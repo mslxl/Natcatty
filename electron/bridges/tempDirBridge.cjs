@@ -65,15 +65,44 @@ async function readFileAtMost(file, maxBytes) {
   return bytesRead > maxBytes ? null : buffer.subarray(0, bytesRead);
 }
 
-async function hasPendingSigningKeyFile(keyPath) {
+async function listPendingSigningKeyFiles(keyPath) {
   try {
     const files = await fs.promises.readdir(path.dirname(keyPath));
-    return files.some(file => (
+    return files.filter(file => (
       file.startsWith(`${TOOL_OUTPUT_SIGNING_KEY_FILE}.`)
       && file.endsWith(".pending")
-    ));
+    )).map(file => path.join(path.dirname(keyPath), file));
   } catch {
-    return false;
+    return [];
+  }
+}
+
+async function hasPendingSigningKeyFile(keyPath, expectedStat) {
+  const keyStat = expectedStat ?? await fs.promises.lstat(keyPath).catch(() => null);
+  if (!keyStat) return false;
+  for (const pendingPath of await listPendingSigningKeyFiles(keyPath)) {
+    try {
+      const pendingStat = await fs.promises.lstat(pendingPath);
+      if (pendingStat.dev === keyStat.dev && pendingStat.ino === keyStat.ino) return true;
+    } catch {
+      // Another publisher may have removed the pending link concurrently.
+    }
+  }
+  return false;
+}
+
+async function cleanupPendingSigningKeyFiles(keyPath, expectedStat) {
+  const keyStat = expectedStat ?? await fs.promises.lstat(keyPath).catch(() => null);
+  if (!keyStat) return;
+  for (const pendingPath of await listPendingSigningKeyFiles(keyPath)) {
+    try {
+      const pendingStat = await fs.promises.lstat(pendingPath);
+      if (pendingStat.dev === keyStat.dev && pendingStat.ino === keyStat.ino) {
+        await safeUnlink(pendingPath);
+      }
+    } catch {
+      // Best effort; the key remains usable even if cleanup loses a race.
+    }
   }
 }
 
@@ -99,7 +128,10 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
         if (!encrypted) return null;
         if (!isCurrentTempDir()) return null;
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-        if (decoded.length === 32 && isCurrentTempDir()) return decoded;
+        if (decoded.length === 32 && isCurrentTempDir()) {
+          if (stat.nlink === 2) await cleanupPendingSigningKeyFiles(keyPath, stat);
+          return decoded;
+        }
       } catch {
         // A locked or temporarily unavailable OS keychain must not destroy the
         // only key capable of verifying previously persisted output.
@@ -140,7 +172,9 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
         if (!encrypted) return null;
         if (!isCurrentTempDir()) return null;
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-        return decoded.length === 32 && isCurrentTempDir() ? decoded : null;
+        if (decoded.length !== 32 || !isCurrentTempDir()) return null;
+        await cleanupPendingSigningKeyFiles(keyPath, await fs.promises.lstat(keyPath).catch(() => null));
+        return decoded;
       } finally {
         await opened.file.close().catch(() => {});
       }
@@ -191,7 +225,8 @@ async function ensureToolOutputSigningKeyFile(key, expectedGeneration = tempDirR
   const mustRevalidateKey = expectedGeneration !== tempDirRebindGeneration;
   try {
     const stat = await fs.promises.lstat(keyPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096) return false;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return false;
+    if (stat.nlink !== 1 && !(stat.nlink === 2 && await hasPendingSigningKeyFile(keyPath, stat))) return false;
     if (!mustRevalidateKey) return true;
     const opened = await openSafeToolOutputFile(keyPath, 4096, false);
     if (!opened) return false;
@@ -461,7 +496,7 @@ async function openSafeToolOutputFile(
     }
     const publishedSigningKey = allowSigningKeyPublication
       && stat.nlink === 2
-      && await hasPendingSigningKeyFile(filePath);
+      && await hasPendingSigningKeyFile(filePath, stat);
     if (
       !stat.isFile()
       || (!publishedSigningKey && stat.nlink !== 1)
@@ -573,6 +608,8 @@ async function deleteToolOutputPair(filePath) {
 
 async function readSafeManifest(manifestPath, signingKey) {
   if (!isNetcattyTempPath(manifestPath) || !manifestPath.endsWith(".log.meta.json")) return null;
+  const entryTempDir = getTempDir();
+  const entryGeneration = tempDirRebindGeneration;
   let file;
   try {
     const noFollow = fs.constants.O_NOFOLLOW ?? 0;
@@ -593,9 +630,17 @@ async function readSafeManifest(manifestPath, signingKey) {
     if (!Number.isSafeInteger(parsed.contentBytes) || parsed.contentBytes < 0 || parsed.contentBytes > MAX_TOOL_OUTPUT_TEMP_BYTES) return null;
     if (!isBoundedString(parsed.contentSha256, 64) || !/^[a-f0-9]{64}$/.test(parsed.contentSha256)) return null;
     if (!await hasValidToolOutputManifestSignature(parsed, signingKey)) return null;
-    const contentPath = path.join(getTempDir(), parsed.contentFile);
+    const contentPath = path.join(entryTempDir, parsed.contentFile);
     if (toolOutputManifestPath(contentPath) !== manifestPath) return null;
-    return { manifest: parsed, manifestPath, manifestStat: stat, contentPath };
+    if (entryGeneration !== tempDirRebindGeneration || getTempDir() !== entryTempDir) return null;
+    return {
+      manifest: parsed,
+      manifestPath,
+      manifestStat: stat,
+      contentPath,
+      tempDir: entryTempDir,
+      tempDirRebindGeneration: entryGeneration,
+    };
   } catch {
     return null;
   } finally {
@@ -641,9 +686,17 @@ async function listToolOutputManifestEntries() {
 }
 
 async function touchToolOutputEntry(entry, now = new Date()) {
+  const tempDir = getTempDir();
+  const generation = tempDirRebindGeneration;
+  if (
+    (entry.tempDir && entry.tempDir !== tempDir)
+    || (entry.tempDirRebindGeneration != null && entry.tempDirRebindGeneration !== generation)
+    || path.dirname(entry.manifestPath) !== tempDir
+  ) return false;
   const key = await getToolOutputSigningKey();
-  if (!key) return false;
+  if (!key || generation !== tempDirRebindGeneration) return false;
   const pendingPath = getTempFilePath(`${entry.manifest.record.handleId}.manifest.pending`);
+  if (generation !== tempDirRebindGeneration || path.dirname(pendingPath) !== tempDir) return false;
   const manifest = {
     ...unsignedToolOutputManifest(entry.manifest),
     record: { ...entry.manifest.record, accessedAt: now.getTime() },
@@ -655,12 +708,14 @@ async function touchToolOutputEntry(entry, now = new Date()) {
       mode: 0o600,
       flag: "wx",
     });
+    if (generation !== tempDirRebindGeneration) return false;
     await fs.promises.rename(pendingPath, entry.manifestPath);
+    if (generation !== tempDirRebindGeneration) return false;
     entry.manifest = manifest;
     entry.manifestStat = await fs.promises.stat(entry.manifestPath);
     return true;
   } catch {
-    await safeUnlink(pendingPath);
+    if (generation === tempDirRebindGeneration) await safeUnlink(pendingPath);
     return false;
   }
 }
