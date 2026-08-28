@@ -8,6 +8,13 @@ import { readExternalMcpStoredEnabled } from './useExternalMcpToggleState';
 /** Right after an enable toggle the runtime may still be starting; poll briefly. */
 const EXTERNAL_MCP_READY_RETRY_LIMIT = 3;
 const EXTERNAL_MCP_READY_RETRY_DELAY_MS = 1200;
+/**
+ * After the fast retry budget is exhausted, keep polling at the shared runtime
+ * status cadence while the persisted switch and the runtime disagree, so a
+ * persistently enabled runtime that takes longer than ~3.6s to reach `running`
+ * still converges the guidance without an explicit state event.
+ */
+const EXTERNAL_MCP_SLOW_POLL_DELAY_MS = 3000;
 
 export type ToolAccessGuidanceState = {
   /** Path of the local Netcatty skill file (Skills + CLI mode). */
@@ -71,7 +78,8 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
   }, [mode]);
 
   // Keep MCP guidance in sync with the shared persisted enable switch and
-  // retry briefly while the runtime finishes starting. The fetch also runs on
+  // retry while the runtime finishes starting (fast retries, then a slower
+  // fallback poll until switch and runtime agree). The fetch also runs on
   // mount through the retrying `refetch()` path: when the settings window
   // mounts while a persistently enabled runtime is still being restored, the
   // startup reconciliation emits no enable-key event, so without an initial
@@ -85,23 +93,43 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
 
     const refetch = async () => {
       if (cancelled) return;
+      const storedEnabled = readExternalMcpStoredEnabled();
       const readyLauncherPath = await refreshMcpStatus().catch(() => undefined);
       if (cancelled) return;
+      // The persisted switch is off but the status check failed: drop any
+      // cached launcher/discovery paths. The stored credentials were revoked
+      // by the disable, and falling through to the comparison below would see
+      // "off" vs "not ready" as synchronized and keep a copyable prompt that
+      // references the revoked credentials.
+      if (!storedEnabled && readyLauncherPath === undefined) {
+        setMcpLauncherPath(null);
+        setMcpDiscoveryPath(null);
+      }
       // Retry while the fetched runtime status disagrees with the persisted
       // switch: after an enable the runtime may still be starting, and the
       // disable event is emitted before the lifecycle IPC settles, so a stale
       // "enabled" status can survive the immediate refetch.
       const statusReady = readyLauncherPath != null;
-      if (retries < EXTERNAL_MCP_READY_RETRY_LIMIT && readExternalMcpStoredEnabled() !== statusReady) {
+      if (storedEnabled === statusReady) return;
+      if (retries < EXTERNAL_MCP_READY_RETRY_LIMIT) {
         retries += 1;
         retryTimer = window.setTimeout(() => {
           void refetch();
         }, EXTERNAL_MCP_READY_RETRY_DELAY_MS);
+        return;
       }
+      // Startup can take longer than the fast retry budget (a persistent
+      // runtime restoring while the settings view mounts): the startup
+      // reconciliation emits no state event, so keep a slower fallback poll
+      // running until switch and runtime agree again.
+      retryTimer = window.setTimeout(() => {
+        void refetch();
+      }, EXTERNAL_MCP_SLOW_POLL_DELAY_MS);
     };
 
     const refetchOnChange = () => {
       retries = 0;
+      if (retryTimer) window.clearTimeout(retryTimer);
       void refetch();
     };
     const handleAIStateChanged = (event: Event) => {
