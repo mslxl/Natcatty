@@ -100,20 +100,21 @@ const renderEditor = async (
   assert.ok(rootNode);
   const root = createRoot(rootNode);
   const changes: string[] = [];
-  await act(async () => {
+  const render = async (nextProps: RenderEditorProps) => act(async () => {
     root.render(
       <I18nProvider locale="en">
         <InlineMarkdownEditor
           noteId="note-1"
-          value={props.value}
+          value={nextProps.value}
           placeholder="Write Markdown notes here..."
-          editorMode={props.editorMode ?? "edit"}
+          editorMode={nextProps.editorMode ?? "edit"}
           onChange={(next) => changes.push(next)}
           hosts={[]}
         />
       </I18nProvider>,
     );
   });
+  await render(props);
   // Let the deferred MDX import (and its parse-error reporting) settle.
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -121,6 +122,7 @@ const renderEditor = async (
   return {
     rootNode,
     changes,
+    rerender: render,
     async unmount() {
       await act(async () => {
         root.unmount();
@@ -237,6 +239,43 @@ test("retry imports the latest fallback draft, not the stale prop value", async 
   }
 });
 
+test("same-note external markdown clears an active fallback", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const { rootNode, rerender, unmount } = await renderEditor(window, {
+      value: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+    });
+    assert.ok(querySourceFallback(rootNode));
+
+    await rerender({ value: PLAIN_NOTE_MARKDOWN });
+    await runWithAct(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    assert.equal(querySourceFallback(rootNode), null);
+    assert.match(rootNode.querySelector<HTMLElement>("[contenteditable]")?.textContent || "", /Promote the replica/);
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("leading and trailing whitespace does not hide an unrenderable note", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const { rootNode, unmount } = await renderEditor(window, {
+      value: `\n${NOTE_MARKDOWN_MDX_CANNOT_PARSE}\n`,
+    });
+
+    const fallback = querySourceFallback(rootNode);
+    assert.ok(fallback, "expected padded unrenderable markdown to use the source fallback");
+    assert.equal(fallback.value, `\n${NOTE_MARKDOWN_MDX_CANNOT_PARSE}\n`);
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
 test("a stale parse error is ignored when the same note has newer markdown", async () => {
   const { shouldApplyMdxParseFailure } = await import("./InlineMarkdownEditor.tsx");
 
@@ -250,6 +289,12 @@ test("a stale parse error is ignored when the same note has newer markdown", asy
     currentNoteId: "note-1",
     failedNoteId: "note-1",
     currentMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+    failedMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+  }), true);
+  assert.equal(shouldApplyMdxParseFailure({
+    currentNoteId: "note-1",
+    failedNoteId: "note-1",
+    currentMarkdown: `\n${NOTE_MARKDOWN_MDX_CANNOT_PARSE}\n`,
     failedMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
   }), true);
 });

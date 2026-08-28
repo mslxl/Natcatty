@@ -155,7 +155,7 @@ export const shouldApplyMdxParseFailure = (input: {
   currentMarkdown: string;
   failedMarkdown: string;
 }): boolean => input.currentNoteId === input.failedNoteId
-  && input.currentMarkdown === input.failedMarkdown;
+  && input.currentMarkdown.trim() === input.failedMarkdown.trim();
 
 export const getNoteDecorationMutationDelay = (editorMode: NoteEditorMode): number =>
   editorMode === "edit" || editorMode === "live" ? NOTE_EDIT_DECORATION_DEBOUNCE_MS : 0;
