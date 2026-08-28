@@ -65,6 +65,7 @@ const activeConnections = new Map<string, PortForwardingConnection>();
 const exhaustedReconnectRules = new Set<string>();
 const rulesPendingCleanup = new Set<string>();
 const manualStopsInProgress = new Set<string>();
+const stopAllInProgress = new Set<string>();
 const ruleCleanupPromises = new Map<string, Promise<{ success: boolean; error?: string }>>();
 const deferredReconnects = new Map<string, {
   enableReconnect: boolean;
@@ -618,6 +619,10 @@ const subscribeSyncedConnection = async (
         current.status = status;
         current.error = error ?? undefined;
         if (status === 'error') {
+          if (stopAllInProgress.has(ruleId)) {
+            onStatusChange(status, error ?? undefined);
+            return;
+          }
           const reconnectScheduled = scheduleReconnectIfNeeded(
             ruleId,
             connection.syncedShouldReconnect?.() ?? false,
@@ -1021,6 +1026,10 @@ export const startPortForward = async (
       
       // Handle auto-reconnect on error/disconnect
       if (status === 'error') {
+        if (stopAllInProgress.has(rule.id)) {
+          onStatusChange(status, error ?? undefined);
+          return;
+        }
         const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
         if (reconnectScheduled) {
           return;
@@ -1403,6 +1412,7 @@ export const stopAllPortForwards = async (): Promise<void> => {
     // Clear any pending reconnect timer
     clearReconnectTimer(ruleId);
     manualStopsInProgress.add(ruleId);
+    stopAllInProgress.add(ruleId);
     
     try {
       if (bridge?.stopPortForward) {
@@ -1421,6 +1431,7 @@ export const stopAllPortForwards = async (): Promise<void> => {
         err instanceof Error ? err.message : String(err),
       );
     } finally {
+      stopAllInProgress.delete(ruleId);
       manualStopsInProgress.delete(ruleId);
     }
   }
