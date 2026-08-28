@@ -1141,6 +1141,33 @@ test("resolve-cli probes Windows Claude exe paths with spaces", { skip: process.
   }
 });
 
+test("resolve-cli reports Cursor Agent CLI on PATH as installed without CLI login", async () => {
+  const { bridge, restore } = loadBridgeWithMocks({
+    resolveCliFromPath: () => null,
+    probeCursorCliAuth: () => ({
+      authenticated: false,
+      authSource: null,
+      email: null,
+      binPath: "/usr/local/bin/cursor-agent",
+    }),
+  });
+  const ipcMain = createIpcMainStub();
+  bridge.init({ sessions: new Map(), sftpClients: new Map(), electronModule: { app: { getPath: () => process.cwd() } } });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const resolveCli = ipcMain.handlers.get("netcatty:ai:resolve-cli");
+    const result = await resolveCli({ sender: { id: 1 } }, { command: "cursor", customPath: "" });
+    assert.equal(result.installed, true);
+    assert.equal(result.sdkInstalled, true);
+    assert.equal(result.cliBinPath, "/usr/local/bin/cursor-agent");
+    assert.equal(result.cliLoginOk, false);
+    assert.equal(result.available, false);
+  } finally {
+    restore();
+  }
+});
+
 test("resolve-cli reports Cursor SDK installed but unavailable without an API key", async () => {
   const { bridge, restore } = loadBridgeWithMocks({
     resolveCliFromPath: () => null,
@@ -1157,7 +1184,7 @@ test("resolve-cli reports Cursor SDK installed but unavailable without an API ke
       binPath: "cursor",
       version: "Cursor SDK",
       available: false,
-      installed: true,
+      installed: false,
       authenticated: false,
       authSource: null,
       cliEmail: null,
@@ -1191,7 +1218,7 @@ test("resolve-cli separates Cursor SDK installation from API key availability", 
       binPath: "cursor",
       version: "Cursor SDK",
       available: false,
-      installed: true,
+      installed: false,
       authenticated: false,
       authSource: null,
       cliEmail: null,
@@ -1226,7 +1253,7 @@ test("resolve-cli ignores custom Cursor paths and stores the SDK sentinel path",
       binPath: "cursor",
       version: "Cursor SDK",
       available: true,
-      installed: true,
+      installed: false,
       authenticated: true,
       authSource: "CURSOR_API_KEY",
       cliEmail: null,
@@ -1257,7 +1284,7 @@ test("resolve-cli exposes Cursor SDK support when installed and authenticated", 
       binPath: "cursor",
       version: "Cursor SDK",
       available: true,
-      installed: true,
+      installed: false,
       authenticated: true,
       authSource: "CURSOR_API_KEY",
       cliEmail: null,
@@ -1290,7 +1317,7 @@ test("resolve-cli exposes Cursor SDK support when API key is saved in settings",
       binPath: "/usr/local/bin/cursor",
       version: "Cursor SDK",
       available: true,
-      installed: true,
+      installed: false,
       authenticated: true,
       authSource: "settings",
       cliEmail: null,
@@ -1373,6 +1400,7 @@ test("discover exposes Cursor when CLI login succeeds without API key", async ()
     const cursor = agents.find((agent) => agent.command === "cursor");
 
     assert.equal(cursor?.available, true);
+    assert.equal(cursor?.installed, true);
     assert.equal(cursor?.authenticated, true);
     assert.equal(cursor?.authSource, "cli-login");
     assert.equal(cursor?.path, "/Users/me/.local/bin/agent");
@@ -1397,6 +1425,8 @@ test("discover exposes Cursor SDK support when API key is saved in settings", as
 
     assert.equal(cursor?.path, "cursor");
     assert.equal(cursor?.available, true);
+    assert.equal(cursor?.installed, false);
+    assert.equal(cursor?.sdkInstalled, true);
     assert.equal(cursor?.authenticated, true);
     assert.equal(cursor?.authSource, "settings");
   } finally {
@@ -1422,6 +1452,7 @@ test("resolve-cli exposes Cursor CLI login without API key", async () => {
     const resolveCli = ipcMain.handlers.get("netcatty:ai:resolve-cli");
     const result = await resolveCli({ sender: { id: 1 } }, { command: "cursor", customPath: "" });
     assert.equal(result.available, true);
+    assert.equal(result.installed, true);
     assert.equal(result.authenticated, true);
     assert.equal(result.authSource, "cli-login");
     assert.equal(result.path, "/Users/me/.local/bin/agent");
