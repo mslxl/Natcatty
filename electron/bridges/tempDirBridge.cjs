@@ -335,6 +335,10 @@ function getTempDir() {
   }
 }
 
+function getTempDirRebindGeneration() {
+  return tempDirRebindGeneration;
+}
+
 function assertSafeTempDir(tempDir, expectedIdentity) {
   const stat = fs.lstatSync(tempDir);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Netcatty temp path is not a safe directory.");
@@ -1241,6 +1245,7 @@ function registerHandlers(ipcMain, shell, electronModule) {
 
 module.exports = {
   getTempDir,
+  getTempDirRebindGeneration,
   ensureTempDir,
   getTempDirInfo,
   clearTempDir,
