@@ -249,13 +249,15 @@ export function Combobox({
         return filterComboboxOptions(options, inputValue, isSearching)
     }, [options, inputValue, isSearching])
 
-    // Restart the window from its initial size whenever the picker opens, the
-    // option set, or the search mode changes, so a previously grown window
-    // never persists across uses.
+    // Restart the window from its initial size whenever the picker opens or
+    // the filtered result set changes (option set, search mode, or query), so
+    // a previously grown or slid window never persists across a changed list.
+    // filteredOptions' identity changes whenever its inputs change, which
+    // covers query refinements while already searching.
     React.useEffect(() => {
         setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
         setWindowStart(0)
-    }, [options, isSearching, open])
+    }, [open, filteredOptions])
 
     const renderedOptions = React.useMemo(() => {
         return filteredOptions.slice(windowStart, windowStart + renderLimit)
@@ -276,8 +278,11 @@ export function Combobox({
             scrollTop: target.scrollTop,
         }
         // Scrolling back to the top restores the initial window so options
-        // above a slid window become reachable again.
+        // above a slid window become reachable again. The active index must
+        // be cleared too, otherwise the active-option effect immediately
+        // slides the window back to a stale active option.
         if (windowStart > 0 && shouldResetComboboxWindow(scrollTarget)) {
+            setActiveIndex(-1)
             setWindowStart(0)
             setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
             return
