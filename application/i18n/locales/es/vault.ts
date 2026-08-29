@@ -148,6 +148,10 @@ export const esVaultMessages: Messages = {
   'vault.import.mobaxterm.utf8Desc': 'Úsalo para archivos guardados o convertidos como UTF-8.',
   'vault.import.mobaxterm.gb18030': 'Windows en chino',
   'vault.import.mobaxterm.gb18030Desc': 'Úsalo para archivos antiguos exportados en Windows en chino.',
+  'vault.import.mobaxterm.masterPassword': 'Contraseña maestra (opcional)',
+  'vault.import.mobaxterm.masterPasswordPlaceholder': 'Introduce la contraseña maestra de MobaXterm',
+  'vault.import.mobaxterm.masterPasswordHint':
+    'Hace falta para importar las contraseñas guardadas de .mobaconf o MobaXterm.ini. Déjalo vacío para importar solo las sesiones.',
   'vault.import.sshConfig.chooseMode': 'Elige cómo importar tu archivo de configuración SSH.',
   'vault.import.sshConfig.modeQuestion': '¿Cómo te gustaría importar?',
   'vault.import.sshConfig.importOnly': 'Solo importar',

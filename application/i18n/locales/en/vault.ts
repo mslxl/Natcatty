@@ -148,6 +148,10 @@ export const enVaultMessages: Messages = {
   'vault.import.mobaxterm.utf8Desc': 'Use for files saved or converted as UTF-8.',
   'vault.import.mobaxterm.gb18030': 'Chinese Windows',
   'vault.import.mobaxterm.gb18030Desc': 'Use for legacy files exported on Chinese Windows.',
+  'vault.import.mobaxterm.masterPassword': 'Master password (optional)',
+  'vault.import.mobaxterm.masterPasswordPlaceholder': 'Enter the MobaXterm master password',
+  'vault.import.mobaxterm.masterPasswordHint':
+    'Needed to import saved passwords from .mobaconf or MobaXterm.ini. Leave blank to import sessions only.',
   'vault.import.sshConfig.chooseMode': 'Choose how to import your SSH config file.',
   'vault.import.sshConfig.modeQuestion': 'How would you like to import?',
   'vault.import.sshConfig.importOnly': 'Import Only',
