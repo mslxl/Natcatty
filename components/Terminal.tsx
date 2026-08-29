@@ -1075,6 +1075,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autocompleteSettings = resolveTerminalAutocompleteSettings({
     protocol: effectiveTerminalProtocol,
     terminalSettings,
+    isNetworkDevice: host.deviceType === 'network'
+      || classifyDistroId(host.distro) === 'network-device',
   });
 
   const resolveSftpInitialPath = useCallback(async (options?: {

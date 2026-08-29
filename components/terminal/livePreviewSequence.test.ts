@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import {
   computeLivePreviewWrite,
   isWindowsShellLineInput,
+  shouldWriteAutocompleteLivePreview,
 } from "./autocomplete/livePreviewSequence.ts";
+
+test("network-device sessions skip live-preview PTY writes (#1193)", () => {
+  assert.equal(shouldWriteAutocompleteLivePreview(true, false), true);
+  assert.equal(shouldWriteAutocompleteLivePreview(true, true), false);
+  assert.equal(shouldWriteAutocompleteLivePreview(false, false), false);
+  assert.equal(shouldWriteAutocompleteLivePreview(false, true), false);
+});
 
 test("appends only the tail when the candidate continues the current line", () => {
   assert.equal(
