@@ -29,6 +29,8 @@ export const zhCNVaultMessages: Messages = {
   'notes.mode.preview': '预览',
   'notes.title.placeholder': '笔记标题',
   'notes.editor.placeholder': '在这里写 Markdown 笔记...',
+  'notes.editor.unrenderableMarkdown': '这篇笔记包含富文本编辑器无法显示的 Markdown（例如未闭合的 <tag> 文本），已改为显示原始 Markdown 源码，内容并没有丢失。',
+  'notes.editor.retryRichView': '重试富文本视图',
   'notes.preview.empty': '暂无内容可预览。',
   'notes.empty.title': '还没有笔记',
   'notes.empty.desc': '可以记录运维手册、临时备忘、服务器交接信息。',

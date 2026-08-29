@@ -29,6 +29,8 @@ export const ruVaultMessages: Messages = {
   'notes.mode.preview': 'Просмотр',
   'notes.title.placeholder': 'Заголовок заметки',
   'notes.editor.placeholder': 'Пишите Markdown-заметки здесь...',
+  'notes.editor.unrenderableMarkdown': 'Эта заметка содержит Markdown, который не может отобразить визуальный редактор (например, незакрытые теги вида <tag>). Показан исходный Markdown — содержимое не потеряно.',
+  'notes.editor.retryRichView': 'Повторить в визуальном режиме',
   'notes.preview.empty': 'Пока нечего просматривать.',
   'notes.empty.title': 'Заметок пока нет',
   'notes.empty.desc': 'Создавайте Markdown-заметки для инструкций, напоминаний и передачи серверов.',

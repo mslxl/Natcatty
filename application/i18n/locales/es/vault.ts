@@ -29,6 +29,8 @@ export const esVaultMessages: Messages = {
   'notes.mode.preview': 'Vista previa',
   'notes.title.placeholder': 'Título de la nota',
   'notes.editor.placeholder': 'Escribe notas Markdown aquí...',
+  'notes.editor.unrenderableMarkdown': 'Esta nota contiene Markdown que el editor enriquecido no puede mostrar (por ejemplo, etiquetas sin cerrar como <tag>). Se muestra el origen Markdown sin cambios: el contenido está intacto.',
+  'notes.editor.retryRichView': 'Reintentar vista enriquecida',
   'notes.preview.empty': 'Aún no hay nada para previsualizar.',
   'notes.empty.title': 'Aún no hay notas',
   'notes.empty.desc': 'Crea notas Markdown para runbooks, recordatorios y detalles de traspaso de servidores.',

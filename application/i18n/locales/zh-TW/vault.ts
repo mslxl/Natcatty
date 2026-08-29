@@ -29,6 +29,8 @@ export const zhTWVaultMessages: Messages = {
   'notes.mode.preview': '預覽',
   'notes.title.placeholder': '筆記標題',
   'notes.editor.placeholder': '在這裡寫 Markdown 筆記...',
+  'notes.editor.unrenderableMarkdown': '這篇筆記包含富文本編輯器無法顯示的 Markdown（例如未閉合的 <tag> 文字），已改為顯示原始 Markdown 原始碼，內容並沒有遺失。',
+  'notes.editor.retryRichView': '重試富文字檢視',
   'notes.preview.empty': '暫無內容可預覽。',
   'notes.empty.title': '還沒有筆記',
   'notes.empty.desc': '可以記錄運維手冊、臨時備忘、伺服器交接資訊。',
