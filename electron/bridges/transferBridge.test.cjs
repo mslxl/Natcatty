@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const Module = require("node:module");
+const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const { PassThrough, Readable, Writable } = require("node:stream");
 
@@ -9127,6 +9128,152 @@ test("resumable SFTP downloads preserve a 2MB request window on high-latency pat
   assert.equal(observedChunkSize, 32 * 1024);
   assert.equal(observedConcurrency * observedChunkSize, 2 * 1024 * 1024);
   assert.deepEqual(await fs.promises.readFile(path.join(tempDir, "large.bin")), payload);
+});
+
+function runIsolatedStagedDownloadRecovery(mode) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `netcatty-transfer-root-rebind-${mode}-`));
+  const home = path.join(root, "home");
+  fs.mkdirSync(home);
+  try {
+    const script = `
+      const fs = require("node:fs");
+      const os = require("node:os");
+      const path = require("node:path");
+      const { EventEmitter } = require("node:events");
+      const transferBridge = require("./electron/bridges/transferBridge.cjs");
+      const tempDirBridge = require("./electron/bridges/tempDirBridge.cjs");
+
+      const mode = process.env.NETCATTY_TEST_REBIND_MODE;
+      const transferId = mode === "after-open"
+        ? "download-root-rebind-after-open"
+        : "download-root-rebind-before-write";
+      const payload = Buffer.from(
+        mode === "after-open" ? "recovered after stage open" : "recovered staged download",
+      );
+      const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "target-"));
+      const targetPath = path.join(targetDir, "download.bin");
+      const initialStagedPath = tempDirBridge.getTransferTempFilePath(transferId, "download.bin");
+      const tempRoot = path.dirname(initialStagedPath);
+      const initialGeneration = tempDirBridge.getTempDirRebindGeneration();
+      let triggered = false;
+
+      const originalGetTransferTempFilePath = tempDirBridge.getTransferTempFilePath;
+      const originalOpen = fs.promises.open;
+      if (mode === "after-open") {
+        fs.promises.open = async (filePath, ...args) => {
+          const opened = await originalOpen(filePath, ...args);
+          if (!triggered && path.resolve(filePath) === path.resolve(initialStagedPath)) {
+            triggered = true;
+            fs.renameSync(tempRoot, tempRoot + ".after-open-old");
+            fs.mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+          }
+          return opened;
+        };
+      } else {
+        tempDirBridge.getTransferTempFilePath = (id, fileName) => {
+          const stagedPath = originalGetTransferTempFilePath(id, fileName);
+          if (!triggered) {
+            triggered = true;
+            fs.rmSync(tempRoot, { recursive: true, force: true });
+          }
+          return stagedPath;
+        };
+      }
+
+      const sftp = new EventEmitter();
+      sftp.open = (_remotePath, flags, callback) => {
+        if (typeof flags === "function") callback = flags;
+        callback(null, Buffer.from("read-handle"));
+      };
+      sftp.read = (_handle, buffer, offset, length, position, callback) => {
+        const end = Math.min(position + length, payload.length);
+        payload.copy(buffer, offset, position, end);
+        setImmediate(() => callback(null, end - position));
+      };
+      sftp.close = (_handle, callback) => callback(null);
+      sftp.readdir = (_remotePath, callback) => callback(null, []);
+      sftp.stat = (_remotePath, callback) => callback(null, { size: payload.length });
+      sftp.lstat = (_remotePath, callback) => {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+      };
+      sftp.mkdir = (_remotePath, callback) => callback(null);
+      sftp.unlink = (_remotePath, callback) => callback(null);
+      sftp.end = () => {};
+      const client = {
+        sftp,
+        stat: () => Promise.resolve({ size: payload.length }),
+      };
+      transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+      (async () => {
+        const result = await transferBridge.startTransfer(
+          { sender: { send() {} } },
+          {
+            transferId,
+            sourcePath: "/tmp/source.bin",
+            targetPath,
+            sourceType: "sftp",
+            targetType: "local",
+            sourceSftpId: "source",
+            totalBytes: payload.length,
+            resumable: true,
+          },
+        );
+        const content = fs.existsSync(targetPath)
+          ? await fs.promises.readFile(targetPath, "utf8")
+          : null;
+        console.log("RESULT:" + JSON.stringify({
+          error: result.error || null,
+          content,
+          triggered,
+          tempRoot,
+          generation: tempDirBridge.getTempDirRebindGeneration(),
+          initialGeneration,
+        }));
+      })().catch(error => {
+        console.error(error);
+        process.exitCode = 1;
+      });
+    `;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: {
+        ...process.env,
+        TMPDIR: root,
+        TEMP: root,
+        TMP: root,
+        HOME: home,
+        NETCATTY_TEST_REBIND_MODE: mode,
+      },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const match = result.stdout.match(/^RESULT:(.+)$/m);
+    assert.ok(match, result.stdout);
+    const report = JSON.parse(match[1]);
+    assert.equal(path.dirname(report.tempRoot), root);
+    return report;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("staged SFTP downloads recover when the temp root disappears before the first write", () => {
+  const result = runIsolatedStagedDownloadRecovery("before-write");
+  assert.equal(result.error, null);
+  assert.equal(result.triggered, true);
+  assert.equal(result.generation, result.initialGeneration + 1);
+  assert.equal(result.content, "recovered staged download");
+});
+
+test("staged SFTP downloads recover when the temp root is replaced after opening the stage", () => {
+  const result = runIsolatedStagedDownloadRecovery("after-open");
+  assert.equal(result.error, null);
+  assert.equal(result.triggered, true);
+  assert.equal(result.generation, result.initialGeneration + 1);
+  assert.equal(result.content, "recovered after stage open");
 });
 
 test("fast resumable downloads pause only at a complete checkpoint", async (t) => {

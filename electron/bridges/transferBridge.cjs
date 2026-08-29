@@ -5035,6 +5035,38 @@ async function downloadFile(
   throw error;
 }
 
+async function downloadFileWithTempRootRecovery({
+  transfer,
+  transferId,
+  fileName,
+  localPath,
+  run,
+}) {
+  const initialGeneration = tempDirBridge.getTempDirRebindGeneration();
+  try {
+    const result = await run(localPath);
+    tempDirBridge.getTempDir();
+    if (tempDirBridge.getTempDirRebindGeneration() === initialGeneration) {
+      return { localPath, result };
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    tempDirBridge.getTempDir();
+    if (tempDirBridge.getTempDirRebindGeneration() === initialGeneration) throw error;
+  }
+  const recoveredPath = tempDirBridge.getTransferTempFilePath(transferId, fileName);
+  transfer.checkpointBytes = 0;
+  transfer.downloadCheckpointBytes = 0;
+  transfer.stagedLocalPath = recoveredPath;
+  const recoveryGeneration = tempDirBridge.getTempDirRebindGeneration();
+  const result = await run(recoveredPath);
+  tempDirBridge.getTempDir();
+  if (tempDirBridge.getTempDirRebindGeneration() !== recoveryGeneration) {
+    throw new Error("Temporary directory was replaced during SFTP download recovery.");
+  }
+  return { localPath: recoveredPath, result };
+}
+
 /**
  * Start a file transfer
  */
@@ -5861,7 +5893,7 @@ async function startTransferNow(event, payload, onProgress) {
       // SCP cannot resume, but it must still stage locally so a failed/cancelled
       // overwrite never truncates or removes the existing destination.
       const stageLocalDownload = transfer.resumable || isScpModeClient(client);
-      const downloadTargetPath = stageLocalDownload
+      let downloadTargetPath = stageLocalDownload
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
       transfer.stagedLocalPath = stageLocalDownload ? downloadTargetPath : null;
@@ -5887,16 +5919,35 @@ async function startTransferNow(event, payload, onProgress) {
           (options) => hashLocalPrefix(downloadTargetPath, verifyBytes, options),
         );
       }
-      const downloadResult = await downloadFile(
-        encodedSourcePath,
-        downloadTargetPath,
-        client,
-        fileSize,
-        transfer,
-        sendProgress,
-        resolveEncodingForRequest(sourceSftpId, sourceEncoding),
-        runCancelablePreflight,
-      );
+      const download = stageLocalDownload
+        ? await downloadFileWithTempRootRecovery({
+          transfer,
+          transferId,
+          fileName: path.basename(targetPath),
+          localPath: downloadTargetPath,
+          run: recoveredPath => downloadFile(
+            encodedSourcePath,
+            recoveredPath,
+            client,
+            fileSize,
+            transfer,
+            sendProgress,
+            resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+            runCancelablePreflight,
+          ),
+        })
+        : { localPath: downloadTargetPath, result: await downloadFile(
+          encodedSourcePath,
+          downloadTargetPath,
+          client,
+          fileSize,
+          transfer,
+          sendProgress,
+          resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+          runCancelablePreflight,
+        ) };
+      downloadTargetPath = download.localPath;
+      const downloadResult = download.result;
       if (
         isScpModeClient(client)
         && Number.isFinite(downloadResult?.fileSize)
@@ -6086,7 +6137,7 @@ async function startTransferNow(event, payload, onProgress) {
       }
 
       if (!sameHostDone) {
-        const tempPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(sourcePath));
+        let tempPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(sourcePath));
         transfer.stagedLocalPath = tempPath;
 
         const sourceClient = sftpClients.get(sourceSftpId);
@@ -6151,16 +6202,24 @@ async function startTransferNow(event, payload, onProgress) {
             });
             transfer.checkpointBytes = durableCheckpoint;
           };
-          const downloadResult = await downloadFile(
-            encodedSourcePath,
-            tempPath,
-            sourceClient,
-            fileSize,
+          const download = await downloadFileWithTempRootRecovery({
             transfer,
-            downloadProgress,
-            resolveEncodingForRequest(sourceSftpId, sourceEncoding),
-            runCancelablePreflight,
-          );
+            transferId,
+            fileName: path.basename(sourcePath),
+            localPath: tempPath,
+            run: recoveredPath => downloadFile(
+              encodedSourcePath,
+              recoveredPath,
+              sourceClient,
+              fileSize,
+              transfer,
+              downloadProgress,
+              resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+              runCancelablePreflight,
+            ),
+          });
+          tempPath = download.localPath;
+          const downloadResult = download.result;
           if (
             isScpModeClient(sourceClient)
             && Number.isFinite(downloadResult?.fileSize)
