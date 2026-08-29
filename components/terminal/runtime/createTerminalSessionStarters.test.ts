@@ -1249,6 +1249,68 @@ test("startSSH rejects encrypted stored-key material instead of sending cipherte
   assert.match(authRetryMessage ?? "", /cannot be decrypted/);
 });
 
+test("startSSH does not wait to hydrate unrelated encrypted vault keys", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  let decryptAttempts = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        credentialsDecrypt: async (value: string) => {
+          decryptAttempts += 1;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return value;
+        },
+      },
+    },
+  });
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  });
+
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const started = Date.now();
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Password host",
+      hostname: "password.example.test",
+      username: "alice",
+      authMethod: "password",
+      password: "secret",
+    },
+    keys: [{
+      id: "unused-key",
+      label: "Foreign key",
+      type: "ED25519",
+      privateKey: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      source: "imported",
+      category: "key",
+      created: 1,
+    }],
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(decryptAttempts, 0);
+  assert.equal(capturedOptions?.password, "secret");
+  assert.ok(Date.now() - started < 200);
+});
+
 for (const protocol of ["Mosh", "ET"] as const) {
   test(`${protocol} keeps certificate signing material when the system agent toggle is also enabled`, async () => {
     let capturedOptions: Record<string, unknown> | null = null;

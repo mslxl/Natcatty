@@ -6,9 +6,9 @@
  *
  * The heavy lifting is done by Electron's safeStorage via the credential
  * bridge IPC.  When the bridge is unavailable (web fallback, tests) plaintext
- * values pass through unmodified. Ciphertext (`enc:v1:` placeholders) is never
- * echoed as plaintext — decrypt returns undefined so callers can wait or treat
- * the field as unread.
+ * values pass through unmodified. Ciphertext (`enc:v1:` placeholders) stays
+ * ciphertext when decrypt is not ready or fails — never treat it as usable
+ * plaintext, and never persist empty over recoverable ciphertext.
  */
 
 import type { GroupConfig, Host, Identity, ProxyProfile, SSHKey } from "../../domain/models";
@@ -42,12 +42,22 @@ export async function encryptField(value: string | undefined): Promise<string | 
   return b.credentialsEncrypt(value);
 }
 
-export async function decryptField(value: string | undefined): Promise<string | undefined> {
-  if (!value) return value;
+export type DecryptFieldResult = {
+  value: string | undefined;
+  unread: boolean;
+};
+
+/**
+ * Decrypt a field and distinguish plaintext from unread ciphertext.
+ * When decrypt is missing or fails, `unread` is true and `value` remains the
+ * original `enc:v1:` ciphertext so persistence can keep it.
+ */
+export async function decryptFieldResult(value: string | undefined): Promise<DecryptFieldResult> {
+  if (!value) return { value, unread: false };
   const encrypted = isEncryptedCredentialPlaceholder(value);
   const b = bridge();
   if (!b?.credentialsDecrypt) {
-    return encrypted ? undefined : value;
+    return { value, unread: encrypted };
   }
   try {
     const decrypted = await b.credentialsDecrypt(value);
@@ -59,14 +69,28 @@ export async function decryptField(value: string | undefined): Promise<string | 
         || isEncryptedCredentialPlaceholder(decrypted)
       )
     ) {
-      return undefined;
+      return { value, unread: true };
     }
-    return decrypted;
+    return { value: decrypted, unread: false };
   } catch (err) {
-    if (encrypted) return undefined;
+    if (encrypted) return { value, unread: true };
     throw err;
   }
 }
+
+export async function decryptField(value: string | undefined): Promise<string | undefined> {
+  return (await decryptFieldResult(value)).value;
+}
+
+const persistDecryptedSecret = (
+  original: string | undefined,
+  decrypted: string | undefined,
+): string | undefined => {
+  if (isEncryptedCredentialPlaceholder(original) && !sanitizeCredentialValue(decrypted)) {
+    return original;
+  }
+  return decrypted;
+};
 
 const readStoredSshKey = (id: string): SSHKey | undefined => {
   try {
@@ -118,21 +142,27 @@ export async function hydrateStoredKeySecrets(
       sawCiphertext = true;
     }
 
-    const decryptedPrivate = await decryptField(candidate.privateKey || undefined);
-    const privateKey = sanitizeCredentialValue(decryptedPrivate);
+    const decryptedPrivate = await decryptFieldResult(candidate.privateKey || undefined);
+    const privateKey = decryptedPrivate.unread
+      ? undefined
+      : sanitizeCredentialValue(decryptedPrivate.value);
     if (privateKey) {
       const decryptedPassphrase = candidate.passphrase != null
-        ? await decryptField(candidate.passphrase)
+        ? await decryptFieldResult(candidate.passphrase)
         : undefined;
       return {
         key: {
           ...candidate,
           privateKey,
-          passphrase: sanitizeCredentialValue(decryptedPassphrase) ?? (
-            isEncryptedCredentialPlaceholder(candidate.passphrase)
+          passphrase: decryptedPassphrase && !decryptedPassphrase.unread
+            ? (sanitizeCredentialValue(decryptedPassphrase.value) ?? (
+              isEncryptedCredentialPlaceholder(candidate.passphrase)
+                ? undefined
+                : candidate.passphrase
+            ))
+            : (isEncryptedCredentialPlaceholder(candidate.passphrase)
               ? undefined
-              : candidate.passphrase
-          ),
+              : candidate.passphrase),
         },
         unreadable: false,
       };
@@ -194,10 +224,13 @@ export async function encryptHostSecrets(host: Host): Promise<Host> {
 
 export async function decryptHostSecrets(host: Host): Promise<Host> {
   const out = { ...host };
-  out.password = await decryptField(out.password);
-  out.telnetPassword = await decryptField(out.telnetPassword);
+  out.password = persistDecryptedSecret(out.password, await decryptField(out.password));
+  out.telnetPassword = persistDecryptedSecret(out.telnetPassword, await decryptField(out.telnetPassword));
   if (out.proxyConfig?.password) {
-    out.proxyConfig = { ...out.proxyConfig, password: await decryptField(out.proxyConfig.password) };
+    out.proxyConfig = {
+      ...out.proxyConfig,
+      password: persistDecryptedSecret(out.proxyConfig.password, await decryptField(out.proxyConfig.password)),
+    };
   }
   return out;
 }
@@ -215,8 +248,8 @@ export async function encryptKeySecrets(key: SSHKey): Promise<SSHKey> {
 
 export async function decryptKeySecrets(key: SSHKey): Promise<SSHKey> {
   const out = { ...key };
-  out.passphrase = await decryptField(out.passphrase);
-  out.privateKey = (await decryptField(out.privateKey)) ?? "";
+  out.passphrase = persistDecryptedSecret(out.passphrase, await decryptField(out.passphrase));
+  out.privateKey = persistDecryptedSecret(out.privateKey, await decryptField(out.privateKey)) ?? out.privateKey ?? "";
   return out;
 }
 
@@ -232,7 +265,7 @@ export async function encryptIdentitySecrets(identity: Identity): Promise<Identi
 
 export async function decryptIdentitySecrets(identity: Identity): Promise<Identity> {
   const out = { ...identity };
-  out.password = await decryptField(out.password);
+  out.password = persistDecryptedSecret(out.password, await decryptField(out.password));
   return out;
 }
 
@@ -252,10 +285,13 @@ export async function encryptGroupConfigSecrets(config: GroupConfig): Promise<Gr
 
 export async function decryptGroupConfigSecrets(config: GroupConfig): Promise<GroupConfig> {
   const out = { ...config };
-  out.password = await decryptField(out.password);
-  out.telnetPassword = await decryptField(out.telnetPassword);
+  out.password = persistDecryptedSecret(out.password, await decryptField(out.password));
+  out.telnetPassword = persistDecryptedSecret(out.telnetPassword, await decryptField(out.telnetPassword));
   if (out.proxyConfig?.password) {
-    out.proxyConfig = { ...out.proxyConfig, password: await decryptField(out.proxyConfig.password) };
+    out.proxyConfig = {
+      ...out.proxyConfig,
+      password: persistDecryptedSecret(out.proxyConfig.password, await decryptField(out.proxyConfig.password)),
+    };
   }
   return out;
 }
@@ -280,7 +316,7 @@ export async function encryptProxyProfileSecrets(profile: ProxyProfile): Promise
 
 export async function decryptProxyProfileSecrets(profile: ProxyProfile): Promise<ProxyProfile> {
   const out = { ...profile, config: { ...profile.config } };
-  out.config.password = await decryptField(out.config.password);
+  out.config.password = persistDecryptedSecret(out.config.password, await decryptField(out.config.password));
   return out;
 }
 
@@ -454,8 +490,8 @@ export async function decryptProviderSecrets(conn: ProviderConnection): Promise<
 
   if (out.tokens) {
     const t = { ...out.tokens };
-    t.accessToken = (await decryptField(t.accessToken)) ?? "";
-    t.refreshToken = await decryptField(t.refreshToken);
+    t.accessToken = persistDecryptedSecret(t.accessToken, await decryptField(t.accessToken)) ?? t.accessToken ?? "";
+    t.refreshToken = persistDecryptedSecret(t.refreshToken, await decryptField(t.refreshToken));
     out.tokens = t;
   }
 
@@ -469,23 +505,25 @@ export async function decryptProviderSecrets(conn: ProviderConnection): Promise<
       || providerId === "onedrive";
     if (isBuiltin && typeof out.config === "object" && "authType" in out.config) {
       const c = { ...out.config } as WebDAVConfig;
-      c.password = await decryptField(c.password);
-      c.token = await decryptField(c.token);
+      c.password = persistDecryptedSecret(c.password, await decryptField(c.password));
+      c.token = persistDecryptedSecret(c.token, await decryptField(c.token));
       out.config = c;
     } else if (isBuiltin && typeof out.config === "object" && "secretAccessKey" in out.config) {
       const c = { ...out.config } as S3Config;
-      c.secretAccessKey = (await decryptField(c.secretAccessKey)) ?? "";
-      c.sessionToken = await decryptField(c.sessionToken);
+      c.secretAccessKey = persistDecryptedSecret(c.secretAccessKey, await decryptField(c.secretAccessKey))
+        ?? c.secretAccessKey
+        ?? "";
+      c.sessionToken = persistDecryptedSecret(c.sessionToken, await decryptField(c.sessionToken));
       out.config = c;
     } else if (isPluginConfigEnvelope(out.config) || isLegacyPluginConfigEnvelope(out.config)) {
       const sealed = isPluginConfigEnvelope(out.config)
         ? out.config[PLUGIN_CONFIG_ENVELOPE_KEY]
         : out.config[LEGACY_PLUGIN_CONFIG_ENVELOPE_KEY];
-      const plain = await decryptField(sealed);
-      // plain may be JSON "false"/"0"/'""' — treat empty decrypt as failure only.
-      if (plain != null && plain !== "") {
+      const plain = await decryptFieldResult(sealed);
+      // Unread ciphertext must stay sealed. JSON "false"/"0"/'""' are valid plains.
+      if (!plain.unread && plain.value != null && plain.value !== "") {
         try {
-          out.config = JSON.parse(plain) as ProviderConnection["config"];
+          out.config = JSON.parse(plain.value) as ProviderConnection["config"];
         } catch {
           // leave sealed if corrupt
         }
@@ -494,10 +532,10 @@ export async function decryptProviderSecrets(conn: ProviderConnection): Promise<
   }
 
   if (isPluginCredentialEnvelope(out.credential)) {
-    const plain = await decryptField(out.credential[PLUGIN_CREDENTIAL_ENVELOPE_KEY]);
-    if (plain != null && plain !== "") {
+    const plain = await decryptFieldResult(out.credential[PLUGIN_CREDENTIAL_ENVELOPE_KEY]);
+    if (!plain.unread && plain.value != null && plain.value !== "") {
       try {
-        const parsed = JSON.parse(plain) as {
+        const parsed = JSON.parse(plain.value) as {
           kind?: unknown;
           id?: unknown;
           key?: unknown;

@@ -1,7 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
-import type { Host, SSHKey } from "../../../types";
+import type { Host, Identity, SSHKey } from "../../../types";
 import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 import { setTerminalBootEpoch } from "../../../domain/terminalBootEpoch";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
@@ -61,11 +61,44 @@ import { resolveHostSshConnectionTimeouts } from "../../../domain/sshConnectionT
 import { isPluginHostProtocol, sanitizePluginConnection } from "../../../domain/pluginConnection";
 import { hydrateVaultStoredKeys } from "../../../infrastructure/persistence/secureFieldAdapter";
 
-const hydrateConnectKeysIfNeeded = (sourceKeys: SSHKey[]) => (
-  sourceKeys.some((key) => needsVaultStoredKeyHydration(key))
-    ? hydrateVaultStoredKeys(sourceKeys)
-    : null
-);
+const collectConnectKeyIds = (
+  host: Host,
+  jumpHosts: Host[],
+  identities: Identity[] | undefined,
+  pendingAuth: { authMethod?: string; keyId?: string } | null,
+): Set<string> => {
+  const ids = new Set<string>();
+  const addHostKeyId = (
+    candidate: Host,
+    override?: { authMethod?: string; keyId?: string } | null,
+  ) => {
+    const identity = candidate.identityId
+      ? identities?.find((item) => item.id === candidate.identityId)
+      : undefined;
+    const selectedAuthMethod = override?.authMethod || identity?.authMethod || candidate.authMethod;
+    if (selectedAuthMethod === "password") return;
+    const keyId = override?.keyId || identity?.keyId || candidate.identityFileId;
+    if (keyId) ids.add(keyId);
+  };
+  addHostKeyId(host, pendingAuth);
+  for (const jumpHost of jumpHosts) addHostKeyId(jumpHost);
+  return ids;
+};
+
+const hydrateConnectKeysIfNeeded = (
+  sourceKeys: SSHKey[],
+  keyIds: Set<string>,
+) => {
+  const candidates = sourceKeys.filter((key) => keyIds.has(key.id));
+  if (!candidates.some((key) => needsVaultStoredKeyHydration(key))) return null;
+  return hydrateVaultStoredKeys(candidates).then(({ keys: hydrated, unreadableKeyIds }) => {
+    const byId = new Map(hydrated.map((key) => [key.id, key] as const));
+    return {
+      keys: sourceKeys.map((key) => byId.get(key.id) ?? key),
+      unreadableKeyIds,
+    };
+  });
+};
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 const JUMP_HOST_AUTH_FAILED_PREFIX = "Jump host authentication failed";
@@ -257,7 +290,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
 
     const pendingAuth = ctx.pendingAuthRef.current;
-    const pendingKeyHydration = hydrateConnectKeysIfNeeded(ctx.keys);
+    const pendingKeyHydration = hydrateConnectKeysIfNeeded(
+      ctx.keys,
+      collectConnectKeyIds(ctx.host, ctx.resolvedChainHosts, ctx.identities, pendingAuth),
+    );
     const { keys, unreadableKeyIds } = pendingKeyHydration
       ? await pendingKeyHydration
       : { keys: ctx.keys, unreadableKeyIds: new Set<string>() };
@@ -1093,7 +1129,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       const pendingAuth = ctx.pendingAuthRef.current;
-      const pendingKeyHydration = hydrateConnectKeysIfNeeded(ctx.keys);
+      const pendingKeyHydration = hydrateConnectKeysIfNeeded(
+        ctx.keys,
+        collectConnectKeyIds(ctx.host, ctx.resolvedChainHosts, ctx.identities, pendingAuth),
+      );
       const { keys, unreadableKeyIds } = pendingKeyHydration
         ? await pendingKeyHydration
         : { keys: ctx.keys, unreadableKeyIds: new Set<string>() };
@@ -1374,7 +1413,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       const pendingAuth = ctx.pendingAuthRef.current;
-      const pendingKeyHydration = hydrateConnectKeysIfNeeded(ctx.keys);
+      const pendingKeyHydration = hydrateConnectKeysIfNeeded(
+        ctx.keys,
+        collectConnectKeyIds(ctx.host, ctx.resolvedChainHosts, ctx.identities, pendingAuth),
+      );
       const { keys, unreadableKeyIds } = pendingKeyHydration
         ? await pendingKeyHydration
         : { keys: ctx.keys, unreadableKeyIds: new Set<string>() };

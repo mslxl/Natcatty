@@ -4,9 +4,14 @@ import assert from "node:assert/strict";
 import type { SSHKey } from "../../domain/models";
 import { ENCRYPTED_CREDENTIAL_PLACEHOLDER } from "../../domain/credentialsTestFixtures";
 import { STORAGE_KEY_KEYS } from "../config/storageKeys";
+import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../domain/credentials";
+import { localStorageAdapter } from "./localStorageAdapter.ts";
 import {
   decryptField,
+  decryptFieldResult,
   decryptKeySecrets,
+  decryptKeys,
+  encryptKeys,
   hydrateStoredKeySecrets,
 } from "./secureFieldAdapter.ts";
 
@@ -72,26 +77,36 @@ function installBridge(
   });
 }
 
-test("decryptField does not echo enc:v1 ciphertext when the credential bridge is missing", async (t) => {
+test("decryptField marks enc:v1 unread without treating it as plaintext when the bridge is missing", async (t) => {
   installBridge(t, undefined);
-  assert.equal(await decryptField(ENCRYPTED_CREDENTIAL_PLACEHOLDER), undefined);
+  const result = await decryptFieldResult(ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(result.unread, true);
+  assert.equal(result.value, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(await decryptField(ENCRYPTED_CREDENTIAL_PLACEHOLDER), ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(sanitizeCredentialValue(result.value), undefined);
   assert.equal(await decryptField("plain-secret"), "plain-secret");
+  assert.equal((await decryptFieldResult("plain-secret")).unread, false);
 });
 
-test("decryptField does not echo enc:v1 ciphertext when decrypt returns the same value", async (t) => {
+test("decryptField marks enc:v1 unread when decrypt returns the same value", async (t) => {
   installBridge(t, {
     credentialsDecrypt: async (value: string) => value,
   });
-  assert.equal(await decryptField(ENCRYPTED_CREDENTIAL_PLACEHOLDER), undefined);
+  const result = await decryptFieldResult(ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(result.unread, true);
+  assert.equal(result.value, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(sanitizeCredentialValue(result.value), undefined);
 });
 
-test("decryptField does not echo enc:v1 ciphertext when decrypt throws", async (t) => {
+test("decryptField keeps enc:v1 ciphertext when decrypt throws", async (t) => {
   installBridge(t, {
     credentialsDecrypt: async () => {
       throw new Error("safeStorage unavailable");
     },
   });
-  assert.equal(await decryptField(ENCRYPTED_CREDENTIAL_PLACEHOLDER), undefined);
+  const result = await decryptFieldResult(ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(result.unread, true);
+  assert.equal(result.value, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
 });
 
 test("decryptField returns plaintext once the credential bridge decrypts", async (t) => {
@@ -101,13 +116,29 @@ test("decryptField returns plaintext once the credential bridge decrypts", async
       return PRIVATE_KEY;
     },
   });
+  const result = await decryptFieldResult(ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(result.unread, false);
+  assert.equal(result.value, PRIVATE_KEY);
   assert.equal(await decryptField(ENCRYPTED_CREDENTIAL_PLACEHOLDER), PRIVATE_KEY);
 });
 
-test("decryptKeySecrets does not keep enc:v1 privateKey material in memory", async (t) => {
+test("decryptKeySecrets keeps enc:v1 privateKey ciphertext until decrypt succeeds", async (t) => {
   installBridge(t, undefined);
   const decrypted = await decryptKeySecrets(storedKey());
-  assert.equal(decrypted.privateKey, "");
+  assert.equal(decrypted.privateKey, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  assert.equal(isEncryptedCredentialPlaceholder(decrypted.privateKey), true);
+});
+
+test("failed decrypt does not persist wiping enc:v1 key material", async (t) => {
+  installLocalStorage(t);
+  installBridge(t, undefined);
+  const decrypted = await decryptKeys([storedKey()]);
+  assert.equal(decrypted[0]?.privateKey, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  const encrypted = await encryptKeys(decrypted);
+  assert.equal(encrypted[0]?.privateKey, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+  localStorageAdapter.write(STORAGE_KEY_KEYS, encrypted);
+  const stored = localStorageAdapter.read<SSHKey[]>(STORAGE_KEY_KEYS);
+  assert.equal(stored?.[0]?.privateKey, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
 });
 
 test("hydrateStoredKeySecrets waits until ciphertext decrypts", async (t) => {
