@@ -35,6 +35,52 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
+// ---------------------------------------------------------------------------
+// Keys write gate
+//
+// `useVaultState.updateKeys` / `importOrReuseKey` publish key state
+// synchronously and write the encrypted snapshot to storage asynchronously.
+// A connection started in that window must not hydrate from a stale
+// localStorage entry — e.g. a sync/import recovery that cleared a private key
+// would otherwise be undone by the previous persisted snapshot. The writer
+// announces its in-flight write here; stored-key hydration awaits it before
+// re-reading storage.
+// ---------------------------------------------------------------------------
+
+let keysEncryptedWritePending: Promise<unknown> | null = null;
+
+/**
+ * Record the in-flight encrypted keys storage write so `hydrateStoredKeySecrets`
+ * cannot read an older persisted snapshot over newer application state.
+ * Called by the vault writer; failures of the tracked write are ignored here.
+ */
+export const notifyKeysEncryptedWritePending = (pending: Promise<unknown> | null): void => {
+  keysEncryptedWritePending = pending ?? null;
+};
+
+/**
+ * Drain any announced keys write. Returns true when at least one in-flight
+ * write was observed and has settled, which means the stored keys snapshot now
+ * reflects the current application state. If another write raced in while
+ * draining, it is awaited as well.
+ */
+const awaitKeysEncryptedWrite = async (): Promise<boolean> => {
+  let pending = keysEncryptedWritePending;
+  while (pending) {
+    try {
+      await pending;
+    } catch {
+      // A failed write leaves storage unchanged; proceed with what is there.
+    }
+    if (keysEncryptedWritePending !== pending) {
+      pending = keysEncryptedWritePending;
+      continue;
+    }
+    return true;
+  }
+  return false;
+};
+
 export async function encryptField(value: string | undefined): Promise<string | undefined> {
   if (!value) return value;
   const b = bridge();
@@ -128,12 +174,32 @@ export async function hydrateStoredKeySecrets(
 
   while (true) {
     if (!candidate.privateKey) {
+      // Coordinate with the vault writer: application state may have just
+      // cleared or replaced this key before its encrypted write landed in
+      // storage. Never overwrite the current state value with an older
+      // persisted snapshot.
+      const writerSettled = await awaitKeysEncryptedWrite();
       const stored = readStoredSshKey(key.id);
       if (stored?.privateKey && stored.privateKey !== candidate.privateKey) {
         candidate = {
           ...candidate,
           privateKey: stored.privateKey,
           passphrase: stored.passphrase ?? candidate.passphrase,
+        };
+      } else if (writerSettled) {
+        // The settled writer's storage has no private key either — the
+        // credential was deliberately cleared upstream (sync / import
+        // recovery). Return empty immediately instead of spinning until the
+        // timeout so the removal stays authoritative.
+        return {
+          key: {
+            ...candidate,
+            privateKey: "",
+            passphrase: isEncryptedCredentialPlaceholder(candidate.passphrase)
+              ? undefined
+              : candidate.passphrase,
+          },
+          unreadable: sawCiphertext,
         };
       }
     }
@@ -183,7 +249,23 @@ export async function hydrateStoredKeySecrets(
     }
 
     await sleep(retryDelayMs);
+    const writerSettled = await awaitKeysEncryptedWrite();
     const stored = readStoredSshKey(key.id);
+    if (writerSettled && !stored?.privateKey) {
+      // The settled writer's storage has no private key for this id — the
+      // credential was deliberately cleared upstream (sync / import
+      // recovery). Do not keep retrying the previous in-memory snapshot.
+      return {
+        key: {
+          ...candidate,
+          privateKey: "",
+          passphrase: isEncryptedCredentialPlaceholder(candidate.passphrase)
+            ? undefined
+            : candidate.passphrase,
+        },
+        unreadable: sawCiphertext,
+      };
+    }
     if (stored?.privateKey) {
       candidate = {
         ...candidate,

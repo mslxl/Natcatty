@@ -13,6 +13,7 @@ import {
   decryptKeys,
   encryptKeys,
   hydrateStoredKeySecrets,
+  notifyKeysEncryptedWritePending,
 } from "./secureFieldAdapter.ts";
 
 const PRIVATE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----";
@@ -173,6 +174,78 @@ test("hydrateStoredKeySecrets re-reads storage when in-memory privateKey was str
     timeoutMs: 100,
     retryDelayMs: 10,
   });
+  assert.equal(hydrated.unreadable, false);
+  assert.equal(hydrated.key.privateKey, PRIVATE_KEY);
+});
+
+test("hydrateStoredKeySecrets does not revive a stale persisted key while the vault write is pending", async (t) => {
+  const store = installLocalStorage(t);
+  store.set(
+    STORAGE_KEY_KEYS,
+    JSON.stringify([storedKey({ privateKey: ENCRYPTED_CREDENTIAL_PLACEHOLDER })]),
+  );
+  installBridge(t, {
+    credentialsDecrypt: async (value: string) => {
+      assert.equal(value, ENCRYPTED_CREDENTIAL_PLACEHOLDER);
+      return PRIVATE_KEY;
+    },
+  });
+
+  const keyAfterRecovery = storedKey({ privateKey: "" });
+  let landWrite: () => void = () => {};
+  const pendingWrite = new Promise<void>((resolve) => {
+    landWrite = () => {
+      // A sync/import recovery replaced the key with an empty private key; the
+      // async encrypted write publishes that state when it lands.
+      store.set(STORAGE_KEY_KEYS, JSON.stringify([keyAfterRecovery]));
+      resolve();
+    };
+  });
+  notifyKeysEncryptedWritePending(pendingWrite);
+  t.after(() => notifyKeysEncryptedWritePending(null));
+
+  let hydrationSettled = false;
+  const hydration = hydrateStoredKeySecrets(keyAfterRecovery, {
+    timeoutMs: 2000,
+    retryDelayMs: 10,
+  }).then((result) => {
+    hydrationSettled = true;
+    return result;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Without the gate the stale persisted ciphertext would hydrate immediately.
+  assert.equal(hydrationSettled, false);
+
+  landWrite();
+  const hydrated = await hydration;
+  assert.equal(hydrated.unreadable, false);
+  assert.equal(hydrated.key.privateKey, "");
+  assert.equal(hydrated.key.passphrase, undefined);
+});
+
+test("hydrateStoredKeySecrets hydrates from settled storage after the vault write lands", async (t) => {
+  const store = installLocalStorage(t);
+  installBridge(t, {
+    credentialsDecrypt: async () => PRIVATE_KEY,
+  });
+
+  let landWrite: () => void = () => {};
+  const pendingWrite = new Promise<void>((resolve) => {
+    landWrite = () => {
+      store.set(STORAGE_KEY_KEYS, JSON.stringify([storedKey()]));
+      resolve();
+    };
+  });
+  notifyKeysEncryptedWritePending(pendingWrite);
+  t.after(() => notifyKeysEncryptedWritePending(null));
+
+  const hydration = hydrateStoredKeySecrets(storedKey({ privateKey: "" }), {
+    timeoutMs: 2000,
+    retryDelayMs: 10,
+  });
+  landWrite();
+  const hydrated = await hydration;
   assert.equal(hydrated.unreadable, false);
   assert.equal(hydrated.key.privateKey, PRIVATE_KEY);
 });
