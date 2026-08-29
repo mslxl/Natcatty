@@ -408,6 +408,7 @@ export const enVaultMessages: Messages = {
   'sftp.encoding.utf8': 'UTF-8',
   'sftp.encoding.gb18030': 'GB18030',
   'sftp.goHome': 'Go to home',
+  'sftp.goRoot': 'Go to root',
   'sftp.folderName': 'Folder name',
   'sftp.folderName.placeholder': 'Enter folder name',
   'sftp.fileName': 'File name',
