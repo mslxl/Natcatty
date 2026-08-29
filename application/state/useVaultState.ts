@@ -94,6 +94,7 @@ import {
   encryptIdentities,
   encryptKeys,
   encryptProxyProfiles,
+  notifyKeysEncryptedWritePending,
 } from "../../infrastructure/persistence/secureFieldAdapter";
 import { pluginExtensionBridge } from "./pluginExtensionBridge";
 import type { PluginImporterCommitRequest } from "./usePluginImporterCommit";
@@ -581,6 +582,9 @@ export const useVaultState = () => {
       });
     });
     keysWritePendingRef.current = writePromise;
+    // Stored-key hydration must not read a stale persisted key snapshot over
+    // this new state before its encrypted write lands.
+    notifyKeysEncryptedWritePending(writePromise);
     return writePromise;
   }, []);
 
@@ -624,6 +628,7 @@ export const useVaultState = () => {
       });
     });
     keysWritePendingRef.current = writePromise;
+    notifyKeysEncryptedWritePending(writePromise);
     return newKey;
   }, [keys]);
 
