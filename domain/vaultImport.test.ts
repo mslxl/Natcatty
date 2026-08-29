@@ -816,12 +816,29 @@ test("MobaXterm import does not save garbage passwords for a wrong master passwo
     `root-server=${mobaXtermSshSession("root.example.com", 22, "root")}`,
   ].join("\n");
 
-  for (const masterPassword of ["wrong0", "wrong-password"]) {
+  for (const masterPassword of ["wrong0", "wrong25", "wrong-password"]) {
     const result = importVaultHostsFromText("mobaxterm", source, { masterPassword });
     assert.equal(result.hosts.length, 2, masterPassword);
     assert.equal(result.hosts.every((host) => host.password === undefined), true, masterPassword);
     assert.match(result.issues[0]?.message ?? "", /master password/i, masterPassword);
   }
+});
+
+test("MobaXterm import does not save a truncated UTF-8 prefix from a lone credential", () => {
+  const result = importVaultHostsFromText("mobaxterm", [
+    "[Sesspass]",
+    "Administrator@WIN=dummy",
+    "[Credentials]",
+    "prod=root:0XROpGmLAYVx",
+    "[Bookmarks]",
+    "SubRep=",
+    "ImgNum=42",
+    `root-server=${mobaXtermSshSession("root.example.com", 22, "root")}`,
+  ].join("\n"), { masterPassword: "wrong25" });
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].password, undefined);
+  assert.match(result.issues[0]?.message ?? "", /master password/i);
 });
 
 test("MobaXterm import keeps leading whitespace in the master password", () => {

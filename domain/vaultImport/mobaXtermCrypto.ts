@@ -327,13 +327,20 @@ export const decryptMobaWeakCipher = (ciphertext: string, key: Uint8Array): Uint
 export const decodeMobaPlaintext = (bytes: Uint8Array | null): string | null => {
   if (!bytes || bytes.length === 0) return null;
   const nul = bytes.indexOf(0);
-  const slice = nul === 0 ? null : nul > 0 ? bytes.subarray(0, nul) : bytes;
-  if (!slice || slice.length === 0) return null;
+  // AES-CFB is unauthenticated. A wrong key can inject an interior NUL and leave
+  // a short printable prefix (e.g. "M)8%"). Only a trailing NUL pad is a C string.
+  let slice = bytes;
+  if (nul === 0) return null;
+  if (nul > 0) {
+    for (let i = nul; i < bytes.length; i++) {
+      if (bytes[i] !== 0) return null;
+    }
+    slice = bytes.subarray(0, nul);
+  }
+  if (slice.length === 0) return null;
   for (const value of slice) {
     if (value < 0x20 && value !== 0x09) return null;
   }
-  // AES-CFB is unauthenticated: a wrong key often yields high-bit Latin-1 junk
-  // that looks "printable". Only accept valid UTF-8 so that garbage is rejected.
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(slice);
   } catch {

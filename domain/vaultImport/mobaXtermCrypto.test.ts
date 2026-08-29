@@ -78,7 +78,7 @@ test("weak connection cipher decrypts the published session-password vector", ()
 });
 
 test("wrong master password does not look like a saved secret", () => {
-  for (const masterPassword of ["wrong-password", "wrong0", "x", "0"]) {
+  for (const masterPassword of ["wrong-password", "wrong0", "wrong25", "x", "0"]) {
     assert.equal(
       decryptMobaStoredSecret({
         ciphertext: "1du11XKQBOxud/FWh4ouWA==",
@@ -96,6 +96,17 @@ test("wrong master password does not look like a saved secret", () => {
       `credential ciphertext accepted garbage for ${masterPassword}`,
     );
   }
+});
+
+test("decodeMobaPlaintext rejects an interior NUL left by a wrong AES key", () => {
+  assert.equal(
+    decodeMobaPlaintext(Uint8Array.from([0x4d, 0x29, 0x38, 0x25, 0x00, 0x72, 0x33, 0x8a, 0xa8])),
+    null,
+  );
+  assert.equal(
+    decodeMobaPlaintext(Uint8Array.from([0x48, 0x69, 0x00, 0x00])),
+    "Hi",
+  );
 });
 
 test("master-password AES keeps leading and trailing whitespace in the key", () => {
