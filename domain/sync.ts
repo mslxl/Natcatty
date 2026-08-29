@@ -402,6 +402,14 @@ export function sanitizeHostsForSync(
   return hosts.map((host) => ({ ...host, lastConnectedAt: undefined }));
 }
 
+/** Copy a payload with device-local host telemetry stripped for compare/convert. */
+export function withHostsSanitizedForSync(payload: SyncPayload): SyncPayload {
+  return {
+    ...payload,
+    hosts: sanitizeHostsForSync(payload.hosts) ?? payload.hosts,
+  };
+}
+
 /**
  * Re-attach this device's Recently Connected timestamps when a cloud payload
  * omits `lastConnectedAt`. Incoming timestamps (local backups, legacy cloud
