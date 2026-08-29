@@ -54,6 +54,7 @@ test("repositionPopup pins the visible popup to the wrapped command start (#3061
   );
   assert.match(source, /resolveAutocompletePopupAnchorInViewport/);
   assert.match(source, /nextAutocompletePopupAnchorViewport/);
+  assert.match(source, /if \(!stateRef\.current\.popupVisible \|\| stateRef\.current\.suggestions\.length === 0\) return;/);
 });
 
 test("mount effect re-arms disposedRef after dispose cleanup (HMR / StrictMode)", () => {

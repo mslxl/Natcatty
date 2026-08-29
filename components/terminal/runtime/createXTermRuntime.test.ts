@@ -975,6 +975,8 @@ test("xterm scroll and line-feed reposition the autocomplete popup (#3061)", asy
   assert.match(source, /onAutocompleteReposition\?: \(\) => void/);
   assert.match(source, /term\.onScroll\(scheduleAutocompleteReposition\)/);
   assert.match(source, /term\.onLineFeed\?\.\(scheduleAutocompleteReposition\)/);
+  assert.match(source, /if \(autocompleteRepositionFrame\) return;/);
+  assert.match(source, /cancelAutocompleteReposition\(\)/);
   assert.match(terminalSource, /onAutocompleteReposition: \(\) => autocompleteRepositionRef\.current\?\.\(\)/);
   assert.match(effectsSource, /onAutocompleteReposition: \(\) => autocompleteRepositionRef\.current\?\.\(\)/);
 });

@@ -203,6 +203,12 @@ export interface PopupPlacementInput {
    * ties when neither side can fully fit the desired height.
    */
   expandUpwardHint: boolean;
+  /**
+   * When true, keep rendering above the supplied anchor even if there is a
+   * full fit below. Used after a wrap pins the anchor to the command start
+   * so placement cannot flip down over the continuation rows (#3061).
+   */
+  forceExpandUpward?: boolean;
 }
 
 export interface PopupPlacement {
@@ -289,6 +295,7 @@ export function computeAutocompletePopupPlacement(
     anchorGap,
     viewportPadding,
     expandUpwardHint,
+    forceExpandUpward = false,
     clampViewport,
     clampWidth,
   } = input;
@@ -308,13 +315,15 @@ export function computeAutocompletePopupPlacement(
   const spaceBelow = Math.max(0, boundsBottom - anchorBottom - viewportPadding - anchorGap);
   const canFullyRenderAbove = spaceAbove >= cappedDesiredHeight;
   const canFullyRenderBelow = spaceBelow >= cappedDesiredHeight;
-  const renderUpward = canFullyRenderBelow
-    ? false
-    : canFullyRenderAbove
-      ? true
-      : expandUpwardHint
-        ? spaceAbove >= Math.min(spaceBelow, 80)
-        : spaceAbove > spaceBelow;
+  const renderUpward = forceExpandUpward && spaceAbove > 0
+    ? true
+    : canFullyRenderBelow
+      ? false
+      : canFullyRenderAbove
+        ? true
+        : expandUpwardHint
+          ? spaceAbove >= Math.min(spaceBelow, 80)
+          : spaceAbove > spaceBelow;
 
   const availableVerticalSpace = renderUpward ? spaceAbove : spaceBelow;
   const availableViewportHeight = Math.max(0, bounds.height - viewportPadding * 2);

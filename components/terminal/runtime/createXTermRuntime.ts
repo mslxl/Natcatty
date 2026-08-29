@@ -2573,13 +2573,25 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
+  let autocompleteRepositionFrame = 0;
   const scheduleAutocompleteReposition = () => {
     const run = () => ctx.onAutocompleteReposition?.();
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(run);
-    } else {
+    if (typeof requestAnimationFrame !== "function") {
       run();
+      return;
     }
+    // onLineFeed fires per newline. Coalesce to one rAF so a burst cannot
+    // enqueue thousands of React updates (#3204).
+    if (autocompleteRepositionFrame) return;
+    autocompleteRepositionFrame = requestAnimationFrame(() => {
+      autocompleteRepositionFrame = 0;
+      run();
+    });
+  };
+  const cancelAutocompleteReposition = () => {
+    if (!autocompleteRepositionFrame) return;
+    cancelAnimationFrame(autocompleteRepositionFrame);
+    autocompleteRepositionFrame = 0;
   };
   // Soft-wrap at the bottom scrolls the buffer without a fit/resize. Keep the
   // popup glued to the command start instead of a stale viewport cell (#3061).
@@ -2667,6 +2679,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       osc99Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
+      cancelAutocompleteReposition();
       autocompleteScrollDisposable.dispose();
       autocompleteLineFeedDisposable?.dispose();
       bellDisposable.dispose();

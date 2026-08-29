@@ -91,6 +91,20 @@ test("clamps height to the larger side when neither side fully fits", () => {
   assert.ok(p.maxHeight > 0);
 });
 
+test("forceExpandUpward keeps the popup above the command-start when below fully fits", () => {
+  const p = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorTop: 100,
+    anchorBottom: 120,
+    desiredHeight: 80,
+    expandUpwardHint: true,
+    forceExpandUpward: true,
+  });
+  assert.equal(p.renderUpward, true, "must not flip below the command-start anchor");
+  const contentHeight = Math.min(p.maxHeight, 80);
+  assert.ok(p.top + contentHeight <= 100 - baseInput.anchorGap + 0.001);
+});
+
 test("honors the upward hint to break ties when neither side fits", () => {
   const shared = {
     ...baseInput,

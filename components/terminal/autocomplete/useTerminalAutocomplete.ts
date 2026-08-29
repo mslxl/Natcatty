@@ -503,6 +503,9 @@ export function useTerminalAutocomplete(
   }, []);
 
   const repositionPopup = useCallback(() => {
+    // Skip the React setter entirely while the popup is closed so a line-feed
+    // burst cannot stall the renderer (#3204).
+    if (!stateRef.current.popupVisible || stateRef.current.suggestions.length === 0) return;
     const term = termRef.current;
     if (!term) return;
 
