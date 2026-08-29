@@ -247,6 +247,59 @@ async function assertRemoteUploadSize(client, remotePath, expectedSize) {
   }
 }
 
+function existingModeFromUploadPlan(plan) {
+  if (!Number.isFinite(plan?.existingMode)) return null;
+  return plan.existingMode & 0o7777;
+}
+
+/**
+ * Best-effort chmod of captured mode bits onto the published remote path.
+ * Failures are warnings only (same as writeSftp); upload bytes are already committed.
+ */
+async function restoreRemoteUploadModeBestEffort(client, sftpId, remotePath, encoding, existingMode, options = {}) {
+  if (!client || existingMode == null || !Number.isFinite(existingMode)) return;
+  const mode = existingMode & 0o7777;
+  const timeoutMs = Number(options.timeoutMs) > 0
+    ? Number(options.timeoutMs)
+    : (Number(process.env.NETCATTY_REMOTE_MODE_RESTORE_TIMEOUT_MS) > 0
+      ? Number(process.env.NETCATTY_REMOTE_MODE_RESTORE_TIMEOUT_MS)
+      : 15_000);
+  try {
+    // Post-commit: cancelTransfer will not abort. Bound the wait so a stalled
+    // chmod cannot pin the transfer, SFTP lease, or admission slot.
+    await awaitBestEffortBounded((async () => {
+      if (isScpModeClient(client)) {
+        const backend = getScpBackendForClient(client);
+        if (typeof backend.chmod !== "function") return;
+        await backend.chmod(remotePath, mode, { encoding });
+        return;
+      }
+      const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
+      if (typeof client.chmod === "function") {
+        await client.chmod(encodedPath, mode);
+        return;
+      }
+      const sftp = client.sftp;
+      if (sftp && typeof sftp.chmod === "function") {
+        await new Promise((resolve, reject) => {
+          sftp.chmod(encodedPath, mode, (err) => (err ? reject(err) : resolve()));
+        });
+        return;
+      }
+      if (sftp && typeof sftp.setstat === "function") {
+        await new Promise((resolve, reject) => {
+          sftp.setstat(encodedPath, { mode }, (err) => (err ? reject(err) : resolve()));
+        });
+      }
+    })(), timeoutMs, "Remote chmod");
+  } catch (err) {
+    console.warn(
+      `[sftp] Failed to restore permissions on ${remotePath}:`,
+      err && err.message ? err.message : err,
+    );
+  }
+}
+
 /**
  * Safely ensure a local directory exists.
  * On Windows, `mkdir("E:\\", { recursive: true })` throws EPERM for drive roots.
@@ -2235,6 +2288,9 @@ async function uploadFile(
   options = {},
 ) {
   const generatedStagePath = options.generatedStagePath === true;
+  const existingRemoteMode = Number.isFinite(options.existingMode)
+    ? options.existingMode & 0o7777
+    : null;
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
@@ -2291,6 +2347,17 @@ async function uploadFile(
       });
     }
     await assertRemoteUploadSize(client, remotePath, fileSize);
+    // In-place replace writes the final path (fastPut / pipelined WRITE). Restore
+    // captured mode here; staged `.part` uploads restore after rename instead.
+    if (!generatedStagePath && Number.isFinite(existingRemoteMode)) {
+      await restoreRemoteUploadModeBestEffort(
+        client,
+        options.sftpId,
+        options.finalRemotePath || remotePath,
+        encoding,
+        existingRemoteMode,
+      );
+    }
   };
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
@@ -5824,6 +5891,7 @@ async function startTransferNow(event, payload, onProgress) {
       }
 
       const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+      let existingRemoteMode = null;
       const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
       await runRemoteUploadTransaction(client, sourcePath, targetPath, {
         encoding: resolvedTargetEncoding,
@@ -5848,6 +5916,7 @@ async function startTransferNow(event, payload, onProgress) {
         async uploadFile(encodedUploadPath, uploadTarget) {
           const uploadTargetPath = uploadTarget.logicalPath;
           const usesStage = uploadTarget.generatedStagePath === true;
+          existingRemoteMode = existingModeFromUploadPlan(uploadTarget.plan);
           transfer.stagedRemote = usesStage
             ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
             : null;
@@ -5874,11 +5943,23 @@ async function startTransferNow(event, payload, onProgress) {
             sendProgress,
             resolvedTargetEncoding,
             usesStage ? null : () => { transfer.completionCommitted = true; },
-            { generatedStagePath: usesStage },
+            {
+              generatedStagePath: usesStage,
+              existingMode: existingRemoteMode,
+              sftpId: targetSftpId,
+              finalRemotePath: targetPath,
+            },
           );
         },
       });
       transfer.stagedRemote = null;
+      await restoreRemoteUploadModeBestEffort(
+        client,
+        targetSftpId,
+        targetPath,
+        resolvedTargetEncoding,
+        existingRemoteMode,
+      );
 
     } else if (sourceType === 'sftp' && targetType === 'local') {
       const client = sftpClients.get(sourceSftpId);
@@ -6267,6 +6348,7 @@ async function startTransferNow(event, payload, onProgress) {
         };
         transfer.sourceIsOwnedTemp = true;
         const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+        let existingRemoteMode = null;
         const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
         await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
           encoding: resolvedTargetEncoding,
@@ -6288,6 +6370,7 @@ async function startTransferNow(event, payload, onProgress) {
           async uploadFile(encodedUploadPath, uploadTarget) {
             const uploadTargetPath = uploadTarget.logicalPath;
             const usesStage = uploadTarget.generatedStagePath === true;
+            existingRemoteMode = existingModeFromUploadPlan(uploadTarget.plan);
             transfer.stagedRemote = usesStage
               ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
               : null;
@@ -6333,11 +6416,23 @@ async function startTransferNow(event, payload, onProgress) {
               uploadProgress,
               resolvedTargetEncoding,
               usesStage ? null : () => { transfer.completionCommitted = true; },
-              { generatedStagePath: usesStage },
+              {
+                generatedStagePath: usesStage,
+                existingMode: existingRemoteMode,
+                sftpId: targetSftpId,
+                finalRemotePath: targetPath,
+              },
             );
           },
         });
         transfer.stagedRemote = null;
+        await restoreRemoteUploadModeBestEffort(
+          targetClient,
+          targetSftpId,
+          targetPath,
+          resolvedTargetEncoding,
+          existingRemoteMode,
+        );
 
         try { await fs.promises.unlink(tempPath); } catch { }
         transfer.stagedLocalPath = null;
@@ -7332,6 +7427,7 @@ module.exports = {
   listTransferSftpIds,
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _preserveTransferredDestinationMtimeForTests: preserveTransferredDestinationMtime,
+  _restoreRemoteUploadModeBestEffortForTests: restoreRemoteUploadModeBestEffort,
   _waitForPendingWriteOpenPathGateForTests: waitForPendingWriteOpenPathGate,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
   _getWorkerTransferLifecycleEpochCountForTests: () => workerTransferLifecycleEpochs.size,
