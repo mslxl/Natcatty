@@ -6,6 +6,7 @@ import {
   sanitizeHost,
 } from "../../domain/host";
 import { isEncryptedCredentialPlaceholder } from "../../domain/credentials";
+import { retainLocalHostLastConnectedAt } from "../../domain/sync";
 import { sanitizeGroupConfig } from "../../domain/groupConfig";
 import { normalizeKnownHosts } from "../../domain/knownHosts";
 import { normalizeNoteGroups, normalizeVaultNotes } from "../../domain/notes";
@@ -1927,14 +1928,11 @@ export const useVaultState = () => {
         // remote snippet/settings change cannot clear this device's recent-
         // hosts list. Timestamps present on the incoming hosts (local backups,
         // legacy cloud snapshots) still win as before.
-        const localHostsById = new Map(hostsRef.current.map((host) => [host.id, host]));
-        const hostsWithLocalTelemetry = payload.hosts.map((host) => {
-          if (host.lastConnectedAt != null) return host;
-          const local = localHostsById.get(host.id);
-          if (local?.lastConnectedAt == null) return host;
-          return { ...host, lastConnectedAt: local.lastConnectedAt };
-        });
-        encryptedWrites.push(updateHosts(hostsWithLocalTelemetry).then(() => undefined));
+        encryptedWrites.push(
+          updateHosts(
+            retainLocalHostLastConnectedAt(payload.hosts, hostsRef.current) ?? payload.hosts,
+          ).then(() => undefined),
+        );
       }
       if (payload.keys) encryptedWrites.push(updateKeys(payload.keys));
       if (payload.identities) encryptedWrites.push(updateIdentities(payload.identities));

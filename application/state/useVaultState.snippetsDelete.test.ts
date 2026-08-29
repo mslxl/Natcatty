@@ -260,15 +260,6 @@ test("importData preserves device-local lastConnectedAt when a cloud payload omi
   // each matching local host's device-local timestamp instead of dropping it.
   assert.match(
     source,
-    /const localHostsById = new Map\(hostsRef\.current\.map\(\(host\) => \[host\.id, host\]\)\)/,
-  );
-  assert.match(
-    source,
-    /importData[\s\S]*localHostsById\.get\(host\.id\)[\s\S]*lastConnectedAt: local\.lastConnectedAt/,
-  );
-  // Incoming timestamps (local backups, legacy cloud snapshots) still win.
-  assert.match(
-    source,
-    /if \(host\.lastConnectedAt != null\) return host;/,
+    /retainLocalHostLastConnectedAt\(payload\.hosts,\s*hostsRef\.current\)/,
   );
 });

@@ -402,6 +402,26 @@ export function sanitizeHostsForSync(
   return hosts.map((host) => ({ ...host, lastConnectedAt: undefined }));
 }
 
+/**
+ * Re-attach this device's Recently Connected timestamps when a cloud payload
+ * omits `lastConnectedAt`. Incoming timestamps (local backups, legacy cloud
+ * snapshots) still win when present.
+ */
+export function retainLocalHostLastConnectedAt(
+  incoming: import('./models').Host[] | undefined,
+  local: import('./models').Host[] | undefined,
+): import('./models').Host[] | undefined {
+  if (!incoming) return incoming;
+  if (!local?.length) return incoming;
+  const localById = new Map(local.map((host) => [host.id, host.lastConnectedAt]));
+  return incoming.map((host) => {
+    if (host.lastConnectedAt != null) return host;
+    const localTs = localById.get(host.id);
+    if (localTs == null) return host;
+    return { ...host, lastConnectedAt: localTs };
+  });
+}
+
 export const SYNC_PAYLOAD_ENTITY_KEYS = [
   'hosts',
   'keys',

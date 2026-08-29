@@ -46,6 +46,7 @@ const {
   withPluginSyncSidecars,
   buildSyncPayload,
   sanitizeHostsForSync,
+  retainLocalHostLastConnectedAt,
   hasCloudSyncEntityData,
   hasMeaningfulCloudSyncData,
   hasMeaningfulSyncData,
@@ -169,6 +170,59 @@ test("buildLocalVaultPayload keeps lastConnectedAt for local backups", () => {
   const payload = buildLocalVaultPayload({ ...vault([]), hosts: [host] });
 
   assert.equal(payload.hosts[0]?.lastConnectedAt, 99);
+});
+
+test("applySyncPayload keeps local lastConnectedAt when the cloud host omits it", async () => {
+  const localHost = {
+    id: "host-apply",
+    label: "prod",
+    hostname: "prod.example.com",
+    username: "root",
+    tags: [],
+    os: "linux" as const,
+    protocol: "ssh" as const,
+    lastConnectedAt: 77,
+  };
+  const remoteHost = {
+    ...localHost,
+    label: "prod-renamed",
+    lastConnectedAt: undefined,
+  };
+
+  const payload = buildSyncPayload({ ...vault([]), hosts: [remoteHost] });
+  let imported: { hosts?: Array<{ lastConnectedAt?: number; label?: string }> } | null = null;
+  await applySyncPayload(
+    payload,
+    { importVaultData: (json) => { imported = JSON.parse(json); } },
+    { currentHosts: [localHost] },
+  );
+
+  assert.equal(imported?.hosts?.[0]?.lastConnectedAt, 77);
+  assert.equal(imported?.hosts?.[0]?.label, "prod-renamed");
+});
+
+test("retainLocalHostLastConnectedAt does not invent timestamps for unknown hosts", () => {
+  const incoming = [{
+    id: "new-host",
+    label: "new",
+    hostname: "new.example.com",
+    username: "root",
+    tags: [],
+    os: "linux" as const,
+    protocol: "ssh" as const,
+  }];
+  const retained = retainLocalHostLastConnectedAt(incoming, [{
+    id: "other",
+    label: "other",
+    hostname: "other.example.com",
+    username: "root",
+    tags: [],
+    os: "linux" as const,
+    protocol: "ssh" as const,
+    lastConnectedAt: 5,
+  }]);
+
+  assert.equal(retained?.[0]?.lastConnectedAt, undefined);
 });
 
 test("buildSyncPayload includes reusable proxy profiles", () => {
