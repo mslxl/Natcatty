@@ -24,6 +24,7 @@ import {
   SYNC_PAYLOAD_ENTITY_KEYS,
   SYNC_STORAGE_KEYS,
   hasSyncPayloadEntityData,
+  sanitizeHostsForSync,
   type SyncPayload,
 } from '../domain/sync';
 import { migrateHostsFromLegacyLineTimestamps } from '../domain/host';
@@ -212,15 +213,7 @@ export function sanitizePortForwardingRulesForSync(
   }));
 }
 
-/**
- * Strip device-local connection telemetry from hosts before cloud sync.
- * `lastConnectedAt` updates on every successful SSH connect (#2629) and must
- * not dirty auto-sync hashes or inflate cloud versions.
- */
-export function sanitizeHostsForSync(hosts: Host[] | undefined): Host[] | undefined {
-  if (!hosts) return hosts;
-  return hosts.map((host) => ({ ...host, lastConnectedAt: undefined }));
-}
+export { sanitizeHostsForSync };
 
 export function getEffectivePortForwardingRulesForSync(
   rules: PortForwardingRule[] | undefined,

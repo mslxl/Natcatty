@@ -388,6 +388,20 @@ export interface SyncPayload {
   convergentSync?: ConvergentSyncEnvelopeV2;
 }
 
+/**
+ * Strip device-local connection telemetry from hosts before any sync
+ * comparison or upload (#2629). `lastConnectedAt` updates on every successful
+ * SSH connect and must not dirty auto-sync hashes, three-way merges, or
+ * inflate cloud versions. Legacy stored bases / remote payloads still carry
+ * the field, so all three merge sides are normalized with this helper.
+ */
+export function sanitizeHostsForSync(
+  hosts: import('./models').Host[] | undefined,
+): import('./models').Host[] | undefined {
+  if (!hosts) return hosts;
+  return hosts.map((host) => ({ ...host, lastConnectedAt: undefined }));
+}
+
 export const SYNC_PAYLOAD_ENTITY_KEYS = [
   'hosts',
   'keys',

@@ -1920,7 +1920,22 @@ export const useVaultState = () => {
   const importData = useCallback(
     (payload: Partial<ExportableVaultData>): Promise<void> => {
       const encryptedWrites: Promise<void>[] = [];
-      if (payload.hosts) encryptedWrites.push(updateHosts(payload.hosts).then(() => undefined));
+      if (payload.hosts) {
+        // Cloud payloads no longer carry `lastConnectedAt` (#2629), but any
+        // remote reconciliation replaces the whole local host array. Re-attach
+        // each matching local host's device-local timestamp so applying a
+        // remote snippet/settings change cannot clear this device's recent-
+        // hosts list. Timestamps present on the incoming hosts (local backups,
+        // legacy cloud snapshots) still win as before.
+        const localHostsById = new Map(hostsRef.current.map((host) => [host.id, host]));
+        const hostsWithLocalTelemetry = payload.hosts.map((host) => {
+          if (host.lastConnectedAt != null) return host;
+          const local = localHostsById.get(host.id);
+          if (local?.lastConnectedAt == null) return host;
+          return { ...host, lastConnectedAt: local.lastConnectedAt };
+        });
+        encryptedWrites.push(updateHosts(hostsWithLocalTelemetry).then(() => undefined));
+      }
       if (payload.keys) encryptedWrites.push(updateKeys(payload.keys));
       if (payload.identities) encryptedWrites.push(updateIdentities(payload.identities));
       if (Array.isArray(payload.proxyProfiles)) encryptedWrites.push(updateProxyProfiles(payload.proxyProfiles));
