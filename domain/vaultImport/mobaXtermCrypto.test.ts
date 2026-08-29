@@ -78,11 +78,52 @@ test("weak connection cipher decrypts the published session-password vector", ()
 });
 
 test("wrong master password does not look like a saved secret", () => {
+  for (const masterPassword of ["wrong-password", "wrong0", "x", "0"]) {
+    assert.equal(
+      decryptMobaStoredSecret({
+        ciphertext: "1du11XKQBOxud/FWh4ouWA==",
+        masterPassword,
+      }),
+      null,
+      `session ciphertext accepted garbage for ${masterPassword}`,
+    );
+    assert.equal(
+      decryptMobaStoredSecret({
+        ciphertext: "0XROpGmLAYVx",
+        masterPassword,
+      }),
+      null,
+      `credential ciphertext accepted garbage for ${masterPassword}`,
+    );
+  }
+});
+
+test("master-password AES keeps leading and trailing whitespace in the key", () => {
+  const masterPassword = " 12345678 ";
+  const plaintext = "spaced-master";
+  const key = createHash("sha512").update(masterPassword, "utf8").digest().subarray(0, 32);
+  const iv = createCipheriv("aes-256-ecb", key, null).update(Buffer.alloc(16));
+  const cipher = createCipheriv("aes-256-cfb8", key, iv);
+  cipher.setAutoPadding(false);
+  const stored = Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]).toString("base64");
+
   assert.equal(
-    decryptMobaStoredSecret({
-      ciphertext: "1du11XKQBOxud/FWh4ouWA==",
-      masterPassword: "wrong-password",
-    }),
+    decryptMobaStoredSecret({ ciphertext: stored, masterPassword }),
+    plaintext,
+  );
+  assert.equal(
+    decryptMobaStoredSecret({ ciphertext: stored, masterPassword: masterPassword.trim() }),
     null,
   );
+});
+
+test("decodeMobaPlaintext rejects high-bit Latin-1 that is not UTF-8", () => {
+  assert.equal(
+    decodeMobaPlaintext(Uint8Array.from([0xd7, 0xf4, 0x5f, 0xb8, 0x77, 0xf9, 0x9c, 0xc9, 0x40])),
+    null,
+  );
+  assert.equal(decodeMobaPlaintext(Uint8Array.from([0x48, 0x69])), "Hi");
 });

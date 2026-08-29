@@ -332,12 +332,12 @@ export const decodeMobaPlaintext = (bytes: Uint8Array | null): string | null => 
   for (const value of slice) {
     if (value < 0x20 && value !== 0x09) return null;
   }
+  // AES-CFB is unauthenticated: a wrong key often yields high-bit Latin-1 junk
+  // that looks "printable". Only accept valid UTF-8 so that garbage is rejected.
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(slice);
   } catch {
-    let text = "";
-    for (const value of slice) text += String.fromCharCode(value);
-    return text || null;
+    return null;
   }
 };
 

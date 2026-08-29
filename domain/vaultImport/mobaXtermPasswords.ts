@@ -31,6 +31,10 @@ const sameHost = (left: string | undefined, right: string | undefined): boolean 
   Boolean(left && right && left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0)
 );
 
+const presentMasterPassword = (value: string | undefined): string | undefined => (
+  value === undefined || value === "" ? undefined : value
+);
+
 const lookupPlaintext = (
   host: Host,
   passwords: Map<string, string>,
@@ -74,7 +78,7 @@ export const attachMobaXtermPasswords = (
   options: AttachMobaXtermPasswordsOptions = {},
 ): { hosts: Host[]; issues: VaultImportIssue[]; attached: number } => {
   const issues: VaultImportIssue[] = [];
-  const masterPassword = options.masterPassword?.trim() || undefined;
+  const masterPassword = presentMasterPassword(options.masterPassword);
   const hasCiphertext = sections.passwords.size > 0 || sections.credentials.size > 0;
 
   if (sections.passwordsInRegistry && !hasCiphertext) {
@@ -128,12 +132,18 @@ export const attachMobaXtermPasswords = (
     credentialsByUser.set(credential.username, current);
   }
 
+  if (masterPassword && failed > 0) {
+    issues.push({
+      level: "warning",
+      message: "Could not decrypt MobaXterm passwords. Check the master password and try again.",
+    });
+    return { hosts, issues, attached: 0 };
+  }
+
   if (failed > 0 && decryptedPasswords.size === 0 && credentialsByUser.size === 0) {
     issues.push({
       level: "warning",
-      message: masterPassword
-        ? "Could not decrypt MobaXterm passwords. Check the master password and try again."
-        : "Could not decrypt MobaXterm passwords from this file.",
+      message: "Could not decrypt MobaXterm passwords from this file.",
     });
     return { hosts, issues, attached: 0 };
   }

@@ -516,7 +516,7 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
       setStep("format");
       pickFile("mobaxterm", ".ini,.mxtsessions,.txt,.mobaconf", {
         encoding,
-        masterPassword: mobaMasterPassword.trim() || undefined,
+        masterPassword: mobaMasterPassword === "" ? undefined : mobaMasterPassword,
       });
     },
     [mobaMasterPassword, pickFile],
