@@ -15,6 +15,12 @@ const {
  * worker is running, every process-level error is suppressed. The error is
  * still reported (see `report`) so the main process can record it in the
  * crash log for later diagnosis.
+ *
+ * Startup errors are NOT suppressed: until `options.isRuntimeStarted()`
+ * returns true, a fatal classification re-throws the error so the worker
+ * exits. An IPC-retained utilityProcess that swallowed a startup failure
+ * would otherwise stay alive without a message listener, leaving every
+ * manager request pending forever instead of rejecting/replacing it.
  */
 function installTerminalWorkerErrorGuards(options = {}) {
   const processObject = options.processObject || process;
@@ -25,16 +31,42 @@ function installTerminalWorkerErrorGuards(options = {}) {
   const logError = typeof options.logError === "function"
     ? options.logError
     : (...args) => console.error(...args);
+  // Default to runtime semantics only when a caller provides no startup
+  // signal; process.cjs always passes one.
+  const isRuntimeStarted = typeof options.isRuntimeStarted === "function"
+    ? options.isRuntimeStarted
+    : () => true;
 
   const labelFor = (origin) => (
     origin === "unhandledRejection" ? "unhandled rejection" : "uncaught exception"
   );
 
   const makeHandler = (origin) => (err) => {
+    // An error already marked fatal (e.g. a startup unhandled rejection that
+    // threw into the uncaughtException path) must exit, not be re-classified.
+    if (err?.__terminalWorkerFatalStartupError) {
+      throw err;
+    }
     const decision = classifyProcessError(err, {
-      runtimeStarted: true,
+      runtimeStarted: isRuntimeStarted(),
       origin,
     });
+    if (decision.action === "fatal") {
+      logError(
+        `Terminal worker ${labelFor(origin)} (${decision.reason}); exiting:`,
+        err,
+      );
+      try {
+        report(origin, err, decision);
+      } catch {
+        // Error reporting must never be able to escalate into a worker crash.
+      }
+      // Re-throw so Node's default behavior terminates the worker; the
+      // manager observes the exit and can reject or replace the worker.
+      const fatal = err instanceof Error ? err : new Error(String(err));
+      fatal.__terminalWorkerFatalStartupError = true;
+      throw fatal;
+    }
     logError(
       `Suppressed terminal worker ${labelFor(origin)} (${decision.reason}):`,
       err,
