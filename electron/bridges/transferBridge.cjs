@@ -256,33 +256,42 @@ function existingModeFromUploadPlan(plan) {
  * Best-effort chmod of captured mode bits onto the published remote path.
  * Failures are warnings only (same as writeSftp); upload bytes are already committed.
  */
-async function restoreRemoteUploadModeBestEffort(client, sftpId, remotePath, encoding, existingMode) {
+async function restoreRemoteUploadModeBestEffort(client, sftpId, remotePath, encoding, existingMode, options = {}) {
   if (!client || existingMode == null || !Number.isFinite(existingMode)) return;
   const mode = existingMode & 0o7777;
+  const timeoutMs = Number(options.timeoutMs) > 0
+    ? Number(options.timeoutMs)
+    : (Number(process.env.NETCATTY_REMOTE_MODE_RESTORE_TIMEOUT_MS) > 0
+      ? Number(process.env.NETCATTY_REMOTE_MODE_RESTORE_TIMEOUT_MS)
+      : 15_000);
   try {
-    if (isScpModeClient(client)) {
-      const backend = getScpBackendForClient(client);
-      if (typeof backend.chmod !== "function") return;
-      await backend.chmod(remotePath, mode, { encoding });
-      return;
-    }
-    const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
-    if (typeof client.chmod === "function") {
-      await client.chmod(encodedPath, mode);
-      return;
-    }
-    const sftp = client.sftp;
-    if (sftp && typeof sftp.chmod === "function") {
-      await new Promise((resolve, reject) => {
-        sftp.chmod(encodedPath, mode, (err) => (err ? reject(err) : resolve()));
-      });
-      return;
-    }
-    if (sftp && typeof sftp.setstat === "function") {
-      await new Promise((resolve, reject) => {
-        sftp.setstat(encodedPath, { mode }, (err) => (err ? reject(err) : resolve()));
-      });
-    }
+    // Post-commit: cancelTransfer will not abort. Bound the wait so a stalled
+    // chmod cannot pin the transfer, SFTP lease, or admission slot.
+    await awaitBestEffortBounded((async () => {
+      if (isScpModeClient(client)) {
+        const backend = getScpBackendForClient(client);
+        if (typeof backend.chmod !== "function") return;
+        await backend.chmod(remotePath, mode, { encoding });
+        return;
+      }
+      const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
+      if (typeof client.chmod === "function") {
+        await client.chmod(encodedPath, mode);
+        return;
+      }
+      const sftp = client.sftp;
+      if (sftp && typeof sftp.chmod === "function") {
+        await new Promise((resolve, reject) => {
+          sftp.chmod(encodedPath, mode, (err) => (err ? reject(err) : resolve()));
+        });
+        return;
+      }
+      if (sftp && typeof sftp.setstat === "function") {
+        await new Promise((resolve, reject) => {
+          sftp.setstat(encodedPath, { mode }, (err) => (err ? reject(err) : resolve()));
+        });
+      }
+    })(), timeoutMs, "Remote chmod");
   } catch (err) {
     console.warn(
       `[sftp] Failed to restore permissions on ${remotePath}:`,
@@ -7418,6 +7427,7 @@ module.exports = {
   listTransferSftpIds,
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _preserveTransferredDestinationMtimeForTests: preserveTransferredDestinationMtime,
+  _restoreRemoteUploadModeBestEffortForTests: restoreRemoteUploadModeBestEffort,
   _waitForPendingWriteOpenPathGateForTests: waitForPendingWriteOpenPathGate,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
   _getWorkerTransferLifecycleEpochCountForTests: () => workerTransferLifecycleEpochs.size,

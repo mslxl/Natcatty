@@ -12215,6 +12215,36 @@ test("preserveTransferredDestinationMtime stamps local targets from sourceSoftId
   assert.notEqual(Math.floor(after.mtimeMs / 1000), Math.floor(before.mtimeMs / 1000));
 });
 
+test("restoreRemoteUploadModeBestEffort times out hanging chmod", async () => {
+  const hangingClient = {
+    async chmod() {
+      await new Promise(() => {});
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(" ")); };
+  const startedAt = Date.now();
+  try {
+    await transferBridge._restoreRemoteUploadModeBestEffortForTests(
+      hangingClient,
+      "target",
+      "/usr/local/bin/tool",
+      "utf-8",
+      0o755,
+      { timeoutMs: 40 },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  const elapsed = Date.now() - startedAt;
+  assert.ok(elapsed < 1500, `expected bounded chmod, elapsed=${elapsed}`);
+  assert.ok(
+    warnings.some((message) => /Failed to restore permissions|timed out/i.test(message)),
+    `expected chmod timeout warning, got ${JSON.stringify(warnings)}`,
+  );
+});
+
 test("preserveTransferredDestinationMtime times out hanging remote setStat", async () => {
   let setStatStarted = false;
   const hangingClient = {
