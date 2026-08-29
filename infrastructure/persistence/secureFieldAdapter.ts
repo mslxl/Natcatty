@@ -5,19 +5,35 @@
  * they are written to (or after they are read from) localStorage.
  *
  * The heavy lifting is done by Electron's safeStorage via the credential
- * bridge IPC.  When the bridge is unavailable (web fallback, tests) every
- * function degrades to a no-op — values pass through unmodified.
+ * bridge IPC.  When the bridge is unavailable (web fallback, tests) plaintext
+ * values pass through unmodified. Ciphertext (`enc:v1:` placeholders) is never
+ * echoed as plaintext — decrypt returns undefined so callers can wait or treat
+ * the field as unread.
  */
 
 import type { GroupConfig, Host, Identity, ProxyProfile, SSHKey } from "../../domain/models";
 import type { ProviderConnection, S3Config, WebDAVConfig } from "../../domain/sync";
+import {
+  isEncryptedCredentialPlaceholder,
+  needsVaultStoredKeyHydration,
+  sanitizeCredentialValue,
+} from "../../domain/credentials";
+import { STORAGE_KEY_KEYS } from "../config/storageKeys";
 import { netcattyBridge } from "../services/netcattyBridge";
+import { localStorageAdapter } from "./localStorageAdapter";
 
 // ---------------------------------------------------------------------------
 // Primitive helpers
 // ---------------------------------------------------------------------------
 
 const bridge = () => netcattyBridge.get();
+
+const STORED_KEY_HYDRATE_RETRY_DELAY_MS = 50;
+const STORED_KEY_HYDRATE_TIMEOUT_MS = 2000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
 
 export async function encryptField(value: string | undefined): Promise<string | undefined> {
   if (!value) return value;
@@ -28,9 +44,138 @@ export async function encryptField(value: string | undefined): Promise<string | 
 
 export async function decryptField(value: string | undefined): Promise<string | undefined> {
   if (!value) return value;
+  const encrypted = isEncryptedCredentialPlaceholder(value);
   const b = bridge();
-  if (!b?.credentialsDecrypt) return value;
-  return b.credentialsDecrypt(value);
+  if (!b?.credentialsDecrypt) {
+    return encrypted ? undefined : value;
+  }
+  try {
+    const decrypted = await b.credentialsDecrypt(value);
+    if (
+      encrypted
+      && (
+        !decrypted
+        || decrypted === value
+        || isEncryptedCredentialPlaceholder(decrypted)
+      )
+    ) {
+      return undefined;
+    }
+    return decrypted;
+  } catch (err) {
+    if (encrypted) return undefined;
+    throw err;
+  }
+}
+
+const readStoredSshKey = (id: string): SSHKey | undefined => {
+  try {
+    const stored = localStorageAdapter.read<SSHKey[]>(STORAGE_KEY_KEYS);
+    if (!Array.isArray(stored)) return undefined;
+    return stored.find((key) => key?.id === id);
+  } catch {
+    return undefined;
+  }
+};
+
+export type HydratedStoredKey = {
+  key: SSHKey;
+  unreadable: boolean;
+};
+
+/**
+ * Retry decrypt for vault-stored (imported/generated) private keys instead of
+ * treating enc:v1: ciphertext as key material. Re-reads the encrypted snapshot
+ * from storage when in-memory privateKey was already stripped.
+ */
+export async function hydrateStoredKeySecrets(
+  key: SSHKey,
+  options?: { timeoutMs?: number; retryDelayMs?: number },
+): Promise<HydratedStoredKey> {
+  if (key.source === "reference" || !needsVaultStoredKeyHydration(key)) {
+    return { key, unreadable: false };
+  }
+
+  const timeoutMs = options?.timeoutMs ?? STORED_KEY_HYDRATE_TIMEOUT_MS;
+  const retryDelayMs = options?.retryDelayMs ?? STORED_KEY_HYDRATE_RETRY_DELAY_MS;
+  const startedAt = Date.now();
+  let candidate = key;
+  let sawCiphertext = isEncryptedCredentialPlaceholder(candidate.privateKey);
+
+  while (true) {
+    if (!candidate.privateKey) {
+      const stored = readStoredSshKey(key.id);
+      if (stored?.privateKey && stored.privateKey !== candidate.privateKey) {
+        candidate = {
+          ...candidate,
+          privateKey: stored.privateKey,
+          passphrase: stored.passphrase ?? candidate.passphrase,
+        };
+      }
+    }
+
+    if (isEncryptedCredentialPlaceholder(candidate.privateKey)) {
+      sawCiphertext = true;
+    }
+
+    const decryptedPrivate = await decryptField(candidate.privateKey || undefined);
+    const privateKey = sanitizeCredentialValue(decryptedPrivate);
+    if (privateKey) {
+      const decryptedPassphrase = candidate.passphrase != null
+        ? await decryptField(candidate.passphrase)
+        : undefined;
+      return {
+        key: {
+          ...candidate,
+          privateKey,
+          passphrase: sanitizeCredentialValue(decryptedPassphrase) ?? (
+            isEncryptedCredentialPlaceholder(candidate.passphrase)
+              ? undefined
+              : candidate.passphrase
+          ),
+        },
+        unreadable: false,
+      };
+    }
+
+    const decryptReady = Boolean(bridge()?.credentialsDecrypt);
+    if (!decryptReady || Date.now() - startedAt >= timeoutMs) {
+      return {
+        key: {
+          ...candidate,
+          privateKey: sanitizeCredentialValue(candidate.privateKey) ?? "",
+          passphrase: isEncryptedCredentialPlaceholder(candidate.passphrase)
+            ? undefined
+            : candidate.passphrase,
+        },
+        unreadable: sawCiphertext,
+      };
+    }
+
+    await sleep(retryDelayMs);
+    const stored = readStoredSshKey(key.id);
+    if (stored?.privateKey) {
+      candidate = {
+        ...candidate,
+        privateKey: stored.privateKey,
+        passphrase: stored.passphrase ?? candidate.passphrase,
+      };
+    }
+  }
+}
+
+export async function hydrateVaultStoredKeys(
+  keys: SSHKey[],
+  options?: { timeoutMs?: number; retryDelayMs?: number },
+): Promise<{ keys: SSHKey[]; unreadableKeyIds: Set<string> }> {
+  const unreadableKeyIds = new Set<string>();
+  const next = await Promise.all(keys.map(async (key) => {
+    if (!needsVaultStoredKeyHydration(key)) return key;
+    const hydrated = await hydrateStoredKeySecrets(key, options);
+    if (hydrated.unreadable) unreadableKeyIds.add(key.id);
+    return hydrated.key;
+  }));
+  return { keys: next, unreadableKeyIds };
 }
 
 // ---------------------------------------------------------------------------
