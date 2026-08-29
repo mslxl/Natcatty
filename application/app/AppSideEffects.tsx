@@ -503,12 +503,13 @@ export function AppSideEffects() {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          }),
+          }, { currentHosts: hosts }),
         translateProtectiveBackupFailure: (message) =>
           t('cloudSync.localBackups.protectiveBackupFailed', { message }),
       }),
     [
       buildCurrentSyncPayload,
+      hosts,
       importDataFromString,
       importPortForwardingRules,
       settings.rehydrateAllFromStorage,
@@ -526,7 +527,7 @@ export function AppSideEffects() {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          });
+          }, { currentHosts: hosts });
           await commitReplica();
         },
         translateProtectiveBackupFailure: (message) =>
@@ -534,6 +535,7 @@ export function AppSideEffects() {
       }),
     [
       buildCurrentSyncPayload,
+      hosts,
       importDataFromString,
       importPortForwardingRules,
       settings.rehydrateAllFromStorage,
