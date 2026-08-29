@@ -561,6 +561,8 @@ export function Combobox({
                                     id={`${listboxId}-option-0`}
                                     role="option"
                                     aria-selected={false}
+                                    aria-posinset={1}
+                                    aria-setsize={selectableOptionCount}
                                     tabIndex={-1}
                                     type="button"
                                     className={cn(
@@ -591,6 +593,8 @@ export function Combobox({
                                         id={`${listboxId}-option-${selectableIndex}`}
                                         role="option"
                                         aria-selected={value === option.value}
+                                        aria-posinset={selectableIndex + 1}
+                                        aria-setsize={selectableOptionCount}
                                         tabIndex={-1}
                                         type="button"
                                         className={cn(
