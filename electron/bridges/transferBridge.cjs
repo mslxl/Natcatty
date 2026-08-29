@@ -247,40 +247,9 @@ async function assertRemoteUploadSize(client, remotePath, expectedSize) {
   }
 }
 
-function remoteModeFromAttrs(attrs) {
-  if (typeof attrs?.mode !== "number" || !Number.isFinite(attrs.mode)) return null;
-  return attrs.mode & 0o7777;
-}
-
-/**
- * Permission bits of an existing remote upload target, or null for a new file.
- * fastPut / pipelined WRITE recreate with umask defaults (typically 0644), so
- * replace uploads must remember this before truncating and chmod it back after
- * the final path is published — not on the `.part` stage.
- */
-async function captureRemoteUploadMode(client, sftpId, remotePath, encoding) {
-  if (!client || remotePath == null || remotePath === "") return null;
-  try {
-    if (isScpModeClient(client)) {
-      return remoteModeFromAttrs(
-        await getScpBackendForClient(client).stat(remotePath, { encoding }),
-      );
-    }
-    const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
-    if (typeof client.stat === "function") {
-      return remoteModeFromAttrs(await client.stat(encodedPath));
-    }
-    const sftp = client.sftp;
-    if (sftp && typeof sftp.stat === "function") {
-      const attrs = await new Promise((resolve, reject) => {
-        sftp.stat(encodedPath, (err, st) => (err ? reject(err) : resolve(st)));
-      });
-      return remoteModeFromAttrs(attrs);
-    }
-  } catch {
-    // Missing target or stat unsupported — new file keeps server defaults.
-  }
-  return null;
+function existingModeFromUploadPlan(plan) {
+  if (!Number.isFinite(plan?.existingMode)) return null;
+  return plan.existingMode & 0o7777;
 }
 
 /**
@@ -5913,12 +5882,7 @@ async function startTransferNow(event, payload, onProgress) {
       }
 
       const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
-      const existingRemoteMode = await captureRemoteUploadMode(
-        client,
-        targetSftpId,
-        targetPath,
-        resolvedTargetEncoding,
-      );
+      let existingRemoteMode = null;
       const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
       await runRemoteUploadTransaction(client, sourcePath, targetPath, {
         encoding: resolvedTargetEncoding,
@@ -5943,6 +5907,7 @@ async function startTransferNow(event, payload, onProgress) {
         async uploadFile(encodedUploadPath, uploadTarget) {
           const uploadTargetPath = uploadTarget.logicalPath;
           const usesStage = uploadTarget.generatedStagePath === true;
+          existingRemoteMode = existingModeFromUploadPlan(uploadTarget.plan);
           transfer.stagedRemote = usesStage
             ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
             : null;
@@ -6374,12 +6339,7 @@ async function startTransferNow(event, payload, onProgress) {
         };
         transfer.sourceIsOwnedTemp = true;
         const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
-        const existingRemoteMode = await captureRemoteUploadMode(
-          targetClient,
-          targetSftpId,
-          targetPath,
-          resolvedTargetEncoding,
-        );
+        let existingRemoteMode = null;
         const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
         await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
           encoding: resolvedTargetEncoding,
@@ -6401,6 +6361,7 @@ async function startTransferNow(event, payload, onProgress) {
           async uploadFile(encodedUploadPath, uploadTarget) {
             const uploadTargetPath = uploadTarget.logicalPath;
             const usesStage = uploadTarget.generatedStagePath === true;
+            existingRemoteMode = existingModeFromUploadPlan(uploadTarget.plan);
             transfer.stagedRemote = usesStage
               ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
               : null;

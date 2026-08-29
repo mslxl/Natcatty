@@ -915,7 +915,9 @@ test("in-place upload ignores cancellation during final size verification", asyn
         throw error;
       }
       statCalls += 1;
-      if (statCalls === 1) {
+      // Hang on the post-upload size check (after OPEN replaced the payload),
+      // not on an earlier existence/mode probe.
+      if (remote.length === payload.length && !releaseFinalStat) {
         markFinalStatStarted();
         await new Promise((resolve) => { releaseFinalStat = resolve; });
       }
