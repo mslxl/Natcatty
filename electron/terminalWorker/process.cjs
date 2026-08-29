@@ -229,6 +229,30 @@ function main() {
     throw new Error("Terminal worker requires process.parentPort");
   }
 
+  // Every session lives in this shared worker, so a single stray async error
+  // must never hit Node's default exit-with-code-1 behavior. Install the same
+  // guards as the main process; without them one unhandled error disconnects
+  // all sessions simultaneously ("Terminal worker exited with code 1").
+  // Errors are reported to main so they still land in the crash log.
+  const { installTerminalWorkerErrorGuards } = require("./workerProcessGuards.cjs");
+  installTerminalWorkerErrorGuards({
+    report(origin, err, decision) {
+      try {
+        parentPort.postMessage({
+          kind: "worker-error",
+          origin,
+          reason: decision?.reason,
+          message: err?.message || String(err),
+          ...(err?.stack ? { stack: err.stack } : {}),
+          ...(err?.code ? { code: err.code } : {}),
+          ...(err?.level ? { level: err.level } : {}),
+        });
+      } catch {
+        // Reporting must never be able to escalate into a worker crash.
+      }
+    },
+  });
+
   const sessions = new Map();
   const sftpClients = new Map();
   const { createTerminalDataPipeline } = require("./terminalDataPipeline.cjs");

@@ -686,19 +686,26 @@ function createTerminalWorkerRuntime(options = {}) {
     if (message.channel === "netcatty:close" && message.payload?.sessionId) {
       invalidateSessionOutput(message.payload.sessionId);
     }
-    listener({
-      sender: createSender(
-        parentPort,
-        message.webContentsId,
-        outputPorts,
-        terminalDataPipeline,
-        pendingOutputBySession,
-        sessionOutputGenerations,
-        sessionRequestIds,
-        null,
-        finalizeNaturalSessionExit,
-      ),
-    }, message.payload);
+    try {
+      listener({
+        sender: createSender(
+          parentPort,
+          message.webContentsId,
+          outputPorts,
+          terminalDataPipeline,
+          pendingOutputBySession,
+          sessionOutputGenerations,
+          sessionRequestIds,
+          null,
+          finalizeNaturalSessionExit,
+        ),
+      }, message.payload);
+    } catch (err) {
+      // Send listeners (write/resize/flow/close) are fire-and-forget; a throw
+      // here is synchronous and would otherwise escape as an uncaught
+      // exception on the worker's message loop.
+      console.error(`[TerminalWorker] send listener failed for ${message.channel}:`, err);
+    }
   }
 
   function handleUrgentInput(webContentsId, message) {
