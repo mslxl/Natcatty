@@ -390,6 +390,8 @@ export type CreateXTermRuntimeContext = {
   onAutocompleteKeyEvent?: (e: KeyboardEvent) => boolean;
   // Autocomplete input handler — called on every character input
   onAutocompleteInput?: (data: string) => void;
+  // Recompute the popup after wrap/scroll so it follows the command start (#3061)
+  onAutocompleteReposition?: () => void;
 
   terminalContextActionsRef?: RefObject<{
     onPaste?: () => void | Promise<void>;
@@ -2571,6 +2573,19 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
+  const scheduleAutocompleteReposition = () => {
+    const run = () => ctx.onAutocompleteReposition?.();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  };
+  // Soft-wrap at the bottom scrolls the buffer without a fit/resize. Keep the
+  // popup glued to the command start instead of a stale viewport cell (#3061).
+  const autocompleteScrollDisposable = term.onScroll(scheduleAutocompleteReposition);
+  const autocompleteLineFeedDisposable = term.onLineFeed?.(scheduleAutocompleteReposition);
+
   const keywordHighlighter = new KeywordHighlighter(term, {
     serializeAddon,
   });
@@ -2652,6 +2667,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       osc99Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
+      autocompleteScrollDisposable.dispose();
+      autocompleteLineFeedDisposable?.dispose();
       bellDisposable.dispose();
       cursorPreferenceDisposable?.dispose();
       // Release decoded bitmaps and the image canvas layers before xterm tears the

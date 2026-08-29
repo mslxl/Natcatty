@@ -47,6 +47,15 @@ test("network-device sessions skip live-preview writeToTerminal (#1193)", () => 
   );
 });
 
+test("repositionPopup pins the visible popup to the wrapped command start (#3061)", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("./autocomplete/useTerminalAutocomplete.ts", import.meta.url)),
+    "utf8",
+  );
+  assert.match(source, /resolveAutocompletePopupAnchorInViewport/);
+  assert.match(source, /nextAutocompletePopupAnchorViewport/);
+});
+
 test("mount effect re-arms disposedRef after dispose cleanup (HMR / StrictMode)", () => {
   // dispose() sets disposedRef=true on effect cleanup. Fast Refresh preserves
   // refs, so without resetting on mount, fetchSuggestions stays dead forever

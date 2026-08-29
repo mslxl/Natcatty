@@ -31,9 +31,10 @@ import { isWindowsShellLineInput, shouldWriteAutocompleteLivePreview } from "./l
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
-  resolveAutocompleteAnchorInViewport,
+  nextAutocompletePopupAnchorViewport,
   resolveAutocompleteCursorCell,
   resolveAutocompleteCwdWithSource,
+  resolveAutocompletePopupAnchorInViewport,
   resolvePreservedSuggestionIndex,
 } from "./terminalAutocompleteLayout";
 import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
@@ -524,24 +525,26 @@ export function useTerminalAutocomplete(
           column: term.buffer.active.cursorX,
           row: term.buffer.active.cursorY,
         };
-      const anchor = resolveAutocompleteAnchorInViewport(
+      // Pin to the wrapped command start after wrap/scroll so the popup
+      // follows the first physical line instead of covering it (#3061).
+      const anchor = resolveAutocompletePopupAnchorInViewport(
         term,
         containerRef.current,
         prev.suggestions.length,
         cursorCell.column,
         cursorCell.row,
       );
+      const nextAnchor = nextAutocompletePopupAnchorViewport(
+        prev.popupAnchorViewport,
+        prev.expandUpward,
+        anchor,
+      );
+      if (!nextAnchor) return prev;
 
-      // Force a re-render even when the relative cursor cell hasn't changed.
-      // The terminal container may have moved in the viewport after a fit/resize.
       return {
         ...prev,
-        popupAnchorViewport: {
-          left: anchor.anchorLeft,
-          top: anchor.anchorTop,
-          bottom: anchor.anchorBottom,
-        },
-        expandUpward: anchor.expandUpward,
+        popupAnchorViewport: nextAnchor.viewport,
+        expandUpward: nextAnchor.expandUpward,
       };
     });
   }, [containerRef, termRef]);
@@ -1045,7 +1048,7 @@ export function useTerminalAutocomplete(
         if (!options?.preserveSelection) {
           previewActiveRef.current = false;
         }
-        const anchor = resolveAutocompleteAnchorInViewport(
+        const anchor = resolveAutocompletePopupAnchorInViewport(
           term,
           containerRef.current,
           completions.length,
