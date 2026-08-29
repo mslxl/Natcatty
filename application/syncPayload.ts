@@ -212,6 +212,16 @@ export function sanitizePortForwardingRulesForSync(
   }));
 }
 
+/**
+ * Strip device-local connection telemetry from hosts before cloud sync.
+ * `lastConnectedAt` updates on every successful SSH connect (#2629) and must
+ * not dirty auto-sync hashes or inflate cloud versions.
+ */
+export function sanitizeHostsForSync(hosts: Host[] | undefined): Host[] | undefined {
+  if (!hosts) return hosts;
+  return hosts.map((host) => ({ ...host, lastConnectedAt: undefined }));
+}
+
 export function getEffectivePortForwardingRulesForSync(
   rules: PortForwardingRule[] | undefined,
 ): PortForwardingRule[] | undefined {
@@ -951,7 +961,7 @@ export function buildSyncPayload(
   portForwardingRules?: PortForwardingRule[],
 ): SyncPayload {
   return {
-    hosts: vault.hosts,
+    hosts: sanitizeHostsForSync(vault.hosts),
     keys: vault.keys,
     identities: vault.identities,
     proxyProfiles: vault.proxyProfiles,
@@ -1036,7 +1046,7 @@ export async function buildCloudSyncPayload(
   },
 ): Promise<SyncPayload> {
   const base: SyncPayload = {
-    hosts: vault.hosts,
+    hosts: sanitizeHostsForSync(vault.hosts),
     keys: vault.keys,
     identities: vault.identities,
     proxyProfiles: vault.proxyProfiles,
@@ -1062,6 +1072,8 @@ export function buildLocalVaultPayload(
 ): SyncPayload {
   const base: SyncPayload = {
     ...buildSyncPayload(vault, portForwardingRules),
+    // Keep device-local recent-connection timestamps in protective backups.
+    hosts: vault.hosts,
     settings: collectLocalBackupSettings(),
     knownHosts: vault.knownHosts,
   };
