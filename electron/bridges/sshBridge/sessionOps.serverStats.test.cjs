@@ -4,6 +4,18 @@ const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const { createSessionOpsApi } = require("./sessionOps.cjs");
+
+function quoteShellArg(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
+function unwrapExecShC(command) {
+  const prefix = "exec sh -c ";
+  if (!String(command).startsWith(prefix)) return command;
+  const quoted = command.slice(prefix.length);
+  if (!quoted.startsWith("'") || !quoted.endsWith("'")) return command;
+  return quoted.slice(1, -1).replace(/'\\''/g, "'");
+}
 const { selectServerStatsFixtureOutput } = require("./serverStatsTestHelpers.cjs");
 const {
   borrowTransport,
@@ -55,12 +67,14 @@ function makeSessionOps(sessions) {
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     measureTcpConnectLatency: async () => 3,
     // The rest of the sessionOps surface isn't exercised by getServerStats.
   });
 }
 
 function runStatsCommandWithBusyBoxTools(command) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 4; }",
@@ -85,6 +99,7 @@ function runStatsCommandWithBusyBoxTools(command) {
 }
 
 function runStatsCommandWithBusyBoxSmpTop(command) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 4; }",
@@ -104,6 +119,7 @@ function runStatsCommandWithBusyBoxSmpTop(command) {
 // Proxmox LXC (CT) guests often expose ZFS datasets / host bind mounts as the
 // df "Filesystem" column instead of /dev/* block devices.
 function runStatsCommandWithPveCtDf(command) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -207,6 +223,7 @@ test("getServerStats keeps PVE CT ZFS/bind mounts and recovers dash Capacity", a
 // rclone / CloudDrive / union-style FUSE mounts expose cloud quotas that should
 // not inflate System Overview disk totals after the PVE CT filter broadening.
 function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {}) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -280,6 +297,7 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
 }
 
 function runStatsCommandWithRootFuseDf(command, filesystemType = "fuse.rclone") {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -351,6 +369,7 @@ test("getServerStats uses mount metadata when df filesystem types are unavailabl
 });
 
 function runStatsCommandWithUntypedScopedIpv6NfsDf(command) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -447,6 +466,7 @@ test("getServerStats keeps a local fuseblk root filesystem", async () => {
 });
 
 function runStatsCommandWithLoopRootDf(command) {
+  command = unwrapExecShC(command);
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -526,6 +546,7 @@ test("getServerStats opens a Mosh stats companion connection when session.conn i
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     ensureMoshStatsConnection: async (s, id) => {
       ensureCalls += 1;
       assert.equal(s, session);
@@ -561,6 +582,7 @@ test("getServerStats fails gracefully when the companion connection cannot be es
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     ensureMoshStatsConnection: async () => null, // no usable auth, etc.
   });
 
@@ -583,6 +605,7 @@ test("getServerStats does not touch the companion path for a normal SSH session"
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     ensureMoshStatsConnection: async () => {
       ensureCalls += 1;
       return null;
@@ -611,6 +634,7 @@ test("getServerStats measures TCP connectivity instead of SSH protocol latency",
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     measureTcpConnectLatency: async (target) => {
       probes.push(target);
       return 2;
@@ -636,6 +660,7 @@ test("getServerStats skips a misleading direct probe for jump-host sessions", as
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     measureTcpConnectLatency: async () => {
       probeCalls += 1;
       return 2;
@@ -665,6 +690,7 @@ test("getServerStats closes a blocked probe channel when stats time out", async 
     },
     clearTimeout: () => {},
     Buffer,
+    quoteShellArg,
   });
 
   const pending = api.getServerStats({ sender: {} }, { sessionId: "sid" });
@@ -692,6 +718,7 @@ test("getServerStats closes a stats stream delivered after timeout", async () =>
     },
     clearTimeout: () => {},
     Buffer,
+    quoteShellArg,
   });
 
   const pending = api.getServerStats({ sender: {} }, { sessionId: "sid" });
@@ -737,6 +764,7 @@ test("three stats retries on an unresponsive exec open leave no pooled transport
     },
     clearTimeout: (timer) => { if (timer) timer.cleared = true; },
     Buffer,
+    quoteShellArg,
   });
 
   const first = api.getServerStats({ sender: {} }, { sessionId: "sid" });
@@ -928,6 +956,7 @@ test("getServerStats reports pending (not a hard failure) for a Mosh session bef
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     ensureMoshStatsConnection: async () => {
       ensureCalls += 1;
       return null; // nothing to connect with yet
@@ -957,6 +986,7 @@ test("getServerStats reports a hard failure (not pending) once the companion per
     setTimeout,
     clearTimeout,
     Buffer,
+    quoteShellArg,
     ensureMoshStatsConnection: async () => null,
   });
 
@@ -1002,8 +1032,12 @@ test("getServerStats wraps probes in a remote watchdog matching the client timeo
     // (df, ps, lsof, ...) would otherwise survive `kill -9 $$` and keep
     // holding the channel's output descriptors.
     assert.ok(
-      command.startsWith('( sleep 10 &&'),
-      `missing watchdog arm: ${command.slice(0, 120)}`,
+      command.startsWith('exec sh -c '),
+      `missing POSIX sh wrap: ${command.slice(0, 120)}`,
+    );
+    assert.ok(
+      command.includes('( sleep 10 &&'),
+      `missing watchdog arm: ${command.slice(0, 160)}`,
     );
     assert.ok(
       command.includes('kill -9 $nc_tree "$$"'),
@@ -1020,10 +1054,12 @@ test("getServerStats wraps probes in a remote watchdog matching the client timeo
     // subshell would leave the `sleep` alive for the full watchdog duration,
     // delaying the channel close and racing the client-side timeout.
     assert.ok(
-      command.endsWith(
-        "; nc_kids=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root=\"$nc_watchdog_pid\" -v self=\"-1\" '{ pp[$1+0]=$2+0 } END { for (p in pp) { q=p+0; d=0; while (q>0 && d<4096) { if (q==root) { printf \"%s \", p+0; break } if (q==self) break; q=pp[q]+0; d++ } } }'); kill -9 $nc_kids \"$nc_watchdog_pid\" 2>/dev/null; exit $nc_status",
-      ),
-      " watchdog cleanup must reap the watchdog's pending sleep child",
+      command.includes('kill -9 $nc_kids "$nc_watchdog_pid"'),
+      "watchdog cleanup must reap the watchdog's pending sleep child",
+    );
+    assert.ok(
+      command.includes("exit $nc_status"),
+      "watchdog cleanup must preserve the probe exit status",
     );
     assert.ok(command.includes("( sleep 10 &&"), "watchdog bound must match the 10s stats run timeout");
   }
@@ -1050,7 +1086,11 @@ test("getSessionDistroInfo wraps the os-release probe in a remote watchdog", asy
   assert.equal(result.success, true);
   assert.equal(commands.length, 1);
   assert.ok(
-    commands[0].startsWith('( sleep 5 &&'),
+    commands[0].startsWith('exec sh -c '),
+    "distro probe must force POSIX sh so fish/zsh login shells can parse it",
+  );
+  assert.ok(
+    commands[0].includes('( sleep 5 &&'),
     "distro probe must carry a 5s remote watchdog",
   );
   assert.ok(

@@ -113,6 +113,12 @@ function withRemoteWatchdog(command, timeoutMs) {
 function createSessionOpsApi(ctx) {
   with (ctx) {
     const cwdRecoveryToken = Symbol('cwd-recovery');
+    function withPosixRemoteWatchdog(command, timeoutMs) {
+      // sshd invokes `$SHELL -c command`. fish/zsh cannot parse the POSIX watchdog.
+      // `exec sh -c` is accepted by fish and replaces the login shell so the
+      // POSIX sh's $PPID is sshd (needed by the cwd probe).
+      return `exec sh -c ${quoteShellArg(withRemoteWatchdog(command, timeoutMs))}`;
+    }
     function getTcpLatencyTarget(session) {
       if (session.tcpLatencyDirect === false) return null;
 
@@ -166,7 +172,7 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
-      const command = withRemoteWatchdog(
+      const command = withPosixRemoteWatchdog(
         "cat /etc/os-release 2>/dev/null || uname -a",
         5000,
       );
@@ -534,9 +540,10 @@ function createSessionOpsApi(ctx) {
         //      same-uid login shell cwd when allowed.
         //   5. Falls back to the user's home directory if the caller allows it.
         //
-        // `exec` makes sh replace the user's login shell (fish/bash/...)
-        // so sh keeps the same PID and $PPID = sshd. Starting another shell
-        // without exec would make $PPID point at the intermediate shell instead.
+        // Outer `exec sh -c` replaces the login shell (fish/zsh/...) so the
+        // POSIX sh's $PPID is sshd. That pid is exported as NC_SSHD_PPID
+        // because the watchdog wrapper would otherwise become $PPID of the
+        // inner posixScript (and macOS/BSD have no /proc fallback).
         const posixScript = `SELF=$$
     TARGET_LOGIN=${targetLoginPid}
     ALLOW_HOME_FALLBACK=${allowHomeFallback ? "1" : "0"}
@@ -637,7 +644,7 @@ function createSessionOpsApi(ctx) {
       return 1
     }
     login="$TARGET_LOGIN"
-    [ -n "$login" ] || login=$(find_login_shell "$PPID")
+    [ -n "$login" ] || login=$(find_login_shell "\${NC_SSHD_PPID:-$PPID}")
     if [ -n "$login" ]; then
       printf 'NETCATTY_LOGIN_PID=%s\\n' "$login" >&2
       pid=$(find_active_shell "$login")
@@ -673,15 +680,15 @@ function createSessionOpsApi(ctx) {
     emit_home "$home"
     emit_home "$HOME"
     exit 1`;
-        // No `exec` here: it would replace the wrapper shell that runs the
-        // watchdog cleanup below, leaving the watchdog subshell holding the
-        // channel's output pipes open until timeoutMs and racing the
-        // client-side timer (a valid cwd result could time out). The inner
-        // `sh -c` exit code propagates to the wrapper instead.
-        const cmd = withRemoteWatchdog(
-          `sh -c ${quoteShellArg(posixScript)}`,
-          timeoutMs,
-        );
+        // Capture sshd's pid in the exec'd POSIX sh (`$PPID` is sshd because
+        // `exec` replaced the login shell). Do not `exec` the inner posixScript:
+        // that would skip the watchdog cleanup after it.
+        const cmd = `exec sh -c ${quoteShellArg(
+          `export NC_SSHD_PPID=$PPID; ${withRemoteWatchdog(
+            `sh -c ${quoteShellArg(posixScript)}`,
+            timeoutMs,
+          )}`
+        )}`;
 
         void executeBoundedSshCommand(session.conn, cmd, {
           // Do not shorten channel opening: a timeout there invalidates the
@@ -1225,7 +1232,7 @@ function createSessionOpsApi(ctx) {
       // so keep non-pseudo filesystems. Skip FUSE/cloud/NFS/CIFS network mounts:
       // their quotas are not local capacity. Keep a loop-backed rootfs while
       // dropping snap loops, derive missing percentages, and fall back to "/".
-      const linuxDiskStatsCommand = withRemoteWatchdog([
+      const linuxDiskStatsCommand = withPosixRemoteWatchdog([
         `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `[ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `echo "DISKS:$disks"`,
@@ -1237,7 +1244,7 @@ function createSessionOpsApi(ctx) {
       // additions cannot repeat issue #2924.
       const dropbearMaxCommandBytes = 9000;
       const latencyMarker = "NC_LATENCY_MARK";
-      const statsCommand = withRemoteWatchdog(
+      const statsCommand = withPosixRemoteWatchdog(
         `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`,
         statsRunTimeoutMs,
       );
