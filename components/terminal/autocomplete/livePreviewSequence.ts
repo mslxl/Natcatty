@@ -9,6 +9,19 @@
  *   shells use Ctrl-U (kill-line); Windows (cmd/PowerShell) uses backspaces
  *   sized to the current line length.
  */
+
+/**
+ * Live-preview rewrites inject Ctrl-U / backspaces into the PTY. Vendor
+ * bastion and network-device CLIs treat those bytes as session-kill, so
+ * network-device sessions keep the popup but skip the rewrite (#1193).
+ */
+export function shouldWriteAutocompleteLivePreview(
+  livePreviewEnabled: boolean,
+  isNetworkDevice = false,
+): boolean {
+  return livePreviewEnabled && !isNetworkDevice;
+}
+
 export function isWindowsShellLineInput(
   os: string,
   promptText?: string | null,

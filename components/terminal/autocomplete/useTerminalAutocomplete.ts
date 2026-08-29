@@ -27,7 +27,7 @@ import {
   shouldPreferRemoteShellCwd,
 } from "./remotePathCompleter";
 import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
-import { isWindowsShellLineInput } from "./livePreviewSequence";
+import { isWindowsShellLineInput, shouldWriteAutocompleteLivePreview } from "./livePreviewSequence";
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
@@ -238,6 +238,11 @@ interface UseTerminalAutocompleteOptions {
     input: string,
     options: HostCompletionProviderOptions,
   ) => Promise<CompletionSuggestion[]>;
+  /**
+   * Vendor bastion / network-device CLI. Live-preview PTY rewrites (Ctrl-U)
+   * disconnect these sessions, so the popup stays and preview writes no-op (#1193).
+   */
+  isNetworkDevice?: boolean;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -277,6 +282,7 @@ export function useTerminalAutocomplete(
     onAcceptSnippet,
     sensitiveInputActiveRef,
     provideCompletions,
+    isNetworkDevice = false,
   } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
@@ -292,6 +298,7 @@ export function useTerminalAutocomplete(
   const settings: AutocompleteSettings = {
     ...rawSettings,
     showGhostText: rawSettings.showPopupMenu ? false : rawSettings.showGhostText,
+    livePreview: shouldWriteAutocompleteLivePreview(rawSettings.livePreview, isNetworkDevice),
   };
 
   // Use refs for values accessed in callbacks to avoid stale closures
@@ -313,6 +320,8 @@ export function useTerminalAutocomplete(
   sessionIdRef.current = sessionId;
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
+  const isNetworkDeviceRef = useRef(isNetworkDevice);
+  isNetworkDeviceRef.current = isNetworkDevice;
   const getCwdRef = useRef(getCwd);
   getCwdRef.current = getCwd;
   const provideCompletionsRef = useRef(provideCompletions ?? getCompletions);
@@ -709,6 +718,10 @@ export function useTerminalAutocomplete(
    * (no clearState). Used for live-preview while navigating sub-dir panels (#1005).
    */
   const renderSubDirPath = useCallback((level: number, entry: SubDirEntry) => {
+    if (!shouldWriteAutocompleteLivePreview(
+      settingsRef.current.livePreview,
+      isNetworkDeviceRef.current,
+    )) return;
     const s = stateRef.current;
     const term = termRef.current;
     if (!term) return;
@@ -1251,7 +1264,10 @@ export function useTerminalAutocomplete(
    * live-preview, #1005). `index < 0` restores the user's typed baseline.
    */
   const renderPreviewSelection = useCallback((index: number) => {
-    if (!settingsRef.current.livePreview) return;
+    if (!shouldWriteAutocompleteLivePreview(
+      settingsRef.current.livePreview,
+      isNetworkDeviceRef.current,
+    )) return;
     const s = stateRef.current;
     const term = termRef.current;
     if (!term) return;
