@@ -82,9 +82,18 @@ const setupDom = () => {
 
 type DomHarness = ReturnType<typeof setupDom>;
 
+type ActiveFormats = {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  code: boolean;
+};
+
 type RenderEditorProps = {
   value: string;
   editorMode?: "edit" | "preview" | "source";
+  onActiveFormatsChange?: (formats: ActiveFormats) => void;
 };
 
 const renderEditor = async (
@@ -109,6 +118,7 @@ const renderEditor = async (
           placeholder="Write Markdown notes here..."
           editorMode={nextProps.editorMode ?? "edit"}
           onChange={(next) => changes.push(next)}
+          onActiveFormatsChange={nextProps.onActiveFormatsChange}
           hosts={[]}
         />
       </I18nProvider>,
@@ -233,6 +243,55 @@ test("retry imports the latest fallback draft, not the stale prop value", async 
     assert.ok(editable, "expected the rich editor back after the retry");
     assert.match(editable.textContent || "", /The content after the angle tags/);
     assert.equal(querySourceFallback(rootNode), null, "the fallback must be gone after a successful retry");
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("retry rebinds active-format listeners after the rich editor remounts", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const formatChanges: ActiveFormats[] = [];
+    const onActiveFormatsChange = (formats: ActiveFormats) => {
+      formatChanges.push(formats);
+    };
+    const { rootNode, changes, unmount } = await renderEditor(window, {
+      value: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+      onActiveFormatsChange,
+    });
+
+    assert.ok(querySourceFallback(rootNode), "expected the raw markdown fallback");
+    assert.equal(rootNode.querySelectorAll("[contenteditable]").length, 0);
+    const callsWhileFallback = formatChanges.length;
+
+    const fallback = querySourceFallback(rootNode);
+    assert.ok(fallback);
+    const fixedMarkdown = NOTE_MARKDOWN_MDX_CANNOT_PARSE.replace(
+      "mysql -h <host> -u <user>",
+      "mysql with host and user",
+    );
+    await runWithAct(async () => {
+      setTextareaValue(window, fallback, fixedMarkdown);
+    });
+    assert.deepEqual(changes, [fixedMarkdown]);
+
+    const retry = rootNode.querySelector<HTMLButtonElement>("[data-note-markdown-source-retry]");
+    assert.ok(retry, "expected a retry action on the fallback notice");
+    await runWithAct(async () => {
+      retry.click();
+    });
+    await runWithAct(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const editable = rootNode.querySelector<HTMLElement>("[contenteditable]");
+    assert.ok(editable, "expected the rich editor back after the retry");
+    assert.equal(querySourceFallback(rootNode), null, "the fallback must be gone after a successful retry");
+    assert.ok(
+      formatChanges.length > callsWhileFallback,
+      "expected onActiveFormatsChange after the rich editor remounted",
+    );
     await unmount();
   } finally {
     cleanup();

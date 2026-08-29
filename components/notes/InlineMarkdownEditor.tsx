@@ -1128,7 +1128,7 @@ export const InlineMarkdownEditor = React.memo(
   // buttons. Listens to Lexical selection/update changes in edit/live modes.
   useEffect(() => {
     if (!onActiveFormatsChange) return;
-    if (editorMode !== "edit" && editorMode !== "live") {
+    if (mdxFallbackActive || (editorMode !== "edit" && editorMode !== "live")) {
       onActiveFormatsChange(EMPTY_ACTIVE_FORMATS);
       return;
     }
@@ -1172,7 +1172,7 @@ export const InlineMarkdownEditor = React.memo(
       unregisterUpdate();
       unregisterSelection();
     };
-  }, [editorMode, onActiveFormatsChange]);
+  }, [editorMode, mdxFallbackActive, onActiveFormatsChange]);
 
   const setLinkActionIfChanged = useCallback((next: LinkActionState | null) => {
     if (linkActionStatesEqual(linkActionRef.current, next)) return;
