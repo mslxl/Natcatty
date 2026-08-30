@@ -17,8 +17,8 @@ const {
  * crash log for later diagnosis.
  *
  * Startup errors are NOT suppressed: until `options.isRuntimeStarted()`
- * returns true, a fatal classification re-throws the error so the worker
- * exits. An IPC-retained utilityProcess that swallowed a startup failure
+ * returns true, every error is fatal and re-thrown so the worker exits.
+ * An IPC-retained utilityProcess that swallowed a startup failure
  * would otherwise stay alive without a message listener, leaving every
  * manager request pending forever instead of rejecting/replacing it.
  */
@@ -47,10 +47,12 @@ function installTerminalWorkerErrorGuards(options = {}) {
     if (err?.__terminalWorkerFatalStartupError) {
       throw err;
     }
-    const decision = classifyProcessError(err, {
-      runtimeStarted: isRuntimeStarted(),
-      origin,
-    });
+    // The shared classifier ignores some stream/network errors regardless of
+    // startup state. Those are recoverable only after this worker can receive
+    // requests; swallowing them during initialization leaves a live dead end.
+    const decision = isRuntimeStarted()
+      ? classifyProcessError(err, { runtimeStarted: true, origin })
+      : { action: "fatal", reason: "startup error before worker became usable" };
     if (decision.action === "fatal") {
       logError(
         `Terminal worker ${labelFor(origin)} (${decision.reason}); exiting:`,
