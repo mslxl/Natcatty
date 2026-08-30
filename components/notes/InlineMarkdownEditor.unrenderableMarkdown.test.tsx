@@ -81,6 +81,7 @@ const setupDom = () => {
     document: window.document,
     navigator: window.navigator,
     HTMLElement: window.HTMLElement,
+    HTMLImageElement: window.HTMLImageElement,
     HTMLInputElement: window.HTMLInputElement,
     HTMLTextAreaElement: window.HTMLTextAreaElement,
     HTMLSelectElement: window.HTMLSelectElement,
