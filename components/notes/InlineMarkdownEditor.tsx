@@ -2226,7 +2226,13 @@ export const InlineMarkdownEditor = React.memo(
             editorMode === "preview" && "netcatty-mdx-editor--preview",
           )}
           contentEditableClassName="netcatty-mdx-content"
-          onChange={commitMarkdown}
+          onChange={(markdown, initialMarkdownNormalize) => {
+            // Importing Markdown may escape literal comparisons on export.
+            // Keep the user's source until they actually edit the rich view.
+            if (!initialMarkdownNormalize && editorMode !== "preview") {
+              commitMarkdown(markdown);
+            }
+          }}
           onError={handleMdxParseError}
         />
       )}
