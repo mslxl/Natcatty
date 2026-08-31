@@ -1876,6 +1876,167 @@ test("pause acknowledges quickly then publishes a full source identity", async (
   assert.equal((await running).error, undefined);
 });
 
+test("remote restart verifies the complete source with bounded concurrent reads", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(`${tempDirBridge.getTempFilePath("resume-window")}-`);
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `resume-window-${crypto.randomUUID()}`;
+  const payload = Buffer.alloc(2 * 1024 * 1024 + 17);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+  const checkpoint = 512 * 1024;
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagePath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  await fs.promises.writeFile(stagePath, payload.subarray(0, checkpoint));
+  t.after(async () => { await fs.promises.unlink(stagePath).catch(() => {}); });
+  const sender = createSender();
+  let verificationReads = 0;
+  let maxVerificationReads = 0;
+  let verificationBytes = 0;
+  const { sftp } = createPipelinedDownloadSftp(payload, {
+    read(_handle, buffer, offset, length, position, callback) {
+      const verifying = sender.sent.at(-1)?.payload.phase === "verifying";
+      if (verifying) {
+        verificationReads += 1;
+        maxVerificationReads = Math.max(maxVerificationReads, verificationReads);
+      }
+      setTimeout(() => {
+        const bytes = Math.min(length, payload.length - position);
+        payload.copy(buffer, offset, position, position + bytes);
+        if (verifying) {
+          verificationReads -= 1;
+          verificationBytes += bytes;
+        }
+        callback(null, bytes);
+      }, 2);
+    },
+  });
+  const client = { sftp, stat: async () => ({ size: payload.length }) };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+  const result = await transferBridge.startTransfer({ sender }, {
+    transferId, sourcePath: "/source.bin", targetPath,
+    sourceType: "sftp", targetType: "local", sourceSftpId: "source",
+    totalBytes: payload.length, resumable: true, checkpointBytes: checkpoint,
+    sourceFingerprint: `sha256:p${payload.length}:${crypto.createHash("sha256").update(payload).digest("hex")}`,
+  });
+  assert.equal(result.error, undefined, result.error);
+  assert.deepEqual(await fs.promises.readFile(targetPath), payload);
+  assert.ok(maxVerificationReads > 1, "large resume verification must not wait for one network read at a time");
+  assert.ok(maxVerificationReads <= DOWNLOAD_TRANSFER_CONCURRENCY);
+  assert.ok(verificationBytes >= payload.length, "verify every source byte, not a sample");
+});
+
+for (const scenario of ["read-error", "open-error", "changed-content", "cancelled", "timeout"]) {
+  test(`remote restart prefix compatibility: ${scenario}`, async (t) => {
+    const tempDir = await fs.promises.mkdtemp(`${tempDirBridge.getTempFilePath("resume-compat")}-`);
+    const transferId = `resume-compat-${crypto.randomUUID()}`;
+    const payload = Buffer.alloc(3 * TRANSFER_CHUNK_SIZE, 71);
+    const targetPath = path.join(tempDir, "target.bin");
+    const stagePath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+    t.after(async () => {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+      await fs.promises.rm(stagePath, { force: true });
+    });
+    await fs.promises.writeFile(stagePath, payload);
+    let streamOpens = 0;
+    const protocolError = new Error(scenario === "cancelled" ? "Transfer cancelled" : `Range ${scenario}`);
+    protocolError.code = scenario === "cancelled" ? "ABORT_ERR" : scenario === "timeout" ? "SFTP_READ_TIMEOUT" : 4;
+    if (scenario === "timeout") protocolError.sftpRequestTimedOut = true;
+    const { sftp } = createPipelinedDownloadSftp(payload, {
+      open(_path, _flags, callback) {
+        if (scenario === "open-error") callback(protocolError);
+        else callback(null, Buffer.from("prefix-handle"));
+      },
+      read(_handle, _buffer, _offset, _length, _position, callback) {
+        setImmediate(() => callback(protocolError));
+      },
+      createReadStream(_path, options) {
+        streamOpens += 1;
+        assert.equal(options.start, 0);
+        assert.equal(options.end, payload.length - 1);
+        const current = Buffer.from(payload);
+        if (scenario === "changed-content") current[current.length - 1] ^= 1;
+        return Readable.from([current]);
+      },
+    });
+    transferBridge.init({ sftpClients: new Map([["source", {
+      sftp, stat: async () => ({ size: payload.length }),
+    }]]) });
+    const result = await transferBridge.startTransfer({ sender: createSender() }, {
+      transferId, sourcePath: "/source.bin", targetPath,
+      sourceType: "sftp", targetType: "local", sourceSftpId: "source",
+      totalBytes: payload.length, resumable: true, checkpointBytes: payload.length,
+      sourceFingerprint: `sha256:p${payload.length}:${crypto.createHash("sha256").update(payload).digest("hex")}`,
+    });
+    if (scenario === "cancelled" || scenario === "timeout") {
+      assert.match(result.error || "", /cancelled|Range timeout/);
+      assert.equal(streamOpens, 0, "cancellation and timeouts must not start a fallback");
+    } else {
+      assert.ok(streamOpens > 0, "ordinary protocol errors must retain stream compatibility");
+      if (scenario === "changed-content") {
+        assert.match(result.error || "", /source.*changed|source.*match/i);
+        assert.equal(fs.existsSync(targetPath), false, "fallback must still reject changed content");
+      } else {
+        assert.equal(result.error, undefined, result.error);
+        assert.deepEqual(await fs.promises.readFile(targetPath), payload);
+      }
+    }
+  });
+}
+
+test("remote prefix timeout abandons its channel and ignores late replies", async () => {
+  const pending = [];
+  let ended = false;
+  let progress = 0;
+  const { sftp } = createPipelinedDownloadSftp(Buffer.alloc(2 * TRANSFER_CHUNK_SIZE), {
+    read(_handle, buffer, _offset, length, _position, callback) {
+      pending.push(() => { buffer.fill(0); callback(null, length); });
+    },
+    end() { ended = true; },
+    createReadStream() { throw new Error("must not fall back after a timeout"); },
+  });
+  const client = { sftp };
+  await assert.rejects(transferBridge._hashRemotePrefixForTests(
+    client, "source", "/source.bin", undefined, 2 * TRANSFER_CHUNK_SIZE,
+    { sftpReadTimeoutMs: 20, onProgress: () => { progress += 1; } },
+  ), (error) => error.code === "SFTP_READ_TIMEOUT" && error.noTransferFallback === true);
+  assert.equal(ended, true);
+  assert.equal(client.sftp, null);
+  assert.equal(pending.length, 2);
+  for (const reply of pending) reply();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(progress, 0, "finished verification must ignore late window progress");
+});
+
+test("remote prefix watchdog observes every positive short READ", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE, 73);
+  let replies = 0;
+  const { sftp } = createPipelinedDownloadSftp(payload, {
+    read(_handle, buffer, offset, length, position, callback) {
+      setTimeout(() => {
+        const count = Math.min(1024, length);
+        payload.copy(buffer, offset, position, position + count);
+        replies += 1;
+        callback(null, count);
+      }, 5);
+    },
+    createReadStream() { throw new Error("responsive range reads must not fall back"); },
+  });
+  const hashing = transferBridge._hashRemotePrefixForTests(
+    { sftp }, "source", "/source.bin", undefined, payload.length, { sftpReadTimeoutMs: 25 },
+  );
+  // Handle rejection immediately so advancing the mock clock can expose a bad
+  // watchdog without generating an unrelated unhandled-rejection failure.
+  const outcome = hashing.then((digest) => ({ digest }), (error) => ({ error }));
+  for (let index = 0; index < 40; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(5);
+  }
+  const result = await outcome;
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(replies, 32);
+  assert.equal(result.digest, crypto.createHash("sha256").update(payload).digest("hex"));
+});
+
 test("remote resume identity rejects a same-size source rewrite", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-modifytime-id-"));
   t.after(async () => {

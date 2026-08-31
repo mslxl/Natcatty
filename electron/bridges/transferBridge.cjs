@@ -900,6 +900,24 @@ async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes, optio
   if (isScpModeClient(client)) return null;
   await requireSftpChannel(client, { signal: options?.signal });
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
+  // Resume still hashes the entire required prefix. Use the same bounded READ
+  // window as downloads instead of ssh2's serial stream, which makes a large
+  // pause/restart verification pay one network round trip per read.
+  try {
+    const rangeDigest = await hashRemotePrefixWithSftpRanges(client, encodedPath, bytes, options);
+    if (rangeDigest !== null) return rangeDigest;
+  } catch (error) {
+    if (error?.sftpRequestTimedOut) {
+      error.noTransferFallback = true;
+      abandonWedgedVerificationSftpChannel(client);
+      throw error;
+    }
+    if (options?.signal?.aborted || error?.code === "ABORT_ERR") throw error;
+    // Some servers reject concurrent READs while supporting serial streams.
+    // Retain the existing compatibility path, without bypassing cancellation
+    // or retrying a request timeout on a channel that may still own the request.
+  }
+  await requireSftpChannel(client, { signal: options?.signal });
   return hashReadable(
     client.sftp.createReadStream(encodedPath, { start: 0, end: bytes - 1 }),
     options,
@@ -3327,6 +3345,7 @@ async function readSftpRange(sftp, handle, buffer, position, length, options = {
     if (bytesRead <= 0) {
       throw new Error("Download stream finished before the full source was received");
     }
+    options.onRead?.(bytesRead);
     received += bytesRead;
   }
 }
@@ -3470,12 +3489,13 @@ async function hashRemotePrefixWithSftpRanges(client, remotePath, bytes, options
       // on a slow/serialized server.
       let inactivityTimer = null;
       let rejectInactivity = null;
+      let windowActive = true;
       const clearInactivity = () => {
         if (inactivityTimer) clearTimeout(inactivityTimer);
         inactivityTimer = null;
       };
       const armInactivity = () => {
-        if (!(readTimeoutMs > 0) || options.signal?.aborted || abortGate.aborted) return;
+        if (!windowActive || !(readTimeoutMs > 0) || options.signal?.aborted || abortGate.aborted) return;
         clearInactivity();
         inactivityTimer = setTimeout(() => {
           const error = new Error(`SFTP READ timed out after ${readTimeoutMs} ms`);
@@ -3497,15 +3517,22 @@ async function hashRemotePrefixWithSftpRanges(client, remotePath, bytes, options
             const buffer = Buffer.allocUnsafe(length);
             await readSftpRange(sftp, handle, buffer, position, length, {
               abortGate,
+              onRead: () => {
+                // Short READ replies are real activity too. Do not start the
+                // next partial read after this window has already failed.
+                if (!windowActive) throw new Error("SFTP verification window ended");
+                armInactivity();
+              },
             });
+            if (!windowActive) return;
             windowBuffers[offset] = buffer;
             completedBytes += length;
             options.onProgress?.(completedBytes);
-            armInactivity();
           })),
           ...(inactivityWait ? [inactivityWait] : []),
         ]);
       } finally {
+        windowActive = false;
         clearInactivity();
         rejectInactivity = null;
       }
@@ -7447,5 +7474,6 @@ module.exports = {
   _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
   _assertDownloadSourceAfterTransferForTests: assertDownloadSourceAfterTransfer,
   _assertLocalDownloadMatchesRemotePrefixForTests: assertLocalDownloadMatchesRemotePrefix,
+  _hashRemotePrefixForTests: hashRemotePrefix,
   _remoteOpenPathMatchesStagedForTests: remoteOpenPathMatchesStaged,
 };
