@@ -220,6 +220,28 @@ test("breadcrumb root button navigates to the filesystem root", async () => {
 
     assert.deepEqual(navigatedPaths, ["/"]);
 
+    // A preserved double-slash POSIX path must still be able to navigate to /.
+    await act(async () => {
+      root.render(
+        React.createElement(
+          TooltipProvider,
+          null,
+          React.createElement(SftpBreadcrumb, {
+            path: "//",
+            onNavigate: (path: string) => navigatedPaths.push(path),
+            onHome: () => {},
+          }),
+        ),
+      );
+    });
+    const rootButtonAtDoubleSlash = Array.from(window.document.querySelectorAll("button")).find(
+      (button) => button.textContent === "/",
+    );
+    assert.ok(rootButtonAtDoubleSlash, "root button should stay visible at //");
+    assert.equal(rootButtonAtDoubleSlash.disabled, false, "// must not disable navigation to /");
+    await act(async () => rootButtonAtDoubleSlash.click());
+    assert.deepEqual(navigatedPaths, ["/", "/"]);
+
     // Already at the root: the button is disabled so it stays a no-op.
     await act(async () => {
       root.render(
@@ -239,6 +261,8 @@ test("breadcrumb root button navigates to the filesystem root", async () => {
     );
     assert.ok(rootButtonAtRoot, "root button should stay visible at /");
     assert.equal(rootButtonAtRoot.disabled, true);
+    await act(async () => rootButtonAtRoot.click());
+    assert.deepEqual(navigatedPaths, ["/", "/"]);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

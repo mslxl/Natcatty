@@ -198,7 +198,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         if (rootPath === null) return false;
         return isWindowsPath(path, pathOptions)
             ? isWindowsRoot(path, pathOptions)
-            : /^\/{1,2}$/.test(path);
+            : path === rootPath;
     }, [path, pathOptions, rootPath]);
 
     const renderSegmentButton = (
