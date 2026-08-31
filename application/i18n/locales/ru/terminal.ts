@@ -645,6 +645,7 @@ export const ruTerminalMessages: Messages = {
   'tabs.logPrefix': 'Журнал:',
   'tabs.logLocal': 'Локальный',
   'tabs.copyTab': 'Копировать вкладку',
+  'tabs.duplicateSession': 'Дублировать сессию',
   'tabs.copyTabToNewWindow': 'Копировать вкладку в новое окно',
   'tabs.copyTabToNewWindowFailed': 'Не удалось открыть вкладку в новом окне',
   'tabs.closeOthers': 'Закрыть остальные',

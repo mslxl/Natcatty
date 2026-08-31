@@ -487,6 +487,47 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   assert.deepEqual(reuseAttempts, ["source-session", undefined, undefined]);
 });
 
+test("startSSH requests a fresh transport for Duplicate Session clones", async () => {
+  const captured: Record<string, unknown>[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      captured.push(options);
+      return `ssh-session-${captured.length}`;
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  // Without the marker an ordinary open stays eligible for general endpoint
+  // reuse; with it, every attempt (including reconnects) dials fresh instead
+  // of borrowing the source's live authenticated transport.
+  await createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  await createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    requireFreshConnection: true,
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  const duplicateStarters = createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    requireFreshConnection: true,
+    terminalBackend,
+  }) as never);
+  await duplicateStarters.startSSH(createTermStub() as never);
+  await duplicateStarters.startSSH(createTermStub() as never);
+
+  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[0].sourceSessionId, undefined);
+  assert.equal(captured[1].reuseTransport, false);
+  assert.equal(captured[2].reuseTransport, false);
+});
+
 test("startSSH commits an empty automation snapshot only after the backend session succeeds", async () => {
   let resolveStart: ((sessionId: string) => void) | undefined;
   let commitCount = 0;

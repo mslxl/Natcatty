@@ -630,6 +630,7 @@ export const esTerminalMessages: Messages = {
   'tabs.logPrefix': 'Registro:',
   'tabs.logLocal': 'Local',
   'tabs.copyTab': 'Copiar pestaña',
+  'tabs.duplicateSession': 'Duplicar sesión',
   'tabs.copyTabToNewWindow': 'Copiar pestaña a una nueva ventana',
   'tabs.copyTabToNewWindowFailed': 'No se pudo abrir la pestaña en una nueva ventana',
   'tabs.closeOthers': 'Cerrar las demás',

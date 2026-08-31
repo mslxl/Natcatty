@@ -630,6 +630,7 @@ export const enTerminalMessages: Messages = {
   'tabs.logPrefix': 'Log:',
   'tabs.logLocal': 'Local',
   'tabs.copyTab': 'Copy Tab',
+  'tabs.duplicateSession': 'Duplicate Session',
   'tabs.copyTabToNewWindow': 'Copy Tab to New Window',
   'tabs.copyTabToNewWindowFailed': 'Failed to open tab in a new window',
   'tabs.closeOthers': 'Close Others',

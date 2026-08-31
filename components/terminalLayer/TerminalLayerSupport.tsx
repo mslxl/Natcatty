@@ -694,6 +694,7 @@ export interface TerminalLayerProps {
   onReorderWorkspaceSessions?: (workspaceId: string, draggedSessionId: string, targetSessionId: string, position: 'before' | 'after') => void;
   onReorderTabs?: (draggedId: string, targetId: string, position: 'before' | 'after', additionalTabIds?: readonly string[]) => void;
   onCopySession?: (sessionId: string) => void;
+  onDuplicateSession?: (sessionId: string) => void;
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onRemoveSessionFromWorkspace?: (
     sessionId: string,
@@ -1567,6 +1568,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         pendingScriptId={session.pendingScriptId}
         pendingScript={session.pendingScript}
         reuseConnectionFromSessionId={session.reuseConnectionFromSessionId}
+        requireFreshConnection={session.requireFreshConnection}
         serialConfig={session.serialConfig}
         hotkeyScheme={hotkeyScheme}
         disableTerminalFontZoom={disableTerminalFontZoom}
