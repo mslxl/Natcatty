@@ -1205,12 +1205,13 @@ if (!gotLock) {
     const deepLinkQueueItems = collectSshDeepLinkQueueItems(secondInstanceArgv, {
       includeSchemeUrls: sshDeepLinkEnabled,
     });
-    if (jmsDeepLinkUrls.length > 0 || deepLinkQueueItems.ssh.length > 0 || deepLinkQueueItems.telnet.length > 0) {
-      redactPuttyCommandLinePasswords(secondInstanceArgv);
-      // The regrouped event argv still holds the raw -pw value; scrub it too.
-      if (secondInstanceArgv !== argv) {
-        redactPuttyCommandLinePasswords(argv);
-      }
+    redactPuttyCommandLinePasswords(secondInstanceArgv);
+    if (rawLaunchArgv) {
+      // Parsing and subsequent routing use the independent ordered copy.
+      // Release both consumed transport buffers: Chromium may have moved the
+      // password away from -pw, so adjacency-based redaction is unsafe here.
+      rawLaunchArgv.length = 0;
+      argv.length = 0;
     }
     if (jmsDeepLinkUrls.length > 0) {
       if (jmsDeepLinkEnabled) {
@@ -1238,7 +1239,7 @@ if (!gotLock) {
       } else {
         // Still bring the app forward when Explorer launched us but the path
         // failed validation — silent no-op feels like a broken menu item.
-        console.warn("[Main] Open-terminal-path args present but no valid path resolved:", argv);
+        console.warn("[Main] Open-terminal-path args present but no valid path resolved:", secondInstanceArgv);
         if (!focusMainWindow()) {
           void createAndShowMainWindow().catch((err) => {
             console.error("[Main] Failed to recreate window on open-terminal-path:", err);
