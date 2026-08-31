@@ -1031,6 +1031,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.encoding.utf8': 'UTF-8',
   'sftp.encoding.gb18030': 'GB18030',
   'sftp.goHome': '返回主目录',
+  'sftp.goRoot': '回到根目录',
   'sftp.folderName': '文件夹名称',
   'sftp.folderName.placeholder': '输入文件夹名称',
   'sftp.fileName': '文件名称',

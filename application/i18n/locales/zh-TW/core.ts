@@ -1034,6 +1034,7 @@ export const zhTWCoreMessages: Messages = {
   'sftp.encoding.utf8': 'UTF-8',
   'sftp.encoding.gb18030': 'GB18030',
   'sftp.goHome': '返回主目錄',
+  'sftp.goRoot': '回到根目錄',
   'sftp.folderName': '資料夾名稱',
   'sftp.folderName.placeholder': '輸入資料夾名稱',
   'sftp.fileName': '檔案名稱',
