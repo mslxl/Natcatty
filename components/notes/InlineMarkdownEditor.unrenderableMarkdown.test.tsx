@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 
@@ -23,6 +24,9 @@ const NOTE_MARKDOWN_MDX_CANNOT_PARSE = [
 
 const PLAIN_NOTE_MARKDOWN = ["# Steps", "", "Promote the replica, then restart the agent."].join("\n");
 
+// Public author-supplied note from issue #3205. Commands are inert test content.
+const ISSUE_3205_MARKDOWN = readFileSync(new URL("./test-fixtures/issue-3205.md", import.meta.url), "utf8");
+
 const setupDom = () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     pretendToBeVisual: true,
@@ -41,17 +45,51 @@ const setupDom = () => {
     disconnect() {}
   }
 
+  function LoadedImageStub() {
+    const image = window.document.createElement("img");
+    Object.defineProperty(image, "src", {
+      get: () => image.getAttribute("src") ?? "",
+      set: (src: string) => {
+        image.setAttribute("src", src);
+        queueMicrotask(() => image.dispatchEvent(new window.Event("load")));
+      },
+    });
+    return image;
+  }
+
+  Object.assign(window.Range.prototype, {
+    getClientRects: () => [],
+    getBoundingClientRect: () => new window.DOMRect(),
+  });
+
+  // CodeMirror needs these browser APIs when the full note contains code blocks.
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => false,
+  });
+
   for (const [key, value] of Object.entries({
     window,
+    Window: window.Window,
+    Image: LoadedImageStub,
     document: window.document,
     navigator: window.navigator,
     HTMLElement: window.HTMLElement,
+    HTMLImageElement: window.HTMLImageElement,
     HTMLInputElement: window.HTMLInputElement,
     HTMLTextAreaElement: window.HTMLTextAreaElement,
     HTMLSelectElement: window.HTMLSelectElement,
     Element: window.Element,
     SVGElement: window.SVGElement,
     Node: window.Node,
+    DocumentFragment: window.DocumentFragment,
+    Range: window.Range,
     NodeFilter: window.NodeFilter,
     MutationObserver: window.MutationObserver,
     CustomEvent: window.CustomEvent,
@@ -92,6 +130,7 @@ type ActiveFormats = {
 
 type RenderEditorProps = {
   value: string;
+  noteId?: string;
   editorMode?: "edit" | "preview" | "source";
   onActiveFormatsChange?: (formats: ActiveFormats) => void;
 };
@@ -113,7 +152,7 @@ const renderEditor = async (
     root.render(
       <I18nProvider locale="en">
         <InlineMarkdownEditor
-          noteId="note-1"
+          noteId={nextProps.noteId ?? "note-1"}
           value={nextProps.value}
           placeholder="Write Markdown notes here..."
           editorMode={nextProps.editorMode ?? "edit"}
@@ -150,6 +189,191 @@ const setTextareaValue = (window: DomHarness["window"], textarea: HTMLTextAreaEl
   setValue.call(textarea, nextValue);
   textarea.dispatchEvent(new window.Event("input", { bubbles: true }));
 };
+
+test("literal Markdown comparisons render without changing the note source", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = "Memory<1GB";
+    const { rootNode, changes, unmount } = await renderEditor(window, {
+      value,
+      editorMode: "preview",
+    });
+    try {
+      assert.ok(!querySourceFallback(rootNode), "a comparison must render as ordinary text");
+      assert.equal(rootNode.querySelector("[contenteditable]")?.textContent, value);
+      assert.deepEqual(changes, [], "reading the note must preserve its original source");
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("comparison variants render in paragraphs, tables and alongside HTML", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = [
+      "<1GB",
+      "",
+      "Memory<1GB, x<=2, x<-1, x<+2, x<.5, x < 3, x\\<4, x&lt;5",
+      "",
+      "| Limit |",
+      "| --- |",
+      "| **Memory<1GB** |",
+      "",
+      '<a href="https://example.com/">limit<1</a><2',
+      "",
+      '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="limit" width="80" height="40" /><3',
+      "",
+      "`literal<1 and <host>`",
+      "",
+      "```sh",
+      "cat <<'EOF'",
+      "<host> and x<1",
+      "EOF",
+      "```",
+    ].join("\n");
+    const { rootNode, changes, unmount } = await renderEditor(window, { value });
+    try {
+      assert.ok(!querySourceFallback(rootNode));
+      const editable = rootNode.querySelector("[contenteditable]");
+      assert.ok(editable);
+      assert.match(editable.textContent ?? "", /Memory<1GB, x<=2, x<-1, x<\+2, x<\.5, x < 3, x<4, x<5/);
+      assert.equal(editable.querySelector("td strong")?.textContent, "Memory<1GB");
+      assert.equal(editable.querySelector("a")?.getAttribute("href"), "https://example.com/");
+      assert.equal(editable.querySelector("a")?.textContent, "limit<1");
+      const image = editable.querySelector("img");
+      assert.equal(image?.getAttribute("alt"), "limit");
+      assert.equal(image?.getAttribute("width"), "80");
+      assert.equal(image?.getAttribute("height"), "40");
+      assert.equal(editable.querySelector("code")?.textContent, "literal<1 and <host>");
+      const { getCodeMirrorBlockText } = await import("./InlineMarkdownEditor.tsx");
+      const codeBlock = editable.querySelector(".cm-editor");
+      assert.ok(codeBlock);
+      assert.equal(getCodeMirrorBlockText(codeBlock), "cat <<'EOF'\n<host> and x<1\nEOF");
+      assert.deepEqual(changes, []);
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("issue 3205 author note survives source, preview and edit without rewriting", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = ISSUE_3205_MARKDOWN;
+    const { rootNode, changes, rerender, unmount } = await renderEditor(window, { value, editorMode: "source" });
+    try {
+      assert.equal(rootNode.querySelector("textarea")?.value, value);
+      for (const editorMode of ["preview", "edit", "preview"] as const) {
+        await rerender({ value, editorMode });
+        await runWithAct(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        assert.ok(!querySourceFallback(rootNode), `${editorMode} must render the author's note`);
+        const editable = rootNode.querySelector("[contenteditable]");
+        assert.ok(editable);
+        assert.equal(editable.getAttribute("contenteditable"), editorMode === "edit" ? "true" : "false");
+        assert.equal(editable.querySelector("h1")?.textContent, "设备TCP栈调优操作记录");
+        assert.match(editable.querySelector("table")?.textContent ?? "", /内存<1GB设备/);
+        assert.match(editable.textContent ?? "", /配置回滚/);
+        assert.equal(editable.querySelectorAll(".cm-editor").length, 10);
+      }
+      await rerender({ value, editorMode: "source" });
+      assert.equal(rootNode.querySelector("textarea")?.value, value);
+      assert.deepEqual(changes, [], "view changes must not rewrite the author's source");
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("editing a comparison emits Markdown that can be reopened", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = "Memory<1GB";
+    const { rootNode, changes, rerender, unmount } = await renderEditor(window, { value });
+    try {
+      assert.deepEqual(changes, []);
+      const editable = rootNode.querySelector("[contenteditable]");
+      assert.ok(editable);
+      const { getNearestEditorFromDOMNode, $getRoot, $isTextNode } = await import("lexical");
+      const editor = getNearestEditorFromDOMNode(editable);
+      assert.ok(editor);
+      await runWithAct(async () => {
+        editor.update(() => {
+          const text = $getRoot().getFirstDescendant();
+          assert.ok($isTextNode(text));
+          text.setTextContent("Memory<2GB");
+        }, { discrete: true });
+      });
+      assert.ok(changes.length > 0, "real edits must still be saved");
+      const edited = changes.at(-1)!;
+      await rerender({ value: edited, editorMode: "preview" });
+      assert.ok(!querySourceFallback(rootNode));
+      assert.equal(rootNode.querySelector("[contenteditable]")?.textContent, "Memory<2GB");
+      await rerender({ value: edited, editorMode: "source" });
+      assert.equal(rootNode.querySelector("textarea")?.value, edited);
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("preview task checkboxes still save explicit changes without rewriting comparisons", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = "- [ ] Memory<1GB\n- [x] Ready";
+    const { rootNode, changes, unmount } = await renderEditor(window, { value, editorMode: "preview" });
+    try {
+      assert.deepEqual(changes, []);
+      const task = rootNode.querySelector<HTMLElement>('li[role="checkbox"]');
+      assert.ok(task);
+      await runWithAct(async () => {
+        task.dispatchEvent(new window.MouseEvent("click", { bubbles: true, clientX: 0 }));
+      });
+      assert.deepEqual(changes, ["- [x] Memory<1GB\n- [x] Ready"]);
+      assert.equal(rootNode.querySelector('li[role="checkbox"]')?.getAttribute("aria-checked"), "true");
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("switching between a comparison note and an unsupported note keeps the fallback scoped", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const value = "Memory<1GB";
+    const { rootNode, changes, rerender, unmount } = await renderEditor(window, { value });
+    try {
+      for (const props of [
+        { noteId: "unsupported", value: NOTE_MARKDOWN_MDX_CANNOT_PARSE },
+        { noteId: "comparison", value },
+      ]) {
+        await rerender(props);
+        await runWithAct(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+        if (props.noteId === "unsupported") {
+          assert.equal(querySourceFallback(rootNode)?.value, props.value);
+        } else {
+          assert.ok(!querySourceFallback(rootNode));
+          assert.equal(rootNode.querySelector("[contenteditable]")?.textContent, value);
+        }
+      }
+      assert.deepEqual(changes, []);
+    } finally {
+      await unmount();
+    }
+  } finally {
+    cleanup();
+  }
+});
 
 test("unrenderable markdown stays visible via the raw source fallback", async () => {
   const { window, cleanup } = setupDom();
