@@ -1,18 +1,10 @@
 export const MAX_SFTP_SIDE_PANEL_REMEMBERED_PATHS = 32;
 
-export type SftpSidePanelPathLocation = {
-  hostId: string;
-  connectionKey: string;
-  path: string;
-  routeSessionId: string | null;
-};
-
 export function canApplySftpSidePanelInitialLocation(params: {
   activeHostId: string;
   initialLocation: { hostId: string; path: string };
   expectedConnectionKey: string;
   actualConnectionKey: string | null;
-  expectedRouteSessionId: string | null;
   pendingRequiresExactTarget: boolean;
   pendingTargetConnectionId: string | null;
   connection: {
@@ -20,7 +12,6 @@ export function canApplySftpSidePanelInitialLocation(params: {
     hostId: string;
     isLocal: boolean;
     status: string;
-    routeSessionId?: string;
   } | null | undefined;
 }): boolean {
   const { connection } = params;
@@ -30,10 +21,6 @@ export function canApplySftpSidePanelInitialLocation(params: {
   if (connection.hostId !== params.activeHostId) return false;
   if (params.actualConnectionKey !== params.expectedConnectionKey) return false;
   if (
-    params.expectedRouteSessionId
-    && connection.routeSessionId !== params.expectedRouteSessionId
-  ) return false;
-  if (
     params.pendingRequiresExactTarget
     && (
       !params.pendingTargetConnectionId
@@ -41,19 +28,6 @@ export function canApplySftpSidePanelInitialLocation(params: {
     )
   ) return false;
   return true;
-}
-
-export function resolveSftpSidePanelPathPublication(params: {
-  hasPendingUpload: boolean;
-  expectedRouteSessionId: string | null;
-  location: SftpSidePanelPathLocation;
-}): SftpSidePanelPathLocation | null {
-  if (params.hasPendingUpload) return null;
-  if (
-    params.expectedRouteSessionId
-    && params.location.routeSessionId !== params.expectedRouteSessionId
-  ) return null;
-  return params.location;
 }
 
 export function pruneSftpSidePanelState<Value>(

@@ -117,25 +117,6 @@ test("moving an in-flight reconnect does not create a second connection", () => 
   );
 });
 
-test("same-endpoint Mosh and ET routes never share an in-flight connect", () => {
-  const base = {
-    side: "left" as const,
-    tabId: "tab-1",
-    targetConnectionKey: "host-key",
-    initialPath: "/home",
-  };
-  const routeA = buildSftpConnectInFlightKey({
-    ...base,
-    routeSessionId: "mosh-a",
-  });
-  const routeB = buildSftpConnectInFlightKey({
-    ...base,
-    routeSessionId: "mosh-b",
-  });
-
-  assert.notEqual(routeA, routeB);
-});
-
 test("the newest request for a moved tab wins after an older close finishes", () => {
   const requests = new Map<string, symbol>();
   const oldRequest = beginSftpTabConnectRequest(requests, "tab-moving");
@@ -766,7 +747,7 @@ test("a reconnecting tab moved to the other pane still schedules recovery", () =
   }), { side: "right", tabId: "tab-a" });
 });
 
-test("automatic reconnect preserves route ownership and strict source reuse", () => {
+test("automatic reconnect preserves strict source reuse", () => {
   const pane = {
     id: "tab-a",
     connection: {
@@ -776,14 +757,12 @@ test("automatic reconnect preserves route ownership and strict source reuse", ()
       isLocal: false,
       status: "disconnected",
       currentPath: "/home/alice",
-      routeSessionId: "terminal-a",
       sourceSessionId: "ssh-a",
     },
   } as SftpPane;
 
   assert.deepEqual(resolveSftpReconnectOptions(pane), {
     tabId: "tab-a",
-    routeSessionId: "terminal-a",
     sourceSessionId: "ssh-a",
     requireSourceSessionReuse: true,
   });

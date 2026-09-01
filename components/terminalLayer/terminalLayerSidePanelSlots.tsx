@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import { getSftpCurrentPathMemoryKey } from '../../application/state/sftp/sftpReopenLocation';
-import { resolvePendingSftpUploadRoute } from '../../application/state/sftp/pendingSftpUploadQueue';
 import {
   getSidePanelLiveSnapshot,
   subscribeSidePanelLiveSnapshot,
@@ -29,7 +28,7 @@ import type { Host, TerminalSession, Workspace } from '../../types';
 import { SystemManagerSidePanel } from '../systemManager/SystemManagerSidePanel';
 import { resolveSftpFollowTerminalCwdTargetHost } from '../../domain/sftpFollowTerminalCwd';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
-import type { PendingSftpUpload, SidePanelTab } from './TerminalLayerSupport';
+import type { SidePanelTab } from './TerminalLayerSupport';
 import {
   collectSidePanelPanes,
   sidePanelLayoutHasTool,
@@ -37,7 +36,6 @@ import {
 } from '../../domain/sidePanelLayout';
 import { sidePanelHiddenNotesPanelClassName, sidePanelHiddenPanelClassName } from './terminalLayerSidePanelHiddenWrapper';
 import { shouldKeepSftpBrowseSessionInteractive } from './sftpPanelLifecycle';
-import { resolveSftpSidePanelPathPublication } from '../sftp/sftpSidePanelConnectionMemory';
 
 type SidePanelStableContext = Record<string, any> & {
   sftpPaneClosedTabIdsRef: React.MutableRefObject<Set<string>>;
@@ -111,34 +109,12 @@ function SidePanelSftpSlotInner({
   } = ctx;
 
   const storedSftpHost = sftpHostForTab.get(tabId) ?? null;
-  const pendingUploads = (
-    sftpPendingUploadsForTab as Map<string, PendingSftpUpload[]>
-  ).get(tabId) ?? [];
-  const route = resolvePendingSftpUploadRoute(
-    pendingUploads,
-    {
-      host: isVisible ? (live.sftpActiveHost ?? storedSftpHost) : storedSftpHost,
-      activeSessionId: isVisible ? live.activeTerminalSessionIdForSftp : null,
-      focusedSessionId: isVisible ? live.focusedSessionId : null,
-      initialLocation: sftpInitialLocationForTab.get(tabId) ?? null,
-    },
-  );
-  const pendingUpload = route.pendingUpload;
-  const panelActiveHost = route.host;
-  const panelActiveSessionId = route.activeSessionId;
-  const panelFocusedSessionId = route.focusedSessionId;
-  const panelInitialLocation = route.initialLocation;
-  const pendingUploadObservedRoute = isVisible
-    ? {
-        activeHostId: (live.sftpActiveHost ?? storedSftpHost)?.id ?? null,
-        activeSessionId: live.activeTerminalSessionIdForSftp,
-        focusedSessionId: live.focusedSessionId,
-      }
-    : {
-        activeHostId: panelActiveHost?.id ?? null,
-        activeSessionId: panelActiveSessionId,
-        focusedSessionId: panelFocusedSessionId,
-      };
+  const panelActiveHost = isVisible
+    ? (live.sftpActiveHost ?? storedSftpHost)
+    : storedSftpHost;
+  const panelActiveSessionId = isVisible ? live.activeTerminalSessionIdForSftp : null;
+  const panelFocusedSessionId = isVisible ? live.focusedSessionId : null;
+  const pendingUpload = sftpPendingUploadsForTab.get(tabId) ?? null;
 
   const handleFollowTerminalCwdChange = useCallback((enabled: boolean, visibleHost?: Host | null) => {
     const isActive = activeTabStore.getActiveTabId() === tabId;
@@ -178,34 +154,17 @@ function SidePanelSftpSlotInner({
   );
 
   const handleCurrentPathChange = useCallback(
-    (location: {
-      hostId: string;
-      connectionKey: string;
-      path: string;
-      routeSessionId: string | null;
-    }) => {
-      const publishableLocation = resolveSftpSidePanelPathPublication({
-        hasPendingUpload: Boolean(pendingUpload),
-        expectedRouteSessionId: panelActiveSessionId ?? panelFocusedSessionId,
-        location,
-      });
-      if (!publishableLocation) return;
+    (location: { hostId: string; connectionKey: string; path: string }) => {
       handleSftpCurrentPathChange(
         getSftpCurrentPathMemoryKey({
           tabId,
           activeTerminalSessionIdForSftp: panelActiveSessionId,
           focusedSessionId: panelFocusedSessionId,
         }),
-        publishableLocation,
+        location,
       );
     },
-    [
-      handleSftpCurrentPathChange,
-      panelActiveSessionId,
-      panelFocusedSessionId,
-      pendingUpload,
-      tabId,
-    ],
+    [handleSftpCurrentPathChange, panelActiveSessionId, panelFocusedSessionId, tabId],
   );
 
   const handleActiveTransfersChange = useCallback(
@@ -238,7 +197,7 @@ function SidePanelSftpSlotInner({
         activeHost={panelActiveHost}
         activeSessionId={panelActiveSessionId}
         focusedSessionId={panelFocusedSessionId}
-        initialLocation={isVisible ? panelInitialLocation : null}
+        initialLocation={isVisible ? (sftpInitialLocationForTab.get(tabId) ?? null) : null}
         onInitialLocationApplied={handleInitialLocationApplied}
         onCurrentPathChange={handleCurrentPathChange}
         onActiveTransfersChange={handleActiveTransfersChange}
@@ -248,7 +207,6 @@ function SidePanelSftpSlotInner({
         ownerPanelOpen={ownerPanelOpen}
         renderOverlays={isVisible}
         pendingUpload={pendingUpload}
-        pendingUploadObservedRoute={pendingUploadObservedRoute}
         onPendingUploadHandled={handlePendingUploadHandledForTab}
         sftpDoubleClickBehavior={sftpDoubleClickBehavior}
         sftpAutoSync={isVisible ? sftpAutoSync : false}
@@ -259,8 +217,8 @@ function SidePanelSftpSlotInner({
         editorWordWrap={editorWordWrap}
         setEditorWordWrap={setEditorWordWrap}
         onGetTerminalCwd={getTerminalCwd}
-        activeTerminalCwd={isVisible && !pendingUpload ? live.activeTerminalCwd : null}
-        activeTerminalCwdTrusted={isVisible && !pendingUpload ? live.activeTerminalCwdTrusted : false}
+        activeTerminalCwd={isVisible ? live.activeTerminalCwd : null}
+        activeTerminalCwdTrusted={isVisible ? live.activeTerminalCwdTrusted : false}
         sftpFollowTerminalCwd={sftpFollowTerminalCwd}
         onSftpFollowTerminalCwdChange={handleFollowTerminalCwdChange}
         onRequestTerminalFocus={refocusActiveTerminalSession}

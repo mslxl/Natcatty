@@ -28,8 +28,6 @@ export interface SftpConnection {
   reusedConnection?: boolean;
   /** Terminal session whose confirmed SSH transport backs this connection. */
   sourceSessionId?: string;
-  /** Terminal route that requested and owns this browse connection. */
-  routeSessionId?: string;
   fileProtocol?: 'auto' | 'sftp' | 'scp';
 }
 

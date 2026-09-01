@@ -404,6 +404,8 @@ test("remote SSH terminal drop falls back to SFTP when rz never starts", async (
 
 test("remote SSH folder drop uses SFTP to preserve directory structure", async () => {
   let openedEntries: DropEntry[] | undefined;
+  let originSessionId: string | undefined;
+  let sourceSessionId: string | undefined;
   let zmodemStarted = false;
 
   const folderEntries: DropEntry[] = [
@@ -426,8 +428,10 @@ test("remote SSH folder drop uses SFTP to preserve directory structure", async (
     dropEntries: folderEntries,
     host,
     isLocalConnection: false,
-    onOpenSftp: (_host, _initialPath, pendingUploadEntries) => {
+    onOpenSftp: (_host, _initialPath, pendingUploadEntries, origin, source) => {
       openedEntries = pendingUploadEntries;
+      originSessionId = origin;
+      sourceSessionId = source;
     },
     resolveSftpInitialPath: async () => "/srv/app/current",
     scrollToBottomAfterProgrammaticInput: () => {},
@@ -445,6 +449,8 @@ test("remote SSH folder drop uses SFTP to preserve directory structure", async (
 
   assert.equal(zmodemStarted, false);
   assert.equal(openedEntries, folderEntries);
+  assert.equal(originSessionId, "session-1");
+  assert.equal(sourceSessionId, "session-1");
 });
 
 test("Mosh folder drop keeps its origin but opens a fresh SFTP route", async () => {

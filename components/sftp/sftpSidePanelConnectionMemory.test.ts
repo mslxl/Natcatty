@@ -6,7 +6,6 @@ import {
   pruneSftpSidePanelState,
   recallSftpSidePanelPath,
   rememberSftpSidePanelPath,
-  resolveSftpSidePanelPathPublication,
 } from "./sftpSidePanelConnectionMemory";
 
 const initialLocationParams = {
@@ -14,7 +13,6 @@ const initialLocationParams = {
   initialLocation: { hostId: "host-1", path: "/srv/b" },
   expectedConnectionKey: "host-1:endpoint",
   actualConnectionKey: "host-1:endpoint",
-  expectedRouteSessionId: "terminal-b",
   pendingRequiresExactTarget: true,
   pendingTargetConnectionId: "connection-b",
   connection: {
@@ -22,18 +20,16 @@ const initialLocationParams = {
     hostId: "host-1",
     isLocal: false,
     status: "connected",
-    routeSessionId: "terminal-b",
   },
 };
 
-test("initial location waits for the exact endpoint, route, and pending target", () => {
+test("initial location waits for the exact endpoint and pending target", () => {
   assert.equal(canApplySftpSidePanelInitialLocation(initialLocationParams), true);
   assert.equal(canApplySftpSidePanelInitialLocation({
     ...initialLocationParams,
     connection: {
       ...initialLocationParams.connection,
       id: "connection-a",
-      routeSessionId: "terminal-a",
     },
   }), false);
   assert.equal(canApplySftpSidePanelInitialLocation({
@@ -46,7 +42,7 @@ test("initial location waits for the exact endpoint, route, and pending target",
   }), false);
 });
 
-test("ordinary initial locations still require their known terminal route", () => {
+test("ordinary initial locations apply once the matching pane is connected", () => {
   assert.equal(canApplySftpSidePanelInitialLocation({
     ...initialLocationParams,
     pendingRequiresExactTarget: false,
@@ -58,7 +54,7 @@ test("ordinary initial locations still require their known terminal route", () =
     pendingTargetConnectionId: null,
     connection: {
       ...initialLocationParams.connection,
-      routeSessionId: "terminal-a",
+      status: "connecting",
     },
   }), false);
 });
@@ -100,46 +96,4 @@ test("reading a remembered SFTP path keeps that endpoint in the LRU", () => {
 
   assert.equal(paths.has("endpoint-a"), true);
   assert.equal(paths.has("endpoint-b"), false);
-});
-
-test("path publication waits for the queue to clear and the current route to bind", () => {
-  const oldRouteLocation = {
-    hostId: "host-1",
-    connectionKey: "host-1:endpoint",
-    path: "/srv/a",
-    routeSessionId: "terminal-a",
-  };
-
-  assert.equal(resolveSftpSidePanelPathPublication({
-    hasPendingUpload: true,
-    expectedRouteSessionId: "terminal-a",
-    location: oldRouteLocation,
-  }), null);
-  assert.equal(resolveSftpSidePanelPathPublication({
-    hasPendingUpload: false,
-    expectedRouteSessionId: "terminal-b",
-    location: oldRouteLocation,
-  }), null);
-  assert.equal(resolveSftpSidePanelPathPublication({
-    hasPendingUpload: false,
-    expectedRouteSessionId: "terminal-b",
-    location: { ...oldRouteLocation, routeSessionId: null },
-  }), null);
-
-  assert.deepEqual(resolveSftpSidePanelPathPublication({
-    hasPendingUpload: false,
-    expectedRouteSessionId: null,
-    location: { ...oldRouteLocation, routeSessionId: null },
-  }), { ...oldRouteLocation, routeSessionId: null });
-
-  const reboundLocation = {
-    ...oldRouteLocation,
-    path: "/srv/b",
-    routeSessionId: "terminal-b",
-  };
-  assert.equal(resolveSftpSidePanelPathPublication({
-    hasPendingUpload: false,
-    expectedRouteSessionId: "terminal-b",
-    location: reboundLocation,
-  }), reboundLocation);
 });

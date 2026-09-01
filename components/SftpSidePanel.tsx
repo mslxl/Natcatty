@@ -93,7 +93,6 @@ import {
   shouldCancelPendingSftpUpload,
   shouldCancelSettledPendingSftpRebindWithoutTarget,
   shouldDeferSftpSidePanelAutoConnectForSession,
-  shouldRebindSftpSidePanelRouteSession,
   shouldRebindSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
   shouldStartPendingSftpUploadRebind,
@@ -136,7 +135,6 @@ interface SftpSidePanelProps {
     hostId: string;
     connectionKey: string;
     path: string;
-    routeSessionId: string | null;
   }) => void;
   onActiveTransfersChange?: (count: number) => void;
   /** External-editor temps that must keep this owner mounted after panel close. */
@@ -151,7 +149,6 @@ interface SftpSidePanelProps {
   renderOverlays?: boolean;
   pendingUpload?: {
     requestId: string;
-    activated: boolean;
     hostId: string;
     connectionKey: string;
     originSessionId?: string;
@@ -159,12 +156,6 @@ interface SftpSidePanelProps {
     targetPath?: string;
     entries: DropEntry[];
   } | null;
-  /** Live route used only to detect a user moving away from a pending drop. */
-  pendingUploadObservedRoute?: {
-    activeHostId: string | null;
-    activeSessionId: string | null;
-    focusedSessionId: string | null;
-  };
   onPendingUploadHandled?: (requestId: string) => void;
   sftpDoubleClickBehavior: "open" | "transfer";
   sftpAutoSync: boolean;
@@ -211,7 +202,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   ownerPanelOpen = false,
   renderOverlays = true,
   pendingUpload = null,
-  pendingUploadObservedRoute,
   onPendingUploadHandled,
   sftpDoubleClickBehavior,
   sftpAutoSync,
@@ -557,8 +547,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!activeHost) return;
 
     const s = sftpRef.current;
-    const routeSessionId = activeSessionId ?? focusedSessionId ?? null;
-    const autoConnectPendingUpload = pendingUpload?.activated ? pendingUpload : null;
     const hasActiveWork = interactiveWorkActive
       || (s.activeFileWatchCountRef?.current ?? 0) > 0
       || (s.activeExternalEditCount ?? 0) > 0;
@@ -605,32 +593,32 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       activeHost.sftpFileProtocol,
     );
     const pendingMatchesTarget = Boolean(
-      autoConnectPendingUpload?.hostId === activeHost.id
-      && autoConnectPendingUpload.connectionKey === connectionKey
+      pendingUpload?.hostId === activeHost.id
+      && pendingUpload.connectionKey === connectionKey
     );
     const pendingStrictSourceSessionId = (
       pendingMatchesTarget
-      && autoConnectPendingUpload?.sourceSessionId
-      && autoConnectPendingUpload.sourceSessionId === activeSessionId
-    ) ? autoConnectPendingUpload.sourceSessionId : undefined;
+      && pendingUpload?.sourceSessionId
+      && pendingUpload.sourceSessionId === activeSessionId
+    ) ? pendingUpload.sourceSessionId : undefined;
     if (
-      autoConnectPendingUpload?.hostId === activeHost.id
-      && autoConnectPendingUpload.connectionKey === connectionKey
-      && autoConnectPendingUpload.sourceSessionId
-      && autoConnectPendingUpload.sourceSessionId !== activeSessionId
+      pendingUpload?.hostId === activeHost.id
+      && pendingUpload.connectionKey === connectionKey
+      && pendingUpload.sourceSessionId
+      && pendingUpload.sourceSessionId !== activeSessionId
     ) return;
     if (
-      autoConnectPendingUpload
-      && pendingUploadRebindStartedIdRef.current === autoConnectPendingUpload.requestId
-      && pendingUploadRebindSettledRequestId !== autoConnectPendingUpload.requestId
+      pendingUpload
+      && pendingUploadRebindStartedIdRef.current === pendingUpload.requestId
+      && pendingUploadRebindSettledRequestId !== pendingUpload.requestId
     ) return;
-    const pendingRequiresForcedRebind = autoConnectPendingUpload
+    const pendingRequiresForcedRebind = pendingUpload
       ? shouldStartPendingSftpUploadRebind({
           pendingMatchesTarget,
-          requestId: autoConnectPendingUpload.requestId,
+          requestId: pendingUpload.requestId,
           startedRequestId: pendingUploadRebindStartedIdRef.current,
-          originSessionId: autoConnectPendingUpload.originSessionId,
-          sourceSessionId: autoConnectPendingUpload.sourceSessionId,
+          originSessionId: pendingUpload.originSessionId,
+          sourceSessionId: pendingUpload.sourceSessionId,
         })
       : false;
     const pendingSameEndpointSession = sessions.find((session) => (
@@ -672,20 +660,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       : null;
     const activeTabConnectionKey = liveConnectionKey
       ?? (activeTab ? tabConnectionKeyMapRef.current.get(activeTab.id) ?? null : null);
-    const activeConnectionRouteSessionId = activeTab?.connection?.routeSessionId ?? null;
-    const routeSessionChanged = shouldRebindSftpSidePanelRouteSession({
-      boundRouteSessionId: activeConnectionRouteSessionId,
-      nextRouteSessionId: routeSessionId,
-    });
     if (activeTab && activeTabConnectionKey) {
       tabConnectionKeyMapRef.current.set(activeTab.id, activeTabConnectionKey);
     }
-    // Rebind when the focused terminal route changes (SSH, Mosh, or ET): saved
-    // host keys can lag live session endpoints, and an existing connection must
-    // never be relabeled as belonging to another terminal.
+    // Rebind when the focused terminal SSH session changes: saved host keys can
+    // lag live session endpoints (edited host / unsaved user). Still keep the
+    // browsed path sticky via remembered initialPath below.
     if (
       !sessionChanged
-      && !routeSessionChanged
       && !pendingRequiresForcedRebind
       && shouldSkipSftpSidePanelAutoConnect(
         connectionKey,
@@ -730,7 +712,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // (proxy/jump path can differ even when hostId/hostname/port/user match).
     // Same-endpoint rebind happens in place below with remembered initialPath so
     // we keep the browsed directory without stacking tabs.
-    const existingTab = sessionChanged || routeSessionChanged || pendingRequiresForcedRebind
+    const existingTab = sessionChanged || pendingRequiresForcedRebind
       ? null
       : findReusableSftpSidePanelTab(
         tabs,
@@ -760,7 +742,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
           hostId: existingTab.connection.hostId,
           connectionKey,
           path,
-          routeSessionId,
         });
       }
       return;
@@ -769,7 +750,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // Capture the visible path before rebind so session switches keep it even
     // if the path-memory effect has not written this endpoint yet.
     if (
-      (sessionChanged || routeSessionChanged || pendingRequiresForcedRebind)
+      (sessionChanged || pendingRequiresForcedRebind)
       && activeTab?.connection
       && !activeTab.connection.isLocal
       && activeTab.connection.status === "connected"
@@ -785,7 +766,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         hostId: activeTab.connection.hostId,
         connectionKey,
         path: activeTab.connection.currentPath,
-        routeSessionId: activeTab.connection.routeSessionId ?? null,
       });
     }
 
@@ -830,7 +810,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         // Same-endpoint rebind closes the old connection in place; keep a tab
         // when editors or in-flight transfers still depend on that connection id.
         || (
-          (sessionChanged || routeSessionChanged || pendingRequiresForcedRebind)
+          (sessionChanged || pendingRequiresForcedRebind)
           && (hasEditorBoundToCurrentConnection || hasActiveTransferOnCurrentConnection)
         )
       )
@@ -854,7 +834,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       sourceSessionId: pendingStrictSourceSessionId
         ?? (activeSessionStatus === "connected" ? (activeSessionId ?? undefined) : undefined),
       requireSourceSessionReuse: Boolean(pendingStrictSourceSessionId),
-      routeSessionId: routeSessionId ?? undefined,
       ...(connectRequestKey ? { connectRequestKey } : undefined),
       onConnectionCreated,
       ...(initialPath ? { initialPath } : undefined),
@@ -863,13 +842,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-    if (pendingRequiresForcedRebind && autoConnectPendingUpload) {
+    if (pendingRequiresForcedRebind && pendingUpload) {
       startPendingUploadRebind({
-        requestId: autoConnectPendingUpload.requestId,
+        requestId: pendingUpload.requestId,
         previousConnectionId: currentConn?.id ?? null,
         connect: () => connect(
-          autoConnectPendingUpload.requestId,
-          (target) => bindPendingUploadRebindTarget(autoConnectPendingUpload.requestId, target),
+          pendingUpload.requestId,
+          (target) => bindPendingUploadRebindTarget(pendingUpload.requestId, target),
         ),
       });
       return;
@@ -879,7 +858,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     activeHost,
     activeSessionId,
     bindPendingUploadRebindTarget,
-    focusedSessionId,
     initialLocation,
     interactiveWorkActive,
     pendingUpload,
@@ -926,7 +904,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   useEffect(() => {
     if (!activeHost || !initialLocation) return;
     const s = sftpRef.current;
-    const activePendingUpload = pendingUpload?.activated ? pendingUpload : null;
+    const activePendingUpload = pendingUpload;
     const pendingRequiresExactTarget = Boolean(
       activePendingUpload
       && (activePendingUpload.originSessionId || activePendingUpload.sourceSessionId)
@@ -966,7 +944,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       initialLocation,
       expectedConnectionKey,
       actualConnectionKey,
-      expectedRouteSessionId: activeSessionId ?? focusedSessionId ?? null,
       pendingRequiresExactTarget,
       pendingTargetConnectionId: pendingRequiresExactTarget
         ? rebindBarrier?.targetConnectionId ?? null
@@ -987,8 +964,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     void s.navigateTo(targetSide, initialLocation.path, { tabId: targetPane!.id });
   }, [
     activeHost,
-    activeSessionId,
-    focusedSessionId,
     initialLocation,
     onInitialLocationApplied,
     pendingUpload,
@@ -1039,7 +1014,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       hostId: connection.hostId,
       connectionKey,
       path: connection.currentPath,
-      routeSessionId: connection.routeSessionId ?? null,
     });
   }, [
     activeHost,
@@ -1077,19 +1051,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const originSessionStatus = pendingUpload.originSessionId
       ? sessions.find((session) => session.id === pendingUpload.originSessionId)?.status ?? null
       : undefined;
-    const cancellationRoute = pendingUploadObservedRoute ?? {
-      activeHostId: activeHost?.id ?? null,
-      activeSessionId: activeSessionId ?? null,
-      focusedSessionId: focusedSessionId ?? null,
-    };
     const cancellationReason = resolvePendingSftpUploadCancellation({
       pendingHostId: pendingUpload.hostId,
       pendingOriginSessionId: pendingUpload.originSessionId,
       pendingSourceSessionId: pendingUpload.sourceSessionId,
       originSessionStatus,
-      activeHostId: cancellationRoute.activeHostId,
-      activeSessionId: cancellationRoute.activeSessionId,
-      focusedSessionId: cancellationRoute.focusedSessionId,
+      activeHostId: activeHost?.id ?? null,
+      activeSessionId: activeSessionId ?? null,
+      focusedSessionId: focusedSessionId ?? null,
       panelVisible: isVisible,
       connection,
     });
@@ -1103,7 +1072,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       cancelPendingUpload();
       return;
     }
-    if (!pendingUpload.activated) return;
     if (shouldCancelSettledPendingSftpRebindWithoutTarget({
       pendingRequiresRebind: Boolean(
         pendingUpload.originSessionId || pendingUpload.sourceSessionId
@@ -1217,7 +1185,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     onPendingUploadHandled,
     ownerPanelOpen,
     pendingUpload,
-    pendingUploadObservedRoute,
     pendingUploadRebindBarrierRef,
     pendingUploadRebindSettledRequestId,
     pendingUploadRebindStartedIdRef,
@@ -1951,10 +1918,6 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.ownerPanelOpen === next.ownerPanelOpen &&
   prev.renderOverlays === next.renderOverlays &&
   prev.pendingUpload?.requestId === next.pendingUpload?.requestId &&
-  prev.pendingUpload?.activated === next.pendingUpload?.activated &&
-  prev.pendingUploadObservedRoute?.activeHostId === next.pendingUploadObservedRoute?.activeHostId &&
-  prev.pendingUploadObservedRoute?.activeSessionId === next.pendingUploadObservedRoute?.activeSessionId &&
-  prev.pendingUploadObservedRoute?.focusedSessionId === next.pendingUploadObservedRoute?.focusedSessionId &&
   prev.onPendingUploadHandled === next.onPendingUploadHandled &&
   prev.sftpDoubleClickBehavior === next.sftpDoubleClickBehavior &&
   prev.sftpAutoSync === next.sftpAutoSync &&
