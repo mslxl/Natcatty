@@ -621,7 +621,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     Map<string, { hostId: string; path: string }>
   >(new Map());
   const [sftpPendingUploadsForTab, setSftpPendingUploadsForTab] = useState<
-    Map<string, PendingSftpUpload>
+    Map<string, PendingSftpUpload[]>
   >(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
@@ -925,11 +925,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     });
 
     setSftpPendingUploadsForTab(prev => {
-      const next = new Map(prev);
       if (!pendingUploadEntries?.length) {
-        next.delete(tabId);
-      } else {
-        next.set(tabId, {
+        // Opening the panel without new files must not discard drops that are
+        // still queued and waiting to upload; leave the queue untouched.
+        // Stale entries are cancelled by the panel itself (with a toast) when
+        // their host/connection no longer matches.
+        return prev;
+      }
+      const next = new Map(prev);
+      // Queue the drop behind any earlier pending request for this tab so a
+      // second drop that arrives before the first has started uploading
+      // cannot silently discard the first batch.
+      const queue = prev.get(tabId) ?? [];
+      next.set(tabId, [
+        ...queue,
+        {
           requestId: crypto.randomUUID(),
           hostId: host.id,
           connectionKey,
@@ -937,18 +947,25 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           sourceSessionId,
           targetPath: initialPath,
           entries: pendingUploadEntries,
-        });
-      }
+        },
+      ]);
       return next;
     });
   }, [closeTerminalSidePanelTab, resolveSftpOpenTarget, setSidePanelOpenTabs, sidePanelLayoutsRef, sidePanelOpenTabsRef]);
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {
-      const current = prev.get(tabId);
-      if (!current || current.requestId !== requestId) return prev;
+      const queue = prev.get(tabId);
+      if (!queue?.length) return prev;
+      const index = queue.findIndex(item => item.requestId === requestId);
+      if (index === -1) return prev;
       const next = new Map(prev);
-      next.delete(tabId);
+      const remaining = queue.filter((_, itemIndex) => itemIndex !== index);
+      if (remaining.length) {
+        next.set(tabId, remaining);
+      } else {
+        next.delete(tabId);
+      }
       return next;
     });
   }, []);

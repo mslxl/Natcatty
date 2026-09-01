@@ -114,7 +114,9 @@ function SidePanelSftpSlotInner({
     : storedSftpHost;
   const panelActiveSessionId = isVisible ? live.activeTerminalSessionIdForSftp : null;
   const panelFocusedSessionId = isVisible ? live.focusedSessionId : null;
-  const pendingUpload = sftpPendingUploadsForTab.get(tabId) ?? null;
+  // Only the head of the per-tab pending upload queue is surfaced at a time;
+  // the panel advances the queue by reporting each request as handled.
+  const pendingUpload = sftpPendingUploadsForTab.get(tabId)?.[0] ?? null;
 
   const handleFollowTerminalCwdChange = useCallback((enabled: boolean, visibleHost?: Host | null) => {
     const isActive = activeTabStore.getActiveTabId() === tabId;
