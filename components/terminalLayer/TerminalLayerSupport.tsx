@@ -103,6 +103,10 @@ export type PendingSftpUpload = {
   sourceSessionId?: string;
   targetPath?: string;
   entries: DropEntry[];
+  /** Endpoint snapshot captured at drop time so queued requests can rebind the shared panel route in FIFO order. */
+  host?: Host;
+  /** Initial location resolved at drop time; applied when this request reaches the head of the queue. */
+  initialLocation?: { hostId: string; path: string } | null;
 };
 
 export type SnippetExecutor = (
