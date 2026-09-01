@@ -284,7 +284,11 @@ test("setAutoLaunchEnabled is a no-op in dev and does not call the app API", () 
   const result = setAutoLaunchEnabled(true, { app, defaultApp: true, platform: "win32" });
 
   assert.equal(called, false);
-  assert.deepEqual(result, { success: false, enabled: false, supported: false });
+  assert.deepEqual(
+    result,
+    { success: true, enabled: false, supported: false },
+    "enabled:false is a confirmed fact when unsupported, not an unknown state — matches getAutoLaunchEnabled",
+  );
 });
 
 test("setAutoLaunchEnabled is a no-op on Linux and does not call the app API", () => {
@@ -294,19 +298,38 @@ test("setAutoLaunchEnabled is a no-op on Linux and does not call the app API", (
   const result = setAutoLaunchEnabled(true, { app, defaultApp: false, platform: "linux" });
 
   assert.equal(called, false);
-  assert.deepEqual(result, { success: false, enabled: false, supported: false });
+  assert.deepEqual(result, { success: true, enabled: false, supported: false });
 });
 
-test("setAutoLaunchEnabled surfaces failures without throwing", () => {
+test("setAutoLaunchEnabled reports the real (unwritten) state when the write fails but a fallback read succeeds", () => {
   const app = {
     setLoginItemSettings: () => { throw new Error("registry locked"); },
     getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
   };
 
+  const result = setAutoLaunchEnabled(true, { app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
+
+  assert.deepEqual(
+    result,
+    { success: true, enabled: false, supported: true },
+    "success means \"enabled is trustworthy\", not \"the write succeeded\" — the renderer's push effect relies on " +
+      "this to roll an optimistic toggle back to the real state instead of leaving it stuck on a failed write",
+  );
+});
+
+test("setAutoLaunchEnabled reports success:false only when the write AND the fallback read both fail", () => {
+  const app = {
+    setLoginItemSettings: () => { throw new Error("registry locked"); },
+    getLoginItemSettings: () => { throw new Error("registry unreadable"); },
+  };
+
   const result = setAutoLaunchEnabled(true, { app, defaultApp: false, platform: "win32" });
 
-  assert.equal(result.success, false);
-  assert.equal(result.supported, true);
+  assert.deepEqual(
+    result,
+    { success: false, enabled: false, supported: true },
+    "a genuine double failure leaves the real state unknown — the renderer must preserve its last-known value",
+  );
 });
 
 test("wasLaunchedHidden detects the --hidden cold-start flag", () => {

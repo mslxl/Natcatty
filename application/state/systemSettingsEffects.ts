@@ -77,6 +77,13 @@ export function useSystemSettingsEffects({
   notifySettingsChanged,
 }: UseSystemSettingsEffectsParams) {
   const appIconApplyRequestIdRef = useRef(0);
+  // True once the push effect has issued a real OS write (i.e. after mount,
+  // when persistMountedRef is set — see below). If the user toggles
+  // auto-launch while the mount-time hydration read is still in flight, the
+  // hydration effect must not let its now-stale response overwrite that
+  // choice, or the adjacent push effect reacts to the overwrite and issues
+  // the opposite OS write right after the user's own request lands.
+  const autoLaunchWriteStartedRef = useRef(false);
 
   // Persist and sync toggle window hotkey setting
   useEffect(() => {
@@ -169,6 +176,11 @@ export function useSystemSettingsEffects({
     bridge.getAutoLaunch().then((result) => {
       if (cancelled) return;
       setAutoLaunchSupported(result.supported);
+      // The user (or an already-issued write) may have moved state on while
+      // this request was in flight — a stale hydration response must not
+      // clobber it, or the push effect below reacts to the clobber and
+      // fires an unwanted OS write right after the user's own request.
+      if (autoLaunchWriteStartedRef.current) return;
       if (!isAutoLaunchResultTrustworthy(result)) return;
       setAutoLaunchEnabled(result.enabled);
       localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');
@@ -188,6 +200,9 @@ export function useSystemSettingsEffects({
     if (!persistMountedRef.current) return;
     const bridge = netcattyBridge.get();
     if (!bridge?.setAutoLaunch) return;
+    // A real write is now in flight — permanently disqualify the mount-time
+    // hydration effect above from applying a (now possibly stale) response.
+    autoLaunchWriteStartedRef.current = true;
     bridge.setAutoLaunch(autoLaunchEnabled).then((result) => {
       setAutoLaunchSupported(result.supported);
       if (!isAutoLaunchResultTrustworthy(result)) return;

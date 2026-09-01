@@ -115,7 +115,10 @@ function setAutoLaunchEnabled(enabled, {
   platform = process.platform,
 } = {}) {
   if (!isAutoLaunchSupported({ defaultApp, platform })) {
-    return { success: false, enabled: false, supported: false };
+    // enabled:false is a confirmed fact here (the feature genuinely isn't
+    // available), not an unknown state — matches getAutoLaunchEnabled's
+    // equivalent branch so both functions agree on what `success` means.
+    return { success: true, enabled: false, supported: false };
   }
   const wantEnabled = Boolean(enabled);
   try {
@@ -131,7 +134,17 @@ function setAutoLaunchEnabled(enabled, {
     return { success: true, enabled: resolveEffectiveLoginState(settings, platform, execPath), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to update login item settings:", err?.message || err);
-    return { success: false, enabled: getAutoLaunchEnabled({ app, execPath, defaultApp, platform }).enabled, supported: true };
+    // `success` means "is `enabled` trustworthy", not "did the write
+    // succeed" — the write itself failing does not make a subsequent,
+    // independent read failing too. Surface whatever the fallback read
+    // determines: if it succeeds, `enabled` reflects the real (unwritten)
+    // state and the renderer's push effect correctly rolls the optimistic
+    // toggle back instead of leaving it stuck on a change that never
+    // actually happened. Only a genuine double failure (write AND fallback
+    // read both throw) reports success:false, so the renderer preserves its
+    // last-known state instead of guessing.
+    const fallback = getAutoLaunchEnabled({ app, execPath, defaultApp, platform });
+    return { success: fallback.success, enabled: fallback.enabled, supported: true };
   }
 }
 

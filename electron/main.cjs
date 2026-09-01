@@ -843,9 +843,15 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:getEnabled", async () => ({
 if (ipcMain) registerAutoLaunchHandlers(ipcMain, { app });
 
 // Cold-start only: true when the OS login item launched us hidden (--hidden
-// on Windows, wasOpenedAsHidden on macOS). Consumed once by the first
-// createAndShowMainWindow() call below so later reuse paths (tray click,
-// deep links, second-instance focus) always show.
+// on Windows, wasOpenedAsHidden on macOS). Consumed exactly once by whichever
+// createAndShowMainWindow() call reaches it first — this is NOT guaranteed to
+// be the default bootstrap call near the bottom of this file: a genuine
+// second instance (or a Dock reopen) can arrive after app.whenReady() but
+// before the bootstrap's own await chain gets there, racing it. Any caller
+// that represents an explicit foreground request (second-instance, activate,
+// deep links, ...) must re-focus after creation regardless of which flag it
+// happened to consume, or a user-triggered relaunch can silently create a
+// hidden window with nothing to show it.
 let consumeColdStartHiddenLaunch = (() => {
   let pending = wasLaunchedHidden({ argv: process.argv, app });
   return () => {
@@ -1273,7 +1279,14 @@ if (!gotLock) {
         // failed validation — silent no-op feels like a broken menu item.
         console.warn("[Main] Open-terminal-path args present but no valid path resolved:", secondInstanceArgv);
         if (!focusMainWindow()) {
-          void createAndShowMainWindow().catch((err) => {
+          // Explicit foreground request (a second instance launch): if a
+          // still-pending hidden auto-launch cold start races ahead of the
+          // normal bootstrap and consumes the --hidden flag here, the window
+          // would otherwise get created hidden with nothing to show it —
+          // focus again to guarantee visibility either way.
+          void createAndShowMainWindow().then(() => {
+            focusMainWindow();
+          }).catch((err) => {
             console.error("[Main] Failed to recreate window on open-terminal-path:", err);
           });
         }
@@ -1281,8 +1294,13 @@ if (!gotLock) {
       return;
     }
     if (!focusMainWindow()) {
-      // Window is missing or crashed — try to recreate it
-      void createAndShowMainWindow().catch((err) => {
+      // Window is missing or crashed — try to recreate it. Same
+      // hidden-launch race guard as above: this is an explicit foreground
+      // request, so re-focus after creation regardless of which flag this
+      // particular call happened to consume.
+      void createAndShowMainWindow().then(() => {
+        focusMainWindow();
+      }).catch((err) => {
         console.error("[Main] Failed to recreate window on second-instance:", err);
         showStartupError(err);
         if (!hasUsableWindow()) {
@@ -1539,8 +1557,13 @@ if (!gotLock) {
       } catch {}
 
       if (focusMainWindow()) return;
-      // Main window doesn't exist — create it even if other windows (e.g. settings) are open
-      void createAndShowMainWindow().catch((err) => {
+      // Main window doesn't exist — create it even if other windows (e.g.
+      // settings) are open. Explicit foreground request (Dock reopen/click):
+      // guard against the same hidden-launch race as the second-instance
+      // handler above by re-focusing after creation.
+      void createAndShowMainWindow().then(() => {
+        focusMainWindow();
+      }).catch((err) => {
         console.error("[Main] Failed to create window on activate:", err);
         showStartupError(err);
         if (!hasUsableWindow()) {

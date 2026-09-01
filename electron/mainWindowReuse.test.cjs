@@ -187,3 +187,48 @@ test("a successful cold start always marks processErrorController runtime protec
     "a startup failure (createWindow threw) must still leave protection strict",
   );
 });
+
+test("foreground-triggered createAndShowMainWindow call sites re-focus after creation", () => {
+  // consumeColdStartHiddenLaunch() is a one-time latch consumed by whichever
+  // createAndShowMainWindow() call reaches it first, which is not guaranteed
+  // to be the default bootstrap call: a genuine second instance or Dock
+  // reopen can race ahead of it (arriving after app.whenReady() but before
+  // the bootstrap's own await chain gets there). If a foreground-triggered
+  // call happens to consume the --hidden flag, it must still end up visible,
+  // or a user-initiated relaunch/reopen silently does nothing. The four deep
+  // link / open-terminal-path delivery functions already call
+  // focusMainWindow() unconditionally after awaiting createAndShowMainWindow()
+  // (verified separately by exercising those functions); this test covers
+  // the three fire-and-forget call sites that don't await it directly.
+  const source = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const foregroundCallSites = [
+    {
+      name: "second-instance / open-terminal-path invalid-path fallback",
+      anchor: "Failed to recreate window on open-terminal-path",
+    },
+    {
+      name: "second-instance / plain fallback",
+      anchor: "Failed to recreate window on second-instance",
+    },
+    {
+      name: "activate handler (Dock reopen/click)",
+      anchor: "Failed to create window on activate",
+    },
+  ];
+
+  for (const { name, anchor } of foregroundCallSites) {
+    const anchorIndex = source.indexOf(anchor);
+    assert.notEqual(anchorIndex, -1, `expected to find call site: ${name}`);
+    // The .then(() => { focusMainWindow(); }) must appear on the same
+    // createAndShowMainWindow() call, i.e. between the nearest preceding
+    // "void createAndShowMainWindow()" and this catch handler's error text.
+    const callStart = source.lastIndexOf("void createAndShowMainWindow()", anchorIndex);
+    assert.ok(callStart > -1 && callStart < anchorIndex, `expected a createAndShowMainWindow() call before: ${name}`);
+    const callSlice = source.slice(callStart, anchorIndex);
+    assert.match(
+      callSlice,
+      /\.then\(\(\) => \{\s*focusMainWindow\(\);\s*\}\)/,
+      `${name} must re-focus after creation to guarantee visibility regardless of which flag it raced to consume`,
+    );
+  }
+});
