@@ -38,6 +38,7 @@ function createMainWindowApi(ctx) {
         registerAsMainWindow = true,
         persistWindowState = registerAsMainWindow,
         registerAsAppContentWindow = true,
+        startHidden = false,
       } = options;
       const rendererHash = typeof route === "string" && route.trim()
         ? `#/${route.trim().replace(/^#?\/*/, "")}`
@@ -481,7 +482,7 @@ function createMainWindowApi(ctx) {
     
       // Defer show until renderer is ready; use fallback timeout to avoid keeping window hidden forever.
       // Production gets a shorter timeout since the splash screen provides visual feedback.
-      setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 1500 });
+      setupDeferredShow(win, { timeoutMs: isDev ? 3000 : 1500, startHidden });
     
       win.webContents.on("did-create-window", (childWindow) => {
         try {
@@ -520,7 +521,19 @@ function createMainWindowApi(ctx) {
       // Register IPC handlers BEFORE loading any URL so the renderer never
       // calls a handler that hasn't been registered yet.
       onRegisterBridge?.(win);
-    
+
+      if (startHidden) {
+        // Belt-and-suspenders: guarantee a tray icon exists as soon as
+        // bridges (and electronModule) are ready, regardless of the user's
+        // separate close-to-tray preference, so a hidden cold start is
+        // always reachable.
+        try {
+          getGlobalShortcutBridge().createTray?.();
+        } catch (err) {
+          console.warn("[MainWindow] Failed to create tray for hidden launch:", err?.message || err);
+        }
+      }
+
       if (isDev) {
         try {
           await win.loadURL(`${getDevRendererBaseUrl(devServerUrl)}${rendererHash}`);

@@ -640,7 +640,7 @@ function attachOAuthLoadingOverlay(win) {
   });
 }
 
-function setupDeferredShow(win, { timeoutMs = 3000, waitForRendererReady = true } = {}) {
+function setupDeferredShow(win, { timeoutMs = 3000, waitForRendererReady = true, startHidden = false } = {}) {
   const webContentsId = (() => {
     try {
       return win?.webContents?.id;
@@ -660,6 +660,18 @@ function setupDeferredShow(win, { timeoutMs = 3000, waitForRendererReady = true 
     if (timer) clearTimeout(timer);
     timer = null;
     if (webContentsId) rendererReadyCallbacksByWebContentsId.delete(webContentsId);
+    if (startHidden) {
+      // Cold start via the OS login item ("--hidden"): stay hidden. The tray
+      // icon is guaranteed by mainWindow.cjs right after bridges register,
+      // which runs before this can fire (ready-to-show/renderer-ready always
+      // come later), so electronModule is safely initialized by then.
+      try {
+        getGlobalShortcutBridge().createTray?.();
+      } catch (err) {
+        console.warn("[WindowManager] Failed to create tray for hidden launch:", err?.message || err);
+      }
+      return;
+    }
     try {
       if (!win.isDestroyed()) win.show();
     } catch {

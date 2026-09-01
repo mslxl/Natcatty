@@ -1523,6 +1523,12 @@ function createPreloadApi(ctx) {
   isCloseToTray: () =>
     ipcRenderer.invoke("netcatty:tray:isCloseToTray"),
 
+  // Auto Launch at system login (hidden to tray)
+  getAutoLaunch: () =>
+    ipcRenderer.invoke("netcatty:autoLaunch:get"),
+  setAutoLaunch: (enabled) =>
+    ipcRenderer.invoke("netcatty:autoLaunch:set", { enabled }),
+
   // App-level HTTP(S) network proxy (cloud sync / AI providers)
   setHttpNetworkProxy: (settings) =>
     ipcRenderer.invoke("netcatty:networkProxy:set", settings),

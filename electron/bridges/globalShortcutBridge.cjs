@@ -1305,6 +1305,7 @@ module.exports = {
   handleWindowClose,
   clearPendingFullscreenHide,
   cleanup,
+  createTray,
   getTray: () => tray,
   getTrayPanelWindow: () => trayPanelWindow,
   // Test helpers

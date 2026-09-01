@@ -811,6 +811,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.update.title",
   },
   {
+    id: "system-auto-launch",
+    tab: "system",
+    labelKey: "settings.autoLaunch.enabled",
+    descriptionKey: "settings.autoLaunch.enabledDesc",
+    sectionKey: "settings.autoLaunch.title",
+    keywords: ["startup", "login", "autostart", "boot", "开机", "自启动", "开机启动"],
+  },
+  {
     id: "system-network-proxy-mode",
     tab: "system",
     labelKey: "settings.system.networkProxy.mode",

@@ -110,6 +110,10 @@ const {
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
+const {
+  registerHandlers: registerAutoLaunchHandlers,
+  wasLaunchedHidden,
+} = require("./autoLaunch.cjs");
 
 try {
   protocol?.registerSchemesAsPrivileged?.([
@@ -572,7 +576,7 @@ const registerBridges = createBridgeRegistrar({
 /**
  * Create the main application window
  */
-async function createWindow() {
+async function createWindow({ startHidden = false } = {}) {
   const windowManager = getWindowManager();
   windowManager.setAppContentWindowClosedHandler(createAppContentWindowClosedHandler({
     app,
@@ -586,8 +590,9 @@ async function createWindow() {
     isMac,
     electronDir,
     onRegisterBridge: registerBridges,
+    startHidden,
   });
-  
+
   return win;
 }
 
@@ -651,17 +656,21 @@ async function createAndShowMainWindow() {
     return existingWin;
   }
 
+  const startHidden = consumeColdStartHiddenLaunch();
+
   mainWindowStartupPromise = (async () => {
     processErrorController.beginMainWindowStartup();
     try {
-      const win = await createWindow();
-      await waitForWindowToShow(win);
+      const win = await createWindow({ startHidden });
+      // A hidden cold start never fires "show" — waiting for it would hang
+      // startup forever, so only wait when the window is meant to appear.
+      if (!startHidden) await waitForWindowToShow(win);
       void getWindowManager().waitForRendererReady(win, {
         timeoutMs: isDev ? 30000 : 15000,
       }).catch((err) => {
         console.warn("[Main] Renderer ready signal was late or missing after first show:", err?.message || err);
       });
-      processErrorController.completeMainWindowStartup({ windowShown: true });
+      processErrorController.completeMainWindowStartup({ windowShown: !startHidden });
       return win;
     } catch (err) {
       processErrorController.completeMainWindowStartup({ windowShown: false });
@@ -699,6 +708,18 @@ let flushingJmsDeepLinks = false;
 let jmsDeepLinkDeliveryGeneration = 0;
 
 let explorerContextMenuEnabled = resolveExplorerContextMenuEnabled({ app }).enabled === true;
+
+// Cold-start only: true when the OS login item launched us with --hidden.
+// Consumed once by the first createAndShowMainWindow() call below so later
+// reuse paths (tray click, deep links, second-instance focus) always show.
+let consumeColdStartHiddenLaunch = (() => {
+  let pending = wasLaunchedHidden(process.argv);
+  return () => {
+    const value = pending;
+    pending = false;
+    return value;
+  };
+})();
 
 function queueSshDeepLink(rawUrl) {
   if (!sshDeepLinkEnabled) return;
@@ -807,6 +828,8 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:getEnabled", async () => ({
   enabled: explorerContextMenuEnabled,
   supported: process.platform === "win32",
 }));
+
+if (ipcMain) registerAutoLaunchHandlers(ipcMain, { app });
 
 async function deliverJmsDeepLink(rawUrl, expectedGeneration = jmsDeepLinkDeliveryGeneration) {
   if (!shouldDeliverJmsDeepLink({

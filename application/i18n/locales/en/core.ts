@@ -197,6 +197,12 @@ export const enCoreMessages: Messages = {
   'settings.appLock.validation.mismatch': 'The new passwords do not match.',
   'settings.appLock.validation.incorrect': 'The current lock password is incorrect.',
 
+  // Settings > System > Auto Launch
+  'settings.autoLaunch.title': 'Launch at Login',
+  'settings.autoLaunch.enabled': 'Launch at system startup',
+  'settings.autoLaunch.enabledDesc': 'Automatically start Netcatty when you log in, hidden in the system tray.',
+  'settings.autoLaunch.unsupportedDesc': 'Not available in a development build.',
+
   // Settings > System > Network Proxy
   'settings.system.networkProxy.title': 'Network Proxy',
   'settings.system.networkProxy.description': 'HTTP(S) proxy for cloud sync and AI providers. This is separate from SSH ProxyJump / ProxyCommand profiles.',

@@ -2,6 +2,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import {
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_CLOSE_TO_TRAY,
+  STORAGE_KEY_AUTO_LAUNCH_ENABLED,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_WINDOW_OPACITY,
@@ -29,6 +30,7 @@ interface UseSystemSettingsEffectsParams {
   toggleWindowHotkey: string;
   globalHotkeyEnabled: boolean;
   closeToTray: boolean;
+  autoLaunchEnabled: boolean;
   windowOpacityRecord: WindowOpacityRecord;
   windowOpacityMutationSourceRef: MutableRefObject<WindowOpacityMutationSource>;
   appIconVariant: AppIconVariant;
@@ -38,6 +40,8 @@ interface UseSystemSettingsEffectsParams {
   setHotkeyRegistrationError: (error: string | null) => void;
   setAutoUpdateEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
   setAppIconVariant: (variant: AppIconVariant | ((prev: AppIconVariant) => AppIconVariant)) => void;
+  setAutoLaunchEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
+  setAutoLaunchSupported: (supported: boolean) => void;
   notifySettingsChanged: (key: string, value: unknown) => void;
 }
 
@@ -46,6 +50,7 @@ export function useSystemSettingsEffects({
   toggleWindowHotkey,
   globalHotkeyEnabled,
   closeToTray,
+  autoLaunchEnabled,
   windowOpacityRecord,
   windowOpacityMutationSourceRef,
   appIconVariant,
@@ -55,6 +60,8 @@ export function useSystemSettingsEffects({
   setHotkeyRegistrationError,
   setAutoUpdateEnabled,
   setAppIconVariant,
+  setAutoLaunchEnabled,
+  setAutoLaunchSupported,
   notifySettingsChanged,
 }: UseSystemSettingsEffectsParams) {
   const appIconApplyRequestIdRef = useRef(0);
@@ -138,6 +145,46 @@ export function useSystemSettingsEffects({
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
   }, [enabled, closeToTray, notifySettingsChanged, persistMountedRef]);
+
+  // Hydrate auto-launch from the main process on mount — the OS login item
+  // is the real source of truth (the user may have toggled it outside the
+  // app), localStorage is only an optimistic cache for first paint.
+  useEffect(() => {
+    if (!enabled) return;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getAutoLaunch) return;
+    let cancelled = false;
+    bridge.getAutoLaunch().then((result) => {
+      if (cancelled) return;
+      setAutoLaunchSupported(result.supported);
+      setAutoLaunchEnabled(result.enabled);
+      localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');
+    }).catch((err) => {
+      console.warn('[AutoLaunch] Failed to read login item state:', err);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Runs once per mount — this is a one-shot hydration, not a sync loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+
+  // Push auto-launch changes to the main process and cache the result.
+  useEffect(() => {
+    if (!enabled) return;
+    if (!persistMountedRef.current) return;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setAutoLaunch) return;
+    bridge.setAutoLaunch(autoLaunchEnabled).then((result) => {
+      setAutoLaunchSupported(result.supported);
+      if (result.enabled !== autoLaunchEnabled) setAutoLaunchEnabled(result.enabled);
+      localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');
+    }).catch((err) => {
+      console.warn('[AutoLaunch] Failed to update login item state:', err);
+    });
+    notifySettingsChanged(STORAGE_KEY_AUTO_LAUNCH_ENABLED, autoLaunchEnabled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, autoLaunchEnabled]);
 
   // Persist and apply app-level HTTP(S) network proxy (cloud sync / AI)
   useEffect(() => {
