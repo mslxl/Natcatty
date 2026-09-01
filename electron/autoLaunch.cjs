@@ -58,6 +58,18 @@ function resolveEffectiveLoginState(settings, platform, execPath) {
     // scoped to "is that exact entry registered" — false if absent.
     return Boolean(settings?.openAtLogin);
   }
+  if (platform === "darwin" && settings?.status === "requires-approval") {
+    // macOS 13+ (SMAppService): a freshly registered login item sits in
+    // "requires-approval" until the user approves it in System Settings,
+    // during which openAtLogin reports false even though registration
+    // itself succeeded. Reporting false here would make the renderer's
+    // push effect see a mismatch against what the user just requested and
+    // immediately fire an opposite write, unregistering the pending item
+    // before the user ever gets a chance to approve it. Treat pending
+    // approval as enabled; a later read naturally reflects the real state
+    // once the user approves it (or the OS drops the pending request).
+    return true;
+  }
   return Boolean(settings?.openAtLogin);
 }
 

@@ -198,7 +198,7 @@ export const zhCNCoreMessages: Messages = {
   'settings.autoLaunch.title': '开机自启动',
   'settings.autoLaunch.enabled': '开机自动启动',
   'settings.autoLaunch.enabledDesc': '系统启动时自动运行 Netcatty，并隐藏到系统托盘。',
-  'settings.autoLaunch.unsupportedDesc': '开发环境下不支持此功能。',
+  'settings.autoLaunch.unsupportedDesc': '当前平台不支持此功能，或处于开发环境。',
 
   // Settings > System > Network Proxy
   'settings.system.networkProxy.title': '网络代理',

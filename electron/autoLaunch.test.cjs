@@ -80,6 +80,29 @@ test("resolveEffectiveLoginState does not consult launchItems on non-Windows pla
   );
 });
 
+test("resolveEffectiveLoginState treats a macOS pending-approval registration as enabled", () => {
+  const settings = { openAtLogin: false, status: "requires-approval" };
+
+  assert.equal(
+    resolveEffectiveLoginState(settings, "darwin", EXEC_PATH),
+    true,
+    "openAtLogin reports false while SMAppService awaits System Settings approval, even though registration succeeded; " +
+      "reporting false here would make the renderer's push effect immediately unregister the pending item",
+  );
+});
+
+test("resolveEffectiveLoginState ignores the requires-approval special-case on non-macOS platforms", () => {
+  const settings = { openAtLogin: false, status: "requires-approval" };
+
+  assert.equal(resolveEffectiveLoginState(settings, "win32", EXEC_PATH), false);
+});
+
+test("resolveEffectiveLoginState reads openAtLogin normally for other macOS statuses", () => {
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: true, status: "enabled" }, "darwin", EXEC_PATH), true);
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: false, status: "not-registered" }, "darwin", EXEC_PATH), false);
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: false, status: "not-found" }, "darwin", EXEC_PATH), false);
+});
+
 test("buildLoginItemQueryOptions matches the path+args our own writes always register", () => {
   assert.deepEqual(
     buildLoginItemQueryOptions(EXEC_PATH),
@@ -223,6 +246,21 @@ test("setAutoLaunchEnabled(true) reports disabled when Windows Startup Apps bloc
   const result = setAutoLaunchEnabled(true, { app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
 
   assert.deepEqual(result, { success: true, enabled: false, supported: true });
+});
+
+test("setAutoLaunchEnabled(true) on macOS does not report disabled while approval is pending", () => {
+  const app = {
+    setLoginItemSettings: () => {},
+    getLoginItemSettings: () => ({ openAtLogin: false, status: "requires-approval" }),
+  };
+
+  const result = setAutoLaunchEnabled(true, { app, defaultApp: false, platform: "darwin" });
+
+  assert.deepEqual(
+    result,
+    { success: true, enabled: true, supported: true },
+    "must match what the user requested, or the renderer's push effect fires an unregistering write before approval",
+  );
 });
 
 test("setAutoLaunchEnabled(false) clears the hidden launch arg", () => {
