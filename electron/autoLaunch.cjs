@@ -34,12 +34,29 @@ function resolveEffectiveLoginState(settings, platform) {
   return Boolean(settings?.openAtLogin);
 }
 
-function getAutoLaunchEnabled({ app, defaultApp = process.defaultApp, platform = process.platform } = {}) {
+/**
+ * Electron's getLoginItemSettings() only reports openAtLogin/
+ * executableWillLaunchAtLogin for the specific path+args combination you
+ * ask about — it does not mean "is anything registered for this app". Our
+ * code only ever registers a login item with args:[HIDDEN_LAUNCH_ARG], so
+ * every read must query that exact combination (matching what
+ * setAutoLaunchEnabled writes) or Windows reports a false negative.
+ */
+function buildLoginItemQueryOptions(execPath) {
+  return { path: execPath, args: [HIDDEN_LAUNCH_ARG] };
+}
+
+function getAutoLaunchEnabled({
+  app,
+  execPath = process.execPath,
+  defaultApp = process.defaultApp,
+  platform = process.platform,
+} = {}) {
   if (!isAutoLaunchSupported({ defaultApp, platform })) {
     return { enabled: false, supported: false };
   }
   try {
-    const settings = app.getLoginItemSettings();
+    const settings = app.getLoginItemSettings(buildLoginItemQueryOptions(execPath));
     return { enabled: resolveEffectiveLoginState(settings, platform), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to read login item settings:", err?.message || err);
@@ -66,11 +83,11 @@ function setAutoLaunchEnabled(enabled, {
       path: execPath,
       args: wantEnabled ? [HIDDEN_LAUNCH_ARG] : [],
     });
-    const settings = app.getLoginItemSettings();
+    const settings = app.getLoginItemSettings(buildLoginItemQueryOptions(execPath));
     return { success: true, enabled: resolveEffectiveLoginState(settings, platform), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to update login item settings:", err?.message || err);
-    return { success: false, enabled: getAutoLaunchEnabled({ app, defaultApp, platform }).enabled, supported: true };
+    return { success: false, enabled: getAutoLaunchEnabled({ app, execPath, defaultApp, platform }).enabled, supported: true };
   }
 }
 
@@ -106,6 +123,7 @@ module.exports = {
   HIDDEN_LAUNCH_ARG,
   isAutoLaunchSupported,
   resolveEffectiveLoginState,
+  buildLoginItemQueryOptions,
   getAutoLaunchEnabled,
   setAutoLaunchEnabled,
   wasLaunchedHidden,

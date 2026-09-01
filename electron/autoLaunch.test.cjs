@@ -5,6 +5,7 @@ const {
   HIDDEN_LAUNCH_ARG,
   isAutoLaunchSupported,
   resolveEffectiveLoginState,
+  buildLoginItemQueryOptions,
   getAutoLaunchEnabled,
   setAutoLaunchEnabled,
   wasLaunchedHidden,
@@ -48,6 +49,13 @@ test("resolveEffectiveLoginState ignores executableWillLaunchAtLogin on non-Wind
   );
 });
 
+test("buildLoginItemQueryOptions matches the path+args our own writes always register", () => {
+  assert.deepEqual(
+    buildLoginItemQueryOptions("C:\\Netcatty\\Netcatty.exe"),
+    { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] },
+  );
+});
+
 test("getAutoLaunchEnabled reports unsupported without touching app in dev", () => {
   let called = false;
   const app = { getLoginItemSettings: () => { called = true; return { openAtLogin: true }; } };
@@ -56,6 +64,17 @@ test("getAutoLaunchEnabled reports unsupported without touching app in dev", () 
 
   assert.deepEqual(result, { enabled: false, supported: false });
   assert.equal(called, false);
+});
+
+test("getAutoLaunchEnabled queries the same path+args the login item was registered with", () => {
+  let capturedOptions = null;
+  const app = {
+    getLoginItemSettings: (options) => { capturedOptions = options; return { openAtLogin: true }; },
+  };
+
+  getAutoLaunchEnabled({ app, execPath: "C:\\Netcatty\\Netcatty.exe", defaultApp: false, platform: "win32" });
+
+  assert.deepEqual(capturedOptions, { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] });
 });
 
 test("getAutoLaunchEnabled reports unsupported on Linux without touching app", () => {
@@ -115,6 +134,32 @@ test("setAutoLaunchEnabled(true) registers the hidden launch arg", () => {
     args: [HIDDEN_LAUNCH_ARG],
   });
   assert.deepEqual(result, { success: true, enabled: true, supported: true });
+});
+
+test("setAutoLaunchEnabled(true) verifies with the same path+args it just wrote", () => {
+  let capturedQueryOptions = null;
+  const app = {
+    setLoginItemSettings: () => {},
+    getLoginItemSettings: (options) => {
+      capturedQueryOptions = options;
+      // Electron 42 contract: openAtLogin only reflects true for the exact
+      // path+args queried — a bare getLoginItemSettings() call (no args)
+      // would incorrectly report false right after enabling with --hidden.
+      return options?.args?.includes(HIDDEN_LAUNCH_ARG)
+        ? { openAtLogin: true, executableWillLaunchAtLogin: true }
+        : { openAtLogin: false, executableWillLaunchAtLogin: false };
+    },
+  };
+
+  const result = setAutoLaunchEnabled(true, {
+    app,
+    execPath: "C:\\Netcatty\\Netcatty.exe",
+    defaultApp: false,
+    platform: "win32",
+  });
+
+  assert.deepEqual(capturedQueryOptions, { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] });
+  assert.equal(result.enabled, true, "must not report false just because the query omitted matching args");
 });
 
 test("setAutoLaunchEnabled(true) reports disabled when Windows Startup Apps blocks it", () => {
