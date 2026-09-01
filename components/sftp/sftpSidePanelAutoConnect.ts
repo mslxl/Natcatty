@@ -127,6 +127,12 @@ export function resolvePendingSftpUploadCancellation(params: {
   pendingHostId: string;
   pendingOriginSessionId?: string;
   pendingSourceSessionId?: string;
+  /**
+   * Status of the origin terminal session while the drop is pending: the
+   * session's live status, `null` once it no longer exists, or `undefined`
+   * when the caller does not track it.
+   */
+  originSessionStatus?: string | null;
   activeHostId: string | null | undefined;
   activeSessionId: string | null | undefined;
   focusedSessionId?: string | null;
@@ -149,6 +155,18 @@ export function resolvePendingSftpUploadCancellation(params: {
     && params.activeSessionId
     && params.activeSessionId !== params.pendingSourceSessionId
   ) return "source-changed";
+  // A Mosh/ET (or local) origin has no reusable SSH source session, so the
+  // origin terminal itself is the only evidence of the drop's destination
+  // route. If it disconnects or disappears while the standalone SFTP rebind
+  // is pending, cancel instead of uploading into a route that is gone. SSH
+  // origins are excluded: their same-tab reconnect rebind is expected to
+  // pass through non-connected statuses.
+  if (params.pendingOriginSessionId && !params.pendingSourceSessionId) {
+    if (
+      params.originSessionStatus === null
+      || params.originSessionStatus === "disconnected"
+    ) return "source-changed";
+  }
   if (
     params.connection?.hostId === params.pendingHostId
     && (!params.pendingSourceSessionId

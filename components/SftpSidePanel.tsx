@@ -997,10 +997,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const activeSessionStatus = activeSessionId
       ? sessions.find((session) => session.id === activeSessionId)?.status ?? null
       : null;
+    const originSessionStatus = pendingUpload.originSessionId
+      ? sessions.find((session) => session.id === pendingUpload.originSessionId)?.status ?? null
+      : undefined;
     const cancellationReason = resolvePendingSftpUploadCancellation({
       pendingHostId: pendingUpload.hostId,
       pendingOriginSessionId: pendingUpload.originSessionId,
       pendingSourceSessionId: pendingUpload.sourceSessionId,
+      originSessionStatus,
       activeHostId: activeHost?.id,
       activeSessionId,
       focusedSessionId,

@@ -263,6 +263,58 @@ test("pending terminal upload tolerates a transient missing focused session", ()
   }), null);
 });
 
+test("pending Mosh/ET origin upload is cancelled when its origin session disconnects", () => {
+  const params = {
+    pendingHostId: "host-1",
+    pendingOriginSessionId: "mosh-session",
+    pendingSourceSessionId: undefined,
+    activeHostId: "host-1",
+    activeSessionId: null,
+    focusedSessionId: "mosh-session",
+    panelVisible: true,
+    connection: {
+      hostId: "host-1",
+      status: "connected",
+    },
+  };
+
+  assert.equal(resolvePendingSftpUploadCancellation({
+    ...params,
+    originSessionStatus: "disconnected",
+  }), "source-changed");
+  assert.equal(resolvePendingSftpUploadCancellation({
+    ...params,
+    originSessionStatus: null,
+  }), "source-changed");
+  // Still pending origin routes must not cancel.
+  assert.equal(resolvePendingSftpUploadCancellation({
+    ...params,
+    originSessionStatus: "connected",
+  }), null);
+  assert.equal(resolvePendingSftpUploadCancellation({
+    ...params,
+    originSessionStatus: "connecting",
+  }), null);
+});
+
+test("pending SSH origin upload keeps waiting through a same-tab reconnect", () => {
+  assert.equal(resolvePendingSftpUploadCancellation({
+    pendingHostId: "host-1",
+    pendingOriginSessionId: "ssh-session",
+    pendingSourceSessionId: "ssh-session",
+    activeHostId: "host-1",
+    activeSessionId: "ssh-session",
+    focusedSessionId: "ssh-session",
+    panelVisible: true,
+    originSessionStatus: "disconnected",
+    connection: {
+      hostId: "host-1",
+      sourceSessionId: "ssh-session",
+      status: "connected",
+    },
+  }), null);
+});
+
 test("pending terminal upload is cancelled after its matching connection fails", () => {
   assert.equal(resolvePendingSftpUploadCancellation({
     pendingHostId: "host-1",
