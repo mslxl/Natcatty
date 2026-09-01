@@ -668,7 +668,15 @@ async function createAndShowMainWindow() {
       }).catch((err) => {
         console.warn("[Main] Renderer ready signal was late or missing after first show:", err?.message || err);
       });
-      processErrorController.completeMainWindowStartup({ windowShown: !startHidden });
+      // windowShown latches process-error-guard protection on for the rest
+      // of the app's life (see processErrorGuards.cjs), so a hidden cold
+      // start must still report true here: createWindow() above already
+      // succeeded (window created, page loaded) — a deliberately hidden
+      // window is a completed startup, not a failure. Passing false would
+      // leave the guard permanently "strict", classifying any later
+      // non-network error as fatal and killing an otherwise healthy
+      // tray-only session that never happened to show a window.
+      processErrorController.completeMainWindowStartup({ windowShown: true });
       return win;
     } catch (err) {
       processErrorController.completeMainWindowStartup({ windowShown: false });

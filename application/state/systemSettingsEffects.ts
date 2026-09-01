@@ -25,6 +25,18 @@ import {
   type WindowOpacityRecord,
 } from './windowOpacitySync';
 
+/**
+ * A getAutoLaunch/setAutoLaunch IPC result is only safe to apply to state
+ * when the main process could actually determine the OS's login-item state.
+ * success:false means "unknown" (a transient read/write failure), not a
+ * confirmed disabled state — applying enabled:false in that case would
+ * overwrite a valid cached value and, via the push effect, cascade into an
+ * unwanted disable write that could remove a working login item.
+ */
+export function isAutoLaunchResultTrustworthy(result: { success?: boolean }): boolean {
+  return result.success !== false;
+}
+
 interface UseSystemSettingsEffectsParams {
   enabled?: boolean;
   toggleWindowHotkey: string;
@@ -157,6 +169,7 @@ export function useSystemSettingsEffects({
     bridge.getAutoLaunch().then((result) => {
       if (cancelled) return;
       setAutoLaunchSupported(result.supported);
+      if (!isAutoLaunchResultTrustworthy(result)) return;
       setAutoLaunchEnabled(result.enabled);
       localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');
     }).catch((err) => {
@@ -177,6 +190,7 @@ export function useSystemSettingsEffects({
     if (!bridge?.setAutoLaunch) return;
     bridge.setAutoLaunch(autoLaunchEnabled).then((result) => {
       setAutoLaunchSupported(result.supported);
+      if (!isAutoLaunchResultTrustworthy(result)) return;
       if (result.enabled !== autoLaunchEnabled) setAutoLaunchEnabled(result.enabled);
       localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');
     }).catch((err) => {

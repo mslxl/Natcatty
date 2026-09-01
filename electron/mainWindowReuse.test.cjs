@@ -150,3 +150,40 @@ test("createAndShowMainWindow reuses a main window before creating another one",
   assert.ok(reuseIndex < createIndex);
   assert.match(source.slice(reuseIndex, createIndex), /return existingWin;/);
 });
+
+test("a successful cold start always marks processErrorController runtime protection usable, hidden or not", () => {
+  // hasShownMainWindow (see processErrorGuards.cjs) is a one-way latch: once
+  // any completeMainWindowStartup({windowShown:true}) call happens, runtime
+  // protection stays active (non-network errors stop being treated as fatal
+  // startup failures) for the rest of the process's life. A hidden auto-launch
+  // cold start still successfully creates and loads the window — it is a
+  // deliberate, completed startup, not a failure — so the success branch must
+  // report windowShown:true unconditionally rather than `!startHidden`, or a
+  // tray-only session would never leave "strict" mode and any later
+  // non-network error would be fatal.
+  const source = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const functionStart = source.indexOf("async function createAndShowMainWindow()");
+  const tryStart = source.indexOf("const win = await createWindow({ startHidden });", functionStart);
+  const catchStart = source.indexOf("} catch (err) {", tryStart);
+  const finallyStart = source.indexOf("} finally {", catchStart);
+
+  assert.notEqual(functionStart, -1);
+  assert.ok(tryStart > functionStart);
+  assert.ok(catchStart > tryStart);
+  assert.ok(finallyStart > catchStart);
+
+  const successBranch = source.slice(tryStart, catchStart);
+  assert.match(
+    successBranch,
+    /completeMainWindowStartup\(\{\s*windowShown:\s*true\s*\}\)/,
+    "success path must not gate windowShown on !startHidden",
+  );
+  assert.doesNotMatch(successBranch, /windowShown:\s*!startHidden/);
+
+  const catchBranch = source.slice(catchStart, finallyStart);
+  assert.match(
+    catchBranch,
+    /completeMainWindowStartup\(\{\s*windowShown:\s*false\s*\}\)/,
+    "a startup failure (createWindow threw) must still leave protection strict",
+  );
+});

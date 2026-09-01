@@ -93,7 +93,7 @@ test("getAutoLaunchEnabled reports unsupported without touching app in dev", () 
 
   const result = getAutoLaunchEnabled({ app, defaultApp: true, platform: "win32" });
 
-  assert.deepEqual(result, { enabled: false, supported: false });
+  assert.deepEqual(result, { success: true, enabled: false, supported: false });
   assert.equal(called, false);
 });
 
@@ -114,7 +114,7 @@ test("getAutoLaunchEnabled reports unsupported on Linux without touching app", (
 
   const result = getAutoLaunchEnabled({ app, defaultApp: false, platform: "linux" });
 
-  assert.deepEqual(result, { enabled: false, supported: false });
+  assert.deepEqual(result, { success: true, enabled: false, supported: false });
   assert.equal(called, false);
 });
 
@@ -123,7 +123,7 @@ test("getAutoLaunchEnabled reflects the current login item state on macOS", () =
 
   const result = getAutoLaunchEnabled({ app, defaultApp: false, platform: "darwin" });
 
-  assert.deepEqual(result, { enabled: true, supported: true });
+  assert.deepEqual(result, { success: true, enabled: true, supported: true });
 });
 
 test("getAutoLaunchEnabled reports disabled when Windows Startup Apps has disabled the matching entry", () => {
@@ -133,7 +133,7 @@ test("getAutoLaunchEnabled reports disabled when Windows Startup Apps has disabl
 
   const result = getAutoLaunchEnabled({ app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
 
-  assert.deepEqual(result, { enabled: false, supported: true });
+  assert.deepEqual(result, { success: true, enabled: false, supported: true });
 });
 
 test("getAutoLaunchEnabled is not fooled by an unrelated no-argument entry for the same executable", () => {
@@ -148,17 +148,21 @@ test("getAutoLaunchEnabled is not fooled by an unrelated no-argument entry for t
 
   assert.deepEqual(
     result,
-    { enabled: false, supported: true },
+    { success: true, enabled: false, supported: true },
     "executableWillLaunchAtLogin-style any-args matching would wrongly report true here",
   );
 });
 
-test("getAutoLaunchEnabled tolerates a throwing app API", () => {
+test("getAutoLaunchEnabled reports success:false (not a confirmed disabled state) when the app API throws", () => {
   const app = { getLoginItemSettings: () => { throw new Error("boom"); } };
 
   const result = getAutoLaunchEnabled({ app, defaultApp: false, platform: "win32" });
 
-  assert.deepEqual(result, { enabled: false, supported: true });
+  assert.deepEqual(
+    result,
+    { success: false, enabled: false, supported: true },
+    "callers (renderer hydration) must be able to tell a transient read failure apart from a confirmed enabled:false, or they will overwrite a cached true and cascade into an unwanted disable write",
+  );
 });
 
 test("setAutoLaunchEnabled(true) registers the hidden launch arg", () => {
@@ -317,7 +321,7 @@ test("registerHandlers wires get/set IPC channels", async () => {
   assert.ok(handlers.has("netcatty:autoLaunch:set"));
 
   const getResult = await handlers.get("netcatty:autoLaunch:get")();
-  assert.deepEqual(getResult, { enabled: false, supported: true });
+  assert.deepEqual(getResult, { success: true, enabled: false, supported: true });
 
   app.getLoginItemSettings = () => ({ openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: true })] });
   const setResult = await handlers.get("netcatty:autoLaunch:set")(null, { enabled: true });

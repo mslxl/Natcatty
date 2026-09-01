@@ -80,14 +80,19 @@ function getAutoLaunchEnabled({
   platform = process.platform,
 } = {}) {
   if (!isAutoLaunchSupported({ defaultApp, platform })) {
-    return { enabled: false, supported: false };
+    return { success: true, enabled: false, supported: false };
   }
   try {
     const settings = app.getLoginItemSettings(buildLoginItemQueryOptions(execPath));
-    return { enabled: resolveEffectiveLoginState(settings, platform, execPath), supported: true };
+    return { success: true, enabled: resolveEffectiveLoginState(settings, platform, execPath), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to read login item settings:", err?.message || err);
-    return { enabled: false, supported: true };
+    // success:false signals "OS state unknown" (as opposed to a confirmed
+    // disabled state) so callers — notably the renderer's mount-time
+    // hydration — know not to trust `enabled` here. Blindly applying
+    // enabled:false on a transient read failure would overwrite the
+    // renderer's cached value and cascade into an unwanted disable write.
+    return { success: false, enabled: false, supported: true };
   }
 }
 
