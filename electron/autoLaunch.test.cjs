@@ -12,6 +12,12 @@ const {
   registerHandlers,
 } = require("./autoLaunch.cjs");
 
+const EXEC_PATH = "C:\\Netcatty\\Netcatty.exe";
+
+function hiddenLaunchItem(overrides = {}) {
+  return { name: "Netcatty", path: EXEC_PATH, args: [HIDDEN_LAUNCH_ARG], scope: "user", enabled: true, ...overrides };
+}
+
 test("isAutoLaunchSupported is false when running unpackaged (electron .)", () => {
   assert.equal(isAutoLaunchSupported({ defaultApp: true, platform: "win32" }), false);
   assert.equal(isAutoLaunchSupported({ defaultApp: true, platform: "darwin" }), false);
@@ -26,33 +32,58 @@ test("isAutoLaunchSupported is false on Linux — Electron's login-item API is a
   assert.equal(isAutoLaunchSupported({ defaultApp: false, platform: "linux" }), false);
 });
 
-test("resolveEffectiveLoginState prefers Windows executableWillLaunchAtLogin over openAtLogin", () => {
+test("resolveEffectiveLoginState uses the matching launchItems entry's enabled flag on Windows", () => {
+  const settings = { openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: false })] };
+
   assert.equal(
-    resolveEffectiveLoginState({ openAtLogin: true, executableWillLaunchAtLogin: false }, "win32"),
+    resolveEffectiveLoginState(settings, "win32", EXEC_PATH),
     false,
-    "Task Manager can disable the run-key entry without clearing openAtLogin",
-  );
-  assert.equal(
-    resolveEffectiveLoginState({ openAtLogin: true, executableWillLaunchAtLogin: true }, "win32"),
-    true,
+    "Task Manager can disable the specific --hidden entry while openAtLogin stays true",
   );
 });
 
-test("resolveEffectiveLoginState falls back to openAtLogin when the Windows field is absent", () => {
-  assert.equal(resolveEffectiveLoginState({ openAtLogin: true }, "win32"), true);
+test("resolveEffectiveLoginState reports true when the matching launchItems entry is enabled", () => {
+  const settings = { openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: true })] };
+
+  assert.equal(resolveEffectiveLoginState(settings, "win32", EXEC_PATH), true);
 });
 
-test("resolveEffectiveLoginState ignores executableWillLaunchAtLogin on non-Windows platforms", () => {
+test("resolveEffectiveLoginState ignores unrelated launchItems entries (different path or args)", () => {
+  const settings = {
+    openAtLogin: false,
+    launchItems: [
+      hiddenLaunchItem({ path: "C:\\Other\\App.exe", enabled: true }),
+      hiddenLaunchItem({ args: [], enabled: true }),
+    ],
+  };
+
   assert.equal(
-    resolveEffectiveLoginState({ openAtLogin: true, executableWillLaunchAtLogin: false }, "darwin"),
+    resolveEffectiveLoginState(settings, "win32", EXEC_PATH),
+    false,
+    "a differently-scoped entry (wrong path or wrong args) must not count as our own registration",
+  );
+});
+
+test("resolveEffectiveLoginState falls back to openAtLogin when no matching launchItems entry exists", () => {
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: true, launchItems: [] }, "win32", EXEC_PATH), true);
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: false, launchItems: [] }, "win32", EXEC_PATH), false);
+  assert.equal(resolveEffectiveLoginState({ openAtLogin: true }, "win32", EXEC_PATH), true, "no launchItems array at all");
+});
+
+test("resolveEffectiveLoginState does not consult launchItems on non-Windows platforms", () => {
+  const settings = { openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: false })] };
+
+  assert.equal(
+    resolveEffectiveLoginState(settings, "darwin", EXEC_PATH),
     true,
+    "launchItems is Windows-only; macOS must read openAtLogin directly",
   );
 });
 
 test("buildLoginItemQueryOptions matches the path+args our own writes always register", () => {
   assert.deepEqual(
-    buildLoginItemQueryOptions("C:\\Netcatty\\Netcatty.exe"),
-    { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] },
+    buildLoginItemQueryOptions(EXEC_PATH),
+    { path: EXEC_PATH, args: [HIDDEN_LAUNCH_ARG] },
   );
 });
 
@@ -72,9 +103,9 @@ test("getAutoLaunchEnabled queries the same path+args the login item was registe
     getLoginItemSettings: (options) => { capturedOptions = options; return { openAtLogin: true }; },
   };
 
-  getAutoLaunchEnabled({ app, execPath: "C:\\Netcatty\\Netcatty.exe", defaultApp: false, platform: "win32" });
+  getAutoLaunchEnabled({ app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
 
-  assert.deepEqual(capturedOptions, { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] });
+  assert.deepEqual(capturedOptions, { path: EXEC_PATH, args: [HIDDEN_LAUNCH_ARG] });
 });
 
 test("getAutoLaunchEnabled reports unsupported on Linux without touching app", () => {
@@ -87,7 +118,7 @@ test("getAutoLaunchEnabled reports unsupported on Linux without touching app", (
   assert.equal(called, false);
 });
 
-test("getAutoLaunchEnabled reflects the current login item state", () => {
+test("getAutoLaunchEnabled reflects the current login item state on macOS", () => {
   const app = { getLoginItemSettings: () => ({ openAtLogin: true }) };
 
   const result = getAutoLaunchEnabled({ app, defaultApp: false, platform: "darwin" });
@@ -95,14 +126,31 @@ test("getAutoLaunchEnabled reflects the current login item state", () => {
   assert.deepEqual(result, { enabled: true, supported: true });
 });
 
-test("getAutoLaunchEnabled reports disabled when Windows Startup Apps has disabled the entry", () => {
+test("getAutoLaunchEnabled reports disabled when Windows Startup Apps has disabled the matching entry", () => {
   const app = {
-    getLoginItemSettings: () => ({ openAtLogin: true, executableWillLaunchAtLogin: false }),
+    getLoginItemSettings: () => ({ openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: false })] }),
   };
 
-  const result = getAutoLaunchEnabled({ app, defaultApp: false, platform: "win32" });
+  const result = getAutoLaunchEnabled({ app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
 
   assert.deepEqual(result, { enabled: false, supported: true });
+});
+
+test("getAutoLaunchEnabled is not fooled by an unrelated no-argument entry for the same executable", () => {
+  const app = {
+    getLoginItemSettings: () => ({
+      openAtLogin: false,
+      launchItems: [hiddenLaunchItem({ args: [], enabled: true })],
+    }),
+  };
+
+  const result = getAutoLaunchEnabled({ app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
+
+  assert.deepEqual(
+    result,
+    { enabled: false, supported: true },
+    "executableWillLaunchAtLogin-style any-args matching would wrongly report true here",
+  );
 });
 
 test("getAutoLaunchEnabled tolerates a throwing app API", () => {
@@ -117,12 +165,12 @@ test("setAutoLaunchEnabled(true) registers the hidden launch arg", () => {
   let capturedSettings = null;
   const app = {
     setLoginItemSettings: (settings) => { capturedSettings = settings; },
-    getLoginItemSettings: () => ({ openAtLogin: true, executableWillLaunchAtLogin: true }),
+    getLoginItemSettings: () => ({ openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: true })] }),
   };
 
   const result = setAutoLaunchEnabled(true, {
     app,
-    execPath: "C:\\Netcatty\\Netcatty.exe",
+    execPath: EXEC_PATH,
     defaultApp: false,
     platform: "win32",
   });
@@ -130,7 +178,7 @@ test("setAutoLaunchEnabled(true) registers the hidden launch arg", () => {
   assert.deepEqual(capturedSettings, {
     openAtLogin: true,
     openAsHidden: true,
-    path: "C:\\Netcatty\\Netcatty.exe",
+    path: EXEC_PATH,
     args: [HIDDEN_LAUNCH_ARG],
   });
   assert.deepEqual(result, { success: true, enabled: true, supported: true });
@@ -146,29 +194,29 @@ test("setAutoLaunchEnabled(true) verifies with the same path+args it just wrote"
       // path+args queried — a bare getLoginItemSettings() call (no args)
       // would incorrectly report false right after enabling with --hidden.
       return options?.args?.includes(HIDDEN_LAUNCH_ARG)
-        ? { openAtLogin: true, executableWillLaunchAtLogin: true }
-        : { openAtLogin: false, executableWillLaunchAtLogin: false };
+        ? { openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: true })] }
+        : { openAtLogin: false, launchItems: [] };
     },
   };
 
   const result = setAutoLaunchEnabled(true, {
     app,
-    execPath: "C:\\Netcatty\\Netcatty.exe",
+    execPath: EXEC_PATH,
     defaultApp: false,
     platform: "win32",
   });
 
-  assert.deepEqual(capturedQueryOptions, { path: "C:\\Netcatty\\Netcatty.exe", args: [HIDDEN_LAUNCH_ARG] });
+  assert.deepEqual(capturedQueryOptions, { path: EXEC_PATH, args: [HIDDEN_LAUNCH_ARG] });
   assert.equal(result.enabled, true, "must not report false just because the query omitted matching args");
 });
 
-test("setAutoLaunchEnabled(true) reports disabled when Windows Startup Apps blocks it", () => {
+test("setAutoLaunchEnabled(true) reports disabled when Windows Startup Apps blocks the matching entry", () => {
   const app = {
     setLoginItemSettings: () => {},
-    getLoginItemSettings: () => ({ openAtLogin: true, executableWillLaunchAtLogin: false }),
+    getLoginItemSettings: () => ({ openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: false })] }),
   };
 
-  const result = setAutoLaunchEnabled(true, { app, defaultApp: false, platform: "win32" });
+  const result = setAutoLaunchEnabled(true, { app, execPath: EXEC_PATH, defaultApp: false, platform: "win32" });
 
   assert.deepEqual(result, { success: true, enabled: false, supported: true });
 });
@@ -177,7 +225,7 @@ test("setAutoLaunchEnabled(false) clears the hidden launch arg", () => {
   let capturedSettings = null;
   const app = {
     setLoginItemSettings: (settings) => { capturedSettings = settings; },
-    getLoginItemSettings: () => ({ openAtLogin: false }),
+    getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
   };
 
   const result = setAutoLaunchEnabled(false, { app, defaultApp: false, platform: "win32" });
@@ -210,7 +258,7 @@ test("setAutoLaunchEnabled is a no-op on Linux and does not call the app API", (
 test("setAutoLaunchEnabled surfaces failures without throwing", () => {
   const app = {
     setLoginItemSettings: () => { throw new Error("registry locked"); },
-    getLoginItemSettings: () => ({ openAtLogin: false }),
+    getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
   };
 
   const result = setAutoLaunchEnabled(true, { app, defaultApp: false, platform: "win32" });
@@ -225,17 +273,21 @@ test("wasLaunchedHidden detects the --hidden cold-start flag", () => {
   assert.equal(wasLaunchedHidden({ argv: undefined, platform: "win32" }), false);
 });
 
-test("wasLaunchedHidden detects a macOS hidden login-item launch via wasOpenedAsHidden", () => {
-  const app = { getLoginItemSettings: () => ({ wasOpenedAsHidden: true }) };
+test("wasLaunchedHidden detects a macOS login-item launch via wasOpenedAtLogin", () => {
+  const app = { getLoginItemSettings: () => ({ wasOpenedAtLogin: true }) };
 
   const result = wasLaunchedHidden({ argv: ["node", "main.js"], app, platform: "darwin" });
 
-  assert.equal(result, true, "macOS login launches never carry setLoginItemSettings() args in argv");
+  assert.equal(
+    result,
+    true,
+    "openAsHidden/wasOpenedAsHidden are deprecated and stop working on macOS 13+, so wasOpenedAtLogin is the only reliable signal",
+  );
 });
 
 test("wasLaunchedHidden does not consult macOS login-item state on other platforms", () => {
   let called = false;
-  const app = { getLoginItemSettings: () => { called = true; return { wasOpenedAsHidden: true }; } };
+  const app = { getLoginItemSettings: () => { called = true; return { wasOpenedAtLogin: true }; } };
 
   const result = wasLaunchedHidden({ argv: ["node", "main.js"], app, platform: "win32" });
 
@@ -255,7 +307,7 @@ test("registerHandlers wires get/set IPC channels", async () => {
   const handlers = new Map();
   const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) };
   const app = {
-    getLoginItemSettings: () => ({ openAtLogin: false }),
+    getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
     setLoginItemSettings: () => {},
   };
 
@@ -267,7 +319,7 @@ test("registerHandlers wires get/set IPC channels", async () => {
   const getResult = await handlers.get("netcatty:autoLaunch:get")();
   assert.deepEqual(getResult, { enabled: false, supported: true });
 
-  app.getLoginItemSettings = () => ({ openAtLogin: true, executableWillLaunchAtLogin: true });
+  app.getLoginItemSettings = () => ({ openAtLogin: true, launchItems: [hiddenLaunchItem({ enabled: true })] });
   const setResult = await handlers.get("netcatty:autoLaunch:set")(null, { enabled: true });
   assert.deepEqual(setResult, { success: true, enabled: true, supported: true });
 });

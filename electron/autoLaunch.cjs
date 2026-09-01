@@ -21,26 +21,53 @@ function isAutoLaunchSupported({ defaultApp = process.defaultApp, platform = pro
   return platform === "darwin" || platform === "win32";
 }
 
+function argsEqual(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Find the specific Windows run-key entry our own writes create (path +
+ * --hidden args), not just any entry for this executable.
+ */
+function findMatchingLaunchItem(settings, execPath) {
+  if (!Array.isArray(settings?.launchItems)) return null;
+  return settings.launchItems.find(
+    (item) => item?.path === execPath && argsEqual(item?.args, [HIDDEN_LAUNCH_ARG]),
+  ) ?? null;
+}
+
 /**
  * Resolve the OS's effective auto-launch state, not just whether a
- * registration exists. Windows can retain the run-key entry while the user
- * disables it via Task Manager's Startup Apps UI; Electron surfaces that as
- * executableWillLaunchAtLogin, distinct from openAtLogin (registration only).
+ * registration exists.
+ *
+ * Windows can retain the run-key entry while the user disables it via Task
+ * Manager's Startup Apps UI. Electron's executableWillLaunchAtLogin surfaces
+ * an effective state too, but it deliberately ignores the args option and
+ * reports true if the executable would launch with ANY arguments — so it
+ * can false-positive on an unrelated no-argument entry for the same exe.
+ * launchItems[].enabled is scoped to one specific path+args registration
+ * (the same combination buildLoginItemQueryOptions queries), so look up our
+ * own --hidden entry there instead and use its enabled flag.
  */
-function resolveEffectiveLoginState(settings, platform) {
-  if (platform === "win32" && typeof settings?.executableWillLaunchAtLogin === "boolean") {
-    return settings.executableWillLaunchAtLogin;
+function resolveEffectiveLoginState(settings, platform, execPath) {
+  if (platform === "win32") {
+    const matchingItem = findMatchingLaunchItem(settings, execPath);
+    if (matchingItem) return Boolean(matchingItem.enabled);
+    // No matching --hidden entry: openAtLogin was queried with the same
+    // path+args (see buildLoginItemQueryOptions), so it is still correctly
+    // scoped to "is that exact entry registered" — false if absent.
+    return Boolean(settings?.openAtLogin);
   }
   return Boolean(settings?.openAtLogin);
 }
 
 /**
- * Electron's getLoginItemSettings() only reports openAtLogin/
- * executableWillLaunchAtLogin for the specific path+args combination you
- * ask about — it does not mean "is anything registered for this app". Our
- * code only ever registers a login item with args:[HIDDEN_LAUNCH_ARG], so
- * every read must query that exact combination (matching what
- * setAutoLaunchEnabled writes) or Windows reports a false negative.
+ * Electron's getLoginItemSettings() only reports openAtLogin for the
+ * specific path+args combination you ask about — it does not mean "is
+ * anything registered for this app". Our code only ever registers a login
+ * item with args:[HIDDEN_LAUNCH_ARG], so every read must query that exact
+ * combination (matching what setAutoLaunchEnabled writes) or Windows
+ * reports a false negative.
  */
 function buildLoginItemQueryOptions(execPath) {
   return { path: execPath, args: [HIDDEN_LAUNCH_ARG] };
@@ -57,7 +84,7 @@ function getAutoLaunchEnabled({
   }
   try {
     const settings = app.getLoginItemSettings(buildLoginItemQueryOptions(execPath));
-    return { enabled: resolveEffectiveLoginState(settings, platform), supported: true };
+    return { enabled: resolveEffectiveLoginState(settings, platform, execPath), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to read login item settings:", err?.message || err);
     return { enabled: false, supported: true };
@@ -84,7 +111,7 @@ function setAutoLaunchEnabled(enabled, {
       args: wantEnabled ? [HIDDEN_LAUNCH_ARG] : [],
     });
     const settings = app.getLoginItemSettings(buildLoginItemQueryOptions(execPath));
-    return { success: true, enabled: resolveEffectiveLoginState(settings, platform), supported: true };
+    return { success: true, enabled: resolveEffectiveLoginState(settings, platform, execPath), supported: true };
   } catch (err) {
     console.warn("[AutoLaunch] Failed to update login item settings:", err?.message || err);
     return { success: false, enabled: getAutoLaunchEnabled({ app, execPath, defaultApp, platform }).enabled, supported: true };
@@ -93,18 +120,25 @@ function setAutoLaunchEnabled(enabled, {
 
 /**
  * True when this process was launched by the OS login item (cold start
- * only). Windows relies on the --hidden arg (openAsHidden is a macOS-only
- * setting); macOS never puts args from setLoginItemSettings() into argv for
- * a login launch, so it must be detected via
- * getLoginItemSettings().wasOpenedAsHidden instead.
+ * only). Windows relies on the --hidden arg (macOS never puts args from
+ * setLoginItemSettings() into argv for a login launch, so it needs a
+ * different signal).
+ *
+ * macOS's own hidden-launch flags (openAsHidden/wasOpenedAsHidden) are
+ * deprecated and stop working on macOS 13+ per Electron's docs, so they
+ * cannot be trusted to detect an actual hidden launch there. wasOpenedAtLogin
+ * still works on 13+ and is not deprecated; since Netcatty only ever
+ * registers a macOS login item to satisfy this "launch hidden" feature (there
+ * is no scenario where it registers one for a normal, visible startup), any
+ * automatic login launch should apply our own hidden-window behavior.
  */
 function wasLaunchedHidden({ argv = process.argv, app, platform = process.platform } = {}) {
   if (Array.isArray(argv) && argv.includes(HIDDEN_LAUNCH_ARG)) return true;
   if (platform !== "darwin" || typeof app?.getLoginItemSettings !== "function") return false;
   try {
-    return Boolean(app.getLoginItemSettings().wasOpenedAsHidden);
+    return Boolean(app.getLoginItemSettings().wasOpenedAtLogin);
   } catch (err) {
-    console.warn("[AutoLaunch] Failed to read macOS hidden login-item state:", err?.message || err);
+    console.warn("[AutoLaunch] Failed to read macOS login-item launch state:", err?.message || err);
     return false;
   }
 }
