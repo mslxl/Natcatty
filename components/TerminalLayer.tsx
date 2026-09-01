@@ -1499,7 +1499,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       const { effectiveInitialPath } = resolveSftpOpenTarget({
         tabId,
         host,
-        sourceSessionId,
+        originSessionId: sourceSessionId,
       });
       setSftpInitialLocationForTab(prev => {
         const next = new Map(prev);
