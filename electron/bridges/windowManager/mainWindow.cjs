@@ -469,6 +469,17 @@ function createMainWindowApi(ctx) {
 
       win.on("show", () => {
         safeSend("netcatty:window:shown");
+        if (startHidden) {
+          // The hidden-launch tray pin exists so a --hidden cold start is
+          // never a windowless, trayless zombie; once this window is
+          // actually visible that concern no longer applies, so hand tray
+          // lifetime back to the user's normal close-to-tray preference.
+          try {
+            getGlobalShortcutBridge().releaseHiddenLaunchTrayPin?.();
+          } catch (err) {
+            console.warn("[MainWindow] Failed to release hidden-launch tray pin:", err?.message || err);
+          }
+        }
       });
     
       // Ensure native background matches frontend background, even before first paint.
@@ -524,11 +535,12 @@ function createMainWindowApi(ctx) {
 
       if (startHidden) {
         // Belt-and-suspenders: guarantee a tray icon exists as soon as
-        // bridges (and electronModule) are ready, regardless of the user's
-        // separate close-to-tray preference, so a hidden cold start is
-        // always reachable.
+        // bridges (and electronModule) are ready, and keep it pinned
+        // (independent of the user's separate close-to-tray preference)
+        // until this window is actually shown — see releaseHiddenLaunchTrayPin
+        // in the "show" handler below.
         try {
-          getGlobalShortcutBridge().createTray?.();
+          getGlobalShortcutBridge().pinTrayForHiddenLaunch?.();
         } catch (err) {
           console.warn("[MainWindow] Failed to create tray for hidden launch:", err?.message || err);
         }

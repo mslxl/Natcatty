@@ -662,11 +662,13 @@ function setupDeferredShow(win, { timeoutMs = 3000, waitForRendererReady = true,
     if (webContentsId) rendererReadyCallbacksByWebContentsId.delete(webContentsId);
     if (startHidden) {
       // Cold start via the OS login item ("--hidden"): stay hidden. The tray
-      // icon is guaranteed by mainWindow.cjs right after bridges register,
-      // which runs before this can fire (ready-to-show/renderer-ready always
-      // come later), so electronModule is safely initialized by then.
+      // icon is guaranteed (and pinned open regardless of close-to-tray)
+      // by mainWindow.cjs right after bridges register, which runs before
+      // this can fire (ready-to-show/renderer-ready always come later), so
+      // electronModule is safely initialized by then. Pin here too as a
+      // belt-and-suspenders fallback in case that ordering ever changes.
       try {
-        getGlobalShortcutBridge().createTray?.();
+        getGlobalShortcutBridge().pinTrayForHiddenLaunch?.();
       } catch (err) {
         console.warn("[WindowManager] Failed to create tray for hidden launch:", err?.message || err);
       }

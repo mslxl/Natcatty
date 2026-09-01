@@ -834,11 +834,12 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:getEnabled", async () => ({
 
 if (ipcMain) registerAutoLaunchHandlers(ipcMain, { app });
 
-// Cold-start only: true when the OS login item launched us with --hidden.
-// Consumed once by the first createAndShowMainWindow() call below so later
-// reuse paths (tray click, deep links, second-instance focus) always show.
+// Cold-start only: true when the OS login item launched us hidden (--hidden
+// on Windows, wasOpenedAsHidden on macOS). Consumed once by the first
+// createAndShowMainWindow() call below so later reuse paths (tray click,
+// deep links, second-instance focus) always show.
 let consumeColdStartHiddenLaunch = (() => {
-  let pending = wasLaunchedHidden(process.argv);
+  let pending = wasLaunchedHidden({ argv: process.argv, app });
   return () => {
     const value = pending;
     pending = false;

@@ -5,6 +5,7 @@ const { createMainWindowApi } = require("./windowManager/mainWindow.cjs");
 
 class BrowserWindowStub {
   constructor() {
+    this._listeners = new Map();
     this.webContents = {
       id: 1,
       on() {},
@@ -25,7 +26,11 @@ class BrowserWindowStub {
     };
   }
 
-  on() {}
+  on(event, handler) {
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event).push(handler);
+  }
+
   once() {}
   isDestroyed() { return false; }
   isMaximized() { return false; }
@@ -35,6 +40,11 @@ class BrowserWindowStub {
   setOpacity() {}
   async loadURL() {}
   close() {}
+
+  /** Test helper: fire a registered event listener, e.g. simulating win.show(). */
+  emit(event) {
+    for (const handler of this._listeners.get(event) || []) handler();
+  }
 }
 
 function createApi({ setupDeferredShow, getGlobalShortcutBridge } = {}) {
@@ -128,12 +138,12 @@ test("createWindow defaults startHidden to false when omitted", async () => {
   assert.equal(deferredShowCalls[0].startHidden, false);
 });
 
-test("createWindow(startHidden) ensures a tray exists right after bridges register", async () => {
+test("createWindow(startHidden) pins the tray open right after bridges register", async () => {
   const callOrder = [];
   const api = createApi({
     getGlobalShortcutBridge: () => ({
       handleWindowClose: () => false,
-      createTray: () => { callOrder.push("createTray"); },
+      pinTrayForHiddenLaunch: () => { callOrder.push("pinTrayForHiddenLaunch"); },
     }),
   });
 
@@ -142,30 +152,76 @@ test("createWindow(startHidden) ensures a tray exists right after bridges regist
     onRegisterBridge: () => { callOrder.push("onRegisterBridge"); },
   });
 
-  assert.deepEqual(callOrder, ["onRegisterBridge", "createTray"]);
+  assert.deepEqual(callOrder, ["onRegisterBridge", "pinTrayForHiddenLaunch"]);
 });
 
-test("createWindow(startHidden) tolerates a tray creation failure without throwing", async () => {
+test("createWindow(startHidden) tolerates a tray pin failure without throwing", async () => {
   const api = createApi({
     getGlobalShortcutBridge: () => ({
       handleWindowClose: () => false,
-      createTray: () => { throw new Error("electronModule not ready"); },
+      pinTrayForHiddenLaunch: () => { throw new Error("electronModule not ready"); },
     }),
   });
 
   await assert.doesNotReject(() => createWindowWith(api, { startHidden: true }));
 });
 
-test("createWindow without startHidden does not force-create a tray", async () => {
-  let createTrayCalls = 0;
+test("createWindow without startHidden does not pin the tray open", async () => {
+  let pinCalls = 0;
   const api = createApi({
     getGlobalShortcutBridge: () => ({
       handleWindowClose: () => false,
-      createTray: () => { createTrayCalls += 1; },
+      pinTrayForHiddenLaunch: () => { pinCalls += 1; },
     }),
   });
 
   await createWindowWith(api, {});
 
-  assert.equal(createTrayCalls, 0);
+  assert.equal(pinCalls, 0);
+});
+
+test("a hidden cold start releases the tray pin once the window is actually shown", async () => {
+  let releaseCalls = 0;
+  const api = createApi({
+    getGlobalShortcutBridge: () => ({
+      handleWindowClose: () => false,
+      pinTrayForHiddenLaunch: () => {},
+      releaseHiddenLaunchTrayPin: () => { releaseCalls += 1; },
+    }),
+  });
+
+  const win = await createWindowWith(api, { startHidden: true });
+  assert.equal(releaseCalls, 0, "must stay pinned until the window is actually shown");
+
+  win.emit("show");
+  assert.equal(releaseCalls, 1);
+});
+
+test("a normal (non-hidden) cold start never touches the hidden-launch tray pin", async () => {
+  let releaseCalls = 0;
+  const api = createApi({
+    getGlobalShortcutBridge: () => ({
+      handleWindowClose: () => false,
+      releaseHiddenLaunchTrayPin: () => { releaseCalls += 1; },
+    }),
+  });
+
+  const win = await createWindowWith(api, {});
+  win.emit("show");
+
+  assert.equal(releaseCalls, 0);
+});
+
+test("releasing the tray pin tolerates a failure without throwing", async () => {
+  const api = createApi({
+    getGlobalShortcutBridge: () => ({
+      handleWindowClose: () => false,
+      pinTrayForHiddenLaunch: () => {},
+      releaseHiddenLaunchTrayPin: () => { throw new Error("tray already gone"); },
+    }),
+  });
+
+  const win = await createWindowWith(api, { startHidden: true });
+
+  assert.doesNotThrow(() => win.emit("show"));
 });
