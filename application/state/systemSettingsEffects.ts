@@ -84,6 +84,14 @@ export function useSystemSettingsEffects({
   // choice, or the adjacent push effect reacts to the overwrite and issues
   // the opposite OS write right after the user's own request lands.
   const autoLaunchWriteStartedRef = useRef(false);
+  // Incremented on every push-effect invocation. If the user toggles again
+  // before an in-flight bridge.setAutoLaunch(...) resolves, that older
+  // call's response is stale by the time it arrives — comparing its own
+  // request against its own result is self-consistent but says nothing
+  // about whether a newer request has since superseded it, so a delayed
+  // response could otherwise "correct" state the user has already moved
+  // past (undoing a toggle they made after this specific request started).
+  const autoLaunchWriteGenerationRef = useRef(0);
 
   // Persist and sync toggle window hotkey setting
   useEffect(() => {
@@ -203,8 +211,13 @@ export function useSystemSettingsEffects({
     // A real write is now in flight — permanently disqualify the mount-time
     // hydration effect above from applying a (now possibly stale) response.
     autoLaunchWriteStartedRef.current = true;
+    const requestGeneration = ++autoLaunchWriteGenerationRef.current;
     bridge.setAutoLaunch(autoLaunchEnabled).then((result) => {
       setAutoLaunchSupported(result.supported);
+      // The user toggled again before this request resolved — a newer
+      // request (and its own response, once it arrives) is authoritative;
+      // reconciling this stale one could undo a choice made after it fired.
+      if (autoLaunchWriteGenerationRef.current !== requestGeneration) return;
       if (!isAutoLaunchResultTrustworthy(result)) return;
       if (result.enabled !== autoLaunchEnabled) setAutoLaunchEnabled(result.enabled);
       localStorageAdapter.writeString(STORAGE_KEY_AUTO_LAUNCH_ENABLED, result.enabled ? 'true' : 'false');

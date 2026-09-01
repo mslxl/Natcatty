@@ -1192,6 +1192,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setWindowOpacity: applyIncomingWindowOpacity,
     setAppIconVariant,
     setAutoUpdateEnabled,
+    setAutoLaunchEnabled,
     setHttpNetworkProxy,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,

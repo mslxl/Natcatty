@@ -105,3 +105,87 @@ test('hydration still applies normally when it resolves before any write starts'
   assert.equal(state, true);
   void writeStarted;
 });
+
+/**
+ * Model of the push effect's own overlap guard: rapid double (or triple)
+ * toggles start multiple bridge.setAutoLaunch(...) calls that can resolve
+ * out of order. Each response is only reconciled into state if no newer
+ * request has started since — this is the exact scenario the review
+ * flagged: "each callback closes over its render's autoLaunchEnabled value
+ * ... without checking whether a newer request exists".
+ */
+class AutoLaunchWriteSimulator {
+  state: boolean;
+  private generation = 0;
+
+  constructor(initial: boolean) {
+    this.state = initial;
+  }
+
+  /** Simulates the user toggling the switch, starting a new write. */
+  startWrite(requestedValue: boolean): { requestGeneration: number; requestedValue: boolean } {
+    this.state = requestedValue;
+    this.generation += 1;
+    return { requestGeneration: this.generation, requestedValue };
+  }
+
+  /** Simulates that write's bridge.setAutoLaunch(...) response arriving. */
+  resolveWrite(request: { requestGeneration: number; requestedValue: boolean }, result: { success: boolean; enabled: boolean }) {
+    if (this.generation !== request.requestGeneration) return; // superseded — ignore
+    if (!isAutoLaunchResultTrustworthy(result)) return;
+    if (result.enabled !== request.requestedValue) this.state = result.enabled;
+  }
+}
+
+test('a stale write response is ignored once a newer request has started', () => {
+  const sim = new AutoLaunchWriteSimulator(false);
+
+  const first = sim.startWrite(true); // user enables
+  const second = sim.startWrite(false); // user immediately disables again, before `first` resolves
+  assert.equal(sim.state, false, 'the latest toggle is reflected optimistically right away');
+
+  // `first`'s response arrives late, reporting a mismatch against ITS OWN
+  // request (e.g. macOS pending approval reported enabled:false for a
+  // requested true) — without the generation guard this would incorrectly
+  // "correct" state to false right as `second` is still in flight, and
+  // with a mismatch reported the OTHER way it could just as easily stomp
+  // a subsequent true.
+  sim.resolveWrite(first, { success: true, enabled: false });
+  assert.equal(sim.state, false, 'the stale response for the superseded first request must not touch state');
+
+  // `second`'s own (current) response arrives and is applied normally.
+  sim.resolveWrite(second, { success: true, enabled: false });
+  assert.equal(sim.state, false);
+});
+
+test('a stale write response would have incorrectly overridden a later successful write, without the guard', () => {
+  const sim = new AutoLaunchWriteSimulator(false);
+
+  const first = sim.startWrite(true); // request enable — this one will report a mismatch
+  const second = sim.startWrite(true); // user toggles off and back on again quickly; also requests true
+  assert.equal(sim.state, true);
+
+  // second's response arrives first (network/OS timing is not ordered) and
+  // confirms the real, current state.
+  sim.resolveWrite(second, { success: true, enabled: true });
+  assert.equal(sim.state, true);
+
+  // first's stale response finally arrives, reporting a mismatch (its own
+  // request was true but the OS said false at the time) — must not undo
+  // the now-confirmed true state from the newer request.
+  sim.resolveWrite(first, { success: true, enabled: false });
+  assert.equal(
+    sim.state,
+    true,
+    'a delayed response from a superseded request must not overwrite the newer, already-confirmed state',
+  );
+});
+
+test('the only in-flight write still reconciles a genuine mismatch normally', () => {
+  const sim = new AutoLaunchWriteSimulator(false);
+
+  const only = sim.startWrite(true);
+  sim.resolveWrite(only, { success: true, enabled: false }); // e.g. blocked by Windows Startup Apps
+
+  assert.equal(sim.state, false, 'with no overlap, a real mismatch must still correct the optimistic toggle');
+});
