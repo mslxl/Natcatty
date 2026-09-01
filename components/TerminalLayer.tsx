@@ -686,6 +686,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (!prev.has(tabId)) return prev;
       const next = new Map(prev);
       next.delete(tabId);
+      sftpPendingUploadsForTabRef.current.delete(tabId);
       return next;
     });
     setSftpInitialLocationForTab(prev => {
@@ -966,6 +967,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           enqueuePendingSftpUpload(next.get(tabId) ?? [], pendingUpload),
         );
       }
+      // Keep the render-lagging ref in sync immediately so consecutive
+      // async drop handlers observe the enqueued (or cleared) queue before
+      // React commits this state update; otherwise the FIFO route guard
+      // below would read a stale empty queue.
+      const nextQueue = next.get(tabId);
+      if (nextQueue) sftpPendingUploadsForTabRef.current.set(tabId, nextQueue);
+      else sftpPendingUploadsForTabRef.current.delete(tabId);
       return next;
     });
   }, [closeTerminalSidePanelTab, resolveSftpOpenTarget, setSidePanelOpenTabs, sidePanelLayoutsRef, sidePanelOpenTabsRef]);
@@ -1005,6 +1013,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       const next = new Map(prev);
       if (remainingPrev.length > 0) next.set(tabId, [...remainingPrev]);
       else next.delete(tabId);
+      // Sync the render-lagging ref immediately so a drop handled right
+      // after this one sees the updated queue head, not the pre-removal
+      // one from before React commits.
+      const nextQueue = next.get(tabId);
+      if (nextQueue) sftpPendingUploadsForTabRef.current.set(tabId, nextQueue);
+      else sftpPendingUploadsForTabRef.current.delete(tabId);
       return next;
     });
     if (remaining === queued) return;
