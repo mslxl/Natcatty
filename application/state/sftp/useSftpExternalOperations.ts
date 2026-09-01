@@ -1682,6 +1682,7 @@ export const useSftpExternalOperations = (
         connectionId?: string;
         tabId?: string;
         endpointPin?: UploadEndpointPin;
+        strictConnectionPin?: boolean;
       },
     ): Promise<UploadResult[]> => {
       // Pin before any await so tab switches cannot retarget the upload.
@@ -1697,6 +1698,7 @@ export const useSftpExternalOperations = (
       const originatingEndpoint = options?.endpointPin ?? captureUploadEndpoint(
         originatingPane.connection,
         connectionCacheKeyMapRef.current,
+        { pinConnectionId: options?.strictConnectionPin },
       );
       assertUploadEndpointUnchanged(
         originatingPane.connection,

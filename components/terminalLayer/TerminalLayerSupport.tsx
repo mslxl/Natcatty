@@ -28,6 +28,7 @@ import {
   resolveTerminalHibernateEnabledForProtocol,
 } from '../../domain/terminalHibernate';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
+import type { TerminalCwdChangeMeta } from '../terminal/sftpCwd';
 import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION } from '../../infrastructure/config/storageKeys';
 import { cn } from '../../lib/utils';
 import { LazyLoadBoundary } from '../ui/lazy-load-boundary';
@@ -96,6 +97,10 @@ export type PendingSftpUpload = {
   hostId: string;
   /** Full connection identity (id:hostname:port:protocol) for session-override awareness */
   connectionKey: string;
+  /** Terminal session where the drop originated, including Mosh and ET. */
+  originSessionId?: string;
+  /** Terminal session whose active route must own the accepting SFTP connection. */
+  sourceSessionId?: string;
   targetPath?: string;
   entries: DropEntry[];
 };
@@ -781,9 +786,10 @@ interface TerminalPaneProps {
     host: Host,
     initialPath?: string,
     pendingUploadEntries?: DropEntry[],
+    originSessionId?: string,
     sourceSessionId?: string,
   ) => void;
-  onTerminalCwdChange: (sessionId: string, cwd: string | null, meta?: { source?: 'osc7' }) => void;
+  onTerminalCwdChange: (sessionId: string, cwd: string | null, meta?: TerminalCwdChangeMeta) => void;
   onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
   onTerminalBell?: (sessionId: string) => void;
   onTerminalOutput?: (sessionId: string, chunk: string) => void;

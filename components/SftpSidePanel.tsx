@@ -28,6 +28,8 @@ import { useSftpState } from "../application/state/useSftpState";
 import {
   useReportSftpTransferOwnerActivity,
 } from "../application/state/sftp/useSftpTransferLifecycle";
+import { useSftpFollowTerminalCwd } from "../application/state/sftp/useSftpFollowTerminalCwd";
+import { usePendingSftpUploadRebind } from "../application/state/sftp/usePendingSftpUploadRebind";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import {
   editorTabStore,
@@ -65,17 +67,8 @@ import { keepOnlyPaneSelections } from "./sftp/hooks/selectionScope";
 import { KeyBinding, HotkeyScheme } from "../domain/models";
 import {
   mergeLatestFollowTerminalCwdHostSetting,
-  runInitialFollowTerminalCwdSync,
   resolveHostFollowTerminalCwd,
-  shouldApplyFollowTerminalCwdSyncResult,
-  shouldClearBlockedFollowOnReach,
-  shouldFollowTerminalCwdNavigate,
-  shouldInvalidateFollowBookkeepingOnCwdChange,
-  shouldLatchInitialFollowInterruption,
-  shouldReleaseInitialFollowSyncAttempt,
-  shouldResetInitialFollowTerminalCwdSync,
-  type SftpFollowTerminalCwdBlock,
-} from "./sftp/sftpFollowTerminalCwd";
+} from "../domain/sftpFollowTerminalCwd";
 import {
   canLocateSftpPathInTerminal,
   resolveLocateSftpPathInTerminalAction,
@@ -89,14 +82,21 @@ import { getNextSftpToolbarDisplayPath } from "./sftp/SftpPaneToolbar";
 import { scheduleDeferredTerminalFocus } from "./systemManager/tmuxActionFocus";
 import {
   connectionKeyMatchesHost,
+  findPendingSftpRebindTargetPane,
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
   rememberSftpSidePanelSourceStatus,
+  resolvePendingSftpUploadCancellation,
   resolveSftpSidePanelTrackedSourceStatusUpdate,
   shouldAcceptPendingSftpUpload,
+  shouldBlockPendingSftpUploadForSourceRebind,
+  shouldCancelPendingSftpUpload,
+  shouldCancelSettledPendingSftpRebindWithoutTarget,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
+  shouldStartPendingSftpUploadRebind,
+  shouldWaitForPendingSftpRebind,
 } from "./sftp/sftpSidePanelAutoConnect";
 import {
   pruneSftpSidePanelTabConnectionKeys,
@@ -146,6 +146,8 @@ interface SftpSidePanelProps {
     requestId: string;
     hostId: string;
     connectionKey: string;
+    originSessionId?: string;
+    sourceSessionId?: string;
     targetPath?: string;
     entries: DropEntry[];
   } | null;
@@ -161,8 +163,10 @@ interface SftpSidePanelProps {
   onGetTerminalCwd?: (options?: {
     preferFreshBackend?: boolean;
     allowRendererFallback?: boolean;
+    requireActiveShellCwd?: boolean;
   }) => Promise<string | null>;
   activeTerminalCwd?: string | null;
+  activeTerminalCwdTrusted?: boolean;
   sftpFollowTerminalCwd?: boolean;
   onSftpFollowTerminalCwdChange?: (enabled: boolean, host?: Host | null) => void;
   onRequestTerminalFocus?: () => void;
@@ -204,6 +208,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   setEditorWordWrap,
   onGetTerminalCwd,
   activeTerminalCwd = null,
+  activeTerminalCwdTrusted = false,
   sftpFollowTerminalCwd = false,
   onSftpFollowTerminalCwdChange,
   onRequestTerminalFocus,
@@ -508,6 +513,15 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const lastSourceSessionStatusRef = useRef<string | null>(null);
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
+  const {
+    barrierRef: pendingUploadRebindBarrierRef,
+    bindTarget: bindPendingUploadRebindTarget,
+    clearBarrier: clearPendingUploadRebindBarrier,
+    reset: resetPendingUploadRebind,
+    settledRequestId: pendingUploadRebindSettledRequestId,
+    start: startPendingUploadRebind,
+    startedRequestIdRef: pendingUploadRebindStartedIdRef,
+  } = usePendingSftpUploadRebind();
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
   /** Last browsed path per endpoint — survives session switches while the panel stays open. */
   const lastBrowsedPathByConnectionKeyRef = useRef<Map<string, string>>(new Map());
@@ -573,6 +587,35 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       activeHost.username,
       activeHost.sftpFileProtocol,
     );
+    const pendingMatchesTarget = Boolean(
+      pendingUpload?.hostId === activeHost.id
+      && pendingUpload.connectionKey === connectionKey
+    );
+    const pendingStrictSourceSessionId = (
+      pendingMatchesTarget
+      && pendingUpload.sourceSessionId
+      && pendingUpload.sourceSessionId === activeSessionId
+    ) ? pendingUpload.sourceSessionId : undefined;
+    if (
+      pendingUpload?.hostId === activeHost.id
+      && pendingUpload.connectionKey === connectionKey
+      && pendingUpload.sourceSessionId
+      && pendingUpload.sourceSessionId !== activeSessionId
+    ) return;
+    if (
+      pendingUpload
+      && pendingUploadRebindStartedIdRef.current === pendingUpload.requestId
+      && pendingUploadRebindSettledRequestId !== pendingUpload.requestId
+    ) return;
+    const pendingRequiresForcedRebind = pendingUpload
+      ? shouldStartPendingSftpUploadRebind({
+          pendingMatchesTarget,
+          requestId: pendingUpload.requestId,
+          startedRequestId: pendingUploadRebindStartedIdRef.current,
+          originSessionId: pendingUpload.originSessionId,
+          sourceSessionId: pendingUpload.sourceSessionId,
+        })
+      : false;
     const pendingSameEndpointSession = sessions.find((session) => (
       isPendingSameEndpointSshSession(session, activeHost)
     ));
@@ -620,6 +663,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // browsed path sticky via remembered initialPath below.
     if (
       !sessionChanged
+      && !pendingRequiresForcedRebind
       && shouldSkipSftpSidePanelAutoConnect(
         connectionKey,
         connectedKeyRef.current,
@@ -663,7 +707,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // (proxy/jump path can differ even when hostId/hostname/port/user match).
     // Same-endpoint rebind happens in place below with remembered initialPath so
     // we keep the browsed directory without stacking tabs.
-    const existingTab = sessionChanged
+    const existingTab = sessionChanged || pendingRequiresForcedRebind
       ? null
       : findReusableSftpSidePanelTab(
         tabs,
@@ -701,7 +745,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // Capture the visible path before rebind so session switches keep it even
     // if the path-memory effect has not written this endpoint yet.
     if (
-      sessionChanged
+      (sessionChanged || pendingRequiresForcedRebind)
       && activeTab?.connection
       && !activeTab.connection.isLocal
       && activeTab.connection.status === "connected"
@@ -761,7 +805,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         // Same-endpoint rebind closes the old connection in place; keep a tab
         // when editors or in-flight transfers still depend on that connection id.
         || (
-          sessionChanged
+          (sessionChanged || pendingRequiresForcedRebind)
           && (hasEditorBoundToCurrentConnection || hasActiveTransferOnCurrentConnection)
         )
       )
@@ -778,17 +822,45 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
-    s.connect("left", activeHost, {
-      sourceSessionId: activeSessionStatus === "connected"
-        ? (activeSessionId ?? undefined)
-        : undefined,
+    const connect = (
+      connectRequestKey?: string,
+      onConnectionCreated?: (target: { tabId: string; connectionId: string }) => void,
+    ) => s.connect("left", activeHost, {
+      sourceSessionId: pendingStrictSourceSessionId
+        ?? (activeSessionStatus === "connected" ? (activeSessionId ?? undefined) : undefined),
+      requireSourceSessionReuse: Boolean(pendingStrictSourceSessionId),
+      ...(connectRequestKey ? { connectRequestKey } : undefined),
+      ...(onConnectionCreated ? { onConnectionCreated } : undefined),
       ...(initialPath ? { initialPath } : undefined),
       ...(needsNewTab ? { forceNewTab: true } : undefined),
       onTabCreated: (tabId) => {
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-  }, [activeHost, activeSessionId, initialLocation, interactiveWorkActive, sessions]);
+    if (pendingRequiresForcedRebind && pendingUpload) {
+      startPendingUploadRebind({
+        requestId: pendingUpload.requestId,
+        previousConnectionId: currentConn?.id ?? null,
+        connect: () => connect(
+          pendingUpload.requestId,
+          (target) => bindPendingUploadRebindTarget(pendingUpload.requestId, target),
+        ),
+      });
+      return;
+    }
+    void connect();
+  }, [
+    activeHost,
+    activeSessionId,
+    bindPendingUploadRebindTarget,
+    initialLocation,
+    interactiveWorkActive,
+    pendingUpload,
+    pendingUploadRebindSettledRequestId,
+    pendingUploadRebindStartedIdRef,
+    sessions,
+    startPendingUploadRebind,
+  ]);
 
   useEffect(() => {
     if (!activeHost || !isVisible) return;
@@ -905,11 +977,91 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   ]);
 
   useEffect(() => {
-    if (!pendingUpload || !activeHost) return;
+    if (!pendingUpload) return;
     if (handledPendingUploadIdRef.current === pendingUpload.requestId) return;
 
-    const activePane = leftPane;
+    const rebindBarrier = pendingUploadRebindBarrierRef.current;
+    const forcedRebindTargetPane = (
+      rebindBarrier?.requestId === pendingUpload.requestId
+      && pendingUploadRebindSettledRequestId === pendingUpload.requestId
+    )
+      ? findPendingSftpRebindTargetPane(
+          sftpRef.current.leftTabs.tabs,
+          sftpRef.current.rightTabs.tabs,
+          rebindBarrier.targetTabId,
+          rebindBarrier.targetConnectionId,
+        )
+      : null;
+    const activePane = forcedRebindTargetPane ?? leftPane;
     const connection = activePane.connection;
+    const activeSessionStatus = activeSessionId
+      ? sessions.find((session) => session.id === activeSessionId)?.status ?? null
+      : null;
+    const cancellationReason = resolvePendingSftpUploadCancellation({
+      pendingHostId: pendingUpload.hostId,
+      pendingOriginSessionId: pendingUpload.originSessionId,
+      pendingSourceSessionId: pendingUpload.sourceSessionId,
+      activeHostId: activeHost?.id,
+      activeSessionId,
+      focusedSessionId,
+      panelVisible: isVisible,
+      connection,
+    });
+    const cancelPendingUpload = () => {
+      handledPendingUploadIdRef.current = pendingUpload.requestId;
+      clearPendingUploadRebindBarrier(pendingUpload.requestId);
+      toast.error(t("terminal.dragDrop.uploadCancelled"), "SFTP");
+      onPendingUploadHandled?.(pendingUpload.requestId);
+    };
+    if (shouldCancelPendingSftpUpload(cancellationReason, true)) {
+      cancelPendingUpload();
+      return;
+    }
+    if (shouldCancelSettledPendingSftpRebindWithoutTarget({
+      pendingRequiresRebind: Boolean(
+        pendingUpload.originSessionId || pendingUpload.sourceSessionId
+      ),
+      requestId: pendingUpload.requestId,
+      startedRequestId: pendingUploadRebindStartedIdRef.current,
+      settledRequestId: pendingUploadRebindSettledRequestId,
+      barrierRequestId: rebindBarrier?.requestId,
+      targetTabId: rebindBarrier?.targetTabId,
+      targetConnectionId: rebindBarrier?.targetConnectionId,
+      targetExists: Boolean(forcedRebindTargetPane),
+    })) {
+      cancelPendingUpload();
+      return;
+    }
+    if (!activeHost) return;
+    if (shouldBlockPendingSftpUploadForSourceRebind({
+      pendingSourceSessionId: pendingUpload.sourceSessionId,
+      previousSessionId: lastSourceSessionIdRef.current,
+      activeSessionId,
+      previousStatus: lastSourceSessionStatusRef.current,
+      activeStatus: activeSessionStatus,
+    })) return;
+    const waitingForForcedRebind = shouldWaitForPendingSftpRebind({
+      pendingRequiresRebind: Boolean(
+        pendingUpload.originSessionId || pendingUpload.sourceSessionId
+      ),
+      pendingSourceSessionId: pendingUpload.sourceSessionId,
+      requestId: pendingUpload.requestId,
+      startedRequestId: pendingUploadRebindStartedIdRef.current,
+      settledRequestId: pendingUploadRebindSettledRequestId,
+      tabId: activePane.id,
+      connectionId: connection?.id,
+      barrierRequestId: rebindBarrier?.requestId,
+      previousConnectionId: rebindBarrier?.previousConnectionId,
+      targetTabId: rebindBarrier?.targetTabId,
+      targetConnectionId: rebindBarrier?.targetConnectionId,
+    });
+    if (shouldCancelPendingSftpUpload(cancellationReason, waitingForForcedRebind)) {
+      // Only fail a strict drop after its replacement connection (not the old
+      // disconnected pane) is the connection being evaluated.
+      cancelPendingUpload();
+      return;
+    }
+    if (waitingForForcedRebind) return;
     // Prefer the live connection cache key (includes session overrides). Fall
     // back to the tab map only when the connect-time stamp is not yet readable.
     const paneConnectionKey = connection && !connection.isLocal
@@ -920,13 +1072,19 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       )
       : null;
     if (!shouldAcceptPendingSftpUpload({
+      ownerPanelOpen,
       pendingHostId: pendingUpload.hostId,
       pendingConnectionKey: pendingUpload.connectionKey,
+      pendingSourceSessionId: pendingUpload.sourceSessionId,
       activeHostId: activeHost.id,
       connection,
       paneConnectionKey,
     }) || !connection) {
       return;
+    }
+
+    if (rebindBarrier?.requestId === pendingUpload.requestId) {
+      clearPendingUploadRebindBarrier(pendingUpload.requestId);
     }
 
     handledPendingUploadIdRef.current = pendingUpload.requestId;
@@ -939,8 +1097,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
           targetPath: pendingUpload.targetPath,
           connectionId: pinnedConnectionId,
           tabId: pinnedTabId,
+          strictConnectionPin: true,
         });
-        reportSftpUploadResults({ results, t, toast });
+        reportSftpUploadResults({
+          results,
+          targetPath: pendingUpload.targetPath,
+          t,
+          toast,
+        });
       } catch (error) {
         logger.error("[SftpSidePanel] Failed to upload dropped files:", error);
         handledPendingUploadIdRef.current = null;
@@ -957,10 +1121,41 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     void runUpload();
   }, [
     activeHost,
+    activeSessionId,
+    clearPendingUploadRebindBarrier,
+    focusedSessionId,
     getConnectionCacheKey,
+    isVisible,
     leftPane,
     onPendingUploadHandled,
+    ownerPanelOpen,
     pendingUpload,
+    pendingUploadRebindBarrierRef,
+    pendingUploadRebindSettledRequestId,
+    pendingUploadRebindStartedIdRef,
+    sessions,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (!pendingUpload) {
+      resetPendingUploadRebind();
+      return;
+    }
+    if (!ownerPanelOpen) {
+      if (handledPendingUploadIdRef.current !== pendingUpload.requestId) {
+        handledPendingUploadIdRef.current = pendingUpload.requestId;
+        clearPendingUploadRebindBarrier(pendingUpload.requestId);
+        toast.error(t("terminal.dragDrop.uploadCancelled"), "SFTP");
+        onPendingUploadHandled?.(pendingUpload.requestId);
+      }
+    }
+  }, [
+    clearPendingUploadRebindBarrier,
+    onPendingUploadHandled,
+    ownerPanelOpen,
+    pendingUpload,
+    resetPendingUploadRebind,
     t,
   ]);
 
@@ -988,6 +1183,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         setEditorWordWrap={setEditorWordWrap}
         onGetTerminalCwd={onGetTerminalCwd}
         activeTerminalCwd={activeTerminalCwd}
+        activeTerminalCwdTrusted={activeTerminalCwdTrusted}
         sftpFollowTerminalCwd={sftpFollowTerminalCwd}
         onSftpFollowTerminalCwdChange={onSftpFollowTerminalCwdChange}
         onRequestTerminalFocus={onRequestTerminalFocus}
@@ -1035,8 +1231,10 @@ type SftpSidePanelInteractiveBodyProps = {
   onGetTerminalCwd?: (options?: {
     preferFreshBackend?: boolean;
     allowRendererFallback?: boolean;
+    requireActiveShellCwd?: boolean;
   }) => Promise<string | null>;
   activeTerminalCwd?: string | null;
+  activeTerminalCwdTrusted: boolean;
   sftpFollowTerminalCwd: boolean;
   onSftpFollowTerminalCwdChange?: (enabled: boolean, host?: Host | null) => void;
   onRequestTerminalFocus?: () => void;
@@ -1079,6 +1277,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   setEditorWordWrap,
   onGetTerminalCwd,
   activeTerminalCwd = null,
+  activeTerminalCwdTrusted,
   sftpFollowTerminalCwd,
   onSftpFollowTerminalCwdChange,
   onRequestTerminalFocus,
@@ -1283,79 +1482,32 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
     || (sftp.activeFileWatchCountRef?.current ?? 0) > 0
     || (sftp.activeExternalEditCount ?? 0) > 0;
-
-  const blockedFollowRef = useRef<SftpFollowTerminalCwdBlock | null>(null);
-  const handledFollowRef = useRef<SftpFollowTerminalCwdBlock | null>(null);
-  const followSyncGenerationRef = useRef(0);
-  const effectiveFollowTerminalCwdRef = useRef(effectiveFollowTerminalCwd);
-  const canFollowTerminalCwdRef = useRef(canFollowTerminalCwd);
-  const activeTerminalCwdRef = useRef(activeTerminalCwd);
-  const activeSessionIdRef = useRef(activeSessionId);
   const connectionId = sftp.leftPane.connection?.id ?? null;
-  const connectionIdRef = useRef(connectionId);
   const connectionPath = sftp.leftPane.connection?.currentPath ?? null;
-  const isVisibleRef = useRef(isVisible);
-  const ownerPanelOpenRef = useRef(ownerPanelOpen);
-  const hasActiveWorkRef = useRef(hasActiveWork);
-  effectiveFollowTerminalCwdRef.current = effectiveFollowTerminalCwd;
-  canFollowTerminalCwdRef.current = canFollowTerminalCwd;
-  activeTerminalCwdRef.current = activeTerminalCwd;
-  activeSessionIdRef.current = activeSessionId;
-  connectionIdRef.current = connectionId;
-  isVisibleRef.current = isVisible;
-  ownerPanelOpenRef.current = ownerPanelOpen;
-  hasActiveWorkRef.current = hasActiveWork;
 
-  const invalidateInFlightFollowSync = useCallback(() => {
-    followSyncGenerationRef.current += 1;
-    blockedFollowRef.current = null;
-    handledFollowRef.current = null;
-  }, []);
-
-  // A terminal/connection replacement always invalidates follow bookkeeping.
-  useEffect(() => {
-    invalidateInFlightFollowSync();
-  }, [followTerminalCwdHost?.id, connectionId, invalidateInFlightFollowSync]);
-
-  // A concrete terminal cwd change invalidates handled/blocked bookkeeping so
-  // the changed cwd is followed. The visibility-induced `null` of hidden
-  // surfaces (they receive `activeTerminalCwd={null}`) must NOT: invalidating
-  // on it would drop `handledFollowRef` and navigate the user's browsed pane
-  // back to the terminal cwd (clearing the filter) on every terminal-tab
-  // switch. A `null` while visible is real, though — the linked terminal
-  // session moved to (or closed on) a session whose cwd cache is empty — and
-  // must invalidate so an in-flight first-open probe of the previous session
-  // is dropped before it can navigate the visible pane.
-  const lastLiveTerminalCwdRef = useRef<string | null>(activeTerminalCwd);
-  useEffect(() => {
-    if (!shouldInvalidateFollowBookkeepingOnCwdChange({
-      nextCwd: activeTerminalCwd,
-      lastCwd: lastLiveTerminalCwdRef.current,
-      isVisible,
-    })) return;
-    lastLiveTerminalCwdRef.current = activeTerminalCwd;
-    invalidateInFlightFollowSync();
-  }, [activeTerminalCwd, isVisible, invalidateInFlightFollowSync]);
-
-  useEffect(() => {
-    if (effectiveFollowTerminalCwd) return;
-    invalidateInFlightFollowSync();
-  }, [effectiveFollowTerminalCwd, invalidateInFlightFollowSync]);
-
-  useEffect(() => {
-    const blockedFollow = blockedFollowRef.current;
-    if (
-      shouldClearBlockedFollowOnReach(
-        blockedFollow,
-        connectionId,
-        connectionPath,
-        sftp.leftPane.loading,
-      )
-    ) {
-      blockedFollowRef.current = null;
-      handledFollowRef.current = blockedFollow;
-    }
-  }, [connectionId, connectionPath, sftp.leftPane.loading]);
+  const {
+    handleGoToTerminalCwd,
+    handleToggleFollowTerminalCwd,
+  } = useSftpFollowTerminalCwd({
+    activeSessionId,
+    activeTerminalCwd,
+    activeTerminalCwdTrusted,
+    canFollowTerminalCwd,
+    connectionId,
+    connectionIsLocal: sftp.leftPane.connection?.isLocal,
+    connectionLoading: sftp.leftPane.loading,
+    connectionPath,
+    connectionStatus: sftp.leftPane.connection?.status,
+    effectiveFollowTerminalCwd,
+    followTerminalCwdHost,
+    hasActiveWork,
+    isVisible,
+    ownerPanelOpen,
+    onGetTerminalCwd,
+    onPendingFollowOverride: setPendingFollowOverride,
+    onSftpFollowTerminalCwdChange,
+    sftpRef,
+  });
 
   // Match toolbar path semantics: keep the last confirmed path while navigateTo
   // has optimistically replaced connection.currentPath during an uncached load.
@@ -1377,20 +1529,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       return next;
     });
   }, [connectionId, connectionPath, sftp.leftPane.loading]);
-
-  const handleGoToTerminalCwd = useCallback(async () => {
-    if (!onGetTerminalCwd) return;
-    const cwd = await onGetTerminalCwd({ preferFreshBackend: true });
-    if (!cwd) return;
-    const navigateResult = await sftpRef.current.navigateTo("left", cwd);
-    if (navigateResult === "reached") {
-      blockedFollowRef.current = null;
-      const connection = sftpRef.current.leftPane.connection;
-      if (connection?.id) {
-        handledFollowRef.current = { connectionId: connection.id, terminalCwd: cwd };
-      }
-    }
-  }, [onGetTerminalCwd, sftpRef]);
 
   const locatePathInTerminalContext = useMemo(() => {
     const connection = sftp.leftPane.connection;
@@ -1479,368 +1617,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     sessions,
     sftpRef,
     terminalBackend,
-  ]);
-
-  const syncFollowToTerminalCwd = useCallback(async () => {
-    if (!onGetTerminalCwd || !effectiveFollowTerminalCwd || !canFollowTerminalCwd) {
-      return;
-    }
-
-    const syncGeneration = followSyncGenerationRef.current;
-
-    const usesLiveTerminalCwd = Boolean(activeTerminalCwd);
-    let terminalCwd = activeTerminalCwd;
-    if (!terminalCwd) {
-      terminalCwd = await onGetTerminalCwd({ preferFreshBackend: true });
-    }
-    if (!terminalCwd) return;
-    if (!shouldApplyFollowTerminalCwdSyncResult({
-      syncGeneration,
-      currentGeneration: followSyncGenerationRef.current,
-      followEnabled: effectiveFollowTerminalCwdRef.current,
-      canFollow: canFollowTerminalCwdRef.current,
-    })) {
-      return;
-    }
-
-    const connection = sftpRef.current.leftPane.connection;
-    if (!shouldFollowTerminalCwdNavigate({
-      followEnabled: effectiveFollowTerminalCwdRef.current,
-      isVisible,
-      terminalCwd,
-      currentPath: connection?.currentPath,
-      connectionId: connection?.id,
-      hasActiveWork,
-      isConnected: Boolean(connection && !connection.isLocal && connection.status === "connected"),
-      blockedFollow: blockedFollowRef.current,
-      handledFollow: handledFollowRef.current,
-    })) {
-      if (
-        connection?.id
-        && !connection.isLocal
-        && connection.status === "connected"
-        && connection.currentPath === terminalCwd
-      ) {
-        handledFollowRef.current = { connectionId: connection.id, terminalCwd };
-      }
-      return;
-    }
-
-    const expectedConnectionId = connection?.id ?? null;
-    const shouldApplyCurrentFollowSync = () => (
-      shouldApplyFollowTerminalCwdSyncResult({
-        syncGeneration,
-        currentGeneration: followSyncGenerationRef.current,
-        followEnabled: effectiveFollowTerminalCwdRef.current,
-        canFollow: canFollowTerminalCwdRef.current,
-        expectedConnectionId,
-        liveConnectionId: connectionIdRef.current,
-        paneConnectionId: sftpRef.current.leftPane.connection?.id ?? null,
-        expectedTerminalCwd: terminalCwd,
-        liveTerminalCwd: activeTerminalCwdRef.current,
-        requireLiveTerminalCwd: usesLiveTerminalCwd,
-      })
-    );
-    const navigateResult = await sftpRef.current.navigateTo("left", terminalCwd, {
-      shouldApply: shouldApplyCurrentFollowSync,
-    });
-    if (!shouldApplyFollowTerminalCwdSyncResult({
-      syncGeneration,
-      currentGeneration: followSyncGenerationRef.current,
-      followEnabled: effectiveFollowTerminalCwdRef.current,
-      canFollow: canFollowTerminalCwdRef.current,
-    })) {
-      return;
-    }
-
-    const currentConnection = sftpRef.current.leftPane.connection;
-    if (!currentConnection || currentConnection.id !== connection?.id) {
-      return;
-    }
-
-    if (navigateResult === "failed" && currentConnection.id) {
-      blockedFollowRef.current = { connectionId: currentConnection.id, terminalCwd };
-    } else if (navigateResult === "superseded" && currentConnection.id) {
-      handledFollowRef.current = { connectionId: currentConnection.id, terminalCwd };
-    } else if (navigateResult === "reached") {
-      blockedFollowRef.current = null;
-      handledFollowRef.current = { connectionId: currentConnection.id, terminalCwd };
-    }
-  }, [
-    activeTerminalCwd,
-    canFollowTerminalCwd,
-    effectiveFollowTerminalCwd,
-    hasActiveWork,
-    isVisible,
-    onGetTerminalCwd,
-    sftpRef,
-  ]);
-
-  const handleToggleFollowTerminalCwd = useCallback(() => {
-    const nextEnabled = !effectiveFollowTerminalCwd;
-    invalidateInFlightFollowSync();
-    if (followTerminalCwdHost?.id) {
-      setPendingFollowOverride({ hostId: followTerminalCwdHost.id, value: nextEnabled });
-    }
-    onSftpFollowTerminalCwdChange?.(nextEnabled, followTerminalCwdHost);
-  }, [effectiveFollowTerminalCwd, followTerminalCwdHost, invalidateInFlightFollowSync, onSftpFollowTerminalCwdChange]);
-
-  useEffect(() => {
-    if (!effectiveFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
-    void syncFollowToTerminalCwd();
-  }, [
-    activeTerminalCwd,
-    canFollowTerminalCwd,
-    effectiveFollowTerminalCwd,
-    hasActiveWork,
-    isVisible,
-    connectionId,
-    sftp.leftPane.connection?.status,
-    sftp.leftPane.connection?.isLocal,
-    syncFollowToTerminalCwd,
-  ]);
-
-  // First open resync (#2335). While the SFTP panel is closed, the per-command
-  // cwd probe does not run, so `activeTerminalCwd` can be stale (it still points
-  // at the login home even though the terminal has since `cd`-ed elsewhere). On
-  // that stale value the normal follow sync sees currentPath === terminalCwd and
-  // does nothing, leaving the panel at home. When the panel first becomes
-  // visible for a connected remote, force one fresh backend probe (bypassing the
-  // stale cache) and navigate to the terminal's real cwd. Reset on hide so
-  // reopening after another `cd` resyncs again.
-  const initialFollowSyncedConnRef = useRef<string | null>(null);
-  const initialFollowRetryRef = useRef<{ connectionId: string | null; attempts: number }>({
-    connectionId: null,
-    attempts: 0,
-  });
-  const initialFollowRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Latched when the surface is hidden while the owning panel stays open
-  // (terminal-tab switch) with a fresh-CWD first-open probe still pending.
-  // The probe re-checks eligibility live when it resolves; if the tab became
-  // visible again in the meantime, those live checks pass again and the stale
-  // probe would navigate the pane back to the terminal cwd (clearing the
-  // user's browsed directory and filename filter). The latch makes such an
-  // interrupted attempt ineligible while its one-shot slot stays consumed.
-  // `initialFollowProbeAttemptRef` tracks whether a probe is actually in
-  // flight: hiding while the connection is merely `connecting` (no probe has
-  // started yet) must not latch, or the fresh-CWD resync on return would see
-  // a permanently-ineligible probe until the owner panel closes. It stores
-  // the identity (sequence number) of the in-flight attempt instead of a
-  // shared boolean: while connection A's probe is still outstanding the
-  // connection can be replaced and connection B's probe can start, and A's
-  // completion must not report "no probe pending" while B is still running —
-  // otherwise the hide-latch effect below would skip arming the interruption
-  // latch and B's current-generation result could navigate the pane on a
-  // later tab return (clearing the browsed directory and filename filter).
-  const initialFollowInterruptedRef = useRef(false);
-  const initialFollowProbeSeqRef = useRef(0);
-  const initialFollowProbeAttemptRef = useRef<number | null>(null);
-  const initialFollowMountedRef = useRef(true);
-  const [initialFollowRetryNonce, setInitialFollowRetryNonce] = useState(0);
-  useEffect(() => {
-    initialFollowMountedRef.current = true;
-    return () => {
-      initialFollowMountedRef.current = false;
-      if (initialFollowRetryTimerRef.current) clearTimeout(initialFollowRetryTimerRef.current);
-    };
-  }, []);
-  useEffect(() => {
-    if (initialFollowProbeAttemptRef.current === null) return;
-    if (!shouldLatchInitialFollowInterruption({ isVisible, ownerPanelOpen })) return;
-    initialFollowInterruptedRef.current = true;
-  }, [isVisible, ownerPanelOpen]);
-  useEffect(() => {
-    // A hide with the owner panel still open (terminal-tab switch) while a
-    // 250 ms retry is queued must consume that retry: the timer's expiry
-    // check inspects only the current visibility state, so a hide restored
-    // before the delay expires is invisible to it and it would release the
-    // one-shot slot and re-arm the first-open sync on return — navigating
-    // the preserved pane back to the terminal cwd (clearing its filename
-    // filter). Cancelling here keeps the slot consumed; the regular follow
-    // sync still follows later cwd changes.
-    if (isVisible || !ownerPanelOpen) return;
-    if (!initialFollowRetryTimerRef.current) return;
-    clearTimeout(initialFollowRetryTimerRef.current);
-    initialFollowRetryTimerRef.current = null;
-  }, [isVisible, ownerPanelOpen]);
-  useEffect(() => {
-    if (
-      shouldResetInitialFollowTerminalCwdSync({
-        isVisible,
-        ownerPanelOpen,
-        connectionId,
-        trackedConnectionId: initialFollowRetryRef.current.connectionId,
-      })
-    ) {
-      initialFollowSyncedConnRef.current = null;
-      initialFollowInterruptedRef.current = false;
-      initialFollowRetryRef.current = { connectionId, attempts: 0 };
-      // Invalidate any fresh-CWD probe that is still in flight from before the
-      // reset (e.g. the panel was closed and reopened on the same connection
-      // while the probe was pending). Its snapshot generation no longer
-      // matches, so it can no longer pass the live eligibility re-check and
-      // race the re-armed probe into an obsolete directory. Without this, the
-      // latch/marker reset above would re-enable a stale probe on reopen.
-      followSyncGenerationRef.current += 1;
-      // Also clear the pending-probe marker: it may still hold the replaced
-      // connection's attempt identity. If the tab is hidden before that stale
-      // probe settles (or before the new connection's probe starts), the
-      // hide-latch effect would treat the stale marker as a current pending
-      // probe and arm the interruption latch, leaving the new connection's
-      // fresh first-open sync ineligible until the owner panel closes. The
-      // generation bump above already invalidates any probe from before the
-      // reset, so dropping its marker here cannot resurrect its result.
-      initialFollowProbeAttemptRef.current = null;
-      if (initialFollowRetryTimerRef.current) {
-        clearTimeout(initialFollowRetryTimerRef.current);
-        initialFollowRetryTimerRef.current = null;
-      }
-    }
-  }, [connectionId, isVisible, ownerPanelOpen]);
-  useEffect(() => {
-    if (!effectiveFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
-    const connection = sftpRef.current.leftPane.connection;
-    if (
-      !connection
-      || connection.isLocal
-      || connection.status !== "connected"
-      || !connection.id
-    ) {
-      return;
-    }
-    if (initialFollowSyncedConnRef.current === connection.id) return;
-    if (initialFollowRetryRef.current.connectionId !== connection.id) {
-      initialFollowRetryRef.current = { connectionId: connection.id, attempts: 0 };
-    }
-    if (initialFollowRetryRef.current.attempts >= 3) return;
-    initialFollowRetryRef.current.attempts += 1;
-    initialFollowSyncedConnRef.current = connection.id;
-    const expectedConnectionId = connection.id;
-    // Bind the attempt to the linked terminal session as well: two connected
-    // same-endpoint sessions can report an equal cached cwd (so no cwd-change
-    // invalidation fires) while the source-session rebind is still deferred
-    // through requestAnimationFrame. A fresh-CWD probe armed for the previous
-    // session must not navigate the pane once focus moved to another session
-    // of the same endpoint, even while the SFTP connection id still belongs to
-    // the session the probe was armed for.
-    const expectedSessionId = activeSessionId ?? null;
-    // Snapshot the (possibly stale) cached cwd so we can neutralize it below.
-    const staleTerminalCwd = activeTerminalCwdRef.current;
-    const syncGeneration = followSyncGenerationRef.current;
-    // Follow is still eligible: same generation, still enabled/allowed, still
-    // visible, and no interactive work has begun. Re-checked live via refs so a
-    // probe that resolves after the panel is hidden or an editor/dialog opens
-    // does not move the pane while follow should be paused (#2335).
-    const followCurrentlyEligible = () => (
-      initialFollowMountedRef.current
-      && effectiveFollowTerminalCwdRef.current
-      && canFollowTerminalCwdRef.current
-      && isVisibleRef.current
-      && !hasActiveWorkRef.current
-      && (expectedSessionId === null || activeSessionIdRef.current === expectedSessionId)
-      && sftpRef.current.leftPane.connection?.id === expectedConnectionId
-      && !sftpRef.current.leftPane.connection?.isLocal
-      && sftpRef.current.leftPane.connection?.status === "connected"
-    );
-    const followStillEligible = () => (
-      syncGeneration === followSyncGenerationRef.current
-      && !initialFollowInterruptedRef.current
-      && followCurrentlyEligible()
-    );
-    const clearAttemptAndRetry = () => {
-      // A hide transition latched this attempt as interrupted (the surface was
-      // hidden with the owner panel open while the probe was pending, then
-      // possibly reshown before it resolved): keep it consumed, the regular
-      // follow sync still follows later cwd changes.
-      if (initialFollowInterruptedRef.current) return;
-      // While the surface is hidden but the owning panel stays open (terminal
-      // tab switch), an interrupted attempt must remain consumed: clearing it
-      // here would re-run the first-open sync on return and navigate the pane
-      // away from the user's browsed directory (clearing its filename filter).
-      if (
-        initialFollowSyncedConnRef.current === expectedConnectionId
-        && !shouldReleaseInitialFollowSyncAttempt({
-          isVisible: isVisibleRef.current,
-          ownerPanelOpen: ownerPanelOpenRef.current,
-        })
-      ) {
-        return;
-      }
-      if (
-        !initialFollowMountedRef.current
-        || !followCurrentlyEligible()
-        || initialFollowRetryRef.current.attempts >= 3
-      ) {
-        if (initialFollowSyncedConnRef.current === expectedConnectionId) {
-          initialFollowSyncedConnRef.current = null;
-        }
-        return;
-      }
-      // Keep the one-shot slot consumed while the retry is queued: if the
-      // surface is hidden during the delay (terminal-tab switch with the owner
-      // panel still open), the hide-latch effect sees no pending probe, so the
-      // queued retry itself must not re-arm the first-open sync on return —
-      // it stays consumed instead. The regular follow sync still follows
-      // later cwd changes.
-      if (initialFollowRetryTimerRef.current) clearTimeout(initialFollowRetryTimerRef.current);
-      initialFollowRetryTimerRef.current = setTimeout(() => {
-        initialFollowRetryTimerRef.current = null;
-        // The surface was hidden (owner panel still open) while the retry was
-        // queued: consume the queued retry so returning to the tab does not
-        // navigate the pane away from the preserved directory and clear its
-        // filename filter.
-        if (
-          !shouldReleaseInitialFollowSyncAttempt({
-            isVisible: isVisibleRef.current,
-            ownerPanelOpen: ownerPanelOpenRef.current,
-          })
-        ) {
-          return;
-        }
-        if (initialFollowSyncedConnRef.current === expectedConnectionId) {
-          initialFollowSyncedConnRef.current = null;
-        }
-        setInitialFollowRetryNonce((value) => value + 1);
-      }, 250);
-    };
-    initialFollowProbeSeqRef.current += 1;
-    const probeAttempt = initialFollowProbeSeqRef.current;
-    initialFollowProbeAttemptRef.current = probeAttempt;
-    void runInitialFollowTerminalCwdSync({
-      expectedConnectionId,
-      staleTerminalCwd,
-      getFreshTerminalCwd: () => onGetTerminalCwd?.({
-        preferFreshBackend: true,
-        allowRendererFallback: false,
-      }),
-      isEligible: followStillEligible,
-      getConnection: () => sftpRef.current.leftPane.connection,
-      navigate: (cwd, shouldApply) => sftpRef.current.navigateTo("left", cwd, { shouldApply }),
-      setHandled: (value) => { handledFollowRef.current = value; },
-      setBlocked: (value) => { blockedFollowRef.current = value; },
-    }).then((completed) => {
-      // Only the matching attempt may clear the pending marker: a superseded
-      // probe (its connection was replaced or the sync re-armed while it was
-      // still in flight) resolving must not report "no probe pending" while a
-      // newer probe is running, or the hide-latch effect would skip arming
-      // the interruption latch for that newer probe.
-      const isCurrentAttempt = initialFollowProbeAttemptRef.current === probeAttempt;
-      if (isCurrentAttempt) initialFollowProbeAttemptRef.current = null;
-      if (!completed && isCurrentAttempt) clearAttemptAndRetry();
-    });
-  }, [
-    activeSessionId,
-    canFollowTerminalCwd,
-    effectiveFollowTerminalCwd,
-    hasActiveWork,
-    initialFollowRetryNonce,
-    isVisible,
-    onGetTerminalCwd,
-    sftpRef,
-    activeTerminalCwd,
-    sftp.leftPane.connection?.id,
-    sftp.leftPane.connection?.isLocal,
-    sftp.leftPane.connection?.status,
   ]);
 
   const MAX_VISIBLE_TRANSFERS = 5;
@@ -2098,6 +1874,7 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   prev.onGetTerminalCwd === next.onGetTerminalCwd &&
   prev.activeTerminalCwd === next.activeTerminalCwd &&
+  prev.activeTerminalCwdTrusted === next.activeTerminalCwdTrusted &&
   prev.sftpFollowTerminalCwd === next.sftpFollowTerminalCwd &&
   prev.onSftpFollowTerminalCwdChange === next.onSftpFollowTerminalCwdChange &&
   prev.onRequestTerminalFocus === next.onRequestTerminalFocus &&

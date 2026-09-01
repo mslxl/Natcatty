@@ -26,7 +26,7 @@ import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHib
 import { resolveTerminalFontFamilyId } from '../../infrastructure/config/fonts';
 import type { Host, TerminalSession, Workspace } from '../../types';
 import { SystemManagerSidePanel } from '../systemManager/SystemManagerSidePanel';
-import { resolveSftpFollowTerminalCwdTargetHost } from '../sftp/sftpFollowTerminalCwd';
+import { resolveSftpFollowTerminalCwdTargetHost } from '../../domain/sftpFollowTerminalCwd';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import type { SidePanelTab } from './TerminalLayerSupport';
 import {
@@ -203,7 +203,7 @@ function SidePanelSftpSlotInner({
         isVisible={isVisible}
         ownerPanelOpen={ownerPanelOpen}
         renderOverlays={isVisible}
-        pendingUpload={sftpPendingUploadsForTab.get(tabId) ?? null}
+        pendingUpload={sftpPendingUploadsForTab.get(tabId)?.[0] ?? null}
         onPendingUploadHandled={handlePendingUploadHandledForTab}
         sftpDoubleClickBehavior={sftpDoubleClickBehavior}
         sftpAutoSync={isVisible ? sftpAutoSync : false}
@@ -215,6 +215,7 @@ function SidePanelSftpSlotInner({
         setEditorWordWrap={setEditorWordWrap}
         onGetTerminalCwd={getTerminalCwd}
         activeTerminalCwd={isVisible ? live.activeTerminalCwd : null}
+        activeTerminalCwdTrusted={isVisible ? live.activeTerminalCwdTrusted : false}
         sftpFollowTerminalCwd={sftpFollowTerminalCwd}
         onSftpFollowTerminalCwdChange={handleFollowTerminalCwdChange}
         onRequestTerminalFocus={refocusActiveTerminalSession}

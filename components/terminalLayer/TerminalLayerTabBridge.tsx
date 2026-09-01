@@ -181,6 +181,14 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
       ?? null
     )
     : null;
+  const activeTerminalCwdSource = linkedTerminalSessionIdForSftp
+    ? (
+      terminalCwdStore.getSource(linkedTerminalSessionIdForSftp)
+      ?? s.terminalRendererCwdSourceBySessionRef.current.get(linkedTerminalSessionIdForSftp)
+    )
+    : undefined;
+  const activeTerminalCwdTrusted = activeTerminalCwdSource === 'osc7'
+    || activeTerminalCwdSource === 'backend-strict';
   void terminalCwdVersion;
 
   const historySessionId = effectiveFocusedSessionId;
@@ -252,6 +260,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     sftpActiveHost,
     activeTerminalSessionIdForSftp,
     activeTerminalCwd,
+    activeTerminalCwdTrusted,
     activeWorkspace,
     activeTerminalSessionForSystem: activeTerminalSessionForSystem ?? null,
     activeSystemSessionHost,
@@ -270,6 +279,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }), [
     activeSystemSessionHost,
     activeTerminalCwd,
+    activeTerminalCwdTrusted,
     activeTerminalSessionForSystem,
     activeTerminalSessionIdForSftp,
     activeWorkspace,
@@ -405,6 +415,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     activeSidePanelLayout,
     activeTabId,
     activeTerminalCwd,
+    activeTerminalCwdTrusted,
     activeTerminalSessionIdForSftp,
     activeWorkspace,
     AIChatPanelsHost: s.AIChatPanelsHost,
@@ -643,6 +654,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     activeSidePanelTab,
     activeTabId,
     activeTerminalCwd,
+    activeTerminalCwdTrusted,
     activeTerminalSessionIdForSftp,
     activeWorkspace,
     aiContextsByTabId,

@@ -117,6 +117,8 @@ export const enTerminalMessages: Messages = {
   'terminal.dragDrop.notConnected': 'Cannot drop files - terminal is not connected',
   'terminal.dragDrop.errorTitle': 'Drop Error',
   'terminal.dragDrop.errorMessage': 'Failed to process dropped files',
+  'terminal.dragDrop.destinationUnknown': 'Could not determine the current terminal folder. Enable directory tracking, or open SFTP and choose an upload folder first.',
+  'terminal.dragDrop.uploadCancelled': 'The upload was cancelled because the terminal connection changed or could not be reused. Drop the files again after reconnecting.',
   'terminal.search.placeholder': 'Search...',
   'terminal.search.noResults': 'No results',
   'terminal.search.prevMatch': 'Previous match (Shift+Enter)',

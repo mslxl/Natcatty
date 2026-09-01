@@ -146,7 +146,7 @@ test('session launch paths use the same effective protocol as Provider snapshots
 
 test('trusted command delivery reaches plugin providers without duplicating the host callback', () => {
   const callbackStart = terminalSource.indexOf('const pluginAwareOnCommandSubmitted = useCallback');
-  const callbackEnd = terminalSource.indexOf('const pluginAwareOnCommandCompleted = useCallback', callbackStart);
+  const callbackEnd = terminalSource.indexOf('const cwdAwareOnCommandSubmitted = useCallback', callbackStart);
   assert.notEqual(callbackStart, -1);
   assert.notEqual(callbackEnd, -1);
 

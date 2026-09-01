@@ -21,6 +21,7 @@ import type {
   TerminalTheme,
 } from "../../types";
 import type { KittyKeyboardBroadcastInput } from "./runtime/kittyKeyboardBroadcast";
+import type { TerminalCwdChangeMeta } from "./sftpCwd";
 
 export const MAX_CONNECTION_LOG_DATA_CHARS = 1_000_000;
 export const AUTO_RUN_SNIPPET_LINE_DELAY_MS = 250;
@@ -198,9 +199,10 @@ export interface TerminalProps {
     host: Host,
     initialPath?: string,
     pendingUploadEntries?: DropEntry[],
+    originSessionId?: string,
     sourceSessionId?: string,
   ) => void;
-  onTerminalCwdChange?: (sessionId: string, cwd: string | null, meta?: { source?: 'osc7' }) => void;
+  onTerminalCwdChange?: (sessionId: string, cwd: string | null, meta?: TerminalCwdChangeMeta) => void;
   onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
   onTerminalBell?: (sessionId: string) => void;
   onTerminalOutput?: (sessionId: string, chunk: string) => void;

@@ -106,7 +106,12 @@ import {
   resolveTerminalSidePanelAutoOpen,
 } from '../domain/terminalSidePanelAutoOpen';
 import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
-import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
+import {
+  resolvePreferredTerminalCwd,
+  scheduleBackendCwdProbeAfterCommand,
+  type RendererCwdSource,
+  type TerminalCwdChangeMeta,
+} from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 import {
   collectSidePanelPanes,
@@ -120,6 +125,10 @@ import {
   type PaneMagnificationTarget,
 } from '../domain/paneMagnification';
 import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
+import {
+  enqueuePendingSftpUpload,
+  removePendingSftpUpload,
+} from '../application/state/sftp/pendingSftpUploadQueue';
 import {
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
   TERMINAL_SIDE_PANEL_MIN_WIDTH,
@@ -308,6 +317,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     });
   }, [sessions, sidePanelLayouts]);
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
+  const terminalRendererCwdSourceBySessionRef = useRef<Map<string, RendererCwdSource>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
   const activeWorkspaceRef = useRef<Workspace | undefined>(undefined);
@@ -321,6 +331,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const liveSessionIds = new Set(sessions.map((session) => session.id));
     pruneTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
+      terminalRendererCwdSourceBySessionRef,
       terminalOsc7SignalBySessionRef,
       cwdProbeGenerationRef,
       cwdProbeCancelersRef,
@@ -341,7 +352,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleTerminalCwdChange = useCallback((
     sessionId: string,
     cwd: string | null,
-    meta?: { source?: 'osc7' },
+    meta?: TerminalCwdChangeMeta,
   ) => {
     if (meta?.source === 'osc7') {
       // Bump on every OSC 7 report, even when the decoded path is unchanged.
@@ -354,23 +365,27 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     const currentCwd = terminalRendererCwdBySessionRef.current.get(sessionId) ?? null;
     const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
+    const nextCwdSource: RendererCwdSource = meta?.source ?? 'backend';
     if (currentCwd === nextCwd) {
-      // Heal store drift if ref already has this path but the store does not.
-      if (terminalCwdStore.getCwd(sessionId) !== nextCwd) {
-        terminalCwdStore.setCwd(sessionId, nextCwd);
+      if (nextCwd) {
+        terminalRendererCwdSourceBySessionRef.current.set(sessionId, nextCwdSource);
       }
+      // Heal store drift and publish provenance changes even when the path is unchanged.
+      terminalCwdStore.setCwd(sessionId, nextCwd, nextCwd ? nextCwdSource : undefined);
       return;
     }
 
     if (nextCwd) {
       terminalRendererCwdBySessionRef.current.set(sessionId, nextCwd);
+      terminalRendererCwdSourceBySessionRef.current.set(sessionId, nextCwdSource);
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
+      terminalRendererCwdSourceBySessionRef.current.delete(sessionId);
     }
     onUpdateSessionRestoreCwd?.(sessionId, nextCwd);
     // External store: side-panel live snapshot subscribers update without
     // re-rendering TerminalLayerInner.
-    terminalCwdStore.setCwd(sessionId, nextCwd);
+    terminalCwdStore.setCwd(sessionId, nextCwd, nextCwd ? nextCwdSource : undefined);
   }, [onUpdateSessionRestoreCwd]);
 
   // Stable while only presentation fields (title/provider) change.
@@ -610,7 +625,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     Map<string, { hostId: string; path: string }>
   >(new Map());
   const [sftpPendingUploadsForTab, setSftpPendingUploadsForTab] = useState<
-    Map<string, PendingSftpUpload>
+    Map<string, PendingSftpUpload[]>
   >(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
@@ -631,11 +646,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     host: Host;
     initialPath?: string;
     pendingUploadEntries?: DropEntry[];
-    sourceSessionId?: string | null;
+    originSessionId?: string | null;
   }) => {
-    const { tabId, host, initialPath, pendingUploadEntries, sourceSessionId } = params;
+    const { tabId, host, initialPath, pendingUploadEntries, originSessionId } = params;
     const connectionKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username, host.sftpFileProtocol);
-    const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId });
+    const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId: originSessionId });
     const effectiveInitialPath = resolveSftpOpenLocation({
       hostId: host.id,
       connectionKey,
@@ -823,17 +838,23 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setIsComposeBarOpen(prev => !prev);
   }, [setIsComposeBarOpen]);
 
-  const handleOpenSftp = useCallback((host: Host, initialPath?: string, pendingUploadEntries?: DropEntry[], sourceSessionId?: string) => {
+  const handleOpenSftp = useCallback((
+    host: Host,
+    initialPath?: string,
+    pendingUploadEntries?: DropEntry[],
+    originSessionId?: string,
+    sourceSessionId?: string,
+  ) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
 
     // When SFTP is opened from a non-focused workspace pane (toolbar click
     // or drag-drop), switch focus first so the SFTP panel binds to the
     // correct host.
-    if (sourceSessionId) {
+    if (originSessionId) {
       const ws = activeWorkspaceRef.current;
-      if (ws && ws.focusedSessionId !== sourceSessionId) {
-        onSetWorkspaceFocusedSessionRef.current?.(ws.id, sourceSessionId);
+      if (ws && ws.focusedSessionId !== originSessionId) {
+        onSetWorkspaceFocusedSessionRef.current?.(ws.id, originSessionId);
       }
     }
 
@@ -894,7 +915,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       host,
       initialPath,
       pendingUploadEntries,
-      sourceSessionId,
+      originSessionId,
     });
 
     setSftpInitialLocationForTab(prev => {
@@ -913,13 +934,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         // Clear any stale pending upload when opening without new files.
         next.delete(tabId);
       } else {
-        next.set(tabId, {
+        const pendingUpload = {
           requestId: crypto.randomUUID(),
           hostId: host.id,
           connectionKey,
+          originSessionId,
+          sourceSessionId,
           targetPath: initialPath,
           entries: pendingUploadEntries,
-        });
+        };
+        next.set(
+          tabId,
+          enqueuePendingSftpUpload(next.get(tabId) ?? [], pendingUpload),
+        );
       }
       return next;
     });
@@ -927,12 +954,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {
-      const current = prev.get(tabId);
-      if (!current || current.requestId !== requestId) {
-        return prev;
-      }
+      const current = prev.get(tabId) ?? [];
+      const remaining = removePendingSftpUpload(current, requestId);
+      if (remaining === current) return prev;
       const next = new Map(prev);
-      next.delete(tabId);
+      if (remaining.length > 0) next.set(tabId, [...remaining]);
+      else next.delete(tabId);
       return next;
     });
   }, []);
@@ -1119,7 +1146,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return;
         const existing = terminalRendererCwdBySessionRef.current.get(sessionId);
         if (existing === cwd) return;
-        handleTerminalCwdChange(sessionId, cwd);
+        handleTerminalCwdChange(sessionId, cwd, { source: 'backend-strict' });
       },
     });
     cwdProbeCancelersRef.current.set(sessionId, cancelProbe);
@@ -1132,6 +1159,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   useEffect(() => () => {
     pruneTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
+      terminalRendererCwdSourceBySessionRef,
       terminalOsc7SignalBySessionRef,
       cwdProbeGenerationRef,
       cwdProbeCancelersRef,
@@ -1313,14 +1341,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const getTerminalCwd = useCallback(async (options?: {
     preferFreshBackend?: boolean;
     allowRendererFallback?: boolean;
+    requireActiveShellCwd?: boolean;
   }): Promise<string | null> => {
     const sessionId = getActiveTerminalSessionId();
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
+      rendererCwdSource: sessionId
+        ? terminalRendererCwdSourceBySessionRef.current.get(sessionId)
+        : undefined,
       sessionId,
       getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
       preferFreshBackend: options?.preferFreshBackend,
       allowRendererFallback: options?.allowRendererFallback,
+      requireActiveShellCwd: options?.requireActiveShellCwd,
     });
   }, [getActiveTerminalSessionId, terminalBackend]);
 
@@ -2372,6 +2405,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     TerminalPanesHost,
     terminalFontFamilyId,
     terminalRendererCwdBySessionRef,
+    terminalRendererCwdSourceBySessionRef,
     terminalSettings,
     terminalTheme,
     terminalThemeId,
