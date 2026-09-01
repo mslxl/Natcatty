@@ -498,6 +498,7 @@ export function terminalLayerFocusSidebarPropsEqual(prev: Ctx, next: Ctx): boole
     && eq(prev, next, 'onAppendHostToWorkspace')
     && eq(prev, next, 'handleCloseSession')
     && eq(prev, next, 'onCopySession')
+    && eq(prev, next, 'onDuplicateSession')
     && eq(prev, next, 'onCopySessionToNewWindow')
     && eq(prev, next, 'onRemoveSessionFromWorkspace')
     && eq(prev, next, 'onSetWorkspaceFocusedSession')

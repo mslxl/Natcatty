@@ -8,7 +8,7 @@ attachment_urls_path="$research_dir/attachment-urls.json"
 
 node -e '
   const fs = require("node:fs");
-  const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+  const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
   const input = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const urls = auto.extractGithubUserAttachmentAssetUrls(input);
   fs.writeFileSync(process.argv[2], JSON.stringify(urls) + "\n");
@@ -32,13 +32,13 @@ for (( index=0; index<attachment_count; index++ )); do
   source_url="$(node -e '
     process.stdout.write(require(process.argv[1])[Number(process.argv[2])]);
   ' "$attachment_urls_path" "$index")"
-  headers_path="$(mktemp "${RUNNER_TEMP}/cursor-attachment-headers.XXXXXX")"
+  headers_path="$(mktemp "${RUNNER_TEMP}/ai-attachment-headers.XXXXXX")"
   curl --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
     --connect-timeout 3 --max-time 20 --max-redirs 0 -fsS \
     -D "$headers_path" -o /dev/null "$source_url"
   kind="$(node -e '
     const fs = require("node:fs");
-    const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+    const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
     process.stdout.write(auto.classifyGithubUserAttachmentRedirect(
       fs.readFileSync(process.argv[1], "utf8"),
     ));
@@ -54,7 +54,7 @@ for (( index=0; index<attachment_count; index++ )); do
   fi
 done
 
-container_name="cursor-research-imgproxy-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+container_name="ai-research-imgproxy-${GITHUB_RUN_ID}-${GITHUB_JOB}"
 if (( image_count > 0 )); then
   docker run -d --rm --name "$container_name" \
     --cap-drop=ALL --security-opt=no-new-privileges --read-only \
@@ -74,7 +74,7 @@ if (( image_count > 0 )); then
     -e IMGPROXY_ALLOW_SECURITY_OPTIONS=false \
     -e IMGPROXY_COOKIE_PASSTHROUGH=false \
     -e IMGPROXY_COOKIE_PASSTHROUGH_ALL=false \
-    "$CURSOR_RESEARCH_IMGPROXY_IMAGE" >/dev/null
+    "$AI_RESEARCH_IMGPROXY_IMAGE" >/dev/null
 fi
 stop_imgproxy() {
   if (( image_count > 0 )); then
@@ -113,7 +113,7 @@ trap - EXIT
 # shellcheck disable=SC2016
 node -e '
   const fs = require("node:fs");
-  const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+  const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
   const input = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const urls = require(process.argv[2]);
   const kinds = fs.readFileSync(process.argv[3], "utf8").trim().split("\n");

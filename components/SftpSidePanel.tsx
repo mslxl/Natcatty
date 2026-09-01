@@ -70,6 +70,10 @@ import {
   shouldApplyFollowTerminalCwdSyncResult,
   shouldClearBlockedFollowOnReach,
   shouldFollowTerminalCwdNavigate,
+  shouldInvalidateFollowBookkeepingOnCwdChange,
+  shouldLatchInitialFollowInterruption,
+  shouldReleaseInitialFollowSyncAttempt,
+  shouldResetInitialFollowTerminalCwdSync,
   type SftpFollowTerminalCwdBlock,
 } from "./sftp/sftpFollowTerminalCwd";
 import {
@@ -988,6 +992,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         onSftpFollowTerminalCwdChange={onSftpFollowTerminalCwdChange}
         onRequestTerminalFocus={onRequestTerminalFocus}
         isVisible={isVisible}
+        ownerPanelOpen={ownerPanelOpen}
         behaviorRef={behaviorRef}
         autoSyncRef={autoSyncRef}
         connectedHostObjRef={connectedHostObjRef}
@@ -1036,6 +1041,8 @@ type SftpSidePanelInteractiveBodyProps = {
   onSftpFollowTerminalCwdChange?: (enabled: boolean, host?: Host | null) => void;
   onRequestTerminalFocus?: () => void;
   isVisible: boolean;
+  /** Side panel still open for this terminal tab (another tool/tab may have focus). */
+  ownerPanelOpen: boolean;
   behaviorRef: MutableRefObject<"open" | "transfer">;
   autoSyncRef: MutableRefObject<boolean>;
   connectedHostObjRef: MutableRefObject<Host | null>;
@@ -1076,6 +1083,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   onSftpFollowTerminalCwdChange,
   onRequestTerminalFocus,
   isVisible,
+  ownerPanelOpen,
   behaviorRef,
   autoSyncRef,
   connectedHostObjRef,
@@ -1282,16 +1290,20 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const effectiveFollowTerminalCwdRef = useRef(effectiveFollowTerminalCwd);
   const canFollowTerminalCwdRef = useRef(canFollowTerminalCwd);
   const activeTerminalCwdRef = useRef(activeTerminalCwd);
+  const activeSessionIdRef = useRef(activeSessionId);
   const connectionId = sftp.leftPane.connection?.id ?? null;
   const connectionIdRef = useRef(connectionId);
   const connectionPath = sftp.leftPane.connection?.currentPath ?? null;
   const isVisibleRef = useRef(isVisible);
+  const ownerPanelOpenRef = useRef(ownerPanelOpen);
   const hasActiveWorkRef = useRef(hasActiveWork);
   effectiveFollowTerminalCwdRef.current = effectiveFollowTerminalCwd;
   canFollowTerminalCwdRef.current = canFollowTerminalCwd;
   activeTerminalCwdRef.current = activeTerminalCwd;
+  activeSessionIdRef.current = activeSessionId;
   connectionIdRef.current = connectionId;
   isVisibleRef.current = isVisible;
+  ownerPanelOpenRef.current = ownerPanelOpen;
   hasActiveWorkRef.current = hasActiveWork;
 
   const invalidateInFlightFollowSync = useCallback(() => {
@@ -1300,14 +1312,30 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     handledFollowRef.current = null;
   }, []);
 
+  // A terminal/connection replacement always invalidates follow bookkeeping.
   useEffect(() => {
     invalidateInFlightFollowSync();
-  }, [
-    activeTerminalCwd,
-    followTerminalCwdHost?.id,
-    connectionId,
-    invalidateInFlightFollowSync,
-  ]);
+  }, [followTerminalCwdHost?.id, connectionId, invalidateInFlightFollowSync]);
+
+  // A concrete terminal cwd change invalidates handled/blocked bookkeeping so
+  // the changed cwd is followed. The visibility-induced `null` of hidden
+  // surfaces (they receive `activeTerminalCwd={null}`) must NOT: invalidating
+  // on it would drop `handledFollowRef` and navigate the user's browsed pane
+  // back to the terminal cwd (clearing the filter) on every terminal-tab
+  // switch. A `null` while visible is real, though — the linked terminal
+  // session moved to (or closed on) a session whose cwd cache is empty — and
+  // must invalidate so an in-flight first-open probe of the previous session
+  // is dropped before it can navigate the visible pane.
+  const lastLiveTerminalCwdRef = useRef<string | null>(activeTerminalCwd);
+  useEffect(() => {
+    if (!shouldInvalidateFollowBookkeepingOnCwdChange({
+      nextCwd: activeTerminalCwd,
+      lastCwd: lastLiveTerminalCwdRef.current,
+      isVisible,
+    })) return;
+    lastLiveTerminalCwdRef.current = activeTerminalCwd;
+    invalidateInFlightFollowSync();
+  }, [activeTerminalCwd, isVisible, invalidateInFlightFollowSync]);
 
   useEffect(() => {
     if (effectiveFollowTerminalCwd) return;
@@ -1586,6 +1614,27 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     attempts: 0,
   });
   const initialFollowRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latched when the surface is hidden while the owning panel stays open
+  // (terminal-tab switch) with a fresh-CWD first-open probe still pending.
+  // The probe re-checks eligibility live when it resolves; if the tab became
+  // visible again in the meantime, those live checks pass again and the stale
+  // probe would navigate the pane back to the terminal cwd (clearing the
+  // user's browsed directory and filename filter). The latch makes such an
+  // interrupted attempt ineligible while its one-shot slot stays consumed.
+  // `initialFollowProbeAttemptRef` tracks whether a probe is actually in
+  // flight: hiding while the connection is merely `connecting` (no probe has
+  // started yet) must not latch, or the fresh-CWD resync on return would see
+  // a permanently-ineligible probe until the owner panel closes. It stores
+  // the identity (sequence number) of the in-flight attempt instead of a
+  // shared boolean: while connection A's probe is still outstanding the
+  // connection can be replaced and connection B's probe can start, and A's
+  // completion must not report "no probe pending" while B is still running —
+  // otherwise the hide-latch effect below would skip arming the interruption
+  // latch and B's current-generation result could navigate the pane on a
+  // later tab return (clearing the browsed directory and filename filter).
+  const initialFollowInterruptedRef = useRef(false);
+  const initialFollowProbeSeqRef = useRef(0);
+  const initialFollowProbeAttemptRef = useRef<number | null>(null);
   const initialFollowMountedRef = useRef(true);
   const [initialFollowRetryNonce, setInitialFollowRetryNonce] = useState(0);
   useEffect(() => {
@@ -1596,15 +1645,58 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     };
   }, []);
   useEffect(() => {
-    if (!isVisible || initialFollowRetryRef.current.connectionId !== connectionId) {
+    if (initialFollowProbeAttemptRef.current === null) return;
+    if (!shouldLatchInitialFollowInterruption({ isVisible, ownerPanelOpen })) return;
+    initialFollowInterruptedRef.current = true;
+  }, [isVisible, ownerPanelOpen]);
+  useEffect(() => {
+    // A hide with the owner panel still open (terminal-tab switch) while a
+    // 250 ms retry is queued must consume that retry: the timer's expiry
+    // check inspects only the current visibility state, so a hide restored
+    // before the delay expires is invisible to it and it would release the
+    // one-shot slot and re-arm the first-open sync on return — navigating
+    // the preserved pane back to the terminal cwd (clearing its filename
+    // filter). Cancelling here keeps the slot consumed; the regular follow
+    // sync still follows later cwd changes.
+    if (isVisible || !ownerPanelOpen) return;
+    if (!initialFollowRetryTimerRef.current) return;
+    clearTimeout(initialFollowRetryTimerRef.current);
+    initialFollowRetryTimerRef.current = null;
+  }, [isVisible, ownerPanelOpen]);
+  useEffect(() => {
+    if (
+      shouldResetInitialFollowTerminalCwdSync({
+        isVisible,
+        ownerPanelOpen,
+        connectionId,
+        trackedConnectionId: initialFollowRetryRef.current.connectionId,
+      })
+    ) {
       initialFollowSyncedConnRef.current = null;
+      initialFollowInterruptedRef.current = false;
       initialFollowRetryRef.current = { connectionId, attempts: 0 };
+      // Invalidate any fresh-CWD probe that is still in flight from before the
+      // reset (e.g. the panel was closed and reopened on the same connection
+      // while the probe was pending). Its snapshot generation no longer
+      // matches, so it can no longer pass the live eligibility re-check and
+      // race the re-armed probe into an obsolete directory. Without this, the
+      // latch/marker reset above would re-enable a stale probe on reopen.
+      followSyncGenerationRef.current += 1;
+      // Also clear the pending-probe marker: it may still hold the replaced
+      // connection's attempt identity. If the tab is hidden before that stale
+      // probe settles (or before the new connection's probe starts), the
+      // hide-latch effect would treat the stale marker as a current pending
+      // probe and arm the interruption latch, leaving the new connection's
+      // fresh first-open sync ineligible until the owner panel closes. The
+      // generation bump above already invalidates any probe from before the
+      // reset, so dropping its marker here cannot resurrect its result.
+      initialFollowProbeAttemptRef.current = null;
       if (initialFollowRetryTimerRef.current) {
         clearTimeout(initialFollowRetryTimerRef.current);
         initialFollowRetryTimerRef.current = null;
       }
     }
-  }, [connectionId, isVisible]);
+  }, [connectionId, isVisible, ownerPanelOpen]);
   useEffect(() => {
     if (!effectiveFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
     const connection = sftpRef.current.leftPane.connection;
@@ -1624,6 +1716,14 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     initialFollowRetryRef.current.attempts += 1;
     initialFollowSyncedConnRef.current = connection.id;
     const expectedConnectionId = connection.id;
+    // Bind the attempt to the linked terminal session as well: two connected
+    // same-endpoint sessions can report an equal cached cwd (so no cwd-change
+    // invalidation fires) while the source-session rebind is still deferred
+    // through requestAnimationFrame. A fresh-CWD probe armed for the previous
+    // session must not navigate the pane once focus moved to another session
+    // of the same endpoint, even while the SFTP connection id still belongs to
+    // the session the probe was armed for.
+    const expectedSessionId = activeSessionId ?? null;
     // Snapshot the (possibly stale) cached cwd so we can neutralize it below.
     const staleTerminalCwd = activeTerminalCwdRef.current;
     const syncGeneration = followSyncGenerationRef.current;
@@ -1637,31 +1737,75 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       && canFollowTerminalCwdRef.current
       && isVisibleRef.current
       && !hasActiveWorkRef.current
+      && (expectedSessionId === null || activeSessionIdRef.current === expectedSessionId)
       && sftpRef.current.leftPane.connection?.id === expectedConnectionId
       && !sftpRef.current.leftPane.connection?.isLocal
       && sftpRef.current.leftPane.connection?.status === "connected"
     );
     const followStillEligible = () => (
       syncGeneration === followSyncGenerationRef.current
+      && !initialFollowInterruptedRef.current
       && followCurrentlyEligible()
     );
     const clearAttemptAndRetry = () => {
-      if (initialFollowSyncedConnRef.current === expectedConnectionId) {
-        initialFollowSyncedConnRef.current = null;
+      // A hide transition latched this attempt as interrupted (the surface was
+      // hidden with the owner panel open while the probe was pending, then
+      // possibly reshown before it resolved): keep it consumed, the regular
+      // follow sync still follows later cwd changes.
+      if (initialFollowInterruptedRef.current) return;
+      // While the surface is hidden but the owning panel stays open (terminal
+      // tab switch), an interrupted attempt must remain consumed: clearing it
+      // here would re-run the first-open sync on return and navigate the pane
+      // away from the user's browsed directory (clearing its filename filter).
+      if (
+        initialFollowSyncedConnRef.current === expectedConnectionId
+        && !shouldReleaseInitialFollowSyncAttempt({
+          isVisible: isVisibleRef.current,
+          ownerPanelOpen: ownerPanelOpenRef.current,
+        })
+      ) {
+        return;
       }
       if (
         !initialFollowMountedRef.current
         || !followCurrentlyEligible()
         || initialFollowRetryRef.current.attempts >= 3
       ) {
+        if (initialFollowSyncedConnRef.current === expectedConnectionId) {
+          initialFollowSyncedConnRef.current = null;
+        }
         return;
       }
+      // Keep the one-shot slot consumed while the retry is queued: if the
+      // surface is hidden during the delay (terminal-tab switch with the owner
+      // panel still open), the hide-latch effect sees no pending probe, so the
+      // queued retry itself must not re-arm the first-open sync on return —
+      // it stays consumed instead. The regular follow sync still follows
+      // later cwd changes.
       if (initialFollowRetryTimerRef.current) clearTimeout(initialFollowRetryTimerRef.current);
       initialFollowRetryTimerRef.current = setTimeout(() => {
         initialFollowRetryTimerRef.current = null;
+        // The surface was hidden (owner panel still open) while the retry was
+        // queued: consume the queued retry so returning to the tab does not
+        // navigate the pane away from the preserved directory and clear its
+        // filename filter.
+        if (
+          !shouldReleaseInitialFollowSyncAttempt({
+            isVisible: isVisibleRef.current,
+            ownerPanelOpen: ownerPanelOpenRef.current,
+          })
+        ) {
+          return;
+        }
+        if (initialFollowSyncedConnRef.current === expectedConnectionId) {
+          initialFollowSyncedConnRef.current = null;
+        }
         setInitialFollowRetryNonce((value) => value + 1);
       }, 250);
     };
+    initialFollowProbeSeqRef.current += 1;
+    const probeAttempt = initialFollowProbeSeqRef.current;
+    initialFollowProbeAttemptRef.current = probeAttempt;
     void runInitialFollowTerminalCwdSync({
       expectedConnectionId,
       staleTerminalCwd,
@@ -1675,9 +1819,17 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       setHandled: (value) => { handledFollowRef.current = value; },
       setBlocked: (value) => { blockedFollowRef.current = value; },
     }).then((completed) => {
-      if (!completed) clearAttemptAndRetry();
+      // Only the matching attempt may clear the pending marker: a superseded
+      // probe (its connection was replaced or the sync re-armed while it was
+      // still in flight) resolving must not report "no probe pending" while a
+      // newer probe is running, or the hide-latch effect would skip arming
+      // the interruption latch for that newer probe.
+      const isCurrentAttempt = initialFollowProbeAttemptRef.current === probeAttempt;
+      if (isCurrentAttempt) initialFollowProbeAttemptRef.current = null;
+      if (!completed && isCurrentAttempt) clearAttemptAndRetry();
     });
   }, [
+    activeSessionId,
     canFollowTerminalCwd,
     effectiveFollowTerminalCwd,
     hasActiveWork,

@@ -967,6 +967,20 @@ test("alternate-screen history preview falls back to the captured session output
   assert.match(source, /nextOutputHistoryPreviewTop\(/);
 });
 
+test("xterm scroll and line-feed reposition the autocomplete popup (#3061)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");
+  const terminalSource = readFileSync(new URL("../../Terminal.tsx", import.meta.url), "utf8");
+  const effectsSource = readFileSync(new URL("../useTerminalEffects.ts", import.meta.url), "utf8");
+  assert.match(source, /onAutocompleteReposition\?: \(\) => void/);
+  assert.match(source, /term\.onScroll\(scheduleAutocompleteReposition\)/);
+  assert.match(source, /term\.onLineFeed\?\.\(scheduleAutocompleteReposition\)/);
+  assert.match(source, /if \(autocompleteRepositionFrame\) return;/);
+  assert.match(source, /cancelAutocompleteReposition\(\)/);
+  assert.match(terminalSource, /onAutocompleteReposition: \(\) => autocompleteRepositionRef\.current\?\.\(\)/);
+  assert.match(effectsSource, /onAutocompleteReposition: \(\) => autocompleteRepositionRef\.current\?\.\(\)/);
+});
+
 test("multi-character plain text goes out as per-character writes (#3077)", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");

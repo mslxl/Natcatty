@@ -374,9 +374,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         scopeHostIds,
         activeTerminalSessionIds,
         workspaceMemberTerminalIds,
+        activeSessionIdMap,
       ),
     ),
-    [sessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds],
+    [sessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds, activeSessionIdMap],
   );
 
   const explicitPanelView = panelViewByScope[scopeKey];
@@ -1850,6 +1851,7 @@ export function aiChatSidePanelPropsAreEqual(
         props.scopeHostIds,
         activeTerminalSessionIds,
         workspaceMemberTerminalIds,
+        props.activeSessionIdMap,
       ).map((session) => session.id),
     );
     return resolveInheritedAIActiveSessionId({

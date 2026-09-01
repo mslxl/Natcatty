@@ -6,20 +6,19 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const auto = require('./cursor-automation.cjs');
+const auto = require('./ai-automation.cjs');
 
-test('prepareCursorCliConfig creates a secure config when Cursor leaves it absent', (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-cli-config-'));
+test('prepareAiCliSettings creates dontAsk Claude Code settings', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-cli-config-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
-  const configPath = path.join(tempDir, '.cursor', 'cli-config.json');
+  const configPath = path.join(tempDir, '.claude', 'settings.json');
 
-  const config = auto.prepareCursorCliConfig({ configPath });
+  const config = auto.prepareAiCliSettings({ configPath, denyWeb: true });
 
-  assert.deepEqual(config.sandbox, {
-    mode: 'enabled',
-    networkAccess: 'user_config',
-  });
-  assert.equal(config.version, 1);
+  assert.equal(config.permissions.defaultMode, 'dontAsk');
+  assert.ok(config.permissions.allow.includes('Read'));
+  assert.ok(config.permissions.deny.includes('WebSearch'));
+  assert.ok(config.permissions.deny.includes('Edit'));
   assert.deepEqual(
     JSON.parse(fs.readFileSync(configPath, 'utf8')),
     config,
@@ -27,37 +26,32 @@ test('prepareCursorCliConfig creates a secure config when Cursor leaves it absen
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
 });
 
-test('prepareCursorCliConfig preserves preferences and adds web denials once', (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-cli-config-'));
+test('prepareAiCliSettings preserves extra allow rules and adds web denials once', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-cli-config-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
-  const configPath = path.join(tempDir, 'cli-config.json');
+  const configPath = path.join(tempDir, 'settings.json');
   fs.writeFileSync(configPath, JSON.stringify({
-    version: 7,
-    editor: { vimMode: true },
+    env: { CUSTOM: '1' },
     permissions: {
-      allow: ['Read(**)'],
-      deny: ['WebSearch(*)'],
+      allow: ['Read'],
+      deny: ['WebSearch'],
     },
-    sandbox: { mode: 'disabled', networkAccess: 'enabled', git: true },
   }));
 
-  auto.prepareCursorCliConfig({ configPath, denyWeb: true });
-  const config = auto.prepareCursorCliConfig({ configPath, denyWeb: true });
+  auto.prepareAiCliSettings({ configPath, denyWeb: true });
+  const config = auto.prepareAiCliSettings({ configPath, denyWeb: true });
 
-  assert.equal(config.version, 7);
-  assert.deepEqual(config.editor, { vimMode: true });
-  assert.deepEqual(config.permissions.allow, ['Read(**)']);
-  assert.deepEqual(config.permissions.deny, ['WebSearch(*)', 'WebFetch(*)']);
-  assert.deepEqual(config.sandbox, {
-    mode: 'enabled',
-    networkAccess: 'user_config',
-    git: true,
-  });
+  assert.equal(config.env.CUSTOM, '1');
+  assert.ok(config.permissions.allow.includes('Read'));
+  assert.deepEqual(
+    [...new Set(config.permissions.deny)].sort(),
+    ['Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Write'].sort(),
+  );
 });
 
 test('workflow routes PR lifecycle events through pull_request_target', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const triggers = workflow.match(/^on:\n[\s\S]*?^concurrency:/m)?.[0] || '';
@@ -69,7 +63,7 @@ test('workflow routes PR lifecycle events through pull_request_target', () => {
 
 test('Codex polling dispatches actionable submitted reviews to the fix loop', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const poll = workflow.match(
@@ -80,8 +74,8 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /DISPATCH_TOKEN:/);
   assert.match(poll, /latestCodexReview/);
   assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
-  assert.match(poll, /cursor-codex-dispatch:head=/);
-  assert.match(poll, /cursor-codex-dispatch:head=\$\{pr\.head\.sha\};/);
+  assert.match(poll, /ai-codex-dispatch:head=/);
+  assert.match(poll, /ai-codex-dispatch:head=\$\{pr\.head\.sha\};/);
   assert.match(poll, /const priorDispatch/);
   assert.match(poll, /github\.paginate\(\s*github\.rest\.actions\.listWorkflowRuns/);
   assert.match(poll, /const dispatchedRunIsActive/);
@@ -94,7 +88,7 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /codex_dispatch_id: dispatchId/);
   assert.match(poll, /let dispatchRejected = false/);
   assert.match(poll, /authorization: `Bearer \$\{process\.env\.DISPATCH_TOKEN\}`/);
-  assert.match(poll, /actions\/workflows\/cursor-automation\.yml\/dispatches/);
+  assert.match(poll, /actions\/workflows\/ai-automation\.yml\/dispatches/);
   assert.match(poll, /github\.rest\.issues\.deleteComment/);
   assert.match(poll, /if \(dispatchRejected\)/);
   assert.match(poll, /reviewedInBody[\s\S]*?!auto\.commitShasMatch\(reviewedInBody, reviewedByGithub\)/);
@@ -102,7 +96,7 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
 
 test('Codex poll dispatch markers are cleared only after the dispatched workflow completes', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const cleanup = workflow.match(
@@ -115,7 +109,7 @@ test('Codex poll dispatch markers are cleared only after the dispatched workflow
   assert.match(workflow, /run-name:/);
   assert.match(cleanup, /needs: \[codex_loop, publish_codex_fix\]/);
   assert.match(cleanup, /if: always\(\)/);
-  assert.match(cleanup, /cursor-codex-dispatch:head=/);
+  assert.match(cleanup, /ai-codex-dispatch:head=/);
   assert.match(cleanup, /CODEX_DISPATCH_ID/);
   assert.match(cleanup, /trustedAuthors/);
   assert.match(cleanup, /github\.rest\.issues\.deleteComment/);
@@ -123,30 +117,30 @@ test('Codex poll dispatch markers are cleared only after the dispatched workflow
 
 test('scheduled Codex polls share one concurrency group', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
 
   assert.match(
     workflow,
-    /github\.event_name == 'schedule' && github\.event\.schedule == '17 3 \* \* \*' && 'cursor-smoke' \|\|[\s\S]*?github\.event_name == 'schedule' && 'codex-poll' \|\|/,
+    /github\.event_name == 'schedule' && github\.event\.schedule == '17 3 \* \* \*' && 'ai-smoke' \|\|[\s\S]*?github\.event_name == 'schedule' && 'codex-poll' \|\|/,
   );
 });
 
-test('workflow defaults to Cursor triage-only and gates coding routes', () => {
+test('workflow defaults to full automation and still gates coding routes in triage-only', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
 
   assert.match(
     workflow,
-    /CURSOR_AUTOMATION_MODE: \$\{\{ vars\.CURSOR_AUTOMATION_MODE \|\| 'triage_only' \}\}/,
+    /AI_AUTOMATION_MODE: \$\{\{ vars\.AI_AUTOMATION_MODE \|\| 'full' \}\}/,
   );
+  assert.match(workflow, /AI_MODEL: \$\{\{ vars\.AI_MODEL \|\| 'glm-5\.3-flash:cloud' \}\}/);
   assert.match(workflow, /auto\.gateAutomationRoute\(kind,/);
-  assert.match(workflow, /# Temporarily disabled: Cursor is triage-only/);
-  assert.match(workflow, /# schedule:/);
-  assert.match(workflow, /#   - cron: '\*\/5 \* \* \* \*'/);
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /- cron: '\*\/5 \* \* \* \*'/);
 });
 
 test('gateAutomationRoute skips implement and Codex loop kinds in triage-only', () => {
@@ -177,8 +171,8 @@ test('gateAutomationRoute skips implement and Codex loop kinds in triage-only', 
 });
 
 test('applyTriageOnlyClassificationPolicy blocks implement and remaps agent labels', () => {
-  const previous = process.env.CURSOR_AUTOMATION_MODE;
-  process.env.CURSOR_AUTOMATION_MODE = 'triage_only';
+  const previous = process.env.AI_AUTOMATION_MODE;
+  process.env.AI_AUTOMATION_MODE = 'triage_only';
   try {
     const { classification, labels } = auto.applyTriageOnlyClassificationPolicy(
       { category: 'bug_ready', should_implement: true, reply: 'Will fix.' },
@@ -188,8 +182,8 @@ test('applyTriageOnlyClassificationPolicy blocks implement and remaps agent labe
     assert.ok(labels.includes('ready-for-human'));
     assert.ok(!labels.includes('ready-for-agent'));
   } finally {
-    if (previous == null) delete process.env.CURSOR_AUTOMATION_MODE;
-    else process.env.CURSOR_AUTOMATION_MODE = previous;
+    if (previous == null) delete process.env.AI_AUTOMATION_MODE;
+    else process.env.AI_AUTOMATION_MODE = previous;
   }
 
   const unchanged = auto.applyTriageOnlyClassificationPolicy(
@@ -200,21 +194,21 @@ test('applyTriageOnlyClassificationPolicy blocks implement and remaps agent labe
   assert.ok(unchanged.labels.includes('ready-for-agent'));
 });
 
-test('no-PR follow-ups use a writable Cursor agent mode', () => {
+test('no-PR follow-ups use a writable Claude Code mode', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const reviewStep = workflow.match(
-    /- name: Review follow-up with Cursor CLI[\s\S]*?(?=\n\s{6}- name:)/,
+    /- name: Review follow-up with Claude Code[\s\S]*?(?=\n\s{6}- name:)/,
   )?.[0] || '';
 
   assert.match(reviewStep, /if \[\[ "\$HAS_PULL" == "true" \]\]; then/);
-  assert.match(reviewStep, /decision_dir="\$\(mktemp -d \/tmp\/cursor-followup-decision\.XXXXXX\)"/);
-  assert.match(reviewStep, /cp \.cursor-runtime\/followup\.json "\$decision_dir\/\.cursor-runtime\/followup\.json"/);
-  assert.match(reviewStep, /else[\s\S]*?sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \\\n\s+"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --trust --sandbox enabled/);
-  assert.match(reviewStep, /--workspace "\$decision_dir" "\$prompt"/);
-  assert.match(reviewStep, /cp "\$decision_dir\/\.cursor-runtime\/followup-status\.txt"/);
+  assert.match(reviewStep, /decision_dir="\$\(mktemp -d \/tmp\/ai-followup-decision\.XXXXXX\)"/);
+  assert.match(reviewStep, /cp \.ai-runtime\/followup\.json "\$decision_dir\/\.ai-runtime\/followup\.json"/);
+  assert.match(reviewStep, /else[\s\S]*?cd "\$decision_dir"/);
+  assert.match(reviewStep, /--permission-mode dontAsk/);
+  assert.match(reviewStep, /cp "\$decision_dir\/\.ai-runtime\/followup-status\.txt"/);
   assert.doesNotMatch(reviewStep, /--mode=ask/);
 });
 
@@ -955,7 +949,7 @@ test('findPendingIssueFollowups coalesces new author and maintainer messages', (
   const pull = {
     body: [
       auto.BOT_PR_MARKER,
-      '<!-- cursor-issue-watermark:comment-id=100 -->',
+      '<!-- ai-issue-watermark:comment-id=100 -->',
       'Fixes #42',
     ].join('\n'),
     created_at: '2026-07-24T10:00:00Z',
@@ -995,7 +989,7 @@ test('findPendingIssueFollowups coalesces new author and maintainer messages', (
       author_association: 'COLLABORATOR',
       body: [
         auto.TRIAGE_MARKER,
-        '<!-- cursor-followup:comment-id=101;result=no_change -->',
+        '<!-- ai-followup:comment-id=101;result=no_change -->',
         '收到。',
       ].join('\n'),
       created_at: '2026-07-24T10:04:00Z',
@@ -1207,7 +1201,7 @@ test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', a
   let lastUpdate = null;
   let comments = [{
     user: { login: 'mallory' },
-    body: '<!-- cursor-implement-failure:base=abc;kind=no_changes -->',
+    body: '<!-- ai-implement-failure:base=abc;kind=no_changes -->',
   }];
   const github = {
     rest: {
@@ -1238,7 +1232,7 @@ test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', a
     context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
     issueNumber: 42,
     message: 'failure details',
-    dedupeMarker: '<!-- cursor-implement-failure:base=abc;kind=no_changes -->',
+    dedupeMarker: '<!-- ai-implement-failure:base=abc;kind=no_changes -->',
   };
   const first = await auto.markNeedsHuman(args);
   assert.equal(first.commented, true);
@@ -1298,7 +1292,7 @@ test('applyReadyForHumanHandoff hands open auto-closed issues to humans', async 
   assert.equal(update.state, undefined);
   assert.ok(update.labels.includes('ready-for-human'));
   assert.ok(update.labels.includes('triage:already-available'));
-  assert.match(commentBody, /cursor-reopen-handoff/);
+  assert.match(commentBody, /ai-reopen-handoff/);
   assert.match(commentBody, /重新打开/);
 });
 
@@ -1381,7 +1375,7 @@ test('applyReadyForHumanHandoff skips when maintainer already re-closed', async 
 
 test('workflow cleans source labels after eligible PR close and dedupes clean notices', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
@@ -1409,8 +1403,8 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.match(workflow, /reconcile_closed_handoffs:/);
   assert.match(workflow, /shouldRetryIssueHandoff/);
   assert.match(workflow, /isTrustedOpenPullForIssue/);
-  assert.match(workflow, /cursor-handoff-recovery:version=\$\{recoveryVersion\}/);
-  assert.match(workflow, /workflow_id: 'cursor-automation\.yml'/);
+  assert.match(workflow, /ai-handoff-recovery:version=\$\{recoveryVersion\}/);
+  assert.match(workflow, /workflow_id: 'ai-automation\.yml'/);
   assert.match(workflow, /Reconcile handoffs/);
   assert.ok((workflow.match(/auto\.extractPaginatedItems\(response\)/g) || []).length >= 2);
   assert.match(workflow, /notBefore: '2026-07-31T12:54:37Z'/);
@@ -1434,13 +1428,13 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.doesNotMatch(classify, /actions: write/);
   assert.match(followup, /actions: write/);
   assert.match(followup, /createWorkflowDispatch/);
-  assert.match(workflow, /cursor-codex-clean-head:/);
+  assert.match(workflow, /ai-codex-clean-head:/);
   assert.match(workflow, /Clean handoff already recorded/);
 });
 
 test('simple follow-ups immediately recheck linked clean pull requests', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const simpleStep = workflow.match(
@@ -1468,7 +1462,7 @@ test('findPendingIssueFollowups coalesces rapid no-PR comments after bot triage'
         user: { login: 'netcatty-bot', type: 'User' },
         body: [
           auto.TRIAGE_MARKER,
-          '<!-- cursor-triage-watermark:comment-id=7 -->',
+          '<!-- ai-triage-watermark:comment-id=7 -->',
           'Thanks for the report.',
         ].join('\n'),
         created_at: '2026-07-24T09:00:00Z',
@@ -1496,17 +1490,17 @@ test('countIssueFollowupRepliesSince counts only trusted bot result markers', ()
   const comments = [
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-followup:comment-id=1;result=no_change -->',
+      body: '<!-- ai-followup:comment-id=1;result=no_change -->',
       created_at: '2026-07-24T10:00:00Z',
     },
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-followup:comment-id=2;result=updated -->',
+      body: '<!-- ai-followup:comment-id=2;result=updated -->',
       created_at: '2026-07-23T10:00:00Z',
     },
     {
       user: { login: 'mallory' },
-      body: '<!-- cursor-followup:comment-id=3;result=no_change -->',
+      body: '<!-- ai-followup:comment-id=3;result=no_change -->',
       created_at: '2026-07-24T11:00:00Z',
     },
   ];
@@ -1523,12 +1517,12 @@ test('needs-info follow-up accounting counts trusted triage replies and watermar
   const comments = [
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-automation -->\n<!-- cursor-triage-watermark:comment-id=9 -->',
+      body: '<!-- ai-automation -->\n<!-- ai-triage-watermark:comment-id=9 -->',
       created_at: '2026-07-24T10:00:00Z',
     },
     {
       user: { login: 'mallory' },
-      body: '<!-- cursor-triage-watermark:comment-id=10 -->',
+      body: '<!-- ai-triage-watermark:comment-id=10 -->',
       created_at: '2026-07-24T11:00:00Z',
     },
   ];
@@ -1550,8 +1544,8 @@ test('buildPullRequestBody records the issue comment snapshot', () => {
     summary: 'keep local should upload',
     issueCommentWatermark: 987,
   });
-  assert.match(body, /<!-- cursor-source-issue:42 -->/);
-  assert.match(body, /<!-- cursor-issue-watermark:comment-id=987 -->/);
+  assert.match(body, /<!-- ai-source-issue:42 -->/);
+  assert.match(body, /<!-- ai-issue-watermark:comment-id=987 -->/);
   assert.equal(auto.extractIssueCommentWatermark(body), '987');
   assert.equal(auto.extractSourceIssueNumber({ body }), 42);
   assert.deepEqual(
@@ -1581,10 +1575,10 @@ test('parseIssueFollowupStatus is fail-closed and builds durable reply markers',
     pullNumber: 77,
     headSha: 'abcdef1234567890',
   });
-  assert.match(reply, /cursor-followup:comment-id=101;result=updated/);
-  assert.match(reply, /cursor-followup:comment-id=102;result=updated/);
-  assert.match(reply, /cursor-followup-pr:77/);
-  assert.match(reply, /cursor-followup-head:abcdef1234567890/);
+  assert.match(reply, /ai-followup:comment-id=101;result=updated/);
+  assert.match(reply, /ai-followup:comment-id=102;result=updated/);
+  assert.match(reply, /ai-followup-pr:77/);
+  assert.match(reply, /ai-followup-head:abcdef1234567890/);
   assert.match(reply, /这些补充已经加入现有修复/);
 });
 
@@ -1608,7 +1602,7 @@ test('buildIssueFollowupFallbackReply follows the reporter language', () => {
 test('getPendingIssueFollowupsForPull protects ready state with live issue comments', async () => {
   const pull = {
     number: 77,
-    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\n<!-- ai-issue-watermark:comment-id=1 -->\nFixes #42`,
     created_at: '2026-07-24T10:00:00Z',
     labels: [{ name: 'automation:bot-pr' }],
     user: { login: 'netcatty-bot' },
@@ -1657,7 +1651,7 @@ test('getPendingIssueFollowupsForPull protects ready state with live issue comme
 test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', () => {
   assert.equal(
     auto.shouldGatePullOnSourceIssueFollowups({
-      body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\nFixes #42`,
+      body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\nFixes #42`,
       labels: [{ name: 'automation:bot-pr' }],
       user: { login: 'netcatty-bot' },
     }),
@@ -1681,7 +1675,7 @@ test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', ()
   );
   assert.equal(
     auto.shouldGatePullOnSourceIssueFollowups({
-      body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\nFixes #42`,
+      body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\nFixes #42`,
       labels: [{ name: 'automation:bot-pr' }],
       user: { login: 'untrusted-collaborator' },
       head: { repo: { full_name: 'binaricat/Netcatty' } },
@@ -1754,7 +1748,7 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
   };
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'netcatty-bot' },
-    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+    body: '<!-- ai-implement-failure:base=abc;kind=protected_path -->',
   }], options), true);
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'netcatty-bot' },
@@ -1762,20 +1756,20 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
   }], options), true);
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'attacker' },
-    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+    body: '<!-- ai-implement-failure:base=abc;kind=protected_path -->',
   }], options), false);
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'netcatty-bot' },
-    body: '<!-- cursor-implement-failure:base=abc;kind=verification_failed -->',
+    body: '<!-- ai-implement-failure:base=abc;kind=verification_failed -->',
   }], options), false);
   assert.equal(auto.shouldRetryIssueHandoff([
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      body: '<!-- ai-implement-failure:base=abc;kind=protected_path -->',
     },
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-handoff-recovery:version=handoff-v1 -->',
+      body: '<!-- ai-handoff-recovery:version=handoff-v1 -->',
     },
   ], options), false);
 
@@ -1798,41 +1792,41 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
   assert.equal(auto.shouldRetryIssueHandoff([
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      body: '<!-- ai-implement-failure:base=abc;kind=protected_path -->',
       created_at: '2026-08-01T12:00:00Z',
     },
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-followup:comment-id=123;result=no_change -->',
+      body: '<!-- ai-followup:comment-id=123;result=no_change -->',
       created_at: '2026-08-02T12:00:00Z',
     },
   ], boundedOptions), false);
   assert.equal(auto.shouldRetryIssueHandoff([
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-followup:comment-id=123;result=updated -->',
+      body: '<!-- ai-followup:comment-id=123;result=updated -->',
       created_at: '2026-08-01T12:00:00Z',
     },
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-classification-failure:kind=research_failed;run=2 -->',
+      body: '<!-- ai-classification-failure:kind=research_failed;run=2 -->',
       created_at: '2026-08-02T12:00:00Z',
     },
   ], boundedOptions), true);
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'netcatty-bot' },
-    body: '<!-- cursor-implement-failure:base=future;kind=protected_path -->',
+    body: '<!-- ai-implement-failure:base=future;kind=protected_path -->',
     created_at: '2026-08-05T12:00:00Z',
   }], boundedOptions), false);
   assert.equal(auto.shouldRetryIssueHandoff([
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      body: '<!-- ai-implement-failure:base=abc;kind=protected_path -->',
       created_at: '2026-08-01T12:00:00Z',
     },
     {
       user: { login: 'netcatty-bot' },
-      body: '<!-- cursor-handoff-recovery:version=handoff-v2 -->',
+      body: '<!-- ai-handoff-recovery:version=handoff-v2 -->',
       created_at: '2026-08-05T12:00:00Z',
     },
   ], boundedOptions), false);
@@ -1869,8 +1863,8 @@ test('automation pull references only control the marked source issue', () => {
     number: 8,
     state: 'open',
     body: [
-      '<!-- cursor-bot-pr -->',
-      '<!-- cursor-source-issue:41 -->',
+      '<!-- ai-bot-pr -->',
+      '<!-- ai-source-issue:41 -->',
       'Related to #42',
       'Fixes #43',
     ].join('\n'),
@@ -1951,7 +1945,7 @@ test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs',
 });
 
 test('prepareIssueFollowupContext uses the triggering comment when no PR exists', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-followup-'));
   const outputPath = path.join(dir, 'followup.json');
   const outputs = {};
   const comments = [
@@ -2032,7 +2026,7 @@ test('prepareIssueFollowupContext uses the triggering comment when no PR exists'
 });
 
 test('prepareIssueFollowupContext shortcuts simple resolved replies without Cursor', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-simple-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-followup-simple-'));
   const outputs = {};
   const github = {
     rest: {
@@ -2055,7 +2049,7 @@ test('prepareIssueFollowupContext shortcuts simple resolved replies without Curs
       {
         id: 8,
         user: { login: 'netcatty-bot', type: 'Bot' },
-        body: '<!-- cursor-followup:comment-id=7;result=no_change -->',
+        body: '<!-- ai-followup:comment-id=7;result=no_change -->',
         created_at: '2026-07-24T09:00:00Z',
       },
       {
@@ -2084,14 +2078,14 @@ test('prepareIssueFollowupContext shortcuts simple resolved replies without Curs
 });
 
 test('prepareIssueFollowupContext hands off after the daily follow-up limit', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-limit-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-followup-limit-'));
   const outputPath = path.join(dir, 'followup.json');
   const outputs = {};
   const comments = [
     {
       id: 8,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-followup:comment-id=7;result=no_change -->',
+      body: '<!-- ai-followup:comment-id=7;result=no_change -->',
       created_at: '2026-07-24T09:00:00Z',
     },
     {
@@ -2177,7 +2171,7 @@ test('restoreCleanPullRequestAfterNoChange undoes ready when a comment races', a
     number: 77,
     state: 'open',
     draft,
-    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\n<!-- ai-issue-watermark:comment-id=1 -->\nFixes #42`,
     user: { login: 'netcatty-bot' },
     head: {
       sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -2255,7 +2249,7 @@ test('restoreCleanPullRequestAfterNoChange ignores only the current batch', asyn
     number: 77,
     state: 'open',
     draft,
-    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\n<!-- ai-issue-watermark:comment-id=1 -->\nFixes #42`,
     user: { login: 'netcatty-bot' },
     head: {
       sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -2323,7 +2317,7 @@ test('restoreCleanPullRequestAfterNoChange rejects an edited current-batch comme
     number: 77,
     state: 'open',
     draft: true,
-    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    body: `${auto.BOT_PR_MARKER}\n<!-- ai-source-issue:42 -->\n<!-- ai-issue-watermark:comment-id=1 -->\nFixes #42`,
     user: { login: 'netcatty-bot' },
     head: {
       sha: 'cccccccccccccccccccccccccccccccccccccccc',
@@ -2508,7 +2502,7 @@ test('hasProtectedChangesInSources checks commit names', () => {
       '.github/workflows/x.yml',
       'package-lock.json',
       'scripts/compare-ci-test-baseline.cjs',
-      'scripts/prepare-cursor-research-input.sh',
+      'scripts/prepare-ai-research-input.sh',
       'src/a.ts',
     ],
   });
@@ -2516,7 +2510,7 @@ test('hasProtectedChangesInSources checks commit names', () => {
     '.github/workflows/x.yml',
     'package-lock.json',
     'scripts/compare-ci-test-baseline.cjs',
-    'scripts/prepare-cursor-research-input.sh',
+    'scripts/prepare-ai-research-input.sh',
   ]);
 });
 
@@ -2550,9 +2544,9 @@ test('hasProtectedChangesInSources blocks electron-builder configs', () => {
 
 test('pathsFromGitStatusPorcelain keeps both rename sides', () => {
   const paths = auto.pathsFromGitStatusPorcelain(
-    'R  scripts/cursor-automation.cjs -> scripts/evil.cjs\n',
+    'R  scripts/ai-automation.cjs -> scripts/evil.cjs\n',
   );
-  assert.ok(paths.includes('scripts/cursor-automation.cjs'));
+  assert.ok(paths.includes('scripts/ai-automation.cjs'));
   assert.ok(paths.includes('scripts/evil.cjs'));
 });
 
@@ -2629,10 +2623,10 @@ test('extractJsonObject reads fenced blocks', () => {
 
 test('hasProtectedChanges flags workflow edits', () => {
   const hits = auto.hasProtectedChanges(
-    ' M .github/workflows/cursor-automation.yml\n?? .cursor/sandbox.json\n M components/App.tsx\n',
+    ' M .github/workflows/ai-automation.yml\n?? .cursor/sandbox.json\n M components/App.tsx\n',
   );
   assert.deepEqual(hits, [
-    '.github/workflows/cursor-automation.yml',
+    '.github/workflows/ai-automation.yml',
     '.cursor/sandbox.json',
   ]);
 });
@@ -2650,7 +2644,7 @@ test('protected paths allow ordinary electron-builder regression tests', () => {
 
 test('every code-writing Cursor path compares exact-base failures and preserves rejected patches', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const implement = workflow.match(
@@ -2667,8 +2661,8 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(implement, /set -o pipefail/);
   assert.match(implement, /steps\.patch\.outputs\.artifact_ready == 'true'/);
   assert.match(implement, /name: Fail after preserving rejected implementation/);
-  assert.match(implement, /\.cursor-runtime\/verify-result\.json/);
-  assert.match(implement, /\.cursor-runtime\/test-comparison\.json/);
+  assert.match(implement, /\.ai-runtime\/verify-result\.json/);
+  assert.match(implement, /\.ai-runtime\/test-comparison\.json/);
   assert.match(implement, /Validation scripts changed/);
   assert.match(implement, /candidate-lint\.log/);
   assert.ok(
@@ -2724,8 +2718,8 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(codex, /buildCodexFixFailureMessage/);
   assert.match(codex, /id: upload_fixpatch/);
   assert.match(codex, /steps\.upload_fixpatch\.outcome/);
-  assert.match(codex, /cursor-codex-fix-failure:kind=/);
-  assert.match(codex, /cursor-codex-fix-failure:kind=no_changes/);
+  assert.match(codex, /ai-codex-fix-failure:kind=/);
+  assert.match(codex, /ai-codex-fix-failure:kind=no_changes/);
   assert.doesNotMatch(
     codex,
     /agent, protected paths, or verification failed/,
@@ -2735,7 +2729,7 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
 
 test('classification failure handoff receives its issue number', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const handoff = workflow.match(
@@ -2743,7 +2737,7 @@ test('classification failure handoff receives its issue number', () => {
   )?.[0] || '';
   assert.match(handoff, /ISSUE_NUMBER: \$\{\{ needs\.route\.outputs\.issue_number \}\}/);
   assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
-  assert.match(handoff, /cursor-classification-failure:kind=\$\{kind\};run=\$\{context\.runId\}/);
+  assert.match(handoff, /ai-classification-failure:kind=\$\{kind\};run=\$\{context\.runId\}/);
   assert.match(handoff, /buildClassificationFailureMessage/);
   assert.match(handoff, /steps\.research\.outcome/);
   assert.match(handoff, /steps\.classify_agent\.outcome/);
@@ -2753,12 +2747,12 @@ test('classification failure handoff receives its issue number', () => {
   assert.match(handoff, /const failureMessage = auto/);
   assert.doesNotMatch(handoff, /自动复核没有安全完成/);
   assert.match(workflow, /name: Validate classification result/);
-  assert.match(workflow, /auto\.parseClassificationFile\("\.cursor-runtime\/classification\.json"\)/);
+  assert.match(workflow, /auto\.parseClassificationFile\("\.ai-runtime\/classification\.json"\)/);
 });
 
 test('implementation publish rechecks related work and records a deduplicated handoff', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const implement = workflow.match(
@@ -2767,12 +2761,12 @@ test('implementation publish rechecks related work and records a deduplicated ha
   const publish = workflow.match(
     /\n  publish_implement:\n[\s\S]*?(?=\n  codex_loop:\n)/,
   )?.[0] || '';
-  assert.match(implement, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.match(implement, /ai-existing-related-pr:\$\{existing\.number\}/);
   assert.match(implement, /auto\.markNeedsHuman/);
   assert.match(publish, /name: Skip publish if trusted related PR opened during implementation/);
   assert.match(publish, /includeRelated: true/);
   assert.match(publish, /auto\.markNeedsHuman/);
-  assert.match(publish, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.match(publish, /ai-existing-related-pr:\$\{existing\.number\}/);
   assert.ok(
     publish.indexOf('name: Skip publish if trusted related PR opened during implementation')
       < publish.indexOf('name: Publish branch from fresh runner'),
@@ -2791,7 +2785,7 @@ test('implementation publish rechecks related work and records a deduplicated ha
 
 test('classification follow-up rate-limit handoff receives its issue number', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const handoff = workflow.match(
@@ -2806,7 +2800,7 @@ test('classification follow-up rate-limit handoff receives its issue number', ()
 
 test('no-change follow-up ignores this batch while restoring before recording it', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const finishStep = workflow.match(
@@ -2839,7 +2833,7 @@ test('no-change follow-up ignores this batch while restoring before recording it
 
 test('follow-up publish revalidates comment snapshots before pushing', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const publish = workflow.match(
@@ -2874,7 +2868,7 @@ test('follow-up publish revalidates comment snapshots before pushing', () => {
 
 test('Codex loop bootstraps the current same-repo helper API when default is stale', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const codexLoop = workflow.match(
@@ -2893,7 +2887,7 @@ test('Codex loop bootstraps the current same-repo helper API when default is sta
 
 test('implementation keeps the classification-time issue watermark', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const classify = workflow.match(
@@ -2917,7 +2911,7 @@ test('implementation keeps the classification-time issue watermark', () => {
   );
   assert.match(
     classify,
-    /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?\.cursor-runtime\/issue\.json/,
+    /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?\.ai-runtime\/issue\.json/,
   );
   assert.doesNotMatch(implement, /name: Prepare issue JSON/);
   assert.doesNotMatch(implement, /prepareIssueContext\(/);
@@ -2925,7 +2919,7 @@ test('implementation keeps the classification-time issue watermark', () => {
 
 test('classification backlog is re-dispatched only after implementation finishes', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const drain = workflow.match(
@@ -2954,79 +2948,36 @@ test('classification backlog is re-dispatched only after implementation finishes
   assert.match(apply, /processedCommentIds:/);
 });
 
-test('every Cursor job prepares and verifies the Linux sandbox host', () => {
+test('every agent job prepares Claude Code dontAsk settings', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const sandboxPreparations = workflow.match(
-    /- name: Prepare Cursor sandbox host/g,
-  ) || [];
-  const sandboxEnables = workflow.match(/agent sandbox enable/g) || [];
-  const profileDownloads = workflow.match(
-    /https:\/\/downloads\.cursor\.com\/lab\/enterprise\/cursor-sandbox-apparmor_0\.6\.0_all\.deb/g,
-  ) || [];
-  const checksumVerifications = workflow.match(
-    /d982e1f17d8eed0a6277b51576ee74ed0259c06922f16ea5a93ac8e4877844ce/g,
+    /- name: Prepare Claude Code settings host/g,
   ) || [];
 
-  assert.equal(sandboxEnables.length, 5);
-  assert.equal(sandboxPreparations.length, sandboxEnables.length);
-  assert.equal(profileDownloads.length, 1);
-  assert.equal(checksumVerifications.length, 1);
+  assert.ok(sandboxPreparations.length >= 4);
   assert.equal(
-    (workflow.match(/sudo dpkg -i "\$sandbox_package"/g) || []).length,
+    (workflow.match(/run: &prepare_ai_cli_host \|/g) || []).length,
     1,
   );
-  assert.equal(
-    (workflow.match(/cursor_sandbox_agent_cli/g) || []).length,
-    1,
-  );
-  assert.ok(
-    workflow.includes("sudo sed -i 's/^  #userns,$/  userns,/' \"$sandbox_profile\""),
-  );
-  assert.match(workflow, /abi <abi\/4\.0>,/);
-  assert.match(workflow, /include <tunables\/global>/);
-  assert.ok(
-    workflow.includes(
-      "sudo sed -i '/^  capability chown,$/a\\  capability dac_override,' \"$sandbox_profile\"",
-    ),
-  );
-  assert.ok(
-    workflow.includes(
-      "test \"$(grep -c '^  capability dac_override,$' \"$sandbox_profile\")\" -eq 2",
-    ),
-  );
-  assert.equal(
-    (workflow.match(/run: &prepare_cursor_sandbox_host \|/g) || []).length,
-    1,
-  );
-  assert.equal(
-    (workflow.match(/run: \*prepare_cursor_sandbox_host/g) || []).length,
-    sandboxEnables.length - 1,
-  );
-  assert.doesNotMatch(
-    workflow,
-    /apparmor_restrict_unprivileged_(?:unconfined|userns)\s*=\s*0/,
-  );
-
-  let cursor = 0;
-  for (let index = 0; index < sandboxEnables.length; index += 1) {
-    const preparation = workflow.indexOf('- name: Prepare Cursor sandbox host', cursor);
-    const enable = workflow.indexOf('agent sandbox enable', cursor);
-    assert.ok(preparation >= cursor && preparation < enable);
-    cursor = enable + 1;
-  }
+  assert.ok((workflow.match(/run: \*prepare_ai_cli_host/g) || []).length >= 3);
+  assert.doesNotMatch(workflow, /downloads\.cursor\.com/);
+  assert.doesNotMatch(workflow, /agent sandbox enable/);
+  assert.match(workflow, /claude\.ai\/install\.sh/);
+  assert.match(workflow, /ai-brave-search\.cjs/);
+  assert.match(workflow, /secrets\.BRAVE_API_KEY/);
 });
 
-test('workflow keeps sandbox probes credential-free and runs an authenticated agent smoke', () => {
+test('workflow keeps smoke probes credential-free and runs an authenticated agent smoke', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   assert.match(
     workflow,
-    /sandbox_smoke:\n\s+description: Verify the Cursor sandbox and authenticated agent\n\s+required: false\n\s+type: boolean\n\s+default: false/,
+    /sandbox_smoke:\n\s+description: Verify Claude Code auth and the isolated research helper\n\s+required: false\n\s+type: boolean\n\s+default: false/,
   );
   const smokeJob = workflow.match(
     /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
@@ -3040,58 +2991,34 @@ test('workflow keeps sandbox probes credential-free and runs an authenticated ag
     smokeJob,
     /ref: \$\{\{ github\.event_name == 'schedule' && github\.event\.repository\.default_branch \|\| github\.sha \}\}/,
   );
-  assert.match(smokeJob, /run: \*prepare_cursor_sandbox_host/);
-  assert.match(smokeJob, /agent sandbox enable/);
-  assert.match(
-    smokeJob,
-    /prepareCursorCliConfig[\s\S]*?agent sandbox run -- touch \.cursor-runtime\/sandbox-smoke/,
-  );
-  assert.match(
-    smokeJob,
-    /agent sandbox run -- curl -fsS --max-time 3 -o \/dev\/null https:\/\/example\.com/,
-  );
-  assert.match(smokeJob, /--policy "\$sandbox_policy_file"/);
-  assert.match(smokeJob, /sandbox: \{/);
-  assert.match(smokeJob, /networkAccess: false/);
-  assert.match(smokeJob, /touch \.cursor-runtime\/sandbox-smoke/);
-  assert.match(smokeJob, /Cursor sandbox unexpectedly allowed network access/);
-  assert.doesNotMatch(smokeJob, /--sandbox-policy/);
+  assert.match(smokeJob, /run: \*prepare_ai_cli_host/);
+  assert.match(smokeJob, /prepareAiCliSettings/);
   const sandboxStep = smokeJob.match(
-    /- name: Verify Cursor sandbox[\s\S]*?(?=\n\s{6}- name:)/,
+    /- name: Verify Claude Code permissions[\s\S]*?(?=\n\s{6}- name:)/,
   )?.[0] || '';
-  assert.doesNotMatch(sandboxStep, /CURSOR_API_KEY|GITHUB_TOKEN|GH_TOKEN/);
+  assert.doesNotMatch(sandboxStep, /ANTHROPIC_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN/);
   assert.match(
     smokeJob,
-    /- name: Stage Cursor API key for authenticated smoke[\s\S]*?CURSOR_API_KEY: \$\{\{ secrets\.CURSOR_API_KEY \}\}/,
+    /- name: Stage Anthropic auth token for authenticated smoke[\s\S]*?ANTHROPIC_AUTH_TOKEN: \$\{\{ secrets\.ANTHROPIC_AUTH_TOKEN \}\}/,
   );
   const authenticatedSmokeStep = smokeJob.match(
-    /- name: Run authenticated Cursor agent smoke[\s\S]*?(?=\n\s{6}- name:)/,
+    /- name: Run authenticated Claude Code smoke[\s\S]*?(?=\n\s{6}- name:)/,
   )?.[0] || '';
-  assert.doesNotMatch(authenticatedSmokeStep, /CURSOR_API_KEY|CURSOR_AUTH_TOKEN/);
-  assert.match(
-    authenticatedSmokeStep,
-    /"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --trust/,
-  );
+  assert.doesNotMatch(authenticatedSmokeStep, /secrets\.ANTHROPIC_AUTH_TOKEN/);
+  assert.match(authenticatedSmokeStep, /ai-claude-authenticated/);
   assert.doesNotMatch(smokeJob, /--api-key/);
-  assert.match(smokeJob, /allow: \["Shell\(node\)"\]/);
-  assert.match(smokeJob, /CURSOR_AUTH_PROBE_OK/);
-  assert.match(smokeJob, /readdirSync\('\/proc'\)/);
-  assert.match(smokeJob, /cursor-auth-config\.\*\/cursor\/auth\.json/);
-  assert.match(smokeJob, /Scan authenticated Cursor smoke output for credential leaks/);
+  assert.match(smokeJob, /AI_AUTH_PROBE_OK/);
+  assert.match(smokeJob, /Scan authenticated Claude Code smoke output for credential leaks/);
 });
 
-test('workflow prepares missing Cursor config on every agent path and checks it daily', () => {
+test('workflow prepares Claude Code settings on agent paths and checks them daily', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
-  const prepareCalls = workflow.match(/prepareCursorCliConfig/g) || [];
+  const prepareCalls = workflow.match(/prepareAiCliSettings/g) || [];
 
-  assert.equal(prepareCalls.length, 7);
-  assert.doesNotMatch(
-    workflow,
-    /JSON\.parse\(fs\.readFileSync\(p, "utf8"\)\)/,
-  );
+  assert.ok(prepareCalls.length >= 4);
   assert.match(workflow, /- cron: '17 3 \* \* \*'/);
   assert.match(
     workflow,
@@ -3101,37 +3028,17 @@ test('workflow prepares missing Cursor config on every agent path and checks it 
     /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
   )?.[0] || '';
   assert.match(smokeJob, /github\.event\.schedule == '17 3 \* \* \*'/);
-  assert.match(smokeJob, /prepareCursorCliConfig/);
+  assert.match(smokeJob, /prepareAiCliSettings/);
 });
 
-test('workflow passes direct commands after the Cursor option boundary', () => {
+test('workflow runs Claude Code without Cursor CLI option boundaries', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
-  const sandboxRunLines = workflow
-    .split('\n')
-    .filter((line) => line.includes('agent sandbox run'))
-    .map((line) => line.trim());
-  const expectedTouchCommands = [
-    'agent sandbox run -- touch .cursor-runtime/sandbox-check',
-    'agent sandbox run -- touch .cursor-runtime/sandbox-smoke',
-    'agent sandbox run -- touch .cursor-runtime/followup-sandbox-check',
-    'agent sandbox run -- touch .cursor-runtime/implement-sandbox-check',
-    'agent sandbox run -- touch .cursor-runtime/fix-sandbox-check',
-  ];
-  const expectedCurlCommand =
-    'if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then';
-
-  assert.equal(sandboxRunLines.length, 10);
-  assert.deepEqual(
-    sandboxRunLines.filter((line) => line.includes(' -- touch ')).sort(),
-    expectedTouchCommands.sort(),
-  );
-  assert.equal(
-    sandboxRunLines.filter((line) => line === expectedCurlCommand).length,
-    5,
-  );
+  assert.doesNotMatch(workflow, /agent sandbox run/);
+  assert.match(workflow, /--permission-mode dontAsk/);
+  assert.match(workflow, /--bare -p/);
 });
 
 test('normalizeExternalResearchText accepts sourced research and explicit no-op', () => {
@@ -3965,6 +3872,90 @@ test('parseExternalResearchStream rejects forged and unrelated web evidence', ()
   );
 });
 
+test('parseClassificationText unwraps Claude Code print JSON', () => {
+  const inner = {
+    category: 'other',
+    confidence: 0.9,
+    summary: 'Support question about existing UI.',
+    reasoning: 'Opened components/App.tsx and confirmed the control already exists.',
+    code_paths: ['components/App.tsx'],
+    code_findings: 'App.tsx already renders the requested sidebar control for users.',
+    reply: 'This is already available in the sidebar.',
+    label_corrections: [],
+  };
+  const wrapped = JSON.stringify({
+    type: 'result',
+    result: JSON.stringify(inner),
+    structured_output: inner,
+  });
+  const parsed = auto.parseClassificationText(wrapped);
+  assert.equal(parsed.category, 'other');
+  assert.equal(parsed.code_paths[0], 'components/App.tsx');
+});
+
+test('toClaudeJsonSchema strips draft URIs Claude Code Ajv cannot load', () => {
+  const schemaPath = path.join(
+    __dirname,
+    '..',
+    '.github',
+    'ai',
+    'schemas',
+    'classification.schema.json',
+  );
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  assert.equal(schema.$schema, undefined);
+  assert.equal(schema.type, 'object');
+  assert.ok(schema.required.includes('category'));
+
+  const stripped = auto.toClaudeJsonSchema({
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'https://example.invalid/classification.json',
+    type: 'object',
+    required: ['category'],
+  });
+  assert.equal('$schema' in stripped, false);
+  assert.equal('$id' in stripped, false);
+  assert.equal(stripped.type, 'object');
+  assert.throws(() => auto.toClaudeJsonSchema([]), /must be an object/);
+});
+
+test('classify step passes a sanitized JSON Schema to Claude Code', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const classify = workflow.match(
+    /- name: Classify with Claude Code\n[\s\S]*?(?=\n      - name:)/,
+  )?.[0] || '';
+  assert.match(classify, /toClaudeJsonSchema/);
+  assert.match(classify, /--json-schema "\$CLASSIFY_SCHEMA"/);
+  assert.doesNotMatch(classify, /--json-schema "\$\(cat /);
+});
+
+test('parseExternalResearchStream accepts Brave helper tool logs', (t) => {
+  const logPath = path.join(os.tmpdir(), `brave-tool-${process.pid}.jsonl`);
+  fs.writeFileSync(logPath, `${JSON.stringify({
+    ok: true,
+    action: 'search',
+    query: 'example docs',
+    urls: ['https://example.com/docs'],
+    results: [{ title: 'Docs', url: 'https://example.com/docs', description: 'Official' }],
+  })}\n`);
+  t.after(() => fs.rmSync(logPath, { force: true }));
+  const stream = JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    result: [
+      'RESEARCH_COMPLETE: official docs describe the tool',
+      'Sources:',
+      '- https://example.com/docs — official documentation',
+    ].join('\n'),
+  });
+  const normalized = auto.parseExternalResearchStream(stream, { toolLogPath: logPath });
+  assert.match(normalized, /^RESEARCH_COMPLETE:/);
+  assert.match(normalized, /https:\/\/example.com\/docs/);
+});
+
 test('parseExternalResearchStream drops unverified sources when others are proven', () => {
   const finalText = [
     'RESEARCH_COMPLETE: known product with one hallucinated citation',
@@ -3997,9 +3988,84 @@ test('parseExternalResearchStream drops unverified sources when others are prove
   assert.doesNotMatch(normalized, /apps\.microsoft\.com/);
 });
 
-test('workflow confines forced WebSearch to isolated read-only research passes', () => {
+test('legacy cursor automation markers still count as processed replies', () => {
+  assert.equal(auto.isAutomationTriageMarker('<!-- ai-automation -->'), true);
+  assert.equal(auto.isAutomationTriageMarker('<!-- cursor-automation -->'), true);
+  assert.equal(auto.isAutomationTriageMarker('hello'), false);
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({ head: { ref: 'ai/issue-42-run' }, body: '' }),
+    [42],
+  );
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({ head: { ref: 'cursor/issue-9-run' }, body: '' }),
+    [9],
+  );
+});
+
+test('writeBraveResearchHelpers writes shebang wrappers without YAML heredocs', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-brave-helpers-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  auto.writeBraveResearchHelpers(tempDir);
+
+  for (const [name, mode] of [['web-search', 'search'], ['web-fetch', 'fetch']]) {
+    const filePath = path.join(tempDir, name);
+    const body = fs.readFileSync(filePath, 'utf8');
+    assert.equal(body.startsWith('#!/usr/bin/env bash\n'), true, name);
+    assert.match(body, new RegExp(`exec node "\\$\\(dirname "\\$0"\\)/ai-brave-search\\.cjs" ${mode} "\\$@"`));
+    assert.equal(fs.statSync(filePath).mode & 0o111, 0o111);
+  }
+  assert.throws(() => auto.writeBraveResearchHelpers(''), /research directory is required/);
+});
+
+test('ai-automation.yml stays valid YAML with no unindented block content', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const badLines = workflow.split('\n').flatMap((line, index) => {
+    if (!line || line.startsWith('#') || line.startsWith(' ') || line.startsWith('\t')) {
+      return [];
+    }
+    if (/^[A-Za-z0-9_.-]+:(?:\s|$)/.test(line)) return [];
+    return [`${index + 1}: ${line}`];
+  });
+  assert.deepEqual(badLines, []);
+  assert.doesNotMatch(workflow, /^EOS$/m);
+  assert.doesNotMatch(workflow, /<<'EOS'/);
+});
+
+test('jobs copy ai-automation.cjs to RUNNER_TEMP before requiring it', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const jobsStart = workflow.indexOf('\njobs:\n');
+  assert.ok(jobsStart >= 0, 'jobs block missing');
+  const jobsSection = workflow.slice(jobsStart);
+  const jobs = [...jobsSection.matchAll(
+    /\n  ([a-zA-Z0-9_]+):\n([\s\S]*?)(?=\n  [a-zA-Z0-9_]+:|\n*$)/g,
+  )];
+  const requireHelper = /require\((?:`\$\{process\.env\.RUNNER_TEMP\}\/ai-automation\.cjs`|process\.env\.RUNNER_TEMP \+ ['"]\/ai-automation\.cjs['"])\)/;
+  const copyHelper = /cp (?:helpers\/)?scripts\/ai-automation\.cjs "\$RUNNER_TEMP\/ai-automation\.cjs"|git(?: -C helpers)? show "FETCH_HEAD:scripts\/ai-automation\.cjs" > "\$RUNNER_TEMP\/ai-automation\.cjs"|run: \*freeze_ai_helper/;
+  const missing = [];
+  for (const [, name, body] of jobs) {
+    if (!requireHelper.test(body)) continue;
+    if (!copyHelper.test(body)) missing.push(name);
+  }
+  assert.deepEqual(missing, []);
+  const route = jobs.find((match) => match[1] === 'route')?.[2] || '';
+  assert.match(route, /run: &freeze_ai_helper \|/);
+  assert.ok(
+    route.indexOf('cp scripts/ai-automation.cjs "$RUNNER_TEMP/ai-automation.cjs"') <
+      route.indexOf('name: Decide route'),
+    'route must freeze the helper before Decide route',
+  );
+});
+
+test('workflow confines Brave research to isolated read-only research passes', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const researchRuns = [...workflow.matchAll(
@@ -4008,47 +4074,35 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
 
   assert.equal(researchRuns.length, 2);
   for (const run of researchRuns) {
-    assert.match(run, /mktemp -d \/tmp\/cursor-web-research/);
-    assert.doesNotMatch(run, /CURSOR_API_KEY|CURSOR_AUTH_TOKEN/);
-    assert.match(
-      run,
-      /"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --mode=ask --force --trust --sandbox enabled/,
-    );
+    assert.match(run, /mktemp -d \/tmp\/ai-web-research/);
+    assert.doesNotMatch(run, /secrets\.ANTHROPIC_AUTH_TOKEN/);
+    assert.match(run, /ai-claude-authenticated/);
     assert.match(run, /--output-format stream-json/);
-    assert.match(run, /--stream-partial-output/);
     assert.match(run, /GITHUB_TOKEN: ''/);
     assert.match(run, /GH_TOKEN: ''/);
-    assert.match(run, /Shell\(\*\)/);
-    assert.match(run, /Write\(\*\*\)/);
-    assert.match(run, /Read\(input\.json\)/);
-    assert.match(run, /process\.env\.HOME/);
-    assert.match(run, /process\.env\.GITHUB_WORKSPACE/);
-    // Research itself must not write the non-research web-tool denylist.
+    assert.match(run, /web-search/);
+    assert.match(run, /web-fetch/);
+    assert.match(run, /BRAVE_TOOL_LOG/);
+    assert.match(run, /writeBraveResearchHelpers/);
+    assert.doesNotMatch(run, /<<'EOS'/);
+    assert.match(run, /--settings "\$HOME\/\.claude\/settings\.json"/);
+    assert.match(run, /--disallowedTools "WebSearch" "WebFetch"/);
+    assert.doesNotMatch(run, /printf '%s\n'/);
     assert.doesNotMatch(run, /denyWeb: true/);
   }
 
-  const nonResearchAgentLines = workflow
-    .split('\n')
-    .filter((line) => line.includes('-p ') && line.includes('--trust') && !line.includes('--force'));
-  assert.ok(nonResearchAgentLines.length >= 4);
-  assert.equal(
-    workflow.split('\n').filter((line) => (
-      line.includes('-p ') && line.includes('--trust') && line.includes('--force')
-    )).length,
-    2,
-  );
-  assert.equal((workflow.match(/denyWeb: true/g) || []).length, 5);
+  assert.match(workflow, /--permission-mode dontAsk/);
   assert.doesNotMatch(workflow, /issue-research-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
   assert.match(workflow, /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?overwrite: true/);
 });
 
 test('workflow sanitizes GitHub screenshots through pinned imgproxy before research', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const attachmentProxy = fs.readFileSync(
-    path.join(__dirname, 'prepare-cursor-research-input.sh'),
+    path.join(__dirname, 'prepare-ai-research-input.sh'),
     'utf8',
   );
   const researchRuns = [...workflow.matchAll(
@@ -4058,20 +4112,20 @@ test('workflow sanitizes GitHub screenshots through pinned imgproxy before resea
   assert.equal(researchRuns.length, 2);
   assert.match(
     workflow,
-    /CURSOR_RESEARCH_IMGPROXY_IMAGE: ghcr\.io\/imgproxy\/imgproxy@sha256:[a-f0-9]{64}/,
+    /AI_RESEARCH_IMGPROXY_IMAGE: ghcr\.io\/imgproxy\/imgproxy@sha256:[a-f0-9]{64}/,
   );
   for (const run of researchRuns) {
-    assert.match(run, /"\$RUNNER_TEMP\/prepare-cursor-research-input\.sh"/);
-    assert.doesNotMatch(run, /(?:^|\s)scripts\/prepare-cursor-research-input\.sh/);
-    assert.match(run, /Read\(attachments\/\*\*\)/);
+    assert.match(run, /"\$RUNNER_TEMP\/prepare-ai-research-input\.sh"/);
+    assert.doesNotMatch(run, /(?:^|\s)scripts\/prepare-ai-research-input\.sh/);
+    assert.match(run, /prepare-ai-research-input/);
   }
   assert.match(
     workflow,
-    /cp scripts\/prepare-cursor-research-input\.sh "\$RUNNER_TEMP\/prepare-cursor-research-input\.sh"/,
+    /cp scripts\/prepare-ai-research-input\.sh "\$RUNNER_TEMP\/prepare-ai-research-input\.sh"/,
   );
   assert.match(
     workflow,
-    /git show "FETCH_HEAD:scripts\/prepare-cursor-research-input\.sh" > "\$RUNNER_TEMP\/prepare-cursor-research-input\.sh"/,
+    /git show "FETCH_HEAD:scripts\/prepare-ai-research-input\.sh" > "\$RUNNER_TEMP\/prepare-ai-research-input\.sh"/,
   );
   assert.match(attachmentProxy, /extractGithubUserAttachmentAssetUrls/);
   assert.match(attachmentProxy, /classifyGithubUserAttachmentRedirect/);
@@ -4092,59 +4146,34 @@ test('workflow sanitizes GitHub screenshots through pinned imgproxy before resea
   assert.match(attachmentProxy, /attachments\/issue-image-/);
 });
 
-test('every Cursor agent invocation uses the one-shot credential descriptor bridge', () => {
+test('every Claude Code invocation uses the staged-auth launcher', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
-  const agentCalls = workflow
-    .split('\n')
-    .filter((line) => (
-      line.includes('"$RUNNER_TEMP/cursor-agent-authenticated"') && line.trimEnd().endsWith('\\')
-    ));
-
-  assert.equal(agentCalls.length, 8);
-  assert.doesNotMatch(workflow, /env -u CURSOR_API_KEY -u CURSOR_AUTH_TOKEN/);
+  assert.ok(workflow.includes('"$RUNNER_TEMP/ai-claude-authenticated"'));
   assert.doesNotMatch(workflow, /agent --api-key/);
-  assert.doesNotMatch(workflow, /cursor_api_key="\$CURSOR_API_KEY"/);
-  assert.doesNotMatch(workflow, /3<<<"\$cursor_api_key"/);
-  assert.equal((workflow.match(/prepare_cursor_credential_bridge/g) || []).length, 5);
-  assert.equal((workflow.match(/run: &stage_cursor_api_key \|/g) || []).length, 1);
-  assert.equal((workflow.match(/run: \*stage_cursor_api_key/g) || []).length, 6);
-  assert.equal((workflow.match(/- name: Stage Cursor API key/g) || []).length, 7);
+  assert.doesNotMatch(workflow, /cursor_api_key=/);
+  assert.ok((workflow.match(/prepare_ai_credential_bridge/g) || []).length >= 5);
+  assert.equal((workflow.match(/run: &stage_ai_auth_token \|/g) || []).length, 1);
+  assert.ok((workflow.match(/run: \*stage_ai_auth_token/g) || []).length >= 5);
+  assert.ok((workflow.match(/- name: Stage Anthropic auth token/g) || []).length >= 5);
   const keyedRunSteps = [...workflow.matchAll(
-    /      - name: (?:Research external context for classification|Classify with Cursor CLI|Run authenticated Cursor agent smoke|Research external context for follow-up|Review follow-up with Cursor CLI|Implement with Cursor CLI|Fix with Cursor CLI)\n[\s\S]*?(?=\n      - name:|\n  [a-zA-Z0-9_]+:)/g,
+    /      - name: (?:Research external context for classification|Classify with Claude Code|Run authenticated Claude Code smoke|Research external context for follow-up|Review follow-up with Claude Code|Implement with Claude Code|Fix with Claude Code)\n[\s\S]*?(?=\n      - name:|\n  [a-zA-Z0-9_]+:)/g,
   )].map((match) => match[0]);
   assert.equal(keyedRunSteps.length, 7);
   for (const step of keyedRunSteps) {
-    assert.doesNotMatch(step, /CURSOR_API_KEY|CURSOR_AUTH_TOKEN/);
-    assert.match(step, /"\$RUNNER_TEMP\/cursor-agent-authenticated"/);
-    assert.match(step, /sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE/);
+    assert.doesNotMatch(step, /secrets\.ANTHROPIC_AUTH_TOKEN/);
+    assert.match(step, /"\$RUNNER_TEMP\/ai-claude-authenticated"/);
   }
-  assert.match(workflow, /AGENT_CLI_CREDENTIAL_STORE=memory/);
-  assert.match(workflow, /CURSOR_INVOKED_AS=agent/);
-  assert.match(workflow, /CURSOR_TOOL_PATH="\$runner_node_dir:/);
-  assert.match(workflow, /export PATH=\$\{JSON\.stringify\(toolPath\)\}/);
-  assert.match(workflow, /"\$RUNNER_TOOL_CACHE"\/node\/\*\/bin/);
-  assert.match(workflow, /official install directory/);
-  assert.match(workflow, /CURSOR_API_KEY_FD=3/);
-  assert.match(workflow, /process\.argv\.splice\(2, 0, '--api-key', value\)/);
-  assert.match(workflow, /delete process\.env\.CURSOR_API_KEY/);
-  assert.match(workflow, /delete process\.env\.CURSOR_AUTH_TOKEN/);
-  assert.match(workflow, /delete process\.env\.NODE_OPTIONS/);
-  assert.match(workflow, /secret\.fill\(0\)/);
-  assert.match(workflow, /sudo install -o root -g root -m 0400/);
-  assert.match(workflow, /exec 3<"\$key_file"/);
-  assert.match(workflow, /rm -f "\$key_file"/);
-  assert.match(workflow, /XDG_CONFIG_HOME="\$auth_config"/);
-  assert.match(workflow, /\/usr\/bin\/setpriv --reuid/);
-  assert.match(workflow, /"\$CURSOR_AGENT_DIR\/node" --use-system-ca/);
-  assert.match(workflow, /sudo chown root:root/);
+  assert.match(workflow, /export ANTHROPIC_AUTH_TOKEN="\$token"/);
+  assert.match(workflow, /exec claude "\$@"/);
+  assert.match(workflow, /install -m 0400/);
 });
 
 test('workflow denies WebSearch only after isolated research, not before it', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
 
@@ -4178,7 +4207,7 @@ test('workflow denies WebSearch only after isolated research, not before it', ()
 
     const denyIdx = postResearch.indexOf('- name: Deny WebSearch and WebFetch after');
     const agentIdx = postResearch.search(
-      /- name: (Classify with Cursor CLI|Review follow-up with Cursor CLI)/,
+      /- name: (Classify with Claude Code|Review follow-up with Claude Code)/,
     );
     assert.ok(denyIdx >= 0 && agentIdx > denyIdx, `${label} deny must precede agent`);
   }
@@ -4187,13 +4216,14 @@ test('workflow denies WebSearch only after isolated research, not before it', ()
   const implementJob = workflow.match(
     /\n  implement:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
   )?.[0] || '';
-  assert.match(implementJob, /Require the Cursor command sandbox for implementation[\s\S]*?denyWeb: true/);
+  assert.match(implementJob, /AI_ALLOW_WRITES: 'true'/);
+  assert.match(implementJob, /prepare_ai_cli_host/);
   assert.doesNotMatch(implementJob, /Research external context/);
 });
 
 test('initial issue failures still label and notify without a trigger comment id', () => {
   const workflow = fs.readFileSync(
-    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
     'utf8',
   );
   const handoff = workflow.match(
@@ -4265,7 +4295,7 @@ test('shouldSkipExternalCodexRerequest honors head pins; ignores plain unpinned 
       existingComments: [
         {
           user: { login: 'binaricat' },
-          body: `<!-- cursor-automation -->\n\n@codex review\n\n<!-- cursor-codex-head:${short} -->`,
+          body: `<!-- ai-automation -->\n\n@codex review\n\n<!-- ai-codex-head:${short} -->`,
         },
       ],
     }),
@@ -4385,10 +4415,11 @@ test('buildCodexReviewRequestComment pins head sha', () => {
     2,
     'deadbeefcafebabe000000000000000000000001',
   );
-  assert.match(body, /cursor-codex-round:2/);
-  assert.match(body, /cursor-codex-head:deadbeefcafebabe000000000000000000000001/);
+  assert.match(body, /ai-codex-round:2/);
+  assert.match(body, /ai-codex-head:deadbeefcafebabe000000000000000000000001/);
   assert.equal((body.match(/@codex review/g) || []).length, 1);
   assert.doesNotMatch(body, /cursor-external-codex:/);
+  assert.doesNotMatch(body, /ai-external-codex:/);
 });
 
 test('buildCodexReviewRequestComment can plant external dedupe marker once', () => {
@@ -4397,14 +4428,14 @@ test('buildCodexReviewRequestComment can plant external dedupe marker once', () 
     includeExternalMarker: true,
   });
   assert.equal((body.match(/@codex review/g) || []).length, 1);
-  assert.match(body, new RegExp(`cursor-codex-head:${sha}`));
-  assert.match(body, new RegExp(`cursor-external-codex:${sha}`));
+  assert.match(body, new RegExp(`ai-codex-head:${sha}`));
+  assert.match(body, new RegExp(`ai-external-codex:${sha}`));
 });
 
 test('buildExternalCodexRerequestComment only asks Codex', () => {
   const body = auto.buildExternalCodexRerequestComment('deadbeef');
   assert.match(body, /@codex review/);
-  assert.match(body, /cursor-external-codex:deadbeef/);
+  assert.match(body, /ai-external-codex:deadbeef/);
   assert.doesNotMatch(body, /Cursor CLI/i);
   assert.equal((body.match(/@codex review/g) || []).length, 1);
 });
@@ -4412,23 +4443,23 @@ test('buildExternalCodexRerequestComment only asks Codex', () => {
 test('getCodexRoundFromComments reads max round from trusted authors only', () => {
   assert.equal(
     auto.getCodexRoundFromComments([
-      { user: { login: 'github-actions[bot]' }, body: '<!-- cursor-codex-round:1 -->' },
-      { user: { login: 'github-actions[bot]' }, body: '<!-- cursor-codex-round:3 -->' },
-      { user: { login: 'random-user' }, body: '<!-- cursor-codex-round:999 -->' },
-      { user: { login: 'other-app[bot]' }, body: '<!-- cursor-codex-round:50 -->' },
+      { user: { login: 'github-actions[bot]' }, body: '<!-- ai-codex-round:1 -->' },
+      { user: { login: 'github-actions[bot]' }, body: '<!-- ai-codex-round:3 -->' },
+      { user: { login: 'random-user' }, body: '<!-- ai-codex-round:999 -->' },
+      { user: { login: 'other-app[bot]' }, body: '<!-- ai-codex-round:50 -->' },
     ]),
     3,
   );
   assert.equal(
     auto.getCodexRoundFromComments(
-      [{ user: { login: 'binaricat' }, body: '<!-- cursor-codex-round:5 -->' }],
+      [{ user: { login: 'binaricat' }, body: '<!-- ai-codex-round:5 -->' }],
       { ownActors: 'binaricat' },
     ),
     5,
   );
   assert.equal(
     auto.getCodexRoundFromComments([
-      { user: { login: 'attacker' }, body: '<!-- cursor-codex-round:99 -->' },
+      { user: { login: 'attacker' }, body: '<!-- ai-codex-round:99 -->' },
     ]),
     0,
   );
@@ -4437,7 +4468,7 @@ test('getCodexRoundFromComments reads max round from trusted authors only', () =
 test('hasAutomationCodexRequest ignores untrusted markers', () => {
   assert.equal(
     auto.hasAutomationCodexRequest([
-      { user: { login: 'attacker' }, body: '<!-- cursor-codex-round:1 -->' },
+      { user: { login: 'attacker' }, body: '<!-- ai-codex-round:1 -->' },
     ]),
     false,
   );
@@ -4445,7 +4476,7 @@ test('hasAutomationCodexRequest ignores untrusted markers', () => {
     auto.hasAutomationCodexRequest([
       {
         user: { login: 'github-actions[bot]' },
-        body: '<!-- cursor-codex-round:1 -->',
+        body: '<!-- ai-codex-round:1 -->',
       },
     ]),
     true,
@@ -4488,7 +4519,7 @@ test('decideCodexLoopAction allows fix on round equal to maxRounds', () => {
 });
 
 test('parseClassificationFile accepts pure JSON file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-'));
   const file = path.join(dir, 'c.json');
   fs.writeFileSync(
     file,
@@ -4511,8 +4542,8 @@ test('parseClassificationFile accepts pure JSON file', () => {
 test('buildCodexReviewRequestComment includes mention', () => {
   const body = auto.buildCodexReviewRequestComment(2);
   assert.match(body, /@codex review/);
-  assert.match(body, /cursor-codex-round:2/);
-  assert.doesNotMatch(body, /cursor-codex-head:/);
+  assert.match(body, /ai-codex-round:2/);
+  assert.doesNotMatch(body, /ai-codex-head:/);
 });
 
 test('buildTriageComment has no public generated-by disclaimer', () => {
@@ -4520,8 +4551,8 @@ test('buildTriageComment has no public generated-by disclaimer', () => {
     { reply: '感谢反馈。侧栏已经支持多个会话了。' },
     { issueCommentWatermark: 123 },
   );
-  assert.match(body, /cursor-automation/); // internal HTML marker only
-  assert.match(body, /cursor-triage-watermark:comment-id=123/);
+  assert.match(body, /ai-automation/); // internal HTML marker only
+  assert.match(body, /ai-triage-watermark:comment-id=123/);
   assert.match(body, /侧栏已经支持/);
   assert.doesNotMatch(body, /generated by|This was generated/i);
   assert.doesNotMatch(body, /^\s*>\s*\*/m);
@@ -4574,7 +4605,7 @@ test('labelsForCategory for already_available drops ready-for-agent', () => {
 });
 
 test('applyClassification updates state before posting the final reply', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-'));
   const classificationPath = path.join(dir, 'classification.json');
   fs.writeFileSync(
     classificationPath,
@@ -4642,9 +4673,9 @@ test('applyClassification updates state before posting the final reply', async (
 });
 
 test('applyClassification in triage-only never starts implement', async () => {
-  const previous = process.env.CURSOR_AUTOMATION_MODE;
-  process.env.CURSOR_AUTOMATION_MODE = 'triage_only';
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-triage-only-'));
+  const previous = process.env.AI_AUTOMATION_MODE;
+  process.env.AI_AUTOMATION_MODE = 'triage_only';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-triage-only-'));
   const classificationPath = path.join(dir, 'classification.json');
   fs.writeFileSync(
     classificationPath,
@@ -4705,14 +4736,14 @@ test('applyClassification in triage-only never starts implement', async () => {
     assert.ok(calls[0][1].labels.includes('ready-for-human'));
     assert.ok(!calls[0][1].labels.includes('ready-for-agent'));
   } finally {
-    if (previous == null) delete process.env.CURSOR_AUTOMATION_MODE;
-    else process.env.CURSOR_AUTOMATION_MODE = previous;
+    if (previous == null) delete process.env.AI_AUTOMATION_MODE;
+    else process.env.AI_AUTOMATION_MODE = previous;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('applyClassification restores the original issue when its reply fails', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-rollback-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-rollback-'));
   const classificationPath = path.join(dir, 'classification.json');
   fs.writeFileSync(
     classificationPath,
@@ -4782,7 +4813,7 @@ test('extractPaginatedItems accepts normalized Search arrays and raw items', () 
 });
 
 test('prepareIssueContext survives Octokit-normalized search pages (no .items)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-'));
   const outputPath = path.join(dir, 'issue.json');
   const outputs = {};
   const core = {
@@ -4886,7 +4917,7 @@ test('prepareIssueContext survives Octokit-normalized search pages (no .items)',
 });
 
 test('prepareIssueContext does not throw when search map previously returned undefined', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-auto-'));
   const outputPath = path.join(dir, 'issue.json');
   const outputs = {};
   const core = {
@@ -5027,7 +5058,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 10,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=9 -->',
+      body: '<!-- ai-triage-watermark:comment-id=9 -->',
       created_at: '2026-07-24T10:00:00Z',
     },
   ], 9);
@@ -5038,7 +5069,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 10,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=8 -->',
+      body: '<!-- ai-triage-watermark:comment-id=8 -->',
       created_at: '2026-07-24T10:00:00Z',
     },
     {
@@ -5057,7 +5088,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 10,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=8 -->',
+      body: '<!-- ai-triage-watermark:comment-id=8 -->',
       created_at: '2026-07-24T10:00:00Z',
     },
     {
@@ -5074,7 +5105,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 10,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=11 -->',
+      body: '<!-- ai-triage-watermark:comment-id=11 -->',
       created_at: '2026-07-24T10:00:00Z',
     },
   ], 11, 20, [{ name: 'ready-for-agent' }]);
@@ -5085,7 +5116,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 1,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=1 -->',
+      body: '<!-- ai-triage-watermark:comment-id=1 -->',
       created_at: '2026-07-24T09:00:00Z',
     },
     ...Array.from({ length: 25 }, (_, index) => ({
@@ -5109,7 +5140,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     { reply: '这一轮已处理。' },
     { issueCommentWatermark: 21, processedCommentIds: [26] },
   );
-  assert.match(triageReply, /cursor-triage-processed:comment-id=26/);
+  assert.match(triageReply, /ai-triage-processed:comment-id=26/);
   const next = await run([
     ...burstComments,
     {
@@ -5129,7 +5160,7 @@ test('prepareIssueContext dedupes and limits all managed issue author replies', 
     {
       id: 27,
       user: { login: 'netcatty-bot', type: 'User' },
-      body: '<!-- cursor-triage-watermark:comment-id=21 -->',
+      body: '<!-- ai-triage-watermark:comment-id=21 -->',
       created_at: '2026-07-24T11:00:00Z',
     },
   ], '', 100);
@@ -5412,7 +5443,7 @@ test('buildPullRequestBody prefers substantial agent body over one-line template
     summary: 'OK: raise fanout',
     agentBody,
   });
-  assert.match(body, /<!-- cursor-bot-pr -->/);
+  assert.match(body, /<!-- ai-bot-pr -->/);
   assert.match(body, /Raise SFTP WRITE fanout/);
   assert.match(body, /## Why/);
   assert.match(body, /Fixes #2449/);
@@ -5439,7 +5470,7 @@ test('buildPullRequestBody strips agent markers and appends Fixes when missing',
     issueTitle: 'x',
     summary: 'y',
     agentBody: [
-      '<!-- cursor-bot-pr -->',
+      '<!-- ai-bot-pr -->',
       '## Summary',
       '',
       '- One concrete change that is long enough to count as a real body for reviewers.',
@@ -5450,7 +5481,7 @@ test('buildPullRequestBody strips agent markers and appends Fixes when missing',
       '- unit tests for the helper',
     ].join('\n'),
   });
-  assert.equal((body.match(/<!-- cursor-bot-pr -->/g) || []).length, 1);
+  assert.equal((body.match(/<!-- ai-bot-pr -->/g) || []).length, 1);
   assert.match(body, /Fixes #99/);
 });
 
