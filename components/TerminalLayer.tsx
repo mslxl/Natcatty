@@ -126,8 +126,10 @@ import {
 } from '../domain/paneMagnification';
 import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
 import {
+  advancePendingSftpUploadQueue,
   enqueuePendingSftpUpload,
-  removePendingSftpUpload,
+  resolvePendingSftpUploadFocusedSessionId,
+  shouldActivatePendingSftpUploadImmediately,
 } from '../application/state/sftp/pendingSftpUploadQueue';
 import {
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
@@ -627,14 +629,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const [sftpPendingUploadsForTab, setSftpPendingUploadsForTab] = useState<
     Map<string, PendingSftpUpload[]>
   >(new Map());
+  const sftpPendingUploadsForTabRef = useRef<Map<string, PendingSftpUpload[]>>(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
   const [notesOpenNoteByTab, setNotesOpenNoteByTab] = useState<Map<string, { noteId: string; requestId: number }>>(new Map());
   const notesOpenRequestIdRef = useRef(0);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
-  const sftpPendingUploadsForTabRef = useRef(sftpPendingUploadsForTab);
-  sftpPendingUploadsForTabRef.current = sftpPendingUploadsForTab;
   const sftpActiveTransfersByTabRef = useRef<Map<string, number>>(new Map());
   const sftpActiveExternalEditsByTabRef = useRef<Map<string, number>>(new Map());
   const sftpRetainedAfterCloseTabIdsRef = useRef<Set<string>>(new Set());
@@ -682,13 +683,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.delete(tabId);
       return next;
     });
-    setSftpPendingUploadsForTab(prev => {
-      if (!prev.has(tabId)) return prev;
-      const next = new Map(prev);
+    if (sftpPendingUploadsForTabRef.current.has(tabId)) {
+      const next = new Map(sftpPendingUploadsForTabRef.current);
       next.delete(tabId);
-      sftpPendingUploadsForTabRef.current.delete(tabId);
-      return next;
-    });
+      sftpPendingUploadsForTabRef.current = next;
+      setSftpPendingUploadsForTab(next);
+    }
     setSftpInitialLocationForTab(prev => {
       if (!prev.has(tabId)) return prev;
       const next = new Map(prev);
@@ -850,29 +850,17 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   ) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-
-    const { connectionKey, effectiveInitialPath } = resolveSftpOpenTarget({
-      tabId,
-      host,
-      initialPath,
-      pendingUploadEntries,
-      originSessionId,
-    });
-
-    // Queued drops are handled FIFO. While an earlier drop for this tab is
-    // still pending, keep the shared panel route (host, initial location and
-    // focused terminal) bound to that head request; otherwise the panel would
-    // evaluate the head against the newer route and cancel it as
-    // "source-changed". The route advances when the head request is handled.
-    const hasQueuedPendingUploads = (
-      sftpPendingUploadsForTabRef.current.get(tabId)?.length ?? 0
-    ) > 0;
-    const shouldDeferRouteSwitch = hasQueuedPendingUploads && !!pendingUploadEntries?.length;
+    const queuedUploads = sftpPendingUploadsForTabRef.current.get(tabId) ?? [];
+    const queuesBehindPendingUpload = Boolean(
+      pendingUploadEntries?.length
+      && !shouldActivatePendingSftpUploadImmediately(queuedUploads)
+    );
 
     // When SFTP is opened from a non-focused workspace pane (toolbar click
     // or drag-drop), switch focus first so the SFTP panel binds to the
-    // correct host.
-    if (!shouldDeferRouteSwitch && originSessionId) {
+    // correct host. A later queued drop stays dormant until it reaches the
+    // FIFO head, so it cannot masquerade as a manual focus change.
+    if (originSessionId && !queuesBehindPendingUpload) {
       const ws = activeWorkspaceRef.current;
       if (ws && ws.focusedSessionId !== originSessionId) {
         onSetWorkspaceFocusedSessionRef.current?.(ws.id, originSessionId);
@@ -925,114 +913,106 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return next;
     });
 
-    setSftpHostForTab(prev => {
-      if (shouldDeferRouteSwitch) return prev;
-      const next = new Map(prev);
-      next.set(tabId, host);
-      return next;
+    if (!queuesBehindPendingUpload) {
+      setSftpHostForTab(prev => {
+        const next = new Map(prev);
+        next.set(tabId, host);
+        return next;
+      });
+    }
+
+    const { connectionKey, effectiveInitialPath } = resolveSftpOpenTarget({
+      tabId,
+      host,
+      initialPath,
+      pendingUploadEntries,
+      originSessionId,
     });
 
-    setSftpInitialLocationForTab(prev => {
-      if (shouldDeferRouteSwitch) return prev;
-      const next = new Map(prev);
-      if (effectiveInitialPath) {
-        next.set(tabId, { hostId: host.id, path: effectiveInitialPath });
-      } else {
-        next.delete(tabId);
-      }
-      return next;
-    });
+    if (!queuesBehindPendingUpload) {
+      setSftpInitialLocationForTab(prev => {
+        const next = new Map(prev);
+        if (effectiveInitialPath) {
+          next.set(tabId, { hostId: host.id, path: effectiveInitialPath });
+        } else {
+          next.delete(tabId);
+        }
+        return next;
+      });
+    }
 
-    setSftpPendingUploadsForTab(prev => {
-      const next = new Map(prev);
-      if (!pendingUploadEntries?.length) {
-        // Clear any stale pending upload when opening without new files.
-        next.delete(tabId);
-      } else {
-        const pendingUpload: PendingSftpUpload = {
-          requestId: crypto.randomUUID(),
-          hostId: host.id,
-          connectionKey,
-          originSessionId,
-          sourceSessionId,
-          targetPath: initialPath,
-          entries: pendingUploadEntries,
-          host,
-          initialLocation: effectiveInitialPath
-            ? { hostId: host.id, path: effectiveInitialPath }
-            : null,
-        };
-        next.set(
-          tabId,
-          enqueuePendingSftpUpload(next.get(tabId) ?? [], pendingUpload),
-        );
-      }
-      // Keep the render-lagging ref in sync immediately so consecutive
-      // async drop handlers observe the enqueued (or cleared) queue before
-      // React commits this state update; otherwise the FIFO route guard
-      // below would read a stale empty queue.
-      const nextQueue = next.get(tabId);
-      if (nextQueue) sftpPendingUploadsForTabRef.current.set(tabId, nextQueue);
-      else sftpPendingUploadsForTabRef.current.delete(tabId);
-      return next;
-    });
+    if (pendingUploadEntries?.length) {
+      const pendingUpload = {
+        requestId: crypto.randomUUID(),
+        activated: shouldActivatePendingSftpUploadImmediately(queuedUploads),
+        host: { ...host },
+        hostId: host.id,
+        connectionKey,
+        originSessionId,
+        sourceSessionId,
+        initialLocation: effectiveInitialPath
+          ? { hostId: host.id, path: effectiveInitialPath }
+          : undefined,
+        targetPath: initialPath,
+        entries: pendingUploadEntries,
+      };
+      const next = new Map(sftpPendingUploadsForTabRef.current);
+      next.set(tabId, enqueuePendingSftpUpload(queuedUploads, pendingUpload));
+      sftpPendingUploadsForTabRef.current = next;
+      setSftpPendingUploadsForTab(next);
+    }
   }, [closeTerminalSidePanelTab, resolveSftpOpenTarget, setSidePanelOpenTabs, sidePanelLayoutsRef, sidePanelOpenTabsRef]);
 
-  const applySftpPanelRouteForTab = useCallback((tabId: string, host: Host, initialLocation: { hostId: string; path: string } | null, originSessionId?: string) => {
-    setSftpHostForTab(prev => {
-      const next = new Map(prev);
-      next.set(tabId, host);
-      return next;
+  const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
+    const currentState = sftpPendingUploadsForTabRef.current;
+    const currentQueue = currentState.get(tabId) ?? [];
+    const workspace = workspacesRef.current.find((candidate) => candidate.id === tabId);
+    const focusedSessionId = resolvePendingSftpUploadFocusedSessionId({
+      tabId,
+      workspaceFocusedSessionId: workspace?.focusedSessionId,
+      sessionIds: sessionsRef.current.map((session) => session.id),
     });
-    setSftpInitialLocationForTab(prev => {
-      const next = new Map(prev);
-      if (initialLocation) {
-        next.set(tabId, initialLocation);
-      } else {
-        next.delete(tabId);
-      }
-      return next;
-    });
-    // Re-focus the terminal pane the queued drop came from so the panel
-    // binds to that drop's route, mirroring handleOpenSftp.
-    if (originSessionId) {
-      const ws = activeWorkspaceRef.current;
-      if (ws && ws.focusedSessionId !== originSessionId) {
-        onSetWorkspaceFocusedSessionRef.current?.(ws.id, originSessionId);
+    const advance = advancePendingSftpUploadQueue(
+      currentQueue,
+      requestId,
+      focusedSessionId,
+    );
+    if (advance.queue === currentQueue) return;
+
+    const next = new Map(currentState);
+    if (advance.queue.length > 0) next.set(tabId, [...advance.queue]);
+    else next.delete(tabId);
+    sftpPendingUploadsForTabRef.current = next;
+    setSftpPendingUploadsForTab(next);
+
+    if (advance.cancelledUploads.length > 0) {
+      toast.error(t('terminal.dragDrop.uploadCancelled'), 'SFTP');
+    }
+
+    const nextUpload = advance.nextUploadToActivate;
+    if (nextUpload) {
+      setSftpHostForTab(prev => {
+        const updated = new Map(prev);
+        updated.set(tabId, nextUpload.host);
+        return updated;
+      });
+      setSftpInitialLocationForTab(prev => {
+        const updated = new Map(prev);
+        if (nextUpload.initialLocation) {
+          updated.set(tabId, nextUpload.initialLocation);
+        } else {
+          updated.delete(tabId);
+        }
+        return updated;
+      });
+      if (advance.shouldFocusNext && nextUpload.originSessionId) {
+        onSetWorkspaceFocusedSessionRef.current?.(
+          tabId,
+          nextUpload.originSessionId,
+        );
       }
     }
-  }, []);
-
-  const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
-    const queued = sftpPendingUploadsForTabRef.current.get(tabId) ?? [];
-    const remaining = removePendingSftpUpload(queued, requestId);
-    setSftpPendingUploadsForTab(prev => {
-      const current = prev.get(tabId) ?? [];
-      const remainingPrev = removePendingSftpUpload(current, requestId);
-      if (remainingPrev === current) return prev;
-      const next = new Map(prev);
-      if (remainingPrev.length > 0) next.set(tabId, [...remainingPrev]);
-      else next.delete(tabId);
-      // Sync the render-lagging ref immediately so a drop handled right
-      // after this one sees the updated queue head, not the pre-removal
-      // one from before React commits.
-      const nextQueue = next.get(tabId);
-      if (nextQueue) sftpPendingUploadsForTabRef.current.set(tabId, nextQueue);
-      else sftpPendingUploadsForTabRef.current.delete(tabId);
-      return next;
-    });
-    if (remaining === queued) return;
-    const nextHead = remaining[0];
-    if (!nextHead?.host) return;
-    // FIFO: once the head request is handled, rebind the shared panel route
-    // to the next queued drop so it is not cancelled as "source-changed".
-    applySftpPanelRouteForTab(
-      tabId,
-      nextHead.host,
-      nextHead.initialLocation ?? null,
-      nextHead.originSessionId,
-    );
-  }, [applySftpPanelRouteForTab]);
+  }, [t]);
 
   const handleSftpInitialLocationApplied = useCallback((tabId: string, location: { hostId: string; path: string }) => {
     setSftpInitialLocationForTab(prev => {

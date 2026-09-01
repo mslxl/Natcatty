@@ -324,6 +324,15 @@ export function shouldRebindSftpSidePanelSourceSession(params: {
   return params.previousStatus !== "connected";
 }
 
+/** A known Mosh/ET or SSH route owner cannot be reassigned to another terminal. */
+export function shouldRebindSftpSidePanelRouteSession(params: {
+  boundRouteSessionId?: string | null;
+  nextRouteSessionId?: string | null;
+}): boolean {
+  if (!params.nextRouteSessionId) return false;
+  return params.boundRouteSessionId !== params.nextRouteSessionId;
+}
+
 /**
  * While the linked terminal is actively connecting, wait for its transport so
  * SFTP can reuse it. A terminal left disconnected must not block standalone

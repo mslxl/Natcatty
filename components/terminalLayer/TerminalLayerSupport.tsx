@@ -94,6 +94,10 @@ export type ResizerHandle = {
 
 export type PendingSftpUpload = {
   requestId: string;
+  /** Dormant queued drops cannot drive the panel until the previous drop advances them. */
+  activated: boolean;
+  /** Complete endpoint snapshot so later drops cannot retarget this request. */
+  host: Host;
   hostId: string;
   /** Full connection identity (id:hostname:port:protocol) for session-override awareness */
   connectionKey: string;
@@ -101,12 +105,9 @@ export type PendingSftpUpload = {
   originSessionId?: string;
   /** Terminal session whose active route must own the accepting SFTP connection. */
   sourceSessionId?: string;
+  initialLocation?: { hostId: string; path: string };
   targetPath?: string;
   entries: DropEntry[];
-  /** Endpoint snapshot captured at drop time so queued requests can rebind the shared panel route in FIFO order. */
-  host?: Host;
-  /** Initial location resolved at drop time; applied when this request reaches the head of the queue. */
-  initialLocation?: { hostId: string; path: string } | null;
 };
 
 export type SnippetExecutor = (

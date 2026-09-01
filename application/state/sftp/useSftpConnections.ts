@@ -60,6 +60,8 @@ export interface SftpConnectOptions {
   tabId?: string;
   onTabCreated?: (tabId: string) => void;
   sourceSessionId?: string;
+  /** Terminal route that owns this browse connection. */
+  routeSessionId?: string;
   /** Fail instead of opening a new route when the requested terminal transport cannot be reused. */
   requireSourceSessionReuse?: boolean;
   /** Prevent a forced terminal-drop route rebind from sharing an older open. */
@@ -276,6 +278,21 @@ export function resolveSftpReconnectSchedule(params: {
   }
 }
 
+export function resolveSftpReconnectOptions(
+  pane: SftpPane,
+): SftpConnectOptions {
+  const sourceSessionId = pane.connection?.sourceSessionId;
+  return {
+    tabId: pane.id,
+    ...(pane.connection?.routeSessionId
+      ? { routeSessionId: pane.connection.routeSessionId }
+      : undefined),
+    ...(sourceSessionId
+      ? { sourceSessionId, requireSourceSessionReuse: true }
+      : undefined),
+  };
+}
+
 export function resolveSftpReconnectAttempt(params: {
   isPinnedBackgroundReconnect: boolean;
   initialPath?: string;
@@ -450,6 +467,7 @@ export function buildSftpConnectInFlightKey(params: {
   tabId: string;
   targetConnectionKey: string;
   sourceSessionId?: string;
+  routeSessionId?: string;
   requireSourceSessionReuse?: boolean;
   initialPath?: string;
   forceNewTab?: boolean;
@@ -460,6 +478,7 @@ export function buildSftpConnectInFlightKey(params: {
     params.tabId,
     params.targetConnectionKey,
     params.sourceSessionId ?? "",
+    params.routeSessionId ?? "",
     params.requireSourceSessionReuse ? "strict-source" : "",
     params.initialPath ?? "",
     params.forceNewTab ? "force-new-tab" : "",
@@ -782,6 +801,7 @@ export const useSftpConnections = ({
         tabId: activeTabId,
         targetConnectionKey,
         sourceSessionId: host === "local" ? undefined : options?.sourceSessionId,
+        routeSessionId: host === "local" ? undefined : options?.routeSessionId,
         requireSourceSessionReuse: host === "local" ? false : options?.requireSourceSessionReuse,
         initialPath: effectiveInitialPath,
         forceNewTab: options?.forceNewTab,
@@ -982,6 +1002,7 @@ export const useSftpConnections = ({
           // no worse than the previous UX of always showing a spinner.
           reusedConnection: !!sourceSessionId,
           sourceSessionId: requireSourceSessionReuse ? sourceSessionId : undefined,
+          routeSessionId: options?.routeSessionId,
           fileProtocol: host.sftpFileProtocol ?? 'auto',
         };
 
@@ -1353,7 +1374,12 @@ export const useSftpConnections = ({
         if (!liveSchedule) return;
         const host = resolveReconnectHost(liveSchedule.side, livePane);
         if (!host) return;
-        void connect(liveSchedule.side, host, { tabId: liveSchedule.tabId });
+        if (!livePane) return;
+        void connect(
+          liveSchedule.side,
+          host,
+          resolveSftpReconnectOptions(livePane),
+        );
       }, 1000);
       reconnectTimers.push(timer);
     };

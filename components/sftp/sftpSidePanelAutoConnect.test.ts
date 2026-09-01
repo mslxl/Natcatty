@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { SftpPane } from "../../application/state/sftp/types";
+import { advancePendingSftpUploadQueue } from "../../application/state/sftp/pendingSftpUploadQueue";
 import {
   connectionKeyMatchesHost,
   findPendingSftpRebindTargetPane,
@@ -16,6 +17,7 @@ import {
   shouldCancelSettledPendingSftpRebindWithoutTarget,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
+  shouldRebindSftpSidePanelRouteSession,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
   shouldStartPendingSftpUploadRebind,
@@ -250,6 +252,41 @@ test("visible panel cancels an SSH drop when focus moves to same-host mosh or ET
   assert.equal(resolvePendingSftpUploadCancellation({
     ...params,
     panelVisible: false,
+  }), null);
+});
+
+test("unknown focus advances FIFO to the next route before cancellation observes it", () => {
+  const first = {
+    requestId: "drop-a",
+    activated: true,
+    originSessionId: "terminal-a",
+    sourceSessionId: "ssh-a",
+  };
+  const second = {
+    requestId: "drop-b",
+    activated: false,
+    originSessionId: "terminal-b",
+    sourceSessionId: "ssh-b",
+  };
+  const advance = advancePendingSftpUploadQueue(
+    [first, second],
+    first.requestId,
+    null,
+  );
+  const focusedSessionId = advance.shouldFocusNext
+    ? advance.nextUploadToActivate?.originSessionId ?? null
+    : null;
+
+  assert.equal(advance.shouldFocusNext, true);
+  assert.equal(resolvePendingSftpUploadCancellation({
+    pendingHostId: "host-1",
+    pendingOriginSessionId: second.originSessionId,
+    pendingSourceSessionId: second.sourceSessionId,
+    activeHostId: "host-1",
+    activeSessionId: second.sourceSessionId,
+    focusedSessionId,
+    panelVisible: true,
+    connection: null,
   }), null);
 });
 
@@ -503,6 +540,21 @@ test("Mosh and ET drops force a fresh SFTP route even when an old tab is healthy
     originSessionId: "mosh-session",
     sourceSessionId: undefined,
   }), false);
+});
+
+test("same-endpoint Mosh and ET focus changes rebind an already-owned connection", () => {
+  assert.equal(shouldRebindSftpSidePanelRouteSession({
+    boundRouteSessionId: "mosh-a",
+    nextRouteSessionId: "mosh-b",
+  }), true);
+  assert.equal(shouldRebindSftpSidePanelRouteSession({
+    boundRouteSessionId: "et-a",
+    nextRouteSessionId: "et-a",
+  }), false);
+  assert.equal(shouldRebindSftpSidePanelRouteSession({
+    boundRouteSessionId: null,
+    nextRouteSessionId: "mosh-b",
+  }), true);
 });
 
 test("findReusableSftpSidePanelTab ignores tabs stuck in loading after SSH disconnect", () => {

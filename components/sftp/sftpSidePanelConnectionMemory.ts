@@ -1,13 +1,69 @@
 export const MAX_SFTP_SIDE_PANEL_REMEMBERED_PATHS = 32;
 
-export function pruneSftpSidePanelTabConnectionKeys(
-  connectionKeys: Map<string, string>,
-  activeTabIds: Iterable<string>,
+export type SftpSidePanelPathLocation = {
+  hostId: string;
+  connectionKey: string;
+  path: string;
+  routeSessionId: string | null;
+};
+
+export function canApplySftpSidePanelInitialLocation(params: {
+  activeHostId: string;
+  initialLocation: { hostId: string; path: string };
+  expectedConnectionKey: string;
+  actualConnectionKey: string | null;
+  expectedRouteSessionId: string | null;
+  pendingRequiresExactTarget: boolean;
+  pendingTargetConnectionId: string | null;
+  connection: {
+    id: string;
+    hostId: string;
+    isLocal: boolean;
+    status: string;
+    routeSessionId?: string;
+  } | null | undefined;
+}): boolean {
+  const { connection } = params;
+  if (!params.initialLocation.path) return false;
+  if (params.initialLocation.hostId !== params.activeHostId) return false;
+  if (!connection || connection.isLocal || connection.status !== "connected") return false;
+  if (connection.hostId !== params.activeHostId) return false;
+  if (params.actualConnectionKey !== params.expectedConnectionKey) return false;
+  if (
+    params.expectedRouteSessionId
+    && connection.routeSessionId !== params.expectedRouteSessionId
+  ) return false;
+  if (
+    params.pendingRequiresExactTarget
+    && (
+      !params.pendingTargetConnectionId
+      || connection.id !== params.pendingTargetConnectionId
+    )
+  ) return false;
+  return true;
+}
+
+export function resolveSftpSidePanelPathPublication(params: {
+  hasPendingUpload: boolean;
+  expectedRouteSessionId: string | null;
+  location: SftpSidePanelPathLocation;
+}): SftpSidePanelPathLocation | null {
+  if (params.hasPendingUpload) return null;
+  if (
+    params.expectedRouteSessionId
+    && params.location.routeSessionId !== params.expectedRouteSessionId
+  ) return null;
+  return params.location;
+}
+
+export function pruneSftpSidePanelState<Value>(
+  valuesById: Map<string, Value>,
+  activeIdsInput: Iterable<string>,
 ): void {
-  const activeIds = new Set(activeTabIds);
-  for (const tabId of connectionKeys.keys()) {
-    if (!activeIds.has(tabId)) {
-      connectionKeys.delete(tabId);
+  const activeIds = new Set(activeIdsInput);
+  for (const id of valuesById.keys()) {
+    if (!activeIds.has(id)) {
+      valuesById.delete(id);
     }
   }
 }

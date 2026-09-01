@@ -7,6 +7,14 @@ const slotSource = readFileSync(
   new URL("../terminalLayer/terminalLayerSidePanelSlots.tsx", import.meta.url),
   "utf8",
 );
+const connectionsSource = readFileSync(
+  new URL("../../application/state/sftp/useSftpConnections.ts", import.meta.url),
+  "utf8",
+);
+const terminalLayerSource = readFileSync(
+  new URL("../TerminalLayer.tsx", import.meta.url),
+  "utf8",
+);
 
 test("locate-path write skips sessions waiting on sensitive/password prompts", () => {
   assert.match(
@@ -42,6 +50,55 @@ test("locate-path uses focused session fallback when SFTP cannot reuse the termi
   assert.match(sidePanelSource, /resolveLocateSftpPathSessionId\(\{\s*activeSessionId,\s*focusedSessionId,/);
   assert.match(
     slotSource,
-    /focusedSessionId=\{isVisible \? live\.focusedSessionId : null\}/,
+    /focusedSessionId=\{panelFocusedSessionId\}/,
+  );
+});
+
+test("queued uploads keep the target route separate from the live cancellation route", () => {
+  assert.match(
+    slotSource,
+    /pendingUploadObservedRoute=\{pendingUploadObservedRoute\}/,
+  );
+  assert.match(
+    sidePanelSource,
+    /const cancellationRoute = pendingUploadObservedRoute \?\? \{/,
+  );
+});
+
+test("queued uploads gate path publication by pending and bound route state", () => {
+  assert.match(
+    slotSource,
+    /resolveSftpSidePanelPathPublication\(/,
+  );
+  assert.match(
+    sidePanelSource,
+    /routeSessionId: connection\.routeSessionId \?\? null/,
+  );
+});
+
+test("dormant queued uploads cannot navigate or upload before cancellation", () => {
+  assert.match(sidePanelSource, /if \(!pendingUpload\.activated\) return;/);
+  assert.match(
+    sidePanelSource,
+    /const autoConnectPendingUpload = pendingUpload\?\.activated \? pendingUpload : null;/,
+  );
+  assert.doesNotMatch(
+    sidePanelSource,
+    /const pendingMatchesTarget = Boolean\(\s*pendingUpload\?/,
+  );
+});
+
+test("route ownership is committed with the connection instead of transient pane state", () => {
+  assert.match(
+    connectionsSource,
+    /routeSessionId: options\?\.routeSessionId/,
+  );
+  assert.doesNotMatch(sidePanelSource, /connectionRouteSessionIdMapRef/);
+});
+
+test("opening workspace SFTP reads path memory for the focused terminal", () => {
+  assert.match(
+    terminalLayerSource,
+    /const sourceSessionId = getActiveTerminalSessionId\(\);[\s\S]*?resolveSftpOpenTarget\(\{\s*tabId,\s*host,\s*originSessionId: sourceSessionId,/,
   );
 });
