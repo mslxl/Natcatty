@@ -35,10 +35,10 @@ test("planDualPaneSftpOpen connects local left and host right on empty panes", (
     {
       selectLeftTabId: null,
       connectLeftLocal: true,
-      addLeftTab: true,
+      addLeftTab: false,
       selectRightTabId: null,
       connectRightHost: true,
-      addRightTab: true,
+      addRightTab: false,
     },
   );
 });

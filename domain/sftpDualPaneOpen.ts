@@ -69,10 +69,10 @@ export function planDualPaneSftpOpen(params: {
   return {
     selectLeftTabId: leftReuse?.id ?? null,
     connectLeftLocal: !localLeft,
-    addLeftTab: !leftReuse,
+    addLeftTab: !leftReuse && params.leftTabs.length > 0,
     selectRightTabId: rightReuse?.id ?? null,
     connectRightHost: !matchingRight,
-    addRightTab: !rightReuse,
+    addRightTab: !rightReuse && params.rightTabs.length > 0,
   };
 }
 
