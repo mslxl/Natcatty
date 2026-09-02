@@ -56,13 +56,19 @@ export function estimateReasoningOutputReserve(
  * requested explicitly or the provider returns no replayable ciphertext and
  * the reasoning items get dropped from subsequent turns. The SDK dedupes the
  * include when it would have added it anyway.
+ *
+ * The include is therefore requested for *every* stateless Responses turn,
+ * not gated on a reasoning classifier: relay model IDs are arbitrary, and
+ * always-thinking models whose IDs match no known pattern (e.g. DeepSeek's
+ * default `deepseek-v4-flash`, which streams thinking deltas) would silently
+ * lose replayable reasoning. Models that emit no reasoning simply have no
+ * reasoning items to encrypt, so the extra include is a no-op for them.
  */
 const REASONING_ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 
 export function applyResponsesApiStatelessStoreOption(
   provider: Pick<ProviderConfig, 'openaiApi' | 'providerId' | 'style'> | null | undefined,
   options: CattyReasoningProviderOptions | undefined,
-  modelId?: string,
 ): CattyReasoningProviderOptions | undefined {
   if (!provider || resolveProviderStyle(provider) !== 'openai') return options;
   if (resolveOpenAIApi(provider) !== 'responses') return options;
@@ -70,11 +76,9 @@ export function applyResponsesApiStatelessStoreOption(
     ...options?.openai,
     store: false,
   };
-  if (modelId && openaiModelLikelySupportsReasoning(modelId)) {
-    const existingInclude = Array.isArray(openaiOptions.include) ? openaiOptions.include : [];
-    if (!existingInclude.includes(REASONING_ENCRYPTED_CONTENT_INCLUDE)) {
-      openaiOptions.include = [...existingInclude, REASONING_ENCRYPTED_CONTENT_INCLUDE];
-    }
+  const existingInclude = Array.isArray(openaiOptions.include) ? openaiOptions.include : [];
+  if (!existingInclude.includes(REASONING_ENCRYPTED_CONTENT_INCLUDE)) {
+    openaiOptions.include = [...existingInclude, REASONING_ENCRYPTED_CONTENT_INCLUDE];
   }
   return {
     ...options,

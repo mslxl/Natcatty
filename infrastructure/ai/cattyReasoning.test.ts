@@ -296,12 +296,13 @@ test('applyResponsesApiStatelessStoreOption sets store:false for OpenAI Response
   const responsesProvider = { providerId: 'openai' as const, openaiApi: 'responses' as const };
   assert.deepEqual(
     applyResponsesApiStatelessStoreOption(responsesProvider, { openai: { reasoningEffort: 'high' } }),
-    { openai: { reasoningEffort: 'high', store: false } },
+    { openai: { reasoningEffort: 'high', store: false, include: ['reasoning.encrypted_content'] } },
   );
-  // Even with no reasoning options, Responses turns stay stateless.
+  // Even with no reasoning options, Responses turns stay stateless
+  // and request replayable (encrypted) reasoning.
   assert.deepEqual(
     applyResponsesApiStatelessStoreOption(responsesProvider, undefined),
-    { openai: { store: false } },
+    { openai: { store: false, include: ['reasoning.encrypted_content'] } },
   );
 });
 
@@ -323,23 +324,16 @@ test('applyResponsesApiStatelessStoreOption is a no-op for Chat Completions and 
   assert.equal(applyResponsesApiStatelessStoreOption(undefined, undefined), undefined);
 });
 
-test('applyResponsesApiStatelessStoreOption requests encrypted reasoning for relay reasoner IDs', () => {
+test('applyResponsesApiStatelessStoreOption always requests encrypted reasoning on stateless Responses turns', () => {
   const responsesProvider = { providerId: 'custom' as const, openaiApi: 'responses' as const };
-  for (const modelId of ['deepseek-r1', 'gpt-oss-120b', 'grok-4', 'o3', 'gpt-5.1']) {
-    assert.deepEqual(
-      applyResponsesApiStatelessStoreOption(responsesProvider, undefined, modelId),
-      { openai: { store: false, include: ['reasoning.encrypted_content'] } },
-      modelId,
-    );
-  }
-  // Non-reasoning models must not get the include.
-  assert.deepEqual(
-    applyResponsesApiStatelessStoreOption(responsesProvider, undefined, 'gpt-4o-mini'),
-    { openai: { store: false } },
-  );
-  // No model id: keep prior behavior.
+  // Every stateless Responses turn gets the include, covering known reasoner
+  // IDs (`deepseek-r1`, `gpt-oss-120b`, `grok-4`, `o3`, `gpt-5.1`) as before,
+  // always-thinking relay models whose IDs match no classifier (e.g.
+  // DeepSeek's default `deepseek-v4-flash`), and plain chat models — for the
+  // latter the include is a no-op (no reasoning items to encrypt).
   assert.deepEqual(
     applyResponsesApiStatelessStoreOption(responsesProvider, undefined),
-    { openai: { store: false } },
+    { openai: { store: false, include: ['reasoning.encrypted_content'] } },
+    'deepseek-v4-flash',
   );
 });
