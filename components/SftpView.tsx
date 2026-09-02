@@ -27,7 +27,7 @@ import {
   type PaneMagnificationController,
 } from "../domain/paneMagnification";
 import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
-import { applyDualPaneSftpOpen, type DualPaneSftpTab } from "../domain/sftpDualPaneOpen";
+import { applyDualPaneSftpOpen, dualPaneTabFromPane } from "../domain/sftpDualPaneOpen";
 import {
   consumePendingDualPaneSftpRequest,
   subscribeDualPaneSftpOpen,
@@ -204,14 +204,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   useEffect(() => {
     const toTabs = (panes: Array<{
       id: string;
-      connection: { isLocal?: boolean; hostId?: string | null } | null;
-    }>): DualPaneSftpTab[] =>
-      panes.map((pane) => ({
-        id: pane.id,
-        isLocal: !!pane.connection?.isLocal,
-        hostId: pane.connection?.isLocal ? "local" : pane.connection?.hostId ?? null,
-        hasConnection: !!pane.connection,
-      }));
+      connection: { isLocal?: boolean; hostId?: string | null; status?: string | null } | null;
+    }>) => panes.map(dualPaneTabFromPane);
 
     const applyRequest = (request: { hostId: string } | null) => {
       if (!request) return;

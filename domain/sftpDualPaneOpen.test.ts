@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   applyDualPaneSftpOpen,
   canOpenDualPaneSftp,
+  dualPaneTabFromPane,
   planDualPaneSftpOpen,
   type DualPaneSftpTab,
 } from "./sftpDualPaneOpen.ts";
@@ -19,10 +20,11 @@ const tab = (
   ...options,
 });
 
-test("canOpenDualPaneSftp allows SSH-like hosts and rejects serial/plugin", () => {
+test("canOpenDualPaneSftp matches the SFTP host picker: not serial, not plugin", () => {
   assert.equal(canOpenDualPaneSftp({}), true);
   assert.equal(canOpenDualPaneSftp({ protocol: "ssh" }), true);
   assert.equal(canOpenDualPaneSftp({ protocol: "mosh" }), true);
+  assert.equal(canOpenDualPaneSftp({ protocol: "telnet" }), true);
   assert.equal(canOpenDualPaneSftp({ protocol: "serial" }), false);
   assert.equal(canOpenDualPaneSftp({ protocol: "plugin:example.provider.ssh" }), false);
 });
@@ -89,6 +91,43 @@ test("applyDualPaneSftpOpen selects existing tabs without reconnecting", () => {
   assert.equal(plan.connectLeftLocal, false);
   assert.equal(plan.connectRightHost, false);
   assert.deepEqual(calls, ["select:left:left-local", "select:right:right-host"]);
+});
+
+test("dualPaneTabFromPane treats error and disconnected tabs as idle", () => {
+  assert.deepEqual(
+    dualPaneTabFromPane({
+      id: "right-dead",
+      connection: { isLocal: false, hostId: "host-1", status: "error" },
+    }),
+    { id: "right-dead", isLocal: false, hostId: null, hasConnection: false },
+  );
+  assert.deepEqual(
+    dualPaneTabFromPane({
+      id: "right-live",
+      connection: { isLocal: false, hostId: "host-1", status: "connected" },
+    }),
+    { id: "right-live", isLocal: false, hostId: "host-1", hasConnection: true },
+  );
+});
+
+test("planDualPaneSftpOpen reconnects a matching host tab that is no longer live", () => {
+  const dead = dualPaneTabFromPane({
+    id: "right-dead",
+    connection: { isLocal: false, hostId: "host-1", status: "error" },
+  });
+  const plan = planDualPaneSftpOpen({
+    leftTabs: [tab("left-local", { isLocal: true, hostId: "local" })],
+    rightTabs: [dead],
+    hostId: "host-1",
+  });
+  assert.deepEqual(plan, {
+    selectLeftTabId: "left-local",
+    connectLeftLocal: false,
+    addLeftTab: false,
+    selectRightTabId: "right-dead",
+    connectRightHost: true,
+    addRightTab: false,
+  });
 });
 
 test("applyDualPaneSftpOpen adds tabs when both sides are occupied by other hosts", () => {

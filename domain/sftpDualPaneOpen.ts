@@ -7,6 +7,31 @@ export type DualPaneSftpTab = {
   hasConnection: boolean;
 };
 
+export function isReusableSftpConnectionStatus(
+  status?: string | null,
+): boolean {
+  return status === "connected" || status === "connecting";
+}
+
+export function dualPaneTabFromPane(pane: {
+  id: string;
+  connection: {
+    isLocal?: boolean;
+    hostId?: string | null;
+    status?: string | null;
+  } | null;
+}): DualPaneSftpTab {
+  const live = isReusableSftpConnectionStatus(pane.connection?.status);
+  return {
+    id: pane.id,
+    isLocal: live && !!pane.connection?.isLocal,
+    hostId: live
+      ? (pane.connection?.isLocal ? "local" : pane.connection?.hostId ?? null)
+      : null,
+    hasConnection: live,
+  };
+}
+
 export type DualPaneSftpPlan = {
   selectLeftTabId: string | null;
   connectLeftLocal: boolean;
