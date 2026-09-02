@@ -168,6 +168,19 @@ test("pickDisplayRecoveryBounds does not match a candidate remembered for anothe
   assert.equal(restored, null);
 });
 
+test("pickDisplayRecoveryBounds does not match a tagged candidate by geometry alone", () => {
+  const restored = pickDisplayRecoveryBounds({
+    // Display 3 re-appears first with bounds overlapping the geometry that
+    // was remembered for display 2: the identity mismatch must win over the
+    // geometry match, or the window would be dragged onto the wrong display
+    // before its real owner returns.
+    addedDisplay: { id: 3, bounds: { x: 1920, y: 0, width: 2560, height: 1440 } },
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    candidates: [{ bounds: { x: 2000, y: 100, width: 1400, height: 900 }, displayId: 2 }],
+  });
+  assert.equal(restored, null);
+});
+
 test("clampBoundsToDisplay keeps the restored window fully visible", () => {
   const clamped = clampBoundsToDisplay(
     { x: 3000, y: -200, width: 3000, height: 2000 },
@@ -466,6 +479,66 @@ test("attachDisplayRecovery clears the removal-time snapshot once it is consumed
     screen.emit("display-added", {}, SECONDARY);
 
     assert.equal(win.setBoundsCalls.length, 1);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery keeps the pending teardown snapshot across a suspension delay", () => {
+  const realNow = Date.now;
+  let now = 2_000_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+      __listeners: powerListeners,
+    };
+
+    const detach = attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The window lives on the secondary display, then the OS relocates it to
+    // the primary before "display-removed" fires (within the grace window).
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // The machine suspends right after the relocation. On wake the wall
+    // clock has advanced far past the teardown grace window — but the jump
+    // happened while the machine was asleep, so the pending snapshot must
+    // not be expired because of it.
+    powerMonitor.emit("suspend");
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+
+    // Unlock: the display returns and the pre-relocation placement must
+    // still be restored.
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    // The tracked placement was last updated by the pre-teardown move that
+    // still happened on the secondary display (2100,120), not by the OS
+    // relocation to the primary.
+    assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+
+    // Detach must also unsubscribe the suspend listener.
+    detach();
+    assert.equal((powerListeners.get("suspend") || []).length, 0);
   } finally {
     Date.now = realNow;
   }

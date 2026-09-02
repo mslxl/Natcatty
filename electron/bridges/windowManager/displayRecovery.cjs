@@ -23,6 +23,23 @@
 // window, treat the move as a teardown relocation and keep the snapshot.
 const DEFAULT_TEARDOWN_GRACE_MS = 2000;
 
+// There is no portable clock that keeps running unchanged across system
+// suspension: Date.now() (and every clock Node exposes) advances while the
+// machine is asleep. The "suspend" event of Electron's powerMonitor is the
+// only reliable signal that the wall clock jumped since a timestamp was
+// taken. It is loaded lazily so the module also works outside Electron
+// (e.g. in the unit tests).
+let powerMonitor = null;
+try {
+  const electron = require("electron");
+  if (electron && typeof electron === "object") {
+    powerMonitor = electron.powerMonitor || null;
+  }
+} catch {
+  // Not running inside Electron; suspension tracking stays unavailable and
+  // the wall-clock grace window is used as-is.
+}
+
 function isFiniteBounds(bounds) {
   return Boolean(
     bounds &&
@@ -84,10 +101,15 @@ function normalizeRecoveryCandidate(candidate) {
  * Returns the remembered bounds to restore, or null when the window is already
  * on that display or no remembered placement matches it. Candidates are
  * evaluated in order, so more specific snapshots should come first. A
- * candidate is accepted when its bounds intersect the re-added display, or
- * when it was remembered for that very display id — the display may have come
- * back with different bounds (DPI/resolution/topology change), in which case
- * the old geometry is clamped into the new bounds by the caller.
+ * candidate is accepted when it was remembered for that very display id — the
+ * display may have come back with different bounds (DPI/resolution/topology
+ * change), in which case the old geometry is clamped into the new bounds by
+ * the caller — or, for untagged (legacy) candidates without a display id,
+ * when its bounds intersect the re-added display. Candidates tagged for
+ * another display never match by geometry: during multi-display churn an
+ * unrelated display can re-appear first with overlapping bounds, and
+ * restoring the owner's geometry onto it would move the window to the wrong
+ * display and clobber the placement remembered for its real owner.
  */
 function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) {
   if (!addedDisplay || !isFiniteBounds(addedDisplay.bounds)) return null;
@@ -97,11 +119,11 @@ function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) 
   for (const candidate of candidates || []) {
     const normalized = normalizeRecoveryCandidate(candidate);
     if (!normalized) continue;
-    if (
-      normalized.displayId !== null &&
-      normalized.displayId === addedDisplay.id
-    ) {
-      return normalized.bounds;
+    if (normalized.displayId !== null) {
+      // A tagged candidate belongs to one specific display: only accept it
+      // for that display and never fall back to geometry matching.
+      if (normalized.displayId === addedDisplay.id) return normalized.bounds;
+      continue;
     }
     if (boundsIntersectDisplay(normalized.bounds, addedDisplay.bounds)) {
       return normalized.bounds;
@@ -146,7 +168,14 @@ function clampBoundsToDisplay(bounds, displayBounds) {
  * a non-primary display when that display re-appears. Returns a detach()
  * function that removes every listener this function registered.
  */
-function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN_GRACE_MS }) {
+function attachDisplayRecovery({
+  win,
+  screen,
+  teardownGraceMs = DEFAULT_TEARDOWN_GRACE_MS,
+  // Injectable for tests; defaults to Electron's powerMonitor (null outside
+  // Electron).
+  powerMonitor: injectedPowerMonitor = null,
+}) {
   if (!win || !screen || typeof screen.on !== "function") {
     return () => {};
   }
@@ -177,7 +206,16 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   // `fromBounds` the window's placement at deferral time — if the window has
   // been re-placed since, the user wins and the recovery is dropped.
   let pendingRecovery = null;
+  // Wall-clock time of the last powerMonitor "suspend" event. Used to tell a
+  // grace-window expiry caused by actual elapsed time from one caused by the
+  // clock advancing while the machine was asleep (see onDisplayRemoved).
+  let suspendedAt = null;
+  const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
+
+  const onSuspend = () => {
+    suspendedAt = Date.now();
+  };
 
   const isTrackable = () => {
     try {
@@ -314,7 +352,18 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
     if (pendingTeardownMove && oldDisplay && oldDisplay.id === pendingTeardownMove.displayId) {
-      if (Date.now() - pendingTeardownMove.at < teardownGraceMs) {
+      // Date.now() advances while the machine is asleep: when the OS
+      // relocates the window right before suspension, the matching
+      // "display-removed" event can be delivered hours later on the wall
+      // clock. A suspension after the pending move was recorded means the
+      // elapsed grace window proves nothing about a deliberate user move, so
+      // the pending snapshot must not be expired for that reason alone.
+      const suspendedAfterPendingMove =
+        suspendedAt !== null && suspendedAt >= pendingTeardownMove.at;
+      if (
+        suspendedAfterPendingMove ||
+        Date.now() - pendingTeardownMove.at < teardownGraceMs
+      ) {
         // The OS relocated the window to the primary before this removal event
         // fired: restore the pre-relocation placement on the removed display.
         boundsAtDisplayRemoval = pendingTeardownMove.bounds;
@@ -498,6 +547,12 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   };
 
   try {
+    activePowerMonitor?.on?.("suspend", onSuspend);
+  } catch {
+    // Suspension tracking is best-effort; the grace window still applies.
+  }
+
+  try {
     screen.on("display-removed", onDisplayRemoved);
     screen.on("display-added", onDisplayAdded);
     win.on?.("move", rememberWindowPlacement);
@@ -514,6 +569,9 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
 
   return function detach() {
     attached = false;
+    try {
+      activePowerMonitor?.removeListener?.("suspend", onSuspend);
+    } catch {}
     try {
       screen.removeListener?.("display-removed", onDisplayRemoved);
     } catch {}
