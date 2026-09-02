@@ -74,15 +74,62 @@ function modelMessageHasToolCall(message: ModelMessage): boolean {
  * that reference the discarded call ids are skipped as well. Reasoning parts
  * with real ciphertext (or no OpenAI item id at all) are kept untouched.
  */
-function isStatelessReplayableReasoningPart(
+function getReasoningOpenAIItemId(
+  part: ProviderContinuationReasoningPart,
+): string | undefined {
+  const openaiOptions = part.providerOptions?.openai as
+    | { itemId?: unknown }
+    | undefined;
+  const itemId = openaiOptions?.itemId;
+  return typeof itemId === 'string' && itemId ? itemId : undefined;
+}
+
+function partHasReasoningEncryptedContent(
   part: ProviderContinuationReasoningPart,
 ): boolean {
   const openaiOptions = part.providerOptions?.openai as
-    | { itemId?: unknown; reasoningEncryptedContent?: unknown }
+    | { reasoningEncryptedContent?: unknown }
     | undefined;
-  if (typeof openaiOptions?.itemId !== 'string' || !openaiOptions.itemId) return true;
-  return typeof openaiOptions.reasoningEncryptedContent === 'string'
+  return typeof openaiOptions?.reasoningEncryptedContent === 'string'
     && openaiOptions.reasoningEncryptedContent.length > 0;
+}
+
+function isStatelessReplayableReasoningPart(
+  part: ProviderContinuationReasoningPart,
+): boolean {
+  const itemId = getReasoningOpenAIItemId(part);
+  if (!itemId) return true;
+  return partHasReasoningEncryptedContent(part);
+}
+
+/**
+ * A single Responses reasoning item is streamed as several fragments
+ * (`reasoning-start`/`reasoning-delta`/`reasoning-end`): the initial fragment
+ * carries only the item id (with `reasoningEncryptedContent: null`), deltas
+ * omit the key, and the ciphertext arrives on the final fragment. The merge
+ * therefore keeps an ID-only fragment next to the encrypted one for the *same*
+ * item, so replayability must be decided per item id: an item is unreplayable
+ * statelessly only when *no* fragment for that id carries ciphertext (the
+ * legacy case where only the id was recorded). Fragments without an OpenAI
+ * item id are always replayable.
+ */
+function hasUnreplayableReasoningItems(
+  parts: readonly ProviderContinuationReasoningPart[],
+): boolean {
+  const itemIds = new Set<string>();
+  const itemIdsWithCiphertext = new Set<string>();
+  for (const part of parts) {
+    const itemId = getReasoningOpenAIItemId(part);
+    if (!itemId) continue;
+    itemIds.add(itemId);
+    if (partHasReasoningEncryptedContent(part)) {
+      itemIdsWithCiphertext.add(itemId);
+    }
+  }
+  for (const itemId of itemIds) {
+    if (!itemIdsWithCiphertext.has(itemId)) return true;
+  }
+  return false;
 }
 
 function collectReplayableReasoningParts(
@@ -183,12 +230,13 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         const resolvedCalls = resolvedToolCalls
           ? m.toolCalls.filter(tc => resolvedToolCalls.has(tc))
           : [];
-        // An unreplayable (id-only) reasoning item poisons the whole Responses
-        // tool exchange: without it the paired function-call output is
-        // rejected, so discard the calls instead of replaying them orphaned.
+        // An unreplayable (id-only, never encrypted) reasoning item poisons
+        // the whole Responses tool exchange: without it the paired
+        // function-call output is rejected, so discard the calls instead of
+        // replaying them orphaned. Freshly streamed items whose ciphertext
+        // arrived on a later fragment stay replayable.
         const hasUnreplayableReasoning = resolvedCalls.length > 0
-          && (activeContinuation?.reasoningParts ?? [])
-            .some((part) => !isStatelessReplayableReasoningPart(part));
+          && hasUnreplayableReasoningItems(activeContinuation?.reasoningParts ?? []);
         if (hasUnreplayableReasoning) {
           for (const tc of resolvedCalls) discardedToolCallIds.add(tc.id);
         }

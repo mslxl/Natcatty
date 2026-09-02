@@ -165,3 +165,96 @@ test('tool exchanges with replayable reasoning are kept intact', () => {
   );
   assert.equal(sdkMessages[1].role, 'tool');
 });
+
+test('freshly streamed reasoning fragments with a null start payload keep the tool exchange', () => {
+  // Mirrors a live `@ai-sdk/openai` Responses stream (store: false): the
+  // reasoning-start fragment carries only the item id with
+  // `reasoningEncryptedContent: null`, deltas omit the key, and the ciphertext
+  // arrives on the reasoning-end fragment. The merge keeps both fragments for
+  // the same item, which must still replay.
+  const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
+  const toolResult = {
+    toolCallId: 'call-1',
+    content: 'output',
+  };
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+        reasoningParts: [
+          {
+            text: '',
+            providerOptions: { openai: { itemId: 'rs_new', reasoningEncryptedContent: null } },
+          },
+          {
+            text: 'replayable reasoning',
+            providerOptions: { openai: { itemId: 'rs_new', reasoningEncryptedContent: 'enc-abc' } },
+          },
+        ],
+      },
+      toolCalls: [toolCall],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 3,
+      toolResults: [toolResult],
+    },
+  ];
+
+  const sdkMessages = buildHistory(messages);
+
+  assert.equal(sdkMessages.length, 2);
+  const assistantContent = sdkMessages[0].content;
+  assert.ok(Array.isArray(assistantContent));
+  // The empty ID-only start fragment is dropped from the replayed content;
+  // the encrypted fragment for the same item carries the ciphertext.
+  assert.deepEqual(
+    assistantContent.map((part) => (part as { type: string }).type),
+    ['reasoning', 'text', 'tool-call'],
+  );
+  assert.equal(sdkMessages[1].role, 'tool');
+});
+
+test('an item id whose every fragment lacks ciphertext still discards the tool exchange', () => {
+  const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
+  const toolResult = {
+    toolCallId: 'call-1',
+    content: 'output',
+  };
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+        reasoningParts: [
+          {
+            text: 'legacy reasoning',
+            providerOptions: { openai: { itemId: 'rs_legacy', reasoningEncryptedContent: null } },
+          },
+        ],
+      },
+      toolCalls: [toolCall],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 3,
+      toolResults: [toolResult],
+    },
+  ];
+
+  const sdkMessages = buildHistory(messages);
+
+  assert.equal(sdkMessages.length, 1);
+  assert.equal(sdkMessages[0].content, 'Running it.');
+});
