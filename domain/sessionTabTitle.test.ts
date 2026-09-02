@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   DEFAULT_WORKSPACE_TITLE,
   buildMergedWorkspaceTitle,
+  buildMergedWorkspaceTitleFromSessions,
   getSessionConnectionLabel,
   resolveCodingCliProviderIconUpdate,
   resolveSessionTabTitle,
@@ -217,4 +218,32 @@ test('buildMergedWorkspaceTitle falls back to the labeled side', () => {
 
 test('buildMergedWorkspaceTitle returns null when neither tab has a label', () => {
   assert.equal(buildMergedWorkspaceTitle('', ''), null);
+});
+
+test('buildMergedWorkspaceTitleFromSessions recomputes from live membership', () => {
+  const sessions = [
+    { id: 'a', customName: '01', hostLabel: '01', hostId: 'h1' },
+    { id: 'b', customName: '02', hostLabel: '02', hostId: 'h2' },
+  ];
+  assert.equal(buildMergedWorkspaceTitleFromSessions(sessions), '01/02');
+  // After renaming pane "02" the composed title follows.
+  assert.equal(
+    buildMergedWorkspaceTitleFromSessions([
+      sessions[0],
+      { ...sessions[1], customName: 'prod', hostLabel: 'prod' },
+    ]),
+    '01/prod',
+  );
+  // After removing a pane the title collapses to the remaining label.
+  assert.equal(buildMergedWorkspaceTitleFromSessions([sessions[1]]), '02');
+  // Identical labels still collapse; unlabeled panes are skipped.
+  assert.equal(
+    buildMergedWorkspaceTitleFromSessions([
+      sessions[0],
+      { id: 'c', customName: '', hostLabel: '', hostId: 'h3' },
+      { ...sessions[0], id: 'd' },
+    ]),
+    '01',
+  );
+  assert.equal(buildMergedWorkspaceTitleFromSessions([]), null);
 });

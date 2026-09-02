@@ -62,6 +62,7 @@ import { normalizeCodingCliDynamicTitleForStorage } from '../../domain/codingCli
 import {
   DEFAULT_WORKSPACE_TITLE,
   buildMergedWorkspaceTitle,
+  buildMergedWorkspaceTitleFromSessions,
   getSessionConnectionLabel,
 } from '../../domain/sessionTabTitle';
 import { cleanupClosedTerminalSessions } from './aiStateSnapshots';
@@ -263,6 +264,28 @@ export const useSessionState = ({
       activeTabStore.setActiveTabId(initialRestoreState.activeTabId);
     }
   }, [initialRestoreState.activeTabId]);
+
+  // Keep generated merged-workspace titles (e.g. "01/02" after dragging tab
+  // "02" onto "01") synchronized with the workspace's current membership and
+  // each pane's connection label. `autoTitle: false` makes
+  // resolveWorkspaceTabLabel treat the composed title as a user-chosen name,
+  // so without this pass a pane rename or a pane being added/removed would
+  // leave the label stale. Runs off session changes and only touches
+  // workspaces still flagged `generatedTitle` (a user rename clears it).
+  useEffect(() => {
+    setWorkspaces(prev => {
+      let changed = false;
+      const next = prev.map(ws => {
+        if (!ws.generatedTitle) return ws;
+        const members = sessions.filter(s => s.workspaceId === ws.id);
+        const recomputed = buildMergedWorkspaceTitleFromSessions(members) ?? DEFAULT_WORKSPACE_TITLE;
+        if (recomputed === ws.title) return ws;
+        changed = true;
+        return { ...ws, title: recomputed };
+      });
+      return changed ? next : prev;
+    });
+  }, [sessions]);
 
   useEffect(() => {
     const handleRestorePreviousSessionChanged = (key?: string) => {
@@ -626,11 +649,16 @@ export const useSessionState = ({
   }, []);
 
   const submitWorkspaceRename = useCallback((workspaceId?: string, name?: string) => {
+    // A user rename takes ownership of the title: clear `generatedTitle` so a
+    // previously synthesized merged title ("01/02") stops being auto-updated.
+    const applyRename = (w: Workspace, trimmed: string): Workspace => (
+      { ...w, title: trimmed, autoTitle: false, generatedTitle: false }
+    );
     if (workspaceId !== undefined && name !== undefined) {
       const trimmed = name.trim();
       if (!trimmed) return;
       setWorkspaces(prev => prev.map(w => (
-        w.id === workspaceId ? { ...w, title: trimmed, autoTitle: false } : w
+        w.id === workspaceId ? applyRename(w, trimmed) : w
       )));
       return;
     }
@@ -641,7 +669,7 @@ export const useSessionState = ({
 
       setWorkspaceRenameTarget(prevTarget => {
         if (!prevTarget) return prevTarget;
-        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? { ...w, title: trimmed, autoTitle: false } : w));
+        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? applyRename(w, trimmed) : w));
         return null;
       });
 
@@ -737,7 +765,9 @@ export const useSessionState = ({
     // "01/02") so the window title and the rename dialog show the merged
     // identity instead of the generic "Workspace". Falls back to the default
     // auto title when neither tab has a label. The explicit `autoTitle: false`
-    // makes tab labels use this composed name too.
+    // makes tab labels use this composed name too; `generatedTitle: true`
+    // marks it as synthesized so it keeps tracking membership/renames (see the
+    // generated-title sync effect below) instead of going stale.
     const baseSession = sessionsRef.current.find(s => s.id === baseSessionId);
     const joiningSession = sessionsRef.current.find(s => s.id === joiningSessionId);
     const mergedTitle = buildMergedWorkspaceTitle(
@@ -746,7 +776,7 @@ export const useSessionState = ({
     );
     const created = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
     const newWorkspace = mergedTitle
-      ? { ...created, title: mergedTitle, autoTitle: false }
+      ? { ...created, title: mergedTitle, autoTitle: false, generatedTitle: true }
       : created;
 
     setSessions((prevSessions) => {

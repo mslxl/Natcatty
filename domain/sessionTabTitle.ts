@@ -40,6 +40,22 @@ export const buildMergedWorkspaceTitle = (
 type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hostLabel' | 'hostId'>;
 
 /**
+ * Recompute a merged workspace's composed title from its *current* member
+ * sessions. Unlike the one-shot `buildMergedWorkspaceTitle` call at merge
+ * time, this runs over live membership, so pane renames and panes being
+ * added or removed are reflected. Returns null when no member has a label.
+ */
+export const buildMergedWorkspaceTitleFromSessions = (
+  sessions: readonly WorkspaceTabLabelSession[],
+): string | null => {
+  let title: string | null = null;
+  for (const session of sessions) {
+    title = buildMergedWorkspaceTitle(title ?? '', getSessionConnectionLabel(session));
+  }
+  return title;
+};
+
+/**
  * Resolve the label shown on a split-workspace tab. When the user has renamed
  * the workspace, that name wins. Otherwise derive it from the focused session's
  * host (e.g. "Localhost" for a local shell, the host config name for SSH) so the
