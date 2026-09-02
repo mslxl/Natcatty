@@ -119,6 +119,7 @@ export const esTerminalMessages: Messages = {
   'terminal.dragDrop.errorMessage': 'No se pudieron procesar los archivos soltados',
   'terminal.dragDrop.destinationUnknown': 'No se pudo determinar la carpeta actual del terminal. Active el seguimiento de directorios o abra SFTP y elija primero una carpeta de carga.',
   'terminal.dragDrop.uploadCancelled': 'La carga se canceló porque la conexión del terminal cambió o no se pudo reutilizar. Vuelva a soltar los archivos después de reconectar.',
+  'terminal.dragDrop.needsSudoElevation': 'Esta carpeta no es escribible con el usuario de inicio de sesión. Active la elevación Sudo en la configuración del host, o vuelva al directorio de usuario y suelte de nuevo.',
   'terminal.search.placeholder': 'Buscar...',
   'terminal.search.noResults': 'Sin resultados',
   'terminal.search.prevMatch': 'Coincidencia anterior (Shift+Enter)',

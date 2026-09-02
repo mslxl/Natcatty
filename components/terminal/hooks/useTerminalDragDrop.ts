@@ -15,6 +15,10 @@ import {
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 import type { Host, TerminalSession } from "../../../types";
 import { resolveSftpReuseSourceSessionId } from "../../../application/state/terminalConnectionReuse";
+import {
+  resolveTerminalDropSftpHost,
+  TerminalDropNeedsSudoError,
+} from "../../../domain/sftpDropElevation";
 import { toast } from "../../ui/toast";
 import {
   extractRootPathsFromDropEntries,
@@ -23,6 +27,10 @@ import {
 
 interface UseTerminalDragDropOptions {
   host: Host;
+  /** Password already resolved through host auth (host or Keychain identity). */
+  resolvedSudoPassword?: string;
+  /** Login username already resolved through host auth (host or Keychain identity). */
+  resolvedLoginUsername?: string;
   isLocalConnection: boolean;
   isNetworkDevice?: boolean;
   onOpenSftp?: TerminalProps["onOpenSftp"];
@@ -72,10 +80,44 @@ export function resolveTerminalDropErrorMessage(
   if (error instanceof ActiveTerminalCwdUnavailableError) {
     return t("terminal.dragDrop.destinationUnknown");
   }
+  if (error instanceof TerminalDropNeedsSudoError) {
+    return t("terminal.dragDrop.needsSudoElevation");
+  }
   if (error instanceof Error && error.message === "No files to upload") {
     return t("terminal.dragDrop.noFiles");
   }
   return t("terminal.dragDrop.errorMessage");
+}
+
+async function openSftpForTerminalDrop({
+  dropEntries,
+  host,
+  onOpenSftp,
+  resolveSftpInitialPath,
+  resolvedLoginUsername,
+  resolvedSudoPassword,
+  sessionId,
+}: {
+  dropEntries: DropEntry[];
+  host: Host;
+  onOpenSftp: NonNullable<UseTerminalDragDropOptions["onOpenSftp"]>;
+  resolveSftpInitialPath: UseTerminalDragDropOptions["resolveSftpInitialPath"];
+  resolvedLoginUsername?: string;
+  resolvedSudoPassword?: string;
+  sessionId: string;
+}): Promise<void> {
+  const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
+  const uploadHost = resolveTerminalDropSftpHost(host, initialPath, {
+    password: resolvedSudoPassword ?? host.password,
+    username: resolvedLoginUsername ?? host.username,
+  });
+  onOpenSftp(
+    uploadHost,
+    initialPath,
+    dropEntries,
+    sessionId,
+    resolveSftpReuseSourceSessionId(host, sessionId),
+  );
 }
 
 export async function resolveTerminalDropUploadInitialPath(
@@ -155,6 +197,8 @@ export async function handleTerminalDropEntries({
   isNetworkDevice = false,
   onOpenSftp,
   resolveSftpInitialPath,
+  resolvedLoginUsername,
+  resolvedSudoPassword,
   scrollToBottomAfterProgrammaticInput,
   sessionId,
   sessionRef,
@@ -165,6 +209,8 @@ export async function handleTerminalDropEntries({
 }: Pick<
   UseTerminalDragDropOptions,
   | "host"
+  | "resolvedLoginUsername"
+  | "resolvedSudoPassword"
   | "isLocalConnection"
   | "isNetworkDevice"
   | "onOpenSftp"
@@ -206,14 +252,15 @@ export async function handleTerminalDropEntries({
     && onOpenSftp
     && supportsZmodemDragDropSftpFallback(host)
   ) {
-    const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-    onOpenSftp(
-      host,
-      initialPath,
+    await openSftpForTerminalDrop({
       dropEntries,
+      host,
+      onOpenSftp,
+      resolveSftpInitialPath,
+      resolvedLoginUsername,
+      resolvedSudoPassword,
       sessionId,
-      resolveSftpReuseSourceSessionId(host, sessionId),
-    );
+    });
   } else if (supportsZmodemTerminalDragDrop(host, isNetworkDevice)) {
     const files = await buildZmodemDragDropFiles(dropEntries);
     if (files.length === 0) {
@@ -260,29 +307,35 @@ export async function handleTerminalDropEntries({
     const fallbackResult = rzMissingWatcher ? await rzMissingWatcher.promise : "detected";
     if (fallbackResult === "missing" || fallbackResult === "timeout") {
       terminalBackend.cancelZmodem?.(sessionId, { interrupt: fallbackResult === "timeout" });
-      const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-      onOpenSftp?.(
-        host,
-        initialPath,
-        dropEntries,
-        sessionId,
-        resolveSftpReuseSourceSessionId(host, sessionId),
-      );
+      if (onOpenSftp) {
+        await openSftpForTerminalDrop({
+          dropEntries,
+          host,
+          onOpenSftp,
+          resolveSftpInitialPath,
+          resolvedLoginUsername,
+          resolvedSudoPassword,
+          sessionId,
+        });
+      }
     }
   } else if (onOpenSftp) {
-    const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-    onOpenSftp(
-      host,
-      initialPath,
+    await openSftpForTerminalDrop({
       dropEntries,
+      host,
+      onOpenSftp,
+      resolveSftpInitialPath,
+      resolvedLoginUsername,
+      resolvedSudoPassword,
       sessionId,
-      resolveSftpReuseSourceSessionId(host, sessionId),
-    );
+    });
   }
 }
 
 export function useTerminalDragDrop({
   host,
+  resolvedLoginUsername,
+  resolvedSudoPassword,
   isLocalConnection,
   isNetworkDevice = false,
   onOpenSftp,
@@ -346,6 +399,8 @@ export function useTerminalDragDrop({
       await handleTerminalDropEntries({
         dropEntries,
         host,
+        resolvedLoginUsername,
+        resolvedSudoPassword,
         isLocalConnection,
         isNetworkDevice,
         onOpenSftp,

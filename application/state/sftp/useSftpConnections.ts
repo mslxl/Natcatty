@@ -276,15 +276,14 @@ export function resolveSftpReconnectSchedule(params: {
   }
 }
 
+/** Retry the last terminal transport, then fall through to a fresh/sudo open. */
 export function resolveSftpReconnectOptions(
   pane: SftpPane,
 ): SftpConnectOptions {
   const sourceSessionId = pane.connection?.sourceSessionId;
   return {
     tabId: pane.id,
-    ...(sourceSessionId
-      ? { sourceSessionId, requireSourceSessionReuse: true }
-      : undefined),
+    ...(sourceSessionId ? { sourceSessionId } : undefined),
   };
 }
 

@@ -747,7 +747,7 @@ test("a reconnecting tab moved to the other pane still schedules recovery", () =
   }), { side: "right", tabId: "tab-a" });
 });
 
-test("automatic reconnect preserves strict source reuse", () => {
+test("automatic reconnect retries the source session then allows a fresh open", () => {
   const pane = {
     id: "tab-a",
     connection: {
@@ -764,6 +764,9 @@ test("automatic reconnect preserves strict source reuse", () => {
   assert.deepEqual(resolveSftpReconnectOptions(pane), {
     tabId: "tab-a",
     sourceSessionId: "ssh-a",
-    requireSourceSessionReuse: true,
   });
+  assert.equal(
+    "requireSourceSessionReuse" in resolveSftpReconnectOptions(pane),
+    false,
+  );
 });

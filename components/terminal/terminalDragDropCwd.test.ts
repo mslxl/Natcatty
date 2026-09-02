@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import type { DropEntry } from "../../lib/sftpFileUtils";
 import type { Host } from "../../types";
+import { TerminalDropNeedsSudoError } from "../../domain/sftpDropElevation";
 import {
   ActiveTerminalCwdUnavailableError,
   DEFAULT_RZ_MISSING_FALLBACK_TIMEOUT_MS,
@@ -44,6 +45,20 @@ test("terminal drag-drop shows actionable guidance when the active directory is 
 
   assert.equal(message, "translated:terminal.dragDrop.destinationUnknown");
   assert.deepEqual(requestedKeys, ["terminal.dragDrop.destinationUnknown"]);
+});
+
+test("terminal drag-drop asks to enable sudo when /root is not writable as the login user", () => {
+  const requestedKeys: string[] = [];
+  const message = resolveTerminalDropErrorMessage(
+    new TerminalDropNeedsSudoError(),
+    (key) => {
+      requestedKeys.push(key);
+      return `translated:${key}`;
+    },
+  );
+
+  assert.equal(message, "translated:terminal.dragDrop.needsSudoElevation");
+  assert.deepEqual(requestedKeys, ["terminal.dragDrop.needsSudoElevation"]);
 });
 
 test("remote SSH terminal drop triggers ZMODEM drag-drop upload", async () => {
@@ -520,6 +535,124 @@ test("ET rz fallback keeps its origin but opens a fresh SFTP route", async () =>
 
   assert.equal(originSessionId, "et-session");
   assert.equal(sourceSessionId, undefined);
+});
+
+test("remote SSH folder drop to /root reuses the saved host password for sudo SFTP", async () => {
+  let openedHost: Host | undefined;
+  let openedPath: string | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+    host: { ...host, password: "secret" },
+    isLocalConnection: false,
+    onOpenSftp: (nextHost, initialPath) => {
+      openedHost = nextHost;
+      openedPath = initialPath;
+    },
+    resolveSftpInitialPath: async () => "/root",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: { writeToSession: () => {} },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedPath, "/root");
+  assert.equal(openedHost?.sftpSudo, true);
+  assert.equal(openedHost?.password, "secret");
+  assert.equal(host.sftpSudo, undefined);
+});
+
+test("remote SSH folder drop to /root uses a resolved identity username over a stale host username", async () => {
+  let openedHost: Host | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+    host: { ...host, username: "root", password: "secret" },
+    resolvedLoginUsername: "alice",
+    resolvedSudoPassword: "secret",
+    isLocalConnection: false,
+    onOpenSftp: (nextHost) => {
+      openedHost = nextHost;
+    },
+    resolveSftpInitialPath: async () => "/root",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: { writeToSession: () => {} },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedHost?.sftpSudo, true);
+});
+
+test("remote SSH folder drop to /root uses a resolved identity password", async () => {
+  let openedHost: Host | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+    host: { ...host, identityId: "id-1" },
+    resolvedSudoPassword: "identity-secret",
+    isLocalConnection: false,
+    onOpenSftp: (nextHost) => {
+      openedHost = nextHost;
+    },
+    resolveSftpInitialPath: async () => "/root",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: { writeToSession: () => {} },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedHost?.sftpSudo, true);
+  assert.equal(openedHost?.password, undefined);
+  assert.equal(openedHost?.identityId, "id-1");
+});
+
+test("remote SSH folder drop to /root fails closed without a saved sudo password", async () => {
+  let openedSftp = false;
+
+  await assert.rejects(
+    handleTerminalDropEntries({
+      dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+      host,
+      isLocalConnection: false,
+      onOpenSftp: () => {
+        openedSftp = true;
+      },
+      resolveSftpInitialPath: async () => "/root",
+      scrollToBottomAfterProgrammaticInput: () => {},
+      sessionId: "session-1",
+      sessionRef: { current: "session-1" },
+      terminalBackend: { writeToSession: () => {} },
+      termRef: { current: null },
+    }),
+    TerminalDropNeedsSudoError,
+  );
+
+  assert.equal(openedSftp, false);
+});
+
+test("remote SSH folder drop to the login home does not enable sudo", async () => {
+  let openedHost: Host | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+    host: { ...host, password: "secret" },
+    isLocalConnection: false,
+    onOpenSftp: (nextHost) => {
+      openedHost = nextHost;
+    },
+    resolveSftpInitialPath: async () => "/home/alice",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: { writeToSession: () => {} },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedHost?.sftpSudo, undefined);
 });
 
 test("remote SSH folder drop refuses to guess a destination when the active shell cwd is unknown", async () => {

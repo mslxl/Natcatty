@@ -140,6 +140,7 @@ export const ruTerminalMessages: Messages = {
   'terminal.dragDrop.errorMessage': 'Не удалось обработать перетащенные файлы',
   'terminal.dragDrop.destinationUnknown': 'Не удалось определить текущую папку терминала. Включите отслеживание каталогов или сначала откройте SFTP и выберите папку загрузки.',
   'terminal.dragDrop.uploadCancelled': 'Загрузка отменена: соединение терминала изменилось или его не удалось повторно использовать. После переподключения перетащите файлы снова.',
+  'terminal.dragDrop.needsSudoElevation': 'Эта папка недоступна для записи пользователю входа. Включите повышение прав Sudo в настройках хоста или вернитесь в домашний каталог и перетащите файлы снова.',
   'terminal.search.placeholder': 'Поиск...',
   'terminal.search.noResults': 'Ничего не найдено',
   'terminal.search.prevMatch': 'Предыдущее совпадение (Shift+Enter)',
