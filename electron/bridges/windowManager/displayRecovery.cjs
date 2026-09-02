@@ -226,11 +226,24 @@ function attachDisplayRecovery({
   // emitting "suspend"; "lock-screen" is the only signal for that path —
   // see onDisplayRemoved).
   let sessionInterruptedAt = null;
+  // True between an interruption start signal ("lock-screen" or "suspend")
+  // and its matching end signal ("unlock-screen" or "resume"). A single
+  // lock/sleep cycle can emit several start signals (Win+L followed by a
+  // later suspend, or the reverse); they all belong to the same interruption.
+  let sessionInterruptionActive = false;
   const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
 
   const onSessionInterrupted = () => {
     sessionInterruptedAt = Date.now();
+    // Repeated start signals within the same interruption (e.g. a "suspend"
+    // following a "lock-screen" more than the grace window later) must not
+    // clear a pending move recorded for that very cycle: the session is
+    // locked/asleep, so the user cannot have moved the window in between.
+    // Only the start of a NEW interruption may expire a pending move that
+    // went stale while the session was running.
+    if (sessionInterruptionActive) return;
+    sessionInterruptionActive = true;
     // Only a pending move that belongs to the current interruption may be
     // promoted by a later "display-removed" event: the OS relocation that
     // races ahead of display teardown happens immediately around the
@@ -245,6 +258,10 @@ function attachDisplayRecovery({
     ) {
       pendingTeardownMove = null;
     }
+  };
+
+  const onSessionResumed = () => {
+    sessionInterruptionActive = false;
   };
 
   const isTrackable = () => {
@@ -649,6 +666,8 @@ function attachDisplayRecovery({
   try {
     activePowerMonitor?.on?.("suspend", onSessionInterrupted);
     activePowerMonitor?.on?.("lock-screen", onSessionInterrupted);
+    activePowerMonitor?.on?.("resume", onSessionResumed);
+    activePowerMonitor?.on?.("unlock-screen", onSessionResumed);
   } catch {
     // Suspension/lock tracking is best-effort; the grace window still applies.
   }
@@ -673,6 +692,8 @@ function attachDisplayRecovery({
     try {
       activePowerMonitor?.removeListener?.("suspend", onSessionInterrupted);
       activePowerMonitor?.removeListener?.("lock-screen", onSessionInterrupted);
+      activePowerMonitor?.removeListener?.("resume", onSessionResumed);
+      activePowerMonitor?.removeListener?.("unlock-screen", onSessionResumed);
     } catch {}
     try {
       screen.removeListener?.("display-removed", onDisplayRemoved);
@@ -700,6 +721,7 @@ function attachDisplayRecovery({
     pendingRecovery = null;
     teardownRelocationAt = null;
     teardownSnapshotAt = null;
+    sessionInterruptionActive = false;
   };
 }
 
