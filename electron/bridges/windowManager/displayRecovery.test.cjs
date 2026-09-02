@@ -286,6 +286,36 @@ test("attachDisplayRecovery clears the removal-time snapshot once it is consumed
   }
 });
 
+test("attachDisplayRecovery drops the removal snapshot after the user moves to another secondary display", () => {
+  const TERTIARY = { id: 3, bounds: { x: -1920, y: 0, width: 1920, height: 1080 } };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
+
+  attachDisplayRecovery({ win, screen, teardownGraceMs: 0 });
+
+  // User is working with the window on the secondary display: placement gets tracked.
+  win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The secondary display disappears and the OS relocates the window to the
+  // primary display, capturing a removal-time snapshot for SECONDARY.
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The user then deliberately moves the relocated window onto the
+  // still-connected third display: the stale SECONDARY snapshot must be
+  // dropped so a later re-add of SECONDARY cannot yank the window back.
+  win.bounds = { x: -1800, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The removed display comes back: the user's placement on TERTIARY stands.
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("attachDisplayRecovery leaves the window alone while maximized", () => {
   const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
   win.maximized = true;

@@ -151,6 +151,15 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         rememberedDisplayId = null;
         return;
       }
+      // A fresh placement on a non-primary display supersedes any removal-time
+      // snapshot: the snapshot belongs to a display that was removed earlier,
+      // and restoring it when that display re-appears would move the window
+      // away from this newer placement (e.g. the user relocated the window
+      // from a removed display onto another still-connected one). If the
+      // snapshot's display is still connected, its "display-added" event has
+      // already fired, so dropping the snapshot here can never lose a pending
+      // recovery.
+      boundsAtDisplayRemoval = null;
       rememberedSecondaryBounds = bounds;
       rememberedDisplayId = display.id;
       pendingTeardownMove = null;
