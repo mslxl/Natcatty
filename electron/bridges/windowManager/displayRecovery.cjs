@@ -113,6 +113,11 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   let rememberedSecondaryBounds = null;
   let rememberedDisplayId = null;
   let pendingTeardownMove = null;
+  // Time of the first primary-display edit observed while the remembered
+  // display is already gone (i.e. the OS teardown relocation). Later edits
+  // past the grace window are deliberate user placement, not part of the
+  // relocation, and must invalidate the pending recovery candidate.
+  let teardownRelocationAt = null;
   // Recovery computed while the window was maximized/full-screen (when
   // setBounds would be wrong or would clobber the maximized state) is held
   // here and applied once the window returns to its normal state.
@@ -174,6 +179,26 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         if (rememberedDisplayId !== null) {
           const connected = screen.getAllDisplays?.() || [];
           if (!connected.some((candidate) => candidate.id === rememberedDisplayId)) {
+            // Teardown relocation: preserve the pre-teardown placement so the
+            // later "display-added" event can restore it. But only the OS's
+            // initial relocation (and the events it emits in the same burst,
+            // e.g. a paired "resize") may do so: a move/resize that arrives
+            // past the grace window is a deliberate user edit while the
+            // monitor stays disconnected, and it supersedes the stale
+            // recovery candidate.
+            const now = Date.now();
+            if (
+              teardownRelocationAt !== null &&
+              now - teardownRelocationAt >= teardownGraceMs
+            ) {
+              teardownRelocationAt = null;
+              rememberedSecondaryBounds = null;
+              rememberedDisplayId = null;
+              pendingTeardownMove = null;
+              boundsAtDisplayRemoval = null;
+              return;
+            }
+            if (teardownRelocationAt === null) teardownRelocationAt = now;
             return;
           }
           pendingTeardownMove = {
@@ -184,6 +209,12 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         }
         rememberedSecondaryBounds = null;
         rememberedDisplayId = null;
+        teardownRelocationAt = null;
+        // Any pending removal-time snapshot was captured for a recovery this
+        // edit now supersedes: the user deliberately (re)placed the window on
+        // the primary display, so a later "display-added" must not drag it
+        // back to the old geometry.
+        boundsAtDisplayRemoval = null;
         return;
       }
       // A fresh placement on a non-primary display supersedes any removal-time
@@ -198,6 +229,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       rememberedSecondaryBounds = bounds;
       rememberedDisplayId = display.id;
       pendingTeardownMove = null;
+      teardownRelocationAt = null;
     } catch {
       // Screen queries can fail during display teardown; ignore.
     }
@@ -352,6 +384,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     rememberedDisplayId = null;
     pendingTeardownMove = null;
     pendingRecovery = null;
+    teardownRelocationAt = null;
   };
 }
 
