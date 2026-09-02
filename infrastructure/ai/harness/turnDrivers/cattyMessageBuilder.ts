@@ -94,14 +94,6 @@ function partHasReasoningEncryptedContent(
     && openaiOptions.reasoningEncryptedContent.length > 0;
 }
 
-function isStatelessReplayableReasoningPart(
-  part: ProviderContinuationReasoningPart,
-): boolean {
-  const itemId = getReasoningOpenAIItemId(part);
-  if (!itemId) return true;
-  return partHasReasoningEncryptedContent(part);
-}
-
 /**
  * A single Responses reasoning item is streamed as several fragments
  * (`reasoning-start`/`reasoning-delta`/`reasoning-end`): the initial fragment
@@ -132,10 +124,34 @@ function hasUnreplayableReasoningItems(
   return false;
 }
 
+/**
+ * Replayability is decided per reasoning item id (see
+ * {@link hasUnreplayableReasoningItems}): when any fragment of an item carries
+ * ciphertext, every fragment of that item is replayable. Filtering fragments
+ * independently would drop the earlier text fragments of a multi-fragment
+ * item whose ciphertext arrives only on the final fragment, truncating the
+ * reasoning item sent on later turns.
+ */
 function collectReplayableReasoningParts(
   continuation: ProviderContinuation | undefined,
 ): ProviderContinuationReasoningPart[] {
-  return (continuation?.reasoningParts ?? []).filter(isStatelessReplayableReasoningPart);
+  const parts = continuation?.reasoningParts ?? [];
+  const itemIdsWithCiphertext = new Set<string>();
+  for (const part of parts) {
+    const itemId = getReasoningOpenAIItemId(part);
+    if (itemId && partHasReasoningEncryptedContent(part)) {
+      itemIdsWithCiphertext.add(itemId);
+    }
+  }
+  return parts.filter((part) => {
+    const itemId = getReasoningOpenAIItemId(part);
+    if (!itemId) return true;
+    if (!itemIdsWithCiphertext.has(itemId)) return false;
+    // The empty ID-only start fragment of a replayable item is redundant: the
+    // encrypted fragment for the same item already identifies it, and
+    // replaying both would duplicate the item id.
+    return part.text.length > 0 || partHasReasoningEncryptedContent(part);
+  });
 }
 
 export function collectOpenAIChatAssistantFieldsForMessages(

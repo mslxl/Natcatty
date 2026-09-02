@@ -221,6 +221,46 @@ test('freshly streamed reasoning fragments with a null start payload keep the to
   assert.equal(sdkMessages[1].role, 'tool');
 });
 
+test('every text fragment of a multi-fragment replayable reasoning item is kept', () => {
+  // A Responses reasoning item with several summary parts gives every
+  // fragment the same item id; the ciphertext arrives only on the final
+  // `output_item.done` fragment. Replayability is per item id, so all text
+  // fragments of the item must survive the replay filter.
+  const messages: ChatMessage[] = [{
+    id: 'assistant-1',
+    role: 'assistant',
+    content: 'Done.',
+    timestamp: 1,
+    providerContinuation: {
+      source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+      reasoningParts: [
+        {
+          text: 'first summary',
+          providerOptions: { openai: { itemId: 'rs_new', reasoningEncryptedContent: null } },
+        },
+        {
+          text: 'second summary',
+          providerOptions: { openai: { itemId: 'rs_new', reasoningEncryptedContent: null } },
+        },
+        {
+          text: '',
+          providerOptions: { openai: { itemId: 'rs_new', reasoningEncryptedContent: 'enc-abc' } },
+        },
+      ],
+    },
+  }];
+
+  const sdkMessages = buildHistory(messages);
+
+  assert.equal(sdkMessages.length, 1);
+  const content = sdkMessages[0].content;
+  assert.ok(Array.isArray(content));
+  assert.deepEqual(
+    content.map((part) => (part as { type: string; text?: string }).text),
+    ['first summary', 'second summary', '', 'Done.'],
+  );
+});
+
 test('an item id whose every fragment lacks ciphertext still discards the tool exchange', () => {
   const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
   const toolResult = {
