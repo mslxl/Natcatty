@@ -181,6 +181,23 @@ export const shouldClearBlockedFollowOnReach = (
   );
 };
 
+/**
+ * Whether a first-open or in-flight follow still belongs to the terminal that
+ * started it. A missing origin id is not a skipped guard: the live focused
+ * terminal must stay absent too, otherwise the probe belongs to a later pane.
+ */
+export const isFollowOriginStillCurrent = ({
+  expectedOriginId,
+  liveOriginId,
+}: {
+  expectedOriginId: string | null | undefined;
+  liveOriginId?: string | null;
+}): boolean => {
+  if (liveOriginId === undefined) return true;
+  if (expectedOriginId == null) return liveOriginId == null;
+  return liveOriginId === expectedOriginId;
+};
+
 /** Whether an async follow result still belongs to the current terminal/connection state. */
 export const shouldApplyFollowTerminalCwdSyncResult = ({
   syncGeneration,
@@ -200,7 +217,10 @@ export const shouldApplyFollowTerminalCwdSyncResult = ({
     return false;
   }
   if (expectedSessionId !== undefined) {
-    if (liveSessionId !== undefined && liveSessionId !== expectedSessionId) return false;
+    if (!isFollowOriginStillCurrent({
+      expectedOriginId: expectedSessionId,
+      liveOriginId: liveSessionId,
+    })) return false;
   }
   if (expectedConnectionId !== undefined) {
     if (!expectedConnectionId) return false;

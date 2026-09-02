@@ -143,6 +143,70 @@ test("first-open follow does not use a stale cached cwd while the fresh probe is
   await act(async () => renderer?.unmount());
 });
 
+test("an in-flight first-open probe cannot navigate after Mosh focus changes", async () => {
+  let resolveCwd: ((cwd: string) => void) | null = null;
+  const navigatedPaths: string[] = [];
+  const connection = {
+    id: "conn-1",
+    hostId: "host-1",
+    currentPath: "/home/alice",
+    status: "connected",
+    isLocal: false,
+  };
+  const sftpRef = {
+    current: {
+      leftPane: { connection, loading: false },
+      navigateTo: async (_side: "left", path: string, options?: { shouldApply?: () => boolean }) => {
+        if (options?.shouldApply && !options.shouldApply()) return "aborted" as const;
+        navigatedPaths.push(path);
+        return "reached" as const;
+      },
+    },
+  };
+  let focusedSessionId: string | null = "mosh-a";
+  let renderer: ReactTestRenderer | null = null;
+  const onGetTerminalCwd = () => new Promise<string>((resolve) => { resolveCwd = resolve; });
+
+  function Probe() {
+    useSftpFollowTerminalCwd({
+      activeSessionId: null,
+      focusedSessionId,
+      activeTerminalCwd: "/home/alice",
+      canFollowTerminalCwd: true,
+      connectionId: connection.id,
+      connectionIsLocal: connection.isLocal,
+      connectionLoading: false,
+      connectionPath: connection.currentPath,
+      connectionStatus: connection.status,
+      effectiveFollowTerminalCwd: true,
+      followTerminalCwdHost: host,
+      hasActiveWork: false,
+      isVisible: true,
+      ownerPanelOpen: true,
+      onGetTerminalCwd,
+      onPendingFollowOverride: () => {},
+      sftpRef,
+    });
+    return null;
+  }
+
+  await act(async () => {
+    renderer = create(React.createElement(Probe));
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  assert.ok(resolveCwd);
+
+  focusedSessionId = "mosh-b";
+  await act(async () => renderer?.update(React.createElement(Probe)));
+  await act(async () => {
+    resolveCwd?.("/root/from-mosh-a");
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  assert.deepEqual(navigatedPaths, []);
+  await act(async () => renderer?.unmount());
+});
+
 test("an in-flight first-open probe cannot move a pane after a hidden tab is restored", async () => {
   let resolveCwd: ((cwd: string) => void) | null = null;
   const navigatedPaths: string[] = [];

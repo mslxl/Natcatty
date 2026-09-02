@@ -111,6 +111,15 @@ export function shouldAcceptPendingSftpUpload(params: {
   return true;
 }
 
+/** Wait until the drop's origin pane is focused before binding SFTP. */
+export function shouldDeferPendingSftpUploadForOriginFocus(params: {
+  originSessionId?: string;
+  focusedSessionId?: string | null;
+}): boolean {
+  if (!params.originSessionId || !params.focusedSessionId) return false;
+  return params.focusedSessionId !== params.originSessionId;
+}
+
 export type PendingSftpUploadCancellationReason = "source-changed" | "connection-failed";
 
 /** Old-pane failures are ignored until a strict replacement has finished binding. */
@@ -137,6 +146,16 @@ export function resolvePendingSftpUploadCancellation(params: {
   activeSessionId: string | null | undefined;
   focusedSessionId?: string | null;
   panelVisible?: boolean;
+  /**
+   * True while this drop's own focus switch has not landed yet. A live focus
+   * still sitting on another same-host session is then lag, not a user leave.
+   */
+  waitingForOriginFocus?: boolean;
+  /**
+   * True while the drop's originating SSH session has not yet become the
+   * panel's active session. Distinguishes scheduled rebind from a real switch.
+   */
+  waitingForSourceSession?: boolean;
   connection: {
     hostId?: string | null;
     sourceSessionId?: string;
@@ -149,11 +168,13 @@ export function resolvePendingSftpUploadCancellation(params: {
     && params.pendingOriginSessionId
     && params.focusedSessionId
     && params.focusedSessionId !== params.pendingOriginSessionId
+    && !params.waitingForOriginFocus
   ) return "source-changed";
   if (
     params.pendingSourceSessionId
     && params.activeSessionId
     && params.activeSessionId !== params.pendingSourceSessionId
+    && !params.waitingForSourceSession
   ) return "source-changed";
   // A Mosh/ET (or local) origin has no reusable SSH source session, so the
   // origin terminal itself is the only evidence of the drop's destination

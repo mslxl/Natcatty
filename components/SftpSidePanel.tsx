@@ -92,6 +92,7 @@ import {
   shouldBlockPendingSftpUploadForSourceRebind,
   shouldCancelPendingSftpUpload,
   shouldCancelSettledPendingSftpRebindWithoutTarget,
+  shouldDeferPendingSftpUploadForOriginFocus,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
@@ -518,6 +519,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const lastSourceSessionStatusRef = useRef<string | null>(null);
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
+  const pendingUploadFocusSeenRef = useRef<{
+    requestId: string;
+    originFocused: boolean;
+    sourceActive: boolean;
+  } | null>(null);
   const {
     barrierRef: pendingUploadRebindBarrierRef,
     bindTarget: bindPendingUploadRebindTarget,
@@ -607,6 +613,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       && pendingUpload.sourceSessionId
       && pendingUpload.sourceSessionId !== activeSessionId
     ) return;
+    if (shouldDeferPendingSftpUploadForOriginFocus({
+      originSessionId: pendingUpload?.originSessionId,
+      focusedSessionId,
+    })) return;
     if (
       pendingUpload
       && pendingUploadRebindStartedIdRef.current === pendingUpload.requestId
@@ -858,6 +868,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     activeHost,
     activeSessionId,
     bindPendingUploadRebindTarget,
+    focusedSessionId,
     initialLocation,
     interactiveWorkActive,
     pendingUpload,
@@ -1051,6 +1062,40 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const originSessionStatus = pendingUpload.originSessionId
       ? sessions.find((session) => session.id === pendingUpload.originSessionId)?.status ?? null
       : undefined;
+    if (pendingUploadFocusSeenRef.current?.requestId !== pendingUpload.requestId) {
+      pendingUploadFocusSeenRef.current = {
+        requestId: pendingUpload.requestId,
+        originFocused: false,
+        sourceActive: false,
+      };
+    }
+    const focusSeen = pendingUploadFocusSeenRef.current;
+    if (
+      pendingUpload.originSessionId
+      && focusedSessionId === pendingUpload.originSessionId
+    ) {
+      focusSeen.originFocused = true;
+    }
+    if (
+      pendingUpload.sourceSessionId
+      && activeSessionId === pendingUpload.sourceSessionId
+    ) {
+      focusSeen.sourceActive = true;
+    }
+    const waitingForOriginFocus = Boolean(
+      pendingUpload.originSessionId
+      && focusedSessionId
+      && focusedSessionId !== pendingUpload.originSessionId
+      && !focusSeen.originFocused
+      && originSessionStatus !== "disconnected"
+      && originSessionStatus !== null
+    );
+    const waitingForSourceSession = Boolean(
+      pendingUpload.sourceSessionId
+      && activeSessionId
+      && activeSessionId !== pendingUpload.sourceSessionId
+      && !focusSeen.sourceActive
+    );
     const cancellationReason = resolvePendingSftpUploadCancellation({
       pendingHostId: pendingUpload.hostId,
       pendingOriginSessionId: pendingUpload.originSessionId,
@@ -1060,6 +1105,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       activeSessionId: activeSessionId ?? null,
       focusedSessionId: focusedSessionId ?? null,
       panelVisible: isVisible,
+      waitingForOriginFocus,
+      waitingForSourceSession,
       connection,
     });
     const cancelPendingUpload = () => {
@@ -1072,6 +1119,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       cancelPendingUpload();
       return;
     }
+    if (waitingForOriginFocus || waitingForSourceSession) return;
     if (shouldCancelSettledPendingSftpRebindWithoutTarget({
       pendingRequiresRebind: Boolean(
         pendingUpload.originSessionId || pendingUpload.sourceSessionId
@@ -1194,6 +1242,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   useEffect(() => {
     if (!pendingUpload) {
+      pendingUploadFocusSeenRef.current = null;
       resetPendingUploadRebind();
       return;
     }
@@ -1545,6 +1594,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     handleToggleFollowTerminalCwd,
   } = useSftpFollowTerminalCwd({
     activeSessionId,
+    focusedSessionId,
     activeTerminalCwd,
     activeTerminalCwdTrusted,
     canFollowTerminalCwd,

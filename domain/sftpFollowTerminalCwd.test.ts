@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isFollowOriginStillCurrent,
   mergeLatestFollowTerminalCwdHostSetting,
   resolveHostFollowTerminalCwd,
   resolveSftpFollowTerminalCwdTargetHost,
@@ -261,6 +262,50 @@ test("shouldApplyFollowTerminalCwdSyncResult rejects results after follow is una
       currentGeneration: 2,
       followEnabled: true,
       canFollow: false,
+    }),
+    false,
+  );
+});
+
+test("isFollowOriginStillCurrent treats a missing origin as bound to the live focused terminal", () => {
+  assert.equal(isFollowOriginStillCurrent({
+    expectedOriginId: null,
+    liveOriginId: null,
+  }), true);
+  assert.equal(isFollowOriginStillCurrent({
+    expectedOriginId: null,
+    liveOriginId: "mosh-b",
+  }), false);
+  assert.equal(isFollowOriginStillCurrent({
+    expectedOriginId: "mosh-a",
+    liveOriginId: "mosh-b",
+  }), false);
+  assert.equal(isFollowOriginStillCurrent({
+    expectedOriginId: "mosh-a",
+    liveOriginId: "mosh-a",
+  }), true);
+});
+
+test("shouldApplyFollowTerminalCwdSyncResult rejects a null origin after focus appears", () => {
+  assert.equal(
+    shouldApplyFollowTerminalCwdSyncResult({
+      syncGeneration: 2,
+      currentGeneration: 2,
+      followEnabled: true,
+      canFollow: true,
+      expectedSessionId: null,
+      liveSessionId: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldApplyFollowTerminalCwdSyncResult({
+      syncGeneration: 2,
+      currentGeneration: 2,
+      followEnabled: true,
+      canFollow: true,
+      expectedSessionId: null,
+      liveSessionId: "mosh-b",
     }),
     false,
   );

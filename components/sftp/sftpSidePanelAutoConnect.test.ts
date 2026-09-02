@@ -14,6 +14,7 @@ import {
   shouldBlockPendingSftpUploadForSourceRebind,
   shouldCancelPendingSftpUpload,
   shouldCancelSettledPendingSftpRebindWithoutTarget,
+  shouldDeferPendingSftpUploadForOriginFocus,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
   shouldResetSftpSidePanelSourceSession,
@@ -224,6 +225,53 @@ test("pending terminal upload is cancelled when its source terminal changes", ()
     pendingSourceSessionId: "session-a",
     activeHostId: "host-1",
     activeSessionId: "session-b",
+    connection: null,
+  }), "source-changed");
+});
+
+test("pending drop does not cancel while waiting for its own origin focus", () => {
+  assert.equal(resolvePendingSftpUploadCancellation({
+    pendingHostId: "host-1",
+    pendingOriginSessionId: "session-b",
+    pendingSourceSessionId: "session-b",
+    originSessionStatus: "connected",
+    activeHostId: "host-1",
+    activeSessionId: "session-a",
+    focusedSessionId: "session-a",
+    panelVisible: true,
+    waitingForOriginFocus: true,
+    waitingForSourceSession: true,
+    connection: null,
+  }), null);
+});
+
+test("Mosh/ET drops wait for origin focus before binding an SSH route", () => {
+  assert.equal(shouldDeferPendingSftpUploadForOriginFocus({
+    originSessionId: "mosh-b",
+    focusedSessionId: "ssh-a",
+  }), true);
+  assert.equal(shouldDeferPendingSftpUploadForOriginFocus({
+    originSessionId: "mosh-b",
+    focusedSessionId: "mosh-b",
+  }), false);
+  assert.equal(shouldDeferPendingSftpUploadForOriginFocus({
+    originSessionId: undefined,
+    focusedSessionId: "ssh-a",
+  }), false);
+});
+
+test("pending drop still cancels after origin focus landed and the user leaves", () => {
+  assert.equal(resolvePendingSftpUploadCancellation({
+    pendingHostId: "host-1",
+    pendingOriginSessionId: "session-b",
+    pendingSourceSessionId: "session-b",
+    originSessionStatus: "connected",
+    activeHostId: "host-1",
+    activeSessionId: "session-a",
+    focusedSessionId: "session-a",
+    panelVisible: true,
+    waitingForOriginFocus: false,
+    waitingForSourceSession: false,
     connection: null,
   }), "source-changed");
 });
