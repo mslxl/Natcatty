@@ -144,6 +144,19 @@ function boundsEqual(a, b) {
 }
 
 /**
+ * Usable placement rectangle for a display: prefer the work area (which
+ * excludes reserved desktop space such as a top taskbar or dock) so a
+ * restored window never ends up partially beneath that UI — with a top
+ * taskbar that could hide a frameless title bar and its window controls.
+ * Falls back to the full display bounds when no work area is reported.
+ */
+function displayPlacementRect(display) {
+  if (!display) return null;
+  if (isFiniteBounds(display.workArea)) return display.workArea;
+  return isFiniteBounds(display.bounds) ? display.bounds : null;
+}
+
+/**
  * Clamp remembered bounds so the restored window stays fully visible on the
  * target display (size is capped at the display size, position is pulled
  * inside the display bounds).
@@ -457,8 +470,39 @@ function attachDisplayRecovery({
     if (!attached || !pendingRecovery) return;
     try {
       if (isMaximizedOrFullScreen()) return;
-      const { bounds, displayId } = pendingRecovery;
+      const { bounds, displayId, fromBounds } = pendingRecovery;
       if (!isFiniteBounds(bounds)) {
+        pendingRecovery = null;
+        return;
+      }
+      // Revalidate the deferred recovery against the window's current normal
+      // placement. While still maximized, a user can move the window to
+      // another monitor (e.g. Win+Shift+Arrow), which updates
+      // getNormalBounds() without clearing the pending recovery; applying it
+      // unconditionally here would overwrite the user's newer monitor and
+      // geometry. `fromBounds` records the placement at deferral time, so any
+      // change since means the user wins and the recovery is dropped. Normal
+      // bounds are read directly because fromBounds was captured through
+      // getNormalBounds() while the window was maximized (mid-unmaximize
+      // getBounds() may still report the inflated maximized geometry).
+      const currentNormalBounds = (() => {
+        try {
+          if (typeof win.getNormalBounds === "function") {
+            const normal = win.getNormalBounds();
+            if (isFiniteBounds(normal)) return { ...normal };
+          }
+        } catch {
+          // Fall through to the regular bounds below.
+        }
+        return copyBounds();
+      })();
+      if (
+        isFiniteBounds(currentNormalBounds) &&
+        isFiniteBounds(fromBounds) &&
+        !boundsEqual(currentNormalBounds, fromBounds)
+      ) {
+        // The user deliberately re-placed the window while the recovery was
+        // deferred: drop the stale recovery.
         pendingRecovery = null;
         return;
       }
@@ -473,7 +517,8 @@ function attachDisplayRecovery({
         // is the only remaining recovery candidate here — the removal-time
         // snapshot was already consumed when it was deferred.
         if (!display) return;
-        targetBounds = clampBoundsToDisplay(bounds, display.bounds) || bounds;
+        targetBounds =
+          clampBoundsToDisplay(bounds, displayPlacementRect(display)) || bounds;
       }
       pendingRecovery = null;
       win.setBounds(targetBounds);
@@ -514,7 +559,10 @@ function attachDisplayRecovery({
           // through to the candidate-based recovery below.
           pendingRecovery = null;
         } else {
-          const requeued = clampBoundsToDisplay(pendingRecovery.bounds, display.bounds);
+          const requeued = clampBoundsToDisplay(
+            pendingRecovery.bounds,
+            displayPlacementRect(display)
+          );
           pendingRecovery = null;
           if (requeued) {
             if (isMaximizedOrFullScreen()) {
@@ -578,7 +626,7 @@ function attachDisplayRecovery({
         boundsAtDisplayRemovalDisplayId = null;
         teardownSnapshotAt = null;
       }
-      const clamped = clampBoundsToDisplay(restored, display?.bounds);
+      const clamped = clampBoundsToDisplay(restored, displayPlacementRect(display));
       if (!clamped) return;
       if (isMaximizedOrFullScreen()) {
         // setBounds would clobber the maximized/full-screen state (or be

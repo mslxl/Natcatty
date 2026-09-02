@@ -855,6 +855,55 @@ test("attachDisplayRecovery drops a deferred recovery when the user re-placed th
   assert.equal(win.setBoundsCalls.length, 0);
 });
 
+test("attachDisplayRecovery drops a deferred recovery when the maximized window is moved to another monitor", () => {
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  win.maximized = true;
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen, teardownGraceMs: 0 });
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  // The OS relocates the maximized window to the primary display; the
+  // re-added display defers the recovery because the window stays maximized.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // While still maximized, the user moves the window to another monitor
+  // (e.g. Win+Shift+Arrow): getNormalBounds() changes but the deferred
+  // recovery stays queued. Unmaximizing must not overwrite the newer
+  // placement with the stale deferred recovery.
+  win.normalBounds = { x: 40, y: 60, width: 1400, height: 900 };
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery clamps restored windows to the display work area", () => {
+  // The re-added secondary display reserves a 40px top taskbar: restoring
+  // with the full display bounds would place the window partly beneath it.
+  const DOCKED = {
+    id: 2,
+    bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+    workArea: { x: 1920, y: 40, width: 2560, height: 1400 },
+  };
+  const win = createMockWindow({ x: 2000, y: 20, width: 1400, height: 900 });
+  const screen = createMockScreen({ displays: [PRIMARY, DOCKED] });
+
+  attachDisplayRecovery({ win, screen });
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, DOCKED);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, DOCKED);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  // The y coordinate is pulled down to the top of the work area instead of
+  // the display bounds.
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2000, y: 40, width: 1400, height: 900 });
+});
+
 test("attachDisplayRecovery does not claim a window split evenly across the removed display", () => {
   // Exactly half of the window sits on the primary display and half on the
   // removed secondary one (the 1920 boundary splits it down the middle): the
