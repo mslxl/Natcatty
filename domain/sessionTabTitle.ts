@@ -44,15 +44,22 @@ type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hos
  * sessions. Unlike the one-shot `buildMergedWorkspaceTitle` call at merge
  * time, this runs over live membership, so pane renames and panes being
  * added or removed are reflected. Returns null when no member has a label.
+ * Labels are deduplicated by exact match against the other member labels
+ * (not against the accumulated title, which would only catch full-string
+ * repeats like "web/db/web/db"), keeping first-seen order: `web/db/web`
+ * collapses to `web/db`.
  */
 export const buildMergedWorkspaceTitleFromSessions = (
   sessions: readonly WorkspaceTabLabelSession[],
 ): string | null => {
-  let title: string | null = null;
+  const labels: string[] = [];
   for (const session of sessions) {
-    title = buildMergedWorkspaceTitle(title ?? '', getSessionConnectionLabel(session));
+    const label = getSessionConnectionLabel(session).trim();
+    if (!label || labels.includes(label)) continue;
+    labels.push(label);
   }
-  return title;
+  if (labels.length === 0) return null;
+  return labels.join('/');
 };
 
 /**

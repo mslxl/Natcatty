@@ -277,7 +277,20 @@ export const useSessionState = ({
       let changed = false;
       const next = prev.map(ws => {
         if (!ws.generatedTitle) return ws;
-        const members = sessions.filter(s => s.workspaceId === ws.id);
+        // Order members by the workspace's pane tree (base/join or split
+        // layout), not by global session creation order — merging a newer tab
+        // onto an older one must keep the merged title as created (e.g.
+        // "02/01"), while `sessions.filter` would rewrite it to "01/02".
+        const rootIds = collectSessionIds(ws.root);
+        const members = [
+          ...rootIds
+            .map(id => sessions.find(s => s.id === id))
+            .filter((s): s is TerminalSession => Boolean(s)),
+          // Safety net for transient membership: any session assigned to this
+          // workspace whose pane has not landed in `root` yet keeps its
+          // previous (creation-order) position after the pane-tree members.
+          ...sessions.filter(s => s.workspaceId === ws.id && !rootIds.includes(s.id)),
+        ];
         const recomputed = buildMergedWorkspaceTitleFromSessions(members) ?? DEFAULT_WORKSPACE_TITLE;
         if (recomputed === ws.title) return ws;
         changed = true;

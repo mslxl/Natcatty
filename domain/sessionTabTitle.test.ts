@@ -246,4 +246,13 @@ test('buildMergedWorkspaceTitleFromSessions recomputes from live membership', ()
     '01',
   );
   assert.equal(buildMergedWorkspaceTitleFromSessions([]), null);
+  // A third pane whose label duplicates a non-adjacent member is collapsed too.
+  assert.equal(
+    buildMergedWorkspaceTitleFromSessions([
+      sessions[0],
+      sessions[1],
+      { ...sessions[0], id: 'd' },
+    ]),
+    '01/02',
+  );
 });
