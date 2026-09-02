@@ -322,3 +322,24 @@ test('applyResponsesApiStatelessStoreOption is a no-op for Chat Completions and 
   );
   assert.equal(applyResponsesApiStatelessStoreOption(undefined, undefined), undefined);
 });
+
+test('applyResponsesApiStatelessStoreOption requests encrypted reasoning for relay reasoner IDs', () => {
+  const responsesProvider = { providerId: 'custom' as const, openaiApi: 'responses' as const };
+  for (const modelId of ['deepseek-r1', 'gpt-oss-120b', 'grok-4', 'o3', 'gpt-5.1']) {
+    assert.deepEqual(
+      applyResponsesApiStatelessStoreOption(responsesProvider, undefined, modelId),
+      { openai: { store: false, include: ['reasoning.encrypted_content'] } },
+      modelId,
+    );
+  }
+  // Non-reasoning models must not get the include.
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(responsesProvider, undefined, 'gpt-4o-mini'),
+    { openai: { store: false } },
+  );
+  // No model id: keep prior behavior.
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(responsesProvider, undefined),
+    { openai: { store: false } },
+  );
+});

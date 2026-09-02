@@ -48,19 +48,37 @@ export function estimateReasoningOutputReserve(
  * Items are not persisted when `store` is set to false." With `store: false`
  * the SDK instead requests `reasoning.encrypted_content` and replays the full
  * reasoning items inline, which works against both relays and OpenAI directly.
+ *
+ * The installed `@ai-sdk/openai` only auto-adds the encrypted-content include
+ * for model IDs its own capability detector recognizes (o-series / gpt-5).
+ * Relay reasoners such as `deepseek-r1`, `gpt-oss`, or `grok-4` pass
+ * Netcatty's broader classifier but not the SDK's, so the include must be
+ * requested explicitly or the provider returns no replayable ciphertext and
+ * the reasoning items get dropped from subsequent turns. The SDK dedupes the
+ * include when it would have added it anyway.
  */
+const REASONING_ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
+
 export function applyResponsesApiStatelessStoreOption(
   provider: Pick<ProviderConfig, 'openaiApi' | 'providerId' | 'style'> | null | undefined,
   options: CattyReasoningProviderOptions | undefined,
+  modelId?: string,
 ): CattyReasoningProviderOptions | undefined {
   if (!provider || resolveProviderStyle(provider) !== 'openai') return options;
   if (resolveOpenAIApi(provider) !== 'responses') return options;
+  const openaiOptions: Record<string, unknown> = {
+    ...options?.openai,
+    store: false,
+  };
+  if (modelId && openaiModelLikelySupportsReasoning(modelId)) {
+    const existingInclude = Array.isArray(openaiOptions.include) ? openaiOptions.include : [];
+    if (!existingInclude.includes(REASONING_ENCRYPTED_CONTENT_INCLUDE)) {
+      openaiOptions.include = [...existingInclude, REASONING_ENCRYPTED_CONTENT_INCLUDE];
+    }
+  }
   return {
     ...options,
-    openai: {
-      ...options?.openai,
-      store: false,
-    },
+    openai: openaiOptions,
   };
 }
 

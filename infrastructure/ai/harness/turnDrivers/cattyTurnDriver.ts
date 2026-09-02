@@ -264,6 +264,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         context.reasoningEffort,
         activeModelId,
       ),
+      activeModelId,
     );
     const reasoningReserveTokens = estimateReasoningOutputReserve(reasoningProviderOptions);
     // Fold thinking budget into compaction maxOutput only. reservedTokens is
