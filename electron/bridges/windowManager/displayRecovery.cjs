@@ -471,7 +471,15 @@ function attachDisplayRecovery({
         // case the ordering check above is false even though the pending
         // move belongs to this very interruption. Such moves are stamped at
         // creation time and must not be expired by the grace window either.
-        pendingTeardownMove.duringSessionInterruption === true ||
+        // The stamp must not outlive its interruption, though: if the locked
+        // session never tears the display down, the tagged move would
+        // otherwise be promoted by an ordinary unplug long after unlock and
+        // restore the obsolete pre-lock placement on re-add. Gate the stamp
+        // by the same live-interruption / ended-grace check as above.
+        (pendingTeardownMove.duringSessionInterruption === true &&
+          (sessionInterruptionActive ||
+            (sessionInterruptionEndedAt !== null &&
+              Date.now() - sessionInterruptionEndedAt < teardownGraceMs))) ||
         Date.now() - pendingTeardownMove.at < teardownGraceMs
       ) {
         // The OS relocated the window to the primary before this removal event
