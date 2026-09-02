@@ -720,6 +720,59 @@ test("attachDisplayRecovery keeps the pending teardown snapshot when a suspend f
   }
 });
 
+test("attachDisplayRecovery keeps the pending teardown snapshot when resume fires while the session is still locked", () => {
+  const realNow = Date.now;
+  let now = 3_600_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+      __listeners: powerListeners,
+    };
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // Win+L locks the session and the machine then suspends. On wake the
+    // screen is still locked: "resume" fires while "unlock-screen" has not.
+    powerMonitor.emit("lock-screen");
+    powerMonitor.emit("suspend");
+    powerMonitor.emit("resume");
+
+    // The OS teardown relocation lands after the resume, while the session
+    // is still locked — the user cannot have moved the window.
+    now += 60_000;
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // The matching "display-removed" arrives outside the grace window. The
+    // interruption must still count as active (the session is locked), so
+    // the pre-relocation placement is promoted and restored on re-add.
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery drops a pending teardown move that predates the interruption", () => {
   const realNow = Date.now;
   let now = 3_500_000;
