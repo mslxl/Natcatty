@@ -217,6 +217,34 @@ test("attachDisplayRecovery preserves the fallback when the OS relocates the win
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
 });
 
+test("attachDisplayRecovery keeps the snapshot when unrelated secondary displays are removed later", () => {
+  const TERTIARY = { id: 3, bounds: { x: -1920, y: 0, width: 1920, height: 1080 } };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
+
+  attachDisplayRecovery({ win, screen });
+
+  // User is working with the window on the secondary display: placement gets tracked.
+  win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // Teardown: Windows relocates the window to the primary BEFORE the
+  // "display-removed" event for the window's own display fires.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  // A second secondary display is removed during the same teardown: this
+  // unrelated removal must not overwrite the snapshot for SECONDARY.
+  screen.emit("display-removed", {}, TERTIARY);
+
+  // Unlock: the window's display comes back and the window must be restored.
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+});
+
 test("attachDisplayRecovery leaves the window alone while maximized", () => {
   const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
   win.maximized = true;

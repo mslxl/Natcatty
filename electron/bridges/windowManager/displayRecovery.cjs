@@ -162,21 +162,25 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   // Electron invokes "display-removed" listeners as (event, oldDisplay).
   const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
-    if (
-      pendingTeardownMove &&
-      oldDisplay &&
-      oldDisplay.id === pendingTeardownMove.displayId &&
-      Date.now() - pendingTeardownMove.at < teardownGraceMs
-    ) {
-      // The OS relocated the window to the primary before this removal event
-      // fired: restore the pre-relocation placement on the removed display.
-      boundsAtDisplayRemoval = pendingTeardownMove.bounds;
+    if (pendingTeardownMove && oldDisplay && oldDisplay.id === pendingTeardownMove.displayId) {
+      if (Date.now() - pendingTeardownMove.at < teardownGraceMs) {
+        // The OS relocated the window to the primary before this removal event
+        // fired: restore the pre-relocation placement on the removed display.
+        boundsAtDisplayRemoval = pendingTeardownMove.bounds;
+      }
       pendingTeardownMove = null;
       return;
     }
     // Snapshot the bounds at removal time: if the OS has not relocated the
-    // window yet this is the most accurate placement to restore.
-    boundsAtDisplayRemoval = copyBounds();
+    // window yet this is the most accurate placement to restore. Only do this
+    // when the window actually lives on the removed display: during a lock/
+    // sleep teardown multiple secondary displays can be removed in sequence,
+    // and snapshotting the window's (possibly already relocated, primary-
+    // display) bounds for an unrelated removal would clobber the valid
+    // snapshot captured for the display the window was really on.
+    const currentBounds = copyBounds();
+    if (!oldDisplay || !boundsIntersectDisplay(currentBounds, oldDisplay.bounds)) return;
+    boundsAtDisplayRemoval = currentBounds;
   };
 
   // Electron invokes "display-added" listeners as (event, newDisplay).
