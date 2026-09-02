@@ -231,6 +231,11 @@ function attachDisplayRecovery({
   // lock/sleep cycle can emit several start signals (Win+L followed by a
   // later suspend, or the reverse); they all belong to the same interruption.
   let sessionInterruptionActive = false;
+  // Wall-clock time at which the last interruption ended. Teardown events
+  // queued while the event loop was frozen (the machine was asleep) can be
+  // delivered shortly after the end signal, so a removal arriving within the
+  // grace window of the end still belongs to the finished interruption.
+  let sessionInterruptionEndedAt = null;
   const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
 
@@ -244,6 +249,7 @@ function attachDisplayRecovery({
     // went stale while the session was running.
     if (sessionInterruptionActive) return;
     sessionInterruptionActive = true;
+    sessionInterruptionEndedAt = null;
     // Only a pending move that belongs to the current interruption may be
     // promoted by a later "display-removed" event: the OS relocation that
     // races ahead of display teardown happens immediately around the
@@ -262,6 +268,15 @@ function attachDisplayRecovery({
 
   const onSessionResumed = () => {
     sessionInterruptionActive = false;
+    // The interruption is over: remember when it ended so the promotion
+    // logic below can tell a removal event still in flight from the finished
+    // interruption (delivered within the grace window of the end signal,
+    // e.g. queued while the machine was asleep) from a much later ordinary
+    // unplug. Without this, a pending move recorded just before a lock that
+    // never tore the display down would keep satisfying the
+    // "interruption started after the move" ordering check forever, and a
+    // later unplug would resurrect the superseded placement.
+    sessionInterruptionEndedAt = Date.now();
   };
 
   const isTrackable = () => {
@@ -352,13 +367,14 @@ function attachDisplayRecovery({
             // after the interruption, the timestamp ordering check in
             // onDisplayRemoved cannot tell that this move belongs to the
             // interruption, so record it here: a primary-display move
-            // observed within the teardown grace window after a lock/suspend
-            // is the OS's teardown relocation — the session is locked or the
-            // machine is going to sleep, so the user cannot have moved the
-            // window.
-            duringSessionInterruption:
-              sessionInterruptedAt !== null &&
-              Date.now() - sessionInterruptedAt < teardownGraceMs,
+            // observed while the session is locked or the machine is asleep
+            // is the OS's teardown relocation — the user cannot have moved
+            // the window. The live `sessionInterruptionActive` flag is used
+            // rather than the elapsed time since `sessionInterruptedAt`:
+            // the relocation can land long after the lock/sleep event (the
+            // teardown itself can take longer than the grace window) while
+            // the session is still interrupted.
+            duringSessionInterruption: sessionInterruptionActive === true,
           };
         }
         rememberedSecondaryBounds = null;
@@ -418,7 +434,20 @@ function attachDisplayRecovery({
       // elapsed grace window proves nothing about a deliberate user move, so
       // the pending snapshot must not be expired for that reason alone.
       const suspendedAfterPendingMove =
-        sessionInterruptedAt !== null && sessionInterruptedAt >= pendingTeardownMove.at;
+        sessionInterruptedAt !== null &&
+        sessionInterruptedAt >= pendingTeardownMove.at &&
+        // The interruption that started after the pending move must still be
+        // the live one this removal event belongs to: either it has not ended
+        // yet, or it ended so recently that teardown events queued while the
+        // event loop was frozen may still be in flight. Without this gate, a
+        // pending move recorded just before a lock whose interruption ended
+        // without the display ever disappearing (a deliberate user move, not
+        // a teardown relocation) would keep satisfying the ordering check
+        // forever, and a much later ordinary unplug would promote the stale
+        // placement and undo the user's move on the next re-add.
+        (sessionInterruptionActive ||
+          (sessionInterruptionEndedAt !== null &&
+            Date.now() - sessionInterruptionEndedAt < teardownGraceMs));
       if (
         suspendedAfterPendingMove ||
         // The OS relocation can also land after the lock-screen/suspend
@@ -722,6 +751,7 @@ function attachDisplayRecovery({
     teardownRelocationAt = null;
     teardownSnapshotAt = null;
     sessionInterruptionActive = false;
+    sessionInterruptionEndedAt = null;
   };
 }
 

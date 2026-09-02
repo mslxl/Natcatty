@@ -773,6 +773,118 @@ test("attachDisplayRecovery drops a pending teardown move that predates the inte
   }
 });
 
+test("attachDisplayRecovery keeps the pending snapshot for a relocation that lands long after the lock", () => {
+  const realNow = Date.now;
+  let now = 3_600_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+    };
+
+    const detach = attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The window lives on the secondary display.
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // Win+L locks the session; the OS teardown relocation to the primary
+    // lands long after the lock event (the teardown itself takes longer
+    // than the grace window) while the session is still locked.
+    powerMonitor.emit("lock-screen");
+    now += 60_000;
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // The matching "display-removed" is delivered much later still (the
+    // machine went to sleep right after the lock): every elapsed-time check
+    // fails, but the move was recorded while the interruption was active —
+    // the session was locked, so the user cannot have moved the window —
+    // and the pending snapshot must still be promoted.
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+
+    detach();
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery drops the pending teardown move when the interruption ends without a removal", () => {
+  const realNow = Date.now;
+  let now = 3_700_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+    };
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The user deliberately moves the window from the secondary display to
+    // the primary, then locks the session within the grace window — the
+    // pending move is indistinguishable from a teardown relocation at this
+    // point, so it is kept.
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    powerMonitor.emit("lock-screen");
+
+    // The display never disappears: the interruption ends without the
+    // pending move ever being claimed by a "display-removed" event.
+    now += 60_000;
+    powerMonitor.emit("unlock-screen");
+
+    // Much later the secondary display is unplugged ordinarily. The stale
+    // pending move must not be promoted by the "interruption started after
+    // the move" ordering check, and the re-added display must not drag the
+    // window back to the superseded placement.
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 0);
+    assert.deepEqual(win.bounds, { x: 100, y: 100, width: 1400, height: 900 });
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery drops the removal snapshot when the returning display already holds the window", () => {
   const realNow = Date.now;
   let now = 4_000_000;
