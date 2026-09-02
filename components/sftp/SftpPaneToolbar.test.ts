@@ -511,6 +511,7 @@ test("bookmark delete asks for confirmation with the path", () => {
 
 test("bookmark rename does not use window.prompt", () => {
   assert.doesNotMatch(toolbarSource, /window\.prompt/);
+  assert.match(toolbarSource, /event\.nativeEvent\.isComposing/);
 });
 
 test("bookmark list renders saved paths as selectable rows", () => {

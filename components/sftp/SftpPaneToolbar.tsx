@@ -341,6 +341,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                 onClick={(event) => event.stopPropagation()}
                 onChange={(event) => setRenameDraft(event.target.value)}
                 onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
                   if (event.key === "Enter") {
                     event.preventDefault();
                     onRenameBookmark(bm.id, renameDraft);
