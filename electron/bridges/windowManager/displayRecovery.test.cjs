@@ -245,6 +245,47 @@ test("attachDisplayRecovery keeps the snapshot when unrelated secondary displays
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
 });
 
+test("attachDisplayRecovery clears the removal-time snapshot once it is consumed", () => {
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+
+    attachDisplayRecovery({ win, screen });
+
+    // The window lives on the secondary display, then teardown relocates it to
+    // the primary before "display-removed" fires (within the grace window).
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-removed", {}, SECONDARY);
+
+    // Recovery: the display returns and the window is restored.
+    screen.emit("display-added", {}, SECONDARY);
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+
+    // The user later deliberately moves the window back to the primary
+    // display, well past the teardown grace window, and the display is torn
+    // down and re-added again: the already-consumed snapshot must not restore
+    // the old placement against the user's latest move.
+    now += 60_000;
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    now += 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery leaves the window alone while maximized", () => {
   const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
   win.maximized = true;

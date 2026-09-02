@@ -197,6 +197,13 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         candidates: [boundsAtDisplayRemoval, rememberedSecondaryBounds],
       });
       if (!restored) return;
+      // The removal-time snapshot is only valid for the recovery it was taken
+      // for. Once consumed (or once the window is back on the re-added
+      // display), drop it so a later re-add can't restore the window against
+      // the user's most recent placement.
+      if (restored === boundsAtDisplayRemoval) {
+        boundsAtDisplayRemoval = null;
+      }
       const clamped = clampBoundsToDisplay(restored, display?.bounds);
       if (clamped) {
         win.setBounds(clamped);
