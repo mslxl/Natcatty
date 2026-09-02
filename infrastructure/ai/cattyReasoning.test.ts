@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  applyResponsesApiStatelessStoreOption,
   buildCattyReasoningProviderOptions,
   cattyReasoningLevelsForSelection,
   estimateReasoningOutputReserve,
@@ -289,4 +290,35 @@ test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-1.5-flash'),
     undefined,
   );
+});
+
+test('applyResponsesApiStatelessStoreOption sets store:false for OpenAI Responses providers', () => {
+  const responsesProvider = { providerId: 'openai' as const, openaiApi: 'responses' as const };
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(responsesProvider, { openai: { reasoningEffort: 'high' } }),
+    { openai: { reasoningEffort: 'high', store: false } },
+  );
+  // Even with no reasoning options, Responses turns stay stateless.
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(responsesProvider, undefined),
+    { openai: { store: false } },
+  );
+});
+
+test('applyResponsesApiStatelessStoreOption is a no-op for Chat Completions and other styles', () => {
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption({ providerId: 'openai' as const }, { openai: { reasoningEffort: 'high' } }),
+    { openai: { reasoningEffort: 'high' } },
+  );
+  const chatProvider = { providerId: 'openai' as const, openaiApi: 'chat' as const };
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(chatProvider, { openai: { reasoningEffort: 'low' } }),
+    { openai: { reasoningEffort: 'low' } },
+  );
+  const anthropicProvider = { providerId: 'openai' as const, openaiApi: 'responses' as const, style: 'anthropic' as const };
+  assert.deepEqual(
+    applyResponsesApiStatelessStoreOption(anthropicProvider, { anthropic: { thinking: { type: 'adaptive' } } }),
+    { anthropic: { thinking: { type: 'adaptive' } } },
+  );
+  assert.equal(applyResponsesApiStatelessStoreOption(undefined, undefined), undefined);
 });

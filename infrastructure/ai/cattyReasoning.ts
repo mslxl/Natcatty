@@ -1,5 +1,5 @@
 import type { ProviderStyle } from './types';
-import { resolveProviderStyle, type ProviderConfig } from './types';
+import { resolveOpenAIApi, resolveProviderStyle, type ProviderConfig } from './types';
 import { CATTY_REASONING_LEVELS } from './composerPicker';
 
 const ANTHROPIC_THINKING_BUDGET: Record<'low' | 'medium' | 'high', number> = {
@@ -36,6 +36,32 @@ export function estimateReasoningOutputReserve(
     return Math.ceil(googleConfig.thinkingBudget);
   }
   return 0;
+}
+
+/**
+ * OpenAI Responses turns must run stateless (`store: false`).
+ *
+ * The Responses API defaults to `store: true`, which makes the SDK replay
+ * prior reasoning turns as server-side item references (`rs_…` ids).
+ * Relays — the main reason Responses mode is opt-in here — frequently do not
+ * persist items, so the next turn fails with "Item with id 'rs_…' not found.
+ * Items are not persisted when `store` is set to false." With `store: false`
+ * the SDK instead requests `reasoning.encrypted_content` and replays the full
+ * reasoning items inline, which works against both relays and OpenAI directly.
+ */
+export function applyResponsesApiStatelessStoreOption(
+  provider: Pick<ProviderConfig, 'openaiApi' | 'providerId' | 'style'> | null | undefined,
+  options: CattyReasoningProviderOptions | undefined,
+): CattyReasoningProviderOptions | undefined {
+  if (!provider || resolveProviderStyle(provider) !== 'openai') return options;
+  if (resolveOpenAIApi(provider) !== 'responses') return options;
+  return {
+    ...options,
+    openai: {
+      ...options?.openai,
+      store: false,
+    },
+  };
 }
 
 export function buildCattyReasoningProviderOptions(

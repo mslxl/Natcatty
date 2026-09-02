@@ -14,6 +14,7 @@ import {
   normalizeResponseIdleTimeoutSeconds,
 } from '../../types';
 import {
+  applyResponsesApiStatelessStoreOption,
   buildCattyReasoningProviderOptions,
   estimateReasoningOutputReserve,
 } from '../../cattyReasoning';
@@ -256,10 +257,13 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       defaultContextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
     });
     const maxOutputTokens = context.activeProvider.advancedParams?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-    const reasoningProviderOptions = buildCattyReasoningProviderOptions(
+    const reasoningProviderOptions = applyResponsesApiStatelessStoreOption(
       context.activeProvider,
-      context.reasoningEffort,
-      activeModelId,
+      buildCattyReasoningProviderOptions(
+        context.activeProvider,
+        context.reasoningEffort,
+        activeModelId,
+      ),
     );
     const reasoningReserveTokens = estimateReasoningOutputReserve(reasoningProviderOptions);
     // Fold thinking budget into compaction maxOutput only. reservedTokens is
