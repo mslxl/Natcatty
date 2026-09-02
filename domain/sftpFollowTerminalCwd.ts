@@ -1,3 +1,4 @@
+/** Pure state and decision helpers for keeping an SFTP pane aligned with a terminal. */
 export type SftpFollowTerminalCwdBlock = {
   connectionId: string;
   terminalCwd: string;
@@ -22,75 +23,14 @@ export type SftpFollowTerminalCwdSyncResultContext = {
   currentGeneration: number;
   followEnabled: boolean;
   canFollow: boolean;
+  expectedSessionId?: string | null;
+  liveSessionId?: string | null;
   expectedConnectionId?: string | null;
   liveConnectionId?: string | null;
   paneConnectionId?: string | null;
   expectedTerminalCwd?: string | null;
   liveTerminalCwd?: string | null;
   requireLiveTerminalCwd?: boolean;
-};
-
-type InitialFollowConnection = {
-  id: string;
-  currentPath?: string | null;
-  status: string;
-  isLocal?: boolean;
-};
-
-type InitialFollowSyncOptions = {
-  expectedConnectionId: string;
-  staleTerminalCwd?: string | null;
-  getFreshTerminalCwd: () => Promise<string | null | undefined>;
-  isEligible: () => boolean;
-  getConnection: () => InitialFollowConnection | null | undefined;
-  navigate: (
-    cwd: string,
-    shouldApply: () => boolean,
-  ) => Promise<"reached" | "failed" | "aborted" | "superseded">;
-  setHandled: (value: SftpFollowTerminalCwdBlock) => void;
-  setBlocked: (value: SftpFollowTerminalCwdBlock | null) => void;
-};
-
-/** Run one guarded first-open sync. False means the caller may retry. */
-export const runInitialFollowTerminalCwdSync = async ({
-  expectedConnectionId,
-  staleTerminalCwd,
-  getFreshTerminalCwd,
-  isEligible,
-  getConnection,
-  navigate,
-  setHandled,
-  setBlocked,
-}: InitialFollowSyncOptions): Promise<boolean> => {
-  const cwd = await getFreshTerminalCwd();
-  if (!cwd || !isEligible()) return false;
-
-  const live = getConnection();
-  if (!live || live.id !== expectedConnectionId || live.status !== "connected" || live.isLocal) {
-    return false;
-  }
-
-  setHandled({
-    connectionId: expectedConnectionId,
-    terminalCwd: staleTerminalCwd && staleTerminalCwd !== cwd ? staleTerminalCwd : cwd,
-  });
-  if (live.currentPath === cwd) return true;
-
-  const navigateResult = await navigate(cwd, isEligible);
-  if (!isEligible()) return false;
-  const current = getConnection();
-  if (!current || current.id !== expectedConnectionId || current.status !== "connected") {
-    return false;
-  }
-  if (navigateResult === "failed") {
-    setBlocked({ connectionId: expectedConnectionId, terminalCwd: cwd });
-    return true;
-  }
-  if (navigateResult === "reached") {
-    setBlocked(null);
-    return true;
-  }
-  return navigateResult === "superseded";
 };
 
 /**
@@ -241,12 +181,31 @@ export const shouldClearBlockedFollowOnReach = (
   );
 };
 
+/**
+ * Whether a first-open or in-flight follow still belongs to the terminal that
+ * started it. A missing origin id is not a skipped guard: the live focused
+ * terminal must stay absent too, otherwise the probe belongs to a later pane.
+ */
+export const isFollowOriginStillCurrent = ({
+  expectedOriginId,
+  liveOriginId,
+}: {
+  expectedOriginId: string | null | undefined;
+  liveOriginId?: string | null;
+}): boolean => {
+  if (liveOriginId === undefined) return true;
+  if (expectedOriginId == null) return liveOriginId == null;
+  return liveOriginId === expectedOriginId;
+};
+
 /** Whether an async follow result still belongs to the current terminal/connection state. */
 export const shouldApplyFollowTerminalCwdSyncResult = ({
   syncGeneration,
   currentGeneration,
   followEnabled,
   canFollow,
+  expectedSessionId,
+  liveSessionId,
   expectedConnectionId,
   liveConnectionId,
   paneConnectionId,
@@ -256,6 +215,12 @@ export const shouldApplyFollowTerminalCwdSyncResult = ({
 }: SftpFollowTerminalCwdSyncResultContext): boolean => {
   if (syncGeneration !== currentGeneration || !followEnabled || !canFollow) {
     return false;
+  }
+  if (expectedSessionId !== undefined) {
+    if (!isFollowOriginStillCurrent({
+      expectedOriginId: expectedSessionId,
+      liveOriginId: liveSessionId,
+    })) return false;
   }
   if (expectedConnectionId !== undefined) {
     if (!expectedConnectionId) return false;

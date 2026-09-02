@@ -519,6 +519,8 @@ export const zhCNVaultMessages: Messages = {
   'terminal.dragDrop.notConnected': '无法拖放文件 - 终端未连接',
   'terminal.dragDrop.errorTitle': '拖放错误',
   'terminal.dragDrop.errorMessage': '处理拖放文件失败',
+  'terminal.dragDrop.destinationUnknown': '无法确定当前终端目录。请启用目录跟踪，或先打开 SFTP 选择上传目录。',
+  'terminal.dragDrop.uploadCancelled': '终端连接已变化或无法继续复用，本次上传已取消。请重新连接后再次拖放文件。',
   'terminal.search.placeholder': '搜索…',
   'terminal.search.noResults': '无结果',
   'terminal.search.prevMatch': '上一个匹配 (Shift+Enter)',

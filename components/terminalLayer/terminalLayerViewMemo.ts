@@ -213,6 +213,7 @@ const SIDE_PANEL_LIVE_CTX_KEYS = [
   'sftpActiveHost',
   'activeTerminalSessionIdForSftp',
   'activeTerminalCwd',
+  'activeTerminalCwdTrusted',
   'activeWorkspace',
   'focusedFontFamilyId',
   'focusedFontFamilyOverridden',

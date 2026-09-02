@@ -519,6 +519,8 @@ export const zhTWVaultMessages: Messages = {
   'terminal.dragDrop.notConnected': '無法拖放檔案 - 終端未連線',
   'terminal.dragDrop.errorTitle': '拖放錯誤',
   'terminal.dragDrop.errorMessage': '處理拖放檔案失敗',
+  'terminal.dragDrop.destinationUnknown': '無法確定目前終端目錄。請啟用目錄追蹤，或先開啟 SFTP 選擇上傳目錄。',
+  'terminal.dragDrop.uploadCancelled': '終端連線已變更或無法繼續重用，本次上傳已取消。請重新連線後再次拖放檔案。',
   'terminal.search.placeholder': '搜尋…',
   'terminal.search.noResults': '無結果',
   'terminal.search.prevMatch': '上一個相符 (Shift+Enter)',

@@ -26,7 +26,7 @@ import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHib
 import { resolveTerminalFontFamilyId } from '../../infrastructure/config/fonts';
 import type { Host, TerminalSession, Workspace } from '../../types';
 import { SystemManagerSidePanel } from '../systemManager/SystemManagerSidePanel';
-import { resolveSftpFollowTerminalCwdTargetHost } from '../sftp/sftpFollowTerminalCwd';
+import { resolveSftpFollowTerminalCwdTargetHost } from '../../domain/sftpFollowTerminalCwd';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import type { SidePanelTab } from './TerminalLayerSupport';
 import {
@@ -112,6 +112,11 @@ function SidePanelSftpSlotInner({
   const panelActiveHost = isVisible
     ? (live.sftpActiveHost ?? storedSftpHost)
     : storedSftpHost;
+  const panelActiveSessionId = isVisible ? live.activeTerminalSessionIdForSftp : null;
+  const panelFocusedSessionId = isVisible ? live.focusedSessionId : null;
+  // Only the head of the per-tab pending upload queue is surfaced at a time;
+  // the panel advances the queue by reporting each request as handled.
+  const pendingUpload = sftpPendingUploadsForTab.get(tabId)?.[0] ?? null;
 
   const handleFollowTerminalCwdChange = useCallback((enabled: boolean, visibleHost?: Host | null) => {
     const isActive = activeTabStore.getActiveTabId() === tabId;
@@ -155,13 +160,13 @@ function SidePanelSftpSlotInner({
       handleSftpCurrentPathChange(
         getSftpCurrentPathMemoryKey({
           tabId,
-          activeTerminalSessionIdForSftp: live.activeTerminalSessionIdForSftp,
-          focusedSessionId: live.focusedSessionId,
+          activeTerminalSessionIdForSftp: panelActiveSessionId,
+          focusedSessionId: panelFocusedSessionId,
         }),
         location,
       );
     },
-    [handleSftpCurrentPathChange, live.activeTerminalSessionIdForSftp, live.focusedSessionId, tabId],
+    [handleSftpCurrentPathChange, panelActiveSessionId, panelFocusedSessionId, tabId],
   );
 
   const handleActiveTransfersChange = useCallback(
@@ -192,8 +197,8 @@ function SidePanelSftpSlotInner({
         onAddKnownHost={handleAddKnownHost}
         sftpDefaultViewMode={sftpDefaultViewMode}
         activeHost={panelActiveHost}
-        activeSessionId={isVisible ? live.activeTerminalSessionIdForSftp : null}
-        focusedSessionId={isVisible ? live.focusedSessionId : null}
+        activeSessionId={panelActiveSessionId}
+        focusedSessionId={panelFocusedSessionId}
         initialLocation={isVisible ? (sftpInitialLocationForTab.get(tabId) ?? null) : null}
         onInitialLocationApplied={handleInitialLocationApplied}
         onCurrentPathChange={handleCurrentPathChange}
@@ -203,7 +208,7 @@ function SidePanelSftpSlotInner({
         isVisible={isVisible}
         ownerPanelOpen={ownerPanelOpen}
         renderOverlays={isVisible}
-        pendingUpload={sftpPendingUploadsForTab.get(tabId) ?? null}
+        pendingUpload={pendingUpload}
         onPendingUploadHandled={handlePendingUploadHandledForTab}
         sftpDoubleClickBehavior={sftpDoubleClickBehavior}
         sftpAutoSync={isVisible ? sftpAutoSync : false}
@@ -215,6 +220,7 @@ function SidePanelSftpSlotInner({
         setEditorWordWrap={setEditorWordWrap}
         onGetTerminalCwd={getTerminalCwd}
         activeTerminalCwd={isVisible ? live.activeTerminalCwd : null}
+        activeTerminalCwdTrusted={isVisible ? live.activeTerminalCwdTrusted : false}
         sftpFollowTerminalCwd={sftpFollowTerminalCwd}
         onSftpFollowTerminalCwdChange={handleFollowTerminalCwdChange}
         onRequestTerminalFocus={refocusActiveTerminalSession}

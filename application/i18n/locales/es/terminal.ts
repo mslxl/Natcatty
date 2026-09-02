@@ -117,6 +117,8 @@ export const esTerminalMessages: Messages = {
   'terminal.dragDrop.notConnected': 'No se pueden soltar archivos: la terminal no está conectada',
   'terminal.dragDrop.errorTitle': 'Error al soltar',
   'terminal.dragDrop.errorMessage': 'No se pudieron procesar los archivos soltados',
+  'terminal.dragDrop.destinationUnknown': 'No se pudo determinar la carpeta actual del terminal. Active el seguimiento de directorios o abra SFTP y elija primero una carpeta de carga.',
+  'terminal.dragDrop.uploadCancelled': 'La carga se canceló porque la conexión del terminal cambió o no se pudo reutilizar. Vuelva a soltar los archivos después de reconectar.',
   'terminal.search.placeholder': 'Buscar...',
   'terminal.search.noResults': 'Sin resultados',
   'terminal.search.prevMatch': 'Coincidencia anterior (Shift+Enter)',

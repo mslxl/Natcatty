@@ -138,6 +138,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.dragDrop.notConnected': 'Нельзя перетащить файлы — терминал не подключён',
   'terminal.dragDrop.errorTitle': 'Ошибка перетаскивания',
   'terminal.dragDrop.errorMessage': 'Не удалось обработать перетащенные файлы',
+  'terminal.dragDrop.destinationUnknown': 'Не удалось определить текущую папку терминала. Включите отслеживание каталогов или сначала откройте SFTP и выберите папку загрузки.',
+  'terminal.dragDrop.uploadCancelled': 'Загрузка отменена: соединение терминала изменилось или его не удалось повторно использовать. После переподключения перетащите файлы снова.',
   'terminal.search.placeholder': 'Поиск...',
   'terminal.search.noResults': 'Ничего не найдено',
   'terminal.search.prevMatch': 'Предыдущее совпадение (Shift+Enter)',
