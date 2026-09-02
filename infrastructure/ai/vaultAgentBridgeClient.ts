@@ -100,6 +100,7 @@ const VAULT_HOST_UPDATE_FIELDS = [
   'tags',
   'notes',
   'protocol',
+  'os',
   'identityId',
   'jumpHostIds',
   'proxyProfileId',

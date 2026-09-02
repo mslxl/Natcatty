@@ -88,7 +88,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     hosts: {
       type: "string",
       description:
-        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
+        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local), os (linux|windows|macos).",
     },
     dryRun: {
       type: "string",
@@ -119,6 +119,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     tags: { type: "string", optional: true, description: "JSON array or comma-separated tag names. Empty string clears tags." },
     notes: { type: "string", optional: true, description: "Host Details remarks. Empty string clears notes." },
     protocol: { type: "string", optional: true, description: "New protocol: ssh, telnet, local, or serial." },
+    os: { type: "string", optional: true, description: "Host operating system: linux, windows, or macos. Drives AI environment reporting and shell-aware behavior." },
     identityId: { type: "string", optional: true, description: "Reusable identity ID from vault_identities_list. Empty string detaches the identity." },
     jumpHostIds: { type: "string", optional: true, description: "JSON array of vault host IDs in jump order. Empty array clears the chain." },
     proxyProfileId: { type: "string", optional: true, description: "Reusable proxy ID from vault_proxy_profiles_list. Empty string clears it." },

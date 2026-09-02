@@ -634,6 +634,30 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.ok(deps.getCustomGroups().includes('prod'));
   });
 
+  it('host.update can set the host operating system for AI-facing metadata', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'windows box',
+        hostname: '10.0.0.5',
+        username: 'root',
+        port: 22,
+        tags: [],
+        os: 'linux',
+      }],
+      customGroups: [],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', os: 'windows' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getHosts()[0]?.os, 'windows');
+  });
+
   it('host.update saves a passphrase for the host key path without returning it', async () => {
     const savedPassphrases: Array<{ keyPath: string; passphrase: string }> = [];
     const deps = createDeps({
