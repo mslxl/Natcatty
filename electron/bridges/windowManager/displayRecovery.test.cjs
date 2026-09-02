@@ -224,6 +224,68 @@ test("attachDisplayRecovery preserves the fallback when the OS relocates the win
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
 });
 
+test("attachDisplayRecovery keeps the promoted snapshot through trailing teardown-burst events", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+
+  // User is working with the window on the secondary display: placement gets tracked.
+  win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // Teardown: Windows relocates the window to the primary BEFORE
+  // "display-removed" fires (the secondary is still connected, so the move
+  // is stashed as a pending teardown move).
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  // The removal promotes the pending move to the removal-time snapshot.
+  screen.emit("display-removed", {}, SECONDARY);
+  // A trailing "resize" of the same relocation burst fires after the
+  // removal: it must not clear the promoted snapshot.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 898 };
+  for (const handler of win.__listeners.get("resize") || []) handler();
+
+  // Unlock: the display comes back and the window must be restored.
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
+  const realNow = Date.now;
+  let now = 2_000_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+
+    attachDisplayRecovery({ win, screen });
+
+    // Teardown relocation before "display-removed": the pending move is
+    // promoted to the removal-time snapshot.
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-removed", {}, SECONDARY);
+
+    // Well after the grace window, the user deliberately re-places the
+    // window on the primary: the stale snapshot must be dropped.
+    now += 10_000;
+    win.bounds = { x: 300, y: 300, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery keeps the snapshot when unrelated secondary displays are removed later", () => {
   const TERTIARY = { id: 3, bounds: { x: -1920, y: 0, width: 1920, height: 1080 } };
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };

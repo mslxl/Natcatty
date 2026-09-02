@@ -124,6 +124,12 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   let rememberedSecondaryBounds = null;
   let rememberedDisplayId = null;
   let pendingTeardownMove = null;
+  // Time at which `boundsAtDisplayRemoval` was (re)captured or promoted from
+  // `pendingTeardownMove`. Trailing teardown-burst events (e.g. a paired
+  // "resize" after "display-removed" promoted the snapshot) arrive within the
+  // grace window and must not clear the snapshot; later edits past the grace
+  // window are deliberate user placement and invalidate it.
+  let teardownSnapshotAt = null;
   // Time of the first primary-display edit observed while the remembered
   // display is already gone (i.e. the OS teardown relocation). Later edits
   // past the grace window are deliberate user placement, not part of the
@@ -210,6 +216,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
               rememberedDisplayId = null;
               pendingTeardownMove = null;
               boundsAtDisplayRemoval = null;
+              teardownSnapshotAt = null;
               return;
             }
             if (teardownRelocationAt === null) teardownRelocationAt = now;
@@ -224,11 +231,26 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         rememberedSecondaryBounds = null;
         rememberedDisplayId = null;
         teardownRelocationAt = null;
+        // A snapshot promoted from `pendingTeardownMove` must survive the rest
+        // of the teardown burst: the OS relocation can emit trailing events
+        // (e.g. a paired "resize") after "display-removed" already promoted
+        // the snapshot, and `rememberedDisplayId` is cleared by then, so this
+        // is the only protection left. Events within the grace window of the
+        // promotion are part of the burst and keep the snapshot; later edits
+        // past the grace window are deliberate user placement.
+        if (
+          boundsAtDisplayRemoval !== null &&
+          teardownSnapshotAt !== null &&
+          Date.now() - teardownSnapshotAt < teardownGraceMs
+        ) {
+          return;
+        }
         // Any pending removal-time snapshot was captured for a recovery this
         // edit now supersedes: the user deliberately (re)placed the window on
         // the primary display, so a later "display-added" must not drag it
         // back to the old geometry.
         boundsAtDisplayRemoval = null;
+        teardownSnapshotAt = null;
         return;
       }
       // A fresh placement on a non-primary display supersedes any removal-time
@@ -240,6 +262,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       // already fired, so dropping the snapshot here can never lose a pending
       // recovery.
       boundsAtDisplayRemoval = null;
+      teardownSnapshotAt = null;
       rememberedSecondaryBounds = bounds;
       rememberedDisplayId = display.id;
       pendingTeardownMove = null;
@@ -257,6 +280,11 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         // The OS relocated the window to the primary before this removal event
         // fired: restore the pre-relocation placement on the removed display.
         boundsAtDisplayRemoval = pendingTeardownMove.bounds;
+        // Trailing events of the same relocation burst (e.g. a paired
+        // "resize" after this removal) must not clear the promoted snapshot;
+        // stamp the promotion so rememberWindowPlacement can tell burst
+        // events from later deliberate user edits.
+        teardownSnapshotAt = Date.now();
       }
       pendingTeardownMove = null;
       return;
@@ -295,6 +323,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       return;
     }
     boundsAtDisplayRemoval = currentBounds;
+    teardownSnapshotAt = Date.now();
   };
 
   // Apply a recovery that was deferred while the window was maximized or
@@ -393,6 +422,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       // the user's most recent placement.
       if (restored === boundsAtDisplayRemoval) {
         boundsAtDisplayRemoval = null;
+        teardownSnapshotAt = null;
       }
       const clamped = clampBoundsToDisplay(restored, display?.bounds);
       if (!clamped) return;
@@ -455,6 +485,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     pendingTeardownMove = null;
     pendingRecovery = null;
     teardownRelocationAt = null;
+    teardownSnapshotAt = null;
   };
 }
 
