@@ -544,6 +544,94 @@ test("attachDisplayRecovery keeps the pending teardown snapshot across a suspens
   }
 });
 
+test("attachDisplayRecovery keeps the pending teardown snapshot across a lock-screen delay (Win+L without suspend)", () => {
+  const realNow = Date.now;
+  let now = 3_000_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+    };
+
+    const detach = attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The window lives on the secondary display, then the OS relocates it to
+    // the primary before "display-removed" fires (within the grace window).
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // Locking the session (Win+L) tears the display down without necessarily
+    // emitting "suspend". The lock must count as a session interruption just
+    // like a suspension: on unlock the wall clock is far past the grace
+    // window, but the pending snapshot must not be expired because of it.
+    powerMonitor.emit("lock-screen");
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+
+    detach();
+    assert.equal((powerListeners.get("lock-screen") || []).length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery drops the removal snapshot when the returning display already holds the window", () => {
+  const realNow = Date.now;
+  let now = 4_000_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+
+    attachDisplayRecovery({ win, screen });
+
+    // The window lives on the secondary display, then the display disappears
+    // (a removal-time snapshot is captured) and re-appears before the window
+    // coordinates stop intersecting it: recovery is a no-op, but the stale
+    // removal snapshot must still be invalidated.
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    assert.equal(win.setBoundsCalls.length, 0);
+
+    // The user then deliberately moves the window to the primary display
+    // (still inside the snapshot's teardown grace window, so the grace
+    // protection alone cannot clear it), and that display is later torn down
+    // and re-added again: the stale snapshot must not restore the old
+    // placement over the user's newer choice.
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    now += 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery drops the removal snapshot after the user moves to another secondary display", () => {
   const TERTIARY = { id: 3, bounds: { x: -1920, y: 0, width: 1920, height: 1080 } };
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };

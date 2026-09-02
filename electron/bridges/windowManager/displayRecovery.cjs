@@ -206,15 +206,18 @@ function attachDisplayRecovery({
   // `fromBounds` the window's placement at deferral time — if the window has
   // been re-placed since, the user wins and the recovery is dropped.
   let pendingRecovery = null;
-  // Wall-clock time of the last powerMonitor "suspend" event. Used to tell a
-  // grace-window expiry caused by actual elapsed time from one caused by the
-  // clock advancing while the machine was asleep (see onDisplayRemoved).
-  let suspendedAt = null;
+  // Wall-clock time of the last powerMonitor "suspend" or "lock-screen"
+  // event. Used to tell a grace-window expiry caused by actual elapsed time
+  // from one caused by the clock advancing while the machine was asleep or
+  // the session locked (Win+L tears displays down without necessarily
+  // emitting "suspend"; "lock-screen" is the only signal for that path —
+  // see onDisplayRemoved).
+  let sessionInterruptedAt = null;
   const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
 
-  const onSuspend = () => {
-    suspendedAt = Date.now();
+  const onSessionInterrupted = () => {
+    sessionInterruptedAt = Date.now();
   };
 
   const isTrackable = () => {
@@ -359,7 +362,7 @@ function attachDisplayRecovery({
       // elapsed grace window proves nothing about a deliberate user move, so
       // the pending snapshot must not be expired for that reason alone.
       const suspendedAfterPendingMove =
-        suspendedAt !== null && suspendedAt >= pendingTeardownMove.at;
+        sessionInterruptedAt !== null && sessionInterruptedAt >= pendingTeardownMove.at;
       if (
         suspendedAfterPendingMove ||
         Date.now() - pendingTeardownMove.at < teardownGraceMs
@@ -516,6 +519,23 @@ function attachDisplayRecovery({
           },
         ],
       });
+      // Recovery is already unnecessary when the returning display contains
+      // the window: invalidate the removal-time snapshot captured for it so a
+      // later teardown + re-add cannot restore stale placement over the
+      // user's current position (e.g. after they moved to the primary during
+      // the teardown grace window).
+      if (
+        display &&
+        isFiniteBounds(display.bounds) &&
+        isFiniteBounds(currentBounds) &&
+        boundsIntersectDisplay(currentBounds, display.bounds) &&
+        boundsAtDisplayRemoval !== null &&
+        boundsAtDisplayRemovalDisplayId === display.id
+      ) {
+        boundsAtDisplayRemoval = null;
+        boundsAtDisplayRemovalDisplayId = null;
+        teardownSnapshotAt = null;
+      }
       if (!restored) return;
       // The removal-time snapshot is only valid for the recovery it was taken
       // for. Once consumed (or once the window is back on the re-added
@@ -547,9 +567,10 @@ function attachDisplayRecovery({
   };
 
   try {
-    activePowerMonitor?.on?.("suspend", onSuspend);
+    activePowerMonitor?.on?.("suspend", onSessionInterrupted);
+    activePowerMonitor?.on?.("lock-screen", onSessionInterrupted);
   } catch {
-    // Suspension tracking is best-effort; the grace window still applies.
+    // Suspension/lock tracking is best-effort; the grace window still applies.
   }
 
   try {
@@ -570,7 +591,8 @@ function attachDisplayRecovery({
   return function detach() {
     attached = false;
     try {
-      activePowerMonitor?.removeListener?.("suspend", onSuspend);
+      activePowerMonitor?.removeListener?.("suspend", onSessionInterrupted);
+      activePowerMonitor?.removeListener?.("lock-screen", onSessionInterrupted);
     } catch {}
     try {
       screen.removeListener?.("display-removed", onDisplayRemoved);
