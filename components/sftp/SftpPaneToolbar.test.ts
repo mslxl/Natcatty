@@ -509,6 +509,10 @@ test("bookmark delete asks for confirmation with the path", () => {
   assert.deepEqual(prompts, ["sftp.bookmark.removeConfirm:/srv/www"]);
 });
 
+test("bookmark rename does not use window.prompt", () => {
+  assert.doesNotMatch(toolbarSource, /window\.prompt/);
+});
+
 test("bookmark list renders saved paths as selectable rows", () => {
   const markup = renderToStaticMarkup(
     React.createElement(

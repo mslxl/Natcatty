@@ -265,6 +265,8 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   t,
 }) => {
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
 
   if (bookmarks.length === 0) {
     return (
@@ -300,7 +302,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
               "flex items-start gap-1 px-2 py-1.5 hover:bg-secondary/60 group",
               draggingId === bm.id && "opacity-60",
             )}
-            draggable={managing}
+            draggable={managing && renamingId !== bm.id}
             onDragStart={(event) => {
               if (!managing) return;
               setDraggingId(bm.id);
@@ -330,10 +332,34 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
             {bm.global && (
               <Globe size={10} className="mt-1 shrink-0 text-primary" />
             )}
-            {managing ? pathButton : (
+            {managing && onRenameBookmark && renamingId === bm.id ? (
+              <Input
+                autoFocus
+                value={renameDraft}
+                aria-label={t("sftp.bookmark.rename")}
+                className="h-6 flex-1 min-w-0 text-xs"
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onRenameBookmark(bm.id, renameDraft);
+                    setRenamingId(null);
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setRenamingId(null);
+                  }
+                }}
+                onBlur={() => {
+                  onRenameBookmark(bm.id, renameDraft);
+                  setRenamingId(null);
+                }}
+              />
+            ) : managing ? pathButton : (
               <PopoverClose asChild>{pathButton}</PopoverClose>
             )}
-            {managing && onRenameBookmark && (
+            {managing && onRenameBookmark && renamingId !== bm.id && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -341,8 +367,8 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                 aria-label={t("sftp.bookmark.rename")}
                 onClick={(event) => {
                   event.stopPropagation();
-                  const next = window.prompt(t("sftp.bookmark.rename"), bm.label);
-                  if (next != null) onRenameBookmark(bm.id, next);
+                  setRenamingId(bm.id);
+                  setRenameDraft(bm.label);
                 }}
               >
                 <Pencil size={10} />
