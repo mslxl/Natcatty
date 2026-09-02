@@ -64,8 +64,9 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
       const index = list.indexOf(handler);
       if (index >= 0) list.splice(index, 1);
     },
-    emit(event, payload) {
-      for (const handler of listeners.get(event) || []) handler(payload);
+    emit(event, ...args) {
+      // Mirror Electron: screen event listeners receive (event, display).
+      for (const handler of listeners.get(event) || []) handler(...args);
     },
     getPrimaryDisplay() {
       return primary;
@@ -143,13 +144,13 @@ test("attachDisplayRecovery moves the window back after lock/unlock display chur
   for (const handler of win.__listeners.get("move") || []) handler();
 
   // Lock: the secondary display disappears.
-  screen.emit("display-removed", SECONDARY);
+  screen.emit("display-removed", {}, SECONDARY);
   // Windows relocates the window to the primary display.
   win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
   for (const handler of win.__listeners.get("move") || []) handler();
 
   // Unlock: the display comes back.
-  screen.emit("display-added", SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
 
   assert.equal(win.setBoundsCalls.length, 1);
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
@@ -162,11 +163,11 @@ test("attachDisplayRecovery leaves the window alone while maximized", () => {
 
   attachDisplayRecovery({ win, screen });
   for (const handler of win.__listeners.get("move") || []) handler();
-  screen.emit("display-removed", SECONDARY);
+  screen.emit("display-removed", {}, SECONDARY);
   // The window stays maximized while the display is missing and returns.
   win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
   for (const handler of win.__listeners.get("move") || []) handler();
-  screen.emit("display-added", SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
 
   assert.equal(win.setBoundsCalls.length, 0);
 });
@@ -177,8 +178,8 @@ test("attachDisplayRecovery does nothing when the window never left the primary 
 
   attachDisplayRecovery({ win, screen });
   for (const handler of win.__listeners.get("move") || []) handler();
-  screen.emit("display-removed", SECONDARY);
-  screen.emit("display-added", SECONDARY);
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
 
   assert.equal(win.setBoundsCalls.length, 0);
 });
@@ -196,9 +197,9 @@ test("detach removes all listeners and stops recovery", () => {
   assert.equal((win.__listeners.get("resize") || []).length, 0);
 
   // Events after detach must not move the window.
-  screen.emit("display-removed", SECONDARY);
+  screen.emit("display-removed", {}, SECONDARY);
   win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
-  screen.emit("display-added", SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
   assert.equal(win.setBoundsCalls.length, 0);
 });
 

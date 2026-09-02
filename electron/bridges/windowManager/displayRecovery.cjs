@@ -130,7 +130,8 @@ function attachDisplayRecovery({ win, screen }) {
     boundsAtDisplayRemoval = copyBounds();
   };
 
-  const onDisplayAdded = (display) => {
+  // Electron invokes "display-added" listeners as (event, newDisplay).
+  const onDisplayAdded = (_event, display) => {
     if (!attached || !isTrackable()) return;
     try {
       const currentBounds = copyBounds();
@@ -157,6 +158,10 @@ function attachDisplayRecovery({ win, screen }) {
     screen.on("display-added", onDisplayAdded);
     win.on?.("move", rememberWindowPlacement);
     win.on?.("resize", rememberWindowPlacement);
+    // Seed the tracked placement from the window's initial bounds so windows
+    // that started on a secondary display and were never moved/resized are
+    // still recoverable when that display is torn down and re-added.
+    rememberWindowPlacement();
   } catch {
     return () => {};
   }
