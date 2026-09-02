@@ -112,7 +112,15 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   // Remap when Kitty encoding does not preserve Shift+Enter (not merely flags===0).
   assert.match(
     source,
-    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*!term\.modes\.win32InputMode &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+  );
+  assert.match(
+    source,
+    /vtExtensions: \{\s*win32InputMode: windowsPty\?\.backend === "conpty",\s*\},/s,
+  );
+  assert.match(
+    source,
+    /const kittySequenceForKeyDown =\s*!term\.modes\.win32InputMode &&\s*kittyKeyboardProtocolEnabled/s,
   );
   assert.match(
     source,
@@ -127,7 +135,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
     /resolveOptions: \(\) => \(\{[\s\S]*?shiftEnterSettings: ctx\.terminalSettingsRef\.current,[\s\S]*?\}\),/s,
   );
   assert.doesNotMatch(source, /resolveShiftEnterText\([\s\S]*?alternateScreen:/s);
-  assert.match(source, /getShiftEnterSubmittedInput\(data\)/);
+  assert.match(source, /getShiftEnterSubmittedInput\(logicalData\)/);
   assert.match(source, /inputSource !== "shift-enter"/);
   assert.match(
     source,
@@ -139,7 +147,40 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /const sanitizedData = sanitizeTerminalInput\(data\);[\s\S]*const encoded = encodeKittyCompositionText\(kittyKeyboardMode, sanitizedData\);[\s\S]*if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(sanitizedData, \{\s*perCharacterWrites: shouldSplitImeTextInputForWire\(sanitizedData\),?\s*\}\);[\s\S]*broadcastKittyInput\(\{ kind: "text", text: sanitizedData \}\);/,
+    /const sanitizedData = sanitizeTerminalInput\(data\);[\s\S]*const encoded = term\.modes\.win32InputMode\s*\? null\s*:\s*encodeKittyCompositionText\(kittyKeyboardMode, sanitizedData\);[\s\S]*if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(sanitizedData, \{\s*perCharacterWrites: shouldSplitImeTextInputForWire\(sanitizedData\),?\s*\}\);[\s\S]*broadcastKittyInput\(\{ kind: "text", text: sanitizedData \}\);/,
+  );
+  assert.match(
+    source,
+    /if \(term\.modes\.win32InputMode\) \{[\s\S]*win32InputModePendingEvent = \{\s*event: normalizedKittyEvent,\s*logicalData: resolveWin32InputLogicalData\(/s,
+  );
+  assert.match(
+    source,
+    /const broadcastInput: KittyKeyboardBroadcastInput = \{\s*kind: "win32",\s*data,\s*event: win32Input\.event,[\s\S]*handleTerminalInputData\(data, \{\s*logicalData: win32Input\.logicalData,\s*skipBroadcast: true,/s,
+  );
+  assert.match(
+    source,
+    /const hasForwardedWin32KeyDown = win32InputModeForwardedKeys\.delete\(identity\);[\s\S]*if \(term\.modes\.win32InputMode\) \{[\s\S]*releaseForwardedKittyPress\([\s\S]*if \(!hasForwardedWin32KeyDown\) \{[\s\S]*win32InputModePendingEvent = null;[\s\S]*return false;[\s\S]*logicalData: null,[\s\S]*return true;[\s\S]*releaseForwardedKittyPress/s,
+  );
+  assert.match(
+    source,
+    /if \(win32Input\.event\.type === "keydown"\) \{\s*upsertKittyKeyboardForwardedPress\(\s*win32InputModeForwardedKeys,\s*win32Input\.event\.code \|\| win32Input\.event\.key,\s*win32Input\.event,\s*\[\],/s,
+  );
+  assert.match(
+    source,
+    /if \(term\.modes\.win32InputMode\) \{[\s\S]*flushKittyKeyboardBroadcastReleases\(\s*win32InputModeForwardedKeys,[\s\S]*writeWin32InputModeEvent\(input\.event, null\);/s,
+  );
+  assert.match(source, /win32InputMode: term\.modes\.win32InputMode,/);
+  assert.match(
+    source,
+    /const win32BroadcastForwardedKeys = new Map<string, KittyKeyboardForwardedPress>\(\);/,
+  );
+  assert.match(
+    source,
+    /const forwardedPress = win32BroadcastForwardedKeys\.get\(identity\);[\s\S]*broadcastKittyInput\(\s*broadcastInput,\s*true,\s*forwardedPress\.targetSessionIds,/s,
+  );
+  assert.match(
+    source,
+    /upsertKittyKeyboardForwardedPress\(\s*win32BroadcastForwardedKeys,[\s\S]*forwarded\.targetSessionIds,/s,
   );
   assert.match(source, /ctx\.container\.addEventListener\("input", markKittyTextInput, true\);/);
   assert.match(
