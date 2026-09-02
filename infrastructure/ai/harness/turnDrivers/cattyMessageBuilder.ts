@@ -66,10 +66,13 @@ function modelMessageHasToolCall(message: ModelMessage): boolean {
  * (`store: false`) Responses turn makes the SDK emit a `reasoning` item
  * referencing an id that was never persisted, which the API rejects
  * ("Item with id 'rs_…' not found"), leaving the conversation unable to
- * continue. Drop such parts before replay: the associated function calls are
- * replayed in full by `call_id`, which reasoning models accept without a
- * preceding reasoning item. Parts with real ciphertext (or no OpenAI item id
- * at all) are kept untouched.
+ * continue. Dropping just the reasoning part is not enough: OpenAI Responses
+ * stateless tool loops require the reasoning item to accompany its
+ * function-call output, so replaying the paired `fc_…` call/result without it
+ * is also rejected. Discard the entire incompatible call/result exchange
+ * before replay (the assistant's plain text is still replayed); tool results
+ * that reference the discarded call ids are skipped as well. Reasoning parts
+ * with real ciphertext (or no OpenAI item id at all) are kept untouched.
  */
 function isStatelessReplayableReasoningPart(
   part: ProviderContinuationReasoningPart,
@@ -135,6 +138,9 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
   const { resolvedToolCallsByAssistant, toolCallByToolResult } = buildHistoricalToolReplayMaps(allMessages);
   const nextFieldsByMessage = new Map<ModelMessage, OpenAIChatAssistantFields | undefined>();
   const sdkMessages: ModelMessage[] = [];
+  // Call ids whose exchange was discarded because the paired reasoning item is
+  // not replayable statelessly; their tool results must not be replayed either.
+  const discardedToolCallIds = new Set<string>();
   let previousHistoryMessageWasToolResult = false;
 
   const compactedMessageCount = Math.min(
@@ -177,8 +183,18 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         const resolvedCalls = resolvedToolCalls
           ? m.toolCalls.filter(tc => resolvedToolCalls.has(tc))
           : [];
+        // An unreplayable (id-only) reasoning item poisons the whole Responses
+        // tool exchange: without it the paired function-call output is
+        // rejected, so discard the calls instead of replaying them orphaned.
+        const hasUnreplayableReasoning = resolvedCalls.length > 0
+          && (activeContinuation?.reasoningParts ?? [])
+            .some((part) => !isStatelessReplayableReasoningPart(part));
+        if (hasUnreplayableReasoning) {
+          for (const tc of resolvedCalls) discardedToolCallIds.add(tc.id);
+        }
+        const replayedCalls = hasUnreplayableReasoning ? [] : resolvedCalls;
         const contentParts: AssistantContentPart[] = [];
-        if (resolvedCalls.length > 0) {
+        if (replayedCalls.length > 0) {
           for (const part of collectReplayableReasoningParts(activeContinuation)) {
             if (!part.text && !part.providerOptions) continue;
             contentParts.push({
@@ -195,7 +211,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
             ...(activeContinuation?.textProviderOptions ? { providerOptions: activeContinuation.textProviderOptions } : {}),
           });
         }
-        for (const tc of resolvedCalls) {
+        for (const tc of replayedCalls) {
           const providerOptions = activeContinuation?.toolCallProviderOptionsById?.[tc.id];
           contentParts.push({
             type: 'tool-call' as const,
@@ -208,7 +224,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         if (contentParts.length > 0) {
           const message: ModelMessage = { role: 'assistant', content: toAssistantModelContent(contentParts) };
           sdkMessages.push(message);
-          if (resolvedCalls.length > 0) {
+          if (replayedCalls.length > 0) {
             rememberOpenAIChatAssistantFields(message, openAIChatAssistantFields, nextFieldsByMessage);
           }
         }
@@ -237,25 +253,31 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         }
       }
     } else if (m.role === 'tool' && m.toolResults?.length) {
-      sdkMessages.push({
-        role: 'tool',
-        content: m.toolResults.map(tr => {
-          const toolCall = toolCallByToolResult.get(tr);
-          return {
-            type: 'tool-result' as const,
-            toolCallId: tr.toolCallId,
-            toolName: toolCall?.name ?? 'unknown',
-            output: {
-              type: 'text' as const,
-              value: buildHistoricalToolResultReplayText(tr, toolCall, {
-                preserveTerminalOutput: preserveTerminalToolResults.has(tr),
-              }),
-            },
-          };
-        }),
-      });
+      const replayableResults = m.toolResults.filter(
+        (tr) => !discardedToolCallIds.has(tr.toolCallId),
+      );
+      if (replayableResults.length > 0) {
+        sdkMessages.push({
+          role: 'tool',
+          content: replayableResults.map(tr => {
+            const toolCall = toolCallByToolResult.get(tr);
+            return {
+              type: 'tool-result' as const,
+              toolCallId: tr.toolCallId,
+              toolName: toolCall?.name ?? 'unknown',
+              output: {
+                type: 'text' as const,
+                value: buildHistoricalToolResultReplayText(tr, toolCall, {
+                  preserveTerminalOutput: preserveTerminalToolResults.has(tr),
+                }),
+              },
+            };
+          }),
+        });
+      }
     }
-    previousHistoryMessageWasToolResult = m.role === 'tool' && !!m.toolResults?.length;
+    previousHistoryMessageWasToolResult = m.role === 'tool' && !!m.toolResults?.length
+      && m.toolResults.some((tr) => !discardedToolCallIds.has(tr.toolCallId));
   }
 
   if (includeCurrentUserMessage) {
