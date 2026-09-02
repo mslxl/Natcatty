@@ -264,6 +264,8 @@ export function useSftpFollowTerminalCwd({
     if (!liveConnectionId || initialFollowReadyConnectionRef.current !== liveConnectionId) return;
 
     const syncGeneration = followSyncGenerationRef.current;
+    const expectedSessionId = activeSessionIdRef.current ?? null;
+    const expectedConnectionIdAtStart = connectionIdRef.current ?? liveConnectionId;
     const usesLiveTerminalCwd = Boolean(activeTerminalCwd && activeTerminalCwdTrusted);
     let terminalCwd = usesLiveTerminalCwd ? activeTerminalCwd : null;
     if (!terminalCwd) {
@@ -279,6 +281,11 @@ export function useSftpFollowTerminalCwd({
       currentGeneration: followSyncGenerationRef.current,
       followEnabled: effectiveFollowTerminalCwdRef.current,
       canFollow: canFollowTerminalCwdRef.current,
+      expectedSessionId,
+      liveSessionId: activeSessionIdRef.current ?? null,
+      expectedConnectionId: expectedConnectionIdAtStart,
+      liveConnectionId: connectionIdRef.current,
+      paneConnectionId: sftpRef.current.leftPane.connection?.id ?? null,
     })) return;
 
     const connection = sftpRef.current.leftPane.connection;
@@ -310,6 +317,8 @@ export function useSftpFollowTerminalCwd({
       currentGeneration: followSyncGenerationRef.current,
       followEnabled: effectiveFollowTerminalCwdRef.current,
       canFollow: canFollowTerminalCwdRef.current,
+      expectedSessionId,
+      liveSessionId: activeSessionIdRef.current ?? null,
       expectedConnectionId,
       liveConnectionId: connectionIdRef.current,
       paneConnectionId: sftpRef.current.leftPane.connection?.id ?? null,
@@ -320,12 +329,7 @@ export function useSftpFollowTerminalCwd({
     const navigateResult = await sftpRef.current.navigateTo("left", terminalCwd, {
       shouldApply: shouldApplyCurrentFollowSync,
     });
-    if (!shouldApplyFollowTerminalCwdSyncResult({
-      syncGeneration,
-      currentGeneration: followSyncGenerationRef.current,
-      followEnabled: effectiveFollowTerminalCwdRef.current,
-      canFollow: canFollowTerminalCwdRef.current,
-    })) return;
+    if (!shouldApplyCurrentFollowSync()) return;
 
     const currentConnection = sftpRef.current.leftPane.connection;
     if (!currentConnection || currentConnection.id !== connection?.id) return;

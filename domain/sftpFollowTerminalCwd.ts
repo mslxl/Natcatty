@@ -23,6 +23,8 @@ export type SftpFollowTerminalCwdSyncResultContext = {
   currentGeneration: number;
   followEnabled: boolean;
   canFollow: boolean;
+  expectedSessionId?: string | null;
+  liveSessionId?: string | null;
   expectedConnectionId?: string | null;
   liveConnectionId?: string | null;
   paneConnectionId?: string | null;
@@ -185,6 +187,8 @@ export const shouldApplyFollowTerminalCwdSyncResult = ({
   currentGeneration,
   followEnabled,
   canFollow,
+  expectedSessionId,
+  liveSessionId,
   expectedConnectionId,
   liveConnectionId,
   paneConnectionId,
@@ -194,6 +198,9 @@ export const shouldApplyFollowTerminalCwdSyncResult = ({
 }: SftpFollowTerminalCwdSyncResultContext): boolean => {
   if (syncGeneration !== currentGeneration || !followEnabled || !canFollow) {
     return false;
+  }
+  if (expectedSessionId !== undefined) {
+    if (liveSessionId !== undefined && liveSessionId !== expectedSessionId) return false;
   }
   if (expectedConnectionId !== undefined) {
     if (!expectedConnectionId) return false;

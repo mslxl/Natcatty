@@ -411,3 +411,80 @@ test("only trusted live terminal cwd recovery resumes follow after initial probe
   assert.deepEqual(navigatedPaths, ["/srv/new"]);
   await act(async () => renderer?.unmount());
 });
+
+test("an in-flight follow probe cannot navigate after the focused session changes", async () => {
+  const navigatedPaths: string[] = [];
+  const connection = {
+    id: "conn-1",
+    hostId: "host-1",
+    currentPath: "/home/alice",
+    status: "connected",
+    isLocal: false,
+  };
+  const sftpRef = {
+    current: {
+      leftPane: { connection, loading: false },
+      navigateTo: async (_side: "left", path: string, options?: { shouldApply?: () => boolean }) => {
+        if (options?.shouldApply && !options.shouldApply()) return "aborted" as const;
+        navigatedPaths.push(path);
+        connection.currentPath = path;
+        return "reached" as const;
+      },
+    },
+  };
+  let activeSessionId = "session-a";
+  let activeTerminalCwd: string | null = "/home/alice";
+  let resolveCwd: ((cwd: string) => void) | null = null;
+  let deferProbe = false;
+  let renderer: ReactTestRenderer | null = null;
+  const onGetTerminalCwd = () => {
+    if (!deferProbe) return Promise.resolve("/root/session-a");
+    return new Promise<string>((resolve) => { resolveCwd = resolve; });
+  };
+
+  function Probe() {
+    useSftpFollowTerminalCwd({
+      activeSessionId,
+      activeTerminalCwd,
+      canFollowTerminalCwd: true,
+      connectionId: connection.id,
+      connectionIsLocal: connection.isLocal,
+      connectionLoading: false,
+      connectionPath: connection.currentPath,
+      connectionStatus: connection.status,
+      effectiveFollowTerminalCwd: true,
+      followTerminalCwdHost: host,
+      hasActiveWork: false,
+      isVisible: true,
+      ownerPanelOpen: true,
+      onGetTerminalCwd,
+      onPendingFollowOverride: () => {},
+      sftpRef,
+    });
+    return null;
+  }
+
+  await act(async () => {
+    renderer = create(React.createElement(Probe));
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  assert.deepEqual(navigatedPaths, ["/root/session-a"]);
+
+  deferProbe = true;
+  activeTerminalCwd = null;
+  await act(async () => {
+    renderer?.update(React.createElement(Probe));
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  assert.ok(resolveCwd);
+
+  activeSessionId = "session-b";
+  await act(async () => renderer?.update(React.createElement(Probe)));
+  await act(async () => {
+    resolveCwd?.("/root/from-session-a");
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  assert.deepEqual(navigatedPaths, ["/root/session-a"]);
+  await act(async () => renderer?.unmount());
+});

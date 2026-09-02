@@ -266,6 +266,31 @@ test("shouldApplyFollowTerminalCwdSyncResult rejects results after follow is una
   );
 });
 
+test("shouldApplyFollowTerminalCwdSyncResult rejects results after the focused session changes", () => {
+  assert.equal(
+    shouldApplyFollowTerminalCwdSyncResult({
+      syncGeneration: 2,
+      currentGeneration: 2,
+      followEnabled: true,
+      canFollow: true,
+      expectedSessionId: "session-a",
+      liveSessionId: "session-b",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyFollowTerminalCwdSyncResult({
+      syncGeneration: 2,
+      currentGeneration: 2,
+      followEnabled: true,
+      canFollow: true,
+      expectedSessionId: "session-a",
+      liveSessionId: "session-a",
+    }),
+    true,
+  );
+});
+
 test("shouldApplyFollowTerminalCwdSyncResult rejects results for an old connection", () => {
   assert.equal(
     shouldApplyFollowTerminalCwdSyncResult({
