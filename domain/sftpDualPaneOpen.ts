@@ -25,9 +25,9 @@ export function dualPaneTabFromPane(pane: {
   return {
     id: pane.id,
     isLocal: live && !!pane.connection?.isLocal,
-    hostId: live
-      ? (pane.connection?.isLocal ? "local" : pane.connection?.hostId ?? null)
-      : null,
+    hostId: pane.connection?.isLocal
+      ? "local"
+      : pane.connection?.hostId ?? null,
     hasConnection: live,
   };
 }
@@ -55,11 +55,16 @@ export function planDualPaneSftpOpen(params: {
 }): DualPaneSftpPlan {
   const localLeft = params.leftTabs.find((tab) => tab.isLocal);
   const idleLeft = params.leftTabs.find((tab) => !tab.hasConnection);
-  const matchingRight = params.rightTabs.find((tab) => tab.hostId === params.hostId);
+  const matchingRight = params.rightTabs.find(
+    (tab) => tab.hostId === params.hostId && tab.hasConnection,
+  );
+  const matchingDeadRight = params.rightTabs.find(
+    (tab) => tab.hostId === params.hostId && !tab.hasConnection,
+  );
   const idleRight = params.rightTabs.find((tab) => !tab.hasConnection);
 
   const leftReuse = localLeft ?? idleLeft;
-  const rightReuse = matchingRight ?? idleRight;
+  const rightReuse = matchingRight ?? matchingDeadRight ?? idleRight;
 
   return {
     selectLeftTabId: leftReuse?.id ?? null,

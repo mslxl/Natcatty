@@ -99,7 +99,7 @@ test("dualPaneTabFromPane treats error and disconnected tabs as idle", () => {
       id: "right-dead",
       connection: { isLocal: false, hostId: "host-1", status: "error" },
     }),
-    { id: "right-dead", isLocal: false, hostId: null, hasConnection: false },
+    { id: "right-dead", isLocal: false, hostId: "host-1", hasConnection: false },
   );
   assert.deepEqual(
     dualPaneTabFromPane({
@@ -108,6 +108,22 @@ test("dualPaneTabFromPane treats error and disconnected tabs as idle", () => {
     }),
     { id: "right-live", isLocal: false, hostId: "host-1", hasConnection: true },
   );
+});
+
+test("planDualPaneSftpOpen prefers a matching dead host tab over an earlier idle tab", () => {
+  const idle = tab("right-idle", { hasConnection: false });
+  const dead = dualPaneTabFromPane({
+    id: "right-dead",
+    connection: { isLocal: false, hostId: "host-1", status: "error" },
+  });
+  const plan = planDualPaneSftpOpen({
+    leftTabs: [tab("left-local", { isLocal: true, hostId: "local" })],
+    rightTabs: [idle, dead],
+    hostId: "host-1",
+  });
+  assert.equal(plan.selectRightTabId, "right-dead");
+  assert.equal(plan.connectRightHost, true);
+  assert.equal(plan.addRightTab, false);
 });
 
 test("planDualPaneSftpOpen reconnects a matching host tab that is no longer live", () => {
