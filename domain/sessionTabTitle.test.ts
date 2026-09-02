@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFAULT_WORKSPACE_TITLE,
+  buildMergedWorkspaceTitle,
   getSessionConnectionLabel,
   resolveCodingCliProviderIconUpdate,
   resolveSessionTabTitle,
@@ -198,4 +199,22 @@ test('resolveWorkspaceTabLabel falls back to the default title with no sessions'
     resolveWorkspaceTabLabel({ title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: null }, []),
     DEFAULT_WORKSPACE_TITLE,
   );
+});
+
+test('buildMergedWorkspaceTitle joins both tab labels with a slash', () => {
+  assert.equal(buildMergedWorkspaceTitle('01', '02'), '01/02');
+  assert.equal(buildMergedWorkspaceTitle('web-01', 'db-02'), 'web-01/db-02');
+});
+
+test('buildMergedWorkspaceTitle collapses identical labels to one name', () => {
+  assert.equal(buildMergedWorkspaceTitle('web-01', 'web-01'), 'web-01');
+});
+
+test('buildMergedWorkspaceTitle falls back to the labeled side', () => {
+  assert.equal(buildMergedWorkspaceTitle('', '02'), '02');
+  assert.equal(buildMergedWorkspaceTitle('01', ''), '01');
+});
+
+test('buildMergedWorkspaceTitle returns null when neither tab has a label', () => {
+  assert.equal(buildMergedWorkspaceTitle('', ''), null);
 });

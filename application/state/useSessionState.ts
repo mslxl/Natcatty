@@ -59,7 +59,11 @@ import type { SessionRestorePayload } from '../../domain/sessionRestore';
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 import type { CodingCliProviderId } from '../../domain/codingCliProviders';
 import { normalizeCodingCliDynamicTitleForStorage } from '../../domain/codingCliTitleParse';
-import { DEFAULT_WORKSPACE_TITLE } from '../../domain/sessionTabTitle';
+import {
+  DEFAULT_WORKSPACE_TITLE,
+  buildMergedWorkspaceTitle,
+  getSessionConnectionLabel,
+} from '../../domain/sessionTabTitle';
 import { cleanupClosedTerminalSessions } from './aiStateSnapshots';
 
 export function addWorkspaceIfMissing(
@@ -729,7 +733,21 @@ export const useSessionState = ({
     hint: SplitHint
   ) => {
     if (!hint || baseSessionId === joiningSessionId) return;
-    const newWorkspace = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
+    // Name the merged workspace after both tabs' connection labels (e.g.
+    // "01/02") so the window title and the rename dialog show the merged
+    // identity instead of the generic "Workspace". Falls back to the default
+    // auto title when neither tab has a label. The explicit `autoTitle: false`
+    // makes tab labels use this composed name too.
+    const baseSession = sessionsRef.current.find(s => s.id === baseSessionId);
+    const joiningSession = sessionsRef.current.find(s => s.id === joiningSessionId);
+    const mergedTitle = buildMergedWorkspaceTitle(
+      getSessionConnectionLabel(baseSession ?? { customName: '', hostLabel: '' }),
+      getSessionConnectionLabel(joiningSession ?? { customName: '', hostLabel: '' }),
+    );
+    const created = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
+    const newWorkspace = mergedTitle
+      ? { ...created, title: mergedTitle, autoTitle: false }
+      : created;
 
     setSessions((prevSessions) => {
       const base = prevSessions.find((s) => s.id === baseSessionId);
