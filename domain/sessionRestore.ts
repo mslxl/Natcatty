@@ -392,7 +392,7 @@ const restoreWorkspace = (workspace: Workspace, root: WorkspaceNode, sessionIds:
     // Preserve explicit-title state across restore; the boolean guard keeps a
     // deliberate `autoTitle: false` (a user-named workspace) from being dropped.
     ...(typeof workspace.autoTitle === "boolean" ? { autoTitle: workspace.autoTitle } : {}),
-    ...(workspace.generatedTitle ? { generatedTitle: true } : {}),
+    ...(workspace.generatedTitle === true ? { generatedTitle: true } : {}),
   };
 };
 
