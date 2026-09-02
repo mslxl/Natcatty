@@ -61,10 +61,33 @@ function displayIntersectionArea(bounds, displayBounds) {
 }
 
 /**
+ * Normalize a recovery candidate: either plain bounds or an object carrying
+ * the bounds plus the id of the display they were remembered for.
+ */
+function normalizeRecoveryCandidate(candidate) {
+  if (!candidate) return null;
+  if (isFiniteBounds(candidate)) return { bounds: candidate, displayId: null };
+  if (isFiniteBounds(candidate.bounds)) {
+    return {
+      bounds: candidate.bounds,
+      displayId:
+        candidate.displayId === undefined || candidate.displayId === null
+          ? null
+          : candidate.displayId,
+    };
+  }
+  return null;
+}
+
+/**
  * Decide whether the window should be moved back onto a (re-)added display.
  * Returns the remembered bounds to restore, or null when the window is already
- * on that display or no remembered placement intersects it. Candidates are
- * evaluated in order, so more specific snapshots should come first.
+ * on that display or no remembered placement matches it. Candidates are
+ * evaluated in order, so more specific snapshots should come first. A
+ * candidate is accepted when its bounds intersect the re-added display, or
+ * when it was remembered for that very display id — the display may have come
+ * back with different bounds (DPI/resolution/topology change), in which case
+ * the old geometry is clamped into the new bounds by the caller.
  */
 function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) {
   if (!addedDisplay || !isFiniteBounds(addedDisplay.bounds)) return null;
@@ -72,8 +95,16 @@ function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) 
   // The window is already (at least partially) on this display: nothing to do.
   if (boundsIntersectDisplay(currentBounds, addedDisplay.bounds)) return null;
   for (const candidate of candidates || []) {
-    if (boundsIntersectDisplay(candidate, addedDisplay.bounds)) {
-      return candidate;
+    const normalized = normalizeRecoveryCandidate(candidate);
+    if (!normalized) continue;
+    if (
+      normalized.displayId !== null &&
+      normalized.displayId === addedDisplay.id
+    ) {
+      return normalized.bounds;
+    }
+    if (boundsIntersectDisplay(normalized.bounds, addedDisplay.bounds)) {
+      return normalized.bounds;
     }
   }
   return null;
@@ -121,6 +152,10 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   }
 
   let boundsAtDisplayRemoval = null;
+  // Id of the display `boundsAtDisplayRemoval` was captured for, so the
+  // snapshot can still be matched when that display re-appears with changed
+  // bounds (DPI/resolution/topology change).
+  let boundsAtDisplayRemovalDisplayId = null;
   let rememberedSecondaryBounds = null;
   let rememberedDisplayId = null;
   let pendingTeardownMove = null;
@@ -216,6 +251,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
               rememberedDisplayId = null;
               pendingTeardownMove = null;
               boundsAtDisplayRemoval = null;
+              boundsAtDisplayRemovalDisplayId = null;
               teardownSnapshotAt = null;
               return;
             }
@@ -250,6 +286,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         // the primary display, so a later "display-added" must not drag it
         // back to the old geometry.
         boundsAtDisplayRemoval = null;
+        boundsAtDisplayRemovalDisplayId = null;
         teardownSnapshotAt = null;
         return;
       }
@@ -262,6 +299,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       // already fired, so dropping the snapshot here can never lose a pending
       // recovery.
       boundsAtDisplayRemoval = null;
+      boundsAtDisplayRemovalDisplayId = null;
       teardownSnapshotAt = null;
       rememberedSecondaryBounds = bounds;
       rememberedDisplayId = display.id;
@@ -280,6 +318,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         // The OS relocated the window to the primary before this removal event
         // fired: restore the pre-relocation placement on the removed display.
         boundsAtDisplayRemoval = pendingTeardownMove.bounds;
+        boundsAtDisplayRemovalDisplayId = pendingTeardownMove.displayId;
         // Trailing events of the same relocation burst (e.g. a paired
         // "resize" after this removal) must not clear the promoted snapshot;
         // stamp the promotion so rememberWindowPlacement can tell burst
@@ -323,6 +362,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       return;
     }
     boundsAtDisplayRemoval = currentBounds;
+    boundsAtDisplayRemovalDisplayId = oldDisplay.id;
     teardownSnapshotAt = Date.now();
   };
 
@@ -412,8 +452,20 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         currentBounds,
         // The removal-time snapshot is the most accurate; the continuously
         // tracked placement covers the case where the OS relocated the window
-        // before the removal event fired.
-        candidates: [boundsAtDisplayRemoval, rememberedSecondaryBounds],
+        // before the removal event fired. Each candidate carries the id of
+        // the display it was remembered for so a returning display with
+        // changed bounds (DPI/resolution/topology) is still matched and the
+        // old geometry gets clamped into the new bounds below.
+        candidates: [
+          boundsAtDisplayRemoval && {
+            bounds: boundsAtDisplayRemoval,
+            displayId: boundsAtDisplayRemovalDisplayId,
+          },
+          rememberedSecondaryBounds && {
+            bounds: rememberedSecondaryBounds,
+            displayId: rememberedDisplayId,
+          },
+        ],
       });
       if (!restored) return;
       // The removal-time snapshot is only valid for the recovery it was taken
@@ -422,6 +474,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       // the user's most recent placement.
       if (restored === boundsAtDisplayRemoval) {
         boundsAtDisplayRemoval = null;
+        boundsAtDisplayRemovalDisplayId = null;
         teardownSnapshotAt = null;
       }
       const clamped = clampBoundsToDisplay(restored, display?.bounds);
@@ -480,6 +533,7 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       win.removeListener?.("leave-full-screen", applyPendingRecovery);
     } catch {}
     boundsAtDisplayRemoval = null;
+    boundsAtDisplayRemovalDisplayId = null;
     rememberedSecondaryBounds = null;
     rememberedDisplayId = null;
     pendingTeardownMove = null;

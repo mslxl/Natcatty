@@ -145,6 +145,29 @@ test("pickDisplayRecoveryBounds ignores candidates on other displays", () => {
   assert.equal(restored, null);
 });
 
+test("pickDisplayRecoveryBounds matches a candidate by display identity when bounds changed", () => {
+  // The display came back with different bounds (e.g. DPI/resolution or
+  // topology change): the remembered geometry no longer intersects it, but
+  // the candidate is still valid because it was remembered for this display.
+  const restored = pickDisplayRecoveryBounds({
+    addedDisplay: { id: 2, bounds: { x: 1920, y: 0, width: 1024, height: 768 } },
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    candidates: [{ bounds: { x: 2000, y: 100, width: 1200, height: 800 }, displayId: 2 }],
+  });
+  assert.deepEqual(restored, { x: 2000, y: 100, width: 1200, height: 800 });
+});
+
+test("pickDisplayRecoveryBounds does not match a candidate remembered for another display", () => {
+  const restored = pickDisplayRecoveryBounds({
+    addedDisplay: { id: 3, bounds: { x: 1920, y: 0, width: 1024, height: 768 } },
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    // Non-intersecting bounds remembered for a different display id: neither
+    // the identity nor the geometry matches, so nothing is restored.
+    candidates: [{ bounds: { x: 5000, y: 5000, width: 400, height: 300 }, displayId: 2 }],
+  });
+  assert.equal(restored, null);
+});
+
 test("clampBoundsToDisplay keeps the restored window fully visible", () => {
   const clamped = clampBoundsToDisplay(
     { x: 3000, y: -200, width: 3000, height: 2000 },
@@ -175,6 +198,29 @@ test("attachDisplayRecovery moves the window back after lock/unlock display chur
 
   assert.equal(win.setBoundsCalls.length, 1);
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery restores the placement when the display returns with changed bounds", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+
+  // The window is tracked on the secondary display (never moved, so only the
+  // seeded placement exists).
+  // Lock: the secondary display disappears.
+  screen.emit("display-removed", {}, SECONDARY);
+
+  // Unlock: the display comes back with different bounds (DPI/resolution or
+  // topology change), and the window still sits on the secondary's old
+  // coordinates, which no longer intersect the new ones. The remembered
+  // placement must still be restored (clamped into the new bounds).
+  const changedSecondary = { id: SECONDARY.id, bounds: { x: -1024, y: 0, width: 1024, height: 768 } };
+  screen.emit("display-added", {}, changedSecondary);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: -1024, y: 0, width: 1024, height: 768 });
 });
 
 test("attachDisplayRecovery clears the remembered placement when the user moves to the primary", () => {
