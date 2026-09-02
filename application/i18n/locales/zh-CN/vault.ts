@@ -521,6 +521,7 @@ export const zhCNVaultMessages: Messages = {
   'terminal.dragDrop.errorMessage': '处理拖放文件失败',
   'terminal.dragDrop.destinationUnknown': '无法确定当前终端目录。请启用目录跟踪，或先打开 SFTP 选择上传目录。',
   'terminal.dragDrop.uploadCancelled': '终端连接已变化或无法继续复用，本次上传已取消。请重新连接后再次拖放文件。',
+  'terminal.dragDrop.needsSudoElevation': '当前目录登录用户无法写入。请在主机设置中开启 Sudo 提权，或回到用户目录后再拖放。',
   'terminal.search.placeholder': '搜索…',
   'terminal.search.noResults': '无结果',
   'terminal.search.prevMatch': '上一个匹配 (Shift+Enter)',

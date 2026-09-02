@@ -15,6 +15,10 @@ import {
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 import type { Host, TerminalSession } from "../../../types";
 import { resolveSftpReuseSourceSessionId } from "../../../application/state/terminalConnectionReuse";
+import {
+  resolveTerminalDropSftpHost,
+  TerminalDropNeedsSudoError,
+} from "../../../domain/sftpDropElevation";
 import { toast } from "../../ui/toast";
 import {
   extractRootPathsFromDropEntries,
@@ -72,10 +76,37 @@ export function resolveTerminalDropErrorMessage(
   if (error instanceof ActiveTerminalCwdUnavailableError) {
     return t("terminal.dragDrop.destinationUnknown");
   }
+  if (error instanceof TerminalDropNeedsSudoError) {
+    return t("terminal.dragDrop.needsSudoElevation");
+  }
   if (error instanceof Error && error.message === "No files to upload") {
     return t("terminal.dragDrop.noFiles");
   }
   return t("terminal.dragDrop.errorMessage");
+}
+
+async function openSftpForTerminalDrop({
+  dropEntries,
+  host,
+  onOpenSftp,
+  resolveSftpInitialPath,
+  sessionId,
+}: {
+  dropEntries: DropEntry[];
+  host: Host;
+  onOpenSftp: NonNullable<UseTerminalDragDropOptions["onOpenSftp"]>;
+  resolveSftpInitialPath: UseTerminalDragDropOptions["resolveSftpInitialPath"];
+  sessionId: string;
+}): Promise<void> {
+  const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
+  const uploadHost = resolveTerminalDropSftpHost(host, initialPath);
+  onOpenSftp(
+    uploadHost,
+    initialPath,
+    dropEntries,
+    sessionId,
+    resolveSftpReuseSourceSessionId(host, sessionId),
+  );
 }
 
 export async function resolveTerminalDropUploadInitialPath(
@@ -206,14 +237,13 @@ export async function handleTerminalDropEntries({
     && onOpenSftp
     && supportsZmodemDragDropSftpFallback(host)
   ) {
-    const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-    onOpenSftp(
-      host,
-      initialPath,
+    await openSftpForTerminalDrop({
       dropEntries,
+      host,
+      onOpenSftp,
+      resolveSftpInitialPath,
       sessionId,
-      resolveSftpReuseSourceSessionId(host, sessionId),
-    );
+    });
   } else if (supportsZmodemTerminalDragDrop(host, isNetworkDevice)) {
     const files = await buildZmodemDragDropFiles(dropEntries);
     if (files.length === 0) {
@@ -260,24 +290,24 @@ export async function handleTerminalDropEntries({
     const fallbackResult = rzMissingWatcher ? await rzMissingWatcher.promise : "detected";
     if (fallbackResult === "missing" || fallbackResult === "timeout") {
       terminalBackend.cancelZmodem?.(sessionId, { interrupt: fallbackResult === "timeout" });
-      const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-      onOpenSftp?.(
-        host,
-        initialPath,
-        dropEntries,
-        sessionId,
-        resolveSftpReuseSourceSessionId(host, sessionId),
-      );
+      if (onOpenSftp) {
+        await openSftpForTerminalDrop({
+          dropEntries,
+          host,
+          onOpenSftp,
+          resolveSftpInitialPath,
+          sessionId,
+        });
+      }
     }
   } else if (onOpenSftp) {
-    const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-    onOpenSftp(
-      host,
-      initialPath,
+    await openSftpForTerminalDrop({
       dropEntries,
+      host,
+      onOpenSftp,
+      resolveSftpInitialPath,
       sessionId,
-      resolveSftpReuseSourceSessionId(host, sessionId),
-    );
+    });
   }
 }
 

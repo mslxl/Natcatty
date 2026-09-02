@@ -521,6 +521,7 @@ export const zhTWVaultMessages: Messages = {
   'terminal.dragDrop.errorMessage': '處理拖放檔案失敗',
   'terminal.dragDrop.destinationUnknown': '無法確定目前終端目錄。請啟用目錄追蹤，或先開啟 SFTP 選擇上傳目錄。',
   'terminal.dragDrop.uploadCancelled': '終端連線已變更或無法繼續重用，本次上傳已取消。請重新連線後再次拖放檔案。',
+  'terminal.dragDrop.needsSudoElevation': '目前目錄登入使用者無法寫入。請在主機設定中開啟 Sudo 提權，或回到使用者目錄後再拖放。',
   'terminal.search.placeholder': '搜尋…',
   'terminal.search.noResults': '無結果',
   'terminal.search.prevMatch': '上一個相符 (Shift+Enter)',

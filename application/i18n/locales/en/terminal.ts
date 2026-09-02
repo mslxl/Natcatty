@@ -119,6 +119,7 @@ export const enTerminalMessages: Messages = {
   'terminal.dragDrop.errorMessage': 'Failed to process dropped files',
   'terminal.dragDrop.destinationUnknown': 'Could not determine the current terminal folder. Enable directory tracking, or open SFTP and choose an upload folder first.',
   'terminal.dragDrop.uploadCancelled': 'The upload was cancelled because the terminal connection changed or could not be reused. Drop the files again after reconnecting.',
+  'terminal.dragDrop.needsSudoElevation': 'This folder is not writable as the login user. Enable Sudo elevation in host settings, or go back to your user directory and drop again.',
   'terminal.search.placeholder': 'Search...',
   'terminal.search.noResults': 'No results',
   'terminal.search.prevMatch': 'Previous match (Shift+Enter)',
