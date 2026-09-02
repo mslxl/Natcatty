@@ -212,10 +212,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
       const host = effectiveHostsRef.current.find((candidate) => candidate.id === request.hostId);
       if (!host) return;
       const current = sftpRef.current;
-      // First SFTP visit already auto-connects the left pane to local. Opening
-      // from the host list should only attach the host on the right so we do
-      // not race a second local tab into existence.
-      if (current.leftTabs.tabs.length === 0) {
+      // First SFTP visit auto-connects the empty left pane to local. Only skip
+      // the planner then; if the user later closes every left tab, left is
+      // empty again and Open SFTP must restore local-left / host-right.
+      const firstVisitBothEmpty =
+        current.leftTabs.tabs.length === 0 && current.rightTabs.tabs.length === 0;
+      if (firstVisitBothEmpty) {
         void current.connect("right", host);
         return;
       }

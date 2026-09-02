@@ -10,6 +10,12 @@ test("main SftpView keeps browse sessions across top-tab switches", () => {
   assert.doesNotMatch(source, /interactive:\s*isActive/);
 });
 
+test("Open SFTP only skips the dual-pane planner on the first empty visit", () => {
+  const source = readFileSync(new URL("./SftpView.tsx", import.meta.url), "utf8");
+  assert.match(source, /firstVisitBothEmpty/);
+  assert.match(source, /applyDualPaneSftpOpen/);
+});
+
 test("SFTP magnification overlays one side while preserving the original two-pane geometry", async () => {
   const { resolveTwoPaneMagnificationStyle } = await import("../domain/paneMagnification.ts");
 
