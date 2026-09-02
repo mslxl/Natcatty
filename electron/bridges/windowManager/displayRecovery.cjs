@@ -79,6 +79,17 @@ function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) 
   return null;
 }
 
+function boundsEqual(a, b) {
+  return Boolean(
+    a &&
+    b &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.width === b.width &&
+    a.height === b.height
+  );
+}
+
 /**
  * Clamp remembered bounds so the restored window stays fully visible on the
  * target display (size is capped at the display size, position is pulled
@@ -120,7 +131,10 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   let teardownRelocationAt = null;
   // Recovery computed while the window was maximized/full-screen (when
   // setBounds would be wrong or would clobber the maximized state) is held
-  // here and applied once the window returns to its normal state.
+  // here and applied once the window returns to its normal state. `bounds`
+  // is the restore target, `displayId` the display it belongs to, and
+  // `fromBounds` the window's placement at deferral time — if the window has
+  // been re-placed since, the user wins and the recovery is dropped.
   let pendingRecovery = null;
   let attached = true;
 
@@ -291,18 +305,24 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     try {
       if (isMaximizedOrFullScreen()) return;
       const { bounds, displayId } = pendingRecovery;
-      pendingRecovery = null;
-      if (!isFiniteBounds(bounds)) return;
+      if (!isFiniteBounds(bounds)) {
+        pendingRecovery = null;
+        return;
+      }
       let targetBounds = bounds;
       if (displayId !== null && displayId !== undefined) {
         const display = (screen.getAllDisplays?.() || []).find(
           (candidate) => candidate.id === displayId
         );
         // The display disappeared again before the window left the
-        // maximized/full-screen state: drop the stale recovery.
+        // maximized/full-screen state: keep the recovery queued so the next
+        // "display-added" event can still apply it (see onDisplayAdded). It
+        // is the only remaining recovery candidate here — the removal-time
+        // snapshot was already consumed when it was deferred.
         if (!display) return;
         targetBounds = clampBoundsToDisplay(bounds, display.bounds) || bounds;
       }
+      pendingRecovery = null;
       win.setBounds(targetBounds);
     } catch {
       // Never let display churn break the window.
@@ -314,6 +334,50 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     if (!attached) return;
     try {
       const currentBounds = copyBounds();
+      // A recovery deferred while the window was maximized/full-screen may
+      // still be queued because its target display vanished again before the
+      // window left that state (applyPendingRecovery keeps it queued in that
+      // case). When the target display re-appears, apply the deferred
+      // recovery instead of letting it sit forever — unless the user has
+      // re-placed the window in the meantime, in which case the user wins.
+      if (
+        pendingRecovery &&
+        display &&
+        isFiniteBounds(display.bounds) &&
+        pendingRecovery.displayId === display.id
+      ) {
+        if (boundsIntersectDisplay(currentBounds, display.bounds)) {
+          // The window already sits on the re-added display: nothing to do.
+          pendingRecovery = null;
+          return;
+        }
+        if (
+          !isFiniteBounds(currentBounds) ||
+          !isFiniteBounds(pendingRecovery.fromBounds) ||
+          !boundsEqual(currentBounds, pendingRecovery.fromBounds)
+        ) {
+          // The user deliberately re-placed the window while the target
+          // display was absent: drop the stale deferred recovery and fall
+          // through to the candidate-based recovery below.
+          pendingRecovery = null;
+        } else {
+          const requeued = clampBoundsToDisplay(pendingRecovery.bounds, display.bounds);
+          pendingRecovery = null;
+          if (requeued) {
+            if (isMaximizedOrFullScreen()) {
+              // Still maximized/full-screen: defer once more.
+              pendingRecovery = {
+                bounds: requeued,
+                displayId: display.id,
+                fromBounds: currentBounds,
+              };
+              return;
+            }
+            win.setBounds(requeued);
+          }
+          return;
+        }
+      }
       const restored = pickDisplayRecoveryBounds({
         addedDisplay: display,
         currentBounds,
@@ -335,7 +399,13 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
       if (isMaximizedOrFullScreen()) {
         // setBounds would clobber the maximized/full-screen state (or be
         // ignored): defer until the window returns to its normal state.
-        pendingRecovery = { bounds: clamped, displayId: display?.id ?? null };
+        // `fromBounds` records the placement at deferral time so a later
+        // re-apply can tell an untouched window from a user-replaced one.
+        pendingRecovery = {
+          bounds: clamped,
+          displayId: display?.id ?? null,
+          fromBounds: currentBounds,
+        };
         return;
       }
       win.setBounds(clamped);

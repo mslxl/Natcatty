@@ -416,6 +416,67 @@ test("attachDisplayRecovery defers recovery while maximized and applies it on un
   assert.deepEqual(win.setBoundsCalls[0], { x: 2000, y: 100, width: 1400, height: 900 });
 });
 
+test("attachDisplayRecovery keeps a deferred recovery queued when its display vanishes again", () => {
+  // The deferred recovery is the only remaining candidate: the removal-time
+  // snapshot was consumed when the recovery was deferred. If the display
+  // vanishes again before the window leaves the maximized state and the user
+  // unmaximizes while it is still gone, the next re-add must still restore.
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  win.maximized = true;
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen, teardownGraceMs: 0 });
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  // The OS relocates the maximized window to the primary display; the
+  // re-added display defers the recovery because the window stays maximized.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // The display disappears once more while the window is still maximized.
+  screen.emit("display-removed", {}, SECONDARY);
+  // A later edit while the display stays disconnected supersedes the
+  // tracked placement (past the grace window), leaving the deferred
+  // recovery as the only remaining candidate.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  // The user unmaximizes while the display is absent: the deferred recovery
+  // must survive instead of being discarded.
+  win.unmaximize();
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // When the display returns, the deferred recovery is finally applied.
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2000, y: 100, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery drops a deferred recovery when the user re-placed the window", () => {
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  win.maximized = true;
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen, teardownGraceMs: 0 });
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+  screen.emit("display-removed", {}, SECONDARY);
+  win.unmaximize();
+
+  // While the display is absent the user deliberately moves the window
+  // somewhere else on the primary display: the stale deferred recovery must
+  // not drag it back when the display re-appears.
+  win.bounds = { x: 40, y: 60, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("attachDisplayRecovery does not claim a window split evenly across the removed display", () => {
   // Exactly half of the window sits on the primary display and half on the
   // removed secondary one (the 1920 boundary splits it down the middle): the
