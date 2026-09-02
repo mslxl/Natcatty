@@ -3744,6 +3744,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isDraggingOver,
   } = useTerminalDragDrop({
     host,
+    resolvedSudoPassword: resolvedSudoAutofillPassword,
     isLocalConnection,
     isNetworkDevice,
     onOpenSftp,

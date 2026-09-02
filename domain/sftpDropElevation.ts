@@ -31,28 +31,30 @@ export function posixPathNeedsLoginUserElevation(
   return path === "/root" || path.startsWith("/root/");
 }
 
-export function hostHasUsableSftpSudoPassword(
-  host: Pick<Host, "password">,
+export function hasUsableSftpSudoPassword(
+  password: string | undefined,
 ): boolean {
-  const password = sanitizeCredentialValue(host.password);
-  return typeof password === "string" && password.length > 0;
+  const value = sanitizeCredentialValue(password);
+  return typeof value === "string" && value.length > 0;
 }
 
 export function canElevateSftpForTerminalDrop(
-  host: Pick<Host, "sftpSudo" | "sftpFileProtocol" | "password">,
+  host: Pick<Host, "sftpSudo" | "sftpFileProtocol">,
+  resolvedPassword?: string,
 ): boolean {
   if (host.sftpFileProtocol === "scp") return false;
   if (host.sftpSudo) return true;
-  return hostHasUsableSftpSudoPassword(host);
+  return hasUsableSftpSudoPassword(resolvedPassword);
 }
 
 export function resolveTerminalDropSftpHost<T extends Host>(
   host: T,
   cwd: string,
+  resolvedPassword?: string,
 ): T {
   if (!posixPathNeedsLoginUserElevation(cwd, host.username)) return host;
   if (host.sftpSudo) return host;
-  if (!canElevateSftpForTerminalDrop(host)) {
+  if (!canElevateSftpForTerminalDrop(host, resolvedPassword)) {
     throw new TerminalDropNeedsSudoError();
   }
   return { ...host, sftpSudo: true };

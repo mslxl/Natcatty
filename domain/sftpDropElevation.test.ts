@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Host } from "./models";
 import {
   canElevateSftpForTerminalDrop,
-  hostHasUsableSftpSudoPassword,
+  hasUsableSftpSudoPassword,
   normalizePosixAbsolutePath,
   posixPathNeedsLoginUserElevation,
   resolveTerminalDropSftpHost,
@@ -44,31 +44,37 @@ test("posixPathNeedsLoginUserElevation only flags /root for non-root logins", ()
   assert.equal(posixPathNeedsLoginUserElevation("/root", undefined), false);
 });
 
-test("hostHasUsableSftpSudoPassword ignores missing and encrypted placeholders", () => {
-  assert.equal(hostHasUsableSftpSudoPassword({ password: "secret" }), true);
-  assert.equal(hostHasUsableSftpSudoPassword({ password: "" }), false);
-  assert.equal(hostHasUsableSftpSudoPassword({}), false);
-  assert.equal(hostHasUsableSftpSudoPassword({ password: encryptedPassword }), false);
+test("hasUsableSftpSudoPassword ignores missing and encrypted placeholders", () => {
+  assert.equal(hasUsableSftpSudoPassword("secret"), true);
+  assert.equal(hasUsableSftpSudoPassword(""), false);
+  assert.equal(hasUsableSftpSudoPassword(undefined), false);
+  assert.equal(hasUsableSftpSudoPassword(encryptedPassword), false);
 });
 
 test("canElevateSftpForTerminalDrop rejects SCP and missing passwords", () => {
   assert.equal(canElevateSftpForTerminalDrop({ sftpSudo: true }), true);
-  assert.equal(canElevateSftpForTerminalDrop({ password: "secret" }), true);
-  assert.equal(canElevateSftpForTerminalDrop({ sftpFileProtocol: "scp", password: "secret" }), false);
+  assert.equal(canElevateSftpForTerminalDrop({}, "secret"), true);
+  assert.equal(canElevateSftpForTerminalDrop({ sftpFileProtocol: "scp" }, "secret"), false);
   assert.equal(canElevateSftpForTerminalDrop({}), false);
 });
 
 test("resolveTerminalDropSftpHost clones sudo only for unelevated /root drops", () => {
-  const withPassword = { ...host, password: "secret" };
-  const elevated = resolveTerminalDropSftpHost(withPassword, "/root");
+  const elevated = resolveTerminalDropSftpHost(host, "/root", "secret");
   assert.equal(elevated.sftpSudo, true);
-  assert.notEqual(elevated, withPassword);
+  assert.notEqual(elevated, host);
 
   const alreadySudo = { ...host, sftpSudo: true };
   assert.equal(resolveTerminalDropSftpHost(alreadySudo, "/root"), alreadySudo);
 
-  const userHome = { ...host, password: "secret" };
-  assert.equal(resolveTerminalDropSftpHost(userHome, "/home/alice"), userHome);
+  assert.equal(resolveTerminalDropSftpHost(host, "/home/alice", "secret"), host);
+});
+
+test("resolveTerminalDropSftpHost uses a resolved identity password when host.password is empty", () => {
+  const identityHost = { ...host, identityId: "id-1", password: undefined };
+  const elevated = resolveTerminalDropSftpHost(identityHost, "/root", "identity-secret");
+  assert.equal(elevated.sftpSudo, true);
+  assert.equal(elevated.password, undefined);
+  assert.equal(elevated.identityId, "id-1");
 });
 
 test("resolveTerminalDropSftpHost asks the user to enable sudo when no password is saved", () => {
@@ -77,7 +83,7 @@ test("resolveTerminalDropSftpHost asks the user to enable sudo when no password 
     TerminalDropNeedsSudoError,
   );
   assert.throws(
-    () => resolveTerminalDropSftpHost({ ...host, sftpFileProtocol: "scp", password: "secret" }, "/root"),
+    () => resolveTerminalDropSftpHost({ ...host, sftpFileProtocol: "scp" }, "/root", "secret"),
     TerminalDropNeedsSudoError,
   );
 });
