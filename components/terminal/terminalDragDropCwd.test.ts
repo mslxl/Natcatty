@@ -563,6 +563,29 @@ test("remote SSH folder drop to /root reuses the saved host password for sudo SF
   assert.equal(host.sftpSudo, undefined);
 });
 
+test("remote SSH folder drop to /root uses a resolved identity username over a stale host username", async () => {
+  let openedHost: Host | undefined;
+
+  await handleTerminalDropEntries({
+    dropEntries: [{ file: null, relativePath: "docs", isDirectory: true }],
+    host: { ...host, username: "root", password: "secret" },
+    resolvedLoginUsername: "alice",
+    resolvedSudoPassword: "secret",
+    isLocalConnection: false,
+    onOpenSftp: (nextHost) => {
+      openedHost = nextHost;
+    },
+    resolveSftpInitialPath: async () => "/root",
+    scrollToBottomAfterProgrammaticInput: () => {},
+    sessionId: "session-1",
+    sessionRef: { current: "session-1" },
+    terminalBackend: { writeToSession: () => {} },
+    termRef: { current: null },
+  });
+
+  assert.equal(openedHost?.sftpSudo, true);
+});
+
 test("remote SSH folder drop to /root uses a resolved identity password", async () => {
   let openedHost: Host | undefined;
 

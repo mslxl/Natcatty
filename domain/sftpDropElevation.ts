@@ -50,11 +50,11 @@ export function canElevateSftpForTerminalDrop(
 export function resolveTerminalDropSftpHost<T extends Host>(
   host: T,
   cwd: string,
-  resolvedPassword?: string,
+  resolved?: { password?: string; username?: string },
 ): T {
-  if (!posixPathNeedsLoginUserElevation(cwd, host.username)) return host;
+  if (!posixPathNeedsLoginUserElevation(cwd, resolved?.username ?? host.username)) return host;
   if (host.sftpSudo) return host;
-  if (!canElevateSftpForTerminalDrop(host, resolvedPassword)) {
+  if (!canElevateSftpForTerminalDrop(host, resolved?.password)) {
     throw new TerminalDropNeedsSudoError();
   }
   return { ...host, sftpSudo: true };

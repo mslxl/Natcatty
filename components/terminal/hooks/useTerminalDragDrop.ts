@@ -29,6 +29,8 @@ interface UseTerminalDragDropOptions {
   host: Host;
   /** Password already resolved through host auth (host or Keychain identity). */
   resolvedSudoPassword?: string;
+  /** Login username already resolved through host auth (host or Keychain identity). */
+  resolvedLoginUsername?: string;
   isLocalConnection: boolean;
   isNetworkDevice?: boolean;
   onOpenSftp?: TerminalProps["onOpenSftp"];
@@ -92,6 +94,7 @@ async function openSftpForTerminalDrop({
   host,
   onOpenSftp,
   resolveSftpInitialPath,
+  resolvedLoginUsername,
   resolvedSudoPassword,
   sessionId,
 }: {
@@ -99,15 +102,15 @@ async function openSftpForTerminalDrop({
   host: Host;
   onOpenSftp: NonNullable<UseTerminalDragDropOptions["onOpenSftp"]>;
   resolveSftpInitialPath: UseTerminalDragDropOptions["resolveSftpInitialPath"];
+  resolvedLoginUsername?: string;
   resolvedSudoPassword?: string;
   sessionId: string;
 }): Promise<void> {
   const initialPath = await resolveTerminalDropUploadInitialPath(resolveSftpInitialPath);
-  const uploadHost = resolveTerminalDropSftpHost(
-    host,
-    initialPath,
-    resolvedSudoPassword ?? host.password,
-  );
+  const uploadHost = resolveTerminalDropSftpHost(host, initialPath, {
+    password: resolvedSudoPassword ?? host.password,
+    username: resolvedLoginUsername ?? host.username,
+  });
   onOpenSftp(
     uploadHost,
     initialPath,
@@ -194,6 +197,7 @@ export async function handleTerminalDropEntries({
   isNetworkDevice = false,
   onOpenSftp,
   resolveSftpInitialPath,
+  resolvedLoginUsername,
   resolvedSudoPassword,
   scrollToBottomAfterProgrammaticInput,
   sessionId,
@@ -205,6 +209,7 @@ export async function handleTerminalDropEntries({
 }: Pick<
   UseTerminalDragDropOptions,
   | "host"
+  | "resolvedLoginUsername"
   | "resolvedSudoPassword"
   | "isLocalConnection"
   | "isNetworkDevice"
@@ -252,6 +257,7 @@ export async function handleTerminalDropEntries({
       host,
       onOpenSftp,
       resolveSftpInitialPath,
+      resolvedLoginUsername,
       resolvedSudoPassword,
       sessionId,
     });
@@ -307,6 +313,7 @@ export async function handleTerminalDropEntries({
           host,
           onOpenSftp,
           resolveSftpInitialPath,
+          resolvedLoginUsername,
           resolvedSudoPassword,
           sessionId,
         });
@@ -318,6 +325,7 @@ export async function handleTerminalDropEntries({
       host,
       onOpenSftp,
       resolveSftpInitialPath,
+      resolvedLoginUsername,
       resolvedSudoPassword,
       sessionId,
     });
@@ -326,6 +334,7 @@ export async function handleTerminalDropEntries({
 
 export function useTerminalDragDrop({
   host,
+  resolvedLoginUsername,
   resolvedSudoPassword,
   isLocalConnection,
   isNetworkDevice = false,
@@ -390,6 +399,7 @@ export function useTerminalDragDrop({
       await handleTerminalDropEntries({
         dropEntries,
         host,
+        resolvedLoginUsername,
         resolvedSudoPassword,
         isLocalConnection,
         isNetworkDevice,
