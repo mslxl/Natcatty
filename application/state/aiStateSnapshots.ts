@@ -10,6 +10,7 @@ import type {
   AIPermissionMode,
   AIToolIntegrationMode,
 } from '../../infrastructure/ai/types';
+import type { ProviderContinuationOptions } from '../../infrastructure/ai/providerContinuation';
 import {
   bumpDraftMutationVersionState,
   bumpDraftUploadGenerationState,
@@ -112,10 +113,7 @@ export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
 
   if (nextSessionCleanup.sessions !== currentSessions) {
     setLatestAISessionsSnapshot(nextSessionCleanup.sessions);
-    localStorageAdapter.write(
-      STORAGE_KEY_AI_SESSIONS,
-      pruneSessionsForStorage(nextSessionCleanup.sessions),
-    );
+    writeSessionsForStorage(nextSessionCleanup.sessions);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
   }
 
@@ -181,6 +179,66 @@ export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
 const MAX_STORED_SESSIONS = 50;
 /** Maximum number of messages per session when persisting to localStorage. */
 const MAX_SESSION_MESSAGES = 200;
+/**
+ * Byte budget for the serialized sessions JSON. The localStorage quota is
+ * ~5-10 MB across all keys, and Responses reasoning ciphertext can add tens
+ * of KB per turn, so keep the sessions blob well under the quota with
+ * headroom for the rest of the app's storage keys.
+ */
+const MAX_SESSIONS_JSON_BYTES = 2 * 1024 * 1024;
+/** Retry budgets used when the primary budget still fails to persist. */
+const RETRY_SESSIONS_JSON_BYTES = [1024 * 1024, 512 * 1024] as const;
+
+/**
+ * Remove `reasoningEncryptedContent` ciphertext from a message's persisted
+ * continuation. The ciphertext exists so stateless Responses turns can replay
+ * prior reasoning items; it is also by far the largest per-message payload.
+ * When storage pressure forces it, dropping the ciphertext keeps the visible
+ * conversation intact at the cost of reasoning replay for affected messages.
+ */
+function stripReasoningEncryptedContent(
+  options: ProviderContinuationOptions,
+): ProviderContinuationOptions | undefined {
+  const hasCiphertext = Object.values(options).some(
+    providerOptions => typeof providerOptions?.reasoningEncryptedContent === 'string',
+  );
+  if (!hasCiphertext) return options;
+  const stripped: ProviderContinuationOptions = {};
+  for (const [provider, providerOptions] of Object.entries(options)) {
+    const rest = { ...providerOptions };
+    delete rest.reasoningEncryptedContent;
+    if (Object.keys(rest).length) stripped[provider] = rest;
+  }
+  return Object.keys(stripped).length ? stripped : undefined;
+}
+
+function stripEncryptedReasoningFromSessions(sessions: AISession[]): AISession[] {
+  return sessions.map(session => {
+    let changed = false;
+    const messages = session.messages.map(message => {
+      const continuation = message.providerContinuation;
+      if (!continuation?.reasoningParts) return message;
+      let partsChanged = false;
+      const parts = continuation.reasoningParts.map(part => {
+        if (!part.providerOptions) return part;
+        const providerOptions = stripReasoningEncryptedContent(part.providerOptions);
+        if (providerOptions === part.providerOptions) return part;
+        partsChanged = true;
+        return providerOptions ? { text: part.text, providerOptions } : { text: part.text };
+      });
+      if (!partsChanged) return message;
+      changed = true;
+      return {
+        ...message,
+        providerContinuation: {
+          ...continuation,
+          reasoningParts: parts,
+        },
+      };
+    });
+    return changed ? { ...session, messages } : session;
+  });
+}
 
 /**
  * Prune sessions before writing to localStorage to prevent hitting the
@@ -200,6 +258,54 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
     }
     return s;
   });
+}
+
+/**
+ * Serialize sessions for localStorage under a byte budget, escalating pruning
+ * as needed. Returns the JSON to persist plus the (possibly) further-pruned
+ * sessions that JSON represents.
+ */
+export function serializeSessionsForStorage(
+  sessions: AISession[],
+  budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
+): { json: string; sessions: AISession[] } {
+  let pruned = pruneSessionsForStorage(sessions);
+  let json = JSON.stringify(pruned);
+  // Escalation 1: drop the oldest sessions (already sorted by updatedAt desc)
+  // until the payload fits. The active session is the newest, so its replay
+  // context survives as long as possible.
+  while (json.length > budgetBytes && pruned.length > 1) {
+    pruned = pruned.slice(0, -1);
+    json = JSON.stringify(pruned);
+  }
+  // Escalation 2: strip encrypted reasoning ciphertext, the largest payloads,
+  // before letting a single oversized session fall through to memory-only.
+  if (json.length > budgetBytes) {
+    pruned = stripEncryptedReasoningFromSessions(pruned);
+    json = JSON.stringify(pruned);
+  }
+  return { json, sessions: pruned };
+}
+
+/**
+ * Persist sessions to localStorage with byte-budgeted pruning and retries.
+ * Returns true when the write succeeded; a false result means the payload
+ * could not be persisted even after escalation (it stays memory-only).
+ */
+export function writeSessionsForStorage(sessions: AISession[]): boolean {
+  const { json } = serializeSessionsForStorage(sessions);
+  if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, json)) return true;
+  // Other keys may be consuming the shared quota: retry with progressively
+  // tighter budgets so at least the most recent sessions survive a restart.
+  for (const retryBudget of RETRY_SESSIONS_JSON_BYTES) {
+    const retry = serializeSessionsForStorage(sessions, retryBudget);
+    if (retry.json.length >= json.length) continue;
+    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, retry.json)) return true;
+  }
+  console.warn(
+    '[AIState] Failed to persist AI sessions within the storage quota; recent chat history may not survive a restart.',
+  );
+  return false;
 }
 
 export let latestAISessionsSnapshot: AISession[] | null = null;
