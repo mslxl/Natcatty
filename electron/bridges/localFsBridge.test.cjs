@@ -338,6 +338,41 @@ test("collectLocalTreeEntries does not follow a directory symlink cycle", async 
   }
 });
 
+test("collectLocalTreeEntries skips a symlink back to a non-root ancestor", async (t) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-tree-nested-cycle-"));
+  const selected = path.join(root, "project");
+  const nested = path.join(selected, "a", "b");
+  await fs.promises.mkdir(nested, { recursive: true });
+  await fs.promises.writeFile(path.join(selected, "a", "keep.txt"), "keep");
+  try {
+    await fs.promises.symlink(
+      path.join(selected, "a"),
+      path.join(nested, "back"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    await fs.promises.rm(root, { recursive: true, force: true });
+    t.skip(`symlink creation unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  try {
+    const entries = await Promise.race([
+      collectLocalTreeEntries(selected),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("local tree scan followed a nested ancestor symlink cycle")), 500)),
+    ]);
+    const loopRows = entries.filter((entry) => entry.relativePath.includes("/back/"));
+    assert.equal(loopRows.length, 0, "symlink to a non-root ancestor must not duplicate the ancestor subtree");
+    assert.equal(
+      entries.filter((entry) => entry.relativePath.endsWith("/back")).length,
+      0,
+      "cyclic directory links must be skipped instead of uploaded as files",
+    );
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("collectLocalTreeEntries counts a cyclic directory alias against the global budget", async (t) => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-tree-cycle-budget-"));
   const selected = path.join(root, "project");
