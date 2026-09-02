@@ -175,7 +175,9 @@ test("attachDisplayRecovery clears the remembered placement when the user moves 
   const win = createMockWindow({ ...secondaryBounds });
   const screen = createMockScreen();
 
-  attachDisplayRecovery({ win, screen });
+  // A deliberate user move happens well before any display churn, so the
+  // teardown grace window is disabled for this scenario.
+  attachDisplayRecovery({ win, screen, teardownGraceMs: 0 });
 
   // The user deliberately moves the window to the primary display while the
   // secondary display is still connected.
@@ -188,6 +190,31 @@ test("attachDisplayRecovery clears the remembered placement when the user moves 
   screen.emit("display-added", {}, SECONDARY);
 
   assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery preserves the fallback when the OS relocates the window before display-removed", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+
+  // User is working with the window on the secondary display: placement gets tracked.
+  win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // Teardown: Windows relocates the window to the primary display BEFORE
+  // Electron emits "display-removed" (the secondary is still connected when
+  // the relocation fires, so the move looks like a user move).
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+
+  // Unlock: the display comes back and the window must be restored.
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
 });
 
 test("attachDisplayRecovery leaves the window alone while maximized", () => {

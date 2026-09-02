@@ -16,6 +16,13 @@
  * already intersects the re-added display, nothing happens.
  */
 
+// A move to the primary display while the remembered secondary display is
+// still connected is ambiguous: it can be a deliberate user move, or the OS
+// relocating the window during teardown before Electron emits
+// "display-removed". If the remembered display is removed within this grace
+// window, treat the move as a teardown relocation and keep the snapshot.
+const DEFAULT_TEARDOWN_GRACE_MS = 2000;
+
 function isFiniteBounds(bounds) {
   return Boolean(
     bounds &&
@@ -82,7 +89,7 @@ function clampBoundsToDisplay(bounds, displayBounds) {
  * a non-primary display when that display re-appears. Returns a detach()
  * function that removes every listener this function registered.
  */
-function attachDisplayRecovery({ win, screen }) {
+function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN_GRACE_MS }) {
   if (!win || !screen || typeof screen.on !== "function") {
     return () => {};
   }
@@ -90,6 +97,7 @@ function attachDisplayRecovery({ win, screen }) {
   let boundsAtDisplayRemoval = null;
   let rememberedSecondaryBounds = null;
   let rememberedDisplayId = null;
+  let pendingTeardownMove = null;
   let attached = true;
 
   const isTrackable = () => {
@@ -120,17 +128,24 @@ function attachDisplayRecovery({ win, screen }) {
       if (!primary || !display) return;
       if (display.id === primary.id) {
         // The window is on the primary display now. If the remembered
-        // secondary display is still connected, the user deliberately moved
-        // the window off it: drop the stale snapshot so a later unplug or
-        // lock cycle cannot yank the window away from this placement.
-        // During teardown the OS also relocates the window to the primary,
-        // but in that case the remembered display is already gone from the
-        // display list, so the snapshot is kept for recovery.
+        // secondary display is still connected, this is either a deliberate
+        // user move or an OS teardown relocation that raced ahead of the
+        // "display-removed" event (the display list has not changed yet).
+        // The two are indistinguishable here, so drop the stale snapshot but
+        // stash it briefly: if the remembered display is removed within the
+        // grace window, the pre-relocation placement is still recoverable.
+        // When the remembered display is already gone from the display list,
+        // teardown has happened: keep the snapshot for recovery.
         if (rememberedDisplayId !== null) {
           const connected = screen.getAllDisplays?.() || [];
           if (!connected.some((candidate) => candidate.id === rememberedDisplayId)) {
             return;
           }
+          pendingTeardownMove = {
+            bounds: rememberedSecondaryBounds,
+            displayId: rememberedDisplayId,
+            at: Date.now(),
+          };
         }
         rememberedSecondaryBounds = null;
         rememberedDisplayId = null;
@@ -138,13 +153,27 @@ function attachDisplayRecovery({ win, screen }) {
       }
       rememberedSecondaryBounds = bounds;
       rememberedDisplayId = display.id;
+      pendingTeardownMove = null;
     } catch {
       // Screen queries can fail during display teardown; ignore.
     }
   };
 
-  const onDisplayRemoved = () => {
+  // Electron invokes "display-removed" listeners as (event, oldDisplay).
+  const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
+    if (
+      pendingTeardownMove &&
+      oldDisplay &&
+      oldDisplay.id === pendingTeardownMove.displayId &&
+      Date.now() - pendingTeardownMove.at < teardownGraceMs
+    ) {
+      // The OS relocated the window to the primary before this removal event
+      // fired: restore the pre-relocation placement on the removed display.
+      boundsAtDisplayRemoval = pendingTeardownMove.bounds;
+      pendingTeardownMove = null;
+      return;
+    }
     // Snapshot the bounds at removal time: if the OS has not relocated the
     // window yet this is the most accurate placement to restore.
     boundsAtDisplayRemoval = copyBounds();
@@ -203,6 +232,7 @@ function attachDisplayRecovery({ win, screen }) {
     boundsAtDisplayRemoval = null;
     rememberedSecondaryBounds = null;
     rememberedDisplayId = null;
+    pendingTeardownMove = null;
   };
 }
 
