@@ -113,11 +113,23 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
   let rememberedSecondaryBounds = null;
   let rememberedDisplayId = null;
   let pendingTeardownMove = null;
+  // Recovery computed while the window was maximized/full-screen (when
+  // setBounds would be wrong or would clobber the maximized state) is held
+  // here and applied once the window returns to its normal state.
+  let pendingRecovery = null;
   let attached = true;
 
   const isTrackable = () => {
     try {
-      return !win.isDestroyed() && !win.isMaximized() && !win.isFullScreen();
+      return !win.isDestroyed();
+    } catch {
+      return false;
+    }
+  };
+
+  const isMaximizedOrFullScreen = () => {
+    try {
+      return Boolean(win.isMaximized?.() || win.isFullScreen?.());
     } catch {
       return false;
     }
@@ -125,7 +137,15 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
 
   const copyBounds = () => {
     try {
-      const bounds = win.getBounds();
+      // While maximized/full-screen, getBounds() reports the inflated
+      // maximized geometry; getNormalBounds() reports the placement the window
+      // will return to, which is what recovery must remember.
+      const maximized = isMaximizedOrFullScreen();
+      const bounds = maximized
+        ? typeof win.getNormalBounds === "function"
+          ? win.getNormalBounds()
+          : null
+        : win.getBounds();
       return isFiniteBounds(bounds) ? { ...bounds } : null;
     } catch {
       return null;
@@ -216,8 +236,13 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     const removedArea = displayIntersectionArea(currentBounds, oldDisplay.bounds);
     if (removedArea <= 0) return;
     try {
+      // An exact tie with a connected display is ambiguous (Electron's own
+      // tie-breaking could have assigned the window to either display), so
+      // treat equal overlap as "not owned by the removed display" too and
+      // skip the snapshot rather than risk dragging the window onto the
+      // re-added display against its actual placement.
       for (const display of screen.getAllDisplays?.() || []) {
-        if (displayIntersectionArea(currentBounds, display.bounds) > removedArea) return;
+        if (displayIntersectionArea(currentBounds, display.bounds) >= removedArea) return;
       }
     } catch {
       // Screen queries can fail during display teardown; skip the snapshot.
@@ -226,9 +251,35 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     boundsAtDisplayRemoval = currentBounds;
   };
 
+  // Apply a recovery that was deferred while the window was maximized or
+  // full-screen (see onDisplayAdded). Invoked when the window leaves that
+  // state; also guards against the target display vanishing again.
+  const applyPendingRecovery = () => {
+    if (!attached || !pendingRecovery) return;
+    try {
+      if (isMaximizedOrFullScreen()) return;
+      const { bounds, displayId } = pendingRecovery;
+      pendingRecovery = null;
+      if (!isFiniteBounds(bounds)) return;
+      let targetBounds = bounds;
+      if (displayId !== null && displayId !== undefined) {
+        const display = (screen.getAllDisplays?.() || []).find(
+          (candidate) => candidate.id === displayId
+        );
+        // The display disappeared again before the window left the
+        // maximized/full-screen state: drop the stale recovery.
+        if (!display) return;
+        targetBounds = clampBoundsToDisplay(bounds, display.bounds) || bounds;
+      }
+      win.setBounds(targetBounds);
+    } catch {
+      // Never let display churn break the window.
+    }
+  };
+
   // Electron invokes "display-added" listeners as (event, newDisplay).
   const onDisplayAdded = (_event, display) => {
-    if (!attached || !isTrackable()) return;
+    if (!attached) return;
     try {
       const currentBounds = copyBounds();
       const restored = pickDisplayRecoveryBounds({
@@ -248,9 +299,14 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
         boundsAtDisplayRemoval = null;
       }
       const clamped = clampBoundsToDisplay(restored, display?.bounds);
-      if (clamped) {
-        win.setBounds(clamped);
+      if (!clamped) return;
+      if (isMaximizedOrFullScreen()) {
+        // setBounds would clobber the maximized/full-screen state (or be
+        // ignored): defer until the window returns to its normal state.
+        pendingRecovery = { bounds: clamped, displayId: display?.id ?? null };
+        return;
       }
+      win.setBounds(clamped);
     } catch {
       // Never let display churn break the window.
     }
@@ -261,6 +317,8 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     screen.on("display-added", onDisplayAdded);
     win.on?.("move", rememberWindowPlacement);
     win.on?.("resize", rememberWindowPlacement);
+    win.on?.("unmaximize", applyPendingRecovery);
+    win.on?.("leave-full-screen", applyPendingRecovery);
     // Seed the tracked placement from the window's initial bounds so windows
     // that started on a secondary display and were never moved/resized are
     // still recoverable when that display is torn down and re-added.
@@ -283,10 +341,17 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     try {
       win.removeListener?.("resize", rememberWindowPlacement);
     } catch {}
+    try {
+      win.removeListener?.("unmaximize", applyPendingRecovery);
+    } catch {}
+    try {
+      win.removeListener?.("leave-full-screen", applyPendingRecovery);
+    } catch {}
     boundsAtDisplayRemoval = null;
     rememberedSecondaryBounds = null;
     rememberedDisplayId = null;
     pendingTeardownMove = null;
+    pendingRecovery = null;
   };
 }
 

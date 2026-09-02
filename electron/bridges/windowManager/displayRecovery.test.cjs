@@ -33,6 +33,13 @@ function createMockWindow(initialBounds) {
     getBounds() {
       return { ...win.bounds };
     },
+    getNormalBounds() {
+      return { ...(win.normalBounds || win.bounds) };
+    },
+    unmaximize() {
+      win.maximized = false;
+      for (const handler of listeners.get("unmaximize") || []) handler();
+    },
     setBounds(next) {
       win.setBoundsCalls.push({ ...next });
       win.bounds = { ...next };
@@ -316,7 +323,7 @@ test("attachDisplayRecovery drops the removal snapshot after the user moves to a
   assert.equal(win.setBoundsCalls.length, 0);
 });
 
-test("attachDisplayRecovery leaves the window alone while maximized", () => {
+test("attachDisplayRecovery defers recovery while maximized and applies it on unmaximize", () => {
   const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
   win.maximized = true;
   const screen = createMockScreen();
@@ -324,8 +331,34 @@ test("attachDisplayRecovery leaves the window alone while maximized", () => {
   attachDisplayRecovery({ win, screen });
   for (const handler of win.__listeners.get("move") || []) handler();
   screen.emit("display-removed", {}, SECONDARY);
-  // The window stays maximized while the display is missing and returns.
+  // The window stays maximized while the display is missing and returns:
+  // recovery must not be lost, only deferred.
   win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // Leaving the maximized state applies the deferred recovery.
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], { x: 2000, y: 100, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery does not claim a window split evenly across the removed display", () => {
+  // Exactly half of the window sits on the primary display and half on the
+  // removed secondary one (the 1920 boundary splits it down the middle): the
+  // ownership tie must be treated as ambiguous, so no snapshot is taken and
+  // re-adding the display does not move the window.
+  const win = createMockWindow({ x: 1720, y: 100, width: 400, height: 300 });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 400, height: 300 };
   for (const handler of win.__listeners.get("move") || []) handler();
   screen.emit("display-added", {}, SECONDARY);
 
@@ -379,6 +412,8 @@ test("detach removes all listeners and stops recovery", () => {
   assert.equal((screen.__listeners.get("display-added") || []).length, 0);
   assert.equal((win.__listeners.get("move") || []).length, 0);
   assert.equal((win.__listeners.get("resize") || []).length, 0);
+  assert.equal((win.__listeners.get("unmaximize") || []).length, 0);
+  assert.equal((win.__listeners.get("leave-full-screen") || []).length, 0);
 
   // Events after detach must not move the window.
   screen.emit("display-removed", {}, SECONDARY);
