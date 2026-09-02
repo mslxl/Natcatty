@@ -781,13 +781,19 @@ export const useSessionState = ({
     // makes tab labels use this composed name too; `generatedTitle: true`
     // marks it as synthesized so it keeps tracking membership/renames (see the
     // generated-title sync effect below) instead of going stale.
-    const baseSession = sessionsRef.current.find(s => s.id === baseSessionId);
-    const joiningSession = sessionsRef.current.find(s => s.id === joiningSessionId);
-    const mergedTitle = buildMergedWorkspaceTitle(
-      getSessionConnectionLabel(baseSession ?? { customName: '', hostLabel: '' }),
-      getSessionConnectionLabel(joiningSession ?? { customName: '', hostLabel: '' }),
-    );
+    // Compose the title from the created pane-tree order (not base/join
+    // order): for left/top merges `createWorkspaceEntity` places the joining
+    // pane before the base pane in `root`, and the generated-title sync
+    // effect above recomputes from `root` order — building the initial title
+    // in tree order keeps it stable instead of renaming itself right after
+    // creation.
     const created = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
+    const treeLabels = collectSessionIds(created.root).map((id) =>
+      getSessionConnectionLabel(
+        sessionsRef.current.find(s => s.id === id) ?? { customName: '', hostLabel: '' },
+      ),
+    );
+    const mergedTitle = buildMergedWorkspaceTitle(treeLabels[0] ?? '', treeLabels[1] ?? '');
     const newWorkspace = mergedTitle
       ? { ...created, title: mergedTitle, autoTitle: false, generatedTitle: true }
       : created;
