@@ -20,6 +20,7 @@ import {
   isProviderContinuationForSource,
   type OpenAIChatAssistantFields,
   type ProviderContinuation,
+  type ProviderContinuationReasoningPart,
 } from '../../providerContinuation';
 import {
   toAssistantModelContent,
@@ -56,6 +57,35 @@ function getRememberedOpenAIChatAssistantFields(
 function modelMessageHasToolCall(message: ModelMessage): boolean {
   if (message.role !== 'assistant' || !Array.isArray(message.content)) return false;
   return message.content.some((part) => part && typeof part === 'object' && (part as { type?: string }).type === 'tool-call');
+}
+
+/**
+ * Legacy Responses histories — recorded before `reasoning-end` capture — store
+ * reasoning parts that carry only the server-side `rs_…` item id and no
+ * `reasoningEncryptedContent`. Replaying them against a stateless
+ * (`store: false`) Responses turn makes the SDK emit a `reasoning` item
+ * referencing an id that was never persisted, which the API rejects
+ * ("Item with id 'rs_…' not found"), leaving the conversation unable to
+ * continue. Drop such parts before replay: the associated function calls are
+ * replayed in full by `call_id`, which reasoning models accept without a
+ * preceding reasoning item. Parts with real ciphertext (or no OpenAI item id
+ * at all) are kept untouched.
+ */
+function isStatelessReplayableReasoningPart(
+  part: ProviderContinuationReasoningPart,
+): boolean {
+  const openaiOptions = part.providerOptions?.openai as
+    | { itemId?: unknown; reasoningEncryptedContent?: unknown }
+    | undefined;
+  if (typeof openaiOptions?.itemId !== 'string' || !openaiOptions.itemId) return true;
+  return typeof openaiOptions.reasoningEncryptedContent === 'string'
+    && openaiOptions.reasoningEncryptedContent.length > 0;
+}
+
+function collectReplayableReasoningParts(
+  continuation: ProviderContinuation | undefined,
+): ProviderContinuationReasoningPart[] {
+  return (continuation?.reasoningParts ?? []).filter(isStatelessReplayableReasoningPart);
 }
 
 export function collectOpenAIChatAssistantFieldsForMessages(
@@ -149,7 +179,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
           : [];
         const contentParts: AssistantContentPart[] = [];
         if (resolvedCalls.length > 0) {
-          for (const part of activeContinuation?.reasoningParts ?? []) {
+          for (const part of collectReplayableReasoningParts(activeContinuation)) {
             if (!part.text && !part.providerOptions) continue;
             contentParts.push({
               type: 'reasoning' as const,
@@ -184,7 +214,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         }
       } else if (m.content) {
         const contentParts: AssistantContentPart[] = [];
-        for (const part of activeContinuation?.reasoningParts ?? []) {
+        for (const part of collectReplayableReasoningParts(activeContinuation)) {
           if (!part.text && !part.providerOptions) continue;
           contentParts.push({
             type: 'reasoning' as const,
