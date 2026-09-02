@@ -102,7 +102,7 @@ import { handleSerialLineModeInput } from "./serialLineInput";
 import {
   doesKittyEncodingPreserveShiftEnter,
   getShiftEnterSubmittedInput,
-  resolveShiftEnterPayload,
+  resolveShiftEnterText,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 import {
@@ -1972,8 +1972,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
 
     // Before Kitty encoding that collapses Shift+Enter to bare CR/LF (flags=0,
-    // or non-preserving sets like alternate-key / associated-text alone). Remap
-    // first so alternate-screen TUIs still receive CSI-u Shift+Enter.
+    // or non-preserving sets like alternate-key / associated-text alone), keep
+    // the configured send-text fallback. Only negotiated preserving modes may
+    // emit CSI-u; alternate-screen activation is not a capability signal.
     if (
       shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current) &&
       !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)
@@ -1983,24 +1984,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         e.preventDefault();
         e.stopPropagation();
         const kittyEvent = toKittyKeyboardEvent(e);
-        // Local payload uses this session's buffer. Broadcast targets re-resolve
-        // from the key chord via resolveKittyKeyboardBroadcastInput.
-        const shiftEnterPayload = resolveShiftEnterPayload(
+        const shiftEnterText = resolveShiftEnterText(
           ctx.terminalSettingsRef.current,
-          { alternateScreen: term.buffer.active.type === "alternate" },
         );
-        if (shiftEnterPayload.data) {
-          if (shiftEnterPayload.kind === "key") {
-            // Local CSI-u as kitty-sourced input so raw bytes are not broadcast.
-            handleTerminalInputData(shiftEnterPayload.data, { source: "kitty" });
-          } else {
-            // Skip string broadcast: peers resolve Shift+Enter from their own
-            // buffer + keyboard mode via the key chord below.
-            handleTerminalInputData(shiftEnterPayload.data, {
-              source: "shift-enter",
-              skipBroadcast: true,
-            });
-          }
+        if (shiftEnterText) {
+          // Skip string broadcast: peers resolve Shift+Enter from their own
+          // negotiated keyboard mode via the key chord below.
+          handleTerminalInputData(shiftEnterText, {
+            source: "shift-enter",
+            skipBroadcast: true,
+          });
           const forwarded = broadcastKittyInput({
             kind: "key",
             event: kittyEvent,
@@ -2318,7 +2311,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       applicationCursorMode: term.modes.applicationCursorKeysMode,
       encodedKeys: broadcastEncodedKeys,
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
-      alternateScreen: term.buffer.active.type === "alternate",
       shiftEnterSettings: ctx.terminalSettingsRef.current,
     }),
     getSessionId: () => ctx.sessionRef.current,

@@ -521,7 +521,7 @@ test("enhanced sources can fall back to reliable legacy data for plain targets",
   }
 });
 
-test("Shift+Enter broadcast remaps from each target buffer when Kitty collapses the chord", () => {
+test("Shift+Enter broadcast uses CSI-u only after the target negotiated a preserving mode", () => {
   const alternateOnly = createKittyKeyboardModeState();
   setKittyKeyboardModeFlags(alternateOnly, 0b00100);
   const shiftEnter = {
@@ -540,10 +540,9 @@ test("Shift+Enter broadcast remaps from each target buffer when Kitty collapses 
     kittyMode: alternateOnly,
     applicationCursorMode: false,
     encodedKeys: new Set<string>(),
-    alternateScreen: true,
   }), {
-    data: SHIFT_ENTER_CSI_U_SEQUENCE,
-    kittyEncoded: true,
+    data: "\n",
+    kittyEncoded: false,
     urgentInterrupt: false,
   });
 
@@ -552,7 +551,6 @@ test("Shift+Enter broadcast remaps from each target buffer when Kitty collapses 
     kittyMode: createKittyKeyboardModeState(),
     applicationCursorMode: false,
     encodedKeys: new Set<string>(),
-    alternateScreen: false,
   }), {
     data: "\n",
     kittyEncoded: false,
@@ -566,7 +564,6 @@ test("Shift+Enter broadcast remaps from each target buffer when Kitty collapses 
     kittyMode: disambiguate,
     applicationCursorMode: false,
     encodedKeys: new Set<string>(),
-    alternateScreen: true,
   }), {
     data: SHIFT_ENTER_CSI_U_SEQUENCE,
     kittyEncoded: true,

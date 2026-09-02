@@ -9,7 +9,7 @@ import {
 import type { TerminalSettings } from "../../../domain/models";
 import {
   isBareShiftEnterLineEnding,
-  resolveShiftEnterPayload,
+  resolveShiftEnterText,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 
@@ -202,8 +202,6 @@ type ResolveKittyKeyboardBroadcastOptions = {
   applicationCursorMode: boolean;
   encodedKeys: Set<string>;
   legacySuppressedKeys?: Set<string>;
-  /** Target buffer: remap Shift+Enter per peer, not from the broadcast source. */
-  alternateScreen?: boolean;
   shiftEnterSettings?: Pick<
     TerminalSettings,
     "shiftEnterNewlineEnabled" | "shiftEnterNewlineText"
@@ -222,13 +220,11 @@ const resolveShiftEnterBroadcastPayload = (
   ) {
     return null;
   }
-  const payload = resolveShiftEnterPayload(options.shiftEnterSettings, {
-    alternateScreen: options.alternateScreen === true,
-  });
-  if (!payload.data) return null;
+  const data = resolveShiftEnterText(options.shiftEnterSettings);
+  if (!data) return null;
   return {
-    data: payload.data,
-    kittyEncoded: payload.kind === "key",
+    data,
+    kittyEncoded: false,
     urgentInterrupt: false,
   };
 };

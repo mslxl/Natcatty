@@ -8,7 +8,6 @@ import {
   getShiftEnterSubmittedInput,
   isBareShiftEnterLineEnding,
   isShiftEnterLineContinuationText,
-  resolveShiftEnterPayload,
   resolveShiftEnterText,
   SHIFT_ENTER_CSI_U_SEQUENCE,
   shouldSendShiftEnterText,
@@ -100,44 +99,6 @@ test("Kitty encodings that collapse Shift+Enter to CR/LF do not preserve the cho
   assert.equal(doesKittyEncodingPreserveShiftEnter(SHIFT_ENTER_CSI_U_SEQUENCE), true);
 });
 
-test("main-buffer Shift+Enter keeps configured send text", () => {
-  assert.deepEqual(resolveShiftEnterPayload(), {
-    kind: "text",
-    data: "\n",
-  });
-  assert.deepEqual(
-    resolveShiftEnterPayload(
-      { shiftEnterNewlineText: " \\\\\\n" },
-      { alternateScreen: false },
-    ),
-    { kind: "text", data: " \\\n" },
-  );
-});
-
-test("alternate-screen Shift+Enter sends CSI-u when configured text is a bare line ending", () => {
-  assert.deepEqual(
-    resolveShiftEnterPayload(undefined, { alternateScreen: true }),
-    { kind: "key", data: SHIFT_ENTER_CSI_U_SEQUENCE },
-  );
-  assert.deepEqual(
-    resolveShiftEnterPayload(
-      { shiftEnterNewlineText: "\\r\\n" },
-      { alternateScreen: true },
-    ),
-    { kind: "key", data: SHIFT_ENTER_CSI_U_SEQUENCE },
-  );
-});
-
-test("alternate-screen Shift+Enter keeps custom non-line-ending send text", () => {
-  assert.deepEqual(
-    resolveShiftEnterPayload(
-      { shiftEnterNewlineText: " \\\\\\n" },
-      { alternateScreen: true },
-    ),
-    { kind: "text", data: " \\\n" },
-  );
-});
-
 test("runtime routes Shift+Enter text through the shared input handler", () => {
   const source = readFileSync(
     new URL("./createXTermRuntime.ts", import.meta.url),
@@ -151,11 +112,11 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   // Remap when Kitty encoding does not preserve Shift+Enter (not merely flags===0).
   assert.match(
     source,
-    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\) \{[\s\S]*?const shiftEnterPayload = resolveShiftEnterPayload\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
   );
   assert.match(
     source,
-    /if \(shiftEnterPayload\.kind === "key"\) \{[\s\S]*?handleTerminalInputData\(shiftEnterPayload\.data, \{ source: "kitty" \}\);[\s\S]*?\} else \{[\s\S]*?handleTerminalInputData\(shiftEnterPayload\.data, \{\s*source: "shift-enter",\s*skipBroadcast: true,\s*\}\);[\s\S]*?\}\s*const forwarded = broadcastKittyInput\(\{\s*kind: "key",\s*event: kittyEvent,\s*fallbackToLegacy: true,\s*\}\);/s,
+    /const shiftEnterText = resolveShiftEnterText\([\s\S]*?if \(shiftEnterText\) \{[\s\S]*?handleTerminalInputData\(shiftEnterText, \{\s*source: "shift-enter",\s*skipBroadcast: true,\s*\}\);\s*const forwarded = broadcastKittyInput\(\{\s*kind: "key",\s*event: kittyEvent,\s*fallbackToLegacy: true,\s*\}\);/s,
   );
   assert.match(
     source,
@@ -163,8 +124,9 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /alternateScreen: term\.buffer\.active\.type === "alternate",\s*shiftEnterSettings: ctx\.terminalSettingsRef\.current,/s,
+    /resolveOptions: \(\) => \(\{[\s\S]*?shiftEnterSettings: ctx\.terminalSettingsRef\.current,[\s\S]*?\}\),/s,
   );
+  assert.doesNotMatch(source, /resolveShiftEnterText\([\s\S]*?alternateScreen:/s);
   assert.match(source, /getShiftEnterSubmittedInput\(data\)/);
   assert.match(source, /inputSource !== "shift-enter"/);
   assert.match(
