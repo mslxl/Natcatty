@@ -27,6 +27,11 @@ import {
   type PaneMagnificationController,
 } from "../domain/paneMagnification";
 import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import { applyDualPaneSftpOpen, type DualPaneSftpTab } from "../domain/sftpDualPaneOpen";
+import {
+  consumePendingDualPaneSftpRequest,
+  subscribeDualPaneSftpOpen,
+} from "../application/state/sftp/sftpDualPaneOpenStore";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
@@ -193,6 +198,49 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   // without needing to re-create when sftp changes
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
+  const effectiveHostsRef = useRef(effectiveHosts);
+  effectiveHostsRef.current = effectiveHosts;
+
+  useEffect(() => {
+    const toTabs = (panes: Array<{
+      id: string;
+      connection: { isLocal?: boolean; hostId?: string | null } | null;
+    }>): DualPaneSftpTab[] =>
+      panes.map((pane) => ({
+        id: pane.id,
+        isLocal: !!pane.connection?.isLocal,
+        hostId: pane.connection?.isLocal ? "local" : pane.connection?.hostId ?? null,
+        hasConnection: !!pane.connection,
+      }));
+
+    const applyRequest = (request: { hostId: string } | null) => {
+      if (!request) return;
+      const host = effectiveHostsRef.current.find((candidate) => candidate.id === request.hostId);
+      if (!host) return;
+      const current = sftpRef.current;
+      // First SFTP visit already auto-connects the left pane to local. Opening
+      // from the host list should only attach the host on the right so we do
+      // not race a second local tab into existence.
+      if (current.leftTabs.tabs.length === 0) {
+        void current.connect("right", host);
+        return;
+      }
+      applyDualPaneSftpOpen(
+        {
+          leftTabs: toTabs(current.leftTabs.tabs),
+          rightTabs: toTabs(current.rightTabs.tabs),
+          selectTab: current.selectTab,
+          connect: (side, nextHost, options) => {
+            void current.connect(side, nextHost === "local" ? "local" : host, options);
+          },
+        },
+        host,
+      );
+    };
+
+    applyRequest(consumePendingDualPaneSftpRequest());
+    return subscribeDualPaneSftpOpen(applyRequest);
+  }, []);
 
   // Register this useSftpState's writeTextFileByConnection with the bridge so
   // the editor tab's save path can reach the active SFTP session. The bridge

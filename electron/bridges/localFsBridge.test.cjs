@@ -511,6 +511,28 @@ test("lstatLocal classifies symlinks without following the target", async (t) =>
   }
 });
 
+test("collectLocalTreeEntries skips realpath for ordinary files and directories", async (t) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-tree-realpath-"));
+  const selected = path.join(root, "project");
+  await fs.promises.mkdir(path.join(selected, "src"), { recursive: true });
+  await fs.promises.writeFile(path.join(selected, "src", "index.txt"), "ok");
+
+  const originalRealpath = fs.promises.realpath;
+  let realpathCalls = 0;
+  fs.promises.realpath = async (...args) => {
+    realpathCalls += 1;
+    return originalRealpath.apply(fs.promises, args);
+  };
+  t.after(async () => {
+    fs.promises.realpath = originalRealpath;
+    await fs.promises.rm(root, { recursive: true, force: true });
+  });
+
+  const entries = await collectLocalTreeEntries(selected);
+  assert.equal(entries.some((entry) => entry.relativePath === "project/src/index.txt"), true);
+  assert.equal(realpathCalls, 1, "only the selected root should be realpath'd");
+});
+
 test("collectLocalTreeEntries uses the target metadata for a leaf file symlink", async (t) => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-tree-file-link-"));
   const selected = path.join(root, "project");

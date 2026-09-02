@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Check, ClipboardCopy, Eye, EyeOff, FilePlus, Folder, FolderPlus, FolderSync, Globe, Home, Languages, List, ListTree, RefreshCw, Search, Terminal, TerminalSquare, Trash2, X } from "lucide-react";
+import { Bookmark, Check, ClipboardCopy, Eye, EyeOff, FilePlus, Folder, FolderPlus, FolderSync, Globe, GripVertical, Home, Languages, List, ListTree, Pencil, RefreshCw, Rows3, Search, Terminal, TerminalSquare, Trash2, X } from "lucide-react";
+import {
+  getNextSftpListDensity,
+  getSftpListDensityToggleLabelKey,
+  type SftpListDensity,
+} from "../../domain/sftpListDensity";
 import { useToolbarItemLayout } from "../../application/state/useToolbarItemLayout";
 import type { ToolbarItemLayoutDefaults } from "../../domain/toolbarItemLayout";
 import { STORAGE_KEY_SFTP_TOOLBAR_LAYOUT } from "../../infrastructure/config/storageKeys";
@@ -33,6 +38,7 @@ export const SFTP_TOOLBAR_ITEM_IDS = [
   "followTerminalCwd",
   "copyPath",
   "viewMode",
+  "listDensity",
   "filter",
   "encoding",
   "newFolder",
@@ -52,6 +58,7 @@ export const SFTP_TOOLBAR_LAYOUT_DEFAULTS: ToolbarItemLayoutDefaults = {
     followTerminalCwd: "show",
     copyPath: "show",
     viewMode: "show",
+    listDensity: "show",
     filter: "show",
     encoding: "collapse",
     newFolder: "show",
@@ -74,6 +81,7 @@ export const SFTP_TOOLBAR_NARROW_INLINE_IDS = new Set<SftpToolbarItemId>([
   "followTerminalCwd",
   "copyPath",
   "viewMode",
+  "listDensity",
   "filter",
 ]);
 
@@ -216,6 +224,10 @@ interface SftpPaneToolbarProps {
   isCurrentPathGlobalBookmarked: boolean;
   onNavigateToBookmark: (path: string) => void;
   onDeleteBookmark: (id: string) => void;
+  onReorderBookmark?: (fromId: string, toId: string) => void;
+  onRenameBookmark?: (id: string, label: string) => void;
+  listDensity?: SftpListDensity;
+  onSetListDensity?: (density: SftpListDensity) => void;
   showHiddenFiles: boolean;
   onToggleShowHiddenFiles?: () => void;
   onGoToTerminalCwd?: () => void;
@@ -229,63 +241,135 @@ interface SftpPaneToolbarProps {
 
 interface SftpBookmarkListProps {
   bookmarks: SftpBookmark[];
+  managing?: boolean;
   onNavigateToBookmark: (path: string) => void;
   onDeleteBookmark: (id: string) => void;
+  onReorderBookmark?: (fromId: string, toId: string) => void;
+  onRenameBookmark?: (id: string, label: string) => void;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
 
+export const confirmRemoveSftpBookmark = (
+  path: string,
+  t: (key: string, params?: Record<string, unknown>) => string,
+  confirmFn: (message: string) => boolean = (message) => window.confirm(message),
+): boolean => confirmFn(t("sftp.bookmark.removeConfirm", { path }));
+
 export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   bookmarks,
+  managing = false,
   onNavigateToBookmark,
   onDeleteBookmark,
+  onReorderBookmark,
+  onRenameBookmark,
   t,
-}) => (
-  bookmarks.length > 0 ? (
-    <div className="max-h-48 overflow-auto py-1">
-      {bookmarks.map((bm) => (
-        <div
-          key={bm.id}
-          className="flex items-center gap-1 px-2 py-1 hover:bg-secondary/60 group"
-        >
-          {bm.global && (
-            <Globe size={10} className="shrink-0 text-primary" />
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <PopoverClose asChild>
-                <button
-                  type="button"
-                  className="flex-1 text-left text-xs truncate font-mono"
-                  onClick={() => onNavigateToBookmark(bm.path)}
-                >
-                  {bm.label}
-                  <span className="ml-1.5 text-muted-foreground text-[10px]">{bm.path}</span>
-                </button>
-              </PopoverClose>
-            </TooltipTrigger>
-            <TooltipContent>{bm.path}</TooltipContent>
-          </Tooltip>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 shrink-0 text-muted-foreground hover:text-destructive"
-            aria-label={t("sftp.bookmark.remove")}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteBookmark(bm.id);
+}) => {
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  if (bookmarks.length === 0) {
+    return (
+      <div className="p-3 text-xs text-muted-foreground text-center">
+        {t("sftp.bookmark.empty")}
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-h-64 overflow-auto py-1 min-w-[18rem]">
+      {bookmarks.map((bm) => {
+        const pathButton = (
+          <button
+            type="button"
+            className="flex-1 min-w-0 text-left"
+            onClick={() => {
+              if (managing) return;
+              onNavigateToBookmark(bm.path);
             }}
           >
-            <Trash2 size={10} />
-          </Button>
-        </div>
-      ))}
+            <div className="text-xs font-medium truncate">{bm.label}</div>
+            <div className="text-[10px] text-muted-foreground font-mono break-all leading-tight">
+              {bm.path}
+            </div>
+          </button>
+        );
+
+        return (
+          <div
+            key={bm.id}
+            className={cn(
+              "flex items-start gap-1 px-2 py-1.5 hover:bg-secondary/60 group",
+              draggingId === bm.id && "opacity-60",
+            )}
+            draggable={managing}
+            onDragStart={(event) => {
+              if (!managing) return;
+              setDraggingId(bm.id);
+              event.dataTransfer.setData("text/netcatty-sftp-bookmark", bm.id);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(event) => {
+              if (!managing || !draggingId || draggingId === bm.id) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const fromId = event.dataTransfer.getData("text/netcatty-sftp-bookmark") || draggingId;
+              setDraggingId(null);
+              if (fromId && fromId !== bm.id) onReorderBookmark?.(fromId, bm.id);
+            }}
+            onDragEnd={() => setDraggingId(null)}
+          >
+            {managing && (
+              <GripVertical
+                size={12}
+                className="mt-1 shrink-0 text-muted-foreground cursor-grab"
+                aria-hidden="true"
+              />
+            )}
+            {bm.global && (
+              <Globe size={10} className="mt-1 shrink-0 text-primary" />
+            )}
+            {managing ? pathButton : (
+              <PopoverClose asChild>{pathButton}</PopoverClose>
+            )}
+            {managing && onRenameBookmark && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 text-muted-foreground"
+                aria-label={t("sftp.bookmark.rename")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const next = window.prompt(t("sftp.bookmark.rename"), bm.label);
+                  if (next != null) onRenameBookmark(bm.id, next);
+                }}
+              >
+                <Pencil size={10} />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive",
+                managing ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1",
+              )}
+              aria-label={t("sftp.bookmark.remove")}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!confirmRemoveSftpBookmark(bm.path, t)) return;
+                onDeleteBookmark(bm.id);
+              }}
+            >
+              <Trash2 size={10} />
+            </Button>
+          </div>
+        );
+      })}
     </div>
-  ) : (
-    <div className="p-3 text-xs text-muted-foreground text-center">
-      {t("sftp.bookmark.empty")}
-    </div>
-  )
-);
+  );
+};
 
 const menuItemClass =
   "flex items-center gap-2 px-2 py-1.5 text-xs rounded-sm hover:bg-secondary transition-colors w-full text-left";
@@ -327,6 +411,10 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   isCurrentPathGlobalBookmarked,
   onNavigateToBookmark,
   onDeleteBookmark,
+  onReorderBookmark,
+  onRenameBookmark,
+  listDensity = "comfortable",
+  onSetListDensity,
   showHiddenFiles,
   onToggleShowHiddenFiles,
   onGoToTerminalCwd,
@@ -459,6 +547,8 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   const isRemote = !pane.connection?.isLocal;
   const viewModeToggleTarget = getSftpViewModeToggleTarget(viewMode);
   const viewModeToggleLabel = t(viewModeToggleTarget.labelKey);
+  const listDensityToggleTarget = getNextSftpListDensity(listDensity);
+  const listDensityToggleLabel = t(getSftpListDensityToggleLabelKey(listDensity));
   const shouldToggleBookmarkFromButton = shouldToggleSftpBookmarkFromButton({
     bookmarkCount: bookmarks.length,
     isCurrentPathBookmarked,
@@ -475,6 +565,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       "bookmark",
       "copyPath",
       "viewMode",
+      "listDensity",
       "filter",
       "newFolder",
       "newFile",
@@ -496,6 +587,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       followTerminalCwd: t("sftp.followTerminalCwd"),
       copyPath: t("sftp.copyCurrentPath"),
       viewMode: viewModeToggleLabel,
+      listDensity: listDensityToggleLabel,
       filter: t("sftp.filter"),
       encoding: t("sftp.encoding.label"),
       newFolder: t("sftp.newFolder"),
@@ -503,7 +595,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       showHidden: t("settings.sftp.showHiddenFiles"),
       refresh: t("common.refresh"),
     }),
-    [bookmarkButtonLabel, t, viewModeToggleLabel],
+    [bookmarkButtonLabel, listDensityToggleLabel, t, viewModeToggleLabel],
   );
 
   const itemIcons = useMemo(
@@ -514,6 +606,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       followTerminalCwd: <FolderSync size={14} />,
       copyPath: <ClipboardCopy size={14} />,
       viewMode: viewMode === "list" ? <List size={14} /> : <ListTree size={14} />,
+      listDensity: <Rows3 size={14} />,
       filter: <Search size={14} />,
       encoding: <Languages size={14} />,
       newFolder: <FolderPlus size={14} />,
@@ -584,6 +677,8 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       onAddGlobalBookmark={onAddGlobalBookmark}
       onNavigateToBookmark={onNavigateToBookmark}
       onDeleteBookmark={onDeleteBookmark}
+      onReorderBookmark={onReorderBookmark}
+      onRenameBookmark={onRenameBookmark}
       onAfterLeafAction={onAfterLeafAction}
     />
   );
@@ -615,7 +710,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         </TooltipTrigger>
         <TooltipContent>{bookmarkButtonLabel}</TooltipContent>
       </Tooltip>
-      <PopoverContent className="w-64 p-0" align="start">
+      <PopoverContent className="w-80 p-0" align="start">
         {renderBookmarkPopoverBody()}
       </PopoverContent>
     </Popover>
@@ -773,6 +868,23 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             <TooltipContent>{viewModeToggleLabel}</TooltipContent>
           </Tooltip>
         );
+      case "listDensity":
+        return (
+          <Tooltip key={id}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-6 w-6", listDensity === "compact" && "bg-secondary text-foreground")}
+                aria-label={listDensityToggleLabel}
+                onClick={() => onSetListDensity?.(listDensityToggleTarget)}
+              >
+                <Rows3 size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{listDensityToggleLabel}</TooltipContent>
+          </Tooltip>
+        );
       case "filter":
         return (
           <Tooltip key={id}>
@@ -914,6 +1026,18 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
               <ListTree size={14} className="shrink-0" />
             )}
             {viewModeToggleLabel}
+          </button>
+        );
+      case "listDensity":
+        return (
+          <button
+            key={id}
+            type="button"
+            className={cn(menuItemClass, listDensity === "compact" && "text-primary")}
+            onClick={() => onSetListDensity?.(listDensityToggleTarget)}
+          >
+            <Rows3 size={14} className="shrink-0" />
+            {listDensityToggleLabel}
           </button>
         );
       case "filter":
@@ -1229,6 +1353,8 @@ function SftpBookmarkPopoverBody({
   onAddGlobalBookmark,
   onNavigateToBookmark,
   onDeleteBookmark,
+  onReorderBookmark,
+  onRenameBookmark,
   onAfterLeafAction,
 }: {
   t: (key: string, params?: Record<string, unknown>) => string;
@@ -1240,8 +1366,11 @@ function SftpBookmarkPopoverBody({
   onAddGlobalBookmark: (path: string) => void;
   onNavigateToBookmark: (path: string) => void;
   onDeleteBookmark: (id: string) => void;
+  onReorderBookmark?: (fromId: string, toId: string) => void;
+  onRenameBookmark?: (id: string, label: string) => void;
   onAfterLeafAction?: () => void;
 }) {
+  const [managing, setManaging] = useState(false);
   const runThenClose = (action: () => void) => {
     action();
     onAfterLeafAction?.();
@@ -1249,15 +1378,30 @@ function SftpBookmarkPopoverBody({
 
   return (
     <>
-      <div className="px-3 py-2 border-b border-border/40">
+      <div className="px-3 py-2 border-b border-border/40 flex items-center justify-between gap-2">
         <div className="text-xs font-medium">{t("sftp.bookmark.list")}</div>
+        {bookmarks.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            onClick={() => setManaging((value) => !value)}
+          >
+            {managing ? t("sftp.bookmark.done") : t("sftp.bookmark.manage")}
+          </Button>
+        )}
       </div>
       <div className="p-2 border-b border-border/40 flex gap-1">
         <Button
           variant={isCurrentPathBookmarked ? "secondary" : "ghost"}
           size="sm"
           className="flex-1 justify-start text-xs h-7"
-          onClick={() => runThenClose(onToggleBookmark)}
+          onClick={() => {
+            if (isCurrentPathBookmarked && currentPath && !confirmRemoveSftpBookmark(currentPath, t)) {
+              return;
+            }
+            runThenClose(onToggleBookmark);
+          }}
         >
           <Bookmark
             size={12}
@@ -1284,8 +1428,11 @@ function SftpBookmarkPopoverBody({
       </div>
       <SftpBookmarkList
         bookmarks={bookmarks}
+        managing={managing}
         onNavigateToBookmark={(path) => runThenClose(() => onNavigateToBookmark(path))}
-        onDeleteBookmark={(id) => runThenClose(() => onDeleteBookmark(id))}
+        onDeleteBookmark={onDeleteBookmark}
+        onReorderBookmark={onReorderBookmark}
+        onRenameBookmark={onRenameBookmark}
         t={t}
       />
     </>
@@ -1341,7 +1488,7 @@ function SftpOverflowNestedBookmark({
         </button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-64 p-0"
+        className="w-80 p-0"
         align="start"
         side="left"
         sideOffset={6}

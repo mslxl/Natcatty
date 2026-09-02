@@ -10,6 +10,7 @@ import {
   getSftpBookmarkButtonLabelKey,
   getNextSftpViewMode,
   copySftpCurrentPathToClipboard,
+  confirmRemoveSftpBookmark,
   getNextSftpToolbarDisplayPath,
   getSftpViewModeToggleTarget,
   getSftpViewModeToggleLabelKey,
@@ -30,6 +31,11 @@ const toolbarSource = fs.readFileSync(
 test("single SFTP view-mode button toggles to the other mode", () => {
   assert.equal(getNextSftpViewMode("list"), "tree");
   assert.equal(getNextSftpViewMode("tree"), "list");
+});
+
+test("SFTP toolbar includes compact list density next to view mode", () => {
+  assert.match(toolbarSource, /"listDensity"/);
+  assert.match(toolbarSource, /getSftpListDensityToggleLabelKey/);
 });
 
 test("narrow SFTP toolbar spills non-pinned show items into overflow without changing hide/collapse", () => {
@@ -489,6 +495,18 @@ test("toolbar display path keeps the previous confirmed path while loading the s
     }),
     "/srv/old",
   );
+});
+
+test("bookmark delete asks for confirmation with the path", () => {
+  const prompts: string[] = [];
+  assert.equal(
+    confirmRemoveSftpBookmark("/srv/www", (key, params) => `${key}:${params?.path ?? ""}`, (message) => {
+      prompts.push(message);
+      return false;
+    }),
+    false,
+  );
+  assert.deepEqual(prompts, ["sftp.bookmark.removeConfirm:/srv/www"]);
 });
 
 test("bookmark list renders saved paths as selectable rows", () => {

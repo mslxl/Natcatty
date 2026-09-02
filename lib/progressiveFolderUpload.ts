@@ -17,7 +17,9 @@ import {
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const UPLOAD_CONCURRENCY = 2;
+/** Folder drops of many small files stall at 2 workers; keep a higher floor. */
+export const DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY = 6;
+const UPLOAD_CONCURRENCY = DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
 /** Pause discovery when the upload queue grows this large (memory backpressure). */
 const QUEUE_HIGH_WATER = 2_000;
 /** Resume discovery once the queue drains to this size. */
