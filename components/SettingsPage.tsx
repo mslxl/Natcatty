@@ -661,6 +661,9 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setToggleWindowHotkey={settings.setToggleWindowHotkey}
                                 closeToTray={settings.closeToTray}
                                 setCloseToTray={settings.setCloseToTray}
+                                autoLaunchEnabled={settings.autoLaunchEnabled}
+                                setAutoLaunchEnabled={settings.setAutoLaunchEnabled}
+                                autoLaunchSupported={settings.autoLaunchSupported}
                                 httpNetworkProxy={settings.httpNetworkProxy}
                                 setHttpNetworkProxy={settings.setHttpNetworkProxy}
                                 hotkeyRegistrationError={settings.hotkeyRegistrationError}

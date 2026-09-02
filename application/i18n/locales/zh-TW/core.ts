@@ -197,6 +197,12 @@ export const zhTWCoreMessages: Messages = {
   'settings.appLock.validation.mismatch': '兩次輸入的新密碼不一致。',
   'settings.appLock.validation.incorrect': '目前的鎖定密碼不正確。',
 
+  // Settings > System > Auto Launch
+  'settings.autoLaunch.title': '開機自動啟動',
+  'settings.autoLaunch.enabled': '開機時自動啟動',
+  'settings.autoLaunch.enabledDesc': '系統啟動時自動執行 Netcatty，並隱藏到系統匣。',
+  'settings.autoLaunch.unsupportedDesc': '目前平台不支援此功能，或處於開發環境。',
+
   // Settings > System > Network Proxy
   'settings.system.networkProxy.title': '網路代理',
   'settings.system.networkProxy.description': '用於雲端同步與 AI 服務商的 HTTP(S) 代理。與 SSH 的 ProxyJump / ProxyCommand 設定無關。',

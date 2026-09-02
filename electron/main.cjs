@@ -108,6 +108,10 @@ const {
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
+const {
+  registerHandlers: registerAutoLaunchHandlers,
+  wasLaunchedHidden,
+} = require("./autoLaunch.cjs");
 
 try {
   protocol?.registerSchemesAsPrivileged?.([
@@ -570,7 +574,7 @@ const registerBridges = createBridgeRegistrar({
 /**
  * Create the main application window
  */
-async function createWindow() {
+async function createWindow({ startHidden = false } = {}) {
   const windowManager = getWindowManager();
   windowManager.setAppContentWindowClosedHandler(createAppContentWindowClosedHandler({
     app,
@@ -584,8 +588,9 @@ async function createWindow() {
     isMac,
     electronDir,
     onRegisterBridge: registerBridges,
+    startHidden,
   });
-  
+
   return win;
 }
 
@@ -649,16 +654,28 @@ async function createAndShowMainWindow() {
     return existingWin;
   }
 
+  const startHidden = consumeColdStartHiddenLaunch();
+
   mainWindowStartupPromise = (async () => {
     processErrorController.beginMainWindowStartup();
     try {
-      const win = await createWindow();
-      await waitForWindowToShow(win);
+      const win = await createWindow({ startHidden });
+      // A hidden cold start never fires "show" — waiting for it would hang
+      // startup forever, so only wait when the window is meant to appear.
+      if (!startHidden) await waitForWindowToShow(win);
       void getWindowManager().waitForRendererReady(win, {
         timeoutMs: isDev ? 30000 : 15000,
       }).catch((err) => {
         console.warn("[Main] Renderer ready signal was late or missing after first show:", err?.message || err);
       });
+      // windowShown latches process-error-guard protection on for the rest
+      // of the app's life (see processErrorGuards.cjs), so a hidden cold
+      // start must still report true here: createWindow() above already
+      // succeeded (window created, page loaded) — a deliberately hidden
+      // window is a completed startup, not a failure. Passing false would
+      // leave the guard permanently "strict", classifying any later
+      // non-network error as fatal and killing an otherwise healthy
+      // tray-only session that never happened to show a window.
       processErrorController.completeMainWindowStartup({ windowShown: true });
       return win;
     } catch (err) {
@@ -822,6 +839,27 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:getEnabled", async () => ({
   enabled: explorerContextMenuEnabled,
   supported: process.platform === "win32",
 }));
+
+if (ipcMain) registerAutoLaunchHandlers(ipcMain, { app });
+
+// Cold-start only: true when the OS login item launched us hidden (--hidden
+// on Windows, wasOpenedAsHidden on macOS). Consumed exactly once by whichever
+// createAndShowMainWindow() call reaches it first — this is NOT guaranteed to
+// be the default bootstrap call near the bottom of this file: a genuine
+// second instance (or a Dock reopen) can arrive after app.whenReady() but
+// before the bootstrap's own await chain gets there, racing it. Any caller
+// that represents an explicit foreground request (second-instance, activate,
+// deep links, ...) must re-focus after creation regardless of which flag it
+// happened to consume, or a user-triggered relaunch can silently create a
+// hidden window with nothing to show it.
+let consumeColdStartHiddenLaunch = (() => {
+  let pending = wasLaunchedHidden({ argv: process.argv, app });
+  return () => {
+    const value = pending;
+    pending = false;
+    return value;
+  };
+})();
 
 async function deliverJmsDeepLink(rawUrl, expectedGeneration = jmsDeepLinkDeliveryGeneration) {
   if (!shouldDeliverJmsDeepLink({
@@ -1241,7 +1279,14 @@ if (!gotLock) {
         // failed validation — silent no-op feels like a broken menu item.
         console.warn("[Main] Open-terminal-path args present but no valid path resolved:", secondInstanceArgv);
         if (!focusMainWindow()) {
-          void createAndShowMainWindow().catch((err) => {
+          // Explicit foreground request (a second instance launch): if a
+          // still-pending hidden auto-launch cold start races ahead of the
+          // normal bootstrap and consumes the --hidden flag here, the window
+          // would otherwise get created hidden with nothing to show it —
+          // focus again to guarantee visibility either way.
+          void createAndShowMainWindow().then(() => {
+            focusMainWindow();
+          }).catch((err) => {
             console.error("[Main] Failed to recreate window on open-terminal-path:", err);
           });
         }
@@ -1249,8 +1294,13 @@ if (!gotLock) {
       return;
     }
     if (!focusMainWindow()) {
-      // Window is missing or crashed — try to recreate it
-      void createAndShowMainWindow().catch((err) => {
+      // Window is missing or crashed — try to recreate it. Same
+      // hidden-launch race guard as above: this is an explicit foreground
+      // request, so re-focus after creation regardless of which flag this
+      // particular call happened to consume.
+      void createAndShowMainWindow().then(() => {
+        focusMainWindow();
+      }).catch((err) => {
         console.error("[Main] Failed to recreate window on second-instance:", err);
         showStartupError(err);
         if (!hasUsableWindow()) {
@@ -1507,8 +1557,13 @@ if (!gotLock) {
       } catch {}
 
       if (focusMainWindow()) return;
-      // Main window doesn't exist — create it even if other windows (e.g. settings) are open
-      void createAndShowMainWindow().catch((err) => {
+      // Main window doesn't exist — create it even if other windows (e.g.
+      // settings) are open. Explicit foreground request (Dock reopen/click):
+      // guard against the same hidden-launch race as the second-instance
+      // handler above by re-focusing after creation.
+      void createAndShowMainWindow().then(() => {
+        focusMainWindow();
+      }).catch((err) => {
         console.error("[Main] Failed to create window on activate:", err);
         showStartupError(err);
         if (!hasUsableWindow()) {

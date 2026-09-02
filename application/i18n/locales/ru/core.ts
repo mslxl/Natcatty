@@ -196,6 +196,12 @@ export const ruCoreMessages: Messages = {
   'settings.appLock.validation.mismatch': 'Новые пароли не совпадают.',
   'settings.appLock.validation.incorrect': 'Текущий пароль блокировки неверен.',
 
+  // Settings > System > Auto Launch
+  'settings.autoLaunch.title': 'Запуск при входе в систему',
+  'settings.autoLaunch.enabled': 'Запускать при старте системы',
+  'settings.autoLaunch.enabledDesc': 'Автоматически запускать Netcatty при входе в систему, свернутым в системный трей.',
+  'settings.autoLaunch.unsupportedDesc': 'Недоступно на этой платформе или в сборке для разработки.',
+
   // Settings > System > Network Proxy
   'settings.system.networkProxy.title': 'Сетевой прокси',
   'settings.system.networkProxy.description': 'HTTP(S)-прокси для облачной синхронизации и AI-провайдеров. Не связан с SSH ProxyJump / ProxyCommand.',
