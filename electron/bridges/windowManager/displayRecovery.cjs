@@ -220,12 +220,12 @@ function attachDisplayRecovery({
     sessionInterruptedAt = Date.now();
     // Only a pending move that belongs to the current interruption may be
     // promoted by a later "display-removed" event: the OS relocation that
-    // races ahead of display teardown happens immediately before the
-    // suspend/lock event, so it is still fresh here. A move recorded long
-    // before this interruption is a deliberate user placement (e.g. the
-    // user moved the window to the primary display and locked the session
-    // much later); drop it so the removal during the interruption cannot
-    // resurrect the superseded placement.
+    // races ahead of display teardown happens immediately around the
+    // suspend/lock event (before or after it), so it is still fresh here.
+    // A move recorded long before this interruption is a deliberate user
+    // placement (e.g. the user moved the window to the primary display and
+    // locked the session much later); drop it so the removal during the
+    // interruption cannot resurrect the superseded placement.
     if (
       pendingTeardownMove &&
       Date.now() - pendingTeardownMove.at >= teardownGraceMs
@@ -317,6 +317,18 @@ function attachDisplayRecovery({
             bounds: rememberedSecondaryBounds,
             displayId: rememberedDisplayId,
             at: Date.now(),
+            // Windows may relocate the window either just before or just
+            // after the lock-screen/suspend event. When the relocation lands
+            // after the interruption, the timestamp ordering check in
+            // onDisplayRemoved cannot tell that this move belongs to the
+            // interruption, so record it here: a primary-display move
+            // observed within the teardown grace window after a lock/suspend
+            // is the OS's teardown relocation — the session is locked or the
+            // machine is going to sleep, so the user cannot have moved the
+            // window.
+            duringSessionInterruption:
+              sessionInterruptedAt !== null &&
+              Date.now() - sessionInterruptedAt < teardownGraceMs,
           };
         }
         rememberedSecondaryBounds = null;
@@ -379,6 +391,12 @@ function attachDisplayRecovery({
         sessionInterruptedAt !== null && sessionInterruptedAt >= pendingTeardownMove.at;
       if (
         suspendedAfterPendingMove ||
+        // The OS relocation can also land after the lock-screen/suspend
+        // event (Windows is free to emit them in either order), in which
+        // case the ordering check above is false even though the pending
+        // move belongs to this very interruption. Such moves are stamped at
+        // creation time and must not be expired by the grace window either.
+        pendingTeardownMove.duringSessionInterruption === true ||
         Date.now() - pendingTeardownMove.at < teardownGraceMs
       ) {
         // The OS relocated the window to the primary before this removal event

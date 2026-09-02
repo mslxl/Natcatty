@@ -596,6 +596,62 @@ test("attachDisplayRecovery keeps the pending teardown snapshot across a lock-sc
   }
 });
 
+test("attachDisplayRecovery keeps the pending teardown snapshot when the relocation follows the lock-screen event", () => {
+  const realNow = Date.now;
+  let now = 3_200_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+    };
+
+    const detach = attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The window lives on the secondary display.
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // Windows may lock the session BEFORE relocating the window: the
+    // lock-screen event fires first and the OS teardown relocation to the
+    // primary lands afterwards. The pending move is then stamped as part of
+    // the interruption even though its timestamp postdates the lock.
+    powerMonitor.emit("lock-screen");
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // The "display-removed" event is delivered long after the relocation
+    // (e.g. the machine went to sleep right after the lock), so the wall
+    // clock is far past the teardown grace window. The snapshot must still
+    // be promoted: the move belonged to the interruption, not to the user.
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+
+    detach();
+    assert.equal((powerListeners.get("lock-screen") || []).length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery drops a pending teardown move that predates the interruption", () => {
   const realNow = Date.now;
   let now = 3_500_000;
