@@ -596,6 +596,59 @@ test("attachDisplayRecovery keeps the pending teardown snapshot across a lock-sc
   }
 });
 
+test("attachDisplayRecovery drops a pending teardown move that predates the interruption", () => {
+  const realNow = Date.now;
+  let now = 3_500_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerListeners = new Map();
+    const powerMonitor = {
+      on(event, handler) {
+        if (!powerListeners.has(event)) powerListeners.set(event, []);
+        powerListeners.get(event).push(handler);
+      },
+      removeListener(event, handler) {
+        const list = powerListeners.get(event) || [];
+        const index = list.indexOf(handler);
+        if (index >= 0) list.splice(index, 1);
+      },
+      emit(event) {
+        for (const handler of powerListeners.get(event) || []) handler();
+      },
+    };
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The user deliberately moves the window from the secondary display to
+    // the primary, well before any session interruption: this supersedes the
+    // remembered secondary placement.
+    win.bounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // Much later the user locks the session (Win+L). The pending move is
+    // stale by now — it was a deliberate user edit, not the OS's pre-teardown
+    // relocation — so it must not be promoted by the "display-removed" event
+    // that fires during the lock.
+    now += 60_000;
+    powerMonitor.emit("lock-screen");
+    now += 60 * 60_000;
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+
+    // The user's primary-display placement must survive the teardown and
+    // re-addition of the secondary display.
+    assert.equal(win.setBoundsCalls.length, 0);
+    assert.deepEqual(win.bounds, { x: 100, y: 100, width: 1400, height: 900 });
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery drops the removal snapshot when the returning display already holds the window", () => {
   const realNow = Date.now;
   let now = 4_000_000;

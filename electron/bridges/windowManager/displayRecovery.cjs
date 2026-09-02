@@ -218,6 +218,20 @@ function attachDisplayRecovery({
 
   const onSessionInterrupted = () => {
     sessionInterruptedAt = Date.now();
+    // Only a pending move that belongs to the current interruption may be
+    // promoted by a later "display-removed" event: the OS relocation that
+    // races ahead of display teardown happens immediately before the
+    // suspend/lock event, so it is still fresh here. A move recorded long
+    // before this interruption is a deliberate user placement (e.g. the
+    // user moved the window to the primary display and locked the session
+    // much later); drop it so the removal during the interruption cannot
+    // resurrect the superseded placement.
+    if (
+      pendingTeardownMove &&
+      Date.now() - pendingTeardownMove.at >= teardownGraceMs
+    ) {
+      pendingTeardownMove = null;
+    }
   };
 
   const isTrackable = () => {
