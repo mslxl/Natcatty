@@ -344,6 +344,30 @@ test("attachDisplayRecovery does nothing when the window never left the primary 
   assert.equal(win.setBoundsCalls.length, 0);
 });
 
+test("attachDisplayRecovery does not claim a primary-display window that merely overlaps the removed display", () => {
+  // The window lives primarily on the primary display but its right edge
+  // overlaps the secondary display.
+  const overlappingBounds = { x: 1700, y: 100, width: 400, height: 300 };
+  const win = createMockWindow({ ...overlappingBounds });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The secondary display is torn down and the OS moves the window fully onto
+  // the primary display: the removal-time snapshot must not claim the window
+  // for the secondary display, since it primarily lived on the primary.
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 400, height: 300 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // When the secondary display returns, the user's primary-display placement
+  // must stand: no recovery move.
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("detach removes all listeners and stops recovery", () => {
   const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
   const screen = createMockScreen();

@@ -46,6 +46,21 @@ function boundsIntersectDisplay(bounds, displayBounds) {
 }
 
 /**
+ * Area of the part of `bounds` that lies on a display with `displayBounds`
+ * (0 when they do not overlap).
+ */
+function displayIntersectionArea(bounds, displayBounds) {
+  if (!boundsIntersectDisplay(bounds, displayBounds)) return 0;
+  const width =
+    Math.min(bounds.x + bounds.width, displayBounds.x + displayBounds.width) -
+    Math.max(bounds.x, displayBounds.x);
+  const height =
+    Math.min(bounds.y + bounds.height, displayBounds.y + displayBounds.height) -
+    Math.max(bounds.y, displayBounds.y);
+  return width * height;
+}
+
+/**
  * Decide whether the window should be moved back onto a (re-)added display.
  * Returns the remembered bounds to restore, or null when the window is already
  * on that display or no remembered placement intersects it. Candidates are
@@ -189,6 +204,25 @@ function attachDisplayRecovery({ win, screen, teardownGraceMs = DEFAULT_TEARDOWN
     // snapshot captured for the display the window was really on.
     const currentBounds = copyBounds();
     if (!oldDisplay || !boundsIntersectDisplay(currentBounds, oldDisplay.bounds)) return;
+    // Only treat the window as belonging to the removed display when that
+    // display holds the largest share of it — the same "most closely
+    // intersecting" rule screen.getDisplayMatching applies. The removed
+    // display is already gone from the display list when this event fires, so
+    // getDisplayMatching alone cannot identify it; compare against every
+    // still-connected display instead. A window that lives primarily on
+    // another display and merely overlaps the removed one must not be
+    // snapshotted: recovery would later drag it onto the re-added display
+    // against the user's placement.
+    const removedArea = displayIntersectionArea(currentBounds, oldDisplay.bounds);
+    if (removedArea <= 0) return;
+    try {
+      for (const display of screen.getAllDisplays?.() || []) {
+        if (displayIntersectionArea(currentBounds, display.bounds) > removedArea) return;
+      }
+    } catch {
+      // Screen queries can fail during display teardown; skip the snapshot.
+      return;
+    }
     boundsAtDisplayRemoval = currentBounds;
   };
 
