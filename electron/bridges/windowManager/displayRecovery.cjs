@@ -89,6 +89,7 @@ function attachDisplayRecovery({ win, screen }) {
 
   let boundsAtDisplayRemoval = null;
   let rememberedSecondaryBounds = null;
+  let rememberedDisplayId = null;
   let attached = true;
 
   const isTrackable = () => {
@@ -116,8 +117,27 @@ function attachDisplayRecovery({ win, screen }) {
       if (!bounds) return;
       const primary = screen.getPrimaryDisplay?.();
       const display = screen.getDisplayMatching?.(bounds);
-      if (!primary || !display || display.id === primary.id) return;
+      if (!primary || !display) return;
+      if (display.id === primary.id) {
+        // The window is on the primary display now. If the remembered
+        // secondary display is still connected, the user deliberately moved
+        // the window off it: drop the stale snapshot so a later unplug or
+        // lock cycle cannot yank the window away from this placement.
+        // During teardown the OS also relocates the window to the primary,
+        // but in that case the remembered display is already gone from the
+        // display list, so the snapshot is kept for recovery.
+        if (rememberedDisplayId !== null) {
+          const connected = screen.getAllDisplays?.() || [];
+          if (!connected.some((candidate) => candidate.id === rememberedDisplayId)) {
+            return;
+          }
+        }
+        rememberedSecondaryBounds = null;
+        rememberedDisplayId = null;
+        return;
+      }
       rememberedSecondaryBounds = bounds;
+      rememberedDisplayId = display.id;
     } catch {
       // Screen queries can fail during display teardown; ignore.
     }
@@ -182,6 +202,7 @@ function attachDisplayRecovery({ win, screen }) {
     } catch {}
     boundsAtDisplayRemoval = null;
     rememberedSecondaryBounds = null;
+    rememberedDisplayId = null;
   };
 }
 

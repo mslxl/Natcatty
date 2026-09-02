@@ -54,7 +54,8 @@ function createMockWindow(initialBounds) {
 
 function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] } = {}) {
   const listeners = new Map();
-  return {
+  const connected = [...displays];
+  const mock = {
     on(event, handler) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(handler);
@@ -65,16 +66,28 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
       if (index >= 0) list.splice(index, 1);
     },
     emit(event, ...args) {
+      // Mirror Electron: the display list changes when these events fire.
+      const display = args[1] || args[0];
+      if (event === "display-removed" && display) {
+        const index = connected.findIndex((candidate) => candidate.id === display.id);
+        if (index >= 0) connected.splice(index, 1);
+      }
+      if (event === "display-added" && display) {
+        if (!connected.some((candidate) => candidate.id === display.id)) connected.push(display);
+      }
       // Mirror Electron: screen event listeners receive (event, display).
       for (const handler of listeners.get(event) || []) handler(...args);
     },
     getPrimaryDisplay() {
       return primary;
     },
+    getAllDisplays() {
+      return [...connected];
+    },
     getDisplayMatching(bounds) {
       let best = null;
       let bestArea = 0;
-      for (const display of displays) {
+      for (const display of connected) {
         const overlap = boundsIntersectDisplay(bounds, display.bounds)
           ? Math.min(bounds.x + bounds.width, display.bounds.x + display.bounds.width) -
             Math.max(bounds.x, display.bounds.x)
@@ -84,10 +97,11 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
           best = display;
         }
       }
-      return best || displays[0];
+      return best || connected[0];
     },
     __listeners: listeners,
   };
+  return mock;
 }
 
 test("boundsIntersectDisplay detects overlap and rejects invalid input", () => {
@@ -154,6 +168,26 @@ test("attachDisplayRecovery moves the window back after lock/unlock display chur
 
   assert.equal(win.setBoundsCalls.length, 1);
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery clears the remembered placement when the user moves to the primary", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+
+  // The user deliberately moves the window to the primary display while the
+  // secondary display is still connected.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // Later the secondary display is torn down and re-added (lock cycle or
+  // unplug/replug): the stale secondary placement must not be restored.
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
 });
 
 test("attachDisplayRecovery leaves the window alone while maximized", () => {
