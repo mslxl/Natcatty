@@ -1413,6 +1413,90 @@ test("attachDisplayRecovery follows a moved target after an unrelated unknown di
   );
 });
 
+test("attachDisplayRecovery follows a moved target when it stabilizes before a fresh unrelated payload", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // The target stabilizes first, but both displays use replacement payloads
+  // and move from their transient positions. Correlation must not depend on
+  // which metrics event happens to arrive first.
+  const stableReturningDisplay = {
+    id: SECONDARY.id,
+    bounds: { x: -5120, y: 0, width: 2560, height: 1440 },
+  };
+  screen.emit("display-metrics-changed", {}, stableReturningDisplay, ["bounds"]);
+  const stableNeighbor = {
+    id: 4,
+    bounds: { x: 7040, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-metrics-changed", {}, stableNeighbor, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], stableReturningDisplay.bounds),
+    true
+  );
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], stableNeighbor.bounds),
+    false
+  );
+});
+
+test("attachDisplayRecovery does not let a neighbor claim a fresh target removal", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // The real target disappears again, revealing its stable id only in a fresh
+  // removal payload at changed coordinates.
+  const stableTargetRemoval = {
+    id: SECONDARY.id,
+    bounds: { x: -5120, y: 0, width: 2560, height: 1440 },
+  };
+  screen.emit("display-removed", {}, stableTargetRemoval);
+
+  // The surviving neighbor later moves over the target's transient return
+  // geometry. It must not inherit the target's recovery record.
+  const stableNeighbor = {
+    id: 4,
+    bounds: { ...returningDisplay.bounds },
+  };
+  screen.emit("display-metrics-changed", {}, stableNeighbor, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("attachDisplayRecovery associates an unknown moved return beside a stable third display", () => {
   const returningDisplay = { ...SECONDARY, id: -1 };
   const thirdDisplay = {
@@ -2434,6 +2518,9 @@ test("attachDisplayRecovery respects a maximized keyboard move from a returned d
 });
 
 test("attachDisplayRecovery protects a maximized keyboard transfer from a trailing OS relocation", () => {
+  const realNow = Date.now;
+  let now = 4_800_000;
+  Date.now = () => now;
   const TERTIARY = {
     id: 3,
     bounds: { x: -1920, y: 0, width: 1920, height: 1080 },
@@ -2446,29 +2533,34 @@ test("attachDisplayRecovery protects a maximized keyboard transfer from a traili
   const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
   const powerMonitor = createMockPowerMonitor();
 
-  attachDisplayRecovery({ win, screen, powerMonitor });
-  powerMonitor.emit("lock-screen");
-  screen.emit("display-removed", {}, SECONDARY);
-  screen.emit("display-added", {}, SECONDARY);
-  powerMonitor.emit("unlock-screen");
+  try {
+    attachDisplayRecovery({ win, screen, powerMonitor });
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    powerMonitor.emit("unlock-screen");
 
-  win.webContents.emit("before-input-event", {}, {
-    type: "keyDown",
-    key: "ArrowLeft",
-    meta: true,
-    shift: true,
-  });
-  win.normalBounds = { ...tertiaryBounds };
-  for (const handler of win.__listeners.get("move") || []) handler();
+    win.webContents.emit("before-input-event", {}, {
+      type: "keyDown",
+      key: "ArrowLeft",
+      meta: true,
+      shift: true,
+    });
+    win.normalBounds = { ...tertiaryBounds };
+    for (const handler of win.__listeners.get("move") || []) handler();
 
-  // The user's transfer to B wins even if a trailing event from the old
-  // Windows relocation subsequently presents primary-display normal bounds.
-  win.normalBounds = { x: 100, y: 100, width: 1200, height: 800 };
-  for (const handler of win.__listeners.get("resize") || []) handler();
-  win.unmaximize();
+    // The user's transfer to B wins even if a trailing event from the old
+    // Windows relocation arrives well after the ordinary grace window.
+    now += 3_000;
+    win.normalBounds = { x: 100, y: 100, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("resize") || []) handler();
+    win.unmaximize();
 
-  assert.equal(win.setBoundsCalls.length, 1);
-  assert.deepEqual(win.setBoundsCalls[0], tertiaryBounds);
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], tertiaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("attachDisplayRecovery respects a maximized keyboard move while the old display is absent", () => {
