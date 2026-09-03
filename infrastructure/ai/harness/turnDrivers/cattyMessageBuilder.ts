@@ -94,6 +94,15 @@ function partHasReasoningEncryptedContent(
     && openaiOptions.reasoningEncryptedContent.length > 0;
 }
 
+function hasOpenAIResponsesReasoningMetadata(
+  parts: readonly ProviderContinuationReasoningPart[],
+): boolean {
+  return parts.some(part => (
+    getReasoningOpenAIItemId(part) !== undefined
+    || partHasReasoningEncryptedContent(part)
+  ));
+}
+
 /**
  * A single Responses reasoning item is streamed as several fragments
  * (`reasoning-start`/`reasoning-delta`/`reasoning-end`): the initial fragment
@@ -110,9 +119,15 @@ function hasUnreplayableReasoningItems(
 ): boolean {
   const itemIds = new Set<string>();
   const itemIdsWithCiphertext = new Set<string>();
+  let hasCiphertextWithoutItemId = false;
   for (const part of parts) {
     const itemId = getReasoningOpenAIItemId(part);
-    if (!itemId) continue;
+    if (!itemId) {
+      if (partHasReasoningEncryptedContent(part)) {
+        hasCiphertextWithoutItemId = true;
+      }
+      continue;
+    }
     itemIds.add(itemId);
     if (partHasReasoningEncryptedContent(part)) {
       itemIdsWithCiphertext.add(itemId);
@@ -121,7 +136,12 @@ function hasUnreplayableReasoningItems(
   for (const itemId of itemIds) {
     if (!itemIdsWithCiphertext.has(itemId)) return true;
   }
-  return false;
+  // The Responses converter also skips reasoning that has neither an item id
+  // nor encrypted content. If that is the only reasoning attached to a tool
+  // exchange, replaying the call/result without it is unsafe. Plain delta
+  // fragments are still accepted when another fragment supplies the item's
+  // ciphertext.
+  return parts.length > 0 && itemIds.size === 0 && !hasCiphertextWithoutItemId;
 }
 
 /**
@@ -257,8 +277,10 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         // to the active Responses model, so its tool exchange must not be sent
         // without it. Freshly streamed items whose ciphertext arrived on a
         // later fragment stay replayable.
-        const hasSourceMismatchedReasoning = !!m.providerContinuation?.reasoningParts?.length
-          && !activeContinuation;
+        const hasSourceMismatchedReasoning = !activeContinuation
+          && hasOpenAIResponsesReasoningMetadata(
+            m.providerContinuation?.reasoningParts ?? [],
+          );
         const hasUnreplayableReasoning = resolvedCalls.length > 0
           && continuationContext.usesOpenAIResponses
           && (

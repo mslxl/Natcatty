@@ -186,6 +186,89 @@ test('a Responses model switch discards a reasoning-backed tool exchange from th
   assert.equal(chatMessages[1].role, 'tool');
 });
 
+test('a Responses provider switch keeps a non-OpenAI reasoning tool exchange', () => {
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'anthropic-1', providerType: 'anthropic', modelId: 'claude' },
+        reasoningParts: [{
+          text: 'prior Anthropic thinking',
+          providerOptions: { anthropic: { signature: 'sig-1' } },
+        }],
+      },
+      toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } }],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-1', content: 'output' }],
+    },
+  ];
+
+  const sdkMessages = buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('openai-1', 'openai', 'gpt-5', true),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+
+  assert.equal(sdkMessages.length, 2);
+  const assistantContent = sdkMessages[0].content;
+  assert.ok(Array.isArray(assistantContent));
+  assert.deepEqual(
+    assistantContent.map(part => part.type),
+    ['text', 'tool-call'],
+  );
+  assert.equal(sdkMessages[1].role, 'tool');
+});
+
+test('metadata-free Responses reasoning discards its paired tool exchange', () => {
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+        reasoningParts: [{ text: 'relay reasoning without replay metadata' }],
+      },
+      toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } }],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-1', content: 'output' }],
+    },
+  ];
+
+  const responsesMessages = buildHistory(messages);
+  assert.deepEqual(responsesMessages, [{ role: 'assistant', content: 'Running it.' }]);
+
+  const chatMessages = buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1', false),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+  assert.equal(chatMessages.length, 2);
+  assert.equal(chatMessages[1].role, 'tool');
+});
+
 test('a durable summary survives when storage trimming shifts its boundary to zero', () => {
   const sdkMessages = buildCattySdkMessages({
     allMessages: [{
