@@ -500,6 +500,7 @@ test("toolbar display path keeps the previous confirmed path while loading the s
 
 test("bookmark delete asks for confirmation inside the app", () => {
   assert.doesNotMatch(toolbarSource, /window\.confirm/);
+  assert.doesNotMatch(toolbarSource, /confirmRemoveSftpBookmark/);
   assert.match(toolbarSource, /import \{ ConfirmDialog \} from "\.\.\/ui\/confirm-dialog"/);
   assert.match(toolbarSource, /<ConfirmDialog/);
   assert.match(toolbarSource, /sftp\.bookmark\.removeConfirm/);

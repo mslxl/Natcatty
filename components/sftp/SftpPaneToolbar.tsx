@@ -1492,6 +1492,7 @@ function SftpBookmarkPopoverBody({
   onAfterLeafAction?: () => void;
 }) {
   const [managing, setManaging] = useState(false);
+  const [confirmingCurrentPathRemoval, setConfirmingCurrentPathRemoval] = useState(false);
   const runThenClose = (action: () => void) => {
     action();
     onAfterLeafAction?.();
@@ -1518,7 +1519,8 @@ function SftpBookmarkPopoverBody({
           size="sm"
           className="flex-1 justify-start text-xs h-7"
           onClick={() => {
-            if (isCurrentPathBookmarked && currentPath && !confirmRemoveSftpBookmark(currentPath, t)) {
+            if (isCurrentPathBookmarked && currentPath) {
+              setConfirmingCurrentPathRemoval(true);
               return;
             }
             runThenClose(onToggleBookmark);
@@ -1555,6 +1557,20 @@ function SftpBookmarkPopoverBody({
         onReorderBookmark={onReorderBookmark}
         onRenameBookmark={onRenameBookmark}
         t={t}
+      />
+      <ConfirmDialog
+        open={confirmingCurrentPathRemoval}
+        title={t("sftp.bookmark.remove")}
+        message={currentPath
+          ? t("sftp.bookmark.removeConfirm", { path: currentPath })
+          : undefined}
+        confirmLabel={t("sftp.bookmark.remove")}
+        destructive
+        onOpenChange={setConfirmingCurrentPathRemoval}
+        onConfirm={() => {
+          setConfirmingCurrentPathRemoval(false);
+          runThenClose(onToggleBookmark);
+        }}
       />
     </>
   );
