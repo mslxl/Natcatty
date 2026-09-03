@@ -311,45 +311,49 @@ function attachDisplayRecovery({
   // regular move event alone cannot tell the two apart.
   const onManualPlacement = (_event, nextBounds) => {
     if (!attached || !isTrackable() || sessionInterruptionActive) return;
-    if (
-      recentlyReturnedRecovery &&
-      recentlyReturnedRecovery.burstExpiresAt === null &&
-      isFiniteBounds(nextBounds)
-    ) {
+    if (isFiniteBounds(nextBounds)) {
       try {
-        const returnedDisplay = (screen.getAllDisplays?.() || []).find(
-          (candidate) =>
-            recoveryPlacementMatchesDisplay(
-              recentlyReturnedRecovery,
-              candidate
-            )
-        );
         const destinationDisplay = screen.getDisplayMatching?.(nextBounds);
+        const primaryDisplay = screen.getPrimaryDisplay?.();
+        const recentRecoveryCanStillReceiveQueuedEvents = Boolean(
+          recentlyReturnedRecovery &&
+            (recentlyReturnedRecovery.burstExpiresAt === null ||
+              Date.now() <= recentlyReturnedRecovery.burstExpiresAt)
+        );
         if (
-          returnedDisplay &&
           destinationDisplay &&
-          recoveryPlacementMatchesDisplay(
-            {
-              bounds: returnedDisplay.bounds,
-              displayId: returnedDisplay.id,
-            },
-            destinationDisplay
-          )
+          primaryDisplay &&
+          !recoveryPlacementMatchesDisplay(destinationDisplay, primaryDisplay) &&
+          (recentRecoveryCanStillReceiveQueuedEvents ||
+            transientReturnedDisplay)
         ) {
-          // The user refined the placement on the display that just returned.
-          // Keep that newer target for the one queued Windows relocation that
-          // can still arrive after the display-added event.
-          const retainedTransientAssociation = transientReturnedDisplay;
-          const returnedDisplayId =
-            normalizeDisplayId(returnedDisplay.id) ??
-            normalizeDisplayId(recentlyReturnedRecovery.displayId);
+          // A display has already returned, but its queued Windows relocation
+          // may still arrive. Protect whichever non-primary placement the user
+          // chose now — either a refined target position or another secondary.
+          // If this is the still-transient target, retain its association so a
+          // later stable id can be transferred to the updated placement.
+          const destinationDisplayId = normalizeDisplayId(destinationDisplay.id);
+          const retainedTransientAssociation =
+            transientReturnedDisplay &&
+            !transientReturnedDisplay.unrelatedDisplayIds.has(
+              destinationDisplayId
+            ) &&
+            boundsIntersectDisplay(
+              transientReturnedDisplay.displayBounds,
+              destinationDisplay.bounds
+            )
+              ? transientReturnedDisplay
+              : null;
+          const burstExpiresAt = recentRecoveryCanStillReceiveQueuedEvents
+            ? recentlyReturnedRecovery.burstExpiresAt
+            : null;
           clearRecoveryCandidates();
           transientReturnedDisplay = retainedTransientAssociation;
           recentlyReturnedRecovery = {
             bounds: { ...nextBounds },
-            displayId: returnedDisplayId,
+            displayId: destinationDisplayId,
             fromBounds: { ...nextBounds },
-            burstExpiresAt: null,
+            burstExpiresAt,
           };
           return;
         }
@@ -509,7 +513,10 @@ function attachDisplayRecovery({
     };
   };
 
-  const matchesTransientReturnedDisplay = (display) => {
+  const matchesTransientReturnedDisplay = (
+    display,
+    { allowDisconnectedDisplay = false } = {}
+  ) => {
     const association = transientReturnedDisplay;
     const stableDisplayId = normalizeDisplayId(display?.id);
     if (
@@ -526,7 +533,25 @@ function attachDisplayRecovery({
     }
 
     if (boundsIntersectDisplay(association.displayBounds, display.bounds)) {
-      return true;
+      if (allowDisconnectedDisplay) return true;
+      // A second unknown display can stabilize while moving across the
+      // target's old coordinates. Geometry is authoritative only when exactly
+      // one still-connected, not-known-unrelated secondary overlaps the
+      // transient target. Multiple overlaps are indistinguishable, so keep
+      // waiting rather than assigning the recovery to the wrong display.
+      const overlappingMatches = connectedSecondaryDisplays().filter(
+        (candidate) => {
+          const candidateId = normalizeDisplayId(candidate.id);
+          return (
+            !association.unrelatedDisplayIds.has(candidateId) &&
+            boundsIntersectDisplay(
+              association.displayBounds,
+              candidate.bounds
+            )
+          );
+        }
+      );
+      return overlappingMatches.length === 1;
     }
 
     // Some Windows topology changes update the id and move the display in the
@@ -546,8 +571,8 @@ function attachDisplayRecovery({
     );
   };
 
-  const promoteTransientReturnedDisplay = (display) => {
-    if (!matchesTransientReturnedDisplay(display)) return false;
+  const promoteTransientReturnedDisplay = (display, options) => {
+    if (!matchesTransientReturnedDisplay(display, options)) return false;
     const association = transientReturnedDisplay;
     const stableDisplayId = normalizeDisplayId(display.id);
     const belongsToAssociation = (bounds) =>
@@ -610,13 +635,16 @@ function attachDisplayRecovery({
       // target that the shortcut superseded before deciding whether the new
       // monitor is primary or secondary; otherwise moving from the returned
       // display onto another secondary can leave the old target armed.
-      const maximizedTransferRecovery =
-        recentlyReturnedRecovery || pendingRecovery;
+      const maximizedTransferSourceBounds =
+        recentlyReturnedRecovery?.fromBounds ||
+        pendingRecovery?.fromBounds ||
+        boundsAtDisplayRemoval ||
+        pendingTeardownMove?.bounds ||
+        rememberedSecondaryBounds;
       if (
-        maximizedTransferRecovery &&
+        isFiniteBounds(maximizedTransferSourceBounds) &&
         isMaximizedOrFullScreen() &&
-        isFiniteBounds(maximizedTransferRecovery.fromBounds) &&
-        !boundsEqual(bounds, maximizedTransferRecovery.fromBounds) &&
+        !boundsEqual(bounds, maximizedTransferSourceBounds) &&
         lastMaximizedMonitorTransferInputAt !== null &&
         Date.now() - lastMaximizedMonitorTransferInputAt <=
           MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
@@ -863,7 +891,9 @@ function attachDisplayRecovery({
         // removal payload. Transfer it to every pending candidate before the
         // live association disappears so a changed-geometry return can still
         // be matched by identity.
-        promoteTransientReturnedDisplay(oldDisplay);
+        promoteTransientReturnedDisplay(oldDisplay, {
+          allowDisconnectedDisplay: true,
+        });
       } else {
         transientReturnedDisplay = null;
       }
@@ -1035,11 +1065,8 @@ function attachDisplayRecovery({
       } else if (transientReturnedDisplay) {
         const separatelyAddedDisplayId = normalizeDisplayId(display?.id);
         if (separatelyAddedDisplayId === null) {
-          // With two independently added displays that both lack durable ids,
-          // no later geometry change can prove which one owns the recovery.
-          // Drop the ambiguous target rather than risk moving the window onto
-          // the wrong screen when either id stabilizes.
-          clearRecoveryCandidates();
+          // Keep waiting. When either id stabilizes, the overlap check above
+          // will accept it only if exactly one possible target remains.
           return;
         }
         // A second display-added event is new topology, not identity
