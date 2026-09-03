@@ -50,7 +50,7 @@ test("progressive folder uploads use six slots by default and preserve a saved l
     "progressive",
     `file-${index}`,
     ["host:one"],
-    () => resolveProgressiveFolderUploadConcurrency(null),
+    () => null,
     async () => {
       active += 1;
       maxActive = Math.max(maxActive, active);

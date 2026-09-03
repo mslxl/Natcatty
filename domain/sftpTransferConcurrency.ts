@@ -6,7 +6,8 @@ export function resolveSftpTransferConcurrency(
   readStoredValue: () => number | null | undefined,
 ): number {
   const stored = readStoredValue();
-  return stored != null &&
+  return Number.isInteger(stored) &&
+    stored != null &&
     stored >= MIN_SFTP_FILE_TRANSFER_CONCURRENCY &&
     stored <= MAX_SFTP_FILE_TRANSFER_CONCURRENCY
     ? stored

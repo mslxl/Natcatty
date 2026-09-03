@@ -34,6 +34,7 @@ test("defaults skip-unchanged to enabled", () => {
 test("keeps explicit folder transfer concurrency within the supported range", () => {
   assert.equal(resolveSftpTransferConcurrency(() => 1), 1);
   assert.equal(resolveSftpTransferConcurrency(() => 16), 16);
+  assert.equal(resolveSftpTransferConcurrency(() => 1.5), DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY);
   assert.equal(resolveSftpTransferConcurrency(() => 0), DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY);
   assert.equal(resolveSftpTransferConcurrency(() => 17), DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY);
 });
