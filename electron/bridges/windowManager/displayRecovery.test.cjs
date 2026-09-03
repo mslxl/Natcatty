@@ -1371,6 +1371,48 @@ test("attachDisplayRecovery recovers when an unrelated unknown display changes i
   );
 });
 
+test("attachDisplayRecovery follows a moved target after an unrelated unknown display stabilizes with a fresh payload", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // Both displays receive fresh payload objects and move when their ids
+  // stabilize. The still-connected unknown display at the target's return
+  // geometry proves the first stable event belongs to the neighbor.
+  const stableNeighbor = {
+    id: 4,
+    bounds: { x: 7040, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-metrics-changed", {}, stableNeighbor, ["bounds"]);
+
+  const stableReturningDisplay = {
+    id: SECONDARY.id,
+    bounds: { x: -5120, y: 0, width: 2560, height: 1440 },
+  };
+  screen.emit("display-metrics-changed", {}, stableReturningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], stableReturningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery associates an unknown moved return beside a stable third display", () => {
   const returningDisplay = { ...SECONDARY, id: -1 };
   const thirdDisplay = {

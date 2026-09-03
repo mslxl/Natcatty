@@ -586,6 +586,7 @@ function attachDisplayRecovery({
           const candidateId = normalizeDisplayId(candidate.id);
           return (
             !association.unrelatedDisplayIds.has(candidateId) &&
+            findUnrelatedTransientDisplayIndex(candidate) < 0 &&
             boundsIntersectDisplay(
               association.displayBounds,
               candidate.bounds
@@ -603,13 +604,20 @@ function attachDisplayRecovery({
     const possibleMatches = connectedSecondaryDisplays().filter((candidate) => {
       const candidateId = normalizeDisplayId(candidate.id);
       return (
-        candidateId === null ||
-        !association.unrelatedDisplayIds.has(candidateId)
+        findUnrelatedTransientDisplayIndex(candidate) < 0 &&
+        (candidateId === null ||
+          !association.unrelatedDisplayIds.has(candidateId))
       );
     });
+    if (possibleMatches.length !== 1) return false;
+    const possibleDisplayId = normalizeDisplayId(possibleMatches[0].id);
     return (
-      possibleMatches.length === 1 &&
-      normalizeDisplayId(possibleMatches[0].id) === stableDisplayId
+      possibleDisplayId === stableDisplayId ||
+      (possibleDisplayId === null &&
+        boundsIntersectDisplay(
+          association.displayBounds,
+          possibleMatches[0].bounds
+        ))
     );
   };
 
@@ -934,7 +942,9 @@ function attachDisplayRecovery({
         return;
       }
       if (
-        association.unrelatedTransientDisplays.length > 0 &&
+        association.unrelatedTransientDisplays.some(
+          (candidate) => candidate.stableDisplayId === null
+        ) &&
         oldDisplay !== association.display &&
         (removedDisplayId !== null ||
           !isFiniteBounds(oldDisplay.bounds) ||
@@ -1153,11 +1163,37 @@ function attachDisplayRecovery({
           const stableDisplayId = normalizeDisplayId(display?.id);
           if (stableDisplayId !== null) {
             transientReturnedDisplay.unrelatedDisplayIds.add(stableDisplayId);
+            transientReturnedDisplay.unrelatedTransientDisplays[
+              unrelatedTransientIndex
+            ].stableDisplayId = stableDisplayId;
           }
-          transientReturnedDisplay.unrelatedTransientDisplays.splice(
-            unrelatedTransientIndex,
-            1
+          return;
+        }
+        const stableDisplayId = normalizeDisplayId(display?.id);
+        const unresolvedNeighbor =
+          transientReturnedDisplay?.unrelatedTransientDisplays.find(
+            (candidate) => candidate.stableDisplayId === null
           );
+        const targetStillConnectedAsUnknown =
+          unresolvedNeighbor &&
+          stableDisplayId !== null &&
+          isFiniteBounds(display?.bounds) &&
+          !boundsIntersectDisplay(
+            transientReturnedDisplay.displayBounds,
+            display.bounds
+          ) &&
+          connectedSecondaryDisplays().some(
+            (candidate) =>
+              normalizeDisplayId(candidate.id) === null &&
+              findUnrelatedTransientDisplayIndex(candidate) < 0 &&
+              boundsIntersectDisplay(
+                transientReturnedDisplay.displayBounds,
+                candidate.bounds
+              )
+          );
+        if (targetStillConnectedAsUnknown) {
+          transientReturnedDisplay.unrelatedDisplayIds.add(stableDisplayId);
+          unresolvedNeighbor.stableDisplayId = stableDisplayId;
           return;
         }
         promoteTransientReturnedDisplay(display);
@@ -1176,6 +1212,7 @@ function attachDisplayRecovery({
             transientReturnedDisplay.unrelatedTransientDisplays.push({
               display,
               bounds: { ...display.bounds },
+              stableDisplayId: null,
             });
           }
           return;
