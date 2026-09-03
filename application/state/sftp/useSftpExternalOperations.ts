@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileConflict, FileConflictAction, Host, TransferStatus, SftpFilenameEncoding } from "../../../domain/models";
 import { getSftpConflictTypeKey } from "../../../domain/sftpConflict";
+import { resolveSftpTransferConcurrency } from "../../../domain/sftpTransferConcurrency";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { notify } from "../../notification";
@@ -107,6 +108,11 @@ import {
   isTransferPauseLatched,
   waitWhileTransferOrRootPaused,
 } from "./transferPauseLatch";
+
+const readSftpFileTransferConcurrency = (): number =>
+  resolveSftpTransferConcurrency(
+    () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+  );
 
 type UploadConflictResolver = {
   resolve: (action: FileConflictAction) => void;
@@ -1257,6 +1263,7 @@ export const useSftpExternalOperations = (
                 targetPath: liveTargetPath,
                 sftpId: uploadSftpId,
                 targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                fileTransferConcurrency: readSftpFileTransferConcurrency(),
                 isLocal: livePane.connection!.isLocal,
                 bridge: uploadBridge,
                 joinPath,
@@ -1386,6 +1393,7 @@ export const useSftpExternalOperations = (
                 targetPath: uploadTargetPath,
                 sftpId: uploadSftpId,
                 targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                fileTransferConcurrency: readSftpFileTransferConcurrency(),
                 isLocal: livePane.connection!.isLocal,
                 bridge: uploadBridge,
                 joinPath,
@@ -1606,6 +1614,7 @@ export const useSftpExternalOperations = (
                 targetPath: uploadTargetPath,
                 sftpId: uploadSftpId,
                 targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                fileTransferConcurrency: readSftpFileTransferConcurrency(),
                 isLocal: livePane.connection!.isLocal,
                 bridge: uploadBridge,
                 joinPath,
@@ -1791,6 +1800,7 @@ export const useSftpExternalOperations = (
                 targetPath: uploadTargetPath,
                 sftpId: uploadSftpId,
                 targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                fileTransferConcurrency: readSftpFileTransferConcurrency(),
                 isLocal: livePane.connection!.isLocal,
                 bridge: directUploadBridge,
                 joinPath,
