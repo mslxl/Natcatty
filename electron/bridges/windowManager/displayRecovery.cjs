@@ -290,6 +290,10 @@ function attachDisplayRecovery({
     if (isInterrupted()) return;
     pendingRestore = null;
     restoreUntil = null;
+    // A manual move/resize after unlock is the user's new placement. Drop the
+    // frozen secondary snapshot so a later ordinary lock/unlock cannot restore
+    // it after the display happens to reconnect.
+    remembered = null;
   };
 
   const onManualPlacement = (_event, nextBounds) => {

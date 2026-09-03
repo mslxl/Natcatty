@@ -425,6 +425,30 @@ test("attachDisplayRecovery does not restore a user move to the primary before l
   assert.deepEqual(win.bounds, primaryBounds);
 });
 
+test("attachDisplayRecovery does not restore a stale snapshot on a later lock after the user stayed on primary", () => {
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const primaryBounds = { x: 300, y: 200, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  powerMonitor.emit("unlock-screen");
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  moveWindowManually(win, primaryBounds);
+  screen.emit("display-added", {}, SECONDARY);
+  powerMonitor.emit("lock-screen");
+  powerMonitor.emit("unlock-screen");
+
+  assert.equal(win.setBoundsCalls.length, 0);
+  assert.deepEqual(win.bounds, primaryBounds);
+});
+
 test("attachDisplayRecovery lets an immediate post-unlock user move win", () => {
   const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
   const primaryBounds = { x: 300, y: 200, width: 1400, height: 900 };
