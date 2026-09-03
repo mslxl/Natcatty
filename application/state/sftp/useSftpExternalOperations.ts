@@ -16,10 +16,7 @@ import {
   UploadResult,
   startUploadScanningTask,
 } from "../../../lib/uploadService";
-import {
-  resolveProgressiveFolderUploadConcurrency,
-  uploadLocalFoldersProgressively,
-} from "../../../lib/progressiveFolderUpload";
+import { uploadLocalFoldersProgressively } from "../../../lib/progressiveFolderUpload";
 import {
   captureDropPayload,
   formatDropScanLabel,
@@ -1045,9 +1042,7 @@ export const useSftpExternalOperations = (
           const connectHost = resolveUploadConnectHost(uploadPaneId, livePane.connection.isLocal);
           const uploadBridge = createUploadBridge(
             connectHost,
-            () => resolveProgressiveFolderUploadConcurrency(
-              localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-            ),
+            readSftpFileTransferConcurrency,
           );
           const liveCallbacks = livePane.connection.id === pane.connection.id
             && liveTargetPath === uploadTargetPath
@@ -1085,6 +1080,7 @@ export const useSftpExternalOperations = (
                 targetPath: liveTargetPath,
                 sftpId,
                 targetHostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
+                fileTransferConcurrency: readSftpFileTransferConcurrency(),
                 isLocal: livePane.connection.isLocal,
                 bridge: uploadBridge,
                 joinPath,

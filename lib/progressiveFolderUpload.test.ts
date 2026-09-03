@@ -93,6 +93,59 @@ test("progressive folder upload starts file transfers before the tree walk finis
   assert.ok(uploadA < batch2, "first file must upload while scan still running");
 });
 
+test("progressive folder upload honors an explicit transfer concurrency above the default", async () => {
+  const requestedConcurrency = 16;
+  const entries: LocalTreeListEntry[] = Array.from(
+    { length: requestedConcurrency + 2 },
+    (_, index) => ({
+      localPath: `/tmp/docs/file-${index}.txt`,
+      relativePath: `docs/file-${index}.txt`,
+      type: "file",
+      size: 1,
+      lastModified: index,
+    }),
+  );
+  const started: string[] = [];
+  let releaseAll!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseAll = resolve;
+  });
+  const config = {
+    targetPath: "/remote",
+    sftpId: "sftp-1",
+    fileTransferConcurrency: requestedConcurrency,
+    isLocal: false,
+    joinPath: (base: string, name: string) => `${base}/${name}`,
+    bridge: {
+      mkdirSftp: async () => {},
+      startStreamTransfer: async (payload: { sourcePath: string; transferId: string }) => {
+        started.push(payload.sourcePath);
+        await gate;
+        return { transferId: payload.transferId };
+      },
+    },
+    listLocalTree: async (
+      _path: string,
+      options: { onEntries?: (batch: LocalTreeListEntry[]) => void },
+    ) => {
+      options.onEntries?.(entries);
+      return [];
+    },
+  };
+
+  const uploading = uploadLocalFoldersProgressively(
+    [{ name: "docs", localPath: "/tmp/docs" }],
+    config,
+    new UploadController(),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const initiallyStarted = started.length;
+  releaseAll();
+  await uploading;
+
+  assert.equal(initiallyStarted, requestedConcurrency);
+});
+
 test("progressive folder upload enqueues nested subdirectory files", async () => {
   const transferred: string[] = [];
   const mkdirs: string[] = [];

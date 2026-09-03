@@ -23,7 +23,6 @@ const formatUploadError = (error: unknown): string =>
 
 /** Keep progressive worker admission aligned with the user-visible transfer limit. */
 export const DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY = DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY;
-const UPLOAD_CONCURRENCY = DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
 
 export const resolveProgressiveFolderUploadConcurrency = (
   savedValue: number | null | undefined,
@@ -53,6 +52,8 @@ export type ProgressiveFolderUploadConfig = {
   targetPath: string;
   sftpId: string | null;
   targetHostId?: string;
+  /** Maximum number of file transfers this upload may start at once. */
+  fileTransferConcurrency?: number;
   isLocal: boolean;
   bridge: UploadBridge;
   joinPath: (base: string, name: string) => string;
@@ -103,6 +104,7 @@ export async function uploadLocalFoldersProgressively(
     targetPath,
     sftpId,
     targetHostId,
+    fileTransferConcurrency,
     isLocal,
     bridge,
     joinPath,
@@ -578,7 +580,8 @@ export async function uploadLocalFoldersProgressively(
     }
   };
 
-  const workers = Array.from({ length: UPLOAD_CONCURRENCY }, async () => {
+  const uploadConcurrency = resolveProgressiveFolderUploadConcurrency(fileTransferConcurrency);
+  const workers = Array.from({ length: uploadConcurrency }, async () => {
     while (true) {
       if (isStopped()) {
         fileQueue.length = 0;
