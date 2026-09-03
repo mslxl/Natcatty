@@ -10,7 +10,6 @@ import {
   getSftpBookmarkButtonLabelKey,
   getNextSftpViewMode,
   copySftpCurrentPathToClipboard,
-  confirmRemoveSftpBookmark,
   canReorderSftpBookmark,
   getSftpBookmarkMoveTargets,
   getNextSftpToolbarDisplayPath,
@@ -499,16 +498,12 @@ test("toolbar display path keeps the previous confirmed path while loading the s
   );
 });
 
-test("bookmark delete asks for confirmation with the path", () => {
-  const prompts: string[] = [];
-  assert.equal(
-    confirmRemoveSftpBookmark("/srv/www", (key, params) => `${key}:${params?.path ?? ""}`, (message) => {
-      prompts.push(message);
-      return false;
-    }),
-    false,
-  );
-  assert.deepEqual(prompts, ["sftp.bookmark.removeConfirm:/srv/www"]);
+test("bookmark delete asks for confirmation inside the app", () => {
+  assert.doesNotMatch(toolbarSource, /window\.confirm/);
+  assert.match(toolbarSource, /import \{ ConfirmDialog \} from "\.\.\/ui\/confirm-dialog"/);
+  assert.match(toolbarSource, /<ConfirmDialog/);
+  assert.match(toolbarSource, /sftp\.bookmark\.removeConfirm/);
+  assert.match(toolbarSource, /path: pendingRemoval\.path/);
 });
 
 test("bookmark rename does not use window.prompt", () => {

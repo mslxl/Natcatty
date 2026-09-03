@@ -9,6 +9,7 @@ import { useToolbarItemLayout } from "../../application/state/useToolbarItemLayo
 import type { ToolbarItemLayoutDefaults } from "../../domain/toolbarItemLayout";
 import { STORAGE_KEY_SFTP_TOOLBAR_LAYOUT } from "../../infrastructure/config/storageKeys";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import { Input } from "../ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { cn } from "../../lib/utils";
@@ -283,12 +284,6 @@ export const getSftpBookmarkMoveTargets = (
   return { previousId, nextId };
 };
 
-export const confirmRemoveSftpBookmark = (
-  path: string,
-  t: (key: string, params?: Record<string, unknown>) => string,
-  confirmFn: (message: string) => boolean = (message) => window.confirm(message),
-): boolean => confirmFn(t("sftp.bookmark.removeConfirm", { path }));
-
 export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   bookmarks,
   managing = false,
@@ -301,6 +296,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState<SftpBookmark | null>(null);
 
   if (bookmarks.length === 0) {
     return (
@@ -466,8 +462,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
               aria-label={t("sftp.bookmark.remove")}
               onClick={(event) => {
                 event.stopPropagation();
-                if (!confirmRemoveSftpBookmark(bm.path, t)) return;
-                onDeleteBookmark(bm.id);
+                setPendingRemoval(bm);
               }}
             >
               <Trash2 size={10} />
@@ -475,6 +470,24 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
           </div>
         );
       })}
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        title={t("sftp.bookmark.remove")}
+        message={pendingRemoval
+          ? t("sftp.bookmark.removeConfirm", { path: pendingRemoval.path })
+          : undefined}
+        confirmLabel={t("sftp.bookmark.remove")}
+        destructive
+        onOpenChange={(open) => {
+          if (!open) setPendingRemoval(null);
+        }}
+        onConfirm={() => {
+          if (!pendingRemoval) return;
+          const bookmarkId = pendingRemoval.id;
+          setPendingRemoval(null);
+          onDeleteBookmark(bookmarkId);
+        }}
+      />
     </div>
   );
 };
