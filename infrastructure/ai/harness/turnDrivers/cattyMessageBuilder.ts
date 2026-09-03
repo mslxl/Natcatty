@@ -277,9 +277,19 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         // to the active Responses model, so its tool exchange must not be sent
         // without it. Freshly streamed items whose ciphertext arrived on a
         // later fragment stay replayable.
+        const storedReasoningParts = m.providerContinuation?.reasoningParts ?? [];
+        const storedSource = m.providerContinuation?.source;
+        const sameProviderConfig = storedSource?.providerConfigId
+          === continuationContext.source.providerConfigId
+          && storedSource?.providerType === continuationContext.source.providerType;
         const hasSourceMismatchedReasoning = !activeContinuation
-          && hasOpenAIResponsesReasoningMetadata(
-            m.providerContinuation?.reasoningParts ?? [],
+          && (
+            hasOpenAIResponsesReasoningMetadata(storedReasoningParts)
+            // A model change within the same Responses configuration is also
+            // enough evidence that metadata-free reasoning came from this
+            // wire format. Cross-provider Anthropic/Google reasoning remains
+            // a generic, replayable call/result exchange.
+            || (sameProviderConfig && storedReasoningParts.length > 0)
           );
         const hasUnreplayableReasoning = resolvedCalls.length > 0
           && continuationContext.usesOpenAIResponses

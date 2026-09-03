@@ -256,6 +256,20 @@ test('metadata-free Responses reasoning discards its paired tool exchange', () =
   const responsesMessages = buildHistory(messages);
   assert.deepEqual(responsesMessages, [{ role: 'assistant', content: 'Running it.' }]);
 
+  const responsesAfterModelSwitch = buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-2', true),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+  assert.deepEqual(
+    responsesAfterModelSwitch,
+    [{ role: 'assistant', content: 'Running it.' }],
+  );
+
   const chatMessages = buildCattySdkMessages({
     allMessages: messages,
     includeCurrentUserMessage: false,
