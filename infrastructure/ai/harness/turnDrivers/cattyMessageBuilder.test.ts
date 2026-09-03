@@ -186,6 +186,31 @@ test('a Responses model switch discards a reasoning-backed tool exchange from th
   assert.equal(chatMessages[1].role, 'tool');
 });
 
+test('a durable summary survives when storage trimming shifts its boundary to zero', () => {
+  const sdkMessages = buildCattySdkMessages({
+    allMessages: [{
+      id: 'recent-user',
+      role: 'user',
+      content: 'What should I do next?',
+      timestamp: 1,
+    }],
+    contextCompaction: {
+      summary: 'Earlier work completed the deployment.',
+      compactedMessageCount: 0,
+    },
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1', true),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+
+  assert.equal(sdkMessages.length, 3);
+  assert.match(String(sdkMessages[0].content), /Earlier work completed the deployment/);
+  assert.equal(sdkMessages[2].content, 'What should I do next?');
+});
+
 test('tool exchanges with replayable reasoning are kept intact', () => {
   const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
   const toolResult = {

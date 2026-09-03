@@ -294,6 +294,49 @@ test('serializeSessionsForStorage drops compacted ciphertext before protecting t
   );
 });
 
+test('serializeSessionsForStorage shifts the compaction boundary when trimming old messages', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  const ciphertext = 'enc'.repeat(100);
+  const messages = Array.from({ length: 250 }, (_, index) => ({
+    id: `message-${index}`,
+    role: 'assistant' as const,
+    content: `turn ${index}`,
+    timestamp: index,
+    providerContinuation: {
+      reasoningParts: [{
+        text: '',
+        providerOptions: {
+          openai: { itemId: `rs_${index}`, reasoningEncryptedContent: ciphertext },
+        },
+      }],
+    },
+  }));
+  const session = {
+    ...makeSession('trimmed', 1, messages),
+    contextCompaction: {
+      summary: 'The first 100 messages were summarized.',
+      compactedMessageCount: 100,
+    },
+  };
+
+  const result = serializeSessionsForStorage([session]);
+  const persisted = result.sessions[0];
+
+  assert.equal(persisted.messages.length, 200);
+  assert.equal(persisted.messages[0].id, 'message-50');
+  assert.equal(persisted.contextCompaction?.compactedMessageCount, 50);
+  assert.equal(
+    persisted.messages[49].providerContinuation
+      ?.reasoningParts?.[0].providerOptions?.openai?.reasoningEncryptedContent,
+    undefined,
+  );
+  assert.equal(
+    persisted.messages[50].providerContinuation
+      ?.reasoningParts?.[0].providerOptions?.openai?.reasoningEncryptedContent,
+    ciphertext,
+  );
+});
+
 test('writeSessionsForStorage retries below nominal budgets after a quota failure', async () => {
   const { writeSessionsForStorage } = await import('./aiStateSnapshots');
   const writes: string[] = [];

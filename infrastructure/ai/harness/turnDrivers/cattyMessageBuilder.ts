@@ -210,7 +210,10 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
     allMessages.length,
     Math.max(0, contextCompaction?.compactedMessageCount ?? 0),
   );
-  if (contextCompaction?.summary && compactedMessageCount > 0) {
+  // The boundary can become zero when storage trims messages that were all
+  // covered by the durable summary. Keep injecting that summary even though
+  // no remaining persisted message needs to be skipped.
+  if (contextCompaction?.summary) {
     sdkMessages.push({
       role: 'user',
       content: `[Previous conversation summary]\n\n${contextCompaction.summary}\n\n[Continue with the recent messages below.]`,

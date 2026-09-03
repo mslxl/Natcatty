@@ -279,7 +279,21 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
   const limited = sorted.slice(0, MAX_STORED_SESSIONS);
   return limited.map(s => {
     if (s.messages.length > MAX_SESSION_MESSAGES) {
-      return { ...s, messages: s.messages.slice(-MAX_SESSION_MESSAGES) };
+      const removedMessageCount = s.messages.length - MAX_SESSION_MESSAGES;
+      const contextCompaction = s.contextCompaction
+        ? {
+            ...s.contextCompaction,
+            compactedMessageCount: Math.max(
+              0,
+              s.contextCompaction.compactedMessageCount - removedMessageCount,
+            ),
+          }
+        : undefined;
+      return {
+        ...s,
+        messages: s.messages.slice(-MAX_SESSION_MESSAGES),
+        ...(contextCompaction ? { contextCompaction } : {}),
+      };
     }
     return s;
   });
