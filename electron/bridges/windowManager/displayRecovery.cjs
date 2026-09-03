@@ -242,8 +242,10 @@ function attachDisplayRecovery({
   // A display can re-appear before Windows delivers the queued relocation
   // that moves the window to the primary display. Keep the matching recovery
   // target until that late system move arrives, a manual placement cancels it,
-  // or a new interruption starts. The queued relocation is not guaranteed to
-  // arrive within the short teardown grace window.
+  // or a new interruption starts. `fromBounds` records the normal placement
+  // at return time so a maximized Win+Shift+Arrow move can be recognized even
+  // though Electron does not emit will-move for it. The queued relocation is
+  // not guaranteed to arrive within the short teardown grace window.
   let recentlyReturnedRecovery = null;
   // A display-added event is authoritative even while Electron reports the
   // returning display with a transient negative id. Keep enough of that
@@ -540,6 +542,22 @@ function attachDisplayRecovery({
         )
       ) {
         if (recentlyReturnedRecovery) {
+          // A maximized window moved with Win+Shift+Arrow does not emit
+          // Electron's manual-only will-move event on Windows. Its normal
+          // placement does change, though. If that happens after the display
+          // has returned, prefer the user's new monitor instead of treating
+          // the ordinary move event as a queued OS relocation. While the
+          // session is still interrupted the user cannot be responsible, so
+          // retain the recovery in that case.
+          if (
+            isMaximizedOrFullScreen() &&
+            !sessionInterruptionActive &&
+            isFiniteBounds(recentlyReturnedRecovery.fromBounds) &&
+            !boundsEqual(bounds, recentlyReturnedRecovery.fromBounds)
+          ) {
+            clearRecoveryCandidates();
+            return;
+          }
           const connected = screen.getAllDisplays?.() || [];
           const returnedDisplay = connected.find((candidate) =>
             recoveryPlacementMatchesDisplay(recentlyReturnedRecovery, candidate)
@@ -551,12 +569,17 @@ function attachDisplayRecovery({
               )
             : null;
           if (restored) {
+            // This record covers one queued relocation. Consume it before
+            // setBounds emits another move event so a later user placement is
+            // not pulled back a second time.
+            const returnedRecovery = recentlyReturnedRecovery;
+            recentlyReturnedRecovery = null;
             if (isMaximizedOrFullScreen()) {
               pendingRecovery = {
                 bounds: restored,
                 displayId:
                   normalizeDisplayId(returnedDisplay.id) ??
-                  normalizeDisplayId(recentlyReturnedRecovery.displayId),
+                  normalizeDisplayId(returnedRecovery.displayId),
                 fromBounds: bounds,
               };
             } else {
@@ -689,19 +712,27 @@ function attachDisplayRecovery({
       oldDisplay &&
       !isPrimaryDisplay(oldDisplay)
     ) {
+      const association = transientReturnedDisplay;
       const removedDisplayId = normalizeDisplayId(oldDisplay.id);
-      // A known pre-existing secondary is explicitly unrelated. Any other
-      // secondary removal cannot be proven unrelated to the transient target,
-      // so fail closed instead of letting a later display inherit stale state.
-      if (
-        removedDisplayId === null ||
-        !transientReturnedDisplay.unrelatedDisplayIds.has(removedDisplayId)
-      ) {
-        // The transient target itself may have disappeared again. Drop every
-        // candidate tied to the old association; the regular removal logic
-        // below will immediately capture a fresh snapshot when the window is
-        // actually still on this display.
-        clearRecoveryCandidates();
+      if (!association.unrelatedDisplayIds.has(removedDisplayId)) {
+        if (
+          !isFiniteBounds(oldDisplay.bounds) ||
+          !boundsIntersectDisplay(association.displayBounds, oldDisplay.bounds)
+        ) {
+          // This removal is neither a known pre-existing display nor a
+          // geometry match for the transient target. Its identity is
+          // ambiguous, so fail closed instead of allowing a later display to
+          // inherit the target's recovery record.
+          clearRecoveryCandidates();
+          return;
+        }
+        // The transient target itself disappeared again. End only the live
+        // association; the regular removal logic below must first get a chance
+        // to promote a pending teardown move or capture the current placement.
+        // Clearing every candidate here would lose the last trusted bounds
+        // when Windows relocates the window before this event.
+        transientReturnedDisplay = null;
+        recentlyReturnedRecovery = null;
       }
     }
     if (
@@ -915,17 +946,24 @@ function attachDisplayRecovery({
         !requireStableIdentity &&
         normalizeDisplayId(display?.id) === null &&
         isFiniteBounds(display?.bounds) &&
-        !isPrimaryDisplay(display) &&
-        connectedSecondaryDisplays().length === 1
+        !isPrimaryDisplay(display)
       ) {
         const untaggedCandidates = normalizedCandidates.filter(
           (candidate) => candidate?.displayId === null
         );
+        const otherUnknownSecondaries = connectedSecondaryDisplays().filter(
+          (candidate) =>
+            normalizeDisplayId(candidate.id) === null &&
+            !boundsEqual(candidate.bounds, display.bounds)
+        );
         // Multiple snapshots for the same placement are common (continuous
         // tracking plus removal-time capture). Treat them as one target only
-        // when their geometries overlap; otherwise the add is ambiguous.
+        // when their geometries overlap. Stable displays already connected
+        // beside the newly added unknown-id display are distinguishable and
+        // do not make the add ambiguous; another unknown secondary does.
         const firstUntagged = untaggedCandidates[0] || null;
         if (
+          otherUnknownSecondaries.length === 0 &&
           firstUntagged &&
           untaggedCandidates.every((candidate) =>
             boundsIntersectDisplay(candidate.bounds, firstUntagged.bounds)
@@ -950,6 +988,7 @@ function attachDisplayRecovery({
           bounds: { ...matchingCandidate.bounds },
           displayId:
             normalizeDisplayId(display?.id) ?? matchingCandidate.displayId,
+          fromBounds: isFiniteBounds(currentBounds) ? { ...currentBounds } : null,
         };
       }
       // A recovery deferred while the window was maximized/full-screen may

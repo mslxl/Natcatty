@@ -950,6 +950,131 @@ test("attachDisplayRecovery ignores removal of a known same-label secondary", ()
   );
 });
 
+test("attachDisplayRecovery keeps recovery through a second transient disconnect", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  // The same physical display drops again before Electron learns its durable
+  // id. Windows relocates the window first, so the last trusted placement has
+  // to survive the second removal event instead of being cleared with the
+  // transient identity.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, returningDisplay);
+  screen.emit("display-added", {}, returningDisplay);
+
+  assert.equal(win.setBoundsCalls.length, 2);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[1], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery keeps deferred recovery through a second transient disconnect", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  win.normalBounds = { ...win.bounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // The display drops again before the deferred recovery can be applied and
+  // before its durable id is known. The queued target must remain available
+  // for the next add event.
+  screen.emit("display-removed", {}, returningDisplay);
+  screen.emit("display-added", {}, returningDisplay);
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery associates an unknown moved return beside a stable third display", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const thirdDisplay = {
+    id: 3,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({
+    displays: [PRIMARY, returningDisplay, thirdDisplay],
+  });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  returningDisplay.id = SECONDARY.id;
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery associates a maximized unknown return beside a stable third display", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const thirdDisplay = {
+    id: 3,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen({
+    displays: [PRIMARY, returningDisplay, thirdDisplay],
+  });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  win.normalBounds = { ...win.bounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  returningDisplay.id = SECONDARY.id;
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
   const realNow = Date.now;
   let now = 2_000_000;
@@ -1779,6 +1904,52 @@ test("attachDisplayRecovery drops a deferred recovery when the maximized window 
   win.unmaximize();
 
   assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery respects a maximized keyboard move after an early display return", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+  screen.emit("display-removed", {}, SECONDARY);
+
+  // The display returns before Windows moves the maximized window, so the
+  // recovery target is retained for a possible late OS relocation.
+  screen.emit("display-added", {}, SECONDARY);
+
+  // Win+Shift+Arrow changes the normal placement and emits a regular move,
+  // but not Electron's manual-only will-move event. This is a user choice and
+  // must not be mistaken for the late OS relocation.
+  win.normalBounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery keeps a maximized OS relocation during an active interruption", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+
+  // The normal placement changes while the session is still locked. The user
+  // cannot have initiated this move, so it remains a recoverable OS action.
+  win.normalBounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  powerMonitor.emit("unlock-screen");
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
 test("attachDisplayRecovery clamps restored windows to the display work area", () => {
