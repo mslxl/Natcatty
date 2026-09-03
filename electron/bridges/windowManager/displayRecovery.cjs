@@ -391,6 +391,7 @@ function attachDisplayRecovery({
       monitorTransferIntent = {
         bounds: { ...sourceBounds },
         displayId: sourceDisplayId,
+        horizontalDirection: input.key === "ArrowLeft" ? -1 : 1,
         protectDestination: Boolean(
           pendingRecovery || recentlyReturnedRecovery
         ),
@@ -522,6 +523,11 @@ function attachDisplayRecovery({
       // bounds fallback) so their removal resolves ambiguity instead of
       // destroying the target display's recovery record.
       unrelatedTransientDisplays: [],
+      // Fresh stable payloads that could not yet be assigned safely. Keep
+      // them only while they remain connected so eliminating a definitively
+      // unrelated transient neighbor can retry the target without waiting for
+      // another metrics event that Windows may never emit.
+      deferredStableDisplays: [],
       // Stable secondary displays that were already connected when this
       // unknown-id display was added are known to be unrelated. Their later
       // metrics/removal events must neither claim nor clear this association.
@@ -620,6 +626,63 @@ function attachDisplayRecovery({
     // object identity, a durable id already known to be unrelated, a unique
     // label, or elimination down to one unresolved display.
     return null;
+  };
+
+  const rememberDeferredStableDisplay = (display) => {
+    const association = transientReturnedDisplay;
+    const displayId = normalizeDisplayId(display?.id);
+    if (
+      !association ||
+      displayId === null ||
+      !isFiniteBounds(display?.bounds) ||
+      isPrimaryDisplay(display)
+    ) {
+      return;
+    }
+    if (
+      association.deferredStableDisplays.some(
+        (candidate) =>
+          candidate === display || normalizeDisplayId(candidate.id) === displayId
+      )
+    ) {
+      return;
+    }
+    association.deferredStableDisplays.push(display);
+  };
+
+  const forgetDeferredStableDisplay = (display) => {
+    const association = transientReturnedDisplay;
+    if (!association || !display) return;
+    const displayId = normalizeDisplayId(display.id);
+    association.deferredStableDisplays =
+      association.deferredStableDisplays.filter(
+        (candidate) =>
+          candidate !== display &&
+          (displayId === null || normalizeDisplayId(candidate.id) !== displayId)
+      );
+  };
+
+  const retryDeferredStableTarget = () => {
+    const association = transientReturnedDisplay;
+    if (!association) return false;
+    const connected = connectedSecondaryDisplays();
+    association.deferredStableDisplays =
+      association.deferredStableDisplays.filter((deferred) => {
+        const deferredId = normalizeDisplayId(deferred.id);
+        return connected.some(
+          (candidate) =>
+            candidate === deferred ||
+            (deferredId !== null &&
+              normalizeDisplayId(candidate.id) === deferredId)
+        );
+      });
+    const target = association.deferredStableDisplays.find(
+      (deferred) => identifyTransientDisplay(deferred)?.kind === "target"
+    );
+    if (!target) return false;
+    forgetDeferredStableDisplay(target);
+    onDisplayAdded({}, target, true);
+    return true;
   };
 
   const matchesTransientReturnedDisplay = (
@@ -761,6 +824,28 @@ function attachDisplayRecovery({
       return false;
     }
 
+    const connectedSourceDisplay = connectedSecondaryDisplays().find(
+      (candidate) =>
+        recoveryPlacementMatchesDisplay(monitorTransferIntent, candidate)
+    );
+    const sourceDisplayBounds = connectedSourceDisplay?.bounds;
+    const sourceCenterX = isFiniteBounds(sourceDisplayBounds)
+      ? sourceDisplayBounds.x + sourceDisplayBounds.width / 2
+      : monitorTransferIntent.bounds.x +
+        monitorTransferIntent.bounds.width / 2;
+    const destinationCenterX = display.bounds.x + display.bounds.width / 2;
+    if (
+      (destinationCenterX - sourceCenterX) *
+        monitorTransferIntent.horizontalDirection <=
+      0
+    ) {
+      // The observed move went opposite to the requested monitor direction,
+      // so the shortcut was a no-op and this is an unrelated system event.
+      // Cancel the stale intent and let ordinary recovery classify the event.
+      monitorTransferIntent = null;
+      return false;
+    }
+
     const transferredBounds = { ...bounds };
     const transferredDisplayId = normalizeDisplayId(display.id);
     const protectDestination = Boolean(
@@ -817,9 +902,13 @@ function attachDisplayRecovery({
         ) {
           return;
         }
-        // Windows can emit the resize half while the bounds still belong to
-        // the source display. Keep waiting for the destination.
-        return;
+        if (monitorTransferIntent) {
+          // Windows can emit the resize half while the bounds still belong to
+          // the source display. Keep waiting for the destination.
+          return;
+        }
+        // An event in the opposite direction cancelled a no-op shortcut;
+        // continue so ordinary recovery can classify it below.
       }
 
       if (recentlyReturnedRecovery) {
@@ -1037,15 +1126,18 @@ function attachDisplayRecovery({
       const removedDisplayId = normalizeDisplayId(oldDisplay.id);
       const identified = identifyTransientDisplay(oldDisplay);
       if (identified?.kind === "unrelated") {
+        forgetDeferredStableDisplay(oldDisplay);
         if (removedDisplayId !== null) {
           association.unrelatedDisplayIds.add(removedDisplayId);
         }
         if (identified.index >= 0) {
           association.unrelatedTransientDisplays.splice(identified.index, 1);
         }
+        retryDeferredStableTarget();
         return;
       }
       if (identified?.kind === "target") {
+        forgetDeferredStableDisplay(oldDisplay);
         // A fresh removal payload can reveal the durable id and different
         // coordinates at the same time. Transfer that identity to pending
         // recovery records before ending the live association.
@@ -1285,13 +1377,14 @@ function attachDisplayRecovery({
   // add event, a metrics event does not prove that an unknown-id recovery
   // candidate belongs to the display that emitted it. Geometry fallback there
   // could consume a secondary snapshot on an unrelated primary-display event.
-  const onDisplayAdded = (_event, display, requireStableIdentity = false) => {
+  function onDisplayAdded(_event, display, requireStableIdentity = false) {
     if (!attached) return;
     try {
       if (requireStableIdentity) {
         const stableDisplayId = normalizeDisplayId(display?.id);
         const identified = identifyTransientDisplay(display);
         if (identified?.kind === "unrelated") {
+          forgetDeferredStableDisplay(display);
           if (stableDisplayId !== null) {
             transientReturnedDisplay.unrelatedDisplayIds.add(stableDisplayId);
           }
@@ -1300,9 +1393,11 @@ function attachDisplayRecovery({
               identified.index
             ].stableDisplayId = stableDisplayId;
           }
+          retryDeferredStableTarget();
           return;
         }
         if (identified?.kind === "target") {
+          forgetDeferredStableDisplay(display);
           promoteTransientReturnedDisplay(display, {
             allowAssignedTransientDisplay: true,
           });
@@ -1312,7 +1407,9 @@ function attachDisplayRecovery({
           )
         ) {
           // Multiple still-unidentified displays remain and this fresh payload
-          // cannot be assigned safely yet. Wait for more evidence.
+          // cannot be assigned safely yet. Retain it only while connected so
+          // eliminating a known neighbor can retry without another event.
+          rememberDeferredStableDisplay(display);
           return;
         } else {
           promoteTransientReturnedDisplay(display);
@@ -1569,7 +1666,7 @@ function attachDisplayRecovery({
     } catch {
       // Never let display churn break the window.
     }
-  };
+  }
 
   const onDisplayMetricsChanged = (event, display) =>
     onDisplayAdded(event, display, true);

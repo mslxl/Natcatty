@@ -1382,6 +1382,50 @@ test("attachDisplayRecovery recovers after an unrelated unknown display disappea
   );
 });
 
+test("attachDisplayRecovery retries a deferred stable target after a transient neighbor disappears", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // A fresh target payload is connected but cannot yet be assigned because
+  // the transient neighbor makes the crossed topology ambiguous.
+  const stableReturningDisplay = {
+    id: SECONDARY.id,
+    bounds: { x: 7040, y: 0, width: 1920, height: 1080 },
+  };
+  screen.__setDisplays([PRIMARY, stableReturningDisplay, unknownNeighbor]);
+  for (const handler of screen.__listeners.get("display-metrics-changed") || []) {
+    handler({}, stableReturningDisplay, ["bounds"]);
+  }
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // Removing the original neighbor object is definitive evidence. Recovery
+  // must retry the already-connected target without requiring another metrics
+  // event that Windows may never emit.
+  screen.emit("display-removed", {}, unknownNeighbor);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], stableReturningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery recovers when an unrelated unknown display changes identity and bounds before removal", () => {
   const returningDisplay = { ...SECONDARY, id: -1, label: "Target" };
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
@@ -2813,6 +2857,45 @@ test("attachDisplayRecovery retains a maximized shortcut through a delayed move"
     win.unmaximize();
 
     assert.equal(win.setBoundsCalls.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery ignores a no-op shortcut before a late relocation", () => {
+  const realNow = Date.now;
+  let now = 4_900_000;
+  Date.now = () => now;
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  try {
+    attachDisplayRecovery({ win, screen, powerMonitor });
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    powerMonitor.emit("unlock-screen");
+
+    // The returned display is already the rightmost monitor, so this shortcut
+    // has no destination and must not make a later move to the left look like
+    // explicit user intent.
+    win.webContents.emit("before-input-event", {}, {
+      type: "keyDown",
+      key: "ArrowRight",
+      meta: true,
+      shift: true,
+    });
+    now += 3_000;
+    win.normalBounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    win.unmaximize();
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
   } finally {
     Date.now = realNow;
   }
