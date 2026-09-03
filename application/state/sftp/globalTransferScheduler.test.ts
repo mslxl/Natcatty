@@ -5,6 +5,10 @@ import {
   createGlobalSftpTransferScheduler,
 } from "./globalTransferScheduler";
 import { resolveProgressiveFolderUploadConcurrency } from "../../../lib/progressiveFolderUpload";
+import {
+  DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY,
+  resolveSftpTransferConcurrency,
+} from "./transferConcurrency";
 
 test("scheduler limits each remote host independently", async () => {
   const scheduler = createGlobalSftpTransferScheduler();
@@ -30,7 +34,11 @@ test("scheduler limits each remote host independently", async () => {
 });
 
 test("progressive folder uploads use six slots by default and preserve a saved limit", async () => {
-  assert.equal(resolveProgressiveFolderUploadConcurrency(null), 6);
+  const displayedDefault = resolveSftpTransferConcurrency(() => null);
+  const effectiveDefault = resolveProgressiveFolderUploadConcurrency(null);
+  assert.equal(displayedDefault, DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY);
+  assert.equal(effectiveDefault, displayedDefault);
+  assert.equal(effectiveDefault, 6);
   assert.equal(resolveProgressiveFolderUploadConcurrency(3), 3);
   assert.equal(resolveProgressiveFolderUploadConcurrency(99), 6);
 

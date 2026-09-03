@@ -13,20 +13,21 @@ import {
   describeSftpIncomingKind,
   getSftpConflictTypeKey,
 } from "../domain/sftpConflict";
+import {
+  DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY,
+  resolveSftpTransferConcurrency,
+} from "../domain/sftpTransferConcurrency";
 
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-/** Folder drops of many small files stall at 2 workers; keep a higher floor. */
-export const DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY = 6;
+/** Keep progressive worker admission aligned with the user-visible transfer limit. */
+export const DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY = DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY;
 const UPLOAD_CONCURRENCY = DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
 
 export const resolveProgressiveFolderUploadConcurrency = (
   savedValue: number | null | undefined,
-): number => Number.isInteger(savedValue) && savedValue !== undefined && savedValue !== null
-  && savedValue >= 1 && savedValue <= 16
-  ? savedValue
-  : DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
+): number => resolveSftpTransferConcurrency(() => savedValue);
 /** Pause discovery when the upload queue grows this large (memory backpressure). */
 const QUEUE_HIGH_WATER = 2_000;
 /** Resume discovery once the queue drains to this size. */
