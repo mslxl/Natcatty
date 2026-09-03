@@ -227,6 +227,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
         host.username,
         host.sftpFileProtocol,
       );
+      // External "Open SFTP" promises a visible local-left / host-right pair.
+      // Clear a stale single-pane magnification before selecting or connecting.
+      setMagnifiedSide(null);
       applyDualPaneSftpOpen(
         {
           leftTabs: toTabs(current.leftTabs.tabs, current.getConnectionCacheKey),

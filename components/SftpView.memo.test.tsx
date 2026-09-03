@@ -12,6 +12,7 @@ test("main SftpView keeps browse sessions across top-tab switches", () => {
 
 test("Open SFTP always restores dual-pane layout through the planner", () => {
   const source = readFileSync(new URL("./SftpView.tsx", import.meta.url), "utf8");
+  assert.match(source, /setMagnifiedSide\(null\);\s*applyDualPaneSftpOpen/);
   assert.match(source, /applyDualPaneSftpOpen/);
   assert.doesNotMatch(source, /firstVisitBothEmpty/);
 });
