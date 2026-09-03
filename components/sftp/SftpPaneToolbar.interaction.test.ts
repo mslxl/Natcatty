@@ -54,12 +54,13 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
   assert.ok(rootNode);
   const root = createRoot(rootNode);
   const navigatedPaths: string[] = [];
+  const deletedBookmarkIds: string[] = [];
   let toggleBookmarkCalls = 0;
-  const findRemovalDialog = () => Array.from(
-    window.document.querySelectorAll<HTMLElement>('[role="dialog"]'),
-  ).find((element) => element.textContent?.includes("/home/app")) ?? null;
+  const findRemovalDialog = () => Array.from(window.document.querySelectorAll("h2"))
+    .find((heading) => heading.textContent?.trim() === "Remove bookmark")
+    ?.closest<HTMLElement>('[role="dialog"]') ?? null;
 
-  try {
+  const renderToolbar = async (currentPath: string, currentPathBookmarked: boolean) => {
     await act(async () => {
       const toolbar = React.createElement(SftpPaneToolbar, {
         t: (key, params) => ({
@@ -74,7 +75,7 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
             id: "conn-1",
             hostId: "host-1",
             name: "Example",
-            currentPath: "/home/app",
+            currentPath,
             homeDir: "/home/app",
             isLocal: false,
           },
@@ -116,15 +117,18 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
         setShowNewFileDialog: () => {},
         setShowNewFolderDialog: () => {},
         setNewFolderName: () => {},
-        bookmarks: [{ id: "bm-1", path: "/srv/www", label: "Web root" }],
-        isCurrentPathBookmarked: true,
+        bookmarks: [
+          { id: "bm-current", path: "/home/app", label: "App root" },
+          { id: "bm-1", path: "/srv/www", label: "Web root" },
+        ],
+        isCurrentPathBookmarked: currentPathBookmarked,
         onToggleBookmark: () => {
           toggleBookmarkCalls += 1;
         },
         onAddGlobalBookmark: () => {},
         isCurrentPathGlobalBookmarked: false,
         onNavigateToBookmark: (path) => navigatedPaths.push(path),
-        onDeleteBookmark: () => {},
+        onDeleteBookmark: (id) => deletedBookmarkIds.push(id),
         showHiddenFiles: false,
         onToggleShowHiddenFiles: () => {},
         viewMode: "list",
@@ -132,6 +136,10 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
       });
       root.render(React.createElement(I18nProvider, { locale: "en" }, toolbar));
     });
+  };
+
+  try {
+    await renderToolbar("/home/app", true);
 
     const trigger = window.document.querySelector<HTMLButtonElement>(
       'button[aria-label="Bookmarked paths"]',
@@ -164,6 +172,13 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     let dialog = findRemovalDialog();
     assert.ok(dialog, "current-path removal should open an in-app dialog");
     assert.match(dialog.textContent ?? "", /Remove bookmark \/home\/app\?/);
+    assert.equal(
+      Array.from(window.document.querySelectorAll("button")).some((button) =>
+        button.textContent?.includes("Web root"),
+      ),
+      false,
+      "the bookmark popover must close before the dialog opens",
+    );
     assert.equal(toggleBookmarkCalls, 0, "opening the dialog must not remove the bookmark");
 
     const cancel = Array.from(dialog.querySelectorAll("button")).find(
@@ -174,16 +189,50 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     assert.equal(findRemovalDialog(), null);
     assert.equal(toggleBookmarkCalls, 0, "cancelling must preserve the bookmark");
 
-    await act(async () => removeCurrentPath.click());
+    await act(async () => trigger.click());
+    const removeCurrentPathAfterCancel = Array.from(
+      window.document.querySelectorAll("button"),
+    ).find((button) => button.textContent?.trim() === "Remove bookmark");
+    assert.ok(removeCurrentPathAfterCancel);
+    await act(async () => removeCurrentPathAfterCancel.click());
     dialog = findRemovalDialog();
     assert.ok(dialog, "the removal dialog should reopen after cancellation");
+    await renderToolbar("/home/other", false);
+    dialog = findRemovalDialog();
+    assert.ok(dialog, "changing directory must not replace the pending removal target");
+    assert.match(dialog.textContent ?? "", /Remove bookmark \/home\/app\?/);
+    assert.doesNotMatch(dialog.textContent ?? "", /\/home\/other/);
     const confirm = Array.from(dialog.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "Remove bookmark",
     );
     assert.ok(confirm);
     await act(async () => confirm.click());
-    assert.equal(toggleBookmarkCalls, 1, "confirmation should remove the bookmark once");
+    assert.deepEqual(deletedBookmarkIds, ["bm-current"]);
+    assert.equal(toggleBookmarkCalls, 0, "confirmation must not toggle the new current path");
     assert.equal(findRemovalDialog(), null);
+
+    await act(async () => trigger.click());
+    const webRootRow = Array.from(
+      window.document.querySelectorAll<HTMLElement>("[data-bookmark-scope]"),
+    ).find((element) => element.textContent?.includes("Web root"));
+    const removeWebRoot = webRootRow?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove bookmark"]',
+    );
+    assert.ok(removeWebRoot);
+    await act(async () => removeWebRoot.click());
+    dialog = findRemovalDialog();
+    assert.ok(dialog, "row removal should use the shared in-app dialog");
+    assert.match(dialog.textContent ?? "", /Remove bookmark \/srv\/www\?/);
+    assert.equal(webRootRow.isConnected, false, "row removal must close the bookmark popover");
+    const confirmWebRoot = Array.from(dialog.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Remove bookmark",
+    );
+    assert.ok(confirmWebRoot);
+    await act(async () => confirmWebRoot.click());
+    assert.deepEqual(deletedBookmarkIds, ["bm-current", "bm-1"]);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+    });
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

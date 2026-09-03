@@ -244,7 +244,7 @@ interface SftpBookmarkListProps {
   bookmarks: SftpBookmark[];
   managing?: boolean;
   onNavigateToBookmark: (path: string) => void;
-  onDeleteBookmark: (id: string) => void;
+  onRequestDeleteBookmark: (bookmark: SftpBookmark) => void;
   onReorderBookmark?: (fromId: string, toId: string) => void;
   onRenameBookmark?: (id: string, label: string) => void;
   t: (key: string, params?: Record<string, unknown>) => string;
@@ -288,7 +288,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   bookmarks,
   managing = false,
   onNavigateToBookmark,
-  onDeleteBookmark,
+  onRequestDeleteBookmark,
   onReorderBookmark,
   onRenameBookmark,
   t,
@@ -296,7 +296,6 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [pendingRemoval, setPendingRemoval] = useState<SftpBookmark | null>(null);
 
   if (bookmarks.length === 0) {
     return (
@@ -462,7 +461,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
               aria-label={t("sftp.bookmark.remove")}
               onClick={(event) => {
                 event.stopPropagation();
-                setPendingRemoval(bm);
+                onRequestDeleteBookmark(bm);
               }}
             >
               <Trash2 size={10} />
@@ -470,24 +469,6 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
           </div>
         );
       })}
-      <ConfirmDialog
-        open={pendingRemoval !== null}
-        title={t("sftp.bookmark.remove")}
-        message={pendingRemoval
-          ? t("sftp.bookmark.removeConfirm", { path: pendingRemoval.path })
-          : undefined}
-        confirmLabel={t("sftp.bookmark.remove")}
-        destructive
-        onOpenChange={(open) => {
-          if (!open) setPendingRemoval(null);
-        }}
-        onConfirm={() => {
-          if (!pendingRemoval) return;
-          const bookmarkId = pendingRemoval.id;
-          setPendingRemoval(null);
-          onDeleteBookmark(bookmarkId);
-        }}
-      />
     </div>
   );
 };
@@ -548,6 +529,8 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
 }) => {
   const [displayPath, setDisplayPath] = useState(pane.connection?.currentPath ?? "");
   const [filterDraft, setFilterDraft] = useState(pane.filter);
+  const [bookmarkPopoverOpen, setBookmarkPopoverOpen] = useState(false);
+  const [pendingBookmarkRemoval, setPendingBookmarkRemoval] = useState<SftpBookmark | null>(null);
   const filterComposingRef = useRef(false);
   const filterAtComposeStartRef = useRef(pane.filter);
   // Directory at compositionstart. Navigation that leaves the filter already ""
@@ -797,7 +780,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       onToggleBookmark={onToggleBookmark}
       onAddGlobalBookmark={onAddGlobalBookmark}
       onNavigateToBookmark={onNavigateToBookmark}
-      onDeleteBookmark={onDeleteBookmark}
+      onRequestDeleteBookmark={setPendingBookmarkRemoval}
       onReorderBookmark={onReorderBookmark}
       onRenameBookmark={onRenameBookmark}
       onAfterLeafAction={onAfterLeafAction}
@@ -805,7 +788,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   );
 
   const renderBookmarkButton = (size: "sm" | "md" = "sm") => (
-    <Popover>
+    <Popover open={bookmarkPopoverOpen} onOpenChange={setBookmarkPopoverOpen}>
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
@@ -832,7 +815,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         <TooltipContent>{bookmarkButtonLabel}</TooltipContent>
       </Tooltip>
       <PopoverContent className="w-80 p-0" align="start">
-        {renderBookmarkPopoverBody()}
+        {renderBookmarkPopoverBody(() => setBookmarkPopoverOpen(false))}
       </PopoverContent>
     </Popover>
   );
@@ -1460,6 +1443,24 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
           </Tooltip>
         </div>
       )}
+      <ConfirmDialog
+        open={pendingBookmarkRemoval !== null}
+        title={t("sftp.bookmark.remove")}
+        message={pendingBookmarkRemoval
+          ? t("sftp.bookmark.removeConfirm", { path: pendingBookmarkRemoval.path })
+          : undefined}
+        confirmLabel={t("sftp.bookmark.remove")}
+        destructive
+        onOpenChange={(open) => {
+          if (!open) setPendingBookmarkRemoval(null);
+        }}
+        onConfirm={() => {
+          if (!pendingBookmarkRemoval) return;
+          const bookmarkId = pendingBookmarkRemoval.id;
+          setPendingBookmarkRemoval(null);
+          onDeleteBookmark(bookmarkId);
+        }}
+      />
     </TooltipProvider>
   );
 });
@@ -1473,7 +1474,7 @@ function SftpBookmarkPopoverBody({
   onToggleBookmark,
   onAddGlobalBookmark,
   onNavigateToBookmark,
-  onDeleteBookmark,
+  onRequestDeleteBookmark,
   onReorderBookmark,
   onRenameBookmark,
   onAfterLeafAction,
@@ -1486,13 +1487,12 @@ function SftpBookmarkPopoverBody({
   onToggleBookmark: () => void;
   onAddGlobalBookmark: (path: string) => void;
   onNavigateToBookmark: (path: string) => void;
-  onDeleteBookmark: (id: string) => void;
+  onRequestDeleteBookmark: (bookmark: SftpBookmark) => void;
   onReorderBookmark?: (fromId: string, toId: string) => void;
   onRenameBookmark?: (id: string, label: string) => void;
   onAfterLeafAction?: () => void;
 }) {
   const [managing, setManaging] = useState(false);
-  const [confirmingCurrentPathRemoval, setConfirmingCurrentPathRemoval] = useState(false);
   const runThenClose = (action: () => void) => {
     action();
     onAfterLeafAction?.();
@@ -1520,7 +1520,10 @@ function SftpBookmarkPopoverBody({
           className="flex-1 justify-start text-xs h-7"
           onClick={() => {
             if (isCurrentPathBookmarked && currentPath) {
-              setConfirmingCurrentPathRemoval(true);
+              const bookmark = bookmarks.find((candidate) => (
+                candidate.path === currentPath && !candidate.global
+              )) ?? bookmarks.find((candidate) => candidate.path === currentPath);
+              if (bookmark) runThenClose(() => onRequestDeleteBookmark(bookmark));
               return;
             }
             runThenClose(onToggleBookmark);
@@ -1553,24 +1556,12 @@ function SftpBookmarkPopoverBody({
         bookmarks={bookmarks}
         managing={managing}
         onNavigateToBookmark={(path) => runThenClose(() => onNavigateToBookmark(path))}
-        onDeleteBookmark={onDeleteBookmark}
+        onRequestDeleteBookmark={(bookmark) => (
+          runThenClose(() => onRequestDeleteBookmark(bookmark))
+        )}
         onReorderBookmark={onReorderBookmark}
         onRenameBookmark={onRenameBookmark}
         t={t}
-      />
-      <ConfirmDialog
-        open={confirmingCurrentPathRemoval}
-        title={t("sftp.bookmark.remove")}
-        message={currentPath
-          ? t("sftp.bookmark.removeConfirm", { path: currentPath })
-          : undefined}
-        confirmLabel={t("sftp.bookmark.remove")}
-        destructive
-        onOpenChange={setConfirmingCurrentPathRemoval}
-        onConfirm={() => {
-          setConfirmingCurrentPathRemoval(false);
-          runThenClose(onToggleBookmark);
-        }}
       />
     </>
   );

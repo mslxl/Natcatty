@@ -504,7 +504,7 @@ test("bookmark delete asks for confirmation inside the app", () => {
   assert.match(toolbarSource, /import \{ ConfirmDialog \} from "\.\.\/ui\/confirm-dialog"/);
   assert.match(toolbarSource, /<ConfirmDialog/);
   assert.match(toolbarSource, /sftp\.bookmark\.removeConfirm/);
-  assert.match(toolbarSource, /path: pendingRemoval\.path/);
+  assert.match(toolbarSource, /path: pendingBookmarkRemoval\.path/);
 });
 
 test("bookmark rename does not use window.prompt", () => {
@@ -542,7 +542,7 @@ test("bookmark manage mode exposes keyboard reorder controls without a dead path
       ],
       managing: true,
       onNavigateToBookmark: () => {},
-      onDeleteBookmark: () => {},
+      onRequestDeleteBookmark: () => {},
       onReorderBookmark: () => {},
       t: (key: string, params?: Record<string, unknown>) => ({
         "sftp.bookmark.moveUp": `Move ${params?.label ?? ""} up`,
@@ -570,7 +570,7 @@ test("bookmark list renders saved paths as selectable rows", () => {
         React.createElement(SftpBookmarkList, {
           bookmarks: [{ id: "bm-1", path: "/srv/www", label: "Web root" }],
           onNavigateToBookmark: () => {},
-          onDeleteBookmark: () => {},
+          onRequestDeleteBookmark: () => {},
           t: (key: string) => ({
             "sftp.bookmark.remove": "Remove bookmark",
           }[key] ?? key),
