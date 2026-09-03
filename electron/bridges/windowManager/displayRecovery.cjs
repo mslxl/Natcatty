@@ -698,7 +698,11 @@ function attachDisplayRecovery({
   };
 
   // Electron invokes "display-added" listeners as (event, newDisplay).
-  const onDisplayAdded = (_event, display) => {
+  // `requireStableIdentity` is used for display-metrics-changed: unlike an
+  // add event, a metrics event does not prove that an unknown-id recovery
+  // candidate belongs to the display that emitted it. Geometry fallback there
+  // could consume a secondary snapshot on an unrelated primary-display event.
+  const onDisplayAdded = (_event, display, requireStableIdentity = false) => {
     if (!attached) return;
     try {
       const currentBounds = copyBounds();
@@ -712,10 +716,26 @@ function attachDisplayRecovery({
           displayId: rememberedDisplayId,
         },
       ].filter(Boolean);
+      const candidateMatchesDisplay = (candidate) => {
+        const normalized = normalizeRecoveryCandidate(candidate);
+        if (!normalized) return false;
+        if (!requireStableIdentity) {
+          return recoveryPlacementMatchesDisplay(normalized, display);
+        }
+        const displayId = normalizeDisplayId(display?.id);
+        return (
+          normalized.displayId !== null &&
+          displayId !== null &&
+          normalized.displayId === displayId
+        );
+      };
+      const eligibleRecoveryCandidates = requireStableIdentity
+        ? recoveryCandidates.filter(candidateMatchesDisplay)
+        : recoveryCandidates;
       const matchingCandidate = [pendingRecovery, ...recoveryCandidates]
         .filter(Boolean)
         .map(normalizeRecoveryCandidate)
-        .find((candidate) => recoveryPlacementMatchesDisplay(candidate, display));
+        .find(candidateMatchesDisplay);
       if (
         matchingCandidate &&
         boundsIntersectDisplay(currentBounds, display?.bounds)
@@ -736,7 +756,7 @@ function attachDisplayRecovery({
         pendingRecovery &&
         display &&
         isFiniteBounds(display.bounds) &&
-        recoveryPlacementMatchesDisplay(pendingRecovery, display)
+        candidateMatchesDisplay(pendingRecovery)
       ) {
         if (boundsIntersectDisplay(currentBounds, display.bounds)) {
           // The window already sits on the re-added display: nothing to do.
@@ -785,10 +805,11 @@ function attachDisplayRecovery({
         // the display it was remembered for so a returning display with
         // changed bounds (DPI/resolution/topology) is still matched and the
         // old geometry gets clamped into the new bounds below.
-        candidates: recoveryCandidates,
+        candidates: eligibleRecoveryCandidates,
       });
       const restoredDisplayId = normalizeDisplayId(
-        recoveryCandidates.find((candidate) => candidate.bounds === restored)?.displayId
+        eligibleRecoveryCandidates.find((candidate) => candidate.bounds === restored)
+          ?.displayId
       );
       // Recovery is already unnecessary when the returning display contains
       // the window: invalidate the removal-time snapshot captured for it so a
@@ -801,12 +822,11 @@ function attachDisplayRecovery({
         isFiniteBounds(currentBounds) &&
         boundsIntersectDisplay(currentBounds, display.bounds) &&
         boundsAtDisplayRemoval !== null &&
-        recoveryPlacementMatchesDisplay(
+        candidateMatchesDisplay(
           {
             bounds: boundsAtDisplayRemoval,
             displayId: boundsAtDisplayRemovalDisplayId,
-          },
-          display
+          }
         )
       ) {
         boundsAtDisplayRemoval = null;
@@ -843,6 +863,9 @@ function attachDisplayRecovery({
     }
   };
 
+  const onDisplayMetricsChanged = (event, display) =>
+    onDisplayAdded(event, display, true);
+
   const onSuspend = () => onSessionInterrupted("suspend");
   const onLockScreen = () => onSessionInterrupted("lock-screen");
   const onResume = () => onSessionResumed("suspend");
@@ -860,7 +883,7 @@ function attachDisplayRecovery({
   try {
     screen.on("display-removed", onDisplayRemoved);
     screen.on("display-added", onDisplayAdded);
-    screen.on("display-metrics-changed", onDisplayAdded);
+    screen.on("display-metrics-changed", onDisplayMetricsChanged);
     win.on?.("will-move", onManualPlacement);
     win.on?.("will-resize", onManualPlacement);
     win.on?.("move", rememberWindowPlacement);
@@ -890,7 +913,7 @@ function attachDisplayRecovery({
       screen.removeListener?.("display-added", onDisplayAdded);
     } catch {}
     try {
-      screen.removeListener?.("display-metrics-changed", onDisplayAdded);
+      screen.removeListener?.("display-metrics-changed", onDisplayMetricsChanged);
     } catch {}
     try {
       win.removeListener?.("will-move", onManualPlacement);

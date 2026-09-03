@@ -751,6 +751,33 @@ test("attachDisplayRecovery retries after a transient returning display stabiliz
   );
 });
 
+test("attachDisplayRecovery ignores unrelated metrics while a removed display id is unknown", () => {
+  const unknownSecondary = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 1850, y: 100, width: 800, height: 600 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, unknownSecondary] });
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, unknownSecondary);
+  win.bounds = { x: 100, y: 100, width: 800, height: 600 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The saved bounds overlap the primary display, but this event is only a
+  // primary-display metrics change. It must not consume the unknown-id
+  // snapshot before the actual secondary display returns.
+  screen.emit("display-metrics-changed", {}, PRIMARY, ["bounds"]);
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(
+    win.setBoundsCalls[0],
+    clampBoundsToDisplay(secondaryBounds, SECONDARY.bounds)
+  );
+});
+
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
   const realNow = Date.now;
   let now = 2_000_000;
