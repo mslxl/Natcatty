@@ -346,6 +346,11 @@ function attachDisplayRecovery({
     activeInterruptions.delete(signal);
     if (activeInterruptions.size > 0) return;
     restoreUntil = Date.now() + restoreGraceMs;
+    // display-added can land while the window still overlaps the returning
+    // secondary. Windows may then queue the relocation to the primary before
+    // unlock, and that move is ignored while the session is interrupted. Retry
+    // now; there may be no later display or window event.
+    restoreIfNeeded();
   };
 
   const onDisplayRemoved = (_event, oldDisplay) => {

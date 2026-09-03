@@ -367,6 +367,29 @@ test("attachDisplayRecovery keeps a deferred restore until the window is unmaxim
   assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
+test("attachDisplayRecovery retries restore when unlock follows a locked relocation", () => {
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // Windows relocates the window while the session is still locked. Unlock
+  // must retry; no later display event is guaranteed.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  assert.equal(win.setBoundsCalls.length, 0);
+  powerMonitor.emit("unlock-screen");
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+});
+
 test("attachDisplayRecovery restores a late OS move that arrives after the display returns", () => {
   const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
   const win = createMockWindow({ ...secondaryBounds });
