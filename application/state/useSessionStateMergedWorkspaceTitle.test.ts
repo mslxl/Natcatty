@@ -102,12 +102,41 @@ test("merged tab titles follow the workspace lifecycle until the user renames it
   });
   assert.equal(workspace(workspaceId).title, "01/prod");
 
+  const workspaceIdsBeforeCopy = new Set(current().workspaces.map((candidate) => candidate.id));
+  await act(async () => {
+    current().copyWorkspace(workspaceId);
+  });
+  const copiedWorkspace = current().workspaces.find(
+    (candidate) => !workspaceIdsBeforeCopy.has(candidate.id),
+  );
+  assert.ok(copiedWorkspace);
+  assert.equal(copiedWorkspace.title, "01/prod");
+  assert.equal(copiedWorkspace.autoTitle, false);
+  assert.equal(copiedWorkspace.generatedTitle, true);
+
   await act(async () => {
     current().submitWorkspaceRename(workspaceId, "Pinned");
     current().renameSessionInline(firstSessionId, "ops");
   });
   assert.equal(workspace(workspaceId).title, "Pinned");
   assert.equal(workspace(workspaceId).generatedTitle, false);
+
+  let leftBaseSessionId = "";
+  let leftJoiningSessionId = "";
+  await act(async () => {
+    leftBaseSessionId = current().createLocalTerminal({ shellName: "04" });
+    leftJoiningSessionId = current().createLocalTerminal({ shellName: "05" });
+  });
+  await act(async () => {
+    current().createWorkspaceFromSessions(leftBaseSessionId, leftJoiningSessionId, {
+      direction: "vertical",
+      position: "left",
+      targetSessionId: leftBaseSessionId,
+    });
+  });
+  const leftWorkspace = current().workspaces.find((candidate) => candidate.title === "05/04");
+  assert.ok(leftWorkspace);
+  assert.equal(leftWorkspace.generatedTitle, true);
 
   await act(async () => {
     renderer?.unmount();
