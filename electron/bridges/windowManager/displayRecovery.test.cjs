@@ -1292,6 +1292,40 @@ test("attachDisplayRecovery rejects a second unknown display before either ident
   );
 });
 
+test("attachDisplayRecovery recovers after an unrelated unknown display disappears", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  // The target returns at new coordinates without a stable id, followed by a
+  // second unknown display. The second display disappears before either id
+  // stabilizes, making the target unambiguous again.
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+  screen.emit("display-removed", {}, unknownNeighbor);
+
+  returningDisplay.id = SECONDARY.id;
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery associates an unknown moved return beside a stable third display", () => {
   const returningDisplay = { ...SECONDARY, id: -1 };
   const thirdDisplay = {
@@ -2393,6 +2427,58 @@ test("attachDisplayRecovery keeps recovery through a paired late move and resize
 
   assert.equal(win.setBoundsCalls.length, 2);
   assert.deepEqual(win.bounds, secondaryBounds);
+});
+
+test("attachDisplayRecovery keeps recovery when display return splits a relocation burst", () => {
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+
+  // Windows emits the move half of one relocation, then reports the display
+  // return before delivering the complementary resize half.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  win.bounds = { x: 100, y: 100, width: 1200, height: 800 };
+  for (const handler of win.__listeners.get("resize") || []) handler();
+
+  assert.equal(win.setBoundsCalls.length, 2);
+  assert.deepEqual(win.bounds, secondaryBounds);
+});
+
+test("attachDisplayRecovery keeps maximized recovery when display return splits a relocation burst", () => {
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+
+  win.normalBounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // The trailing resize is the second half of the same OS relocation, not a
+  // user placement. It must not invalidate the deferred recovery.
+  win.normalBounds = { x: 100, y: 100, width: 1200, height: 800 };
+  for (const handler of win.__listeners.get("resize") || []) handler();
+  powerMonitor.emit("unlock-screen");
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
 test("attachDisplayRecovery keeps recovery through repeated late move events", () => {

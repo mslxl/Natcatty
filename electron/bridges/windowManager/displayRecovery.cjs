@@ -492,8 +492,14 @@ function attachDisplayRecovery({
   const rememberTransientReturnedDisplay = (display, recoveryCandidate) => {
     const connectedSecondaries = connectedSecondaryDisplays();
     transientReturnedDisplay = {
+      display,
       displayBounds: { ...display.bounds },
       recoveryBounds: { ...recoveryCandidate.bounds },
+      // More than one display can be reported with the same transient -1 id.
+      // Keep the later add payloads separate by object identity (with a copied
+      // bounds fallback) so their removal resolves ambiguity instead of
+      // destroying the target display's recovery record.
+      unrelatedTransientDisplays: [],
       // Stable secondary displays that were already connected when this
       // unknown-id display was added are known to be unrelated. Their later
       // metrics/removal events must neither claim nor clear this association.
@@ -511,6 +517,27 @@ function attachDisplayRecovery({
           .filter((displayId) => displayId !== null)
       ),
     };
+  };
+
+  const findUnrelatedTransientDisplayIndex = (display) => {
+    const association = transientReturnedDisplay;
+    if (!association || !display) return -1;
+    const byIdentity = association.unrelatedTransientDisplays.findIndex(
+      (candidate) => candidate.display === display
+    );
+    if (byIdentity >= 0) return byIdentity;
+    if (!isFiniteBounds(display.bounds)) return -1;
+    const byBounds = association.unrelatedTransientDisplays
+      .map((candidate, index) =>
+        boundsEqual(candidate.bounds, display.bounds) ? index : -1
+      )
+      .filter((index) => index >= 0);
+    // Geometry is safe only when it selects one recorded neighbor and does
+    // not also match the target's transient add geometry.
+    return byBounds.length === 1 &&
+      !boundsEqual(association.displayBounds, display.bounds)
+      ? byBounds[0]
+      : -1;
   };
 
   const matchesTransientReturnedDisplay = (
@@ -863,6 +890,15 @@ function attachDisplayRecovery({
     ) {
       const association = transientReturnedDisplay;
       const removedDisplayId = normalizeDisplayId(oldDisplay.id);
+      const unrelatedTransientIndex =
+        findUnrelatedTransientDisplayIndex(oldDisplay);
+      if (unrelatedTransientIndex >= 0) {
+        association.unrelatedTransientDisplays.splice(
+          unrelatedTransientIndex,
+          1
+        );
+        return;
+      }
       if (association.unrelatedDisplayIds.has(removedDisplayId)) {
         // This display was already present when the transient target returned,
         // or arrived later as separate topology. Its removal must not fall
@@ -1061,12 +1097,37 @@ function attachDisplayRecovery({
     if (!attached) return;
     try {
       if (requireStableIdentity) {
+        const unrelatedTransientIndex =
+          findUnrelatedTransientDisplayIndex(display);
+        if (unrelatedTransientIndex >= 0) {
+          const stableDisplayId = normalizeDisplayId(display?.id);
+          if (stableDisplayId !== null) {
+            transientReturnedDisplay.unrelatedDisplayIds.add(stableDisplayId);
+          }
+          transientReturnedDisplay.unrelatedTransientDisplays.splice(
+            unrelatedTransientIndex,
+            1
+          );
+          return;
+        }
         promoteTransientReturnedDisplay(display);
       } else if (transientReturnedDisplay) {
         const separatelyAddedDisplayId = normalizeDisplayId(display?.id);
         if (separatelyAddedDisplayId === null) {
           // Keep waiting. When either id stabilizes, the overlap check above
           // will accept it only if exactly one possible target remains.
+          if (
+            display !== transientReturnedDisplay.display &&
+            !transientReturnedDisplay.unrelatedTransientDisplays.some(
+              (candidate) => candidate.display === display
+            ) &&
+            isFiniteBounds(display?.bounds)
+          ) {
+            transientReturnedDisplay.unrelatedTransientDisplays.push({
+              display,
+              bounds: { ...display.bounds },
+            });
+          }
           return;
         }
         // A second display-added event is new topology, not identity
@@ -1195,6 +1256,17 @@ function attachDisplayRecovery({
           );
           pendingRecovery = null;
           if (requeued) {
+            const burstRecovery = {
+              bounds: { ...requeued },
+              displayId: requeuedDisplayId,
+              fromBounds: { ...requeued },
+              burstExpiresAt:
+                teardownGraceMs > 0
+                  ? Date.now() + teardownGraceMs
+                  : null,
+            };
+            recentlyReturnedRecovery =
+              teardownGraceMs > 0 ? burstRecovery : null;
             if (isMaximizedOrFullScreen()) {
               // Still maximized/full-screen: defer once more.
               pendingRecovery = {
@@ -1258,6 +1330,22 @@ function attachDisplayRecovery({
       }
       const clamped = clampBoundsToDisplay(restored, displayPlacementRect(display));
       if (!clamped) return;
+      const targetDisplayId =
+        normalizeDisplayId(display?.id) ?? restoredDisplayId;
+      // The display can return between two events from the same Windows
+      // relocation (commonly move then resize). A successful recovery must
+      // retain the target for the short remainder of that burst, just like a
+      // late post-return recovery does. Manual placement signals still cancel
+      // this record immediately.
+      recentlyReturnedRecovery =
+        teardownGraceMs > 0
+          ? {
+              bounds: { ...clamped },
+              displayId: targetDisplayId,
+              fromBounds: { ...clamped },
+              burstExpiresAt: Date.now() + teardownGraceMs,
+            }
+          : null;
       if (isMaximizedOrFullScreen()) {
         // setBounds would clobber the maximized/full-screen state (or be
         // ignored): defer until the window returns to its normal state.
@@ -1265,7 +1353,7 @@ function attachDisplayRecovery({
         // re-apply can tell an untouched window from a user-replaced one.
         pendingRecovery = {
           bounds: clamped,
-          displayId: normalizeDisplayId(display?.id) ?? restoredDisplayId,
+          displayId: targetDisplayId,
           fromBounds: currentBounds,
         };
         return;
