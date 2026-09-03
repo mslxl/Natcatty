@@ -245,6 +245,11 @@ function attachDisplayRecovery({
   // or a new interruption starts. The queued relocation is not guaranteed to
   // arrive within the short teardown grace window.
   let recentlyReturnedRecovery = null;
+  // A display-added event is authoritative even while Electron reports the
+  // returning display with a transient negative id. Keep enough of that
+  // event to correlate the display's later stable-id metrics event without
+  // letting an unrelated primary-display metrics event claim the snapshot.
+  let transientReturnedDisplay = null;
   // Wall-clock time of the last powerMonitor "suspend" or "lock-screen"
   // event. Used to tell a grace-window expiry caused by actual elapsed time
   // from one caused by the clock advancing while the machine was asleep or
@@ -288,6 +293,7 @@ function attachDisplayRecovery({
     teardownSnapshotAt = null;
     pendingRecovery = null;
     recentlyReturnedRecovery = null;
+    transientReturnedDisplay = null;
   };
 
   // Electron emits these events only for a manual move/resize, before the
@@ -313,6 +319,7 @@ function attachDisplayRecovery({
     if (wasActive) return;
     sessionInterruptionEndedAt = null;
     recentlyReturnedRecovery = null;
+    transientReturnedDisplay = null;
     // Only a pending move that belongs to the current interruption may be
     // promoted by a later "display-removed" event: the OS relocation that
     // races ahead of display teardown happens immediately around the
@@ -382,6 +389,132 @@ function attachDisplayRecovery({
     } catch {
       return null;
     }
+  };
+
+  const displayLabel = (display) =>
+    typeof display?.label === "string" && display.label.trim()
+      ? display.label.trim()
+      : null;
+
+  const isPrimaryDisplay = (display) => {
+    if (!display || !isFiniteBounds(display.bounds)) return false;
+    try {
+      const primary = screen.getPrimaryDisplay?.();
+      if (!primary || !isFiniteBounds(primary.bounds)) return false;
+      const displayId = normalizeDisplayId(display.id);
+      const primaryId = normalizeDisplayId(primary.id);
+      if (displayId !== null && primaryId !== null) {
+        return displayId === primaryId;
+      }
+      return boundsEqual(display.bounds, primary.bounds);
+    } catch {
+      return false;
+    }
+  };
+
+  const nonPrimaryDisplays = () => {
+    try {
+      return (screen.getAllDisplays?.() || []).filter(
+        (display) => !isPrimaryDisplay(display)
+      );
+    } catch {
+      return [];
+    }
+  };
+
+  const matchesTransientReturnedDisplay = (display) => {
+    const association = transientReturnedDisplay;
+    const stableDisplayId = normalizeDisplayId(display?.id);
+    if (
+      !association ||
+      stableDisplayId === null ||
+      !isFiniteBounds(display?.bounds) ||
+      isPrimaryDisplay(display)
+    ) {
+      return false;
+    }
+
+    const connectedSecondaries = nonPrimaryDisplays();
+    const label = displayLabel(display);
+    if (association.label && label && label !== association.label) return false;
+    if (
+      association.internal !== null &&
+      typeof display.internal === "boolean" &&
+      display.internal !== association.internal
+    ) {
+      return false;
+    }
+    if (association.label && label === association.label) {
+      const sameLabel = connectedSecondaries.filter(
+        (candidate) =>
+          displayLabel(candidate) === association.label &&
+          (association.internal === null ||
+            typeof candidate.internal !== "boolean" ||
+            candidate.internal === association.internal)
+      );
+      if (
+        sameLabel.length === 1 &&
+        normalizeDisplayId(sameLabel[0].id) === stableDisplayId
+      ) {
+        return true;
+      }
+    }
+
+    if (boundsIntersectDisplay(association.bounds, display.bounds)) return true;
+
+    // Some Windows topology changes update the id and move the display in the
+    // same event. With no usable label or overlapping geometry, correlation is
+    // still unambiguous when it is the only connected secondary display.
+    return (
+      connectedSecondaries.length === 1 &&
+      normalizeDisplayId(connectedSecondaries[0].id) === stableDisplayId
+    );
+  };
+
+  const promoteTransientReturnedDisplay = (display) => {
+    if (!matchesTransientReturnedDisplay(display)) return false;
+    const association = transientReturnedDisplay;
+    const stableDisplayId = normalizeDisplayId(display.id);
+    const belongsToAssociation = (bounds) =>
+      isFiniteBounds(bounds) &&
+      boundsIntersectDisplay(bounds, association.bounds);
+
+    if (
+      boundsAtDisplayRemovalDisplayId === null &&
+      belongsToAssociation(boundsAtDisplayRemoval)
+    ) {
+      boundsAtDisplayRemovalDisplayId = stableDisplayId;
+    }
+    if (
+      rememberedDisplayId === null &&
+      belongsToAssociation(rememberedSecondaryBounds)
+    ) {
+      rememberedDisplayId = stableDisplayId;
+    }
+    if (
+      pendingTeardownMove &&
+      normalizeDisplayId(pendingTeardownMove.displayId) === null &&
+      belongsToAssociation(pendingTeardownMove.bounds)
+    ) {
+      pendingTeardownMove.displayId = stableDisplayId;
+    }
+    if (
+      pendingRecovery &&
+      normalizeDisplayId(pendingRecovery.displayId) === null &&
+      belongsToAssociation(pendingRecovery.bounds)
+    ) {
+      pendingRecovery.displayId = stableDisplayId;
+    }
+    if (
+      recentlyReturnedRecovery &&
+      normalizeDisplayId(recentlyReturnedRecovery.displayId) === null &&
+      belongsToAssociation(recentlyReturnedRecovery.bounds)
+    ) {
+      recentlyReturnedRecovery.displayId = stableDisplayId;
+    }
+
+    transientReturnedDisplay = null;
+    return true;
   };
 
   // Remember the window's placement while it lives on a non-primary display.
@@ -544,6 +677,24 @@ function attachDisplayRecovery({
   // Electron invokes "display-removed" listeners as (event, oldDisplay).
   const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
+    if (transientReturnedDisplay && oldDisplay) {
+      const oldLabel = displayLabel(oldDisplay);
+      const labelMatches =
+        transientReturnedDisplay.label !== null &&
+        oldLabel === transientReturnedDisplay.label &&
+        (transientReturnedDisplay.internal === null ||
+          typeof oldDisplay.internal !== "boolean" ||
+          oldDisplay.internal === transientReturnedDisplay.internal);
+      if (
+        labelMatches ||
+        boundsIntersectDisplay(
+          transientReturnedDisplay.bounds,
+          oldDisplay.bounds
+        )
+      ) {
+        transientReturnedDisplay = null;
+      }
+    }
     if (
       pendingTeardownMove &&
       recoveryPlacementMatchesDisplay(pendingTeardownMove, oldDisplay)
@@ -705,6 +856,9 @@ function attachDisplayRecovery({
   const onDisplayAdded = (_event, display, requireStableIdentity = false) => {
     if (!attached) return;
     try {
+      if (requireStableIdentity) {
+        promoteTransientReturnedDisplay(display);
+      }
       const currentBounds = copyBounds();
       const recoveryCandidates = [
         boundsAtDisplayRemoval && {
@@ -736,6 +890,25 @@ function attachDisplayRecovery({
         .filter(Boolean)
         .map(normalizeRecoveryCandidate)
         .find(candidateMatchesDisplay);
+      if (
+        !requireStableIdentity &&
+        matchingCandidate &&
+        normalizeDisplayId(display?.id) === null &&
+        isFiniteBounds(display?.bounds)
+      ) {
+        transientReturnedDisplay = {
+          bounds: { ...display.bounds },
+          label: displayLabel(display),
+          internal:
+            typeof display.internal === "boolean" ? display.internal : null,
+        };
+      } else if (
+        !requireStableIdentity &&
+        matchingCandidate &&
+        normalizeDisplayId(display?.id) !== null
+      ) {
+        transientReturnedDisplay = null;
+      }
       if (
         matchingCandidate &&
         boundsIntersectDisplay(currentBounds, display?.bounds)

@@ -778,6 +778,64 @@ test("attachDisplayRecovery ignores unrelated metrics while a removed display id
   );
 });
 
+test("attachDisplayRecovery follows an unknown returned display when its id and bounds stabilize", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  // Once the transient association exists, an unrelated primary-display
+  // metrics event still must not claim it.
+  screen.emit("display-metrics-changed", {}, PRIMARY, ["bounds"]);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  returningDisplay.id = SECONDARY.id;
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 2);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[1], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery follows a stabilized unknown display while maximized", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  win.normalBounds = { ...win.bounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  returningDisplay.id = SECONDARY.id;
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
   const realNow = Date.now;
   let now = 2_000_000;
