@@ -260,10 +260,23 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
       )
         ? m.providerContinuation
         : undefined;
-      const openAIChatAssistantFields = getOpenAIChatAssistantFieldsForHistoryMessage(
-        m,
-        continuationContext.source,
-      );
+      const hasStoredOpenAIChatAssistantFields = Object.keys(
+        m.providerContinuation?.openAIChatAssistantFields ?? {},
+      ).length > 0;
+      // Provider/model identity alone cannot distinguish a Chat history from
+      // a Responses history when the user changes only the API format. Chat
+      // continuation fields are explicit evidence that its provider-specific
+      // reasoning must not be replayed as a Responses reasoning item.
+      const replayContinuation = continuationContext.usesOpenAIResponses
+        && hasStoredOpenAIChatAssistantFields
+        ? undefined
+        : activeContinuation;
+      const openAIChatAssistantFields = continuationContext.usesOpenAIResponses
+        ? undefined
+        : getOpenAIChatAssistantFieldsForHistoryMessage(
+          m,
+          continuationContext.source,
+        );
       if (m.toolCalls?.length) {
         const resolvedToolCalls = resolvedToolCallsByAssistant.get(m);
         const resolvedCalls = resolvedToolCalls
@@ -282,10 +295,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         const sameProviderConfig = storedSource?.providerConfigId
           === continuationContext.source.providerConfigId
           && storedSource?.providerType === continuationContext.source.providerType;
-        const hasStoredOpenAIChatAssistantFields = Object.keys(
-          m.providerContinuation?.openAIChatAssistantFields ?? {},
-        ).length > 0;
-        const hasSourceMismatchedReasoning = !activeContinuation
+        const hasSourceMismatchedReasoning = !replayContinuation
           && (
             hasOpenAIResponsesReasoningMetadata(storedReasoningParts)
             // A model change within the same Responses configuration is also
@@ -304,7 +314,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
           && continuationContext.usesOpenAIResponses
           && (
             hasSourceMismatchedReasoning
-            || hasUnreplayableReasoningItems(activeContinuation?.reasoningParts ?? [])
+            || hasUnreplayableReasoningItems(replayContinuation?.reasoningParts ?? [])
           );
         if (hasUnreplayableReasoning) {
           for (const tc of resolvedCalls) discardedToolCallIds.add(tc.id);
@@ -312,7 +322,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         const replayedCalls = hasUnreplayableReasoning ? [] : resolvedCalls;
         const contentParts: AssistantContentPart[] = [];
         if (replayedCalls.length > 0) {
-          for (const part of collectReplayableReasoningParts(activeContinuation)) {
+          for (const part of collectReplayableReasoningParts(replayContinuation)) {
             if (!part.text && !part.providerOptions) continue;
             contentParts.push({
               type: 'reasoning' as const,
@@ -325,11 +335,11 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
           contentParts.push({
             type: 'text' as const,
             text: m.content,
-            ...(activeContinuation?.textProviderOptions ? { providerOptions: activeContinuation.textProviderOptions } : {}),
+            ...(replayContinuation?.textProviderOptions ? { providerOptions: replayContinuation.textProviderOptions } : {}),
           });
         }
         for (const tc of replayedCalls) {
-          const providerOptions = activeContinuation?.toolCallProviderOptionsById?.[tc.id];
+          const providerOptions = replayContinuation?.toolCallProviderOptionsById?.[tc.id];
           contentParts.push({
             type: 'tool-call' as const,
             toolCallId: tc.id,
@@ -347,7 +357,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         }
       } else if (m.content) {
         const contentParts: AssistantContentPart[] = [];
-        for (const part of collectReplayableReasoningParts(activeContinuation)) {
+        for (const part of collectReplayableReasoningParts(replayContinuation)) {
           if (!part.text && !part.providerOptions) continue;
           contentParts.push({
             type: 'reasoning' as const,
@@ -358,7 +368,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         contentParts.push({
           type: 'text' as const,
           text: m.content,
-          ...(activeContinuation?.textProviderOptions ? { providerOptions: activeContinuation.textProviderOptions } : {}),
+          ...(replayContinuation?.textProviderOptions ? { providerOptions: replayContinuation.textProviderOptions } : {}),
         });
         const message: ModelMessage = {
           role: 'assistant',

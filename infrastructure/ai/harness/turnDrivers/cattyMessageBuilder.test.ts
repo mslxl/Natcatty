@@ -283,7 +283,7 @@ test('metadata-free Responses reasoning discards its paired tool exchange', () =
   assert.equal(chatMessages[1].role, 'tool');
 });
 
-test('a same-provider Chat to Responses model switch keeps the generic tool exchange', () => {
+test('same-provider Chat to Responses switches keep the generic tool exchange', () => {
   const messages: ChatMessage[] = [
     {
       id: 'assistant-1',
@@ -306,24 +306,26 @@ test('a same-provider Chat to Responses model switch keeps the generic tool exch
     },
   ];
 
-  const responsesMessages = buildCattySdkMessages({
-    allMessages: messages,
-    includeCurrentUserMessage: false,
-    trimmed: '',
-    continuationContext: createContinuationContext('provider-1', 'openai', 'model-2', true),
-    chatSessionId: 'chat-1',
-    toolOutputStore: new ToolOutputStore(),
-    fieldsByMessage: new Map(),
-  });
+  for (const modelId of ['model-1', 'model-2']) {
+    const responsesMessages = buildCattySdkMessages({
+      allMessages: messages,
+      includeCurrentUserMessage: false,
+      trimmed: '',
+      continuationContext: createContinuationContext('provider-1', 'openai', modelId, true),
+      chatSessionId: 'chat-1',
+      toolOutputStore: new ToolOutputStore(),
+      fieldsByMessage: new Map(),
+    });
 
-  assert.equal(responsesMessages.length, 2);
-  const assistantContent = responsesMessages[0].content;
-  assert.ok(Array.isArray(assistantContent));
-  assert.deepEqual(
-    assistantContent.map(part => part.type),
-    ['text', 'tool-call'],
-  );
-  assert.equal(responsesMessages[1].role, 'tool');
+    assert.equal(responsesMessages.length, 2);
+    const assistantContent = responsesMessages[0].content;
+    assert.ok(Array.isArray(assistantContent));
+    assert.deepEqual(
+      assistantContent.map(part => part.type),
+      ['text', 'tool-call'],
+    );
+    assert.equal(responsesMessages[1].role, 'tool');
+  }
 });
 
 test('a durable summary survives when storage trimming shifts its boundary to zero', () => {
