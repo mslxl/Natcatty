@@ -285,11 +285,20 @@ export function serializeSessionsForStorage(
     };
   });
 
-  // First determine how many visible sessions can fit using their smallest
-  // representation. This prevents an old, oversized visible chat that must be
-  // dropped anyway from causing newer replay ciphertext to be stripped first.
+  // Preserve the newest session's full continuation whenever it can fit by
+  // itself. That session is the one the user is most likely continuing now;
+  // older visible history must not make its next tool turn unreplayable.
+  const protectNewestContinuation = serialized.length > 0
+    && serialized[0].json.length + 2 <= budgetBytes;
+
+  // Determine how many sessions can fit using the smallest representation for
+  // older sessions while reserving the newest session's full representation
+  // when possible. This also prevents an old, oversized visible chat that must
+  // be dropped anyway from causing newer replay ciphertext to be stripped.
   let minimalLength = 2
-    + serialized.reduce((total, entry) => total + entry.strippedJson.length, 0)
+    + serialized.reduce((total, entry, index) => (
+      total + (protectNewestContinuation && index === 0 ? entry.json.length : entry.strippedJson.length)
+    ), 0)
     + Math.max(0, serialized.length - 1);
   while (minimalLength > budgetBytes && serialized.length > 1) {
     const removed = serialized.pop();
@@ -298,10 +307,16 @@ export function serializeSessionsForStorage(
   }
 
   // Then keep full continuation data for the retained sessions and remove
-  // replay-only ciphertext from the oldest retained sessions only as needed.
+  // replay-only ciphertext from the oldest retained sessions only as needed,
+  // never touching the protected newest session.
   let jsonLength = 2 + serialized.reduce((total, entry) => total + entry.json.length, 0)
     + Math.max(0, serialized.length - 1);
-  for (let index = serialized.length - 1; index >= 0 && jsonLength > budgetBytes; index -= 1) {
+  const firstStrippableIndex = protectNewestContinuation ? 1 : 0;
+  for (
+    let index = serialized.length - 1;
+    index >= firstStrippableIndex && jsonLength > budgetBytes;
+    index -= 1
+  ) {
     const current = serialized[index];
     if (current.strippedSession === current.session) continue;
     jsonLength += current.strippedJson.length - current.json.length;

@@ -133,6 +133,37 @@ test('serializeSessionsForStorage keeps new ciphertext when an oversized old cha
   assert.ok(result.json.length <= 200 * 1024);
 });
 
+test('serializeSessionsForStorage prioritizes a usable newest chat over older visible history', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  const ciphertext = 'gAAAA'.repeat(20 * 1024); // ~100 KB
+  const newest = makeSession('newest', 2, [{
+    id: 'new-message',
+    role: 'assistant',
+    content: 'new visible chat',
+    timestamp: 2,
+    providerContinuation: {
+      source: { providerConfigId: 'p', providerType: 'openai', modelId: 'm' },
+      reasoningParts: [{ text: '', providerOptions: { openai: { reasoningEncryptedContent: ciphertext } } }],
+    },
+  }]);
+  const olderVisible = makeSession('oldest', 1, [{
+    id: 'old-message',
+    role: 'user',
+    content: 'x'.repeat(100 * 1024),
+    timestamp: 1,
+  }]);
+
+  const result = serializeSessionsForStorage([olderVisible, newest], 150 * 1024);
+
+  assert.deepEqual(result.sessions.map(session => session.id), ['newest']);
+  assert.equal(
+    result.sessions[0].messages[0].providerContinuation
+      ?.reasoningParts?.[0].providerOptions?.openai?.reasoningEncryptedContent,
+    ciphertext,
+  );
+  assert.ok(result.json.length <= 150 * 1024);
+});
+
 test('writeSessionsForStorage retries below nominal budgets after a quota failure', async () => {
   const { writeSessionsForStorage } = await import('./aiStateSnapshots');
   const writes: string[] = [];
