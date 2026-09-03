@@ -4,11 +4,15 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-  attachDisplayRecovery,
+  attachDisplayRecovery: attachDisplayRecoveryForPlatform,
   boundsIntersectDisplay,
   clampBoundsToDisplay,
   pickDisplayRecoveryBounds,
 } = require("./displayRecovery.cjs");
+
+function attachDisplayRecovery(options) {
+  return attachDisplayRecoveryForPlatform({ ...options, platform: "win32" });
+}
 
 const PRIMARY = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } };
 const SECONDARY = { id: 2, bounds: { x: 1920, y: 0, width: 2560, height: 1440 } };
@@ -1489,6 +1493,19 @@ test("detach removes all listeners and stops recovery", () => {
   win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
   screen.emit("display-added", {}, SECONDARY);
   assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery stays disabled outside Windows", () => {
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  const screen = createMockScreen();
+
+  const detach = attachDisplayRecoveryForPlatform({ win, screen, platform: "linux" });
+
+  assert.equal(typeof detach, "function");
+  assert.equal((screen.__listeners.get("display-removed") || []).length, 0);
+  assert.equal((screen.__listeners.get("display-added") || []).length, 0);
+  assert.equal((win.__listeners.get("will-move") || []).length, 0);
+  assert.equal((win.__listeners.get("move") || []).length, 0);
 });
 
 test("attachDisplayRecovery tolerates a missing screen module", () => {

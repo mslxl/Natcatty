@@ -192,11 +192,14 @@ function attachDisplayRecovery({
   win,
   screen,
   teardownGraceMs = DEFAULT_TEARDOWN_GRACE_MS,
+  // The recovery flow depends on Windows' manual-only will-move/will-resize
+  // events to distinguish user intent from OS display relocation.
+  platform = process.platform,
   // Injectable for tests; defaults to Electron's powerMonitor (null outside
   // Electron).
   powerMonitor: injectedPowerMonitor = null,
 }) {
-  if (!win || !screen || typeof screen.on !== "function") {
+  if (platform !== "win32" || !win || !screen || typeof screen.on !== "function") {
     return () => {};
   }
 
