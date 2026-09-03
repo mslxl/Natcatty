@@ -356,6 +356,44 @@ test("sanitizeSessionRestorePayload preserves explicit workspace autoTitle acros
   assert.equal(sanitized.workspaces[0].autoTitle, false);
 });
 
+test("generated workspace titles survive JSON restore only with a valid boolean flag", () => {
+  const workspace: Workspace = {
+    id: "ws-1",
+    title: "01/02",
+    autoTitle: false,
+    generatedTitle: true,
+    root: {
+      id: "split-1",
+      type: "split",
+      direction: "vertical",
+      children: [
+        { id: "pane-1", type: "pane", sessionId: "s1" },
+        { id: "pane-2", type: "pane", sessionId: "s2" },
+      ],
+    },
+    focusedSessionId: "s1",
+    focusSessionOrder: ["s1", "s2"],
+  };
+  const payload = buildSessionRestorePayload({
+    sessions: [session("s1", "ws-1"), session("s2", "ws-1")],
+    workspaces: [workspace],
+    tabOrder: ["ws-1"],
+    activeTabId: "ws-1",
+    now: 123,
+  });
+
+  const restored = sanitizeSessionRestorePayload(JSON.parse(JSON.stringify(payload)));
+  assert.equal(restored.workspaces[0].title, "01/02");
+  assert.equal(restored.workspaces[0].autoTitle, false);
+  assert.equal(restored.workspaces[0].generatedTitle, true);
+
+  const malformed = sanitizeSessionRestorePayload({
+    ...payload,
+    workspaces: [{ ...payload.workspaces[0], generatedTitle: "true" }],
+  });
+  assert.equal(malformed.workspaces[0].generatedTitle, undefined);
+});
+
 test("sanitizeSessionRestorePayload leaves legacy workspaces without an autoTitle flag", () => {
   const workspace: Workspace = {
     id: "ws-1",
