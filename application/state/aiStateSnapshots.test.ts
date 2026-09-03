@@ -164,6 +164,70 @@ test('serializeSessionsForStorage prioritizes a usable newest chat over older vi
   assert.ok(result.json.length <= 150 * 1024);
 });
 
+test('serializeSessionsForStorage keeps the newest replayable turn in one oversized chat', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  const ciphertext = 'gAAAA'.repeat(20 * 1024); // ~100 KB per reasoning turn
+  const reasoning = (itemId: string) => ({
+    source: { providerConfigId: 'p', providerType: 'openai', modelId: 'm' },
+    reasoningParts: [{
+      text: '',
+      providerOptions: { openai: { itemId, reasoningEncryptedContent: ciphertext } },
+    }],
+  });
+  const session = makeSession('active', 1, [
+    {
+      id: 'assistant-old',
+      role: 'assistant',
+      content: 'old turn',
+      timestamp: 1,
+      providerContinuation: reasoning('rs_old'),
+      toolCalls: [{ id: 'call-old', name: 'terminal_execute', arguments: { command: 'pwd' } }],
+    },
+    {
+      id: 'tool-old',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-old', content: '/tmp' }],
+    },
+    {
+      id: 'assistant-new',
+      role: 'assistant',
+      content: 'new turn',
+      timestamp: 3,
+      providerContinuation: reasoning('rs_new'),
+      toolCalls: [{ id: 'call-new', name: 'terminal_execute', arguments: { command: 'ls' } }],
+    },
+    {
+      id: 'tool-new',
+      role: 'tool',
+      content: '',
+      timestamp: 4,
+      toolResults: [{ toolCallId: 'call-new', content: 'file.txt' }],
+    },
+  ]);
+
+  const result = serializeSessionsForStorage([session], 150 * 1024);
+
+  assert.ok(result.json.length <= 150 * 1024);
+  assert.deepEqual(result.sessions[0].messages.map(message => message.id), [
+    'assistant-old',
+    'tool-old',
+    'assistant-new',
+    'tool-new',
+  ]);
+  assert.equal(
+    result.sessions[0].messages[0].providerContinuation
+      ?.reasoningParts?.[0].providerOptions?.openai?.reasoningEncryptedContent,
+    undefined,
+  );
+  assert.equal(
+    result.sessions[0].messages[2].providerContinuation
+      ?.reasoningParts?.[0].providerOptions?.openai?.reasoningEncryptedContent,
+    ciphertext,
+  );
+});
+
 test('writeSessionsForStorage retries below nominal budgets after a quota failure', async () => {
   const { writeSessionsForStorage } = await import('./aiStateSnapshots');
   const writes: string[] = [];

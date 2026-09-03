@@ -217,28 +217,33 @@ function stripReasoningEncryptedContent(
   return Object.keys(stripped).length ? stripped : undefined;
 }
 
+function stripEncryptedReasoningFromMessage(message: AISession['messages'][number]) {
+  const continuation = message.providerContinuation;
+  if (!continuation?.reasoningParts) return message;
+  let changed = false;
+  const parts = continuation.reasoningParts.map(part => {
+    if (!part.providerOptions) return part;
+    const providerOptions = stripReasoningEncryptedContent(part.providerOptions);
+    if (providerOptions === part.providerOptions) return part;
+    changed = true;
+    return providerOptions ? { text: part.text, providerOptions } : { text: part.text };
+  });
+  if (!changed) return message;
+  return {
+    ...message,
+    providerContinuation: {
+      ...continuation,
+      reasoningParts: parts,
+    },
+  };
+}
+
 function stripEncryptedReasoningFromSession(session: AISession): AISession {
   let changed = false;
   const messages = session.messages.map(message => {
-    const continuation = message.providerContinuation;
-    if (!continuation?.reasoningParts) return message;
-    let partsChanged = false;
-    const parts = continuation.reasoningParts.map(part => {
-      if (!part.providerOptions) return part;
-      const providerOptions = stripReasoningEncryptedContent(part.providerOptions);
-      if (providerOptions === part.providerOptions) return part;
-      partsChanged = true;
-      return providerOptions ? { text: part.text, providerOptions } : { text: part.text };
-    });
-    if (!partsChanged) return message;
-    changed = true;
-    return {
-      ...message,
-      providerContinuation: {
-        ...continuation,
-        reasoningParts: parts,
-      },
-    };
+    const stripped = stripEncryptedReasoningFromMessage(message);
+    if (stripped !== message) changed = true;
+    return stripped;
   });
   return changed ? { ...session, messages } : session;
 }
@@ -282,6 +287,10 @@ export function serializeSessionsForStorage(
       strippedJson: strippedSession === session
         ? json
         : JSON.stringify(strippedSession),
+      ciphertextMessageIndexes: session.messages.flatMap((message, index) => (
+        stripEncryptedReasoningFromMessage(message) === message ? [] : [index]
+      )),
+      strippedMessageCount: 0,
     };
   });
 
@@ -308,7 +317,9 @@ export function serializeSessionsForStorage(
 
   // Then keep full continuation data for the retained sessions and remove
   // replay-only ciphertext from the oldest retained sessions only as needed,
-  // never touching the protected newest session.
+  // never touching the protected newest session. Within one session, remove
+  // it one message at a time from oldest to newest so a long active chat can
+  // retain its most recent replayable tool exchange when that still fits.
   let jsonLength = 2 + serialized.reduce((total, entry) => total + entry.json.length, 0)
     + Math.max(0, serialized.length - 1);
   const firstStrippableIndex = protectNewestContinuation ? 1 : 0;
@@ -317,14 +328,29 @@ export function serializeSessionsForStorage(
     index >= firstStrippableIndex && jsonLength > budgetBytes;
     index -= 1
   ) {
-    const current = serialized[index];
-    if (current.strippedSession === current.session) continue;
-    jsonLength += current.strippedJson.length - current.json.length;
-    serialized[index] = {
-      ...current,
-      session: current.strippedSession,
-      json: current.strippedJson,
-    };
+    let current = serialized[index];
+    while (
+      jsonLength > budgetBytes
+      && current.strippedMessageCount < current.ciphertextMessageIndexes.length
+    ) {
+      const messageIndex = current.ciphertextMessageIndexes[current.strippedMessageCount];
+      const strippedMessage = stripEncryptedReasoningFromMessage(current.session.messages[messageIndex]);
+      const nextSession = {
+        ...current.session,
+        messages: current.session.messages.map((message, currentIndex) => (
+          currentIndex === messageIndex ? strippedMessage : message
+        )),
+      };
+      const nextJson = JSON.stringify(nextSession);
+      jsonLength += nextJson.length - current.json.length;
+      current = {
+        ...current,
+        session: nextSession,
+        json: nextJson,
+        strippedMessageCount: current.strippedMessageCount + 1,
+      };
+      serialized[index] = current;
+    }
   }
 
   return {
