@@ -244,10 +244,13 @@ function attachDisplayRecovery({
   const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
 
-  const isSessionInterruptionActiveOrDraining = () =>
-    sessionInterruptionActive ||
+  const isSessionInterruptionDraining = () =>
+    !sessionInterruptionActive &&
     (sessionInterruptionEndedAt !== null &&
       Date.now() - sessionInterruptionEndedAt < teardownGraceMs);
+
+  const isSessionInterruptionActiveOrDraining = () =>
+    sessionInterruptionActive || isSessionInterruptionDraining();
 
   const onSessionInterrupted = (signal) => {
     sessionInterruptedAt = Date.now();
@@ -343,6 +346,22 @@ function attachDisplayRecovery({
       const display = screen.getDisplayMatching?.(bounds);
       if (!primary || !display) return;
       if (display.id === primary.id) {
+        // Once every lock/suspend signal has ended, a fresh window event can
+        // be a real user edit again. Let that edit win immediately instead of
+        // applying the ordinary teardown grace window: otherwise a move made
+        // just after unlock can be promoted as an OS relocation and later
+        // overwritten when the display returns.
+        if (isSessionInterruptionDraining()) {
+          rememberedSecondaryBounds = null;
+          rememberedDisplayId = null;
+          pendingTeardownMove = null;
+          boundsAtDisplayRemoval = null;
+          boundsAtDisplayRemovalDisplayId = null;
+          teardownRelocationAt = null;
+          teardownSnapshotAt = null;
+          pendingRecovery = null;
+          return;
+        }
         // The window is on the primary display now. If the remembered
         // secondary display is still connected, this is either a deliberate
         // user move or an OS teardown relocation that raced ahead of the

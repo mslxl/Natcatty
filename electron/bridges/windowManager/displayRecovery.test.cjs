@@ -420,10 +420,38 @@ test("attachDisplayRecovery lets an immediate post-unlock user edit invalidate r
     // Once the session unlocks, the user can deliberately re-place the
     // relocated window. That edit must win even when it happens immediately
     // after unlock and before the monitor returns.
-    now += 60_000;
     powerMonitor.emit("unlock-screen");
     win.bounds = { x: 300, y: 200, width: 1200, height: 800 };
     for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 0);
+    assert.deepEqual(win.bounds, { x: 300, y: 200, width: 1200, height: 800 });
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery does not promote an immediate post-unlock user move", () => {
+  const realNow = Date.now;
+  let now = 1_950_000;
+  Date.now = () => now;
+  try {
+    const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // The interruption ends before the display is removed. An immediate move
+    // onto the primary is therefore a real user edit, not an OS relocation
+    // racing ahead of display-removed, even though it falls inside the usual
+    // teardown grace window.
+    powerMonitor.emit("lock-screen");
+    powerMonitor.emit("unlock-screen");
+    win.bounds = { x: 300, y: 200, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-removed", {}, SECONDARY);
     screen.emit("display-added", {}, SECONDARY);
 
     assert.equal(win.setBoundsCalls.length, 0);
