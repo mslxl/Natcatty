@@ -614,7 +614,7 @@
       "hosts": {
         "type": "string",
         "optional": false,
-        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local)."
+        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local), os (linux|windows|macos)."
       },
       "dryRun": {
         "type": "string",
@@ -729,6 +729,11 @@
         "type": "string",
         "optional": true,
         "description": "New protocol: ssh, telnet, local, or serial."
+      },
+      "os": {
+        "type": "string",
+        "optional": true,
+        "description": "Host operating system: linux, windows, or macos. Drives AI environment reporting and shell-aware behavior."
       },
       "identityId": {
         "type": "string",

@@ -11,6 +11,7 @@ import {
   applyEffectiveHostAuthMethodSelection,
   detachEffectiveHostIdentity,
   HOST_AUTH_METHOD_CHOICES,
+  HOST_OS_CHOICES,
   HostDetailsConnectionSections,
   removeSelectedHostCredential,
   shouldForceAuthMethodReselect,
@@ -109,6 +110,28 @@ test("color and icon settings render for non-Linux hosts", () => {
   assert.match(markup, /hostDetails\.icon\.sectionTitle/);
   assert.match(markup, /hostDetails\.icon\.colorLabel/);
   assert.match(markup, /hostDetails\.icon\.manualLabel/);
+});
+
+test("host operating system can be selected in the ordinary host editor", () => {
+  const markup = renderConnectionSections({ os: "windows" });
+
+  assert.deepEqual(
+    HOST_OS_CHOICES.map(([value, labelKey]) => [value, labelKey]),
+    [
+      ["linux", "hostDetails.os.linux"],
+      ["windows", "hostDetails.os.windows"],
+      ["macos", "hostDetails.os.macos"],
+    ],
+  );
+  assert.match(markup, /hostDetails\.os\.title/);
+  assert.match(markup, /role="combobox"[^>]*aria-label="hostDetails\.os\.title"/);
+  assert.match(markup, />hostDetails\.os\.windows<\/span>/);
+
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "HostDetailsConnectionSections.tsx"),
+    "utf8",
+  );
+  assert.match(source, /onValueChange=\{\(value\) => update\("os", value as Host\["os"\]\)\}/);
 });
 
 test("host credentials expose automatic and password-only choices", () => {
