@@ -80,7 +80,18 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
       // Mirror Electron: the display list changes when these events fire.
       const display = args[1] || args[0];
       if (event === "display-removed" && display) {
-        const index = connected.findIndex((candidate) => candidate.id === display.id);
+        let index = connected.findIndex((candidate) => candidate.id === display.id);
+        // Electron may report -1 while the durable display id is not known.
+        // Keep the mock topology faithful by falling back to exact geometry.
+        if (index < 0 && display.bounds) {
+          index = connected.findIndex(
+            (candidate) =>
+              candidate.bounds?.x === display.bounds.x &&
+              candidate.bounds?.y === display.bounds.y &&
+              candidate.bounds?.width === display.bounds.width &&
+              candidate.bounds?.height === display.bounds.height
+          );
+        }
         if (index >= 0) connected.splice(index, 1);
       }
       if (event === "display-added" && display) {
@@ -591,6 +602,43 @@ test("attachDisplayRecovery promotes a queued post-unlock OS move when removal f
     width: 1400,
     height: 900,
   });
+});
+
+test("attachDisplayRecovery matches a pending move to a removal with an unknown id", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, { ...SECONDARY, id: -1 });
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+});
+
+test("attachDisplayRecovery matches an unknown pending id to a stable removal", () => {
+  const unknownSecondary = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, unknownSecondary] });
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
@@ -1305,6 +1353,32 @@ test("attachDisplayRecovery defers recovery while maximized and applies it on un
 
   assert.equal(win.setBoundsCalls.length, 1);
   assert.deepEqual(win.setBoundsCalls[0], { x: 2000, y: 100, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery applies a deferred recovery after a transient added id stabilizes", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen();
+
+  attachDisplayRecovery({ win, screen });
+  screen.emit("display-removed", {}, SECONDARY);
+
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  win.normalBounds = { ...win.bounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  // Electron can learn the durable id before the maximized window returns to
+  // normal. The queued recovery must still find the same display by geometry.
+  returningDisplay.id = SECONDARY.id;
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
 test("attachDisplayRecovery keeps a deferred recovery queued when its display vanishes again", () => {

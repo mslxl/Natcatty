@@ -102,6 +102,16 @@ function normalizeRecoveryCandidate(candidate) {
   return null;
 }
 
+function recoveryPlacementMatchesDisplay(placement, display) {
+  const normalized = normalizeRecoveryCandidate(placement);
+  if (!normalized || !display || !isFiniteBounds(display.bounds)) return false;
+  const displayId = normalizeDisplayId(display.id);
+  if (normalized.displayId !== null && displayId !== null) {
+    return normalized.displayId === displayId;
+  }
+  return boundsIntersectDisplay(normalized.bounds, display.bounds);
+}
+
 /**
  * Decide whether the window should be moved back onto a (re-)added display.
  * Returns the remembered bounds to restore, or null when the window is already
@@ -110,8 +120,8 @@ function normalizeRecoveryCandidate(candidate) {
  * candidate is accepted when it was remembered for that very display id — the
  * display may have come back with different bounds (DPI/resolution/topology
  * change), in which case the old geometry is clamped into the new bounds by
- * the caller — or, for untagged (legacy) candidates without a display id,
- * when its bounds intersect the re-added display. Candidates tagged for
+ * the caller — or, when either side lacks a stable display id, when its bounds
+ * intersect the re-added display. Candidates with stable ids that belong to
  * another display never match by geometry: during multi-display churn an
  * unrelated display can re-appear first with overlapping bounds, and
  * restoring the owner's geometry onto it would move the window to the wrong
@@ -375,7 +385,12 @@ function attachDisplayRecovery({
       const primary = screen.getPrimaryDisplay?.();
       const display = screen.getDisplayMatching?.(bounds);
       if (!primary || !display) return;
-      if (display.id === primary.id) {
+      if (
+        recoveryPlacementMatchesDisplay(
+          { bounds: display.bounds, displayId: display.id },
+          primary
+        )
+      ) {
         // The window is on the primary display now. If the remembered
         // secondary display is still connected, this is either a deliberate
         // user move or an OS teardown relocation that raced ahead of the
@@ -385,9 +400,19 @@ function attachDisplayRecovery({
         // grace window, the pre-relocation placement is still recoverable.
         // When the remembered display is already gone from the display list,
         // teardown has happened: keep the snapshot for recovery.
-        if (rememberedDisplayId !== null) {
+        if (rememberedSecondaryBounds !== null) {
           const connected = screen.getAllDisplays?.() || [];
-          if (!connected.some((candidate) => candidate.id === rememberedDisplayId)) {
+          if (
+            !connected.some((candidate) =>
+              recoveryPlacementMatchesDisplay(
+                {
+                  bounds: rememberedSecondaryBounds,
+                  displayId: rememberedDisplayId,
+                },
+                candidate
+              )
+            )
+          ) {
             // Teardown relocation: preserve the pre-teardown placement so the
             // later "display-added" event can restore it. But only the OS's
             // initial relocation (and the events it emits in the same burst,
@@ -474,7 +499,7 @@ function attachDisplayRecovery({
       boundsAtDisplayRemovalDisplayId = null;
       teardownSnapshotAt = null;
       rememberedSecondaryBounds = bounds;
-      rememberedDisplayId = display.id;
+      rememberedDisplayId = normalizeDisplayId(display.id);
       pendingTeardownMove = null;
       teardownRelocationAt = null;
     } catch {
@@ -485,7 +510,10 @@ function attachDisplayRecovery({
   // Electron invokes "display-removed" listeners as (event, oldDisplay).
   const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
-    if (pendingTeardownMove && oldDisplay && oldDisplay.id === pendingTeardownMove.displayId) {
+    if (
+      pendingTeardownMove &&
+      recoveryPlacementMatchesDisplay(pendingTeardownMove, oldDisplay)
+    ) {
       // Date.now() advances while the machine is asleep: when the OS
       // relocates the window right before suspension, the matching
       // "display-removed" event can be delivered hours later on the wall
@@ -524,7 +552,9 @@ function attachDisplayRecovery({
         // The OS relocated the window to the primary before this removal event
         // fired: restore the pre-relocation placement on the removed display.
         boundsAtDisplayRemoval = pendingTeardownMove.bounds;
-        boundsAtDisplayRemovalDisplayId = pendingTeardownMove.displayId;
+        boundsAtDisplayRemovalDisplayId =
+          normalizeDisplayId(pendingTeardownMove.displayId) ??
+          normalizeDisplayId(oldDisplay?.id);
         // Trailing events of the same relocation burst (e.g. a paired
         // "resize" after this removal) must not clear the promoted snapshot;
         // stamp the promotion so rememberWindowPlacement can tell burst
@@ -568,7 +598,7 @@ function attachDisplayRecovery({
       return;
     }
     boundsAtDisplayRemoval = currentBounds;
-    boundsAtDisplayRemovalDisplayId = oldDisplay.id;
+    boundsAtDisplayRemovalDisplayId = normalizeDisplayId(oldDisplay.id);
     teardownSnapshotAt = Date.now();
   };
 
@@ -615,20 +645,17 @@ function attachDisplayRecovery({
         pendingRecovery = null;
         return;
       }
-      let targetBounds = bounds;
-      if (displayId !== null && displayId !== undefined) {
-        const display = (screen.getAllDisplays?.() || []).find(
-          (candidate) => candidate.id === displayId
-        );
-        // The display disappeared again before the window left the
-        // maximized/full-screen state: keep the recovery queued so the next
-        // "display-added" event can still apply it (see onDisplayAdded). It
-        // is the only remaining recovery candidate here — the removal-time
-        // snapshot was already consumed when it was deferred.
-        if (!display) return;
-        targetBounds =
-          clampBoundsToDisplay(bounds, displayPlacementRect(display)) || bounds;
-      }
+      const display = (screen.getAllDisplays?.() || []).find((candidate) =>
+        recoveryPlacementMatchesDisplay({ bounds, displayId }, candidate)
+      );
+      // The display disappeared again before the window left the
+      // maximized/full-screen state: keep the recovery queued so the next
+      // "display-added" event can still apply it (see onDisplayAdded). It
+      // is the only remaining recovery candidate here — the removal-time
+      // snapshot was already consumed when it was deferred.
+      if (!display) return;
+      const targetBounds =
+        clampBoundsToDisplay(bounds, displayPlacementRect(display)) || bounds;
       pendingRecovery = null;
       win.setBounds(targetBounds);
     } catch {
@@ -651,7 +678,7 @@ function attachDisplayRecovery({
         pendingRecovery &&
         display &&
         isFiniteBounds(display.bounds) &&
-        pendingRecovery.displayId === display.id
+        recoveryPlacementMatchesDisplay(pendingRecovery, display)
       ) {
         if (boundsIntersectDisplay(currentBounds, display.bounds)) {
           // The window already sits on the re-added display: nothing to do.
@@ -678,7 +705,7 @@ function attachDisplayRecovery({
               // Still maximized/full-screen: defer once more.
               pendingRecovery = {
                 bounds: requeued,
-                displayId: display.id,
+                displayId: normalizeDisplayId(display.id),
                 fromBounds: currentBounds,
               };
               return;
@@ -719,7 +746,13 @@ function attachDisplayRecovery({
         isFiniteBounds(currentBounds) &&
         boundsIntersectDisplay(currentBounds, display.bounds) &&
         boundsAtDisplayRemoval !== null &&
-        boundsAtDisplayRemovalDisplayId === display.id
+        recoveryPlacementMatchesDisplay(
+          {
+            bounds: boundsAtDisplayRemoval,
+            displayId: boundsAtDisplayRemovalDisplayId,
+          },
+          display
+        )
       ) {
         boundsAtDisplayRemoval = null;
         boundsAtDisplayRemovalDisplayId = null;
@@ -744,7 +777,7 @@ function attachDisplayRecovery({
         // re-apply can tell an untouched window from a user-replaced one.
         pendingRecovery = {
           bounds: clamped,
-          displayId: display?.id ?? null,
+          displayId: normalizeDisplayId(display?.id),
           fromBounds: currentBounds,
         };
         return;
