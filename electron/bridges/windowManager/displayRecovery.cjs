@@ -22,7 +22,6 @@
 // "display-removed". If the remembered display is removed within this grace
 // window, treat the move as a teardown relocation and keep the snapshot.
 const DEFAULT_TEARDOWN_GRACE_MS = 2000;
-const MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS = 2000;
 
 // There is no portable clock that keeps running unchanged across system
 // suspension: Date.now() (and every clock Node exposes) advances while the
@@ -248,11 +247,12 @@ function attachDisplayRecovery({
   // though Electron does not emit will-move for it. The queued relocation is
   // not guaranteed to arrive within the short teardown grace window.
   let recentlyReturnedRecovery = null;
-  // Win+Shift+Left/Right moves a maximized window between monitors without
-  // Electron's manual-only will-move event. before-input-event is the missing
-  // user-intent signal that distinguishes that shortcut from an otherwise
-  // identical queued OS relocation after unlock.
-  let lastMaximizedMonitorTransferInputAt = null;
+  // Win+Shift+Left/Right can move a window between monitors without Electron's
+  // manual-only will-move event. before-input-event is the missing user-intent
+  // signal that distinguishes that shortcut from an otherwise identical
+  // queued OS relocation after unlock. The source captured here survives a
+  // delayed resize/move pair and a recovery deferred between those events.
+  let monitorTransferIntent = null;
   // A display-added event is authoritative even while Electron reports the
   // returning display with a transient negative id. Keep enough of that
   // event to correlate the display's later stable-id metrics event without
@@ -302,7 +302,7 @@ function attachDisplayRecovery({
     pendingRecovery = null;
     recentlyReturnedRecovery = null;
     transientReturnedDisplay = null;
-    lastMaximizedMonitorTransferInputAt = null;
+    monitorTransferIntent = null;
   };
 
   // Electron emits these events only for a manual move/resize, before the
@@ -324,8 +324,7 @@ function attachDisplayRecovery({
           destinationDisplay &&
           primaryDisplay &&
           !recoveryPlacementMatchesDisplay(destinationDisplay, primaryDisplay) &&
-          (recentRecoveryCanStillReceiveQueuedEvents ||
-            transientReturnedDisplay)
+          recentRecoveryCanStillReceiveQueuedEvents
         ) {
           // A display has already returned, but its queued Windows relocation
           // may still arrive. Protect whichever non-primary placement the user
@@ -344,11 +343,10 @@ function attachDisplayRecovery({
             )
               ? transientReturnedDisplay
               : null;
-          const burstExpiresAt = recentRecoveryCanStillReceiveQueuedEvents
-            ? recentlyReturnedRecovery.burstExpiresAt === null
+          const burstExpiresAt =
+            recentlyReturnedRecovery.burstExpiresAt === null
               ? null
-              : Date.now() + teardownGraceMs
-            : null;
+              : Date.now() + teardownGraceMs;
           const preserveUntilIntent =
             recentlyReturnedRecovery?.preserveUntilIntent === true;
           clearRecoveryCandidates();
@@ -370,20 +368,39 @@ function attachDisplayRecovery({
   };
 
   const onBeforeInputEvent = (_event, input) => {
-    if (!attached || !isTrackable() || !isMaximizedOrFullScreen()) return;
+    if (!attached || !isTrackable()) return;
     if (
       input?.type === "keyDown" &&
       input.meta === true &&
       input.shift === true &&
       (input.key === "ArrowLeft" || input.key === "ArrowRight")
     ) {
-      lastMaximizedMonitorTransferInputAt = Date.now();
+      const sourceBounds = copyBounds();
+      if (!isFiniteBounds(sourceBounds)) return;
+      let sourceDisplayId = null;
+      try {
+        sourceDisplayId = normalizeDisplayId(
+          screen.getDisplayMatching?.(sourceBounds)?.id
+        );
+      } catch {
+        // Bounds still identify the source when the screen query races churn.
+      }
+      // Keep the actual source placement captured at key time. Display return
+      // can defer recovery before the later move event and replace every other
+      // fromBounds snapshot; the shortcut source must not be overwritten.
+      monitorTransferIntent = {
+        bounds: { ...sourceBounds },
+        displayId: sourceDisplayId,
+        protectDestination: Boolean(
+          pendingRecovery || recentlyReturnedRecovery
+        ),
+      };
     }
   };
 
   const onSessionInterrupted = (signal) => {
     sessionInterruptedAt = Date.now();
-    lastMaximizedMonitorTransferInputAt = null;
+    monitorTransferIntent = null;
     // Repeated start signals within the same interruption (e.g. a "suspend"
     // following a "lock-screen" more than the grace window later) must not
     // clear a pending move recorded for that very cycle: the session is
@@ -597,36 +614,12 @@ function attachDisplayRecovery({
       if (labelMatches.length === 1) return labelMatches[0];
     }
 
-    const centerDistanceSquared = (a, b) => {
-      const dx = a.x + a.width / 2 - (b.x + b.width / 2);
-      const dy = a.y + a.height / 2 - (b.y + b.height / 2);
-      return dx * dx + dy * dy;
-    };
-    const ranked = unresolved
-      .map((candidate) => ({
-        candidate,
-        distance: centerDistanceSquared(candidate.bounds, display.bounds),
-      }))
-      .sort((a, b) => a.distance - b.distance);
-    const sizeMatches = unresolved.filter(
-      (candidate) =>
-        candidate.bounds.width === display.bounds.width &&
-        candidate.bounds.height === display.bounds.height
-    );
-    // Fresh geometry is usable only when its unchanged display size and its
-    // nearest old position independently point to the same candidate. If the
-    // signals conflict (for example, two monitors crossed positions), wait
-    // rather than assigning a physical identity from coordinates alone.
-    if (
-      ranked.length < 2 ||
-      sizeMatches.length !== 1 ||
-      ranked[0].candidate !== sizeMatches[0] ||
-      (ranked[0].distance !== 0 &&
-        ranked[0].distance * 4 >= ranked[1].distance)
-    ) {
-      return null;
-    }
-    return sizeMatches[0];
+    // Coordinates and effective resolution can both change during the same
+    // Windows topology rebuild. With multiple fresh replacement payloads,
+    // neither old position nor old size proves physical identity. Wait for
+    // object identity, a durable id already known to be unrelated, a unique
+    // label, or elimination down to one unresolved display.
+    return null;
   };
 
   const matchesTransientReturnedDisplay = (
@@ -749,6 +742,58 @@ function attachDisplayRecovery({
     return true;
   };
 
+  const rememberMonitorTransferDestination = (
+    bounds,
+    display,
+    primary
+  ) => {
+    if (
+      !monitorTransferIntent ||
+      !isFiniteBounds(bounds) ||
+      !display ||
+      !primary
+    ) {
+      return false;
+    }
+    if (
+      recoveryPlacementMatchesDisplay(monitorTransferIntent, display)
+    ) {
+      return false;
+    }
+
+    const transferredBounds = { ...bounds };
+    const transferredDisplayId = normalizeDisplayId(display.id);
+    const protectDestination = Boolean(
+      monitorTransferIntent.protectDestination ||
+        pendingRecovery ||
+        recentlyReturnedRecovery
+    );
+    const windowOnPrimary = recoveryPlacementMatchesDisplay(
+      { bounds: display.bounds, displayId: display.id },
+      primary
+    );
+    clearRecoveryCandidates();
+    if (windowOnPrimary) return true;
+
+    // The shortcut is explicit user intent, so the chosen destination
+    // replaces the old recovery target. Keep it until a queued relocation,
+    // explicit manual placement, shortcut, or a new interruption supersedes
+    // it, even if the window is unmaximized before the old relocation arrives.
+    rememberedSecondaryBounds = transferredBounds;
+    rememberedDisplayId = transferredDisplayId;
+    recentlyReturnedRecovery =
+      teardownGraceMs > 0 && protectDestination
+        ? {
+            bounds: transferredBounds,
+            displayId: transferredDisplayId,
+            fromBounds: { ...transferredBounds },
+            burstExpiresAt: null,
+            preserveUntilIntent: true,
+          }
+        : null;
+    return true;
+  };
+
   // Remember the window's placement while it lives on a non-primary display.
   const rememberWindowPlacement = () => {
     if (!attached || !isTrackable()) return;
@@ -763,64 +808,17 @@ function attachDisplayRecovery({
         primary
       );
 
-      // Maximized Win+Shift+Arrow transfers do not emit will-move. Clear any
-      // target that the shortcut superseded before deciding whether the new
-      // monitor is primary or secondary; otherwise moving from the returned
-      // display onto another secondary can leave the old target armed.
-      const maximizedTransferSourceBounds =
-        recentlyReturnedRecovery?.fromBounds ||
-        pendingRecovery?.fromBounds ||
-        boundsAtDisplayRemoval ||
-        pendingTeardownMove?.bounds ||
-        rememberedSecondaryBounds;
-      if (
-        isFiniteBounds(maximizedTransferSourceBounds) &&
-        isMaximizedOrFullScreen() &&
-        !boundsEqual(bounds, maximizedTransferSourceBounds) &&
-        lastMaximizedMonitorTransferInputAt !== null &&
-        Date.now() - lastMaximizedMonitorTransferInputAt <=
-          MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
-      ) {
-        const transferSourceDisplay = screen.getDisplayMatching?.(
-          maximizedTransferSourceBounds
-        );
+      // Maximized Win+Shift+Arrow transfers do not emit will-move. Retain the
+      // source captured at key time until a later move/resize reaches another
+      // display; no wall-clock timeout can safely distinguish a delayed event.
+      if (monitorTransferIntent) {
         if (
-          transferSourceDisplay &&
-          recoveryPlacementMatchesDisplay(
-            { bounds: display.bounds, displayId: display.id },
-            transferSourceDisplay
-          )
+          rememberMonitorTransferDestination(bounds, display, primary)
         ) {
-          // Windows can emit the resize half of Win+Shift+Arrow while the
-          // normal bounds still belong to the source display. Preserve the
-          // input signal until the paired move reveals the real destination.
           return;
         }
-        const transferredBounds = { ...bounds };
-        const transferredDisplayId = normalizeDisplayId(display.id);
-        clearRecoveryCandidates();
-        if (windowOnPrimary) return;
-        // The shortcut is explicit user intent, so the chosen destination
-        // replaces the old recovery target. Keep it until a queued relocation,
-        // explicit manual placement, or a new interruption supersedes it: a
-        // trailing OS resize or move must not undo the user's transfer to this
-        // display, even after the window leaves maximized state.
-        rememberedSecondaryBounds = transferredBounds;
-        rememberedDisplayId = transferredDisplayId;
-        recentlyReturnedRecovery =
-          teardownGraceMs > 0
-            ? {
-                bounds: transferredBounds,
-                displayId: transferredDisplayId,
-                fromBounds: { ...transferredBounds },
-                // Keep the explicit maximized transfer authoritative until
-                // the queued OS relocation arrives or explicit user/session
-                // intent supersedes it. The OS tail is not bounded by the
-                // ordinary teardown event grace period or maximized lifetime.
-                burstExpiresAt: null,
-                preserveUntilIntent: true,
-              }
-            : null;
+        // Windows can emit the resize half while the bounds still belong to
+        // the source display. Keep waiting for the destination.
         return;
       }
 
@@ -1077,6 +1075,16 @@ function attachDisplayRecovery({
         // temporarily move it over the target's old coordinates during churn.
         return;
       } else if (
+        association.unrelatedTransientDisplays.some(
+          (candidate) => candidate.stableDisplayId === null
+        )
+      ) {
+        // A fresh removal payload cannot be assigned by overlapping geometry
+        // while another transient display is still unidentified. Keep the
+        // live association and recovery candidates intact; an original object
+        // or other durable evidence may still resolve the target later.
+        return;
+      } else if (
         !isFiniteBounds(oldDisplay.bounds) ||
         !boundsIntersectDisplay(association.displayBounds, oldDisplay.bounds)
       ) {
@@ -1196,9 +1204,28 @@ function attachDisplayRecovery({
   // full-screen (see onDisplayAdded). Invoked when the window leaves that
   // state; also guards against the target display vanishing again.
   const applyPendingRecovery = () => {
-    if (!attached || !pendingRecovery) return;
+    if (!attached) return;
     try {
       if (isMaximizedOrFullScreen()) return;
+      if (monitorTransferIntent) {
+        const currentBounds = copyBounds();
+        const currentDisplay = isFiniteBounds(currentBounds)
+          ? screen.getDisplayMatching?.(currentBounds)
+          : null;
+        const primaryDisplay = screen.getPrimaryDisplay?.();
+        if (
+          rememberMonitorTransferDestination(
+            currentBounds,
+            currentDisplay,
+            primaryDisplay
+          )
+        ) {
+          return;
+        }
+        // The window was unmaximized before the shortcut produced a transfer.
+        monitorTransferIntent = null;
+      }
+      if (!pendingRecovery) return;
       const { bounds, displayId, fromBounds } = pendingRecovery;
       if (!isFiniteBounds(bounds)) {
         pendingRecovery = null;
