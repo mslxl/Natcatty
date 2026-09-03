@@ -1193,6 +1193,43 @@ test("attachDisplayRecovery keeps recovery through a second transient disconnect
   );
 });
 
+test("attachDisplayRecovery keeps a transient target association beside an unresolved neighbor", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // The authoritative target object disappears again before either display
+  // exposes a stable identity. The unresolved neighbor must not cause the
+  // target association itself to be discarded.
+  screen.emit("display-removed", {}, returningDisplay);
+  const stableReturningDisplay = {
+    id: SECONDARY.id,
+    bounds: { x: 7040, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, stableReturningDisplay);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], stableReturningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery keeps deferred recovery through a second transient disconnect", () => {
   const returningDisplay = { ...SECONDARY, id: -1 };
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
@@ -1885,6 +1922,37 @@ test("attachDisplayRecovery drops the promoted snapshot for user edits after the
     screen.emit("display-added", {}, SECONDARY);
 
     assert.equal(win.setBoundsCalls.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery does not rearm completed recovery on stable metrics", () => {
+  const realNow = Date.now;
+  let now = 3_700_000;
+  Date.now = () => now;
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+
+  try {
+    attachDisplayRecovery({ win, screen });
+    screen.emit("display-removed", {}, SECONDARY);
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-added", {}, SECONDARY);
+    assert.equal(win.setBoundsCalls.length, 1);
+
+    // The bounded relocation tail has expired. A routine metrics event on the
+    // already-restored display is not evidence of another queued relocation.
+    now += 3_000;
+    screen.emit("display-metrics-changed", {}, SECONDARY, ["workArea"]);
+    now += 10_000;
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.bounds, { x: 100, y: 100, width: 1400, height: 900 });
   } finally {
     Date.now = realNow;
   }
@@ -2899,6 +2967,88 @@ test("attachDisplayRecovery ignores a no-op shortcut before a late relocation", 
   } finally {
     Date.now = realNow;
   }
+});
+
+test("attachDisplayRecovery retains shortcut intent past an early unmaximize", () => {
+  const TERTIARY = {
+    id: 3,
+    bounds: { x: -1920, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const tertiaryBounds = { x: -1700, y: 100, width: 1200, height: 800 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+  powerMonitor.emit("unlock-screen");
+
+  win.webContents.emit("before-input-event", {}, {
+    type: "keyDown",
+    key: "ArrowLeft",
+    meta: true,
+    shift: true,
+  });
+  // Electron can announce unmaximize before Windows publishes the new normal
+  // bounds and move event for the shortcut destination.
+  win.maximized = false;
+  for (const handler of win.__listeners.get("unmaximize") || []) handler();
+  win.normalBounds = { ...tertiaryBounds };
+  win.bounds = { ...tertiaryBounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  assert.equal(win.setBoundsCalls.length, 0);
+  assert.deepEqual(win.bounds, tertiaryBounds);
+});
+
+test("attachDisplayRecovery compares shortcut direction against the key-time source", () => {
+  const sourceDisplay = {
+    id: 2,
+    bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+  };
+  const TERTIARY = {
+    id: 3,
+    bounds: { x: -1920, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const tertiaryBounds = { x: -1700, y: 100, width: 1200, height: 800 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen({
+    displays: [PRIMARY, sourceDisplay, TERTIARY],
+  });
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, sourceDisplay);
+  screen.emit("display-added", {}, sourceDisplay);
+  powerMonitor.emit("unlock-screen");
+
+  win.webContents.emit("before-input-event", {}, {
+    type: "keyDown",
+    key: "ArrowLeft",
+    meta: true,
+    shift: true,
+  });
+  // Topology churn can slide the source display to the opposite side of the
+  // destination before Windows delivers the delayed shortcut move. Mutate the
+  // live display geometry without another recovery pass so only the
+  // direction check observes the change.
+  sourceDisplay.bounds = { x: -4480, y: 0, width: 2560, height: 1440 };
+  win.normalBounds = { ...tertiaryBounds };
+  win.bounds = { ...tertiaryBounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 0);
+  assert.deepEqual(win.bounds, tertiaryBounds);
 });
 
 test("attachDisplayRecovery keeps the shortcut source before an early return defers recovery", () => {

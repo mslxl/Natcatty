@@ -824,15 +824,12 @@ function attachDisplayRecovery({
       return false;
     }
 
-    const connectedSourceDisplay = connectedSecondaryDisplays().find(
-      (candidate) =>
-        recoveryPlacementMatchesDisplay(monitorTransferIntent, candidate)
-    );
-    const sourceDisplayBounds = connectedSourceDisplay?.bounds;
-    const sourceCenterX = isFiniteBounds(sourceDisplayBounds)
-      ? sourceDisplayBounds.x + sourceDisplayBounds.width / 2
-      : monitorTransferIntent.bounds.x +
-        monitorTransferIntent.bounds.width / 2;
+    // Compare against the geometry captured at key time. A later metrics
+    // update can move the source display to the opposite side of the
+    // destination before the delayed shortcut notification arrives, and using
+    // that live position would cancel an explicit transfer.
+    const sourceCenterX =
+      monitorTransferIntent.bounds.x + monitorTransferIntent.bounds.width / 2;
     const destinationCenterX = display.bounds.x + display.bounds.width / 2;
     if (
       (destinationCenterX - sourceCenterX) *
@@ -1153,7 +1150,11 @@ function attachDisplayRecovery({
           // candidates so a surviving neighbor cannot inherit them.
           clearRecoveryCandidates();
           return;
-        } else {
+        } else if (
+          !association.unrelatedTransientDisplays.some(
+            (candidate) => candidate.stableDisplayId === null
+          )
+        ) {
           transientReturnedDisplay = null;
         }
         recentlyReturnedRecovery = null;
@@ -1314,8 +1315,12 @@ function attachDisplayRecovery({
         ) {
           return;
         }
-        // The window was unmaximized before the shortcut produced a transfer.
-        monitorTransferIntent = null;
+        if (monitorTransferIntent) {
+          // Electron can announce unmaximize before Windows publishes the
+          // shortcut destination. Keep the intent until that move arrives
+          // instead of treating the still-source placement as a cancellation.
+          return;
+        }
       }
       if (!pendingRecovery) return;
       const { bounds, displayId, fromBounds } = pendingRecovery;
@@ -1415,32 +1420,43 @@ function attachDisplayRecovery({
           promoteTransientReturnedDisplay(display);
         }
       } else if (transientReturnedDisplay) {
+        const association = transientReturnedDisplay;
         const separatelyAddedDisplayId = normalizeDisplayId(display?.id);
+        const targetStillConnected = connectedSecondaryDisplays().some(
+          (candidate) => candidate === association.display
+        );
         if (separatelyAddedDisplayId === null) {
           // Keep waiting. When either id stabilizes, the overlap check above
           // will accept it only if exactly one possible target remains.
-          if (
-            display !== transientReturnedDisplay.display &&
-            !transientReturnedDisplay.unrelatedTransientDisplays.some(
-              (candidate) => candidate.display === display
-            ) &&
-            isFiniteBounds(display?.bounds)
-          ) {
-            transientReturnedDisplay.unrelatedTransientDisplays.push({
-              display,
-              bounds: { ...display.bounds },
-              stableDisplayId: null,
-            });
+          if (display !== association.display) {
+            if (
+              !association.unrelatedTransientDisplays.some(
+                (candidate) => candidate.display === display
+              ) &&
+              isFiniteBounds(display?.bounds)
+            ) {
+              association.unrelatedTransientDisplays.push({
+                display,
+                bounds: { ...display.bounds },
+                stableDisplayId: null,
+              });
+            }
+            return;
           }
+          // The original transient target object returned. Recover it
+          // instead of treating the add as another unknown neighbor.
+        } else if (targetStillConnected) {
+          // A second display-added event is new topology, not identity
+          // stabilization for the earlier unknown display. Mark stable
+          // newcomers as unrelated before any geometry-based promotion.
+          association.unrelatedDisplayIds.add(separatelyAddedDisplayId);
+          return;
+        } else if (!promoteTransientReturnedDisplay(display)) {
+          // The original target object is gone. Promote only when this is
+          // the unique remaining candidate; otherwise keep failing closed.
+          association.unrelatedDisplayIds.add(separatelyAddedDisplayId);
           return;
         }
-        // A second display-added event is new topology, not identity
-        // stabilization for the earlier unknown display. Mark stable
-        // newcomers as unrelated before any geometry-based promotion.
-        transientReturnedDisplay.unrelatedDisplayIds.add(
-          separatelyAddedDisplayId
-        );
-        return;
       }
       const currentBounds = copyBounds();
       const recoveryCandidates = [
@@ -1514,8 +1530,13 @@ function attachDisplayRecovery({
       }
       if (
         matchingCandidate &&
-        boundsIntersectDisplay(currentBounds, display?.bounds)
+        boundsIntersectDisplay(currentBounds, display?.bounds) &&
+        !recentlyReturnedRecovery &&
+        !requireStableIdentity
       ) {
+        // Arm late-relocation protection only for a genuine display return
+        // that still has no recovery record. A later metrics event on an
+        // already-restored display is not evidence of another queued move.
         recentlyReturnedRecovery = {
           bounds: { ...matchingCandidate.bounds },
           displayId:
