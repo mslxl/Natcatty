@@ -836,6 +836,120 @@ test("attachDisplayRecovery follows a stabilized unknown display while maximized
   );
 });
 
+test("attachDisplayRecovery associates a sole unknown return after its bounds changed", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 0);
+
+  returningDisplay.id = SECONDARY.id;
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery associates a moved unknown return while maximized", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  win.normalBounds = { ...win.bounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  returningDisplay.id = SECONDARY.id;
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[0], returningDisplay.bounds),
+    true
+  );
+});
+
+test("attachDisplayRecovery clears a transient association when its display is removed again", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const thirdDisplay = {
+    id: -1,
+    bounds: { x: 0, y: -1200, width: 1920, height: 1200 },
+  };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-removed", {}, returningDisplay);
+  screen.emit("display-added", {}, thirdDisplay);
+  thirdDisplay.id = 3;
+  screen.emit("display-metrics-changed", {}, thirdDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.equal(boundsIntersectDisplay(win.bounds, thirdDisplay.bounds), false);
+});
+
+test("attachDisplayRecovery ignores removal of a known same-label secondary", () => {
+  const returningDisplay = { ...SECONDARY, id: -1, label: "Same Model" };
+  const thirdDisplay = {
+    id: 3,
+    label: "Same Model",
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({
+    displays: [PRIMARY, returningDisplay, thirdDisplay],
+  });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, returningDisplay);
+  assert.equal(win.setBoundsCalls.length, 1);
+
+  screen.emit("display-removed", {}, thirdDisplay);
+  returningDisplay.id = SECONDARY.id;
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-metrics-changed", {}, returningDisplay, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 2);
+  assert.equal(
+    boundsIntersectDisplay(win.setBoundsCalls[1], returningDisplay.bounds),
+    true
+  );
+});
+
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
   const realNow = Date.now;
   let now = 2_000_000;

@@ -391,11 +391,6 @@ function attachDisplayRecovery({
     }
   };
 
-  const displayLabel = (display) =>
-    typeof display?.label === "string" && display.label.trim()
-      ? display.label.trim()
-      : null;
-
   const isPrimaryDisplay = (display) => {
     if (!display || !isFiniteBounds(display.bounds)) return false;
     try {
@@ -412,7 +407,7 @@ function attachDisplayRecovery({
     }
   };
 
-  const nonPrimaryDisplays = () => {
+  const connectedSecondaryDisplays = () => {
     try {
       return (screen.getAllDisplays?.() || []).filter(
         (display) => !isPrimaryDisplay(display)
@@ -420,6 +415,30 @@ function attachDisplayRecovery({
     } catch {
       return [];
     }
+  };
+
+  const rememberTransientReturnedDisplay = (display, recoveryCandidate) => {
+    const connectedSecondaries = connectedSecondaryDisplays();
+    transientReturnedDisplay = {
+      displayBounds: { ...display.bounds },
+      recoveryBounds: { ...recoveryCandidate.bounds },
+      // Stable secondary displays that were already connected when this
+      // unknown-id display was added are known to be unrelated. Their later
+      // metrics/removal events must neither claim nor clear this association.
+      unrelatedDisplayIds: new Set(
+        connectedSecondaries
+          // The event payload may still carry -1 after getAllDisplays() has
+          // learned the id. Exclude the only secondary, or the one with the
+          // same bounds, because it is the just-added display itself.
+          .filter(
+            (candidate) =>
+              connectedSecondaries.length > 1 &&
+              !boundsEqual(candidate.bounds, display.bounds)
+          )
+          .map((candidate) => normalizeDisplayId(candidate.id))
+          .filter((displayId) => displayId !== null)
+      ),
+    };
   };
 
   const matchesTransientReturnedDisplay = (display) => {
@@ -434,40 +453,28 @@ function attachDisplayRecovery({
       return false;
     }
 
-    const connectedSecondaries = nonPrimaryDisplays();
-    const label = displayLabel(display);
-    if (association.label && label && label !== association.label) return false;
-    if (
-      association.internal !== null &&
-      typeof display.internal === "boolean" &&
-      display.internal !== association.internal
-    ) {
+    if (association.unrelatedDisplayIds.has(stableDisplayId)) {
       return false;
     }
-    if (association.label && label === association.label) {
-      const sameLabel = connectedSecondaries.filter(
-        (candidate) =>
-          displayLabel(candidate) === association.label &&
-          (association.internal === null ||
-            typeof candidate.internal !== "boolean" ||
-            candidate.internal === association.internal)
-      );
-      if (
-        sameLabel.length === 1 &&
-        normalizeDisplayId(sameLabel[0].id) === stableDisplayId
-      ) {
-        return true;
-      }
+
+    if (boundsIntersectDisplay(association.displayBounds, display.bounds)) {
+      return true;
     }
 
-    if (boundsIntersectDisplay(association.bounds, display.bounds)) return true;
-
     // Some Windows topology changes update the id and move the display in the
-    // same event. With no usable label or overlapping geometry, correlation is
-    // still unambiguous when it is the only connected secondary display.
+    // same event. With no overlapping geometry, correlation is still
+    // unambiguous when this is the only connected secondary that was not
+    // already known to be unrelated when the association was established.
+    const possibleMatches = connectedSecondaryDisplays().filter((candidate) => {
+      const candidateId = normalizeDisplayId(candidate.id);
+      return (
+        candidateId === null ||
+        !association.unrelatedDisplayIds.has(candidateId)
+      );
+    });
     return (
-      connectedSecondaries.length === 1 &&
-      normalizeDisplayId(connectedSecondaries[0].id) === stableDisplayId
+      possibleMatches.length === 1 &&
+      normalizeDisplayId(possibleMatches[0].id) === stableDisplayId
     );
   };
 
@@ -477,7 +484,7 @@ function attachDisplayRecovery({
     const stableDisplayId = normalizeDisplayId(display.id);
     const belongsToAssociation = (bounds) =>
       isFiniteBounds(bounds) &&
-      boundsIntersectDisplay(bounds, association.bounds);
+      boundsIntersectDisplay(bounds, association.recoveryBounds);
 
     if (
       boundsAtDisplayRemovalDisplayId === null &&
@@ -677,22 +684,24 @@ function attachDisplayRecovery({
   // Electron invokes "display-removed" listeners as (event, oldDisplay).
   const onDisplayRemoved = (_event, oldDisplay) => {
     if (!attached) return;
-    if (transientReturnedDisplay && oldDisplay) {
-      const oldLabel = displayLabel(oldDisplay);
-      const labelMatches =
-        transientReturnedDisplay.label !== null &&
-        oldLabel === transientReturnedDisplay.label &&
-        (transientReturnedDisplay.internal === null ||
-          typeof oldDisplay.internal !== "boolean" ||
-          oldDisplay.internal === transientReturnedDisplay.internal);
+    if (
+      transientReturnedDisplay &&
+      oldDisplay &&
+      !isPrimaryDisplay(oldDisplay)
+    ) {
+      const removedDisplayId = normalizeDisplayId(oldDisplay.id);
+      // A known pre-existing secondary is explicitly unrelated. Any other
+      // secondary removal cannot be proven unrelated to the transient target,
+      // so fail closed instead of letting a later display inherit stale state.
       if (
-        labelMatches ||
-        boundsIntersectDisplay(
-          transientReturnedDisplay.bounds,
-          oldDisplay.bounds
-        )
+        removedDisplayId === null ||
+        !transientReturnedDisplay.unrelatedDisplayIds.has(removedDisplayId)
       ) {
-        transientReturnedDisplay = null;
+        // The transient target itself may have disappeared again. Drop every
+        // candidate tied to the old association; the regular removal logic
+        // below will immediately capture a fresh snapshot when the window is
+        // actually still on this display.
+        clearRecoveryCandidates();
       }
     }
     if (
@@ -858,6 +867,17 @@ function attachDisplayRecovery({
     try {
       if (requireStableIdentity) {
         promoteTransientReturnedDisplay(display);
+      } else if (
+        transientReturnedDisplay &&
+        normalizeDisplayId(display?.id) !== null &&
+        !promoteTransientReturnedDisplay(display)
+      ) {
+        // A separately added stable display is a new, known-unrelated screen.
+        // Recording it prevents its later metrics/removal events from taking
+        // over the pending transient association.
+        transientReturnedDisplay.unrelatedDisplayIds.add(
+          normalizeDisplayId(display.id)
+        );
       }
       const currentBounds = copyBounds();
       const recoveryCandidates = [
@@ -886,28 +906,41 @@ function attachDisplayRecovery({
       const eligibleRecoveryCandidates = requireStableIdentity
         ? recoveryCandidates.filter(candidateMatchesDisplay)
         : recoveryCandidates;
-      const matchingCandidate = [pendingRecovery, ...recoveryCandidates]
+      const normalizedCandidates = [pendingRecovery, ...recoveryCandidates]
         .filter(Boolean)
-        .map(normalizeRecoveryCandidate)
-        .find(candidateMatchesDisplay);
+        .map(normalizeRecoveryCandidate);
+      let matchingCandidate = normalizedCandidates.find(candidateMatchesDisplay);
+      if (
+        !matchingCandidate &&
+        !requireStableIdentity &&
+        normalizeDisplayId(display?.id) === null &&
+        isFiniteBounds(display?.bounds) &&
+        !isPrimaryDisplay(display) &&
+        connectedSecondaryDisplays().length === 1
+      ) {
+        const untaggedCandidates = normalizedCandidates.filter(
+          (candidate) => candidate?.displayId === null
+        );
+        // Multiple snapshots for the same placement are common (continuous
+        // tracking plus removal-time capture). Treat them as one target only
+        // when their geometries overlap; otherwise the add is ambiguous.
+        const firstUntagged = untaggedCandidates[0] || null;
+        if (
+          firstUntagged &&
+          untaggedCandidates.every((candidate) =>
+            boundsIntersectDisplay(candidate.bounds, firstUntagged.bounds)
+          )
+        ) {
+          matchingCandidate = firstUntagged;
+        }
+      }
       if (
         !requireStableIdentity &&
         matchingCandidate &&
         normalizeDisplayId(display?.id) === null &&
         isFiniteBounds(display?.bounds)
       ) {
-        transientReturnedDisplay = {
-          bounds: { ...display.bounds },
-          label: displayLabel(display),
-          internal:
-            typeof display.internal === "boolean" ? display.internal : null,
-        };
-      } else if (
-        !requireStableIdentity &&
-        matchingCandidate &&
-        normalizeDisplayId(display?.id) !== null
-      ) {
-        transientReturnedDisplay = null;
+        rememberTransientReturnedDisplay(display, matchingCandidate);
       }
       if (
         matchingCandidate &&
