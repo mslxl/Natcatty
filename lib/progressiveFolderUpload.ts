@@ -20,6 +20,13 @@ const formatUploadError = (error: unknown): string =>
 /** Folder drops of many small files stall at 2 workers; keep a higher floor. */
 export const DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY = 6;
 const UPLOAD_CONCURRENCY = DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
+
+export const resolveProgressiveFolderUploadConcurrency = (
+  savedValue: number | null | undefined,
+): number => Number.isInteger(savedValue) && savedValue !== undefined && savedValue !== null
+  && savedValue >= 1 && savedValue <= 16
+  ? savedValue
+  : DEFAULT_PROGRESSIVE_FOLDER_UPLOAD_CONCURRENCY;
 /** Pause discovery when the upload queue grows this large (memory backpressure). */
 const QUEUE_HIGH_WATER = 2_000;
 /** Resume discovery once the queue drains to this size. */

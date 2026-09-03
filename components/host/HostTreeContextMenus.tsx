@@ -3,6 +3,7 @@ import React from 'react';
 
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { requestOpenDualPaneSftp } from '../../application/state/sftp/sftpDualPaneOpenStore';
+import { useSettingsChromeStore } from '../../application/state/settingsChromeStore';
 import { sanitizeHost } from '../../domain/host';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
 import { canOpenDualPaneSftp } from '../../domain/sftpDualPaneOpen';
@@ -23,7 +24,8 @@ export interface HostTreeHostContextMenuHandlers {
 
 export const OpenDualPaneSftpMenuItem: React.FC<{ host: Host }> = ({ host }) => {
   const { t } = useI18n();
-  if (!canOpenDualPaneSftp(host)) return null;
+  const { showSftpTab } = useSettingsChromeStore();
+  if (!showSftpTab || !canOpenDualPaneSftp(host)) return null;
   return (
     <ContextMenuItem onClick={() => requestOpenDualPaneSftp(host.id)}>
       <Files className="mr-2 h-4 w-4" /> {t('vault.hosts.openSftp')}

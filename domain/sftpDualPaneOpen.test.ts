@@ -16,6 +16,7 @@ const tab = (
   id,
   isLocal: false,
   hostId: null,
+  endpointKey: "endpoint-1",
   hasConnection: true,
   ...options,
 });
@@ -31,7 +32,7 @@ test("canOpenDualPaneSftp matches the SFTP host picker: not serial, not plugin",
 
 test("planDualPaneSftpOpen connects local left and host right on empty panes", () => {
   assert.deepEqual(
-    planDualPaneSftpOpen({ leftTabs: [], rightTabs: [], hostId: "host-1" }),
+    planDualPaneSftpOpen({ leftTabs: [], rightTabs: [], hostId: "host-1", hostEndpointKey: "endpoint-1" }),
     {
       selectLeftTabId: null,
       connectLeftLocal: true,
@@ -48,6 +49,7 @@ test("planDualPaneSftpOpen reuses an existing local left tab and matching right 
     leftTabs: [tab("left-remote", { hostId: "other" }), tab("left-local", { isLocal: true, hostId: "local" })],
     rightTabs: [tab("right-host", { hostId: "host-1" })],
     hostId: "host-1",
+    hostEndpointKey: "endpoint-1",
   });
   assert.deepEqual(plan, {
     selectLeftTabId: "left-local",
@@ -64,6 +66,7 @@ test("planDualPaneSftpOpen uses idle panes instead of adding tabs", () => {
     leftTabs: [tab("left-idle", { hasConnection: false })],
     rightTabs: [tab("right-idle", { hasConnection: false })],
     hostId: "host-1",
+    hostEndpointKey: "endpoint-1",
   });
   assert.equal(plan.selectLeftTabId, "left-idle");
   assert.equal(plan.connectLeftLocal, true);
@@ -87,6 +90,7 @@ test("applyDualPaneSftpOpen selects existing tabs without reconnecting", () => {
       },
     },
     { id: "host-1" },
+    "endpoint-1",
   );
   assert.equal(plan.connectLeftLocal, false);
   assert.equal(plan.connectRightHost, false);
@@ -99,14 +103,14 @@ test("dualPaneTabFromPane treats error and disconnected tabs as idle", () => {
       id: "right-dead",
       connection: { isLocal: false, hostId: "host-1", status: "error" },
     }),
-    { id: "right-dead", isLocal: false, hostId: "host-1", hasConnection: false },
+    { id: "right-dead", isLocal: false, hostId: "host-1", endpointKey: null, hasConnection: false },
   );
   assert.deepEqual(
     dualPaneTabFromPane({
       id: "right-live",
       connection: { isLocal: false, hostId: "host-1", status: "connected" },
     }),
-    { id: "right-live", isLocal: false, hostId: "host-1", hasConnection: true },
+    { id: "right-live", isLocal: false, hostId: "host-1", endpointKey: null, hasConnection: true },
   );
 });
 
@@ -120,6 +124,7 @@ test("planDualPaneSftpOpen prefers a matching dead host tab over an earlier idle
     leftTabs: [tab("left-local", { isLocal: true, hostId: "local" })],
     rightTabs: [idle, dead],
     hostId: "host-1",
+    hostEndpointKey: "endpoint-1",
   });
   assert.equal(plan.selectRightTabId, "right-dead");
   assert.equal(plan.connectRightHost, true);
@@ -135,6 +140,7 @@ test("planDualPaneSftpOpen reconnects a matching host tab that is no longer live
     leftTabs: [tab("left-local", { isLocal: true, hostId: "local" })],
     rightTabs: [dead],
     hostId: "host-1",
+    hostEndpointKey: "endpoint-1",
   });
   assert.deepEqual(plan, {
     selectLeftTabId: "left-local",
@@ -160,9 +166,23 @@ test("applyDualPaneSftpOpen adds tabs when both sides are occupied by other host
       },
     },
     { id: "host-1" },
+    "endpoint-1",
   );
   assert.deepEqual(calls, [
     "connect:left:local:new",
     "connect:right:host-1:new",
   ]);
+});
+
+test("planDualPaneSftpOpen does not reuse a live tab after the saved endpoint changes", () => {
+  const plan = planDualPaneSftpOpen({
+    leftTabs: [tab("left-local", { isLocal: true, hostId: "local" })],
+    rightTabs: [tab("right-stale", { hostId: "host-1", endpointKey: "old-endpoint" })],
+    hostId: "host-1",
+    hostEndpointKey: "new-endpoint",
+  });
+
+  assert.equal(plan.selectRightTabId, null);
+  assert.equal(plan.connectRightHost, true);
+  assert.equal(plan.addRightTab, true);
 });

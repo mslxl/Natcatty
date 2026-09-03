@@ -13,4 +13,6 @@ test("host context menu offers dual-pane SFTP without extra prop drilling", () =
   assert.match(source, /OpenDualPaneSftpMenuItem/);
   assert.match(source, /requestOpenDualPaneSftp/);
   assert.match(source, /vault\.hosts\.openSftp/);
+  assert.match(source, /useSettingsChromeStore/);
+  assert.match(source, /!showSftpTab\s*\|\|\s*!canOpenDualPaneSftp/);
 });

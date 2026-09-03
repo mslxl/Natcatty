@@ -15,7 +15,10 @@ import {
   UploadResult,
   startUploadScanningTask,
 } from "../../../lib/uploadService";
-import { uploadLocalFoldersProgressively } from "../../../lib/progressiveFolderUpload";
+import {
+  resolveProgressiveFolderUploadConcurrency,
+  uploadLocalFoldersProgressively,
+} from "../../../lib/progressiveFolderUpload";
 import {
   captureDropPayload,
   formatDropScanLabel,
@@ -833,7 +836,10 @@ export const useSftpExternalOperations = (
   // Create upload bridge that wraps netcattyBridge.
   // Pass connect-time Host so pooled stream uploads open the pinned endpoint
   // (session hostname/port/user overrides), not the vault entry by hostId alone.
-  const createUploadBridge = useCallback((connectHost?: Host): UploadBridge => {
+  const createUploadBridge = useCallback((
+    connectHost?: Host,
+    readTransferConcurrency = () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+  ): UploadBridge => {
     const bridge = netcattyBridge.get();
     return {
       managesTransferLifecycle: Boolean(
@@ -896,7 +902,7 @@ export const useSftpExternalOperations = (
                 ownerId,
                 options.transferId,
                 getSftpTransferResourceKeys(options),
-                () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+                readTransferConcurrency,
                 async () => {
                   let lease: { sftpId: string; release: () => void; discard: () => void } | null = null;
                   try {
@@ -1031,7 +1037,12 @@ export const useSftpExternalOperations = (
           const uploadPaneId = livePane.id;
           const liveTargetPath = targetPath || livePane.connection.currentPath;
           const connectHost = resolveUploadConnectHost(uploadPaneId, livePane.connection.isLocal);
-          const uploadBridge = createUploadBridge(connectHost);
+          const uploadBridge = createUploadBridge(
+            connectHost,
+            () => resolveProgressiveFolderUploadConcurrency(
+              localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+            ),
+          );
           const liveCallbacks = livePane.connection.id === pane.connection.id
             && liveTargetPath === uploadTargetPath
             ? callbacks

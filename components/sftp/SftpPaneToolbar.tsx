@@ -249,6 +249,16 @@ interface SftpBookmarkListProps {
   t: (key: string, params?: Record<string, unknown>) => string;
 }
 
+export const canReorderSftpBookmark = (
+  bookmarks: SftpBookmark[],
+  fromId: string,
+  toId: string,
+): boolean => {
+  const source = bookmarks.find((bookmark) => bookmark.id === fromId);
+  const target = bookmarks.find((bookmark) => bookmark.id === toId);
+  return !!source && !!target && !!source.global === !!target.global;
+};
+
 export const confirmRemoveSftpBookmark = (
   path: string,
   t: (key: string, params?: Record<string, unknown>) => string,
@@ -278,7 +288,8 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
 
   return (
     <div className="max-h-64 overflow-auto py-1 min-w-[18rem]">
-      {bookmarks.map((bm) => {
+      {bookmarks.map((bm, index) => {
+        const startsHostGroup = index > 0 && !!bookmarks[index - 1]?.global && !bm.global;
         const pathButton = (
           <button
             type="button"
@@ -300,8 +311,10 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
             key={bm.id}
             className={cn(
               "flex items-start gap-1 px-2 py-1.5 hover:bg-secondary/60 group",
+              startsHostGroup && "mt-1 border-t border-border/60 pt-2",
               draggingId === bm.id && "opacity-60",
             )}
+            data-bookmark-scope={bm.global ? "global" : "location"}
             draggable={managing && renamingId !== bm.id}
             onDragStart={(event) => {
               if (!managing) return;
@@ -310,7 +323,12 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
               event.dataTransfer.effectAllowed = "move";
             }}
             onDragOver={(event) => {
-              if (!managing || !draggingId || draggingId === bm.id) return;
+              if (
+                !managing
+                || !draggingId
+                || draggingId === bm.id
+                || !canReorderSftpBookmark(bookmarks, draggingId, bm.id)
+              ) return;
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
             }}
@@ -318,7 +336,11 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
               event.preventDefault();
               const fromId = event.dataTransfer.getData("text/netcatty-sftp-bookmark") || draggingId;
               setDraggingId(null);
-              if (fromId && fromId !== bm.id) onReorderBookmark?.(fromId, bm.id);
+              if (
+                fromId
+                && fromId !== bm.id
+                && canReorderSftpBookmark(bookmarks, fromId, bm.id)
+              ) onReorderBookmark?.(fromId, bm.id);
             }}
             onDragEnd={() => setDraggingId(null)}
           >

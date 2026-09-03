@@ -11,6 +11,7 @@ import {
   getNextSftpViewMode,
   copySftpCurrentPathToClipboard,
   confirmRemoveSftpBookmark,
+  canReorderSftpBookmark,
   getNextSftpToolbarDisplayPath,
   getSftpViewModeToggleTarget,
   getSftpViewModeToggleLabelKey,
@@ -512,6 +513,19 @@ test("bookmark delete asks for confirmation with the path", () => {
 test("bookmark rename does not use window.prompt", () => {
   assert.doesNotMatch(toolbarSource, /window\.prompt/);
   assert.match(toolbarSource, /event\.nativeEvent\.isComposing/);
+});
+
+test("bookmark drag ordering stays within global or location scope", () => {
+  const bookmarks = [
+    { id: "gbm-1", path: "/global-a", label: "Global A", global: true },
+    { id: "gbm-2", path: "/global-b", label: "Global B", global: true },
+    { id: "bm-1", path: "/host-a", label: "Host A" },
+    { id: "bm-2", path: "/host-b", label: "Host B" },
+  ];
+  assert.equal(canReorderSftpBookmark(bookmarks, "gbm-1", "gbm-2"), true);
+  assert.equal(canReorderSftpBookmark(bookmarks, "bm-1", "bm-2"), true);
+  assert.equal(canReorderSftpBookmark(bookmarks, "gbm-1", "bm-1"), false);
+  assert.equal(canReorderSftpBookmark(bookmarks, "missing", "bm-1"), false);
 });
 
 test("bookmark list renders saved paths as selectable rows", () => {

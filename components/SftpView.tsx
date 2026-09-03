@@ -20,6 +20,7 @@ import { activeTabStore as globalActiveTabStore, useIsSftpActive } from "../appl
 import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
+import { buildCacheKey } from "../application/state/sftp/sharedRemoteHostCache";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
 import {
   getPaneMagnificationShortcutLabel,
@@ -204,24 +205,39 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   useEffect(() => {
     const toTabs = (panes: Array<{
       id: string;
-      connection: { isLocal?: boolean; hostId?: string | null; status?: string | null } | null;
-    }>) => panes.map(dualPaneTabFromPane);
+      connection: { id: string; isLocal?: boolean; hostId?: string | null; status?: string | null } | null;
+    }>, getEndpointKey: (connectionId: string) => string | null) => panes.map(
+      (pane) => dualPaneTabFromPane(
+        pane,
+        pane.connection ? getEndpointKey(pane.connection.id) : null,
+      ),
+    );
 
     const applyRequest = (request: { hostId: string } | null) => {
       if (!request) return;
       const host = effectiveHostsRef.current.find((candidate) => candidate.id === request.hostId);
       if (!host) return;
       const current = sftpRef.current;
+      const hostEndpointKey = buildCacheKey(
+        host.id,
+        host.hostname,
+        host.port,
+        host.protocol,
+        host.sftpSudo,
+        host.username,
+        host.sftpFileProtocol,
+      );
       applyDualPaneSftpOpen(
         {
-          leftTabs: toTabs(current.leftTabs.tabs),
-          rightTabs: toTabs(current.rightTabs.tabs),
+          leftTabs: toTabs(current.leftTabs.tabs, current.getConnectionCacheKey),
+          rightTabs: toTabs(current.rightTabs.tabs, current.getConnectionCacheKey),
           selectTab: current.selectTab,
           connect: (side, nextHost, options) => {
             void current.connect(side, nextHost === "local" ? "local" : host, options);
           },
         },
         host,
+        hostEndpointKey,
       );
     };
 

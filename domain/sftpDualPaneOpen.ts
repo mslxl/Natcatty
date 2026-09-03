@@ -4,6 +4,7 @@ export type DualPaneSftpTab = {
   id: string;
   isLocal: boolean;
   hostId: string | null;
+  endpointKey: string | null;
   hasConnection: boolean;
 };
 
@@ -20,7 +21,7 @@ export function dualPaneTabFromPane(pane: {
     hostId?: string | null;
     status?: string | null;
   } | null;
-}): DualPaneSftpTab {
+}, endpointKey: string | null = null): DualPaneSftpTab {
   const live = isReusableSftpConnectionStatus(pane.connection?.status);
   return {
     id: pane.id,
@@ -28,6 +29,7 @@ export function dualPaneTabFromPane(pane: {
     hostId: pane.connection?.isLocal
       ? "local"
       : pane.connection?.hostId ?? null,
+    endpointKey,
     hasConnection: live,
   };
 }
@@ -52,11 +54,14 @@ export function planDualPaneSftpOpen(params: {
   leftTabs: DualPaneSftpTab[];
   rightTabs: DualPaneSftpTab[];
   hostId: string;
+  hostEndpointKey: string;
 }): DualPaneSftpPlan {
   const localLeft = params.leftTabs.find((tab) => tab.isLocal);
   const idleLeft = params.leftTabs.find((tab) => !tab.hasConnection);
   const matchingRight = params.rightTabs.find(
-    (tab) => tab.hostId === params.hostId && tab.hasConnection,
+    (tab) => tab.hostId === params.hostId
+      && tab.endpointKey === params.hostEndpointKey
+      && tab.hasConnection,
   );
   const matchingDeadRight = params.rightTabs.find(
     (tab) => tab.hostId === params.hostId && !tab.hasConnection,
@@ -99,11 +104,13 @@ function connectOptions(plan: {
 export function applyDualPaneSftpOpen<THost extends { id: string }>(
   api: DualPaneSftpApi,
   host: THost,
+  hostEndpointKey: string,
 ): DualPaneSftpPlan {
   const plan = planDualPaneSftpOpen({
     leftTabs: api.leftTabs,
     rightTabs: api.rightTabs,
     hostId: host.id,
+    hostEndpointKey,
   });
 
   if (plan.selectLeftTabId) {
