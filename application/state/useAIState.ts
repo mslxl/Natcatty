@@ -69,7 +69,7 @@ import {
   latestAIDraftsByScopeSnapshot,
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
-  pruneSessionsForStorage,
+  writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
   setLatestAIPanelViewByScopeSnapshot,
@@ -650,7 +650,7 @@ export function useAIState() {
 
   // ── Session CRUD ──
   const persistSessions = useCallback((next: AISession[]) => {
-    localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(next));
+    writeSessionsForStorage(next);
   }, []);
 
   // Debounced version of persistSessions for high-frequency updates (e.g. streaming)
@@ -661,7 +661,7 @@ export function useAIState() {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
       if (!mountedRef.current) return; // Skip writes after unmount
-      localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsRef.current));
+      writeSessionsForStorage(sessionsRef.current);
       persistTimerRef.current = null;
     }, 500);
   }, []);
