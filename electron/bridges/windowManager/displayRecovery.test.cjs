@@ -664,6 +664,27 @@ test("attachDisplayRecovery restores when display-added precedes a queued OS mov
   assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
+test("attachDisplayRecovery respects a manual move after display-added", () => {
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+  powerMonitor.emit("unlock-screen");
+
+  // Unlike the queued OS relocation, a real user move emits will-move first
+  // and must cancel the recently returned recovery target.
+  moveWindowManually(win, { x: 300, y: 200, width: 1200, height: 800 });
+
+  assert.equal(win.setBoundsCalls.length, 0);
+  assert.deepEqual(win.bounds, { x: 300, y: 200, width: 1200, height: 800 });
+});
+
 test("attachDisplayRecovery retries after a transient returning display stabilizes", () => {
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
   const win = createMockWindow({ ...secondaryBounds });
