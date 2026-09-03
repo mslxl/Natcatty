@@ -278,6 +278,15 @@ export function serializeSessionsForStorage(
   budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
 ): { json: string; sessions: AISession[] } {
   const serialized = pruneSessionsForStorage(sessions).map(session => {
+    const ciphertextMessages = session.messages.flatMap((message, index) => {
+      const strippedMessage = stripEncryptedReasoningFromMessage(message);
+      if (strippedMessage === message) return [];
+      return [{
+        index,
+        strippedMessage,
+        jsonLengthDelta: JSON.stringify(strippedMessage).length - JSON.stringify(message).length,
+      }];
+    });
     const strippedSession = stripEncryptedReasoningFromSession(session);
     const json = JSON.stringify(session);
     return {
@@ -287,10 +296,7 @@ export function serializeSessionsForStorage(
       strippedJson: strippedSession === session
         ? json
         : JSON.stringify(strippedSession),
-      ciphertextMessageIndexes: session.messages.flatMap((message, index) => (
-        stripEncryptedReasoningFromMessage(message) === message ? [] : [index]
-      )),
-      strippedMessageCount: 0,
+      ciphertextMessages,
     };
   });
 
@@ -328,28 +334,35 @@ export function serializeSessionsForStorage(
     index >= firstStrippableIndex && jsonLength > budgetBytes;
     index -= 1
   ) {
-    let current = serialized[index];
-    while (
-      jsonLength > budgetBytes
-      && current.strippedMessageCount < current.ciphertextMessageIndexes.length
-    ) {
-      const messageIndex = current.ciphertextMessageIndexes[current.strippedMessageCount];
-      const strippedMessage = stripEncryptedReasoningFromMessage(current.session.messages[messageIndex]);
+    const current = serialized[index];
+    let strippedMessageCount = 0;
+    while (jsonLength > budgetBytes && strippedMessageCount < current.ciphertextMessages.length) {
+      jsonLength += current.ciphertextMessages[strippedMessageCount].jsonLengthDelta;
+      strippedMessageCount += 1;
+    }
+    if (strippedMessageCount > 0) {
+      const strippedMessagesByIndex = new Map(
+        current.ciphertextMessages
+          .slice(0, strippedMessageCount)
+          .map(entry => [entry.index, entry.strippedMessage] as const),
+      );
       const nextSession = {
         ...current.session,
-        messages: current.session.messages.map((message, currentIndex) => (
-          currentIndex === messageIndex ? strippedMessage : message
+        messages: current.session.messages.map((message, messageIndex) => (
+          strippedMessagesByIndex.get(messageIndex) ?? message
         )),
       };
       const nextJson = JSON.stringify(nextSession);
-      jsonLength += nextJson.length - current.json.length;
-      current = {
+      const projectedJsonLength = current.json.length
+        + current.ciphertextMessages
+          .slice(0, strippedMessageCount)
+          .reduce((total, entry) => total + entry.jsonLengthDelta, 0);
+      jsonLength += nextJson.length - projectedJsonLength;
+      serialized[index] = {
         ...current,
         session: nextSession,
         json: nextJson,
-        strippedMessageCount: current.strippedMessageCount + 1,
       };
-      serialized[index] = current;
     }
   }
 
