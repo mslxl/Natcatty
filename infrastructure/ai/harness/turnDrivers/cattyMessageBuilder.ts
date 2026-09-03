@@ -282,14 +282,23 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         const sameProviderConfig = storedSource?.providerConfigId
           === continuationContext.source.providerConfigId
           && storedSource?.providerType === continuationContext.source.providerType;
+        const hasStoredOpenAIChatAssistantFields = Object.keys(
+          m.providerContinuation?.openAIChatAssistantFields ?? {},
+        ).length > 0;
         const hasSourceMismatchedReasoning = !activeContinuation
           && (
             hasOpenAIResponsesReasoningMetadata(storedReasoningParts)
             // A model change within the same Responses configuration is also
             // enough evidence that metadata-free reasoning came from this
             // wire format. Cross-provider Anthropic/Google reasoning remains
-            // a generic, replayable call/result exchange.
-            || (sameProviderConfig && storedReasoningParts.length > 0)
+            // a generic, replayable call/result exchange. OpenAI Chat history
+            // is also generic when its captured assistant fields identify the
+            // original wire format.
+            || (
+              sameProviderConfig
+              && storedReasoningParts.length > 0
+              && !hasStoredOpenAIChatAssistantFields
+            )
           );
         const hasUnreplayableReasoning = resolvedCalls.length > 0
           && continuationContext.usesOpenAIResponses
