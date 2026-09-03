@@ -216,6 +216,47 @@ test("pickDisplayRecoveryBounds does not match a tagged candidate by geometry al
   assert.equal(restored, null);
 });
 
+test("pickDisplayRecoveryBounds treats an unknown negative display id as untagged", () => {
+  const rememberedBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const restored = pickDisplayRecoveryBounds({
+    addedDisplay: SECONDARY,
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    // Electron uses -1 when the correct display id is not known yet. The
+    // returning display can later have its stable positive id.
+    candidates: [{ bounds: rememberedBounds, displayId: -1 }],
+  });
+
+  assert.deepEqual(restored, rememberedBounds);
+});
+
+test("pickDisplayRecoveryBounds falls back to geometry while the added display id is unknown", () => {
+  const rememberedBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const restored = pickDisplayRecoveryBounds({
+    addedDisplay: { id: -1, bounds: SECONDARY.bounds },
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    candidates: [{ bounds: rememberedBounds, displayId: SECONDARY.id }],
+  });
+
+  assert.deepEqual(restored, rememberedBounds);
+});
+
+test("pickDisplayRecoveryBounds does not use the unified-desktop sentinel as identity", () => {
+  const restored = pickDisplayRecoveryBounds({
+    addedDisplay: { id: -10, bounds: { x: 1920, y: 0, width: 2560, height: 1440 } },
+    currentBounds: { x: 100, y: 100, width: 1200, height: 800 },
+    // Electron assigns -10 to a unified virtual desktop. It is not a unique
+    // display identity, so unrelated geometry must not match on id alone.
+    candidates: [
+      {
+        bounds: { x: 5000, y: 5000, width: 400, height: 300 },
+        displayId: -10,
+      },
+    ],
+  });
+
+  assert.equal(restored, null);
+});
+
 test("clampBoundsToDisplay keeps the restored window fully visible", () => {
   const clamped = clampBoundsToDisplay(
     { x: 3000, y: -200, width: 3000, height: 2000 },

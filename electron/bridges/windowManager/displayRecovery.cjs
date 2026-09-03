@@ -77,6 +77,12 @@ function displayIntersectionArea(bounds, displayBounds) {
   return width * height;
 }
 
+function normalizeDisplayId(displayId) {
+  return typeof displayId === "number" && Number.isFinite(displayId) && displayId >= 0
+    ? displayId
+    : null;
+}
+
 /**
  * Normalize a recovery candidate: either plain bounds or an object carrying
  * the bounds plus the id of the display they were remembered for.
@@ -87,10 +93,10 @@ function normalizeRecoveryCandidate(candidate) {
   if (isFiniteBounds(candidate.bounds)) {
     return {
       bounds: candidate.bounds,
-      displayId:
-        candidate.displayId === undefined || candidate.displayId === null
-          ? null
-          : candidate.displayId,
+      // Electron reserves negative IDs for invalid/unknown and unified
+      // displays. Neither is a durable, unique identity, so fall back to
+      // geometry when either side has one of those sentinel values.
+      displayId: normalizeDisplayId(candidate.displayId),
     };
   }
   return null;
@@ -116,13 +122,14 @@ function pickDisplayRecoveryBounds({ addedDisplay, currentBounds, candidates }) 
   if (!isFiniteBounds(currentBounds)) return null;
   // The window is already (at least partially) on this display: nothing to do.
   if (boundsIntersectDisplay(currentBounds, addedDisplay.bounds)) return null;
+  const addedDisplayId = normalizeDisplayId(addedDisplay.id);
   for (const candidate of candidates || []) {
     const normalized = normalizeRecoveryCandidate(candidate);
     if (!normalized) continue;
-    if (normalized.displayId !== null) {
+    if (normalized.displayId !== null && addedDisplayId !== null) {
       // A tagged candidate belongs to one specific display: only accept it
       // for that display and never fall back to geometry matching.
-      if (normalized.displayId === addedDisplay.id) return normalized.bounds;
+      if (normalized.displayId === addedDisplayId) return normalized.bounds;
       continue;
     }
     if (boundsIntersectDisplay(normalized.bounds, addedDisplay.bounds)) {
