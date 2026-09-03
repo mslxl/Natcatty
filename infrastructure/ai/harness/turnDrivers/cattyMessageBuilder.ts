@@ -254,10 +254,10 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         // to the active Responses model, so its tool exchange must not be sent
         // without it. Freshly streamed items whose ciphertext arrived on a
         // later fragment stay replayable.
-        const hasSourceMismatchedReasoning = continuationContext.usesOpenAIResponses
-          && !!m.providerContinuation?.reasoningParts?.length
+        const hasSourceMismatchedReasoning = !!m.providerContinuation?.reasoningParts?.length
           && !activeContinuation;
         const hasUnreplayableReasoning = resolvedCalls.length > 0
+          && continuationContext.usesOpenAIResponses
           && (
             hasSourceMismatchedReasoning
             || hasUnreplayableReasoningItems(activeContinuation?.reasoningParts ?? [])

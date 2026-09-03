@@ -13,7 +13,7 @@ function buildHistory(messages: ChatMessage[]) {
     allMessages: messages,
     includeCurrentUserMessage: false,
     trimmed: '',
-    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1'),
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1', true),
     chatSessionId: 'chat-1',
     toolOutputStore: new ToolOutputStore(),
     fieldsByMessage: new Map(),
@@ -121,6 +121,18 @@ test('an unreplayable reasoning item discards the whole tool-call exchange from 
   assert.equal(sdkMessages.length, 2);
   assert.equal(sdkMessages[0].content, 'Running it.');
   assert.equal(sdkMessages[1].content, 'All done.');
+
+  const chatMessages = buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1', false),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+  assert.equal(chatMessages.length, 3);
+  assert.equal(chatMessages[1].role, 'tool');
 });
 
 test('a Responses model switch discards a reasoning-backed tool exchange from the old source', () => {
