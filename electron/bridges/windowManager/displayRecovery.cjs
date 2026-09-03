@@ -313,7 +313,7 @@ function attachDisplayRecovery({
     if (!attached || !isTrackable() || sessionInterruptionActive) return;
     if (
       recentlyReturnedRecovery &&
-      recentlyReturnedRecovery.handledEventKinds === null &&
+      recentlyReturnedRecovery.burstExpiresAt === null &&
       isFiniteBounds(nextBounds)
     ) {
       try {
@@ -349,7 +349,6 @@ function attachDisplayRecovery({
             bounds: { ...nextBounds },
             displayId: returnedDisplayId,
             fromBounds: { ...nextBounds },
-            handledEventKinds: null,
             burstExpiresAt: null,
           };
           return;
@@ -594,7 +593,7 @@ function attachDisplayRecovery({
   };
 
   // Remember the window's placement while it lives on a non-primary display.
-  const rememberWindowPlacement = (eventKind = null) => {
+  const rememberWindowPlacement = () => {
     if (!attached || !isTrackable()) return;
     try {
       const bounds = copyBounds();
@@ -602,49 +601,55 @@ function attachDisplayRecovery({
       const primary = screen.getPrimaryDisplay?.();
       const display = screen.getDisplayMatching?.(bounds);
       if (!primary || !display) return;
+      const windowOnPrimary = recoveryPlacementMatchesDisplay(
+        { bounds: display.bounds, displayId: display.id },
+        primary
+      );
+
+      // Maximized Win+Shift+Arrow transfers do not emit will-move. Clear any
+      // target that the shortcut superseded before deciding whether the new
+      // monitor is primary or secondary; otherwise moving from the returned
+      // display onto another secondary can leave the old target armed.
+      const maximizedTransferRecovery =
+        recentlyReturnedRecovery || pendingRecovery;
       if (
-        recoveryPlacementMatchesDisplay(
-          { bounds: display.bounds, displayId: display.id },
-          primary
-        )
+        maximizedTransferRecovery &&
+        isMaximizedOrFullScreen() &&
+        isFiniteBounds(maximizedTransferRecovery.fromBounds) &&
+        !boundsEqual(bounds, maximizedTransferRecovery.fromBounds) &&
+        lastMaximizedMonitorTransferInputAt !== null &&
+        Date.now() - lastMaximizedMonitorTransferInputAt <=
+          MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
       ) {
-        if (recentlyReturnedRecovery) {
-          let returnedRecovery = recentlyReturnedRecovery;
-          if (
-            returnedRecovery.burstExpiresAt !== null &&
-            (Date.now() > returnedRecovery.burstExpiresAt ||
-              returnedRecovery.handledEventKinds?.has(eventKind))
-          ) {
-            // A completed recovery may retain a short tail for the
-            // complementary move/resize event from the same Windows burst.
-            // A repeated event kind, or an event after the tail expires, is a
-            // new placement and must not reuse the old recovery.
-            recentlyReturnedRecovery = null;
-            returnedRecovery = null;
-          }
-          // A maximized window moved with Win+Shift+Arrow does not emit
-          // Electron's manual-only will-move event on Windows. Its normal
-          // placement does change, though. The matching before-input-event
-          // identifies that user action without misclassifying a queued OS
-          // relocation that arrives after unlock.
-          if (
-            returnedRecovery &&
-            isMaximizedOrFullScreen() &&
-            isFiniteBounds(returnedRecovery.fromBounds) &&
-            !boundsEqual(bounds, returnedRecovery.fromBounds) &&
-            lastMaximizedMonitorTransferInputAt !== null &&
-            Date.now() - lastMaximizedMonitorTransferInputAt <=
-              MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
-          ) {
-            clearRecoveryCandidates();
-            return;
-          }
-          const connected = screen.getAllDisplays?.() || [];
-          const returnedDisplay = returnedRecovery
-            ? connected.find((candidate) =>
-                recoveryPlacementMatchesDisplay(returnedRecovery, candidate)
-              )
-            : null;
+        clearRecoveryCandidates();
+        if (windowOnPrimary) return;
+      }
+
+      if (recentlyReturnedRecovery) {
+        let returnedRecovery = recentlyReturnedRecovery;
+        if (
+          returnedRecovery.burstExpiresAt !== null &&
+          Date.now() > returnedRecovery.burstExpiresAt
+        ) {
+          // Once one queued relocation event has been recovered, keep the
+          // record only for a bounded burst. User moves clear it earlier via
+          // will-move/will-resize (or the maximized shortcut signal above).
+          recentlyReturnedRecovery = null;
+          returnedRecovery = null;
+        }
+        const connected = screen.getAllDisplays?.() || [];
+        const returnedDisplay = returnedRecovery
+          ? connected.find((candidate) =>
+              recoveryPlacementMatchesDisplay(returnedRecovery, candidate)
+            )
+          : null;
+        const windowOnReturnedDisplay =
+          returnedDisplay &&
+          recoveryPlacementMatchesDisplay(
+            { bounds: display.bounds, displayId: display.id },
+            returnedDisplay
+          );
+        if (returnedDisplay && !windowOnReturnedDisplay) {
           const restored = returnedDisplay
             ? clampBoundsToDisplay(
                 returnedRecovery.bounds,
@@ -652,21 +657,17 @@ function attachDisplayRecovery({
               )
             : null;
           if (restored) {
-            const handledEventKinds = new Set(
-              returnedRecovery.handledEventKinds || []
-            );
-            if (eventKind) handledEventKinds.add(eventKind);
-            // A Windows relocation may emit a move and a resize. Retain a
-            // bounded tail after the first kind, then consume the recovery
-            // before applying the complementary event. A second event of the
-            // same kind is rejected by the gate above.
+            // A single Windows relocation may emit multiple move and resize
+            // events. Retain the target for the bounded burst; a real manual
+            // placement has its own intent signal and clears it immediately.
             recentlyReturnedRecovery =
-              handledEventKinds.size < 2 && teardownGraceMs > 0
+              teardownGraceMs > 0
                 ? {
                     ...returnedRecovery,
                     fromBounds: { ...restored },
-                    handledEventKinds,
-                    burstExpiresAt: Date.now() + teardownGraceMs,
+                    burstExpiresAt:
+                      returnedRecovery.burstExpiresAt ??
+                      Date.now() + teardownGraceMs,
                   }
                 : null;
             if (isMaximizedOrFullScreen()) {
@@ -683,6 +684,9 @@ function attachDisplayRecovery({
             return;
           }
         }
+      }
+
+      if (windowOnPrimary) {
         // The window is on the primary display now. If the remembered
         // secondary display is still connected, this is either a deliberate
         // user move or an OS teardown relocation that raced ahead of the
@@ -797,17 +801,16 @@ function attachDisplayRecovery({
           display
         );
       if (
-        isSessionInterruptionActiveOrDraining() &&
-        (boundsAtDisplayRemoval !== null ||
-          pendingTeardownMove !== null ||
-          pendingRecovery !== null ||
-          recentlyReturnedRecovery !== null ||
-          rememberedPlacementBelongsElsewhere)
+        boundsAtDisplayRemoval !== null ||
+        pendingTeardownMove !== null ||
+        pendingRecovery !== null ||
+        recentlyReturnedRecovery !== null ||
+        rememberedPlacementBelongsElsewhere
       ) {
-        // During lock/sleep Windows can move a window from a removed display
-        // onto another secondary that remains connected. A real manual move
-        // clears recovery state in onManualPlacement before reaching here, so
-        // preserving the original target cannot override user intent.
+        // Windows can deliver a queued relocation onto another connected
+        // secondary long after unlock. A real manual placement clears recovery
+        // state in onManualPlacement (or the maximized shortcut gate above), so
+        // preserve the original target until one of those intent signals wins.
         return;
       }
       boundsAtDisplayRemoval = null;
@@ -832,26 +835,39 @@ function attachDisplayRecovery({
     ) {
       const association = transientReturnedDisplay;
       const removedDisplayId = normalizeDisplayId(oldDisplay.id);
-      if (!association.unrelatedDisplayIds.has(removedDisplayId)) {
-        if (
-          !isFiniteBounds(oldDisplay.bounds) ||
-          !boundsIntersectDisplay(association.displayBounds, oldDisplay.bounds)
-        ) {
-          // This removal is neither a known pre-existing display nor a
-          // geometry match for the transient target. Its identity is
-          // ambiguous, so fail closed instead of allowing a later display to
-          // inherit the target's recovery record.
-          clearRecoveryCandidates();
-          return;
-        }
-        // The transient target itself disappeared again. End only the live
-        // association; the regular removal logic below must first get a chance
-        // to promote a pending teardown move or capture the current placement.
-        // Clearing every candidate here would lose the last trusted bounds
-        // when Windows relocates the window before this event.
-        transientReturnedDisplay = null;
-        recentlyReturnedRecovery = null;
+      if (association.unrelatedDisplayIds.has(removedDisplayId)) {
+        // This display was already present when the transient target returned,
+        // or arrived later as separate topology. Its removal must not fall
+        // through to the geometry-only recovery matcher below: Windows may
+        // temporarily move it over the target's old coordinates during churn.
+        return;
       }
+      if (
+        !isFiniteBounds(oldDisplay.bounds) ||
+        !boundsIntersectDisplay(association.displayBounds, oldDisplay.bounds)
+      ) {
+        // This removal is neither a known pre-existing display nor a
+        // geometry match for the transient target. Its identity is
+        // ambiguous, so fail closed instead of allowing a later display to
+        // inherit the target's recovery record.
+        clearRecoveryCandidates();
+        return;
+      }
+      // The transient target itself disappeared again. End only the live
+      // association; the regular removal logic below must first get a chance
+      // to promote a pending teardown move or capture the current placement.
+      // Clearing every candidate here would lose the last trusted bounds
+      // when Windows relocates the window before this event.
+      if (removedDisplayId !== null) {
+        // Electron can reveal the durable id for the first time in this
+        // removal payload. Transfer it to every pending candidate before the
+        // live association disappears so a changed-geometry return can still
+        // be matched by identity.
+        promoteTransientReturnedDisplay(oldDisplay);
+      } else {
+        transientReturnedDisplay = null;
+      }
+      recentlyReturnedRecovery = null;
     }
     if (
       pendingTeardownMove &&
@@ -1018,16 +1034,20 @@ function attachDisplayRecovery({
         promoteTransientReturnedDisplay(display);
       } else if (transientReturnedDisplay) {
         const separatelyAddedDisplayId = normalizeDisplayId(display?.id);
-        if (separatelyAddedDisplayId !== null) {
-          // A second display-added event is new topology, not identity
-          // stabilization for the earlier unknown display. Mark stable
-          // newcomers as unrelated before any geometry-based promotion.
-          transientReturnedDisplay.unrelatedDisplayIds.add(
-            separatelyAddedDisplayId
-          );
+        if (separatelyAddedDisplayId === null) {
+          // With two independently added displays that both lack durable ids,
+          // no later geometry change can prove which one owns the recovery.
+          // Drop the ambiguous target rather than risk moving the window onto
+          // the wrong screen when either id stabilizes.
+          clearRecoveryCandidates();
+          return;
         }
-        // Unknown newcomers are ambiguous too. Only a metrics event for the
-        // original transient display is allowed to promote the association.
+        // A second display-added event is new topology, not identity
+        // stabilization for the earlier unknown display. Mark stable
+        // newcomers as unrelated before any geometry-based promotion.
+        transientReturnedDisplay.unrelatedDisplayIds.add(
+          separatelyAddedDisplayId
+        );
         return;
       }
       const currentBounds = copyBounds();
@@ -1109,7 +1129,6 @@ function attachDisplayRecovery({
           displayId:
             normalizeDisplayId(display?.id) ?? matchingCandidate.displayId,
           fromBounds: isFiniteBounds(currentBounds) ? { ...currentBounds } : null,
-          handledEventKinds: null,
           burstExpiresAt: null,
         };
       }
@@ -1237,8 +1256,6 @@ function attachDisplayRecovery({
   const onLockScreen = () => onSessionInterrupted("lock-screen");
   const onResume = () => onSessionResumed("suspend");
   const onUnlockScreen = () => onSessionResumed("lock-screen");
-  const onWindowMove = () => rememberWindowPlacement("move");
-  const onWindowResize = () => rememberWindowPlacement("resize");
 
   try {
     activePowerMonitor?.on?.("suspend", onSuspend);
@@ -1255,8 +1272,8 @@ function attachDisplayRecovery({
     screen.on("display-metrics-changed", onDisplayMetricsChanged);
     win.on?.("will-move", onManualPlacement);
     win.on?.("will-resize", onManualPlacement);
-    win.on?.("move", onWindowMove);
-    win.on?.("resize", onWindowResize);
+    win.on?.("move", rememberWindowPlacement);
+    win.on?.("resize", rememberWindowPlacement);
     win.on?.("unmaximize", applyPendingRecovery);
     win.on?.("leave-full-screen", applyPendingRecovery);
     // Seed the tracked placement from the window's initial bounds so windows
@@ -1297,10 +1314,10 @@ function attachDisplayRecovery({
       win.removeListener?.("will-resize", onManualPlacement);
     } catch {}
     try {
-      win.removeListener?.("move", onWindowMove);
+      win.removeListener?.("move", rememberWindowPlacement);
     } catch {}
     try {
-      win.removeListener?.("resize", onWindowResize);
+      win.removeListener?.("resize", rememberWindowPlacement);
     } catch {}
     try {
       win.removeListener?.("unmaximize", applyPendingRecovery);
