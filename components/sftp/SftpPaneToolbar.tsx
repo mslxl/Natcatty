@@ -531,6 +531,9 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   const [filterDraft, setFilterDraft] = useState(pane.filter);
   const [bookmarkPopoverOpen, setBookmarkPopoverOpen] = useState(false);
   const [pendingBookmarkRemoval, setPendingBookmarkRemoval] = useState<SftpBookmark | null>(null);
+  const bookmarkButtonRef = useRef<HTMLButtonElement>(null);
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
+  const bookmarkRemovalFocusRef = useRef<HTMLButtonElement | null>(null);
   const filterComposingRef = useRef(false);
   const filterAtComposeStartRef = useRef(pane.filter);
   // Directory at compositionstart. Navigation that leaves the filter already ""
@@ -770,7 +773,26 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
     [shown, collapsed, narrow],
   );
 
-  const renderBookmarkPopoverBody = (onAfterLeafAction?: () => void) => (
+  const requestBookmarkRemoval = (
+    bookmark: SftpBookmark,
+    restoreFocusTarget: HTMLButtonElement | null,
+  ) => {
+    bookmarkRemovalFocusRef.current = restoreFocusTarget;
+    setPendingBookmarkRemoval(bookmark);
+  };
+
+  const restoreBookmarkRemovalFocus = () => {
+    const target = bookmarkRemovalFocusRef.current;
+    bookmarkRemovalFocusRef.current = null;
+    window.setTimeout(() => {
+      if (target?.isConnected) target.focus();
+    }, 0);
+  };
+
+  const renderBookmarkPopoverBody = (
+    onAfterLeafAction?: () => void,
+    getRestoreFocusTarget: () => HTMLButtonElement | null = () => bookmarkButtonRef.current,
+  ) => (
     <SftpBookmarkPopoverBody
       t={t}
       bookmarks={bookmarks}
@@ -780,7 +802,9 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       onToggleBookmark={onToggleBookmark}
       onAddGlobalBookmark={onAddGlobalBookmark}
       onNavigateToBookmark={onNavigateToBookmark}
-      onRequestDeleteBookmark={setPendingBookmarkRemoval}
+      onRequestDeleteBookmark={(bookmark) => (
+        requestBookmarkRemoval(bookmark, getRestoreFocusTarget())
+      )}
       onReorderBookmark={onReorderBookmark}
       onRenameBookmark={onRenameBookmark}
       onAfterLeafAction={onAfterLeafAction}
@@ -793,6 +817,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button
+              ref={bookmarkButtonRef}
               variant="ghost"
               size="icon"
               className={cn(
@@ -829,7 +854,9 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       bookmarksCount={bookmarks.length}
       shouldToggleBookmarkFromButton={shouldToggleBookmarkFromButton}
       onToggleBookmark={onToggleBookmark}
-      renderBody={(closeOverflow) => renderBookmarkPopoverBody(closeOverflow)}
+      renderBody={(closeOverflow) => (
+        renderBookmarkPopoverBody(closeOverflow, () => overflowButtonRef.current)
+      )}
     />
   );
 
@@ -1314,6 +1341,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
                 orientation="horizontal"
                 buttonClassName="h-6 w-6"
                 contentClassName="min-w-[140px]"
+                triggerRef={overflowButtonRef}
               >
                 <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
               </ToolbarOverflowMenu>
@@ -1452,13 +1480,17 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         confirmLabel={t("sftp.bookmark.remove")}
         destructive
         onOpenChange={(open) => {
-          if (!open) setPendingBookmarkRemoval(null);
+          if (!open) {
+            setPendingBookmarkRemoval(null);
+            restoreBookmarkRemovalFocus();
+          }
         }}
         onConfirm={() => {
           if (!pendingBookmarkRemoval) return;
           const bookmarkId = pendingBookmarkRemoval.id;
           setPendingBookmarkRemoval(null);
           onDeleteBookmark(bookmarkId);
+          restoreBookmarkRemovalFocus();
         }}
       />
     </TooltipProvider>

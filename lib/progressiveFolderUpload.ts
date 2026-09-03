@@ -17,6 +17,7 @@ import {
   DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY,
   resolveSftpTransferConcurrency,
 } from "../domain/sftpTransferConcurrency";
+import { isMissingStatError } from "../domain/sftpStatError";
 
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -152,10 +153,13 @@ export async function uploadLocalFoldersProgressively(
 
   const statTarget = async (path: string) => {
     try {
-      if (isLocal) return await bridge.statLocal?.(path) ?? null;
-      if (sftpId) return await bridge.statSftp?.(sftpId, path) ?? null;
-    } catch {
-      return null;
+      // Prefer no-follow lstat so Replace cannot write through a symlink.
+      if (isLocal) return await (bridge.lstatLocal ?? bridge.statLocal)?.(path) ?? null;
+      if (sftpId) return await (bridge.lstatSftp ?? bridge.statSftp)?.(sftpId, path) ?? null;
+    } catch (error) {
+      if (isMissingStatError(error)) return null;
+      // Unknown target state must fail closed rather than bypass conflict handling.
+      throw error;
     }
     return null;
   };

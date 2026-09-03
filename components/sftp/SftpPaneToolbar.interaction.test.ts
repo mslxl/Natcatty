@@ -56,6 +56,11 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
   const navigatedPaths: string[] = [];
   const deletedBookmarkIds: string[] = [];
   let toggleBookmarkCalls = 0;
+  const waitForFocusRestore = async () => {
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+  };
   const findRemovalDialog = () => Array.from(window.document.querySelectorAll("h2"))
     .find((heading) => heading.textContent?.trim() === "Remove bookmark")
     ?.closest<HTMLElement>('[role="dialog"]') ?? null;
@@ -167,6 +172,7 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
       (button) => button.textContent?.trim() === "Remove bookmark",
     );
     assert.ok(removeCurrentPath, "current-path bookmark removal should be visible");
+    removeCurrentPath.focus();
     await act(async () => removeCurrentPath.click());
 
     let dialog = findRemovalDialog();
@@ -186,8 +192,10 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     );
     assert.ok(cancel);
     await act(async () => cancel.click());
+    await waitForFocusRestore();
     assert.equal(findRemovalDialog(), null);
     assert.equal(toggleBookmarkCalls, 0, "cancelling must preserve the bookmark");
+    assert.equal(window.document.activeElement, trigger, "cancel should restore the bookmark trigger");
 
     await act(async () => trigger.click());
     const removeCurrentPathAfterCancel = Array.from(
@@ -210,6 +218,8 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     assert.deepEqual(deletedBookmarkIds, ["bm-current"]);
     assert.equal(toggleBookmarkCalls, 0, "confirmation must not toggle the new current path");
     assert.equal(findRemovalDialog(), null);
+    await waitForFocusRestore();
+    assert.equal(window.document.activeElement, trigger, "confirm should restore the bookmark trigger");
 
     await act(async () => trigger.click());
     const webRootRow = Array.from(
@@ -230,9 +240,50 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     assert.ok(confirmWebRoot);
     await act(async () => confirmWebRoot.click());
     assert.deepEqual(deletedBookmarkIds, ["bm-current", "bm-1"]);
+    await waitForFocusRestore();
+    assert.equal(window.document.activeElement, trigger, "row removal should restore the bookmark trigger");
+
+    window.localStorage.setItem("netcatty_sftp_toolbar_layout_v1", JSON.stringify({
+      order: ["bookmark"],
+      placement: { bookmark: "collapse" },
+    }));
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      window.dispatchEvent(new window.StorageEvent("storage", {
+        key: "netcatty_sftp_toolbar_layout_v1",
+      }));
     });
+    const overflowTrigger = window.document.querySelector<HTMLButtonElement>(
+      'button[data-toolbar-overflow-trigger="true"]',
+    );
+    assert.ok(overflowTrigger, "collapsed bookmark should expose the overflow trigger");
+    await act(async () => overflowTrigger.click());
+    const nestedBookmarkTrigger = window.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Bookmarked paths"]',
+    );
+    assert.ok(nestedBookmarkTrigger, "overflow should expose the nested bookmark trigger");
+    await act(async () => nestedBookmarkTrigger.click());
+    const overflowWebRootRow = Array.from(
+      window.document.querySelectorAll<HTMLElement>("[data-bookmark-scope]"),
+    ).find((element) => element.textContent?.includes("Web root"));
+    const removeOverflowWebRoot = overflowWebRootRow?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove bookmark"]',
+    );
+    assert.ok(removeOverflowWebRoot);
+    removeOverflowWebRoot.focus();
+    await act(async () => removeOverflowWebRoot.click());
+    dialog = findRemovalDialog();
+    assert.ok(dialog, "overflow row removal should open the shared dialog");
+    const cancelOverflowRemoval = Array.from(dialog.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Cancel",
+    );
+    assert.ok(cancelOverflowRemoval);
+    await act(async () => cancelOverflowRemoval.click());
+    await waitForFocusRestore();
+    assert.equal(
+      window.document.activeElement,
+      overflowTrigger,
+      "overflow removal should restore the persistent overflow trigger",
+    );
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
