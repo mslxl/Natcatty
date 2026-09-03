@@ -111,6 +111,25 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
   return mock;
 }
 
+function createMockPowerMonitor() {
+  const listeners = new Map();
+  return {
+    on(event, handler) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(handler);
+    },
+    removeListener(event, handler) {
+      const list = listeners.get(event) || [];
+      const index = list.indexOf(handler);
+      if (index >= 0) list.splice(index, 1);
+    },
+    emit(event) {
+      for (const handler of listeners.get(event) || []) handler();
+    },
+    __listeners: listeners,
+  };
+}
+
 test("boundsIntersectDisplay detects overlap and rejects invalid input", () => {
   assert.equal(boundsIntersectDisplay({ x: 2000, y: 100, width: 800, height: 600 }, SECONDARY.bounds), true);
   assert.equal(boundsIntersectDisplay({ x: 0, y: 0, width: 800, height: 600 }, SECONDARY.bounds), false);
@@ -311,6 +330,108 @@ test("attachDisplayRecovery keeps the promoted snapshot through trailing teardow
 
   assert.equal(win.setBoundsCalls.length, 1);
   assert.deepEqual(win.setBoundsCalls[0], { x: 2100, y: 120, width: 1400, height: 900 });
+});
+
+test("attachDisplayRecovery keeps the promoted snapshot through a delayed lock-screen teardown burst", () => {
+  const realNow = Date.now;
+  let now = 1_500_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // During Win+L teardown, Windows relocates the window before Electron
+    // reports the display removal. The removal promotes the secondary bounds.
+    powerMonitor.emit("lock-screen");
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-removed", {}, SECONDARY);
+
+    // The session remains locked while a delayed resize from the same OS
+    // relocation arrives well after the ordinary teardown grace window.
+    now += 60_000;
+    win.bounds = { x: 100, y: 100, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("resize") || []) handler();
+
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery keeps the removal snapshot through a delayed lock-screen relocation burst", () => {
+  const realNow = Date.now;
+  let now = 1_750_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    // In the opposite valid ordering, Electron reports the display removal
+    // while the window still has its secondary placement, then Windows moves
+    // it onto the primary display.
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // A delayed resize is still part of the OS relocation because the session
+    // remains locked, even though the normal grace window has elapsed.
+    now += 60_000;
+    win.bounds = { x: 100, y: 100, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("resize") || []) handler();
+
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery keeps the snapshot through teardown events queued just after unlock", () => {
+  const realNow = Date.now;
+  let now = 1_900_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    powerMonitor.emit("lock-screen");
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    screen.emit("display-removed", {}, SECONDARY);
+
+    // A long lock makes the snapshot old on the wall clock. Unlocking can
+    // release queued display events before the display-added notification, so
+    // a trailing resize in the short post-unlock drain window must keep it.
+    now += 60_000;
+    powerMonitor.emit("unlock-screen");
+    win.bounds = { x: 100, y: 100, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("resize") || []) handler();
+    screen.emit("display-added", {}, SECONDARY);
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {

@@ -244,6 +244,11 @@ function attachDisplayRecovery({
   const activePowerMonitor = injectedPowerMonitor || powerMonitor;
   let attached = true;
 
+  const isSessionInterruptionActiveOrDraining = () =>
+    sessionInterruptionActive ||
+    (sessionInterruptionEndedAt !== null &&
+      Date.now() - sessionInterruptionEndedAt < teardownGraceMs);
+
   const onSessionInterrupted = (signal) => {
     sessionInterruptedAt = Date.now();
     // Repeated start signals within the same interruption (e.g. a "suspend"
@@ -356,10 +361,14 @@ function attachDisplayRecovery({
             // e.g. a paired "resize") may do so: a move/resize that arrives
             // past the grace window is a deliberate user edit while the
             // monitor stays disconnected, and it supersedes the stale
-            // recovery candidate.
+            // recovery candidate. While a lock/sleep interruption remains
+            // active, however, the user cannot deliberately edit placement.
+            // Also keep it through the short post-resume drain window, when
+            // teardown events queued during the interruption may still fire.
             const now = Date.now();
             if (
               teardownRelocationAt !== null &&
+              !isSessionInterruptionActiveOrDraining() &&
               now - teardownRelocationAt >= teardownGraceMs
             ) {
               teardownRelocationAt = null;
@@ -400,13 +409,16 @@ function attachDisplayRecovery({
         // of the teardown burst: the OS relocation can emit trailing events
         // (e.g. a paired "resize") after "display-removed" already promoted
         // the snapshot, and `rememberedDisplayId` is cleared by then, so this
-        // is the only protection left. Events within the grace window of the
-        // promotion are part of the burst and keep the snapshot; later edits
-        // past the grace window are deliberate user placement.
+        // is the only protection left. Keep it for the full active lock/sleep
+        // interruption, when the user cannot deliberately place the window,
+        // and through the short post-resume drain window for queued teardown
+        // events. Otherwise the grace window separates the teardown burst from
+        // a later user edit.
         if (
           boundsAtDisplayRemoval !== null &&
           teardownSnapshotAt !== null &&
-          Date.now() - teardownSnapshotAt < teardownGraceMs
+          (isSessionInterruptionActiveOrDraining() ||
+            Date.now() - teardownSnapshotAt < teardownGraceMs)
         ) {
           return;
         }
@@ -461,9 +473,7 @@ function attachDisplayRecovery({
         // a teardown relocation) would keep satisfying the ordering check
         // forever, and a much later ordinary unplug would promote the stale
         // placement and undo the user's move on the next re-add.
-        (sessionInterruptionActive ||
-          (sessionInterruptionEndedAt !== null &&
-            Date.now() - sessionInterruptionEndedAt < teardownGraceMs));
+        isSessionInterruptionActiveOrDraining();
       if (
         suspendedAfterPendingMove ||
         // The OS relocation can also land after the lock-screen/suspend
@@ -477,9 +487,7 @@ function attachDisplayRecovery({
         // restore the obsolete pre-lock placement on re-add. Gate the stamp
         // by the same live-interruption / ended-grace check as above.
         (pendingTeardownMove.duringSessionInterruption === true &&
-          (sessionInterruptionActive ||
-            (sessionInterruptionEndedAt !== null &&
-              Date.now() - sessionInterruptionEndedAt < teardownGraceMs))) ||
+          isSessionInterruptionActiveOrDraining()) ||
         Date.now() - pendingTeardownMove.at < teardownGraceMs
       ) {
         // The OS relocated the window to the primary before this removal event
