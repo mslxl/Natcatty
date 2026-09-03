@@ -272,32 +272,44 @@ export function serializeSessionsForStorage(
   sessions: AISession[],
   budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
 ): { json: string; sessions: AISession[] } {
-  const serialized = pruneSessionsForStorage(sessions).map(session => ({
-    session,
-    json: JSON.stringify(session),
-  }));
-  let jsonLength = 2 + serialized.reduce((total, entry) => total + entry.json.length, 0)
+  const serialized = pruneSessionsForStorage(sessions).map(session => {
+    const strippedSession = stripEncryptedReasoningFromSession(session);
+    const json = JSON.stringify(session);
+    return {
+      session,
+      json,
+      strippedSession,
+      strippedJson: strippedSession === session
+        ? json
+        : JSON.stringify(strippedSession),
+    };
+  });
+
+  // First determine how many visible sessions can fit using their smallest
+  // representation. This prevents an old, oversized visible chat that must be
+  // dropped anyway from causing newer replay ciphertext to be stripped first.
+  let minimalLength = 2
+    + serialized.reduce((total, entry) => total + entry.strippedJson.length, 0)
     + Math.max(0, serialized.length - 1);
-
-  // Escalation 1: remove replay-only ciphertext from the oldest sessions
-  // first. This preserves visible chat history and keeps the newest session's
-  // stateless continuation intact for as long as possible.
-  for (let index = serialized.length - 1; index >= 0 && jsonLength > budgetBytes; index -= 1) {
-    const current = serialized[index];
-    const strippedSession = stripEncryptedReasoningFromSession(current.session);
-    if (strippedSession === current.session) continue;
-    const strippedJson = JSON.stringify(strippedSession);
-    jsonLength += strippedJson.length - current.json.length;
-    serialized[index] = { session: strippedSession, json: strippedJson };
-  }
-
-  // Escalation 2: if visible history itself still exceeds the budget, drop
-  // whole oldest sessions. Each session is serialized at most twice, avoiding
-  // repeated full-array JSON serialization on the renderer thread.
-  while (jsonLength > budgetBytes && serialized.length > 1) {
+  while (minimalLength > budgetBytes && serialized.length > 1) {
     const removed = serialized.pop();
     if (!removed) break;
-    jsonLength -= removed.json.length + 1;
+    minimalLength -= removed.strippedJson.length + 1;
+  }
+
+  // Then keep full continuation data for the retained sessions and remove
+  // replay-only ciphertext from the oldest retained sessions only as needed.
+  let jsonLength = 2 + serialized.reduce((total, entry) => total + entry.json.length, 0)
+    + Math.max(0, serialized.length - 1);
+  for (let index = serialized.length - 1; index >= 0 && jsonLength > budgetBytes; index -= 1) {
+    const current = serialized[index];
+    if (current.strippedSession === current.session) continue;
+    jsonLength += current.strippedJson.length - current.json.length;
+    serialized[index] = {
+      ...current,
+      session: current.strippedSession,
+      json: current.strippedJson,
+    };
   }
 
   return {
