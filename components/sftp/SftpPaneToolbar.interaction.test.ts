@@ -61,6 +61,17 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });
   };
+  const setBookmarkPlacement = async (placement: "show" | "collapse") => {
+    window.localStorage.setItem("netcatty_sftp_toolbar_layout_v1", JSON.stringify({
+      order: ["bookmark"],
+      placement: { bookmark: placement },
+    }));
+    await act(async () => {
+      window.dispatchEvent(new window.StorageEvent("storage", {
+        key: "netcatty_sftp_toolbar_layout_v1",
+      }));
+    });
+  };
   const findRemovalDialog = () => Array.from(window.document.querySelectorAll("h2"))
     .find((heading) => heading.textContent?.trim() === "Remove bookmark")
     ?.closest<HTMLElement>('[role="dialog"]') ?? null;
@@ -146,7 +157,7 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
   try {
     await renderToolbar("/home/app", true);
 
-    const trigger = window.document.querySelector<HTMLButtonElement>(
+    let trigger = window.document.querySelector<HTMLButtonElement>(
       'button[aria-label="Bookmarked paths"]',
     );
     assert.ok(trigger);
@@ -191,11 +202,26 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
       (button) => button.textContent?.trim() === "Cancel",
     );
     assert.ok(cancel);
+    await setBookmarkPlacement("collapse");
+    const overflowTriggerAfterLayoutChange = window.document.querySelector<HTMLButtonElement>(
+      'button[data-toolbar-overflow-trigger="true"]',
+    );
+    assert.ok(overflowTriggerAfterLayoutChange);
     await act(async () => cancel.click());
     await waitForFocusRestore();
     assert.equal(findRemovalDialog(), null);
     assert.equal(toggleBookmarkCalls, 0, "cancelling must preserve the bookmark");
-    assert.equal(window.document.activeElement, trigger, "cancel should restore the bookmark trigger");
+    assert.equal(
+      window.document.activeElement,
+      overflowTriggerAfterLayoutChange,
+      "cancel should fall back to the newly mounted overflow trigger",
+    );
+
+    await setBookmarkPlacement("show");
+    trigger = window.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Bookmarked paths"]',
+    );
+    assert.ok(trigger);
 
     await act(async () => trigger.click());
     const removeCurrentPathAfterCancel = Array.from(
@@ -243,15 +269,7 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
     await waitForFocusRestore();
     assert.equal(window.document.activeElement, trigger, "row removal should restore the bookmark trigger");
 
-    window.localStorage.setItem("netcatty_sftp_toolbar_layout_v1", JSON.stringify({
-      order: ["bookmark"],
-      placement: { bookmark: "collapse" },
-    }));
-    await act(async () => {
-      window.dispatchEvent(new window.StorageEvent("storage", {
-        key: "netcatty_sftp_toolbar_layout_v1",
-      }));
-    });
+    await setBookmarkPlacement("collapse");
     const overflowTrigger = window.document.querySelector<HTMLButtonElement>(
       'button[data-toolbar-overflow-trigger="true"]',
     );
@@ -284,6 +302,9 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
       overflowTrigger,
       "overflow removal should restore the persistent overflow trigger",
     );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+    });
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

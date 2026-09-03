@@ -670,6 +670,50 @@ test("progressive root conflict check treats explicit ENOENT as an absent destin
   assert.equal(results[0]?.success, true);
 });
 
+test("progressive root replace carries the inspected type into the guarded delete", async () => {
+  let currentType: "file" | "directory" = "directory";
+  let scans = 0;
+  let transfers = 0;
+
+  await assert.rejects(
+    () => uploadLocalFoldersProgressively(
+      [{ name: "docs", localPath: "/tmp/docs" }],
+      {
+        targetPath: "/remote",
+        sftpId: "sftp-1",
+        isLocal: false,
+        joinPath: (base, name) => `${base}/${name}`,
+        resolveConflict: async () => {
+          currentType = "file";
+          return "replace";
+        },
+        bridge: {
+          mkdirSftp: async () => {},
+          lstatSftp: async () => ({ type: "directory", size: 0, lastModified: 1 }),
+          deleteSftp: async (_sftpId, _path, expectedType) => {
+            assert.equal(expectedType, "directory");
+            if (currentType !== expectedType) {
+              throw new Error(`Expected ${expectedType}, found ${currentType}`);
+            }
+          },
+          startStreamTransfer: async (payload) => {
+            transfers += 1;
+            return { transferId: payload.transferId };
+          },
+        },
+        listLocalTree: async () => {
+          scans += 1;
+          return [];
+        },
+      },
+    ),
+    /Expected directory, found file/,
+  );
+
+  assert.equal(scans, 0, "changed targets must abort before scanning starts");
+  assert.equal(transfers, 0, "changed targets must not be overwritten");
+});
+
 test("progressive multi-root resume of non-head parent unblocks while head stays paused", async () => {
   const transferred: string[] = [];
   // Both latched initially; head is always parent-a in FIFO order.

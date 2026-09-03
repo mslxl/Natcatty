@@ -164,9 +164,12 @@ export async function uploadLocalFoldersProgressively(
     return null;
   };
 
-  const deleteTarget = async (path: string) => {
-    if (isLocal) await bridge.deleteLocalFile?.(path);
-    else if (sftpId) await bridge.deleteSftp?.(sftpId, path);
+  const deleteTarget = async (
+    path: string,
+    expectedType?: "file" | "directory" | "symlink",
+  ) => {
+    if (isLocal) await bridge.deleteLocalFile?.(path, expectedType);
+    else if (sftpId) await bridge.deleteSftp?.(sftpId, path, expectedType);
   };
 
   const getDuplicateName = async (name: string) => {
@@ -242,7 +245,7 @@ export async function uploadLocalFoldersProgressively(
           }
           continue;
         }
-        await deleteTarget(joinPath(targetPath, root.name));
+        await deleteTarget(joinPath(targetPath, root.name), existing.type);
         destRootNameBySource.set(root.name, root.name);
         kept.push(root);
         continue;

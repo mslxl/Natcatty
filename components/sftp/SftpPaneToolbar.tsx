@@ -533,7 +533,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   const [pendingBookmarkRemoval, setPendingBookmarkRemoval] = useState<SftpBookmark | null>(null);
   const bookmarkButtonRef = useRef<HTMLButtonElement>(null);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
-  const bookmarkRemovalFocusRef = useRef<HTMLButtonElement | null>(null);
+  const bookmarkRemovalFocusOriginRef = useRef<"inline" | "overflow" | null>(null);
   const filterComposingRef = useRef(false);
   const filterAtComposeStartRef = useRef(pane.filter);
   // Directory at compositionstart. Navigation that leaves the filter already ""
@@ -775,23 +775,26 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
 
   const requestBookmarkRemoval = (
     bookmark: SftpBookmark,
-    restoreFocusTarget: HTMLButtonElement | null,
+    focusOrigin: "inline" | "overflow",
   ) => {
-    bookmarkRemovalFocusRef.current = restoreFocusTarget;
+    bookmarkRemovalFocusOriginRef.current = focusOrigin;
     setPendingBookmarkRemoval(bookmark);
   };
 
   const restoreBookmarkRemovalFocus = () => {
-    const target = bookmarkRemovalFocusRef.current;
-    bookmarkRemovalFocusRef.current = null;
+    const origin = bookmarkRemovalFocusOriginRef.current;
+    bookmarkRemovalFocusOriginRef.current = null;
     window.setTimeout(() => {
-      if (target?.isConnected) target.focus();
+      const preferred = origin === "overflow" ? overflowButtonRef.current : bookmarkButtonRef.current;
+      const fallback = origin === "overflow" ? bookmarkButtonRef.current : overflowButtonRef.current;
+      const target = preferred?.isConnected ? preferred : fallback?.isConnected ? fallback : null;
+      target?.focus();
     }, 0);
   };
 
   const renderBookmarkPopoverBody = (
     onAfterLeafAction?: () => void,
-    getRestoreFocusTarget: () => HTMLButtonElement | null = () => bookmarkButtonRef.current,
+    focusOrigin: "inline" | "overflow" = "inline",
   ) => (
     <SftpBookmarkPopoverBody
       t={t}
@@ -803,7 +806,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       onAddGlobalBookmark={onAddGlobalBookmark}
       onNavigateToBookmark={onNavigateToBookmark}
       onRequestDeleteBookmark={(bookmark) => (
-        requestBookmarkRemoval(bookmark, getRestoreFocusTarget())
+        requestBookmarkRemoval(bookmark, focusOrigin)
       )}
       onReorderBookmark={onReorderBookmark}
       onRenameBookmark={onRenameBookmark}
@@ -855,7 +858,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       shouldToggleBookmarkFromButton={shouldToggleBookmarkFromButton}
       onToggleBookmark={onToggleBookmark}
       renderBody={(closeOverflow) => (
-        renderBookmarkPopoverBody(closeOverflow, () => overflowButtonRef.current)
+        renderBookmarkPopoverBody(closeOverflow, "overflow")
       )}
     />
   );
