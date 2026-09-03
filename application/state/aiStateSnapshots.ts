@@ -248,6 +248,23 @@ function stripEncryptedReasoningFromSession(session: AISession): AISession {
   return changed ? { ...session, messages } : session;
 }
 
+function stripCompactedEncryptedReasoningFromSession(session: AISession): AISession {
+  const compactedMessageCount = Math.min(
+    session.messages.length,
+    Math.max(0, session.contextCompaction?.compactedMessageCount ?? 0),
+  );
+  if (compactedMessageCount === 0) return session;
+
+  let changed = false;
+  const messages = session.messages.map((message, index) => {
+    if (index >= compactedMessageCount) return message;
+    const stripped = stripEncryptedReasoningFromMessage(message);
+    if (stripped !== message) changed = true;
+    return stripped;
+  });
+  return changed ? { ...session, messages } : session;
+}
+
 /**
  * Prune sessions before writing to localStorage to prevent hitting the
  * ~5-10 MB storage quota. Only affects what is persisted — the in-memory
@@ -277,7 +294,12 @@ export function serializeSessionsForStorage(
   sessions: AISession[],
   budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
 ): { json: string; sessions: AISession[] } {
-  const serialized = pruneSessionsForStorage(sessions).map(session => {
+  const serialized = pruneSessionsForStorage(sessions).map(rawSession => {
+    // These messages are replaced by the durable summary before every later
+    // request, so their replay ciphertext can never be used again. Remove it
+    // before deciding whether the newest session deserves full protection;
+    // otherwise dead metadata can evict other visible conversations.
+    const session = stripCompactedEncryptedReasoningFromSession(rawSession);
     const ciphertextMessages = session.messages.flatMap((message, index) => {
       const strippedMessage = stripEncryptedReasoningFromMessage(message);
       if (strippedMessage === message) return [];
