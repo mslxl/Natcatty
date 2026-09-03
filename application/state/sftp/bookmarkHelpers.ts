@@ -2,17 +2,6 @@ import type { SftpBookmark } from "../../../domain/models";
 
 const ROOT_PATH_RE = /^[A-Za-z]:[\\/]?$/;
 
-export type SftpBookmarkScope = "global" | "location";
-
-export function getSftpBookmarkScope(
-  bookmarks: ReadonlyArray<Pick<SftpBookmark, "id" | "global">>,
-  id: string,
-): SftpBookmarkScope | null {
-  const bookmark = bookmarks.find((candidate) => candidate.id === id);
-  if (!bookmark) return null;
-  return bookmark.global ? "global" : "location";
-}
-
 export function getSftpBookmarkLabel(path: string): string {
   const trimmed = path.trim();
   if (trimmed === "/" || ROOT_PATH_RE.test(trimmed)) return trimmed;

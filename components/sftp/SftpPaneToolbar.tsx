@@ -224,9 +224,9 @@ interface SftpPaneToolbarProps {
   onAddGlobalBookmark: (path: string) => void;
   isCurrentPathGlobalBookmarked: boolean;
   onNavigateToBookmark: (path: string) => void;
-  onDeleteBookmark: (id: string) => void;
-  onReorderBookmark?: (fromId: string, toId: string) => void;
-  onRenameBookmark?: (id: string, label: string) => void;
+  onDeleteBookmark: (bookmark: SftpBookmark) => void;
+  onReorderBookmark?: (from: SftpBookmark, to: SftpBookmark) => void;
+  onRenameBookmark?: (bookmark: SftpBookmark, label: string) => void;
   listDensity?: SftpListDensity;
   onSetListDensity?: (density: SftpListDensity) => void;
   showHiddenFiles: boolean;
@@ -245,43 +245,48 @@ interface SftpBookmarkListProps {
   managing?: boolean;
   onNavigateToBookmark: (path: string) => void;
   onRequestDeleteBookmark: (bookmark: SftpBookmark) => void;
-  onReorderBookmark?: (fromId: string, toId: string) => void;
-  onRenameBookmark?: (id: string, label: string) => void;
+  onReorderBookmark?: (from: SftpBookmark, to: SftpBookmark) => void;
+  onRenameBookmark?: (bookmark: SftpBookmark, label: string) => void;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
 
+const SFTP_BOOKMARK_DRAG_TYPE = "text/netcatty-sftp-bookmark";
+
+export const getSftpBookmarkIdentity = (bookmark: SftpBookmark): string => (
+  `${bookmark.global ? "global" : "location"}:${bookmark.id}`
+);
+
 export const canReorderSftpBookmark = (
-  bookmarks: SftpBookmark[],
-  fromId: string,
-  toId: string,
+  source: SftpBookmark | undefined,
+  target: SftpBookmark | undefined,
 ): boolean => {
-  const source = bookmarks.find((bookmark) => bookmark.id === fromId);
-  const target = bookmarks.find((bookmark) => bookmark.id === toId);
   return !!source && !!target && !!source.global === !!target.global;
 };
 
 export const getSftpBookmarkMoveTargets = (
   bookmarks: SftpBookmark[],
-  bookmarkId: string,
-): { previousId: string | null; nextId: string | null } => {
-  const index = bookmarks.findIndex((bookmark) => bookmark.id === bookmarkId);
-  if (index < 0) return { previousId: null, nextId: null };
+  bookmark: SftpBookmark,
+): { previous: SftpBookmark | null; next: SftpBookmark | null } => {
+  const index = bookmarks.findIndex((candidate) => (
+    candidate.id === bookmark.id && !!candidate.global === !!bookmark.global
+  ));
+  if (index < 0) return { previous: null, next: null };
   const isGlobal = !!bookmarks[index]?.global;
-  let previousId: string | null = null;
-  let nextId: string | null = null;
+  let previous: SftpBookmark | null = null;
+  let next: SftpBookmark | null = null;
   for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
     if (!!bookmarks[candidate]?.global === isGlobal) {
-      previousId = bookmarks[candidate]!.id;
+      previous = bookmarks[candidate]!;
       break;
     }
   }
   for (let candidate = index + 1; candidate < bookmarks.length; candidate += 1) {
     if (!!bookmarks[candidate]?.global === isGlobal) {
-      nextId = bookmarks[candidate]!.id;
+      next = bookmarks[candidate]!;
       break;
     }
   }
-  return { previousId, nextId };
+  return { previous, next };
 };
 
 export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
@@ -293,8 +298,8 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   onRenameBookmark,
   t,
 }) => {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draggingBookmark, setDraggingBookmark] = useState<SftpBookmark | null>(null);
+  const [renamingBookmark, setRenamingBookmark] = useState<SftpBookmark | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
   if (bookmarks.length === 0) {
@@ -308,8 +313,13 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
   return (
     <div className="max-h-64 overflow-auto py-1 min-w-[18rem]">
       {bookmarks.map((bm, index) => {
+        const bookmarkIdentity = getSftpBookmarkIdentity(bm);
         const startsHostGroup = index > 0 && !!bookmarks[index - 1]?.global && !bm.global;
-        const moveTargets = getSftpBookmarkMoveTargets(bookmarks, bm.id);
+        const moveTargets = getSftpBookmarkMoveTargets(bookmarks, bm);
+        const isDragging = draggingBookmark?.id === bm.id
+          && !!draggingBookmark.global === !!bm.global;
+        const isRenaming = renamingBookmark?.id === bm.id
+          && !!renamingBookmark.global === !!bm.global;
         const pathContent = (
           <>
             <div className="text-xs font-medium truncate">{bm.label}</div>
@@ -332,41 +342,44 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
 
         return (
           <div
-            key={bm.id}
+            key={bookmarkIdentity}
             className={cn(
               "flex items-start gap-1 px-2 py-1.5 hover:bg-secondary/60 group",
               startsHostGroup && "mt-1 border-t border-border/60 pt-2",
-              draggingId === bm.id && "opacity-60",
+              isDragging && "opacity-60",
             )}
             data-bookmark-scope={bm.global ? "global" : "location"}
-            draggable={managing && renamingId !== bm.id}
+            draggable={managing && !isRenaming}
             onDragStart={(event) => {
               if (!managing) return;
-              setDraggingId(bm.id);
-              event.dataTransfer.setData("text/netcatty-sftp-bookmark", bm.id);
+              setDraggingBookmark(bm);
+              event.dataTransfer.setData(SFTP_BOOKMARK_DRAG_TYPE, bookmarkIdentity);
               event.dataTransfer.effectAllowed = "move";
             }}
             onDragOver={(event) => {
               if (
                 !managing
-                || !draggingId
-                || draggingId === bm.id
-                || !canReorderSftpBookmark(bookmarks, draggingId, bm.id)
+                || !draggingBookmark
+                || (draggingBookmark.id === bm.id && !!draggingBookmark.global === !!bm.global)
+                || !canReorderSftpBookmark(draggingBookmark, bm)
               ) return;
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
             }}
             onDrop={(event) => {
               event.preventDefault();
-              const fromId = event.dataTransfer.getData("text/netcatty-sftp-bookmark") || draggingId;
-              setDraggingId(null);
+              const transferredIdentity = event.dataTransfer.getData(SFTP_BOOKMARK_DRAG_TYPE);
+              const source = bookmarks.find((candidate) => (
+                getSftpBookmarkIdentity(candidate) === transferredIdentity
+              )) ?? draggingBookmark;
+              setDraggingBookmark(null);
               if (
-                fromId
-                && fromId !== bm.id
-                && canReorderSftpBookmark(bookmarks, fromId, bm.id)
-              ) onReorderBookmark?.(fromId, bm.id);
+                source
+                && (source.id !== bm.id || !!source.global !== !!bm.global)
+                && canReorderSftpBookmark(source, bm)
+              ) onReorderBookmark?.(source, bm);
             }}
-            onDragEnd={() => setDraggingId(null)}
+            onDragEnd={() => setDraggingBookmark(null)}
           >
             {managing && (
               <GripVertical
@@ -378,7 +391,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
             {bm.global && (
               <Globe size={10} className="mt-1 shrink-0 text-primary" />
             )}
-            {managing && onRenameBookmark && renamingId === bm.id ? (
+            {managing && onRenameBookmark && isRenaming ? (
               <Input
                 autoFocus
                 value={renameDraft}
@@ -390,17 +403,17 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                   if (event.nativeEvent.isComposing) return;
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    onRenameBookmark(bm.id, renameDraft);
-                    setRenamingId(null);
+                    onRenameBookmark(bm, renameDraft);
+                    setRenamingBookmark(null);
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();
-                    setRenamingId(null);
+                    setRenamingBookmark(null);
                   }
                 }}
                 onBlur={() => {
-                  onRenameBookmark(bm.id, renameDraft);
-                  setRenamingId(null);
+                  onRenameBookmark(bm, renameDraft);
+                  setRenamingBookmark(null);
                 }}
               />
             ) : managing ? pathDisplay : (
@@ -413,10 +426,10 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                   size="icon"
                   className="h-5 w-5 shrink-0 text-muted-foreground"
                   aria-label={t("sftp.bookmark.moveUp", { label: bm.label })}
-                  disabled={!moveTargets.previousId}
+                  disabled={!moveTargets.previous}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (moveTargets.previousId) onReorderBookmark(bm.id, moveTargets.previousId);
+                    if (moveTargets.previous) onReorderBookmark(bm, moveTargets.previous);
                   }}
                 >
                   <ArrowUp size={10} />
@@ -426,17 +439,17 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                   size="icon"
                   className="h-5 w-5 shrink-0 text-muted-foreground"
                   aria-label={t("sftp.bookmark.moveDown", { label: bm.label })}
-                  disabled={!moveTargets.nextId}
+                  disabled={!moveTargets.next}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (moveTargets.nextId) onReorderBookmark(bm.id, moveTargets.nextId);
+                    if (moveTargets.next) onReorderBookmark(bm, moveTargets.next);
                   }}
                 >
                   <ArrowDown size={10} />
                 </Button>
               </>
             )}
-            {managing && onRenameBookmark && renamingId !== bm.id && (
+            {managing && onRenameBookmark && !isRenaming && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -444,7 +457,7 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                 aria-label={t("sftp.bookmark.rename")}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setRenamingId(bm.id);
+                  setRenamingBookmark(bm);
                   setRenameDraft(bm.label);
                 }}
               >
@@ -1490,9 +1503,9 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         }}
         onConfirm={() => {
           if (!pendingBookmarkRemoval) return;
-          const bookmarkId = pendingBookmarkRemoval.id;
+          const bookmark = pendingBookmarkRemoval;
           setPendingBookmarkRemoval(null);
-          onDeleteBookmark(bookmarkId);
+          onDeleteBookmark(bookmark);
           restoreBookmarkRemovalFocus();
         }}
       />
@@ -1523,8 +1536,8 @@ function SftpBookmarkPopoverBody({
   onAddGlobalBookmark: (path: string) => void;
   onNavigateToBookmark: (path: string) => void;
   onRequestDeleteBookmark: (bookmark: SftpBookmark) => void;
-  onReorderBookmark?: (fromId: string, toId: string) => void;
-  onRenameBookmark?: (id: string, label: string) => void;
+  onReorderBookmark?: (from: SftpBookmark, to: SftpBookmark) => void;
+  onRenameBookmark?: (bookmark: SftpBookmark, label: string) => void;
   onAfterLeafAction?: () => void;
 }) {
   const [managing, setManaging] = useState(false);

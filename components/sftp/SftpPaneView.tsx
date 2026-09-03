@@ -20,7 +20,7 @@ import {
 } from "./SftpContext";
 import type { SftpPane } from "../../application/state/sftp/types";
 import { joinPath, getParentPath } from "../../application/state/sftp/utils";
-import type { Host } from "../../domain/models";
+import type { Host, SftpBookmark } from "../../domain/models";
 import { useSftpPaneDialogs } from "./hooks/useSftpPaneDialogs";
 import { useSftpPaneDragAndSelect } from "./hooks/useSftpPaneDragAndSelect";
 import { useSftpPaneFiles } from "./hooks/useSftpPaneFiles";
@@ -32,7 +32,6 @@ import { useSftpDialogActionHandler } from "../../application/state/sftp/sftpDia
 import { useSftpBookmarks } from "./hooks/useSftpBookmarks";
 import { useLocalSftpBookmarks } from "../../application/state/sftp/localSftpBookmarks";
 import { useGlobalSftpBookmarks } from "./hooks/useGlobalSftpBookmarks";
-import { getSftpBookmarkScope } from "../../application/state/sftp/bookmarkHelpers";
 import { useSftpHostViewMode } from "../../application/state/sftp/sftpHostViewModeStore";
 import { useSftpListDensity } from "../../application/state/sftp/sftpListDensityStore";
 import { sftpListOrderStore } from "./hooks/useSftpListOrderStore";
@@ -217,38 +216,34 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
     }
   }, [hostBookmarks, globalBookmarks, pane.connection?.currentPath]);
   const deleteBookmark = useCallback(
-    (id: string) => {
-      const scope = getSftpBookmarkScope(mergedBookmarks, id);
-      if (scope === "global") {
-        globalBookmarks.deleteBookmark(id);
-      } else if (scope === "location") {
-        hostBookmarks.deleteBookmark(id);
+    (bookmark: SftpBookmark) => {
+      if (bookmark.global) {
+        globalBookmarks.deleteBookmark(bookmark.id);
+      } else {
+        hostBookmarks.deleteBookmark(bookmark.id);
       }
     },
-    [hostBookmarks, globalBookmarks, mergedBookmarks],
+    [hostBookmarks, globalBookmarks],
   );
   const reorderBookmark = useCallback(
-    (fromId: string, toId: string) => {
-      const fromScope = getSftpBookmarkScope(mergedBookmarks, fromId);
-      const toScope = getSftpBookmarkScope(mergedBookmarks, toId);
-      if (fromScope === "global" && toScope === "global") {
-        globalBookmarks.reorderBookmark(fromId, toId);
-      } else if (fromScope === "location" && toScope === "location") {
-        hostBookmarks.reorderBookmark(fromId, toId);
+    (from: SftpBookmark, to: SftpBookmark) => {
+      if (from.global && to.global) {
+        globalBookmarks.reorderBookmark(from.id, to.id);
+      } else if (!from.global && !to.global) {
+        hostBookmarks.reorderBookmark(from.id, to.id);
       }
     },
-    [hostBookmarks, globalBookmarks, mergedBookmarks],
+    [hostBookmarks, globalBookmarks],
   );
   const renameBookmark = useCallback(
-    (id: string, label: string) => {
-      const scope = getSftpBookmarkScope(mergedBookmarks, id);
-      if (scope === "global") {
-        globalBookmarks.renameBookmark(id, label);
-      } else if (scope === "location") {
-        hostBookmarks.renameBookmark(id, label);
+    (bookmark: SftpBookmark, label: string) => {
+      if (bookmark.global) {
+        globalBookmarks.renameBookmark(bookmark.id, label);
+      } else {
+        hostBookmarks.renameBookmark(bookmark.id, label);
       }
     },
-    [hostBookmarks, globalBookmarks, mergedBookmarks],
+    [hostBookmarks, globalBookmarks],
   );
 
   const { sortedDisplayFiles } = useSftpPaneFiles({

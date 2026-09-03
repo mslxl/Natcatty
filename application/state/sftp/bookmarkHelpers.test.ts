@@ -3,21 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   createSftpBookmark,
-  getSftpBookmarkScope,
   moveSftpBookmark,
   renameSftpBookmark,
 } from "./bookmarkHelpers.ts";
-
-test("getSftpBookmarkScope uses persisted scope instead of the bookmark id shape", () => {
-  const bookmarks = [
-    { id: "opaque-synced-id", global: true },
-    { id: "gbm-looking-location-id" },
-  ];
-
-  assert.equal(getSftpBookmarkScope(bookmarks, "opaque-synced-id"), "global");
-  assert.equal(getSftpBookmarkScope(bookmarks, "gbm-looking-location-id"), "location");
-  assert.equal(getSftpBookmarkScope(bookmarks, "missing"), null);
-});
 
 test("moveSftpBookmark reorders by id and ignores unknown ids", () => {
   const bookmarks = [

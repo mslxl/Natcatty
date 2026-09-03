@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   getSftpBookmarkButtonLabelKey,
+  getSftpBookmarkIdentity,
   getNextSftpViewMode,
   copySftpCurrentPathToClipboard,
   canReorderSftpBookmark,
@@ -519,18 +520,33 @@ test("bookmark drag ordering stays within global or location scope", () => {
     { id: "bm-1", path: "/host-a", label: "Host A" },
     { id: "bm-2", path: "/host-b", label: "Host B" },
   ];
-  assert.equal(canReorderSftpBookmark(bookmarks, "gbm-1", "gbm-2"), true);
-  assert.equal(canReorderSftpBookmark(bookmarks, "bm-1", "bm-2"), true);
-  assert.equal(canReorderSftpBookmark(bookmarks, "gbm-1", "bm-1"), false);
-  assert.equal(canReorderSftpBookmark(bookmarks, "missing", "bm-1"), false);
-  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, "gbm-1"), {
-    previousId: null,
-    nextId: "gbm-2",
+  assert.equal(canReorderSftpBookmark(bookmarks[0], bookmarks[1]), true);
+  assert.equal(canReorderSftpBookmark(bookmarks[2], bookmarks[3]), true);
+  assert.equal(canReorderSftpBookmark(bookmarks[0], bookmarks[2]), false);
+  assert.equal(canReorderSftpBookmark(undefined, bookmarks[2]), false);
+  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, bookmarks[0]), {
+    previous: null,
+    next: bookmarks[1],
   });
-  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, "bm-1"), {
-    previousId: null,
-    nextId: "bm-2",
+  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, bookmarks[2]), {
+    previous: null,
+    next: bookmarks[3],
   });
+});
+
+test("bookmark operations keep global and location entries distinct when ids collide", () => {
+  const global = { id: "shared-id", path: "/global", label: "Global", global: true };
+  const location = { id: "shared-id", path: "/location", label: "Location" };
+  const nextLocation = { id: "next", path: "/next", label: "Next" };
+  const bookmarks = [global, location, nextLocation];
+
+  assert.notEqual(getSftpBookmarkIdentity(global), getSftpBookmarkIdentity(location));
+  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, location), {
+    previous: null,
+    next: nextLocation,
+  });
+  assert.equal(canReorderSftpBookmark(location, nextLocation), true);
+  assert.equal(canReorderSftpBookmark(global, location), false);
 });
 
 test("bookmark manage mode exposes keyboard reorder controls without a dead path button", () => {

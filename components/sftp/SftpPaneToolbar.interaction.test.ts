@@ -144,7 +144,7 @@ test("inline bookmark actions navigate and confirm current-path removal", async 
         onAddGlobalBookmark: () => {},
         isCurrentPathGlobalBookmarked: false,
         onNavigateToBookmark: (path) => navigatedPaths.push(path),
-        onDeleteBookmark: (id) => deletedBookmarkIds.push(id),
+        onDeleteBookmark: (bookmark) => deletedBookmarkIds.push(bookmark.id),
         showHiddenFiles: false,
         onToggleShowHiddenFiles: () => {},
         viewMode: "list",
