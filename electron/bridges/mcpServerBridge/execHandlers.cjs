@@ -47,14 +47,6 @@ function createExecHandlerApi(ctx) {
       // Additionally, execViaRawPty sends commands without shell wrapping, so shell
       // metacharacters in blocklist patterns (eval, $(), backticks, pipes) cannot
       // actually be interpreted even if sent to a serial-connected shell.
-      if (!isNetworkDevice) {
-        const safety = checkCommandSafety(command);
-        if (safety.blocked) {
-          debugLog("handleExec:blocklisted", { sessionId, matchedPattern: safety.matchedPattern });
-          return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
-        }
-      }
-    
       if ((session.protocol === "local" || session.type === "local") && session.shellKind === "unknown") {
         return {
           ok: false,
@@ -144,6 +136,11 @@ function createExecHandlerApi(ctx) {
             chatSessionId,
           });
           if (!probed.ok) return probed;
+          const safety = checkCommandSafetyForShell(command, resolveSessionBlocklistShellKind(session));
+          if (safety.blocked) {
+            debugLog("handleExec:blocklisted", { sessionId, matchedPattern: safety.matchedPattern });
+            return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+          }
           return execViaPty(ptyStream, command, {
             trackForCancellation: activePtyExecs,
             timeoutMs: commandTimeoutMs,
@@ -171,13 +168,25 @@ function createExecHandlerApi(ctx) {
       // Fallback: SSH exec channel (invisible to terminal).
       // At this point ptyStream is not writable (already returned above if it was).
       if (sshClient && typeof sshClient.exec === "function") {
-        return runExecution(() => execViaChannel(sshClient, command, {
-          timeoutMs: commandTimeoutMs,
-          trackForCancellation: activePtyExecs,
-          // Pass chatSessionId so cancelPtyExecsForSession can interrupt this
-          // exec channel when the originating SDK agent run is stopped.
-          chatSessionId: params?.chatSessionId,
-        }));
+        return runExecution(async () => {
+          const probed = await ensureSessionShellKindForExec(session, {
+            trackForCancellation: activePtyExecs,
+            chatSessionId,
+          });
+          if (!probed.ok) return probed;
+          const safety = checkCommandSafetyForShell(command, resolveSessionBlocklistShellKind(session));
+          if (safety.blocked) {
+            debugLog("handleExec:blocklisted", { sessionId, matchedPattern: safety.matchedPattern });
+            return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+          }
+          return execViaChannel(sshClient, command, {
+            timeoutMs: commandTimeoutMs,
+            trackForCancellation: activePtyExecs,
+            // Pass chatSessionId so cancelPtyExecsForSession can interrupt this
+            // exec channel when the originating SDK agent run is stopped.
+            chatSessionId: params?.chatSessionId,
+          });
+        });
       }
     
       // Serial port: raw command execution (no shell wrapping)
@@ -281,6 +290,17 @@ function createExecHandlerApi(ctx) {
             sessionId,
             status: "cancelled",
           };
+        }
+
+        const safety = checkCommandSafetyForShell(command, resolveSessionBlocklistShellKind(session));
+        if (safety.blocked) {
+          job.status = "failed";
+          job.error = `Command blocked by safety policy. Pattern: ${safety.matchedPattern}`;
+          job.updatedAt = Date.now();
+          job.pendingShellProbe = false;
+          backgroundJobs.delete(jobId);
+          releaseSessionExecution(sessionId, sessionToken);
+          return { ok: false, error: job.error };
         }
 
         let handle;
