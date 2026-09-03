@@ -123,6 +123,57 @@ test('an unreplayable reasoning item discards the whole tool-call exchange from 
   assert.equal(sdkMessages[1].content, 'All done.');
 });
 
+test('a Responses model switch discards a reasoning-backed tool exchange from the old source', () => {
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+        reasoningParts: [{
+          text: 'replayable only for the original model',
+          providerOptions: {
+            openai: { itemId: 'rs_old_model', reasoningEncryptedContent: 'enc-old-model' },
+          },
+        }],
+      },
+      toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } }],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-1', content: 'output' }],
+    },
+  ];
+  const buildForModel = (usesOpenAIResponses: boolean) => buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext(
+      'provider-1',
+      'openai',
+      'model-2',
+      usesOpenAIResponses,
+    ),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+
+  const responsesMessages = buildForModel(true);
+  assert.deepEqual(responsesMessages, [{ role: 'assistant', content: 'Running it.' }]);
+
+  // Chat Completions does not require a Responses reasoning item alongside
+  // the generic call/result pair, so keep the existing cross-model behavior.
+  const chatMessages = buildForModel(false);
+  assert.equal(chatMessages.length, 2);
+  assert.equal(chatMessages[1].role, 'tool');
+});
+
 test('tool exchanges with replayable reasoning are kept intact', () => {
   const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
   const toolResult = {

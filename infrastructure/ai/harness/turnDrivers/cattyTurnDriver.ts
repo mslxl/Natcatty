@@ -12,6 +12,8 @@ import {
   isWebSearchReady,
   normalizeCommandTimeoutSeconds,
   normalizeResponseIdleTimeoutSeconds,
+  resolveOpenAIApi,
+  resolveProviderStyle,
 } from '../../types';
 import {
   applyResponsesApiStatelessStoreOption,
@@ -203,6 +205,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     context.activeProvider.id,
     context.activeProvider.providerId,
     activeModelId,
+    resolveProviderStyle(context.activeProvider) === 'openai'
+      && resolveOpenAIApi(context.activeProvider) === 'responses',
   );
 
   ui.setStreamingForScope(sessionId, true);

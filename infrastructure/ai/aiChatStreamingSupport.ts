@@ -220,6 +220,7 @@ export interface DefaultTargetSessionHint extends TerminalSessionInfo {
 
 export interface CattyProviderContinuationContext {
   source: ProviderContinuationSource;
+  usesOpenAIResponses: boolean;
   openAIChatAssistantFields: Array<OpenAIChatAssistantFields | undefined>;
 }
 

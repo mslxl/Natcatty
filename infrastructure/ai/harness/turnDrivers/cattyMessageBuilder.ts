@@ -249,10 +249,19 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
         // An unreplayable (id-only, never encrypted) reasoning item poisons
         // the whole Responses tool exchange: without it the paired
         // function-call output is rejected, so discard the calls instead of
-        // replaying them orphaned. Freshly streamed items whose ciphertext
-        // arrived on a later fragment stay replayable.
+        // replaying them orphaned. The same applies when a model switch makes
+        // reasoning metadata belong to a different source: it cannot be sent
+        // to the active Responses model, so its tool exchange must not be sent
+        // without it. Freshly streamed items whose ciphertext arrived on a
+        // later fragment stay replayable.
+        const hasSourceMismatchedReasoning = continuationContext.usesOpenAIResponses
+          && !!m.providerContinuation?.reasoningParts?.length
+          && !activeContinuation;
         const hasUnreplayableReasoning = resolvedCalls.length > 0
-          && hasUnreplayableReasoningItems(activeContinuation?.reasoningParts ?? []);
+          && (
+            hasSourceMismatchedReasoning
+            || hasUnreplayableReasoningItems(activeContinuation?.reasoningParts ?? [])
+          );
         if (hasUnreplayableReasoning) {
           for (const tc of resolvedCalls) discardedToolCallIds.add(tc.id);
         }
@@ -416,6 +425,7 @@ export function createContinuationContext(
   providerConfigId: string,
   providerType: string,
   modelId: string,
+  usesOpenAIResponses = false,
 ): CattyProviderContinuationContext {
   return {
     source: {
@@ -423,6 +433,7 @@ export function createContinuationContext(
       providerType,
       modelId,
     },
+    usesOpenAIResponses,
     openAIChatAssistantFields: [],
   };
 }
