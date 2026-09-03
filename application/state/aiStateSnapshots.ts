@@ -212,32 +212,30 @@ function stripReasoningEncryptedContent(
   return Object.keys(stripped).length ? stripped : undefined;
 }
 
-function stripEncryptedReasoningFromSessions(sessions: AISession[]): AISession[] {
-  return sessions.map(session => {
-    let changed = false;
-    const messages = session.messages.map(message => {
-      const continuation = message.providerContinuation;
-      if (!continuation?.reasoningParts) return message;
-      let partsChanged = false;
-      const parts = continuation.reasoningParts.map(part => {
-        if (!part.providerOptions) return part;
-        const providerOptions = stripReasoningEncryptedContent(part.providerOptions);
-        if (providerOptions === part.providerOptions) return part;
-        partsChanged = true;
-        return providerOptions ? { text: part.text, providerOptions } : { text: part.text };
-      });
-      if (!partsChanged) return message;
-      changed = true;
-      return {
-        ...message,
-        providerContinuation: {
-          ...continuation,
-          reasoningParts: parts,
-        },
-      };
+function stripEncryptedReasoningFromSession(session: AISession): AISession {
+  let changed = false;
+  const messages = session.messages.map(message => {
+    const continuation = message.providerContinuation;
+    if (!continuation?.reasoningParts) return message;
+    let partsChanged = false;
+    const parts = continuation.reasoningParts.map(part => {
+      if (!part.providerOptions) return part;
+      const providerOptions = stripReasoningEncryptedContent(part.providerOptions);
+      if (providerOptions === part.providerOptions) return part;
+      partsChanged = true;
+      return providerOptions ? { text: part.text, providerOptions } : { text: part.text };
     });
-    return changed ? { ...session, messages } : session;
+    if (!partsChanged) return message;
+    changed = true;
+    return {
+      ...message,
+      providerContinuation: {
+        ...continuation,
+        reasoningParts: parts,
+      },
+    };
   });
+  return changed ? { ...session, messages } : session;
 }
 
 /**
@@ -269,22 +267,38 @@ export function serializeSessionsForStorage(
   sessions: AISession[],
   budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
 ): { json: string; sessions: AISession[] } {
-  let pruned = pruneSessionsForStorage(sessions);
-  let json = JSON.stringify(pruned);
-  // Escalation 1: drop the oldest sessions (already sorted by updatedAt desc)
-  // until the payload fits. The active session is the newest, so its replay
-  // context survives as long as possible.
-  while (json.length > budgetBytes && pruned.length > 1) {
-    pruned = pruned.slice(0, -1);
-    json = JSON.stringify(pruned);
+  const serialized = pruneSessionsForStorage(sessions).map(session => ({
+    session,
+    json: JSON.stringify(session),
+  }));
+  let jsonLength = 2 + serialized.reduce((total, entry) => total + entry.json.length, 0)
+    + Math.max(0, serialized.length - 1);
+
+  // Escalation 1: remove replay-only ciphertext from the oldest sessions
+  // first. This preserves visible chat history and keeps the newest session's
+  // stateless continuation intact for as long as possible.
+  for (let index = serialized.length - 1; index >= 0 && jsonLength > budgetBytes; index -= 1) {
+    const current = serialized[index];
+    const strippedSession = stripEncryptedReasoningFromSession(current.session);
+    if (strippedSession === current.session) continue;
+    const strippedJson = JSON.stringify(strippedSession);
+    jsonLength += strippedJson.length - current.json.length;
+    serialized[index] = { session: strippedSession, json: strippedJson };
   }
-  // Escalation 2: strip encrypted reasoning ciphertext, the largest payloads,
-  // before letting a single oversized session fall through to memory-only.
-  if (json.length > budgetBytes) {
-    pruned = stripEncryptedReasoningFromSessions(pruned);
-    json = JSON.stringify(pruned);
+
+  // Escalation 2: if visible history itself still exceeds the budget, drop
+  // whole oldest sessions. Each session is serialized at most twice, avoiding
+  // repeated full-array JSON serialization on the renderer thread.
+  while (jsonLength > budgetBytes && serialized.length > 1) {
+    const removed = serialized.pop();
+    if (!removed) break;
+    jsonLength -= removed.json.length + 1;
   }
-  return { json, sessions: pruned };
+
+  return {
+    json: `[${serialized.map(entry => entry.json).join(',')}]`,
+    sessions: serialized.map(entry => entry.session),
+  };
 }
 
 /**
@@ -293,14 +307,16 @@ export function serializeSessionsForStorage(
  * could not be persisted even after escalation (it stays memory-only).
  */
 export function writeSessionsForStorage(sessions: AISession[]): boolean {
-  const { json } = serializeSessionsForStorage(sessions);
-  if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, json)) return true;
-  // Other keys may be consuming the shared quota: retry with progressively
-  // tighter budgets so at least the most recent sessions survive a restart.
-  for (const retryBudget of RETRY_SESSIONS_JSON_BYTES) {
-    const retry = serializeSessionsForStorage(sessions, retryBudget);
-    if (retry.json.length >= json.length) continue;
-    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, retry.json)) return true;
+  let previousLength = Number.POSITIVE_INFINITY;
+  for (const configuredBudget of [MAX_SESSIONS_JSON_BYTES, ...RETRY_SESSIONS_JSON_BYTES]) {
+    // A real quota failure means the next attempt must be smaller even when
+    // the failed payload was already below the nominal retry budget.
+    const budget = Math.min(configuredBudget, previousLength - 1);
+    if (budget < 2) break;
+    const candidate = serializeSessionsForStorage(sessions, budget);
+    if (candidate.json.length >= previousLength) continue;
+    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) return true;
+    previousLength = candidate.json.length;
   }
   console.warn(
     '[AIState] Failed to persist AI sessions within the storage quota; recent chat history may not survive a restart.',

@@ -6,6 +6,7 @@ import {
   createContinuationContext,
 } from './cattyMessageBuilder';
 import type { ChatMessage } from '../../types';
+import { prepareCattyMessagesForStream } from '../cattyRuntime';
 
 function buildHistory(messages: ChatMessage[]) {
   return buildCattySdkMessages({
@@ -164,6 +165,50 @@ test('tool exchanges with replayable reasoning are kept intact', () => {
     ['reasoning', 'text', 'tool-call'],
   );
   assert.equal(sdkMessages[1].role, 'tool');
+});
+
+test('final Responses preparation preserves encrypted reasoning for a tool exchange', () => {
+  const toolCall = { id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } };
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'provider-1', providerType: 'openai', modelId: 'model-1' },
+        reasoningParts: [{
+          text: 'replayable reasoning',
+          providerOptions: {
+            openai: { itemId: 'rs_new', reasoningEncryptedContent: 'enc-abc' },
+          },
+        }],
+      },
+      toolCalls: [toolCall],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-1', content: 'output' }],
+    },
+  ];
+
+  const built = buildHistory(messages);
+  const prepared = prepareCattyMessagesForStream(built, { preserveReasoning: true });
+  const assistantContent = prepared[0].content;
+  assert.ok(Array.isArray(assistantContent));
+  const reasoning = assistantContent.find(part => part.type === 'reasoning');
+  assert.deepEqual(reasoning?.providerOptions?.openai, {
+    itemId: 'rs_new',
+    reasoningEncryptedContent: 'enc-abc',
+  });
+
+  const defaultPrepared = prepareCattyMessagesForStream(built);
+  const defaultAssistantContent = defaultPrepared[0].content;
+  assert.ok(Array.isArray(defaultAssistantContent));
+  assert.equal(defaultAssistantContent.some(part => part.type === 'reasoning'), false);
 });
 
 test('freshly streamed reasoning fragments with a null start payload keep the tool exchange', () => {
