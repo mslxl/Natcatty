@@ -187,7 +187,12 @@ const MAX_SESSION_MESSAGES = 200;
  */
 const MAX_SESSIONS_JSON_BYTES = 2 * 1024 * 1024;
 /** Retry budgets used when the primary budget still fails to persist. */
-const RETRY_SESSIONS_JSON_BYTES = [1024 * 1024, 512 * 1024] as const;
+const RETRY_SESSIONS_JSON_BYTES = [
+  1024 * 1024,
+  512 * 1024,
+  256 * 1024,
+  128 * 1024,
+] as const;
 
 /**
  * Remove `reasoningEncryptedContent` ciphertext from a message's persisted
@@ -310,8 +315,13 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
   let previousLength = Number.POSITIVE_INFINITY;
   for (const configuredBudget of [MAX_SESSIONS_JSON_BYTES, ...RETRY_SESSIONS_JSON_BYTES]) {
     // A real quota failure means the next attempt must be smaller even when
-    // the failed payload was already below the nominal retry budget.
-    const budget = Math.min(configuredBudget, previousLength - 1);
+    // the failed payload was already below the nominal retry budget. Reduce
+    // materially on each bounded retry so several small sessions can be
+    // removed before the retry sequence is exhausted.
+    const reducedBudget = Number.isFinite(previousLength)
+      ? Math.floor(previousLength * 0.75)
+      : configuredBudget;
+    const budget = Math.min(configuredBudget, reducedBudget);
     if (budget < 2) break;
     const candidate = serializeSessionsForStorage(sessions, budget);
     if (candidate.json.length >= previousLength) continue;
