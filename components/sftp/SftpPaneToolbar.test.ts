@@ -12,6 +12,7 @@ import {
   copySftpCurrentPathToClipboard,
   confirmRemoveSftpBookmark,
   canReorderSftpBookmark,
+  getSftpBookmarkMoveTargets,
   getNextSftpToolbarDisplayPath,
   getSftpViewModeToggleTarget,
   getSftpViewModeToggleLabelKey,
@@ -526,6 +527,40 @@ test("bookmark drag ordering stays within global or location scope", () => {
   assert.equal(canReorderSftpBookmark(bookmarks, "bm-1", "bm-2"), true);
   assert.equal(canReorderSftpBookmark(bookmarks, "gbm-1", "bm-1"), false);
   assert.equal(canReorderSftpBookmark(bookmarks, "missing", "bm-1"), false);
+  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, "gbm-1"), {
+    previousId: null,
+    nextId: "gbm-2",
+  });
+  assert.deepEqual(getSftpBookmarkMoveTargets(bookmarks, "bm-1"), {
+    previousId: null,
+    nextId: "bm-2",
+  });
+});
+
+test("bookmark manage mode exposes keyboard reorder controls without a dead path button", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SftpBookmarkList, {
+      bookmarks: [
+        { id: "bm-1", path: "/srv/a", label: "First" },
+        { id: "bm-2", path: "/srv/b", label: "Second" },
+      ],
+      managing: true,
+      onNavigateToBookmark: () => {},
+      onDeleteBookmark: () => {},
+      onReorderBookmark: () => {},
+      t: (key: string, params?: Record<string, unknown>) => ({
+        "sftp.bookmark.moveUp": `Move ${params?.label ?? ""} up`,
+        "sftp.bookmark.moveDown": `Move ${params?.label ?? ""} down`,
+        "sftp.bookmark.remove": "Remove bookmark",
+      }[key] ?? key),
+    }),
+  );
+
+  assert.match(markup, /aria-label="Move First up"[^>]*disabled/);
+  assert.match(markup, /aria-label="Move First down"/);
+  assert.match(markup, /aria-label="Move Second up"/);
+  assert.match(markup, /aria-label="Move Second down"[^>]*disabled/);
+  assert.doesNotMatch(markup, /<button[^>]*>\s*<div class="text-xs font-medium truncate">First/);
 });
 
 test("bookmark list renders saved paths as selectable rows", () => {

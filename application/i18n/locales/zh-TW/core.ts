@@ -911,6 +911,8 @@ export const zhTWCoreMessages: Messages = {
   'sftp.bookmark.manage': '管理',
   'sftp.bookmark.rename': '重新命名收藏',
   'sftp.bookmark.done': '完成',
+  'sftp.bookmark.moveUp': '上移 {label}',
+  'sftp.bookmark.moveDown': '下移 {label}',
   'sftp.columns.name': '名稱',
   'sftp.columns.configure': '選擇顯示的欄位',
   'sftp.columns.modified': '修改時間',

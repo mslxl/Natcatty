@@ -277,6 +277,8 @@ export const esVaultMessages: Messages = {
   'sftp.bookmark.manage': 'Administrar',
   'sftp.bookmark.rename': 'Renombrar marcador',
   'sftp.bookmark.done': 'Listo',
+  'sftp.bookmark.moveUp': 'Mover {label} hacia arriba',
+  'sftp.bookmark.moveDown': 'Mover {label} hacia abajo',
   'sftp.columns.name': 'Nombre',
   'sftp.columns.modified': 'Modificado',
   'sftp.columns.size': 'Tamaño',

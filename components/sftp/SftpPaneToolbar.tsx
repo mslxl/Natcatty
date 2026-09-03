@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Check, ClipboardCopy, Eye, EyeOff, FilePlus, Folder, FolderPlus, FolderSync, Globe, GripVertical, Home, Languages, List, ListTree, Pencil, RefreshCw, Rows3, Search, Terminal, TerminalSquare, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Check, ClipboardCopy, Eye, EyeOff, FilePlus, Folder, FolderPlus, FolderSync, Globe, GripVertical, Home, Languages, List, ListTree, Pencil, RefreshCw, Rows3, Search, Terminal, TerminalSquare, Trash2, X } from "lucide-react";
 import {
   getNextSftpListDensity,
   getSftpListDensityToggleLabelKey,
@@ -259,6 +259,30 @@ export const canReorderSftpBookmark = (
   return !!source && !!target && !!source.global === !!target.global;
 };
 
+export const getSftpBookmarkMoveTargets = (
+  bookmarks: SftpBookmark[],
+  bookmarkId: string,
+): { previousId: string | null; nextId: string | null } => {
+  const index = bookmarks.findIndex((bookmark) => bookmark.id === bookmarkId);
+  if (index < 0) return { previousId: null, nextId: null };
+  const isGlobal = !!bookmarks[index]?.global;
+  let previousId: string | null = null;
+  let nextId: string | null = null;
+  for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+    if (!!bookmarks[candidate]?.global === isGlobal) {
+      previousId = bookmarks[candidate]!.id;
+      break;
+    }
+  }
+  for (let candidate = index + 1; candidate < bookmarks.length; candidate += 1) {
+    if (!!bookmarks[candidate]?.global === isGlobal) {
+      nextId = bookmarks[candidate]!.id;
+      break;
+    }
+  }
+  return { previousId, nextId };
+};
+
 export const confirmRemoveSftpBookmark = (
   path: string,
   t: (key: string, params?: Record<string, unknown>) => string,
@@ -290,19 +314,24 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
     <div className="max-h-64 overflow-auto py-1 min-w-[18rem]">
       {bookmarks.map((bm, index) => {
         const startsHostGroup = index > 0 && !!bookmarks[index - 1]?.global && !bm.global;
-        const pathButton = (
-          <button
-            type="button"
-            className="flex-1 min-w-0 text-left"
-            onClick={() => {
-              if (managing) return;
-              onNavigateToBookmark(bm.path);
-            }}
-          >
+        const moveTargets = getSftpBookmarkMoveTargets(bookmarks, bm.id);
+        const pathContent = (
+          <>
             <div className="text-xs font-medium truncate">{bm.label}</div>
             <div className="text-[10px] text-muted-foreground font-mono break-all leading-tight">
               {bm.path}
             </div>
+          </>
+        );
+        const pathDisplay = managing ? (
+          <div className="flex-1 min-w-0 text-left">{pathContent}</div>
+        ) : (
+          <button
+            type="button"
+            className="flex-1 min-w-0 text-left"
+            onClick={() => onNavigateToBookmark(bm.path)}
+          >
+            {pathContent}
           </button>
         );
 
@@ -379,8 +408,38 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
                   setRenamingId(null);
                 }}
               />
-            ) : managing ? pathButton : (
-              <PopoverClose asChild>{pathButton}</PopoverClose>
+            ) : managing ? pathDisplay : (
+              <PopoverClose asChild>{pathDisplay}</PopoverClose>
+            )}
+            {managing && onReorderBookmark && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 text-muted-foreground"
+                  aria-label={t("sftp.bookmark.moveUp", { label: bm.label })}
+                  disabled={!moveTargets.previousId}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (moveTargets.previousId) onReorderBookmark(bm.id, moveTargets.previousId);
+                  }}
+                >
+                  <ArrowUp size={10} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 text-muted-foreground"
+                  aria-label={t("sftp.bookmark.moveDown", { label: bm.label })}
+                  disabled={!moveTargets.nextId}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (moveTargets.nextId) onReorderBookmark(bm.id, moveTargets.nextId);
+                  }}
+                >
+                  <ArrowDown size={10} />
+                </Button>
+              </>
             )}
             {managing && onRenameBookmark && renamingId !== bm.id && (
               <Button

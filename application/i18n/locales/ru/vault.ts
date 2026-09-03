@@ -315,6 +315,8 @@ export const ruVaultMessages: Messages = {
   'sftp.bookmark.manage': 'Управление',
   'sftp.bookmark.rename': 'Переименовать закладку',
   'sftp.bookmark.done': 'Готово',
+  'sftp.bookmark.moveUp': 'Переместить {label} вверх',
+  'sftp.bookmark.moveDown': 'Переместить {label} вниз',
   'sftp.columns.name': 'Имя',
   'sftp.columns.modified': 'Изменён',
   'sftp.columns.size': 'Размер',

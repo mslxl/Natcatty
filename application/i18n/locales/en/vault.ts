@@ -277,6 +277,8 @@ export const enVaultMessages: Messages = {
   'sftp.bookmark.manage': 'Manage',
   'sftp.bookmark.rename': 'Rename bookmark',
   'sftp.bookmark.done': 'Done',
+  'sftp.bookmark.moveUp': 'Move {label} up',
+  'sftp.bookmark.moveDown': 'Move {label} down',
   'sftp.columns.name': 'Name',
   'sftp.columns.modified': 'Modified',
   'sftp.columns.size': 'Size',

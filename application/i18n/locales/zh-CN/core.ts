@@ -908,6 +908,8 @@ export const zhCNCoreMessages: Messages = {
   'sftp.bookmark.manage': '管理',
   'sftp.bookmark.rename': '重命名收藏',
   'sftp.bookmark.done': '完成',
+  'sftp.bookmark.moveUp': '上移 {label}',
+  'sftp.bookmark.moveDown': '下移 {label}',
   'sftp.columns.name': '名称',
   'sftp.columns.configure': '选择显示的列',
   'sftp.columns.modified': '修改时间',
