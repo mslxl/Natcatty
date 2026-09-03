@@ -328,6 +328,16 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
     if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) return true;
     previousLength = candidate.json.length;
   }
+  // Last resort: attempt the smallest representation this serializer can
+  // produce (the newest session with replay-only ciphertext removed). A very
+  // small amount of shared quota may still be enough to preserve that chat.
+  const minimalCandidate = serializeSessionsForStorage(sessions, 0);
+  if (
+    minimalCandidate.json.length < previousLength
+    && localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, minimalCandidate.json)
+  ) {
+    return true;
+  }
   console.warn(
     '[AIState] Failed to persist AI sessions within the storage quota; recent chat history may not survive a restart.',
   );

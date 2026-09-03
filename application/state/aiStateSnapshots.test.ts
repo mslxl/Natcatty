@@ -191,3 +191,49 @@ test('writeSessionsForStorage reduces several small sessions to fit a sub-512 KB
     });
   }
 });
+
+test('writeSessionsForStorage makes a final attempt with only the newest session', async () => {
+  const { writeSessionsForStorage } = await import('./aiStateSnapshots');
+  const writes: string[] = [];
+  let stored: string | undefined;
+  const previousLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => null,
+      setItem: (_key: string, value: string) => {
+        writes.push(value);
+        if (value.length > 50 * 1024) {
+          throw new DOMException('quota exceeded', 'QuotaExceededError');
+        }
+        stored = value;
+      },
+      removeItem: () => {},
+    },
+  });
+
+  try {
+    const sessions = Array.from({ length: 10 }, (_, index) => makeSession(
+      `session-${index}`,
+      10 - index,
+      [{
+        id: `message-${index}`,
+        role: 'user' as const,
+        content: 'x'.repeat(40 * 1024),
+        timestamp: index,
+      }],
+    ));
+
+    assert.equal(writeSessionsForStorage(sessions), true);
+    assert.equal(writes.length, 6);
+    assert.ok(stored);
+    const persisted = JSON.parse(stored) as AISession[];
+    assert.deepEqual(persisted.map(session => session.id), ['session-0']);
+    assert.ok(stored.length <= 50 * 1024);
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: previousLocalStorage,
+    });
+  }
+});
