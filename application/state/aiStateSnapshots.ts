@@ -11,6 +11,7 @@ import type {
   AIToolIntegrationMode,
 } from '../../infrastructure/ai/types';
 import type { ProviderContinuationOptions } from '../../infrastructure/ai/providerContinuation';
+import { findSafeChatMessageCompactionSplitIndex } from '../../infrastructure/ai/contextCompaction';
 import {
   bumpDraftMutationVersionState,
   bumpDraftUploadGenerationState,
@@ -279,7 +280,13 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
   const limited = sorted.slice(0, MAX_STORED_SESSIONS);
   return limited.map(s => {
     if (s.messages.length > MAX_SESSION_MESSAGES) {
-      const removedMessageCount = s.messages.length - MAX_SESSION_MESSAGES;
+      // Do not start the retained tail with a tool result whose assistant call
+      // was just trimmed. Reuse the same tool-safe boundary logic as context
+      // compaction, even if that retains a few more than the nominal cap.
+      const removedMessageCount = findSafeChatMessageCompactionSplitIndex(
+        s.messages,
+        MAX_SESSION_MESSAGES,
+      );
       const contextCompaction = s.contextCompaction
         ? {
             ...s.contextCompaction,
@@ -291,7 +298,7 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
         : undefined;
       return {
         ...s,
-        messages: s.messages.slice(-MAX_SESSION_MESSAGES),
+        messages: s.messages.slice(removedMessageCount),
         ...(contextCompaction ? { contextCompaction } : {}),
       };
     }

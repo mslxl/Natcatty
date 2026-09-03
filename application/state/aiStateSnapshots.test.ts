@@ -337,6 +337,45 @@ test('serializeSessionsForStorage shifts the compaction boundary when trimming o
   );
 });
 
+test('serializeSessionsForStorage does not trim between a tool call and its result', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  const messages = Array.from({ length: 250 }, (_, index) => ({
+    id: `message-${index}`,
+    role: 'user' as const,
+    content: `turn ${index}`,
+    timestamp: index,
+  }));
+  messages[49] = {
+    id: 'assistant-call',
+    role: 'assistant',
+    content: 'Running it.',
+    timestamp: 49,
+    toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: { command: 'pwd' } }],
+  } as never;
+  messages[50] = {
+    id: 'tool-result',
+    role: 'tool',
+    content: '',
+    timestamp: 50,
+    toolResults: [{ toolCallId: 'call-1', content: '/tmp' }],
+  } as never;
+  const session = {
+    ...makeSession('tool-boundary', 1, messages),
+    contextCompaction: {
+      summary: 'The first 10 messages were summarized.',
+      compactedMessageCount: 10,
+    },
+  };
+
+  const result = serializeSessionsForStorage([session]);
+  const persisted = result.sessions[0];
+
+  assert.equal(persisted.messages.length, 201);
+  assert.equal(persisted.messages[0].id, 'assistant-call');
+  assert.equal(persisted.messages[1].id, 'tool-result');
+  assert.equal(persisted.contextCompaction?.compactedMessageCount, 0);
+});
+
 test('writeSessionsForStorage retries below nominal budgets after a quota failure', async () => {
   const { writeSessionsForStorage } = await import('./aiStateSnapshots');
   const writes: string[] = [];
