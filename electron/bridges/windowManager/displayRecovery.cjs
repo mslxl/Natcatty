@@ -362,13 +362,12 @@ function attachDisplayRecovery({
             // past the grace window is a deliberate user edit while the
             // monitor stays disconnected, and it supersedes the stale
             // recovery candidate. While a lock/sleep interruption remains
-            // active, however, the user cannot deliberately edit placement.
-            // Also keep it through the short post-resume drain window, when
-            // teardown events queued during the interruption may still fire.
+            // active, however, the user cannot deliberately edit placement,
+            // so retain the snapshot for the full interruption.
             const now = Date.now();
             if (
               teardownRelocationAt !== null &&
-              !isSessionInterruptionActiveOrDraining() &&
+              !sessionInterruptionActive &&
               now - teardownRelocationAt >= teardownGraceMs
             ) {
               teardownRelocationAt = null;
@@ -410,14 +409,13 @@ function attachDisplayRecovery({
         // (e.g. a paired "resize") after "display-removed" already promoted
         // the snapshot, and `rememberedDisplayId` is cleared by then, so this
         // is the only protection left. Keep it for the full active lock/sleep
-        // interruption, when the user cannot deliberately place the window,
-        // and through the short post-resume drain window for queued teardown
-        // events. Otherwise the grace window separates the teardown burst from
-        // a later user edit.
+        // interruption, when the user cannot deliberately place the window;
+        // otherwise the grace window separates the teardown burst from a later
+        // user edit.
         if (
           boundsAtDisplayRemoval !== null &&
           teardownSnapshotAt !== null &&
-          (isSessionInterruptionActiveOrDraining() ||
+          (sessionInterruptionActive ||
             Date.now() - teardownSnapshotAt < teardownGraceMs)
         ) {
           return;

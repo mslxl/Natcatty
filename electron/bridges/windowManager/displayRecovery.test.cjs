@@ -401,13 +401,12 @@ test("attachDisplayRecovery keeps the removal snapshot through a delayed lock-sc
   }
 });
 
-test("attachDisplayRecovery keeps the snapshot through teardown events queued just after unlock", () => {
+test("attachDisplayRecovery lets an immediate post-unlock user edit invalidate recovery", () => {
   const realNow = Date.now;
   let now = 1_900_000;
   Date.now = () => now;
   try {
-    const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
-    const win = createMockWindow({ ...secondaryBounds });
+    const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
     const screen = createMockScreen();
     const powerMonitor = createMockPowerMonitor();
 
@@ -418,17 +417,17 @@ test("attachDisplayRecovery keeps the snapshot through teardown events queued ju
     for (const handler of win.__listeners.get("move") || []) handler();
     screen.emit("display-removed", {}, SECONDARY);
 
-    // A long lock makes the snapshot old on the wall clock. Unlocking can
-    // release queued display events before the display-added notification, so
-    // a trailing resize in the short post-unlock drain window must keep it.
+    // Once the session unlocks, the user can deliberately re-place the
+    // relocated window. That edit must win even when it happens immediately
+    // after unlock and before the monitor returns.
     now += 60_000;
     powerMonitor.emit("unlock-screen");
-    win.bounds = { x: 100, y: 100, width: 1200, height: 800 };
-    for (const handler of win.__listeners.get("resize") || []) handler();
+    win.bounds = { x: 300, y: 200, width: 1200, height: 800 };
+    for (const handler of win.__listeners.get("move") || []) handler();
     screen.emit("display-added", {}, SECONDARY);
 
-    assert.equal(win.setBoundsCalls.length, 1);
-    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+    assert.equal(win.setBoundsCalls.length, 0);
+    assert.deepEqual(win.bounds, { x: 300, y: 200, width: 1200, height: 800 });
   } finally {
     Date.now = realNow;
   }
