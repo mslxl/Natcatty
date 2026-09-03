@@ -130,6 +130,22 @@ function createMockPowerMonitor() {
   };
 }
 
+function moveWindowManually(win, nextBounds) {
+  for (const handler of win.__listeners.get("will-move") || []) {
+    handler({}, { ...nextBounds });
+  }
+  win.bounds = { ...nextBounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+}
+
+function resizeWindowManually(win, nextBounds) {
+  for (const handler of win.__listeners.get("will-resize") || []) {
+    handler({}, { ...nextBounds }, { edge: "bottom-right" });
+  }
+  win.bounds = { ...nextBounds };
+  for (const handler of win.__listeners.get("resize") || []) handler();
+}
+
 test("boundsIntersectDisplay detects overlap and rejects invalid input", () => {
   assert.equal(boundsIntersectDisplay({ x: 2000, y: 100, width: 800, height: 600 }, SECONDARY.bounds), true);
   assert.equal(boundsIntersectDisplay({ x: 0, y: 0, width: 800, height: 600 }, SECONDARY.bounds), false);
@@ -421,8 +437,7 @@ test("attachDisplayRecovery lets an immediate post-unlock user edit invalidate r
     // relocated window. That edit must win even when it happens immediately
     // after unlock and before the monitor returns.
     powerMonitor.emit("unlock-screen");
-    win.bounds = { x: 300, y: 200, width: 1200, height: 800 };
-    for (const handler of win.__listeners.get("move") || []) handler();
+    moveWindowManually(win, { x: 300, y: 200, width: 1200, height: 800 });
     screen.emit("display-added", {}, SECONDARY);
 
     assert.equal(win.setBoundsCalls.length, 0);
@@ -449,8 +464,7 @@ test("attachDisplayRecovery does not promote an immediate post-unlock user move"
     // teardown grace window.
     powerMonitor.emit("lock-screen");
     powerMonitor.emit("unlock-screen");
-    win.bounds = { x: 300, y: 200, width: 1200, height: 800 };
-    for (const handler of win.__listeners.get("move") || []) handler();
+    moveWindowManually(win, { x: 300, y: 200, width: 1200, height: 800 });
     screen.emit("display-removed", {}, SECONDARY);
     screen.emit("display-added", {}, SECONDARY);
 
@@ -459,6 +473,79 @@ test("attachDisplayRecovery does not promote an immediate post-unlock user move"
   } finally {
     Date.now = realNow;
   }
+});
+
+test("attachDisplayRecovery lets an immediate post-unlock manual resize cancel recovery", () => {
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  powerMonitor.emit("unlock-screen");
+
+  resizeWindowManually(win, { x: 100, y: 100, width: 1200, height: 800 });
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+  assert.deepEqual(win.bounds, { x: 100, y: 100, width: 1200, height: 800 });
+});
+
+test("attachDisplayRecovery keeps a removal snapshot through a queued post-unlock OS move", () => {
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  powerMonitor.emit("unlock-screen");
+
+  // This regular move has no matching will-move because Windows queued it as
+  // part of the display teardown rather than the user moving the window.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], {
+    x: 2000,
+    y: 100,
+    width: 1400,
+    height: 900,
+  });
+});
+
+test("attachDisplayRecovery promotes a queued post-unlock OS move when removal follows", () => {
+  const win = createMockWindow({ x: 2000, y: 100, width: 1400, height: 900 });
+  const screen = createMockScreen();
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+
+  powerMonitor.emit("lock-screen");
+  powerMonitor.emit("unlock-screen");
+
+  // Windows can deliver the queued relocation before Electron reports that
+  // the display disappeared. It is still a system move, not manual intent.
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+
+  assert.equal(win.setBoundsCalls.length, 1);
+  assert.deepEqual(win.setBoundsCalls[0], {
+    x: 2000,
+    y: 100,
+    width: 1400,
+    height: 900,
+  });
 });
 
 test("attachDisplayRecovery drops the promoted snapshot for user edits after the grace window", () => {
@@ -1349,6 +1436,8 @@ test("detach removes all listeners and stops recovery", () => {
 
   assert.equal((screen.__listeners.get("display-removed") || []).length, 0);
   assert.equal((screen.__listeners.get("display-added") || []).length, 0);
+  assert.equal((win.__listeners.get("will-move") || []).length, 0);
+  assert.equal((win.__listeners.get("will-resize") || []).length, 0);
   assert.equal((win.__listeners.get("move") || []).length, 0);
   assert.equal((win.__listeners.get("resize") || []).length, 0);
   assert.equal((win.__listeners.get("unmaximize") || []).length, 0);

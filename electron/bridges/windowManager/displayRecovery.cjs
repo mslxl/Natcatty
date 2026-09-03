@@ -252,6 +252,26 @@ function attachDisplayRecovery({
   const isSessionInterruptionActiveOrDraining = () =>
     sessionInterruptionActive || isSessionInterruptionDraining();
 
+  const clearRecoveryCandidates = () => {
+    rememberedSecondaryBounds = null;
+    rememberedDisplayId = null;
+    pendingTeardownMove = null;
+    boundsAtDisplayRemoval = null;
+    boundsAtDisplayRemovalDisplayId = null;
+    teardownRelocationAt = null;
+    teardownSnapshotAt = null;
+    pendingRecovery = null;
+  };
+
+  // Electron emits these events only for a manual move/resize, before the
+  // ordinary move/resize event. That distinction matters just after unlock:
+  // Windows can deliver a queued OS relocation in the same period, and a
+  // regular move event alone cannot tell the two apart.
+  const onManualPlacement = () => {
+    if (!attached || !isTrackable() || sessionInterruptionActive) return;
+    clearRecoveryCandidates();
+  };
+
   const onSessionInterrupted = (signal) => {
     sessionInterruptedAt = Date.now();
     // Repeated start signals within the same interruption (e.g. a "suspend"
@@ -346,22 +366,6 @@ function attachDisplayRecovery({
       const display = screen.getDisplayMatching?.(bounds);
       if (!primary || !display) return;
       if (display.id === primary.id) {
-        // Once every lock/suspend signal has ended, a fresh window event can
-        // be a real user edit again. Let that edit win immediately instead of
-        // applying the ordinary teardown grace window: otherwise a move made
-        // just after unlock can be promoted as an OS relocation and later
-        // overwritten when the display returns.
-        if (isSessionInterruptionDraining()) {
-          rememberedSecondaryBounds = null;
-          rememberedDisplayId = null;
-          pendingTeardownMove = null;
-          boundsAtDisplayRemoval = null;
-          boundsAtDisplayRemovalDisplayId = null;
-          teardownRelocationAt = null;
-          teardownSnapshotAt = null;
-          pendingRecovery = null;
-          return;
-        }
         // The window is on the primary display now. If the remembered
         // secondary display is still connected, this is either a deliberate
         // user move or an OS teardown relocation that raced ahead of the
@@ -758,6 +762,8 @@ function attachDisplayRecovery({
   try {
     screen.on("display-removed", onDisplayRemoved);
     screen.on("display-added", onDisplayAdded);
+    win.on?.("will-move", onManualPlacement);
+    win.on?.("will-resize", onManualPlacement);
     win.on?.("move", rememberWindowPlacement);
     win.on?.("resize", rememberWindowPlacement);
     win.on?.("unmaximize", applyPendingRecovery);
@@ -785,6 +791,12 @@ function attachDisplayRecovery({
       screen.removeListener?.("display-added", onDisplayAdded);
     } catch {}
     try {
+      win.removeListener?.("will-move", onManualPlacement);
+    } catch {}
+    try {
+      win.removeListener?.("will-resize", onManualPlacement);
+    } catch {}
+    try {
       win.removeListener?.("move", rememberWindowPlacement);
     } catch {}
     try {
@@ -796,14 +808,7 @@ function attachDisplayRecovery({
     try {
       win.removeListener?.("leave-full-screen", applyPendingRecovery);
     } catch {}
-    boundsAtDisplayRemoval = null;
-    boundsAtDisplayRemovalDisplayId = null;
-    rememberedSecondaryBounds = null;
-    rememberedDisplayId = null;
-    pendingTeardownMove = null;
-    pendingRecovery = null;
-    teardownRelocationAt = null;
-    teardownSnapshotAt = null;
+    clearRecoveryCandidates();
     activeInterruptionSignals.clear();
     sessionInterruptionActive = false;
     sessionInterruptionEndedAt = null;
