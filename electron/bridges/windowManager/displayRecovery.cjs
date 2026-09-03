@@ -349,6 +349,8 @@ function attachDisplayRecovery({
               ? null
               : Date.now() + teardownGraceMs
             : null;
+          const preserveUntilIntent =
+            recentlyReturnedRecovery?.preserveUntilIntent === true;
           clearRecoveryCandidates();
           transientReturnedDisplay = retainedTransientAssociation;
           recentlyReturnedRecovery = {
@@ -356,6 +358,7 @@ function attachDisplayRecovery({
             displayId: destinationDisplayId,
             fromBounds: { ...nextBounds },
             burstExpiresAt,
+            preserveUntilIntent,
           };
           return;
         }
@@ -555,23 +558,43 @@ function attachDisplayRecovery({
       return { kind: "unrelated", index: -1 };
     }
     if (display === association.display) return { kind: "target", index: -1 };
-    const exactNeighborIndex = findUnrelatedTransientDisplayIndex(display);
-    if (exactNeighborIndex >= 0) {
-      return { kind: "unrelated", index: exactNeighborIndex };
+    const neighborIdentityIndex =
+      association.unrelatedTransientDisplays.findIndex(
+        (candidate) => candidate.display === display
+      );
+    if (neighborIdentityIndex >= 0) {
+      return { kind: "unrelated", index: neighborIdentityIndex };
     }
-
     const unresolved = [
-      { kind: "target", index: -1, bounds: association.displayBounds },
+      {
+        kind: "target",
+        index: -1,
+        bounds: association.displayBounds,
+        display: association.display,
+      },
       ...association.unrelatedTransientDisplays
         .map((candidate, index) => ({ ...candidate, kind: "unrelated", index }))
         .filter((candidate) => candidate.stableDisplayId === null),
     ];
     if (unresolved.length === 1) return unresolved[0];
-    // When a fresh payload lands directly over the target's transient
-    // geometry, it could be either the target or a neighbor moving across it.
-    // With no identity evidence, wait rather than restoring to the wrong one.
-    if (boundsIntersectDisplay(association.displayBounds, display.bounds)) {
+    // A replacement payload exactly occupying any old transient geometry
+    // could represent that display or another one after a topology reorder.
+    // Object identity is authoritative above; copied geometry alone is not.
+    if (
+      unresolved.some((candidate) =>
+        boundsEqual(candidate.bounds, display.bounds)
+      )
+    ) {
       return null;
+    }
+
+    const displayLabel =
+      typeof display.label === "string" ? display.label.trim() : "";
+    if (displayLabel) {
+      const labelMatches = unresolved.filter(
+        (candidate) => candidate.display?.label?.trim() === displayLabel
+      );
+      if (labelMatches.length === 1) return labelMatches[0];
     }
 
     const centerDistanceSquared = (a, b) => {
@@ -585,17 +608,25 @@ function attachDisplayRecovery({
         distance: centerDistanceSquared(candidate.bounds, display.bounds),
       }))
       .sort((a, b) => a.distance - b.distance);
-    if (ranked.length < 2) return ranked[0]?.candidate || null;
-    // Accept a replacement payload only when one transient position is much
-    // closer than every alternative. Close calls remain unassigned so an
-    // ambiguous topology change cannot move the window to a neighbor.
+    const sizeMatches = unresolved.filter(
+      (candidate) =>
+        candidate.bounds.width === display.bounds.width &&
+        candidate.bounds.height === display.bounds.height
+    );
+    // Fresh geometry is usable only when its unchanged display size and its
+    // nearest old position independently point to the same candidate. If the
+    // signals conflict (for example, two monitors crossed positions), wait
+    // rather than assigning a physical identity from coordinates alone.
     if (
-      ranked[0].distance !== 0 &&
-      ranked[0].distance * 4 >= ranked[1].distance
+      ranked.length < 2 ||
+      sizeMatches.length !== 1 ||
+      ranked[0].candidate !== sizeMatches[0] ||
+      (ranked[0].distance !== 0 &&
+        ranked[0].distance * 4 >= ranked[1].distance)
     ) {
       return null;
     }
-    return ranked[0].candidate;
+    return sizeMatches[0];
   };
 
   const matchesTransientReturnedDisplay = (
@@ -750,14 +781,30 @@ function attachDisplayRecovery({
         Date.now() - lastMaximizedMonitorTransferInputAt <=
           MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
       ) {
+        const transferSourceDisplay = screen.getDisplayMatching?.(
+          maximizedTransferSourceBounds
+        );
+        if (
+          transferSourceDisplay &&
+          recoveryPlacementMatchesDisplay(
+            { bounds: display.bounds, displayId: display.id },
+            transferSourceDisplay
+          )
+        ) {
+          // Windows can emit the resize half of Win+Shift+Arrow while the
+          // normal bounds still belong to the source display. Preserve the
+          // input signal until the paired move reveals the real destination.
+          return;
+        }
         const transferredBounds = { ...bounds };
         const transferredDisplayId = normalizeDisplayId(display.id);
         clearRecoveryCandidates();
         if (windowOnPrimary) return;
         // The shortcut is explicit user intent, so the chosen destination
-        // replaces the old recovery target. Keep it until the maximized state
-        // ends: a trailing OS resize or move must not undo the user's transfer
-        // to this display, even when it arrives after the teardown grace.
+        // replaces the old recovery target. Keep it until a queued relocation,
+        // explicit manual placement, or a new interruption supersedes it: a
+        // trailing OS resize or move must not undo the user's transfer to this
+        // display, even after the window leaves maximized state.
         rememberedSecondaryBounds = transferredBounds;
         rememberedDisplayId = transferredDisplayId;
         recentlyReturnedRecovery =
@@ -767,11 +814,11 @@ function attachDisplayRecovery({
                 displayId: transferredDisplayId,
                 fromBounds: { ...transferredBounds },
                 // Keep the explicit maximized transfer authoritative until
-                // either the queued OS relocation arrives or the window
-                // leaves the maximized/full-screen state. That relocation is
-                // not bounded by the ordinary teardown event grace period.
+                // the queued OS relocation arrives or explicit user/session
+                // intent supersedes it. The OS tail is not bounded by the
+                // ordinary teardown event grace period or maximized lifetime.
                 burstExpiresAt: null,
-                clearWhenNormal: true,
+                preserveUntilIntent: true,
               }
             : null;
         return;
@@ -811,16 +858,18 @@ function attachDisplayRecovery({
             : null;
           if (restored) {
             // A single Windows relocation may emit multiple move and resize
-            // events. Retain the target for the bounded burst; a real manual
-            // placement has its own intent signal and clears it immediately.
+            // events. Retain ordinary recovery for the bounded burst; an
+            // explicit monitor-transfer destination stays authoritative until
+            // later user/session intent supersedes it.
             recentlyReturnedRecovery =
               teardownGraceMs > 0
                 ? {
                     ...returnedRecovery,
                     fromBounds: { ...restored },
-                    burstExpiresAt:
-                      returnedRecovery.burstExpiresAt ??
-                      Date.now() + teardownGraceMs,
+                    burstExpiresAt: returnedRecovery.preserveUntilIntent
+                      ? null
+                      : returnedRecovery.burstExpiresAt ??
+                        Date.now() + teardownGraceMs,
                   }
                 : null;
             if (isMaximizedOrFullScreen()) {
@@ -1147,16 +1196,7 @@ function attachDisplayRecovery({
   // full-screen (see onDisplayAdded). Invoked when the window leaves that
   // state; also guards against the target display vanishing again.
   const applyPendingRecovery = () => {
-    if (!attached) return;
-    if (!pendingRecovery) {
-      if (
-        !isMaximizedOrFullScreen() &&
-        recentlyReturnedRecovery?.clearWhenNormal
-      ) {
-        recentlyReturnedRecovery = null;
-      }
-      return;
-    }
+    if (!attached || !pendingRecovery) return;
     try {
       if (isMaximizedOrFullScreen()) return;
       const { bounds, displayId, fromBounds } = pendingRecovery;
@@ -1207,9 +1247,6 @@ function attachDisplayRecovery({
       const targetBounds =
         clampBoundsToDisplay(bounds, displayPlacementRect(display)) || bounds;
       pendingRecovery = null;
-      if (recentlyReturnedRecovery?.clearWhenNormal) {
-        recentlyReturnedRecovery = null;
-      }
       win.setBounds(targetBounds);
     } catch {
       // Never let display churn break the window.

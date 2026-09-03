@@ -148,6 +148,9 @@ function createMockScreen({ primary = PRIMARY, displays = [PRIMARY, SECONDARY] }
       }
       return best || connected[0];
     },
+    __setDisplays(nextDisplays) {
+      connected.splice(0, connected.length, ...nextDisplays);
+    },
     __listeners: listeners,
   };
   return mock;
@@ -1458,6 +1461,43 @@ test("attachDisplayRecovery follows a moved target when it stabilizes before a f
   );
 });
 
+test("attachDisplayRecovery does not guess when fresh stable displays cross transient positions", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // Fresh payload objects cross past each other's transient positions while
+  // retaining their physical resolutions. Position and size now disagree,
+  // so fail closed instead of restoring onto the wrong physical display.
+  const stableReturningDisplay = {
+    id: SECONDARY.id,
+    bounds: { x: 6000, y: 0, width: 2560, height: 1440 },
+  };
+  screen.emit("display-metrics-changed", {}, stableReturningDisplay, ["bounds"]);
+  const stableNeighbor = {
+    id: 4,
+    bounds: { x: -5000, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-metrics-changed", {}, stableNeighbor, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("attachDisplayRecovery does not let a neighbor claim a fresh target removal", () => {
   const returningDisplay = { ...SECONDARY, id: -1 };
   const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
@@ -1488,6 +1528,47 @@ test("attachDisplayRecovery does not let a neighbor claim a fresh target removal
 
   // The surviving neighbor later moves over the target's transient return
   // geometry. It must not inherit the target's recovery record.
+  const stableNeighbor = {
+    id: 4,
+    bounds: { ...returningDisplay.bounds },
+  };
+  screen.emit("display-metrics-changed", {}, stableNeighbor, ["bounds"]);
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
+test("attachDisplayRecovery does not let a swapped neighbor claim a removed target", () => {
+  const returningDisplay = { ...SECONDARY, id: -1 };
+  const secondaryBounds = { x: 2000, y: 100, width: 1400, height: 900 };
+  const win = createMockWindow({ ...secondaryBounds });
+  const screen = createMockScreen({ displays: [PRIMARY, returningDisplay] });
+
+  attachDisplayRecovery({ win, screen });
+
+  screen.emit("display-removed", {}, returningDisplay);
+  win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+  for (const handler of win.__listeners.get("move") || []) handler();
+
+  returningDisplay.bounds = { x: -2560, y: 0, width: 2560, height: 1440 };
+  screen.emit("display-added", {}, returningDisplay);
+  const unknownNeighbor = {
+    id: -1,
+    bounds: { x: 4480, y: 0, width: 1920, height: 1080 },
+  };
+  screen.emit("display-added", {}, unknownNeighbor);
+
+  // The target disappears, but its fresh removal payload lands at the
+  // neighbor's transient position. Reflect the already-updated topology
+  // before delivering the event, as Electron does.
+  const stableTargetRemoval = {
+    id: SECONDARY.id,
+    bounds: { ...unknownNeighbor.bounds },
+  };
+  screen.__setDisplays([PRIMARY, unknownNeighbor]);
+  for (const handler of screen.__listeners.get("display-removed") || []) {
+    handler({}, stableTargetRemoval);
+  }
+
   const stableNeighbor = {
     id: 4,
     bounds: { ...returningDisplay.bounds },
@@ -2517,6 +2598,44 @@ test("attachDisplayRecovery respects a maximized keyboard move from a returned d
   assert.equal(win.setBoundsCalls.length, 0);
 });
 
+test("attachDisplayRecovery waits for a maximized shortcut destination when resize fires first", () => {
+  const TERTIARY = {
+    id: 3,
+    bounds: { x: -1920, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const resizedSourceBounds = { x: 2200, y: 80, width: 1000, height: 700 };
+  const tertiaryBounds = { x: -1700, y: 100, width: 1200, height: 800 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
+  const powerMonitor = createMockPowerMonitor();
+
+  attachDisplayRecovery({ win, screen, powerMonitor });
+  powerMonitor.emit("lock-screen");
+  screen.emit("display-removed", {}, SECONDARY);
+  screen.emit("display-added", {}, SECONDARY);
+  powerMonitor.emit("unlock-screen");
+
+  win.webContents.emit("before-input-event", {}, {
+    type: "keyDown",
+    key: "ArrowLeft",
+    meta: true,
+    shift: true,
+  });
+  // Windows can emit the resize half while the normal bounds still belong to
+  // the source display. Keep waiting for the paired move event to reveal the
+  // actual destination instead of arming recovery back to the source.
+  win.normalBounds = { ...resizedSourceBounds };
+  for (const handler of win.__listeners.get("resize") || []) handler();
+  win.normalBounds = { ...tertiaryBounds };
+  for (const handler of win.__listeners.get("move") || []) handler();
+  win.unmaximize();
+
+  assert.equal(win.setBoundsCalls.length, 0);
+});
+
 test("attachDisplayRecovery protects a maximized keyboard transfer from a trailing OS relocation", () => {
   const realNow = Date.now;
   let now = 4_800_000;
@@ -2555,6 +2674,65 @@ test("attachDisplayRecovery protects a maximized keyboard transfer from a traili
     win.normalBounds = { x: 100, y: 100, width: 1200, height: 800 };
     for (const handler of win.__listeners.get("resize") || []) handler();
     win.unmaximize();
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], tertiaryBounds);
+
+    // A second half of the same stale relocation can arrive outside the
+    // ordinary burst window too; it still must not undo the explicit choice.
+    now += 3_000;
+    win.normalBounds = { x: 120, y: 120, width: 1200, height: 800 };
+    win.bounds = { ...win.normalBounds };
+    for (const handler of win.__listeners.get("move") || []) handler();
+    assert.equal(win.setBoundsCalls.length, 2);
+    assert.deepEqual(win.setBoundsCalls[1], tertiaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("attachDisplayRecovery protects an unmaximized keyboard transfer from a late OS relocation", () => {
+  const realNow = Date.now;
+  let now = 5_100_000;
+  Date.now = () => now;
+  const TERTIARY = {
+    id: 3,
+    bounds: { x: -1920, y: 0, width: 1920, height: 1080 },
+  };
+  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+  const tertiaryBounds = { x: -1700, y: 100, width: 1200, height: 800 };
+  const win = createMockWindow({ ...secondaryBounds });
+  win.maximized = true;
+  win.normalBounds = { ...secondaryBounds };
+  const screen = createMockScreen({ displays: [PRIMARY, SECONDARY, TERTIARY] });
+  const powerMonitor = createMockPowerMonitor();
+
+  try {
+    attachDisplayRecovery({ win, screen, powerMonitor });
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    powerMonitor.emit("unlock-screen");
+
+    win.webContents.emit("before-input-event", {}, {
+      type: "keyDown",
+      key: "ArrowLeft",
+      meta: true,
+      shift: true,
+    });
+    win.normalBounds = { ...tertiaryBounds };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    // The user can leave maximized mode before Windows delivers its old
+    // relocation. The explicit destination still wins when that system event
+    // arrives later without a manual-placement signal.
+    win.maximized = false;
+    win.bounds = { ...tertiaryBounds };
+    for (const handler of win.__listeners.get("unmaximize") || []) handler();
+    now += 3_000;
+    win.normalBounds = { x: 100, y: 100, width: 1200, height: 800 };
+    win.bounds = { ...win.normalBounds };
+    for (const handler of win.__listeners.get("resize") || []) handler();
 
     assert.equal(win.setBoundsCalls.length, 1);
     assert.deepEqual(win.setBoundsCalls[0], tertiaryBounds);
