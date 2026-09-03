@@ -241,8 +241,9 @@ function attachDisplayRecovery({
   let pendingRecovery = null;
   // A display can re-appear before Windows delivers the queued relocation
   // that moves the window to the primary display. Keep the matching recovery
-  // target through the active/draining interruption so that late system move
-  // can be corrected immediately without waiting for another display event.
+  // target until that late system move arrives, a manual placement cancels it,
+  // or a new interruption starts. The queued relocation is not guaranteed to
+  // arrive within the short teardown grace window.
   let recentlyReturnedRecovery = null;
   // Wall-clock time of the last powerMonitor "suspend" or "lock-screen"
   // event. Used to tell a grace-window expiry caused by actual elapsed time
@@ -398,10 +399,7 @@ function attachDisplayRecovery({
           primary
         )
       ) {
-        if (
-          recentlyReturnedRecovery &&
-          isSessionInterruptionActiveOrDraining()
-        ) {
+        if (recentlyReturnedRecovery) {
           const connected = screen.getAllDisplays?.() || [];
           const returnedDisplay = connected.find((candidate) =>
             recoveryPlacementMatchesDisplay(recentlyReturnedRecovery, candidate)
@@ -720,7 +718,7 @@ function attachDisplayRecovery({
         .find((candidate) => recoveryPlacementMatchesDisplay(candidate, display));
       if (
         matchingCandidate &&
-        isSessionInterruptionActiveOrDraining()
+        boundsIntersectDisplay(currentBounds, display?.bounds)
       ) {
         recentlyReturnedRecovery = {
           bounds: { ...matchingCandidate.bounds },

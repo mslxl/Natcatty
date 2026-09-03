@@ -664,25 +664,64 @@ test("attachDisplayRecovery restores when display-added precedes a queued OS mov
   assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
 });
 
+test("attachDisplayRecovery restores a delayed queued OS move after display-added", () => {
+  const realNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
+
+    attachDisplayRecovery({ win, screen, powerMonitor });
+
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    powerMonitor.emit("unlock-screen");
+
+    // Windows may not deliver the queued system relocation until well after
+    // the short teardown grace window has elapsed.
+    now += 5_000;
+    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
+    for (const handler of win.__listeners.get("move") || []) handler();
+
+    assert.equal(win.setBoundsCalls.length, 1);
+    assert.deepEqual(win.setBoundsCalls[0], secondaryBounds);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("attachDisplayRecovery respects a manual move after display-added", () => {
-  const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
-  const win = createMockWindow({ ...secondaryBounds });
-  const screen = createMockScreen();
-  const powerMonitor = createMockPowerMonitor();
+  const realNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  try {
+    const secondaryBounds = { x: 2100, y: 120, width: 1400, height: 900 };
+    const win = createMockWindow({ ...secondaryBounds });
+    const screen = createMockScreen();
+    const powerMonitor = createMockPowerMonitor();
 
-  attachDisplayRecovery({ win, screen, powerMonitor });
+    attachDisplayRecovery({ win, screen, powerMonitor });
 
-  powerMonitor.emit("lock-screen");
-  screen.emit("display-removed", {}, SECONDARY);
-  screen.emit("display-added", {}, SECONDARY);
-  powerMonitor.emit("unlock-screen");
+    powerMonitor.emit("lock-screen");
+    screen.emit("display-removed", {}, SECONDARY);
+    screen.emit("display-added", {}, SECONDARY);
+    powerMonitor.emit("unlock-screen");
+    now += 5_000;
 
-  // Unlike the queued OS relocation, a real user move emits will-move first
-  // and must cancel the recently returned recovery target.
-  moveWindowManually(win, { x: 300, y: 200, width: 1200, height: 800 });
+    // Unlike the queued OS relocation, a real user move emits will-move first
+    // and must cancel the recently returned recovery target even after the
+    // teardown grace window has elapsed.
+    moveWindowManually(win, { x: 300, y: 200, width: 1200, height: 800 });
 
-  assert.equal(win.setBoundsCalls.length, 0);
-  assert.deepEqual(win.bounds, { x: 300, y: 200, width: 1200, height: 800 });
+    assert.equal(win.setBoundsCalls.length, 0);
+    assert.deepEqual(win.bounds, { x: 300, y: 200, width: 1200, height: 800 });
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("attachDisplayRecovery retries after a transient returning display stabilizes", () => {
@@ -1361,8 +1400,7 @@ test("attachDisplayRecovery drops the removal snapshot when the returning displa
     // protection alone cannot clear it), and that display is later torn down
     // and re-added again: the stale snapshot must not restore the old
     // placement over the user's newer choice.
-    win.bounds = { x: 100, y: 100, width: 1400, height: 900 };
-    for (const handler of win.__listeners.get("move") || []) handler();
+    moveWindowManually(win, { x: 100, y: 100, width: 1400, height: 900 });
     now += 60_000;
     screen.emit("display-removed", {}, SECONDARY);
     screen.emit("display-added", {}, SECONDARY);
