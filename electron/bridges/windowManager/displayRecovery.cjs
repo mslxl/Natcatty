@@ -345,7 +345,9 @@ function attachDisplayRecovery({
               ? transientReturnedDisplay
               : null;
           const burstExpiresAt = recentRecoveryCanStillReceiveQueuedEvents
-            ? recentlyReturnedRecovery.burstExpiresAt
+            ? recentlyReturnedRecovery.burstExpiresAt === null
+              ? null
+              : Date.now() + teardownGraceMs
             : null;
           clearRecoveryCandidates();
           transientReturnedDisplay = retainedTransientAssociation;
@@ -500,6 +502,12 @@ function attachDisplayRecovery({
       // bounds fallback) so their removal resolves ambiguity instead of
       // destroying the target display's recovery record.
       unrelatedTransientDisplays: [],
+      // If one of multiple unknown displays disappears without enough stable
+      // identity to correlate it, future promotion must still match the
+      // target's return geometry. This preserves recovery when a neighbor goes
+      // away while preventing the remaining unknown display from inheriting
+      // the target solely because it became the last one standing.
+      requireTargetGeometry: false,
       // Stable secondary displays that were already connected when this
       // unknown-id display was added are known to be unrelated. Their later
       // metrics/removal events must neither claim nor clear this association.
@@ -551,6 +559,13 @@ function attachDisplayRecovery({
       stableDisplayId === null ||
       !isFiniteBounds(display?.bounds) ||
       isPrimaryDisplay(display)
+    ) {
+      return false;
+    }
+
+    if (
+      association.requireTargetGeometry &&
+      !boundsIntersectDisplay(association.displayBounds, display.bounds)
     ) {
       return false;
     }
@@ -676,15 +691,34 @@ function attachDisplayRecovery({
         Date.now() - lastMaximizedMonitorTransferInputAt <=
           MAXIMIZED_MONITOR_TRANSFER_INPUT_GRACE_MS
       ) {
+        const transferredBounds = { ...bounds };
+        const transferredDisplayId = normalizeDisplayId(display.id);
         clearRecoveryCandidates();
         if (windowOnPrimary) return;
+        // The shortcut is explicit user intent, so the chosen destination
+        // replaces the old recovery target. Keep it for the short remainder
+        // of the in-flight Windows relocation burst: a trailing OS resize or
+        // move must not undo the user's transfer to this display.
+        rememberedSecondaryBounds = transferredBounds;
+        rememberedDisplayId = transferredDisplayId;
+        recentlyReturnedRecovery =
+          teardownGraceMs > 0
+            ? {
+                bounds: transferredBounds,
+                displayId: transferredDisplayId,
+                fromBounds: { ...transferredBounds },
+                burstExpiresAt: Date.now() + teardownGraceMs,
+              }
+            : null;
+        return;
       }
 
       if (recentlyReturnedRecovery) {
         let returnedRecovery = recentlyReturnedRecovery;
         if (
           returnedRecovery.burstExpiresAt !== null &&
-          Date.now() > returnedRecovery.burstExpiresAt
+          Date.now() > returnedRecovery.burstExpiresAt &&
+          !isSessionInterruptionActiveOrDraining()
         ) {
           // Once one queued relocation event has been recovered, keep the
           // record only for a bounded burst. User moves clear it earlier via
@@ -897,6 +931,22 @@ function attachDisplayRecovery({
           unrelatedTransientIndex,
           1
         );
+        return;
+      }
+      if (
+        association.unrelatedTransientDisplays.length > 0 &&
+        oldDisplay !== association.display &&
+        (removedDisplayId !== null ||
+          !isFiniteBounds(oldDisplay.bounds) ||
+          !boundsIntersectDisplay(association.displayBounds, oldDisplay.bounds))
+      ) {
+        // A second unknown display can stabilize with a replacement event
+        // object and changed bounds, leaving no direct correlation to its add
+        // payload. Its removal reduces the ambiguity; retain the target's
+        // recovery, but require the target's return geometry for promotion so
+        // the surviving neighbor cannot inherit it by mere uniqueness.
+        association.unrelatedTransientDisplays.shift();
+        association.requireTargetGeometry = true;
         return;
       }
       if (association.unrelatedDisplayIds.has(removedDisplayId)) {
