@@ -246,6 +246,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onCreateLocalTerminal,
   isBroadcastEnabled,
   onToggleBroadcast,
+  isGlobalBroadcastEnabled,
+  onToggleGlobalBroadcast,
+  orphanSessionCount,
   updateHosts,
   updateSnippets,
   updateSnippetPackages,
@@ -1060,15 +1063,39 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       ? undefined
       : sessionsRef.current.find((session) => session.id === sourceSessionId);
     const workspaceId = sourceSession?.workspaceId;
-    if (!directTargetIds && !workspaceId) return [];
+
+    // Determine broadcast targets based on mode
+    let shouldBroadcast = false;
+    let isGlobalBroadcast = false;
+
+    if (directTargetIds) {
+      shouldBroadcast = true;
+    } else if (workspaceId) {
+      // Workspace broadcast mode
+      shouldBroadcast = true;
+      isGlobalBroadcast = false;
+    } else if (!workspaceId) {
+      // Orphan session - check global broadcast
+      shouldBroadcast = true;
+      isGlobalBroadcast = true;
+    }
+
+    if (!shouldBroadcast) return [];
+
     const directTargetSet = directTargetIds ? new Set(directTargetIds) : null;
     const deliveredSessionIds: string[] = [];
 
     for (const session of sessionsRef.current) {
       if (directTargetSet) {
         if (!directTargetSet.has(session.id)) continue;
-      } else if (session.workspaceId !== workspaceId || session.id === sourceSessionId) {
-        continue;
+      } else if (isGlobalBroadcast) {
+        // Global broadcast: only to other orphan sessions
+        if (session.workspaceId || session.id === sourceSessionId) continue;
+      } else {
+        // Workspace broadcast: only to sessions in same workspace
+        if (session.workspaceId !== workspaceId || session.id === sourceSessionId) {
+          continue;
+        }
       }
       if (!canUseDirectSessionWriteFallback(session)) continue;
 
@@ -1296,6 +1323,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const onToggleBroadcastRef = useRef(onToggleBroadcast);
   onToggleBroadcastRef.current = onToggleBroadcast;
   const workspaceBroadcastHandlersRef = useRef<Map<string, () => void>>(new Map());
+
+  const onToggleGlobalBroadcastRef = useRef(onToggleGlobalBroadcast);
+  onToggleGlobalBroadcastRef.current = onToggleGlobalBroadcast;
 
   const mountedSftpTabIds = useMemo(
     () => Array.from(sftpHostForTab.keys()),
@@ -2298,6 +2328,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     restoreTerminalCwd,
     identities,
     isBroadcastEnabled,
+    isGlobalBroadcastEnabled,
+    orphanSessionCount,
     isComposeBarOpen,
     keyBindings,
     keys,
@@ -2334,6 +2366,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onSplitSession,
     onSplitSessionRef,
     onToggleBroadcastRef,
+    onToggleGlobalBroadcastRef,
     onToggleWorkspaceViewMode,
     onToggleWorkspaceViewModeRef,
     onUpdateHost,

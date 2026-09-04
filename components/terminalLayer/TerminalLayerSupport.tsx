@@ -710,7 +710,12 @@ export interface TerminalLayerProps {
   onCreateLocalTerminal?: () => void;
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isGlobalBroadcastEnabled?: () => boolean;
+  orphanSessionCount?: number;
   onToggleBroadcast?: (workspaceId: string) => void;
+  isGlobalBroadcastEnabled?: () => boolean;
+  onToggleGlobalBroadcast?: () => void;
+  orphanSessionCount?: number;
   // SFTP side panel
   updateHosts: (hosts: Host[]) => void;
   updateSnippets?: (snippets: Snippet[]) => void;
@@ -810,6 +815,8 @@ interface TerminalPaneProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isGlobalBroadcastEnabled?: () => boolean;
+  orphanSessionCount?: number;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,
@@ -1233,6 +1240,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onSetWorkspaceFocusedSession,
   onSplitSession,
   isBroadcastEnabled,
+  isGlobalBroadcastEnabled,
+  orphanSessionCount,
   onBroadcastInput,
   onBroadcastInterruptPriorityChange,
   onToggleWorkspaceComposeBar,
@@ -1459,7 +1468,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     : undefined;
   const splitHorizontalHandler = splitHorizontalHandlersRef.current.get(session.id);
   const splitVerticalHandler = splitVerticalHandlersRef.current.get(session.id);
-  const broadcastEnabled = activeWorkspaceId ? !!isBroadcastEnabled?.(activeWorkspaceId) : false;
+  const broadcastEnabled = activeWorkspaceId
+    ? !!isBroadcastEnabled?.(activeWorkspaceId)
+    : (isGlobalBroadcastEnabled?.() ?? false);
   const isHostEphemeral = !isSavedVaultHost(hostMap.get(host.id));
   const sessionAppearance = useMemo(
     () => resolveSessionAppearance({ host, isEphemeral: isHostEphemeral }),
@@ -1605,7 +1616,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
         isBroadcastEnabled={broadcastEnabled}
-        onToggleBroadcast={inActiveWorkspace ? workspaceBroadcastHandler : undefined}
+        onToggleBroadcast={
+          inActiveWorkspace
+            ? workspaceBroadcastHandler
+            : (orphanSessionCount && orphanSessionCount >= 2 ? onToggleGlobalBroadcast : undefined)
+        }
+        orphanSessionCount={orphanSessionCount}
         onToggleComposeBar={inActiveWorkspace ? onToggleWorkspaceComposeBar : undefined}
         isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
@@ -1697,6 +1713,8 @@ interface TerminalPanesHostProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isGlobalBroadcastEnabled?: () => boolean;
+  orphanSessionCount?: number;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,

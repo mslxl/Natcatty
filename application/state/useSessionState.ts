@@ -233,6 +233,8 @@ export const useSessionState = ({
   const [tabOrder, setTabOrder] = useState<string[]>(initialRestoreState.tabOrder);
   // Broadcast mode: stores workspace IDs that have broadcast enabled
   const [broadcastWorkspaceIds, setBroadcastWorkspaceIds] = useState<Set<string>>(new Set());
+  // Global broadcast mode: enables broadcast for all orphan sessions (not in workspaces)
+  const [globalBroadcastEnabled, setGlobalBroadcastEnabled] = useState<boolean>(false);
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
   const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
@@ -1272,6 +1274,16 @@ export const useSessionState = ({
     return broadcastWorkspaceIds.has(workspaceId);
   }, [broadcastWorkspaceIds]);
 
+  // Toggle global broadcast mode for orphan sessions
+  const toggleGlobalBroadcast = useCallback(() => {
+    setGlobalBroadcastEnabled(prev => !prev);
+  }, []);
+
+  // Check if global broadcast is enabled
+  const isGlobalBroadcastEnabled = useCallback(() => {
+    return globalBroadcastEnabled;
+  }, [globalBroadcastEnabled]);
+
   const baseWorkTabIds = useMemo(() => [
     ...orphanSessions.map(s => s.id),
     ...workspaces.map(w => w.id),
@@ -1395,9 +1407,12 @@ export const useSessionState = ({
     moveFocusInWorkspace,
     runSnippet,
     orphanSessions,
+    orphanSessionCount: orphanSessions.length,
     // Broadcast mode
     toggleBroadcast,
     isBroadcastEnabled,
+    toggleGlobalBroadcast,
+    isGlobalBroadcastEnabled,
     orderedTabs,
     getOrderedWorkTabs,
     reorderTabs,
