@@ -711,7 +711,7 @@ export interface TerminalLayerProps {
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
   isGlobalBroadcastEnabled?: boolean;
-  orphanSessionCount?: number;
+  canUseGlobalBroadcast?: boolean;
   onToggleBroadcast?: (workspaceId: string) => void;
   onToggleGlobalBroadcast?: () => void;
   // SFTP side panel
@@ -814,7 +814,7 @@ interface TerminalPaneProps {
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
   isGlobalBroadcastEnabled?: boolean;
-  orphanSessionCount?: number;
+  canUseGlobalBroadcast?: boolean;
   onToggleGlobalBroadcast?: () => void;
   onBroadcastInput: (
     data: string,
@@ -941,6 +941,9 @@ const terminalPanePropsAreEqual = (
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onSplitSession === next.onSplitSession &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
+  prev.isGlobalBroadcastEnabled === next.isGlobalBroadcastEnabled &&
+  prev.canUseGlobalBroadcast === next.canUseGlobalBroadcast &&
+  prev.onToggleGlobalBroadcast === next.onToggleGlobalBroadcast &&
   prev.onBroadcastInput === next.onBroadcastInput &&
   prev.onBroadcastInterruptPriorityChange === next.onBroadcastInterruptPriorityChange &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
@@ -1240,7 +1243,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onSplitSession,
   isBroadcastEnabled,
   isGlobalBroadcastEnabled,
-  orphanSessionCount,
+  canUseGlobalBroadcast,
   onToggleGlobalBroadcast,
   onBroadcastInput,
   onBroadcastInterruptPriorityChange,
@@ -1619,19 +1622,10 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onToggleBroadcast={
           inActiveWorkspace
             ? workspaceBroadcastHandler
-            : (orphanSessionCount && orphanSessionCount >= 2 ? onToggleGlobalBroadcast : undefined)
+            : (canUseGlobalBroadcast ? onToggleGlobalBroadcast : undefined)
         }
-        orphanSessionCount={orphanSessionCount}
-        onToggleComposeBar={
-          inActiveWorkspace
-            ? onToggleWorkspaceComposeBar
-            : (orphanSessionCount && orphanSessionCount >= 2 ? onToggleWorkspaceComposeBar : undefined)
-        }
-        isWorkspaceComposeBarOpen={
-          inActiveWorkspace
-            ? isComposeBarOpen
-            : (orphanSessionCount && orphanSessionCount >= 2 ? isComposeBarOpen : undefined)
-        }
+        onToggleComposeBar={inActiveWorkspace ? onToggleWorkspaceComposeBar : undefined}
+        isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
         onBroadcastInterruptPriorityChange={onBroadcastInterruptPriorityChange}
         onSnippetExecutorChange={onSnippetExecutorChange}
@@ -1722,7 +1716,7 @@ interface TerminalPanesHostProps {
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
   isGlobalBroadcastEnabled?: boolean;
-  orphanSessionCount?: number;
+  canUseGlobalBroadcast?: boolean;
   onToggleGlobalBroadcast?: () => void;
   onBroadcastInput: (
     data: string,
@@ -1812,7 +1806,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onSplitSession !== next.onSplitSession) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
   if (prev.isGlobalBroadcastEnabled !== next.isGlobalBroadcastEnabled) return false;
-  if (prev.orphanSessionCount !== next.orphanSessionCount) return false;
+  if (prev.canUseGlobalBroadcast !== next.canUseGlobalBroadcast) return false;
   if (prev.onToggleGlobalBroadcast !== next.onToggleGlobalBroadcast) return false;
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
   if (prev.onBroadcastInterruptPriorityChange !== next.onBroadcastInterruptPriorityChange) return false;

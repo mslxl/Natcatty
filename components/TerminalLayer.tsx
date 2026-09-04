@@ -67,6 +67,7 @@ import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { focusTerminalSessionInput } from './terminal/focusTerminalSession';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { resolveTerminalFontSizeUpdateTarget } from './terminalLayer/terminalFontSizeUpdate';
+import { resolveTerminalBroadcastTargetIds } from '../domain/terminalBroadcast';
 import {
   AUTO_RUN_SNIPPET_LINE_DELAY_MS,
   shouldDelayAutoRunSnippetInput,
@@ -248,7 +249,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onToggleBroadcast,
   isGlobalBroadcastEnabled,
   onToggleGlobalBroadcast,
-  orphanSessionCount,
+  canUseGlobalBroadcast,
   updateHosts,
   updateSnippets,
   updateSnippetPackages,
@@ -1052,51 +1053,25 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionHostsMapRef = useRef(sessionHostsMap);
   sessionHostsMapRef.current = sessionHostsMap;
 
-  // Handle broadcast input - write to all other sessions in the source workspace.
+  // Resolve the active broadcast mode, then write to its target sessions.
   const handleBroadcastInput = useCallback((
     data: string,
     sourceSessionId: string,
     options?: TerminalBroadcastInputOptions,
   ) => {
-    const directTargetIds = options?.kittyKeyboardTargetSessionIds;
-    const sourceSession = directTargetIds
-      ? undefined
-      : sessionsRef.current.find((session) => session.id === sourceSessionId);
-    const workspaceId = sourceSession?.workspaceId;
+    const targetSessionIds = resolveTerminalBroadcastTargetIds({
+      sessions: sessionsRef.current,
+      sourceSessionId,
+      globalBroadcastEnabled: isGlobalBroadcastEnabled,
+      directTargetSessionIds: options?.kittyKeyboardTargetSessionIds,
+    });
+    if (targetSessionIds.length === 0) return [];
 
-    // Determine broadcast targets based on mode
-    let shouldBroadcast = false;
-    let isGlobalBroadcast = false;
-
-    if (directTargetIds) {
-      shouldBroadcast = true;
-    } else if (workspaceId) {
-      // Workspace broadcast mode
-      shouldBroadcast = true;
-      isGlobalBroadcast = false;
-    } else if (!workspaceId) {
-      // Orphan session - check global broadcast flag
-      shouldBroadcast = isGlobalBroadcastEnabled;
-      isGlobalBroadcast = true;
-    }
-
-    if (!shouldBroadcast) return [];
-
-    const directTargetSet = directTargetIds ? new Set(directTargetIds) : null;
+    const targetSessionIdSet = new Set(targetSessionIds);
     const deliveredSessionIds: string[] = [];
 
     for (const session of sessionsRef.current) {
-      if (directTargetSet) {
-        if (!directTargetSet.has(session.id)) continue;
-      } else if (isGlobalBroadcast) {
-        // Global broadcast: only to other orphan sessions
-        if (session.workspaceId || session.id === sourceSessionId) continue;
-      } else {
-        // Workspace broadcast: only to sessions in same workspace
-        if (session.workspaceId !== workspaceId || session.id === sourceSessionId) {
-          continue;
-        }
-      }
+      if (!targetSessionIdSet.has(session.id)) continue;
       if (!canUseDirectSessionWriteFallback(session)) continue;
 
       if (options?.kittyKeyboardInput) {
@@ -2329,7 +2304,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     identities,
     isBroadcastEnabled,
     isGlobalBroadcastEnabled,
-    orphanSessionCount,
+    canUseGlobalBroadcast,
     isComposeBarOpen,
     keyBindings,
     keys,

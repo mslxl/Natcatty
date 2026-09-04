@@ -1123,6 +1123,7 @@ export const useSessionState = ({
 	  }, [setActiveTabId]);
 
   const orphanSessions = useMemo(() => sessions.filter(s => !s.workspaceId && !s.hiddenFromTabs), [sessions]);
+  const canUseGlobalBroadcast = orphanSessions.length >= 2;
 
   const openLogView = useCallback((log: ConnectionLog) => {
     const tabId = getLogViewTabId(log);
@@ -1405,7 +1406,7 @@ export const useSessionState = ({
     moveFocusInWorkspace,
     runSnippet,
     orphanSessions,
-    orphanSessionCount: orphanSessions.length,
+    canUseGlobalBroadcast,
     // Broadcast mode
     toggleBroadcast,
     isBroadcastEnabled,

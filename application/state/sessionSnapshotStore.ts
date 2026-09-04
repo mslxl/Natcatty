@@ -70,7 +70,7 @@ export type SessionSnapshotActions = Pick<
   | 'isBroadcastEnabled'
   | 'toggleGlobalBroadcast'
   | 'isGlobalBroadcastEnabled'
-  | 'orphanSessionCount'
+  | 'canUseGlobalBroadcast'
   | 'copySession'
   | 'copyWorkspace'
   | 'createSessionFromCloneSource'

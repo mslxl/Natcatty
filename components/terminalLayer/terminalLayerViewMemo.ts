@@ -431,7 +431,7 @@ const WORKSPACE_CTX_KEYS = [
   'onStartSessionDrag',
   'onEndSessionDrag',
   'isGlobalBroadcastEnabled',
-  'orphanSessionCount',
+  'canUseGlobalBroadcast',
   'onToggleGlobalBroadcast',
 ] as const;
 

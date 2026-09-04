@@ -208,7 +208,7 @@ export function TerminalHost() {
       hotkeyScheme: terminalSettings.hotkeyScheme,
       isBroadcastEnabled: sessionActions?.isBroadcastEnabled,
       isGlobalBroadcastEnabled: sessionActions?.isGlobalBroadcastEnabled,
-      orphanSessionCount: sessionActions?.orphanSessionCount,
+      canUseGlobalBroadcast: sessionActions?.canUseGlobalBroadcast,
       keyBindings: terminalSettings.keyBindings,
       openNoteRequest: local.openNoteRequest,
       portForwardingRules: local.portForwardingRules,

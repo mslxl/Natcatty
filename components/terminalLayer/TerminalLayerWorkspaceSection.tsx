@@ -124,7 +124,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onStartSessionDrag,
     onEndSessionDrag,
     isGlobalBroadcastEnabled,
-    orphanSessionCount,
+    canUseGlobalBroadcast,
     onToggleGlobalBroadcast,
     t,
   } = ctx;
@@ -259,7 +259,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onStartSessionDrag={onStartSessionDrag}
           onEndSessionDrag={onEndSessionDrag}
           isGlobalBroadcastEnabled={isGlobalBroadcastEnabled}
-          orphanSessionCount={orphanSessionCount}
+          canUseGlobalBroadcast={canUseGlobalBroadcast}
           onToggleGlobalBroadcast={onToggleGlobalBroadcast}
         />
         {!isFocusMode && activeResizers.map((handle: any) => {
