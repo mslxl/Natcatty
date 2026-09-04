@@ -123,6 +123,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onReorderTabs,
     onStartSessionDrag,
     onEndSessionDrag,
+    isGlobalBroadcastEnabled,
+    orphanSessionCount,
+    onToggleGlobalBroadcast,
     t,
   } = ctx;
 
@@ -255,6 +258,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onReorderTabs={onReorderTabs}
           onStartSessionDrag={onStartSessionDrag}
           onEndSessionDrag={onEndSessionDrag}
+          isGlobalBroadcastEnabled={isGlobalBroadcastEnabled}
+          orphanSessionCount={orphanSessionCount}
+          onToggleGlobalBroadcast={onToggleGlobalBroadcast}
         />
         {!isFocusMode && activeResizers.map((handle: any) => {
           const isVertical = handle.direction === 'vertical';

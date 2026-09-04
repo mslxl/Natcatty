@@ -710,12 +710,10 @@ export interface TerminalLayerProps {
   onCreateLocalTerminal?: () => void;
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
-  isGlobalBroadcastEnabled?: () => boolean;
+  isGlobalBroadcastEnabled?: boolean;
   orphanSessionCount?: number;
   onToggleBroadcast?: (workspaceId: string) => void;
-  isGlobalBroadcastEnabled?: () => boolean;
   onToggleGlobalBroadcast?: () => void;
-  orphanSessionCount?: number;
   // SFTP side panel
   updateHosts: (hosts: Host[]) => void;
   updateSnippets?: (snippets: Snippet[]) => void;
@@ -815,8 +813,9 @@ interface TerminalPaneProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
-  isGlobalBroadcastEnabled?: () => boolean;
+  isGlobalBroadcastEnabled?: boolean;
   orphanSessionCount?: number;
+  onToggleGlobalBroadcast?: () => void;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,
@@ -1242,6 +1241,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   isBroadcastEnabled,
   isGlobalBroadcastEnabled,
   orphanSessionCount,
+  onToggleGlobalBroadcast,
   onBroadcastInput,
   onBroadcastInterruptPriorityChange,
   onToggleWorkspaceComposeBar,
@@ -1470,7 +1470,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const splitVerticalHandler = splitVerticalHandlersRef.current.get(session.id);
   const broadcastEnabled = activeWorkspaceId
     ? !!isBroadcastEnabled?.(activeWorkspaceId)
-    : (isGlobalBroadcastEnabled?.() ?? false);
+    : (isGlobalBroadcastEnabled ?? false);
   const isHostEphemeral = !isSavedVaultHost(hostMap.get(host.id));
   const sessionAppearance = useMemo(
     () => resolveSessionAppearance({ host, isEphemeral: isHostEphemeral }),
@@ -1622,8 +1622,16 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
             : (orphanSessionCount && orphanSessionCount >= 2 ? onToggleGlobalBroadcast : undefined)
         }
         orphanSessionCount={orphanSessionCount}
-        onToggleComposeBar={inActiveWorkspace ? onToggleWorkspaceComposeBar : undefined}
-        isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
+        onToggleComposeBar={
+          inActiveWorkspace
+            ? onToggleWorkspaceComposeBar
+            : (orphanSessionCount && orphanSessionCount >= 2 ? onToggleWorkspaceComposeBar : undefined)
+        }
+        isWorkspaceComposeBarOpen={
+          inActiveWorkspace
+            ? isComposeBarOpen
+            : (orphanSessionCount && orphanSessionCount >= 2 ? isComposeBarOpen : undefined)
+        }
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
         onBroadcastInterruptPriorityChange={onBroadcastInterruptPriorityChange}
         onSnippetExecutorChange={onSnippetExecutorChange}
@@ -1713,8 +1721,9 @@ interface TerminalPanesHostProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
-  isGlobalBroadcastEnabled?: () => boolean;
+  isGlobalBroadcastEnabled?: boolean;
   orphanSessionCount?: number;
+  onToggleGlobalBroadcast?: () => void;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,
@@ -1802,6 +1811,9 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onSetWorkspaceFocusedSession !== next.onSetWorkspaceFocusedSession) return false;
   if (prev.onSplitSession !== next.onSplitSession) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
+  if (prev.isGlobalBroadcastEnabled !== next.isGlobalBroadcastEnabled) return false;
+  if (prev.orphanSessionCount !== next.orphanSessionCount) return false;
+  if (prev.onToggleGlobalBroadcast !== next.onToggleGlobalBroadcast) return false;
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
   if (prev.onBroadcastInterruptPriorityChange !== next.onBroadcastInterruptPriorityChange) return false;
   if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;

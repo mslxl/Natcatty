@@ -1279,10 +1279,8 @@ export const useSessionState = ({
     setGlobalBroadcastEnabled(prev => !prev);
   }, []);
 
-  // Check if global broadcast is enabled
-  const isGlobalBroadcastEnabled = useCallback(() => {
-    return globalBroadcastEnabled;
-  }, [globalBroadcastEnabled]);
+  // Global broadcast enabled state - direct boolean value
+  const isGlobalBroadcastEnabled = globalBroadcastEnabled;
 
   const baseWorkTabIds = useMemo(() => [
     ...orphanSessions.map(s => s.id),

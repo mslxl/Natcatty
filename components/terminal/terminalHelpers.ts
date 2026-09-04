@@ -213,6 +213,7 @@ export interface TerminalProps {
   onOpenSystem?: () => void;
   isBroadcastEnabled?: boolean;
   onToggleBroadcast?: () => void;
+  orphanSessionCount?: number;
   onToggleComposeBar?: () => void;
   isWorkspaceComposeBarOpen?: boolean;
   onBroadcastInput?: (

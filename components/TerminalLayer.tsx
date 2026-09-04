@@ -1075,8 +1075,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       shouldBroadcast = true;
       isGlobalBroadcast = false;
     } else if (!workspaceId) {
-      // Orphan session - check global broadcast
-      shouldBroadcast = true;
+      // Orphan session - check global broadcast flag
+      shouldBroadcast = isGlobalBroadcastEnabled;
       isGlobalBroadcast = true;
     }
 
@@ -1134,7 +1134,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       deliveredSessionIds.push(session.id);
     }
     return deliveredSessionIds;
-  }, [terminalBackend]);
+  }, [terminalBackend, isGlobalBroadcastEnabled]);
 
   const handleCommandSubmitted = useCallback((command: string, _hostId: string, _hostLabel: string, sessionId: string) => {
     codingCliSignalController.handleCommandSubmitted(sessionId, command);
