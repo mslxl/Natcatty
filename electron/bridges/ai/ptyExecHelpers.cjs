@@ -204,8 +204,23 @@ function buildPosixWrapperBody(command, marker, startFormat) {
   const cmdAssign = commandLines.length > 1
     ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
     : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
+  // Issue #3265: without HISTCONTROL=ignorespace the wrapper line is recorded
+  // in bash history. Pressing arrow-up then makes readline redraw that huge
+  // marker-containing line, and the preload __NCMCP_ filter suppresses the
+  // redraw fragments that contain the marker — readline's row accounting
+  // diverges from what the terminal actually rendered, so every subsequent
+  // history-navigation redraw leaves fragments of the AI command on screen.
+  // Match the latest entry before deleting it, preserving user history when
+  // HISTCONTROL=ignorespace skips the wrapper. Read the entry's actual number:
+  // older Bash versions can expose HISTCMD as the next history number.
+  // builtin history bypasses user aliases and functions. The unset-safe guard
+  // leaves non-Bash shells alone, including shells with nounset enabled.
+  // Use ^ for the Bash bracket negation: ! triggers interactive zsh history
+  // expansion before the Bash-only guard can run.
+  const historyCleanup =
+    `[ -n "\${BASH_VERSION-}" ] && { ${marker}_h=$(builtin history 1 2>/dev/null); case "$${marker}_h" in *${marker}*) ${marker}_h=\${${marker}_h#"\${${marker}_h%%[^[:space:]]*}"}; builtin history -d "\${${marker}_h%%[[:space:]]*}" 2>/dev/null ;; esac; }`;
   return (
-    `${marker}=0; ${cmdAssign}; { printf '${startFormat}' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }`
+    `${marker}=0; ${cmdAssign}; { printf '${startFormat}' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; ${historyCleanup}; (exit $__NCMCP_rc); }`
   );
 }
 
