@@ -1125,6 +1125,11 @@ export const useSessionState = ({
   const orphanSessions = useMemo(() => sessions.filter(s => !s.workspaceId && !s.hiddenFromTabs), [sessions]);
   const canUseGlobalBroadcast = orphanSessions.length >= 2;
 
+  // Losing the group must disarm broadcast before another tab can join it.
+  if (!canUseGlobalBroadcast && globalBroadcastEnabled) {
+    setGlobalBroadcastEnabled(false);
+  }
+
   const openLogView = useCallback((log: ConnectionLog) => {
     const tabId = getLogViewTabId(log);
     setLogViews(prev => addLogView(prev, log));

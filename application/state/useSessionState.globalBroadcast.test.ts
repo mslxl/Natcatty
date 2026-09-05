@@ -7,7 +7,7 @@ import { useSessionState } from "./useSessionState.ts";
 
 type SessionState = ReturnType<typeof useSessionState>;
 
-test("global broadcast availability follows visible orphan session count", async (t) => {
+test("global broadcast availability follows visible orphan session count", async () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const eventTarget = new EventTarget() as EventTarget & Record<string, unknown>;
   Object.assign(eventTarget, {
@@ -66,6 +66,27 @@ test("global broadcast availability follows visible orphan session count", async
     await act(async () => {
       current().toggleGlobalBroadcast();
     });
+    assert.equal(current().isGlobalBroadcastEnabled, false);
+
+    await act(async () => { current().toggleGlobalBroadcast(); });
+    const closedId = current().orphanSessions[1].id;
+    await act(async () => { current().closeSession(closedId); });
+    assert.equal(current().canUseGlobalBroadcast, false);
+    assert.equal(current().isGlobalBroadcastEnabled, false);
+    await act(async () => { current().createLocalTerminal({ shellName: "03" }); });
+    assert.equal(current().canUseGlobalBroadcast, true);
+    assert.equal(current().isGlobalBroadcastEnabled, false);
+    await act(async () => { current().toggleGlobalBroadcast(); });
+    const [first, second] = current().orphanSessions;
+    await act(async () => {
+      current().createWorkspaceFromSessions(first.id, second.id, "right");
+    });
+    assert.equal(current().canUseGlobalBroadcast, false);
+    assert.equal(current().isGlobalBroadcastEnabled, false);
+    await act(async () => {
+      current().removeSessionFromWorkspace(second.id);
+    });
+    assert.equal(current().canUseGlobalBroadcast, true);
     assert.equal(current().isGlobalBroadcastEnabled, false);
   } finally {
     await act(async () => {
