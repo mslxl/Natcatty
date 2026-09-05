@@ -290,6 +290,13 @@ function createWorkerAiExecHandler({
         timeoutMs,
         shellKind: session.shellKind,
         loginShellHint: session._loginShellKind,
+        probeLiveShell: true,
+        onProbeAborted: (marker) => {
+          event?.sender?.send?.("netcatty:data", {
+            sessionId,
+            data: `${marker}_R\n`,
+          });
+        },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
         typedInput: true,
@@ -486,6 +493,13 @@ function createWorkerAiJobStartHandler({
         timeoutMs,
         shellKind: session.shellKind,
         loginShellHint: session._loginShellKind,
+        probeLiveShell: true,
+        onProbeAborted: (marker) => {
+          event?.sender?.send?.("netcatty:data", {
+            sessionId,
+            data: `${marker}_R\n`,
+          });
+        },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
         typedInput: true,

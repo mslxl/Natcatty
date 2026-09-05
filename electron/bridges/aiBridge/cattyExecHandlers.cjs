@@ -176,6 +176,11 @@ function registerCattyExecHandlers(ctx) {
             timeoutMs,
             shellKind: session.shellKind,
             loginShellHint: session._loginShellKind,
+            probeLiveShell: true,
+            onProbeAborted: (marker) => {
+              const contents = electronModule?.webContents?.fromId?.(session.webContentsId);
+              safeSend(contents, "netcatty:data", { sessionId, data: `${marker}_R\n` });
+            },
             chatSessionId,
             expectedPrompt: getFreshIdlePrompt(session),
             typedInput: true,
