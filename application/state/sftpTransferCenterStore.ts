@@ -1757,7 +1757,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           // Always clear process-global latches + control epoch so walks wake and
           // late soft-drain / pauseWatch cannot re-pause streams. Do not stamp
           // control epoch as task.lifecycleEpoch (bridge-aligned only).
-          bumpTransferControlEpoch(taskId);
+          let resumeEpoch = bumpTransferControlEpoch(taskId);
           releaseTransferPauseTree(taskId, childIds);
 
           if (task.ownerId === "dedicated-resume" && task.isDirectory) {
@@ -1779,64 +1779,53 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
               try { await bridge?.clearPendingTransferCancel?.(id); } catch { /* best-effort */ }
             }
             try { await bridge?.clearPendingTransferCancel?.(taskId); } catch { /* best-effort */ }
+            if (!isTransferControlEpochCurrent(taskId, resumeEpoch)) return existing;
             return resumeInvocations.get(taskId) ?? startFresh();
           }
 
           try {
-            const resumeIds = [taskId, ...childIds.filter((id) => id !== taskId)];
-            const results = await Promise.all(resumeIds.map(async (id) =>
-              netcattyBridge.get()?.resumeTransfer?.(id) ?? { success: false },
-            ));
-            const after = tasks.find((candidate) => candidate.id === taskId);
-            if (after?.status === "cancelled") return existing;
-            // Only rejoin when at least one backend stream actually resumed.
-            // Empty/all-fail must not paint transferring over a dead held run.
-            const successIds = resumeIds.filter((_, index) => results[index]?.success);
-            if (successIds.length > 0) {
-              const resumed = new Set(successIds);
-              // Align with softResumeTransfer: prefer bridge lifecycleEpoch; clear
-              // if omitted so main-process progress is not stale-dropped.
-              let bridgeEpoch: number | undefined;
-              for (let index = 0; index < results.length; index += 1) {
-                if (!results[index]?.success) continue;
-                const epoch = (results[index] as { lifecycleEpoch?: number } | undefined)?.lifecycleEpoch;
-                if (!Number.isFinite(epoch)) continue;
-                bridgeEpoch = bridgeEpoch === undefined
-                  ? (epoch as number)
-                  : Math.max(bridgeEpoch, epoch as number);
-              }
-              tasks = tasks.map((candidate) => {
-                if (candidate.id === taskId || resumed.has(candidate.id)) {
-                  return {
-                    ...candidate,
-                    status: "transferring" as const,
-                    error: undefined,
-                    reconnectRequired: false,
-                    pauseUnavailableReason: undefined,
-                    phase: undefined,
-                    lifecycleEpoch: bridgeEpoch,
-                  };
-                }
-                return candidate;
-              });
+            // Reuse the live control path: held dedicated transfers must obey
+            // the same ordering and per-child lifecycle rules as panel jobs.
+            const softOperation = softResumeTransfer({
+              getTasks: () => tasks,
+              setTasks: (next) => { tasks = next; emit(); },
+              getBridge: defaultTransferControlBridge,
+            }, taskId);
+            resumeEpoch = getTransferControlEpoch(taskId);
+            const soft = await softOperation;
+            if (soft.handled) return existing;
+            const streamGone = /no longer active|not active|not found|session is no longer|Resume unavailable|Transfer not found/i
+              .test(soft.reason ?? "");
+            if (!streamGone) {
+              tasks = tasks.map((candidate) => candidate.id === taskId ? {
+                ...candidate,
+                status: "paused" as const,
+                speed: 0,
+                phase: undefined,
+                error: soft.reason,
+              } : candidate);
               emit();
               return existing;
             }
           } catch {
             // Fall through to await + restart.
           }
+          if (!isTransferControlEpochCurrent(taskId, resumeEpoch)) return existing;
           try {
             await existing;
           } catch { /* previous aborted */ }
+          if (!isTransferControlEpochCurrent(taskId, resumeEpoch)) return existing;
           return resumeInvocations.get(taskId) ?? startFresh();
         }
 
         // After demotion to interrupted/attention/failed while work unwinds:
         // wait then re-invoke (do not rejoin a dying canceling promise).
         if (task && (task.status === "interrupted" || task.status === "attention" || task.status === "failed")) {
+          const resumeEpoch = getTransferControlEpoch(taskId);
           try {
             await existing;
           } catch { /* previous aborted */ }
+          if (getTransferControlEpoch(taskId) !== resumeEpoch) return existing;
           return resumeInvocations.get(taskId) ?? startFresh();
         }
         return existing;

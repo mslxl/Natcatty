@@ -41,6 +41,106 @@ const rootTask = (): TransferTask => ({
   progressMode: "files",
 });
 
+for (const newestAction of ["pause", "cancel", "resume", "remote-resume", "remote-child-resume"] as const) {
+  test(`directory pause watcher respects a newer ${newestAction}`, async () => {
+    const { bumpTransferControlEpoch, resetTransferControlEpochsForTests } = await import("./transferControlEpoch");
+    const { latchTransferPauseTree, isTransferPauseLatched, resetTransferPauseLatchesForTests } = await import("./transferPauseLatch");
+    const previousWindow = (globalThis as { window?: unknown }).window;
+    const previousLocalStorage = (globalThis as { localStorage?: unknown }).localStorage;
+    const previousActEnvironment = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = { ...rootTask(), id: `watch-root-${newestAction}` };
+    let tasks: TransferTask[] = [root];
+    const transfersRef = { current: tasks };
+    const cancelledTasksRef = { current: new Set<string>() };
+    const pausedTasksRef = { current: new Set<string>() };
+    let pauseCalls = 0;
+    let finishPause!: (value: { success: boolean; superseded?: boolean; supersededBy?: "resume" }) => void;
+    let finishTransfer!: (value: { error?: string }) => void;
+    let pauseStarted!: () => void;
+    const pauseGate = new Promise<void>((resolve) => { pauseStarted = resolve; });
+    const transferGate = new Promise<{ error?: string }>((resolve) => { finishTransfer = resolve; });
+    let resumeCalls = 0;
+    let childId = "";
+    (globalThis as { window?: unknown }).window = { netcatty: {
+      mkdirLocal: async () => undefined,
+      statLocal: async () => ({ type: "directory" }),
+      startStreamTransfer: (options: { transferId: string }) => {
+        childId = options.transferId;
+        // Reproduce a stream arming during the parent's initial pause round.
+        bumpTransferControlEpoch(root.id);
+        latchTransferPauseTree(root.id, [childId]);
+        if (newestAction === "remote-resume" || newestAction === "remote-child-resume") { pausedTasksRef.current.add(root.id); pausedTasksRef.current.add(childId); }
+        return transferGate;
+      },
+      pauseTransfer: () => {
+        pauseCalls++;
+        pauseStarted();
+        return new Promise<{ success: boolean; superseded?: boolean; supersededBy?: "resume" }>((resolve) => { finishPause = resolve; });
+      },
+      resumeTransfer: async () => { resumeCalls++; return { success: true }; },
+    } };
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: () => null, setItem: () => undefined, removeItem: () => undefined,
+    };
+    let operations: ReturnType<typeof useSftpDirectoryTransferOps> | undefined;
+    let renderer: ReactTestRenderer | null = null;
+    let running: Promise<unknown> | undefined;
+    const Probe = () => {
+      operations = useSftpDirectoryTransferOps({
+        ownerId: `watch-owner-${newestAction}`, cancelledTasksRef,
+        pausedTasksRef,
+        waitUntilTransferResumed: async () => undefined,
+        activeChildIdsRef: { current: new Map() }, transfersRef,
+        setTransfers: (update) => {
+          tasks = typeof update === "function" ? update(tasks) : update;
+          transfersRef.current = tasks;
+        },
+        listLocalFiles: async () => [], listRemoteFiles: async () => [fileEntry("file.txt")],
+      });
+      return null;
+    };
+    try {
+      await act(async () => { renderer = create(React.createElement(Probe)); });
+      assert.ok(operations);
+      running = operations.transferDirectory(root, "source-sftp", null, false, true, "auto", "auto", root.id);
+      await pauseGate;
+      if (newestAction === "remote-resume" || newestAction === "remote-child-resume") {
+        // Another window's resumed event updates rows without bumping this local epoch.
+        transfersRef.current = tasks = tasks.map(task => ({ ...task, status: task.id === root.id && newestAction === "remote-child-resume" ? "paused" : "transferring", lifecycleEpoch: 8 }));
+        finishPause({ success: false, superseded: true, supersededBy: "resume" });
+        await new Promise((resolve) => setTimeout(resolve, 110));
+        assert.equal(pauseCalls, 1, "superseded watcher must not re-pause the resumed backend");
+        assert.equal(isTransferPauseLatched(root.id), newestAction === "remote-child-resume");
+        assert.equal(isTransferPauseLatched(childId), false);
+        assert.equal(pausedTasksRef.current.has(root.id), newestAction === "remote-child-resume");
+        assert.equal(pausedTasksRef.current.has(childId), false);
+        return;
+      }
+      bumpTransferControlEpoch(root.id);
+      if (newestAction === "pause") latchTransferPauseTree(root.id, [childId]);
+      else {
+        if (newestAction === "cancel") cancelledTasksRef.current.add(root.id);
+        resetTransferPauseLatchesForTests();
+      }
+      finishPause({ success: true });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(resumeCalls, newestAction === "resume" ? 1 : 0, "compensation must follow the latest decision");
+    } finally {
+      pausedTasksRef.current.clear();
+      resetTransferPauseLatchesForTests();
+      finishPause?.({ success: true });
+      finishTransfer({});
+      await running?.catch(() => {});
+      await act(async () => { renderer?.unmount(); });
+      resetTransferControlEpochsForTests();
+      (globalThis as { window?: unknown }).window = previousWindow;
+      (globalThis as { localStorage?: unknown }).localStorage = previousLocalStorage;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
+  });
+}
+
 test("directory transfer discovers each directory once with bounded listing concurrency", async () => {
   const previousWindow = (globalThis as { window?: unknown }).window;
   const previousLocalStorage = (globalThis as { localStorage?: unknown }).localStorage;
