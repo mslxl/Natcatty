@@ -1,3 +1,4 @@
+import { runTransferAndWaitForOwner } from "./waitForTransferOwner";
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings, TransferTask } from "../../../domain/models";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
@@ -1000,6 +1001,11 @@ async function resumeDirectoryWithDedicatedSession(
   onProgress?: (progress: DedicatedResumeProgress) => void,
   options?: DedicatedResumeOptions,
 ): Promise<DedicatedResumeResult> {
+  // Fresh recovery authorizes only pauses already present at its entry. Keep
+  // row references so a newer cross-window pause invalidates that permission.
+  const pausedAtResume = new Map(sftpTransferCenterStore.getSnapshot().tasks
+    .filter((child) => child.parentTaskId === parent.id && child.status === "paused")
+    .map((child) => [child.id, child]));
   const bridge = netcattyBridge.get();
   if (!bridge?.startStreamTransfer) {
     return { success: false, error: "Transfer bridge unavailable" };
@@ -1247,8 +1253,13 @@ async function resumeDirectoryWithDedicatedSession(
               if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
               options?.onChildUpdate?.(childBase);
 
-              const streamResult = await bridge.startStreamTransfer!({
+              const streamResult = await runTransferAndWaitForOwner(childBase, () => bridge.startStreamTransfer!({
                 transferId: childId,
+                // Lifecycle events must carry the current identity even while
+                // large-history renderer child updates remain batched.
+                parentTaskId: childBase.parentTaskId,
+                directoryEntryIndex: childBase.directoryEntryIndex,
+                directoryEntryIdentity: childBase.directoryEntryIdentity,
                 sourcePath: file.sourcePath,
                 targetPath: file.targetPath,
                 sourceType,
@@ -1267,19 +1278,9 @@ async function resumeDirectoryWithDedicatedSession(
                 uploadCheckpointBytes: childBase.uploadCheckpointBytes,
                 sourceFingerprint: childBase.sourceFingerprint,
                 skipAdmission: true,
-              });
+              }), () => options?.shouldAbort?.() === true, pausedAtResume.get(childId));
 
-              if (streamResult?.superseded === true) {
-                for (;;) {
-                  if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
-                  const latest = sftpTransferCenterStore.getTask(childBase.id);
-                  const status = latest?.status;
-                  if (status === "completed") break;
-                  if (status === "failed") throw new Error(latest?.error || "Transfer failed");
-                  if (status === "cancelled") throw new Error("Transfer cancelled");
-                  await new Promise((resolve) => setTimeout(resolve, 200));
-                }
-              } else if (streamResult?.error || streamResult?.cancelled) {
+              if (streamResult?.error || streamResult?.cancelled) {
                 throw new Error(streamResult.error || "Transfer cancelled");
               }
 
