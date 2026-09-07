@@ -481,9 +481,9 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   assert.equal(captured[0].sourceSessionId, "source-session");
   assert.equal(captured[1].reuseTransport, false);
   assert.equal(captured[1].sourceSessionId, undefined);
-  assert.equal(captured[2].reuseTransport, undefined);
+  assert.equal(captured[2].reuseTransport, false);
   assert.equal(captured[2].sourceSessionId, undefined);
-  assert.equal(captured[3].reuseTransport, undefined);
+  assert.equal(captured[3].reuseTransport, false);
   assert.deepEqual(reuseAttempts, ["source-session", undefined, undefined]);
 });
 
@@ -502,9 +502,7 @@ test("startSSH requests a fresh transport for Duplicate Session clones", async (
     resizeSession: noop,
   };
 
-  // Without the marker an ordinary open stays eligible for general endpoint
-  // reuse; with it, every attempt (including reconnects) dials fresh instead
-  // of borrowing the source's live authenticated transport.
+  // Ordinary opens and Duplicate Session both require a new login.
   await createTerminalSessionStarters(createStarterContext({
     shouldUseFreshSshConnection: () => false,
     terminalBackend,
@@ -522,10 +520,63 @@ test("startSSH requests a fresh transport for Duplicate Session clones", async (
   await duplicateStarters.startSSH(createTermStub() as never);
   await duplicateStarters.startSSH(createTermStub() as never);
 
-  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[0].reuseTransport, false);
   assert.equal(captured[0].sourceSessionId, undefined);
   assert.equal(captured[1].reuseTransport, false);
   assert.equal(captured[2].reuseTransport, false);
+});
+
+test("startSSH dials a fresh transport once a pane has reconnected (#3293)", async () => {
+  const captured: Record<string, unknown>[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      captured.push(options);
+      return `ssh-session-${captured.length}`;
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  // An ordinary new tab must refresh groups even before its first reconnect.
+  await createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    requireFreshConnectionOnReconnectRef: { current: false },
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  assert.equal(captured[0].reuseTransport, false);
+
+  // After a reconnect (manual retry / auto-reconnect) every attempt must dial
+  // a brand-new connection so the server performs a fresh login and picks up
+  // remote supplementary-group changes (e.g. `usermod -aG`).
+  const reconnectedStarters = createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    requireFreshConnectionOnReconnectRef: { current: true },
+    terminalBackend,
+  }) as never);
+  await reconnectedStarters.startSSH(createTermStub() as never);
+  await reconnectedStarters.startSSH(createTermStub() as never);
+  assert.equal(captured[1].reuseTransport, false);
+  assert.equal(captured[2].reuseTransport, false);
+
+  // Copy/Split may still have an unconsumed source while credentials load.
+  // A reconnect must discard that intent before the next backend attempt.
+  const pendingSource = { current: "source-session" as string | undefined };
+  const reuseAttempts: (string | undefined)[] = [];
+  await createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    requireFreshConnectionOnReconnectRef: { current: true },
+    reuseConnectionFromSessionIdRef: pendingSource,
+    setConnectionReuseAttemptSourceId: (id: string | undefined) => reuseAttempts.push(id),
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  assert.equal(captured[3].reuseTransport, false);
+  assert.equal(captured[3].sourceSessionId, undefined);
+  assert.equal(pendingSource.current, undefined);
+  assert.deepEqual(reuseAttempts, [undefined]);
 });
 
 test("startSSH commits an empty automation snapshot only after the backend session succeeds", async () => {
@@ -605,7 +656,7 @@ test("startSSH rechecks the live automation policy before password fallback", as
   await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
 
   assert.equal(captured.length, 2);
-  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[0].reuseTransport, false);
   assert.equal(captured[1].reuseTransport, false);
   assert.equal(commitCount, 0);
 });
