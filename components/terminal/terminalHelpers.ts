@@ -539,3 +539,84 @@ export function forceSyncRenderAfterResize(term: XTerm): void {
     logger.warn("Sync render after resize failed", err);
   }
 }
+
+type XTermWithPrivateViewport = XTerm & {
+  _core?: {
+    _viewport?: {
+      scrollToLine?: (line: number, disableSmoothScroll?: boolean) => void;
+      _sync?: () => void;
+    };
+  };
+};
+
+/**
+ * Re-align the DOM scroll position with the buffer's viewport row.
+ *
+ * xterm's reflow adjusts the buffer's viewport row (ydisp) during resize, but
+ * the scrollable viewport keeps its stale pixel offset. Any subsequent
+ * relative scroll (wheel, scrollToLine) then applies its delta twice — once
+ * against the buffer and once against the stale DOM offset — drifting the
+ * reading position (all the way to the top while shrinking, #3299). Snapping
+ * the viewport back to the buffer row before a relative restore removes the
+ * desync.
+ */
+export function alignTerminalViewportScroll(term: XTerm): void {
+  const viewport = (term as XTermWithPrivateViewport)._core?._viewport;
+  const scrollToLine = viewport?.scrollToLine;
+  if (typeof scrollToLine !== "function") return;
+
+  // After a resize, xterm only refreshes the viewport's scroll dimensions on
+  // its queued render callback. Setting a scroll position against the stale
+  // dimensions gets clamped to the old maximum while xterm records the
+  // requested row, so the queued sync then assumes the position was already
+  // applied and the DOM offset stays stale — the next wheel scroll jumps
+  // upward by the resize delta. Sync the dimensions now, before positioning.
+  // If synchronized output (DECSET 2026) is active, _sync() above is a no-op
+  // that merely defers DOM scroll updates until the mode ends; positioning
+  // here would still record the requested row as _latestYDisp against the
+  // stale dimensions, and the deferred sync would then see
+  // ydisp === _latestYDisp and skip repositioning, leaving a stale DOM
+  // offset. Leave positioning to that deferred sync instead: after reflow the
+  // buffer's ydisp differs from the recorded _latestYDisp, so it repositions
+  // with fresh dimensions on its own.
+  if (typeof viewport._sync === "function") {
+    try {
+      viewport._sync.call(viewport);
+    } catch (err) {
+      logger.warn("Sync viewport dimensions after resize failed", err);
+    }
+  }
+  if (term.modes?.synchronizedOutputMode) return;
+
+  try {
+    scrollToLine.call(viewport, term.buffer.active.viewportY, true);
+  } catch (err) {
+    logger.warn("Align viewport scroll after resize failed", err);
+  }
+}
+
+/** Defer the whole fit while xterm keeps the visible frame frozen (DECSET 2026). */
+export function createSynchronizedOutputFitScheduler() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const dispose = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    dispose,
+    defer(term: XTerm, fit: () => void): boolean {
+      dispose();
+      if (!term.modes.synchronizedOutputMode) return false;
+      // Arms xterm's own synchronized-output timeout even if the program
+      // only enabled the mode without writing visible content afterward.
+      term.refresh(0, Math.max(0, term.rows - 1));
+      timer = setTimeout(() => {
+        timer = undefined;
+        // The caller re-enters safeFit and checks the mode again, including
+        // when another synchronized frame started before this retry.
+        fit();
+      }, 32);
+      return true;
+    },
+  };
+}

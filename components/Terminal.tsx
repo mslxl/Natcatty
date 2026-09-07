@@ -252,6 +252,8 @@ import {
   shouldStartTerminalBackend,
 } from "./terminal/restoredSessionGate";
 import {
+  alignTerminalViewportScroll,
+  createSynchronizedOutputFitScheduler,
   AUTO_RUN_SNIPPET_LINE_DELAY_MS,
   forceSyncRenderAfterResize,
   MAX_CONNECTION_LOG_DATA_CHARS,
@@ -2290,6 +2292,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     clearHibernateRetry();
     clearAutoReconnect();
     void cleanupSession();
+    synchronizedFitSchedulerRef.current?.dispose();
     disposeRuntimeOnly();
   };
 
@@ -2884,6 +2887,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     });
   }, [reuseConnectionFromSessionId, sessionId, terminalBackend]);
 
+  const synchronizedFitSchedulerRef = useRef<ReturnType<typeof createSynchronizedOutputFitScheduler> | null>(null);
+  if (!synchronizedFitSchedulerRef.current) {
+    synchronizedFitSchedulerRef.current = createSynchronizedOutputFitScheduler();
+  }
+  useEffect(() => () => synchronizedFitSchedulerRef.current?.dispose(), []);
+
   type SafeFitOptions = { force?: boolean; requireVisible?: boolean; immediate?: boolean; allowHidden?: boolean };
   const pendingWriteSafeFitRef = useRef<{
     term: XTerm;
@@ -2981,6 +2990,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           return;
         }
 
+        // Keep the frozen buffer intact until synchronized output finishes.
+        // Re-enter safeFit to use the latest size, buffer and reading position.
+        if (synchronizedFitSchedulerRef.current?.defer(term, () => {
+          if (termRef.current === term) {
+            safeFitRef.current({ ...options, force: true, immediate: true });
+          }
+        })) return;
+
         const buffer = term.buffer.active;
         const wasPinnedToBottom = buffer.viewportY >= buffer.baseY;
         const savedViewportY = buffer.viewportY;
@@ -3004,6 +3021,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           xtermRuntimeRef.current?.clearTextureAtlas();
           forceSyncRenderAfterResize(term);
         }
+
+        // Reflow changes the buffer row before xterm updates its scroll range.
+        // Align first so the relative restore below does not apply that delta twice.
+        alignTerminalViewportScroll(term);
 
         // Preserve scroll position across resize (superset/Tabby pattern).
         if (wasPinnedToBottom) {
