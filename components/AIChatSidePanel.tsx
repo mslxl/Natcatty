@@ -9,9 +9,11 @@ import type {
   AIPanelView,
   AgentModelPreset,
   AISessionScope,
+  UploadedFile,
   DiscoveredAgent,
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
+import type { VaultNote } from '../domain/models';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import {
   filterAgentModelPresetsForCliVersion,
@@ -20,6 +22,7 @@ import {
   resolveAgentModelSelection,
 } from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
+import { toast } from './ui/toast';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
   getReadyUserSkillOptions,
@@ -42,8 +45,9 @@ import { draftsByScopeEqualIgnoringComposerText, selectDraftForAgentSwitch } fro
 import { sanitizeContextWindow } from '../infrastructure/ai/contextCompaction';
 import {
   buildPromptWithTerminalSelectionAttachments,
-  isTerminalSelectionAttachment,
+  isInlineTextAttachment,
 } from '../application/state/terminalSelectionAttachment';
+import { createVaultNoteAttachment, isVaultNoteAttachment, vaultNoteReferencesFit } from '../application/state/vaultNoteAttachment';
 import type { CodexIntegrationStatus } from './settings/tabs/ai/types';
 import {
   useAIChatStreaming,
@@ -597,6 +601,42 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     removeDraftFile(scopeKey, currentAgentId, fileId);
   }, [removeDraftFile, scopeKey, currentAgentId]);
 
+  // External turns keep the tools from launch; changed settings cannot enable note reads mid-turn.
+  const canMentionNotes = currentAgentId === 'catty' || (toolIntegrationMode === 'mcp' && !isStreaming);
+  const validateNoteMentions = useCallback((attachments: UploadedFile[]) => {
+    if (!canMentionNotes && attachments.some(isVaultNoteAttachment)) {
+      toast.warning(t('ai.chat.mentionNoteUnavailable'));
+      return false;
+    }
+    if (!vaultNoteReferencesFit(attachments)) {
+      toast.warning(t('ai.chat.mentionNoteTooMany'));
+      return false;
+    }
+    return true;
+  }, [canMentionNotes, t]);
+
+  /** Mention Note: attach a Vault → Notes entry as inline context for the next send. */
+  const mentionNote = useCallback((note: VaultNote) => {
+    if (!canMentionNotes) return;
+    const upload = createVaultNoteAttachment({ id: note.id, title: note.title.trim() || t('ai.chat.untitledNote') });
+    if (!upload) {
+      toast.error(t('ai.chat.mentionNoteInvalid', {
+        title: String(note.title || '').trim() || t('ai.chat.untitledNote'),
+      }));
+      return;
+    }
+    const existing = currentDraftRef.current?.attachments ?? [];
+    if (!validateNoteMentions([...existing.filter((file) => file.vaultNoteId !== upload.vaultNoteId), upload])) return;
+    enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
+    updateDraft(scopeKey, currentAgentId, (current) => ({
+      ...current,
+      attachments: [
+        ...current.attachments.filter((file) => file.vaultNoteId !== upload.vaultNoteId),
+        upload,
+      ],
+    }));
+  }, [canMentionNotes, validateNoteMentions, updateDraft, currentAgentId, enterScopeDraftMode, scopeKey, t]);
+
   useEffect(() => {
     if (isVisible) return undefined;
     flushDraftText();
@@ -1141,6 +1181,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const draft = currentDraftRef.current;
     const currentPanelView = panelViewRef.current;
     const currentSessionView = activeSessionRef.current;
+    if (!validateNoteMentions(draft?.attachments ?? [])) return;
     const trimmed = draft?.text.trim() ?? '';
     const sendScopeKey = scopeKey;
     const attachments = (draft?.attachments ?? []).map((file) => ({
@@ -1149,18 +1190,27 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       filename: file.filename,
       filePath: file.filePath,
       terminalSelection: file.terminalSelection,
+      vaultNoteId: file.vaultNoteId,
+      vaultNoteTitle: file.vaultNoteTitle,
       previewText: file.previewText,
       lineCount: file.lineCount,
     }));
-    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
-    if ((!trimmed && !hasTerminalSelectionAttachments) || isStreaming) return;
+    const hasInlineTextAttachments = attachments.some(isInlineTextAttachment);
+    if ((!trimmed && !hasInlineTextAttachments) || isStreaming) return;
+    // Note-only sends (empty text + a mentioned note) still need a usable
+    // session title: fall back to the first mentioned note's title so these
+    // conversations don't all show up as "Untitled" in history.
+    const noteOnlyTitle = attachments.find(
+      (attachment) => isVaultNoteAttachment(attachment) && attachment.vaultNoteTitle,
+    )?.vaultNoteTitle ?? '';
+    const titleText = trimmed || noteOnlyTitle.trim();
     const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
     const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
     if (sendAgentId !== 'catty' && !agentConfig) return;
 
     const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
-    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
+    const modelAttachments = attachments.filter((attachment) => !isInlineTextAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
     flushDraftText();
@@ -1337,7 +1387,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
         setStreamingForScope(sessionId, false);
         abortControllersRef.current.delete(sessionId);
-        autoTitleSession(sessionId, trimmed);
+        autoTitleSession(sessionId, titleText);
       } else {
         const toolScope = {
           type: scopeType,
@@ -1360,7 +1410,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           getExecutorContext: () => buildExecutorContextForScope(toolScope),
           autoTitleSession,
           selectedUserSkillSlugs: selectedSkillSlugs,
-          titleText: trimmed,
+          titleText,
         }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
@@ -1371,6 +1421,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
+    validateNoteMentions,
     isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
@@ -1467,6 +1518,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const draft = currentDraftRef.current;
     if (!sessionId || !draft || steeringSessionId || !canSteerCurrentTurn) return;
 
+    if (!validateNoteMentions(draft.attachments)) return;
     const trimmed = draft.text.trim();
     const attachments = draft.attachments.map((file) => ({
       base64Data: file.base64Data,
@@ -1474,15 +1526,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       filename: file.filename,
       filePath: file.filePath,
       terminalSelection: file.terminalSelection,
+      vaultNoteId: file.vaultNoteId,
+      vaultNoteTitle: file.vaultNoteTitle,
       previewText: file.previewText,
       lineCount: file.lineCount,
     }));
-    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
-    if (!trimmed && !hasTerminalSelectionAttachments) return;
+    const hasInlineTextAttachments = attachments.some(isInlineTextAttachment);
+    if (!trimmed && !hasInlineTextAttachments) return;
 
     const userMessageId = generateId();
     const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
-    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
+    const modelAttachments = attachments.filter((attachment) => !isInlineTextAttachment(attachment));
     setSteerWarnings(current => {
       const next = { ...current };
       delete next[sessionId];
@@ -1511,7 +1565,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     } finally {
       setSteeringSessionId(current => current === sessionId ? null : current);
     }
-  }, [canSteerCurrentTurn, clearScopeDraft, steerExternalAgent, steeringSessionId]);
+  }, [
+    validateNoteMentions, canSteerCurrentTurn, clearScopeDraft, steerExternalAgent, steeringSessionId]);
 
   const stopStreamingForSession = useCallback(async (sessionId: string) => {
     const controller = abortControllersRef.current.get(sessionId);
@@ -1707,6 +1762,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         files={files}
         addFiles={addFiles}
         removeFile={removeFile}
+        onMentionNote={canMentionNotes ? mentionNote : undefined}
         terminalSessions={terminalSessions}
         selectedUserSkills={selectedUserSkills}
         userSkillOptions={userSkillOptions}
