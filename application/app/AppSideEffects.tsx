@@ -57,7 +57,7 @@ import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
 import { isPrimaryModifierWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
-import { applySyncPayload, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
+import { prepareSyncPayloadApply, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
 import {
   applyProtectedSyncPayload,
   ensureVersionChangeBackup,
@@ -502,8 +502,8 @@ export function AppSideEffects() {
     (payload: SyncPayload) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
-        applyPayload: () =>
-          applySyncPayload(payload, {
+        prepareApply: () =>
+          prepareSyncPayloadApply(payload, {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
@@ -525,14 +525,17 @@ export function AppSideEffects() {
     (payload: SyncPayload, commitReplica: () => Promise<void>) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
-        applyPayload: async () => {
+        prepareApply: async () => {
           const portable = stripSyncPayloadEncryptedCredentials(payload);
-          await applySyncPayload(portable, {
+          const applyPreparedPayload = await prepareSyncPayloadApply(portable, {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
           }, { currentHosts: hosts });
-          await commitReplica();
+          return async () => {
+            await applyPreparedPayload();
+            await commitReplica();
+          };
         },
         translateProtectiveBackupFailure: (message) =>
           t('cloudSync.localBackups.protectiveBackupFailed', { message }),

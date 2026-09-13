@@ -1157,7 +1157,7 @@ export async function buildLocalVaultPayloadAsync(
  * This ensures both vault data and port-forwarding rules are imported
  * consistently across windows.
  */
-async function applyPayload(
+async function preparePayloadApply(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
   options: {
@@ -1165,7 +1165,7 @@ async function applyPayload(
     applyPluginSidecars?: PluginSyncSidecarApplier;
     currentHosts?: Host[];
   },
-): Promise<void> {
+): Promise<() => Promise<void>> {
   // Portable payloads must never keep device-bound enc:v1 blobs. Strip them
   // so a previously poisoned cloud/backup snapshot can still restore host
   // shells and let the user re-enter secrets (#2702).
@@ -1210,7 +1210,7 @@ async function applyPayload(
     vaultImport.groupConfigs = sanitizedPayload.groupConfigs;
   }
 
-  return Promise.resolve(importers.importVaultData(JSON.stringify(vaultImport))).then(async () => {
+  return () => Promise.resolve(importers.importVaultData(JSON.stringify(vaultImport))).then(async () => {
     // Only import port-forwarding rules when the payload explicitly carries
     // them.  Absent field = "payload was created before this feature existed",
     // so local rules are preserved.  Explicitly present [] = "remote has no
@@ -1236,19 +1236,26 @@ async function applyPayload(
   });
 }
 
-export function applySyncPayload(
+export function prepareSyncPayloadApply(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
   options?: {
     applyPluginSidecars?: PluginSyncSidecarApplier;
     currentHosts?: Host[];
   },
-): Promise<void> {
-  return applyPayload(payload, importers, {
+): Promise<() => Promise<void>> {
+  return preparePayloadApply(payload, importers, {
     includeLocalOnlyData: false,
     applyPluginSidecars: options?.applyPluginSidecars,
     currentHosts: options?.currentHosts,
   });
+}
+
+export async function applySyncPayload(
+  ...args: Parameters<typeof prepareSyncPayloadApply>
+): Promise<void> {
+  const applyPreparedPayload = await prepareSyncPayloadApply(...args);
+  await applyPreparedPayload();
 }
 
 export async function prepareLocalVaultPayloadApply(
@@ -1265,9 +1272,10 @@ export async function prepareLocalVaultPayloadApply(
   const sanitizedPayload = stripSyncPayloadEncryptedCredentials(payload);
   const prepareConvergentRestore = dependencies.prepareConvergentRestore
     ?? prepareRestoredPayloadConvergentWrites;
+  const applyPreparedPayload = await preparePayloadApply(sanitizedPayload, importers, { includeLocalOnlyData: true });
   const commitConvergentRestore = await prepareConvergentRestore(sanitizedPayload);
   return async () => {
-    await applyPayload(sanitizedPayload, importers, { includeLocalOnlyData: true });
+    await applyPreparedPayload();
     await commitConvergentRestore();
   };
 }
