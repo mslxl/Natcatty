@@ -306,14 +306,14 @@ export interface ExternalAgentConfig {
   acpArgs?: string[];
   /** Internal: disabled only because the managed CLI was unavailable. */
   autoDisabledUntilAvailable?: boolean;
-  /** CodeBuddy-specific advanced options (SDK 0.3.230). */
+  /** CodeBuddy-specific advanced options (SDK 0.3.258). */
   codebuddyOptions?: CodebuddyAdvancedOptions;
 }
 
-/** Advanced options specific to the CodeBuddy backend (SDK 0.3.230+). */
+/** Advanced options specific to the CodeBuddy backend (SDK 0.3.258+). */
 export interface CodebuddyAdvancedOptions {
-  /** Effort level for model reasoning. */
-  effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /** Effort level for model reasoning (SDK 0.3.258 Effort union). */
+  effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** Maximum conversation turns per request. */
   maxTurns?: number;
   /** Maximum budget in USD per request. */
@@ -324,6 +324,12 @@ export interface CodebuddyAdvancedOptions {
   enableFileCheckpointing?: boolean;
   /** Fallback model when primary is unavailable. */
   fallbackModel?: string;
+  /**
+   * Persist the session transcript to disk. Defaults to true; set false to keep
+   * the conversation in memory only (nothing written under the config dir, and
+   * file checkpointing is skipped). Requires CodeBuddy CLI >= 2.125.1.
+   */
+  persistSession?: boolean;
 }
 
 // Discovered agent from system PATH
@@ -587,6 +593,9 @@ const CODEX_REASONING_LEVELS_5_6_LUNA = ['low', 'medium', 'high', 'xhigh', 'max'
 /** Official catalog `minimal_client_version` for GPT-5.6 family. */
 export const CODEX_GPT_5_6_MIN_CLI_VERSION = '0.144.0';
 
+/** Minimum CodeBuddy CLI version that supports `persistSession: false`. */
+export const CODEBUDDY_PERSIST_SESSION_MIN_CLI_VERSION = '2.125.1';
+
 function codexPreset(
   id: string,
   name: string,
@@ -664,6 +673,15 @@ export function filterAgentModelPresetsForCliVersion(
     if (!cliSemver) return false;
     return compareSemverCore(cliSemver, preset.minCliVersion) >= 0;
   });
+}
+
+/** Return whether the installed CodeBuddy CLI accepts session persistence options. */
+export function isCodebuddySessionPersistenceSupported(
+  cliVersionText: string | null | undefined,
+): boolean {
+  const cliSemver = extractCliSemver(cliVersionText);
+  return cliSemver !== null
+    && compareSemverCore(cliSemver, CODEBUDDY_PERSIST_SESSION_MIN_CLI_VERSION) >= 0;
 }
 
 /** Resolve the model id (with optional /effort) for auto-selection. */
@@ -781,7 +799,7 @@ export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
 
 // CodeBuddy's SDK model enumeration can be empty depending on CLI/account
 // state; keep a CLI-supported fallback list so users can still pass --model.
-const CODEBUDDY_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+const CODEBUDDY_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 function codebuddyPreset(id: string, name: string): AgentModelPreset {
   return {

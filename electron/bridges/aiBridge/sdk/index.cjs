@@ -186,7 +186,7 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         pathToCodebuddyCode: ctx.binPath,
         toolIntegrationMode: ctx.toolIntegrationMode,
-        // SDK 0.3.230 options
+        // SDK 0.3.258 options
         systemPrompt: ctx.systemPrompt,
         effort: ctx.effort,
         maxTurns: ctx.maxTurns,
@@ -198,6 +198,7 @@ const DRIVER_REGISTRY = {
         enableFileCheckpointing: ctx.enableFileCheckpointing,
         traceId: ctx.traceId,
         parentSpanId: ctx.parentSpanId,
+        persistSession: ctx.persistSession,
         hooks: codebuddy.buildCodebuddyHooks(ctx.emitter, {
           toolIntegrationMode: ctx.toolIntegrationMode,
           additionalHooks: ctx.hooks,
@@ -239,6 +240,9 @@ const DRIVER_REGISTRY = {
           agents: options.agents,
           thinking: options.thinking,
           effort: options.effort,
+          // SessionOptions gained persistSession in SDK 0.3.258; without this the
+          // V2 path would silently drop the setting (query() already forwards it).
+          persistSession: options.persistSession,
         };
         const v2Result = await codebuddySessionManager.runTurn({
           sessionKey,
