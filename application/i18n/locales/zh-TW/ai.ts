@@ -243,7 +243,7 @@ export const zhTWAiMessages: Messages = {
   'ai.codebuddy.sandbox': '沙箱模式',
   'ai.codebuddy.sandbox.hint': '在沙箱中執行工具呼叫，限制檔案系統和網路存取。',
   'ai.codebuddy.persistSession': '工作階段持久化',
-  'ai.codebuddy.persistSession.hint': '將對話記錄儲存到磁碟，以便後續恢復工作階段。關閉後僅保留在記憶體中，不寫入磁碟，檔案檢查點也會略過。需要 CodeBuddy CLI 2.125.1 或更高版本。',
+  'ai.codebuddy.persistSession.hint': '將 CodeBuddy 自身的工作階段記錄儲存到磁碟，以便 CodeBuddy 後續恢復工作階段。關閉後將停用 CodeBuddy 的工作階段儲存；Netcatty 仍可能儲存聊天記錄和外部工作階段中繼資料。檔案檢查點會略過。需要 CodeBuddy CLI 2.125.1 或更高版本。',
   'ai.codebuddy.fileCheckpointing': '檔案檢查點',
   'ai.codebuddy.fileCheckpointing.hint': '啟用檔案操作檢查點，AI 修改檔案後可回滾。',
   'ai.codebuddy.elicitation.title': 'CodeBuddy 需要你的輸入',

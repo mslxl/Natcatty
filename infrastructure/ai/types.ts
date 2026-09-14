@@ -326,8 +326,10 @@ export interface CodebuddyAdvancedOptions {
   fallbackModel?: string;
   /**
    * Persist the session transcript to disk. Defaults to true; set false to keep
-   * the conversation in memory only (nothing written under the config dir, and
-   * file checkpointing is skipped). Requires CodeBuddy CLI >= 2.125.1.
+   * the conversation in memory only (CodeBuddy writes no session data under
+   * its config dir, and file checkpointing is skipped). Netcatty chat history
+   * and external session metadata are unaffected. Requires CodeBuddy CLI >=
+   * 2.125.1.
    */
   persistSession?: boolean;
 }

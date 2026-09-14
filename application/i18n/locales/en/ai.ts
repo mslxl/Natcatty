@@ -252,7 +252,7 @@ export const enAiMessages: Messages = {
   'ai.codebuddy.sandbox': 'Sandbox Mode',
   'ai.codebuddy.sandbox.hint': 'Execute tool calls in a sandbox, restricting filesystem and network access.',
   'ai.codebuddy.persistSession': 'Session Persistence',
-  'ai.codebuddy.persistSession.hint': 'Keep the conversation transcript on disk so the session can be resumed later. Turn off to keep it in memory only — nothing is written and file checkpointing is skipped. Requires CodeBuddy CLI 2.125.1 or newer.',
+  'ai.codebuddy.persistSession.hint': "Keep CodeBuddy's own session transcript on disk so CodeBuddy can resume it later. Turn off to disable CodeBuddy session storage; Netcatty may still save chat history and external session metadata. File checkpointing is skipped. Requires CodeBuddy CLI 2.125.1 or newer.",
   'ai.codebuddy.fileCheckpointing': 'File Checkpointing',
   'ai.codebuddy.fileCheckpointing.hint': 'Enable file operation checkpoints so AI file modifications can be rolled back.',
   'ai.codebuddy.elicitation.title': 'CodeBuddy needs your input',

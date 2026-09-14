@@ -252,7 +252,7 @@ export const zhCNAiMessages: Messages = {
   'ai.codebuddy.sandbox': '沙箱模式',
   'ai.codebuddy.sandbox.hint': '在沙箱中执行工具调用，限制文件系统和网络访问。',
   'ai.codebuddy.persistSession': '会话持久化',
-  'ai.codebuddy.persistSession.hint': '将对话记录保存到磁盘，以便后续恢复会话。关闭后仅保留在内存中，不写入磁盘，文件检查点也会跳过。需要 CodeBuddy CLI 2.125.1 或更高版本。',
+  'ai.codebuddy.persistSession.hint': '将 CodeBuddy 自身的会话记录保存到磁盘，以便 CodeBuddy 后续恢复会话。关闭后将停用 CodeBuddy 的会话存储；Netcatty 仍可能保存聊天记录和外部会话元数据。文件检查点会跳过。需要 CodeBuddy CLI 2.125.1 或更高版本。',
   'ai.codebuddy.fileCheckpointing': '文件检查点',
   'ai.codebuddy.fileCheckpointing.hint': '启用文件操作检查点，AI 修改文件后可回滚。',
   'ai.codebuddy.elicitation.title': 'CodeBuddy 需要你的输入',

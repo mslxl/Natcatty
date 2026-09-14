@@ -243,7 +243,7 @@ export const esAiMessages: Messages = {
   'ai.codebuddy.sandbox': 'Modo sandbox',
   'ai.codebuddy.sandbox.hint': 'Ejecuta llamadas a herramientas en un sandbox, restringiendo el acceso al sistema de archivos y a la red.',
   'ai.codebuddy.persistSession': 'Persistencia de sesión',
-  'ai.codebuddy.persistSession.hint': 'Guarda la transcripción de la conversación en disco para poder reanudar la sesión más tarde. Desactívalo para mantenerla solo en memoria: no se escribe nada y se omiten los puntos de control de archivos. Requiere CodeBuddy CLI 2.125.1 o superior.',
+  'ai.codebuddy.persistSession.hint': 'Guarda en disco la transcripción de la sesión propia de CodeBuddy para que CodeBuddy pueda reanudarla más tarde. Desactívalo para deshabilitar el almacenamiento de sesiones de CodeBuddy; Netcatty aún puede guardar el historial del chat y los metadatos de la sesión externa. Se omiten los puntos de control de archivos. Requiere CodeBuddy CLI 2.125.1 o superior.',
   'ai.codebuddy.fileCheckpointing': 'Puntos de control de archivos',
   'ai.codebuddy.fileCheckpointing.hint': 'Habilita puntos de control de operaciones de archivos para poder revertir las modificaciones de IA a los archivos.',
   'ai.codebuddy.elicitation.title': 'CodeBuddy necesita tu aporte',
