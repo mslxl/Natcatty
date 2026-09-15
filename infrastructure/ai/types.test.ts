@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   CLAUDE_MODEL_PRESETS,
   CODEBUDDY_MODEL_PRESETS,
+  CODEBUDDY_PERSIST_SESSION_MIN_CLI_VERSION,
   CODEX_GPT_5_6_MIN_CLI_VERSION,
   CODEX_MODEL_PRESETS,
   CURSOR_MODEL_PRESETS,
@@ -14,6 +15,7 @@ import {
   resolveAgentCliVersion,
   resolveAgentModelSelection,
   resolveDiscoveredAgentCliVersion,
+  isCodebuddySessionPersistenceSupported,
 } from './types';
 
 test('Claude presets advertise effort levels separately from the model id', () => {
@@ -44,8 +46,16 @@ test('getAgentModelPresets returns Cursor presets for cursor-agent paths and sdk
   );
   assert.deepEqual(
     getAgentModelPresets(undefined, 'codebuddy')[0]?.thinkingLevels,
-    ['low', 'medium', 'high', 'xhigh'],
+    ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   );
+});
+
+test('CodeBuddy session persistence is gated by CLI version', () => {
+  assert.equal(CODEBUDDY_PERSIST_SESSION_MIN_CLI_VERSION, '2.125.1');
+  assert.equal(isCodebuddySessionPersistenceSupported('CodeBuddy 2.125.0'), false);
+  assert.equal(isCodebuddySessionPersistenceSupported('CodeBuddy 2.125.1'), true);
+  assert.equal(isCodebuddySessionPersistenceSupported('2.126.0'), true);
+  assert.equal(isCodebuddySessionPersistenceSupported(undefined), false);
 });
 
 test('getAgentModelPresets keeps Codex presets separate from CodeBuddy presets', () => {

@@ -523,10 +523,10 @@ function registerSdkStreamHandlers(ctx) {
           model, existingSessionId, toolIntegrationMode,
           defaultTargetSession, userSkillsContext, agentEnv: requestedAgentEnv, agentCommand,
           codexRuntime: requestedCodexRuntime, permissionMode,
-          // SDK 0.3.230 advanced options (passed from renderer via sdkAgentAdapter)
+          // SDK 0.3.258 advanced options (passed from renderer via sdkAgentAdapter)
           effort, maxTurns, maxBudgetUsd, fallbackModel,
           sandbox, agents, outputFormat, enableFileCheckpointing,
-          traceId, parentSpanId,
+          traceId, parentSpanId, persistSession,
         } = payload;
 
         const backendKey = resolveBackendKey(sdkBackend);
@@ -793,7 +793,7 @@ function registerSdkStreamHandlers(ctx) {
             // when the CLI hits a security restriction, route the decision
             // through the renderer approval UI instead of throwing an error.
             requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
-            // SDK 0.3.230 advanced options
+            // SDK 0.3.258 advanced options
             effort: effort || undefined,
             maxTurns: maxTurns || undefined,
             maxBudgetUsd: maxBudgetUsd || undefined,
@@ -804,6 +804,7 @@ function registerSdkStreamHandlers(ctx) {
             enableFileCheckpointing: enableFileCheckpointing != null ? enableFileCheckpointing : undefined,
             traceId: traceId || undefined,
             parentSpanId: parentSpanId || undefined,
+            persistSession: persistSession != null ? persistSession : undefined,
           };
           const result = codexRuntime === "app-server"
             ? await codexAppServerRuntime.runTurn(commonTurnContext)
@@ -979,7 +980,7 @@ function registerSdkStreamHandlers(ctx) {
       const runtime = sdkRequestRuntimes.get(requestId);
       if (!runtime) return { status: "busy" };
 
-      // SDK 0.3.230 Session.send() resets the active message stream, so it
+      // SDK 0.3.258 Session.send() resets the active message stream, so it
       // cannot safely implement mid-turn steering.
       if (runtime.backendKey === "codebuddy") {
         return { status: "unsupported" };
@@ -1096,7 +1097,7 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
-    // --- CodeBuddy SDK 0.3.230 IPC handlers ---
+    // --- CodeBuddy SDK 0.3.258 IPC handlers ---
 
     ipcMain.handle("netcatty:ai:sdk-agent:mcp-status", async (event, payload) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };

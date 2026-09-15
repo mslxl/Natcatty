@@ -189,7 +189,7 @@ test('normalizeStoredAgentModelSelection keeps bare CodeBuddy ids unsuffixed', (
   const presets: AgentModelPreset[] = [{
     id: 'glm-5.1',
     name: 'GLM 5.1',
-    thinkingLevels: ['low', 'medium', 'high', 'xhigh'],
+    thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
     defaultThinkingLevel: 'medium',
     encodeDefaultThinking: false,
   }];
