@@ -275,6 +275,16 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       ),
     );
     const preserveStatelessResponsesReasoning = reasoningProviderOptions?.openai?.store === false;
+    // Anthropic-compatible providers validate signed thinking blocks: every
+    // content[type=thinking] block (with its signature) captured on prior
+    // assistant turns must be echoed back verbatim on subsequent requests that
+    // carry tools, or the API rejects the turn with "The `content[].thinking`
+    // in the thinking mode must be passed back to the API" (DeepSeek's
+    // Anthropic-format endpoint is strict about this even for earlier turns).
+    // Keep the reasoning parts buildCattySdkMessages replayed instead of
+    // pruning them like generic Chat Completions histories.
+    const preserveAnthropicThinkingReplay = resolveProviderStyle(context.activeProvider) === 'anthropic';
+    const preserveReasoningForStream = preserveStatelessResponsesReasoning || preserveAnthropicThinkingReplay;
     const reasoningReserveTokens = estimateReasoningOutputReserve(reasoningProviderOptions);
     // Fold thinking budget into compaction maxOutput only. reservedTokens is
     // added to estimated input separately, so adding the budget there too
@@ -290,7 +300,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
 
     const prepareMessagesForStream = (messages: ModelMessage[]): ModelMessage[] => {
       const pruned = prepareCattyMessagesForStream(messages, {
-        preserveReasoning: preserveStatelessResponsesReasoning,
+        preserveReasoning: preserveReasoningForStream,
       });
       continuationContext.openAIChatAssistantFields = collectOpenAIChatAssistantFieldsForMessages(
         pruned,
