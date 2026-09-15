@@ -32,7 +32,6 @@ const {
 } = await import("../application/state/terminalDragData.ts");
 const {
   activateLogViewTab,
-  createTopTabCopyDoubleClickHandler,
   createTopTabSessionDoubleClickHandler,
   formatSessionTopTabLabel,
   formatSessionTopTabTooltip,
@@ -55,7 +54,6 @@ const appSource = [
 ].join("\n");
 const externalMcpToggleSource = readFileSync(new URL("../application/state/useExternalMcpToggleState.ts", import.meta.url), "utf8");
 const zhTwAiSource = readFileSync(new URL("../application/i18n/locales/zh-TW/ai.ts", import.meta.url), "utf8");
-const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
 const terminalViewSource = readFileSync(new URL("./terminal/TerminalView.tsx", import.meta.url), "utf8");
 
 test("host tree tab gutter fills the remaining sidebar width", () => {
