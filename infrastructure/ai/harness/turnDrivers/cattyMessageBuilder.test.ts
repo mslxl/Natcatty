@@ -573,3 +573,75 @@ test('an item id whose every fragment lacks ciphertext still discards the tool e
   assert.equal(sdkMessages.length, 1);
   assert.equal(sdkMessages[0].content, 'Running it.');
 });
+
+test('Anthropic-format signed thinking survives build and stream preparation', () => {
+  // Anthropic-compatible providers (including DeepSeek's /anthropic endpoint)
+  // validate signed thinking blocks: prior assistant turns must echo back
+  // content[type=thinking] with their signature on every request that carries
+  // tools, or they reject the turn with 400 "The `content[].thinking` in the
+  // thinking mode must be passed back to the API". The turn driver preserves
+  // reasoning for anthropic-style providers, so the signed thinking block
+  // replayed here must survive final stream preparation.
+  const messages: ChatMessage[] = [
+    {
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Running it.',
+      timestamp: 1,
+      providerContinuation: {
+        source: { providerConfigId: 'anthropic-1', providerType: 'anthropic', modelId: 'deepseek-v4-flash' },
+        reasoningParts: [{
+          text: 'prior thinking',
+          providerOptions: { anthropic: { signature: 'sig-abc' } },
+        }],
+      },
+      toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: { command: 'ls' } }],
+    },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      content: '',
+      timestamp: 2,
+      toolResults: [{ toolCallId: 'call-1', content: 'output' }],
+    },
+    {
+      id: 'assistant-2',
+      role: 'assistant',
+      content: 'All done.',
+      timestamp: 4,
+      providerContinuation: {
+        source: { providerConfigId: 'anthropic-1', providerType: 'anthropic', modelId: 'deepseek-v4-flash' },
+        reasoningParts: [{
+          text: 'final thinking',
+          providerOptions: { anthropic: { signature: 'sig-xyz' } },
+        }],
+      },
+    },
+  ];
+
+  const built = buildCattySdkMessages({
+    allMessages: messages,
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('anthropic-1', 'anthropic', 'deepseek-v4-flash'),
+    chatSessionId: 'chat-1',
+    toolOutputStore: new ToolOutputStore(),
+    fieldsByMessage: new Map(),
+  });
+  const prepared = prepareCattyMessagesForStream(built, { preserveReasoning: true });
+
+  const toolExchangeContent = prepared[0].content;
+  assert.ok(Array.isArray(toolExchangeContent));
+  assert.deepEqual(
+    toolExchangeContent.map(part => part.type),
+    ['reasoning', 'text', 'tool-call'],
+  );
+  const toolThinking = toolExchangeContent.find(part => part.type === 'reasoning');
+  assert.deepEqual(toolThinking?.providerOptions?.anthropic, { signature: 'sig-abc' });
+
+  const plainContent = prepared.at(-1).content;
+  assert.ok(Array.isArray(plainContent));
+  const plainThinking = plainContent.find(part => part.type === 'reasoning');
+  assert.equal(plainThinking?.text, 'final thinking');
+  assert.deepEqual(plainThinking?.providerOptions?.anthropic, { signature: 'sig-xyz' });
+});
