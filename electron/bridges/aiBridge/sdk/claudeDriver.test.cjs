@@ -179,6 +179,36 @@ test("mapClaudeModels accepts the CLI's runtime {id,name} shape (Claude Code 2.x
   ]);
 });
 
+test("mapClaudeModels distinguishes Claude aliases that share a custom model name", () => {
+  const models = mapClaudeModels([
+    { id: "default", name: "Default (recommended)" },
+    { id: "opus", name: "deepseek-v4.1-flash:cloud" },
+    { id: "sonnet", name: "deepseek-v4.1-flash:cloud" },
+    { id: "haiku", name: "Claude Haiku" },
+  ]);
+  assert.deepEqual(models.map(({ id, name }) => ({ id, name })), [
+    { id: "default", name: "Default (recommended)" },
+    { id: "opus", name: "[opus] deepseek-v4.1-flash:cloud" },
+    { id: "sonnet", name: "[sonnet] deepseek-v4.1-flash:cloud" },
+    { id: "haiku", name: "Claude Haiku" },
+  ]);
+});
+
+test("mapClaudeModels keeps names unique when an existing name matches a generated alias", () => {
+  const models = mapClaudeModels([
+    { id: "opus", name: "Custom" },
+    { id: "sonnet", name: "Custom" },
+    { id: "other", name: "[opus] Custom" },
+    { id: "opus", name: "Custom" },
+  ]);
+  assert.deepEqual(models.map(({ name }) => name), [
+    "[opus #2] Custom",
+    "[sonnet] Custom",
+    "[opus] Custom",
+    "[opus #3] Custom",
+  ]);
+});
+
 test("mapClaudeModels preserves each live model's supported effort levels", () => {
   const out = mapClaudeModels([
     { value: "opus", displayName: "Opus", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
