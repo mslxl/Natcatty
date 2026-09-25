@@ -291,7 +291,7 @@ function mapClaudeModels(models) {
   // (same CLI lineage as CodeBuddy — see mapCodebuddyModels). Accept both
   // shapes so a live catalog is never filtered into an empty list, which
   // would silently degrade the picker to build-time curated presets (#3496).
-  return models
+  const presets = models
     .map((m) => {
       if (!m) return null;
       const id = m.value || m.id || m.modelId;
@@ -311,6 +311,22 @@ function mapClaudeModels(models) {
       };
     })
     .filter(Boolean);
+  const nameCounts = new Map();
+  for (const preset of presets) {
+    nameCounts.set(preset.name, (nameCounts.get(preset.name) || 0) + 1);
+  }
+  const usedNames = new Set(presets.map((preset) => preset.name));
+  return presets.map((preset) => {
+    if (nameCounts.get(preset.name) === 1) return preset;
+    let suffix = 1;
+    let name = `[${preset.id}] ${preset.name}`;
+    while (usedNames.has(name)) {
+      suffix += 1;
+      name = `[${preset.id} #${suffix}] ${preset.name}`;
+    }
+    usedNames.add(name);
+    return { ...preset, name };
+  });
 }
 
 /**
