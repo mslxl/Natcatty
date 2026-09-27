@@ -291,7 +291,6 @@ function AppViewInner({ domains }: AppViewProps) {
     resolvedTheme,
     windowOpacity,
     showSftpTab,
-    sftpInSidebar,
     showHostTreeSidebar,
     showRecentHosts,
     hostClickBehavior,
@@ -531,7 +530,7 @@ function AppViewInner({ domains }: AppViewProps) {
         onReorderTabs={reorderWorkTabs}
         onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
         onAppendHostToWorkspace={handleAppendHostToWorkspace}
-        showSftpTab={showSftpTab && !sftpInSidebar}
+        showSftpTab={showSftpTab}
         showHostTreeSidebar={showHostTreeSidebar}
         switchTabKeyBinding={keyBindings.find((binding) => binding.action === 'switchToTab') ?? null}
         dynamicTabTitleMode={dynamicTabTitleMode}
@@ -892,7 +891,7 @@ function AppViewInner({ domains }: AppViewProps) {
               results={quickResults}
               sessions={sessions}
               workspaces={workspaces}
-              showSftpTab={showSftpTab || sftpInSidebar}
+              showSftpTab={showSftpTab}
               onQueryChange={setQuickSearch}
               onSelect={handleHostConnectWithProtocolCheck}
               onEditHost={(host) => {

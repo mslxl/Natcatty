@@ -559,8 +559,6 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setShowOnlyUngroupedHostsInRoot={settings.setShowOnlyUngroupedHostsInRoot}
                                 showSftpTab={settings.showSftpTab}
                                 setShowSftpTab={settings.setShowSftpTab}
-                                sftpInSidebar={settings.sftpInSidebar}
-                                setSftpInSidebar={settings.setSftpInSidebar}
                                 showHostTreeSidebar={settings.showHostTreeSidebar}
                                 setShowHostTreeSidebar={settings.setShowHostTreeSidebar}
                                 windowOpacity={settings.windowOpacity}

@@ -361,8 +361,6 @@ export const enCoreMessages: Messages = {
   'settings.vault.showOnlyUngroupedHostsInRootDesc': 'When enabled, the root host list only shows hosts without a group. Open a group from the sidebar to see grouped hosts.',
   'settings.vault.showSftpTab': 'Show SFTP tab',
   'settings.vault.showSftpTabDesc': 'Display the standalone SFTP view in the top tab bar. When hidden, use the in-session SFTP side panel instead.',
-  'settings.vault.sftpInSidebar': 'Keep SFTP in the sidebar',
-  'settings.vault.sftpInSidebarDesc': 'Hide the top SFTP tab and show SFTP in the vault sidebar instead, so the sidebar stays visible while SFTP is open.',
   'settings.vault.showHostTreeSidebar': 'Show host list sidebar',
   'settings.vault.showHostTreeSidebarDesc': 'Display the host list sidebar and its top-bar toggle on terminal and editor tabs.',
   'settings.vault.autoImportSystemKnownHosts': 'Auto-import system known_hosts',
@@ -1026,7 +1024,6 @@ Highlight the focused split pane:
   'vault.nav.snippets': 'Scripts',
   'vault.nav.notes': 'Notes',
   'vault.nav.knownHosts': 'Known Hosts',
-  'vault.nav.sftp': 'SFTP',
   'vault.nav.logs': 'Logs',
 
   'proxyProfiles.action.add': 'Add Proxy',

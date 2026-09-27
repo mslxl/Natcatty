@@ -24,7 +24,6 @@ export type SettingsChromeSnapshot = {
   uiLanguage: UILanguage;
   windowOpacity: number;
   showSftpTab: boolean;
-  sftpInSidebar: boolean;
   showHostTreeSidebar: boolean;
   showRecentHosts: boolean;
   hostClickBehavior: HostClickBehavior;
@@ -59,7 +58,6 @@ export const DEFAULT_SETTINGS_CHROME_SNAPSHOT: SettingsChromeSnapshot = Object.f
   uiLanguage: 'en',
   windowOpacity: 1,
   showSftpTab: true,
-  sftpInSidebar: false,
   showHostTreeSidebar: true,
   showRecentHosts: true,
   hostClickBehavior: 'connect',
@@ -87,7 +85,6 @@ export function settingsChromeSnapshotsEqual(
     && a.uiLanguage === b.uiLanguage
     && a.windowOpacity === b.windowOpacity
     && a.showSftpTab === b.showSftpTab
-    && a.sftpInSidebar === b.sftpInSidebar
     && a.showHostTreeSidebar === b.showHostTreeSidebar
     && a.showRecentHosts === b.showRecentHosts
     && a.hostClickBehavior === b.hostClickBehavior
