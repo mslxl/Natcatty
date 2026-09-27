@@ -404,6 +404,7 @@ export async function saveProviderConnectionImpl(this: any,
   connection: ProviderConnection,
   authAttemptId?: number,
   assertCanPersist?: () => void,
+  preserveStoredSecrets = false,
 ): Promise<void> {
     const key = providerConnectionStorageKey(provider);
     // Use write-specific counter so status-only updates cannot discard
@@ -413,6 +414,19 @@ export async function saveProviderConnectionImpl(this: any,
     const pending = (async () => {
       const encrypted = await encryptProviderSecrets(connection);
       assertCanPersist?.();
+      // A no-op only updates sync metadata. Preserve the latest stored secret
+      // fields so an unseen peer-window credential refresh is not overwritten.
+      if (preserveStoredSecrets) {
+        const latest = this.loadProviderConnection(provider) as ProviderConnection;
+        assertCanPersist?.();
+        for (const field of ['tokens', 'config', 'credential'] as const) {
+          if (Object.prototype.hasOwnProperty.call(latest, field)) {
+            (encrypted as any)[field] = latest[field];
+          } else {
+            delete (encrypted as any)[field];
+          }
+        }
+      }
       // Only persist if no newer save has started during the async gap
       if (
         seq === this.providerWriteSeq[provider] &&

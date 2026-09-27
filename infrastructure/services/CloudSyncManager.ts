@@ -272,8 +272,11 @@ export class CloudSyncManager {
     connection: ProviderConnection,
     authAttemptId?: number,
     assertCanPersist?: () => void,
+    preserveStoredSecrets = false,
   ): Promise<void> {
-    return saveProviderConnectionImpl.call(this, provider, connection, authAttemptId, assertCanPersist);
+    return saveProviderConnectionImpl.call(
+      this, provider, connection, authAttemptId, assertCanPersist, preserveStoredSecrets,
+    );
   }
 
   private loadFromStorage<T>(key: string): T | null {

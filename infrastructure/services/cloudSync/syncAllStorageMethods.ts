@@ -101,6 +101,38 @@ function providerConnectionIdentity(connection: ProviderConnection | undefined):
   });
 }
 
+function persistedProviderIdentity(provider: CloudProvider, connection: ProviderConnection): string {
+  const config = connection.config;
+  let configIdentity: unknown = config;
+  if (provider === 'webdav' && config && typeof config === 'object' && 'authType' in config) {
+    configIdentity = {
+      endpoint: config.endpoint,
+      authType: config.authType,
+      username: config.username,
+      allowInsecure: config.allowInsecure,
+    };
+  } else if (provider === 's3' && config && typeof config === 'object' && 'bucket' in config) {
+    configIdentity = {
+      endpoint: config.endpoint,
+      region: config.region,
+      bucket: config.bucket,
+      accessKeyId: config.accessKeyId,
+      prefix: config.prefix,
+      forcePathStyle: config.forcePathStyle,
+      allowInsecure: config.allowInsecure,
+    };
+  }
+  return JSON.stringify({
+    accountId: connection.account?.id,
+    resourceId: connection.resourceId,
+    config: configIdentity,
+    credential: connection.credential,
+    hasConnectionData: connection.tokens != null
+      || Object.prototype.hasOwnProperty.call(connection, 'config')
+      || connection.credential != null,
+  });
+}
+
 async function loadRawSyncBase(this: any, provider?: CloudProvider): Promise<SyncPayload | null> {
   const key = this.state.unlockedKey?.derivedKey;
   if (!key || typeof this.loadFromStorage !== 'function') return null;
@@ -637,7 +669,8 @@ export async function syncAllProvidersImpl(this: any,
           // its event has advanced providerWriteSeq here.
           if (
             storedProviderFingerprint !== null
-            && JSON.stringify(this.loadProviderConnection(provider)) !== storedProviderFingerprint
+            && persistedProviderIdentity(provider, this.loadProviderConnection(provider))
+              !== storedProviderFingerprint
           ) {
             throw new ProviderConnectionChangedDuringSyncError(
               'Provider connection changed during sync; retry with its latest credentials',
@@ -689,7 +722,7 @@ export async function syncAllProvidersImpl(this: any,
               // while in-memory credentials still lag the stored connection.
               if (typeof this.loadProviderConnection === 'function') {
                 const rawStoredConnection = this.loadProviderConnection(provider);
-                storedProviderFingerprint = JSON.stringify(rawStoredConnection);
+                storedProviderFingerprint = persistedProviderIdentity(provider, rawStoredConnection);
                 const storedConnection = await decryptProviderSecrets(rawStoredConnection);
                 assertSyncSecurityGeneration(this, syncSecurityGeneration);
                 assertProviderConnectionUnchanged();
@@ -753,7 +786,9 @@ export async function syncAllProvidersImpl(this: any,
                   originalProviderWriteSeq == null ? undefined : originalProviderWriteSeq + 1,
                 );
               };
-              await this.saveProviderConnection(provider, connection, undefined, assertCanPersistConnection);
+              await this.saveProviderConnection(
+                provider, connection, undefined, assertCanPersistConnection, true,
+              );
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
               if (
                 originalProviderWriteSeq != null

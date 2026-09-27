@@ -625,6 +625,28 @@ test("guarded provider saves cannot recreate state cleared during an await", asy
     queueMicrotask(() => { providerChanged = true; });
     await assert.rejects(connectionSave, /provider changed/);
     assert.equal(stored.size, 0);
+
+    providerChanged = false;
+    const latestConnection = {
+      provider: "github" as const,
+      status: "connected" as const,
+      tokens: { accessToken: "fresh" },
+      resourceId: "resource-7",
+    };
+    const metadataManager = {
+      providerWriteSeq: { github: 0 },
+      loadProviderConnection: () => latestConnection,
+      saveToStorage: (_storageKey: string, value: typeof latestConnection) => {
+        stored.set("connection", value);
+      },
+    };
+    await saveProviderConnectionImpl.call(metadataManager, "github", {
+      ...latestConnection,
+      tokens: { accessToken: "old" },
+      lastSyncVersion: 7,
+    }, undefined, assertProviderUnchanged, true);
+    const savedConnection = stored.get("connection") as typeof latestConnection;
+    assert.equal(savedConnection.tokens.accessToken, "fresh");
   } finally {
     console.warn = originalWarn;
   }
@@ -1236,9 +1258,13 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
           assertCanPersist?.();
           anchorWrites += 1;
         },
-        saveProviderConnection: async () => {
+        saveProviderConnection: async (_provider: CloudProvider, _connection: unknown,
+          _authAttemptId?: number, assertCanPersist?: () => void,
+          preserveStoredSecrets?: boolean) => {
+          assert.equal(preserveStoredSecrets, true);
           saveCalls += 1;
           manager.providerWriteSeq.github += 1;
+          assertCanPersist?.();
           if (raceAt === "connection") {
             manager.providerWriteSeq.github += 1;
             manager.providerDecryptSeq.github += 1;
@@ -1255,14 +1281,22 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
       };
 
       const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("github");
-      assert.equal(result?.success, false, raceAt);
-      assert.match(result?.error ?? "", /Provider connection changed/, raceAt);
-      assert.equal(saveCalls, raceAt === "connection" ? 1 : 0, raceAt);
-      assert.equal(anchorWrites, raceAt === "connection" ? 1 : 0, raceAt);
+      const sameResourceTokenRefresh = raceAt === "storage";
+      assert.equal(result?.success, sameResourceTokenRefresh, `${raceAt}: ${result?.error ?? "no error"}`);
+      if (sameResourceTokenRefresh) {
+        assert.equal(result?.action, "none");
+        assert.equal(storedToken, "fresh");
+      } else {
+        assert.match(result?.error ?? "", /Provider connection changed/, raceAt);
+      }
+      assert.equal(saveCalls, raceAt === "connection" || sameResourceTokenRefresh ? 1 : 0, raceAt);
+      assert.equal(anchorWrites, raceAt === "connection" || sameResourceTokenRefresh ? 1 : 0, raceAt);
       assert.equal(uploads, 0, raceAt);
-      assert.equal(manager.state.providers.github.status, "error", raceAt);
+      assert.equal(manager.state.providers.github.status,
+        sameResourceTokenRefresh ? "connected" : "error", raceAt);
       assert.equal(manager.providerDecryptSeq.github,
-        raceAt === "connection" ? 2 : raceAt === "anchor" ? 1 : 0, raceAt);
+        raceAt === "connection" ? 2 : raceAt === "anchor" || sameResourceTokenRefresh ? 1 : 0,
+        raceAt);
       if (raceAt === "connection") {
         assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
       }
@@ -1341,6 +1375,72 @@ test("no-op sync accepts its own token refresh during the remote check", async (
     assert.equal(uploads, 0);
     assert.equal(storedConnection.tokens.accessToken, "fresh");
     assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+  }
+});
+
+test("peer no-op metadata updates do not fail an identical provider sync", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const localPayload = payload("local");
+  let storedConnection = {
+    provider: "github" as const,
+    status: "connected" as const,
+    tokens: { accessToken: "same" },
+    resourceId: "resource-7",
+    lastSyncVersion: 7,
+  };
+  let saves = 0;
+  let uploads = 0;
+  EncryptionService.decryptPayload = async () => localPayload;
+
+  try {
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      providerDecryptSeq: { github: 0 },
+      providerWriteSeq: { github: 0 },
+      state: {
+        securityState: "UNLOCKED",
+        providers: { github: { enabled: true, connected: true, ...storedConnection } },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 7,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async () => ({ provider: "github", resourceId: "resource-7" }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({
+        conflict: false,
+        remoteFile: remoteFile("github", 7, 700),
+      }),
+      loadProviderConnection: () => storedConnection,
+      loadSyncBase: async () => localPayload,
+      saveSyncBase: async () => {},
+      saveSyncAnchor: async () => {
+        storedConnection = { ...storedConnection, lastSyncVersion: 8 };
+      },
+      saveProviderConnection: async () => {
+        saves += 1;
+        manager.providerWriteSeq.github += 1;
+      },
+      saveSyncConfig: () => {},
+      uploadToProvider: async () => {
+        uploads += 1;
+        return { success: true, provider: "github" as const, action: "upload" as const };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+
+    const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("github");
+    assert.equal(result?.success, true);
+    assert.equal(result?.action, "none");
+    assert.equal(saves, 1);
+    assert.equal(uploads, 0);
   } finally {
     EncryptionService.decryptPayload = originalDecryptPayload;
   }
