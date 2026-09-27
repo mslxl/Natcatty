@@ -1113,6 +1113,87 @@ test("no-op sync stops when the vault locks during persistence", async () => {
   }
 });
 
+test("no-op sync does not persist stale credentials after a concurrent provider write", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const localPayload = payload("local");
+  const checkedRemote = remoteFile("github", 7, 700);
+  EncryptionService.decryptPayload = async () => localPayload;
+
+  try {
+    for (const raceAt of ["stored", "anchor", "connection"] as const) {
+      let saveCalls = 0;
+      let uploads = 0;
+      const manager = {
+        masterPassword: "pw",
+        adapters: new Map(),
+        providerDecryptSeq: { github: 0 },
+        providerWriteSeq: { github: raceAt === "stored" ? 1 : 0 },
+        state: {
+          securityState: "UNLOCKED",
+          providers: {
+            github: {
+              enabled: true, connected: true, status: "connected",
+              tokens: { accessToken: "old" },
+            },
+          },
+          lastError: null,
+          syncState: "IDLE",
+          syncStrategy: "smartMerge",
+          localVersion: 7,
+          deviceId: "local-device",
+          deviceName: "Local",
+        },
+        getConnectedAdapter: async () => ({ provider: "github" }),
+        updateProviderStatus: () => {},
+        emit: () => {},
+        checkProviderConflict: async () => ({ conflict: false, remoteFile: checkedRemote }),
+        loadProviderConnection: () => ({
+          ...manager.state.providers.github,
+          tokens: { accessToken: raceAt === "stored" ? "fresh" : "old" },
+        }),
+        loadSyncBase: async () => localPayload,
+        saveSyncBase: async () => {},
+        saveSyncAnchor: async () => {
+          if (raceAt === "anchor") {
+            manager.providerWriteSeq.github += 1;
+            manager.providerDecryptSeq.github += 1;
+          }
+        },
+        saveProviderConnection: async () => {
+          saveCalls += 1;
+          manager.providerWriteSeq.github += 1;
+          if (raceAt === "connection") {
+            manager.providerWriteSeq.github += 1;
+            manager.providerDecryptSeq.github += 1;
+            manager.state.providers.github.tokens = { accessToken: "fresh" };
+          }
+        },
+        saveSyncConfig: () => {},
+        uploadToProvider: async () => {
+          uploads += 1;
+          return { success: true, provider: "github" as const, action: "upload" as const };
+        },
+        exitBlockedState: () => {},
+        notifyStateChange: () => {},
+      };
+
+      const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("github");
+      assert.equal(result?.success, false, raceAt);
+      assert.match(result?.error ?? "", /Provider connection changed/, raceAt);
+      assert.equal(saveCalls, raceAt === "connection" ? 1 : 0, raceAt);
+      assert.equal(uploads, 0, raceAt);
+      assert.equal(manager.state.providers.github.status, "error", raceAt);
+      assert.equal(manager.providerDecryptSeq.github,
+        raceAt === "stored" ? 0 : raceAt === "anchor" ? 1 : 2, raceAt);
+      if (raceAt === "connection") {
+        assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
+      }
+    }
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+  }
+});
+
 test("no-op sync does not upload when saving a newer remote base fails", async () => {
   const originalDecryptPayload = EncryptionService.decryptPayload;
   const originalEncryptPayload = EncryptionService.encryptPayload;

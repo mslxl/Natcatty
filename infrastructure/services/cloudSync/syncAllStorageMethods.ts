@@ -6,6 +6,7 @@ import {
 } from '../../../domain/sync';
 import packageJson from '../../../package.json';
 import { EncryptionService } from '../EncryptionService';
+import { decryptProviderSecrets } from '../../persistence/secureFieldAdapter';
 import { mergeSyncPayloads } from '../../../domain/syncMerge';
 import { cloudSyncPayloadsEqual } from '../../../domain/convergentSync';
 import { stripSyncPayloadEncryptedCredentials, healPoisonedSecretsForMerge } from '../../../domain/credentials';
@@ -88,6 +89,8 @@ async function downloadRemoteForSyncAllImpl(this: any,
 
 const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
 const SYNC_SNAPSHOTS_STORAGE_KEY = 'netcatty_sync_snapshots_v1';
+
+class ProviderConnectionChangedDuringSyncError extends Error {}
 
 async function loadRawSyncBase(this: any, provider?: CloudProvider): Promise<SyncPayload | null> {
   const key = this.state.unlockedKey?.derivedKey;
@@ -183,6 +186,13 @@ export async function syncAllProvidersImpl(this: any,
     if (connectedProviders.length === 0) {
       return results;
     }
+
+    // A storage event or token refresh may start while the remote check and
+    // no-op persistence await. Do not save an older connection over that write.
+    const providerWriteSeqAtStart = new Map(connectedProviders.map((provider) => [
+      provider,
+      this.providerWriteSeq?.[provider] as number | undefined,
+    ]));
 
     this.state.lastError = null;
     this.state.syncState = 'SYNCING';
@@ -584,6 +594,17 @@ export async function syncAllProvidersImpl(this: any,
     // fresh anchor paired with a stale base.
     const uploadTasks = validUploads.map(async ({ provider, adapter }) => {
       try {
+        const originalProviderWriteSeq = providerWriteSeqAtStart.get(provider);
+        const assertProviderConnectionUnchanged = () => {
+          if (
+            originalProviderWriteSeq != null
+            && this.providerWriteSeq?.[provider] !== originalProviderWriteSeq
+          ) {
+            throw new ProviderConnectionChangedDuringSyncError(
+              'Provider connection changed during sync; retry with its latest credentials',
+            );
+          }
+        };
         const entry = checkResults.find((result) => result.provider === provider);
         const checkedRemoteFile = entry?.check?.remoteFile;
         // No-op guard (#3519): when the outgoing payload is already identical
@@ -623,6 +644,28 @@ export async function syncAllProvidersImpl(this: any,
             // deletion record needed to reject a stale copy on a later merge.
             if (payloadMatches && deletionsCovered) {
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
+              assertProviderConnectionUnchanged();
+              // A cross-window storage event may already be decrypting when
+              // this sync starts, so the write sequence alone can look stable
+              // while in-memory credentials still lag the stored connection.
+              if (typeof this.loadProviderConnection === 'function') {
+                const storedConnection = await decryptProviderSecrets(
+                  this.loadProviderConnection(provider),
+                );
+                assertSyncSecurityGeneration(this, syncSecurityGeneration);
+                assertProviderConnectionUnchanged();
+                const identityFields = (connection: ProviderConnection) => JSON.stringify({
+                  account: connection.account,
+                  tokens: connection.tokens,
+                  config: connection.config,
+                  credential: connection.credential,
+                });
+                if (identityFields(storedConnection) !== identityFields(this.state.providers[provider])) {
+                  throw new ProviderConnectionChangedDuringSyncError(
+                    'Provider connection changed during sync; retry with its latest credentials',
+                  );
+                }
+              }
               if (
                 !providerBase
                 || !cloudSyncPayloadsEqual(providerBase, checkedRemotePayload)
@@ -630,6 +673,7 @@ export async function syncAllProvidersImpl(this: any,
               ) {
                 await this.saveSyncBase(checkedRemotePayload, provider);
                 assertSyncSecurityGeneration(this, syncSecurityGeneration);
+                assertProviderConnectionUnchanged();
               }
               // Mirror commitRemoteInspection/uploadToProvider: the preflight
               // download may have lazily discovered an existing gist/file and
@@ -642,6 +686,11 @@ export async function syncAllProvidersImpl(this: any,
                 || null;
               await this.saveSyncAnchor(provider, checkedRemoteFile, resolvedResourceId);
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
+              assertProviderConnectionUnchanged();
+              // Invalidate pending decrypts before taking the state snapshot.
+              // A newer provider write is checked both before and after the
+              // awaited save, so its credentials cannot be overwritten here.
+              ++this.providerDecryptSeq[provider];
               const connection = {
                 ...this.state.providers[provider],
                 status: 'connected' as const,
@@ -652,6 +701,14 @@ export async function syncAllProvidersImpl(this: any,
               };
               await this.saveProviderConnection(provider, connection);
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
+              if (
+                originalProviderWriteSeq != null
+                && this.providerWriteSeq?.[provider] !== originalProviderWriteSeq + 1
+              ) {
+                throw new ProviderConnectionChangedDuringSyncError(
+                  'Provider connection changed during sync; retry with its latest credentials',
+                );
+              }
               // Accepting an identical remote that is ahead of the local
               // version must advance the local version/timestamp too (as
               // commitRemoteInspection does). Otherwise the next local edit
@@ -676,7 +733,6 @@ export async function syncAllProvidersImpl(this: any,
               );
               // Discard any earlier provider-secret decrypt that could write
               // back a connection without the resource ID or sync version.
-              ++this.providerDecryptSeq[provider];
               // Mirror uploadToProvider's success path: clear the 'syncing'
               // status set during the preflight so the provider (and its
               // manual Sync button) does not stay stuck after a no-op sync.
@@ -738,7 +794,19 @@ export async function syncAllProvidersImpl(this: any,
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
         const msg = String(error);
         this.state.lastError = msg;
-        this.updateProviderStatus(provider, 'error', msg);
+        if (error instanceof ProviderConnectionChangedDuringSyncError) {
+          // A storage-event decrypt may still be pending. Preserve its
+          // sequence so it can apply the newer credentials when it finishes.
+          this.state.providers[provider] = {
+            ...this.state.providers[provider],
+            provider,
+            status: 'error',
+            error: msg,
+          };
+          this.notifyStateChange();
+        } else {
+          this.updateProviderStatus(provider, 'error', msg);
+        }
         this.emit({ type: 'SYNC_ERROR', provider, error: msg });
         results.set(provider, {
           success: false,
