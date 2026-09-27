@@ -607,8 +607,9 @@ export class CloudSyncManager {
     provider: CloudProvider,
     syncedFile: SyncedFile | null,
     resourceId?: string | null,
+    assertCanPersist?: () => void,
   ): Promise<void> {
-    return saveSyncAnchorImpl.call(this, provider, syncedFile, resourceId);
+    return saveSyncAnchorImpl.call(this, provider, syncedFile, resourceId, assertCanPersist);
   }
 
   private clearSyncAnchor(provider?: CloudProvider): void {
@@ -903,8 +904,12 @@ export class CloudSyncManager {
     return saveProviderAccountIdImpl.call(this, provider, id);
   }
 
-  async saveSyncBase(payload: SyncPayload, provider?: CloudProvider): Promise<void> {
-    return saveSyncBaseImpl.call(this, payload, provider);
+  async saveSyncBase(
+    payload: SyncPayload,
+    provider?: CloudProvider,
+    assertCanPersist?: () => void,
+  ): Promise<void> {
+    return saveSyncBaseImpl.call(this, payload, provider, assertCanPersist);
   }
 
   async loadSyncBase(provider?: CloudProvider): Promise<SyncPayload | null> {

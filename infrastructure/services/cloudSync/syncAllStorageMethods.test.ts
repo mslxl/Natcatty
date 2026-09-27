@@ -6,6 +6,7 @@ import { withSyncReliabilityMeta } from "../../../domain/syncReliability.ts";
 import {
   clearProviderMergeStateImpl,
   commitRemoteInspectionImpl,
+  saveSyncAnchorImpl,
 } from "./authMethods.ts";
 import {
   selectConvergentSyncToProviderResult,
@@ -557,6 +558,55 @@ test("saveSyncBase reports storage failures so callers do not advance anchors", 
       () => saveSyncBaseImpl.call(manager, payload("cloud"), "github"),
       /storage full/,
     );
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("guarded base and anchor saves cannot recreate state cleared during an await", async () => {
+  const stored = new Map<string, unknown>();
+  const key = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"],
+  );
+  let providerChanged = false;
+  const assertProviderUnchanged = () => {
+    if (providerChanged) throw new Error("provider changed");
+  };
+  const manager = {
+    state: { unlockedKey: { derivedKey: key }, providers: { github: { resourceId: "old" } } },
+    syncBaseKey: () => "base:github",
+    syncSnapshotsKey: () => "snapshots:github",
+    syncAnchorKey: () => "anchor:github",
+    loadFromStorage: (storageKey: string) => stored.get(storageKey) ?? null,
+    saveToStorage: (storageKey: string, value: unknown) => {
+      stored.set(storageKey, value);
+      return true;
+    },
+    createSyncedFileSignature: () => new Promise<string>((resolve) => {
+      setImmediate(() => resolve("signature"));
+    }),
+  };
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    await saveSyncBaseImpl.call(manager, payload("old"), "github");
+    const baseSave = saveSyncBaseImpl.call(manager, payload("new"), "github", assertProviderUnchanged);
+    queueMicrotask(() => {
+      providerChanged = true;
+      stored.delete("base:github");
+      stored.delete("snapshots:github");
+    });
+    await assert.rejects(baseSave, /provider changed/);
+    assert.equal(stored.has("base:github"), false);
+    assert.equal(stored.has("snapshots:github"), false);
+
+    providerChanged = false;
+    const anchorSave = saveSyncAnchorImpl.call(
+      manager, "github", remoteFile("github", 7, 700), "old", assertProviderUnchanged,
+    );
+    queueMicrotask(() => { providerChanged = true; });
+    await assert.rejects(anchorSave, /provider changed/);
+    assert.equal(stored.has("anchor:github"), false);
   } finally {
     console.warn = originalWarn;
   }

@@ -100,7 +100,10 @@ async function loadRawSyncBase(this: any, provider?: CloudProvider): Promise<Syn
   return decryptLocalStorageValue<SyncPayload>(encoded, key);
 }
 
-async function rememberCurrentSyncBaseSnapshot(this: any, provider?: CloudProvider): Promise<void> {
+async function rememberCurrentSyncBaseSnapshot(this: any,
+  provider?: CloudProvider,
+  assertCanPersist?: () => void,
+): Promise<void> {
   if (typeof this.syncSnapshotsKey !== 'function') return;
   const previous = await loadRawSyncBase.call(this, provider);
   if (!previous) return;
@@ -111,7 +114,9 @@ async function rememberCurrentSyncBaseSnapshot(this: any, provider?: CloudProvid
     ...(provider ? { provider } : {}),
     payload: previous,
   };
-  await saveSyncSnapshotsImpl.call(this, [entry, ...snapshots].slice(0, SYNC_SNAPSHOT_LIMIT), provider);
+  await saveSyncSnapshotsImpl.call(this,
+    [entry, ...snapshots].slice(0, SYNC_SNAPSHOT_LIMIT), provider, assertCanPersist,
+  );
 }
 
 export async function syncAllProvidersImpl(this: any,
@@ -671,7 +676,11 @@ export async function syncAllProvidersImpl(this: any,
                 || !cloudSyncPayloadsEqual(providerBase, checkedRemotePayload)
                 || !remoteCoversSyncDeletions(checkedRemotePayload, providerBase)
               ) {
-                await this.saveSyncBase(checkedRemotePayload, provider);
+                const assertCanPersist = () => {
+                  assertSyncSecurityGeneration(this, syncSecurityGeneration);
+                  assertProviderConnectionUnchanged();
+                };
+                await this.saveSyncBase(checkedRemotePayload, provider, assertCanPersist);
                 assertSyncSecurityGeneration(this, syncSecurityGeneration);
                 assertProviderConnectionUnchanged();
               }
@@ -684,7 +693,11 @@ export async function syncAllProvidersImpl(this: any,
               const resolvedResourceId = adapter.resourceId
                 || this.state.providers[provider]?.resourceId
                 || null;
-              await this.saveSyncAnchor(provider, checkedRemoteFile, resolvedResourceId);
+              const assertCanPersistAnchor = () => {
+                assertSyncSecurityGeneration(this, syncSecurityGeneration);
+                assertProviderConnectionUnchanged();
+              };
+              await this.saveSyncAnchor(provider, checkedRemoteFile, resolvedResourceId, assertCanPersistAnchor);
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
               assertProviderConnectionUnchanged();
               // Invalidate pending decrypts before taking the state snapshot.
@@ -1066,23 +1079,24 @@ export function saveProviderAccountIdImpl(this: any,provider: CloudProvider, id:
     this.saveToStorage(this.providerAccountIdKey(provider), id);
   }
 
-export async function saveSyncBaseImpl(this: any,payload: SyncPayload, provider?: CloudProvider): Promise<void> {
+export async function saveSyncBaseImpl(this: any,
+  payload: SyncPayload,
+  provider?: CloudProvider,
+  assertCanPersist?: () => void,
+): Promise<void> {
     const key = this.state.unlockedKey?.derivedKey;
     if (!key) {
       throw new Error('Sync base encryption key is unavailable');
     }
     try {
       try {
-        await rememberCurrentSyncBaseSnapshot.call(this, provider);
+        await rememberCurrentSyncBaseSnapshot.call(this, provider, assertCanPersist);
       } catch (snapshotError) {
         console.warn('[CloudSyncManager] Failed to save previous sync snapshot', snapshotError);
       }
-      if (
-        this.saveToStorage(
-          this.syncBaseKey(provider),
-          await encryptLocalStorageValue(payload, key),
-        ) === false
-      ) {
+      const encrypted = await encryptLocalStorageValue(payload, key);
+      assertCanPersist?.();
+      if (this.saveToStorage(this.syncBaseKey(provider), encrypted) === false) {
         throw new Error('Unable to persist sync base');
       }
     } catch (error) {
@@ -1121,15 +1135,20 @@ export async function loadSyncSnapshotsImpl(this: any,provider?: CloudProvider):
     }
   }
 
-export async function saveSyncSnapshotsImpl(this: any,snapshots: SyncSnapshotEntry[], provider?: CloudProvider): Promise<void> {
+export async function saveSyncSnapshotsImpl(this: any,
+  snapshots: SyncSnapshotEntry[],
+  provider?: CloudProvider,
+  assertCanPersist?: () => void,
+): Promise<void> {
     const key = this.state.unlockedKey?.derivedKey;
     if (!key) {
       throw new Error('Sync snapshot encryption key is unavailable');
     }
-    if (this.saveToStorage(
-      this.syncSnapshotsKey(provider),
-      await encryptLocalStorageValue(snapshots.slice(0, SYNC_SNAPSHOT_LIMIT), key),
-    ) === false) throw new Error('Unable to persist sync snapshots');
+    const encrypted = await encryptLocalStorageValue(snapshots.slice(0, SYNC_SNAPSHOT_LIMIT), key);
+    assertCanPersist?.();
+    if (this.saveToStorage(this.syncSnapshotsKey(provider), encrypted) === false) {
+      throw new Error('Unable to persist sync snapshots');
+    }
   }
 
 export function clearSyncBaseImpl(this: any): void {
