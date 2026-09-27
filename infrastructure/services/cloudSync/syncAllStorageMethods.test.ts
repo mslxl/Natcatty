@@ -1170,9 +1170,11 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
   EncryptionService.decryptPayload = async () => localPayload;
 
   try {
-    for (const raceAt of ["stored", "anchor", "connection"] as const) {
+    for (const raceAt of ["stored", "storage", "anchor", "connection"] as const) {
       let saveCalls = 0;
+      let anchorWrites = 0;
       let uploads = 0;
+      let storedToken = raceAt === "stored" ? "fresh" : "old";
       const manager = {
         masterPassword: "pw",
         adapters: new Map(),
@@ -1199,15 +1201,19 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
         checkProviderConflict: async () => ({ conflict: false, remoteFile: checkedRemote }),
         loadProviderConnection: () => ({
           ...manager.state.providers.github,
-          tokens: { accessToken: raceAt === "stored" ? "fresh" : "old" },
+          tokens: { accessToken: storedToken },
         }),
         loadSyncBase: async () => localPayload,
         saveSyncBase: async () => {},
-        saveSyncAnchor: async () => {
+        saveSyncAnchor: async (_provider: CloudProvider, _file: SyncedFile,
+          _resourceId: string | null, assertCanPersist?: () => void) => {
+          if (raceAt === "storage") storedToken = "fresh";
           if (raceAt === "anchor") {
             manager.providerWriteSeq.github += 1;
             manager.providerDecryptSeq.github += 1;
           }
+          assertCanPersist?.();
+          anchorWrites += 1;
         },
         saveProviderConnection: async () => {
           saveCalls += 1;
@@ -1231,10 +1237,11 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
       assert.equal(result?.success, false, raceAt);
       assert.match(result?.error ?? "", /Provider connection changed/, raceAt);
       assert.equal(saveCalls, raceAt === "connection" ? 1 : 0, raceAt);
+      assert.equal(anchorWrites, raceAt === "connection" ? 1 : 0, raceAt);
       assert.equal(uploads, 0, raceAt);
       assert.equal(manager.state.providers.github.status, "error", raceAt);
       assert.equal(manager.providerDecryptSeq.github,
-        raceAt === "stored" ? 0 : raceAt === "anchor" ? 1 : 2, raceAt);
+        raceAt === "connection" ? 2 : raceAt === "anchor" ? 1 : 0, raceAt);
       if (raceAt === "connection") {
         assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
       }

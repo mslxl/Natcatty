@@ -600,10 +600,22 @@ export async function syncAllProvidersImpl(this: any,
     const uploadTasks = validUploads.map(async ({ provider, adapter }) => {
       try {
         const originalProviderWriteSeq = providerWriteSeqAtStart.get(provider);
+        let storedProviderFingerprint: string | null = null;
         const assertProviderConnectionUnchanged = () => {
           if (
             originalProviderWriteSeq != null
             && this.providerWriteSeq?.[provider] !== originalProviderWriteSeq
+          ) {
+            throw new ProviderConnectionChangedDuringSyncError(
+              'Provider connection changed during sync; retry with its latest credentials',
+            );
+          }
+          // Storage events arrive asynchronously in this window. Re-read the
+          // persisted connection so a peer-window write is visible even before
+          // its event has advanced providerWriteSeq here.
+          if (
+            storedProviderFingerprint !== null
+            && JSON.stringify(this.loadProviderConnection(provider)) !== storedProviderFingerprint
           ) {
             throw new ProviderConnectionChangedDuringSyncError(
               'Provider connection changed during sync; retry with its latest credentials',
@@ -654,9 +666,9 @@ export async function syncAllProvidersImpl(this: any,
               // this sync starts, so the write sequence alone can look stable
               // while in-memory credentials still lag the stored connection.
               if (typeof this.loadProviderConnection === 'function') {
-                const storedConnection = await decryptProviderSecrets(
-                  this.loadProviderConnection(provider),
-                );
+                const rawStoredConnection = this.loadProviderConnection(provider);
+                storedProviderFingerprint = JSON.stringify(rawStoredConnection);
+                const storedConnection = await decryptProviderSecrets(rawStoredConnection);
                 assertSyncSecurityGeneration(this, syncSecurityGeneration);
                 assertProviderConnectionUnchanged();
                 const identityFields = (connection: ProviderConnection) => JSON.stringify({
