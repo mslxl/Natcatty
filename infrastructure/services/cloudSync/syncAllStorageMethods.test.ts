@@ -1114,6 +1114,119 @@ test("syncAllProviders skips the upload when the payload already matches the pro
   }
 });
 
+test("manual provider sync accepts identical remote and an identical merge without uploading", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const originalEncryptPayload = EncryptionService.encryptPayload;
+  const checkedRemote = remoteFile("github", 7, 700);
+  const base = payload("local");
+  let remote = base;
+  let conflict = false;
+  let uploads = 0;
+  let encrypts = 0;
+  EncryptionService.decryptPayload = async () => remote;
+  EncryptionService.encryptPayload = async () => {
+    encrypts += 1;
+    return remoteFile("github", 8, 800);
+  };
+  try {
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      providerDecryptSeq: { github: 0 },
+      state: {
+        securityState: "UNLOCKED",
+        providers: { github: { enabled: true, connected: true, status: "connected" } },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 6,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async () => ({ provider: "github" }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({ conflict, remoteFile: checkedRemote }),
+      loadSyncBase: async () => base,
+      saveSyncBase: async () => {},
+      saveSyncAnchor: async () => {},
+      saveProviderConnection: async () => {},
+      saveSyncConfig: () => {},
+      uploadToProvider: async () => {
+        uploads += 1;
+        return { success: true, provider: "github" as const, action: "upload" as const };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+    const unchanged = await syncToProviderImpl.call(manager, "github", base);
+    assert.equal(unchanged.action, "none");
+    assert.equal(unchanged.version, 7);
+
+    conflict = true;
+    remote = payloadWithHosts(["local", "remote-only"]);
+    const merged = await syncToProviderImpl.call(manager, "github", base);
+    assert.equal(merged.action, "merge");
+    assert.equal(merged.version, 7);
+    assert.deepEqual(merged.mergedPayload?.hosts.map((host) => host.id), ["local", "remote-only"]);
+    assert.equal(uploads, 0);
+    assert.equal(encrypts, 0);
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+    EncryptionService.encryptPayload = originalEncryptPayload;
+  }
+});
+
+test("no-op sync snapshots provider identity after startup secrets finish decrypting", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const localPayload = payload("local");
+  EncryptionService.decryptPayload = async () => localPayload;
+  try {
+    let uploads = 0;
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      providerDecryptSeq: { github: 0 },
+      state: {
+        securityState: "UNLOCKED",
+        providers: {
+          github: { enabled: true, connected: true, status: "connected", config: { token: "sealed" } },
+        },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 7,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async () => {
+        manager.state.providers.github.config.token = "plain";
+        return { provider: "github" };
+      },
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({ conflict: false, remoteFile: remoteFile("github", 7, 700) }),
+      loadSyncBase: async () => localPayload,
+      saveSyncBase: async () => {},
+      saveSyncAnchor: async () => {},
+      saveProviderConnection: async () => {},
+      saveSyncConfig: () => {},
+      uploadToProvider: async () => {
+        uploads += 1;
+        return { success: true, provider: "github" as const, action: "upload" as const };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+    const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("github");
+    assert.equal(result?.success, true);
+    assert.equal(result?.action, "none");
+    assert.equal(uploads, 0);
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+  }
+});
+
 test("no-op sync stops when the vault locks during persistence", async () => {
   const originalDecryptPayload = EncryptionService.decryptPayload;
   const localPayload = payload("local");
