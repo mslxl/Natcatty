@@ -1447,3 +1447,108 @@ test("syncAllProviders leaves two converged providers idle across repeated cycle
     EncryptionService.encryptPayload = originalEncryptPayload;
   }
 });
+
+test("two devices sharing one remote stop exchanging idle revisions and still propagate edits", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const originalEncryptPayload = EncryptionService.encryptPayload;
+  const initialPayload = payload("shared");
+  let cloudFile = { ...remoteFile("onedrive", 3, 300), payload: JSON.stringify(initialPayload) };
+  const uploads: string[] = [];
+
+  EncryptionService.decryptPayload = async (file: SyncedFile) => JSON.parse(file.payload) as SyncPayload;
+  EncryptionService.encryptPayload = async (outgoing: SyncPayload, _password: string,
+    deviceId: string, _deviceName: string, _appVersion: string, baseVersion: number) => ({
+    ...remoteFile("onedrive", baseVersion + 1, (baseVersion + 1) * 100),
+    payload: JSON.stringify(outgoing),
+    meta: {
+      ...remoteFile("onedrive", baseVersion + 1, (baseVersion + 1) * 100).meta,
+      deviceId,
+    },
+  });
+
+  const createDevice = (deviceId: string) => {
+    let localPayload = initialPayload;
+    let storedBase = initialPayload;
+    let anchoredVersion = 3;
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      providerDecryptSeq: { onedrive: 0 },
+      state: {
+        securityState: "UNLOCKED",
+        providers: { onedrive: { enabled: true, connected: true, status: "connected" } },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 3,
+        deviceId,
+        deviceName: deviceId,
+      },
+      getConnectedAdapter: async () => ({ provider: "onedrive" }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({
+        conflict: cloudFile.meta.version !== anchoredVersion,
+        remoteFile: cloudFile,
+      }),
+      loadSyncBase: async () => storedBase,
+      saveSyncBase: async (incoming: SyncPayload) => { storedBase = incoming; },
+      saveSyncAnchor: async (_provider: CloudProvider, file: SyncedFile) => {
+        anchoredVersion = file.meta.version;
+      },
+      saveProviderConnection: async () => {},
+      saveSyncConfig: () => {},
+      uploadToProvider: async (provider: CloudProvider, _adapter: unknown,
+        file: SyncedFile, outgoing: SyncPayload) => {
+        uploads.push(deviceId);
+        cloudFile = file;
+        storedBase = outgoing;
+        anchoredVersion = file.meta.version;
+        manager.state.localVersion = file.meta.version;
+        return { success: true, provider, action: "upload" as const, version: file.meta.version };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+    return {
+      setPayload: (incoming: SyncPayload) => { localPayload = incoming; },
+      payload: () => localPayload,
+      sync: async () => {
+        const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("onedrive");
+        assert.equal(result?.success, true);
+        if (result?.mergedPayload) localPayload = result.mergedPayload;
+        return result;
+      },
+    };
+  };
+
+  try {
+    const deviceA = createDevice("device-A");
+    const deviceB = createDevice("device-B");
+
+    deviceA.setPayload(payloadWithHosts(["shared", "from-A"]));
+    assert.equal((await deviceA.sync())?.action, "upload");
+    assert.equal(cloudFile.meta.version, 4);
+    assert.equal((await deviceB.sync())?.action, "merge");
+    assert.deepEqual(deviceB.payload().hosts.map(({ id }) => id), ["shared", "from-A"]);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      assert.equal((await deviceA.sync())?.action, "none");
+      assert.equal((await deviceB.sync())?.action, "none");
+    }
+    assert.deepEqual(uploads, ["device-A"]);
+    assert.equal(cloudFile.meta.version, 4);
+
+    deviceB.setPayload(payloadWithHosts(["shared", "from-A", "from-B"]));
+    assert.equal((await deviceB.sync())?.action, "upload");
+    assert.equal((await deviceA.sync())?.action, "merge");
+    assert.deepEqual(deviceA.payload().hosts.map(({ id }) => id), ["shared", "from-A", "from-B"]);
+    assert.equal((await deviceB.sync())?.action, "none");
+    assert.equal((await deviceA.sync())?.action, "none");
+    assert.deepEqual(uploads, ["device-A", "device-B"]);
+    assert.equal(cloudFile.meta.version, 5);
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+    EncryptionService.encryptPayload = originalEncryptPayload;
+  }
+});
