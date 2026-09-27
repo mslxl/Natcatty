@@ -1,4 +1,3 @@
-import { normalizeTabBarPosition } from '../domain/tabBarPosition';
 import { decryptProviderHeaders, encryptProviderHeaders } from '../infrastructure/ai/providerHeaderCredentials';
 /**
  * Sync Payload Builders - Single source of truth for constructing and applying
@@ -97,7 +96,6 @@ import {
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SFTP_IN_SIDEBAR,
-  STORAGE_KEY_TAB_BAR_POSITION,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
@@ -325,7 +323,6 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SFTP_IN_SIDEBAR,
-  STORAGE_KEY_TAB_BAR_POSITION,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
@@ -559,8 +556,6 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   }
   const showOnlyUngroupedHostsInRoot = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
   if (showOnlyUngroupedHostsInRoot != null) settings.showOnlyUngroupedHostsInRoot = showOnlyUngroupedHostsInRoot;
-  const tabBarPosition = localStorageAdapter.readString(STORAGE_KEY_TAB_BAR_POSITION);
-  if (tabBarPosition != null) settings.tabBarPosition = normalizeTabBarPosition(tabBarPosition);
   const showSftpTab = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
   if (showSftpTab != null) settings.showSftpTab = showSftpTab;
   const sftpInSidebar = localStorageAdapter.readBoolean(STORAGE_KEY_SFTP_IN_SIDEBAR);
@@ -833,9 +828,6 @@ async function applySyncableSettings(
       STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
       settings.showOnlyUngroupedHostsInRoot,
     );
-  }
-  if (settings.tabBarPosition != null) {
-    localStorageAdapter.writeString(STORAGE_KEY_TAB_BAR_POSITION, normalizeTabBarPosition(settings.tabBarPosition));
   }
   if (settings.showSftpTab != null) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_SFTP_TAB, settings.showSftpTab);
