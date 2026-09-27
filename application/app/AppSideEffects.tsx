@@ -141,7 +141,6 @@ export function AppSideEffects() {
     keyBindings,
     isHotkeyRecording,
     showSftpTab,
-    sftpInSidebar,
     shellOnlyTabNumberShortcuts,
     workspaceFocusStyle,
   } = settings;
@@ -930,8 +929,6 @@ export function AppSideEffects() {
   workspacesRefForHotkeys.current = workspaces;
   const showSftpTabRef = useRef(showSftpTab);
   showSftpTabRef.current = showSftpTab;
-  const sftpInSidebarRef = useRef(sftpInSidebar);
-  sftpInSidebarRef.current = sftpInSidebar;
   const shellOnlyTabNumberShortcutsRef = useRef(shellOnlyTabNumberShortcuts);
   shellOnlyTabNumberShortcutsRef.current = shellOnlyTabNumberShortcuts;
   const isQuickSwitcherOpenRef = useRef(isQuickSwitcherOpen);
@@ -1075,7 +1072,6 @@ export function AppSideEffects() {
       setNavigateToSection,
       settings: {
         showSftpTab: showSftpTabRef.current,
-        sftpInSidebar: sftpInSidebarRef.current,
         shellOnlyTabNumberShortcuts: shellOnlyTabNumberShortcutsRef.current,
       },
       sftpPaneMagnificationRef,
