@@ -67,6 +67,23 @@ function ensureProviderSeqCounters(manager: any, provider: CloudProvider): void 
   }
 }
 
+function isProviderSyncMetadataOnlyStorageEvent(event: StorageEvent): boolean {
+  if (!event.oldValue || !event.newValue) return false;
+  try {
+    const previous = JSON.parse(event.oldValue);
+    const next = JSON.parse(event.newValue);
+    if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object'
+      || Array.isArray(previous) || Array.isArray(next)) return false;
+    for (const connection of [previous, next]) {
+      delete connection.lastSync;
+      delete connection.lastSyncVersion;
+    }
+    return JSON.stringify(previous) === JSON.stringify(next);
+  } catch {
+    return false;
+  }
+}
+
 export function loadInitialStateImpl(this: any): SyncManagerState {
     // Load persisted configuration
     const masterKeyConfig = this.loadFromStorage<MasterKeyConfig>(
@@ -657,9 +674,12 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
       ensureProviderSeqCounters(this, provider);
       const rawNext = this.loadProviderConnection(provider);
       const seq = ++this.providerDecryptSeq[provider];
-      // Also bump write seq so any in-flight save from this window for the
-      // same provider is discarded — the cross-window data is newer.
-      ++this.providerWriteSeq[provider];
+      // A peer's no-op sync only refreshes timestamps/version. It must not
+      // cancel this window's in-flight connection save or fail its no-op sync.
+      // Other connection changes still invalidate pending writes.
+      if (!isProviderSyncMetadataOnlyStorageEvent(event)) {
+        ++this.providerWriteSeq[provider];
+      }
 
       // Decrypt secrets asynchronously, then update state.
       // Use sequence counter to discard stale results when multiple events
