@@ -595,13 +595,21 @@ export async function syncAllProvidersImpl(this: any,
         // different versions; requiring this remote version to match the global
         // local version would make them upload in turns forever.
         if (checkedRemoteFile) {
+          let checkedRemotePayload: SyncPayload | null = null;
           try {
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
-            const checkedRemotePayload = await EncryptionService.decryptPayload(
+            checkedRemotePayload = await EncryptionService.decryptPayload(
               checkedRemoteFile,
               this.masterPassword,
             );
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
+          } catch {
+            assertSyncSecurityGeneration(this, syncSecurityGeneration);
+            // A decrypt failure cannot prove equality. The normal upload path
+            // still handles a real local edit, but persistence failures below
+            // must stop instead of replacing a newer remote revision.
+          }
+          if (checkedRemotePayload) {
             const payloadMatches = cloudSyncPayloadsEqual(payload, checkedRemotePayload);
             const providerBase = payloadMatches ? await this.loadSyncBase(provider) : null;
             const deletionsCovered = payloadMatches && remoteCoversSyncDeletions(
@@ -691,11 +699,6 @@ export async function syncAllProvidersImpl(this: any,
               results.set(provider, noOpResult);
               return;
             }
-          } catch {
-            assertSyncSecurityGeneration(this, syncSecurityGeneration);
-            // Could not prove the payloads identical (decrypt failure, storage
-            // failure). Fall through to the normal upload path — a real data
-            // change must never be dropped because this guard failed.
           }
         }
         assertConvergentSyncWriteCompatible(entry?.check?.remoteFile?.meta, payload);
