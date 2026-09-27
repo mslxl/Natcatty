@@ -234,6 +234,7 @@ export class CloudSyncManager {
   private providerWriteSeq: Record<CloudProvider, number> = {
     github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
   };
+  private providerWritePending: Partial<Record<CloudProvider, Promise<void>>> = {};
   /** Optional abort signal for the in-flight syncNow / convergent upload path. */
   activeSyncAbortSignal: AbortSignal | undefined;
 
@@ -269,9 +270,10 @@ export class CloudSyncManager {
   private async saveProviderConnection(
     provider: CloudProvider,
     connection: ProviderConnection,
-    authAttemptId?: number
+    authAttemptId?: number,
+    assertCanPersist?: () => void,
   ): Promise<void> {
-    return saveProviderConnectionImpl.call(this, provider, connection, authAttemptId);
+    return saveProviderConnectionImpl.call(this, provider, connection, authAttemptId, assertCanPersist);
   }
 
   private loadFromStorage<T>(key: string): T | null {

@@ -92,6 +92,15 @@ const SYNC_SNAPSHOTS_STORAGE_KEY = 'netcatty_sync_snapshots_v1';
 
 class ProviderConnectionChangedDuringSyncError extends Error {}
 
+function providerConnectionIdentity(connection: ProviderConnection | undefined): string {
+  return JSON.stringify({
+    account: connection?.account,
+    config: connection?.config,
+    credential: connection?.credential,
+    resourceId: connection?.resourceId,
+  });
+}
+
 async function loadRawSyncBase(this: any, provider?: CloudProvider): Promise<SyncPayload | null> {
   const key = this.state.unlockedKey?.derivedKey;
   if (!key || typeof this.loadFromStorage !== 'function') return null;
@@ -192,11 +201,11 @@ export async function syncAllProvidersImpl(this: any,
       return results;
     }
 
-    // A storage event or token refresh may start while the remote check and
-    // no-op persistence await. Do not save an older connection over that write.
-    const providerWriteSeqAtStart = new Map(connectedProviders.map((provider) => [
+    // A token refresh may change credentials during the remote check without
+    // changing the provider identity. Keep the identity seen by that check.
+    const providerIdentityAtStart = new Map(connectedProviders.map((provider) => [
       provider,
-      this.providerWriteSeq?.[provider] as number | undefined,
+      providerConnectionIdentity(this.state.providers[provider]),
     ]));
 
     this.state.lastError = null;
@@ -599,12 +608,25 @@ export async function syncAllProvidersImpl(this: any,
     // fresh anchor paired with a stale base.
     const uploadTasks = validUploads.map(async ({ provider, adapter }) => {
       try {
-        const originalProviderWriteSeq = providerWriteSeqAtStart.get(provider);
+        // A first-party OAuth refresh starts an asynchronous connection save
+        // during the remote check. Let that write settle before snapshotting
+        // the sequence, so it is not mistaken for a competing account switch.
+        const pendingProviderWrite = this.providerWritePending?.[provider];
+        if (pendingProviderWrite) await pendingProviderWrite;
+        const originalProviderWriteSeq = this.providerWriteSeq?.[provider] as number | undefined;
         let storedProviderFingerprint: string | null = null;
-        const assertProviderConnectionUnchanged = () => {
+        const assertProviderConnectionUnchanged = (expectedWriteSeq = originalProviderWriteSeq) => {
           if (
-            originalProviderWriteSeq != null
-            && this.providerWriteSeq?.[provider] !== originalProviderWriteSeq
+            providerConnectionIdentity(this.state.providers[provider])
+            !== providerIdentityAtStart.get(provider)
+          ) {
+            throw new ProviderConnectionChangedDuringSyncError(
+              'Provider connection changed during sync; retry with its latest credentials',
+            );
+          }
+          if (
+            expectedWriteSeq != null
+            && this.providerWriteSeq?.[provider] !== expectedWriteSeq
           ) {
             throw new ProviderConnectionChangedDuringSyncError(
               'Provider connection changed during sync; retry with its latest credentials',
@@ -676,6 +698,7 @@ export async function syncAllProvidersImpl(this: any,
                   tokens: connection.tokens,
                   config: connection.config,
                   credential: connection.credential,
+                  resourceId: connection.resourceId,
                 });
                 if (identityFields(storedConnection) !== identityFields(this.state.providers[provider])) {
                   throw new ProviderConnectionChangedDuringSyncError(
@@ -724,7 +747,13 @@ export async function syncAllProvidersImpl(this: any,
                 lastSync: Date.now(),
                 lastSyncVersion: checkedRemoteFile.meta.version,
               };
-              await this.saveProviderConnection(provider, connection);
+              const assertCanPersistConnection = () => {
+                assertSyncSecurityGeneration(this, syncSecurityGeneration);
+                assertProviderConnectionUnchanged(
+                  originalProviderWriteSeq == null ? undefined : originalProviderWriteSeq + 1,
+                );
+              };
+              await this.saveProviderConnection(provider, connection, undefined, assertCanPersistConnection);
               assertSyncSecurityGeneration(this, syncSecurityGeneration);
               if (
                 originalProviderWriteSeq != null

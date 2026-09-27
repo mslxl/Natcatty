@@ -26,6 +26,7 @@ import type {
   SyncResult,
 } from "../../../domain/sync.ts";
 import { setConvergentSyncLocalConfig } from "../convergentSyncConfig.ts";
+import { saveProviderConnectionImpl } from "./stateAndSecurityMethods.ts";
 
 function payload(hostId: string): SyncPayload {
   return payloadWithHosts([hostId]);
@@ -563,7 +564,7 @@ test("saveSyncBase reports storage failures so callers do not advance anchors", 
   }
 });
 
-test("guarded base and anchor saves cannot recreate state cleared during an await", async () => {
+test("guarded provider saves cannot recreate state cleared during an await", async () => {
   const stored = new Map<string, unknown>();
   const key = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"],
@@ -607,6 +608,23 @@ test("guarded base and anchor saves cannot recreate state cleared during an awai
     queueMicrotask(() => { providerChanged = true; });
     await assert.rejects(anchorSave, /provider changed/);
     assert.equal(stored.has("anchor:github"), false);
+
+    providerChanged = false;
+    const connectionManager = {
+      providerWriteSeq: { github: 0 },
+      saveToStorage: (storageKey: string, value: unknown) => {
+        stored.set(storageKey, value);
+      },
+    };
+    const connectionSave = saveProviderConnectionImpl.call(connectionManager,
+      "github", {
+        provider: "github",
+        status: "connected",
+        tokens: { accessToken: "old" },
+      }, undefined, assertProviderUnchanged);
+    queueMicrotask(() => { providerChanged = true; });
+    await assert.rejects(connectionSave, /provider changed/);
+    assert.equal(stored.size, 0);
   } finally {
     console.warn = originalWarn;
   }
@@ -1170,11 +1188,12 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
   EncryptionService.decryptPayload = async () => localPayload;
 
   try {
-    for (const raceAt of ["stored", "storage", "anchor", "connection"] as const) {
+    for (const raceAt of ["stored", "storedResource", "storage", "anchor", "connection"] as const) {
       let saveCalls = 0;
       let anchorWrites = 0;
       let uploads = 0;
       let storedToken = raceAt === "stored" ? "fresh" : "old";
+      const storedResourceId = raceAt === "storedResource" ? "resource-new" : "resource-old";
       const manager = {
         masterPassword: "pw",
         adapters: new Map(),
@@ -1186,6 +1205,7 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
             github: {
               enabled: true, connected: true, status: "connected",
               tokens: { accessToken: "old" },
+              resourceId: "resource-old",
             },
           },
           lastError: null,
@@ -1202,6 +1222,7 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
         loadProviderConnection: () => ({
           ...manager.state.providers.github,
           tokens: { accessToken: storedToken },
+          resourceId: storedResourceId,
         }),
         loadSyncBase: async () => localPayload,
         saveSyncBase: async () => {},
@@ -1246,6 +1267,80 @@ test("no-op sync does not persist stale credentials after a concurrent provider 
         assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
       }
     }
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+  }
+});
+
+test("no-op sync accepts its own token refresh during the remote check", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const localPayload = payload("local");
+  const checkedRemote = remoteFile("github", 7, 700);
+  let storedConnection = {
+    provider: "github" as const,
+    status: "connected" as const,
+    tokens: { accessToken: "old" },
+    resourceId: "resource-7",
+  };
+  let uploads = 0;
+  EncryptionService.decryptPayload = async () => localPayload;
+
+  try {
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      providerDecryptSeq: { github: 0 },
+      providerWriteSeq: { github: 0 },
+      state: {
+        securityState: "UNLOCKED",
+        providers: {
+          github: {
+            enabled: true, connected: true, ...storedConnection,
+          },
+        },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 7,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async () => ({ provider: "github", resourceId: "resource-7" }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => {
+        manager.state.providers.github.tokens = { accessToken: "fresh" };
+        void manager.saveProviderConnection("github", manager.state.providers.github);
+        return { conflict: false, remoteFile: checkedRemote };
+      },
+      loadProviderConnection: () => storedConnection,
+      saveToStorage: (_key: string, connection: typeof storedConnection) => {
+        storedConnection = connection;
+        return true;
+      },
+      saveProviderConnection: async (provider: CloudProvider,
+        connection: typeof storedConnection, _authAttemptId?: number,
+        assertCanPersist?: () => void) => saveProviderConnectionImpl.call(
+          manager, provider, connection, undefined, assertCanPersist,
+        ),
+      loadSyncBase: async () => localPayload,
+      saveSyncBase: async () => {},
+      saveSyncAnchor: async () => {},
+      saveSyncConfig: () => {},
+      uploadToProvider: async () => {
+        uploads += 1;
+        return { success: true, provider: "github" as const, action: "upload" as const };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+
+    const result = (await syncAllProvidersImpl.call(manager, localPayload)).get("github");
+    assert.equal(result?.success, true);
+    assert.equal(result?.action, "none");
+    assert.equal(uploads, 0);
+    assert.equal(storedConnection.tokens.accessToken, "fresh");
+    assert.equal(manager.state.providers.github.tokens.accessToken, "fresh");
   } finally {
     EncryptionService.decryptPayload = originalDecryptPayload;
   }

@@ -402,29 +402,42 @@ export async function initProviderDecryptionImpl(this: any): Promise<void> {
 export async function saveProviderConnectionImpl(this: any,
   provider: CloudProvider,
   connection: ProviderConnection,
-  authAttemptId?: number
+  authAttemptId?: number,
+  assertCanPersist?: () => void,
 ): Promise<void> {
     const key = providerConnectionStorageKey(provider);
     // Use write-specific counter so status-only updates cannot discard
     // an in-flight encrypted write that must be persisted.
     ensureProviderSeqCounters(this, provider);
     const seq = ++this.providerWriteSeq[provider];
-    const encrypted = await encryptProviderSecrets(connection);
-    // Only persist if no newer save has started during the async gap
-    if (
-      seq === this.providerWriteSeq[provider] &&
-      (authAttemptId == null || this.isActiveAuthAttempt(provider, authAttemptId))
-    ) {
-      this.saveToStorage(key, encrypted);
-      // Keep dynamic plugin providers in the restart registry while connected
-      // (or while credentials/config remain so a missing plugin cannot drop them).
-      if (isPluginCloudProviderId(provider)) {
-        // Config may be a valid scalar including JSON null — presence is property existence.
-        const hasData = encrypted.tokens != null
-          || Object.prototype.hasOwnProperty.call(encrypted, 'config');
-        if (hasData || encrypted.status === 'connected' || encrypted.status === 'syncing') {
-          registerPluginProviderIdImpl.call(this, provider);
+    const pending = (async () => {
+      const encrypted = await encryptProviderSecrets(connection);
+      assertCanPersist?.();
+      // Only persist if no newer save has started during the async gap
+      if (
+        seq === this.providerWriteSeq[provider] &&
+        (authAttemptId == null || this.isActiveAuthAttempt(provider, authAttemptId))
+      ) {
+        this.saveToStorage(key, encrypted);
+        // Keep dynamic plugin providers in the restart registry while connected
+        // (or while credentials/config remain so a missing plugin cannot drop them).
+        if (isPluginCloudProviderId(provider)) {
+          // Config may be a valid scalar including JSON null — presence is property existence.
+          const hasData = encrypted.tokens != null
+            || Object.prototype.hasOwnProperty.call(encrypted, 'config');
+          if (hasData || encrypted.status === 'connected' || encrypted.status === 'syncing') {
+            registerPluginProviderIdImpl.call(this, provider);
+          }
         }
+      }
+    })();
+    this.providerWritePending ??= {};
+    this.providerWritePending[provider] = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.providerWritePending[provider] === pending) {
+        delete this.providerWritePending[provider];
       }
     }
   }
