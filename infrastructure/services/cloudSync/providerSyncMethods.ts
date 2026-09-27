@@ -435,6 +435,7 @@ export async function syncToProviderImpl(this: any,
       if (unchanged) {
         this.exitBlockedState();
         this.state.syncState = 'IDLE';
+        this.notifyStateChange();
         return unchanged;
       }
 
@@ -534,6 +535,7 @@ export async function syncToProviderImpl(this: any,
           if (unchangedMerge) {
             this.exitBlockedState();
             this.state.syncState = 'IDLE';
+            this.notifyStateChange();
             return { ...unchangedMerge, action: 'merge', mergedPayload };
           }
 

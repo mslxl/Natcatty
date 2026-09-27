@@ -1123,6 +1123,7 @@ test("manual provider sync accepts identical remote and an identical merge witho
   let conflict = false;
   let uploads = 0;
   let encrypts = 0;
+  const notifiedStates: string[] = [];
   EncryptionService.decryptPayload = async () => remote;
   EncryptionService.encryptPayload = async () => {
     encrypts += 1;
@@ -1157,11 +1158,12 @@ test("manual provider sync accepts identical remote and an identical merge witho
         return { success: true, provider: "github" as const, action: "upload" as const };
       },
       exitBlockedState: () => {},
-      notifyStateChange: () => {},
+      notifyStateChange: () => { notifiedStates.push(manager.state.syncState); },
     };
     const unchanged = await syncToProviderImpl.call(manager, "github", base);
     assert.equal(unchanged.action, "none");
     assert.equal(unchanged.version, 7);
+    assert.equal(notifiedStates.at(-1), "IDLE");
 
     conflict = true;
     remote = payloadWithHosts(["local", "remote-only"]);
@@ -1171,6 +1173,7 @@ test("manual provider sync accepts identical remote and an identical merge witho
     assert.deepEqual(merged.mergedPayload?.hosts.map((host) => host.id), ["local", "remote-only"]);
     assert.equal(uploads, 0);
     assert.equal(encrypts, 0);
+    assert.equal(notifiedStates.at(-1), "IDLE");
   } finally {
     EncryptionService.decryptPayload = originalDecryptPayload;
     EncryptionService.encryptPayload = originalEncryptPayload;
