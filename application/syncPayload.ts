@@ -259,7 +259,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'startupCommandDelayMs',
   'scrollback', 'drawBoldInBrightColors', 'terminalEmulationType',
   'fontLigatures', 'fontSmoothing', 'fontWeight', 'fontWeightBold', 'fallbackFont',
-  'linePadding', 'cursorShape', 'cursorBlink', 'highlightCursorLine', 'minimumContrastRatio',
+  'linePadding', 'cursorShape', 'cursorBlink', 'cursorBarWidth', 'highlightCursorLine', 'minimumContrastRatio',
   'altAsMeta', 'optionArrowWordJump', 'shiftEnterNewlineEnabled', 'shiftEnterNewlineText',
   'shiftEnterForceText',
   'kittyKeyboardProtocolEnabled',
