@@ -379,6 +379,13 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.terminal.section.behavior",
   },
   {
+    id: "terminal-shift-enter-force-text",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.shiftEnterForceText",
+    descriptionKey: "settings.terminal.behavior.shiftEnterForceText.desc",
+    sectionKey: "settings.terminal.section.behavior",
+  },
+  {
     id: "terminal-clear-wipes-scrollback",
     tab: "terminal",
     labelKey: "settings.terminal.behavior.clearWipesScrollback",
