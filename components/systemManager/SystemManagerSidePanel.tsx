@@ -4,6 +4,8 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { SYSTEM_MANAGER_TAB_LAYOUT_DEFAULTS } from '../../application/state/systemManagerTabLayout';
 import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
+import { useTerminalBackend } from '../../application/state/useTerminalBackend';
+import { remoteSoftwareRequiresSingleChannel } from '../../domain/singleChannelSshBanner.shared.cjs';
 import { useToolbarItemLayout } from '../../application/state/useToolbarItemLayout';
 import type { TerminalSettings } from '../../domain/models';
 import type { Host } from '../../domain/models/connection';
@@ -14,6 +16,7 @@ import {
   buildSystemManagerTabs,
   shouldCollectServerStats,
 } from '../../domain/systemManager/systemTarget';
+
 import { partitionToolbarItems } from '../../domain/toolbarItemLayout';
 import { STORAGE_KEY_SYSTEM_MANAGER_TAB_LAYOUT } from '../../infrastructure/config/storageKeys';
 import type { Snippet, TerminalSession } from '../../types';
@@ -78,12 +81,41 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
 }: SystemManagerSidePanelProps) {
   const { t } = useI18n();
   const backend = useSystemManagerBackend();
+  const terminalBackend = useTerminalBackend();
   const sessionId = session?.id ?? null;
   const isConnected = session?.status === 'connected';
+  const [peerSingleChannel, setPeerSingleChannel] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!sessionId || !isConnected || sessionHost?.singleChannelSsh === true) {
+      setPeerSingleChannel(sessionHost?.singleChannelSsh === true);
+      return;
+    }
+    let cancelled = false;
+    setPeerSingleChannel(null);
+    void terminalBackend.getSessionRemoteInfo(sessionId).then((info) => {
+      if (cancelled) return;
+      setPeerSingleChannel(remoteSoftwareRequiresSingleChannel(info?.remoteSshVersion));
+    }).catch(() => {
+      if (!cancelled) setPeerSingleChannel(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, sessionHost?.singleChannelSsh, sessionId, terminalBackend]);
+
+  const systemManagerSupported = sessionHost?.singleChannelSsh !== true && peerSingleChannel !== true;
+  const capabilitiesEnabled = systemManagerSupported && peerSingleChannel !== null;
 
   const capabilitiesTtlMs = terminalSettings.systemManagerProcessRefreshInterval * 1000;
 
-  const { capabilities, refreshCapabilities } = useSessionCapabilities(sessionId, isConnected, backend, isVisible, capabilitiesTtlMs);
+  const { capabilities, refreshCapabilities } = useSessionCapabilities(
+    sessionId,
+    isConnected,
+    backend,
+    isVisible && capabilitiesEnabled,
+    capabilitiesTtlMs,
+  );
 
   const availableTabs = useMemo(
     () => buildSystemManagerTabs(sessionHost, capabilities, session),
@@ -352,6 +384,15 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
       <SystemPanelShell section="system-manager-panel">
         {workspaceHostHeader}
         <SystemPanelEmpty icon={Activity} message={t('systemManager.notConnected')} />
+      </SystemPanelShell>
+    );
+  }
+
+  if (!systemManagerSupported) {
+    return (
+      <SystemPanelShell section="system-manager-panel">
+        {workspaceHostHeader}
+        <SystemPanelEmpty icon={Activity} message={t('systemManager.unsupportedRemote')} />
       </SystemPanelShell>
     );
   }

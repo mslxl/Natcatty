@@ -117,7 +117,7 @@ import {
   type RendererCwdSource,
   type TerminalCwdChangeMeta,
 } from './terminal/sftpCwd';
-import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
+import { classifyDistroId, hostRestrictsExtraSshChannels, shouldProbeSessionCwd } from '../domain/host';
 import {
   collectSidePanelPanes,
   sidePanelLayoutHasTool,
@@ -1323,6 +1323,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       visibleSftpHost,
       sessionHost,
       globalSftpFollowTerminalCwd: sftpFollowTerminalCwdRef.current,
+      restrictExtraSshChannels: hostRestrictsExtraSshChannels(sessionHost),
     })) return;
 
     const osc7SignalAtCommand = terminalOsc7SignalBySessionRef.current.get(sessionId) ?? 0;
@@ -1338,13 +1339,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return false;
         const host = sessionHostsMapRef.current.get(sessionId);
         if (!host) return false;
-        const detectedDeviceClass = classifyDistroId(host.distro);
-        const isNetworkDevice =
-          host.deviceType === 'network' || detectedDeviceClass === 'network-device';
+        const hostDeviceClass = classifyDistroId(host.distro);
+        const hostIsNetworkDevice =
+          host.deviceType === 'network' || hostDeviceClass === 'network-device';
         const info = await terminalBackend.getSessionRemoteInfo?.(sessionId);
         return shouldProbeSessionCwd({
-          isNetworkDevice,
+          isNetworkDevice: hostIsNetworkDevice,
           remoteSshVersion: info?.remoteSshVersion,
+          restrictExtraSshChannels: hostRestrictsExtraSshChannels(host),
         });
       },
       onProbedCwd: (cwd) => {
@@ -1552,14 +1554,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     requireActiveShellCwd?: boolean;
   }): Promise<string | null> => {
     const sessionId = getActiveTerminalSessionId();
+    const host = sessionId ? sessionHostsMapRef.current.get(sessionId) : undefined;
+    const skipBackendPwd = hostRestrictsExtraSshChannels(host);
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
       rendererCwdSource: sessionId
         ? terminalRendererCwdSourceBySessionRef.current.get(sessionId)
         : undefined,
       sessionId,
-      getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
-      preferFreshBackend: options?.preferFreshBackend,
+      getSessionPwd: skipBackendPwd
+        ? async () => ({ success: false })
+        : (id, pwdOptions) => terminalBackend.getSessionPwd(id, pwdOptions),
+      preferFreshBackend: skipBackendPwd ? false : options?.preferFreshBackend,
       allowRendererFallback: options?.allowRendererFallback,
       requireActiveShellCwd: options?.requireActiveShellCwd,
     });

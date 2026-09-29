@@ -1,6 +1,14 @@
 /* eslint-disable no-undef */
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
+function extraExecUnsupportedError(session) {
+  if (!session?.singleChannelSsh) return null;
+  console.log("[SSH] skipped extra exec on single-channel session", session.hostname || "");
+  return {
+    success: false,
+    error: "Remote SSH server does not support extra exec channels",
+  };
+}
 function decodeLsofFileName(value) {
   if (typeof value !== 'string') return null;
   // lsof's caret form is ambiguous: a BEL byte and the literal characters
@@ -149,6 +157,8 @@ function createSessionOpsApi(ctx) {
     async function getSessionDistroInfo(_event, payload) {
       const { sessionId } = payload || {};
       const session = sessions.get(sessionId);
+      const bastionBlock = extraExecUnsupportedError(session);
+      if (bastionBlock) return bastionBlock;
       if (session?.type === "et") {
         if (typeof execOnEtSession !== "function") {
           return { success: false, error: "ET command executor unavailable" };
@@ -191,6 +201,8 @@ function createSessionOpsApi(ctx) {
       if (!session) {
         return { success: false, error: 'Session not found' };
       }
+      const bastionHistoryBlock = extraExecUnsupportedError(session);
+      if (bastionHistoryBlock) return bastionHistoryBlock;
 
       const safeLimit =
         Number.isFinite(limit) && limit > 0 && limit <= 10000 ? Math.floor(limit) : 1000;
@@ -318,6 +330,12 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      log('getSessionPwd invoked', {
+        sessionId,
+        singleChannelSsh: !!session.singleChannelSsh,
+      });
+      const bastionPwdBlock = extraExecUnsupportedError(session);
+      if (bastionPwdBlock) return bastionPwdBlock;
       if (
         session.blockUntargetedCwdProbe
         && session.cwdRecoveryPromise
@@ -748,6 +766,7 @@ function createSessionOpsApi(ctx) {
         if (!session || !session.conn || !Array.isArray(names) || names.length === 0) {
           return null;
         }
+        if (session.singleChannelSsh) return null;
         const script = `SELF=$$
     find_login_shell() {
       ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
@@ -806,6 +825,7 @@ function createSessionOpsApi(ctx) {
     // rm -f the given absolute remote paths (quoted; injection-safe).
     async function removeRemoteFiles(session, paths, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return;
+        if (session.singleChannelSsh) return;
         const argv = paths.map((p) => quoteShellArg(p)).join(" ");
         const commitToken = "NETCATTY_ZMODEM_COMMIT";
         const command = `exec sh -c ${quoteShellArg(
@@ -831,6 +851,7 @@ function createSessionOpsApi(ctx) {
     // (parameterized; injection-safe). Modes are validated octal before use.
     async function restoreRemoteModes(session, entries, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return;
+        if (session.singleChannelSsh) return;
         const args = [];
         for (const e of entries) {
           if (!e || !e.path || !/^[0-7]{3,4}$/.test(String(e.mode))) continue;
@@ -876,6 +897,8 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, entries: [], error: 'Session not found' };
       }
+      const bastionListBlock = extraExecUnsupportedError(session);
+      if (bastionListBlock) return { ...bastionListBlock, entries: [] };
     
       if (typeof dirPath !== "string" || dirPath.length === 0) {
         return { success: false, entries: [], error: 'Invalid directory path' };
@@ -998,6 +1021,8 @@ function createSessionOpsApi(ctx) {
       if (!session) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      const bastionStatsBlock = extraExecUnsupportedError(session);
+      if (bastionStatsBlock) return bastionStatsBlock;
 
       const isEtSession = session.type === "et";
       const etUsesExecFallback = isEtSession && session.etStatsAuth?.hasJumpHost;

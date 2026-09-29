@@ -6,6 +6,7 @@ import { sessionCapabilitiesStore } from '../../application/state/sessionCapabil
 import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { isTerminalSessionEligibleForSftpReuse } from '../../application/state/terminalConnectionReuse';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
+
 import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { useSystemCapabilitiesWarmup } from '../../application/state/useSystemManager';
 import { cn } from '../../lib/utils';
@@ -199,7 +200,8 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     )
     : undefined;
   const activeTerminalCwdTrusted = activeTerminalCwdSource === 'osc7'
-    || activeTerminalCwdSource === 'backend-strict';
+    || activeTerminalCwdSource === 'backend-strict'
+    || activeTerminalCwdSource === 'inferred';
   void terminalCwdVersion;
 
   const historySessionId = effectiveFocusedSessionId;
@@ -217,8 +219,9 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     if (!activeTabId || !activeSidePanelTools.has('system')) return [];
     const session = activeTerminalSessionForSystem;
     if (!session || session.status !== 'connected') return [];
+    if (activeSystemSessionHost?.singleChannelSsh === true) return [];
     return [session.id];
-  }, [activeSidePanelTools, activeTabId, activeTerminalSessionForSystem]);
+  }, [activeSidePanelTools, activeSystemSessionHost, activeTabId, activeTerminalSessionForSystem]);
 
   useSystemCapabilitiesWarmup(
     systemWarmupSessionIds,

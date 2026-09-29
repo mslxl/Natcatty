@@ -45,7 +45,7 @@ import {
   resolveTerminalContextLineWindow,
   type TerminalContextReader,
 } from "../domain/terminalContextRead";
-import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
+import { classifyDistroId, hostRestrictsExtraSshChannels, shouldProbeSessionCwd } from "../domain/host";
 import { shouldCollectServerStats } from "../domain/systemManager/systemTarget";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { CONNECTION_PROGRESS_START } from "./terminal/connectionProgress";
@@ -201,6 +201,7 @@ import {
 import {
   createTerminalCwdTracker,
   invalidateTerminalCwdAfterCommand,
+  shouldPreserveTerminalCwdAcrossCommand,
   resolvePreferredTerminalCwd,
   type TerminalCwdChangeMeta,
 } from "./terminal/sftpCwd";
@@ -1132,6 +1133,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     systemUnknown: resolvedAutocompleteOs === 'unknown',
     isNetworkDevice: host.deviceType === 'network'
       || classifyDistroId(host.distro) === 'network-device',
+    restrictPtyRewrites: host.singleChannelSsh === true,
   });
 
   const resolveSftpInitialPath = useCallback(async (options?: {
@@ -1139,12 +1141,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     allowRendererFallback?: boolean;
     requireActiveShellCwd?: boolean;
   }): Promise<string | undefined> => {
+    const skipBackendPwd = hostRestrictsExtraSshChannels(host);
     const cwd = await resolvePreferredTerminalCwd({
       rendererCwd: terminalCwdTracker.getRendererCwd(),
       rendererCwdSource: terminalCwdTracker.getRendererCwdSource(),
       sessionId: sessionRef.current,
-      getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
-      preferFreshBackend: options?.preferFreshBackend,
+      getSessionPwd: skipBackendPwd
+        ? async () => ({ success: false })
+        : (id, pwdOptions) => terminalBackend.getSessionPwd(id, pwdOptions),
+      preferFreshBackend: skipBackendPwd ? false : options?.preferFreshBackend,
       allowRendererFallback: options?.allowRendererFallback,
       requireActiveShellCwd: options?.requireActiveShellCwd,
     });
@@ -2380,14 +2385,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const cwdAwareOnCommandSubmitted = useCallback((
     ...args: Parameters<NonNullable<typeof onCommandSubmitted>>
   ) => {
-    invalidateTerminalCwdAfterCommand(
-      terminalCwdTracker,
-      sessionId,
-      () => { knownCwdRef.current = undefined; },
-      onTerminalCwdChange,
-    );
-    onCommandSubmitted?.(...args);
-  }, [onCommandSubmitted, onTerminalCwdChange, sessionId, terminalCwdTracker]);
+    if (!shouldPreserveTerminalCwdAcrossCommand(hostRestrictsExtraSshChannels(host))) {
+      invalidateTerminalCwdAfterCommand(
+        terminalCwdTracker,
+        sessionId,
+        () => { knownCwdRef.current = undefined; },
+        onTerminalCwdChange,
+      );
+    }
+    const [command, hostId, hostLabel, submittedSessionId] = args;
+    onCommandSubmitted?.(command, hostId, hostLabel, submittedSessionId);
+  }, [host, onCommandSubmitted, onTerminalCwdChange, sessionId, terminalCwdTracker]);
   const pluginAwareOnCommandCompleted = useCallback(() => {
     pluginTerminalLifecycle.onCommandCompleted();
     void xtermRuntimeRef.current?.pluginProviderHost?.commandCompleted();
