@@ -383,6 +383,11 @@ export type CreateXTermRuntimeContext = {
     captureSubmittedLineRecorder?: () => ((line: string, options?: { sensitive?: boolean; includePendingInput?: boolean; consumePendingInput?: boolean }) => Promise<void>) | undefined;
   } | undefined>;
   passwordPromptActiveRef?: RefObject<boolean>;
+  /**
+   * Opt-in "broadcast without password protection" (#3488). When true, an
+   * active password prompt no longer pauses raw-string broadcast fan-out.
+   */
+  broadcastPasswordBypassRef?: RefObject<boolean>;
   allowHostStyleGreaterThanPrompt?: boolean;
   onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
@@ -984,12 +989,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     data: string,
     options?: TerminalBroadcastInputOptions,
   ) => {
+    // Password bypass (#3488): the opt-in lifts the password-prompt pause.
+    // Payloads dispatched from an active prompt stay marked sourceSensitive so
+    // peer writes keep skipping input interceptors.
+    const dispatchingFromPasswordPrompt = ctx.passwordPromptActiveRef?.current === true;
+    // A paste confirmed at a sensitive prompt keeps its pre-dialog snapshot
+    // (#3491): the dialog await can clear the live prompt ref, so the saved
+    // classification carried in the paste options must still tag the fan-out.
+    const sourceSensitive = dispatchingFromPasswordPrompt || options?.sensitive === true;
     if (
-      ctx.passwordPromptActiveRef?.current !== true
+      (!dispatchingFromPasswordPrompt
+        || ctx.broadcastPasswordBypassRef?.current === true)
       && ctx.isBroadcastEnabledRef.current
       && ctx.onBroadcastInputRef.current
     ) {
-      ctx.onBroadcastInputRef.current(data, ctx.sessionId, options);
+      ctx.onBroadcastInputRef.current(data, ctx.sessionId, sourceSensitive
+        ? { ...options, sourceSensitive: true }
+        : options);
       return true;
     }
     return false;
@@ -1263,6 +1279,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       skipBroadcast?: boolean;
       /** Confirmed paste: preserve classification and backend pacing. */
       sensitive?: boolean;
+      /**
+       * The sensitive marker came from a source-sensitive broadcast peer
+       * (#3488), not from this session's own prompt detector. Semantic input
+       * consumers such as autocomplete must not see the secret payload: their
+       * gate only checks this peer's own prompt state (#3491).
+       */
+      sourceSensitiveBroadcast?: boolean;
       lineDelayMs?: number;
       pasteRequestId?: string;
       /**
@@ -1330,7 +1353,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
     // skipBroadcast only suppresses the raw-string fan-out. Peers still receive
     // the Shift+Enter chord, so sudo autofill must treat this as a broadcast.
-    const canBroadcastInput = !sensitive &&
+    // The password bypass (#3488) only lifts the live password-prompt pause.
+    // Explicitly classified sensitive payloads (confirmed pastes, preloaded
+    // sudo credentials) stay non-broadcastable regardless of the opt-in.
+    const canBroadcastInput = (!sensitive
+      || (ctx.broadcastPasswordBypassRef?.current === true && options?.sensitive !== true)) &&
       inputSource !== "kitty" &&
       !handlingKittyBroadcast &&
       !suppressTerminalBroadcast &&
@@ -1548,7 +1575,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.host.backspaceBehavior,
       );
       if (willBroadcastInput) {
-        onBroadcastInput?.(broadcastData, ctx.sessionId);
+        // If the bypass (#3488) let a password-prompt payload through, keep the
+        // sensitive marker on peer writes so input interceptors stay skipped.
+        onBroadcastInput?.(broadcastData, ctx.sessionId, sensitive ? { sourceSensitive: true } : undefined);
       }
 
       if (
@@ -1558,8 +1587,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         scrollToBottomAfterInput(logicalData);
       }
 
-      // Notify autocomplete of input
-      if (logicalData !== null) ctx.onAutocompleteInput?.(logicalData);
+      // Notify autocomplete of input. Payloads whose sensitivity arrived from
+      // a source-sensitive broadcast peer (#3488) stay out of autocomplete:
+      // this peer's own prompt gate has not latched, so the secret could reach
+      // enabled plugin completion providers (#3491).
+      if (logicalData !== null && !options?.sourceSensitiveBroadcast) ctx.onAutocompleteInput?.(logicalData);
 
       if (ctx.statusRef.current === "connected" && logicalData !== null) {
         if (handledSubmittedInput || submittedInput) {
@@ -1609,6 +1641,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   let win32InputModePendingEvent: {
     event: KittyKeyboardEvent;
     logicalData: string | null;
+    /** Forced sensitive marker from a bypassed password-prompt source (#3488). */
+    sensitive?: boolean;
   } | null = null;
   const win32InputModeForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
   const kittyForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
@@ -1656,7 +1690,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     sourceSessionId: ctx.sessionId,
     isHandlingBroadcast: () => handlingKittyBroadcast,
     isBroadcastEnabled: () => ctx.isBroadcastEnabledRef.current,
-    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
+    // The #3488 bypass lifts the password-prompt pause for Kitty key fan-out too.
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true
+      && ctx.broadcastPasswordBypassRef?.current !== true,
+    // Dispatching from an active prompt under the bypass must tag the payload
+    // so peer writes keep input interceptors skipped.
+    isSensitivePromptSource: () => ctx.passwordPromptActiveRef?.current === true,
     getDispatcher: () => ctx.onBroadcastInputRef.current,
   });
 
@@ -2404,6 +2443,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
                   },
                   getCurrentSessionId: () => ctx.sessionRef.current,
                   isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
+                  broadcastPasswordBypass: () => ctx.broadcastPasswordBypassRef?.current === true,
                   onPasteData: broadcastUserPasteData,
                   scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
                   scrollToBottomAfterProgrammaticInput: scrollToBottomAfterInput,
@@ -2499,6 +2539,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (shiftEnterText) {
           e.preventDefault();
           e.stopPropagation();
+          // Snapshot source-prompt sensitivity before the local write (#3491):
+          // the default bare-newline send-text reaches the PTY as a
+          // submission that clears passwordPromptActiveRef, so the live
+          // prompt-source check in broadcastKittyInput would report this
+          // Shift+Enter as nonsensitive and a peer would commit its buffered
+          // source-sensitive password characters as ordinary input.
+          const sourceSensitivePrompt = ctx.passwordPromptActiveRef?.current === true;
           // Skip string broadcast: peers resolve Shift+Enter from their own
           // negotiated keyboard mode via the key chord below.
           handleTerminalInputData(shiftEnterText, {
@@ -2509,7 +2556,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             kind: "key",
             event: kittyEvent,
             fallbackToLegacy: true,
-          });
+          }, false, undefined, sourceSensitivePrompt ? { sourceSensitive: true } : undefined);
           if (forwarded) {
             upsertKittyKeyboardForwardedPress(
               broadcastForwardedKeys,
@@ -2533,6 +2580,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         kittyEvent,
         [],
       );
+      // Snapshot source-prompt sensitivity before the local write (#3491):
+      // a Kitty-encoded Enter that reaches the PTY as bare CR submits here
+      // and clears passwordPromptActiveRef, so the live prompt-source check
+      // in broadcastKittyInput would report this Enter as nonsensitive and
+      // a peer would commit its buffered source-sensitive password
+      // characters as ordinary command/script bookkeeping.
+      const sourceSensitivePrompt = ctx.passwordPromptActiveRef?.current === true;
       handleTerminalInputData(kittySequenceForKeyDown, { source: "kitty" });
       const forwarded = broadcastKittyInput({
         kind: "key",
@@ -2541,7 +2595,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         urgentInterrupt: shouldUseUrgentTerminalInterrupt(e, {
           hasSelection: hasCopyableSelection,
         }),
-      });
+      }, false, undefined, sourceSensitivePrompt ? { sourceSensitive: true } : undefined);
       if (forwarded) {
         upsertKittyKeyboardForwardedPress(
           broadcastForwardedKeys,
@@ -2737,8 +2791,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const writeWin32InputModeEvent = (
     event: KittyKeyboardEvent,
     logicalData: string | null,
+    writeOptions?: { sensitive?: boolean },
   ) => {
-    const pending = { event, logicalData };
+    const pending = {
+      event,
+      logicalData,
+      // A bypassed source-prompt fan-out (#3488) forces the sensitive marker so
+      // this peer's Win32 write keeps input interceptors skipped.
+      ...(writeOptions?.sensitive === true ? { sensitive: true } : {}),
+    };
     win32InputModePendingEvent = pending;
     dispatchWin32InputModeEvent(term, event);
     if (win32InputModePendingEvent === pending) {
@@ -2884,9 +2945,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         acknowledgedWrite: true,
       });
       if (pending.broadcast && isTerminalBroadcastInputCurrent(pending.sourceInput)
-        && ctx.isBroadcastEnabledRef.current && !sensitive) {
+        && ctx.isBroadcastEnabledRef.current
+        // The #3488 bypass keeps the paced fan-out alive when this line was
+        // confirmed at (or lands on) a sensitive prompt.
+        && (!sensitive || ctx.broadcastPasswordBypassRef?.current === true)) {
         ctx.onBroadcastInputRef.current?.(`${index === 0 ? pending.firstPastedLine : command}\r`, ctx.sessionId, {
           pacedBroadcast: pending.broadcast,
+          // Bypassed sensitive fan-out (#3488): tag the line so peer writes
+          // keep input interceptors skipped, like raw-string broadcast does.
+          ...(sensitive ? { sourceSensitive: true } : {}),
         });
       }
       void pending.recordLine?.(index === 0 ? pending.firstPastedLine : command, {
@@ -2902,7 +2969,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (!sessionId) return;
     markTerminalBroadcastUserInput(ctx.sessionId);
     const sourceInput = captureTerminalBroadcastInput(ctx.sessionId);
-    const broadcast: TerminalPacedBroadcast | undefined = options.broadcast && !options.sensitive
+    // The #3488 bypass lets a paste confirmed at a sensitive prompt keep the
+    // paced fan-out: each acknowledged line is re-guarded on its receipt and
+    // the dispatcher keeps peer writes sensitive via the source marker.
+    const broadcast: TerminalPacedBroadcast | undefined = options.broadcast
+      && (!options.sensitive || ctx.broadcastPasswordBypassRef?.current === true)
       && ctx.isBroadcastEnabledRef.current ? {} : undefined;
     if (broadcast) ctx.onBroadcastInputRef.current?.("", ctx.sessionId, { pacedBroadcast: broadcast, preparePacedBroadcast: true });
     const requestId = crypto.randomUUID();
@@ -2974,6 +3045,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       handleTerminalInputData(data, {
         logicalData: win32Input.logicalData,
         skipBroadcast: true,
+        // A bypassed source-prompt fan-out (#3488) forces the sensitive marker
+        // so this peer's write keeps input interceptors skipped.
+        ...(win32Input.sensitive === true
+          ? { sensitive: true, sourceSensitiveBroadcast: true }
+          : {}),
       });
       return;
     }
@@ -3045,31 +3121,45 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       win32ShiftEnterTextKeys: broadcastWin32ShiftEnterTextKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,
-    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
+    // Receiving side: the #3488 bypass lets Kitty broadcast land at password prompts too.
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true
+      && ctx.broadcastPasswordBypassRef?.current !== true,
     isConnected: () => ctx.statusRef.current === "connected",
     isRuntimeDisposed: () => runtimeDisposed,
     interruptSession: ctx.terminalBackend.interruptSession
       ? (id) => ctx.terminalBackend.interruptSession?.(id)
       : undefined,
-    writeDisposed: (id, data) => ctx.terminalBackend.writeToSession(
+    writeDisposed: (id, data, writeOptions) => ctx.terminalBackend.writeToSession(
       id,
       mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior),
-      { sensitive: ctx.passwordPromptActiveRef?.current === true },
+      {
+        sensitive: ctx.passwordPromptActiveRef?.current === true
+          || writeOptions?.sensitive === true,
+      },
     ),
-    writeActive: (data, logicalData) => handleTerminalInputData(data, {
+    writeActive: (data, logicalData, writeOptions) => handleTerminalInputData(data, {
       source: "kitty",
       logicalData,
+      // A bypassed source-prompt fan-out (#3488) forces the sensitive marker so
+      // this peer's write keeps input interceptors skipped.
+      ...(writeOptions?.sensitive === true
+        ? { sensitive: true, sourceSensitiveBroadcast: true }
+        : {}),
     }),
-    writeWin32Event: (event, logicalData) => {
-      writeWin32InputModeEvent(event, logicalData);
+    writeWin32Event: (event, logicalData, writeOptions) => {
+      writeWin32InputModeEvent(event, logicalData, writeOptions);
     },
   });
   registerKittyKeyboardBroadcastHandler(
     ctx.sessionId,
-    (input) => {
+    // Forward the dispatch options (#3488): source-prompt fan-outs tag their
+    // payload with sourceSensitive / beforeUrgentInterrupt, and dropping the
+    // second argument here would downgrade bypassed password keystrokes to
+    // ordinary peer input (leaving input interceptors / autocomplete exposed).
+    (input, dispatchOptions) => {
       handlingKittyBroadcast = true;
       try {
-        handleKittyKeyboardBroadcast(input);
+        handleKittyKeyboardBroadcast(input, dispatchOptions);
       } finally {
         handlingKittyBroadcast = false;
       }

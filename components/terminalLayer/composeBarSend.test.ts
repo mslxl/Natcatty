@@ -15,16 +15,27 @@ const code = ts.transpileModule(source.slice(start, end) + '\nglobalThis.send = 
 }).outputText;
 
 type Status = 'connected' | 'connecting' | 'disconnected';
-type Executor = () => boolean | Promise<boolean>;
-function setup(statuses: Status[], broadcast = false, executors = new Map<string, Executor>(), sensitive = new Set<string>()) {
+type Executor = (text: string, executeImmediately: boolean, options?: { broadcast?: boolean; sensitive?: boolean }) => boolean | Promise<boolean>;
+function setup(
+  statuses: Status[],
+  broadcast = false,
+  executors = new Map<string, Executor>(),
+  sensitive = new Set<string>(),
+  broadcastPasswordBypass = false,
+  restoredDisconnected = new Set<string>(),
+) {
   const writes: string[] = [];
   const context = {
     send: undefined as unknown as (text: string) => Promise<boolean>,
     useCallback: (callback: unknown) => callback,
     activeWorkspaceRef: { current: { id: 'workspace', focusedSessionId: '0' } },
-    sessionsRef: { current: statuses.map((status, index) => ({ id: String(index), workspaceId: 'workspace', status })) },
+    sessionsRef: { current: statuses.map((status, index) => ({
+      id: String(index), workspaceId: 'workspace', status,
+      restoreState: restoredDisconnected.has(String(index)) ? 'restored-disconnected' : undefined,
+    })) },
     isBroadcastEnabled: () => broadcast,
     isTerminalSensitiveInputActive: (id: string) => sensitive.has(id),
+    broadcastPasswordBypassRef: { current: broadcastPasswordBypass },
     snippetExecutorsRef: { current: executors },
     canUseDirectSessionWriteFallback,
     terminalBackend: { writeToSession: (id: string) => writes.push(id) },
@@ -53,7 +64,68 @@ test('a disconnected broadcast peer cannot undo another successful fallback', as
   assert.equal(await setup(['connected', 'disconnected'], true).send('command'), true);
 });
 
-test('sensitive input is excluded for executor and fallback paths', async () => {
+test('the password bypass delivers sensitive sends but keeps them out of compose history (#3488)', async () => {
+  let executorCalls = 0;
+  const executors = new Map<string, Executor>([['0', async () => {
+    executorCalls += 1;
+    return true;
+  }]]);
+  // The payload was delivered (the executor ran), but the send originates from
+  // a sensitive prompt, so the compose bar must not record it for ArrowUp.
+  assert.equal(
+    await setup(['connected'], true, executors, new Set(['0']), true).send('secret'),
+    false,
+  );
+  assert.equal(executorCalls, 1);
+});
+
+test('bypassed fan-out into a lagging sensitive peer keeps the whole send out of history', async () => {
+  // Focused session 0 is non-sensitive; lagging peer 1 sits at a password
+  // prompt. The bypass delivers the payload there, but that text is peer 1's
+  // password input, so the send must not be recallable via ArrowUp.
+  for (const executorOwner of ['0', '1'] as const) {
+    const executors = new Map<string, Executor>([[executorOwner, async () => true]]);
+    assert.equal(
+      await setup(['connected', 'connected'], true, executors, new Set(['1']), true).send('secret'),
+      false,
+    );
+  }
+});
+
+test('bypassed fan-out preserves a sensitive peer snapshot across executor wake', async () => {
+  const sensitive = new Set(['1']);
+  let sensitiveAtWrite: boolean | undefined;
+  const executors = new Map<string, Executor>([['1', async (_text, _executeImmediately, options) => {
+    await Promise.resolve();
+    sensitive.delete('1');
+    sensitiveAtWrite = options?.sensitive;
+    return true;
+  }]]);
+  assert.equal(await setup(['connected', 'connected'], true, executors, sensitive, true).send('secret'), false);
+  assert.equal(sensitiveAtWrite, true);
+});
+
+test('a bypassed sensitive peer that rejects delivery does not hide another successful send', async () => {
+  const executors = new Map<string, Executor>([
+    ['0', async () => true],
+    ['1', async () => false],
+  ]);
+  assert.equal(await setup(['connected', 'connected'], true, executors, new Set(['1']), true).send('command'), true);
+});
+
+test('a bypassed sensitive peer with no write route does not hide another successful send', async () => {
+  const { send, writes } = setup(
+    ['connected', 'disconnected'], true, new Map(), new Set(['1']), true, new Set(['1']),
+  );
+  assert.equal(await send('command'), true);
+  assert.deepEqual(writes, ['0']);
+});
+
+test('a connecting sensitive fallback keeps attempted input out of history', async () => {
+  assert.equal(await setup(['connected', 'connecting'], true, new Map(), new Set(['1']), true).send('secret'), false);
+});
+
+test('without the password bypass sensitive input is excluded for executor and fallback paths', async () => {
   for (const broadcast of [false, true]) {
     for (const executors of [new Map<string, Executor>(), new Map<string, Executor>([['0', async () => true]])]) {
       assert.equal(await setup(['connected'], broadcast, executors, new Set(['0'])).send('secret'), false);

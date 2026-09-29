@@ -7,9 +7,12 @@ import { GripHorizontal, Pin, Plus, Radio, Search, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useComposeBarHistory } from '../../application/state/useComposeBarHistory';
 import { canNavigateComposeBarHistory } from '../../domain/composeBarHistory';
+import { STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS } from '../../infrastructure/config/storageKeys';
+import { useStoredBoolean } from '../../application/state/useStoredBoolean';
 import { useComposeBarHeight } from '../../application/state/useComposeBarHeight';
 import { useComposeBarPinnedSnippets } from '../../application/state/useComposeBarPinnedSnippets';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { useClipboardBackend } from '../../application/state/useClipboardBackend';
 import { resolveSnippetCommand } from '../SnippetExecutionProvider';
 import { Snippet } from '../../types';
 import { cn } from '../../lib/utils';
@@ -292,6 +295,7 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
   themeColors,
 }) => {
   const { t } = useI18n();
+  const { readClipboardText, writeClipboardText } = useClipboardBackend();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const restoreDraft = useCallback((draft: string) => {
     if (textareaRef.current) textareaRef.current.value = draft;
@@ -318,6 +322,88 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
   heightRef.current = barHeight;
 
   const theme = useMemo(() => buildTheme(themeColors), [themeColors]);
+
+  // Opt-in "broadcast without password protection" (#3488). Shared storage key
+  // with the terminal runtime, which reads it to keep broadcasting during
+  // password / interactive prompts while this switch is on.
+  const [allowPasswordBroadcast, setAllowPasswordBroadcast] = useStoredBoolean(
+    STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS,
+    false,
+  );
+  const [broadcastMenuAnchor, setBroadcastMenuAnchor] = useState<{ x: number; y: number; inTextarea: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!broadcastMenuAnchor) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-compose-broadcast-menu]')) return;
+      setBroadcastMenuAnchor(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setBroadcastMenuAnchor(null);
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [broadcastMenuAnchor]);
+
+  const handleBroadcastContextMenu = useCallback((event: React.MouseEvent) => {
+    if (!isBroadcastEnabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setBroadcastMenuAnchor({
+      x: event.clientX,
+      y: event.clientY,
+      inTextarea: event.target instanceof Element && Boolean(event.target.closest('textarea')),
+    });
+  }, [isBroadcastEnabled]);
+
+  const handleComposeMenuEdit = useCallback(async (action: 'cut' | 'copy' | 'paste' | 'selectAll') => {
+    setBroadcastMenuAnchor(null);
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    if (action === 'selectAll') {
+      textarea.select();
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    try {
+      if (action === 'paste') {
+        let text: string | undefined;
+        try { text = await readClipboardText(); } catch { /* Use browser clipboard. */ }
+        if (typeof text !== 'string') text = await navigator.clipboard.readText();
+        if (!text) return;
+        textarea.setSelectionRange(start, end);
+        if (!document.execCommand('insertText', false, text)) {
+          textarea.setRangeText(text, start, end, 'end');
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        reset();
+        return;
+      }
+      if (start === end) return;
+      const selectedText = textarea.value.slice(start, end);
+      let wroteToBridge = false;
+      try { wroteToBridge = await writeClipboardText(selectedText); } catch { /* Use browser clipboard. */ }
+      if (!wroteToBridge) {
+        await navigator.clipboard.writeText(selectedText);
+      }
+      if (action === 'cut') {
+        textarea.setSelectionRange(start, end);
+        if (!document.execCommand('delete')) {
+          textarea.setRangeText('', start, end, 'end');
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        reset();
+      }
+    } catch (error) {
+      console.error('Compose bar clipboard action failed', error);
+    }
+  }, [readClipboardText, reset, writeClipboardText]);
 
   const snippetsById = useMemo(
     () => mergeComposeBarSnippetMap(snippets),
@@ -459,6 +545,7 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
         backgroundColor: theme.resolvedBg,
         borderTop: `1px solid ${theme.borderColor}`,
       }}
+      onContextMenu={handleBroadcastContextMenu}
     >
       <div
         role="separator"
@@ -561,6 +648,54 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
           </Tooltip>
         </div>
       </div>
+
+      {broadcastMenuAnchor && (
+        <div
+          data-compose-broadcast-menu
+          className="fixed z-[120] min-w-[240px] rounded-md border py-1 shadow-lg"
+          style={{
+            // Clamp horizontally so the 240px-min menu stays on-screen even
+            // when the compose bar is right-clicked near the right edge.
+            left: Math.max(4, Math.min(broadcastMenuAnchor.x, window.innerWidth - 244)),
+            top: Math.max(4, Math.min(broadcastMenuAnchor.y, window.innerHeight - (broadcastMenuAnchor.inTextarea ? 160 : 48))),
+            backgroundColor: theme.resolvedBg,
+            borderColor: theme.borderColor,
+            color: theme.resolvedFg,
+          }}
+          onMouseDown={(event) => event.preventDefault()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {broadcastMenuAnchor.inTextarea && (
+            <>
+              {(['cut', 'copy', 'paste', 'selectAll'] as const).map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  className="flex w-full items-center px-2.5 py-1.5 text-left text-[11px] transition-colors duration-150 hover:bg-black/20"
+                  onClick={() => { void handleComposeMenuEdit(action); }}
+                >
+                  {t(`terminal.menu.${action}`)}
+                </button>
+              ))}
+              <div className="my-1 border-t" style={{ borderColor: theme.borderColor }} />
+            </>
+          )}
+          <button
+            data-compose-broadcast-toggle
+            type="button"
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] transition-colors duration-150 hover:bg-black/20"
+            onClick={() => {
+              setAllowPasswordBroadcast((prev) => !prev);
+              setBroadcastMenuAnchor(null);
+            }}
+          >
+            <span className="w-3 shrink-0 text-center" aria-hidden="true">
+              {allowPasswordBroadcast ? '✓' : ''}
+            </span>
+            {t('terminal.composeBar.broadcastAllowPassword')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
