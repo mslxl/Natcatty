@@ -54,6 +54,14 @@ const MODEL_CACHE_ENV_HINTS = [
   'OPENCODE_CONFIG',
   'OPENCODE_CONFIG_DIR',
   'OPENCODE_CONFIG_CONTENT',
+  'MIMOCODE_HOME',
+  'MIMOCODE_BIN',
+  'MIMOCODE_BIN_PATH',
+  'MIMOCODE_CONFIG',
+  'MIMOCODE_CONFIG_DIR',
+  'MIMOCODE_MIMO_ONLY',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
   'CLAUDE_CODE_EXECUTABLE',
   'CODEBUDDY_CODE_PATH',
   'CURSOR_API_KEY',
@@ -266,7 +274,8 @@ export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean
     || sdkBackend === 'cursor'
     || sdkBackend === 'codebuddy'
     || sdkBackend === 'opencode'
-    || sdkBackend === 'grok';
+    || sdkBackend === 'grok'
+    || sdkBackend === 'mimo';
 }
 
 export function shouldAdoptSdkCurrentModel(

@@ -88,6 +88,14 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_CONFIG_CONTENT",
+  "MIMOCODE_HOME",
+  "MIMOCODE_BIN",
+  "MIMOCODE_BIN_PATH",
+  "MIMOCODE_CONFIG",
+  "MIMOCODE_CONFIG_DIR",
+  "MIMOCODE_MIMO_ONLY",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
   "CLAUDE_CODE_EXECUTABLE",
   "CODEBUDDY_CODE_PATH",
   "CURSOR_API_KEY",
@@ -191,7 +199,7 @@ function resolveSdkPromptPlacement({
   contextualPrompt,
   systemContext,
 }) {
-  const supportsSystemContext = backendKey === "opencode" || backendKey === "codebuddy";
+  const supportsSystemContext = backendKey === "opencode" || backendKey === "mimo" || backendKey === "codebuddy";
   return {
     prompt: supportsSystemContext ? turnPrompt : contextualPrompt,
     systemPrompt: supportsSystemContext ? systemContext : undefined,
@@ -430,6 +438,11 @@ function resolveSdkBackendBinPath({
   }
   if (backendKey === "opencode") {
     const configuredEnvPath = normalizeCliPathForPlatform?.(env?.OPENCODE_BIN);
+    const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
+  }
+  if (backendKey === "mimo") {
+    const configuredEnvPath = normalizeCliPathForPlatform?.(env?.MIMOCODE_BIN || env?.MIMOCODE_BIN_PATH);
     const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
     return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
   }
@@ -785,7 +798,7 @@ function registerSdkStreamHandlers(ctx) {
               }
             },
           };
-          const skillsPathAllowlist = effectiveMode === "skills" && backendKey === "opencode"
+          const skillsPathAllowlist = effectiveMode === "skills" && (backendKey === "opencode" || backendKey === "mimo")
             ? buildNetcattySkillsOpenCodePathAllowlist({
               launcherPath: NETCATTY_TOOL_LAUNCHER_PATH,
               cliScriptPath: NETCATTY_TOOL_CLI_PATH,
@@ -839,6 +852,7 @@ function registerSdkStreamHandlers(ctx) {
             // when the CLI hits a security restriction, route the decision
             // through the renderer approval UI instead of throwing an error.
             requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
+            clearPendingApprovals: mcpServerBridge.clearPendingApprovals,
             // SDK 0.3.258 advanced options
             effort: effort || undefined,
             maxTurns: maxTurns || undefined,
