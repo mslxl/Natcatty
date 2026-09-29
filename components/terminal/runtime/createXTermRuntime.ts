@@ -129,6 +129,7 @@ import {
   shouldFlushStaleDeferredImeTextInput,
 } from "./terminalImeTextInput";
 import { keepImeCommittedTextThroughModifierKeyDowns } from "./imeModifierKeyDownSeenGuard";
+import { keepLiveImeTranscriptionSingle } from "./imeCompositionRewrite";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { getLastChar, removeLastChar, isPrintableInput } from "../../../domain/serialCharMetrics";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
@@ -705,6 +706,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   }
 
   term.open(ctx.container);
+  // CompositionHelper is created in open(). Live transcription rewrites the
+  // hypothesis instead of appending; commit that utterance once (#3421).
+  keepLiveImeTranscriptionSingle(term);
 
   // Inline raster images (Kitty graphics / SIXEL / iTerm IIP). Loaded right after
   // term.open so the addon can patch IRenderService.setRenderer before the WebGL
@@ -2977,7 +2981,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // must not classify the next physical key as a second composition commit.
     // Actual composition/input handlers clear the physical-key pairing first.
     if (broadcastLegacyDataPending) kittyCompositionPending = false;
-    if (kittyCompositionPending && !data.startsWith("\u001b")) {
+    // A rewritten IME hypothesis first emits standalone deletions. Route those
+    // as backspaces and keep the composition marker for the replacement text.
+    if (kittyCompositionPending && data !== "\x7f" && !data.startsWith("\u001b")) {
       kittyCompositionPending = false;
       if (kittyCompositionClearTimer !== undefined) {
         window.clearTimeout(kittyCompositionClearTimer);
