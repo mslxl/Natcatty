@@ -222,10 +222,6 @@ export const useSftpTransfers = ({
   const transfersRef = useRef(transfers);
   const conflictsRef = useRef(conflicts);
   conflictsRef.current = conflicts;
-  // Remote files past the preflight cap keep an unknown plan. Mark them so
-  // deferred discovery does not stat the whole tail at once.
-  const preflightSkippedTaskIdsRef = useRef(new Set<string>());
-
   // When the retained panel is re-opened, catch up React state from the ref that
   // kept receiving progress while the surface was hidden.
   useEffect(() => {
@@ -673,7 +669,7 @@ export const useSftpTransfers = ({
         }
 
         if (sourceSftpId) {
-          if (preflightSkippedTaskIdsRef.current.has(task.id)) {
+          if (task.preflightStatSkipped) {
             return cachedListingStatForDialog();
           }
           // This stat runs deferred (started before the conflict check) and
@@ -1354,9 +1350,6 @@ export const useSftpTransfers = ({
           continue;
         }
         const taskId = crypto.randomUUID();
-        if (preflightSkippedNames.has(file.name)) {
-          preflightSkippedTaskIdsRef.current.add(taskId);
-        }
         newTasks.push({
           id: taskId,
           batchId,
@@ -1379,6 +1372,7 @@ export const useSftpTransfers = ({
           isDirectory: file.isDirectory,
           progressMode: file.isDirectory ? "files" : "bytes",
           sourceLastModified,
+          preflightStatSkipped: preflightSkippedNames.has(file.name),
           origin: "manual",
           resumable: !usesLegacyScp,
           pauseUnavailableReason: usesLegacyScp ? "This server uses legacy SCP; cancel and retry from the beginning instead" : undefined,

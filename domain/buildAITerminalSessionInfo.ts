@@ -1,10 +1,12 @@
 import { classifyDistroId, resolveHostOs } from './host';
+import { isSavedVaultHost } from './ephemeralHosts';
 import type { PortForwardingRule } from './models';
 import type { Host, TerminalSession } from '../types';
 
 export type AITerminalSessionInfo = {
   sessionId: string;
   hostId: string;
+  savedHostId?: string;
   hostname: string;
   label: string;
   os?: string;
@@ -50,6 +52,9 @@ export const buildAITerminalSessionInfo = (
   const protocol = session?.protocol || host?.protocol;
   const isLocalSession = protocol === 'local' || session?.hostId?.startsWith('local-');
   const allHosts = options?.allHosts ?? (host ? [host] : []);
+  const savedHostId = !isLocalSession && protocol !== 'serial'
+    ? allHosts.find((entry) => entry.id === session?.hostId && isSavedVaultHost(entry))?.id
+    : undefined;
   const hostChain = summarizeHostChain(host, allHosts);
   const activePortForwards = host?.id && options?.portForwardingRules
     ? options.portForwardingRules
@@ -81,6 +86,7 @@ export const buildAITerminalSessionInfo = (
   return {
     sessionId: session?.id || '',
     hostId: session?.hostId || '',
+    ...(savedHostId ? { savedHostId } : {}),
     hostname: host?.hostname || session?.hostname || '',
     // A session rename is scoped to the individual terminal tab. Prefer it
     // over the saved Host label so duplicate connections to the same host can
