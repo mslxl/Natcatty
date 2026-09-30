@@ -19,6 +19,11 @@ let sendWhenRendererReady = null;
 let getSystemMenuMainWindow = null;
 let tray = null;
 let closeToTray = false;
+// User preference for whether the tray/menu bar icon is shown at all.
+// Independent of close-to-tray: the app keeps running in the background with
+// the icon hidden, and window close still hides (not quits) when close-to-tray
+// was explicitly enabled.
+let showTrayIcon = true;
 let windowsTrayScaleListener = null;
 let currentHotkey = null;
 let hotkeyEnabled = false;
@@ -1292,18 +1297,12 @@ function setCloseToTray(enabled) {
   closeToTray = !!enabled;
 
   if (closeToTray) {
-    // Create tray if it doesn't exist
-    if (!tray) {
+    // Tray visibility is controlled separately by showTrayIcon.
+    if (!tray && showTrayIcon) {
       createTray();
     }
   } else {
     clearPendingFullscreenHide(getMainWindow());
-    // A hidden auto-launch cold start pins the tray regardless of this
-    // preference until its window is actually shown once — otherwise a user
-    // with close-to-tray off would get a windowless, trayless zombie process.
-    if (!hiddenLaunchTrayPinned) {
-      destroyTray();
-    }
   }
 
   return { success: true, enabled: closeToTray };
@@ -1321,16 +1320,43 @@ function pinTrayForHiddenLaunch() {
 }
 
 /**
- * Release the hidden-launch tray pin once its window has been shown. If the
- * user's close-to-tray preference is off, the tray is destroyed now instead
- * of lingering until the next close-to-tray toggle.
+ * Release the hidden-launch tray pin once its window has been shown. The
+ * hidden icon preference can now take effect safely.
  */
 function releaseHiddenLaunchTrayPin() {
   if (!hiddenLaunchTrayPinned) return;
   hiddenLaunchTrayPinned = false;
-  if (!closeToTray) {
+  if (!showTrayIcon) {
     destroyTray();
   }
+}
+
+/**
+ * Show or hide the tray icon without changing close-to-tray behavior. The
+ * app keeps running in the background while the icon is hidden; close-to-tray
+ * still hides the window on close.
+ */
+function setShowTrayIcon(enabled) {
+  showTrayIcon = !!enabled;
+
+  if (showTrayIcon) {
+    if (!tray) {
+      createTray();
+    }
+  } else if (!hiddenLaunchTrayPinned) {
+    // A hidden auto-launch cold start keeps its safety pin until its window
+    // is shown once, so a trayless zombie never appears without consent.
+    destroyTray();
+  }
+
+  return { success: true, enabled: showTrayIcon };
+}
+
+/**
+ * Check if the tray icon is currently meant to be shown
+ */
+function isShowTrayIconEnabled() {
+  return showTrayIcon;
 }
 
 /**
@@ -1354,7 +1380,10 @@ function getHotkeyStatus() {
  * Handle window close event - hide to tray instead of closing
  */
 function handleWindowClose(event, win) {
-  if (closeToTray && tray) {
+  // With the tray icon hidden by preference there is no `tray` object, but a
+  // user who enabled close-to-tray still expects the window to hide (app
+  // stays in the background), not to quit.
+  if (closeToTray && (tray || !showTrayIcon)) {
     event.preventDefault();
     hideWindowRespectingMacFullscreen(win);
     return true; // Prevented close
@@ -1390,6 +1419,16 @@ function registerHandlers(ipcMain) {
   // Get close-to-tray status
   ipcMain.handle("netcatty:tray:isCloseToTray", async () => {
     return { enabled: closeToTray };
+  });
+
+  // Show/hide the tray icon itself (independent of close-to-tray)
+  ipcMain.handle("netcatty:tray:setShowTrayIcon", async (_event, { enabled }) => {
+    return setShowTrayIcon(enabled);
+  });
+
+  // Get show-tray-icon status
+  ipcMain.handle("netcatty:tray:isShowTrayIcon", async () => {
+    return { enabled: showTrayIcon };
   });
 
   // Update tray menu data
