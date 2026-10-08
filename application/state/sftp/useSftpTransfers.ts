@@ -1418,77 +1418,66 @@ export const useSftpTransfers = ({
       releasePausedTransfer(transferId);
       globalSftpTransferScheduler.cancel(transferId);
 
-      // Cancel parent + remove child tasks
-      const childIdsToCancel = new Set<string>();
-      const childrenToCleanup: TransferTask[] = [];
-      for (const t of transfersRef.current) {
-        if (t.parentTaskId === transferId && !["completed", "cancelled", "failed"].includes(t.status)) {
-          childIdsToCancel.add(t.id);
-          childrenToCleanup.push(t);
-        }
+      // Keep child rows and checkpoints until the old walk has stopped. A
+      // partial backend failure needs a fresh re-walk, including queued jobs
+      // the scheduler has already rejected and will never run again.
+      const children = transfersRef.current.filter((task) =>
+        task.parentTaskId === transferId
+        && !["completed", "cancelled", "failed"].includes(task.status));
+      const childIds = new Set([
+        ...children.map((task) => task.id),
+        ...(activeChildIdsRef.current.get(transferId) ?? []),
+      ]);
+      for (const id of childIds) {
+        cancelledTasksRef.current.add(id);
+        releasePausedTransfer(id);
+        globalSftpTransferScheduler.cancel(id);
       }
-      for (const cid of activeChildIdsRef.current.get(transferId) ?? []) {
-        if (!childIdsToCancel.has(cid)) {
-          childIdsToCancel.add(cid);
-          if (taskToCancel) {
-            childrenToCleanup.push({
-              ...taskToCancel,
-              id: cid,
-              parentTaskId: transferId,
-            });
-          }
-        }
-      }
-      for (const cid of childIdsToCancel) {
-        cancelledTasksRef.current.add(cid);
-        markTransferCancelled(cid);
-        globalSftpTransferScheduler.cancel(cid);
-      }
-      markTransferCancelledTree(transferId, [...childIdsToCancel]);
-      // Keep refs in sync immediately so same-turn resolveConflict/resume sees cancel.
-      const nextTransfers = transfersRef.current
-        .filter((t) => t.parentTaskId !== transferId)
-        .map((t) =>
-          t.id === transferId
-            ? { ...t, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
-            : t,
-        );
-      setTransfers(nextTransfers);
-      conflictsRef.current = conflictsRef.current.filter((c) => c.transferId !== transferId && !childIdsToCancel.has(c.transferId));
+      markTransferCancelledTree(transferId, [...childIds]);
+      conflictsRef.current = conflictsRef.current.filter((conflict) =>
+        conflict.transferId !== transferId && !childIds.has(conflict.transferId));
       setConflicts(conflictsRef.current);
 
-      await cancelBackendTransfers([transferId, ...childIdsToCancel]);
-      if (taskToCancel) await cleanupTaskArtifacts(taskToCancel);
-      // Child stages are keyed by per-file transferId — clean each known child.
-      for (const child of childrenToCleanup) {
-        try {
-          await cleanupTaskArtifacts(child);
-        } catch {
-          // best-effort
-        }
-      }
+      const ids = new Set([transferId, ...childIds]);
+      const retainedTasks = (taskToCancel ? [taskToCancel, ...children] : children)
+        .map((task) => ({ task, ...sftpTransferCenterStore.observeTaskSettlement(task) }));
+      const failedIds = new Set(await cancelBackendTransfers([...ids]));
+      await sftpTransferCenterStore.settleCancellation(
+        transferId, ids, failedIds, retainedTasks,
+        async () => {
+          setTransfers(sftpTransferCenterStore.getOwnerTasks(ownerId));
+          for (const id of ids) clearCancelledTask(id);
+          clearTransferCancelledTree(transferId, [...childIds]);
+          if (failedIds.size > 0) {
+            // Preserve stages while any writer could not be cancelled. The
+            // fresh recovery walk reuses ids only after this settlement.
+            const recoveryIds = [...ids];
+            for (let offset = 0; offset < recoveryIds.length; offset += 32) {
+              await Promise.all(recoveryIds.slice(offset, offset + 32).map(async (id) => {
+                try { await netcattyBridge.get()?.clearPendingTransferCancel?.(id); } catch { /* best-effort */ }
+              }));
+            }
+            return;
+          }
+          if (taskToCancel && sftpTransferCenterStore.getTask(transferId)?.status === "cancelled") {
+            try { await cleanupTaskArtifacts(taskToCancel); } catch { /* best-effort */ }
+          }
+          for (const child of children) {
+            if (sftpTransferCenterStore.getTask(child.id)?.status === "completed") continue;
+            try { await cleanupTaskArtifacts(child); } catch { /* best-effort */ }
+          }
+        },
+      );
 
     },
-    [cancelBackendTransfers, cleanupTaskArtifacts, releasePausedTransfer, setTransfers],
+    [cancelBackendTransfers, clearCancelledTask, cleanupTaskArtifacts, ownerId, releasePausedTransfer, setTransfers],
   );
 
-  // Soft pause/resume: single TransferRuntime entry (store soft-control +
-  // dedicated hard reconnect). No panel-local soft-control dual path.
+  // All controls go through the process-global runtime, including cancellation
+  // settlement. A panel must never clear cancellation latches on Resume.
   const resumeTransfer = useCallback(async (transferId: string) => {
-    // Clear sticky child cancel latches so re-walk can retry same child ids.
-    clearCancelledTask(transferId);
-    for (const child of transfersRef.current) {
-      if (child.parentTaskId === transferId) clearCancelledTask(child.id);
-    }
-    for (const childId of activeChildIdsRef.current.get(transferId) ?? []) {
-      clearCancelledTask(childId);
-    }
-    clearTransferCancelledTree(
-      transferId,
-      [...(activeChildIdsRef.current.get(transferId) ?? [])],
-    );
     await transferRuntime.resume(transferId);
-  }, [clearCancelledTask]);
+  }, []);
 
   const prioritizeTransfer = useCallback((transferId: string) => {
     globalSftpTransferScheduler.prioritize(transferId);
@@ -2265,7 +2254,6 @@ export const useSftpTransfers = ({
       await transferRuntime.pause(taskId);
     },
     resume: async (taskId: string) => {
-      // Use resumeTransfer so cancel latches are cleared before soft/hard resume.
       await resumeTransfer(taskId);
     },
     cancel: cancelTransfer,
@@ -2290,7 +2278,7 @@ export const useSftpTransfers = ({
     activeTransfersCount,
     startTransfer,
     downloadToLocal,
-    cancelTransfer,
+    cancelTransfer: transferRuntime.cancel,
     // Single process-level control surface (TransferRuntime).
     pauseTransfer: async (transferId: string) => {
       await transferRuntime.pause(transferId);

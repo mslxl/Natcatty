@@ -26,8 +26,10 @@ import {
   isTransferControlEpochCurrent,
   settleTransferControlEpochTree,
 } from "./sftp/transferControlEpoch";
-import { isTransferWalkInFlight } from "./sftp/transferWalkRegistry";
+import { isTransferWalkInFlight, waitForTransferWalkSettled } from "./sftp/transferWalkRegistry";
+import { settleCancelledTransferTree } from "./sftp/transferCancelOutcome";
 import {
+  clearTransferCancelledTree,
   isTransferOrRootCancelled,
   markTransferCancelledTree,
   settleTransferCancelTree,
@@ -93,6 +95,12 @@ export type DedicatedTransferResumeHandler = (task: TransferTask) => Promise<{
   resetCheckpoint?: boolean;
 }>;
 
+interface RetainedCancellationTask {
+  task: TransferTask;
+  read(): TransferTask | undefined;
+  dispose(): void;
+}
+
 export interface SftpTransferCenterStore {
   subscribe(listener: Listener): () => void;
   /**
@@ -121,7 +129,10 @@ export interface SftpTransferCenterStore {
   isResuming(taskId: string): boolean;
   pause(taskId: string): Promise<void>;
   resume(taskId: string): Promise<void>;
+  /** Wait for backend cancellation requests; live walks settle separately. */
   cancel(taskId: string): Promise<void>;
+  /** Publish one cancellation outcome after the old execution has settled. */
+  settleCancellation(taskId: string, taskIds: ReadonlySet<string>, failedIds: ReadonlySet<string>, retainedTasks: readonly RetainedCancellationTask[], onSettled: () => Promise<void>): Promise<void>;
   retry(taskId: string): Promise<void>;
   prioritize(taskId: string): Promise<void>;
   dismiss(taskId: string): void;
@@ -464,6 +475,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   let persistenceDirty = false;
   let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
   const resumeInvocations = new Map<string, Promise<void>>();
+  const cancelInvocations = new Map<string, Promise<void>>();
+  const cancelSettlements = new Map<string, Promise<void>>();
   // Ephemeral control intent: never serialize this or change bridge lifecycle epochs.
   const resumeRequests = new Map<string, symbol>();
   const resumeListeners = new Set<Listener>();
@@ -818,8 +831,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     // Compressed soft-control is process-global: do not gate on a live panel owner.
     const liveCompressedJob = task?.controlKind === "compressed-upload"
       && task.reconnectRequired !== true
-      && task.status !== "interrupted"
-      && task.status !== "attention";
+      && task.status !== "interrupted";
     if (liveCompressedJob && (action === "pause" || action === "resume" || action === "cancel")) {
       const bridge = netcattyBridge.get();
       if (action === "pause") {
@@ -879,8 +891,17 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (!result.success && result.reason) notify.warning(result.reason, "SFTP");
         return;
       }
-      const result = await (bridge?.cancelCompressedUpload?.(taskId)
-        ?? { success: false });
+      const result = await Promise.resolve(bridge?.cancelCompressedUpload?.(taskId)
+        ?? { success: false }).catch(() => ({ success: false }));
+      // The upload may finish while this cancel is still awaiting IPC: its
+      // completion event has already repainted the row terminal. The new
+      // inactive-compression response still reports success, so recheck the
+      // latest row before applying the cancellation result — otherwise Cancel
+      // all misreports a successfully completed upload as cancelled.
+      const latestAfterCancelIpc = tasks.find((candidate) => candidate.id === taskId);
+      if (latestAfterCancelIpc && ["completed", "failed", "cancelled"].includes(latestAfterCancelIpc.status)) {
+        return;
+      }
       if (!result.success) {
         const reason = "Could not cancel the compressed upload.";
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
@@ -889,6 +910,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           error: reason,
           speed: 0,
         } : candidate);
+        if (isTransferOrRootCancelled(taskId)) {
+          // The row is kept in attention for recovery instead of settling as
+          // cancelled. Drop the pre-installed cancellation latch now, or a
+          // later Resume is rejected outright by admitTaskRun's cancelled-root
+          // check (compressed uploads have no runWalk settlement to clear it).
+          clearTransferCancelledTree(taskId);
+        }
         emit();
         notify.warning(reason, "SFTP");
         return;
@@ -1301,9 +1329,9 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         emit();
       }
     }
-    if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued", "transferring", "pausing"].includes(task.status)) {
+    if (!controller && action === "cancel" && task && !["completed", "cancelled"].includes(task.status)) {
       const childIds = tasks
-        .filter((candidate) => candidate.parentTaskId === taskId)
+        .filter((candidate) => candidate.parentTaskId === taskId && !["completed", "cancelled", "failed"].includes(candidate.status))
         .map((candidate) => candidate.id);
       // Stop surviving processTransfer walks immediately (panel-local
       // cancelledTasksRef is gone after unmount).
@@ -1315,33 +1343,43 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       } catch {
         // best-effort
       }
-      try {
-        await netcattyBridge.get()?.cancelTransfer?.(taskId);
-        for (const childId of childIds) {
-          try { await netcattyBridge.get()?.cancelTransfer?.(childId); } catch { /* best-effort */ }
+      const failedIds = new Set<string>();
+      const cancelIds = [taskId, ...childIds];
+      const cancelledIdSet = new Set(cancelIds);
+      const retainedTasks = tasks.filter((candidate) => cancelledIdSet.has(candidate.id))
+        .map((task) => ({ task, ...store.observeTaskSettlement(task) }));
+      for (let offset = 0; offset < cancelIds.length; offset += 32) {
+        await Promise.all(cancelIds.slice(offset, offset + 32).map(async (id) => {
+          try {
+            const result: unknown = await netcattyBridge.get()?.cancelTransfer?.(id);
+            if (result && typeof result === "object" && "success" in result && result.success === false) {
+              failedIds.add(id);
+            }
+          } catch {
+            failedIds.add(id);
+          }
+        }));
+      }
+      await store.settleCancellation(taskId, cancelledIdSet, failedIds, retainedTasks, async () => {
+        clearTransferCancelledTree(taskId, childIds);
+        if (failedIds.size > 0) {
+          const recoveryIds = cancelIds;
+          for (let offset = 0; offset < recoveryIds.length; offset += 32) {
+            await Promise.all(recoveryIds.slice(offset, offset + 32).map(async (id) => {
+              try { await netcattyBridge.get()?.clearPendingTransferCancel?.(id); } catch { /* best-effort */ }
+            }));
+          }
+        } else if (tasks.find((candidate) => candidate.id === taskId)?.status === "cancelled") {
+          try {
+            await netcattyBridge.get()?.cleanupTransferArtifacts?.({
+              transferId: taskId,
+              sourcePath: task.sourcePath,
+              targetPath: task.targetPath,
+              stagedTargetPath: task.stagedTargetPath,
+            });
+          } catch { /* best-effort */ }
         }
-      } catch {
-        // Best-effort backend cancel when the owning panel is gone / no window.
-      }
-      try {
-        await netcattyBridge.get()?.cleanupTransferArtifacts?.({
-          transferId: taskId,
-          sourcePath: task.sourcePath,
-          targetPath: task.targetPath,
-          stagedTargetPath: task.stagedTargetPath,
-        });
-      } catch {
-        // best-effort temp/.part cleanup
-      }
-      const cancelIds = new Set([taskId, ...childIds]);
-      tasks = tasks.map((candidate) => cancelIds.has(candidate.id) ? {
-        ...candidate,
-        status: "cancelled",
-        error: undefined,
-        endTime: Date.now(),
-        speed: 0,
-        conflict: undefined,
-      } : candidate);
+      });
       emit();
       return;
     }
@@ -1794,10 +1832,28 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         && ["paused", "interrupted", "attention", "pending", "queued"].includes(task.status);
     },
     pause(taskId) {
+      if (cancelInvocations.has(taskId) || isTransferOrRootCancelled(taskId)) return Promise.resolve();
       clearResumeRequest(taskId);
       return invoke(taskId, "pause");
     },
     async resume(taskId) {
+      // A cancelled scheduler job cannot be soft-resumed. Wait for the cancel
+      // outcome and fresh re-walk rather than unlatching the old walk.
+      const cancelling = cancelInvocations.get(taskId);
+      if (cancelling) {
+        await cancelling;
+        const task = tasks.find((candidate) => candidate.id === taskId);
+        if (!task || ["completed", "cancelled", "failed"].includes(task.status)) return;
+      }
+      // Failed cancellation reports immediately, but its old walk must still
+      // settle before Resume can start a fresh scan. A retried Cancel may have
+      // replaced the awaited outcome, so drain the latest settlement as well.
+      while (cancelSettlements.has(taskId)) await cancelSettlements.get(taskId);
+      const afterCancellation = tasks.find((candidate) => candidate.id === taskId);
+      if (!afterCancellation || ["completed", "cancelled"].includes(afterCancellation.status)) return;
+      // Cancel all latches every selected tree before its bounded IPC batches.
+      // A row-level Resume must not revive a tree whose batch has not run yet.
+      if (isTransferOrRootCancelled(taskId)) return;
       const request = Symbol("resume");
       resumeRequests.set(taskId, request);
       notifyResume();
@@ -1913,9 +1969,52 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (resumeRequests.get(taskId) === request) clearResumeRequest(taskId);
       }
     },
+    async settleCancellation(taskId, taskIds, failedIds, retainedTasks, onSettled) {
+      const walkStillRunning = isTransferWalkInFlight(taskId);
+      const settlement = (async () => {
+        await waitForTransferWalkSettled(taskId);
+        // A later cancel attempt owns the outcome, even if this older attempt
+        // failed. Never repaint a successful retry as a failed cancellation.
+        if (cancelSettlements.get(taskId) !== settlement) return;
+        tasks = settleCancelledTransferTree(
+          tasks, taskId, taskIds, failedIds,
+          retainedTasks.map((retained) => retained.read() ?? retained.task),
+        );
+        await onSettled();
+        emit();
+      })().finally(() => {
+        for (const retained of retainedTasks) retained.dispose();
+        if (cancelSettlements.get(taskId) === settlement) cancelSettlements.delete(taskId);
+      });
+      cancelSettlements.set(taskId, settlement);
+      if (walkStillRunning) {
+        if (failedIds.size > 0) {
+          tasks = tasks.map((task) => task.id === taskId
+            && !["completed", "failed"].includes(task.status)
+            ? { ...task, status: "attention", error: "Could not cancel transfer. Please try again.", speed: 0 }
+            : task);
+          emit();
+        }
+        // Backend requests are done: let Cancel all dispatch its next batch.
+        // Resume, final status, and cleanup still wait on this settlement.
+        void settlement.catch(() => {});
+        return;
+      }
+      await settlement;
+    },
     cancel(taskId) {
       clearResumeRequest(taskId);
-      return invoke(taskId, "cancel");
+      const existing = cancelInvocations.get(taskId);
+      if (existing) return existing;
+      bumpTransferControlEpoch(taskId);
+      for (const task of tasks) {
+        if (task.parentTaskId === taskId) bumpTransferControlEpoch(task.id);
+      }
+      const running = invoke(taskId, "cancel").finally(() => {
+        if (cancelInvocations.get(taskId) === running) cancelInvocations.delete(taskId);
+      });
+      cancelInvocations.set(taskId, running);
+      return running;
     },
     async retry(taskId) {
       const ownerId = findOwner(taskId);

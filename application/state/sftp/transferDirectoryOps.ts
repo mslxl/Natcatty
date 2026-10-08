@@ -972,13 +972,10 @@ export function useSftpDirectoryTransferOps({
             if (isTransferCancelledError(err)) {
               // Keep cancelled status; do not rethrow — other workers must finish
               // and the parent should not become a clean completed tree.
-              setTransfers((prev) =>
-                prev.map((t) =>
-                  t.id === fileId
-                    ? { ...t, status: "cancelled" as TransferStatus, error: undefined, endTime: Date.now() }
-                    : t,
-                ),
-              );
+              setTransfers((prev) => prev.map((task) =>
+                task.id === fileId
+                  ? { ...task, status: "cancelled" as TransferStatus, error: undefined, endTime: Date.now() }
+                  : task));
               errors.push(err instanceof Error ? err : new Error(message));
               return;
             }
