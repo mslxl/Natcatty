@@ -160,7 +160,7 @@ test("WSL default directory stays outside the Linux command and option values", 
   }
 });
 
-test("WSL local sessions pass the home directory option to the spawned process", () => {
+test("WSL local sessions pass the home directory option to the spawned process", async () => {
   const spawns = [];
   const bridge = loadBridgeWithFakes(spawns, []);
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
@@ -172,10 +172,10 @@ test("WSL local sessions pass the home directory option to the spawned process",
     });
     const shellArgs = ["-d", "Ubuntu", "--", "zsh", "-l"];
     const payload = { shell: "C:\\Windows\\System32\\wsl.exe", shellArgs };
-    bridge.startLocalSession({ sender: { id: 7 } }, { ...payload, sessionId: "wsl-home" });
+    await bridge.startLocalSession({ sender: { id: 7 } }, { ...payload, sessionId: "wsl-home" });
     assert.deepEqual(spawns[0].spawnArgs[1], ["-d", "Ubuntu", "--cd", "~", "--", "zsh", "-l"]);
     assert.deepEqual(shellArgs, ["-d", "Ubuntu", "--", "zsh", "-l"]);
-    bridge.startLocalSession(
+    await bridge.startLocalSession(
       { sender: { id: 7 } },
       { ...payload, sessionId: "wsl-explicit-cwd", cwd: process.cwd() },
     );
@@ -186,7 +186,7 @@ test("WSL local sessions pass the home directory option to the spawned process",
   }
 });
 
-test("Windows local terminals enable the bundled ConPTY implementation required for clear", () => {
+test("Windows local terminals enable the bundled ConPTY implementation required for clear", async () => {
   const spawns = [];
   const sentries = [];
   const sessions = new Map();
@@ -203,7 +203,7 @@ test("Windows local terminals enable the bundled ConPTY implementation required 
         },
       },
     });
-    bridge.startLocalSession(
+    await bridge.startLocalSession(
       { sender: { id: 7 } },
       { sessionId: "windows-clear", shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
     );
@@ -215,7 +215,7 @@ test("Windows local terminals enable the bundled ConPTY implementation required 
   }
 });
 
-test("local terminal buffers incoming flood while renderer flow is paused", () => {
+test("local terminal buffers incoming flood while renderer flow is paused", async () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -233,7 +233,7 @@ test("local terminal buffers incoming flood while renderer flow is paused", () =
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-flood", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -258,7 +258,7 @@ test("local terminal buffers incoming flood while renderer flow is paused", () =
   assert.equal(sentries[0].consumeCalls.length, 2);
 });
 
-test("local terminal keeps source paused while paced backlog absorbs fresh flood", () => {
+test("local terminal keeps source paused while paced backlog absorbs fresh flood", async () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -276,7 +276,7 @@ test("local terminal keeps source paused while paced backlog absorbs fresh flood
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-flood-paced-fresh", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -307,7 +307,7 @@ test("local terminal keeps source paused while paced backlog absorbs fresh flood
   assert.ok(session.flowState.bufferedBytes >= FLOW_HIGH_WATER_MARK);
 });
 
-test("closing a local terminal discards buffered output instead of flushing it", () => {
+test("closing a local terminal discards buffered output instead of flushing it", async () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -325,7 +325,7 @@ test("closing a local terminal discards buffered output instead of flushing it",
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-flood-close", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -339,7 +339,7 @@ test("closing a local terminal discards buffered output instead of flushing it",
   }]);
 });
 
-test("app cleanup discards buffered output instead of flushing it", () => {
+test("app cleanup discards buffered output instead of flushing it", async () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -357,7 +357,7 @@ test("app cleanup discards buffered output instead of flushing it", () => {
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-flood-cleanup", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -387,7 +387,7 @@ test("local terminal exit waits for paced buffered output drain", async () => {
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-flood-exit", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -414,7 +414,7 @@ test("local terminal exit waits for paced buffered output drain", async () => {
   assert.equal(sessions.has("local-flood-exit"), false);
 });
 
-test("local terminal exit completes while renderer flow is paused", () => {
+test("local terminal exit completes while renderer flow is paused", async () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -432,7 +432,7 @@ test("local terminal exit completes while renderer flow is paused", () => {
     },
   });
 
-  bridge.startLocalSession(
+  await bridge.startLocalSession(
     { sender: { id: 7 } },
     { sessionId: "local-paused-exit", shell: "/bin/sh", cols: 80, rows: 24 },
   );
@@ -447,4 +447,182 @@ test("local terminal exit completes while renderer flow is paused", () => {
   assert.equal(sent.some((item) => item.channel === "netcatty:data"), false);
   assert.equal(sent.some((item) => item.channel === "netcatty:exit"), true);
   assert.equal(sessions.has("local-paused-exit"), false);
+});
+
+test("a window closed while preparing the local environment does not spawn a PTY", async () => {
+  const spawns = [];
+  const bridge = loadBridgeWithFakes(spawns, []);
+  let destroyed = false;
+  const pending = bridge.startLocalSession(
+    { sender: { id: 7, isDestroyed: () => destroyed } },
+    { sessionId: "closed-before-spawn", shell: "/bin/sh" },
+  );
+  destroyed = true;
+  await assert.rejects(pending, /window closed before startup/);
+  assert.equal(spawns.length, 0);
+});
+
+async function withPendingLocalPath(run) {
+  const shellUtils = require("./ai/shellUtils.cjs");
+  const originalResolve = shellUtils.resolveWindowsLivePath;
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const resolvers = [];
+  const spawns = [];
+  const sessions = new Map();
+  const bridge = loadBridgeWithFakes(spawns, []);
+  bridge.init({ sessions, electronModule: { webContents: { fromId: () => null } } });
+  try {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    shellUtils.resolveWindowsLivePath = () => new Promise((resolve) => resolvers.push(resolve));
+    await run({ bridge, resolvers, spawns, sessions });
+  } finally {
+    shellUtils.resolveWindowsLivePath = originalResolve;
+    Object.defineProperty(process, "platform", platformDescriptor);
+  }
+}
+
+test("closing a local tab during PATH refresh prevents the pending PTY spawn", async () => {
+  await withPendingLocalPath(async ({ bridge, resolvers, spawns, sessions }) => {
+    const event = { sender: { id: 7, isDestroyed: () => false } };
+    const payload = { sessionId: "closed-pending-path", bootEpoch: 1, shell: "C:\\Windows\\cmd.exe" };
+    const pending = bridge.startLocalSession(event, payload);
+    const rejected = assert.rejects(pending, { code: "NETCATTY_BOOT_SUPERSEDED" });
+    assert.equal(resolvers.length, 1);
+    bridge.closeSession(event, payload);
+    resolvers[0]("C:\\Windows\\System32");
+    await rejected;
+    assert.equal(spawns.length, 0);
+    assert.equal(sessions.has(payload.sessionId), false);
+  });
+});
+
+test("a stale close and old PATH completion cannot cancel a newer local boot", async () => {
+  await withPendingLocalPath(async ({ bridge, resolvers, spawns, sessions }) => {
+    const event = { sender: { id: 7, isDestroyed: () => false } };
+    const payload = { sessionId: "restarted-pending-path", shell: "C:\\Windows\\cmd.exe" };
+    const older = bridge.startLocalSession(event, { ...payload, bootEpoch: 1 });
+    const rejected = assert.rejects(older, { code: "NETCATTY_BOOT_SUPERSEDED" });
+    const newer = bridge.startLocalSession(event, { ...payload, bootEpoch: 2 });
+    assert.equal(resolvers.length, 2);
+    assert.deepEqual(bridge.closeSession(event, { ...payload, bootEpoch: 1 }), {
+      skipped: true, reason: "boot-epoch-mismatch",
+    });
+    resolvers[0]("C:\\old");
+    await rejected;
+    const { hasPendingBootAfter } = require("./sessionBootEpoch.cjs");
+    assert.equal(hasPendingBootAfter(payload.sessionId, 1), true);
+    resolvers[1]("C:\\new");
+    await newer;
+    assert.equal(spawns.length, 1);
+    assert.equal(sessions.get(payload.sessionId)?.bootEpoch, 2);
+    bridge.closeSession(event, { ...payload, bootEpoch: 1 });
+    assert.equal(sessions.get(payload.sessionId)?.bootEpoch, 2);
+    bridge.closeSession(event, { ...payload, bootEpoch: 2 });
+  });
+});
+
+for (const closeChannel of ["netcatty:close", "netcatty:close:await"]) {
+  test(`worker ${closeChannel} cancels a local start before PATH refresh can spawn it`, async () => {
+    await withPendingLocalPath(async ({ bridge, resolvers, spawns, sessions }) => {
+      const { createTerminalWorkerRuntime } = require("../terminalWorker/runtime.cjs");
+      const messages = [];
+      let receiveMessage;
+      const parentPort = {
+        on: (_channel, listener) => { receiveMessage = listener; },
+        postMessage: (message) => messages.push(message),
+      };
+      createTerminalWorkerRuntime({
+        parentPort,
+        registerBridges: (ipcMain) => bridge.registerHandlers(ipcMain),
+      }).start();
+      const payload = { sessionId: `worker-pending-${closeChannel}`, shell: "C:\\Windows\\cmd.exe" };
+      const start = (bootEpoch) => receiveMessage({
+        kind: "request", requestId: `start-${bootEpoch}`, channel: "netcatty:local:start",
+        webContentsId: 7, payload: { ...payload, bootEpoch },
+      });
+      const close = (bootEpoch) => receiveMessage({
+        kind: closeChannel.endsWith(":await") ? "request" : "send",
+        requestId: `close-${bootEpoch}`, channel: closeChannel,
+        webContentsId: 7, payload: { ...payload, bootEpoch },
+      });
+      const drainMessages = () => new Promise((resolve) => setImmediate(resolve));
+      start(1);
+      await drainMessages();
+      assert.equal(resolvers.length, 1, "the real bridge is waiting for PATH inside the worker queue");
+      close(1);
+      resolvers[0]("C:\\Windows\\System32");
+      await drainMessages();
+      await drainMessages();
+      assert.equal(spawns.length, 0, "a closed tab must not run shell startup scripts");
+      assert.equal(sessions.has(payload.sessionId), false);
+      assert.match(messages.find((message) => message.requestId === "start-1")?.error ?? "", /closed or superseded/);
+      if (closeChannel.endsWith(":await")) {
+        assert.equal(messages.find((message) => message.requestId === "close-1")?.result?.closed, false);
+      }
+
+      start(2);
+      await drainMessages();
+      assert.equal(resolvers.length, 2);
+      close(1); // A delayed old close must not abort the replacement's PATH wait.
+      resolvers[1]("C:\\Windows\\System32");
+      await drainMessages();
+      await drainMessages();
+      assert.equal(spawns.length, 1);
+      assert.equal(sessions.get(payload.sessionId)?.bootEpoch, 2);
+      close(2);
+      await drainMessages();
+      await drainMessages();
+      assert.equal(sessions.has(payload.sessionId), false);
+    });
+  });
+}
+
+test("worker replacements abort pending and skip superseded queued local starts", async () => {
+  await withPendingLocalPath(async ({ bridge, resolvers, spawns, sessions }) => {
+    const { createTerminalWorkerRuntime } = require("../terminalWorker/runtime.cjs");
+    const messages = [];
+    let receiveMessage;
+    createTerminalWorkerRuntime({
+      parentPort: {
+        on: (_channel, listener) => { receiveMessage = listener; },
+        postMessage: (message) => messages.push(message),
+      },
+      registerBridges: (ipcMain) => bridge.registerHandlers(ipcMain),
+    }).start();
+    const payload = { sessionId: "worker-replaced-path", shell: "C:\\Windows\\cmd.exe" };
+    const start = (bootEpoch, requestId) => receiveMessage({
+      kind: "request", requestId, channel: "netcatty:local:start",
+      webContentsId: 7, payload: { ...payload, bootEpoch },
+    });
+    const drainMessages = () => new Promise((resolve) => setImmediate(resolve));
+    start(1, "old-start");
+    await drainMessages();
+    start(2, "queued-replacement");
+    start(3, "replacement");
+    resolvers[0]("C:\\Windows\\System32");
+    await drainMessages();
+    await drainMessages();
+    assert.equal(spawns.length, 0, "a superseded PATH wait must not run shell startup scripts");
+    assert.equal(resolvers.length, 2, "the replacement now owns the startup queue");
+    assert.match(messages.find((message) => message.requestId === "old-start")?.error ?? "", /closed or superseded/);
+    assert.match(messages.find((message) => message.requestId === "queued-replacement")?.error ?? "", /superseded/);
+    start(2, "stale-start");
+    receiveMessage({
+      kind: "send", channel: "netcatty:close", webContentsId: 7,
+      payload: { ...payload, bootEpoch: 2 },
+    });
+    resolvers[1]("C:\\Windows\\System32");
+    await drainMessages();
+    await drainMessages();
+    assert.equal(spawns.length, 1);
+    assert.equal(resolvers.length, 2, "a stale start must not even prepare a new environment");
+    assert.equal(sessions.get(payload.sessionId)?.bootEpoch, 3);
+    assert.match(messages.find((message) => message.requestId === "stale-start")?.error ?? "", /superseded/);
+    receiveMessage({
+      kind: "send", channel: "netcatty:close", webContentsId: 7,
+      payload: { ...payload, bootEpoch: 3 },
+    });
+    await drainMessages();
+    await drainMessages();
+  });
 });
