@@ -946,6 +946,8 @@ const mainWindowApi = createMainWindowApi({
   createAppWindowOpenHandler,
   attachOAuthLoadingOverlay,
   queryDirtyEditors: (...args) => require("./dirtyEditorGuard.cjs").queryDirtyEditors(...args),
+  hasEditorTabsForSource: (webContents) => editorWindowApi.hasEditorTabsForSource(webContents),
+  closeEditorTabsForSource: (...args) => editorWindowApi.closeEditorTabsForSource(...args),
   registerWindowHandlers,
   requestWindowCommandClose,
   shouldCloseWindowFromInput,
@@ -1038,6 +1040,36 @@ const {
   closeTerminalPopupWindow,
   getTerminalPopupWindows,
 } = terminalPopupWindowApi;
+
+const { createEditorWindowApi } = require("./windowManager/editorWindow.cjs");
+const editorWindowApi = createEditorWindowApi({
+  get mainWindow() { return mainWindow; },
+  get currentTheme() { return currentTheme; },
+  get isQuitting() { return isQuitting; },
+  V8_CACHE_OPTIONS,
+  __dirname,
+  resolveFrontendBackgroundColor,
+  createExternalOnlyWindowOpenHandler,
+  getDevRendererBaseUrl,
+  applyWindowOpacityToWindow,
+  showAndFocusWindow,
+  resolveSettingsWindowBounds,
+  registerAppContentWindow,
+  unregisterAppContentWindow,
+  notifyAppContentWindowClosed,
+  queryDirtyEditors: (...args) => require("./dirtyEditorGuard.cjs").queryDirtyEditors(...args),
+});
+const {
+  openEditorWindow,
+  focusEditorTab,
+  closeEditorTabs: closeEditorWindowTabs,
+  saveEditorTab: saveEditorWindowTab,
+  dockEditorTab,
+  reportEditorDirty,
+  reportEditorTabsClosed,
+  remapEditorSession,
+  getEditorWindow,
+} = editorWindowApi;
 
 /**
  * Register window control IPC handlers (only once)
@@ -1491,6 +1523,15 @@ module.exports = {
   openTerminalPopupWindow,
   closeTerminalPopupWindow,
   getTerminalPopupWindows,
+  openEditorWindow,
+  focusEditorTab,
+  closeEditorWindowTabs,
+  saveEditorWindowTab,
+  dockEditorTab,
+  reportEditorDirty,
+  reportEditorTabsClosed,
+  remapEditorSession,
+  getEditorWindow,
   prewarmSettingsWindow,
   buildAppMenu,
   getCurrentLanguage,

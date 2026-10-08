@@ -357,6 +357,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       // exactly the same outcome.
       let hasDirty = false;
       try {
+        // Pending handoffs retain source contents; accepted handoffs clear them.
         hasDirty = editorTabStore.getTabs().some((tab) => tab.content !== tab.baselineContent);
         if (hasDirty) toast.warning(t('sftp.editor.quitBlockedByDirty'), 'SFTP');
         if (!hasDirty) {

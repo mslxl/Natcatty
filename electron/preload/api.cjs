@@ -1123,6 +1123,79 @@ function createPreloadApi(ctx) {
   ),
   setWindowTitle: (title) => ipcRenderer.invoke("netcatty:window:setTitle", title),
   openSessionInNewWindow: (payload) => ipcRenderer.invoke("netcatty:window:openSession", payload),
+  openEditorWindow: (payload) => ipcRenderer.invoke("netcatty:window:openEditor", payload),
+  focusEditorWindow: (editorId) => ipcRenderer.invoke("netcatty:window:focusEditor", { editorId }),
+  closeEditorWindowTabs: (payload) => ipcRenderer.invoke("netcatty:window:closeEditorTabs", payload),
+  saveEditorWindowTab: (payload) => ipcRenderer.invoke("netcatty:editorWindow:save", payload),
+  dockEditorWindowTab: (payload) => ipcRenderer.invoke("netcatty:editorWindow:dock", payload),
+  reportEditorWindowDirty: (payload) => ipcRenderer.send("netcatty:editorWindow:dirty", payload),
+  reportEditorWindowTabsClosed: (payload) => ipcRenderer.send("netcatty:editorWindow:tabsClosed", payload),
+  remapEditorWindowSession: (payload) => ipcRenderer.send("netcatty:editorWindow:remapSession", payload),
+  onEditorWindowOpenTab: (cb) => {
+    const editorOpenTabState = ctx.editorOpenTabState || { pending: [], listeners: new Set() };
+    const receive = (payload) => {
+      try {
+        cb(payload);
+        ipcRenderer.send("netcatty:window:editorOpenTabResult", { requestId: payload.requestId, ok: true });
+      } catch (err) {
+        ipcRenderer.send("netcatty:window:editorOpenTabResult", {
+          requestId: payload.requestId,
+          ok: false,
+          error: err?.message || "Failed to open editor tab",
+        });
+      }
+    };
+    editorOpenTabState.listeners.add(receive);
+    // Drain only to the currently mounted receiver. Deferring this would let
+    // StrictMode cleanup leave a stale callback holding the transfer.
+    for (const payload of editorOpenTabState.pending.splice(0)) receive(payload);
+    ipcRenderer.send("netcatty:window:editorReady");
+    return () => editorOpenTabState.listeners.delete(receive);
+  },
+  onEditorWindowActivateTab: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorActivateTab", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorActivateTab", handler);
+  },
+  onEditorWindowCloseTabs: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorCloseTabs", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorCloseTabs", handler);
+  },
+  reportEditorWindowCloseTabsResult: (payload) => {
+    ipcRenderer.send("netcatty:window:editorCloseTabsResult", payload);
+  },
+  onEditorWindowRemapSession: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorRemapSession", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorRemapSession", handler);
+  },
+  onEditorWindowSaveRequest: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorSaveRequest", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorSaveRequest", handler);
+  },
+  reportEditorWindowSaveResult: (payload) => {
+    ipcRenderer.send("netcatty:window:editorSaveResult", payload);
+  },
+  onEditorWindowDockRequest: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorDockRequest", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorDockRequest", handler);
+  },
+  reportEditorWindowDockResult: (payload) => {
+    ipcRenderer.send("netcatty:window:editorDockResult", payload);
+  },
+  onEditorWindowDirtyChanged: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorDirtyChanged", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorDirtyChanged", handler);
+  },
+  onEditorWindowTabsClosed: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("netcatty:window:editorTabsClosed", handler);
+    return () => ipcRenderer.removeListener("netcatty:window:editorTabsClosed", handler);
+  },
   onOpenSessionInNewWindow: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("netcatty:window:openSession", handler);
