@@ -2911,3 +2911,229 @@ func VaultForwardingProblemInternal() string {
 func (msgs Messages) VaultForwardingProblemInternal() string {
 	return Catalog.Format(msgs.locale, "vaultForwardingProblemInternal", nil)
 }
+
+// TabCloseOthers says "Close Other Tabs"
+// in the language the app shows.
+func TabCloseOthers() string { return In(i18n.Locale()).TabCloseOthers() }
+
+// TabCloseOthers says "Close Other Tabs"
+// in the language of msgs.
+func (msgs Messages) TabCloseOthers() string {
+	return Catalog.Format(msgs.locale, "tabCloseOthers", nil)
+}
+
+// TabCloseRight says "Close Tabs to the Right"
+// in the language the app shows.
+func TabCloseRight() string { return In(i18n.Locale()).TabCloseRight() }
+
+// TabCloseRight says "Close Tabs to the Right"
+// in the language of msgs.
+func (msgs Messages) TabCloseRight() string {
+	return Catalog.Format(msgs.locale, "tabCloseRight", nil)
+}
+
+// TabDuplicate says "Duplicate Tab"
+// in the language the app shows.
+func TabDuplicate() string { return In(i18n.Locale()).TabDuplicate() }
+
+// TabDuplicate says "Duplicate Tab"
+// in the language of msgs.
+func (msgs Messages) TabDuplicate() string {
+	return Catalog.Format(msgs.locale, "tabDuplicate", nil)
+}
+
+// TabDetach says "Detach Tab"
+// in the language the app shows.
+func TabDetach() string { return In(i18n.Locale()).TabDetach() }
+
+// TabDetach says "Detach Tab"
+// in the language of msgs.
+func (msgs Messages) TabDetach() string {
+	return Catalog.Format(msgs.locale, "tabDetach", nil)
+}
+
+// TabCopyTitle says "{title} (copy {count})"
+// in the language the app shows.
+//
+// The title of a duplicated Tab, counting its copy generation.
+func TabCopyTitle(title string, count int) string {
+	return In(i18n.Locale()).TabCopyTitle(title, count)
+}
+
+// TabCopyTitle says "{title} (copy {count})"
+// in the language of msgs.
+//
+// The title of a duplicated Tab, counting its copy generation.
+func (msgs Messages) TabCopyTitle(title string, count int) string {
+	return Catalog.Format(msgs.locale, "tabCopyTitle", map[string]any{"title": title, "count": count})
+}
+
+// TabDirtyMarker says "●"
+// in the language the app shows.
+//
+// The activity marker shown beside a Tab that has unseen output.
+func TabDirtyMarker() string { return In(i18n.Locale()).TabDirtyMarker() }
+
+// TabDirtyMarker says "●"
+// in the language of msgs.
+//
+// The activity marker shown beside a Tab that has unseen output.
+func (msgs Messages) TabDirtyMarker() string {
+	return Catalog.Format(msgs.locale, "tabDirtyMarker", nil)
+}
+
+// PaneConnecting says "Connecting…"
+// in the language the app shows.
+func PaneConnecting() string { return In(i18n.Locale()).PaneConnecting() }
+
+// PaneConnecting says "Connecting…"
+// in the language of msgs.
+func (msgs Messages) PaneConnecting() string {
+	return Catalog.Format(msgs.locale, "paneConnecting", nil)
+}
+
+// PaneOpenFailed says "Could not open this Session."
+// in the language the app shows.
+func PaneOpenFailed() string { return In(i18n.Locale()).PaneOpenFailed() }
+
+// PaneOpenFailed says "Could not open this Session."
+// in the language of msgs.
+func (msgs Messages) PaneOpenFailed() string {
+	return Catalog.Format(msgs.locale, "paneOpenFailed", nil)
+}
+
+// PaneHostMissing says "The Host for this Session no longer exists."
+// in the language the app shows.
+func PaneHostMissing() string { return In(i18n.Locale()).PaneHostMissing() }
+
+// PaneHostMissing says "The Host for this Session no longer exists."
+// in the language of msgs.
+func (msgs Messages) PaneHostMissing() string {
+	return Catalog.Format(msgs.locale, "paneHostMissing", nil)
+}
+
+// PaneSplitRight says "Split Right"
+// in the language the app shows.
+func PaneSplitRight() string { return In(i18n.Locale()).PaneSplitRight() }
+
+// PaneSplitRight says "Split Right"
+// in the language of msgs.
+func (msgs Messages) PaneSplitRight() string {
+	return Catalog.Format(msgs.locale, "paneSplitRight", nil)
+}
+
+// PaneSplitDown says "Split Down"
+// in the language the app shows.
+func PaneSplitDown() string { return In(i18n.Locale()).PaneSplitDown() }
+
+// PaneSplitDown says "Split Down"
+// in the language of msgs.
+func (msgs Messages) PaneSplitDown() string {
+	return Catalog.Format(msgs.locale, "paneSplitDown", nil)
+}
+
+// PaneClose says "Close Pane"
+// in the language the app shows.
+func PaneClose() string { return In(i18n.Locale()).PaneClose() }
+
+// PaneClose says "Close Pane"
+// in the language of msgs.
+func (msgs Messages) PaneClose() string {
+	return Catalog.Format(msgs.locale, "paneClose", nil)
+}
+
+// PaneFocusLeft says "Focus Left"
+// in the language the app shows.
+func PaneFocusLeft() string { return In(i18n.Locale()).PaneFocusLeft() }
+
+// PaneFocusLeft says "Focus Left"
+// in the language of msgs.
+func (msgs Messages) PaneFocusLeft() string {
+	return Catalog.Format(msgs.locale, "paneFocusLeft", nil)
+}
+
+// PaneFocusRight says "Focus Right"
+// in the language the app shows.
+func PaneFocusRight() string { return In(i18n.Locale()).PaneFocusRight() }
+
+// PaneFocusRight says "Focus Right"
+// in the language of msgs.
+func (msgs Messages) PaneFocusRight() string {
+	return Catalog.Format(msgs.locale, "paneFocusRight", nil)
+}
+
+// PaneFocusUp says "Focus Up"
+// in the language the app shows.
+func PaneFocusUp() string { return In(i18n.Locale()).PaneFocusUp() }
+
+// PaneFocusUp says "Focus Up"
+// in the language of msgs.
+func (msgs Messages) PaneFocusUp() string {
+	return Catalog.Format(msgs.locale, "paneFocusUp", nil)
+}
+
+// PaneFocusDown says "Focus Down"
+// in the language the app shows.
+func PaneFocusDown() string { return In(i18n.Locale()).PaneFocusDown() }
+
+// PaneFocusDown says "Focus Down"
+// in the language of msgs.
+func (msgs Messages) PaneFocusDown() string {
+	return Catalog.Format(msgs.locale, "paneFocusDown", nil)
+}
+
+// TabMenuGlyph says "⋯"
+// in the language the app shows.
+//
+// The button that opens a Tab's action menu.
+func TabMenuGlyph() string { return In(i18n.Locale()).TabMenuGlyph() }
+
+// TabMenuGlyph says "⋯"
+// in the language of msgs.
+//
+// The button that opens a Tab's action menu.
+func (msgs Messages) TabMenuGlyph() string {
+	return Catalog.Format(msgs.locale, "tabMenuGlyph", nil)
+}
+
+// PaneMenuGlyph says "⋮"
+// in the language the app shows.
+//
+// The button that opens a Pane's action menu.
+func PaneMenuGlyph() string { return In(i18n.Locale()).PaneMenuGlyph() }
+
+// PaneMenuGlyph says "⋮"
+// in the language of msgs.
+//
+// The button that opens a Pane's action menu.
+func (msgs Messages) PaneMenuGlyph() string {
+	return Catalog.Format(msgs.locale, "paneMenuGlyph", nil)
+}
+
+// PaneDragHandle says "::"
+// in the language the app shows.
+//
+// The handle that drags a Pane.
+func PaneDragHandle() string { return In(i18n.Locale()).PaneDragHandle() }
+
+// PaneDragHandle says "::"
+// in the language of msgs.
+//
+// The handle that drags a Pane.
+func (msgs Messages) PaneDragHandle() string {
+	return Catalog.Format(msgs.locale, "paneDragHandle", nil)
+}
+
+// CloseGlyph says "×"
+// in the language the app shows.
+//
+// The button that closes a Tab or Pane.
+func CloseGlyph() string { return In(i18n.Locale()).CloseGlyph() }
+
+// CloseGlyph says "×"
+// in the language of msgs.
+//
+// The button that closes a Tab or Pane.
+func (msgs Messages) CloseGlyph() string {
+	return Catalog.Format(msgs.locale, "closeGlyph", nil)
+}

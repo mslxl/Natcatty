@@ -40,3 +40,7 @@ func (s *Surface) Close() {
 		_ = s.terminal.Close()
 	})
 }
+
+// Dir returns the working directory the shell reported (OSC 7), or "". The
+// shell reports it for local and remote Sessions that set the sequence.
+func (s *Surface) Dir() string { return s.terminal.Dir() }

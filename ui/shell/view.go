@@ -74,6 +74,11 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		if problem := uiconnection.ProblemText(m, s.Problem()); problem != "" {
 			ui.Text(c, problem).TextColor(t.Danger)
 		}
+		// The ordered work Tabs stay visible over the Vault so a user who
+		// returned to the Vault can select a Session again.
+		if s.TabCount() > 0 {
+			workTabs(c, s, m, t)
+		}
 		if s.VaultVisible() {
 			if view := s.VaultView(); view != nil {
 				view(c)
@@ -84,7 +89,6 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			return
 		}
 		if s.TabCount() > 0 {
-			workTabs(c, s, m)
 			activeTab(c, s, m, t)
 			return
 		}
@@ -92,22 +96,6 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		ui.Text(c, m.NavVault()).FontSize(24).Bold()
 		ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
 	})
-}
-
-func workTabs(c *ui.Context, s *state.State, m locales.Messages) {
-	selected := s.ActiveTab()
-	labels := make([]string, 0, s.TabCount())
-	for index := 0; index < s.TabCount(); index++ {
-		label, number, _ := s.TabLabel(index)
-		if label == "" {
-			label = m.LocalSessionTab(number)
-		}
-		labels = append(labels, label)
-	}
-	if ui.Tabs(c, &selected, labels...).Changed() && selected != s.ActiveTab() {
-		s.SelectTab(selected)
-		c.Invalidate()
-	}
 }
 
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
@@ -119,8 +107,8 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
 		}
 	}
-	if surface := s.ActiveSurface(); surface != nil {
-		surface.View(c)
+	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
+		paneTree(c, s, m, t, s.ActiveTab(), root, focus)
 	}
 }
 

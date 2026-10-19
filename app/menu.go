@@ -42,6 +42,26 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			Click:       dispatch(command.CloseTab),
 		},
 		{
+			ID:    "menu.closeOtherTabs",
+			Label: m.TabCloseOthers(),
+			Click: dispatch(command.CloseOtherTabs),
+		},
+		{
+			ID:    "menu.closeTabsRight",
+			Label: m.TabCloseRight(),
+			Click: dispatch(command.CloseTabsRight),
+		},
+		{
+			ID:    "menu.duplicateTab",
+			Label: m.TabDuplicate(),
+			Click: dispatch(command.DuplicateTab),
+		},
+		{
+			ID:    "menu.detachTab",
+			Label: m.TabDetach(),
+			Click: dispatch(command.DetachTab),
+		},
+		{
 			ID:    "menu.lockApp",
 			Label: m.MenuLockApp(),
 			Click: dispatch(command.LockApp),
@@ -79,6 +99,50 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 		{Label: m.MenuFile(), Submenu: fileItems},
 		{Role: mygo.RoleEditMenu},
 		{Label: m.MenuView(), Submenu: []*mygo.MenuItem{
+			{
+				ID:          "menu.splitRight",
+				Label:       m.PaneSplitRight(),
+				Accelerator: "CmdOrCtrl+Shift+E",
+				Click:       dispatch(command.SplitPaneRight),
+			},
+			{
+				ID:          "menu.splitDown",
+				Label:       m.PaneSplitDown(),
+				Accelerator: "CmdOrCtrl+Shift+D",
+				Click:       dispatch(command.SplitPaneDown),
+			},
+			{
+				ID:          "menu.closePane",
+				Label:       m.PaneClose(),
+				Accelerator: "CmdOrCtrl+Shift+W",
+				Click:       dispatch(command.ClosePane),
+			},
+			mygo.Separator(),
+			{
+				ID:          "menu.focusLeft",
+				Label:       m.PaneFocusLeft(),
+				Accelerator: "CmdOrCtrl+Alt+Left",
+				Click:       dispatch(command.FocusPaneLeft),
+			},
+			{
+				ID:          "menu.focusRight",
+				Label:       m.PaneFocusRight(),
+				Accelerator: "CmdOrCtrl+Alt+Right",
+				Click:       dispatch(command.FocusPaneRight),
+			},
+			{
+				ID:          "menu.focusUp",
+				Label:       m.PaneFocusUp(),
+				Accelerator: "CmdOrCtrl+Alt+Up",
+				Click:       dispatch(command.FocusPaneUp),
+			},
+			{
+				ID:          "menu.focusDown",
+				Label:       m.PaneFocusDown(),
+				Accelerator: "CmdOrCtrl+Alt+Down",
+				Click:       dispatch(command.FocusPaneDown),
+			},
+			mygo.Separator(),
 			{Label: m.NavLanguage(), Submenu: languageItems},
 		}},
 		{Role: mygo.RoleWindowMenu},

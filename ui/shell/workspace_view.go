@@ -1,0 +1,279 @@
+package shell
+
+import (
+	"errors"
+
+	"github.com/egoist/mygo/ui"
+
+	"github.com/mslxl/natcatty/domain/model"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/shell/state"
+)
+
+// workTabs renders the ordered Tab strip. Each Tab is a drag source; the thin
+// strips on either side of it are the insertion targets that show where a
+// dropped Tab will land. A drop directly on a Tab inserts before it.
+func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Gap(2).Children(func() {
+		for index := 0; index < s.TabCount(); index++ {
+			info, ok := s.TabInfo(index)
+			if !ok {
+				continue
+			}
+			tabInsertionStrip(c, s, t, info.ID, false)
+			tabBody(c, s, m, t, index, info)
+			tabInsertionStrip(c, s, t, info.ID, true)
+		}
+	})
+}
+
+func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
+	strip := ui.Column(c).Width(5).Fill().Background(t.Border)
+	if drag, over := ui.DragOver[state.DragItem](strip); over &&
+		drag.Kind == state.DragKindTab && drag.TabID != target {
+		strip.Background(t.Accent)
+	}
+	if drag, dropped := ui.Drop[state.DragItem](strip); dropped &&
+		drag.Kind == state.DragKindTab {
+		if s.MoveTab(drag.TabID, target, after) {
+			c.Invalidate()
+		}
+	}
+}
+
+func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo) {
+	background := t.Background
+	if info.Active {
+		background = t.Surface
+	}
+	body := ui.Row(c).Height(30).Padding(2, 8).Gap(6).Radius(t.Radius).
+		Background(background).AlignItems(ui.Center)
+	body.Drag(state.TabDrag(info.ID))
+	if body.Clicked() {
+		s.SelectTab(index)
+		c.Invalidate()
+	}
+	if drag, over := ui.DragOver[state.DragItem](body); over && drag.TabID != info.ID {
+		body.Border(1, t.Accent)
+	}
+	if drag, dropped := ui.Drop[state.DragItem](body); dropped && drag.TabID != info.ID {
+		moved := false
+		switch drag.Kind {
+		case state.DragKindTab:
+			moved = s.MoveTab(drag.TabID, info.ID, false)
+		case state.DragKindPane:
+			moved = s.MovePaneToTab(drag.TabID, drag.PaneID, info.ID)
+		}
+		if moved {
+			c.Invalidate()
+		}
+	}
+	body.Children(func() {
+		title := ui.Text(c, tabTitle(m, info)).FontSize(12).SingleLine()
+		if info.Active {
+			title.Bold()
+		}
+		if info.Dirty {
+			ui.Text(c, m.TabDirtyMarker()).FontSize(10).TextColor(t.Warning)
+		}
+		ui.Column(c).Grow(1)
+		ui.MenuButton(c, m.TabMenuGlyph(), func(menu *ui.Menu) {
+			if menu.Item(m.MenuCloseTab()).Chosen() {
+				s.CloseTab(index)
+				c.Invalidate()
+			}
+			if menu.Item(m.TabCloseOthers()).Disabled(s.TabCount() <= 1).Chosen() {
+				s.CloseOtherTabs(index)
+				c.Invalidate()
+			}
+			if menu.Item(m.TabCloseRight()).Disabled(index >= s.TabCount()-1).Chosen() {
+				s.CloseTabsRight(index)
+				c.Invalidate()
+			}
+			menu.Separator()
+			if menu.Item(m.TabDuplicate()).Chosen() {
+				if err := s.DuplicateTab(index); err != nil {
+					_ = err
+				}
+				c.Invalidate()
+			}
+			if menu.Item(m.TabDetach()).Chosen() {
+				s.DetachTab(index)
+				c.Invalidate()
+			}
+		})
+		closeButton := ui.Text(c, m.CloseGlyph()).FontSize(14).TextColor(t.TextMuted).Padding(0, 2)
+		if closeButton.Clicked() {
+			s.CloseTab(index)
+			c.Invalidate()
+		}
+	})
+}
+
+func tabTitle(m locales.Messages, info state.TabInfo) string {
+	title := info.Label
+	if title == "" {
+		number := info.TitleNumber
+		if number == 0 {
+			number = info.Number
+		}
+		title = m.LocalSessionTab(number)
+	}
+	if info.Copy > 0 {
+		title = m.TabCopyTitle(title, info.Copy)
+	}
+	return title
+}
+
+// paneTree renders a Tab's split tree with nested binary MyGo splits. A
+// horizontal split in the domain is top/bottom, so it renders with
+// SplitVerticalPercent; a vertical split is left/right. Dragging a divider
+// updates the domain ratio so it survives restore.
+func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, tabIndex int, node *domainworkspace.Node, focus []int) {
+	if node == nil {
+		return
+	}
+	if node.IsPane() {
+		paneView(c, s, m, t, tabIndex, node.PaneID)
+		return
+	}
+	ratio := node.Ratio
+	if ratio <= 0 || ratio >= 100 {
+		ratio = domainworkspace.DefaultRatio
+	}
+	splitID := node.SplitID
+	first := func() { paneTree(c, s, m, t, tabIndex, node.First, focus) }
+	second := func() { paneTree(c, s, m, t, tabIndex, node.Second, focus) }
+	var split ui.Element
+	if node.Direction == domainworkspace.Horizontal {
+		split = ui.SplitVerticalPercent(c, &ratio, first, second)
+	} else {
+		split = ui.SplitPercent(c, &ratio, first, second)
+	}
+	if split.Changed() {
+		s.SetSplitRatio(tabIndex, splitID, ratio)
+	}
+	split.Fill()
+}
+
+func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, tabIndex int, paneID model.PaneID) {
+	info, ok := s.PaneInfoAt(tabIndex, paneID)
+	if !ok {
+		return
+	}
+	tabID, _ := s.TabID(tabIndex)
+	column := ui.Column(c).Fill().Background(t.Background)
+	column.Children(func() {
+		paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
+		ui.Row(c).Fill().Children(func() {
+			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
+			pane := ui.Column(c).Fill().Background(t.Background)
+			if info.Focused {
+				pane.Border(1, t.Accent)
+			}
+			pane.Children(func() {
+				paneHeader(c, s, m, t, tabIndex, tabID, info)
+				paneContent(c, s, m, t, info)
+			})
+			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideRight, false)
+		})
+		paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideBottom, true)
+	})
+}
+
+// paneDropZone is one side target for moving a Pane. A drag of the Pane
+// itself never lights it: a Pane cannot be dropped on itself.
+func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
+	tabID model.TabID, paneID model.PaneID, side domainworkspace.Side, horizontal bool) {
+	var zone ui.Element
+	if horizontal {
+		zone = ui.Column(c).Height(6).FillWidth().Background(t.Border)
+	} else {
+		zone = ui.Column(c).Width(6).Fill().Background(t.Border)
+	}
+	if drag, over := ui.DragOver[state.DragItem](zone); over &&
+		drag.Kind == state.DragKindPane && drag.PaneID != paneID {
+		zone.Background(t.Accent)
+	}
+	if drag, dropped := ui.Drop[state.DragItem](zone); dropped &&
+		drag.Kind == state.DragKindPane {
+		if s.MovePane(drag.TabID, drag.PaneID, tabID, paneID, side) {
+			c.Invalidate()
+		}
+	}
+}
+
+func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	tabIndex int, tabID model.TabID, info state.PaneInfo) {
+	header := ui.Row(c).Height(24).Padding(1, 6).Gap(6).
+		Background(t.Surface).AlignItems(ui.Center)
+	header.Children(func() {
+		handle := ui.Text(c, m.PaneDragHandle()).FontSize(11).TextColor(t.TextMuted)
+		handle.Drag(state.PaneDrag(tabID, info.ID))
+
+		title := info.Label
+		if title == "" {
+			title = m.LocalSessionTab(info.Number)
+		}
+		titleElement := ui.Text(c, title).FontSize(11)
+		if info.Focused {
+			titleElement.Bold().TextColor(t.Text)
+		} else {
+			titleElement.TextColor(t.TextMuted)
+		}
+		if titleElement.Clicked() {
+			s.FocusPaneID(tabIndex, info.ID)
+			c.Invalidate()
+		}
+		if info.Pending {
+			ui.Text(c, m.PaneConnecting()).FontSize(10).TextColor(t.TextMuted)
+		}
+
+		ui.Column(c).Grow(1)
+
+		ui.MenuButton(c, m.PaneMenuGlyph(), func(menu *ui.Menu) {
+			if menu.Item(m.PaneSplitRight()).Chosen() {
+				s.FocusPaneID(tabIndex, info.ID)
+				_ = s.SplitRight()
+				c.Invalidate()
+			}
+			if menu.Item(m.PaneSplitDown()).Chosen() {
+				s.FocusPaneID(tabIndex, info.ID)
+				_ = s.SplitDown()
+				c.Invalidate()
+			}
+			menu.Separator()
+			if menu.Item(m.PaneClose()).Chosen() {
+				s.FocusPaneID(tabIndex, info.ID)
+				s.CloseFocusedPane()
+				c.Invalidate()
+			}
+		})
+		closeButton := ui.Text(c, m.CloseGlyph()).FontSize(13).TextColor(t.TextMuted).Padding(0, 2)
+		if closeButton.Clicked() {
+			s.FocusPaneID(tabIndex, info.ID)
+			s.CloseFocusedPane()
+			c.Invalidate()
+		}
+	})
+}
+
+func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, info state.PaneInfo) {
+	switch {
+	case info.Err != nil:
+		message := m.PaneOpenFailed()
+		if errors.Is(info.Err, state.ErrHostUnavailable) {
+			message = m.PaneHostMissing()
+		}
+		ui.Column(c).Fill().Padding(12).Children(func() {
+			ui.Text(c, message).TextColor(t.Danger).FontSize(12)
+		})
+	case info.Surface != nil:
+		info.Surface.View(c)
+	default:
+		ui.Column(c).Fill().Padding(12).Children(func() {
+			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(12)
+		})
+	}
+}
