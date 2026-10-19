@@ -16,6 +16,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -338,15 +339,34 @@ func TestDeepLinkAndCommandLineOpenTargetsOnce(t *testing.T) {
 	if len(opener.targets) != 1 || controller.LastProblem() == "" {
 		t.Fatalf("an unsupported link opened: %+v problem %q", opener.targets, controller.LastProblem())
 	}
+	if notice := controller.shell.DesktopNotice(); notice != shellstate.DesktopNoticeUnsupportedTarget {
+		t.Fatalf("unsupported link notice = %q", notice)
+	}
 
-	// A second-launch command line skips scheme URLs: MyGo delivers those to
-	// OnOpenURL, so handling both would open the same link twice.
+	// A malformed ssh link is reported as an invalid target, not ignored.
+	controller.HandleDeepLink("ssh://bad:port")
+	if notice := controller.shell.DesktopNotice(); notice != shellstate.DesktopNoticeInvalidTarget {
+		t.Fatalf("invalid link notice = %q", notice)
+	}
+
+	// A malformed ssh URL handed over on the command line is validated even
+	// though OnOpenURL owns the actual open.
+	controller.HandleLaunchArgs([]string{"ssh://bad:port"})
+	if notice := controller.shell.DesktopNotice(); notice != shellstate.DesktopNoticeInvalidTarget {
+		t.Fatalf("invalid command-line link notice = %q", notice)
+	}
+
+	// A second-launch command line skips valid scheme URLs: MyGo delivers
+	// those to OnOpenURL, so handling both would open the same link twice.
 	controller.HandleLaunchArgs([]string{"ssh://dup.example", "box.example:2200"})
 	if len(opener.targets) != 2 {
 		t.Fatalf("targets = %+v", opener.targets)
 	}
 	if last := opener.targets[len(opener.targets)-1]; last.Hostname != "box.example" || last.Port != 2200 {
 		t.Fatalf("command-line target = %+v", last)
+	}
+	if notice := controller.shell.DesktopNotice(); notice != shellstate.DesktopNoticeNone {
+		t.Fatalf("a successful target did not clear the notice: %q", notice)
 	}
 
 	// Disabling deep links stops URL handling, while a later CLI launch still

@@ -80,6 +80,9 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		for _, label := range s.PendingConnections() {
 			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
 		}
+		if notice := desktopNoticeText(m, s.DesktopNotice()); notice != "" {
+			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
+		}
 		if problem := uiconnection.ProblemText(m, s.Problem()); problem != "" {
 			ui.Text(c, problem).TextColor(t.Danger)
 		}
@@ -123,6 +126,18 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 // noticeText localizes a non-fatal Session notice. Unknown codes render
 // nothing, so the UI never shows an untranslated token.
+// desktopNoticeText localizes a desktop target failure. Unknown codes render
+// nothing, so the UI never shows an untranslated token.
+func desktopNoticeText(m locales.Messages, notice state.DesktopNotice) string {
+	switch notice {
+	case state.DesktopNoticeInvalidTarget:
+		return m.DeepLinkProblemInvalid()
+	case state.DesktopNoticeUnsupportedTarget:
+		return m.DeepLinkProblemUnsupported()
+	}
+	return ""
+}
+
 func noticeText(m locales.Messages, notice *appsession.Notice) string {
 	if notice == nil {
 		return ""
