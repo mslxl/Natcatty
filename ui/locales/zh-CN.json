@@ -1,0 +1,15 @@
+{
+  "@@locale": "zh-CN",
+  "appName": "Natcatty",
+  "navVault": "Vault",
+  "navSettings": "设置",
+  "navLanguage": "语言",
+  "vaultPlaceholder": "你的主机、密钥和笔记将显示在这里。",
+  "settingsPlaceholder": "设置将显示在这里。",
+  "menuFile": "文件",
+  "menuView": "视图",
+  "menuNewTab": "新建标签页",
+  "menuCloseTab": "关闭标签页",
+  "menuQuit": "退出",
+  "tabTitle": "标签页 {number}"
+}

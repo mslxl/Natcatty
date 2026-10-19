@@ -1,0 +1,13 @@
+{
+  "name": "Natcatty",
+  "identifier": "io.github.mslxl.natcatty",
+  "version": "0.1.0",
+  "out": "build",
+  "i18n": {
+    "dir": "ui/locales",
+    "source": "en"
+  },
+  "macos": {
+    "minimumSystemVersion": "13.0"
+  }
+}

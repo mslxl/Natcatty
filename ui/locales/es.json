@@ -1,0 +1,15 @@
+{
+  "@@locale": "es",
+  "appName": "Natcatty",
+  "navVault": "Vault",
+  "navSettings": "Configuración",
+  "navLanguage": "Idioma",
+  "vaultPlaceholder": "Tus hosts, claves y notas aparecerán aquí.",
+  "settingsPlaceholder": "La configuración aparecerá aquí.",
+  "menuFile": "Archivo",
+  "menuView": "Ver",
+  "menuNewTab": "Nueva pestaña",
+  "menuCloseTab": "Cerrar pestaña",
+  "menuQuit": "Salir",
+  "tabTitle": "Pestaña {number}"
+}

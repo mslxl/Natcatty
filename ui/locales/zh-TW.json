@@ -1,0 +1,15 @@
+{
+  "@@locale": "zh-TW",
+  "appName": "Natcatty",
+  "navVault": "Vault",
+  "navSettings": "設定",
+  "navLanguage": "語言",
+  "vaultPlaceholder": "你的主機、金鑰和筆記將顯示在這裡。",
+  "settingsPlaceholder": "設定將顯示在這裡。",
+  "menuFile": "檔案",
+  "menuView": "檢視",
+  "menuNewTab": "新增分頁",
+  "menuCloseTab": "關閉分頁",
+  "menuQuit": "結束",
+  "tabTitle": "分頁 {number}"
+}
