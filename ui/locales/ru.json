@@ -134,11 +134,35 @@
   "connectionErrorInternal": "Не удалось открыть подключение.",
   "connectionErrorX11": "Не удалось запустить перенаправление X11. Убедитесь, что Host разрешает перенаправление X11 и установлен xauth.",
   "connectionX11DisplayUnavailable": "Перенаправление X11 не смогло подключиться к локальному дисплею {target}. Запустите X-сервер или проверьте параметр DISPLAY.",
-  "@connectionX11DisplayUnavailable": {"description": "A non-fatal X11 forwarding notice: the local X server could not be reached.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11DisplayUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: the local X server could not be reached.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11ChannelFailed": "Перенаправление X11 не смогло открыть канал для локального дисплея {target}.",
-  "@connectionX11ChannelFailed": {"description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11ChannelFailed": {
+    "description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11CookieUnavailable": "Перенаправление X11 не смогло прочитать локальный xauth-cookie для {target}. Выполните xauth add для дисплея или разрешите локальные подключения.",
-  "@connectionX11CookieUnavailable": {"description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11CookieUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "hostKeyPromptUnknownTitle": "Неизвестный ключ хоста",
   "hostKeyPromptChangedTitle": "Ключ хоста изменился",
   "hostKeyPromptUnknownBody": "Хост {host} ещё не является доверенным. Проверьте отпечаток перед подключением.",
@@ -222,7 +246,15 @@
   "authPromptContinue": "Продолжить",
   "authPromptCancel": "Отмена",
   "vaultForwardingTitle": "Переадресация портов ({count})",
-  "@vaultForwardingTitle": {"description": "The Vault Port Forwarding Rule list heading and rule count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultForwardingTitle": {
+    "description": "The Vault Port Forwarding Rule list heading and rule count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultForwardingNew": "Новое правило",
   "vaultForwardingEmpty": "Правил переадресации портов пока нет.",
   "vaultForwardingFormCreateTitle": "Новое правило переадресации портов",
@@ -241,11 +273,17 @@
   "vaultForwardingAutoStart": "Запускать при запуске Natcatty",
   "vaultForwardingAutoReconnect": "Переподключаться автоматически",
   "vaultForwardingAutoReconnectFollow": "Как при автозапуске",
-  "@vaultForwardingAutoReconnectFollow": {"description": "Reconnect whenever auto-start is enabled."},
+  "@vaultForwardingAutoReconnectFollow": {
+    "description": "Reconnect whenever auto-start is enabled."
+  },
   "vaultForwardingAutoReconnectOn": "Всегда переподключаться",
-  "@vaultForwardingAutoReconnectOn": {"description": "Reconnect regardless of auto-start."},
+  "@vaultForwardingAutoReconnectOn": {
+    "description": "Reconnect regardless of auto-start."
+  },
   "vaultForwardingAutoReconnectOff": "Никогда не переподключаться",
-  "@vaultForwardingAutoReconnectOff": {"description": "Never reconnect automatically."},
+  "@vaultForwardingAutoReconnectOff": {
+    "description": "Never reconnect automatically."
+  },
   "vaultForwardingEnabled": "Включено",
   "vaultForwardingStart": "Запустить",
   "vaultForwardingStop": "Остановить",
@@ -266,9 +304,33 @@
   "vaultForwardingErrorUnforward": "Не удалось освободить удалённый слушатель.",
   "vaultForwardingErrorInternal": "Правило переадресации портов не удалось выполнить.",
   "vaultForwardingHop": "Узел {index}/{total}: {label}",
-  "@vaultForwardingHop": {"description": "The failing jump-chain endpoint for a forwarding error.", "placeholders": {"index": {"type": "int", "example": "2"}, "total": {"type": "int", "example": "3"}, "label": {"type": "String", "example": "bastion"}}},
+  "@vaultForwardingHop": {
+    "description": "The failing jump-chain endpoint for a forwarding error.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      },
+      "label": {
+        "type": "String",
+        "example": "bastion"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirm": "Удалить правило переадресации портов «{label}»? Это действие необратимо.",
-  "@vaultForwardingDeleteConfirm": {"description": "The delete confirmation naming the Port Forwarding Rule about to be removed.", "placeholders": {"label": {"type": "String", "example": "web"}}},
+  "@vaultForwardingDeleteConfirm": {
+    "description": "The delete confirmation naming the Port Forwarding Rule about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirmUnknown": "Удалить это правило переадресации портов? Это действие необратимо.",
   "vaultForwardingProblemLabelRequired": "Правилу переадресации портов нужна метка.",
   "vaultForwardingProblemLabelInvalid": "Метка недопустима.",
@@ -290,9 +352,23 @@
   "tabDetach": "Отделить вкладку",
   "tabCopyToNewWindow": "Копировать вкладку в новое окно",
   "tabCopyTitle": "{title} (копия {count})",
-  "@tabCopyTitle": {"description": "Заголовок дублированной вкладки и номер копии.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
+  "@tabCopyTitle": {
+    "description": "Заголовок дублированной вкладки и номер копии.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "web"
+      },
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "tabDirtyMarker": "●",
-  "@tabDirtyMarker": {"description": "Маркер активности рядом с вкладкой с непросмотренным выводом."},
+  "@tabDirtyMarker": {
+    "description": "Маркер активности рядом с вкладкой с непросмотренным выводом."
+  },
   "paneConnecting": "Подключение…",
   "paneOpenFailed": "Не удалось открыть этот сеанс.",
   "paneHostMissing": "Хост для этого сеанса больше не существует.",
@@ -305,22 +381,125 @@
   "paneFocusUp": "Фокус вверх",
   "paneFocusDown": "Фокус вниз",
   "tabMenuGlyph": "⋯",
-  "@tabMenuGlyph": {"description": "Кнопка, открывающая меню действий вкладки."},
+  "@tabMenuGlyph": {
+    "description": "Кнопка, открывающая меню действий вкладки."
+  },
   "paneMenuGlyph": "⋮",
-  "@paneMenuGlyph": {"description": "Кнопка, открывающая меню действий панели."},
+  "@paneMenuGlyph": {
+    "description": "Кнопка, открывающая меню действий панели."
+  },
   "paneDragHandle": "::",
-  "@paneDragHandle": {"description": "Ручка для перетаскивания панели."},
+  "@paneDragHandle": {
+    "description": "Ручка для перетаскивания панели."
+  },
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "Кнопка, закрывающая вкладку или панель."},
+  "@closeGlyph": {
+    "description": "Кнопка, закрывающая вкладку или панель."
+  },
   "detachedMoveToMain": "Переместить в главное окно",
   "detachedCloseWindow": "Закрыть окно",
   "closeWindowTitle": "Закрыть окно?",
   "closeWindowMessage": "{count, plural, one {# активный сеанс завершится при закрытии этого окна.} few {# активных сеанса завершатся при закрытии этого окна.} many {# активных сеансов завершатся при закрытии этого окна.} other {# активных сеансов завершатся при закрытии этого окна.}}",
-  "@closeWindowMessage": {"description": "Запрос подтверждения закрытия окна с числом завершаемых сеансов.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@closeWindowMessage": {
+    "description": "Запрос подтверждения закрытия окна с числом завершаемых сеансов.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "closeWindowCancel": "Отмена",
   "closeWindowConfirm": "Закрыть окно",
   "quitConfirmTitle": "Выйти из Natcatty?",
   "quitConfirmMessage": "{count, plural, one {# активный сеанс завершится при выходе из Natcatty.} few {# активных сеанса завершатся при выходе из Natcatty.} many {# активных сеансов завершатся при выходе из Natcatty.} other {# активных сеансов завершатся при выходе из Natcatty.}}",
-  "@quitConfirmMessage": {"description": "Запрос подтверждения выхода с числом завершаемых сеансов.", "placeholders": {"count": {"type": "int", "example": "2"}}},
-  "quitConfirmConfirm": "Выйти"
+  "@quitConfirmMessage": {
+    "description": "Запрос подтверждения выхода с числом завершаемых сеансов.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitConfirmConfirm": "Выйти",
+  "settingsTrayTitle": "Системный трей",
+  "settingsTrayDescription": "Держите Natcatty в области уведомлений.",
+  "settingsShowTrayIcon": "Показывать значок в трее",
+  "settingsCloseToTray": "Сворачивать в трей",
+  "settingsTrayUnsupported": "Системный трей недоступен в этой системе.",
+  "settingsHotkeyTitle": "Глобальная горячая клавиша",
+  "settingsHotkeyDescription": "Показывайте, фокусируйте или скрывайте Natcatty откуда угодно.",
+  "settingsHotkeyEnabled": "Включить глобальную горячую клавишу",
+  "settingsHotkeyAccelerator": "Клавиша переключения окна",
+  "settingsHotkeyApply": "Применить",
+  "settingsHotkeyReset": "Сбросить",
+  "settingsHotkeyProblem": "Эта комбинация недоступна. Введите другую или сбросьте.",
+  "settingsHotkeyUnsupported": "Глобальные горячие клавиши недоступны в этой системе.",
+  "settingsAutostartTitle": "Запуск при входе",
+  "settingsAutostartDescription": "Запускать Natcatty при входе в систему.",
+  "settingsAutostartEnabled": "Запускать Natcatty при входе",
+  "settingsAutostartUnsupported": "Запуск при входе недоступен в этой сборке.",
+  "settingsDeepLinksTitle": "Глубокие ссылки",
+  "settingsDeepLinksDescription": "Открывать ссылки ssh:// в Natcatty.",
+  "settingsSSHDeepLinks": "Обрабатывать ссылки ssh:// и аргументы Host",
+  "settingsNotificationsTitle": "Уведомления",
+  "settingsNotificationsDescription": "Выберите события, показываемые в уведомлениях.",
+  "settingsNotifySessionEnded": "Сеанс завершён",
+  "settingsNotifyConnectionFailed": "Ошибка подключения",
+  "settingsNotifyForwardingFailed": "Ошибка перенаправления портов",
+  "settingsNotificationsUnsupported": "Уведомления рабочего стола недоступны в этой системе.",
+  "settingsDesktopSaveFailed": "Не удалось сохранить настройку.",
+  "settingsDesktopUpdateFailed": "Не удалось применить настройку.",
+  "trayOpenMain": "Открыть главное окно",
+  "traySessions": "Сеансы",
+  "trayNoSessions": "Нет активных сеансов",
+  "trayForwarding": "Перенаправление портов",
+  "trayNoForwarding": "Нет правил перенаправления",
+  "trayRecentHosts": "Недавние хосты",
+  "trayNoHosts": "Нет сохранённых хостов",
+  "trayQuit": "Выход",
+  "trayStatusConnected": "Подключено",
+  "trayStatusConnecting": "Подключение",
+  "trayStatusDisconnected": "Отключено",
+  "trayStatusActive": "Активно",
+  "trayStatusInactive": "Неактивно",
+  "trayStatusError": "Ошибка",
+  "trayRuleUnnamed": "Правило без названия",
+  "notificationSessionEndedTitle": "Сеанс завершён",
+  "notificationSessionEndedBody": "{target} завершён.",
+  "@notificationSessionEndedBody": {
+    "description": "The ending Session's label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationConnectionFailedTitle": "Ошибка подключения",
+  "notificationConnectionFailedBody": "Соединение с {target} потеряно.",
+  "@notificationConnectionFailedBody": {
+    "description": "The Host or Session label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationForwardingFailedTitle": "Ошибка перенаправления портов",
+  "notificationForwardingFailedBody": "Правило перенаправления {target} остановлено.",
+  "@notificationForwardingFailedBody": {
+    "description": "The Port Forwarding Rule label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationUnknownTarget": "хост",
+  "deepLinkProblemInvalid": "Natcatty не удалось открыть эту ссылку.",
+  "deepLinkProblemUnsupported": "Natcatty пока не поддерживает эту ссылку или хост."
 }

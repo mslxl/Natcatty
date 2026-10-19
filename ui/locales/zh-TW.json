@@ -134,11 +134,35 @@
   "connectionErrorInternal": "無法開啟連線。",
   "connectionErrorX11": "無法啟動 X11 轉發。請確認 Host 允許 X11 轉發並已安裝 xauth。",
   "connectionX11DisplayUnavailable": "X11 轉發無法連線到本機顯示 {target}。請啟動 X 伺服器或檢查 DISPLAY 設定。",
-  "@connectionX11DisplayUnavailable": {"description": "A non-fatal X11 forwarding notice: the local X server could not be reached.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11DisplayUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: the local X server could not be reached.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11ChannelFailed": "X11 轉發無法為本機顯示 {target} 開啟通道。",
-  "@connectionX11ChannelFailed": {"description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11ChannelFailed": {
+    "description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11CookieUnavailable": "X11 轉發無法讀取 {target} 的本機 xauth cookie。請為該顯示執行 xauth add，或允許本機連線。",
-  "@connectionX11CookieUnavailable": {"description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11CookieUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "hostKeyPromptUnknownTitle": "未知主機金鑰",
   "hostKeyPromptChangedTitle": "主機金鑰已變更",
   "hostKeyPromptUnknownBody": "尚未信任主機 {host}。連線前請核對其指紋。",
@@ -222,7 +246,15 @@
   "authPromptContinue": "繼續",
   "authPromptCancel": "取消",
   "vaultForwardingTitle": "連接埠轉送（{count}）",
-  "@vaultForwardingTitle": {"description": "The Vault Port Forwarding Rule list heading and rule count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultForwardingTitle": {
+    "description": "The Vault Port Forwarding Rule list heading and rule count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultForwardingNew": "新增規則",
   "vaultForwardingEmpty": "尚無連接埠轉送規則。",
   "vaultForwardingFormCreateTitle": "新增連接埠轉送規則",
@@ -241,11 +273,17 @@
   "vaultForwardingAutoStart": "啟動 Natcatty 時啟動",
   "vaultForwardingAutoReconnect": "自動重新連線",
   "vaultForwardingAutoReconnectFollow": "跟隨自動啟動",
-  "@vaultForwardingAutoReconnectFollow": {"description": "Reconnect whenever auto-start is enabled."},
+  "@vaultForwardingAutoReconnectFollow": {
+    "description": "Reconnect whenever auto-start is enabled."
+  },
   "vaultForwardingAutoReconnectOn": "一律重新連線",
-  "@vaultForwardingAutoReconnectOn": {"description": "Reconnect regardless of auto-start."},
+  "@vaultForwardingAutoReconnectOn": {
+    "description": "Reconnect regardless of auto-start."
+  },
   "vaultForwardingAutoReconnectOff": "絕不重新連線",
-  "@vaultForwardingAutoReconnectOff": {"description": "Never reconnect automatically."},
+  "@vaultForwardingAutoReconnectOff": {
+    "description": "Never reconnect automatically."
+  },
   "vaultForwardingEnabled": "已啟用",
   "vaultForwardingStart": "啟動",
   "vaultForwardingStop": "停止",
@@ -266,9 +304,33 @@
   "vaultForwardingErrorUnforward": "無法釋放遠端監聽器。",
   "vaultForwardingErrorInternal": "連接埠轉送規則失敗。",
   "vaultForwardingHop": "第 {index}/{total} 跳：{label}",
-  "@vaultForwardingHop": {"description": "The failing jump-chain endpoint for a forwarding error.", "placeholders": {"index": {"type": "int", "example": "2"}, "total": {"type": "int", "example": "3"}, "label": {"type": "String", "example": "bastion"}}},
+  "@vaultForwardingHop": {
+    "description": "The failing jump-chain endpoint for a forwarding error.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      },
+      "label": {
+        "type": "String",
+        "example": "bastion"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirm": "刪除連接埠轉送規則「{label}」？此操作無法復原。",
-  "@vaultForwardingDeleteConfirm": {"description": "The delete confirmation naming the Port Forwarding Rule about to be removed.", "placeholders": {"label": {"type": "String", "example": "web"}}},
+  "@vaultForwardingDeleteConfirm": {
+    "description": "The delete confirmation naming the Port Forwarding Rule about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirmUnknown": "刪除此連接埠轉送規則？此操作無法復原。",
   "vaultForwardingProblemLabelRequired": "連接埠轉送規則需要標籤。",
   "vaultForwardingProblemLabelInvalid": "標籤無效。",
@@ -290,9 +352,23 @@
   "tabDetach": "分離分頁",
   "tabCopyToNewWindow": "複製分頁到新視窗",
   "tabCopyTitle": "{title}（副本 {count}）",
-  "@tabCopyTitle": {"description": "重複分頁的標題及其副本序號。", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
+  "@tabCopyTitle": {
+    "description": "重複分頁的標題及其副本序號。",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "web"
+      },
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "tabDirtyMarker": "●",
-  "@tabDirtyMarker": {"description": "分頁有未檢視輸出時顯示的活動標記。"},
+  "@tabDirtyMarker": {
+    "description": "分頁有未檢視輸出時顯示的活動標記。"
+  },
   "paneConnecting": "正在連線…",
   "paneOpenFailed": "無法開啟此工作階段。",
   "paneHostMissing": "此工作階段的主機已不存在。",
@@ -305,22 +381,125 @@
   "paneFocusUp": "聚焦上方",
   "paneFocusDown": "聚焦下方",
   "tabMenuGlyph": "⋯",
-  "@tabMenuGlyph": {"description": "開啟分頁操作選單的按鈕。"},
+  "@tabMenuGlyph": {
+    "description": "開啟分頁操作選單的按鈕。"
+  },
   "paneMenuGlyph": "⋮",
-  "@paneMenuGlyph": {"description": "開啟窗格操作選單的按鈕。"},
+  "@paneMenuGlyph": {
+    "description": "開啟窗格操作選單的按鈕。"
+  },
   "paneDragHandle": "::",
-  "@paneDragHandle": {"description": "拖動窗格的手柄。"},
+  "@paneDragHandle": {
+    "description": "拖動窗格的手柄。"
+  },
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "關閉分頁或窗格的按鈕。"},
+  "@closeGlyph": {
+    "description": "關閉分頁或窗格的按鈕。"
+  },
   "detachedMoveToMain": "移到主視窗",
   "detachedCloseWindow": "關閉視窗",
   "closeWindowTitle": "關閉視窗？",
   "closeWindowMessage": "{count, plural, other {關閉此視窗將結束 # 個使用中的工作階段。}}",
-  "@closeWindowMessage": {"description": "關閉視窗確認提示，說明將結束多少個使用中的工作階段。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@closeWindowMessage": {
+    "description": "關閉視窗確認提示，說明將結束多少個使用中的工作階段。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "closeWindowCancel": "取消",
   "closeWindowConfirm": "關閉視窗",
   "quitConfirmTitle": "結束 Natcatty？",
   "quitConfirmMessage": "{count, plural, other {結束 Natcatty 將結束 # 個使用中的工作階段。}}",
-  "@quitConfirmMessage": {"description": "結束確認提示，說明將結束多少個使用中的工作階段。", "placeholders": {"count": {"type": "int", "example": "2"}}},
-  "quitConfirmConfirm": "結束"
+  "@quitConfirmMessage": {
+    "description": "結束確認提示，說明將結束多少個使用中的工作階段。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitConfirmConfirm": "結束",
+  "settingsTrayTitle": "系統匣",
+  "settingsTrayDescription": "將 Natcatty 保留在通知區域。",
+  "settingsShowTrayIcon": "顯示匣圖示",
+  "settingsCloseToTray": "關閉至系統匣",
+  "settingsTrayUnsupported": "此系統不支援系統匣。",
+  "settingsHotkeyTitle": "全域快速鍵",
+  "settingsHotkeyDescription": "隨時顯示、聚焦或隱藏 Natcatty。",
+  "settingsHotkeyEnabled": "啟用全域快速鍵",
+  "settingsHotkeyAccelerator": "切換視窗快速鍵",
+  "settingsHotkeyApply": "套用",
+  "settingsHotkeyReset": "重設",
+  "settingsHotkeyProblem": "該快速鍵無法使用。請輸入其他快速鍵或重設。",
+  "settingsHotkeyUnsupported": "此系統不支援全域快速鍵。",
+  "settingsAutostartTitle": "登入時啟動",
+  "settingsAutostartDescription": "登入系統時啟動 Natcatty。",
+  "settingsAutostartEnabled": "登入時啟動 Natcatty",
+  "settingsAutostartUnsupported": "此版本不支援登入時啟動。",
+  "settingsDeepLinksTitle": "深度連結",
+  "settingsDeepLinksDescription": "在 Natcatty 中開啟 ssh:// 連結。",
+  "settingsSSHDeepLinks": "處理 ssh:// 連結和 Host 命令列參數",
+  "settingsNotificationsTitle": "通知",
+  "settingsNotificationsDescription": "選擇顯示桌面通知的事件。",
+  "settingsNotifySessionEnded": "工作階段已結束",
+  "settingsNotifyConnectionFailed": "連線失敗",
+  "settingsNotifyForwardingFailed": "連接埠轉送失敗",
+  "settingsNotificationsUnsupported": "此系統不支援桌面通知。",
+  "settingsDesktopSaveFailed": "無法儲存設定。",
+  "settingsDesktopUpdateFailed": "無法套用設定。",
+  "trayOpenMain": "開啟主視窗",
+  "traySessions": "工作階段",
+  "trayNoSessions": "沒有作用中的工作階段",
+  "trayForwarding": "連接埠轉送",
+  "trayNoForwarding": "沒有連接埠轉送規則",
+  "trayRecentHosts": "最近的主機",
+  "trayNoHosts": "沒有已儲存的主機",
+  "trayQuit": "結束",
+  "trayStatusConnected": "已連線",
+  "trayStatusConnecting": "正在連線",
+  "trayStatusDisconnected": "已中斷",
+  "trayStatusActive": "作用中",
+  "trayStatusInactive": "未作用",
+  "trayStatusError": "錯誤",
+  "trayRuleUnnamed": "未命名規則",
+  "notificationSessionEndedTitle": "工作階段已結束",
+  "notificationSessionEndedBody": "{target} 已結束。",
+  "@notificationSessionEndedBody": {
+    "description": "The ending Session's label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationConnectionFailedTitle": "連線失敗",
+  "notificationConnectionFailedBody": "與 {target} 的連線已中斷。",
+  "@notificationConnectionFailedBody": {
+    "description": "The Host or Session label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationForwardingFailedTitle": "連接埠轉送失敗",
+  "notificationForwardingFailedBody": "連接埠轉送規則 {target} 已停止。",
+  "@notificationForwardingFailedBody": {
+    "description": "The Port Forwarding Rule label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationUnknownTarget": "某個主機",
+  "deepLinkProblemInvalid": "無法開啟該連結。",
+  "deepLinkProblemUnsupported": "Natcatty 尚不支援該連結或主機。"
 }

@@ -37,11 +37,13 @@ type windowHooks struct {
 // MyGo implements it through mygoWindowHost; tests provide a fake.
 type hostWindow interface {
 	Show()
+	Hide()
 	Focus()
 	Close()
 	Invalidate()
 	IsDestroyed() bool
 	IsVisible() bool
+	IsFocused() bool
 	SetTitle(string)
 }
 
@@ -116,6 +118,10 @@ type windowManager struct {
 	state           *state.State
 	settingsContent func() func(*ui.Context)
 	locale          func() string
+	// closeToTray asks whether a main-window close should hide the window
+	// instead. It is consulted live, so disabling the tray icon or
+	// close-to-tray takes effect without reopening the window.
+	closeToTray func() bool
 	// selftestBind registers the main window's self-test shortcuts at window
 	// scope, and selftestView draws its overlay around the content. Both are
 	// nil in normal builds.
@@ -231,7 +237,9 @@ func (m *windowManager) OpenMain() hostWindow {
 func (m *windowManager) Main() hostWindow { return m.main }
 
 // OpenSettings creates the singleton Settings window or focuses the existing
-// one. Settings holds no Sessions, so it never asks close intent.
+// one. Settings holds no Sessions, so it never asks close intent. It uses the
+// same 1100x720 default and 720x480 minimum as the main window because the
+// desktop integration sections need a readable, scrollable layout.
 func (m *windowManager) OpenSettings() {
 	if m.settings != nil && !m.settings.IsDestroyed() {
 		m.settings.Show()
@@ -245,10 +253,10 @@ func (m *windowManager) OpenSettings() {
 		Key:       "settings",
 		Title:     m.messages().NavSettings(),
 		StateKey:  "settings",
-		Width:     640,
-		Height:    480,
-		MinWidth:  480,
-		MinHeight: 360,
+		Width:     1100,
+		Height:    720,
+		MinWidth:  720,
+		MinHeight: 480,
 		Content:   m.wrap(m.settingsContent()),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
@@ -320,7 +328,21 @@ func (m *windowManager) allowMainClose() bool {
 	if m.quitting {
 		return true
 	}
+	if m.closeToTray != nil && m.closeToTray() {
+		if m.main != nil && !m.main.IsDestroyed() {
+			m.main.Hide()
+		}
+		// The close request is canceled: the window and its Sessions stay
+		// alive in the tray.
+		return false
+	}
 	return m.confirmSessions(m.state.ActiveSessionCountMain(), false)
+}
+
+// SetCloseToTray installs the tray-hiding policy. The window manager asks it
+// on every main-window close.
+func (m *windowManager) SetCloseToTray(policy func() bool) {
+	m.closeToTray = policy
 }
 
 func (m *windowManager) allowDetachedClose(tabID model.TabID) bool {

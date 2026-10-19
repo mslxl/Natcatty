@@ -134,11 +134,35 @@
   "connectionErrorInternal": "无法打开连接。",
   "connectionErrorX11": "无法启动 X11 转发。请确认 Host 允许 X11 转发并已安装 xauth。",
   "connectionX11DisplayUnavailable": "X11 转发无法连接到本地显示 {target}。请启动 X 服务器或检查 DISPLAY 设置。",
-  "@connectionX11DisplayUnavailable": {"description": "A non-fatal X11 forwarding notice: the local X server could not be reached.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11DisplayUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: the local X server could not be reached.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11ChannelFailed": "X11 转发无法为本地显示 {target} 打开通道。",
-  "@connectionX11ChannelFailed": {"description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11ChannelFailed": {
+    "description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11CookieUnavailable": "X11 转发无法读取 {target} 的本地 xauth cookie。请为该显示运行 xauth add，或允许本地连接。",
-  "@connectionX11CookieUnavailable": {"description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11CookieUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "hostKeyPromptUnknownTitle": "未知主机密钥",
   "hostKeyPromptChangedTitle": "主机密钥已更改",
   "hostKeyPromptUnknownBody": "尚未信任主机 {host}。连接前请核对其指纹。",
@@ -222,7 +246,15 @@
   "authPromptContinue": "继续",
   "authPromptCancel": "取消",
   "vaultForwardingTitle": "端口转发（{count}）",
-  "@vaultForwardingTitle": {"description": "The Vault Port Forwarding Rule list heading and rule count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultForwardingTitle": {
+    "description": "The Vault Port Forwarding Rule list heading and rule count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultForwardingNew": "新建规则",
   "vaultForwardingEmpty": "暂无端口转发规则。",
   "vaultForwardingFormCreateTitle": "新建端口转发规则",
@@ -241,11 +273,17 @@
   "vaultForwardingAutoStart": "启动 Natcatty 时启动",
   "vaultForwardingAutoReconnect": "自动重连",
   "vaultForwardingAutoReconnectFollow": "跟随自动启动",
-  "@vaultForwardingAutoReconnectFollow": {"description": "Reconnect whenever auto-start is enabled."},
+  "@vaultForwardingAutoReconnectFollow": {
+    "description": "Reconnect whenever auto-start is enabled."
+  },
   "vaultForwardingAutoReconnectOn": "始终重连",
-  "@vaultForwardingAutoReconnectOn": {"description": "Reconnect regardless of auto-start."},
+  "@vaultForwardingAutoReconnectOn": {
+    "description": "Reconnect regardless of auto-start."
+  },
   "vaultForwardingAutoReconnectOff": "从不重连",
-  "@vaultForwardingAutoReconnectOff": {"description": "Never reconnect automatically."},
+  "@vaultForwardingAutoReconnectOff": {
+    "description": "Never reconnect automatically."
+  },
   "vaultForwardingEnabled": "已启用",
   "vaultForwardingStart": "启动",
   "vaultForwardingStop": "停止",
@@ -266,9 +304,33 @@
   "vaultForwardingErrorUnforward": "无法释放远程监听器。",
   "vaultForwardingErrorInternal": "端口转发规则失败。",
   "vaultForwardingHop": "第 {index}/{total} 跳：{label}",
-  "@vaultForwardingHop": {"description": "The failing jump-chain endpoint for a forwarding error.", "placeholders": {"index": {"type": "int", "example": "2"}, "total": {"type": "int", "example": "3"}, "label": {"type": "String", "example": "bastion"}}},
+  "@vaultForwardingHop": {
+    "description": "The failing jump-chain endpoint for a forwarding error.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      },
+      "label": {
+        "type": "String",
+        "example": "bastion"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirm": "删除端口转发规则“{label}”？此操作无法撤销。",
-  "@vaultForwardingDeleteConfirm": {"description": "The delete confirmation naming the Port Forwarding Rule about to be removed.", "placeholders": {"label": {"type": "String", "example": "web"}}},
+  "@vaultForwardingDeleteConfirm": {
+    "description": "The delete confirmation naming the Port Forwarding Rule about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirmUnknown": "删除此端口转发规则？此操作无法撤销。",
   "vaultForwardingProblemLabelRequired": "端口转发规则需要标签。",
   "vaultForwardingProblemLabelInvalid": "标签无效。",
@@ -290,9 +352,23 @@
   "tabDetach": "分离标签页",
   "tabCopyToNewWindow": "复制标签页到新窗口",
   "tabCopyTitle": "{title}（副本 {count}）",
-  "@tabCopyTitle": {"description": "重复标签页的标题及其副本序号。", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
+  "@tabCopyTitle": {
+    "description": "重复标签页的标题及其副本序号。",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "web"
+      },
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "tabDirtyMarker": "●",
-  "@tabDirtyMarker": {"description": "标签页有未查看输出时显示的活动标记。"},
+  "@tabDirtyMarker": {
+    "description": "标签页有未查看输出时显示的活动标记。"
+  },
   "paneConnecting": "正在连接…",
   "paneOpenFailed": "无法打开此会话。",
   "paneHostMissing": "此会话的主机已不存在。",
@@ -305,22 +381,125 @@
   "paneFocusUp": "聚焦上方",
   "paneFocusDown": "聚焦下方",
   "tabMenuGlyph": "⋯",
-  "@tabMenuGlyph": {"description": "打开标签页操作菜单的按钮。"},
+  "@tabMenuGlyph": {
+    "description": "打开标签页操作菜单的按钮。"
+  },
   "paneMenuGlyph": "⋮",
-  "@paneMenuGlyph": {"description": "打开窗格操作菜单的按钮。"},
+  "@paneMenuGlyph": {
+    "description": "打开窗格操作菜单的按钮。"
+  },
   "paneDragHandle": "::",
-  "@paneDragHandle": {"description": "拖动窗格的手柄。"},
+  "@paneDragHandle": {
+    "description": "拖动窗格的手柄。"
+  },
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "关闭标签页或窗格的按钮。"},
+  "@closeGlyph": {
+    "description": "关闭标签页或窗格的按钮。"
+  },
   "detachedMoveToMain": "移到主窗口",
   "detachedCloseWindow": "关闭窗口",
   "closeWindowTitle": "关闭窗口？",
   "closeWindowMessage": "{count, plural, other {关闭此窗口将结束 # 个活动会话。}}",
-  "@closeWindowMessage": {"description": "关闭窗口确认提示，说明将结束多少个活动会话。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@closeWindowMessage": {
+    "description": "关闭窗口确认提示，说明将结束多少个活动会话。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "closeWindowCancel": "取消",
   "closeWindowConfirm": "关闭窗口",
   "quitConfirmTitle": "退出 Natcatty？",
   "quitConfirmMessage": "{count, plural, other {退出 Natcatty 将结束 # 个活动会话。}}",
-  "@quitConfirmMessage": {"description": "退出确认提示，说明将结束多少个活动会话。", "placeholders": {"count": {"type": "int", "example": "2"}}},
-  "quitConfirmConfirm": "退出"
+  "@quitConfirmMessage": {
+    "description": "退出确认提示，说明将结束多少个活动会话。",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitConfirmConfirm": "退出",
+  "settingsTrayTitle": "系统托盘",
+  "settingsTrayDescription": "将 Natcatty 保留在通知区域。",
+  "settingsShowTrayIcon": "显示托盘图标",
+  "settingsCloseToTray": "关闭到托盘",
+  "settingsTrayUnsupported": "此系统不支持系统托盘。",
+  "settingsHotkeyTitle": "全局热键",
+  "settingsHotkeyDescription": "随时显示、聚焦或隐藏 Natcatty。",
+  "settingsHotkeyEnabled": "启用全局热键",
+  "settingsHotkeyAccelerator": "切换窗口快捷键",
+  "settingsHotkeyApply": "应用",
+  "settingsHotkeyReset": "重置",
+  "settingsHotkeyProblem": "该快捷键不可用。请输入其他快捷键或重置。",
+  "settingsHotkeyUnsupported": "此系统不支持全局快捷键。",
+  "settingsAutostartTitle": "登录时启动",
+  "settingsAutostartDescription": "登录系统时启动 Natcatty。",
+  "settingsAutostartEnabled": "登录时启动 Natcatty",
+  "settingsAutostartUnsupported": "此版本不支持登录时启动。",
+  "settingsDeepLinksTitle": "深度链接",
+  "settingsDeepLinksDescription": "在 Natcatty 中打开 ssh:// 链接。",
+  "settingsSSHDeepLinks": "处理 ssh:// 链接和 Host 命令行参数",
+  "settingsNotificationsTitle": "通知",
+  "settingsNotificationsDescription": "选择显示桌面通知的事件。",
+  "settingsNotifySessionEnded": "会话已结束",
+  "settingsNotifyConnectionFailed": "连接失败",
+  "settingsNotifyForwardingFailed": "端口转发失败",
+  "settingsNotificationsUnsupported": "此系统不支持桌面通知。",
+  "settingsDesktopSaveFailed": "无法保存设置。",
+  "settingsDesktopUpdateFailed": "无法应用设置。",
+  "trayOpenMain": "打开主窗口",
+  "traySessions": "会话",
+  "trayNoSessions": "没有活动会话",
+  "trayForwarding": "端口转发",
+  "trayNoForwarding": "没有端口转发规则",
+  "trayRecentHosts": "最近的主机",
+  "trayNoHosts": "没有已保存的主机",
+  "trayQuit": "退出",
+  "trayStatusConnected": "已连接",
+  "trayStatusConnecting": "正在连接",
+  "trayStatusDisconnected": "已断开",
+  "trayStatusActive": "活动",
+  "trayStatusInactive": "未活动",
+  "trayStatusError": "错误",
+  "trayRuleUnnamed": "未命名规则",
+  "notificationSessionEndedTitle": "会话已结束",
+  "notificationSessionEndedBody": "{target} 已结束。",
+  "@notificationSessionEndedBody": {
+    "description": "The ending Session's label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationConnectionFailedTitle": "连接失败",
+  "notificationConnectionFailedBody": "与 {target} 的连接已断开。",
+  "@notificationConnectionFailedBody": {
+    "description": "The Host or Session label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationForwardingFailedTitle": "端口转发失败",
+  "notificationForwardingFailedBody": "端口转发规则 {target} 已停止。",
+  "@notificationForwardingFailedBody": {
+    "description": "The Port Forwarding Rule label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationUnknownTarget": "某个主机",
+  "deepLinkProblemInvalid": "无法打开该链接。",
+  "deepLinkProblemUnsupported": "Natcatty 尚不支持该链接或主机。"
 }

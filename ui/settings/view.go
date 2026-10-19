@@ -7,30 +7,160 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/application/desktop"
 	"github.com/mslxl/natcatty/domain/applock"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
-// View builds the Settings window's native view.
+// View builds the Settings window's native view with App Lock only. The app
+// uses ViewWithDesktop.
 func View(lock *AppLockState) func(*ui.Context) {
+	return ViewWithDesktop(lock, nil)
+}
+
+// ViewWithDesktop builds the Settings window with the desktop integration
+// sections. The content scrolls, so the layout holds at the minimum window
+// size.
+func ViewWithDesktop(lock *AppLockState, desktopState *DesktopState) func(*ui.Context) {
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
 		ui.Column(c).Fill().Padding(24).Gap(16).Children(func() {
 			ui.Text(c, m.NavSettings()).FontSize(24).Bold()
-			appLockSection(c, lock, m, t)
+			ui.Scroll(c).Grow(1).Children(func() {
+				ui.Column(c).Gap(16).Children(func() {
+					if desktopState != nil {
+						desktopSections(c, desktopState, m, t)
+					}
+					appLockSection(c, lock, m, t)
+				})
+			})
 		})
 	}
+}
+
+func desktopSections(c *ui.Context, state *DesktopState, m locales.Messages, t *ui.Theme) {
+	caps := state.Capabilities()
+	settings := state.Settings()
+	autostartSection(c, state, settings, caps, m, t)
+	hotkeySection(c, state, settings, caps, m, t)
+	traySection(c, state, settings, caps, m, t)
+	deepLinkSection(c, state, settings, m, t)
+	notificationSection(c, state, settings, caps, m, t)
+	desktopProblem(c, state, m, t)
+}
+
+func autostartSection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	caps desktop.Capabilities, m locales.Messages, t *ui.Theme) {
+	section(c, m.SettingsAutostartTitle(), m.SettingsAutostartDescription(), t, func() {
+		if !caps.AutoStart {
+			ui.Text(c, m.SettingsAutostartUnsupported()).TextColor(t.TextMuted)
+			return
+		}
+		enabled := settings.AutoStart
+		if ui.Checkbox(c, &enabled, m.SettingsAutostartEnabled()).Changed() {
+			state.SetAutoStart(enabled)
+			c.Invalidate()
+		}
+	})
+}
+
+func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	caps desktop.Capabilities, m locales.Messages, t *ui.Theme) {
+	section(c, m.SettingsHotkeyTitle(), m.SettingsHotkeyDescription(), t, func() {
+		if !caps.GlobalHotkey {
+			ui.Text(c, m.SettingsHotkeyUnsupported()).TextColor(t.TextMuted)
+			return
+		}
+		enabled := settings.GlobalHotkeyEnabled
+		if ui.Checkbox(c, &enabled, m.SettingsHotkeyEnabled()).Changed() {
+			state.SetGlobalHotkeyEnabled(enabled)
+			c.Invalidate()
+		}
+		ui.Field(c, m.SettingsHotkeyAccelerator(), func() {
+			ui.TextInput(c, state.Hotkey()).Width(220)
+		})
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.PrimaryButton(c, m.SettingsHotkeyApply()).Clicked() {
+				state.ApplyHotkey()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsHotkeyReset()).Clicked() {
+				state.ResetHotkey()
+				c.Invalidate()
+			}
+		})
+	})
+}
+
+func traySection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	caps desktop.Capabilities, m locales.Messages, t *ui.Theme) {
+	section(c, m.SettingsTrayTitle(), m.SettingsTrayDescription(), t, func() {
+		if !caps.Tray {
+			ui.Text(c, m.SettingsTrayUnsupported()).TextColor(t.TextMuted)
+			return
+		}
+		show := settings.ShowTrayIcon
+		if ui.Checkbox(c, &show, m.SettingsShowTrayIcon()).Changed() {
+			state.SetShowTrayIcon(show)
+			c.Invalidate()
+		}
+		closeToTray := settings.CloseToTray
+		if ui.Checkbox(c, &closeToTray, m.SettingsCloseToTray()).Changed() {
+			state.SetCloseToTray(closeToTray)
+			c.Invalidate()
+		}
+	})
+}
+
+func deepLinkSection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	m locales.Messages, t *ui.Theme) {
+	section(c, m.SettingsDeepLinksTitle(), m.SettingsDeepLinksDescription(), t, func() {
+		enabled := settings.SSHDeepLinks
+		if ui.Checkbox(c, &enabled, m.SettingsSSHDeepLinks()).Changed() {
+			state.SetSSHDeepLinks(enabled)
+			c.Invalidate()
+		}
+	})
+}
+
+func notificationSection(c *ui.Context, state *DesktopState, settings desktop.Settings,
+	caps desktop.Capabilities, m locales.Messages, t *ui.Theme) {
+	section(c, m.SettingsNotificationsTitle(), m.SettingsNotificationsDescription(), t, func() {
+		if !caps.Notifications {
+			ui.Text(c, m.SettingsNotificationsUnsupported()).TextColor(t.TextMuted)
+			return
+		}
+		notificationToggle(c, state, settings.NotifySessionEnded, m.SettingsNotifySessionEnded(),
+			desktop.EventSessionEnded)
+		notificationToggle(c, state, settings.NotifyConnectionFailed, m.SettingsNotifyConnectionFailed(),
+			desktop.EventConnectionFailed)
+		notificationToggle(c, state, settings.NotifyForwardingFailed, m.SettingsNotifyForwardingFailed(),
+			desktop.EventForwardingFailed)
+	})
+}
+
+func notificationToggle(c *ui.Context, state *DesktopState, value bool, label string, event desktop.Event) {
+	enabled := value
+	if ui.Checkbox(c, &enabled, label).Changed() {
+		state.SetNotification(event, enabled)
+		c.Invalidate()
+	}
+}
+
+func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
+	ui.Column(c).Padding(16).Gap(10).Background(t.Surface).Children(func() {
+		ui.Text(c, title).FontSize(18).Bold()
+		ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
+		build()
+	})
 }
 
 func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui.Theme) {
 	snapshot := lock.Snapshot()
 
-	ui.Column(c).Fill().Padding(16).Gap(10).Background(t.Surface).Children(func() {
-		ui.Text(c, m.SettingsAppLockTitle()).FontSize(18).Bold()
-		ui.Text(c, m.SettingsAppLockDescription()).FontSize(12).TextColor(t.TextMuted)
-
+	section(c, m.SettingsAppLockTitle(), m.SettingsAppLockDescription(), t, func() {
 		if !snapshot.Enabled {
 			enableSection(c, lock, m)
 			return
@@ -100,6 +230,23 @@ func appLockProblem(c *ui.Context, lock *AppLockState, t *ui.Theme) {
 		return
 	}
 	ui.Text(c, message).TextColor(t.Danger)
+}
+
+func desktopProblem(c *ui.Context, state *DesktopState, m locales.Messages, t *ui.Theme) {
+	var message string
+	switch state.Problem() {
+	case DesktopProblemHotkey:
+		message = m.SettingsHotkeyProblem()
+	case DesktopProblemUnsupported:
+		message = m.SettingsHotkeyUnsupported()
+	case DesktopProblemSave:
+		message = m.SettingsDesktopSaveFailed()
+	case DesktopProblemApply:
+		message = m.SettingsDesktopUpdateFailed()
+	}
+	if message != "" {
+		ui.Text(c, message).TextColor(t.Danger)
+	}
 }
 
 func problemText(m locales.Messages, problem AppLockProblem) string {
