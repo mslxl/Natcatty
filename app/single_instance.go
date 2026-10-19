@@ -11,8 +11,9 @@ type instanceLock interface {
 	// hands the launch over to the running instance and reports false.
 	Acquire() (primary bool, err error)
 	// OnSecondInstance registers the callback the first instance runs when a
-	// later launch hands over.
-	OnSecondInstance(func()) func()
+	// later launch hands over. args excludes the program name; workingDir is
+	// where the later launch started.
+	OnSecondInstance(func(args []string, workingDir string)) func()
 }
 
 // mygoInstanceLock adapts MyGo's single-instance lock.
@@ -22,8 +23,8 @@ func (mygoInstanceLock) Acquire() (bool, error) {
 	return mygo.App.RequestSingleInstanceLock(), nil
 }
 
-func (mygoInstanceLock) OnSecondInstance(fn func()) func() {
-	return mygo.App.OnSecondInstance(func([]string, string) { fn() })
+func (mygoInstanceLock) OnSecondInstance(fn func([]string, string)) func() {
+	return mygo.App.OnSecondInstance(fn)
 }
 
 // singleInstancePrimary acquires the single-instance lock and configures the
@@ -31,7 +32,7 @@ func (mygoInstanceLock) OnSecondInstance(fn func()) func() {
 // lock; the caller must then exit without creating a window. A nil seam or an
 // acquisition error falls back to running as the only instance, which keeps a
 // launch working on a host where locking is unavailable.
-func singleInstancePrimary(lock instanceLock, onSecond func()) bool {
+func singleInstancePrimary(lock instanceLock, onSecond func([]string, string)) bool {
 	if lock == nil {
 		return true
 	}

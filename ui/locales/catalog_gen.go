@@ -3255,3 +3255,553 @@ func QuitConfirmConfirm() string { return In(i18n.Locale()).QuitConfirmConfirm()
 func (msgs Messages) QuitConfirmConfirm() string {
 	return Catalog.Format(msgs.locale, "quitConfirmConfirm", nil)
 }
+
+// SettingsTrayTitle says "System Tray"
+// in the language the app shows.
+func SettingsTrayTitle() string { return In(i18n.Locale()).SettingsTrayTitle() }
+
+// SettingsTrayTitle says "System Tray"
+// in the language of msgs.
+func (msgs Messages) SettingsTrayTitle() string {
+	return Catalog.Format(msgs.locale, "settingsTrayTitle", nil)
+}
+
+// SettingsTrayDescription says "Keep Natcatty in the notification area."
+// in the language the app shows.
+func SettingsTrayDescription() string { return In(i18n.Locale()).SettingsTrayDescription() }
+
+// SettingsTrayDescription says "Keep Natcatty in the notification area."
+// in the language of msgs.
+func (msgs Messages) SettingsTrayDescription() string {
+	return Catalog.Format(msgs.locale, "settingsTrayDescription", nil)
+}
+
+// SettingsShowTrayIcon says "Show tray icon"
+// in the language the app shows.
+func SettingsShowTrayIcon() string { return In(i18n.Locale()).SettingsShowTrayIcon() }
+
+// SettingsShowTrayIcon says "Show tray icon"
+// in the language of msgs.
+func (msgs Messages) SettingsShowTrayIcon() string {
+	return Catalog.Format(msgs.locale, "settingsShowTrayIcon", nil)
+}
+
+// SettingsCloseToTray says "Close to tray"
+// in the language the app shows.
+func SettingsCloseToTray() string { return In(i18n.Locale()).SettingsCloseToTray() }
+
+// SettingsCloseToTray says "Close to tray"
+// in the language of msgs.
+func (msgs Messages) SettingsCloseToTray() string {
+	return Catalog.Format(msgs.locale, "settingsCloseToTray", nil)
+}
+
+// SettingsTrayUnsupported says "The system tray is not available on this system."
+// in the language the app shows.
+func SettingsTrayUnsupported() string { return In(i18n.Locale()).SettingsTrayUnsupported() }
+
+// SettingsTrayUnsupported says "The system tray is not available on this system."
+// in the language of msgs.
+func (msgs Messages) SettingsTrayUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsTrayUnsupported", nil)
+}
+
+// SettingsHotkeyTitle says "Global Hotkey"
+// in the language the app shows.
+func SettingsHotkeyTitle() string { return In(i18n.Locale()).SettingsHotkeyTitle() }
+
+// SettingsHotkeyTitle says "Global Hotkey"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyTitle() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyTitle", nil)
+}
+
+// SettingsHotkeyDescription says "Show, focus, or hide Natcatty from anywhere."
+// in the language the app shows.
+func SettingsHotkeyDescription() string { return In(i18n.Locale()).SettingsHotkeyDescription() }
+
+// SettingsHotkeyDescription says "Show, focus, or hide Natcatty from anywhere."
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyDescription() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyDescription", nil)
+}
+
+// SettingsHotkeyEnabled says "Enable global hotkey"
+// in the language the app shows.
+func SettingsHotkeyEnabled() string { return In(i18n.Locale()).SettingsHotkeyEnabled() }
+
+// SettingsHotkeyEnabled says "Enable global hotkey"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyEnabled", nil)
+}
+
+// SettingsHotkeyAccelerator says "Toggle window shortcut"
+// in the language the app shows.
+func SettingsHotkeyAccelerator() string { return In(i18n.Locale()).SettingsHotkeyAccelerator() }
+
+// SettingsHotkeyAccelerator says "Toggle window shortcut"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyAccelerator() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyAccelerator", nil)
+}
+
+// SettingsHotkeyApply says "Apply"
+// in the language the app shows.
+func SettingsHotkeyApply() string { return In(i18n.Locale()).SettingsHotkeyApply() }
+
+// SettingsHotkeyApply says "Apply"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyApply() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyApply", nil)
+}
+
+// SettingsHotkeyReset says "Reset"
+// in the language the app shows.
+func SettingsHotkeyReset() string { return In(i18n.Locale()).SettingsHotkeyReset() }
+
+// SettingsHotkeyReset says "Reset"
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyReset() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyReset", nil)
+}
+
+// SettingsHotkeyProblem says "That shortcut is unavailable. Enter another one or reset it."
+// in the language the app shows.
+func SettingsHotkeyProblem() string { return In(i18n.Locale()).SettingsHotkeyProblem() }
+
+// SettingsHotkeyProblem says "That shortcut is unavailable. Enter another one or reset it."
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyProblem() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyProblem", nil)
+}
+
+// SettingsHotkeyUnsupported says "Global shortcuts are not available on this system."
+// in the language the app shows.
+func SettingsHotkeyUnsupported() string { return In(i18n.Locale()).SettingsHotkeyUnsupported() }
+
+// SettingsHotkeyUnsupported says "Global shortcuts are not available on this system."
+// in the language of msgs.
+func (msgs Messages) SettingsHotkeyUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsHotkeyUnsupported", nil)
+}
+
+// SettingsAutostartTitle says "Launch at Login"
+// in the language the app shows.
+func SettingsAutostartTitle() string { return In(i18n.Locale()).SettingsAutostartTitle() }
+
+// SettingsAutostartTitle says "Launch at Login"
+// in the language of msgs.
+func (msgs Messages) SettingsAutostartTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAutostartTitle", nil)
+}
+
+// SettingsAutostartDescription says "Start Natcatty when you sign in."
+// in the language the app shows.
+func SettingsAutostartDescription() string { return In(i18n.Locale()).SettingsAutostartDescription() }
+
+// SettingsAutostartDescription says "Start Natcatty when you sign in."
+// in the language of msgs.
+func (msgs Messages) SettingsAutostartDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAutostartDescription", nil)
+}
+
+// SettingsAutostartEnabled says "Launch Natcatty at login"
+// in the language the app shows.
+func SettingsAutostartEnabled() string { return In(i18n.Locale()).SettingsAutostartEnabled() }
+
+// SettingsAutostartEnabled says "Launch Natcatty at login"
+// in the language of msgs.
+func (msgs Messages) SettingsAutostartEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsAutostartEnabled", nil)
+}
+
+// SettingsAutostartUnsupported says "Launch at login is not available in this build."
+// in the language the app shows.
+func SettingsAutostartUnsupported() string { return In(i18n.Locale()).SettingsAutostartUnsupported() }
+
+// SettingsAutostartUnsupported says "Launch at login is not available in this build."
+// in the language of msgs.
+func (msgs Messages) SettingsAutostartUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsAutostartUnsupported", nil)
+}
+
+// SettingsDeepLinksTitle says "Deep Links"
+// in the language the app shows.
+func SettingsDeepLinksTitle() string { return In(i18n.Locale()).SettingsDeepLinksTitle() }
+
+// SettingsDeepLinksTitle says "Deep Links"
+// in the language of msgs.
+func (msgs Messages) SettingsDeepLinksTitle() string {
+	return Catalog.Format(msgs.locale, "settingsDeepLinksTitle", nil)
+}
+
+// SettingsDeepLinksDescription says "Open ssh:// links in Natcatty."
+// in the language the app shows.
+func SettingsDeepLinksDescription() string { return In(i18n.Locale()).SettingsDeepLinksDescription() }
+
+// SettingsDeepLinksDescription says "Open ssh:// links in Natcatty."
+// in the language of msgs.
+func (msgs Messages) SettingsDeepLinksDescription() string {
+	return Catalog.Format(msgs.locale, "settingsDeepLinksDescription", nil)
+}
+
+// SettingsSSHDeepLinks says "Handle ssh:// links and Host command-line arguments"
+// in the language the app shows.
+func SettingsSSHDeepLinks() string { return In(i18n.Locale()).SettingsSSHDeepLinks() }
+
+// SettingsSSHDeepLinks says "Handle ssh:// links and Host command-line arguments"
+// in the language of msgs.
+func (msgs Messages) SettingsSSHDeepLinks() string {
+	return Catalog.Format(msgs.locale, "settingsSSHDeepLinks", nil)
+}
+
+// SettingsNotificationsTitle says "Notifications"
+// in the language the app shows.
+func SettingsNotificationsTitle() string { return In(i18n.Locale()).SettingsNotificationsTitle() }
+
+// SettingsNotificationsTitle says "Notifications"
+// in the language of msgs.
+func (msgs Messages) SettingsNotificationsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsNotificationsTitle", nil)
+}
+
+// SettingsNotificationsDescription says "Choose which events show a desktop notification."
+// in the language the app shows.
+func SettingsNotificationsDescription() string {
+	return In(i18n.Locale()).SettingsNotificationsDescription()
+}
+
+// SettingsNotificationsDescription says "Choose which events show a desktop notification."
+// in the language of msgs.
+func (msgs Messages) SettingsNotificationsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsNotificationsDescription", nil)
+}
+
+// SettingsNotifySessionEnded says "Session ended"
+// in the language the app shows.
+func SettingsNotifySessionEnded() string { return In(i18n.Locale()).SettingsNotifySessionEnded() }
+
+// SettingsNotifySessionEnded says "Session ended"
+// in the language of msgs.
+func (msgs Messages) SettingsNotifySessionEnded() string {
+	return Catalog.Format(msgs.locale, "settingsNotifySessionEnded", nil)
+}
+
+// SettingsNotifyConnectionFailed says "Connection failed"
+// in the language the app shows.
+func SettingsNotifyConnectionFailed() string {
+	return In(i18n.Locale()).SettingsNotifyConnectionFailed()
+}
+
+// SettingsNotifyConnectionFailed says "Connection failed"
+// in the language of msgs.
+func (msgs Messages) SettingsNotifyConnectionFailed() string {
+	return Catalog.Format(msgs.locale, "settingsNotifyConnectionFailed", nil)
+}
+
+// SettingsNotifyForwardingFailed says "Port forwarding failed"
+// in the language the app shows.
+func SettingsNotifyForwardingFailed() string {
+	return In(i18n.Locale()).SettingsNotifyForwardingFailed()
+}
+
+// SettingsNotifyForwardingFailed says "Port forwarding failed"
+// in the language of msgs.
+func (msgs Messages) SettingsNotifyForwardingFailed() string {
+	return Catalog.Format(msgs.locale, "settingsNotifyForwardingFailed", nil)
+}
+
+// SettingsNotificationsUnsupported says "Desktop notifications are not available on this system."
+// in the language the app shows.
+func SettingsNotificationsUnsupported() string {
+	return In(i18n.Locale()).SettingsNotificationsUnsupported()
+}
+
+// SettingsNotificationsUnsupported says "Desktop notifications are not available on this system."
+// in the language of msgs.
+func (msgs Messages) SettingsNotificationsUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsNotificationsUnsupported", nil)
+}
+
+// SettingsDesktopSaveFailed says "The setting could not be saved."
+// in the language the app shows.
+func SettingsDesktopSaveFailed() string { return In(i18n.Locale()).SettingsDesktopSaveFailed() }
+
+// SettingsDesktopSaveFailed says "The setting could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsDesktopSaveFailed() string {
+	return Catalog.Format(msgs.locale, "settingsDesktopSaveFailed", nil)
+}
+
+// SettingsDesktopUpdateFailed says "The setting could not be applied."
+// in the language the app shows.
+func SettingsDesktopUpdateFailed() string { return In(i18n.Locale()).SettingsDesktopUpdateFailed() }
+
+// SettingsDesktopUpdateFailed says "The setting could not be applied."
+// in the language of msgs.
+func (msgs Messages) SettingsDesktopUpdateFailed() string {
+	return Catalog.Format(msgs.locale, "settingsDesktopUpdateFailed", nil)
+}
+
+// TrayOpenMain says "Open Main Window"
+// in the language the app shows.
+func TrayOpenMain() string { return In(i18n.Locale()).TrayOpenMain() }
+
+// TrayOpenMain says "Open Main Window"
+// in the language of msgs.
+func (msgs Messages) TrayOpenMain() string {
+	return Catalog.Format(msgs.locale, "trayOpenMain", nil)
+}
+
+// TraySessions says "Sessions"
+// in the language the app shows.
+func TraySessions() string { return In(i18n.Locale()).TraySessions() }
+
+// TraySessions says "Sessions"
+// in the language of msgs.
+func (msgs Messages) TraySessions() string {
+	return Catalog.Format(msgs.locale, "traySessions", nil)
+}
+
+// TrayNoSessions says "No active Sessions"
+// in the language the app shows.
+func TrayNoSessions() string { return In(i18n.Locale()).TrayNoSessions() }
+
+// TrayNoSessions says "No active Sessions"
+// in the language of msgs.
+func (msgs Messages) TrayNoSessions() string {
+	return Catalog.Format(msgs.locale, "trayNoSessions", nil)
+}
+
+// TrayForwarding says "Port Forwarding"
+// in the language the app shows.
+func TrayForwarding() string { return In(i18n.Locale()).TrayForwarding() }
+
+// TrayForwarding says "Port Forwarding"
+// in the language of msgs.
+func (msgs Messages) TrayForwarding() string {
+	return Catalog.Format(msgs.locale, "trayForwarding", nil)
+}
+
+// TrayNoForwarding says "No Port Forwarding Rules"
+// in the language the app shows.
+func TrayNoForwarding() string { return In(i18n.Locale()).TrayNoForwarding() }
+
+// TrayNoForwarding says "No Port Forwarding Rules"
+// in the language of msgs.
+func (msgs Messages) TrayNoForwarding() string {
+	return Catalog.Format(msgs.locale, "trayNoForwarding", nil)
+}
+
+// TrayRecentHosts says "Recent Hosts"
+// in the language the app shows.
+func TrayRecentHosts() string { return In(i18n.Locale()).TrayRecentHosts() }
+
+// TrayRecentHosts says "Recent Hosts"
+// in the language of msgs.
+func (msgs Messages) TrayRecentHosts() string {
+	return Catalog.Format(msgs.locale, "trayRecentHosts", nil)
+}
+
+// TrayNoHosts says "No saved Hosts"
+// in the language the app shows.
+func TrayNoHosts() string { return In(i18n.Locale()).TrayNoHosts() }
+
+// TrayNoHosts says "No saved Hosts"
+// in the language of msgs.
+func (msgs Messages) TrayNoHosts() string {
+	return Catalog.Format(msgs.locale, "trayNoHosts", nil)
+}
+
+// TrayQuit says "Quit"
+// in the language the app shows.
+func TrayQuit() string { return In(i18n.Locale()).TrayQuit() }
+
+// TrayQuit says "Quit"
+// in the language of msgs.
+func (msgs Messages) TrayQuit() string {
+	return Catalog.Format(msgs.locale, "trayQuit", nil)
+}
+
+// TrayStatusConnected says "Connected"
+// in the language the app shows.
+func TrayStatusConnected() string { return In(i18n.Locale()).TrayStatusConnected() }
+
+// TrayStatusConnected says "Connected"
+// in the language of msgs.
+func (msgs Messages) TrayStatusConnected() string {
+	return Catalog.Format(msgs.locale, "trayStatusConnected", nil)
+}
+
+// TrayStatusConnecting says "Connecting"
+// in the language the app shows.
+func TrayStatusConnecting() string { return In(i18n.Locale()).TrayStatusConnecting() }
+
+// TrayStatusConnecting says "Connecting"
+// in the language of msgs.
+func (msgs Messages) TrayStatusConnecting() string {
+	return Catalog.Format(msgs.locale, "trayStatusConnecting", nil)
+}
+
+// TrayStatusDisconnected says "Disconnected"
+// in the language the app shows.
+func TrayStatusDisconnected() string { return In(i18n.Locale()).TrayStatusDisconnected() }
+
+// TrayStatusDisconnected says "Disconnected"
+// in the language of msgs.
+func (msgs Messages) TrayStatusDisconnected() string {
+	return Catalog.Format(msgs.locale, "trayStatusDisconnected", nil)
+}
+
+// TrayStatusActive says "Active"
+// in the language the app shows.
+func TrayStatusActive() string { return In(i18n.Locale()).TrayStatusActive() }
+
+// TrayStatusActive says "Active"
+// in the language of msgs.
+func (msgs Messages) TrayStatusActive() string {
+	return Catalog.Format(msgs.locale, "trayStatusActive", nil)
+}
+
+// TrayStatusInactive says "Inactive"
+// in the language the app shows.
+func TrayStatusInactive() string { return In(i18n.Locale()).TrayStatusInactive() }
+
+// TrayStatusInactive says "Inactive"
+// in the language of msgs.
+func (msgs Messages) TrayStatusInactive() string {
+	return Catalog.Format(msgs.locale, "trayStatusInactive", nil)
+}
+
+// TrayStatusError says "Error"
+// in the language the app shows.
+func TrayStatusError() string { return In(i18n.Locale()).TrayStatusError() }
+
+// TrayStatusError says "Error"
+// in the language of msgs.
+func (msgs Messages) TrayStatusError() string {
+	return Catalog.Format(msgs.locale, "trayStatusError", nil)
+}
+
+// TrayRuleUnnamed says "Untitled rule"
+// in the language the app shows.
+func TrayRuleUnnamed() string { return In(i18n.Locale()).TrayRuleUnnamed() }
+
+// TrayRuleUnnamed says "Untitled rule"
+// in the language of msgs.
+func (msgs Messages) TrayRuleUnnamed() string {
+	return Catalog.Format(msgs.locale, "trayRuleUnnamed", nil)
+}
+
+// NotificationSessionEndedTitle says "Session ended"
+// in the language the app shows.
+func NotificationSessionEndedTitle() string { return In(i18n.Locale()).NotificationSessionEndedTitle() }
+
+// NotificationSessionEndedTitle says "Session ended"
+// in the language of msgs.
+func (msgs Messages) NotificationSessionEndedTitle() string {
+	return Catalog.Format(msgs.locale, "notificationSessionEndedTitle", nil)
+}
+
+// NotificationSessionEndedBody says "{target} has ended."
+// in the language the app shows.
+//
+// The ending Session's label is inserted.
+func NotificationSessionEndedBody(target string) string {
+	return In(i18n.Locale()).NotificationSessionEndedBody(target)
+}
+
+// NotificationSessionEndedBody says "{target} has ended."
+// in the language of msgs.
+//
+// The ending Session's label is inserted.
+func (msgs Messages) NotificationSessionEndedBody(target string) string {
+	return Catalog.Format(msgs.locale, "notificationSessionEndedBody", map[string]any{"target": target})
+}
+
+// NotificationConnectionFailedTitle says "Connection failed"
+// in the language the app shows.
+func NotificationConnectionFailedTitle() string {
+	return In(i18n.Locale()).NotificationConnectionFailedTitle()
+}
+
+// NotificationConnectionFailedTitle says "Connection failed"
+// in the language of msgs.
+func (msgs Messages) NotificationConnectionFailedTitle() string {
+	return Catalog.Format(msgs.locale, "notificationConnectionFailedTitle", nil)
+}
+
+// NotificationConnectionFailedBody says "The connection to {target} was lost."
+// in the language the app shows.
+//
+// The Host or Session label is inserted.
+func NotificationConnectionFailedBody(target string) string {
+	return In(i18n.Locale()).NotificationConnectionFailedBody(target)
+}
+
+// NotificationConnectionFailedBody says "The connection to {target} was lost."
+// in the language of msgs.
+//
+// The Host or Session label is inserted.
+func (msgs Messages) NotificationConnectionFailedBody(target string) string {
+	return Catalog.Format(msgs.locale, "notificationConnectionFailedBody", map[string]any{"target": target})
+}
+
+// NotificationForwardingFailedTitle says "Port forwarding failed"
+// in the language the app shows.
+func NotificationForwardingFailedTitle() string {
+	return In(i18n.Locale()).NotificationForwardingFailedTitle()
+}
+
+// NotificationForwardingFailedTitle says "Port forwarding failed"
+// in the language of msgs.
+func (msgs Messages) NotificationForwardingFailedTitle() string {
+	return Catalog.Format(msgs.locale, "notificationForwardingFailedTitle", nil)
+}
+
+// NotificationForwardingFailedBody says "The Port Forwarding Rule {target} stopped."
+// in the language the app shows.
+//
+// The Port Forwarding Rule label is inserted.
+func NotificationForwardingFailedBody(target string) string {
+	return In(i18n.Locale()).NotificationForwardingFailedBody(target)
+}
+
+// NotificationForwardingFailedBody says "The Port Forwarding Rule {target} stopped."
+// in the language of msgs.
+//
+// The Port Forwarding Rule label is inserted.
+func (msgs Messages) NotificationForwardingFailedBody(target string) string {
+	return Catalog.Format(msgs.locale, "notificationForwardingFailedBody", map[string]any{"target": target})
+}
+
+// NotificationUnknownTarget says "a Host"
+// in the language the app shows.
+func NotificationUnknownTarget() string { return In(i18n.Locale()).NotificationUnknownTarget() }
+
+// NotificationUnknownTarget says "a Host"
+// in the language of msgs.
+func (msgs Messages) NotificationUnknownTarget() string {
+	return Catalog.Format(msgs.locale, "notificationUnknownTarget", nil)
+}
+
+// DeepLinkProblemInvalid says "Natcatty could not open that link."
+// in the language the app shows.
+func DeepLinkProblemInvalid() string { return In(i18n.Locale()).DeepLinkProblemInvalid() }
+
+// DeepLinkProblemInvalid says "Natcatty could not open that link."
+// in the language of msgs.
+func (msgs Messages) DeepLinkProblemInvalid() string {
+	return Catalog.Format(msgs.locale, "deepLinkProblemInvalid", nil)
+}
+
+// DeepLinkProblemUnsupported says "Natcatty does not support that link or Host yet."
+// in the language the app shows.
+func DeepLinkProblemUnsupported() string { return In(i18n.Locale()).DeepLinkProblemUnsupported() }
+
+// DeepLinkProblemUnsupported says "Natcatty does not support that link or Host yet."
+// in the language of msgs.
+func (msgs Messages) DeepLinkProblemUnsupported() string {
+	return Catalog.Format(msgs.locale, "deepLinkProblemUnsupported", nil)
+}

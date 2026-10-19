@@ -134,11 +134,35 @@
   "connectionErrorInternal": "No se pudo abrir la conexión.",
   "connectionErrorX11": "No se pudo iniciar el reenvío X11. Asegúrate de que el Host permita el reenvío X11 y de que xauth esté instalado.",
   "connectionX11DisplayUnavailable": "El reenvío X11 no pudo acceder a la pantalla local en {target}. Inicia un servidor X o revisa la configuración DISPLAY.",
-  "@connectionX11DisplayUnavailable": {"description": "A non-fatal X11 forwarding notice: the local X server could not be reached.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11DisplayUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: the local X server could not be reached.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11ChannelFailed": "El reenvío X11 no pudo abrir un canal para la pantalla local en {target}.",
-  "@connectionX11ChannelFailed": {"description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11ChannelFailed": {
+    "description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11CookieUnavailable": "El reenvío X11 no pudo leer una cookie xauth local para {target}. Ejecuta xauth add para la pantalla o configúrala para permitir conexiones locales.",
-  "@connectionX11CookieUnavailable": {"description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11CookieUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "hostKeyPromptUnknownTitle": "Clave del host desconocida",
   "hostKeyPromptChangedTitle": "La clave del host ha cambiado",
   "hostKeyPromptUnknownBody": "El host {host} aún no es de confianza. Verifica su huella antes de conectarte.",
@@ -222,7 +246,15 @@
   "authPromptContinue": "Continuar",
   "authPromptCancel": "Cancelar",
   "vaultForwardingTitle": "Reenvío de puertos ({count})",
-  "@vaultForwardingTitle": {"description": "The Vault Port Forwarding Rule list heading and rule count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultForwardingTitle": {
+    "description": "The Vault Port Forwarding Rule list heading and rule count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultForwardingNew": "Nueva regla",
   "vaultForwardingEmpty": "Aún no hay reglas de reenvío de puertos.",
   "vaultForwardingFormCreateTitle": "Nueva regla de reenvío de puertos",
@@ -241,11 +273,17 @@
   "vaultForwardingAutoStart": "Iniciar al abrir Natcatty",
   "vaultForwardingAutoReconnect": "Reconectar automáticamente",
   "vaultForwardingAutoReconnectFollow": "Seguir el inicio automático",
-  "@vaultForwardingAutoReconnectFollow": {"description": "Reconnect whenever auto-start is enabled."},
+  "@vaultForwardingAutoReconnectFollow": {
+    "description": "Reconnect whenever auto-start is enabled."
+  },
   "vaultForwardingAutoReconnectOn": "Reconectar siempre",
-  "@vaultForwardingAutoReconnectOn": {"description": "Reconnect regardless of auto-start."},
+  "@vaultForwardingAutoReconnectOn": {
+    "description": "Reconnect regardless of auto-start."
+  },
   "vaultForwardingAutoReconnectOff": "No reconectar nunca",
-  "@vaultForwardingAutoReconnectOff": {"description": "Never reconnect automatically."},
+  "@vaultForwardingAutoReconnectOff": {
+    "description": "Never reconnect automatically."
+  },
   "vaultForwardingEnabled": "Activada",
   "vaultForwardingStart": "Iniciar",
   "vaultForwardingStop": "Detener",
@@ -266,9 +304,33 @@
   "vaultForwardingErrorUnforward": "No se pudo liberar el listener remoto.",
   "vaultForwardingErrorInternal": "La regla de reenvío de puertos falló.",
   "vaultForwardingHop": "Salto {index}/{total}: {label}",
-  "@vaultForwardingHop": {"description": "The failing jump-chain endpoint for a forwarding error.", "placeholders": {"index": {"type": "int", "example": "2"}, "total": {"type": "int", "example": "3"}, "label": {"type": "String", "example": "bastion"}}},
+  "@vaultForwardingHop": {
+    "description": "The failing jump-chain endpoint for a forwarding error.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      },
+      "label": {
+        "type": "String",
+        "example": "bastion"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirm": "¿Eliminar la regla de reenvío de puertos «{label}»? No se puede deshacer.",
-  "@vaultForwardingDeleteConfirm": {"description": "The delete confirmation naming the Port Forwarding Rule about to be removed.", "placeholders": {"label": {"type": "String", "example": "web"}}},
+  "@vaultForwardingDeleteConfirm": {
+    "description": "The delete confirmation naming the Port Forwarding Rule about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirmUnknown": "¿Eliminar esta regla de reenvío de puertos? No se puede deshacer.",
   "vaultForwardingProblemLabelRequired": "Una regla de reenvío de puertos necesita una etiqueta.",
   "vaultForwardingProblemLabelInvalid": "La etiqueta no es válida.",
@@ -290,9 +352,23 @@
   "tabDetach": "Separar pestaña",
   "tabCopyToNewWindow": "Copiar pestaña a ventana nueva",
   "tabCopyTitle": "{title} (copia {count})",
-  "@tabCopyTitle": {"description": "El título de una pestaña duplicada y su número de copia.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
+  "@tabCopyTitle": {
+    "description": "El título de una pestaña duplicada y su número de copia.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "web"
+      },
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "tabDirtyMarker": "●",
-  "@tabDirtyMarker": {"description": "El marcador de actividad junto a una pestaña con salida no vista."},
+  "@tabDirtyMarker": {
+    "description": "El marcador de actividad junto a una pestaña con salida no vista."
+  },
   "paneConnecting": "Conectando…",
   "paneOpenFailed": "No se pudo abrir esta sesión.",
   "paneHostMissing": "El host de esta sesión ya no existe.",
@@ -305,22 +381,125 @@
   "paneFocusUp": "Enfocar arriba",
   "paneFocusDown": "Enfocar abajo",
   "tabMenuGlyph": "⋯",
-  "@tabMenuGlyph": {"description": "El botón que abre el menú de acciones de una pestaña."},
+  "@tabMenuGlyph": {
+    "description": "El botón que abre el menú de acciones de una pestaña."
+  },
   "paneMenuGlyph": "⋮",
-  "@paneMenuGlyph": {"description": "El botón que abre el menú de acciones de un panel."},
+  "@paneMenuGlyph": {
+    "description": "El botón que abre el menú de acciones de un panel."
+  },
   "paneDragHandle": "::",
-  "@paneDragHandle": {"description": "El tirador para arrastrar un panel."},
+  "@paneDragHandle": {
+    "description": "El tirador para arrastrar un panel."
+  },
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "El botón que cierra una pestaña o un panel."},
+  "@closeGlyph": {
+    "description": "El botón que cierra una pestaña o un panel."
+  },
   "detachedMoveToMain": "Mover a la ventana principal",
   "detachedCloseWindow": "Cerrar ventana",
   "closeWindowTitle": "¿Cerrar ventana?",
   "closeWindowMessage": "{count, plural, one {# sesión activa finalizará si se cierra esta ventana.} many {# de sesiones activas finalizarán si se cierra esta ventana.} other {# sesiones activas finalizarán si se cierra esta ventana.}}",
-  "@closeWindowMessage": {"description": "El mensaje de confirmación al cerrar una ventana que indica cuántas sesiones finalizan.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@closeWindowMessage": {
+    "description": "El mensaje de confirmación al cerrar una ventana que indica cuántas sesiones finalizan.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "closeWindowCancel": "Cancelar",
   "closeWindowConfirm": "Cerrar ventana",
   "quitConfirmTitle": "¿Salir de Natcatty?",
   "quitConfirmMessage": "{count, plural, one {# sesión activa finalizará si se sale de Natcatty.} many {# de sesiones activas finalizarán si se sale de Natcatty.} other {# sesiones activas finalizarán si se sale de Natcatty.}}",
-  "@quitConfirmMessage": {"description": "El mensaje de confirmación al salir que indica cuántas sesiones finalizan.", "placeholders": {"count": {"type": "int", "example": "2"}}},
-  "quitConfirmConfirm": "Salir"
+  "@quitConfirmMessage": {
+    "description": "El mensaje de confirmación al salir que indica cuántas sesiones finalizan.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitConfirmConfirm": "Salir",
+  "settingsTrayTitle": "Bandeja del sistema",
+  "settingsTrayDescription": "Mantén Natcatty en el área de notificación.",
+  "settingsShowTrayIcon": "Mostrar icono en la bandeja",
+  "settingsCloseToTray": "Cerrar a la bandeja",
+  "settingsTrayUnsupported": "La bandeja del sistema no está disponible en este sistema.",
+  "settingsHotkeyTitle": "Atajo global",
+  "settingsHotkeyDescription": "Muestra, enfoca u oculta Natcatty desde cualquier lugar.",
+  "settingsHotkeyEnabled": "Activar atajo global",
+  "settingsHotkeyAccelerator": "Atajo para mostrar la ventana",
+  "settingsHotkeyApply": "Aplicar",
+  "settingsHotkeyReset": "Restablecer",
+  "settingsHotkeyProblem": "Ese atajo no está disponible. Escribe otro o restablécelo.",
+  "settingsHotkeyUnsupported": "Los atajos globales no están disponibles en este sistema.",
+  "settingsAutostartTitle": "Iniciar al iniciar sesión",
+  "settingsAutostartDescription": "Inicia Natcatty cuando inicies sesión.",
+  "settingsAutostartEnabled": "Iniciar Natcatty al iniciar sesión",
+  "settingsAutostartUnsupported": "Iniciar al iniciar sesión no está disponible en esta compilación.",
+  "settingsDeepLinksTitle": "Enlaces profundos",
+  "settingsDeepLinksDescription": "Abre enlaces ssh:// en Natcatty.",
+  "settingsSSHDeepLinks": "Manejar enlaces ssh:// y argumentos de Host",
+  "settingsNotificationsTitle": "Notificaciones",
+  "settingsNotificationsDescription": "Elige qué eventos muestran una notificación.",
+  "settingsNotifySessionEnded": "Sesión finalizada",
+  "settingsNotifyConnectionFailed": "Error de conexión",
+  "settingsNotifyForwardingFailed": "Error de reenvío de puertos",
+  "settingsNotificationsUnsupported": "Las notificaciones de escritorio no están disponibles en este sistema.",
+  "settingsDesktopSaveFailed": "No se pudo guardar la configuración.",
+  "settingsDesktopUpdateFailed": "No se pudo aplicar la configuración.",
+  "trayOpenMain": "Abrir ventana principal",
+  "traySessions": "Sesiones",
+  "trayNoSessions": "No hay sesiones activas",
+  "trayForwarding": "Reenvío de puertos",
+  "trayNoForwarding": "No hay reglas de reenvío",
+  "trayRecentHosts": "Hosts recientes",
+  "trayNoHosts": "No hay Hosts guardados",
+  "trayQuit": "Salir",
+  "trayStatusConnected": "Conectada",
+  "trayStatusConnecting": "Conectando",
+  "trayStatusDisconnected": "Desconectada",
+  "trayStatusActive": "Activa",
+  "trayStatusInactive": "Inactiva",
+  "trayStatusError": "Error",
+  "trayRuleUnnamed": "Regla sin título",
+  "notificationSessionEndedTitle": "Sesión finalizada",
+  "notificationSessionEndedBody": "{target} ha finalizado.",
+  "@notificationSessionEndedBody": {
+    "description": "The ending Session's label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationConnectionFailedTitle": "Error de conexión",
+  "notificationConnectionFailedBody": "Se perdió la conexión con {target}.",
+  "@notificationConnectionFailedBody": {
+    "description": "The Host or Session label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationForwardingFailedTitle": "Error de reenvío de puertos",
+  "notificationForwardingFailedBody": "La regla de reenvío {target} se detuvo.",
+  "@notificationForwardingFailedBody": {
+    "description": "The Port Forwarding Rule label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationUnknownTarget": "un Host",
+  "deepLinkProblemInvalid": "Natcatty no pudo abrir ese enlace.",
+  "deepLinkProblemUnsupported": "Natcatty aún no admite ese enlace o Host."
 }

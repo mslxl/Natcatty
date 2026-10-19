@@ -6,7 +6,9 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -18,6 +20,7 @@ import (
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/command"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -46,20 +49,25 @@ func run(afterReady func(hostWindow)) error {
 	var mainWindow hostWindow
 	var gate *uiapplock.Gate
 	var settingsState *settings.AppLockState
+	var desktopState *settings.DesktopState
+	var desktopService *appdesktop.Service
+	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
 
 	// A later launch hands its command line to the running instance and exits.
-	// Focus the existing main window; if readiness has not run yet, the flag is
-	// consumed after the window is created. The selftest build invokes this
-	// same callback to prove the production second-instance path raises main.
-	secondInstance := func() {
+	// Focus the existing main window and open any Host target it carried; a
+	// URL is delivered separately to OnOpenURL. If readiness has not run yet,
+	// the target is queued. The selftest build invokes this same callback to
+	// prove the production second-instance path raises main.
+	secondInstance := func(args []string, _ string) {
 		if !ready {
 			focusRequested = true
-			return
-		}
-		if windows != nil {
+		} else if windows != nil {
 			windows.SecondInstance()
+		}
+		if desktopCtl != nil {
+			desktopCtl.HandleLaunchArgs(args)
 		}
 	}
 	if !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
@@ -69,10 +77,11 @@ func run(afterReady func(hostWindow)) error {
 	invalidate := func() {
 		if windows != nil {
 			windows.InvalidateAll()
-			return
-		}
-		if mainWindow != nil && !mainWindow.IsDestroyed() {
+		} else if mainWindow != nil && !mainWindow.IsDestroyed() {
 			mainWindow.Invalidate()
+		}
+		if desktopCtl != nil {
+			desktopCtl.ScheduleSync()
 		}
 	}
 
@@ -83,6 +92,30 @@ func run(afterReady func(hostWindow)) error {
 	if err != nil {
 		return err
 	}
+
+	// Desktop integration lives in a versioned JSON file beside App Lock. The
+	// OS login-item state is refreshed once the application is ready; MyGo's
+	// native APIs cannot answer before Run.
+	desktopService = appdesktop.NewService(
+		store.OpenDesktop(filepath.Join(userData, "desktop-settings.json")),
+		hotkeyRegistrar{},
+		autoLauncher{},
+		&nativeNotifier{
+			locale: func() string { return mygo.App.Locale() },
+			onClick: func() {
+				if windows != nil {
+					windows.FocusMain()
+				}
+			},
+		},
+		appdesktop.WithGOOS(runtime.GOOS),
+	)
+	if err := desktopService.Load(context.Background()); err != nil {
+		return err
+	}
+	desktopState = settings.NewDesktopState(desktopService,
+		settings.WithDesktopRedrawRequest(invalidate))
+
 	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
 	if err != nil {
 		return err
@@ -237,18 +270,28 @@ func run(afterReady func(hostWindow)) error {
 		nativeConfirmer{},
 		gate,
 		shellState,
-		func() func(*ui.Context) { return settings.View(settingsState) },
+		func() func(*ui.Context) { return settings.ViewWithDesktop(settingsState, desktopState) },
 		func() string { return mygo.App.Locale() },
 	)
-	// The selftest build installs the F12 keyboard facility here; the normal
+	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and
+	// quit. Close-to-tray asks the current settings live.
+	desktopCtl = newDesktopController(
+		windows, shellState, vaultState, forwardingManager, desktopService,
+		mygoTrayBackend{},
+		func() string { return mygo.App.Locale() },
+		mygo.App.Quit,
+	)
+	windows.SetCloseToTray(desktopCtl.HideOnClose)
+	// The selftest build installs the F11 keyboard facility here; the normal
 	// build's installer is a no-op.
-	installSelftest(windows, shellState, secondInstance)
+	installSelftest(windows, shellState, desktopCtl, secondInstance)
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		shellState.Persist()
 		closeForwarding(forwardingManager, forwardingState)
+		desktopCtl.Shutdown()
 		shellState.Shutdown()
 		shellState.CloseAllSessions()
 		sessions.CloseAll()
@@ -267,12 +310,31 @@ func run(afterReady func(hostWindow)) error {
 	})
 
 	mygo.App.WhenReady(func() {
+		desktopService.RefreshAutoStart()
 		mygo.App.SetMenu(BuildMenu(registry, mygo.App.Locale()))
 		// Start is asynchronous, so launch never waits on a network handshake.
 		forwardingManager.AutoStart(context.Background())
 
 		mainWindow = windows.OpenMain()
 		ready = true
+		// The tray appears before launch targets so any deep link or
+		// command-line Host opens into a running shell.
+		desktopCtl.MarkReady()
+		if err := desktopService.Apply(desktopCtl.ToggleMain); err != nil {
+			// Another application may own the accelerator. The failure is
+			// reported in Settings; the app keeps working.
+			desktopState.RefreshProblem()
+		}
+		forwardingManager.Subscribe(desktopCtl.NoteForwarding)
+		desktopCtl.HandleLaunchArgs(os.Args[1:])
+
+		// A login launch starts quietly in the tray, as the original did,
+		// but only when there is a tray icon to reopen the window from.
+		if mygo.App.WasOpenedAtLogin() && desktopService.Settings().ShowTrayIcon &&
+			desktopService.Capabilities().Tray && mainWindow.IsVisible() {
+			mainWindow.Hide()
+		}
+
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
 		// that input) is the observable activity.
@@ -280,6 +342,7 @@ func run(afterReady func(hostWindow)) error {
 			gate.RecordActivity()
 			shellState.NoteSessionActivity(snapshot.ID)
 			windows.InvalidateAll()
+			desktopCtl.NoteSession(snapshot)
 		})
 
 		// Tabs, splits, and working directories come back; their Sessions open
@@ -289,6 +352,7 @@ func run(afterReady func(hostWindow)) error {
 		mygo.App.OnLocaleChanged(func(tag string) {
 			windows.ApplyLocale()
 			mygo.App.SetMenu(BuildMenu(registry, tag))
+			desktopCtl.SyncNow()
 		})
 
 		// A second launch that handed over before readiness still gets its
@@ -302,6 +366,18 @@ func run(afterReady func(hostWindow)) error {
 			afterReady(mainWindow)
 		}
 	})
+
+	// A deep link opens through the same window and shell as a Host click.
+	// Register before Run so the URL the app was started with is delivered.
+	mygo.App.OnOpenURL(func(raw string) {
+		if desktopCtl != nil {
+			desktopCtl.HandleDeepLink(raw)
+		}
+	})
+	// Runtime registration covers Windows/Linux installs; macOS uses
+	// urlSchemes in mygo.json. A development build may not be allowed to
+	// register, which must not stop the app.
+	_ = mygo.App.RegisterURLScheme("ssh")
 
 	return mygo.App.Run()
 }

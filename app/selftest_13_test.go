@@ -58,7 +58,7 @@ func TestTicket13CheckRunsThroughTheKeyboard(t *testing.T) {
 	t.Cleanup(func() { selftestResultDir = savedDir })
 
 	graph := newWindowGraph(t, unlockedGate(t))
-	installSelftest(graph.manager, graph.state, func() {
+	installSelftest(graph.manager, graph.state, nil, func([]string, string) {
 		graph.manager.SecondInstance()
 	})
 	t.Cleanup(func() { activeSelftest = nil })

@@ -188,11 +188,35 @@
   "connectionErrorInternal": "The connection could not be opened.",
   "connectionErrorX11": "X11 forwarding could not be started. Make sure the Host allows X11 forwarding and xauth is installed.",
   "connectionX11DisplayUnavailable": "X11 forwarding could not reach the local display at {target}. Start an X server or check the DISPLAY setting.",
-  "@connectionX11DisplayUnavailable": {"description": "A non-fatal X11 forwarding notice: the local X server could not be reached.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11DisplayUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: the local X server could not be reached.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11ChannelFailed": "X11 forwarding could not open a channel for the local display at {target}.",
-  "@connectionX11ChannelFailed": {"description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11ChannelFailed": {
+    "description": "A non-fatal X11 forwarding notice: an X11 channel could not be opened.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "connectionX11CookieUnavailable": "X11 forwarding could not read a local xauth cookie for {target}. Run xauth add for the display, or configure it to allow local connections.",
-  "@connectionX11CookieUnavailable": {"description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.", "placeholders": {"target": {"type": "String", "example": "localhost:6000"}}},
+  "@connectionX11CookieUnavailable": {
+    "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "localhost:6000"
+      }
+    }
+  },
   "hostKeyPromptUnknownTitle": "Unknown host key",
   "hostKeyPromptChangedTitle": "Host key has changed",
   "hostKeyPromptUnknownBody": "The host {host} is not trusted yet. Verify its fingerprint before connecting.",
@@ -243,7 +267,15 @@
   "hostKeyPromptTrust": "Trust and connect",
   "hostKeyPromptReject": "Reject",
   "vaultKeyListTitle": "SSH Keys ({count})",
-  "@vaultKeyListTitle": {"description": "The Vault's SSH Key section heading and its Key count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultKeyListTitle": {
+    "description": "The Vault's SSH Key section heading and its Key count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultKeyNew": "New SSH Key",
   "vaultKeyEmpty": "No SSH Keys yet.",
   "vaultKeyFormCreateTitle": "New SSH Key",
@@ -264,18 +296,50 @@
   "vaultKeyPassphraseStored": "Passphrase stored",
   "vaultKeyCertificateStored": "Certificate",
   "vaultDeleteConfirm": "Delete “{label}”? This cannot be undone.",
-  "@vaultDeleteConfirm": {"description": "The delete confirmation naming the Key or Identity about to be removed.", "placeholders": {"label": {"type": "String", "example": "work-key"}}},
+  "@vaultDeleteConfirm": {
+    "description": "The delete confirmation naming the Key or Identity about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "work-key"
+      }
+    }
+  },
   "vaultDeleteConfirmUnknown": "Delete this item? This cannot be undone.",
   "vaultNone": "None",
   "vaultAuthSummaryAgent": "SSH agent",
   "vaultAuthSummaryPassword": "Password",
   "vaultAuthSummaryKeyboard": "Keyboard-interactive",
   "vaultAuthSummaryKey": "SSH Key “{label}”",
-  "@vaultAuthSummaryKey": {"description": "The authentication method summary naming the SSH Key a Host will use.", "placeholders": {"label": {"type": "String", "example": "work-key"}}},
+  "@vaultAuthSummaryKey": {
+    "description": "The authentication method summary naming the SSH Key a Host will use.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "work-key"
+      }
+    }
+  },
   "vaultAuthSummaryCertificate": "Certificate “{label}”",
-  "@vaultAuthSummaryCertificate": {"description": "The authentication method summary naming the certificate a Host will use.", "placeholders": {"label": {"type": "String", "example": "work-key"}}},
+  "@vaultAuthSummaryCertificate": {
+    "description": "The authentication method summary naming the certificate a Host will use.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "work-key"
+      }
+    }
+  },
   "vaultIdentityListTitle": "Identities ({count})",
-  "@vaultIdentityListTitle": {"description": "The Vault's Identity section heading and its Identity count.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@vaultIdentityListTitle": {
+    "description": "The Vault's Identity section heading and its Identity count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "vaultIdentityNew": "New Identity",
   "vaultIdentityEmpty": "No Identities yet.",
   "vaultIdentityFormCreateTitle": "New Identity",
@@ -314,18 +378,66 @@
   "vaultProblemProxy": "Check the jump chain and proxy settings.",
   "vaultProblemAlgorithms": "Check the SSH algorithm selection.",
   "authPromptPassphraseTitle": "Unlock {username}@{hostname}",
-  "@authPromptPassphraseTitle": {"description": "The passphrase prompt title for an SSH Key used by a connection.", "placeholders": {"username": {"type": "String", "example": "root"}, "hostname": {"type": "String", "example": "example.com"}}},
+  "@authPromptPassphraseTitle": {
+    "description": "The passphrase prompt title for an SSH Key used by a connection.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "root"
+      },
+      "hostname": {
+        "type": "String",
+        "example": "example.com"
+      }
+    }
+  },
   "authPromptPassphraseBody": "Enter the passphrase for SSH Key “{key}”.",
-  "@authPromptPassphraseBody": {"description": "The passphrase prompt body naming the SSH Key.", "placeholders": {"key": {"type": "String", "example": "work-key"}}},
+  "@authPromptPassphraseBody": {
+    "description": "The passphrase prompt body naming the SSH Key.",
+    "placeholders": {
+      "key": {
+        "type": "String",
+        "example": "work-key"
+      }
+    }
+  },
   "authPromptPassphraseInvalid": "That passphrase did not unlock “{key}”. Try again.",
-  "@authPromptPassphraseInvalid": {"description": "The passphrase prompt after a rejected passphrase, naming the SSH Key.", "placeholders": {"key": {"type": "String", "example": "work-key"}}},
+  "@authPromptPassphraseInvalid": {
+    "description": "The passphrase prompt after a rejected passphrase, naming the SSH Key.",
+    "placeholders": {
+      "key": {
+        "type": "String",
+        "example": "work-key"
+      }
+    }
+  },
   "authPromptPassphraseLabel": "Passphrase",
   "authPromptKeyboardTitle": "Sign in as {username}@{hostname}",
-  "@authPromptKeyboardTitle": {"description": "The keyboard-interactive prompt title for a connection.", "placeholders": {"username": {"type": "String", "example": "root"}, "hostname": {"type": "String", "example": "example.com"}}},
+  "@authPromptKeyboardTitle": {
+    "description": "The keyboard-interactive prompt title for a connection.",
+    "placeholders": {
+      "username": {
+        "type": "String",
+        "example": "root"
+      },
+      "hostname": {
+        "type": "String",
+        "example": "example.com"
+      }
+    }
+  },
   "authPromptContinue": "Continue",
   "authPromptCancel": "Cancel",
   "vaultForwardingTitle": "Port Forwarding ({count})",
-  "@vaultForwardingTitle": {"description": "The Vault Port Forwarding Rule list heading and rule count.", "placeholders": {"count": {"type": "int", "example": "3"}}},
+  "@vaultForwardingTitle": {
+    "description": "The Vault Port Forwarding Rule list heading and rule count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "vaultForwardingNew": "New Rule",
   "vaultForwardingEmpty": "No Port Forwarding Rules yet.",
   "vaultForwardingFormCreateTitle": "New Port Forwarding Rule",
@@ -344,11 +456,17 @@
   "vaultForwardingAutoStart": "Start when Natcatty launches",
   "vaultForwardingAutoReconnect": "Reconnect automatically",
   "vaultForwardingAutoReconnectFollow": "Follow auto-start",
-  "@vaultForwardingAutoReconnectFollow": {"description": "Reconnect whenever auto-start is enabled."},
+  "@vaultForwardingAutoReconnectFollow": {
+    "description": "Reconnect whenever auto-start is enabled."
+  },
   "vaultForwardingAutoReconnectOn": "Always reconnect",
-  "@vaultForwardingAutoReconnectOn": {"description": "Reconnect regardless of auto-start."},
+  "@vaultForwardingAutoReconnectOn": {
+    "description": "Reconnect regardless of auto-start."
+  },
   "vaultForwardingAutoReconnectOff": "Never reconnect",
-  "@vaultForwardingAutoReconnectOff": {"description": "Never reconnect automatically."},
+  "@vaultForwardingAutoReconnectOff": {
+    "description": "Never reconnect automatically."
+  },
   "vaultForwardingEnabled": "Enabled",
   "vaultForwardingStart": "Start",
   "vaultForwardingStop": "Stop",
@@ -369,9 +487,33 @@
   "vaultForwardingErrorUnforward": "The remote listener could not be released.",
   "vaultForwardingErrorInternal": "The Port Forwarding Rule failed.",
   "vaultForwardingHop": "Hop {index}/{total}: {label}",
-  "@vaultForwardingHop": {"description": "The failing jump-chain endpoint for a forwarding error.", "placeholders": {"index": {"type": "int", "example": "2"}, "total": {"type": "int", "example": "3"}, "label": {"type": "String", "example": "bastion"}}},
+  "@vaultForwardingHop": {
+    "description": "The failing jump-chain endpoint for a forwarding error.",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      },
+      "label": {
+        "type": "String",
+        "example": "bastion"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirm": "Delete Port Forwarding Rule “{label}”? This cannot be undone.",
-  "@vaultForwardingDeleteConfirm": {"description": "The delete confirmation naming the Port Forwarding Rule about to be removed.", "placeholders": {"label": {"type": "String", "example": "web"}}},
+  "@vaultForwardingDeleteConfirm": {
+    "description": "The delete confirmation naming the Port Forwarding Rule about to be removed.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web"
+      }
+    }
+  },
   "vaultForwardingDeleteConfirmUnknown": "Delete this Port Forwarding Rule? This cannot be undone.",
   "vaultForwardingProblemLabelRequired": "A Port Forwarding Rule needs a label.",
   "vaultForwardingProblemLabelInvalid": "The label is invalid.",
@@ -393,9 +535,23 @@
   "tabDetach": "Detach Tab",
   "tabCopyToNewWindow": "Copy Tab to New Window",
   "tabCopyTitle": "{title} (copy {count})",
-  "@tabCopyTitle": {"description": "The title of a duplicated Tab, counting its copy generation.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
+  "@tabCopyTitle": {
+    "description": "The title of a duplicated Tab, counting its copy generation.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "web"
+      },
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "tabDirtyMarker": "●",
-  "@tabDirtyMarker": {"description": "The activity marker shown beside a Tab that has unseen output."},
+  "@tabDirtyMarker": {
+    "description": "The activity marker shown beside a Tab that has unseen output."
+  },
   "paneConnecting": "Connecting…",
   "paneOpenFailed": "Could not open this Session.",
   "paneHostMissing": "The Host for this Session no longer exists.",
@@ -408,22 +564,125 @@
   "paneFocusUp": "Focus Up",
   "paneFocusDown": "Focus Down",
   "tabMenuGlyph": "⋯",
-  "@tabMenuGlyph": {"description": "The button that opens a Tab's action menu."},
+  "@tabMenuGlyph": {
+    "description": "The button that opens a Tab's action menu."
+  },
   "paneMenuGlyph": "⋮",
-  "@paneMenuGlyph": {"description": "The button that opens a Pane's action menu."},
+  "@paneMenuGlyph": {
+    "description": "The button that opens a Pane's action menu."
+  },
   "paneDragHandle": "::",
-  "@paneDragHandle": {"description": "The handle that drags a Pane."},
+  "@paneDragHandle": {
+    "description": "The handle that drags a Pane."
+  },
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "The button that closes a Tab or Pane."},
+  "@closeGlyph": {
+    "description": "The button that closes a Tab or Pane."
+  },
   "detachedMoveToMain": "Move to Main Window",
   "detachedCloseWindow": "Close Window",
   "closeWindowTitle": "Close Window?",
   "closeWindowMessage": "{count, plural, one {# active Session will end if this window closes.} other {# active Sessions will end if this window closes.}}",
-  "@closeWindowMessage": {"description": "The close-window intent prompt naming how many Sessions end.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "@closeWindowMessage": {
+    "description": "The close-window intent prompt naming how many Sessions end.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "closeWindowCancel": "Cancel",
   "closeWindowConfirm": "Close Window",
   "quitConfirmTitle": "Quit Natcatty?",
   "quitConfirmMessage": "{count, plural, one {# active Session will end if Natcatty quits.} other {# active Sessions will end if Natcatty quits.}}",
-  "@quitConfirmMessage": {"description": "The quit intent prompt naming how many Sessions end.", "placeholders": {"count": {"type": "int", "example": "2"}}},
-  "quitConfirmConfirm": "Quit"
+  "@quitConfirmMessage": {
+    "description": "The quit intent prompt naming how many Sessions end.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "quitConfirmConfirm": "Quit",
+  "settingsTrayTitle": "System Tray",
+  "settingsTrayDescription": "Keep Natcatty in the notification area.",
+  "settingsShowTrayIcon": "Show tray icon",
+  "settingsCloseToTray": "Close to tray",
+  "settingsTrayUnsupported": "The system tray is not available on this system.",
+  "settingsHotkeyTitle": "Global Hotkey",
+  "settingsHotkeyDescription": "Show, focus, or hide Natcatty from anywhere.",
+  "settingsHotkeyEnabled": "Enable global hotkey",
+  "settingsHotkeyAccelerator": "Toggle window shortcut",
+  "settingsHotkeyApply": "Apply",
+  "settingsHotkeyReset": "Reset",
+  "settingsHotkeyProblem": "That shortcut is unavailable. Enter another one or reset it.",
+  "settingsHotkeyUnsupported": "Global shortcuts are not available on this system.",
+  "settingsAutostartTitle": "Launch at Login",
+  "settingsAutostartDescription": "Start Natcatty when you sign in.",
+  "settingsAutostartEnabled": "Launch Natcatty at login",
+  "settingsAutostartUnsupported": "Launch at login is not available in this build.",
+  "settingsDeepLinksTitle": "Deep Links",
+  "settingsDeepLinksDescription": "Open ssh:// links in Natcatty.",
+  "settingsSSHDeepLinks": "Handle ssh:// links and Host command-line arguments",
+  "settingsNotificationsTitle": "Notifications",
+  "settingsNotificationsDescription": "Choose which events show a desktop notification.",
+  "settingsNotifySessionEnded": "Session ended",
+  "settingsNotifyConnectionFailed": "Connection failed",
+  "settingsNotifyForwardingFailed": "Port forwarding failed",
+  "settingsNotificationsUnsupported": "Desktop notifications are not available on this system.",
+  "settingsDesktopSaveFailed": "The setting could not be saved.",
+  "settingsDesktopUpdateFailed": "The setting could not be applied.",
+  "trayOpenMain": "Open Main Window",
+  "traySessions": "Sessions",
+  "trayNoSessions": "No active Sessions",
+  "trayForwarding": "Port Forwarding",
+  "trayNoForwarding": "No Port Forwarding Rules",
+  "trayRecentHosts": "Recent Hosts",
+  "trayNoHosts": "No saved Hosts",
+  "trayQuit": "Quit",
+  "trayStatusConnected": "Connected",
+  "trayStatusConnecting": "Connecting",
+  "trayStatusDisconnected": "Disconnected",
+  "trayStatusActive": "Active",
+  "trayStatusInactive": "Inactive",
+  "trayStatusError": "Error",
+  "trayRuleUnnamed": "Untitled rule",
+  "notificationSessionEndedTitle": "Session ended",
+  "notificationSessionEndedBody": "{target} has ended.",
+  "@notificationSessionEndedBody": {
+    "description": "The ending Session's label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationConnectionFailedTitle": "Connection failed",
+  "notificationConnectionFailedBody": "The connection to {target} was lost.",
+  "@notificationConnectionFailedBody": {
+    "description": "The Host or Session label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationForwardingFailedTitle": "Port forwarding failed",
+  "notificationForwardingFailedBody": "The Port Forwarding Rule {target} stopped.",
+  "@notificationForwardingFailedBody": {
+    "description": "The Port Forwarding Rule label is inserted.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "box-1"
+      }
+    }
+  },
+  "notificationUnknownTarget": "a Host",
+  "deepLinkProblemInvalid": "Natcatty could not open that link.",
+  "deepLinkProblemUnsupported": "Natcatty does not support that link or Host yet."
 }

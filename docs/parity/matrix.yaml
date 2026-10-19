@@ -877,6 +877,112 @@
   status: verified
   notes: "EADDRINUSE, EACCES, EADDRNOTAVAIL, and a denied remote tcpip-forward are permanent failures. Authentication and host-key failures are permanent too; a network or timeout failure is retried."
 
+# --- Ticket 14: tray, deep links, notifications, hotkey, autostart ---
+
+- id: desktop.tray
+  area: desktop
+  feature: System tray lists Sessions, active Port Forwarding Rules, and recent Hosts
+  original_paths:
+    - electron/bridges/globalShortcutBridge.cjs
+    - components/TrayPanel.tsx
+    - electron/main.cjs
+  module: app
+  tickets: [14]
+  acceptance_tests:
+    - app.TestTrayMenuContainsSectionsAndRaisesMain
+    - app.TestTrayMenuShowsPinnedRecentHosts
+    - app.TestTrayMenuOrdersPinnedThenRecentlyUpdatedHosts
+    - ui/tray.TestTabTextLocalizesFallbacksAndStatus
+    - ui/tray.TestRuleTextMarksDirectionAndStatus
+    - ui/shell/state.TestTabSummariesFollowTabsAndDetachedOrder
+  status: verified
+  notes: "The menu is rebuilt from the shell, forwarding runtime snapshot, and Vault on every coalesced change. Tray rows select a Tab or toggle a rule and raise the main window; labels use the same L/R/D markers and status words as the original. Recent Hosts are pinned first, then newest UpdatedAt; the domain Host has no lastConnectedAt, so an edited Host can outrank a recently connected one."
+
+- id: desktop.close-to-tray
+  area: desktop
+  feature: Closing the main window hides it to the tray instead of ending Sessions
+  original_paths:
+    - electron/bridges/windowManager.cjs
+  module: app
+  tickets: [14]
+  acceptance_tests:
+    - app.TestCloseToTrayHidesTheMainWindowWithoutPrompting
+    - app.TestCloseToTrayNeedsATray
+  status: verified
+  notes: "The policy is read live from settings and requires a live tray icon. Quit intent still uses the close/exit prompt, and a build without a tray falls back to the normal close path."
+
+- id: desktop.deep-links
+  area: desktop
+  feature: ssh links and command-line Host arguments open or focus the right target
+  original_paths:
+    - electron/deepLink.cjs
+    - domain/sshDeepLink.ts
+    - electron/main.cjs
+  module: application/desktop
+  tickets: [14]
+  acceptance_tests:
+    - application/desktop.TestParseDeepLink
+    - application/desktop.TestParseCommandLine
+    - application/desktop.TestMatchHostRequiresExactlyOneEffectiveMatch
+    - app.TestDeepLinkAndCommandLineOpenTargetsOnce
+    - app.TestSingleInstancePrimaryRegistersTheSecondLaunchCallback
+  status: verified
+  notes: "ssh:// is registered in mygo.json and at runtime. Hostname, port, and optional username must match exactly one saved SSH Host; otherwise an unsaved Host opens. Percent-decoded URL passwords are parsed but never stored. A second instance hands its command line over; scheme URLs are handled only by OnOpenURL, so they open once. Command lines accept user@host, host:port, -l/-p/-P, PuTTY switches (-ssh, -pw, -L, ...), and SecureCRT switches (/SSH2 /L /P /PASSWORD); every known value operand is consumed so it cannot become a Host. telnet:// and URLs while the setting is off are rejected."
+
+- id: desktop.notifications
+  area: desktop
+  feature: Desktop notifications for Session end, connection failure, and forwarding failure
+  original_paths:
+    - electron/bridges/systemNotification.cjs
+  module: application/desktop
+  tickets: [14]
+  acceptance_tests:
+    - application/desktop.TestServiceNotificationsRespectTogglesAndSupport
+    - app.TestSessionAndForwardingNotificationsFireOnTransitions
+  status: verified
+  notes: "Each event is a typed request localized in the UI layer. Notifications fire on the first transition only, so a repeated exit or a retry loop does not spam. Clicking a notification raises the main window."
+
+- id: desktop.global-hotkey
+  area: desktop
+  feature: Configurable global toggle hotkey with graceful registration failure
+  original_paths:
+    - electron/bridges/globalShortcutBridge.cjs
+  module: application/desktop
+  tickets: [14]
+  acceptance_tests:
+    - application/desktop.TestServiceHotkeyRegistrationAndRollback
+    - application/desktop.TestDefaultsPreserveOriginalValues
+    - app.TestGlobalHotkeyRegistrationDrivesTheToggle
+  status: verified
+  notes: "The default stays the original Ctrl + ` (⌃ + ` on macOS); MyGo's Windows backend maps the backtick to VK_OEM_3, so it registers. A failed change keeps the previous shortcut registered, and Settings explains the failure."
+
+- id: desktop.autostart
+  area: desktop
+  feature: Launch at login with OS-authoritative state and rollback
+  original_paths:
+    - electron/autoLaunch.cjs
+  module: application/desktop
+  tickets: [14]
+  acceptance_tests:
+    - application/desktop.TestServiceAutoStartRollsBackOnFailure
+    - application/desktop.TestServiceLoadUsesOSAutoStartState
+  status: verified
+  notes: "Offered on Windows and macOS only, matching the original: Linux packages ship without a first-party autostart hook. On a refused change the cached value is re-read from the OS and persisted. A login launch starts hidden only when a tray icon can restore the window."
+
+- id: desktop.settings-ui
+  area: settings
+  feature: Settings for notifications, hotkey, autostart, tray, and deep links
+  original_paths:
+    - components/settings/tabs/SettingsSystemTab.tsx
+  module: ui/settings
+  tickets: [14]
+  acceptance_tests:
+    - ui/settings.TestDesktopStateAppliesSettingsAndUsesErrors
+    - ui/settings.TestDesktopSettingsFitAtDefaultAndMinimumSizes
+    - ui/settings.TestDesktopSettingsShowUnsupportedCapabilities
+  status: verified
+  notes: "The Settings window now defaults to 1100x720 with a 720x480 minimum and scrolls, so every section fits and no label is clipped. Unsupported integrations are explained instead of hidden."
+
 # --- Ticket 11: X11 forwarding ---
 
 - id: x11.host-setting
