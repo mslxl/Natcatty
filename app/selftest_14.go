@@ -63,10 +63,30 @@ func (t *selftest14) check() selftest.Check {
 	}
 }
 
+// resetRunState clears the controller state this check owns, so pressing
+// F11,1,4 again in the same process starts from the same conditions as the
+// first run. Without it, a forwarding failure observed by run one stays
+// "already notified" and run two never emits it again.
+func (t *selftest14) resetRunState() {
+	if t.desktop == nil {
+		return
+	}
+	t.desktop.mu.Lock()
+	t.desktop.sessions = make(map[model.SessionID]observedSession)
+	t.desktop.forwardingFailure = make(map[model.ForwardingRuleID]bool)
+	t.desktop.lastProblem = ""
+	t.desktop.syncs = 0
+	t.desktop.toggles = 0
+	t.desktop.quits = 0
+	t.desktop.mu.Unlock()
+	t.desktop.syncPending.Store(false)
+}
+
 func (t *selftest14) trayStep(c *ui.Context) selftest.Outcome {
 	if t.desktop == nil || t.desktop.windows == nil {
 		return selftest.Failed(errors.New("the desktop controller is not wired"))
 	}
+	t.resetRunState()
 	t.backend = &selftest14TrayBackend{}
 	t.desktop.backends = t.backend
 	t.desktop.tray = nil

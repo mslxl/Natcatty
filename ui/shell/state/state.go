@@ -120,6 +120,10 @@ type State struct {
 	// Flush transfers them to the activity markers on the UI thread.
 	activity []model.SessionID
 	problem  appconnection.Kind
+
+	// desktopNotice is a non-blocking message for a deep-link or command-line
+	// target the app could not open. It is set and read on the UI thread.
+	desktopNotice DesktopNotice
 }
 
 // Option customizes a State.
@@ -217,6 +221,24 @@ func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
 // Problem returns the last connection failure, or "" when the last attempt
 // succeeded or none has run.
 func (s *State) Problem() appconnection.Kind { return s.problem }
+
+// DesktopNotice identifies a deep-link or command-line target failure the
+// shell shows as a non-blocking banner. It holds a code, not user-visible
+// text: the view localizes it.
+type DesktopNotice string
+
+const (
+	DesktopNoticeNone              DesktopNotice = ""
+	DesktopNoticeInvalidTarget     DesktopNotice = "invalid_target"
+	DesktopNoticeUnsupportedTarget DesktopNotice = "unsupported_target"
+)
+
+// SetDesktopNotice records the banner code. Passing DesktopNoticeNone clears
+// it, which a successful target open does.
+func (s *State) SetDesktopNotice(notice DesktopNotice) { s.desktopNotice = notice }
+
+// DesktopNotice returns the current banner code.
+func (s *State) DesktopNotice() DesktopNotice { return s.desktopNotice }
 
 // PendingConnections returns the labels of Hosts whose initial dial has not
 // finished. The view renders them as the "connecting" indicator.

@@ -91,6 +91,11 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 				c.Invalidate()
 			}
 		})
+		// The registration failure belongs next to the control that caused
+		// it, not at the bottom of the scroll area.
+		if state.Problem() == DesktopProblemHotkey {
+			ui.Text(c, m.SettingsHotkeyProblem()).TextColor(t.Danger)
+		}
 	})
 }
 
@@ -235,10 +240,6 @@ func appLockProblem(c *ui.Context, lock *AppLockState, t *ui.Theme) {
 func desktopProblem(c *ui.Context, state *DesktopState, m locales.Messages, t *ui.Theme) {
 	var message string
 	switch state.Problem() {
-	case DesktopProblemHotkey:
-		message = m.SettingsHotkeyProblem()
-	case DesktopProblemUnsupported:
-		message = m.SettingsHotkeyUnsupported()
 	case DesktopProblemSave:
 		message = m.SettingsDesktopSaveFailed()
 	case DesktopProblemApply:

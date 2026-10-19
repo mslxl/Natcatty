@@ -209,6 +209,52 @@ func TestDesktopSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 	}
 }
 
+func TestHotkeyProblemRendersBesideItsControlsAndClearsOnReset(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+		fake := newFakeDesktop()
+		fake.hotkeyErr = desktop.ErrHotkey
+		state := NewDesktopState(fake)
+		if state.Problem() != DesktopProblemHotkey {
+			t.Fatalf("startup problem = %q", state.Problem())
+		}
+		tester := ui.NewTester(ViewWithDesktop(NewAppLockState(&fakeAppLock{}), state), size[0], size[1])
+		tester.SetLocale("en")
+		tester.Frame()
+
+		problem, ok := tester.Find(m.SettingsHotkeyProblem())
+		if !ok {
+			t.Fatalf("%dx%d does not show the hotkey problem: %v", size[0], size[1], tester.Texts())
+		}
+		apply, ok := tester.Find(m.SettingsHotkeyApply())
+		if !ok {
+			t.Fatalf("%dx%d does not show Apply", size[0], size[1])
+		}
+		tray, ok := tester.Find(m.SettingsTrayTitle())
+		if !ok {
+			t.Fatalf("%dx%d does not lay out the tray section", size[0], size[1])
+		}
+		if problem.Y <= apply.Y || problem.Y >= tray.Y {
+			t.Fatalf("%dx%d problem is not inside the hotkey section: problem=%+v apply=%+v tray=%+v",
+				size[0], size[1], problem, apply, tray)
+		}
+		if problem.X < 0 || problem.X+problem.W > float32(size[0]) {
+			t.Fatalf("%dx%d clips the hotkey problem: %+v", size[0], size[1], problem)
+		}
+
+		if err := tester.Click(m.SettingsHotkeyReset()); err != nil {
+			t.Fatal(err)
+		}
+		tester.Frame()
+		if state.Problem() != DesktopProblemNone {
+			t.Fatalf("reset did not clear the problem: %q", state.Problem())
+		}
+		if tester.HasText(m.SettingsHotkeyProblem()) {
+			t.Fatalf("the hotkey problem survived Reset: %v", tester.Texts())
+		}
+	}
+}
+
 func TestDesktopSettingsShowUnsupportedCapabilities(t *testing.T) {
 	fake := newFakeDesktop()
 	fake.caps = desktop.Capabilities{}

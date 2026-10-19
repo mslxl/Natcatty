@@ -15,12 +15,11 @@ import (
 	"github.com/mslxl/natcatty/ui/selftest"
 )
 
-// TestTicket14CheckRunsThroughTheKeyboard drives F11,1,4 from the initial
-// Vault view through the production App Lock gate and the real desktop
-// controller. Native ports that need an interactive desktop are faked at
-// their seams; the tray, deep-link routing, notifications, hotkey, and
-// autostart logic is the production code.
-func TestTicket14CheckRunsThroughTheKeyboard(t *testing.T) {
+// newTicket14Tester builds the production window graph, desktop controller,
+// and keyboard harness. Native ports that need an interactive desktop are
+// faked at their seams.
+func newTicket14Tester(t *testing.T) (*ui.Tester, string) {
+	t.Helper()
 	dir := t.TempDir()
 	savedDir := selftestResultDir
 	selftestResultDir = dir
@@ -50,13 +49,16 @@ func TestTicket14CheckRunsThroughTheKeyboard(t *testing.T) {
 	tester := ui.NewTester(window.spec.Content, 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
-	if !tester.HasText("Vault") {
-		t.Fatalf("the main window does not start on the Vault view: %v", tester.Texts())
-	}
-	tester.Key(0, ui.KeyF11)
-	tester.Frame()
-	if !tester.HasText("Self-test") {
-		t.Fatalf("F11 did not open the overlay: %v", tester.Texts())
+	return tester, dir
+}
+
+// runTicket14 presses 1 and 4, advances the harness to completion, and
+// asserts a passing seven-step result. openMenu presses F11 first.
+func runTicket14(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result {
+	t.Helper()
+	if openMenu {
+		tester.Key(0, ui.KeyF11)
+		tester.Frame()
 	}
 	tester.Key(0, ui.Key1)
 	tester.Frame()
@@ -77,6 +79,24 @@ func TestTicket14CheckRunsThroughTheKeyboard(t *testing.T) {
 	if len(result.Steps) != 7 {
 		t.Fatalf("steps = %d, want 7: %+v", len(result.Steps), result.Steps)
 	}
+	return result
+}
+
+// TestTicket14CheckRunsThroughTheKeyboard drives F11,1,4 from the initial
+// Vault view through the production App Lock gate and the real desktop
+// controller.
+func TestTicket14CheckRunsThroughTheKeyboard(t *testing.T) {
+	tester, dir := newTicket14Tester(t)
+	if !tester.HasText("Vault") {
+		t.Fatalf("the main window does not start on the Vault view: %v", tester.Texts())
+	}
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	if !tester.HasText("Self-test") {
+		t.Fatalf("F11 did not open the overlay: %v", tester.Texts())
+	}
+	result := runTicket14(t, tester, false)
+
 	seams := map[string]bool{}
 	for _, step := range result.Steps {
 		if step.Seam != "" {
@@ -94,5 +114,41 @@ func TestTicket14CheckRunsThroughTheKeyboard(t *testing.T) {
 	}
 	if !tester.HasText("PASS  14") {
 		t.Fatalf("the overlay does not show PASS: %v", tester.Texts())
+	}
+}
+
+// TestTicket14CheckPassesTwiceInOneProcess is the repeat-run regression: the
+// second F11,1,4 must reset the controller's observation maps, especially the
+// forwarding-failure marker, or notification-transition stops reporting.
+func TestTicket14CheckPassesTwiceInOneProcess(t *testing.T) {
+	tester, dir := newTicket14Tester(t)
+	first := runTicket14(t, tester, true)
+	if !first.Pass {
+		t.Fatalf("first run failed: %+v", first)
+	}
+
+	// Match the real shortcut: F11 closes the finished overlay, F11 opens the
+	// menu again, then 1 and 4 run the check a second time.
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	second := runTicket14(t, tester, false)
+
+	var notification selftest.StepResult
+	for _, step := range second.Steps {
+		if step.Name == "notification-transition" {
+			notification = step
+			break
+		}
+	}
+	if !notification.Pass {
+		t.Fatalf("second-run notification-transition failed: %+v", notification)
+	}
+	if !tester.HasText("PASS  14") {
+		t.Fatalf("the overlay does not show PASS after the second run: %v", tester.Texts())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "natcatty-selftest-14.json")); err != nil {
+		t.Fatalf("result file: %v", err)
 	}
 }

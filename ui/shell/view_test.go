@@ -183,6 +183,27 @@ func TestShellShowsVaultAndSettingsNavigation(t *testing.T) {
 	}
 }
 
+func TestShellShowsDesktopTargetNotice(t *testing.T) {
+	shellState := state.NewState()
+	shellState.SetDesktopNotice(state.DesktopNoticeUnsupportedTarget)
+	tt := ui.NewTester(View(shellState), 900, 600)
+	if !tt.HasText(locales.In("en").DeepLinkProblemUnsupported()) {
+		t.Fatalf("the shell does not show the unsupported-target notice: %v", tt.Texts())
+	}
+
+	shellState.SetDesktopNotice(state.DesktopNoticeInvalidTarget)
+	tt.Frame()
+	if !tt.HasText(locales.In("en").DeepLinkProblemInvalid()) {
+		t.Fatalf("the shell does not show the invalid-target notice: %v", tt.Texts())
+	}
+
+	shellState.SetDesktopNotice(state.DesktopNoticeNone)
+	tt.Frame()
+	if tt.HasText(locales.In("en").DeepLinkProblemInvalid()) {
+		t.Fatalf("the notice did not clear: %v", tt.Texts())
+	}
+}
+
 func TestShellSettingsNavigationRequestsTheSettingsWindow(t *testing.T) {
 	var requests int
 	shellState := state.NewState(state.WithSettingsRequest(func() { requests++ }))

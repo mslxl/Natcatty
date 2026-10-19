@@ -198,7 +198,7 @@ func (c *desktopController) HandleDeepLink(raw string) {
 		}
 		target, err := appdesktop.ParseDeepLink(raw)
 		if err != nil {
-			c.setProblem(err.Error())
+			c.reportTargetProblem(err)
 			return
 		}
 		c.openTarget(target)
@@ -211,21 +211,33 @@ func (c *desktopController) HandleDeepLink(raw string) {
 // stay in the list so an unsupported target is reported instead of ignored.
 func (c *desktopController) HandleLaunchArgs(args []string) {
 	filtered := make([]string, 0, len(args))
+	var invalid []error
 	for _, arg := range args {
 		if !isSSHSchemeURL(arg) {
 			filtered = append(filtered, arg)
+			continue
+		}
+		// OnOpenURL opens a valid scheme URL; validate it here only so a
+		// malformed one is reported instead of silently dropped.
+		if _, err := appdesktop.ParseDeepLink(arg); err != nil {
+			invalid = append(invalid, err)
 		}
 	}
-	if len(filtered) == 0 {
+	if len(filtered) == 0 && len(invalid) == 0 {
 		return
 	}
 	c.runOrQueue(func() {
 		targets, problems := appdesktop.ParseCommandLine(filtered)
-		if len(problems) > 0 {
-			c.setProblem(problems[0].Error())
-		}
 		for _, target := range targets {
 			c.openTarget(target)
+		}
+		// Report problems after the valid targets so a successful open does
+		// not immediately clear the banner.
+		if len(problems) > 0 {
+			c.reportTargetProblem(problems[0])
+		}
+		if len(invalid) > 0 {
+			c.reportTargetProblem(invalid[0])
 		}
 	})
 }
@@ -238,16 +250,36 @@ func isSSHSchemeURL(arg string) bool {
 
 func (c *desktopController) openTarget(target appdesktop.Target) {
 	if target.Kind != appdesktop.TargetSSH {
-		c.setProblem("unsupported-target")
+		c.reportTargetProblem(appdesktop.ErrUnsupportedScheme)
 		return
 	}
 	c.ShowMain()
 	if c.opener == nil {
+		c.setProblem("no-target-opener")
 		return
 	}
 	if err := c.opener.Open(target); err != nil {
-		c.setProblem(err.Error())
+		c.reportTargetProblem(err)
+		return
 	}
+	if c.shell != nil {
+		c.shell.SetDesktopNotice(state.DesktopNoticeNone)
+	}
+}
+
+// reportTargetProblem records the failure for diagnostics and shows a
+// localized, non-blocking shell banner. The app keeps running; a later
+// successful target clears the banner.
+func (c *desktopController) reportTargetProblem(err error) {
+	c.setProblem(err.Error())
+	if c.shell != nil {
+		notice := state.DesktopNoticeInvalidTarget
+		if appdesktop.KindOf(err) == appdesktop.KindUnsupported {
+			notice = state.DesktopNoticeUnsupportedTarget
+		}
+		c.shell.SetDesktopNotice(notice)
+	}
+	c.ShowMain()
 }
 
 func (c *desktopController) runOrQueue(fn func()) {
