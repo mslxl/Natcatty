@@ -695,6 +695,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemIdentityUsernameRequired()
 	case vaultstate.ProblemAuthMethod:
 		return m.VaultProblemAuthMethod()
+	case vaultstate.ProblemProxy:
+		return m.VaultProblemProxy()
+	case vaultstate.ProblemAlgorithms:
+		return m.VaultProblemAlgorithms()
 	}
 	return ""
 }

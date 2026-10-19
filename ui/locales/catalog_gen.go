@@ -1960,6 +1960,26 @@ func (msgs Messages) VaultProblemAuthMethod() string {
 	return Catalog.Format(msgs.locale, "vaultProblemAuthMethod", nil)
 }
 
+// VaultProblemProxy says "Check the jump chain and proxy settings."
+// in the language the app shows.
+func VaultProblemProxy() string { return In(i18n.Locale()).VaultProblemProxy() }
+
+// VaultProblemProxy says "Check the jump chain and proxy settings."
+// in the language of msgs.
+func (msgs Messages) VaultProblemProxy() string {
+	return Catalog.Format(msgs.locale, "vaultProblemProxy", nil)
+}
+
+// VaultProblemAlgorithms says "Check the SSH algorithm selection."
+// in the language the app shows.
+func VaultProblemAlgorithms() string { return In(i18n.Locale()).VaultProblemAlgorithms() }
+
+// VaultProblemAlgorithms says "Check the SSH algorithm selection."
+// in the language of msgs.
+func (msgs Messages) VaultProblemAlgorithms() string {
+	return Catalog.Format(msgs.locale, "vaultProblemAlgorithms", nil)
+}
+
 // AuthPromptPassphraseTitle says "Unlock {username}@{hostname}"
 // in the language the app shows.
 //

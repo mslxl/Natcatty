@@ -192,6 +192,8 @@
   "vaultProblemIdentityKeyRequired": "Una identidad con autenticación por clave o certificado necesita una clave SSH.",
   "vaultProblemIdentityUsernameRequired": "Una identidad con contraseña necesita un usuario.",
   "vaultProblemAuthMethod": "Elige un método de autenticación compatible.",
+  "vaultProblemProxy": "Revisa la cadena de saltos y la configuración del proxy.",
+  "vaultProblemAlgorithms": "Revisa la selección de algoritmos SSH.",
   "authPromptPassphraseTitle": "Desbloquear {username}@{hostname}",
   "authPromptPassphraseBody": "Introduce la frase de contraseña de la clave SSH «{key}».",
   "authPromptPassphraseInvalid": "Esa frase no desbloqueó «{key}». Inténtalo de nuevo.",

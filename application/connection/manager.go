@@ -28,11 +28,20 @@ import (
 
 // Request describes an endpoint to connect to. Credentials are deliberately
 // absent: the Manager reads the saved password through PasswordSource.
+//
+// Jumps, when present, are full endpoints reached before the target, ordered
+// first = closest to the client. Proxy applies to the first endpoint only.
 type Request struct {
-	HostID   model.HostID
-	Hostname string
-	Port     int
-	Username string
+	HostID     model.HostID
+	Hostname   string
+	Port       int
+	Username   string
+	Jumps      []Hop
+	Proxy      *Proxy
+	Algorithms AlgorithmPolicy
+	// OnProgress, when non-nil, receives chain progress. It runs on the dial
+	// goroutine and must not block.
+	OnProgress func(ChainProgress)
 }
 
 // DialRequest is what the SSH adapter needs to dial one endpoint. VerifyHostKey
@@ -45,6 +54,10 @@ type Request struct {
 // called once with the candidate ID that completed authentication; the value
 // is safe to cache because it is a method ID, not a credential.
 type DialRequest struct {
+	// Label names the target in progress and hop errors. The Manager fills it
+	// with the Host label or its address so adapter and Manager annotations
+	// agree.
+	Label         string
 	Hostname      string
 	Port          int
 	Username      string
@@ -53,6 +66,32 @@ type DialRequest struct {
 	Prompter      AuthPrompter
 	OnAuth        func(candidateID string)
 	VerifyHostKey func(ctx context.Context, key domainconn.Key) error
+	// Jumps are the endpoints reached before the target, ordered first =
+	// closest to the client. Each carries its own authentication plan, trust
+	// callback, and algorithm policy.
+	Jumps []DialHop
+	// Algorithms is the target endpoint's negotiation policy.
+	Algorithms AlgorithmPolicy
+	// Proxy applies to the first endpoint only: the first jump when present,
+	// otherwise the target.
+	Proxy *Proxy
+	// OnProgress, when non-nil, receives chain progress on the dial goroutine.
+	OnProgress func(ChainProgress)
+}
+
+// DialHop is one jump endpoint as the transport needs it. Password and Auth
+// carry credential plaintext in memory only.
+type DialHop struct {
+	Label         string
+	Hostname      string
+	Port          int
+	Username      string
+	Password      string
+	Auth          AuthPlan
+	Prompter      AuthPrompter
+	OnAuth        func(candidateID string)
+	VerifyHostKey func(ctx context.Context, key domainconn.Key) error
+	Algorithms    AlgorithmPolicy
 }
 
 // TerminalSpec is one interactive shell's initial terminal state.
@@ -194,14 +233,13 @@ func NewManager(dialer Dialer, passwords PasswordSource, known KnownHostReposito
 // Acquire opens a new Connection and returns its first Lease. The caller's
 // context bounds dialing, the trust prompt, and authentication; after Acquire
 // returns, the Connection owns its transport.
+//
+// Every jump is resolved independently: its own auth plan, auth-method cache
+// entry, and host-key verification run against the same Known Host snapshot.
+// A failure is tagged with the endpoint that produced it.
 func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	if m.dialer == nil {
 		return nil, internalError(ErrNoDialer)
-	}
-
-	plan, err := m.authPlan(ctx, req)
-	if err != nil {
-		return nil, err
 	}
 
 	known, err := m.knownHosts(ctx)
@@ -209,39 +247,138 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, err
 	}
 
-	cacheKey := authCacheKey(req.Username, req.Hostname, req.Port)
-	if cached, ok := m.authCache.Get(cacheKey); ok {
-		PromoteCachedCandidate(&plan, cached, plan.Mode)
+	total := len(req.Jumps) + 1
+	type endpointPlan struct {
+		hop      Hop
+		plan     AuthPlan
+		cacheKey string
+	}
+	endpoints := make([]endpointPlan, 0, total)
+	for i, hop := range req.Jumps {
+		plan, err := m.authPlan(ctx, requestForHop(hop))
+		if err != nil {
+			return nil, TagHop(err, i+1, total, hop.LabelOrAddress())
+		}
+		endpoints = append(endpoints, endpointPlan{
+			hop:      hop,
+			plan:     plan,
+			cacheKey: authCacheKey(hop.Username, hop.Hostname, hop.Port),
+		})
+	}
+	plan, err := m.authPlan(ctx, req)
+	if err != nil {
+		target := targetHop(req)
+		return nil, TagHop(err, total, total, target.LabelOrAddress())
+	}
+	endpoints = append(endpoints, endpointPlan{
+		hop:      targetHop(req),
+		plan:     plan,
+		cacheKey: authCacheKey(req.Username, req.Hostname, req.Port),
+	})
+
+	// Promote a cached successful method per endpoint. The cache stores method
+	// IDs, never credentials.
+	for i := range endpoints {
+		if cached, ok := m.authCache.Get(endpoints[i].cacheKey); ok {
+			PromoteCachedCandidate(&endpoints[i].plan, cached, endpoints[i].plan.Mode)
+		}
 	}
 
-	var succeeded string
-	client, err := m.dialer.Dial(ctx, DialRequest{
-		Hostname: req.Hostname,
-		Port:     req.Port,
-		Username: req.Username,
-		Password: plan.Password,
-		Auth:     plan,
-		Prompter: m.authPrompter,
-		OnAuth: func(candidateID string) {
-			succeeded = candidateID
-		},
-		VerifyHostKey: func(verifyCtx context.Context, key domainconn.Key) error {
-			return m.verifyHostKey(verifyCtx, key, known)
-		},
-	})
+	succeeded := make([]string, total)
+	verify := func(verifyCtx context.Context, key domainconn.Key) error {
+		return m.verifyHostKey(verifyCtx, key, known)
+	}
+	username := func(plan AuthPlan, fallback string) string {
+		if plan.Username != "" {
+			return plan.Username
+		}
+		return fallback
+	}
+
+	dialRequest := DialRequest{
+		Proxy:      req.Proxy,
+		Algorithms: req.Algorithms,
+		OnProgress: req.OnProgress,
+	}
+	for i := range endpoints {
+		endpoint := &endpoints[i]
+		index := i
+		onAuth := func(candidateID string) { succeeded[index] = candidateID }
+
+		if i < len(req.Jumps) {
+			// Legacy mode is inherited additively from the target; ECDSA-skip
+			// and explicit overrides stay strictly per-hop.
+			algorithms := endpoint.hop.Algorithms
+			algorithms.Legacy = algorithms.Legacy || req.Algorithms.Legacy
+			dialRequest.Jumps = append(dialRequest.Jumps, DialHop{
+				Label:         endpoint.hop.LabelOrAddress(),
+				Hostname:      endpoint.hop.Hostname,
+				Port:          endpoint.hop.Port,
+				Username:      username(endpoint.plan, endpoint.hop.Username),
+				Password:      endpoint.plan.Password,
+				Auth:          endpoint.plan,
+				Prompter:      m.authPrompter,
+				OnAuth:        onAuth,
+				VerifyHostKey: verify,
+				Algorithms:    algorithms,
+			})
+			continue
+		}
+
+		dialRequest.Label = endpoint.hop.LabelOrAddress()
+		dialRequest.Hostname = endpoint.hop.Hostname
+		dialRequest.Port = endpoint.hop.Port
+		dialRequest.Username = username(endpoint.plan, endpoint.hop.Username)
+		dialRequest.Password = endpoint.plan.Password
+		dialRequest.Auth = endpoint.plan
+		dialRequest.Prompter = m.authPrompter
+		dialRequest.OnAuth = onAuth
+		dialRequest.VerifyHostKey = verify
+	}
+
+	client, err := m.dialer.Dial(ctx, dialRequest)
 	if err != nil {
 		classified := classifyDialError(err)
 		if isAuthenticationFailure(classified) {
 			// A failed login means the cached method may have been revoked or
-			// the server's policy changed; try every method next time.
-			m.authCache.Delete(cacheKey)
+			// the server's policy changed; try every method next time. Clear
+			// only the endpoint that failed.
+			index := total - 1
+			var typed *Error
+			if errors.As(classified, &typed) && typed.Hop != nil &&
+				typed.Hop.Index >= 1 && typed.Hop.Index <= total {
+				index = typed.Hop.Index - 1
+			}
+			m.authCache.Delete(endpoints[index].cacheKey)
 		}
 		return nil, classified
 	}
-	if succeeded != "" {
-		m.authCache.Put(cacheKey, succeeded)
+	for i := range endpoints {
+		if succeeded[i] != "" {
+			m.authCache.Put(endpoints[i].cacheKey, succeeded[i])
+		}
 	}
 	return newConnection(client).acquire(), nil
+}
+
+// requestForHop turns a jump Hop into the Request an AuthSource consumes.
+func requestForHop(hop Hop) Request {
+	return Request{
+		HostID:   hop.HostID,
+		Hostname: hop.Hostname,
+		Port:     hop.Port,
+		Username: hop.Username,
+	}
+}
+
+// targetHop is the target endpoint as a Hop, for labels and error context.
+func targetHop(req Request) Hop {
+	return Hop{
+		HostID:   req.HostID,
+		Hostname: req.Hostname,
+		Port:     req.Port,
+		Username: req.Username,
+	}
 }
 
 // authPlan resolves the Host's authentication material. Without a Vault-backed
@@ -323,6 +460,16 @@ func (m *Manager) knownHosts(ctx context.Context) ([]domainconn.KnownHost, error
 	}
 	known, err := m.known.ListKnownHosts(ctx)
 	if err != nil {
+		var typed *Error
+		if errors.As(err, &typed) {
+			return nil, err
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, cancelledError(err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, timeoutError(err)
+		}
 		return nil, internalError(err)
 	}
 	return known, nil

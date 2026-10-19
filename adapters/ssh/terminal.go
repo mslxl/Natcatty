@@ -11,11 +11,14 @@ import (
 )
 
 // sshClient is the adapter's authenticated transport. It opens interactive
-// shell channels and closes the underlying SSH connection once.
+// shell channels on the final endpoint and keeps the earlier hops of a jump
+// chain alive until the transport closes: each hop is the carrier for the next
+// hop's direct-tcpip channel.
 type sshClient struct {
-	client *xssh.Client
-	mu     sync.Mutex
-	closed bool
+	client    *xssh.Client
+	ancestors []*xssh.Client
+	mu        sync.Mutex
+	closed    bool
 }
 
 var _ appconnection.Client = (*sshClient)(nil)
@@ -77,7 +80,8 @@ func (c *sshClient) OpenTerminal(ctx context.Context, spec appconnection.Termina
 	return &channelTerminal{session: session, stdin: stdin, stdout: stdout}, nil
 }
 
-// Close closes the SSH transport. Open channels are closed with it.
+// Close closes the final transport and then the hops that carried it. Open
+// channels are closed with the final transport.
 func (c *sshClient) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -86,7 +90,14 @@ func (c *sshClient) Close() error {
 	}
 	c.closed = true
 	c.mu.Unlock()
-	return c.client.Close()
+
+	err := c.client.Close()
+	for i := len(c.ancestors) - 1; i >= 0; i-- {
+		if closeErr := c.ancestors[i].Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
+	return err
 }
 
 // channelTerminal is one interactive shell channel. Read and Write are the

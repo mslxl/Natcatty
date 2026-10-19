@@ -192,6 +192,8 @@
   "vaultProblemIdentityKeyRequired": "使用金鑰或憑證驗證的身分需要選擇 SSH 金鑰。",
   "vaultProblemIdentityUsernameRequired": "密碼身分需要使用者名稱。",
   "vaultProblemAuthMethod": "請選擇支援的驗證方式。",
+  "vaultProblemProxy": "請檢查跳板鏈和代理設定。",
+  "vaultProblemAlgorithms": "請檢查 SSH 演算法選擇。",
   "authPromptPassphraseTitle": "解鎖 {username}@{hostname}",
   "authPromptPassphraseBody": "輸入 SSH 金鑰「{key}」的通行碼。",
   "authPromptPassphraseInvalid": "該通行碼無法解鎖「{key}」。請重試。",
