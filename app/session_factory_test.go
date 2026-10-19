@@ -62,11 +62,13 @@ type factoryClient struct {
 	spec      appconnection.TerminalSpec
 	closed    bool
 	closeCall int
+	openCalls int
 }
 
 func (c *factoryClient) OpenTerminal(_ context.Context, spec appconnection.TerminalSpec) (appconnection.Terminal, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.openCalls++
 	c.spec = spec
 	return c.terminal, nil
 }
@@ -104,6 +106,7 @@ func TestSSHSessionAcquiresAndReleasesALease(t *testing.T) {
 	client := &factoryClient{terminal: &factoryTerminal{}}
 	dialer := &factoryDialer{client: client}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
 	local := &factoryLocal{}
 	factory := newTransportFactory(local, manager, nil)
 
@@ -131,14 +134,133 @@ func TestSSHSessionAcquiresAndReleasesALease(t *testing.T) {
 	if err := transport.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if client.closeCall != 1 {
-		t.Fatalf("SSH client close calls = %d, want 1", client.closeCall)
+	// The shell channel closes, but the authenticated Connection is parked for
+	// reuse rather than torn down.
+	if client.closeCall != 0 {
+		t.Fatalf("SSH client close calls = %d, want the transport parked", client.closeCall)
 	}
 	client.terminal.mu.Lock()
 	terminalClosed := client.terminal.closed
 	client.terminal.mu.Unlock()
 	if !terminalClosed {
 		t.Fatal("the terminal was not closed with the transport")
+	}
+	manager.CloseAll()
+	if client.closeCall != 1 {
+		t.Fatalf("SSH client close calls after CloseAll = %d, want 1", client.closeCall)
+	}
+}
+
+func TestClosingALiveShellKeepsTheSharedTransportOpen(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{},
+		// The fake terminal has no live channel; the probe is covered in the
+		// connection package's tests.
+		appconnection.WithLivenessProbe(0))
+	t.Cleanup(manager.CloseAll)
+	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	spec := appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
+	}
+
+	first, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	second, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dial calls = %d, want one shared Connection", dialer.calls)
+	}
+
+	// Closing the first, still-live shell must not discard the transport the
+	// second Session is using.
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if client.closeCall != 0 {
+		t.Fatalf("closing a live shell closed the shared transport (%d closes)", client.closeCall)
+	}
+
+	if err := second.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if client.closeCall != 0 {
+		t.Fatalf("the last shell release closed the parked transport (%d closes)", client.closeCall)
+	}
+
+	third, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("third Open: %v", err)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("the parked transport was not reused: dial calls = %d", dialer.calls)
+	}
+	_ = third.Close()
+}
+
+func TestClosingATransportThatEndedInErrorDiscardsIt(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// A dropped transport classifies itself before the Session closes it.
+	reporter, ok := transport.(appsession.EndReporter)
+	if !ok {
+		t.Fatal("the leased transport does not report its end")
+	}
+	if end := reporter.End(); end.Reason != appsession.EndReasonError {
+		t.Fatalf("end = %+v, want an error classification", end)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if client.closeCall != 1 {
+		t.Fatalf("SSH client close calls = %d, want the failed transport discarded", client.closeCall)
+	}
+}
+
+func TestTestConnectionAuthenticatesAndReleasesWithoutAShell(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+
+	host := domainvault.Host{
+		ID: "host-1", Hostname: "example.com", Port: 2222, Username: "root",
+		Protocol: domainvault.ProtocolSSH,
+	}
+	if err := testConnection(context.Background(), manager, nil, host); err != nil {
+		t.Fatalf("testConnection: %v", err)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dial calls = %d, want one authenticated transport", dialer.calls)
+	}
+	if dialer.request.Hostname != "example.com" || dialer.request.Port != 2222 ||
+		dialer.request.Username != "root" || dialer.request.Password != "s3cret" {
+		t.Fatalf("dial request = %+v, want the Host endpoint and saved password", dialer.request)
+	}
+	if client.openCalls != 0 {
+		t.Fatalf("Test connection opened %d shell channels, want none", client.openCalls)
+	}
+	// The lease was released, so the transport is parked rather than closed.
+	if client.closed {
+		t.Fatal("Test connection closed the transport instead of releasing its lease")
+	}
+	manager.CloseAll()
+	if !client.closed {
+		t.Fatal("the connection manager did not close the parked test transport")
 	}
 }
 
@@ -359,6 +481,57 @@ func TestVaultRoutesResolveTheChainAndFirstHopProxy(t *testing.T) {
 	if route.Jumps[1].Algorithms.Legacy || route.Jumps[1].Algorithms.SkipECDSAHostKey ||
 		len(route.Jumps[1].Algorithms.Ciphers) != 0 {
 		t.Fatalf("second jump algorithms = %+v", route.Jumps[1].Algorithms)
+	}
+}
+
+// resolvingRouteVault adds the Vault's credential resolution to the route
+// fake, so the fingerprint tests can rotate credentials.
+type resolvingRouteVault struct {
+	*fakeRouteVault
+	resolved map[model.HostID]appvault.ResolvedAuth
+}
+
+func (v resolvingRouteVault) ResolveAuth(_ context.Context, id model.HostID) (appvault.ResolvedAuth, error) {
+	return v.resolved[id], nil
+}
+
+func TestVaultRoutesFingerprintResolvedCredentials(t *testing.T) {
+	vault := resolvingRouteVault{
+		fakeRouteVault: &fakeRouteVault{
+			hosts: map[model.HostID]domainvault.Host{
+				"target": {ID: "target", Hostname: "target.internal", Port: 22, Username: "app"},
+			},
+			secrets: map[string]string{},
+		},
+		resolved: map[model.HostID]appvault.ResolvedAuth{
+			"target": {Password: "first"},
+		},
+	}
+	routes := vaultRoutes{vault: vault}
+
+	first, err := routes.Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("first Route: %v", err)
+	}
+	vault.resolved["target"] = appvault.ResolvedAuth{Password: "rotated"}
+	second, err := routes.Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("second Route: %v", err)
+	}
+	if first.ConfigFingerprint == second.ConfigFingerprint {
+		t.Fatal("a rotated password did not change the reuse fingerprint")
+	}
+
+	vault.resolved["target"] = appvault.ResolvedAuth{
+		Password: "rotated",
+		Key:      &appvault.ResolvedKey{PrivateKey: "key-material", Passphrase: "passphrase"},
+	}
+	third, err := routes.Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("third Route: %v", err)
+	}
+	if third.ConfigFingerprint == second.ConfigFingerprint {
+		t.Fatal("a newly resolved Key did not change the reuse fingerprint")
 	}
 }
 

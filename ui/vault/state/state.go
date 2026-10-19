@@ -8,10 +8,13 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 )
 
 // Hosts is the Vault use-case seam. The application Service implements it;
@@ -49,6 +52,11 @@ type Secrets interface {
 	UnlockSecrets(ctx context.Context, passphrase string) error
 	UseSessionSecrets(ctx context.Context) error
 }
+
+// ConnectionTester opens, authenticates, and verifies a Host without opening
+// a Session. The app wires the connection manager's one-shot test; tests wire
+// a fake.
+type ConnectionTester func(ctx context.Context, host domainvault.Host) error
 
 // Problem identifies a failure the view must show in the user's language.
 // State stores the identifier, never user-visible text.
@@ -135,6 +143,15 @@ type State struct {
 	pendingDelete model.HostID
 	requestRedraw func()
 	connect       func(domainvault.Host)
+	tester        ConnectionTester
+
+	// Test results are keyed by Host. The maps are mutated only on the UI
+	// thread; completed attempts arrive through the lock-protected queue.
+	testing      map[model.HostID]bool
+	testProblems map[model.HostID]appconnection.Kind
+	testPassed   map[model.HostID]bool
+	testMu       sync.Mutex
+	testOutcomes []testOutcome
 
 	editingKey            bool
 	keyForm               KeyForm
@@ -189,6 +206,19 @@ func WithConnect(fn func(domainvault.Host)) Option {
 	return func(s *State) { s.connect = fn }
 }
 
+// WithConnectionTest gives the Vault surface the one-shot Test connection
+// action. The app wires the connection manager; tests wire a fake.
+func WithConnectionTest(fn ConnectionTester) Option {
+	return func(s *State) { s.tester = fn }
+}
+
+// testOutcome is the result of a Test connection attempt started off the UI
+// thread. FlushTests applies it.
+type testOutcome struct {
+	id  model.HostID
+	err error
+}
+
 // NewState returns an empty Vault state. Call Reload to read the Vault.
 func NewState(hosts Hosts, opts ...Option) *State {
 	state := &State{hosts: hosts}
@@ -234,6 +264,78 @@ func (s *State) Connect(id model.HostID) bool {
 	s.problem = ProblemNone
 	s.connect(host)
 	return true
+}
+
+// Test starts a Test connection attempt for one listed Host. The dial runs on
+// its own goroutine; FlushTests applies the outcome on the UI thread. It
+// reports false and records a problem when the Host is gone, the action is not
+// wired, or another attempt is already running.
+func (s *State) Test(id model.HostID) bool {
+	host, ok := s.find(id)
+	if !ok {
+		s.problem = ProblemNotFound
+		s.redraw()
+		return false
+	}
+	if s.tester == nil {
+		s.problem = ProblemInternal
+		s.redraw()
+		return false
+	}
+	if s.testing[id] {
+		return false
+	}
+	if s.testing == nil {
+		s.testing = make(map[model.HostID]bool)
+		s.testProblems = make(map[model.HostID]appconnection.Kind)
+		s.testPassed = make(map[model.HostID]bool)
+	}
+	s.testing[id] = true
+	delete(s.testProblems, id)
+	delete(s.testPassed, id)
+	s.problem = ProblemNone
+	s.redraw()
+
+	tester := s.tester
+	go func() {
+		err := tester(context.Background(), host)
+		s.testMu.Lock()
+		s.testOutcomes = append(s.testOutcomes, testOutcome{id: id, err: err})
+		s.testMu.Unlock()
+		s.redraw()
+	}()
+	return true
+}
+
+// FlushTests applies completed Test connection attempts. The view calls it on
+// the UI thread before rendering.
+func (s *State) FlushTests() {
+	s.testMu.Lock()
+	outcomes := s.testOutcomes
+	s.testOutcomes = nil
+	s.testMu.Unlock()
+
+	for _, outcome := range outcomes {
+		delete(s.testing, outcome.id)
+		if outcome.err != nil {
+			s.testProblems[outcome.id] = uiconnection.Kind(outcome.err)
+			continue
+		}
+		s.testPassed[outcome.id] = true
+	}
+}
+
+// Testing reports whether a Test connection attempt is running for a Host.
+func (s *State) Testing(id model.HostID) bool { return s.testing[id] }
+
+// TestSucceeded reports whether the last Test connection attempt reached and
+// authenticated the Host.
+func (s *State) TestSucceeded(id model.HostID) bool { return s.testPassed[id] }
+
+// TestProblem returns the typed failure of the last Test connection attempt,
+// or "" when it succeeded or none has run.
+func (s *State) TestProblem(id model.HostID) appconnection.Kind {
+	return s.testProblems[id]
 }
 
 // Select marks one listed Host as selected. An unknown id clears the

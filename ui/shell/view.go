@@ -4,8 +4,8 @@ import (
 	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
-	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -68,7 +68,10 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).Fill().Padding(16).Gap(12).Children(func() {
-		if problem := connectionProblemText(m, s.Problem()); problem != "" {
+		for _, label := range s.PendingConnections() {
+			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
+		}
+		if problem := uiconnection.ProblemText(m, s.Problem()); problem != "" {
 			ui.Text(c, problem).TextColor(t.Danger)
 		}
 		if s.VaultVisible() {
@@ -118,34 +121,26 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	}
 }
 
-// connectionProblemText localizes a connection failure. Unknown kinds render
-// nothing, so the UI never shows an untranslated token.
-func connectionProblemText(m locales.Messages, kind appconnection.Kind) string {
-	switch kind {
-	case appconnection.KindAuth:
-		return m.ConnectionErrorAuth()
-	case appconnection.KindNetwork:
-		return m.ConnectionErrorNetwork()
-	case appconnection.KindTimeout:
-		return m.ConnectionErrorTimeout()
-	case appconnection.KindHostKey:
-		return m.ConnectionErrorHostKey()
-	case appconnection.KindUnsupported:
-		return m.ConnectionErrorUnsupported()
-	case appconnection.KindCancelled:
-		return m.ConnectionErrorCancelled()
-	case appconnection.KindInternal:
-		return m.ConnectionErrorInternal()
-	}
-	return ""
-}
-
-// statusText localizes a Session snapshot's status. It returns "" for a state
-// this slice does not know, so the UI never shows an untranslated token.
+// statusText localizes a Session snapshot's status. While a Session is
+// running the connection indicator (active, reconnecting, error) is the useful
+// state; an empty value is treated as active for compatibility. It returns ""
+// for a state this slice does not know, so the UI never shows an untranslated
+// token.
 func statusText(m locales.Messages, snapshot appsession.Snapshot) string {
+	// A terminal failure is the useful state even when the Session has already
+	// stopped: the exit placeholder must not hide why it stopped.
+	if snapshot.Connection == appsession.ConnectionStatusError {
+		return m.ConnectionStatusError()
+	}
 	switch snapshot.Status {
 	case appsession.StatusRunning:
-		return m.SessionRunning()
+		switch snapshot.Connection {
+		case appsession.ConnectionStatusConnecting:
+			return m.ConnectionStatusConnecting()
+		case appsession.ConnectionStatusReconnecting:
+			return m.ConnectionStatusReconnecting()
+		}
+		return m.ConnectionStatusActive()
 	case appsession.StatusExited:
 		if snapshot.HasExitCode {
 			return m.SessionExitedWithCode(snapshot.ExitCode)

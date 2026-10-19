@@ -218,6 +218,62 @@ func (msgs Messages) SessionClosed() string {
 	return Catalog.Format(msgs.locale, "sessionClosed", nil)
 }
 
+// ConnectionStatusActive says "Active"
+// in the language the app shows.
+func ConnectionStatusActive() string { return In(i18n.Locale()).ConnectionStatusActive() }
+
+// ConnectionStatusActive says "Active"
+// in the language of msgs.
+func (msgs Messages) ConnectionStatusActive() string {
+	return Catalog.Format(msgs.locale, "connectionStatusActive", nil)
+}
+
+// ConnectionStatusConnecting says "Connecting…"
+// in the language the app shows.
+func ConnectionStatusConnecting() string { return In(i18n.Locale()).ConnectionStatusConnecting() }
+
+// ConnectionStatusConnecting says "Connecting…"
+// in the language of msgs.
+func (msgs Messages) ConnectionStatusConnecting() string {
+	return Catalog.Format(msgs.locale, "connectionStatusConnecting", nil)
+}
+
+// ConnectionStatusReconnecting says "Reconnecting…"
+// in the language the app shows.
+func ConnectionStatusReconnecting() string { return In(i18n.Locale()).ConnectionStatusReconnecting() }
+
+// ConnectionStatusReconnecting says "Reconnecting…"
+// in the language of msgs.
+func (msgs Messages) ConnectionStatusReconnecting() string {
+	return Catalog.Format(msgs.locale, "connectionStatusReconnecting", nil)
+}
+
+// ConnectionStatusError says "Connection error"
+// in the language the app shows.
+func ConnectionStatusError() string { return In(i18n.Locale()).ConnectionStatusError() }
+
+// ConnectionStatusError says "Connection error"
+// in the language of msgs.
+func (msgs Messages) ConnectionStatusError() string {
+	return Catalog.Format(msgs.locale, "connectionStatusError", nil)
+}
+
+// ConnectionConnectingTo says "Connecting to {host}…"
+// in the language the app shows.
+//
+// The shell's connecting indicator naming the Host being reached.
+func ConnectionConnectingTo(host string) string {
+	return In(i18n.Locale()).ConnectionConnectingTo(host)
+}
+
+// ConnectionConnectingTo says "Connecting to {host}…"
+// in the language of msgs.
+//
+// The shell's connecting indicator naming the Host being reached.
+func (msgs Messages) ConnectionConnectingTo(host string) string {
+	return Catalog.Format(msgs.locale, "connectionConnectingTo", map[string]any{"host": host})
+}
+
 // CommandFailed says "Could not complete the command"
 // in the language the app shows.
 func CommandFailed() string { return In(i18n.Locale()).CommandFailed() }
@@ -1136,6 +1192,36 @@ func VaultHostConnect() string { return In(i18n.Locale()).VaultHostConnect() }
 // in the language of msgs.
 func (msgs Messages) VaultHostConnect() string {
 	return Catalog.Format(msgs.locale, "vaultHostConnect", nil)
+}
+
+// VaultHostTest says "Test"
+// in the language the app shows.
+func VaultHostTest() string { return In(i18n.Locale()).VaultHostTest() }
+
+// VaultHostTest says "Test"
+// in the language of msgs.
+func (msgs Messages) VaultHostTest() string {
+	return Catalog.Format(msgs.locale, "vaultHostTest", nil)
+}
+
+// VaultHostTesting says "Testing…"
+// in the language the app shows.
+func VaultHostTesting() string { return In(i18n.Locale()).VaultHostTesting() }
+
+// VaultHostTesting says "Testing…"
+// in the language of msgs.
+func (msgs Messages) VaultHostTesting() string {
+	return Catalog.Format(msgs.locale, "vaultHostTesting", nil)
+}
+
+// VaultHostTestSuccess says "Connection successful."
+// in the language the app shows.
+func VaultHostTestSuccess() string { return In(i18n.Locale()).VaultHostTestSuccess() }
+
+// VaultHostTestSuccess says "Connection successful."
+// in the language of msgs.
+func (msgs Messages) VaultHostTestSuccess() string {
+	return Catalog.Format(msgs.locale, "vaultHostTestSuccess", nil)
 }
 
 // ConnectionErrorAuth says "Authentication failed. Check the username and the saved password."

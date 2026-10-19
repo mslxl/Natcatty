@@ -12,6 +12,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
@@ -19,6 +20,9 @@ import (
 // View returns the Vault surface.
 func View(s *vaultstate.State) func(*ui.Context) {
 	return func(c *ui.Context) {
+		// Test connection attempts complete off the UI thread.
+		s.FlushTests()
+
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
@@ -308,9 +312,24 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, host.Label).Bold()
 			ui.Text(c, hostSummary(s, host, m)).FontSize(12).TextColor(t.TextMuted)
+			if problem := s.TestProblem(host.ID); problem != "" {
+				if text := uiconnection.ProblemText(m, problem); text != "" {
+					ui.Text(c, text).FontSize(12).TextColor(t.Danger)
+				}
+			} else if s.TestSucceeded(host.ID) {
+				ui.Text(c, m.VaultHostTestSuccess()).FontSize(12).TextColor(t.TextMuted)
+			}
 		})
 
 		if host.Protocol == domainvault.ProtocolSSH {
+			testLabel := m.VaultHostTest()
+			if s.Testing(host.ID) {
+				testLabel = m.VaultHostTesting()
+			}
+			if ui.Button(c, testLabel).Clicked() {
+				s.Test(host.ID)
+				c.Invalidate()
+			}
 			if ui.PrimaryButton(c, m.VaultHostConnect()).Clicked() {
 				s.Connect(host.ID)
 				c.Invalidate()

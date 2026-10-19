@@ -347,7 +347,7 @@
   module: application/connection
   tickets: [06]
   acceptance_tests:
-    - application/connection.TestAcquireUsesTheStoredPasswordAndOpensATerminal
+    - application/connection.TestAcquireUsesTheStoredPasswordAndParksTheTransport
     - application/connection.TestPasswordLookupFailureIsAnAuthError
     - adapters/ssh.TestDialAuthenticatesWithPasswordAndOpensATerminal
     - app.TestSSHSessionAcquiresAndReleasesALease
@@ -665,6 +665,112 @@
     - adapters/ssh.TestSOCKS5RefusalIsATypedNetworkError
   status: verified
   notes: "Typed errors carry the 1-based hop index, total endpoints, and label. Cancellation closes the in-flight transport and every already-open hop; a ProxyCommand process is terminated with its process tree."
+
+# --- Ticket 09: Connection pooling, keepalive, reconnect, and Test connection ---
+
+- id: connections.connection-pool
+  area: connections
+  feature: Share one authenticated Connection between ref-counted leases
+  original_paths:
+    - electron/bridges/sshConnectionPool.cjs
+    - electron/bridges/sshBridge.cjs
+  module: application/connection
+  tickets: [09]
+  acceptance_tests:
+    - application/connection.TestPoolBeginJoinsAnInFlightCompatibleDial
+    - application/connection.TestLeaseReleaseKeepsTheTransportForOtherLeases
+    - application/connection.TestReuseRulesFollowExactAndAsymmetricAgentForwarding
+    - application/connection.TestSingleChannelAndX11AreNeverReused
+    - application/connection.TestEndpointKeyIncludesEffectiveConfiguration
+  status: verified
+  notes: "The pool key is the endpoint fingerprint plus the effective non-secret configuration, including the Host id, route, algorithms, keepalive, and credential digest. Shell reuse requires an exact agent-forwarding match; channel consumers may reuse an agent-forwarding transport but not the reverse. Single-channel and X11 transports never enter the pool."
+
+- id: connections.idle-parking
+  area: connections
+  feature: Park zero-lease Connections for five minutes with a 128-entry LRU and a liveness probe
+  original_paths:
+    - electron/bridges/sshConnectionPool.cjs
+  module: application/connection
+  tickets: [09]
+  acceptance_tests:
+    - application/connection.TestIdleParkExpiresOnTheConfiguredTTL
+    - application/connection.TestZeroIdleTTLKeepsTheTransportUntilManagerClose
+    - application/connection.TestIdleLimitEvictsTheLeastRecentlyUsedTransport
+    - application/connection.TestProbeReusedTerminalAcceptsALiveShell
+    - application/connection.TestProbeReusedTerminalRejectsAShellThatEnds
+    - application/connection.TestRemoteLivenessPolicy
+    - application/connection.TestTermSshdTransportIsNotParked
+  status: verified
+  notes: "The last release parks the transport; TTL 0 means until quit. A reused shell must survive the 350 ms settle window unless the server is OpenSSH or Dropbear. TERM-SSHD never parks because it accepts a channel and then exits."
+
+- id: connections.keepalive
+  area: connections
+  feature: OpenSSH keepalive with global defaults, pool fallback, and failure accounting
+  original_paths:
+    - electron/bridges/sshConnectionPool.cjs
+    - electron/bridges/sshBridge.cjs
+  module: application/connection
+  tickets: [09]
+  acceptance_tests:
+    - application/connection.TestKeepaliveFailureDiscardsTheTransport
+    - application/connection.TestKeepaliveIsSilentWhenDisabled
+    - application/connection.TestKeepalivePolicyResolution
+    - adapters/ssh.TestKeepaliveOnAClosedTransportFails
+    - adapters/ssh.TestVersionRecorderCapturesTheServerBanner
+  status: verified
+  notes: "Terminal defaults are 30 s / 10 unanswered probes; a caller that omits a policy gets 10 s / 3, and a negative interval disables keepalive. A failed probe increments the consecutive-failure count and reaching the limit discards the transport. TCP dial (20 s) and auth-ready (120 s) remain separate timers."
+
+- id: connections.session-reconnect
+  area: connections
+  feature: Reconnect a dropped terminal Session every five seconds under the original reason predicate
+  original_paths:
+    - application/state/terminalAutoReconnect.ts
+    - application/state/resolveTerminalSessionExitIntent.ts
+    - components/Terminal.tsx
+  module: application/session
+  tickets: [09]
+  acceptance_tests:
+    - application/session.TestReconnectReasonPredicate
+    - application/session.TestReconnectDelayDefaultsToFiveSeconds
+    - application/session.TestSessionReconnectsAfterATransportError
+    - application/session.TestSessionDoesNotReconnectAfterACleanExit
+    - application/session.TestSessionDoesNotReconnectAfterUserClose
+    - application/session.TestSessionStopsReconnectingOnAPermanentFailure
+    - application/session.TestSessionRetriesTransientReconnectFailures
+    - application/session.TestStaleTransportEndIsIgnoredAfterReconnect
+  status: verified
+  notes: "Only 'error' and bare 'closed' retry; 'exited', 'timeout', and 'signaled' do not. User close and authentication or host-key failures stop the loop. Each transport carries a generation so a late exit from an abandoned transport cannot end the Session."
+
+- id: connections.test-connection
+  area: vault
+  feature: Test a Host's connection without opening a Session
+  original_paths:
+    - electron/bridges/sshBridge.cjs
+    - application/i18n/locales/en/vault.ts
+  module: app
+  tickets: [09]
+  acceptance_tests:
+    - app.TestTestConnectionAuthenticatesAndReleasesWithoutAShell
+    - ui/vault/state.TestTestConnectionReportsSuccess
+    - ui/vault/state.TestTestConnectionReportsATypedFailure
+    - ui/vault/state.TestTestConnectionWithoutASeamOrHostIsRejected
+  status: verified
+  notes: "Test acquires and releases one lease: TCP, every jump, host-key verification, and authentication run, but no shell channel opens. The Vault shows a localized success line or the typed failure through the same connection-error messages."
+
+- id: connections.status-indicators
+  area: shell
+  feature: Connecting, active, reconnecting, and error indicators around a Session
+  original_paths:
+    - components/Terminal.tsx
+    - application/state/terminalAutoReconnect.ts
+  module: ui/shell
+  tickets: [09]
+  acceptance_tests:
+    - ui/shell.TestStatusTextShowsConnectionIndicators
+    - ui/shell/state.TestOpenHostAddsAnSSHTabOnTheNextFlush
+    - application/session.TestSessionReconnectsAfterATransportError
+  status: verified
+  notes: "The shell lists pending Host dials as connecting, maps a running Session's connection state to active, reconnecting, or error, and keeps the Session visible with its output while a reconnect runs."
 
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
