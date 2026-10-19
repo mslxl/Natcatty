@@ -11,11 +11,15 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	"github.com/mslxl/natcatty/adapters/localpty"
 	"github.com/mslxl/natcatty/adapters/store"
+	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/command"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
+	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
@@ -33,6 +37,17 @@ func Run() error { return run(nil) }
 func run(afterReady func(*mygo.Window)) error {
 	var settingsWindow *mygo.Window
 	var mainWindow *mygo.Window
+	var gate *uiapplock.Gate
+	var settingsState *settings.AppLockState
+
+	invalidate := func() {
+		if mainWindow != nil && !mainWindow.IsDestroyed() {
+			mainWindow.Invalidate()
+		}
+		if settingsWindow != nil && !settingsWindow.IsDestroyed() {
+			settingsWindow.Invalidate()
+		}
+	}
 
 	// openSettings keeps one Settings window per app, as ADR 0006 requires.
 	// Shell callbacks run on the UI thread, so creating and focusing the
@@ -51,8 +66,9 @@ func run(afterReady func(*mygo.Window)) error {
 			MinWidth:  480,
 			MinHeight: 360,
 			StateKey:  "settings",
-			Content:   ui.View(settings.View),
+			Content:   ui.View(gate.Wrap(settings.View(settingsState))),
 		})
+		settingsWindow.OnFocus(func() { gate.RecordActivity() })
 		settingsWindow.OnClosed(func() { settingsWindow = nil })
 	}
 
@@ -66,16 +82,36 @@ func run(afterReady func(*mygo.Window)) error {
 	}
 	defer database.Close()
 
+	// Host credentials live in the field-secret store. It reports OS,
+	// passphrase, or session mode; it never falls back to plaintext.
+	secretStore, err := store.OpenSecretStore(context.Background(), database, platformsecrets.System{})
+	if err != nil {
+		return err
+	}
+	defer secretStore.Close()
+
+	vaultService := appvault.NewService(database, appvault.WithSecrets(secretStore))
+
+	// App Lock is a UI gate backed by its own versioned verifier file.
+	appLock := appapplock.NewService(
+		fileapplock.Open(filepath.Join(userData, "app-lock-settings.json")),
+		appapplock.WithRedrawRequest(invalidate),
+	)
+	// A malformed file means the fail-safe defaults inside the adapter. An
+	// IO failure must not silently disable a security control.
+	if err := appLock.Load(context.Background()); err != nil {
+		return err
+	}
+	gate = uiapplock.NewGate(appLock, uiapplock.WithRedrawRequest(invalidate))
+	settingsState = settings.NewAppLockState(appLock, settings.WithAppLockRedrawRequest(invalidate))
+
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
 	vaultState := vaultstate.NewState(
-		appvault.NewService(database),
-		vaultstate.WithRedrawRequest(func() {
-			if mainWindow != nil && !mainWindow.IsDestroyed() {
-				mainWindow.Invalidate()
-			}
-		}),
+		vaultService,
+		vaultstate.WithSecrets(vaultService),
+		vaultstate.WithRedrawRequest(invalidate),
 	)
 	_ = vaultState.Reload()
 
@@ -97,7 +133,7 @@ func run(afterReady func(*mygo.Window)) error {
 		}),
 		state.WithVault(vaultui.View(vaultState)),
 	)
-	registry := newRegistry(shellState, mygo.App.Quit)
+	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
@@ -113,10 +149,17 @@ func run(afterReady func(*mygo.Window)) error {
 			MinWidth:  720,
 			MinHeight: 480,
 			StateKey:  "main",
-			Content:   ui.View(shell.View(shellState)),
+			Content:   ui.View(gate.Wrap(shell.View(shellState))),
 		})
 		mainWindow = win
-		sessions.SetChangeHook(func(appsession.Snapshot) { win.Invalidate() })
+		win.OnFocus(func() { gate.RecordActivity() })
+		// Terminal widgets consume their own input, so the gate never sees
+		// keystrokes typed there. A Session change (including the echo of
+		// that input) is the observable activity.
+		sessions.SetChangeHook(func(appsession.Snapshot) {
+			gate.RecordActivity()
+			win.Invalidate()
+		})
 		win.OnClosed(func() { sessions.CloseAll() })
 
 		mygo.App.OnLocaleChanged(func(tag string) {
@@ -139,7 +182,7 @@ func run(afterReady func(*mygo.Window)) error {
 
 // newRegistry wires every command the shell exposes. Menu items and any later
 // key binding or command palette dispatch through this one registry.
-func newRegistry(shellState *state.State, quit func()) *command.Registry {
+func newRegistry(shellState *state.State, quit func(), lockApp func() error) *command.Registry {
 	registry := command.NewRegistry()
 	register := func(id command.ID, handler command.Handler) {
 		if err := registry.Register(id, handler); err != nil {
@@ -153,6 +196,9 @@ func newRegistry(shellState *state.State, quit func()) *command.Registry {
 	register(command.CloseTab, func(context.Context) error {
 		shellState.CloseActiveTab()
 		return nil
+	})
+	register(command.LockApp, func(context.Context) error {
+		return lockApp()
 	})
 	register(command.Quit, func(context.Context) error {
 		quit()

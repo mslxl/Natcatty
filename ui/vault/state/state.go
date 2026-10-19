@@ -23,26 +23,43 @@ type Hosts interface {
 	Delete(ctx context.Context, id model.HostID) error
 }
 
+// Secrets is the field-secret mode seam. The application Service implements
+// it; tests provide a fake.
+type Secrets interface {
+	SecretMode() appvault.SecretMode
+	SetSecretsPassphrase(ctx context.Context, passphrase string) error
+	UnlockSecrets(ctx context.Context, passphrase string) error
+	UseSessionSecrets(ctx context.Context) error
+}
+
 // Problem identifies a failure the view must show in the user's language.
 // State stores the identifier, never user-visible text.
 type Problem string
 
 const (
-	ProblemNone             Problem = ""
-	ProblemHostnameRequired Problem = "hostname_required"
-	ProblemHostnameInvalid  Problem = "hostname_invalid"
-	ProblemLabelRequired    Problem = "label_required"
-	ProblemLabelInvalid     Problem = "label_invalid"
-	ProblemPortInvalid      Problem = "port_invalid"
-	ProblemPortRange        Problem = "port_range"
-	ProblemProtocol         Problem = "protocol"
-	ProblemUsername         Problem = "username"
-	ProblemGroup            Problem = "group"
-	ProblemTags             Problem = "tags"
-	ProblemNotes            Problem = "notes"
-	ProblemDuplicate        Problem = "duplicate"
-	ProblemNotFound         Problem = "not_found"
-	ProblemInternal         Problem = "internal"
+	ProblemNone                     Problem = ""
+	ProblemHostnameRequired         Problem = "hostname_required"
+	ProblemHostnameInvalid          Problem = "hostname_invalid"
+	ProblemLabelRequired            Problem = "label_required"
+	ProblemLabelInvalid             Problem = "label_invalid"
+	ProblemPortInvalid              Problem = "port_invalid"
+	ProblemPortRange                Problem = "port_range"
+	ProblemProtocol                 Problem = "protocol"
+	ProblemUsername                 Problem = "username"
+	ProblemGroup                    Problem = "group"
+	ProblemTags                     Problem = "tags"
+	ProblemNotes                    Problem = "notes"
+	ProblemDuplicate                Problem = "duplicate"
+	ProblemNotFound                 Problem = "not_found"
+	ProblemInternal                 Problem = "internal"
+	ProblemSecretField              Problem = "secret_field"
+	ProblemSecretsUnavailable       Problem = "secrets_unavailable"
+	ProblemSecretsLocked            Problem = "secrets_locked"
+	ProblemSecretWrongPassphrase    Problem = "secret_wrong_passphrase"
+	ProblemSecretPassphraseRequired Problem = "secret_passphrase_required"
+	ProblemSecretPassphraseMismatch Problem = "secret_passphrase_mismatch"
+	ProblemSecretUnreadable         Problem = "secret_unreadable"
+	ProblemSecretSetupFailed        Problem = "secret_setup_failed"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -59,11 +76,18 @@ type Form struct {
 	Tags     string
 	Notes    string
 	Pinned   bool
+	// Password is plaintext form input. It is submitted to the application
+	// service, never rendered back and never stored on the Host record.
+	Password string
+	// HasPassword mirrors the Host's non-secret credential flag for the
+	// editor hint.
+	HasPassword bool
 }
 
 // State is the Vault surface's state.
 type State struct {
 	hosts         Hosts
+	secrets       Secrets
 	items         []domainvault.Host
 	selected      model.HostID
 	editing       bool
@@ -71,6 +95,10 @@ type State struct {
 	problem       Problem
 	pendingDelete model.HostID
 	requestRedraw func()
+
+	secretPassphrase string
+	secretConfirm    string
+	secretProblem    Problem
 }
 
 // Option customizes a State.
@@ -79,6 +107,13 @@ type Option func(*State)
 // WithRedrawRequest sets the function called when the Vault surface changes.
 func WithRedrawRequest(fn func()) Option {
 	return func(s *State) { s.requestRedraw = fn }
+}
+
+// WithSecrets gives the Vault surface the field-secret mode and setup use
+// cases. Without it, the surface assumes an OS credential store and hides the
+// fallback setup.
+func WithSecrets(secrets Secrets) Option {
+	return func(s *State) { s.secrets = secrets }
 }
 
 // NewState returns an empty Vault state. Call Reload to read the Vault.
@@ -129,6 +164,98 @@ func (s *State) Form() *Form { return &s.form }
 // Problem returns the current failure, if any.
 func (s *State) Problem() Problem { return s.problem }
 
+// SecretMode reports how credentials are protected. A surface without a
+// secret seam reports OS mode so it does not show fallback setup.
+func (s *State) SecretMode() appvault.SecretMode {
+	if s.secrets == nil {
+		return appvault.SecretModeOS
+	}
+	return s.secrets.SecretMode()
+}
+
+// SecretPassphrase returns the passphrase input for the active setup mode.
+func (s *State) SecretPassphrase() *string { return &s.secretPassphrase }
+
+// SecretConfirmation returns the confirmation input for passphrase setup.
+func (s *State) SecretConfirmation() *string { return &s.secretConfirm }
+
+// SecretProblem returns the current credential-mode failure.
+func (s *State) SecretProblem() Problem { return s.secretProblem }
+
+// SetSecretPassphrase chooses passphrase mode. It reports whether the mode
+// was set; the view redraws either way.
+func (s *State) SetSecretPassphrase() bool {
+	if s.secrets == nil {
+		s.secretProblem = ProblemSecretsUnavailable
+		s.redraw()
+		return false
+	}
+	if s.secretPassphrase == "" {
+		s.secretProblem = ProblemSecretPassphraseRequired
+		s.redraw()
+		return false
+	}
+	if s.secretPassphrase != s.secretConfirm {
+		s.secretProblem = ProblemSecretPassphraseMismatch
+		s.redraw()
+		return false
+	}
+	if err := s.secrets.SetSecretsPassphrase(context.Background(), s.secretPassphrase); err != nil {
+		s.secretProblem = secretProblemFor(err)
+		s.redraw()
+		return false
+	}
+	s.secretPassphrase = ""
+	s.secretConfirm = ""
+	s.secretProblem = ProblemNone
+	s.redraw()
+	return true
+}
+
+// UnlockSecrets unwraps a passphrase-mode field key.
+func (s *State) UnlockSecrets() bool {
+	if s.secrets == nil {
+		s.secretProblem = ProblemSecretsUnavailable
+		s.redraw()
+		return false
+	}
+	if s.secretPassphrase == "" {
+		s.secretProblem = ProblemSecretPassphraseRequired
+		s.redraw()
+		return false
+	}
+	if err := s.secrets.UnlockSecrets(context.Background(), s.secretPassphrase); err != nil {
+		s.secretProblem = secretProblemFor(err)
+		s.redraw()
+		return false
+	}
+	s.secretPassphrase = ""
+	s.secretConfirm = ""
+	s.secretProblem = ProblemNone
+	s.redraw()
+	return true
+}
+
+// UseSessionSecrets chooses session-only mode when the OS store is
+// unavailable.
+func (s *State) UseSessionSecrets() bool {
+	if s.secrets == nil {
+		s.secretProblem = ProblemSecretsUnavailable
+		s.redraw()
+		return false
+	}
+	if err := s.secrets.UseSessionSecrets(context.Background()); err != nil {
+		s.secretProblem = secretProblemFor(err)
+		s.redraw()
+		return false
+	}
+	s.secretPassphrase = ""
+	s.secretConfirm = ""
+	s.secretProblem = ProblemNone
+	s.redraw()
+	return true
+}
+
 // PendingDelete returns the Host awaiting delete confirmation, or "".
 func (s *State) PendingDelete() model.HostID { return s.pendingDelete }
 
@@ -163,6 +290,9 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		Tags:     strings.Join(host.Tags, ", "),
 		Notes:    host.Notes,
 		Pinned:   host.Pinned,
+		// The stored password is never loaded into the form. Leaving the
+		// field blank keeps the existing encrypted value.
+		HasPassword: host.HasPassword,
 	}
 	if host.Protocol == domainvault.ProtocolLocal {
 		s.form.Port = ""
@@ -345,11 +475,15 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Tags:     tags,
 		Notes:    s.form.Notes,
 		Pinned:   s.form.Pinned,
+		Password: s.form.Password,
 	}, ProblemNone
 }
 
 // problemFor maps a typed application error to the view's problem id.
 func problemFor(err error) Problem {
+	if errors.Is(err, appvault.ErrSecretUnreadable) {
+		return ProblemSecretUnreadable
+	}
 	var typed *appvault.Error
 	if !errors.As(err, &typed) {
 		return ProblemInternal
@@ -362,13 +496,33 @@ func problemFor(err error) Problem {
 	case appvault.KindValidation:
 		var validation *domainvault.ValidationError
 		if !errors.As(err, &validation) {
-			return ProblemInternal
+			return ProblemSecretField
 		}
 		return problemForValidation(validation)
+	case appvault.KindPermission:
+		return ProblemSecretsLocked
+	case appvault.KindUnsupported:
+		return ProblemSecretsUnavailable
 	case appvault.KindInternal:
 		return ProblemInternal
 	default:
 		return ProblemInternal
+	}
+}
+
+// secretProblemFor maps a credential-mode failure to the view's problem id.
+func secretProblemFor(err error) Problem {
+	var typed *appvault.Error
+	if !errors.As(err, &typed) {
+		return ProblemSecretSetupFailed
+	}
+	switch typed.Kind {
+	case appvault.KindPermission:
+		return ProblemSecretWrongPassphrase
+	case appvault.KindUnsupported:
+		return ProblemSecretsUnavailable
+	default:
+		return ProblemSecretSetupFailed
 	}
 }
 

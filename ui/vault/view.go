@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -42,6 +43,7 @@ func list(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	})
 
 	problem(c, s, t)
+	secretBanner(c, s, m, t)
 
 	if pending := s.PendingDelete(); pending != "" {
 		message := m.VaultHostDeleteConfirmUnknown()
@@ -74,6 +76,59 @@ func list(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 			hostRow(c, s, host, m, t)
 		}
 	})
+}
+
+// secretBanner offers the credential-protection choice when the OS store is
+// unavailable, and unlocks a passphrase-wrapped store. Session-only mode is
+// stated so the user knows credentials will not survive a restart.
+func secretBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	switch s.SecretMode() {
+	case appvault.SecretModeUnavailable:
+		ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
+			ui.Text(c, m.VaultSecretSetupTitle()).Bold()
+			ui.Text(c, m.VaultSecretSetupBody()).FontSize(12).TextColor(t.TextMuted)
+			ui.Field(c, m.VaultSecretPassphrase(), func() {
+				ui.TextInput(c, s.SecretPassphrase()).Password().Width(260)
+			})
+			ui.Field(c, m.VaultSecretConfirm(), func() {
+				ui.TextInput(c, s.SecretConfirmation()).Password().Width(260)
+			})
+			secretProblem(c, s, t)
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.PrimaryButton(c, m.VaultSecretUsePassphrase()).Clicked() {
+					s.SetSecretPassphrase()
+					c.Invalidate()
+				}
+				if ui.Button(c, m.VaultSecretUseSession()).Clicked() {
+					s.UseSessionSecrets()
+					c.Invalidate()
+				}
+			})
+		})
+	case appvault.SecretModePassphraseLocked:
+		ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
+			ui.Text(c, m.VaultSecretLockedTitle()).Bold()
+			ui.Text(c, m.VaultSecretLockedBody()).FontSize(12).TextColor(t.TextMuted)
+			ui.Row(c).Gap(8).Children(func() {
+				ui.TextInput(c, s.SecretPassphrase()).Password().Width(260)
+				if ui.PrimaryButton(c, m.VaultSecretUnlock()).Clicked() {
+					s.UnlockSecrets()
+					c.Invalidate()
+				}
+			})
+			secretProblem(c, s, t)
+		})
+	case appvault.SecretModeSession:
+		ui.Text(c, m.VaultSecretSessionNote()).FontSize(12).TextColor(t.TextMuted)
+	}
+}
+
+func secretProblem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
+	message := problemText(locales.In(c.Locale()), s.SecretProblem())
+	if message == "" {
+		return
+	}
+	ui.Text(c, message).TextColor(t.Danger)
 }
 
 func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
@@ -114,6 +169,9 @@ func hostSummary(host domainvault.Host, m locales.Messages) string {
 	}
 	if host.Group != "" {
 		parts = append(parts, host.Group)
+	}
+	if host.HasPassword {
+		parts = append(parts, m.VaultHostPasswordStored())
 	}
 	if len(host.Tags) > 0 {
 		parts = append(parts, strings.Join(host.Tags, ", "))
@@ -164,6 +222,15 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 		ui.Field(c, m.VaultHostNotes(), func() {
 			ui.TextArea(c, &form.Notes).Height(80)
 		})
+		passwordHint := m.VaultHostPasswordHint()
+		if form.HasPassword {
+			passwordHint = m.VaultHostPasswordKeep()
+		}
+		ui.Field(c, m.VaultHostPassword(), func() {
+			// The input is plaintext only while the editor is open. It is
+			// never loaded back from storage and never rendered again.
+			ui.TextInput(c, &form.Password).Password()
+		}).Description(passwordHint)
 		ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 	})
 
@@ -222,6 +289,22 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemNotFound()
 	case vaultstate.ProblemInternal:
 		return m.VaultProblemInternal()
+	case vaultstate.ProblemSecretField:
+		return m.VaultProblemSecretField()
+	case vaultstate.ProblemSecretsUnavailable:
+		return m.VaultProblemSecretsUnavailable()
+	case vaultstate.ProblemSecretsLocked:
+		return m.VaultProblemSecretsLocked()
+	case vaultstate.ProblemSecretWrongPassphrase:
+		return m.VaultProblemSecretWrongPassphrase()
+	case vaultstate.ProblemSecretPassphraseRequired:
+		return m.VaultProblemSecretPassphraseRequired()
+	case vaultstate.ProblemSecretPassphraseMismatch:
+		return m.VaultProblemSecretPassphraseMismatch()
+	case vaultstate.ProblemSecretUnreadable:
+		return m.VaultProblemSecretUnreadable()
+	case vaultstate.ProblemSecretSetupFailed:
+		return m.VaultProblemSecretSetupFailed()
 	}
 	return ""
 }

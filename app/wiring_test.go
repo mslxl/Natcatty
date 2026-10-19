@@ -62,7 +62,11 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 		}),
 	)
 	quits := 0
-	registry := newRegistry(shellState, func() { quits++ })
+	locks := 0
+	registry := newRegistry(shellState, func() { quits++ }, func() error {
+		locks++
+		return nil
+	})
 
 	if err := registry.Dispatch(context.Background(), command.NewTab); err != nil {
 		t.Fatalf("NewTab: %v", err)
@@ -84,6 +88,13 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 		t.Fatalf("requested locales = %v, want [zh-TW]", locales)
 	}
 
+	if err := registry.Dispatch(context.Background(), command.LockApp); err != nil {
+		t.Fatalf("LockApp: %v", err)
+	}
+	if locks != 1 {
+		t.Fatalf("locks = %d, want 1", locks)
+	}
+
 	if err := registry.Dispatch(context.Background(), command.Quit); err != nil {
 		t.Fatalf("Quit: %v", err)
 	}
@@ -94,9 +105,9 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 
 func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
 	shellState := newWiringState(t)
-	registry := newRegistry(shellState, func() {})
+	registry := newRegistry(shellState, func() {}, func() error { return nil })
 
-	ids := []command.ID{command.NewTab, command.CloseTab, command.Quit}
+	ids := []command.ID{command.NewTab, command.CloseTab, command.LockApp, command.Quit}
 	for _, tag := range locales.Tags() {
 		ids = append(ids, command.LocaleCommandID(tag))
 	}

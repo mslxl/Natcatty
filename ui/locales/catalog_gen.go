@@ -462,11 +462,11 @@ func (msgs Messages) VaultHostPinned() string {
 	return Catalog.Format(msgs.locale, "vaultHostPinned", nil)
 }
 
-// VaultHostCredentialsNote says "Credentials are not saved until encrypted storage is available."
+// VaultHostCredentialsNote says "Passwords are encrypted before they are saved."
 // in the language the app shows.
 func VaultHostCredentialsNote() string { return In(i18n.Locale()).VaultHostCredentialsNote() }
 
-// VaultHostCredentialsNote says "Credentials are not saved until encrypted storage is available."
+// VaultHostCredentialsNote says "Passwords are encrypted before they are saved."
 // in the language of msgs.
 func (msgs Messages) VaultHostCredentialsNote() string {
 	return Catalog.Format(msgs.locale, "vaultHostCredentialsNote", nil)
@@ -636,4 +636,494 @@ func VaultProblemInternal() string { return In(i18n.Locale()).VaultProblemIntern
 // in the language of msgs.
 func (msgs Messages) VaultProblemInternal() string {
 	return Catalog.Format(msgs.locale, "vaultProblemInternal", nil)
+}
+
+// VaultHostPassword says "Password"
+// in the language the app shows.
+func VaultHostPassword() string { return In(i18n.Locale()).VaultHostPassword() }
+
+// VaultHostPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) VaultHostPassword() string {
+	return Catalog.Format(msgs.locale, "vaultHostPassword", nil)
+}
+
+// VaultHostPasswordStored says "Password stored"
+// in the language the app shows.
+func VaultHostPasswordStored() string { return In(i18n.Locale()).VaultHostPasswordStored() }
+
+// VaultHostPasswordStored says "Password stored"
+// in the language of msgs.
+func (msgs Messages) VaultHostPasswordStored() string {
+	return Catalog.Format(msgs.locale, "vaultHostPasswordStored", nil)
+}
+
+// VaultHostPasswordKeep says "A password is stored. Leave blank to keep it."
+// in the language the app shows.
+func VaultHostPasswordKeep() string { return In(i18n.Locale()).VaultHostPasswordKeep() }
+
+// VaultHostPasswordKeep says "A password is stored. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultHostPasswordKeep() string {
+	return Catalog.Format(msgs.locale, "vaultHostPasswordKeep", nil)
+}
+
+// VaultHostPasswordHint says "Stored encrypted and never shown again."
+// in the language the app shows.
+func VaultHostPasswordHint() string { return In(i18n.Locale()).VaultHostPasswordHint() }
+
+// VaultHostPasswordHint says "Stored encrypted and never shown again."
+// in the language of msgs.
+func (msgs Messages) VaultHostPasswordHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostPasswordHint", nil)
+}
+
+// VaultProblemSecretField says "The password could not be stored."
+// in the language the app shows.
+func VaultProblemSecretField() string { return In(i18n.Locale()).VaultProblemSecretField() }
+
+// VaultProblemSecretField says "The password could not be stored."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretField() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretField", nil)
+}
+
+// VaultProblemSecretsUnavailable says "Encrypted storage is unavailable. Choose how to protect credentials."
+// in the language the app shows.
+func VaultProblemSecretsUnavailable() string {
+	return In(i18n.Locale()).VaultProblemSecretsUnavailable()
+}
+
+// VaultProblemSecretsUnavailable says "Encrypted storage is unavailable. Choose how to protect credentials."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretsUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretsUnavailable", nil)
+}
+
+// VaultProblemSecretsLocked says "Unlock encrypted storage to save credentials."
+// in the language the app shows.
+func VaultProblemSecretsLocked() string { return In(i18n.Locale()).VaultProblemSecretsLocked() }
+
+// VaultProblemSecretsLocked says "Unlock encrypted storage to save credentials."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretsLocked() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretsLocked", nil)
+}
+
+// VaultProblemSecretWrongPassphrase says "That passphrase did not unlock your credentials."
+// in the language the app shows.
+func VaultProblemSecretWrongPassphrase() string {
+	return In(i18n.Locale()).VaultProblemSecretWrongPassphrase()
+}
+
+// VaultProblemSecretWrongPassphrase says "That passphrase did not unlock your credentials."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretWrongPassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretWrongPassphrase", nil)
+}
+
+// VaultProblemSecretPassphraseRequired says "Enter a passphrase."
+// in the language the app shows.
+func VaultProblemSecretPassphraseRequired() string {
+	return In(i18n.Locale()).VaultProblemSecretPassphraseRequired()
+}
+
+// VaultProblemSecretPassphraseRequired says "Enter a passphrase."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretPassphraseRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretPassphraseRequired", nil)
+}
+
+// VaultProblemSecretPassphraseMismatch says "The passphrases do not match."
+// in the language the app shows.
+func VaultProblemSecretPassphraseMismatch() string {
+	return In(i18n.Locale()).VaultProblemSecretPassphraseMismatch()
+}
+
+// VaultProblemSecretPassphraseMismatch says "The passphrases do not match."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretPassphraseMismatch() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretPassphraseMismatch", nil)
+}
+
+// VaultProblemSecretUnreadable says "A stored credential could not be read."
+// in the language the app shows.
+func VaultProblemSecretUnreadable() string { return In(i18n.Locale()).VaultProblemSecretUnreadable() }
+
+// VaultProblemSecretUnreadable says "A stored credential could not be read."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretUnreadable() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretUnreadable", nil)
+}
+
+// VaultProblemSecretSetupFailed says "Encrypted storage could not be set up."
+// in the language the app shows.
+func VaultProblemSecretSetupFailed() string { return In(i18n.Locale()).VaultProblemSecretSetupFailed() }
+
+// VaultProblemSecretSetupFailed says "Encrypted storage could not be set up."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSecretSetupFailed() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSecretSetupFailed", nil)
+}
+
+// VaultSecretSetupTitle says "Protect your credentials"
+// in the language the app shows.
+func VaultSecretSetupTitle() string { return In(i18n.Locale()).VaultSecretSetupTitle() }
+
+// VaultSecretSetupTitle says "Protect your credentials"
+// in the language of msgs.
+func (msgs Messages) VaultSecretSetupTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSecretSetupTitle", nil)
+}
+
+// VaultSecretSetupBody says "This system has no credential store. Choose a passphrase (recommended) or keep credentials only for this session."
+// in the language the app shows.
+func VaultSecretSetupBody() string { return In(i18n.Locale()).VaultSecretSetupBody() }
+
+// VaultSecretSetupBody says "This system has no credential store. Choose a passphrase (recommended) or keep credentials only for this session."
+// in the language of msgs.
+func (msgs Messages) VaultSecretSetupBody() string {
+	return Catalog.Format(msgs.locale, "vaultSecretSetupBody", nil)
+}
+
+// VaultSecretPassphrase says "Passphrase"
+// in the language the app shows.
+func VaultSecretPassphrase() string { return In(i18n.Locale()).VaultSecretPassphrase() }
+
+// VaultSecretPassphrase says "Passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultSecretPassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultSecretPassphrase", nil)
+}
+
+// VaultSecretConfirm says "Confirm passphrase"
+// in the language the app shows.
+func VaultSecretConfirm() string { return In(i18n.Locale()).VaultSecretConfirm() }
+
+// VaultSecretConfirm says "Confirm passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultSecretConfirm() string {
+	return Catalog.Format(msgs.locale, "vaultSecretConfirm", nil)
+}
+
+// VaultSecretUsePassphrase says "Use a passphrase"
+// in the language the app shows.
+func VaultSecretUsePassphrase() string { return In(i18n.Locale()).VaultSecretUsePassphrase() }
+
+// VaultSecretUsePassphrase says "Use a passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultSecretUsePassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultSecretUsePassphrase", nil)
+}
+
+// VaultSecretUseSession says "Session only"
+// in the language the app shows.
+func VaultSecretUseSession() string { return In(i18n.Locale()).VaultSecretUseSession() }
+
+// VaultSecretUseSession says "Session only"
+// in the language of msgs.
+func (msgs Messages) VaultSecretUseSession() string {
+	return Catalog.Format(msgs.locale, "vaultSecretUseSession", nil)
+}
+
+// VaultSecretSessionNote says "Credentials will be forgotten when Natcatty quits."
+// in the language the app shows.
+func VaultSecretSessionNote() string { return In(i18n.Locale()).VaultSecretSessionNote() }
+
+// VaultSecretSessionNote says "Credentials will be forgotten when Natcatty quits."
+// in the language of msgs.
+func (msgs Messages) VaultSecretSessionNote() string {
+	return Catalog.Format(msgs.locale, "vaultSecretSessionNote", nil)
+}
+
+// VaultSecretLockedTitle says "Encrypted storage is locked"
+// in the language the app shows.
+func VaultSecretLockedTitle() string { return In(i18n.Locale()).VaultSecretLockedTitle() }
+
+// VaultSecretLockedTitle says "Encrypted storage is locked"
+// in the language of msgs.
+func (msgs Messages) VaultSecretLockedTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSecretLockedTitle", nil)
+}
+
+// VaultSecretLockedBody says "Enter your passphrase to read and save credentials."
+// in the language the app shows.
+func VaultSecretLockedBody() string { return In(i18n.Locale()).VaultSecretLockedBody() }
+
+// VaultSecretLockedBody says "Enter your passphrase to read and save credentials."
+// in the language of msgs.
+func (msgs Messages) VaultSecretLockedBody() string {
+	return Catalog.Format(msgs.locale, "vaultSecretLockedBody", nil)
+}
+
+// VaultSecretUnlock says "Unlock"
+// in the language the app shows.
+func VaultSecretUnlock() string { return In(i18n.Locale()).VaultSecretUnlock() }
+
+// VaultSecretUnlock says "Unlock"
+// in the language of msgs.
+func (msgs Messages) VaultSecretUnlock() string {
+	return Catalog.Format(msgs.locale, "vaultSecretUnlock", nil)
+}
+
+// SettingsAppLockTitle says "App Lock"
+// in the language the app shows.
+func SettingsAppLockTitle() string { return In(i18n.Locale()).SettingsAppLockTitle() }
+
+// SettingsAppLockTitle says "App Lock"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockTitle", nil)
+}
+
+// SettingsAppLockDescription says "Require a password when Natcatty starts, after it is idle, or when you lock it."
+// in the language the app shows.
+func SettingsAppLockDescription() string { return In(i18n.Locale()).SettingsAppLockDescription() }
+
+// SettingsAppLockDescription says "Require a password when Natcatty starts, after it is idle, or when you lock it."
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockDescription", nil)
+}
+
+// SettingsAppLockEnabled says "App Lock is on"
+// in the language the app shows.
+func SettingsAppLockEnabled() string { return In(i18n.Locale()).SettingsAppLockEnabled() }
+
+// SettingsAppLockEnabled says "App Lock is on"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockEnabled", nil)
+}
+
+// SettingsAppLockDisabled says "App Lock is off"
+// in the language the app shows.
+func SettingsAppLockDisabled() string { return In(i18n.Locale()).SettingsAppLockDisabled() }
+
+// SettingsAppLockDisabled says "App Lock is off"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockDisabled", nil)
+}
+
+// SettingsAppLockPassword says "Password"
+// in the language the app shows.
+func SettingsAppLockPassword() string { return In(i18n.Locale()).SettingsAppLockPassword() }
+
+// SettingsAppLockPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockPassword() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockPassword", nil)
+}
+
+// SettingsAppLockConfirm says "Confirm password"
+// in the language the app shows.
+func SettingsAppLockConfirm() string { return In(i18n.Locale()).SettingsAppLockConfirm() }
+
+// SettingsAppLockConfirm says "Confirm password"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockConfirm", nil)
+}
+
+// SettingsAppLockCurrentPassword says "Current password"
+// in the language the app shows.
+func SettingsAppLockCurrentPassword() string {
+	return In(i18n.Locale()).SettingsAppLockCurrentPassword()
+}
+
+// SettingsAppLockCurrentPassword says "Current password"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockCurrentPassword() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockCurrentPassword", nil)
+}
+
+// SettingsAppLockEnable says "Turn on App Lock"
+// in the language the app shows.
+func SettingsAppLockEnable() string { return In(i18n.Locale()).SettingsAppLockEnable() }
+
+// SettingsAppLockEnable says "Turn on App Lock"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockEnable() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockEnable", nil)
+}
+
+// SettingsAppLockDisable says "Turn off App Lock"
+// in the language the app shows.
+func SettingsAppLockDisable() string { return In(i18n.Locale()).SettingsAppLockDisable() }
+
+// SettingsAppLockDisable says "Turn off App Lock"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockDisable() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockDisable", nil)
+}
+
+// SettingsAppLockTimeout says "Lock after idle"
+// in the language the app shows.
+func SettingsAppLockTimeout() string { return In(i18n.Locale()).SettingsAppLockTimeout() }
+
+// SettingsAppLockTimeout says "Lock after idle"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockTimeout() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockTimeout", nil)
+}
+
+// SettingsAppLockTimeoutNever says "Never"
+// in the language the app shows.
+func SettingsAppLockTimeoutNever() string { return In(i18n.Locale()).SettingsAppLockTimeoutNever() }
+
+// SettingsAppLockTimeoutNever says "Never"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockTimeoutNever() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockTimeoutNever", nil)
+}
+
+// SettingsAppLockTimeoutMinutes says "{minutes} min"
+// in the language the app shows.
+//
+// An App Lock idle timeout choice, in minutes.
+func SettingsAppLockTimeoutMinutes(minutes int) string {
+	return In(i18n.Locale()).SettingsAppLockTimeoutMinutes(minutes)
+}
+
+// SettingsAppLockTimeoutMinutes says "{minutes} min"
+// in the language of msgs.
+//
+// An App Lock idle timeout choice, in minutes.
+func (msgs Messages) SettingsAppLockTimeoutMinutes(minutes int) string {
+	return Catalog.Format(msgs.locale, "settingsAppLockTimeoutMinutes", map[string]any{"minutes": minutes})
+}
+
+// SettingsAppLockLockNow says "Lock Now"
+// in the language the app shows.
+func SettingsAppLockLockNow() string { return In(i18n.Locale()).SettingsAppLockLockNow() }
+
+// SettingsAppLockLockNow says "Lock Now"
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockLockNow() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockLockNow", nil)
+}
+
+// SettingsAppLockProblemEmpty says "Enter a password."
+// in the language the app shows.
+func SettingsAppLockProblemEmpty() string { return In(i18n.Locale()).SettingsAppLockProblemEmpty() }
+
+// SettingsAppLockProblemEmpty says "Enter a password."
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockProblemEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockProblemEmpty", nil)
+}
+
+// SettingsAppLockProblemMismatch says "The passwords do not match."
+// in the language the app shows.
+func SettingsAppLockProblemMismatch() string {
+	return In(i18n.Locale()).SettingsAppLockProblemMismatch()
+}
+
+// SettingsAppLockProblemMismatch says "The passwords do not match."
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockProblemMismatch() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockProblemMismatch", nil)
+}
+
+// SettingsAppLockProblemIncorrect says "That password is incorrect."
+// in the language the app shows.
+func SettingsAppLockProblemIncorrect() string {
+	return In(i18n.Locale()).SettingsAppLockProblemIncorrect()
+}
+
+// SettingsAppLockProblemIncorrect says "That password is incorrect."
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockProblemIncorrect() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockProblemIncorrect", nil)
+}
+
+// SettingsAppLockProblemFailed says "App Lock could not be updated."
+// in the language the app shows.
+func SettingsAppLockProblemFailed() string { return In(i18n.Locale()).SettingsAppLockProblemFailed() }
+
+// SettingsAppLockProblemFailed says "App Lock could not be updated."
+// in the language of msgs.
+func (msgs Messages) SettingsAppLockProblemFailed() string {
+	return Catalog.Format(msgs.locale, "settingsAppLockProblemFailed", nil)
+}
+
+// AppLockTitle says "Natcatty is locked"
+// in the language the app shows.
+func AppLockTitle() string { return In(i18n.Locale()).AppLockTitle() }
+
+// AppLockTitle says "Natcatty is locked"
+// in the language of msgs.
+func (msgs Messages) AppLockTitle() string {
+	return Catalog.Format(msgs.locale, "appLockTitle", nil)
+}
+
+// AppLockBody says "Enter your password to continue."
+// in the language the app shows.
+func AppLockBody() string { return In(i18n.Locale()).AppLockBody() }
+
+// AppLockBody says "Enter your password to continue."
+// in the language of msgs.
+func (msgs Messages) AppLockBody() string {
+	return Catalog.Format(msgs.locale, "appLockBody", nil)
+}
+
+// AppLockPassword says "Password"
+// in the language the app shows.
+func AppLockPassword() string { return In(i18n.Locale()).AppLockPassword() }
+
+// AppLockPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) AppLockPassword() string {
+	return Catalog.Format(msgs.locale, "appLockPassword", nil)
+}
+
+// AppLockUnlock says "Unlock"
+// in the language the app shows.
+func AppLockUnlock() string { return In(i18n.Locale()).AppLockUnlock() }
+
+// AppLockUnlock says "Unlock"
+// in the language of msgs.
+func (msgs Messages) AppLockUnlock() string {
+	return Catalog.Format(msgs.locale, "appLockUnlock", nil)
+}
+
+// AppLockProblemIncorrect says "That password is incorrect."
+// in the language the app shows.
+func AppLockProblemIncorrect() string { return In(i18n.Locale()).AppLockProblemIncorrect() }
+
+// AppLockProblemIncorrect says "That password is incorrect."
+// in the language of msgs.
+func (msgs Messages) AppLockProblemIncorrect() string {
+	return Catalog.Format(msgs.locale, "appLockProblemIncorrect", nil)
+}
+
+// AppLockProblemEmpty says "Enter your password."
+// in the language the app shows.
+func AppLockProblemEmpty() string { return In(i18n.Locale()).AppLockProblemEmpty() }
+
+// AppLockProblemEmpty says "Enter your password."
+// in the language of msgs.
+func (msgs Messages) AppLockProblemEmpty() string {
+	return Catalog.Format(msgs.locale, "appLockProblemEmpty", nil)
+}
+
+// MenuLockApp says "Lock Now"
+// in the language the app shows.
+func MenuLockApp() string { return In(i18n.Locale()).MenuLockApp() }
+
+// MenuLockApp says "Lock Now"
+// in the language of msgs.
+func (msgs Messages) MenuLockApp() string {
+	return Catalog.Format(msgs.locale, "menuLockApp", nil)
+}
+
+// AppLockProblemFailed says "The app could not be unlocked."
+// in the language the app shows.
+func AppLockProblemFailed() string { return In(i18n.Locale()).AppLockProblemFailed() }
+
+// AppLockProblemFailed says "The app could not be unlocked."
+// in the language of msgs.
+func (msgs Messages) AppLockProblemFailed() string {
+	return Catalog.Format(msgs.locale, "appLockProblemFailed", nil)
 }

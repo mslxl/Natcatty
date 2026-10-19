@@ -7,7 +7,7 @@ import (
 )
 
 func TestViewLocalizes(t *testing.T) {
-	tt := ui.NewTester(View, 600, 400)
+	tt := ui.NewTester(View(NewAppLockState(&fakeAppLock{})), 600, 400)
 
 	tt.SetLocale("ru")
 	if !tt.HasText("Настройки") {

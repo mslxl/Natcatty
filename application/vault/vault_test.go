@@ -13,8 +13,9 @@ import (
 
 // fakeHosts is the in-memory HostRepository the Service is tested against.
 type fakeHosts struct {
-	hosts []domainvault.Host
-	saves int
+	hosts   []domainvault.Host
+	saves   int
+	saveErr error
 }
 
 func (f *fakeHosts) List(context.Context) ([]domainvault.Host, error) {
@@ -32,6 +33,9 @@ func (f *fakeHosts) Get(_ context.Context, id model.HostID) (domainvault.Host, e
 
 func (f *fakeHosts) Save(_ context.Context, host domainvault.Host) error {
 	f.saves++
+	if f.saveErr != nil {
+		return f.saveErr
+	}
 	for i, existing := range f.hosts {
 		if existing.ID == host.ID {
 			f.hosts[i] = host
