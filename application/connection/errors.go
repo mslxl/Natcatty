@@ -25,6 +25,8 @@ const (
 	KindCancelled Kind = "cancelled"
 	// KindInternal reports a local failure such as a storage error.
 	KindInternal Kind = "internal"
+	// KindX11 reports that the SSH Host refused X11 forwarding.
+	KindX11 Kind = "x11"
 )
 
 // Error is a typed connection error. Cause carries the transport or storage
@@ -94,7 +96,34 @@ var (
 	// ErrProxyHandshake reports a proxy that accepted the connection but
 	// refused or malformed its tunnel handshake.
 	ErrProxyHandshake = errors.New("connection: proxy handshake failed")
+	// ErrX11RequestDenied reports that the SSH Host rejected x11-req.
+	ErrX11RequestDenied = errors.New("connection: X11 forwarding was refused")
+	// ErrX11Unavailable reports a local X11 bridge that could not start, such
+	// as an unavailable random source.
+	ErrX11Unavailable = errors.New("connection: X11 forwarding unavailable")
 )
+
+// X11NoticeCode identifies a non-fatal X11 runtime problem. It is an
+// identifier, never localized text; the UI resolves it through its catalogs.
+type X11NoticeCode string
+
+const (
+	// X11NoticeLocalDisplay reports that the local X server could not be
+	// reached for a forwarded X11 channel.
+	X11NoticeLocalDisplay X11NoticeCode = "local_display"
+	// X11NoticeCookie reports that xauth produced no MIT-MAGIC-COOKIE-1 for
+	// the local display, so the setup packet could not be rewritten.
+	X11NoticeCookie X11NoticeCode = "cookie"
+	// X11NoticeChannel reports that an X11 channel could not be accepted.
+	X11NoticeChannel X11NoticeCode = "channel"
+)
+
+// X11Notice reports a non-fatal X11 forwarding failure. Display is the
+// resolved local display target for diagnostics.
+type X11Notice struct {
+	Code    X11NoticeCode
+	Display string
+}
 
 // AuthFailure wraps cause as an authentication error. AuthSource
 // implementations use it so the Manager reports a missing or unusable
@@ -105,7 +134,7 @@ func AuthFailure(cause error) error { return authError(cause) }
 // Session must not retry a rejected credential or host key; the user has to
 // change the Host or trust decision first.
 func (e *Error) Permanent() bool {
-	return e != nil && (e.Kind == KindAuth || e.Kind == KindHostKey)
+	return e != nil && (e.Kind == KindAuth || e.Kind == KindHostKey || e.Kind == KindX11)
 }
 
 func hostKeyError(cause error) error     { return &Error{Kind: KindHostKey, Cause: cause} }

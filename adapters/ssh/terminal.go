@@ -22,6 +22,7 @@ type sshClient struct {
 	client        *xssh.Client
 	ancestors     []*xssh.Client
 	remoteVersion string
+	x11           *x11Bridge
 	mu            sync.Mutex
 	closed        bool
 }
@@ -114,6 +115,10 @@ func (c *sshClient) OpenTerminal(ctx context.Context, spec appconnection.Termina
 	if err != nil {
 		return nil, err
 	}
+	if err := c.x11.RequestX11(session); err != nil {
+		_ = session.Close()
+		return nil, err
+	}
 
 	cols, rows := spec.Cols, spec.Rows
 	if cols <= 0 {
@@ -166,6 +171,7 @@ func (c *sshClient) Close() error {
 	c.closed = true
 	c.mu.Unlock()
 
+	c.x11.Close()
 	err := c.client.Close()
 	for i := len(c.ancestors) - 1; i >= 0; i-- {
 		if closeErr := c.ancestors[i].Close(); closeErr != nil && err == nil {

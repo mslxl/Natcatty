@@ -413,6 +413,44 @@ func readWithTimeout(t *testing.T, r io.Reader, p []byte) (int, error) {
 	}
 }
 
+// notifyingTransport is a fake transport that also reports runtime notices.
+type notifyingTransport struct {
+	*fakeTransport
+	notices chan Notice
+}
+
+func (t *notifyingTransport) Notices() <-chan Notice { return t.notices }
+
+type notifyingFactory struct{ transport Transport }
+
+func (f *notifyingFactory) Open(context.Context, StartSpec) (Transport, error) {
+	return f.transport, nil
+}
+
+func TestNoticesReachTheSnapshotWithoutEndingTheSession(t *testing.T) {
+	transport := &notifyingTransport{fakeTransport: newFakeTransport(), notices: make(chan Notice, 1)}
+	service := newTestService(&notifyingFactory{transport: transport},
+		WithIDGenerator(func() model.SessionID { return "session-notice" }))
+
+	session, err := service.OpenLocal(context.Background())
+	if err != nil {
+		t.Fatalf("OpenLocal: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	transport.notices <- Notice{Code: NoticeX11LocalDisplay, Target: "localhost:6000"}
+	eventually(t, "the notice to reach the snapshot", func() bool {
+		snapshot := session.Snapshot()
+		return snapshot.Notice != nil &&
+			snapshot.Notice.Code == NoticeX11LocalDisplay &&
+			snapshot.Notice.Target == "localhost:6000"
+	})
+
+	if snapshot := session.Snapshot(); snapshot.Status != StatusRunning {
+		t.Fatalf("notice ended the Session: status = %q", snapshot.Status)
+	}
+}
+
 func eventually(t *testing.T, what string, ready func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

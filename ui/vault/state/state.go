@@ -96,6 +96,8 @@ const (
 	ProblemAuthMethod               Problem = "auth_method"
 	ProblemProxy                    Problem = "proxy"
 	ProblemAlgorithms               Problem = "algorithms"
+	ProblemX11                      Problem = "x11"
+	ProblemX11Acknowledged          Problem = "x11_acknowledged"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -125,6 +127,10 @@ type Form struct {
 	AuthMethod  string
 	UseSSHAgent bool
 	RequiresMFA bool
+	// X11Forwarding enables X11 forwarding for this Host. It is off by default
+	// and requires X11WarningAcknowledged before the Host validates.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
 }
 
 // State is the Vault surface's state.
@@ -500,6 +506,9 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		AuthMethod:  string(host.AuthMethod),
 		UseSSHAgent: host.UseSSHAgent,
 		RequiresMFA: host.RequiresMFA,
+
+		X11Forwarding:          host.X11Forwarding,
+		X11WarningAcknowledged: host.X11WarningAcknowledged,
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -514,6 +523,16 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	}
 	s.redraw()
 	return true
+}
+
+// SetX11Forwarding updates the editor's X11 preference. Turning X11 off
+// clears the security acknowledgement, so re-enabling it requires the user to
+// acknowledge the warning again.
+func (s *State) SetX11Forwarding(enabled bool) {
+	s.form.X11Forwarding = enabled
+	if !enabled {
+		s.form.X11WarningAcknowledged = false
+	}
 }
 
 // CancelEdit closes the editor without saving.
@@ -675,25 +694,27 @@ func (s *State) find(id model.HostID) (domainvault.Host, bool) {
 // changing its Pinned preference.
 func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 	return domainvault.Draft{
-		Label:            host.Label,
-		Hostname:         host.Hostname,
-		Port:             host.Port,
-		Username:         host.Username,
-		Protocol:         host.Protocol,
-		Group:            host.Group,
-		Tags:             host.Tags,
-		Notes:            host.Notes,
-		Pinned:           pinned,
-		IdentityID:       host.IdentityID,
-		KeyID:            host.KeyID,
-		AuthMethod:       host.AuthMethod,
-		UseSSHAgent:      host.UseSSHAgent,
-		RequiresMFA:      host.RequiresMFA,
-		HostChain:        domainvault.CloneHostChain(host.HostChain),
-		Proxy:            domainvault.CloneProxy(host.Proxy),
-		LegacyAlgorithms: host.LegacyAlgorithms,
-		SkipEcdsaHostKey: host.SkipEcdsaHostKey,
-		Algorithms:       domainvault.CloneAlgorithms(host.Algorithms),
+		Label:                  host.Label,
+		Hostname:               host.Hostname,
+		Port:                   host.Port,
+		Username:               host.Username,
+		Protocol:               host.Protocol,
+		Group:                  host.Group,
+		Tags:                   host.Tags,
+		Notes:                  host.Notes,
+		Pinned:                 pinned,
+		IdentityID:             host.IdentityID,
+		KeyID:                  host.KeyID,
+		AuthMethod:             host.AuthMethod,
+		UseSSHAgent:            host.UseSSHAgent,
+		RequiresMFA:            host.RequiresMFA,
+		X11Forwarding:          host.X11Forwarding,
+		X11WarningAcknowledged: host.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(host.HostChain),
+		Proxy:                  domainvault.CloneProxy(host.Proxy),
+		LegacyAlgorithms:       host.LegacyAlgorithms,
+		SkipEcdsaHostKey:       host.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
 	}
 }
 
@@ -717,21 +738,23 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	}
 
 	return domainvault.Draft{
-		Label:       s.form.Label,
-		Hostname:    s.form.Hostname,
-		Port:        port,
-		Username:    s.form.Username,
-		Protocol:    domainvault.Protocol(s.form.Protocol),
-		Group:       s.form.Group,
-		Tags:        tags,
-		Notes:       s.form.Notes,
-		Pinned:      s.form.Pinned,
-		Password:    s.form.Password,
-		IdentityID:  model.IdentityID(s.form.IdentityID),
-		KeyID:       model.KeyID(s.form.KeyID),
-		AuthMethod:  domainvault.HostAuthMethod(s.form.AuthMethod),
-		UseSSHAgent: s.form.UseSSHAgent,
-		RequiresMFA: s.form.RequiresMFA,
+		Label:                  s.form.Label,
+		Hostname:               s.form.Hostname,
+		Port:                   port,
+		Username:               s.form.Username,
+		Protocol:               domainvault.Protocol(s.form.Protocol),
+		Group:                  s.form.Group,
+		Tags:                   tags,
+		Notes:                  s.form.Notes,
+		Pinned:                 s.form.Pinned,
+		Password:               s.form.Password,
+		IdentityID:             model.IdentityID(s.form.IdentityID),
+		KeyID:                  model.KeyID(s.form.KeyID),
+		AuthMethod:             domainvault.HostAuthMethod(s.form.AuthMethod),
+		UseSSHAgent:            s.form.UseSSHAgent,
+		RequiresMFA:            s.form.RequiresMFA,
+		X11Forwarding:          s.form.X11Forwarding,
+		X11WarningAcknowledged: s.form.X11WarningAcknowledged,
 		// The editor does not expose routing yet. Round-trip the saved chain
 		// and proxy so editing another field cannot erase them.
 		HostChain:        domainvault.CloneHostChain(s.hostChain),
@@ -820,6 +843,11 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemProxy
 	case domainvault.FieldAlgorithms:
 		return ProblemAlgorithms
+	case domainvault.FieldX11:
+		if invalid.Rule == domainvault.RuleAcknowledgementRequired {
+			return ProblemX11Acknowledged
+		}
+		return ProblemX11
 	default:
 		return ProblemInternal
 	}

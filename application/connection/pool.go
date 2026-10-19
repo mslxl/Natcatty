@@ -347,7 +347,14 @@ func (p *pool) borrow(conn *Connection, ep endpointConfig, kind LeaseKind) *Leas
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	conn.mu.Lock()
-	if conn.closed || !ep.allowsReuse(conn.endpoint, kind) {
+	// A no-reuse transport is never registered for reuse, so the only borrow
+	// it serves is its own leader's first lease. The endpoint key still has to
+	// match, but the reuse rules would otherwise reject that lease too.
+	compatible := ep.allowsReuse(conn.endpoint, kind)
+	if conn.endpoint.noReuse || ep.noReuse {
+		compatible = conn.endpoint.key == ep.key
+	}
+	if conn.closed || !compatible {
 		conn.mu.Unlock()
 		return nil
 	}

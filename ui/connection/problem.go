@@ -36,6 +36,8 @@ func ProblemText(m locales.Messages, kind appconnection.Kind) string {
 		return m.ConnectionErrorUnsupported()
 	case appconnection.KindCancelled:
 		return m.ConnectionErrorCancelled()
+	case appconnection.KindX11:
+		return m.ConnectionErrorX11()
 	case appconnection.KindInternal:
 		return m.ConnectionErrorInternal()
 	}

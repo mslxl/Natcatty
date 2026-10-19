@@ -130,6 +130,9 @@ func TestSSHSessionAcquiresAndReleasesALease(t *testing.T) {
 	if local.spec.Kind != "" {
 		t.Fatalf("local factory was called for an SSH Session: %+v", local.spec)
 	}
+	if dialer.request.X11 != nil {
+		t.Fatalf("dial request enabled X11 without a Host preference: %+v", dialer.request.X11)
+	}
 
 	if err := transport.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -148,6 +151,47 @@ func TestSSHSessionAcquiresAndReleasesALease(t *testing.T) {
 	manager.CloseAll()
 	if client.closeCall != 1 {
 		t.Fatalf("SSH client close calls after CloseAll = %d, want 1", client.closeCall)
+	}
+}
+
+func TestX11SessionsPassTheDisplayAndReportNotices(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
+		X11Forwarding: true, X11Display: ":7",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+
+	if dialer.request.X11 == nil {
+		t.Fatal("the dial request did not enable X11")
+	}
+	if dialer.request.X11.Display != ":7" {
+		t.Fatalf("X11 display = %q, want :7", dialer.request.X11.Display)
+	}
+
+	notifier, ok := transport.(appsession.Notifier)
+	if !ok {
+		t.Fatal("the Session transport does not expose notices")
+	}
+	dialer.request.X11.OnNotice(appconnection.X11Notice{
+		Code:    appconnection.X11NoticeLocalDisplay,
+		Display: "localhost:6000",
+	})
+	select {
+	case notice := <-notifier.Notices():
+		if notice.Code != appsession.NoticeX11LocalDisplay || notice.Target != "localhost:6000" {
+			t.Fatalf("notice = %+v, want the local-display notice", notice)
+		}
+	default:
+		t.Fatal("the X11 notice was not forwarded to the Session")
 	}
 }
 
