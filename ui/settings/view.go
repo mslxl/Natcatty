@@ -19,9 +19,9 @@ func View(lock *AppLockState) func(*ui.Context) {
 }
 
 // ViewWithDesktop builds the Settings window with the desktop integration
-// sections. The content scrolls, so the layout holds at the minimum window
-// size.
-func ViewWithDesktop(lock *AppLockState, desktopState *DesktopState) func(*ui.Context) {
+// sections and, when given, the terminal behavior section. The content
+// scrolls, so the layout holds at the minimum window size.
+func ViewWithDesktop(lock *AppLockState, desktopState *DesktopState, terminalStates ...*TerminalState) func(*ui.Context) {
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
@@ -30,6 +30,9 @@ func ViewWithDesktop(lock *AppLockState, desktopState *DesktopState) func(*ui.Co
 			ui.Text(c, m.NavSettings()).FontSize(24).Bold()
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Gap(16).Children(func() {
+					if len(terminalStates) > 0 && terminalStates[0] != nil {
+						terminalSection(c, terminalStates[0], m, t)
+					}
 					if desktopState != nil {
 						desktopSections(c, desktopState, m, t)
 					}

@@ -78,6 +78,20 @@ func (fakeSurface) View(c *ui.Context) ui.Element {
 
 func (fakeSurface) Close() {}
 
+// edgeSurface puts a marker at the right edge of the Pane, like the Session
+// chrome's logging controls. It shows whether a Pane is as wide as the
+// content column or wider than the window.
+type edgeSurface struct{}
+
+func (edgeSurface) View(c *ui.Context) ui.Element {
+	return ui.Row(c).Fill().Children(func() {
+		ui.Text(c, "terminal-surface").Grow(1)
+		ui.Text(c, "pane-right-edge")
+	})
+}
+
+func (edgeSurface) Close() {}
+
 type testGraph struct {
 	state     *state.State
 	transport *fakeTransport
@@ -149,6 +163,42 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		if pane.Y < title.Y+title.H {
 			t.Fatalf("%dx%d terminal Pane overlaps the tab strip: pane %+v, tab %+v",
 				size[0], size[1], pane, title)
+		}
+	}
+}
+
+// TestShellPaneStaysWithinTheWindowWithManyTabs keeps the Pane width tied to
+// the content column. The tab strip can be wider than the window; it must not
+// stretch the content column with it, or the Pane's right-aligned chrome (the
+// logging controls) is pushed outside the window.
+func TestShellPaneStaysWithinTheWindowWithManyTabs(t *testing.T) {
+	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+		service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
+		t.Cleanup(service.CloseAll)
+		shellState := state.NewState(
+			state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+				return edgeSurface{}, nil
+			}),
+		)
+		for index := 0; index < 8; index++ {
+			if err := shellState.NewTab(); err != nil {
+				t.Fatalf("%dx%d NewTab %d: %v", size[0], size[1], index, err)
+			}
+		}
+		shellState.SelectTab(0)
+
+		tt := ui.NewTester(View(shellState), size[0], size[1])
+		tt.SetLocale("en")
+		tt.Frame()
+
+		edge, ok := tt.Find("pane-right-edge")
+		if !ok {
+			t.Fatalf("%dx%d does not render the Pane edge: %v", size[0], size[1], tt.Texts())
+		}
+		const epsilon = 0.5
+		if edge.X < sidebarWidth-epsilon || edge.X+edge.W > float32(size[0])+epsilon {
+			t.Fatalf("%dx%d pushes the Pane's right edge outside the window: %+v",
+				size[0], size[1], edge)
 		}
 	}
 }

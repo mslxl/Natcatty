@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
 // Flow-control watermarks, in bytes of output pending in TerminalConn.
@@ -174,6 +175,24 @@ type Snapshot struct {
 	// Notice is the most recent non-fatal runtime problem, such as a local X11
 	// display that could not be reached. It is nil when there is none.
 	Notice *Notice
+	// CWD is the working directory the shell reported with OSC 7, or "".
+	CWD string
+	// Title is the terminal title from OSC 0/2, or "".
+	Title string
+	// Command is the command tracked from typed input and OSC 133 marks.
+	Command CommandState
+	// Busy reports recent output, a running command, or an active transfer.
+	Busy bool
+	// LastActivity is when terminal output last arrived.
+	LastActivity time.Time
+	// Transfer is the current or most recent file-transfer gate.
+	Transfer TransferState
+	// Notification is the most recent accepted program notification.
+	Notification *TerminalNotification
+	// Clipboard is the most recent OSC 52 request decision, without its data.
+	Clipboard *ClipboardEvent
+	// Logging is the current Session log state.
+	Logging LogStatus
 }
 
 // NoticeCode classifies a non-fatal runtime notice.
@@ -221,12 +240,15 @@ type ExitWaiter interface {
 // the saved credential and Hostname, Port, and Username to reach the endpoint;
 // the other fields are ignored by that transport.
 type StartSpec struct {
-	Kind     Kind
-	Command  []string
-	Dir      string
-	Env      []string
-	Cols     int
-	Rows     int
+	Kind    Kind
+	Command []string
+	Dir     string
+	Env     []string
+	Cols    int
+	Rows    int
+	// Label names the Session for logging (usually the Host label). Empty
+	// falls back to "session".
+	Label    string
 	HostID   model.HostID
 	Hostname string
 	Port     int
@@ -277,6 +299,19 @@ type Session struct {
 	mu        sync.Mutex
 	snapshot  Snapshot
 
+	tap             *terminalTap
+	clipboardAccess domainterminal.ClipboardAccess
+
+	logMu   sync.Mutex
+	logger  *sessionLogger
+	lastLog LogStatus
+
+	activitySeq   uint64
+	activityTimer *time.Timer
+
+	onNotification func(model.SessionID, TerminalNotification)
+	onTransfer     func(model.SessionID, TransferState)
+
 	onEnd    func(model.SessionID)
 	onChange func(Snapshot)
 }
@@ -313,9 +348,15 @@ type Service struct {
 	newID      func() model.SessionID
 	writeDepth int
 	onChange   func(Snapshot)
-	mu         sync.Mutex
-	sessions   map[model.SessionID]*Session
-	closing    bool
+	// autoLog decides whether a new Session starts logging. Nil disables
+	// automatic logs; the user can still start one from the Session surface.
+	autoLog         func(StartSpec) *LogOptions
+	clipboardPolicy func() domainterminal.ClipboardAccess
+	onNotification  func(model.SessionID, TerminalNotification)
+	onTransfer      func(model.SessionID, TransferState)
+	mu              sync.Mutex
+	sessions        map[model.SessionID]*Session
+	closing         bool
 }
 
 // Option customizes a Service.
@@ -336,6 +377,33 @@ func WithIDGenerator(fn func() model.SessionID) Option {
 // is safe from any goroutine.
 func WithChangeHook(fn func(Snapshot)) Option {
 	return func(s *Service) { s.onChange = fn }
+}
+
+// WithAutoLogging decides the log options for each new Session. Returning nil
+// leaves logging off. The policy comes from Settings, read when the Session
+// opens.
+func WithAutoLogging(fn func(StartSpec) *LogOptions) Option {
+	return func(s *Service) { s.autoLog = fn }
+}
+
+// WithClipboardPolicy supplies the OSC 52 policy read when a Session opens.
+// SetClipboardPolicy applies later Settings changes to live Sessions. Nil
+// keeps the original write-only default.
+func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
+	return func(s *Service) { s.clipboardPolicy = fn }
+}
+
+// WithNotificationHook receives accepted program notifications. The app applies
+// the user's notification mode and window focus before showing a desktop
+// notification.
+func WithNotificationHook(fn func(model.SessionID, TerminalNotification)) Option {
+	return func(s *Service) { s.onNotification = fn }
+}
+
+// WithTransferHook observes file-transfer detection. It is the injectable seam
+// for a future transfer engine; the gate itself is always active.
+func WithTransferHook(fn func(model.SessionID, TransferState)) Option {
+	return func(s *Service) { s.onTransfer = fn }
 }
 
 // NewService returns a Service that opens transports through factory.
@@ -379,17 +447,31 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 	id := s.newID()
 	sessionCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	policyProvider := s.clipboardPolicy
+	s.mu.Unlock()
+	policy := domainterminal.ClipboardWriteOnly
+	if policyProvider != nil {
+		if candidate := policyProvider(); candidate.Valid() {
+			policy = candidate
+		}
+	}
+	tap := newTerminalTap(policy)
 	session := &Session{
-		id:        id,
-		ctx:       sessionCtx,
-		cancel:    cancel,
-		transport: transport,
-		factory:   s.factory,
-		spec:      spec,
-		genDone:   make(chan struct{}),
-		writeCh:   make(chan []byte, s.writeDepth),
-		commands:  make(chan command, 16),
-		done:      make(chan struct{}),
+		id:              id,
+		ctx:             sessionCtx,
+		cancel:          cancel,
+		transport:       transport,
+		factory:         s.factory,
+		spec:            spec,
+		tap:             tap,
+		clipboardAccess: policy,
+		genDone:         make(chan struct{}),
+		writeCh:         make(chan []byte, s.writeDepth),
+		commands:        make(chan command, 16),
+		done:            make(chan struct{}),
+		onNotification:  s.onNotification,
+		onTransfer:      s.onTransfer,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
@@ -413,13 +495,59 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	s.sessions[id] = session
 	s.mu.Unlock()
 
+	if s.autoLog != nil {
+		if options := s.autoLog(spec); options != nil {
+			if options.Label == "" {
+				options.Label = spec.Label
+			}
+			session.startAutoLog(*options)
+		}
+	}
+
 	session.start()
 	return session, nil
 }
 
 // OpenLocal opens the platform's local shell in a new Session.
 func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
-	return s.Open(ctx, StartSpec{Kind: KindLocal})
+	// The original names local Session logs "Local Terminal".
+	return s.Open(ctx, StartSpec{Kind: KindLocal, Label: "Local Terminal"})
+}
+
+// Label names the Session for logging. It is the Host label the shell opened,
+// or "Local Terminal" for a local shell.
+func (s *Session) Label() string {
+	if s.spec.Label != "" {
+		return s.spec.Label
+	}
+	switch s.spec.Kind {
+	case KindSSH:
+		if s.spec.Hostname != "" {
+			return s.spec.Hostname
+		}
+	case KindLocal:
+		return "Local Terminal"
+	}
+	return "session"
+}
+
+// SetClipboardPolicy applies an OSC 52 policy change to every live Session
+// and to Sessions opened later. The app calls it from the Settings change
+// hook, matching the original's live policy lookup.
+func (s *Service) SetClipboardPolicy(policy domainterminal.ClipboardAccess) {
+	if !policy.Valid() {
+		return
+	}
+	s.mu.Lock()
+	s.clipboardPolicy = func() domainterminal.ClipboardAccess { return policy }
+	live := make([]*Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		live = append(live, session)
+	}
+	s.mu.Unlock()
+	for _, session := range live {
+		session.setClipboardAccess(policy)
+	}
 }
 
 // SetChangeHook replaces the function called when a Session changes.
@@ -468,10 +596,21 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 
 // Snapshot returns the Session's current state.
 func (s *Session) Snapshot() Snapshot {
+	now := time.Now()
 	s.mu.Lock()
 	snapshot := s.snapshot
 	s.mu.Unlock()
 	snapshot.PendingBytes, snapshot.Paused = s.conn.stats()
+	state := s.tap.state(now)
+	snapshot.CWD = state.CWD
+	snapshot.Title = state.Title
+	snapshot.Command = state.Command
+	snapshot.Busy = state.Busy
+	snapshot.LastActivity = state.LastActivity
+	snapshot.Transfer = state.Transfer
+	snapshot.Notification = state.Notification
+	snapshot.Clipboard = state.Clipboard
+	snapshot.Logging = s.logStatus()
 	return snapshot
 }
 
@@ -597,15 +736,18 @@ func (s *Session) loop() {
 finished:
 	s.cancel()
 	close(s.genDone)
+	s.stopActivityTimer()
 	s.conn.finish()
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
+	logging := s.finishLogging()
 	s.update(func(snapshot *Snapshot) {
 		snapshot.Status = status
 		snapshot.Connection = connection
 		snapshot.ExitCode = code
 		snapshot.HasExitCode = hasCode
+		snapshot.Logging = logging
 	})
 	close(s.done)
 	if s.onEnd != nil {
@@ -666,7 +808,22 @@ func (s *Session) readLoop(generation int, transport Transport) {
 		}
 		n, err := transport.Read(buffer)
 		if n > 0 {
-			s.conn.appendOutput(buffer[:n])
+			now := time.Now()
+			output, effects := s.tap.observe(buffer[:n], now)
+			if len(output) > 0 {
+				s.writeLog(logOutput(output))
+				s.conn.appendOutput(output)
+			}
+			if effects.Changed {
+				s.publishTap(now)
+				s.scheduleActivityClear()
+			}
+			if effects.Notification != nil && s.onNotification != nil {
+				s.onNotification(s.id, *effects.Notification)
+			}
+			if effects.Transfer != nil && s.onTransfer != nil {
+				s.onTransfer(s.id, *effects.Transfer)
+			}
 		}
 		if err != nil {
 			s.post(command{

@@ -325,6 +325,7 @@ func (s *State) OpenHost(host domainvault.Host) error {
 	go func() {
 		session, err := s.sessions.Open(ctx, appsession.StartSpec{
 			Kind:     appsession.KindSSH,
+			Label:    label,
 			HostID:   host.ID,
 			Hostname: host.Hostname,
 			Port:     host.Port,
