@@ -1159,6 +1159,106 @@
   status: verified
   notes: "The bar previews the exact transformed payload. Sanitizing removes IME zero-width characters while preserving ZWNJ and ZWJ; escape decoding runs before CRLF/CR normalization, and trimming is optional. Paste is the default and appends one submit carriage return; line-by-line trims the final newline and submits each line with the original 250 ms delay. Empty drafts are not sent. Send targets the focused Session, or the active broadcast set, and clears the draft only after at least one target accepted it; Cancel discards it."
 
+- id: terminal.encoding
+  area: terminal
+  feature: Per-Session terminal encoding with split multibyte decode and input encode
+  original_paths:
+    - components/TerminalEncodingSelect.tsx
+    - domain/terminalEncodingPreference.ts
+    - components/terminal/runtime/createXTermRuntime.ts
+  module: application/session
+  tickets: [17]
+  acceptance_tests:
+    - adapters/textcodec.TestCodecDecodesLegacyBytesSplitAcrossChunks
+    - adapters/textcodec.TestCodecEncodeUsesTheSelectedEncodingAndHoldsSplitRunes
+    - adapters/textcodec.TestCodecSetEncodingDropsThePreviousIncompleteSequence
+    - adapters/textcodec.TestSessionDecodesSplitLegacyOutputAndEncodesInput
+    - domain/terminal.TestNormalizeEncodingAcceptsCharsetSpellings
+    - domain/terminal.TestSupportedEncodingsKeepTheSelectorOrder
+    - ui/locales.TestEncodingLabelsPreserveTheOriginalNames
+    - application/session.TestSessionRoutesOutputAndInputThroughTheCodec
+    - application/session.TestSessionEncodingResolverUsesTheHostScope
+    - app.TestTicket17CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The Session codec decodes transport output before the tap, log, and terminal, so a GB18030, Shift_JIS, or ISO-8859-1 sequence split across reads becomes one UTF-8 character. Input is encoded after the tap and broadcast hook, so command tracking and fan-out always see UTF-8 while the wire receives the selected bytes. The status bar and Session menu both switch encoding live; the choice persists in terminal-settings.json under the Host scope (or local) and a reopened Host inherits it. UTF-8 and GB18030 keep the original labels and order; Shift_JIS and ISO-8859-1 extend the selector for legacy hosts."
+
+- id: terminal.context-menu
+  area: terminal
+  feature: Session context menu with paste, clear, split, pane lifetime, encoding, and logging
+  original_paths:
+    - components/terminal/TerminalContextMenu.tsx
+    - components/terminal/TerminalView.tsx
+  module: ui/session
+  tickets: [17]
+  acceptance_tests:
+    - ui/session.TestSessionMenuListsTheProductionItemsInOrder
+    - ui/session.TestSessionMenuActionsReachTheSurfaceAndUnavailableItemsAreDisabled
+    - ui/session.TestSessionMenuRefusesDisabledItems
+    - ui/session.TestInteractionControlsFitAtBothSizes
+    - app.TestTicket17CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The native menu keeps Copy, Paste, Select All, and Clear Scrollback with the widget's correct selection-disabled state. The Session menu button in the status bar adds the original's Session commands: Paste, Split Right/Down, Clear Buffer, Encoding (radio list), Logging (start/stop and format submenu), Detach Pane, and Close Pane, with shortcuts where the shell has one and disabled states when an action has no backend. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
+
+- id: terminal.file-drop
+  area: terminal
+  feature: Dropped files insert shell-quoted paths or use the configured upload seam
+  original_paths:
+    - components/terminal/hooks/useTerminalDragDrop.ts
+  module: ui/session
+  tickets: [17]
+  acceptance_tests:
+    - ui/session.TestQuoteDropPathsQuotesSpacesAndQuotesForPOSIX
+    - ui/session.TestQuoteDropPathsUsesTheWindowsDoubleQuoteForm
+    - ui/session.TestDropHandlerInsertsEveryPathAsOneQuotedChunk
+    - ui/session.TestDropHandlerUploadUsesTheTransportWhenPresent
+    - ui/session.TestDropHandlerUploadWithoutTransportIsExplicitAndNonDestructive
+    - ui/session.TestDropHandlerUploadFailureIsReportedWithoutInserting
+    - ui/session.TestDropBannerShowsDragAndOutcomeStates
+    - app.TestTicket17CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "The terminal element is the drop target and shows a banner while files are over it and after a drop. Multiple paths are joined and every path is quoted: a Windows local Session uses double quotes (accepted by both cmd.exe and PowerShell; Windows names cannot contain a double quote), and a POSIX Session single-quotes with the '\"'\"' close-escape-reopen form. The default action inserts the quoted paths without running anything. Upload is a configured seam (sessionui.UploadFunc); because no SFTP/ZMODEM upload transport exists yet, choosing Upload with no seam changes nothing and reports that upload is unavailable, never silently inserting a path. Directories, spaces, and quotes pass through the same quoting. Original raw-path insertion is superseded by quoting as the ticket requires."
+
+- id: terminal.paste-protection
+  area: terminal
+  feature: Multiline paste confirmation that sends exactly on accept and nothing on cancel
+  original_paths:
+    - domain/terminalPasteConfirm.ts
+    - application/state/multilinePasteConfirmStore.ts
+    - components/terminal/hooks/useTerminalFilePaste.ts
+  module: ui/session
+  tickets: [17]
+  acceptance_tests:
+    - domain/terminal.TestPasteLineCountIgnoresOneTrailingNewline
+    - domain/terminal.TestShouldConfirmPasteUsesTheOriginalDefaultThreshold
+    - domain/terminal.TestNormalizePasteMinLinesKeepsTheOriginalRange
+    - ui/session.TestPasteGateProtectedPasteWaitsAndSendsExactlyOnAccept
+    - ui/session.TestPasteGateCancelSendsNothingAndLeavesNoPartialText
+    - ui/session.TestPasteGateANewerPasteSupersedesTheWaitingOne
+    - ui/session.TestPasteGateProtectionOffSendsImmediately
+    - ui/session.TestPasteGateOneLineIsDirectEvenWhenProtected
+    - ui/session.TestPastePromptShowsCountsAndCallsExactlyOneAction
+    - app.TestTicket17CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The original defaults are preserved: protection is off, the threshold is 2 lines (range 1..1000), CRLF and CR normalize to LF, and one trailing newline is not an extra line. With protection on, every terminal paste path (Ctrl+Shift+V, the native menu, and the Session menu) is consumed by the gate, and a banner shows the line count, character count, and a bounded preview. Send delivers the exact stored text once through the terminal's bracketed paste; Cancel sends no bytes. A newer paste replaces the waiting one, and the old text is never sent. With protection off, the same text is delivered immediately."
+
+- id: settings.terminal-interaction
+  area: settings
+  feature: Settings for terminal encoding, multiline paste protection, and dropped-file action
+  original_paths:
+    - components/settings/tabs/TerminalBehaviorSettings.tsx
+    - domain/terminalEncodingPreference.ts
+    - domain/terminalPasteConfirm.ts
+  module: ui/settings
+  tickets: [17]
+  acceptance_tests:
+    - adapters/store.TestTerminalSettingsRoundTrip
+    - application/terminalsettings.TestUpdatePersistsAndPublishes
+    - ui/settings.TestTerminalStateSavesEachSettingAndReportsFailure
+    - ui/settings.TestTerminalSettingsFitAtDefaultAndMinimumSizes
+    - app.TestTicket17CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "terminal-settings.json version 2 adds the default encoding, the per-scope encoding memory, the paste guard and threshold, and the drop action. Version 1 files load with the original defaults. A live encoding choice is written through the Settings service so the next Session for that Host inherits it."
+
 - id: settings.terminal-behavior
   area: settings
   feature: Settings for logging, OSC 52, and OSC notification behavior

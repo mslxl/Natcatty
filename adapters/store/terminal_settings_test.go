@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -19,6 +20,11 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 		LogTimestamps:    true,
 		OSC52:            domainterminal.ClipboardPrompt,
 		OSCNotifications: domainterminal.NotificationUnfocused,
+		Encoding:         domainterminal.EncodingGB18030,
+		Encodings:        map[string]domainterminal.Encoding{"host:abc": domainterminal.EncodingShiftJIS},
+		PasteProtection:  true,
+		PasteMinLines:    5,
+		DropAction:       domainterminal.DropUpload,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatal(err)
@@ -27,7 +33,7 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loaded = %+v, want %+v", got, want)
 	}
 }
@@ -38,7 +44,7 @@ func TestTerminalSettingsMissingFileIsTheOriginalDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != domainterminal.Defaults() {
+	if !reflect.DeepEqual(got, domainterminal.Defaults()) {
 		t.Fatalf("loaded = %+v, want defaults", got)
 	}
 }

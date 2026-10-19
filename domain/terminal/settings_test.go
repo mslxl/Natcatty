@@ -37,8 +37,19 @@ func TestNormalizeKeepsKnownValues(t *testing.T) {
 		LogTimestamps:    true,
 		OSC52:            ClipboardPrompt,
 		OSCNotifications: NotificationUnfocused,
+		Encoding:         EncodingGB18030,
+		Encodings:        map[string]Encoding{"host:abc": EncodingShiftJIS},
+		PasteProtection:  true,
+		PasteMinLines:    4,
+		DropAction:       DropUpload,
 	}
-	if got := Normalize(input); got != input {
+	got := Normalize(input)
+	if got.LoggingEnabled != input.LoggingEnabled || got.LogDirectory != input.LogDirectory ||
+		got.LogFormat != input.LogFormat || got.LogTimestamps != input.LogTimestamps ||
+		got.OSC52 != input.OSC52 || got.OSCNotifications != input.OSCNotifications ||
+		got.Encoding != input.Encoding || got.PasteProtection != input.PasteProtection ||
+		got.PasteMinLines != input.PasteMinLines || got.DropAction != input.DropAction ||
+		len(got.Encodings) != 1 || got.Encodings["host:abc"] != EncodingShiftJIS {
 		t.Fatalf("normalize changed a valid value: %+v", got)
 	}
 }

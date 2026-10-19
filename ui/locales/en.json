@@ -873,5 +873,75 @@
         "example": "2"
       }
     }
+  },
+  "sessionMenuLabel": "Session menu",
+  "sessionMenuPaste": "Paste",
+  "sessionMenuClearBuffer": "Clear Buffer",
+  "sessionMenuSplitRight": "Split Right",
+  "sessionMenuSplitDown": "Split Down",
+  "sessionMenuDetach": "Detach Pane",
+  "sessionMenuClosePane": "Close Pane",
+  "sessionMenuEncoding": "Encoding",
+  "sessionMenuLogging": "Logging",
+  "sessionMenuLogFormat": "Format",
+  "sessionEncoding": "Encoding",
+  "sessionEncodingUTF8": "UTF-8",
+  "sessionEncodingGB18030": "GB18030",
+  "sessionEncodingShiftJIS": "Shift_JIS",
+  "sessionEncodingLatin1": "ISO-8859-1",
+  "sessionPasteConfirmTitle": "Send {lines, plural, one {# line} other {# lines}}?",
+  "sessionPasteConfirmBody": "Waiting to send {chars, plural, one {# character} other {# characters}}. Nothing is sent until you choose Send.",
+  "sessionPastePreviewLabel": "Preview",
+  "sessionPasteSend": "Send",
+  "sessionPasteCancel": "Cancel",
+  "sessionPasteTruncated": "Preview shortened. The full text will be sent.",
+  "sessionDropActive": "Drop files here to {action}.",
+  "sessionDropInsertAction": "insert quoted paths",
+  "sessionDropUploadAction": "upload",
+  "sessionDropInserted": "Inserted {count, plural, one {# file path} other {# file paths}}.",
+  "sessionDropUploaded": "Uploaded {count, plural, one {# file} other {# files}}.",
+  "sessionDropUnavailable": "Upload is not available for this Session. No files were changed.",
+  "sessionDropFailed": "The upload failed. No files were changed.",
+  "settingsTerminalEncoding": "Terminal encoding",
+  "settingsPasteProtection": "Confirm multi-line paste",
+  "settingsPasteMinLines": "Confirm at line count",
+  "settingsDropAction": "Dropped files",
+  "settingsDropInsert": "Insert quoted paths",
+  "settingsDropUpload": "Upload",
+  "@sessionPasteConfirmTitle": {
+    "description": "A multiline paste is waiting; ask before sending it.",
+    "placeholders": {
+      "lines": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@sessionPasteConfirmBody": {
+    "description": "How much text the guarded paste holds.",
+    "placeholders": {
+      "chars": {
+        "type": "int",
+        "example": "120"
+      }
+    }
+  },
+  "@sessionDropInserted": {
+    "description": "How many dropped file paths were inserted.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "@sessionDropUploaded": {
+    "description": "How many dropped files were uploaded.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
   }
 }

@@ -33,6 +33,23 @@ const (
 	ClipboardPrompt ClipboardAccess = "prompt"
 )
 
+// DropAction is what dropping files on a terminal does.
+type DropAction string
+
+const (
+	// DropInsert inserts the shell-quoted file paths into the Session's input.
+	// It is the default and needs no upload transport.
+	DropInsert DropAction = "insert"
+	// DropUpload sends the files through the upload seam. Without a seam the
+	// drop is refused visibly rather than silently doing nothing.
+	DropUpload DropAction = "upload"
+)
+
+// Valid reports whether the drop action is one the application knows.
+func (action DropAction) Valid() bool {
+	return action == DropInsert || action == DropUpload
+}
+
 // NotificationMode is when an OSC 9/777/99 notification reaches the desktop.
 type NotificationMode string
 
@@ -67,6 +84,31 @@ type Settings struct {
 	OSC52 ClipboardAccess
 	// OSCNotifications is the desktop notification mode for OSC 9/777/99.
 	OSCNotifications NotificationMode
+	// Encoding is the default terminal encoding for a new Session. The
+	// original default is UTF-8.
+	Encoding Encoding
+	// Encodings remembers a chosen encoding by scope, so a Host reopens with
+	// the encoding its Session last used. Scope is "local" or "host:<id>".
+	Encodings map[string]Encoding
+	// PasteProtection asks before pasting multiple lines. It is off by
+	// default, as in the original.
+	PasteProtection bool
+	// PasteMinLines is the line count at which PasteProtection asks. The
+	// original default is 2.
+	PasteMinLines int
+	// DropAction is what dropping files on a terminal does.
+	DropAction DropAction
+}
+
+// EncodingScopeLocal is the encoding scope of local shell Sessions.
+const EncodingScopeLocal = "local"
+
+// EncodingScopeHost returns the encoding scope of a Host's Sessions.
+func EncodingScopeHost(hostID string) string {
+	if hostID == "" {
+		return EncodingScopeLocal
+	}
+	return "host:" + hostID
 }
 
 // Defaults returns the original defaults: logging off with a text format and
@@ -79,6 +121,11 @@ func Defaults() Settings {
 		LogTimestamps:    false,
 		OSC52:            ClipboardWriteOnly,
 		OSCNotifications: NotificationAlways,
+		Encoding:         EncodingUTF8,
+		Encodings:        nil,
+		PasteProtection:  false,
+		PasteMinLines:    DefaultPasteMinLines,
+		DropAction:       DropInsert,
 	}
 }
 
@@ -96,6 +143,26 @@ func Normalize(settings Settings) Settings {
 		settings.OSCNotifications = NotificationAlways
 	} else if !settings.OSCNotifications.Valid() {
 		settings.OSCNotifications = NotificationAlways
+	}
+	settings.Encoding = NormalizeEncoding(settings.Encoding)
+	settings.PasteMinLines = NormalizePasteMinLines(settings.PasteMinLines)
+	if !settings.DropAction.Valid() {
+		settings.DropAction = DropInsert
+	}
+	if len(settings.Encodings) > 0 {
+		encodings := make(map[string]Encoding, len(settings.Encodings))
+		for scope, encoding := range settings.Encodings {
+			if scope == "" || !encoding.Valid() {
+				continue
+			}
+			encodings[scope] = encoding
+		}
+		if len(encodings) == 0 {
+			encodings = nil
+		}
+		settings.Encodings = encodings
+	} else {
+		settings.Encodings = nil
 	}
 	return settings
 }
