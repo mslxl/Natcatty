@@ -684,5 +684,86 @@
   },
   "notificationUnknownTarget": "a Host",
   "deepLinkProblemInvalid": "Natcatty could not open that link.",
-  "deepLinkProblemUnsupported": "Natcatty does not support that link or Host yet."
+  "deepLinkProblemUnsupported": "Natcatty does not support that link or Host yet.",
+  "sessionActivityBusy": "Terminal activity",
+  "sessionActivityIdle": "No terminal activity",
+  "sessionCommandIdle": "No command",
+  "sessionCommandRunning": "Running: {command}",
+  "sessionCommandExited": "{command} — exit {code}",
+  "sessionCommandFinished": "{command}",
+  "sessionLoggingStart": "Start log",
+  "sessionLoggingStop": "Stop log",
+  "sessionLoggingOn": "Logging",
+  "sessionLoggingOff": "Not logging",
+  "sessionLoggingPath": "Log: {path}",
+  "sessionLoggingFailed": "The Session log could not be written.",
+  "sessionLoggingNoDirectory": "Choose a log folder in Settings.",
+  "sessionLogFormatText": "Text",
+  "sessionLogFormatRaw": "Raw",
+  "sessionLogFormatHTML": "HTML",
+  "sessionTransferActive": "{kind} transfer detected. Protocol data is gated.",
+  "sessionTransferCancel": "Cancel transfer",
+  "sessionClipboardRequest": "A program wants to read the clipboard.",
+  "sessionClipboardAllow": "Allow",
+  "sessionClipboardDeny": "Deny",
+  "settingsTerminalTitle": "Terminal",
+  "settingsTerminalDescription": "Session logging and terminal program behavior.",
+  "settingsTerminalLoggingTitle": "Session logging",
+  "settingsTerminalLoggingDescription": "Write Session output to a folder you choose.",
+  "settingsLogEnabled": "Log new Sessions automatically",
+  "settingsLogDirectory": "Log folder",
+  "settingsLogFormat": "Format",
+  "settingsLogTimestamps": "Add timestamps to text and HTML logs",
+  "settingsOSC52Title": "Clipboard access",
+  "settingsOSC52Description": "Choose what programs may do with OSC 52.",
+  "settingsOSC52Off": "Off",
+  "settingsOSC52WriteOnly": "Write only",
+  "settingsOSC52ReadWrite": "Read and write",
+  "settingsOSC52Prompt": "Ask before reading",
+  "settingsOSCNotificationsTitle": "Program notifications",
+  "settingsOSCNotificationsDescription": "Choose when OSC 9, 777, and 99 notifications appear.",
+  "settingsOSCNotificationsOff": "Never",
+  "settingsOSCNotificationsUnfocused": "When unfocused",
+  "settingsOSCNotificationsAlways": "Always",
+  "settingsTerminalSaveFailed": "The terminal settings could not be saved.",
+  "@sessionCommandRunning": {
+    "description": "The command line that is running.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "npm test"
+      }
+    }
+  },
+  "@sessionCommandExited": {
+    "description": "The finished command and its exit code.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "npm test"
+      },
+      "code": {
+        "type": "int",
+        "example": "0"
+      }
+    }
+  },
+  "@sessionLoggingPath": {
+    "description": "The log file path.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/logs/host/2026-10-20T09-08-07.txt"
+      }
+    }
+  },
+  "@sessionTransferActive": {
+    "description": "The detected transfer protocol.",
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "example": "ZMODEM"
+      }
+    }
+  }
 }
