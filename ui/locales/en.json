@@ -35,5 +35,57 @@
     }
   },
   "sessionClosed": "Closed",
-  "commandFailed": "Could not complete the command"
+  "commandFailed": "Could not complete the command",
+  "vaultHostListTitle": "Hosts ({count})",
+  "@vaultHostListTitle": {
+    "description": "The Vault's Host list heading and its Host count.",
+    "placeholders": {
+      "count": { "type": "int", "example": "3" }
+    }
+  },
+  "vaultHostNew": "New Host",
+  "vaultHostEdit": "Edit",
+  "vaultHostDelete": "Delete",
+  "vaultHostSave": "Save",
+  "vaultHostCancel": "Cancel",
+  "vaultHostPin": "Pin",
+  "vaultHostUnpin": "Unpin",
+  "vaultHostEmpty": "No Hosts yet. Create one to get started.",
+  "vaultHostLocal": "Local shell",
+  "vaultHostFormCreateTitle": "New Host",
+  "vaultHostFormEditTitle": "Edit Host",
+  "vaultHostLabel": "Label",
+  "vaultHostHostname": "Hostname",
+  "vaultHostPort": "Port",
+  "vaultHostUsername": "Username",
+  "vaultHostProtocol": "Protocol",
+  "vaultHostGroup": "Host Group",
+  "vaultHostGroupHint": "Use slashes for nested Host Groups.",
+  "vaultHostTags": "Tags",
+  "vaultHostTagsHint": "Separate tags with commas.",
+  "vaultHostNotes": "Notes",
+  "vaultHostPinned": "Pin this Host",
+  "vaultHostCredentialsNote": "Credentials are not saved until encrypted storage is available.",
+  "vaultHostDeleteConfirm": "Delete Host “{label}”? This cannot be undone.",
+  "@vaultHostDeleteConfirm": {
+    "description": "The delete confirmation naming the Host about to be removed.",
+    "placeholders": {
+      "label": { "type": "String", "example": "web-1" }
+    }
+  },
+  "vaultHostDeleteConfirmUnknown": "Delete this Host? This cannot be undone.",
+  "vaultProblemHostnameRequired": "A Host needs a hostname.",
+  "vaultProblemHostnameInvalid": "The hostname contains invalid characters.",
+  "vaultProblemLabelRequired": "A Host needs a label.",
+  "vaultProblemLabelInvalid": "The label is invalid.",
+  "vaultProblemPortInvalid": "The port must be a number.",
+  "vaultProblemPortRange": "The port must be between 1 and 65535.",
+  "vaultProblemProtocol": "Choose a supported protocol.",
+  "vaultProblemUsername": "The username is invalid.",
+  "vaultProblemGroup": "The Host Group path is invalid.",
+  "vaultProblemTags": "One or more tags are invalid.",
+  "vaultProblemNotes": "The notes are too long.",
+  "vaultProblemDuplicate": "A Host with this address already exists in the Vault.",
+  "vaultProblemNotFound": "That Host no longer exists.",
+  "vaultProblemInternal": "The Vault could not be updated."
 }

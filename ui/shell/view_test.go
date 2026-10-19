@@ -185,6 +185,39 @@ func TestShellShowsExitStatusAndCode(t *testing.T) {
 	}
 }
 
+func TestShellShowsTheVaultSurfaceAndReturnsToIt(t *testing.T) {
+	service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
+	t.Cleanup(service.CloseAll)
+	shellState := state.NewState(
+		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+			return fakeSurface{}, nil
+		}),
+		state.WithVault(func(c *ui.Context) {
+			ui.Text(c, "vault-surface")
+		}),
+	)
+	tt := ui.NewTester(View(shellState), 900, 600)
+
+	if !tt.HasText("vault-surface") {
+		t.Fatalf("shell does not show the Vault surface, texts %q", tt.Texts())
+	}
+	if err := shellState.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText("vault-surface") {
+		t.Fatalf("shell still shows the Vault after opening a Tab, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click("Vault"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("vault-surface") {
+		t.Fatalf("clicking Vault did not show the Vault, texts %q", tt.Texts())
+	}
+}
+
 func TestShellLanguageControlRequestsLocale(t *testing.T) {
 	var requested []string
 	shellState := state.NewState(state.WithLocaleRequest(func(tag string) {

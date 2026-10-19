@@ -227,3 +227,413 @@ func CommandFailed() string { return In(i18n.Locale()).CommandFailed() }
 func (msgs Messages) CommandFailed() string {
 	return Catalog.Format(msgs.locale, "commandFailed", nil)
 }
+
+// VaultHostListTitle says "Hosts ({count})"
+// in the language the app shows.
+//
+// The Vault's Host list heading and its Host count.
+func VaultHostListTitle(count int) string { return In(i18n.Locale()).VaultHostListTitle(count) }
+
+// VaultHostListTitle says "Hosts ({count})"
+// in the language of msgs.
+//
+// The Vault's Host list heading and its Host count.
+func (msgs Messages) VaultHostListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultHostListTitle", map[string]any{"count": count})
+}
+
+// VaultHostNew says "New Host"
+// in the language the app shows.
+func VaultHostNew() string { return In(i18n.Locale()).VaultHostNew() }
+
+// VaultHostNew says "New Host"
+// in the language of msgs.
+func (msgs Messages) VaultHostNew() string {
+	return Catalog.Format(msgs.locale, "vaultHostNew", nil)
+}
+
+// VaultHostEdit says "Edit"
+// in the language the app shows.
+func VaultHostEdit() string { return In(i18n.Locale()).VaultHostEdit() }
+
+// VaultHostEdit says "Edit"
+// in the language of msgs.
+func (msgs Messages) VaultHostEdit() string {
+	return Catalog.Format(msgs.locale, "vaultHostEdit", nil)
+}
+
+// VaultHostDelete says "Delete"
+// in the language the app shows.
+func VaultHostDelete() string { return In(i18n.Locale()).VaultHostDelete() }
+
+// VaultHostDelete says "Delete"
+// in the language of msgs.
+func (msgs Messages) VaultHostDelete() string {
+	return Catalog.Format(msgs.locale, "vaultHostDelete", nil)
+}
+
+// VaultHostSave says "Save"
+// in the language the app shows.
+func VaultHostSave() string { return In(i18n.Locale()).VaultHostSave() }
+
+// VaultHostSave says "Save"
+// in the language of msgs.
+func (msgs Messages) VaultHostSave() string {
+	return Catalog.Format(msgs.locale, "vaultHostSave", nil)
+}
+
+// VaultHostCancel says "Cancel"
+// in the language the app shows.
+func VaultHostCancel() string { return In(i18n.Locale()).VaultHostCancel() }
+
+// VaultHostCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) VaultHostCancel() string {
+	return Catalog.Format(msgs.locale, "vaultHostCancel", nil)
+}
+
+// VaultHostPin says "Pin"
+// in the language the app shows.
+func VaultHostPin() string { return In(i18n.Locale()).VaultHostPin() }
+
+// VaultHostPin says "Pin"
+// in the language of msgs.
+func (msgs Messages) VaultHostPin() string {
+	return Catalog.Format(msgs.locale, "vaultHostPin", nil)
+}
+
+// VaultHostUnpin says "Unpin"
+// in the language the app shows.
+func VaultHostUnpin() string { return In(i18n.Locale()).VaultHostUnpin() }
+
+// VaultHostUnpin says "Unpin"
+// in the language of msgs.
+func (msgs Messages) VaultHostUnpin() string {
+	return Catalog.Format(msgs.locale, "vaultHostUnpin", nil)
+}
+
+// VaultHostEmpty says "No Hosts yet. Create one to get started."
+// in the language the app shows.
+func VaultHostEmpty() string { return In(i18n.Locale()).VaultHostEmpty() }
+
+// VaultHostEmpty says "No Hosts yet. Create one to get started."
+// in the language of msgs.
+func (msgs Messages) VaultHostEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultHostEmpty", nil)
+}
+
+// VaultHostLocal says "Local shell"
+// in the language the app shows.
+func VaultHostLocal() string { return In(i18n.Locale()).VaultHostLocal() }
+
+// VaultHostLocal says "Local shell"
+// in the language of msgs.
+func (msgs Messages) VaultHostLocal() string {
+	return Catalog.Format(msgs.locale, "vaultHostLocal", nil)
+}
+
+// VaultHostFormCreateTitle says "New Host"
+// in the language the app shows.
+func VaultHostFormCreateTitle() string { return In(i18n.Locale()).VaultHostFormCreateTitle() }
+
+// VaultHostFormCreateTitle says "New Host"
+// in the language of msgs.
+func (msgs Messages) VaultHostFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultHostFormCreateTitle", nil)
+}
+
+// VaultHostFormEditTitle says "Edit Host"
+// in the language the app shows.
+func VaultHostFormEditTitle() string { return In(i18n.Locale()).VaultHostFormEditTitle() }
+
+// VaultHostFormEditTitle says "Edit Host"
+// in the language of msgs.
+func (msgs Messages) VaultHostFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultHostFormEditTitle", nil)
+}
+
+// VaultHostLabel says "Label"
+// in the language the app shows.
+func VaultHostLabel() string { return In(i18n.Locale()).VaultHostLabel() }
+
+// VaultHostLabel says "Label"
+// in the language of msgs.
+func (msgs Messages) VaultHostLabel() string {
+	return Catalog.Format(msgs.locale, "vaultHostLabel", nil)
+}
+
+// VaultHostHostname says "Hostname"
+// in the language the app shows.
+func VaultHostHostname() string { return In(i18n.Locale()).VaultHostHostname() }
+
+// VaultHostHostname says "Hostname"
+// in the language of msgs.
+func (msgs Messages) VaultHostHostname() string {
+	return Catalog.Format(msgs.locale, "vaultHostHostname", nil)
+}
+
+// VaultHostPort says "Port"
+// in the language the app shows.
+func VaultHostPort() string { return In(i18n.Locale()).VaultHostPort() }
+
+// VaultHostPort says "Port"
+// in the language of msgs.
+func (msgs Messages) VaultHostPort() string {
+	return Catalog.Format(msgs.locale, "vaultHostPort", nil)
+}
+
+// VaultHostUsername says "Username"
+// in the language the app shows.
+func VaultHostUsername() string { return In(i18n.Locale()).VaultHostUsername() }
+
+// VaultHostUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) VaultHostUsername() string {
+	return Catalog.Format(msgs.locale, "vaultHostUsername", nil)
+}
+
+// VaultHostProtocol says "Protocol"
+// in the language the app shows.
+func VaultHostProtocol() string { return In(i18n.Locale()).VaultHostProtocol() }
+
+// VaultHostProtocol says "Protocol"
+// in the language of msgs.
+func (msgs Messages) VaultHostProtocol() string {
+	return Catalog.Format(msgs.locale, "vaultHostProtocol", nil)
+}
+
+// VaultHostGroup says "Host Group"
+// in the language the app shows.
+func VaultHostGroup() string { return In(i18n.Locale()).VaultHostGroup() }
+
+// VaultHostGroup says "Host Group"
+// in the language of msgs.
+func (msgs Messages) VaultHostGroup() string {
+	return Catalog.Format(msgs.locale, "vaultHostGroup", nil)
+}
+
+// VaultHostGroupHint says "Use slashes for nested Host Groups."
+// in the language the app shows.
+func VaultHostGroupHint() string { return In(i18n.Locale()).VaultHostGroupHint() }
+
+// VaultHostGroupHint says "Use slashes for nested Host Groups."
+// in the language of msgs.
+func (msgs Messages) VaultHostGroupHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostGroupHint", nil)
+}
+
+// VaultHostTags says "Tags"
+// in the language the app shows.
+func VaultHostTags() string { return In(i18n.Locale()).VaultHostTags() }
+
+// VaultHostTags says "Tags"
+// in the language of msgs.
+func (msgs Messages) VaultHostTags() string {
+	return Catalog.Format(msgs.locale, "vaultHostTags", nil)
+}
+
+// VaultHostTagsHint says "Separate tags with commas."
+// in the language the app shows.
+func VaultHostTagsHint() string { return In(i18n.Locale()).VaultHostTagsHint() }
+
+// VaultHostTagsHint says "Separate tags with commas."
+// in the language of msgs.
+func (msgs Messages) VaultHostTagsHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostTagsHint", nil)
+}
+
+// VaultHostNotes says "Notes"
+// in the language the app shows.
+func VaultHostNotes() string { return In(i18n.Locale()).VaultHostNotes() }
+
+// VaultHostNotes says "Notes"
+// in the language of msgs.
+func (msgs Messages) VaultHostNotes() string {
+	return Catalog.Format(msgs.locale, "vaultHostNotes", nil)
+}
+
+// VaultHostPinned says "Pin this Host"
+// in the language the app shows.
+func VaultHostPinned() string { return In(i18n.Locale()).VaultHostPinned() }
+
+// VaultHostPinned says "Pin this Host"
+// in the language of msgs.
+func (msgs Messages) VaultHostPinned() string {
+	return Catalog.Format(msgs.locale, "vaultHostPinned", nil)
+}
+
+// VaultHostCredentialsNote says "Credentials are not saved until encrypted storage is available."
+// in the language the app shows.
+func VaultHostCredentialsNote() string { return In(i18n.Locale()).VaultHostCredentialsNote() }
+
+// VaultHostCredentialsNote says "Credentials are not saved until encrypted storage is available."
+// in the language of msgs.
+func (msgs Messages) VaultHostCredentialsNote() string {
+	return Catalog.Format(msgs.locale, "vaultHostCredentialsNote", nil)
+}
+
+// VaultHostDeleteConfirm says "Delete Host “{label}”? This cannot be undone."
+// in the language the app shows.
+//
+// The delete confirmation naming the Host about to be removed.
+func VaultHostDeleteConfirm(label string) string {
+	return In(i18n.Locale()).VaultHostDeleteConfirm(label)
+}
+
+// VaultHostDeleteConfirm says "Delete Host “{label}”? This cannot be undone."
+// in the language of msgs.
+//
+// The delete confirmation naming the Host about to be removed.
+func (msgs Messages) VaultHostDeleteConfirm(label string) string {
+	return Catalog.Format(msgs.locale, "vaultHostDeleteConfirm", map[string]any{"label": label})
+}
+
+// VaultHostDeleteConfirmUnknown says "Delete this Host? This cannot be undone."
+// in the language the app shows.
+func VaultHostDeleteConfirmUnknown() string { return In(i18n.Locale()).VaultHostDeleteConfirmUnknown() }
+
+// VaultHostDeleteConfirmUnknown says "Delete this Host? This cannot be undone."
+// in the language of msgs.
+func (msgs Messages) VaultHostDeleteConfirmUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultHostDeleteConfirmUnknown", nil)
+}
+
+// VaultProblemHostnameRequired says "A Host needs a hostname."
+// in the language the app shows.
+func VaultProblemHostnameRequired() string { return In(i18n.Locale()).VaultProblemHostnameRequired() }
+
+// VaultProblemHostnameRequired says "A Host needs a hostname."
+// in the language of msgs.
+func (msgs Messages) VaultProblemHostnameRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemHostnameRequired", nil)
+}
+
+// VaultProblemHostnameInvalid says "The hostname contains invalid characters."
+// in the language the app shows.
+func VaultProblemHostnameInvalid() string { return In(i18n.Locale()).VaultProblemHostnameInvalid() }
+
+// VaultProblemHostnameInvalid says "The hostname contains invalid characters."
+// in the language of msgs.
+func (msgs Messages) VaultProblemHostnameInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultProblemHostnameInvalid", nil)
+}
+
+// VaultProblemLabelRequired says "A Host needs a label."
+// in the language the app shows.
+func VaultProblemLabelRequired() string { return In(i18n.Locale()).VaultProblemLabelRequired() }
+
+// VaultProblemLabelRequired says "A Host needs a label."
+// in the language of msgs.
+func (msgs Messages) VaultProblemLabelRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemLabelRequired", nil)
+}
+
+// VaultProblemLabelInvalid says "The label is invalid."
+// in the language the app shows.
+func VaultProblemLabelInvalid() string { return In(i18n.Locale()).VaultProblemLabelInvalid() }
+
+// VaultProblemLabelInvalid says "The label is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultProblemLabelInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultProblemLabelInvalid", nil)
+}
+
+// VaultProblemPortInvalid says "The port must be a number."
+// in the language the app shows.
+func VaultProblemPortInvalid() string { return In(i18n.Locale()).VaultProblemPortInvalid() }
+
+// VaultProblemPortInvalid says "The port must be a number."
+// in the language of msgs.
+func (msgs Messages) VaultProblemPortInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultProblemPortInvalid", nil)
+}
+
+// VaultProblemPortRange says "The port must be between 1 and 65535."
+// in the language the app shows.
+func VaultProblemPortRange() string { return In(i18n.Locale()).VaultProblemPortRange() }
+
+// VaultProblemPortRange says "The port must be between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultProblemPortRange() string {
+	return Catalog.Format(msgs.locale, "vaultProblemPortRange", nil)
+}
+
+// VaultProblemProtocol says "Choose a supported protocol."
+// in the language the app shows.
+func VaultProblemProtocol() string { return In(i18n.Locale()).VaultProblemProtocol() }
+
+// VaultProblemProtocol says "Choose a supported protocol."
+// in the language of msgs.
+func (msgs Messages) VaultProblemProtocol() string {
+	return Catalog.Format(msgs.locale, "vaultProblemProtocol", nil)
+}
+
+// VaultProblemUsername says "The username is invalid."
+// in the language the app shows.
+func VaultProblemUsername() string { return In(i18n.Locale()).VaultProblemUsername() }
+
+// VaultProblemUsername says "The username is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultProblemUsername() string {
+	return Catalog.Format(msgs.locale, "vaultProblemUsername", nil)
+}
+
+// VaultProblemGroup says "The Host Group path is invalid."
+// in the language the app shows.
+func VaultProblemGroup() string { return In(i18n.Locale()).VaultProblemGroup() }
+
+// VaultProblemGroup says "The Host Group path is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultProblemGroup() string {
+	return Catalog.Format(msgs.locale, "vaultProblemGroup", nil)
+}
+
+// VaultProblemTags says "One or more tags are invalid."
+// in the language the app shows.
+func VaultProblemTags() string { return In(i18n.Locale()).VaultProblemTags() }
+
+// VaultProblemTags says "One or more tags are invalid."
+// in the language of msgs.
+func (msgs Messages) VaultProblemTags() string {
+	return Catalog.Format(msgs.locale, "vaultProblemTags", nil)
+}
+
+// VaultProblemNotes says "The notes are too long."
+// in the language the app shows.
+func VaultProblemNotes() string { return In(i18n.Locale()).VaultProblemNotes() }
+
+// VaultProblemNotes says "The notes are too long."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNotes() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNotes", nil)
+}
+
+// VaultProblemDuplicate says "A Host with this address already exists in the Vault."
+// in the language the app shows.
+func VaultProblemDuplicate() string { return In(i18n.Locale()).VaultProblemDuplicate() }
+
+// VaultProblemDuplicate says "A Host with this address already exists in the Vault."
+// in the language of msgs.
+func (msgs Messages) VaultProblemDuplicate() string {
+	return Catalog.Format(msgs.locale, "vaultProblemDuplicate", nil)
+}
+
+// VaultProblemNotFound says "That Host no longer exists."
+// in the language the app shows.
+func VaultProblemNotFound() string { return In(i18n.Locale()).VaultProblemNotFound() }
+
+// VaultProblemNotFound says "That Host no longer exists."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNotFound() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNotFound", nil)
+}
+
+// VaultProblemInternal says "The Vault could not be updated."
+// in the language the app shows.
+func VaultProblemInternal() string { return In(i18n.Locale()).VaultProblemInternal() }
+
+// VaultProblemInternal says "The Vault could not be updated."
+// in the language of msgs.
+func (msgs Messages) VaultProblemInternal() string {
+	return Catalog.Format(msgs.locale, "vaultProblemInternal", nil)
+}

@@ -1,0 +1,174 @@
+package vault
+
+import (
+	"context"
+	"strconv"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+
+	appvault "github.com/mslxl/natcatty/application/vault"
+	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/locales"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
+)
+
+// fakeHosts is the application seam the Vault view is tested against.
+type fakeHosts struct {
+	items  []domainvault.Host
+	nextID int
+}
+
+func (f *fakeHosts) List(context.Context) ([]domainvault.Host, error) {
+	return append([]domainvault.Host(nil), f.items...), nil
+}
+
+func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainvault.Host, error) {
+	normalized, err := domainvault.NormalizeDraft(draft)
+	if err != nil {
+		return domainvault.Host{}, &appvault.Error{Kind: appvault.KindValidation, Cause: err}
+	}
+	f.nextID++
+	host := domainvault.Host{
+		ID:       model.HostID("host-" + strconv.Itoa(f.nextID)),
+		Label:    normalized.Label,
+		Hostname: normalized.Hostname,
+		Port:     normalized.Port,
+		Username: normalized.Username,
+		Protocol: normalized.Protocol,
+		Group:    normalized.Group,
+		Tags:     normalized.Tags,
+	}
+	f.items = append(f.items, host)
+	return host, nil
+}
+
+func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault.Draft) (domainvault.Host, error) {
+	normalized, err := domainvault.NormalizeDraft(draft)
+	if err != nil {
+		return domainvault.Host{}, &appvault.Error{Kind: appvault.KindValidation, Cause: err}
+	}
+	for i, host := range f.items {
+		if host.ID == id {
+			host.Label = normalized.Label
+			host.Hostname = normalized.Hostname
+			host.Port = normalized.Port
+			host.Username = normalized.Username
+			host.Protocol = normalized.Protocol
+			host.Group = normalized.Group
+			host.Tags = normalized.Tags
+			host.Pinned = normalized.Pinned
+			f.items[i] = host
+			return host, nil
+		}
+	}
+	return domainvault.Host{}, context.Canceled
+}
+
+func (f *fakeHosts) Delete(_ context.Context, id model.HostID) error {
+	for i, host := range f.items {
+		if host.ID == id {
+			f.items = append(f.items[:i], f.items[i+1:]...)
+			return nil
+		}
+	}
+	return context.Canceled
+}
+
+func newView(t *testing.T, repo *fakeHosts) (*vaultstate.State, *ui.Tester) {
+	t.Helper()
+	state := vaultstate.NewState(repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	return state, ui.NewTester(View(state), 900, 600)
+}
+
+func TestVaultViewShowsTheEmptyStateAndOpensTheEditor(t *testing.T) {
+	_, tt := newView(t, &fakeHosts{})
+
+	if !tt.HasText(locales.In("en").VaultHostEmpty()) {
+		t.Fatalf("Vault does not show its empty state, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click(locales.In("en").VaultHostNew()); err != nil {
+		t.Fatalf("click New Host: %v", err)
+	}
+	tt.Frame()
+
+	for _, want := range []string{
+		locales.In("en").VaultHostFormCreateTitle(),
+		locales.In("en").VaultHostHostname(),
+		locales.In("en").VaultHostCredentialsNote(),
+	} {
+		if !tt.HasText(want) {
+			t.Errorf("editor does not show %q, texts %q", want, tt.Texts())
+		}
+	}
+}
+
+func TestVaultViewListsHostDetails(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{
+		{
+			ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
+			Username: "root", Protocol: domainvault.ProtocolSSH,
+			Group: "prod/web", Tags: []string{"prod"}, Pinned: true,
+		},
+		{
+			ID: "host-2", Label: "My shell", Protocol: domainvault.ProtocolLocal,
+		},
+	}}
+	_, tt := newView(t, repo)
+
+	for _, want := range []string{
+		"web", "example.com:22", "root", "prod/web", "★",
+		"My shell", locales.In("en").VaultHostLocal(),
+		locales.In("en").VaultHostEdit(),
+		locales.In("en").VaultHostDelete(),
+	} {
+		if !tt.HasText(want) {
+			t.Errorf("Vault does not show %q, texts %q", want, tt.Texts())
+		}
+	}
+}
+
+func TestVaultViewDeleteConfirmationNeverShowsARawID(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{
+		{ID: "host-1", Label: "web", Hostname: "example.com", Port: 22, Protocol: domainvault.ProtocolSSH},
+	}}
+	state, tt := newView(t, repo)
+
+	state.RequestDelete("missing-host")
+	tt.Frame()
+
+	if !tt.HasText(locales.In("en").VaultHostDeleteConfirmUnknown()) {
+		t.Fatalf("Vault does not show the unknown-Host confirmation, texts %q", tt.Texts())
+	}
+	if tt.HasText("missing-host") {
+		t.Fatalf("Vault shows the raw Host id, texts %q", tt.Texts())
+	}
+}
+
+func TestVaultViewLocalizesValidationProblems(t *testing.T) {
+	repo := &fakeHosts{}
+	state := vaultstate.NewState(repo)
+	if err := state.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	state.BeginCreate()
+	state.Form().Label = "web"
+	if err := state.Save(); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(View(state), 900, 600)
+
+	if !tt.HasText("A Host needs a hostname.") {
+		t.Fatalf("Vault does not show the English problem, texts %q", tt.Texts())
+	}
+
+	tt.SetLocale("ru")
+	if !tt.HasText("Хосту нужно имя хоста.") {
+		t.Fatalf("Vault does not show the Russian problem, texts %q", tt.Texts())
+	}
+}
