@@ -199,10 +199,7 @@ func run(afterReady func(hostWindow)) error {
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			// A focused terminal takes keys before window shortcuts; the
-			// selftest build forwards its plain F12 prefix from here. The
-			// normal build's option list is empty, so no test code is linked.
-			return sessionui.New(s, sessionSurfaceOptions()...)
+			return sessionui.New(s)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithTrustPrompt(trustPrompt),

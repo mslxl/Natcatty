@@ -4,8 +4,10 @@ package app
 
 // Ticket 13 self-test.
 //
-// Shortcut (plain keys, no modifiers): press F12, then 1, then 3. F12 opens
-// the overlay listing the registered checks; Escape cancels. The check runs
+// Shortcut (plain keys, no modifiers): press F11, then 1, then 3. F11 opens
+// the overlay listing the registered checks; Escape cancels. (Plain F12
+// belongs to MyGo's inspector in a normal build, so the facility uses F11.)
+// The check runs
 // on the UI thread one step per frame, so the event loop is never blocked.
 //
 // Result: %TEMP%\natcatty-selftest-13.json (os.TempDir on other platforms),
@@ -36,7 +38,6 @@ import (
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/selftest"
-	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -66,24 +67,9 @@ func installSelftest(windows *windowManager, shellState *state.State, secondInst
 	registry.Register(run.check())
 	activeSelftest = selftest.NewHarness(registry,
 		selftest.WithResultDir(selftestResultDir),
-		selftest.WithRedrawRequest(windows.InvalidateAll),
 	)
-	windows.selftest = activeSelftest.Wrap
-}
-
-// sessionSurfaceOptions installs the terminal key bridge that lets a focused
-// terminal forward the plain F12 prefix to the harness instead of sending it
-// to the shell.
-func sessionSurfaceOptions() []sessionui.Option {
-	return []sessionui.Option{sessionui.WithKeyInterceptor(selftestKeyInterceptor)}
-}
-
-// selftestKeyInterceptor consumes the keys the harness handles.
-func selftestKeyInterceptor(mods ui.Modifiers, key ui.Key) bool {
-	if activeSelftest == nil {
-		return false
-	}
-	return activeSelftest.InterceptKey(mods, key)
+	windows.selftestBind = activeSelftest.Bind
+	windows.selftestView = activeSelftest.View
 }
 
 // selftest13 keeps the state the ticket's steps share.

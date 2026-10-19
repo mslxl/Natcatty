@@ -116,9 +116,11 @@ type windowManager struct {
 	state           *state.State
 	settingsContent func() func(*ui.Context)
 	locale          func() string
-	// selftest decorates the main window's content when the selftest build
-	// installs the F12 facility. It is nil in normal builds.
-	selftest func(func(*ui.Context)) func(*ui.Context)
+	// selftestBind registers the main window's self-test shortcuts at window
+	// scope, and selftestView draws its overlay around the content. Both are
+	// nil in normal builds.
+	selftestBind func(*ui.Context)
+	selftestView func(func(*ui.Context)) func(*ui.Context)
 
 	main     hostWindow
 	settings hostWindow
@@ -185,13 +187,22 @@ func (m *windowManager) OpenMain() hostWindow {
 		m.main.Focus()
 		return m.main
 	}
-	var content func(*ui.Context) = shell.View(m.state)
-	if m.selftest != nil {
-		content = m.selftest(content)
+	var build func(*ui.Context) = shell.View(m.state)
+	if m.selftestView != nil {
+		build = m.selftestView(build)
 	}
 	// The self-test overlay is inside the gate: while App Lock is closed no
 	// window, including the developer facility, builds anything.
-	content = m.wrap(content)
+	gated := m.wrap(build)
+	content := func(c *ui.Context) {
+		// Bind at the root context, before the gate builds its container, so
+		// MyGo registers a window shortcut. Inside the gate it would become
+		// element-scoped and fail from the Vault view with no terminal focus.
+		if m.selftestBind != nil {
+			m.selftestBind(c)
+		}
+		gated(c)
+	}
 	m.main = m.host.Create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
