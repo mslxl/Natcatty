@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"sync"
 
@@ -42,6 +43,17 @@ type Options struct {
 	Ciphers      []string
 	KeyExchanges []string
 	MACs         []string
+	// ForwardDial answers direct-tcpip channel requests. It lets a fixture
+	// play the next hop in a jump chain. Without it, forwarding is rejected.
+	ForwardDial func(host string, port int) (net.Conn, error)
+}
+
+// Forward is one recorded direct-tcpip request.
+type Forward struct {
+	Host       string
+	Port       int
+	OriginHost string
+	OriginPort int
 }
 
 // KeyboardInteractiveRound is one recorded challenge and its answers.
@@ -56,11 +68,12 @@ type KeyboardInteractiveRound struct {
 
 // Server is one fixture SSH server on one connection.
 type Server struct {
-	conn      net.Conn
-	config    *ssh.ServerConfig
-	signer    ssh.Signer
-	done      chan struct{}
-	closeOnce sync.Once
+	conn        net.Conn
+	config      *ssh.ServerConfig
+	signer      ssh.Signer
+	done        chan struct{}
+	closeOnce   sync.Once
+	forwardDial func(host string, port int) (net.Conn, error)
 
 	mu                sync.Mutex
 	passwordAttempts  int
@@ -74,6 +87,7 @@ type Server struct {
 	pty               *Size
 	resizes           []Size
 	shellOpened       bool
+	forwards          []Forward
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -89,7 +103,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		return nil, err
 	}
 
-	server := &Server{conn: conn, signer: signer, done: make(chan struct{})}
+	server := &Server{conn: conn, signer: signer, done: make(chan struct{}), forwardDial: options.ForwardDial}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
 	if options.KeyboardInteractive != nil {
@@ -252,6 +266,14 @@ func (s *Server) ShellOpened() bool {
 	return s.shellOpened
 }
 
+// Forwards reports every direct-tcpip request the server accepted or
+// rejected, in order.
+func (s *Server) Forwards() []Forward {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Forward(nil), s.forwards...)
+}
+
 // Err reports the handshake error, if any. It is valid after Wait returns.
 func (s *Server) Err() error {
 	s.mu.Lock()
@@ -282,17 +304,76 @@ func (s *Server) serve() {
 	}
 	go ssh.DiscardRequests(requests)
 	for incoming := range channels {
-		if incoming.ChannelType() != "session" {
-			_ = incoming.Reject(ssh.UnknownChannelType, "only session channels are supported")
-			continue
+		switch incoming.ChannelType() {
+		case "session":
+			channel, channelRequests, err := incoming.Accept()
+			if err != nil {
+				continue
+			}
+			go s.handleSession(channel, channelRequests)
+		case "direct-tcpip":
+			s.handleDirectTCPIP(incoming)
+		default:
+			_ = incoming.Reject(ssh.UnknownChannelType, "only session and direct-tcpip channels are supported")
 		}
-		channel, channelRequests, err := incoming.Accept()
-		if err != nil {
-			continue
-		}
-		go s.handleSession(channel, channelRequests)
 	}
 	_ = serverConn.Close()
+}
+
+// handleDirectTCPIP serves one forwarding request by dialing the requested
+// endpoint and copying bytes between it and the channel.
+func (s *Server) handleDirectTCPIP(incoming ssh.NewChannel) {
+	var payload struct {
+		Host       string
+		Port       uint32
+		OriginHost string
+		OriginPort uint32
+	}
+	if err := ssh.Unmarshal(incoming.ExtraData(), &payload); err != nil {
+		_ = incoming.Reject(ssh.Prohibited, "malformed direct-tcpip request")
+		return
+	}
+	forward := Forward{
+		Host: payload.Host, Port: int(payload.Port),
+		OriginHost: payload.OriginHost, OriginPort: int(payload.OriginPort),
+	}
+	s.mu.Lock()
+	s.forwards = append(s.forwards, forward)
+	dial := s.forwardDial
+	s.mu.Unlock()
+
+	if dial == nil {
+		_ = incoming.Reject(ssh.Prohibited, "forwarding disabled")
+		return
+	}
+	target, err := dial(payload.Host, int(payload.Port))
+	if err != nil {
+		_ = incoming.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	channel, requests, err := incoming.Accept()
+	if err != nil {
+		_ = target.Close()
+		return
+	}
+	go ssh.DiscardRequests(requests)
+	go proxyStream(channel, target)
+}
+
+func proxyStream(channel ssh.Channel, target net.Conn) {
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(channel, target)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(target, channel)
+		done <- struct{}{}
+	}()
+	<-done
+	_ = channel.Close()
+	_ = target.Close()
+	<-done
 }
 
 func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request) {

@@ -86,6 +86,8 @@ const (
 	ProblemIdentityKeyRequired      Problem = "identity_key_required"
 	ProblemIdentityUsernameRequired Problem = "identity_username_required"
 	ProblemAuthMethod               Problem = "auth_method"
+	ProblemProxy                    Problem = "proxy"
+	ProblemAlgorithms               Problem = "algorithms"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -140,6 +142,16 @@ type State struct {
 	editingIdentity       bool
 	identityForm          IdentityForm
 	pendingDeleteIdentity model.IdentityID
+
+	// hostChain, proxy, and algorithms are preserved across an edit. They are
+	// not exposed in the Host editor yet, so the editor must round-trip them
+	// unchanged instead of silently clearing a saved route or negotiation
+	// policy.
+	hostChain        *domainvault.HostChain
+	proxy            *domainvault.ProxyConfig
+	legacyAlgorithms bool
+	skipEcdsaHostKey bool
+	algorithms       *domainvault.AlgorithmOverrides
 
 	secretPassphrase string
 	secretConfirm    string
@@ -348,6 +360,11 @@ func (s *State) BeginCreate() {
 	}
 	s.problem = ProblemNone
 	s.pendingDelete = ""
+	s.hostChain = nil
+	s.proxy = nil
+	s.legacyAlgorithms = false
+	s.skipEcdsaHostKey = false
+	s.algorithms = nil
 	s.redraw()
 }
 
@@ -382,6 +399,11 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		UseSSHAgent: host.UseSSHAgent,
 		RequiresMFA: host.RequiresMFA,
 	}
+	s.hostChain = domainvault.CloneHostChain(host.HostChain)
+	s.proxy = domainvault.CloneProxy(host.Proxy)
+	s.legacyAlgorithms = host.LegacyAlgorithms
+	s.skipEcdsaHostKey = host.SkipEcdsaHostKey
+	s.algorithms = domainvault.CloneAlgorithms(host.Algorithms)
 	if s.form.AuthMethod == "" {
 		s.form.AuthMethod = string(domainvault.HostAuthAuto)
 	}
@@ -396,6 +418,11 @@ func (s *State) BeginEdit(id model.HostID) bool {
 func (s *State) CancelEdit() {
 	s.editing = false
 	s.form = Form{}
+	s.hostChain = nil
+	s.proxy = nil
+	s.legacyAlgorithms = false
+	s.skipEcdsaHostKey = false
+	s.algorithms = nil
 	s.problem = ProblemNone
 	s.redraw()
 }
@@ -429,6 +456,11 @@ func (s *State) Save() error {
 	}
 	s.editing = false
 	s.form = Form{}
+	s.hostChain = nil
+	s.proxy = nil
+	s.legacyAlgorithms = false
+	s.skipEcdsaHostKey = false
+	s.algorithms = nil
 	s.problem = ProblemNone
 	s.redraw()
 	return nil
@@ -541,20 +573,25 @@ func (s *State) find(id model.HostID) (domainvault.Host, bool) {
 // changing its Pinned preference.
 func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 	return domainvault.Draft{
-		Label:       host.Label,
-		Hostname:    host.Hostname,
-		Port:        host.Port,
-		Username:    host.Username,
-		Protocol:    host.Protocol,
-		Group:       host.Group,
-		Tags:        host.Tags,
-		Notes:       host.Notes,
-		Pinned:      pinned,
-		IdentityID:  host.IdentityID,
-		KeyID:       host.KeyID,
-		AuthMethod:  host.AuthMethod,
-		UseSSHAgent: host.UseSSHAgent,
-		RequiresMFA: host.RequiresMFA,
+		Label:            host.Label,
+		Hostname:         host.Hostname,
+		Port:             host.Port,
+		Username:         host.Username,
+		Protocol:         host.Protocol,
+		Group:            host.Group,
+		Tags:             host.Tags,
+		Notes:            host.Notes,
+		Pinned:           pinned,
+		IdentityID:       host.IdentityID,
+		KeyID:            host.KeyID,
+		AuthMethod:       host.AuthMethod,
+		UseSSHAgent:      host.UseSSHAgent,
+		RequiresMFA:      host.RequiresMFA,
+		HostChain:        domainvault.CloneHostChain(host.HostChain),
+		Proxy:            domainvault.CloneProxy(host.Proxy),
+		LegacyAlgorithms: host.LegacyAlgorithms,
+		SkipEcdsaHostKey: host.SkipEcdsaHostKey,
+		Algorithms:       domainvault.CloneAlgorithms(host.Algorithms),
 	}
 }
 
@@ -593,6 +630,13 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		AuthMethod:  domainvault.HostAuthMethod(s.form.AuthMethod),
 		UseSSHAgent: s.form.UseSSHAgent,
 		RequiresMFA: s.form.RequiresMFA,
+		// The editor does not expose routing yet. Round-trip the saved chain
+		// and proxy so editing another field cannot erase them.
+		HostChain:        domainvault.CloneHostChain(s.hostChain),
+		Proxy:            domainvault.CloneProxy(s.proxy),
+		LegacyAlgorithms: s.legacyAlgorithms,
+		SkipEcdsaHostKey: s.skipEcdsaHostKey,
+		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
 	}, ProblemNone
 }
 
@@ -670,6 +714,10 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemTags
 	case domainvault.FieldNotes:
 		return ProblemNotes
+	case domainvault.FieldChain, domainvault.FieldProxy:
+		return ProblemProxy
+	case domainvault.FieldAlgorithms:
+		return ProblemAlgorithms
 	default:
 		return ProblemInternal
 	}

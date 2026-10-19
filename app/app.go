@@ -154,7 +154,9 @@ func run(afterReady func(*mygo.Window)) error {
 	)
 	_ = vaultState.Reload()
 
-	sessions := appsession.NewService(newTransportFactory(localpty.Factory{}, connections))
+	sessions := appsession.NewService(newTransportFactory(
+		localpty.Factory{}, connections, vaultRoutes{vault: vaultService},
+	))
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)

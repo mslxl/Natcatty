@@ -126,6 +126,19 @@ func (s *Service) List(ctx context.Context) ([]domainvault.Host, error) {
 	return hosts, nil
 }
 
+// Get returns one Host. The connection layer uses it to resolve a jump chain
+// and the Host's proxy configuration.
+func (s *Service) Get(ctx context.Context, id model.HostID) (domainvault.Host, error) {
+	host, err := s.repo.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return domainvault.Host{}, ErrNotFound
+	}
+	if err != nil {
+		return domainvault.Host{}, internal(err)
+	}
+	return host, nil
+}
+
 // Create validates a draft, assigns identity and timestamps, and persists it.
 func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainvault.Host, error) {
 	normalized, err := domainvault.NormalizeDraft(draft)
@@ -148,15 +161,33 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, normalized)
+	passwordStored := normalized.Password != ""
+	proxyPasswordStored := normalized.Proxy != nil && normalized.Proxy.Password != ""
 	if err := s.persistPassword(ctx, host.ID, normalized.Password); err != nil {
+		return domainvault.Host{}, err
+	}
+	if err := s.persistProxyPassword(ctx, host.ID, normalized.Proxy); err != nil {
+		// The Host record is never written, so the password written above must
+		// not outlive the failed Create.
+		if passwordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldPassword))
+		}
 		return domainvault.Host{}, err
 	}
 	// Session-only credentials are deliberately forgotten on restart, so the
 	// Host record must not claim a persisted password.
-	host.HasPassword = normalized.Password != "" && s.SecretMode() != SecretModeSession
+	host.HasPassword = passwordStored && s.SecretMode() != SecretModeSession
+	if host.Proxy != nil {
+		host.Proxy.HasPassword = proxyPasswordStored && s.SecretMode() != SecretModeSession
+	}
 	if err := s.repo.Save(ctx, host); err != nil {
-		if host.HasPassword {
+		// Delete by what was written, not by what the Host advertises: a
+		// session-only credential is stored but deliberately not advertised.
+		if passwordStored {
 			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldPassword))
+		}
+		if proxyPasswordStored {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldProxyPassword))
 		}
 		return domainvault.Host{}, internal(err)
 	}
@@ -190,42 +221,103 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 	updated := applyDraft(existing, normalized)
 	updated.UpdatedAt = s.now()
 
-	if normalized.Password != "" {
-		if s.secrets == nil {
-			return domainvault.Host{}, unsupported(ErrSecretsUnavailable)
+	// Read every credential that a write will replace before writing any of
+	// them, so an unreadable value aborts before the store is modified.
+	passwordChanged := normalized.Password != ""
+	previousPassword, err := s.readSecret(ctx, existing.ID, FieldPassword, passwordChanged)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
+	// A removal or a new password both replace the stored proxy credential.
+	proxyReplaced := normalized.Proxy == nil || normalized.Proxy.Password != ""
+	previousProxy, err := s.readSecret(ctx, existing.ID, FieldProxyPassword, proxyReplaced)
+	if err != nil {
+		return domainvault.Host{}, err
+	}
+
+	var passwordWritten, proxyWritten bool
+	rollback := func() {
+		if passwordWritten {
+			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldPassword), previousPassword)
 		}
-		ref := HostSecretRef(updated.ID, FieldPassword)
-		previous, previousErr := s.secrets.Get(ctx, ref)
-		switch {
-		case previousErr == nil:
-			// Keep the old plaintext only long enough to roll back a failed
-			// Host save.
-		case errors.Is(previousErr, ErrSecretNotFound):
-			previous = ""
-		default:
-			// Never overwrite ciphertext that cannot be read.
-			return domainvault.Host{}, secretError(previousErr)
+		if proxyWritten {
+			rollbackSecret(ctx, s.secrets, HostSecretRef(updated.ID, FieldProxyPassword), previousProxy)
 		}
+	}
+
+	if passwordChanged {
 		if err := s.persistPassword(ctx, updated.ID, normalized.Password); err != nil {
 			return domainvault.Host{}, err
 		}
+		passwordWritten = true
 		if s.SecretMode() != SecretModeSession {
 			updated.HasPassword = true
 		}
-		if err := s.repo.Save(ctx, updated); err != nil {
-			if previousErr == nil {
-				_ = s.secrets.Set(ctx, ref, previous)
-			} else {
-				_ = s.secrets.Delete(ctx, ref)
-			}
-			return domainvault.Host{}, internal(err)
-		}
-		return updated, nil
+	} else {
+		updated.HasPassword = existing.HasPassword
 	}
+
+	if normalized.Proxy != nil {
+		if err := s.persistProxyPassword(ctx, updated.ID, normalized.Proxy); err != nil {
+			rollback()
+			return domainvault.Host{}, err
+		}
+		switch {
+		case normalized.Proxy.Password != "":
+			proxyWritten = true
+			updated.Proxy.HasPassword = s.SecretMode() != SecretModeSession
+		case existing.Proxy != nil:
+			updated.Proxy.HasPassword = existing.Proxy.HasPassword
+		}
+	} else if s.secrets != nil {
+		if err := s.secrets.Delete(ctx, HostSecretRef(updated.ID, FieldProxyPassword)); err != nil &&
+			!errors.Is(err, ErrSecretNotFound) {
+			rollback()
+			return domainvault.Host{}, secretError(err)
+		}
+		proxyWritten = true
+	}
+
 	if err := s.repo.Save(ctx, updated); err != nil {
+		rollback()
 		return domainvault.Host{}, internal(err)
 	}
 	return updated, nil
+}
+
+// priorSecret is the value a write replaces. err is ErrSecretNotFound when no
+// value existed, which tells rollback to delete the new value.
+type priorSecret struct {
+	value string
+	err   error
+}
+
+// readSecret reads a previous value only when a write is about to replace it.
+func (s *Service) readSecret(ctx context.Context, id model.HostID, field string, needed bool) (priorSecret, error) {
+	if !needed || s.secrets == nil {
+		return priorSecret{err: ErrSecretNotFound}, nil
+	}
+	value, err := s.secrets.Get(ctx, HostSecretRef(id, field))
+	if err == nil {
+		return priorSecret{value: value}, nil
+	}
+	if errors.Is(err, ErrSecretNotFound) {
+		return priorSecret{err: ErrSecretNotFound}, nil
+	}
+	// Never overwrite ciphertext that cannot be read.
+	return priorSecret{}, secretError(err)
+}
+
+// rollbackSecret restores a replaced secret or removes a newly written one.
+func rollbackSecret(ctx context.Context, secrets FieldSecrets, ref SecretRef, previous priorSecret) {
+	if secrets == nil {
+		return
+	}
+	if previous.err == nil {
+		_ = secrets.Set(ctx, ref, previous.value)
+		return
+	}
+	_ = secrets.Delete(ctx, ref)
 }
 
 // Delete removes one Host. It never touches another Vault record.
@@ -241,7 +333,7 @@ func (s *Service) Delete(ctx context.Context, id model.HostID) error {
 	// secret store leaves an orphan ciphertext, never plaintext, and must
 	// not block deleting the Host.
 	if s.secrets != nil {
-		for _, field := range []string{FieldPassword, FieldPassphrase} {
+		for _, field := range []string{FieldPassword, FieldPassphrase, FieldProxyPassword} {
 			_ = s.secrets.Delete(ctx, HostSecretRef(id, field))
 		}
 	}
@@ -258,6 +350,21 @@ func (s *Service) persistPassword(ctx context.Context, id model.HostID, password
 		return unsupported(ErrSecretsUnavailable)
 	}
 	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldPassword), password); err != nil {
+		return secretError(err)
+	}
+	return nil
+}
+
+// persistProxyPassword encrypts a proxy password. An empty value keeps any
+// stored password, matching the Host password's update semantics.
+func (s *Service) persistProxyPassword(ctx context.Context, id model.HostID, proxy *domainvault.ProxyConfig) error {
+	if proxy == nil || proxy.Password == "" {
+		return nil
+	}
+	if s.secrets == nil {
+		return unsupported(ErrSecretsUnavailable)
+	}
+	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldProxyPassword), proxy.Password); err != nil {
 		return secretError(err)
 	}
 	return nil
@@ -280,6 +387,11 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host
 	host.AuthMethod = draft.AuthMethod
 	host.UseSSHAgent = draft.UseSSHAgent
 	host.RequiresMFA = draft.RequiresMFA
+	host.HostChain = domainvault.CloneHostChain(draft.HostChain)
+	host.Proxy = domainvault.CloneProxy(draft.Proxy)
+	host.LegacyAlgorithms = draft.LegacyAlgorithms
+	host.SkipEcdsaHostKey = draft.SkipEcdsaHostKey
+	host.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)
 	return host
 }
 

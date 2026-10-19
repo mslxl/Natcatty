@@ -38,22 +38,27 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 	}
 	f.nextID++
 	host := domainvault.Host{
-		ID:          model.HostID("host-" + strconv.Itoa(f.nextID)),
-		Label:       normalized.Label,
-		Hostname:    normalized.Hostname,
-		Port:        normalized.Port,
-		Username:    normalized.Username,
-		Protocol:    normalized.Protocol,
-		Group:       normalized.Group,
-		Tags:        normalized.Tags,
-		Notes:       normalized.Notes,
-		Pinned:      normalized.Pinned,
-		IdentityID:  normalized.IdentityID,
-		KeyID:       normalized.KeyID,
-		AuthMethod:  normalized.AuthMethod,
-		UseSSHAgent: normalized.UseSSHAgent,
-		RequiresMFA: normalized.RequiresMFA,
-		OrderKey:    int64(f.nextID) * 1000,
+		ID:               model.HostID("host-" + strconv.Itoa(f.nextID)),
+		Label:            normalized.Label,
+		Hostname:         normalized.Hostname,
+		Port:             normalized.Port,
+		Username:         normalized.Username,
+		Protocol:         normalized.Protocol,
+		Group:            normalized.Group,
+		Tags:             normalized.Tags,
+		Notes:            normalized.Notes,
+		Pinned:           normalized.Pinned,
+		IdentityID:       normalized.IdentityID,
+		KeyID:            normalized.KeyID,
+		AuthMethod:       normalized.AuthMethod,
+		UseSSHAgent:      normalized.UseSSHAgent,
+		RequiresMFA:      normalized.RequiresMFA,
+		HostChain:        domainvault.CloneHostChain(normalized.HostChain),
+		Proxy:            domainvault.CloneProxy(normalized.Proxy),
+		LegacyAlgorithms: normalized.LegacyAlgorithms,
+		SkipEcdsaHostKey: normalized.SkipEcdsaHostKey,
+		Algorithms:       domainvault.CloneAlgorithms(normalized.Algorithms),
+		OrderKey:         int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
 	f.items = append(f.items, host)
@@ -86,6 +91,11 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.AuthMethod = normalized.AuthMethod
 		host.UseSSHAgent = normalized.UseSSHAgent
 		host.RequiresMFA = normalized.RequiresMFA
+		host.HostChain = domainvault.CloneHostChain(normalized.HostChain)
+		host.Proxy = domainvault.CloneProxy(normalized.Proxy)
+		host.LegacyAlgorithms = normalized.LegacyAlgorithms
+		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
+		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil
@@ -522,5 +532,125 @@ func TestSecretModeWithoutASeamIsOS(t *testing.T) {
 	state, _ := newTestState(t, &fakeHosts{})
 	if state.SecretMode() != appvault.SecretModeOS {
 		t.Fatalf("SecretMode = %q, want os", state.SecretMode())
+	}
+}
+
+func TestValidationProblemsMapRoutingAndAlgorithms(t *testing.T) {
+	tests := []struct {
+		field domainvault.Field
+		want  Problem
+	}{
+		{domainvault.FieldChain, ProblemProxy},
+		{domainvault.FieldProxy, ProblemProxy},
+		{domainvault.FieldAlgorithms, ProblemAlgorithms},
+	}
+	for _, test := range tests {
+		problem := problemForValidation(&domainvault.ValidationError{Field: test.field})
+		if problem != test.want {
+			t.Errorf("field %s maps to %s, want %s", test.field, problem, test.want)
+		}
+	}
+}
+
+func TestEditingPreservesTheSavedChainAndProxy(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "gateway", Hostname: "target.internal", Port: 22,
+		Username: "app", Protocol: domainvault.ProtocolSSH,
+		HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"jump-1", "jump-2"}},
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxySOCKS5, Host: "proxy.internal", Port: 1080,
+			Username: "user", Password: "secret", HasPassword: true,
+		},
+		LegacyAlgorithms: true,
+		SkipEcdsaHostKey: true,
+		Algorithms: &domainvault.AlgorithmOverrides{
+			KeyExchanges: []string{"diffie-hellman-group14-sha1"},
+		},
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit returned false")
+	}
+	state.Form().Label = "renamed"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if len(repo.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(repo.updated))
+	}
+	draft := repo.updated[0]
+	if draft.HostChain == nil || len(draft.HostChain.HostIDs) != 2 ||
+		draft.HostChain.HostIDs[0] != "jump-1" || draft.HostChain.HostIDs[1] != "jump-2" {
+		t.Fatalf("chain = %+v", draft.HostChain)
+	}
+	if draft.Proxy == nil || draft.Proxy.Type != domainvault.ProxySOCKS5 ||
+		draft.Proxy.Host != "proxy.internal" || draft.Proxy.Port != 1080 ||
+		draft.Proxy.Username != "user" {
+		t.Fatalf("proxy = %+v", draft.Proxy)
+	}
+	if draft.Proxy.Password != "" {
+		t.Fatal("the saved proxy password was copied into the draft")
+	}
+	if !draft.LegacyAlgorithms || !draft.SkipEcdsaHostKey || draft.Algorithms == nil ||
+		len(draft.Algorithms.KeyExchanges) != 1 ||
+		draft.Algorithms.KeyExchanges[0] != "diffie-hellman-group14-sha1" {
+		t.Fatalf("algorithms = %+v, legacy = %v, skip = %v", draft.Algorithms, draft.LegacyAlgorithms, draft.SkipEcdsaHostKey)
+	}
+
+	// The reloaded Host must supply the same route and policy to a second
+	// edit; otherwise a save would silently clear them.
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit after save returned false")
+	}
+	state.Form().Notes = "second edit"
+	if err := state.Save(); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if len(repo.updated) != 2 {
+		t.Fatalf("updates = %d, want 2", len(repo.updated))
+	}
+	second := repo.updated[1]
+	if second.HostChain == nil || len(second.HostChain.HostIDs) != 2 {
+		t.Fatalf("second edit chain = %+v", second.HostChain)
+	}
+	if second.Proxy == nil || second.Proxy.Host != "proxy.internal" {
+		t.Fatalf("second edit proxy = %+v", second.Proxy)
+	}
+	if !second.LegacyAlgorithms || !second.SkipEcdsaHostKey || second.Algorithms == nil ||
+		len(second.Algorithms.KeyExchanges) != 1 {
+		t.Fatalf("second edit algorithms = %+v, legacy = %v, skip = %v",
+			second.Algorithms, second.LegacyAlgorithms, second.SkipEcdsaHostKey)
+	}
+}
+
+func TestCreatingAHostDoesNotInheritAPreviousEditsRoute(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "gateway", Hostname: "target.internal", Port: 22,
+		Protocol:  domainvault.ProtocolSSH,
+		HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"jump-1"}},
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit returned false")
+	}
+	state.CancelEdit()
+	state.BeginCreate()
+	state.Form().Label = "new"
+	state.Form().Hostname = "new.internal"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if repo.created[0].HostChain != nil || repo.created[0].Proxy != nil {
+		t.Fatalf("new Host inherited a route: %+v", repo.created[0])
+	}
+	if repo.created[0].LegacyAlgorithms || repo.created[0].SkipEcdsaHostKey || repo.created[0].Algorithms != nil {
+		t.Fatalf("new Host inherited an algorithm policy: %+v", repo.created[0])
 	}
 }

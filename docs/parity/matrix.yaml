@@ -586,6 +586,86 @@
   status: verified
   notes: "The cache is keyed username@hostname:port. A failed login clears the entry; a cached password is never promoted."
 
+# --- Ticket 08: jump chains and proxy transports ---
+
+- id: connections.jump-chain
+  area: connections
+  feature: Connect through one or more jump Hosts using nested direct-tcpip channels
+  original_paths:
+    - electron/bridges/sshBridge.cjs
+    - domain/models/connection.ts
+  module: application/connection
+  tickets: [08]
+  acceptance_tests:
+    - application/connection.TestAcquireResolvesEveryHopWithItsOwnAuth
+    - application/connection.TestJumpAuthFailureIsTaggedAndClearsOnlyThatHop
+    - application/connection.TestHopAuthResolutionFailureCarriesHopContext
+    - adapters/ssh.TestDialTraversesAThreeEndpointChain
+    - app.TestSSHSessionUsesTheResolvedChainAndProxy
+    - app.TestVaultRoutesResolveTheChainAndFirstHopProxy
+  status: verified
+  notes: "Jumps are ordered first = closest. Every hop runs its own auth plan, host-key prompt, and algorithm policy; the target is reached over the last hop's direct-tcpip channel."
+
+- id: connections.proxy-transports
+  area: connections
+  feature: ProxyCommand, HTTP CONNECT, and SOCKS5 reach the first endpoint only
+  original_paths:
+    - electron/bridges/proxyUtils.cjs
+    - electron/bridges/sshBridge.cjs
+  module: adapters/ssh
+  tickets: [08]
+  acceptance_tests:
+    - adapters/ssh.TestHTTPConnectProxyTunnelsTheFirstEndpoint
+    - adapters/ssh.TestHTTPConnectProxyTargetsTheFirstJumpNotTheDestination
+    - adapters/ssh.TestHTTPConnectProxyWithoutCredentialsSendsNoAuthorization
+    - adapters/ssh.TestSOCKS5ProxyTunnelsTheFirstEndpointWithAuthentication
+    - adapters/ssh.TestSOCKS5ProxyOffersOnlyNoAuthWithoutCredentials
+    - adapters/ssh.TestProxyCommandRunsTheConfiguredProcess
+    - adapters/ssh.TestProxyCommandRunsOnceForTheFirstEndpointOnly
+    - adapters/ssh.TestSubstituteProxyCommandExpandsOnlyTheSupportedTokens
+    - adapters/ssh.TestSubstituteProxyCommandRejectsUnsafeWindowsTargets
+    - app.TestVaultRoutesFallBackToTheTargetProxyWithoutAFirstHopProxy
+  status: verified
+  notes: "The first jump's proxy wins over the target Host's proxy. ProxyCommand substitutes only %h, %p, and %% and shell-quotes each value; HTTP CONNECT accepts HTTP/1.0 and HTTP/1.1 200; SOCKS5 uses no-auth or username/password with a domain address."
+
+- id: connections.per-hop-algorithms
+  area: connections
+  feature: Per-Host SSH algorithm policy for the target and every jump Host
+  original_paths:
+    - electron/bridges/sshAlgorithms.cjs
+    - electron/bridges/sshBridge.cjs
+    - domain/sshAlgorithmList.ts
+  module: adapters/ssh
+  tickets: [08]
+  acceptance_tests:
+    - adapters/ssh.TestOfferForAppliesLegacyAlgorithmsAdditively
+    - adapters/ssh.TestOfferForReplacesACategoryWhenOverridden
+    - adapters/ssh.TestOfferForSkipECDSAFiltersTheFinalHostKeyList
+    - adapters/ssh.TestDialUsesEachEndpointsAlgorithmPolicy
+    - adapters/ssh.TestDialReportsAnAlgorithmMismatchAsUnsupported
+    - application/connection.TestAcquireInheritsLegacyAlgorithmsAndKeepsOverridesPerHop
+    - app.TestVaultRoutesResolveTheChainAndFirstHopProxy
+    - domain/vault.TestNormalizeDraftNormalizesAlgorithmOverrides
+    - domain/vault.TestNormalizeDraftRejectsInvalidAlgorithmOverrides
+  status: verified
+  notes: "Each endpoint applies the base offer, additive legacy algorithms, category overrides, then the unconditional ECDSA host-key filter. Legacy mode is inherited additively from the target; overrides and the ECDSA skip stay per-Host. x/crypto/ssh cannot offer a few original legacy names (aes256-cbc, hmac-md5, DH group15/17/18)."
+
+- id: connections.chain-cancellation
+  area: connections
+  feature: A failed or cancelled chain closes every hop and reports the failing endpoint
+  original_paths:
+    - electron/bridges/sshBridge.cjs
+    - electron/bridges/proxyUtils.cjs
+  module: adapters/ssh
+  tickets: [08]
+  acceptance_tests:
+    - adapters/ssh.TestChainFailureAtAHopClosesEarlierHopsAndNamesTheHop
+    - adapters/ssh.TestChainCancellationClosesEveryHop
+    - adapters/ssh.TestHTTPProxyRefusalIsATypedNetworkError
+    - adapters/ssh.TestSOCKS5RefusalIsATypedNetworkError
+  status: verified
+  notes: "Typed errors carry the 1-based hop index, total endpoints, and label. Cancellation closes the in-flight transport and every already-open hop; a ProxyCommand process is terminated with its process tree."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 
@@ -710,7 +790,7 @@
   module: application/connection
   tickets: [06]
   status: excluded
-  notes: "hmac-md5, DH group 15/17, and aes-cbc are unsupported; ssh-rsa and ssh-dss require an explicit insecure opt-in."
+  notes: "hmac-md5 and DH group 15/17/18 remain unsupported. Ticket 08 adds a per-Host legacy mode covering aes128-cbc, 3des-cbc, DH group14/1-sha1, group-exchange-sha1, ssh-rsa, and ssh-dss; see connections.per-hop-algorithms."
 
 - id: browser.cookie-partitioning
   area: browser

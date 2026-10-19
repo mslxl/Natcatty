@@ -40,7 +40,59 @@ const (
 	// maxKeyMaterialLength bounds a private key or certificate before it is
 	// handed to the field-secret store.
 	maxKeyMaterialLength = 256 << 10
+	// maxHostChainLength bounds a jump chain. It is deliberately generous for
+	// real bastion topologies and small enough to reject accidental loops.
+	maxHostChainLength = 10
+	// maxProxyCommandLength bounds a ProxyCommand before it reaches a shell.
+	maxProxyCommandLength = 8 << 10
+	// maxAlgorithmCount and maxAlgorithmNameLength bound an advanced algorithm
+	// selection so a pasted list cannot balloon the Host record.
+	maxAlgorithmCount      = 64
+	maxAlgorithmNameLength = 128
 )
+
+// ProxyType is a transport used to reach the first endpoint of a route.
+type ProxyType string
+
+const (
+	// ProxyHTTP is an HTTP CONNECT proxy.
+	ProxyHTTP ProxyType = "http"
+	// ProxySOCKS5 is a SOCKS5 proxy.
+	ProxySOCKS5 ProxyType = "socks5"
+	// ProxyCommand spawns a process and speaks SSH over its stdio.
+	ProxyCommand ProxyType = "command"
+)
+
+// ProxyConfig is a Host's proxy transport. Password is form input and is
+// never stored on the Host: the Vault encrypts it into the field-secret store
+// and the Host carries only HasPassword.
+type ProxyConfig struct {
+	Type     ProxyType `json:"type"`
+	Host     string    `json:"host,omitempty"`
+	Port     int       `json:"port,omitempty"`
+	Command  string    `json:"command,omitempty"`
+	Username string    `json:"username,omitempty"`
+	// Password is credential plaintext in memory only.
+	Password string `json:"-"`
+	// HasPassword reports that an encrypted proxy password exists.
+	HasPassword bool `json:"hasPassword,omitempty"`
+}
+
+// HostChain is a jump chain, ordered first = closest to the client. The final
+// target is the Host that owns the chain, so it is not repeated here.
+type HostChain struct {
+	HostIDs []model.HostID `json:"hostIds"`
+}
+
+// AlgorithmOverrides is a Host's advanced SSH algorithm selection. A non-empty
+// category replaces the transport's offer for that category. The JSON names
+// mirror the original's algorithm shape.
+type AlgorithmOverrides struct {
+	KeyExchanges []string `json:"kex,omitempty"`
+	Ciphers      []string `json:"cipher,omitempty"`
+	MACs         []string `json:"hmac,omitempty"`
+	HostKeys     []string `json:"serverHostKey,omitempty"`
+}
 
 // HostAuthMethod is the authentication choice stored on a Host. It is a
 // selection, not credential material.
@@ -95,6 +147,21 @@ type Host struct {
 	UseSSHAgent bool `json:"useSshAgent,omitempty"`
 	// RequiresMFA prefers keyboard-interactive before password or key probing.
 	RequiresMFA bool `json:"requiresMfa,omitempty"`
+	// HostChain lists the jump Host references used before this Host. It is an
+	// ordered reference list, not an existence guarantee: a deleted jump Host
+	// remains dangling, as in the original's non-cascading Vault.
+	HostChain *HostChain `json:"hostChain,omitempty"`
+	// Proxy is the transport used to reach the first endpoint. It applies to
+	// hop 1 only; later hops run over the nested SSH stream.
+	Proxy *ProxyConfig `json:"proxy,omitempty"`
+	// LegacyAlgorithms widens the offered algorithms for older servers. On a
+	// jump Host it is additive with the target's setting.
+	LegacyAlgorithms bool `json:"legacyAlgorithms,omitempty"`
+	// SkipEcdsaHostKey removes every ECDSA host-key algorithm from the offer.
+	// It is strictly per-Host and is never inherited by a jump.
+	SkipEcdsaHostKey bool `json:"skipEcdsaHostKey,omitempty"`
+	// Algorithms replaces individual algorithm categories when set.
+	Algorithms *AlgorithmOverrides `json:"algorithms,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -120,6 +187,15 @@ type Draft struct {
 	AuthMethod  HostAuthMethod
 	UseSSHAgent bool
 	RequiresMFA bool
+	// HostChain and Proxy configure the route to this Host. Proxy.Password is
+	// plaintext form input; the Vault encrypts it into the field-secret store.
+	HostChain *HostChain
+	Proxy     *ProxyConfig
+	// LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms configure SSH
+	// negotiation. Each jump Host carries its own copy.
+	LegacyAlgorithms bool
+	SkipEcdsaHostKey bool
+	Algorithms       *AlgorithmOverrides
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -146,6 +222,9 @@ const (
 	FieldPrivateKey  Field = "private_key"
 	FieldPassphrase  Field = "passphrase"
 	FieldCertificate Field = "certificate"
+	FieldChain       Field = "chain"
+	FieldProxy       Field = "proxy"
+	FieldAlgorithms  Field = "algorithms"
 )
 
 // Rule names the validation rule a value broke. The UI maps Field and Rule to
@@ -189,6 +268,9 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Group = NormalizeGroup(draft.Group)
 	draft.Notes = strings.TrimSpace(draft.Notes)
 	draft.Tags = normalizeTags(draft.Tags)
+	draft.HostChain = normalizeHostChain(draft.HostChain)
+	draft.Proxy = normalizeProxy(draft.Proxy)
+	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	if draft.Label == "" {
 		draft.Label = draft.Hostname
 	}
@@ -249,6 +331,9 @@ func (h Host) Validate() error {
 		AuthMethod:  h.AuthMethod,
 		RequiresMFA: h.RequiresMFA,
 		UseSSHAgent: h.UseSSHAgent,
+		HostChain:   h.HostChain,
+		Proxy:       h.Proxy,
+		Algorithms:  h.Algorithms,
 	})
 }
 
@@ -319,7 +404,193 @@ func validateFields(draft Draft) error {
 	if strings.ContainsRune(draft.Notes, 0) {
 		return validation(FieldNotes, RuleInvalid)
 	}
+
+	if draft.HostChain != nil {
+		if len(draft.HostChain.HostIDs) > maxHostChainLength {
+			return validation(FieldChain, RuleTooLong)
+		}
+		seen := make(map[model.HostID]bool, len(draft.HostChain.HostIDs))
+		for _, id := range draft.HostChain.HostIDs {
+			if strings.TrimSpace(string(id)) == "" || seen[id] {
+				return validation(FieldChain, RuleInvalid)
+			}
+			seen[id] = true
+		}
+	}
+
+	if err := validateProxy(draft.Proxy); err != nil {
+		return err
+	}
+	return validateAlgorithms(draft.Algorithms)
+}
+
+// validateAlgorithms checks the advanced algorithm selection. The values are
+// opaque to the domain; the transport reports an unknown name as an
+// unsupported-algorithm error during negotiation.
+func validateAlgorithms(overrides *AlgorithmOverrides) error {
+	if overrides == nil {
+		return nil
+	}
+	for _, list := range [][]string{
+		overrides.KeyExchanges, overrides.Ciphers, overrides.MACs, overrides.HostKeys,
+	} {
+		if len(list) > maxAlgorithmCount {
+			return validation(FieldAlgorithms, RuleTooLong)
+		}
+		for _, value := range list {
+			if value == "" {
+				return validation(FieldAlgorithms, RuleRequired)
+			}
+			if err := validateText(FieldAlgorithms, value, maxAlgorithmNameLength, true); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// validateProxy checks a normalized proxy configuration. A nil proxy means a
+// direct connection and is always valid.
+func validateProxy(proxy *ProxyConfig) error {
+	if proxy == nil {
+		return nil
+	}
+	switch proxy.Type {
+	case ProxyHTTP, ProxySOCKS5:
+		if proxy.Host == "" {
+			return validation(FieldProxy, RuleRequired)
+		}
+		if err := validateText(FieldProxy, proxy.Host, maxHostnameLength, true); err != nil {
+			return err
+		}
+		if proxy.Port < 1 || proxy.Port > 65535 {
+			return validation(FieldProxy, RuleOutOfRange)
+		}
+		if err := validateText(FieldProxy, proxy.Username, maxUsernameLength, false); err != nil {
+			return err
+		}
+		if proxy.Command != "" {
+			return validation(FieldProxy, RuleInvalid)
+		}
+	case ProxyCommand:
+		if proxy.Command == "" {
+			return validation(FieldProxy, RuleRequired)
+		}
+		if len(proxy.Command) > maxProxyCommandLength {
+			return validation(FieldProxy, RuleTooLong)
+		}
+		if strings.ContainsRune(proxy.Command, 0) {
+			return validation(FieldProxy, RuleInvalid)
+		}
+	default:
+		return validation(FieldProxy, RuleUnsupported)
+	}
+	return nil
+}
+
+// normalizeHostChain trims and copies a chain, dropping an empty chain so a
+// Host without jumps serializes exactly like a Host that never had one.
+func normalizeHostChain(chain *HostChain) *HostChain {
+	if chain == nil || len(chain.HostIDs) == 0 {
+		return nil
+	}
+	normalized := &HostChain{HostIDs: make([]model.HostID, 0, len(chain.HostIDs))}
+	for _, id := range chain.HostIDs {
+		normalized.HostIDs = append(normalized.HostIDs, model.HostID(strings.TrimSpace(string(id))))
+	}
+	return normalized
+}
+
+// normalizeAlgorithms trims, drops empty and duplicate names, and collapses an
+// empty selection to nil so it serializes like a Host that never set one.
+func normalizeAlgorithms(overrides *AlgorithmOverrides) *AlgorithmOverrides {
+	if overrides == nil {
+		return nil
+	}
+	normalized := &AlgorithmOverrides{
+		KeyExchanges: normalizeAlgorithmNames(overrides.KeyExchanges),
+		Ciphers:      normalizeAlgorithmNames(overrides.Ciphers),
+		MACs:         normalizeAlgorithmNames(overrides.MACs),
+		HostKeys:     normalizeAlgorithmNames(overrides.HostKeys),
+	}
+	if len(normalized.KeyExchanges) == 0 && len(normalized.Ciphers) == 0 &&
+		len(normalized.MACs) == 0 && len(normalized.HostKeys) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func normalizeAlgorithmNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func normalizeProxy(proxy *ProxyConfig) *ProxyConfig {
+	if proxy == nil {
+		return nil
+	}
+	normalized := &ProxyConfig{
+		Type:        ProxyType(strings.ToLower(strings.TrimSpace(string(proxy.Type)))),
+		Host:        strings.TrimSpace(proxy.Host),
+		Port:        proxy.Port,
+		Command:     strings.TrimSpace(proxy.Command),
+		Username:    strings.TrimSpace(proxy.Username),
+		Password:    proxy.Password,
+		HasPassword: proxy.HasPassword,
+	}
+	if normalized.Type == "" && normalized.Host == "" && normalized.Port == 0 &&
+		normalized.Command == "" && normalized.Username == "" && normalized.Password == "" {
+		return nil
+	}
+	return normalized
+}
+
+// CloneProxy returns a copy safe to store on a Host. Credential plaintext is
+// never copied: only the HasPassword flag survives.
+func CloneProxy(proxy *ProxyConfig) *ProxyConfig {
+	if proxy == nil {
+		return nil
+	}
+	copy := *proxy
+	copy.Password = ""
+	return &copy
+}
+
+// CloneHostChain returns a copy of a jump chain.
+func CloneHostChain(chain *HostChain) *HostChain {
+	if chain == nil {
+		return nil
+	}
+	copy := HostChain{HostIDs: append([]model.HostID(nil), chain.HostIDs...)}
+	return &copy
+}
+
+// CloneAlgorithms returns a deep copy of an algorithm selection.
+func CloneAlgorithms(overrides *AlgorithmOverrides) *AlgorithmOverrides {
+	if overrides == nil {
+		return nil
+	}
+	return &AlgorithmOverrides{
+		KeyExchanges: append([]string(nil), overrides.KeyExchanges...),
+		Ciphers:      append([]string(nil), overrides.Ciphers...),
+		MACs:         append([]string(nil), overrides.MACs...),
+		HostKeys:     append([]string(nil), overrides.HostKeys...),
+	}
 }
 
 // validateText rejects control characters, and when noSpace is true, any

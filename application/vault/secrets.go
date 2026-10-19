@@ -35,9 +35,10 @@ const (
 	EntitySSHKey   = "ssh_key"
 	EntityIdentity = "identity"
 
-	FieldPassword   = "password"
-	FieldPassphrase = "passphrase"
-	FieldPrivateKey = "private_key"
+	FieldPassword      = "password"
+	FieldPassphrase    = "passphrase"
+	FieldPrivateKey    = "private_key"
+	FieldProxyPassword = "proxy_password"
 )
 
 // EncryptedPlaceholder prefixes a portable credential value meaning
@@ -141,10 +142,23 @@ func (s *Service) SetSecret(ctx context.Context, id model.HostID, field, value s
 		return secretError(err)
 	}
 
-	if field == FieldPassword && s.SecretMode() != SecretModeSession {
+	if s.SecretMode() == SecretModeSession {
 		// Session-only credentials never survive a restart, so they are not
 		// announced by the persisted Host record.
+		return nil
+	}
+	changed := false
+	switch field {
+	case FieldPassword:
 		host.HasPassword = value != ""
+		changed = true
+	case FieldProxyPassword:
+		if host.Proxy != nil {
+			host.Proxy.HasPassword = value != ""
+			changed = true
+		}
+	}
+	if changed {
 		host.UpdatedAt = s.now()
 		if err := s.repo.Save(ctx, host); err != nil {
 			return internal(err)
@@ -214,9 +228,9 @@ func (s *Service) UseSessionSecrets(ctx context.Context) error {
 	return nil
 }
 
-// hostField accepts the Host fields ticket 04 encrypts.
+// hostField accepts the Host fields the Vault encrypts.
 func hostField(field string) bool {
-	return field == FieldPassword || field == FieldPassphrase
+	return field == FieldPassword || field == FieldPassphrase || field == FieldProxyPassword
 }
 
 func invalidField(field string) error {
