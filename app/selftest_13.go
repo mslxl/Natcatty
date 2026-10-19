@@ -2,7 +2,8 @@
 
 package app
 
-// Ticket 13 self-test.
+// Ticket 13 self-test. installSelftest also registers ticket 14 when the
+// desktop controller is present; ticket 14 keeps its own file.
 //
 // Shortcut (plain keys, no modifiers): press F11, then 1, then 3. F11 opens
 // the overlay listing the registered checks; Escape cancels. (Plain F12
@@ -57,7 +58,8 @@ var selftestResultDir = os.TempDir()
 
 // installSelftest registers ticket 13's check and attaches the overlay to the
 // main window. It is called only from selftest-tagged builds.
-func installSelftest(windows *windowManager, shellState *state.State, secondInstance func()) {
+func installSelftest(windows *windowManager, shellState *state.State,
+	desktop *desktopController, secondInstance func([]string, string)) {
 	run := &selftest13{
 		windows:        windows,
 		state:          shellState,
@@ -65,6 +67,9 @@ func installSelftest(windows *windowManager, shellState *state.State, secondInst
 	}
 	registry := selftest.NewRegistry()
 	registry.Register(run.check())
+	if desktop != nil {
+		registry.Register((&selftest14{desktop: desktop, windows: windows, state: shellState}).check())
+	}
 	activeSelftest = selftest.NewHarness(registry,
 		selftest.WithResultDir(selftestResultDir),
 	)
@@ -76,7 +81,7 @@ func installSelftest(windows *windowManager, shellState *state.State, secondInst
 type selftest13 struct {
 	windows        *windowManager
 	state          *state.State
-	secondInstance func()
+	secondInstance func([]string, string)
 
 	detachedTabsBefore int
 	mainTab            model.TabID
@@ -254,7 +259,7 @@ func (t *selftest13) secondInstanceStep() selftest.Step {
 				return selftest.Failed(errors.New("the main window is not open"))
 			}
 			before := t.windows.mainFocuses
-			t.secondInstance()
+			t.secondInstance(nil, "")
 			if t.windows.Main() != main {
 				return selftest.Failed(errors.New("the second launch replaced the main window"))
 			}

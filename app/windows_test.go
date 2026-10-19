@@ -30,9 +30,14 @@ type fakeWindow struct {
 }
 
 func (w *fakeWindow) Show() { w.shown = true }
+func (w *fakeWindow) Hide() {
+	w.shown = false
+	w.focused = false
+}
 func (w *fakeWindow) Focus() {
 	w.focused = true
 }
+func (w *fakeWindow) IsFocused() bool { return w.focused && !w.destroyed }
 func (w *fakeWindow) Close() {
 	if w.destroyed {
 		return
@@ -564,18 +569,18 @@ func TestCopyToNewWindowOpensAWindowAndLeavesTheSource(t *testing.T) {
 type fakeInstanceLock struct {
 	primary  bool
 	err      error
-	callback func()
+	callback func([]string, string)
 	asked    bool
 }
 
 func (l *fakeInstanceLock) Acquire() (bool, error) { return l.primary, l.err }
-func (l *fakeInstanceLock) OnSecondInstance(fn func()) func() {
+func (l *fakeInstanceLock) OnSecondInstance(fn func([]string, string)) func() {
 	l.callback = fn
 	return func() {}
 }
 
 func TestSingleInstancePrimaryWithoutASeamRuns(t *testing.T) {
-	if !singleInstancePrimary(nil, func() { t.Fatal("nil seam called back") }) {
+	if !singleInstancePrimary(nil, func([]string, string) { t.Fatal("nil seam called back") }) {
 		t.Fatal("a nil seam did not run as the only instance")
 	}
 }
@@ -583,13 +588,13 @@ func TestSingleInstancePrimaryWithoutASeamRuns(t *testing.T) {
 func TestSingleInstancePrimaryRegistersTheSecondLaunchCallback(t *testing.T) {
 	lock := &fakeInstanceLock{primary: true}
 	raised := 0
-	if !singleInstancePrimary(lock, func() { raised++ }) {
+	if !singleInstancePrimary(lock, func([]string, string) { raised++ }) {
 		t.Fatal("the primary instance did not acquire the lock")
 	}
 	if lock.callback == nil {
 		t.Fatal("the second-launch callback was not registered")
 	}
-	lock.callback()
+	lock.callback([]string{"host"}, "")
 	if raised != 1 {
 		t.Fatalf("focus callbacks = %d, want 1", raised)
 	}
@@ -597,7 +602,7 @@ func TestSingleInstancePrimaryRegistersTheSecondLaunchCallback(t *testing.T) {
 
 func TestSingleInstanceExistingInstanceExits(t *testing.T) {
 	lock := &fakeInstanceLock{primary: false}
-	if singleInstancePrimary(lock, func() { t.Fatal("a later instance ran the focus callback") }) {
+	if singleInstancePrimary(lock, func([]string, string) { t.Fatal("a later instance ran the focus callback") }) {
 		t.Fatal("a later launch ran as a second instance")
 	}
 	if lock.callback != nil {
