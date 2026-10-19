@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/egoist/mygo v0.5.5
+	github.com/kayrus/putty v1.0.5
 	golang.org/x/crypto v0.58.0
 )
 

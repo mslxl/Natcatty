@@ -75,6 +75,7 @@ type fakeDialer struct {
 	key           domainconn.Key
 	verify        bool
 	authAttempted bool
+	authMethod    string
 	client        *fakeClient
 	err           error
 }
@@ -96,6 +97,9 @@ func (f *fakeDialer) Dial(ctx context.Context, req DialRequest) (Client, error) 
 	}
 	if f.client == nil {
 		f.client = &fakeClient{}
+	}
+	if req.OnAuth != nil && f.authMethod != "" {
+		req.OnAuth(f.authMethod)
 	}
 	return f.client, nil
 }
@@ -394,6 +398,141 @@ func TestManagerWithoutPortsFailsSafely(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	if _, err := manager.Acquire(context.Background(), sshRequest()); !errors.Is(err, ErrNoDialer) {
 		t.Fatalf("Acquire error = %v, want ErrNoDialer", err)
+	}
+}
+
+type fakeAuthSource struct {
+	plan  AuthPlan
+	err   error
+	calls int
+	req   Request
+}
+
+func (f *fakeAuthSource) AuthPlan(_ context.Context, req Request) (AuthPlan, error) {
+	f.calls++
+	f.req = req
+	return f.plan, f.err
+}
+
+type fakeAuthPrompter struct{}
+
+func (fakeAuthPrompter) Passphrase(context.Context, PassphraseRequest) (PassphraseDecision, error) {
+	return PassphraseDecision{}, nil
+}
+
+func (fakeAuthPrompter) KeyboardInteractive(context.Context, KeyboardInteractiveRequest) (KeyboardInteractiveDecision, error) {
+	return KeyboardInteractiveDecision{}, nil
+}
+
+func TestAcquireResolvesAuthSourceAndForwardsThePrompter(t *testing.T) {
+	source := &fakeAuthSource{plan: AuthPlan{
+		Mode:     AuthModeKey,
+		Username: "alice",
+		Candidates: []AuthCandidate{{
+			Kind: AuthKindPublicKey, ID: "publickey-user", Primary: true,
+			Key: &KeyMaterial{ID: "key-1", Label: "work", PrivateKey: "material"},
+		}},
+	}}
+	prompter := fakeAuthPrompter{}
+	manager, passwords, dialer, _, _ := newTestManager(t, WithAuthSource(source), WithAuthPrompter(prompter))
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	_ = lease.Release()
+
+	if passwords.calls != 0 {
+		t.Errorf("PasswordSource was consulted %d times, want 0 with an AuthSource", passwords.calls)
+	}
+	if source.calls != 1 || source.req.HostID != "host-1" {
+		t.Errorf("AuthSource calls = %d for %+v", source.calls, source.req)
+	}
+	request := dialer.request()
+	if request.Auth.Mode != AuthModeKey || len(request.Auth.Candidates) != 1 {
+		t.Fatalf("forwarded plan = %+v", request.Auth)
+	}
+	if request.Prompter == nil {
+		t.Fatal("the auth prompter was not forwarded")
+	}
+}
+
+func TestAcquireCachesTheSuccessfulMethodAndClearsItOnFailure(t *testing.T) {
+	source := &fakeAuthSource{plan: BuildAuthPlan(AuthSpec{
+		Username: "root", Mode: AuthModeAuto, Password: "s3cret", UseAgent: true,
+	})}
+	manager, _, dialer, _, _ := newTestManager(t, WithAuthSource(source))
+	dialer.authMethod = CandidatePassword
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	_ = lease.Release()
+	if method, ok := manager.authCache.Get("root@example.com:22"); !ok || method != CandidatePassword {
+		t.Fatalf("cached method = %q, %v, want password", method, ok)
+	}
+
+	// The next automatic connection asks to promote the cached password, but
+	// password promotion is intentionally disabled, so the order is unchanged.
+	source.plan = BuildAuthPlan(AuthSpec{
+		Username: "root", Mode: AuthModeAuto, Password: "s3cret", UseAgent: true,
+	})
+	dialer.authMethod = CandidateAgent
+	lease, err = manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	_ = lease.Release()
+	request := dialer.request()
+	if request.Auth.Candidates[0].ID != CandidateAgent {
+		t.Fatalf("first candidate = %q, want the agent", request.Auth.Candidates[0].ID)
+	}
+	if method, ok := manager.authCache.Get("root@example.com:22"); !ok || method != CandidateAgent {
+		t.Fatalf("cached method = %q, %v, want agent", method, ok)
+	}
+
+	dialer.err = &Error{Kind: KindAuth, Cause: ErrAuthentication}
+	if _, err := manager.Acquire(context.Background(), sshRequest()); err == nil {
+		t.Fatal("Acquire succeeded, want an auth failure")
+	}
+	if _, ok := manager.authCache.Get("root@example.com:22"); ok {
+		t.Fatal("the auth method cache was not cleared after a failed login")
+	}
+}
+
+func TestAcquirePromotesACachedAgentOnlyInAutoMode(t *testing.T) {
+	keyPlan := BuildAuthPlan(AuthSpec{
+		Mode: AuthModeKey, Username: "root",
+		SelectedKey: &KeyMaterial{ID: "key-1", Label: "work", PrivateKey: "material"},
+	})
+	source := &fakeAuthSource{plan: keyPlan}
+	manager, _, dialer, _, _ := newTestManager(t, WithAuthSource(source))
+	manager.authCache.Put("root@example.com:22", CandidateAgent)
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	_ = lease.Release()
+	request := dialer.request()
+	if request.Auth.Candidates[0].ID != "publickey-user" {
+		t.Fatalf("first candidate = %q, want the selected key in explicit key mode",
+			request.Auth.Candidates[0].ID)
+	}
+}
+
+func TestAuthSourceFailureKeepsTypedAuthErrors(t *testing.T) {
+	source := &fakeAuthSource{err: AuthFailure(ErrNoCredentials)}
+	manager, passwords, dialer, _, _ := newTestManager(t, WithAuthSource(source))
+
+	_, err := manager.Acquire(context.Background(), sshRequest())
+	assertKind(t, err, KindAuth)
+	if !errors.Is(err, ErrNoCredentials) {
+		t.Fatalf("error = %v, want ErrNoCredentials", err)
+	}
+	if passwords.calls != 0 || dialer.authenticated() {
+		t.Fatal("authentication proceeded despite an AuthSource failure")
 	}
 }
 

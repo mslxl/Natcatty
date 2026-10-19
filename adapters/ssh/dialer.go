@@ -33,6 +33,7 @@ type DialFunc func(ctx context.Context, network, address string) (net.Conn, erro
 // Dialer opens authenticated SSH transports with x/crypto/ssh.
 type Dialer struct {
 	dial         DialFunc
+	agentDial    AgentDialFunc
 	dialTimeout  time.Duration
 	authTimeout  time.Duration
 	ciphers      []string
@@ -49,6 +50,17 @@ func WithDialFunc(fn DialFunc) Option {
 	return func(d *Dialer) {
 		if fn != nil {
 			d.dial = fn
+		}
+	}
+}
+
+// WithAgentDial replaces the local SSH agent transport. Tests use an
+// in-memory agent; production uses SSH_AUTH_SOCK on Unix and the OpenSSH named
+// pipe on Windows.
+func WithAgentDial(fn AgentDialFunc) Option {
+	return func(d *Dialer) {
+		if fn != nil {
+			d.agentDial = fn
 		}
 	}
 }
@@ -89,6 +101,7 @@ func WithAlgorithms(ciphers, keyExchanges, macs, hostKeys []string) Option {
 func NewDialer(opts ...Option) *Dialer {
 	dialer := &Dialer{
 		dial:         (&net.Dialer{}).DialContext,
+		agentDial:    defaultAgentDial,
 		dialTimeout:  defaultDialTimeout,
 		authTimeout:  defaultAuthTimeout,
 		ciphers:      copyStrings(defaultCiphers),
@@ -114,6 +127,31 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	}
 	address := net.JoinHostPort(req.Hostname, fmt.Sprintf("%d", port))
 
+	// The handshake has no context parameter, so cancellation reaches the
+	// host-key and auth callbacks through this context. A prompt blocked on a
+	// user decision is released when the authentication deadline expires.
+	authCtx, cancelAuth := context.WithCancel(ctx)
+	defer cancelAuth()
+
+	plan := req.Auth
+	if plan.Password == "" {
+		plan.Password = req.Password
+	}
+	if plan.Mode == "" && len(plan.Candidates) == 0 {
+		// Compatibility for callers that predate AuthPlan: password plus
+		// keyboard-interactive only.
+		plan = appconnection.BuildAuthPlan(appconnection.AuthSpec{
+			Username: req.Username,
+			Mode:     appconnection.AuthModePassword,
+			Password: plan.Password,
+		})
+	}
+	machine := newAuthMachine(authCtx, plan, req.Prompter, req.Hostname, d.agentDial)
+	if err := machine.Prepare(); err != nil {
+		return nil, err
+	}
+	defer machine.Close()
+
 	dialCtx, cancel := context.WithTimeout(ctx, d.dialTimeout)
 	defer cancel()
 
@@ -122,15 +160,9 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		return nil, classifyDialFailure(ctx, dialCtx, err)
 	}
 
-	// The handshake has no context parameter, so cancellation reaches the
-	// host-key callback through this context. A prompt blocked on a user
-	// decision is released when the authentication deadline expires.
-	authCtx, cancelAuth := context.WithCancel(ctx)
-	defer cancelAuth()
-
 	config := &xssh.ClientConfig{
-		User: req.Username,
-		Auth: []xssh.AuthMethod{xssh.Password(req.Password)},
+		User:         req.Username,
+		AuthCallback: machine.Next,
 		HostKeyCallback: func(_ string, _ net.Addr, key xssh.PublicKey) error {
 			if req.VerifyHostKey == nil {
 				return &appconnection.Error{Kind: appconnection.KindHostKey, Cause: appconnection.ErrHostKeyRejected}
@@ -172,6 +204,11 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		if result.err != nil {
 			_ = conn.Close()
 			return nil, classifyHandshakeFailure(ctx, result.err)
+		}
+		if req.OnAuth != nil {
+			if candidate := machine.SuccessID(); candidate != "" {
+				req.OnAuth(candidate)
+			}
 		}
 		return &sshClient{client: xssh.NewClient(result.conn, result.chans, result.reqs)}, nil
 	case <-timer.C:

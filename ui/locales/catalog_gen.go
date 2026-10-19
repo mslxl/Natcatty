@@ -1321,3 +1321,735 @@ func HostKeyPromptReject() string { return In(i18n.Locale()).HostKeyPromptReject
 func (msgs Messages) HostKeyPromptReject() string {
 	return Catalog.Format(msgs.locale, "hostKeyPromptReject", nil)
 }
+
+// VaultKeyListTitle says "SSH Keys ({count})"
+// in the language the app shows.
+//
+// The Vault's SSH Key section heading and its Key count.
+func VaultKeyListTitle(count int) string { return In(i18n.Locale()).VaultKeyListTitle(count) }
+
+// VaultKeyListTitle says "SSH Keys ({count})"
+// in the language of msgs.
+//
+// The Vault's SSH Key section heading and its Key count.
+func (msgs Messages) VaultKeyListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultKeyListTitle", map[string]any{"count": count})
+}
+
+// VaultKeyNew says "New SSH Key"
+// in the language the app shows.
+func VaultKeyNew() string { return In(i18n.Locale()).VaultKeyNew() }
+
+// VaultKeyNew says "New SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultKeyNew() string {
+	return Catalog.Format(msgs.locale, "vaultKeyNew", nil)
+}
+
+// VaultKeyEmpty says "No SSH Keys yet."
+// in the language the app shows.
+func VaultKeyEmpty() string { return In(i18n.Locale()).VaultKeyEmpty() }
+
+// VaultKeyEmpty says "No SSH Keys yet."
+// in the language of msgs.
+func (msgs Messages) VaultKeyEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultKeyEmpty", nil)
+}
+
+// VaultKeyFormCreateTitle says "New SSH Key"
+// in the language the app shows.
+func VaultKeyFormCreateTitle() string { return In(i18n.Locale()).VaultKeyFormCreateTitle() }
+
+// VaultKeyFormCreateTitle says "New SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultKeyFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultKeyFormCreateTitle", nil)
+}
+
+// VaultKeyFormEditTitle says "Edit SSH Key"
+// in the language the app shows.
+func VaultKeyFormEditTitle() string { return In(i18n.Locale()).VaultKeyFormEditTitle() }
+
+// VaultKeyFormEditTitle says "Edit SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultKeyFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultKeyFormEditTitle", nil)
+}
+
+// VaultKeyMaterial says "Private key"
+// in the language the app shows.
+func VaultKeyMaterial() string { return In(i18n.Locale()).VaultKeyMaterial() }
+
+// VaultKeyMaterial says "Private key"
+// in the language of msgs.
+func (msgs Messages) VaultKeyMaterial() string {
+	return Catalog.Format(msgs.locale, "vaultKeyMaterial", nil)
+}
+
+// VaultKeyMaterialHint says "Paste an OpenSSH, PEM, PKCS#8, or PuTTY PPK private key. It is encrypted before it is saved."
+// in the language the app shows.
+func VaultKeyMaterialHint() string { return In(i18n.Locale()).VaultKeyMaterialHint() }
+
+// VaultKeyMaterialHint says "Paste an OpenSSH, PEM, PKCS#8, or PuTTY PPK private key. It is encrypted before it is saved."
+// in the language of msgs.
+func (msgs Messages) VaultKeyMaterialHint() string {
+	return Catalog.Format(msgs.locale, "vaultKeyMaterialHint", nil)
+}
+
+// VaultKeyMaterialKeep says "A private key is stored. Leave this blank to keep it."
+// in the language the app shows.
+func VaultKeyMaterialKeep() string { return In(i18n.Locale()).VaultKeyMaterialKeep() }
+
+// VaultKeyMaterialKeep says "A private key is stored. Leave this blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultKeyMaterialKeep() string {
+	return Catalog.Format(msgs.locale, "vaultKeyMaterialKeep", nil)
+}
+
+// VaultKeyPassphrase says "Passphrase"
+// in the language the app shows.
+func VaultKeyPassphrase() string { return In(i18n.Locale()).VaultKeyPassphrase() }
+
+// VaultKeyPassphrase says "Passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultKeyPassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultKeyPassphrase", nil)
+}
+
+// VaultKeyPassphraseHint says "Encrypts the key at rest. Saved only if you ask."
+// in the language the app shows.
+func VaultKeyPassphraseHint() string { return In(i18n.Locale()).VaultKeyPassphraseHint() }
+
+// VaultKeyPassphraseHint says "Encrypts the key at rest. Saved only if you ask."
+// in the language of msgs.
+func (msgs Messages) VaultKeyPassphraseHint() string {
+	return Catalog.Format(msgs.locale, "vaultKeyPassphraseHint", nil)
+}
+
+// VaultKeyPassphraseKeep says "A passphrase is stored. Leave blank to keep it."
+// in the language the app shows.
+func VaultKeyPassphraseKeep() string { return In(i18n.Locale()).VaultKeyPassphraseKeep() }
+
+// VaultKeyPassphraseKeep says "A passphrase is stored. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultKeyPassphraseKeep() string {
+	return Catalog.Format(msgs.locale, "vaultKeyPassphraseKeep", nil)
+}
+
+// VaultKeySavePassphrase says "Save the passphrase"
+// in the language the app shows.
+func VaultKeySavePassphrase() string { return In(i18n.Locale()).VaultKeySavePassphrase() }
+
+// VaultKeySavePassphrase says "Save the passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultKeySavePassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultKeySavePassphrase", nil)
+}
+
+// VaultKeyClearPassphrase says "Forget the saved passphrase"
+// in the language the app shows.
+func VaultKeyClearPassphrase() string { return In(i18n.Locale()).VaultKeyClearPassphrase() }
+
+// VaultKeyClearPassphrase says "Forget the saved passphrase"
+// in the language of msgs.
+func (msgs Messages) VaultKeyClearPassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultKeyClearPassphrase", nil)
+}
+
+// VaultKeyCertificate says "Certificate"
+// in the language the app shows.
+func VaultKeyCertificate() string { return In(i18n.Locale()).VaultKeyCertificate() }
+
+// VaultKeyCertificate says "Certificate"
+// in the language of msgs.
+func (msgs Messages) VaultKeyCertificate() string {
+	return Catalog.Format(msgs.locale, "vaultKeyCertificate", nil)
+}
+
+// VaultKeyCertificateHint says "Optional: paste the signed OpenSSH certificate that matches this key."
+// in the language the app shows.
+func VaultKeyCertificateHint() string { return In(i18n.Locale()).VaultKeyCertificateHint() }
+
+// VaultKeyCertificateHint says "Optional: paste the signed OpenSSH certificate that matches this key."
+// in the language of msgs.
+func (msgs Messages) VaultKeyCertificateHint() string {
+	return Catalog.Format(msgs.locale, "vaultKeyCertificateHint", nil)
+}
+
+// VaultKeyClearCertificate says "Remove the certificate"
+// in the language the app shows.
+func VaultKeyClearCertificate() string { return In(i18n.Locale()).VaultKeyClearCertificate() }
+
+// VaultKeyClearCertificate says "Remove the certificate"
+// in the language of msgs.
+func (msgs Messages) VaultKeyClearCertificate() string {
+	return Catalog.Format(msgs.locale, "vaultKeyClearCertificate", nil)
+}
+
+// VaultKeyNote says "Key material and passphrases are encrypted before they are saved."
+// in the language the app shows.
+func VaultKeyNote() string { return In(i18n.Locale()).VaultKeyNote() }
+
+// VaultKeyNote says "Key material and passphrases are encrypted before they are saved."
+// in the language of msgs.
+func (msgs Messages) VaultKeyNote() string {
+	return Catalog.Format(msgs.locale, "vaultKeyNote", nil)
+}
+
+// VaultKeyStored says "Key stored"
+// in the language the app shows.
+func VaultKeyStored() string { return In(i18n.Locale()).VaultKeyStored() }
+
+// VaultKeyStored says "Key stored"
+// in the language of msgs.
+func (msgs Messages) VaultKeyStored() string {
+	return Catalog.Format(msgs.locale, "vaultKeyStored", nil)
+}
+
+// VaultKeyPassphraseStored says "Passphrase stored"
+// in the language the app shows.
+func VaultKeyPassphraseStored() string { return In(i18n.Locale()).VaultKeyPassphraseStored() }
+
+// VaultKeyPassphraseStored says "Passphrase stored"
+// in the language of msgs.
+func (msgs Messages) VaultKeyPassphraseStored() string {
+	return Catalog.Format(msgs.locale, "vaultKeyPassphraseStored", nil)
+}
+
+// VaultKeyCertificateStored says "Certificate"
+// in the language the app shows.
+func VaultKeyCertificateStored() string { return In(i18n.Locale()).VaultKeyCertificateStored() }
+
+// VaultKeyCertificateStored says "Certificate"
+// in the language of msgs.
+func (msgs Messages) VaultKeyCertificateStored() string {
+	return Catalog.Format(msgs.locale, "vaultKeyCertificateStored", nil)
+}
+
+// VaultDeleteConfirm says "Delete “{label}”? This cannot be undone."
+// in the language the app shows.
+//
+// The delete confirmation naming the Key or Identity about to be removed.
+func VaultDeleteConfirm(label string) string { return In(i18n.Locale()).VaultDeleteConfirm(label) }
+
+// VaultDeleteConfirm says "Delete “{label}”? This cannot be undone."
+// in the language of msgs.
+//
+// The delete confirmation naming the Key or Identity about to be removed.
+func (msgs Messages) VaultDeleteConfirm(label string) string {
+	return Catalog.Format(msgs.locale, "vaultDeleteConfirm", map[string]any{"label": label})
+}
+
+// VaultDeleteConfirmUnknown says "Delete this item? This cannot be undone."
+// in the language the app shows.
+func VaultDeleteConfirmUnknown() string { return In(i18n.Locale()).VaultDeleteConfirmUnknown() }
+
+// VaultDeleteConfirmUnknown says "Delete this item? This cannot be undone."
+// in the language of msgs.
+func (msgs Messages) VaultDeleteConfirmUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultDeleteConfirmUnknown", nil)
+}
+
+// VaultNone says "None"
+// in the language the app shows.
+func VaultNone() string { return In(i18n.Locale()).VaultNone() }
+
+// VaultNone says "None"
+// in the language of msgs.
+func (msgs Messages) VaultNone() string {
+	return Catalog.Format(msgs.locale, "vaultNone", nil)
+}
+
+// VaultAuthSummaryAgent says "SSH agent"
+// in the language the app shows.
+func VaultAuthSummaryAgent() string { return In(i18n.Locale()).VaultAuthSummaryAgent() }
+
+// VaultAuthSummaryAgent says "SSH agent"
+// in the language of msgs.
+func (msgs Messages) VaultAuthSummaryAgent() string {
+	return Catalog.Format(msgs.locale, "vaultAuthSummaryAgent", nil)
+}
+
+// VaultAuthSummaryPassword says "Password"
+// in the language the app shows.
+func VaultAuthSummaryPassword() string { return In(i18n.Locale()).VaultAuthSummaryPassword() }
+
+// VaultAuthSummaryPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) VaultAuthSummaryPassword() string {
+	return Catalog.Format(msgs.locale, "vaultAuthSummaryPassword", nil)
+}
+
+// VaultAuthSummaryKeyboard says "Keyboard-interactive"
+// in the language the app shows.
+func VaultAuthSummaryKeyboard() string { return In(i18n.Locale()).VaultAuthSummaryKeyboard() }
+
+// VaultAuthSummaryKeyboard says "Keyboard-interactive"
+// in the language of msgs.
+func (msgs Messages) VaultAuthSummaryKeyboard() string {
+	return Catalog.Format(msgs.locale, "vaultAuthSummaryKeyboard", nil)
+}
+
+// VaultAuthSummaryKey says "SSH Key “{label}”"
+// in the language the app shows.
+//
+// The authentication method summary naming the SSH Key a Host will use.
+func VaultAuthSummaryKey(label string) string { return In(i18n.Locale()).VaultAuthSummaryKey(label) }
+
+// VaultAuthSummaryKey says "SSH Key “{label}”"
+// in the language of msgs.
+//
+// The authentication method summary naming the SSH Key a Host will use.
+func (msgs Messages) VaultAuthSummaryKey(label string) string {
+	return Catalog.Format(msgs.locale, "vaultAuthSummaryKey", map[string]any{"label": label})
+}
+
+// VaultAuthSummaryCertificate says "Certificate “{label}”"
+// in the language the app shows.
+//
+// The authentication method summary naming the certificate a Host will use.
+func VaultAuthSummaryCertificate(label string) string {
+	return In(i18n.Locale()).VaultAuthSummaryCertificate(label)
+}
+
+// VaultAuthSummaryCertificate says "Certificate “{label}”"
+// in the language of msgs.
+//
+// The authentication method summary naming the certificate a Host will use.
+func (msgs Messages) VaultAuthSummaryCertificate(label string) string {
+	return Catalog.Format(msgs.locale, "vaultAuthSummaryCertificate", map[string]any{"label": label})
+}
+
+// VaultIdentityListTitle says "Identities ({count})"
+// in the language the app shows.
+//
+// The Vault's Identity section heading and its Identity count.
+func VaultIdentityListTitle(count int) string { return In(i18n.Locale()).VaultIdentityListTitle(count) }
+
+// VaultIdentityListTitle says "Identities ({count})"
+// in the language of msgs.
+//
+// The Vault's Identity section heading and its Identity count.
+func (msgs Messages) VaultIdentityListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultIdentityListTitle", map[string]any{"count": count})
+}
+
+// VaultIdentityNew says "New Identity"
+// in the language the app shows.
+func VaultIdentityNew() string { return In(i18n.Locale()).VaultIdentityNew() }
+
+// VaultIdentityNew says "New Identity"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityNew() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityNew", nil)
+}
+
+// VaultIdentityEmpty says "No Identities yet."
+// in the language the app shows.
+func VaultIdentityEmpty() string { return In(i18n.Locale()).VaultIdentityEmpty() }
+
+// VaultIdentityEmpty says "No Identities yet."
+// in the language of msgs.
+func (msgs Messages) VaultIdentityEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityEmpty", nil)
+}
+
+// VaultIdentityFormCreateTitle says "New Identity"
+// in the language the app shows.
+func VaultIdentityFormCreateTitle() string { return In(i18n.Locale()).VaultIdentityFormCreateTitle() }
+
+// VaultIdentityFormCreateTitle says "New Identity"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityFormCreateTitle", nil)
+}
+
+// VaultIdentityFormEditTitle says "Edit Identity"
+// in the language the app shows.
+func VaultIdentityFormEditTitle() string { return In(i18n.Locale()).VaultIdentityFormEditTitle() }
+
+// VaultIdentityFormEditTitle says "Edit Identity"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityFormEditTitle", nil)
+}
+
+// VaultIdentityMethod says "Authentication"
+// in the language the app shows.
+func VaultIdentityMethod() string { return In(i18n.Locale()).VaultIdentityMethod() }
+
+// VaultIdentityMethod says "Authentication"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityMethod() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityMethod", nil)
+}
+
+// VaultIdentityMethodPassword says "Password"
+// in the language the app shows.
+func VaultIdentityMethodPassword() string { return In(i18n.Locale()).VaultIdentityMethodPassword() }
+
+// VaultIdentityMethodPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityMethodPassword() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityMethodPassword", nil)
+}
+
+// VaultIdentityMethodKey says "SSH Key"
+// in the language the app shows.
+func VaultIdentityMethodKey() string { return In(i18n.Locale()).VaultIdentityMethodKey() }
+
+// VaultIdentityMethodKey says "SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityMethodKey() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityMethodKey", nil)
+}
+
+// VaultIdentityMethodCertificate says "Certificate"
+// in the language the app shows.
+func VaultIdentityMethodCertificate() string {
+	return In(i18n.Locale()).VaultIdentityMethodCertificate()
+}
+
+// VaultIdentityMethodCertificate says "Certificate"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityMethodCertificate() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityMethodCertificate", nil)
+}
+
+// VaultIdentityKey says "SSH Key"
+// in the language the app shows.
+func VaultIdentityKey() string { return In(i18n.Locale()).VaultIdentityKey() }
+
+// VaultIdentityKey says "SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityKey() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityKey", nil)
+}
+
+// VaultIdentityKeyHint says "The Identity uses this Key. A certificate Key authenticates with its certificate."
+// in the language the app shows.
+func VaultIdentityKeyHint() string { return In(i18n.Locale()).VaultIdentityKeyHint() }
+
+// VaultIdentityKeyHint says "The Identity uses this Key. A certificate Key authenticates with its certificate."
+// in the language of msgs.
+func (msgs Messages) VaultIdentityKeyHint() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityKeyHint", nil)
+}
+
+// VaultIdentityClearPassword says "Forget the saved password"
+// in the language the app shows.
+func VaultIdentityClearPassword() string { return In(i18n.Locale()).VaultIdentityClearPassword() }
+
+// VaultIdentityClearPassword says "Forget the saved password"
+// in the language of msgs.
+func (msgs Messages) VaultIdentityClearPassword() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityClearPassword", nil)
+}
+
+// VaultIdentityNote says "Passwords are encrypted before they are saved."
+// in the language the app shows.
+func VaultIdentityNote() string { return In(i18n.Locale()).VaultIdentityNote() }
+
+// VaultIdentityNote says "Passwords are encrypted before they are saved."
+// in the language of msgs.
+func (msgs Messages) VaultIdentityNote() string {
+	return Catalog.Format(msgs.locale, "vaultIdentityNote", nil)
+}
+
+// VaultHostAuthSection says "Authentication"
+// in the language the app shows.
+func VaultHostAuthSection() string { return In(i18n.Locale()).VaultHostAuthSection() }
+
+// VaultHostAuthSection says "Authentication"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthSection() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthSection", nil)
+}
+
+// VaultHostIdentity says "Identity"
+// in the language the app shows.
+func VaultHostIdentity() string { return In(i18n.Locale()).VaultHostIdentity() }
+
+// VaultHostIdentity says "Identity"
+// in the language of msgs.
+func (msgs Messages) VaultHostIdentity() string {
+	return Catalog.Format(msgs.locale, "vaultHostIdentity", nil)
+}
+
+// VaultHostIdentityHint says "An Identity supplies the username, method, and Key. It takes precedence over the Host's own values."
+// in the language the app shows.
+func VaultHostIdentityHint() string { return In(i18n.Locale()).VaultHostIdentityHint() }
+
+// VaultHostIdentityHint says "An Identity supplies the username, method, and Key. It takes precedence over the Host's own values."
+// in the language of msgs.
+func (msgs Messages) VaultHostIdentityHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostIdentityHint", nil)
+}
+
+// VaultHostKey says "SSH Key"
+// in the language the app shows.
+func VaultHostKey() string { return In(i18n.Locale()).VaultHostKey() }
+
+// VaultHostKey says "SSH Key"
+// in the language of msgs.
+func (msgs Messages) VaultHostKey() string {
+	return Catalog.Format(msgs.locale, "vaultHostKey", nil)
+}
+
+// VaultHostKeyHint says "Select a saved Key, or an Identity that references one."
+// in the language the app shows.
+func VaultHostKeyHint() string { return In(i18n.Locale()).VaultHostKeyHint() }
+
+// VaultHostKeyHint says "Select a saved Key, or an Identity that references one."
+// in the language of msgs.
+func (msgs Messages) VaultHostKeyHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostKeyHint", nil)
+}
+
+// VaultHostAuthMethod says "Method"
+// in the language the app shows.
+func VaultHostAuthMethod() string { return In(i18n.Locale()).VaultHostAuthMethod() }
+
+// VaultHostAuthMethod says "Method"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthMethod() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthMethod", nil)
+}
+
+// VaultHostAuthAuto says "Automatic"
+// in the language the app shows.
+func VaultHostAuthAuto() string { return In(i18n.Locale()).VaultHostAuthAuto() }
+
+// VaultHostAuthAuto says "Automatic"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthAuto() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthAuto", nil)
+}
+
+// VaultHostAuthPassword says "Password only"
+// in the language the app shows.
+func VaultHostAuthPassword() string { return In(i18n.Locale()).VaultHostAuthPassword() }
+
+// VaultHostAuthPassword says "Password only"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthPassword() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthPassword", nil)
+}
+
+// VaultHostAuthKey says "SSH Key only"
+// in the language the app shows.
+func VaultHostAuthKey() string { return In(i18n.Locale()).VaultHostAuthKey() }
+
+// VaultHostAuthKey says "SSH Key only"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthKey() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthKey", nil)
+}
+
+// VaultHostAuthCertificate says "Certificate only"
+// in the language the app shows.
+func VaultHostAuthCertificate() string { return In(i18n.Locale()).VaultHostAuthCertificate() }
+
+// VaultHostAuthCertificate says "Certificate only"
+// in the language of msgs.
+func (msgs Messages) VaultHostAuthCertificate() string {
+	return Catalog.Format(msgs.locale, "vaultHostAuthCertificate", nil)
+}
+
+// VaultHostUseAgent says "Use the SSH agent"
+// in the language the app shows.
+func VaultHostUseAgent() string { return In(i18n.Locale()).VaultHostUseAgent() }
+
+// VaultHostUseAgent says "Use the SSH agent"
+// in the language of msgs.
+func (msgs Messages) VaultHostUseAgent() string {
+	return Catalog.Format(msgs.locale, "vaultHostUseAgent", nil)
+}
+
+// VaultHostRequiresMFA says "Keyboard-interactive first (MFA)"
+// in the language the app shows.
+func VaultHostRequiresMFA() string { return In(i18n.Locale()).VaultHostRequiresMFA() }
+
+// VaultHostRequiresMFA says "Keyboard-interactive first (MFA)"
+// in the language of msgs.
+func (msgs Messages) VaultHostRequiresMFA() string {
+	return Catalog.Format(msgs.locale, "vaultHostRequiresMFA", nil)
+}
+
+// VaultProblemKeyRequired says "Select an SSH Key."
+// in the language the app shows.
+func VaultProblemKeyRequired() string { return In(i18n.Locale()).VaultProblemKeyRequired() }
+
+// VaultProblemKeyRequired says "Select an SSH Key."
+// in the language of msgs.
+func (msgs Messages) VaultProblemKeyRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemKeyRequired", nil)
+}
+
+// VaultProblemKeyMaterial says "The private key could not be read. Use OpenSSH, PEM, PKCS#8, or PuTTY PPK format."
+// in the language the app shows.
+func VaultProblemKeyMaterial() string { return In(i18n.Locale()).VaultProblemKeyMaterial() }
+
+// VaultProblemKeyMaterial says "The private key could not be read. Use OpenSSH, PEM, PKCS#8, or PuTTY PPK format."
+// in the language of msgs.
+func (msgs Messages) VaultProblemKeyMaterial() string {
+	return Catalog.Format(msgs.locale, "vaultProblemKeyMaterial", nil)
+}
+
+// VaultProblemKeyPassphrase says "The passphrase did not unlock the key."
+// in the language the app shows.
+func VaultProblemKeyPassphrase() string { return In(i18n.Locale()).VaultProblemKeyPassphrase() }
+
+// VaultProblemKeyPassphrase says "The passphrase did not unlock the key."
+// in the language of msgs.
+func (msgs Messages) VaultProblemKeyPassphrase() string {
+	return Catalog.Format(msgs.locale, "vaultProblemKeyPassphrase", nil)
+}
+
+// VaultProblemKeyCertificate says "The certificate could not be read or does not match the key."
+// in the language the app shows.
+func VaultProblemKeyCertificate() string { return In(i18n.Locale()).VaultProblemKeyCertificate() }
+
+// VaultProblemKeyCertificate says "The certificate could not be read or does not match the key."
+// in the language of msgs.
+func (msgs Messages) VaultProblemKeyCertificate() string {
+	return Catalog.Format(msgs.locale, "vaultProblemKeyCertificate", nil)
+}
+
+// VaultProblemKeyUnsupported says "That key type or format is not supported."
+// in the language the app shows.
+func VaultProblemKeyUnsupported() string { return In(i18n.Locale()).VaultProblemKeyUnsupported() }
+
+// VaultProblemKeyUnsupported says "That key type or format is not supported."
+// in the language of msgs.
+func (msgs Messages) VaultProblemKeyUnsupported() string {
+	return Catalog.Format(msgs.locale, "vaultProblemKeyUnsupported", nil)
+}
+
+// VaultProblemIdentityKeyRequired says "An Identity with key or certificate authentication needs an SSH Key."
+// in the language the app shows.
+func VaultProblemIdentityKeyRequired() string {
+	return In(i18n.Locale()).VaultProblemIdentityKeyRequired()
+}
+
+// VaultProblemIdentityKeyRequired says "An Identity with key or certificate authentication needs an SSH Key."
+// in the language of msgs.
+func (msgs Messages) VaultProblemIdentityKeyRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemIdentityKeyRequired", nil)
+}
+
+// VaultProblemIdentityUsernameRequired says "A password Identity needs a username."
+// in the language the app shows.
+func VaultProblemIdentityUsernameRequired() string {
+	return In(i18n.Locale()).VaultProblemIdentityUsernameRequired()
+}
+
+// VaultProblemIdentityUsernameRequired says "A password Identity needs a username."
+// in the language of msgs.
+func (msgs Messages) VaultProblemIdentityUsernameRequired() string {
+	return Catalog.Format(msgs.locale, "vaultProblemIdentityUsernameRequired", nil)
+}
+
+// VaultProblemAuthMethod says "Choose a supported authentication method."
+// in the language the app shows.
+func VaultProblemAuthMethod() string { return In(i18n.Locale()).VaultProblemAuthMethod() }
+
+// VaultProblemAuthMethod says "Choose a supported authentication method."
+// in the language of msgs.
+func (msgs Messages) VaultProblemAuthMethod() string {
+	return Catalog.Format(msgs.locale, "vaultProblemAuthMethod", nil)
+}
+
+// AuthPromptPassphraseTitle says "Unlock {username}@{hostname}"
+// in the language the app shows.
+//
+// The passphrase prompt title for an SSH Key used by a connection.
+func AuthPromptPassphraseTitle(username string, hostname string) string {
+	return In(i18n.Locale()).AuthPromptPassphraseTitle(username, hostname)
+}
+
+// AuthPromptPassphraseTitle says "Unlock {username}@{hostname}"
+// in the language of msgs.
+//
+// The passphrase prompt title for an SSH Key used by a connection.
+func (msgs Messages) AuthPromptPassphraseTitle(username string, hostname string) string {
+	return Catalog.Format(msgs.locale, "authPromptPassphraseTitle", map[string]any{"username": username, "hostname": hostname})
+}
+
+// AuthPromptPassphraseBody says "Enter the passphrase for SSH Key “{key}”."
+// in the language the app shows.
+//
+// The passphrase prompt body naming the SSH Key.
+func AuthPromptPassphraseBody(key string) string {
+	return In(i18n.Locale()).AuthPromptPassphraseBody(key)
+}
+
+// AuthPromptPassphraseBody says "Enter the passphrase for SSH Key “{key}”."
+// in the language of msgs.
+//
+// The passphrase prompt body naming the SSH Key.
+func (msgs Messages) AuthPromptPassphraseBody(key string) string {
+	return Catalog.Format(msgs.locale, "authPromptPassphraseBody", map[string]any{"key": key})
+}
+
+// AuthPromptPassphraseInvalid says "That passphrase did not unlock “{key}”. Try again."
+// in the language the app shows.
+//
+// The passphrase prompt after a rejected passphrase, naming the SSH Key.
+func AuthPromptPassphraseInvalid(key string) string {
+	return In(i18n.Locale()).AuthPromptPassphraseInvalid(key)
+}
+
+// AuthPromptPassphraseInvalid says "That passphrase did not unlock “{key}”. Try again."
+// in the language of msgs.
+//
+// The passphrase prompt after a rejected passphrase, naming the SSH Key.
+func (msgs Messages) AuthPromptPassphraseInvalid(key string) string {
+	return Catalog.Format(msgs.locale, "authPromptPassphraseInvalid", map[string]any{"key": key})
+}
+
+// AuthPromptPassphraseLabel says "Passphrase"
+// in the language the app shows.
+func AuthPromptPassphraseLabel() string { return In(i18n.Locale()).AuthPromptPassphraseLabel() }
+
+// AuthPromptPassphraseLabel says "Passphrase"
+// in the language of msgs.
+func (msgs Messages) AuthPromptPassphraseLabel() string {
+	return Catalog.Format(msgs.locale, "authPromptPassphraseLabel", nil)
+}
+
+// AuthPromptKeyboardTitle says "Sign in as {username}@{hostname}"
+// in the language the app shows.
+//
+// The keyboard-interactive prompt title for a connection.
+func AuthPromptKeyboardTitle(username string, hostname string) string {
+	return In(i18n.Locale()).AuthPromptKeyboardTitle(username, hostname)
+}
+
+// AuthPromptKeyboardTitle says "Sign in as {username}@{hostname}"
+// in the language of msgs.
+//
+// The keyboard-interactive prompt title for a connection.
+func (msgs Messages) AuthPromptKeyboardTitle(username string, hostname string) string {
+	return Catalog.Format(msgs.locale, "authPromptKeyboardTitle", map[string]any{"username": username, "hostname": hostname})
+}
+
+// AuthPromptContinue says "Continue"
+// in the language the app shows.
+func AuthPromptContinue() string { return In(i18n.Locale()).AuthPromptContinue() }
+
+// AuthPromptContinue says "Continue"
+// in the language of msgs.
+func (msgs Messages) AuthPromptContinue() string {
+	return Catalog.Format(msgs.locale, "authPromptContinue", nil)
+}
+
+// AuthPromptCancel says "Cancel"
+// in the language the app shows.
+func AuthPromptCancel() string { return In(i18n.Locale()).AuthPromptCancel() }
+
+// AuthPromptCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) AuthPromptCancel() string {
+	return Catalog.Format(msgs.locale, "authPromptCancel", nil)
+}

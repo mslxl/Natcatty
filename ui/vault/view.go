@@ -23,11 +23,16 @@ func View(s *vaultstate.State) func(*ui.Context) {
 		t := c.Theme()
 
 		ui.Column(c).Fill().Grow(1).Gap(12).Children(func() {
-			if s.Editing() {
+			switch {
+			case s.Editing():
 				editor(c, s, m, t)
-				return
+			case s.EditingKey():
+				keyEditor(c, s, m, t)
+			case s.EditingIdentity():
+				identityEditor(c, s, m, t)
+			default:
+				list(c, s, m, t)
 			}
-			list(c, s, m, t)
 		})
 	}
 }
@@ -66,14 +71,181 @@ func list(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 		})
 	}
 
-	if s.HostCount() == 0 {
-		ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
-		return
-	}
+	keyDeleteBanner(c, s, m, t)
+	identityDeleteBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).Children(func() {
+		if s.HostCount() == 0 {
+			ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
+		}
 		for _, host := range s.Items() {
 			hostRow(c, s, host, m, t)
+		}
+		keySection(c, s, m, t)
+		identitySection(c, s, m, t)
+	})
+}
+
+func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Fill().Gap(8).Padding(0, 8).Children(func() {
+		ui.Text(c, m.VaultKeyListTitle(s.KeyCount())).FontSize(16).Bold()
+		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultKeyNew()).Clicked() {
+			s.BeginCreateKey()
+			c.Invalidate()
+		}
+	})
+	if s.KeyCount() == 0 {
+		ui.Text(c, m.VaultKeyEmpty()).FontSize(12).TextColor(t.TextMuted)
+	}
+	for _, key := range s.Keys() {
+		keyRow(c, s, key, m, t)
+	}
+}
+
+func keyRow(c *ui.Context, s *vaultstate.State, key domainvault.Key, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, key.Label).Bold()
+			ui.Text(c, keySummary(key, m)).FontSize(12).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+			s.BeginEditKey(key.ID)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			s.RequestDeleteKey(key.ID)
+			c.Invalidate()
+		}
+	})
+}
+
+func keySummary(key domainvault.Key, m locales.Messages) string {
+	parts := make([]string, 0, 4)
+	if key.Type != "" {
+		parts = append(parts, string(key.Type))
+	}
+	if key.HasPrivateKey {
+		parts = append(parts, m.VaultKeyStored())
+	}
+	if key.HasPassphrase {
+		parts = append(parts, m.VaultKeyPassphraseStored())
+	}
+	if key.Certificate != "" {
+		parts = append(parts, m.VaultKeyCertificateStored())
+	}
+	return strings.Join(parts, " · ")
+}
+
+func keyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteKey() == "" {
+		return
+	}
+	label := ""
+	for _, key := range s.Keys() {
+		if key.ID == s.PendingDeleteKey() {
+			label = key.Label
+			break
+		}
+	}
+	message := m.VaultDeleteConfirmUnknown()
+	if label != "" {
+		message = m.VaultDeleteConfirm(label)
+	}
+	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Text(c, message).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteKey()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteKey()
+			c.Invalidate()
+		}
+	})
+}
+
+func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Fill().Gap(8).Padding(0, 8).Children(func() {
+		ui.Text(c, m.VaultIdentityListTitle(s.IdentityCount())).FontSize(16).Bold()
+		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultIdentityNew()).Clicked() {
+			s.BeginCreateIdentity()
+			c.Invalidate()
+		}
+	})
+	if s.IdentityCount() == 0 {
+		ui.Text(c, m.VaultIdentityEmpty()).FontSize(12).TextColor(t.TextMuted)
+	}
+	for _, identity := range s.Identities() {
+		identityRow(c, s, identity, m, t)
+	}
+}
+
+func identityRow(c *ui.Context, s *vaultstate.State, identity domainvault.Identity, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, identity.Label).Bold()
+			ui.Text(c, identitySummary(identity, m)).FontSize(12).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+			s.BeginEditIdentity(identity.ID)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			s.RequestDeleteIdentity(identity.ID)
+			c.Invalidate()
+		}
+	})
+}
+
+func identitySummary(identity domainvault.Identity, m locales.Messages) string {
+	parts := make([]string, 0, 3)
+	if identity.Username != "" {
+		parts = append(parts, identity.Username)
+	}
+	parts = append(parts, identityMethodLabel(identity.AuthMethod, m))
+	if identity.HasPassword {
+		parts = append(parts, m.VaultHostPasswordStored())
+	}
+	return strings.Join(parts, " · ")
+}
+
+func identityMethodLabel(method domainvault.IdentityAuthMethod, m locales.Messages) string {
+	switch method {
+	case domainvault.IdentityAuthKey:
+		return m.VaultIdentityMethodKey()
+	case domainvault.IdentityAuthCertificate:
+		return m.VaultIdentityMethodCertificate()
+	default:
+		return m.VaultIdentityMethodPassword()
+	}
+}
+
+func identityDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteIdentity() == "" {
+		return
+	}
+	label := ""
+	for _, identity := range s.Identities() {
+		if identity.ID == s.PendingDeleteIdentity() {
+			label = identity.Label
+			break
+		}
+	}
+	message := m.VaultDeleteConfirmUnknown()
+	if label != "" {
+		message = m.VaultDeleteConfirm(label)
+	}
+	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Text(c, message).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteIdentity()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteIdentity()
+			c.Invalidate()
 		}
 	})
 }
@@ -135,7 +307,7 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, host.Label).Bold()
-			ui.Text(c, hostSummary(host, m)).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, hostSummary(s, host, m)).FontSize(12).TextColor(t.TextMuted)
 		})
 
 		if host.Protocol == domainvault.ProtocolSSH {
@@ -163,8 +335,8 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 	})
 }
 
-func hostSummary(host domainvault.Host, m locales.Messages) string {
-	parts := make([]string, 0, 5)
+func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages) string {
+	parts := make([]string, 0, 6)
 	if host.Protocol == domainvault.ProtocolLocal {
 		parts = append(parts, m.VaultHostLocal())
 	} else {
@@ -176,9 +348,7 @@ func hostSummary(host domainvault.Host, m locales.Messages) string {
 	if host.Group != "" {
 		parts = append(parts, host.Group)
 	}
-	if host.HasPassword {
-		parts = append(parts, m.VaultHostPasswordStored())
-	}
+	parts = append(parts, authSummary(s, host, m))
 	if len(host.Tags) > 0 {
 		parts = append(parts, strings.Join(host.Tags, ", "))
 	}
@@ -186,6 +356,61 @@ func hostSummary(host domainvault.Host, m locales.Messages) string {
 		parts = append(parts, "★")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// authSummary reports the method a connection will use after the Identity,
+// explicit Key, and Host method are resolved. The precedence itself comes from
+// the domain so the list never claims a credential that will not be tried.
+func authSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages) string {
+	identities := s.Identities()
+	var identity *domainvault.Identity
+	if host.IdentityID != "" {
+		for i := range identities {
+			if identities[i].ID == host.IdentityID {
+				identity = &identities[i]
+				break
+			}
+		}
+	}
+	selection := domainvault.ResolveHostAuth(host, identity)
+	// The original uses the Identity password first and the Host password as
+	// the fallback, so either makes a password attempt possible.
+	hasPassword := host.HasPassword || (identity != nil && identity.HasPassword)
+
+	switch selection.Method {
+	case domainvault.HostAuthPassword:
+		return m.VaultAuthSummaryPassword()
+	case domainvault.HostAuthKey, domainvault.HostAuthCertificate:
+		return keyAuthSummary(s.Keys(), string(selection.KeyID), selection.Method, m)
+	default:
+		// Automatic mode: report the first material that will be tried.
+		if host.UseSSHAgent {
+			return m.VaultAuthSummaryAgent()
+		}
+		if selection.KeyID != "" {
+			return keyAuthSummary(s.Keys(), string(selection.KeyID), domainvault.HostAuthKey, m)
+		}
+		if hasPassword {
+			return m.VaultAuthSummaryPassword()
+		}
+		return m.VaultAuthSummaryKeyboard()
+	}
+}
+
+func keyAuthSummary(keys []domainvault.Key, keyID string, method domainvault.HostAuthMethod, m locales.Messages) string {
+	label := keyID
+	certified := false
+	for _, key := range keys {
+		if string(key.ID) == keyID {
+			label = key.Label
+			certified = key.Certificate != ""
+			break
+		}
+	}
+	if method == domainvault.HostAuthCertificate || certified {
+		return m.VaultAuthSummaryCertificate(label)
+	}
+	return m.VaultAuthSummaryKey(label)
 }
 
 func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -237,6 +462,34 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 			// never loaded back from storage and never rendered again.
 			ui.TextInput(c, &form.Password).Password()
 		}).Description(passwordHint)
+
+		ui.Text(c, m.VaultHostAuthSection()).Bold()
+		ui.Field(c, m.VaultHostIdentity(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.IdentityID, "", m.VaultNone())
+				for _, identity := range s.Identities() {
+					ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
+				}
+			})
+		}).Description(m.VaultHostIdentityHint())
+		ui.Field(c, m.VaultHostKey(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.KeyID, "", m.VaultNone())
+				for _, key := range s.Keys() {
+					ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+				}
+			})
+		}).Description(m.VaultHostKeyHint())
+		ui.Field(c, m.VaultHostAuthMethod(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
+			})
+		})
+		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 		ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 	})
 
@@ -250,6 +503,121 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 		}
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelEdit()
+			c.Invalidate()
+		}
+	})
+}
+
+func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.KeyForm()
+	title := m.VaultKeyFormCreateTitle()
+	if form.ID != "" {
+		title = m.VaultKeyFormEditTitle()
+	}
+
+	ui.Text(c, title).FontSize(20).Bold()
+
+	ui.Form(c, func() {
+		ui.Field(c, m.VaultHostLabel(), func() {
+			ui.TextInput(c, &form.Label)
+		})
+		materialHint := m.VaultKeyMaterialHint()
+		if form.HasPrivateKey {
+			materialHint = m.VaultKeyMaterialKeep()
+		}
+		ui.Field(c, m.VaultKeyMaterial(), func() {
+			ui.TextArea(c, &form.PrivateKey).Height(120)
+		}).Description(materialHint)
+		passphraseHint := m.VaultKeyPassphraseHint()
+		if form.HasPassphrase {
+			passphraseHint = m.VaultKeyPassphraseKeep()
+		}
+		ui.Field(c, m.VaultKeyPassphrase(), func() {
+			ui.TextInput(c, &form.Passphrase).Password()
+		}).Description(passphraseHint)
+		ui.Checkbox(c, &form.SavePassphrase, m.VaultKeySavePassphrase())
+		if form.HasPassphrase {
+			ui.Checkbox(c, &form.ClearPassphrase, m.VaultKeyClearPassphrase())
+		}
+		ui.Field(c, m.VaultKeyCertificate(), func() {
+			ui.TextArea(c, &form.Certificate).Height(60)
+		}).Description(m.VaultKeyCertificateHint())
+		if form.HasCertificate {
+			ui.Checkbox(c, &form.ClearCertificate, m.VaultKeyClearCertificate())
+		}
+	})
+
+	ui.Text(c, m.VaultKeyNote()).FontSize(12).TextColor(t.TextMuted)
+	problem(c, s, t)
+
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
+			_ = s.SaveKey()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelKeyEdit()
+			c.Invalidate()
+		}
+	})
+}
+
+func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.IdentityForm()
+	title := m.VaultIdentityFormCreateTitle()
+	if form.ID != "" {
+		title = m.VaultIdentityFormEditTitle()
+	}
+
+	ui.Text(c, title).FontSize(20).Bold()
+
+	ui.Form(c, func() {
+		ui.Field(c, m.VaultHostLabel(), func() {
+			ui.TextInput(c, &form.Label)
+		})
+		ui.Field(c, m.VaultHostUsername(), func() {
+			ui.TextInput(c, &form.Username).Placeholder("root")
+		})
+		ui.Field(c, m.VaultIdentityMethod(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthPassword), m.VaultIdentityMethodPassword())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthKey), m.VaultIdentityMethodKey())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthCertificate), m.VaultIdentityMethodCertificate())
+			})
+		})
+		if form.AuthMethod != string(domainvault.IdentityAuthPassword) {
+			ui.Field(c, m.VaultIdentityKey(), func() {
+				ui.RadioGroup(c, func() {
+					for _, key := range s.Keys() {
+						ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+					}
+				})
+			}).Description(m.VaultIdentityKeyHint())
+		}
+		if form.AuthMethod == string(domainvault.IdentityAuthPassword) {
+			passwordHint := m.VaultHostPasswordHint()
+			if form.HasPassword {
+				passwordHint = m.VaultHostPasswordKeep()
+			}
+			ui.Field(c, m.VaultHostPassword(), func() {
+				ui.TextInput(c, &form.Password).Password()
+			}).Description(passwordHint)
+			if form.HasPassword {
+				ui.Checkbox(c, &form.ClearPassword, m.VaultIdentityClearPassword())
+			}
+		}
+	})
+
+	ui.Text(c, m.VaultIdentityNote()).FontSize(12).TextColor(t.TextMuted)
+	problem(c, s, t)
+
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
+			_ = s.SaveIdentity()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelIdentityEdit()
 			c.Invalidate()
 		}
 	})
@@ -311,6 +679,22 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemSecretUnreadable()
 	case vaultstate.ProblemSecretSetupFailed:
 		return m.VaultProblemSecretSetupFailed()
+	case vaultstate.ProblemKeyRequired:
+		return m.VaultProblemKeyRequired()
+	case vaultstate.ProblemKeyMaterial:
+		return m.VaultProblemKeyMaterial()
+	case vaultstate.ProblemKeyPassphrase:
+		return m.VaultProblemKeyPassphrase()
+	case vaultstate.ProblemKeyCertificate:
+		return m.VaultProblemKeyCertificate()
+	case vaultstate.ProblemKeyUnsupported:
+		return m.VaultProblemKeyUnsupported()
+	case vaultstate.ProblemIdentityKeyRequired:
+		return m.VaultProblemIdentityKeyRequired()
+	case vaultstate.ProblemIdentityUsernameRequired:
+		return m.VaultProblemIdentityUsernameRequired()
+	case vaultstate.ProblemAuthMethod:
+		return m.VaultProblemAuthMethod()
 	}
 	return ""
 }

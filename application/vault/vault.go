@@ -26,10 +26,15 @@ type HostRepository interface {
 
 // Service implements the Vault use cases.
 type Service struct {
-	repo    HostRepository
-	secrets FieldSecrets
-	newID   func() model.HostID
-	now     func() time.Time
+	repo          HostRepository
+	keys          KeyRepository
+	identities    IdentityRepository
+	inspector     KeyInspector
+	secrets       FieldSecrets
+	newID         func() model.HostID
+	newKeyID      func() model.KeyID
+	newIdentityID func() model.IdentityID
+	now           func() time.Time
 }
 
 // Option customizes a Service.
@@ -56,15 +61,56 @@ func WithClock(fn func() time.Time) Option {
 }
 
 // WithSecrets gives the Service the field-secret store that encrypts Host
-// credentials. Without it, a draft that carries a password is refused rather
-// than written in plaintext.
+// credentials and SSH Key material. Without it, a draft that carries a
+// credential is refused rather than written in plaintext.
 func WithSecrets(secrets FieldSecrets) Option {
 	return func(s *Service) { s.secrets = secrets }
 }
 
+// WithKeys gives the Service SSH Key persistence.
+func WithKeys(repo KeyRepository) Option {
+	return func(s *Service) { s.keys = repo }
+}
+
+// WithIdentities gives the Service Identity persistence.
+func WithIdentities(repo IdentityRepository) Option {
+	return func(s *Service) { s.identities = repo }
+}
+
+// WithKeyInspector gives the Service the key-format parser that validates
+// imported material and reports its public key. Without it, key creation is
+// refused: the Service never pretends unvalidated material is usable.
+func WithKeyInspector(inspector KeyInspector) Option {
+	return func(s *Service) { s.inspector = inspector }
+}
+
+// WithKeyIDGenerator sets how the Service names SSH Keys.
+func WithKeyIDGenerator(fn func() model.KeyID) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.newKeyID = fn
+		}
+	}
+}
+
+// WithIdentityIDGenerator sets how the Service names Identities.
+func WithIdentityIDGenerator(fn func() model.IdentityID) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.newIdentityID = fn
+		}
+	}
+}
+
 // NewService returns a Service that persists Hosts through repo.
 func NewService(repo HostRepository, opts ...Option) *Service {
-	service := &Service{repo: repo, newID: newHostID, now: time.Now}
+	service := &Service{
+		repo:          repo,
+		newID:         newHostID,
+		newKeyID:      newSSHKeyID,
+		newIdentityID: newIdentityID,
+		now:           time.Now,
+	}
 	for _, opt := range opts {
 		opt(service)
 	}
@@ -229,6 +275,11 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host
 	host.Tags = draft.Tags
 	host.Notes = draft.Notes
 	host.Pinned = draft.Pinned
+	host.IdentityID = draft.IdentityID
+	host.KeyID = draft.KeyID
+	host.AuthMethod = draft.AuthMethod
+	host.UseSSHAgent = draft.UseSSHAgent
+	host.RequiresMFA = draft.RequiresMFA
 	return host
 }
 

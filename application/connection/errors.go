@@ -68,7 +68,22 @@ var (
 	// ErrClosed reports an operation on a released lease or closed
 	// Connection.
 	ErrClosed = errors.New("connection: closed")
+	// ErrPromptCancelled reports that the user dismissed a passphrase or
+	// keyboard-interactive prompt.
+	ErrPromptCancelled = errors.New("connection: authentication prompt cancelled")
+	// ErrPromptUnavailable reports that the server requires interactive input
+	// but no prompt implementation is wired.
+	ErrPromptUnavailable = errors.New("connection: authentication prompt unavailable")
+	// ErrKeyUnavailable reports a selected SSH Key that no longer exists or has
+	// no stored private material. Explicit key and certificate modes fail
+	// closed instead of substituting another credential.
+	ErrKeyUnavailable = errors.New("connection: selected SSH Key unavailable")
 )
+
+// AuthFailure wraps cause as an authentication error. AuthSource
+// implementations use it so the Manager reports a missing or unusable
+// credential as a typed auth failure rather than an internal error.
+func AuthFailure(cause error) error { return authError(cause) }
 
 func hostKeyError(cause error) error     { return &Error{Kind: KindHostKey, Cause: cause} }
 func authError(cause error) error        { return &Error{Kind: KindAuth, Cause: cause} }
