@@ -2159,3 +2159,645 @@ func AuthPromptCancel() string { return In(i18n.Locale()).AuthPromptCancel() }
 func (msgs Messages) AuthPromptCancel() string {
 	return Catalog.Format(msgs.locale, "authPromptCancel", nil)
 }
+
+// VaultForwardingTitle says "Port Forwarding ({count})"
+// in the language the app shows.
+//
+// The Vault Port Forwarding Rule list heading and rule count.
+func VaultForwardingTitle(count int) string { return In(i18n.Locale()).VaultForwardingTitle(count) }
+
+// VaultForwardingTitle says "Port Forwarding ({count})"
+// in the language of msgs.
+//
+// The Vault Port Forwarding Rule list heading and rule count.
+func (msgs Messages) VaultForwardingTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultForwardingTitle", map[string]any{"count": count})
+}
+
+// VaultForwardingNew says "New Rule"
+// in the language the app shows.
+func VaultForwardingNew() string { return In(i18n.Locale()).VaultForwardingNew() }
+
+// VaultForwardingNew says "New Rule"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingNew() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingNew", nil)
+}
+
+// VaultForwardingEmpty says "No Port Forwarding Rules yet."
+// in the language the app shows.
+func VaultForwardingEmpty() string { return In(i18n.Locale()).VaultForwardingEmpty() }
+
+// VaultForwardingEmpty says "No Port Forwarding Rules yet."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingEmpty", nil)
+}
+
+// VaultForwardingFormCreateTitle says "New Port Forwarding Rule"
+// in the language the app shows.
+func VaultForwardingFormCreateTitle() string {
+	return In(i18n.Locale()).VaultForwardingFormCreateTitle()
+}
+
+// VaultForwardingFormCreateTitle says "New Port Forwarding Rule"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingFormCreateTitle", nil)
+}
+
+// VaultForwardingFormEditTitle says "Edit Port Forwarding Rule"
+// in the language the app shows.
+func VaultForwardingFormEditTitle() string { return In(i18n.Locale()).VaultForwardingFormEditTitle() }
+
+// VaultForwardingFormEditTitle says "Edit Port Forwarding Rule"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingFormEditTitle", nil)
+}
+
+// VaultForwardingType says "Type"
+// in the language the app shows.
+func VaultForwardingType() string { return In(i18n.Locale()).VaultForwardingType() }
+
+// VaultForwardingType says "Type"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingType() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingType", nil)
+}
+
+// VaultForwardingTypeLocal says "Local (-L)"
+// in the language the app shows.
+func VaultForwardingTypeLocal() string { return In(i18n.Locale()).VaultForwardingTypeLocal() }
+
+// VaultForwardingTypeLocal says "Local (-L)"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingTypeLocal() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingTypeLocal", nil)
+}
+
+// VaultForwardingTypeRemote says "Remote (-R)"
+// in the language the app shows.
+func VaultForwardingTypeRemote() string { return In(i18n.Locale()).VaultForwardingTypeRemote() }
+
+// VaultForwardingTypeRemote says "Remote (-R)"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingTypeRemote() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingTypeRemote", nil)
+}
+
+// VaultForwardingTypeDynamic says "Dynamic SOCKS5 (-D)"
+// in the language the app shows.
+func VaultForwardingTypeDynamic() string { return In(i18n.Locale()).VaultForwardingTypeDynamic() }
+
+// VaultForwardingTypeDynamic says "Dynamic SOCKS5 (-D)"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingTypeDynamic() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingTypeDynamic", nil)
+}
+
+// VaultForwardingLabel says "Label"
+// in the language the app shows.
+func VaultForwardingLabel() string { return In(i18n.Locale()).VaultForwardingLabel() }
+
+// VaultForwardingLabel says "Label"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingLabel() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingLabel", nil)
+}
+
+// VaultForwardingHost says "Host"
+// in the language the app shows.
+func VaultForwardingHost() string { return In(i18n.Locale()).VaultForwardingHost() }
+
+// VaultForwardingHost says "Host"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingHost() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingHost", nil)
+}
+
+// VaultForwardingHostNone says "No Hosts available. Add a Host first."
+// in the language the app shows.
+func VaultForwardingHostNone() string { return In(i18n.Locale()).VaultForwardingHostNone() }
+
+// VaultForwardingHostNone says "No Hosts available. Add a Host first."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingHostNone() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingHostNone", nil)
+}
+
+// VaultForwardingBindAddress says "Bind address"
+// in the language the app shows.
+func VaultForwardingBindAddress() string { return In(i18n.Locale()).VaultForwardingBindAddress() }
+
+// VaultForwardingBindAddress says "Bind address"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingBindAddress() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingBindAddress", nil)
+}
+
+// VaultForwardingLocalPort says "Local port"
+// in the language the app shows.
+func VaultForwardingLocalPort() string { return In(i18n.Locale()).VaultForwardingLocalPort() }
+
+// VaultForwardingLocalPort says "Local port"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingLocalPort() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingLocalPort", nil)
+}
+
+// VaultForwardingRemoteHost says "Destination host"
+// in the language the app shows.
+func VaultForwardingRemoteHost() string { return In(i18n.Locale()).VaultForwardingRemoteHost() }
+
+// VaultForwardingRemoteHost says "Destination host"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingRemoteHost() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingRemoteHost", nil)
+}
+
+// VaultForwardingRemotePort says "Destination port"
+// in the language the app shows.
+func VaultForwardingRemotePort() string { return In(i18n.Locale()).VaultForwardingRemotePort() }
+
+// VaultForwardingRemotePort says "Destination port"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingRemotePort() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingRemotePort", nil)
+}
+
+// VaultForwardingAutoStart says "Start when Natcatty launches"
+// in the language the app shows.
+func VaultForwardingAutoStart() string { return In(i18n.Locale()).VaultForwardingAutoStart() }
+
+// VaultForwardingAutoStart says "Start when Natcatty launches"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingAutoStart() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingAutoStart", nil)
+}
+
+// VaultForwardingAutoReconnect says "Reconnect automatically"
+// in the language the app shows.
+func VaultForwardingAutoReconnect() string { return In(i18n.Locale()).VaultForwardingAutoReconnect() }
+
+// VaultForwardingAutoReconnect says "Reconnect automatically"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingAutoReconnect() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingAutoReconnect", nil)
+}
+
+// VaultForwardingAutoReconnectFollow says "Follow auto-start"
+// in the language the app shows.
+//
+// Reconnect whenever auto-start is enabled.
+func VaultForwardingAutoReconnectFollow() string {
+	return In(i18n.Locale()).VaultForwardingAutoReconnectFollow()
+}
+
+// VaultForwardingAutoReconnectFollow says "Follow auto-start"
+// in the language of msgs.
+//
+// Reconnect whenever auto-start is enabled.
+func (msgs Messages) VaultForwardingAutoReconnectFollow() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingAutoReconnectFollow", nil)
+}
+
+// VaultForwardingAutoReconnectOn says "Always reconnect"
+// in the language the app shows.
+//
+// Reconnect regardless of auto-start.
+func VaultForwardingAutoReconnectOn() string {
+	return In(i18n.Locale()).VaultForwardingAutoReconnectOn()
+}
+
+// VaultForwardingAutoReconnectOn says "Always reconnect"
+// in the language of msgs.
+//
+// Reconnect regardless of auto-start.
+func (msgs Messages) VaultForwardingAutoReconnectOn() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingAutoReconnectOn", nil)
+}
+
+// VaultForwardingAutoReconnectOff says "Never reconnect"
+// in the language the app shows.
+//
+// Never reconnect automatically.
+func VaultForwardingAutoReconnectOff() string {
+	return In(i18n.Locale()).VaultForwardingAutoReconnectOff()
+}
+
+// VaultForwardingAutoReconnectOff says "Never reconnect"
+// in the language of msgs.
+//
+// Never reconnect automatically.
+func (msgs Messages) VaultForwardingAutoReconnectOff() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingAutoReconnectOff", nil)
+}
+
+// VaultForwardingEnabled says "Enabled"
+// in the language the app shows.
+func VaultForwardingEnabled() string { return In(i18n.Locale()).VaultForwardingEnabled() }
+
+// VaultForwardingEnabled says "Enabled"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingEnabled() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingEnabled", nil)
+}
+
+// VaultForwardingStart says "Start"
+// in the language the app shows.
+func VaultForwardingStart() string { return In(i18n.Locale()).VaultForwardingStart() }
+
+// VaultForwardingStart says "Start"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStart() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStart", nil)
+}
+
+// VaultForwardingStop says "Stop"
+// in the language the app shows.
+func VaultForwardingStop() string { return In(i18n.Locale()).VaultForwardingStop() }
+
+// VaultForwardingStop says "Stop"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStop() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStop", nil)
+}
+
+// VaultForwardingEnable says "Enable"
+// in the language the app shows.
+func VaultForwardingEnable() string { return In(i18n.Locale()).VaultForwardingEnable() }
+
+// VaultForwardingEnable says "Enable"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingEnable() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingEnable", nil)
+}
+
+// VaultForwardingDisable says "Disable"
+// in the language the app shows.
+func VaultForwardingDisable() string { return In(i18n.Locale()).VaultForwardingDisable() }
+
+// VaultForwardingDisable says "Disable"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingDisable() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingDisable", nil)
+}
+
+// VaultForwardingStatusInactive says "Inactive"
+// in the language the app shows.
+func VaultForwardingStatusInactive() string { return In(i18n.Locale()).VaultForwardingStatusInactive() }
+
+// VaultForwardingStatusInactive says "Inactive"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStatusInactive() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStatusInactive", nil)
+}
+
+// VaultForwardingStatusConnecting says "Connecting…"
+// in the language the app shows.
+func VaultForwardingStatusConnecting() string {
+	return In(i18n.Locale()).VaultForwardingStatusConnecting()
+}
+
+// VaultForwardingStatusConnecting says "Connecting…"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStatusConnecting() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStatusConnecting", nil)
+}
+
+// VaultForwardingStatusActive says "Active"
+// in the language the app shows.
+func VaultForwardingStatusActive() string { return In(i18n.Locale()).VaultForwardingStatusActive() }
+
+// VaultForwardingStatusActive says "Active"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStatusActive() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStatusActive", nil)
+}
+
+// VaultForwardingStatusError says "Error"
+// in the language the app shows.
+func VaultForwardingStatusError() string { return In(i18n.Locale()).VaultForwardingStatusError() }
+
+// VaultForwardingStatusError says "Error"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStatusError() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStatusError", nil)
+}
+
+// VaultForwardingStatusUnknown says "Unknown"
+// in the language the app shows.
+func VaultForwardingStatusUnknown() string { return In(i18n.Locale()).VaultForwardingStatusUnknown() }
+
+// VaultForwardingStatusUnknown says "Unknown"
+// in the language of msgs.
+func (msgs Messages) VaultForwardingStatusUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingStatusUnknown", nil)
+}
+
+// VaultForwardingErrorBindConflict says "The listen address is already in use."
+// in the language the app shows.
+func VaultForwardingErrorBindConflict() string {
+	return In(i18n.Locale()).VaultForwardingErrorBindConflict()
+}
+
+// VaultForwardingErrorBindConflict says "The listen address is already in use."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorBindConflict() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorBindConflict", nil)
+}
+
+// VaultForwardingErrorAuth says "Authentication failed."
+// in the language the app shows.
+func VaultForwardingErrorAuth() string { return In(i18n.Locale()).VaultForwardingErrorAuth() }
+
+// VaultForwardingErrorAuth says "Authentication failed."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorAuth() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorAuth", nil)
+}
+
+// VaultForwardingErrorHostKey says "The host key was not trusted."
+// in the language the app shows.
+func VaultForwardingErrorHostKey() string { return In(i18n.Locale()).VaultForwardingErrorHostKey() }
+
+// VaultForwardingErrorHostKey says "The host key was not trusted."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorHostKey() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorHostKey", nil)
+}
+
+// VaultForwardingErrorNetwork says "The connection failed."
+// in the language the app shows.
+func VaultForwardingErrorNetwork() string { return In(i18n.Locale()).VaultForwardingErrorNetwork() }
+
+// VaultForwardingErrorNetwork says "The connection failed."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorNetwork() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorNetwork", nil)
+}
+
+// VaultForwardingErrorTimeout says "The connection timed out."
+// in the language the app shows.
+func VaultForwardingErrorTimeout() string { return In(i18n.Locale()).VaultForwardingErrorTimeout() }
+
+// VaultForwardingErrorTimeout says "The connection timed out."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorTimeout() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorTimeout", nil)
+}
+
+// VaultForwardingErrorUnsupported says "The Host does not support Port Forwarding."
+// in the language the app shows.
+func VaultForwardingErrorUnsupported() string {
+	return In(i18n.Locale()).VaultForwardingErrorUnsupported()
+}
+
+// VaultForwardingErrorUnsupported says "The Host does not support Port Forwarding."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorUnsupported() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorUnsupported", nil)
+}
+
+// VaultForwardingErrorCancelled says "The Port Forwarding Rule was cancelled."
+// in the language the app shows.
+func VaultForwardingErrorCancelled() string { return In(i18n.Locale()).VaultForwardingErrorCancelled() }
+
+// VaultForwardingErrorCancelled says "The Port Forwarding Rule was cancelled."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorCancelled() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorCancelled", nil)
+}
+
+// VaultForwardingErrorUnforward says "The remote listener could not be released."
+// in the language the app shows.
+func VaultForwardingErrorUnforward() string { return In(i18n.Locale()).VaultForwardingErrorUnforward() }
+
+// VaultForwardingErrorUnforward says "The remote listener could not be released."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorUnforward() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorUnforward", nil)
+}
+
+// VaultForwardingErrorInternal says "The Port Forwarding Rule failed."
+// in the language the app shows.
+func VaultForwardingErrorInternal() string { return In(i18n.Locale()).VaultForwardingErrorInternal() }
+
+// VaultForwardingErrorInternal says "The Port Forwarding Rule failed."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingErrorInternal() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingErrorInternal", nil)
+}
+
+// VaultForwardingHop says "Hop {index}/{total}: {label}"
+// in the language the app shows.
+//
+// The failing jump-chain endpoint for a forwarding error.
+func VaultForwardingHop(index int, total int, label string) string {
+	return In(i18n.Locale()).VaultForwardingHop(index, total, label)
+}
+
+// VaultForwardingHop says "Hop {index}/{total}: {label}"
+// in the language of msgs.
+//
+// The failing jump-chain endpoint for a forwarding error.
+func (msgs Messages) VaultForwardingHop(index int, total int, label string) string {
+	return Catalog.Format(msgs.locale, "vaultForwardingHop", map[string]any{"index": index, "total": total, "label": label})
+}
+
+// VaultForwardingDeleteConfirm says "Delete Port Forwarding Rule “{label}”? This cannot be undone."
+// in the language the app shows.
+//
+// The delete confirmation naming the Port Forwarding Rule about to be
+// removed.
+func VaultForwardingDeleteConfirm(label string) string {
+	return In(i18n.Locale()).VaultForwardingDeleteConfirm(label)
+}
+
+// VaultForwardingDeleteConfirm says "Delete Port Forwarding Rule “{label}”? This cannot be undone."
+// in the language of msgs.
+//
+// The delete confirmation naming the Port Forwarding Rule about to be
+// removed.
+func (msgs Messages) VaultForwardingDeleteConfirm(label string) string {
+	return Catalog.Format(msgs.locale, "vaultForwardingDeleteConfirm", map[string]any{"label": label})
+}
+
+// VaultForwardingDeleteConfirmUnknown says "Delete this Port Forwarding Rule? This cannot be undone."
+// in the language the app shows.
+func VaultForwardingDeleteConfirmUnknown() string {
+	return In(i18n.Locale()).VaultForwardingDeleteConfirmUnknown()
+}
+
+// VaultForwardingDeleteConfirmUnknown says "Delete this Port Forwarding Rule? This cannot be undone."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingDeleteConfirmUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingDeleteConfirmUnknown", nil)
+}
+
+// VaultForwardingProblemLabelRequired says "A Port Forwarding Rule needs a label."
+// in the language the app shows.
+func VaultForwardingProblemLabelRequired() string {
+	return In(i18n.Locale()).VaultForwardingProblemLabelRequired()
+}
+
+// VaultForwardingProblemLabelRequired says "A Port Forwarding Rule needs a label."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemLabelRequired() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemLabelRequired", nil)
+}
+
+// VaultForwardingProblemLabelInvalid says "The label is invalid."
+// in the language the app shows.
+func VaultForwardingProblemLabelInvalid() string {
+	return In(i18n.Locale()).VaultForwardingProblemLabelInvalid()
+}
+
+// VaultForwardingProblemLabelInvalid says "The label is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemLabelInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemLabelInvalid", nil)
+}
+
+// VaultForwardingProblemType says "Choose a supported forwarding type."
+// in the language the app shows.
+func VaultForwardingProblemType() string { return In(i18n.Locale()).VaultForwardingProblemType() }
+
+// VaultForwardingProblemType says "Choose a supported forwarding type."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemType() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemType", nil)
+}
+
+// VaultForwardingProblemHostRequired says "Choose a Host."
+// in the language the app shows.
+func VaultForwardingProblemHostRequired() string {
+	return In(i18n.Locale()).VaultForwardingProblemHostRequired()
+}
+
+// VaultForwardingProblemHostRequired says "Choose a Host."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemHostRequired() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemHostRequired", nil)
+}
+
+// VaultForwardingProblemBindInvalid says "The bind address is invalid."
+// in the language the app shows.
+func VaultForwardingProblemBindInvalid() string {
+	return In(i18n.Locale()).VaultForwardingProblemBindInvalid()
+}
+
+// VaultForwardingProblemBindInvalid says "The bind address is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemBindInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemBindInvalid", nil)
+}
+
+// VaultForwardingProblemLocalPortInvalid says "The local port must be a number."
+// in the language the app shows.
+func VaultForwardingProblemLocalPortInvalid() string {
+	return In(i18n.Locale()).VaultForwardingProblemLocalPortInvalid()
+}
+
+// VaultForwardingProblemLocalPortInvalid says "The local port must be a number."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemLocalPortInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemLocalPortInvalid", nil)
+}
+
+// VaultForwardingProblemLocalPortRange says "The local port must be between 1 and 65535."
+// in the language the app shows.
+func VaultForwardingProblemLocalPortRange() string {
+	return In(i18n.Locale()).VaultForwardingProblemLocalPortRange()
+}
+
+// VaultForwardingProblemLocalPortRange says "The local port must be between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemLocalPortRange() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemLocalPortRange", nil)
+}
+
+// VaultForwardingProblemRemoteHostRequired says "A destination host is required."
+// in the language the app shows.
+func VaultForwardingProblemRemoteHostRequired() string {
+	return In(i18n.Locale()).VaultForwardingProblemRemoteHostRequired()
+}
+
+// VaultForwardingProblemRemoteHostRequired says "A destination host is required."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemRemoteHostRequired() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemRemoteHostRequired", nil)
+}
+
+// VaultForwardingProblemRemoteHostInvalid says "The destination host is invalid."
+// in the language the app shows.
+func VaultForwardingProblemRemoteHostInvalid() string {
+	return In(i18n.Locale()).VaultForwardingProblemRemoteHostInvalid()
+}
+
+// VaultForwardingProblemRemoteHostInvalid says "The destination host is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemRemoteHostInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemRemoteHostInvalid", nil)
+}
+
+// VaultForwardingProblemRemotePortInvalid says "The destination port must be a number."
+// in the language the app shows.
+func VaultForwardingProblemRemotePortInvalid() string {
+	return In(i18n.Locale()).VaultForwardingProblemRemotePortInvalid()
+}
+
+// VaultForwardingProblemRemotePortInvalid says "The destination port must be a number."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemRemotePortInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemRemotePortInvalid", nil)
+}
+
+// VaultForwardingProblemRemotePortRange says "The destination port must be between 1 and 65535."
+// in the language the app shows.
+func VaultForwardingProblemRemotePortRange() string {
+	return In(i18n.Locale()).VaultForwardingProblemRemotePortRange()
+}
+
+// VaultForwardingProblemRemotePortRange says "The destination port must be between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemRemotePortRange() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemRemotePortRange", nil)
+}
+
+// VaultForwardingProblemNotFound says "The Port Forwarding Rule no longer exists."
+// in the language the app shows.
+func VaultForwardingProblemNotFound() string {
+	return In(i18n.Locale()).VaultForwardingProblemNotFound()
+}
+
+// VaultForwardingProblemNotFound says "The Port Forwarding Rule no longer exists."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemNotFound() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemNotFound", nil)
+}
+
+// VaultForwardingProblemDisabled says "Enable the rule before starting it."
+// in the language the app shows.
+func VaultForwardingProblemDisabled() string {
+	return In(i18n.Locale()).VaultForwardingProblemDisabled()
+}
+
+// VaultForwardingProblemDisabled says "Enable the rule before starting it."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemDisabled() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemDisabled", nil)
+}
+
+// VaultForwardingProblemInternal says "The Port Forwarding Rule could not be saved."
+// in the language the app shows.
+func VaultForwardingProblemInternal() string {
+	return In(i18n.Locale()).VaultForwardingProblemInternal()
+}
+
+// VaultForwardingProblemInternal says "The Port Forwarding Rule could not be saved."
+// in the language of msgs.
+func (msgs Messages) VaultForwardingProblemInternal() string {
+	return Catalog.Format(msgs.locale, "vaultForwardingProblemInternal", nil)
+}

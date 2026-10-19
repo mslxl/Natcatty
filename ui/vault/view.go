@@ -13,21 +13,45 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
+// Option customizes the Vault surface.
+type Option func(*options)
+
+type options struct {
+	forwarding *uiforwarding.State
+}
+
+// WithForwarding embeds the Port Forwarding Rule list and editor in the Vault.
+func WithForwarding(s *uiforwarding.State) Option {
+	return func(o *options) { o.forwarding = s }
+}
+
 // View returns the Vault surface.
-func View(s *vaultstate.State) func(*ui.Context) {
+func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
+	var configured options
+	for _, opt := range opts {
+		opt(&configured)
+	}
 	return func(c *ui.Context) {
 		// Test connection attempts complete off the UI thread.
 		s.FlushTests()
+		if configured.forwarding != nil {
+			// Runtime status arrives on the forwarding manager's goroutine;
+			// apply it on the UI thread before rendering.
+			configured.forwarding.Flush()
+		}
 
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
 		ui.Column(c).Fill().Grow(1).Gap(12).Children(func() {
 			switch {
+			case configured.forwarding != nil && configured.forwarding.Editing():
+				uiforwarding.Editor(c, configured.forwarding)
 			case s.Editing():
 				editor(c, s, m, t)
 			case s.EditingKey():
@@ -35,13 +59,13 @@ func View(s *vaultstate.State) func(*ui.Context) {
 			case s.EditingIdentity():
 				identityEditor(c, s, m, t)
 			default:
-				list(c, s, m, t)
+				list(c, s, configured.forwarding, m, t)
 			}
 		})
 	}
 }
 
-func list(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).Fill().Gap(8).Children(func() {
 		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
 		ui.Column(c).Grow(1)
@@ -87,6 +111,9 @@ func list(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 		}
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)
+		if forwarding != nil {
+			uiforwarding.Section(c, forwarding)
+		}
 	})
 }
 

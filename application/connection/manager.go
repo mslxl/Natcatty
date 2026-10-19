@@ -720,6 +720,9 @@ type Connection struct {
 	client Client
 	refs   int
 	closed bool
+	// done closes when the physical transport is closed or discarded, so a
+	// forwarding rule can stop reporting active after its transport dies.
+	done chan struct{}
 	// idle is true while the Connection is parked with no leases.
 	idle      bool
 	idleSince time.Time
@@ -735,12 +738,13 @@ type Connection struct {
 }
 
 func newConnection(client Client) *Connection {
-	return &Connection{client: client}
+	return &Connection{client: client, done: make(chan struct{})}
 }
 
 func newPooledConnection(client Client, endpoint endpointConfig, manager *Manager) *Connection {
 	return &Connection{
 		client:        client,
+		done:          make(chan struct{}),
 		endpoint:      endpoint,
 		allowIdlePark: !endpoint.noReuse && RemoteAllowsIdleParkedShellReuse(remoteVersion(client)),
 		onZero:        manager.pool.park,
@@ -774,6 +778,7 @@ func (c *Connection) release() error {
 	var client Client
 	if zero && onZero == nil {
 		c.closed = true
+		c.closeDoneLocked()
 		client = c.client
 		c.client = nil
 	}
@@ -808,6 +813,7 @@ func (c *Connection) closeTransport(reason string) error {
 		return nil
 	}
 	c.closed = true
+	c.closeDoneLocked()
 	c.idle = false
 	client := c.client
 	c.client = nil
@@ -827,6 +833,21 @@ func (c *Connection) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closed
+}
+
+// closeDoneLocked signals transport death exactly once. The caller owns the
+// lock that guards closed.
+func (c *Connection) closeDoneLocked() {
+	if c.done == nil {
+		c.done = make(chan struct{})
+		close(c.done)
+		return
+	}
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
 }
 
 func remoteVersion(client Client) string {
@@ -891,6 +912,22 @@ func (c *Connection) startKeepalive(policy KeepalivePolicy, onFailure func()) {
 	}()
 }
 
+// ForwardingClient is the forwarding capability of an authenticated
+// transport. DialContext opens a channel through the SSH Host; ListenTCP asks
+// the SSH Host to listen for remote forwarding.
+type ForwardingClient interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+	ListenTCP(address string) (net.Listener, error)
+}
+
+// ErrForwardingUnavailable reports a transport that cannot forward, such as a
+// test fake or a vendor client without direct-tcpip support.
+var ErrForwardingUnavailable = errors.New("connection: forwarding unavailable")
+
+// ErrBindConflict reports a forwarding listener the SSH Host refused to bind.
+// It is permanent: retrying the same address cannot succeed.
+var ErrBindConflict = errors.New("connection: forwarding bind conflict")
+
 // Lease is a counted claim on a Connection. It is safe to release more than
 // once.
 type Lease struct {
@@ -906,6 +943,44 @@ type Lease struct {
 
 // ReusedFromIdle reports whether this lease woke a parked Connection.
 func (l *Lease) ReusedFromIdle() bool { return l != nil && l.fromIdle }
+
+// Done closes when the leased Connection's transport is closed or discarded.
+// A forwarding rule uses it to leave the active state when the transport dies.
+func (l *Lease) Done() <-chan struct{} {
+	if l == nil || l.conn == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	return l.conn.done
+}
+
+// Forwarding returns the leased Connection's forwarding capability. A released
+// lease, a closed Connection, and a transport that cannot forward all fail
+// closed.
+func (l *Lease) Forwarding() (ForwardingClient, error) {
+	if l == nil {
+		return nil, ErrClosed
+	}
+	l.mu.Lock()
+	released := l.released
+	l.mu.Unlock()
+	if released || l.conn == nil {
+		return nil, ErrClosed
+	}
+	l.conn.mu.Lock()
+	client := l.conn.client
+	closed := l.conn.closed
+	l.conn.mu.Unlock()
+	if closed || client == nil {
+		return nil, ErrClosed
+	}
+	forwarding, ok := client.(ForwardingClient)
+	if !ok {
+		return nil, unsupportedError(ErrForwardingUnavailable)
+	}
+	return forwarding, nil
+}
 
 // OpenTerminal opens an interactive shell channel on the leased Connection.
 // When the lease woke a parked transport whose server banner is unknown, the
