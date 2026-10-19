@@ -37,6 +37,28 @@ const (
 	maxTagLength      = 64
 	maxTagCount       = 64
 	maxNotesLength    = 64 << 10
+	// maxKeyMaterialLength bounds a private key or certificate before it is
+	// handed to the field-secret store.
+	maxKeyMaterialLength = 256 << 10
+)
+
+// HostAuthMethod is the authentication choice stored on a Host. It is a
+// selection, not credential material.
+type HostAuthMethod string
+
+const (
+	// HostAuthAuto lets the connection choose from the configured material,
+	// matching the original's automatic ordering.
+	HostAuthAuto HostAuthMethod = "auto"
+	// HostAuthPassword isolates password and keyboard-interactive auth; no key
+	// or agent fallback is offered.
+	HostAuthPassword HostAuthMethod = "password"
+	// HostAuthKey uses the selected SSH Key and fails closed when it cannot be
+	// used.
+	HostAuthKey HostAuthMethod = "key"
+	// HostAuthCertificate uses the selected SSH Key together with its signed
+	// certificate and fails closed when it cannot be used.
+	HostAuthCertificate HostAuthMethod = "certificate"
 )
 
 // Host is one saved target in the Vault. Credential material is deliberately
@@ -60,6 +82,19 @@ type Host struct {
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`
+	// IdentityID selects a reusable Identity. An empty value means the Host
+	// authenticates on its own.
+	IdentityID model.IdentityID `json:"identityId,omitempty"`
+	// KeyID selects an SSH Key directly. IdentityID and KeyID are references,
+	// not existence guarantees: a deleted Key leaves a dangling reference, as
+	// in the original's non-cascading Vault.
+	KeyID model.KeyID `json:"keyId,omitempty"`
+	// AuthMethod is the explicit authentication choice. Empty means auto.
+	AuthMethod HostAuthMethod `json:"authMethod,omitempty"`
+	// UseSSHAgent offers the local SSH agent as the first automatic method.
+	UseSSHAgent bool `json:"useSshAgent,omitempty"`
+	// RequiresMFA prefers keyboard-interactive before password or key probing.
+	RequiresMFA bool `json:"requiresMfa,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -78,6 +113,13 @@ type Draft struct {
 	Tags     []string
 	Notes    string
 	Pinned   bool
+	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
+	// the Host authenticates. They carry references only, never material.
+	IdentityID  model.IdentityID
+	KeyID       model.KeyID
+	AuthMethod  HostAuthMethod
+	UseSSHAgent bool
+	RequiresMFA bool
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -88,14 +130,22 @@ type Draft struct {
 type Field string
 
 const (
-	FieldLabel    Field = "label"
-	FieldHostname Field = "hostname"
-	FieldPort     Field = "port"
-	FieldUsername Field = "username"
-	FieldProtocol Field = "protocol"
-	FieldGroup    Field = "group"
-	FieldTags     Field = "tags"
-	FieldNotes    Field = "notes"
+	FieldLabel       Field = "label"
+	FieldHostname    Field = "hostname"
+	FieldPort        Field = "port"
+	FieldUsername    Field = "username"
+	FieldProtocol    Field = "protocol"
+	FieldGroup       Field = "group"
+	FieldTags        Field = "tags"
+	FieldNotes       Field = "notes"
+	FieldAuthMethod  Field = "auth_method"
+	FieldIdentity    Field = "identity"
+	FieldKey         Field = "key"
+	FieldKeyType     Field = "key_type"
+	FieldKeyMaterial Field = "key_material"
+	FieldPrivateKey  Field = "private_key"
+	FieldPassphrase  Field = "passphrase"
+	FieldCertificate Field = "certificate"
 )
 
 // Rule names the validation rule a value broke. The UI maps Field and Rule to
@@ -128,6 +178,10 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Protocol = Protocol(strings.ToLower(strings.TrimSpace(string(draft.Protocol))))
 	if draft.Protocol == "" {
 		draft.Protocol = ProtocolSSH
+	}
+	draft.AuthMethod = HostAuthMethod(strings.ToLower(strings.TrimSpace(string(draft.AuthMethod))))
+	if draft.AuthMethod == "" {
+		draft.AuthMethod = HostAuthAuto
 	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
@@ -184,14 +238,17 @@ func (h Host) MergeKey() string {
 // Validate checks that a Host already in canonical form is saveable.
 func (h Host) Validate() error {
 	return validateFields(Draft{
-		Label:    h.Label,
-		Hostname: h.Hostname,
-		Port:     h.Port,
-		Username: h.Username,
-		Protocol: h.Protocol,
-		Group:    h.Group,
-		Tags:     h.Tags,
-		Notes:    h.Notes,
+		Label:       h.Label,
+		Hostname:    h.Hostname,
+		Port:        h.Port,
+		Username:    h.Username,
+		Protocol:    h.Protocol,
+		Group:       h.Group,
+		Tags:        h.Tags,
+		Notes:       h.Notes,
+		AuthMethod:  h.AuthMethod,
+		RequiresMFA: h.RequiresMFA,
+		UseSSHAgent: h.UseSSHAgent,
 	})
 }
 
@@ -200,6 +257,12 @@ func validateFields(draft Draft) error {
 	case ProtocolSSH, ProtocolTelnet, ProtocolLocal:
 	default:
 		return validation(FieldProtocol, RuleUnsupported)
+	}
+
+	switch draft.AuthMethod {
+	case "", HostAuthAuto, HostAuthPassword, HostAuthKey, HostAuthCertificate:
+	default:
+		return validation(FieldAuthMethod, RuleUnsupported)
 	}
 
 	if draft.Label == "" {

@@ -16,6 +16,22 @@ var hostIDEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").With
 // bits, rendered as 26 Crockford base32 characters. The ID stays opaque to
 // callers; only its uniqueness and sortable prefix matter.
 func newHostID() model.HostID {
+	return model.HostID(newULID())
+}
+
+// newSSHKeyID returns an SSH Key identifier with the same opaque ULID shape as
+// a Host identifier.
+func newSSHKeyID() model.KeyID {
+	return model.KeyID(newULID())
+}
+
+// newIdentityID returns an Identity identifier with the same opaque ULID shape
+// as a Host identifier.
+func newIdentityID() model.IdentityID {
+	return model.IdentityID(newULID())
+}
+
+func newULID() string {
 	var id [16]byte
 	milliseconds := uint64(time.Now().UnixMilli())
 	id[0] = byte(milliseconds >> 40)
@@ -29,5 +45,5 @@ func newHostID() model.HostID {
 		// distinct rather than panic if it ever does.
 		binary.BigEndian.PutUint64(id[8:], uint64(time.Now().UnixNano()))
 	}
-	return model.HostID(hostIDEncoding.EncodeToString(id[:]))
+	return hostIDEncoding.EncodeToString(id[:])
 }

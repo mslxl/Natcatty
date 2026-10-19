@@ -31,11 +31,13 @@ const (
 // Entity types and field names the Vault encrypts. They are part of the AAD
 // and the persisted secret_values key, so do not rename them.
 const (
-	EntityHost   = "host"
-	EntitySSHKey = "ssh_key"
+	EntityHost     = "host"
+	EntitySSHKey   = "ssh_key"
+	EntityIdentity = "identity"
 
 	FieldPassword   = "password"
 	FieldPassphrase = "passphrase"
+	FieldPrivateKey = "private_key"
 )
 
 // EncryptedPlaceholder prefixes a portable credential value meaning
@@ -53,6 +55,17 @@ type SecretRef struct {
 // HostSecretRef names a Host's credential field.
 func HostSecretRef(id model.HostID, field string) SecretRef {
 	return SecretRef{EntityType: EntityHost, EntityID: string(id), Field: field}
+}
+
+// KeySecretRef names an SSH Key's encrypted material field. Private key and
+// passphrase ciphertext never appear on the Key entity.
+func KeySecretRef(id model.KeyID, field string) SecretRef {
+	return SecretRef{EntityType: EntitySSHKey, EntityID: string(id), Field: field}
+}
+
+// IdentitySecretRef names an Identity's credential field.
+func IdentitySecretRef(id model.IdentityID, field string) SecretRef {
+	return SecretRef{EntityType: EntityIdentity, EntityID: string(id), Field: field}
 }
 
 // FieldSecrets is the field-secret port the Vault consumes. The adapter owns

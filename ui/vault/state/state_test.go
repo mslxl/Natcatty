@@ -38,17 +38,22 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 	}
 	f.nextID++
 	host := domainvault.Host{
-		ID:       model.HostID("host-" + strconv.Itoa(f.nextID)),
-		Label:    normalized.Label,
-		Hostname: normalized.Hostname,
-		Port:     normalized.Port,
-		Username: normalized.Username,
-		Protocol: normalized.Protocol,
-		Group:    normalized.Group,
-		Tags:     normalized.Tags,
-		Notes:    normalized.Notes,
-		Pinned:   normalized.Pinned,
-		OrderKey: int64(f.nextID) * 1000,
+		ID:          model.HostID("host-" + strconv.Itoa(f.nextID)),
+		Label:       normalized.Label,
+		Hostname:    normalized.Hostname,
+		Port:        normalized.Port,
+		Username:    normalized.Username,
+		Protocol:    normalized.Protocol,
+		Group:       normalized.Group,
+		Tags:        normalized.Tags,
+		Notes:       normalized.Notes,
+		Pinned:      normalized.Pinned,
+		IdentityID:  normalized.IdentityID,
+		KeyID:       normalized.KeyID,
+		AuthMethod:  normalized.AuthMethod,
+		UseSSHAgent: normalized.UseSSHAgent,
+		RequiresMFA: normalized.RequiresMFA,
+		OrderKey:    int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
 	f.items = append(f.items, host)
@@ -76,6 +81,11 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.Tags = normalized.Tags
 		host.Notes = normalized.Notes
 		host.Pinned = normalized.Pinned
+		host.IdentityID = normalized.IdentityID
+		host.KeyID = normalized.KeyID
+		host.AuthMethod = normalized.AuthMethod
+		host.UseSSHAgent = normalized.UseSSHAgent
+		host.RequiresMFA = normalized.RequiresMFA
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil

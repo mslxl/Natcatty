@@ -30,6 +30,9 @@ func View(s *state.State) func(*ui.Context) {
 		if prompt := s.TrustPrompt(); prompt != nil {
 			sessionui.TrustView(prompt)(c)
 		}
+		if prompt := s.AuthPrompt(); prompt != nil {
+			sessionui.AuthPromptModal(prompt)(c)
+		}
 	}
 }
 

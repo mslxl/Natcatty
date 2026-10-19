@@ -431,6 +431,161 @@
   status: verified
   notes: "The TCP dial has a 20 s deadline and authentication a separate 120 s deadline, matching the original."
 
+# --- Ticket 07: SSH Keys, Identities, certificates, agent, and MFA ---
+
+- id: vault.ssh-keys
+  area: vault
+  feature: Create, edit, and delete SSH Keys with encrypted material and passphrases
+  original_paths:
+    - domain/models/connection.ts
+    - components/KeychainManager.tsx
+    - components/KeychainEditPanel.tsx
+    - components/keychain/KeyCard.tsx
+    - components/keychain/ViewKeyPanel.tsx
+    - electron/bridges/sshAuthHelper.cjs
+  module: application/vault
+  tickets: [07]
+  acceptance_tests:
+    - application/vault.TestCreateKeyEncryptsMaterialAndKeepsTheRecordSecretFree
+    - application/vault.TestCreateKeyRejectsAWrongStoredPassphrase
+    - application/vault.TestUpdateKeyKeepsMaterialAndCanClearThePassphrase
+    - application/vault.TestDeleteKeyRemovesEncryptedMaterial
+    - adapters/ssh.TestKeyParserReportsNonSecretKeyFacts
+    - adapters/ssh.TestKeyParserReportsAnEncryptedKeyWithoutAPassphrase
+    - adapters/ssh.TestLoadSignerReadsEverySupportedFormat
+    - adapters/store.TestKeysSurviveReopenWithoutMaterialInTheRecord
+    - ui/vault/state.TestSaveKeySubmitsTheMaterialOnceAndReloads
+    - ui/vault/state.TestEditKeyNeverLoadsStoredMaterialIntoTheForm
+  status: verified
+  notes: "OpenSSH, legacy PEM, PKCS#8 (plain and encrypted), and PuTTY PPK v2/v3 are read in-repo or via github.com/kayrus/putty (Apache-2.0, pure Go). Material and passphrases live only in secret_values."
+
+- id: vault.identities
+  area: vault
+  feature: Create, edit, and delete Identities that reuse a Key or password across Hosts
+  original_paths:
+    - domain/models/connection.ts
+    - components/keychain/IdentityCard.tsx
+    - components/keychain/IdentityPanel.tsx
+    - application/state/useVaultState.ts
+  module: application/vault
+  tickets: [07]
+  acceptance_tests:
+    - application/vault.TestCreateIdentityEncryptsPasswordAndClearsKeyOnPasswordAuth
+    - application/vault.TestKeyIdentityRequiresAKey
+    - adapters/store.TestIdentitiesSurviveReopenAndDeleteOnlyThemselves
+    - ui/vault/state.TestSaveIdentitySubmitsMethodKeyAndPassword
+    - ui/vault/state.TestIdentityKeyValidationMapsToAProblem
+  status: verified
+  notes: "Identity passwords are encrypted under the Identity's field reference. Deleting a Key or Identity leaves references dangling, matching the original Vault."
+
+- id: vault.host-auth-selection
+  area: vault
+  feature: A Host selects an Identity, explicit Key, method, agent, and MFA preference, and the UI shows the resolved method
+  original_paths:
+    - domain/models/connection.ts
+    - components/HostDetailsPanel.tsx
+    - application/state/useVaultState.ts
+  module: domain/vault
+  tickets: [07]
+  acceptance_tests:
+    - domain/vault.TestResolveHostAuthPrefersIdentityMethodAndUsername
+    - application/vault.TestHostDraftPersistsAuthenticationSelection
+    - application/vault.TestResolveAuthAppliesIdentityOverHostAndLoadsKeyMaterial
+    - application/vault.TestResolveAuthKeyModeDiscardsTheKeyAndDanglingKeyFailsClosed
+    - ui/vault/state.TestHostEditorPersistsTheAuthSelection
+    - ui/vault/state.TestBeginEditRestoresTheHostAuthSelection
+  status: verified
+  notes: "The list summary mirrors domain precedence so the displayed method is the one the connection will try."
+
+- id: connections.ssh-key-auth
+  area: connections
+  feature: Selected-key and certificate SSH authentication with fail-closed passphrase handling
+  original_paths:
+    - electron/bridges/sshAuthHelper.cjs
+    - electron/bridges/sshBridge/startSession.cjs
+  module: adapters/ssh
+  tickets: [07]
+  acceptance_tests:
+    - application/connection.TestBuildAuthPlanSelectedKeyFailsClosedAndHasNoAgentFallback
+    - application/connection.TestBuildAuthPlanAutoOrdersAgentKeyPasswordThenKeyboardInteractive
+    - app.TestAuthSourceForwardsTheSelectedKeyAndFailsClosed
+    - app.TestAuthSourceFailsClosedWhenTheSelectedKeyIsMissing
+    - adapters/ssh.TestDialAuthenticatesWithSelectedKey
+    - adapters/ssh.TestDialPromptsForAnEncryptedKeyPassphrase
+    - adapters/ssh.TestDialRepromptsAfterAStoredPassphraseFails
+    - adapters/ssh.TestDialPassphraseCancellationIsTyped
+    - adapters/ssh.TestDialKeyModeFailsClosedOnUnusableMaterial
+    - adapters/ssh.TestDialPasswordModeNeverOffersAPublicKey
+  status: verified
+  notes: "Selected-key mode parses its Key before the TCP dial. An unusable selected Key aborts without offering a password, default key, or agent."
+
+- id: connections.ssh-certificate
+  area: connections
+  feature: Authenticate with a private key and its signed OpenSSH certificate
+  original_paths:
+    - electron/bridges/sshAuthHelper.cjs
+    - domain/models/connection.ts
+  module: adapters/ssh
+  tickets: [07]
+  acceptance_tests:
+    - adapters/ssh.TestLoadSignerUsesMatchingCertificate
+    - adapters/ssh.TestLoadSignerRejectsUnparseableCertificate
+    - adapters/ssh.TestKeyParserValidatesACertificateAgainstItsKey
+    - adapters/ssh.TestDialAuthenticatesWithACertificate
+  status: verified
+  notes: "A certificate that does not match the private key is rejected rather than silently falling back to the bare key."
+
+- id: connections.ssh-agent
+  area: connections
+  feature: Authenticate with the local SSH agent over SSH_AUTH_SOCK or the OpenSSH named pipe
+  original_paths:
+    - electron/bridges/sshAuthHelper.cjs
+    - electron/bridges/sshConnectionPool.cjs
+  module: adapters/ssh
+  tickets: [07]
+  acceptance_tests:
+    - application/connection.TestBuildAuthPlanAutoOrdersAgentKeyPasswordThenKeyboardInteractive
+    - app.TestAuthSourceUsesAgentBeforeTheSelectedKeyInAutomaticMode
+    - adapters/ssh.TestDialAuthenticatesWithTheSSHAgent
+  status: verified
+  notes: "The agent is offered only when the Host enables UseSSHAgent. On Windows it dials the OpenSSH named pipe; the deadline behavior of the pipe wrapper is covered only by compilation in this environment."
+
+- id: connections.ssh-keyboard-interactive
+  area: connections
+  feature: Ordered keyboard-interactive rounds with retry, auto-fill, cancellation, and partial-success MFA
+  original_paths:
+    - electron/bridges/sshAuthHelper.cjs
+    - components/KeyboardInteractiveModal.tsx
+  module: adapters/ssh
+  tickets: [07]
+  acceptance_tests:
+    - application/connection.TestBuildAuthPlanPasswordModeIsolatesPassword
+    - application/connection.TestBuildAuthPlanMFAOrdersKeyboardInteractiveFirstWhenPasswordMissing
+    - adapters/ssh.TestDialRunsOrderedKeyboardInteractiveRounds
+    - adapters/ssh.TestDialCompletesPasswordThenKeyboardInteractivePartialSuccess
+    - adapters/ssh.TestDialAutoFillsTheSavedPasswordIntoASinglePrompt
+    - ui/session.TestAuthPromptReturnsOrderedKeyboardInteractiveAnswers
+    - ui/session.TestAuthPromptCancellationAndExpiryAreTyped
+  status: verified
+  notes: "Keyboard-interactive runs at most two factors. The saved password auto-fills only a single non-echo password prompt with no OTP vocabulary, and never after a password or keyboard-interactive factor succeeded."
+
+- id: connections.auth-method-cache
+  area: connections
+  feature: A 512-entry successful-method cache promotes agent and key attempts only in automatic mode
+  original_paths:
+    - electron/bridges/sshConnectionPool.cjs
+    - electron/bridges/sshAuthHelper.cjs
+  module: application/connection
+  tickets: [07]
+  acceptance_tests:
+    - application/connection.TestAuthMethodCacheEvictsLeastRecentlyUsed
+    - application/connection.TestAuthMethodCacheDefaultLimitIs512
+    - application/connection.TestPromoteCachedCandidateOnlyInAutoMode
+    - application/connection.TestAcquireCachesTheSuccessfulMethodAndClearsItOnFailure
+    - application/connection.TestAcquirePromotesACachedAgentOnlyInAutoMode
+  status: verified
+  notes: "The cache is keyed username@hostname:port. A failed login clears the entry; a cached password is never promoted."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

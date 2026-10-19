@@ -16,6 +16,7 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -38,11 +39,19 @@ type Request struct {
 // runs during the handshake, before authentication; returning an error aborts
 // the connection. Its context is cancelled when the handshake deadline
 // expires, so a queued trust prompt cannot outlive the connection attempt.
+//
+// Auth carries the ordered attempts, including credential plaintext. It is
+// memory-only and must never be persisted or logged. OnAuth, when non-nil, is
+// called once with the candidate ID that completed authentication; the value
+// is safe to cache because it is a method ID, not a credential.
 type DialRequest struct {
 	Hostname      string
 	Port          int
 	Username      string
 	Password      string
+	Auth          AuthPlan
+	Prompter      AuthPrompter
+	OnAuth        func(candidateID string)
 	VerifyHostKey func(ctx context.Context, key domainconn.Key) error
 }
 
@@ -106,12 +115,15 @@ type Prompter interface {
 // Manager opens Connections and reads their credentials, Known Hosts, and
 // trust decisions through its ports.
 type Manager struct {
-	dialer    Dialer
-	passwords PasswordSource
-	known     KnownHostRepository
-	prompter  Prompter
-	newID     func() string
-	now       func() time.Time
+	dialer       Dialer
+	passwords    PasswordSource
+	authSource   AuthSource
+	authPrompter AuthPrompter
+	authCache    *AuthMethodCache
+	known        KnownHostRepository
+	prompter     Prompter
+	newID        func() string
+	now          func() time.Time
 }
 
 // Option customizes a Manager.
@@ -121,6 +133,28 @@ type Option func(*Manager)
 // key.
 func WithPrompter(prompter Prompter) Option {
 	return func(m *Manager) { m.prompter = prompter }
+}
+
+// WithAuthSource gives the Manager the Vault-backed authentication resolver.
+// Without it, a Manager falls back to the saved password and offers password
+// and keyboard-interactive only, which preserves ticket 06 behavior.
+func WithAuthSource(source AuthSource) Option {
+	return func(m *Manager) { m.authSource = source }
+}
+
+// WithAuthPrompter sets the passphrase and keyboard-interactive prompter.
+func WithAuthPrompter(prompter AuthPrompter) Option {
+	return func(m *Manager) { m.authPrompter = prompter }
+}
+
+// WithAuthMethodCache replaces the successful-method cache. A nil value keeps
+// the Manager's 512-entry default.
+func WithAuthMethodCache(cache *AuthMethodCache) Option {
+	return func(m *Manager) {
+		if cache != nil {
+			m.authCache = cache
+		}
+	}
 }
 
 // WithIDGenerator sets how the Manager names Known Hosts.
@@ -146,6 +180,7 @@ func NewManager(dialer Dialer, passwords PasswordSource, known KnownHostReposito
 	manager := &Manager{
 		dialer:    dialer,
 		passwords: passwords,
+		authCache: NewAuthMethodCache(MaxAuthMethodCacheEntries),
 		known:     known,
 		newID:     newKnownHostID,
 		now:       time.Now,
@@ -164,7 +199,7 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, internalError(ErrNoDialer)
 	}
 
-	password, err := m.password(ctx, req.HostID)
+	plan, err := m.authPlan(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -174,19 +209,89 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, err
 	}
 
+	cacheKey := authCacheKey(req.Username, req.Hostname, req.Port)
+	if cached, ok := m.authCache.Get(cacheKey); ok {
+		PromoteCachedCandidate(&plan, cached, plan.Mode)
+	}
+
+	var succeeded string
 	client, err := m.dialer.Dial(ctx, DialRequest{
 		Hostname: req.Hostname,
 		Port:     req.Port,
 		Username: req.Username,
-		Password: password,
+		Password: plan.Password,
+		Auth:     plan,
+		Prompter: m.authPrompter,
+		OnAuth: func(candidateID string) {
+			succeeded = candidateID
+		},
 		VerifyHostKey: func(verifyCtx context.Context, key domainconn.Key) error {
 			return m.verifyHostKey(verifyCtx, key, known)
 		},
 	})
 	if err != nil {
-		return nil, classifyDialError(err)
+		classified := classifyDialError(err)
+		if isAuthenticationFailure(classified) {
+			// A failed login means the cached method may have been revoked or
+			// the server's policy changed; try every method next time.
+			m.authCache.Delete(cacheKey)
+		}
+		return nil, classified
+	}
+	if succeeded != "" {
+		m.authCache.Put(cacheKey, succeeded)
 	}
 	return newConnection(client).acquire(), nil
+}
+
+// authPlan resolves the Host's authentication material. Without a Vault-backed
+// AuthSource, it preserves the ticket 06 behavior of using the saved password
+// and offering password plus keyboard-interactive.
+func (m *Manager) authPlan(ctx context.Context, req Request) (AuthPlan, error) {
+	if m.authSource != nil {
+		plan, err := m.authSource.AuthPlan(ctx, req)
+		if err != nil {
+			var typed *Error
+			if errors.As(err, &typed) {
+				return AuthPlan{}, err
+			}
+			if errors.Is(err, context.Canceled) {
+				return AuthPlan{}, cancelledError(err)
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return AuthPlan{}, timeoutError(err)
+			}
+			return AuthPlan{}, internalError(err)
+		}
+		if plan.Mode == "" {
+			plan.Mode = AuthModeAuto
+		}
+		return plan, nil
+	}
+
+	password, err := m.password(ctx, req.HostID)
+	if err != nil {
+		return AuthPlan{}, err
+	}
+	return BuildAuthPlan(AuthSpec{
+		Username: req.Username,
+		Mode:     AuthModePassword,
+		Password: password,
+	}), nil
+}
+
+func authCacheKey(username, hostname string, port int) string {
+	if port == 0 {
+		port = 22
+	}
+	return fmt.Sprintf("%s@%s:%d", username, hostname, port)
+}
+
+// isAuthenticationFailure reports whether a classified failure was a refused
+// login. It is the only class that invalidates the method cache.
+func isAuthenticationFailure(err error) bool {
+	var typed *Error
+	return errors.As(err, &typed) && typed.Kind == KindAuth
 }
 
 // password reads the saved credential. A missing credential is an auth error,

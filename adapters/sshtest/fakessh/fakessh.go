@@ -4,6 +4,7 @@
 package fakessh
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -25,11 +26,32 @@ type Size struct {
 type Options struct {
 	// Password is the only accepted password. An empty password accepts any.
 	Password string
+	// PublicKeys are the authorized user keys. The server offers publickey
+	// authentication only when this list or CertificateAuthority is set.
+	PublicKeys []ssh.PublicKey
+	// CertificateAuthority accepts user certificates signed by this key.
+	CertificateAuthority ssh.PublicKey
+	// KeyboardInteractive, when set, handles challenge rounds. The fixture
+	// records every round before and after the handler answers.
+	KeyboardInteractive func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
+	// PasswordThenKeyboardInteractive makes a correct password a first factor
+	// and requires keyboard-interactive as the second, modelling MFA.
+	PasswordThenKeyboardInteractive bool
 	// Ciphers, KeyExchanges, and MACs override the server's offer so a test
 	// can force a negotiation failure.
 	Ciphers      []string
 	KeyExchanges []string
 	MACs         []string
+}
+
+// KeyboardInteractiveRound is one recorded challenge and its answers.
+type KeyboardInteractiveRound struct {
+	Name        string
+	Instruction string
+	Questions   []string
+	Echos       []bool
+	Answers     []string
+	Err         string
 }
 
 // Server is one fixture SSH server on one connection.
@@ -40,14 +62,18 @@ type Server struct {
 	done      chan struct{}
 	closeOnce sync.Once
 
-	mu               sync.Mutex
-	passwordAttempts int
-	lastPassword     string
-	lastUsername     string
-	handshakeErr     error
-	pty              *Size
-	resizes          []Size
-	shellOpened      bool
+	mu                sync.Mutex
+	passwordAttempts  int
+	lastPassword      string
+	lastUsername      string
+	publicKeyAttempts int
+	lastPublicKeyType string
+	lastPublicKeyID   string
+	kiRounds          []KeyboardInteractiveRound
+	handshakeErr      error
+	pty               *Size
+	resizes           []Size
+	shellOpened       bool
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -64,6 +90,31 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 	}
 
 	server := &Server{conn: conn, signer: signer, done: make(chan struct{})}
+
+	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
+	if options.KeyboardInteractive != nil {
+		keyboardInteractive = func(metadata ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+			recorded := func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+				answers, err := challenge(name, instruction, questions, echos)
+				round := KeyboardInteractiveRound{
+					Name:        name,
+					Instruction: instruction,
+					Questions:   append([]string(nil), questions...),
+					Echos:       append([]bool(nil), echos...),
+					Answers:     append([]string(nil), answers...),
+				}
+				if err != nil {
+					round.Err = err.Error()
+				}
+				server.mu.Lock()
+				server.kiRounds = append(server.kiRounds, round)
+				server.mu.Unlock()
+				return answers, err
+			}
+			return options.KeyboardInteractive(metadata, recorded)
+		}
+	}
+
 	server.config = &ssh.ServerConfig{
 		PasswordCallback: func(metadata ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 			server.mu.Lock()
@@ -74,9 +125,47 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 			if options.Password != "" && string(password) != options.Password {
 				return nil, errors.New("fakessh: password rejected")
 			}
+			if options.PasswordThenKeyboardInteractive && keyboardInteractive != nil {
+				return nil, &ssh.PartialSuccessError{Next: ssh.ServerAuthCallbacks{
+					KeyboardInteractiveCallback: keyboardInteractive,
+				}}
+			}
 			return nil, nil
 		},
+		KeyboardInteractiveCallback: keyboardInteractive,
 	}
+	if len(options.PublicKeys) > 0 || options.CertificateAuthority != nil {
+		authority := options.CertificateAuthority
+		checker := &ssh.CertChecker{
+			IsUserAuthority: func(auth ssh.PublicKey) bool {
+				return authority != nil && bytes.Equal(auth.Marshal(), authority.Marshal())
+			},
+		}
+		server.config.PublicKeyCallback = func(metadata ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			server.mu.Lock()
+			server.publicKeyAttempts++
+			server.lastPublicKeyType = key.Type()
+			server.lastPublicKeyID = ""
+			if certificate, ok := key.(*ssh.Certificate); ok {
+				server.lastPublicKeyID = certificate.KeyId
+			}
+			server.mu.Unlock()
+
+			if certificate, ok := key.(*ssh.Certificate); ok {
+				if authority == nil {
+					return nil, errors.New("fakessh: certificate rejected")
+				}
+				return checker.Authenticate(metadata, certificate)
+			}
+			for _, allowed := range options.PublicKeys {
+				if bytes.Equal(allowed.Marshal(), key.Marshal()) {
+					return nil, nil
+				}
+			}
+			return nil, errors.New("fakessh: public key rejected")
+		}
+	}
+
 	server.config.AddHostKey(signer)
 	server.config.Ciphers = options.Ciphers
 	server.config.KeyExchanges = options.KeyExchanges
@@ -113,6 +202,30 @@ func (s *Server) LastCredentials() (username, password string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastUsername, s.lastPassword
+}
+
+// PublicKeyAttempts reports how many publickey offers the server saw,
+// including certificate offers.
+func (s *Server) PublicKeyAttempts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.publicKeyAttempts
+}
+
+// LastPublicKey reports the most recent offered key's type and, for a
+// certificate, its KeyId.
+func (s *Server) LastPublicKey() (keyType, keyID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastPublicKeyType, s.lastPublicKeyID
+}
+
+// KeyboardInteractiveRounds returns every challenge the server issued in
+// order.
+func (s *Server) KeyboardInteractiveRounds() []KeyboardInteractiveRound {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]KeyboardInteractiveRound(nil), s.kiRounds...)
 }
 
 // Pty reports the most recent PTY request.

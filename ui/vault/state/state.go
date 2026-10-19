@@ -23,6 +23,24 @@ type Hosts interface {
 	Delete(ctx context.Context, id model.HostID) error
 }
 
+// Keys is the SSH Key use-case seam. The application Service implements it;
+// tests provide a fake.
+type Keys interface {
+	ListKeys(ctx context.Context) ([]domainvault.Key, error)
+	CreateKey(ctx context.Context, draft domainvault.KeyDraft) (domainvault.Key, error)
+	UpdateKey(ctx context.Context, id model.KeyID, draft domainvault.KeyDraft) (domainvault.Key, error)
+	DeleteKey(ctx context.Context, id model.KeyID) error
+}
+
+// Identities is the Identity use-case seam. The application Service implements
+// it; tests provide a fake.
+type Identities interface {
+	ListIdentities(ctx context.Context) ([]domainvault.Identity, error)
+	CreateIdentity(ctx context.Context, draft domainvault.IdentityDraft) (domainvault.Identity, error)
+	UpdateIdentity(ctx context.Context, id model.IdentityID, draft domainvault.IdentityDraft) (domainvault.Identity, error)
+	DeleteIdentity(ctx context.Context, id model.IdentityID) error
+}
+
 // Secrets is the field-secret mode seam. The application Service implements
 // it; tests provide a fake.
 type Secrets interface {
@@ -60,6 +78,14 @@ const (
 	ProblemSecretPassphraseMismatch Problem = "secret_passphrase_mismatch"
 	ProblemSecretUnreadable         Problem = "secret_unreadable"
 	ProblemSecretSetupFailed        Problem = "secret_setup_failed"
+	ProblemKeyRequired              Problem = "key_required"
+	ProblemKeyMaterial              Problem = "key_material"
+	ProblemKeyPassphrase            Problem = "key_passphrase"
+	ProblemKeyCertificate           Problem = "key_certificate"
+	ProblemKeyUnsupported           Problem = "key_unsupported"
+	ProblemIdentityKeyRequired      Problem = "identity_key_required"
+	ProblemIdentityUsernameRequired Problem = "identity_username_required"
+	ProblemAuthMethod               Problem = "auth_method"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -82,13 +108,24 @@ type Form struct {
 	// HasPassword mirrors the Host's non-secret credential flag for the
 	// editor hint.
 	HasPassword bool
+	// IdentityID, KeyID, AuthMethod, UseSSHAgent, and RequiresMFA select how
+	// the Host authenticates. They hold references, never credential material.
+	IdentityID  string
+	KeyID       string
+	AuthMethod  string
+	UseSSHAgent bool
+	RequiresMFA bool
 }
 
 // State is the Vault surface's state.
 type State struct {
 	hosts         Hosts
+	keys          Keys
+	identities    Identities
 	secrets       Secrets
 	items         []domainvault.Host
+	keyItems      []domainvault.Key
+	identityItems []domainvault.Identity
 	selected      model.HostID
 	editing       bool
 	form          Form
@@ -96,6 +133,13 @@ type State struct {
 	pendingDelete model.HostID
 	requestRedraw func()
 	connect       func(domainvault.Host)
+
+	editingKey            bool
+	keyForm               KeyForm
+	pendingDeleteKey      model.KeyID
+	editingIdentity       bool
+	identityForm          IdentityForm
+	pendingDeleteIdentity model.IdentityID
 
 	secretPassphrase string
 	secretConfirm    string
@@ -108,6 +152,16 @@ type Option func(*State)
 // WithRedrawRequest sets the function called when the Vault surface changes.
 func WithRedrawRequest(fn func()) Option {
 	return func(s *State) { s.requestRedraw = fn }
+}
+
+// WithKeys gives the Vault surface SSH Key management.
+func WithKeys(keys Keys) Option {
+	return func(s *State) { s.keys = keys }
+}
+
+// WithIdentities gives the Vault surface Identity management.
+func WithIdentities(identities Identities) Option {
+	return func(s *State) { s.identities = identities }
 }
 
 // WithSecrets gives the Vault surface the field-secret mode and setup use
@@ -288,7 +342,10 @@ func (s *State) PendingDelete() model.HostID { return s.pendingDelete }
 // BeginCreate opens the editor with a new Host.
 func (s *State) BeginCreate() {
 	s.editing = true
-	s.form = Form{Protocol: string(domainvault.ProtocolSSH)}
+	s.form = Form{
+		Protocol:   string(domainvault.ProtocolSSH),
+		AuthMethod: string(domainvault.HostAuthAuto),
+	}
 	s.problem = ProblemNone
 	s.pendingDelete = ""
 	s.redraw()
@@ -319,6 +376,14 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		// The stored password is never loaded into the form. Leaving the
 		// field blank keeps the existing encrypted value.
 		HasPassword: host.HasPassword,
+		IdentityID:  string(host.IdentityID),
+		KeyID:       string(host.KeyID),
+		AuthMethod:  string(host.AuthMethod),
+		UseSSHAgent: host.UseSSHAgent,
+		RequiresMFA: host.RequiresMFA,
+	}
+	if s.form.AuthMethod == "" {
+		s.form.AuthMethod = string(domainvault.HostAuthAuto)
 	}
 	if host.Protocol == domainvault.ProtocolLocal {
 		s.form.Port = ""
@@ -443,6 +508,22 @@ func (s *State) load() error {
 			s.selected = ""
 		}
 	}
+	if s.keys != nil {
+		keys, err := s.keys.ListKeys(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.keyItems = keys
+	}
+	if s.identities != nil {
+		identities, err := s.identities.ListIdentities(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.identityItems = identities
+	}
 	return nil
 }
 
@@ -460,15 +541,20 @@ func (s *State) find(id model.HostID) (domainvault.Host, bool) {
 // changing its Pinned preference.
 func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 	return domainvault.Draft{
-		Label:    host.Label,
-		Hostname: host.Hostname,
-		Port:     host.Port,
-		Username: host.Username,
-		Protocol: host.Protocol,
-		Group:    host.Group,
-		Tags:     host.Tags,
-		Notes:    host.Notes,
-		Pinned:   pinned,
+		Label:       host.Label,
+		Hostname:    host.Hostname,
+		Port:        host.Port,
+		Username:    host.Username,
+		Protocol:    host.Protocol,
+		Group:       host.Group,
+		Tags:        host.Tags,
+		Notes:       host.Notes,
+		Pinned:      pinned,
+		IdentityID:  host.IdentityID,
+		KeyID:       host.KeyID,
+		AuthMethod:  host.AuthMethod,
+		UseSSHAgent: host.UseSSHAgent,
+		RequiresMFA: host.RequiresMFA,
 	}
 }
 
@@ -492,16 +578,21 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 	}
 
 	return domainvault.Draft{
-		Label:    s.form.Label,
-		Hostname: s.form.Hostname,
-		Port:     port,
-		Username: s.form.Username,
-		Protocol: domainvault.Protocol(s.form.Protocol),
-		Group:    s.form.Group,
-		Tags:     tags,
-		Notes:    s.form.Notes,
-		Pinned:   s.form.Pinned,
-		Password: s.form.Password,
+		Label:       s.form.Label,
+		Hostname:    s.form.Hostname,
+		Port:        port,
+		Username:    s.form.Username,
+		Protocol:    domainvault.Protocol(s.form.Protocol),
+		Group:       s.form.Group,
+		Tags:        tags,
+		Notes:       s.form.Notes,
+		Pinned:      s.form.Pinned,
+		Password:    s.form.Password,
+		IdentityID:  model.IdentityID(s.form.IdentityID),
+		KeyID:       model.KeyID(s.form.KeyID),
+		AuthMethod:  domainvault.HostAuthMethod(s.form.AuthMethod),
+		UseSSHAgent: s.form.UseSSHAgent,
+		RequiresMFA: s.form.RequiresMFA,
 	}, ProblemNone
 }
 

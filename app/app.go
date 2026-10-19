@@ -93,7 +93,13 @@ func run(afterReady func(*mygo.Window)) error {
 	}
 	defer secretStore.Close()
 
-	vaultService := appvault.NewService(database, appvault.WithSecrets(secretStore))
+	vaultService := appvault.NewService(
+		database,
+		appvault.WithSecrets(secretStore),
+		appvault.WithKeys(database),
+		appvault.WithIdentities(database),
+		appvault.WithKeyInspector(sshadapter.KeyParser{}),
+	)
 
 	// App Lock is a UI gate backed by its own versioned verifier file.
 	appLock := appapplock.NewService(
@@ -112,6 +118,7 @@ func run(afterReady func(*mygo.Window)) error {
 	// It bridges the dial goroutine, which blocks on the user's decision, and
 	// the UI thread.
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
+	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
 
 	// One SSH Connection per Session. The lease seam is what tickets 08 and 09
 	// extend into jump chains and a shared pool.
@@ -120,6 +127,13 @@ func run(afterReady func(*mygo.Window)) error {
 		vaultPasswords{vault: vaultService},
 		database,
 		appconnection.WithPrompter(trustPrompt),
+		appconnection.WithAuthSource(vaultAuthSource{
+			vault:    vaultService,
+			defaults: newSSHDefaultKeys(),
+		}),
+		appconnection.WithAuthPrompter(authPrompt),
+		appconnection.WithAuthMethodCache(
+			appconnection.NewAuthMethodCache(appconnection.MaxAuthMethodCacheEntries)),
 	)
 
 	// The Vault starts from the database. A read failure leaves the surface
@@ -129,6 +143,8 @@ func run(afterReady func(*mygo.Window)) error {
 	vaultState := vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
+		vaultstate.WithKeys(vaultService),
+		vaultstate.WithIdentities(vaultService),
 		vaultstate.WithRedrawRequest(invalidate),
 		vaultstate.WithConnect(func(host domainvault.Host) {
 			if shellState != nil {
@@ -156,6 +172,7 @@ func run(afterReady func(*mygo.Window)) error {
 		}),
 		state.WithVault(vaultui.View(vaultState)),
 		state.WithTrustPrompt(trustPrompt),
+		state.WithAuthPrompt(authPrompt),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
 
