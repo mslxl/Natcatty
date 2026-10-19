@@ -1,0 +1,15 @@
+{
+  "@@locale": "ru",
+  "appName": "Natcatty",
+  "navVault": "Хранилище",
+  "navSettings": "Настройки",
+  "navLanguage": "Язык",
+  "vaultPlaceholder": "Здесь появятся ваши хосты, ключи и заметки.",
+  "settingsPlaceholder": "Здесь появятся настройки.",
+  "menuFile": "Файл",
+  "menuView": "Вид",
+  "menuNewTab": "Новая вкладка",
+  "menuCloseTab": "Закрыть вкладку",
+  "menuQuit": "Выход",
+  "tabTitle": "Вкладка {number}"
+}

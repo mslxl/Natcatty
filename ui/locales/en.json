@@ -1,0 +1,21 @@
+{
+  "@@locale": "en",
+  "appName": "Natcatty",
+  "navVault": "Vault",
+  "navSettings": "Settings",
+  "navLanguage": "Language",
+  "vaultPlaceholder": "Your Hosts, keys, and notes will appear here.",
+  "settingsPlaceholder": "Settings will appear here.",
+  "menuFile": "File",
+  "menuView": "View",
+  "menuNewTab": "New Tab",
+  "menuCloseTab": "Close Tab",
+  "menuQuit": "Quit",
+  "tabTitle": "Tab {number}",
+  "@tabTitle": {
+    "description": "The title of a work tab, numbered from 1.",
+    "placeholders": {
+      "number": { "type": "int", "example": "1" }
+    }
+  }
+}
