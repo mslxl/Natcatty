@@ -95,6 +95,7 @@ type State struct {
 	problem       Problem
 	pendingDelete model.HostID
 	requestRedraw func()
+	connect       func(domainvault.Host)
 
 	secretPassphrase string
 	secretConfirm    string
@@ -114,6 +115,12 @@ func WithRedrawRequest(fn func()) Option {
 // fallback setup.
 func WithSecrets(secrets Secrets) Option {
 	return func(s *State) { s.secrets = secrets }
+}
+
+// WithConnect gives the Vault surface the action that opens an SSH Session for
+// a Host. The app wires the shell's OpenHost; tests wire a fake.
+func WithConnect(fn func(domainvault.Host)) Option {
+	return func(s *State) { s.connect = fn }
 }
 
 // NewState returns an empty Vault state. Call Reload to read the Vault.
@@ -143,6 +150,25 @@ func (s *State) HostCount() int { return len(s.items) }
 
 // Selected returns the selected Host's id, or "".
 func (s *State) Selected() model.HostID { return s.selected }
+
+// Connect opens the SSH Session for one listed Host. It reports false and
+// records a problem when the Host is gone or the shell has no connect action.
+func (s *State) Connect(id model.HostID) bool {
+	host, ok := s.find(id)
+	if !ok {
+		s.problem = ProblemNotFound
+		s.redraw()
+		return false
+	}
+	if s.connect == nil {
+		s.problem = ProblemInternal
+		s.redraw()
+		return false
+	}
+	s.problem = ProblemNone
+	s.connect(host)
+	return true
+}
 
 // Select marks one listed Host as selected. An unknown id clears the
 // selection.

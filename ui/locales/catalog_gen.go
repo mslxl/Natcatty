@@ -1127,3 +1127,197 @@ func AppLockProblemFailed() string { return In(i18n.Locale()).AppLockProblemFail
 func (msgs Messages) AppLockProblemFailed() string {
 	return Catalog.Format(msgs.locale, "appLockProblemFailed", nil)
 }
+
+// VaultHostConnect says "Connect"
+// in the language the app shows.
+func VaultHostConnect() string { return In(i18n.Locale()).VaultHostConnect() }
+
+// VaultHostConnect says "Connect"
+// in the language of msgs.
+func (msgs Messages) VaultHostConnect() string {
+	return Catalog.Format(msgs.locale, "vaultHostConnect", nil)
+}
+
+// ConnectionErrorAuth says "Authentication failed. Check the username and the saved password."
+// in the language the app shows.
+func ConnectionErrorAuth() string { return In(i18n.Locale()).ConnectionErrorAuth() }
+
+// ConnectionErrorAuth says "Authentication failed. Check the username and the saved password."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorAuth() string {
+	return Catalog.Format(msgs.locale, "connectionErrorAuth", nil)
+}
+
+// ConnectionErrorNetwork says "Could not reach the host. Check the network and the port."
+// in the language the app shows.
+func ConnectionErrorNetwork() string { return In(i18n.Locale()).ConnectionErrorNetwork() }
+
+// ConnectionErrorNetwork says "Could not reach the host. Check the network and the port."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorNetwork() string {
+	return Catalog.Format(msgs.locale, "connectionErrorNetwork", nil)
+}
+
+// ConnectionErrorTimeout says "The connection timed out."
+// in the language the app shows.
+func ConnectionErrorTimeout() string { return In(i18n.Locale()).ConnectionErrorTimeout() }
+
+// ConnectionErrorTimeout says "The connection timed out."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorTimeout() string {
+	return Catalog.Format(msgs.locale, "connectionErrorTimeout", nil)
+}
+
+// ConnectionErrorHostKey says "The host key was not verified, so the connection was cancelled."
+// in the language the app shows.
+func ConnectionErrorHostKey() string { return In(i18n.Locale()).ConnectionErrorHostKey() }
+
+// ConnectionErrorHostKey says "The host key was not verified, so the connection was cancelled."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorHostKey() string {
+	return Catalog.Format(msgs.locale, "connectionErrorHostKey", nil)
+}
+
+// ConnectionErrorUnsupported says "The host and this computer share no supported algorithm."
+// in the language the app shows.
+func ConnectionErrorUnsupported() string { return In(i18n.Locale()).ConnectionErrorUnsupported() }
+
+// ConnectionErrorUnsupported says "The host and this computer share no supported algorithm."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorUnsupported() string {
+	return Catalog.Format(msgs.locale, "connectionErrorUnsupported", nil)
+}
+
+// ConnectionErrorCancelled says "The connection was cancelled."
+// in the language the app shows.
+func ConnectionErrorCancelled() string { return In(i18n.Locale()).ConnectionErrorCancelled() }
+
+// ConnectionErrorCancelled says "The connection was cancelled."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorCancelled() string {
+	return Catalog.Format(msgs.locale, "connectionErrorCancelled", nil)
+}
+
+// ConnectionErrorInternal says "The connection could not be opened."
+// in the language the app shows.
+func ConnectionErrorInternal() string { return In(i18n.Locale()).ConnectionErrorInternal() }
+
+// ConnectionErrorInternal says "The connection could not be opened."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorInternal() string {
+	return Catalog.Format(msgs.locale, "connectionErrorInternal", nil)
+}
+
+// HostKeyPromptUnknownTitle says "Unknown host key"
+// in the language the app shows.
+func HostKeyPromptUnknownTitle() string { return In(i18n.Locale()).HostKeyPromptUnknownTitle() }
+
+// HostKeyPromptUnknownTitle says "Unknown host key"
+// in the language of msgs.
+func (msgs Messages) HostKeyPromptUnknownTitle() string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptUnknownTitle", nil)
+}
+
+// HostKeyPromptChangedTitle says "Host key has changed"
+// in the language the app shows.
+func HostKeyPromptChangedTitle() string { return In(i18n.Locale()).HostKeyPromptChangedTitle() }
+
+// HostKeyPromptChangedTitle says "Host key has changed"
+// in the language of msgs.
+func (msgs Messages) HostKeyPromptChangedTitle() string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptChangedTitle", nil)
+}
+
+// HostKeyPromptUnknownBody says "The host {host} is not trusted yet. Verify its fingerprint before connecting."
+// in the language the app shows.
+//
+// The host-key prompt for an endpoint with no saved trust record.
+func HostKeyPromptUnknownBody(host string) string {
+	return In(i18n.Locale()).HostKeyPromptUnknownBody(host)
+}
+
+// HostKeyPromptUnknownBody says "The host {host} is not trusted yet. Verify its fingerprint before connecting."
+// in the language of msgs.
+//
+// The host-key prompt for an endpoint with no saved trust record.
+func (msgs Messages) HostKeyPromptUnknownBody(host string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptUnknownBody", map[string]any{"host": host})
+}
+
+// HostKeyPromptChangedBody says "The host key for {host} has changed. This can happen after a server reinstall, or it can mean the connection is being…"
+// in the language the app shows.
+//
+// The host-key prompt warning that a saved fingerprint no longer matches.
+func HostKeyPromptChangedBody(host string) string {
+	return In(i18n.Locale()).HostKeyPromptChangedBody(host)
+}
+
+// HostKeyPromptChangedBody says "The host key for {host} has changed. This can happen after a server reinstall, or it can mean the connection is being…"
+// in the language of msgs.
+//
+// The host-key prompt warning that a saved fingerprint no longer matches.
+func (msgs Messages) HostKeyPromptChangedBody(host string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptChangedBody", map[string]any{"host": host})
+}
+
+// HostKeyPromptFingerprint says "{keyType} fingerprint: {fingerprint}"
+// in the language the app shows.
+//
+// The live host key's type and SHA-256 fingerprint.
+func HostKeyPromptFingerprint(keyType string, fingerprint string) string {
+	return In(i18n.Locale()).HostKeyPromptFingerprint(keyType, fingerprint)
+}
+
+// HostKeyPromptFingerprint says "{keyType} fingerprint: {fingerprint}"
+// in the language of msgs.
+//
+// The live host key's type and SHA-256 fingerprint.
+func (msgs Messages) HostKeyPromptFingerprint(keyType string, fingerprint string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptFingerprint", map[string]any{"keyType": keyType, "fingerprint": fingerprint})
+}
+
+// HostKeyPromptExpected says "Previously trusted fingerprint: {fingerprint}"
+// in the language the app shows.
+//
+// The fingerprint the Vault trusted before a host key changed.
+func HostKeyPromptExpected(fingerprint string) string {
+	return In(i18n.Locale()).HostKeyPromptExpected(fingerprint)
+}
+
+// HostKeyPromptExpected says "Previously trusted fingerprint: {fingerprint}"
+// in the language of msgs.
+//
+// The fingerprint the Vault trusted before a host key changed.
+func (msgs Messages) HostKeyPromptExpected(fingerprint string) string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptExpected", map[string]any{"fingerprint": fingerprint})
+}
+
+// HostKeyPromptChangedHint says "Do not continue unless you know why the key changed."
+// in the language the app shows.
+func HostKeyPromptChangedHint() string { return In(i18n.Locale()).HostKeyPromptChangedHint() }
+
+// HostKeyPromptChangedHint says "Do not continue unless you know why the key changed."
+// in the language of msgs.
+func (msgs Messages) HostKeyPromptChangedHint() string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptChangedHint", nil)
+}
+
+// HostKeyPromptTrust says "Trust and connect"
+// in the language the app shows.
+func HostKeyPromptTrust() string { return In(i18n.Locale()).HostKeyPromptTrust() }
+
+// HostKeyPromptTrust says "Trust and connect"
+// in the language of msgs.
+func (msgs Messages) HostKeyPromptTrust() string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptTrust", nil)
+}
+
+// HostKeyPromptReject says "Reject"
+// in the language the app shows.
+func HostKeyPromptReject() string { return In(i18n.Locale()).HostKeyPromptReject() }
+
+// HostKeyPromptReject says "Reject"
+// in the language of msgs.
+func (msgs Messages) HostKeyPromptReject() string {
+	return Catalog.Format(msgs.locale, "hostKeyPromptReject", nil)
+}

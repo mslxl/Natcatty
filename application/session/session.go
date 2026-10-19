@@ -41,12 +41,17 @@ const defaultWriteQueueDepth = 64
 // readChunkSize is the size of one transport read.
 const readChunkSize = 32 << 10
 
-// Kind is the protocol of a Session. Only local shells exist in this slice;
-// later tickets add SSH, serial, Telnet, mosh, and EternalTerminal.
+// Kind is the protocol of a Session. Local shells and password-authenticated
+// SSH exist in this slice; later tickets add keys, serial, Telnet, mosh, and
+// EternalTerminal.
 type Kind string
 
-// KindLocal is a shell running in a pseudo-terminal on this machine.
-const KindLocal Kind = "local"
+const (
+	// KindLocal is a shell running in a pseudo-terminal on this machine.
+	KindLocal Kind = "local"
+	// KindSSH is an interactive shell on a remote Host.
+	KindSSH Kind = "ssh"
+)
 
 // Status is a Session's lifecycle state.
 type Status string
@@ -91,14 +96,20 @@ type ExitWaiter interface {
 }
 
 // StartSpec describes a Session to open. Command empty asks the transport
-// adapter for its platform's default shell.
+// adapter for its platform's default shell. SSH Sessions use HostID to read
+// the saved credential and Hostname, Port, and Username to reach the endpoint;
+// the other fields are ignored by that transport.
 type StartSpec struct {
-	Kind    Kind
-	Command []string
-	Dir     string
-	Env     []string
-	Cols    int
-	Rows    int
+	Kind     Kind
+	Command  []string
+	Dir      string
+	Env      []string
+	Cols     int
+	Rows     int
+	HostID   model.HostID
+	Hostname string
+	Port     int
+	Username string
 }
 
 // Factory opens a Transport for a StartSpec. It is the application's port for

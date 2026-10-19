@@ -113,5 +113,22 @@
       }
     }
   },
-  "appLockProblemFailed": "無法解鎖應用程式。"
+  "appLockProblemFailed": "無法解鎖應用程式。",
+  "vaultHostConnect": "連線",
+  "connectionErrorAuth": "驗證失敗。請檢查使用者名稱和已儲存的密碼。",
+  "connectionErrorNetwork": "無法連線到主機。請檢查網路和連接埠。",
+  "connectionErrorTimeout": "連線逾時。",
+  "connectionErrorHostKey": "主機金鑰未通過驗證，連線已取消。",
+  "connectionErrorUnsupported": "主機與本機沒有相容的演算法。",
+  "connectionErrorCancelled": "連線已取消。",
+  "connectionErrorInternal": "無法開啟連線。",
+  "hostKeyPromptUnknownTitle": "未知主機金鑰",
+  "hostKeyPromptChangedTitle": "主機金鑰已變更",
+  "hostKeyPromptUnknownBody": "尚未信任主機 {host}。連線前請核對其指紋。",
+  "hostKeyPromptChangedBody": "主機 {host} 的金鑰已變更。這可能是伺服器重新安裝，也可能代表連線遭到攔截。",
+  "hostKeyPromptFingerprint": "{keyType} 指紋：{fingerprint}",
+  "hostKeyPromptExpected": "先前信任的指紋：{fingerprint}",
+  "hostKeyPromptChangedHint": "除非你確定金鑰變更的原因，否則不要繼續。",
+  "hostKeyPromptTrust": "信任並連線",
+  "hostKeyPromptReject": "拒絕"
 }
