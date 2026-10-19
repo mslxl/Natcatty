@@ -288,6 +288,7 @@
   "tabCloseRight": "关闭右侧标签页",
   "tabDuplicate": "复制标签页",
   "tabDetach": "分离标签页",
+  "tabCopyToNewWindow": "复制标签页到新窗口",
   "tabCopyTitle": "{title}（副本 {count}）",
   "@tabCopyTitle": {"description": "重复标签页的标题及其副本序号。", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
   "tabDirtyMarker": "●",
@@ -298,6 +299,7 @@
   "paneSplitRight": "向右拆分",
   "paneSplitDown": "向下拆分",
   "paneClose": "关闭窗格",
+  "paneDetach": "分离会话",
   "paneFocusLeft": "聚焦左侧",
   "paneFocusRight": "聚焦右侧",
   "paneFocusUp": "聚焦上方",
@@ -309,5 +311,16 @@
   "paneDragHandle": "::",
   "@paneDragHandle": {"description": "拖动窗格的手柄。"},
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "关闭标签页或窗格的按钮。"}
+  "@closeGlyph": {"description": "关闭标签页或窗格的按钮。"},
+  "detachedMoveToMain": "移到主窗口",
+  "detachedCloseWindow": "关闭窗口",
+  "closeWindowTitle": "关闭窗口？",
+  "closeWindowMessage": "{count, plural, other {关闭此窗口将结束 # 个活动会话。}}",
+  "@closeWindowMessage": {"description": "关闭窗口确认提示，说明将结束多少个活动会话。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "closeWindowCancel": "取消",
+  "closeWindowConfirm": "关闭窗口",
+  "quitConfirmTitle": "退出 Natcatty？",
+  "quitConfirmMessage": "{count, plural, other {退出 Natcatty 将结束 # 个活动会话。}}",
+  "@quitConfirmMessage": {"description": "退出确认提示，说明将结束多少个活动会话。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "quitConfirmConfirm": "退出"
 }

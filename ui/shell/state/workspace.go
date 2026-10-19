@@ -78,6 +78,19 @@ type PaneInfo struct {
 	Surface Surface
 }
 
+// DetachedTabInfo describes a Tab that left the main window and now belongs to
+// its own window. Panes lists the Tab's Pane identities in tree order.
+type DetachedTabInfo struct {
+	ID          model.TabID
+	Number      int
+	TitleNumber int
+	Label       string
+	AutoTitle   bool
+	// Copy counts duplicate generations, as Tab.Copy does.
+	Copy  int
+	Panes []model.PaneID
+}
+
 // DragKind distinguishes the two things the shell moves by drag and drop.
 type DragKind int
 
@@ -199,6 +212,21 @@ func (s *State) tabByID(id model.TabID) (*Tab, int) {
 	return nil, -1
 }
 
+// tabByAnyID finds a Tab in the main Workspace or in a detached window. Pane
+// outcomes use it so a Session opened for a duplicated-to-window Tab is
+// applied to the right owner.
+func (s *State) tabByAnyID(id model.TabID) (*Tab, int) {
+	if tab, index := s.tabByID(id); tab != nil {
+		return tab, index
+	}
+	for _, tab := range s.detached {
+		if tab.ID == id {
+			return tab, -1
+		}
+	}
+	return nil, -1
+}
+
 // TabCount returns the number of work Tabs.
 func (s *State) TabCount() int { return len(s.tabs) }
 
@@ -263,21 +291,7 @@ func (s *State) PaneInfoAt(tabIndex int, id model.PaneID) (PaneInfo, bool) {
 	if tabIndex < 0 || tabIndex >= len(s.tabs) {
 		return PaneInfo{}, false
 	}
-	tab := s.tabs[tabIndex]
-	value, ok := tab.panes[id]
-	if !ok || !domainworkspace.ContainsPane(tab.Root, id) {
-		return PaneInfo{}, false
-	}
-	focused, focusedID := tab.focusedPane()
-	return PaneInfo{
-		ID:      id,
-		Number:  value.descriptor.Number,
-		Label:   value.descriptor.Label,
-		Focused: id == focusedID && focused != nil,
-		Pending: value.pending,
-		Err:     value.err,
-		Surface: value.surface,
-	}, true
+	return paneInfo(s.tabs[tabIndex], id)
 }
 
 // FocusedPaneID returns the Pane that owns focus in the Tab at index.
@@ -450,13 +464,59 @@ func (s *State) DuplicateTab(index int) error {
 		return ErrNoSessions
 	}
 	source := s.tabs[index]
+	copyTab, err := s.cloneTab(source)
+	if err != nil {
+		return err
+	}
+
+	s.tabs = append(s.tabs, nil)
+	copy(s.tabs[index+2:], s.tabs[index+1:])
+	s.tabs[index+1] = copyTab
+	s.active = index + 1
+	s.vaultVisible = false
+
+	for newID, value := range copyTab.panes {
+		// A duplicate opens where its source last was.
+		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
+	}
+	s.save()
+	s.RequestRedraw()
+	return nil
+}
+
+// DuplicateTabToWindow clones the Tab at index into a new window, opening
+// fresh Sessions for every Pane and leaving the source untouched.
+func (s *State) DuplicateTabToWindow(index int) error {
+	if index < 0 || index >= len(s.tabs) {
+		return ErrNoActiveTab
+	}
+	if s.sessions == nil || s.surfaces == nil {
+		return ErrNoSessions
+	}
+	copyTab, err := s.cloneTab(s.tabs[index])
+	if err != nil {
+		return err
+	}
+	s.detached = append(s.detached, copyTab)
+	for newID, value := range copyTab.panes {
+		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
+	}
+	if s.onDetach != nil {
+		s.onDetach(copyTab.ID)
+	}
+	s.RequestRedraw()
+	return nil
+}
+
+// cloneTab makes a fresh Tab with new Pane identities and pending Sessions.
+func (s *State) cloneTab(source *Tab) (*Tab, error) {
 	mapping := make(map[model.PaneID]model.PaneID)
 	for _, id := range source.paneIDs() {
 		mapping[id] = model.PaneID(newRuntimeID("pane-"))
 	}
 	root, err := cloneTabTree(source.Root, mapping)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	copyTab := &Tab{
@@ -478,20 +538,7 @@ func (s *State) DuplicateTab(index int) error {
 		copyTab.panes[newID] = &pane{ID: newID, descriptor: descriptor, pending: true}
 	}
 	copyTab.setFocus(mapping[mustFocusedID(source)])
-
-	s.tabs = append(s.tabs, nil)
-	copy(s.tabs[index+2:], s.tabs[index+1:])
-	s.tabs[index+1] = copyTab
-	s.active = index + 1
-	s.vaultVisible = false
-
-	for newID, value := range copyTab.panes {
-		// A duplicate opens where its source last was.
-		s.requestPaneOpen(copyTab.ID, newID, value.descriptor, true)
-	}
-	s.save()
-	s.RequestRedraw()
-	return nil
+	return copyTab, nil
 }
 
 func mustFocusedID(tab *Tab) model.PaneID {
@@ -549,7 +596,204 @@ func (s *State) DetachedTabIDs() []model.TabID {
 	return ids
 }
 
-// CloseDetachedTab closes a Tab that left the main window.
+// DetachedTabInfo returns the description of one detached Tab.
+func (s *State) DetachedTabInfo(id model.TabID) (DetachedTabInfo, bool) {
+	tab := s.detachedTabByID(id)
+	if tab == nil {
+		return DetachedTabInfo{}, false
+	}
+	panes := tab.paneIDs()
+	return DetachedTabInfo{
+		ID:          tab.ID,
+		Number:      tab.Number,
+		TitleNumber: tab.TitleNumber,
+		Label:       tab.Label,
+		AutoTitle:   tab.AutoTitle,
+		Copy:        tab.Copy,
+		Panes:       panes,
+	}, true
+}
+
+// DetachedTabTree returns a detached Tab's split tree and focus path.
+func (s *State) DetachedTabTree(id model.TabID) (*domainworkspace.Node, []int, bool) {
+	tab := s.detachedTabByID(id)
+	if tab == nil {
+		return nil, nil, false
+	}
+	return tab.Root, append([]int(nil), tab.FocusPath...), true
+}
+
+// DetachedPaneInfoAt returns the Pane with paneID in a detached Tab.
+func (s *State) DetachedPaneInfoAt(tabID model.TabID, paneID model.PaneID) (PaneInfo, bool) {
+	tab := s.detachedTabByID(tabID)
+	if tab == nil {
+		return PaneInfo{}, false
+	}
+	return paneInfo(tab, paneID)
+}
+
+// DetachedTabExists reports whether a detached window still owns the Tab.
+func (s *State) DetachedTabExists(id model.TabID) bool {
+	return s.detachedTabByID(id) != nil
+}
+
+// FocusDetachedPaneID moves focus inside a detached Tab.
+func (s *State) FocusDetachedPaneID(tabID model.TabID, paneID model.PaneID) bool {
+	tab := s.detachedTabByID(tabID)
+	if tab == nil {
+		return false
+	}
+	if !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	tab.setFocus(paneID)
+	s.RequestRedraw()
+	return true
+}
+
+// SetDetachedSplitRatio stores a split ratio in a detached Tab so a resize
+// survives until the Tab moves back.
+func (s *State) SetDetachedSplitRatio(tabID model.TabID, splitID model.SplitID, ratio float32) bool {
+	tab := s.detachedTabByID(tabID)
+	if tab == nil {
+		return false
+	}
+	root, ok := domainworkspace.WithSplitRatio(tab.Root, splitID, ratio)
+	if !ok {
+		return false
+	}
+	tab.Root = root
+	return true
+}
+
+// RequestDetachedClose asks the composition root to close a detached Tab's
+// window. The app owns close intent and the window lifecycle.
+func (s *State) RequestDetachedClose(id model.TabID) {
+	if s.onDetachedClose != nil {
+		s.onDetachedClose(id)
+	}
+}
+
+// ReattachDetachedTab moves a detached Tab back into the main Workspace,
+// keeping its Sessions and surfaces alive. The composition root closes the
+// now-empty window.
+func (s *State) ReattachDetachedTab(id model.TabID) bool {
+	for index, tab := range s.detached {
+		if tab.ID != id {
+			continue
+		}
+		s.detached = append(s.detached[:index], s.detached[index+1:]...)
+		s.tabs = append(s.tabs, tab)
+		s.active = len(s.tabs) - 1
+		s.vaultVisible = false
+		s.save()
+		if s.onDetachReattached != nil {
+			s.onDetachReattached(id)
+		}
+		s.RequestRedraw()
+		return true
+	}
+	return false
+}
+
+// DetachPane moves one Pane out of a Tab into its own detached window. When
+// the Pane is the Tab's only leaf the whole Tab moves. The Session and its
+// surface are transferred, not recreated.
+func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
+	if tabIndex < 0 || tabIndex >= len(s.tabs) {
+		return false
+	}
+	tab := s.tabs[tabIndex]
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	if len(tab.paneIDs()) == 1 {
+		return s.DetachTab(tabIndex)
+	}
+
+	focused, _ := tab.focusedPane()
+	focusedID := model.PaneID("")
+	if focused != nil {
+		focusedID = focused.ID
+	}
+	root, err := domainworkspace.RemovePane(tab.Root, paneID)
+	if err != nil {
+		return false
+	}
+	tab.Root = root
+	delete(tab.panes, paneID)
+	remainingFocus := domainworkspace.FocusAfterRemove(root, focusedID, paneID)
+	tab.FocusPath = domainworkspace.FocusPath(root, remainingFocus)
+
+	label := value.descriptor.Label
+	autoTitle := label == ""
+	number := s.nextTabNumber
+	s.nextTabNumber++
+	detachedRoot := domainworkspace.NewPaneNode(paneID)
+	detached := &Tab{
+		ID:          model.TabID(newRuntimeID("tab-")),
+		Number:      number,
+		TitleNumber: value.descriptor.Number,
+		Label:       label,
+		AutoTitle:   autoTitle,
+		Root:        detachedRoot,
+		FocusPath:   domainworkspace.FocusPath(detachedRoot, paneID),
+		panes:       map[model.PaneID]*pane{paneID: value},
+	}
+	if detached.TitleNumber == 0 {
+		detached.TitleNumber = number
+	}
+	s.detached = append(s.detached, detached)
+	if s.onDetach != nil {
+		s.onDetach(detached.ID)
+	}
+	s.save()
+	s.RequestRedraw()
+	return true
+}
+
+// ActiveSessionCount returns the active Sessions in every window: running or
+// still opening. Exit screens and failed Panes do not count.
+func (s *State) ActiveSessionCount() int {
+	return activePaneCountIn(s.tabs) + activePaneCountIn(s.detached)
+}
+
+// ActiveSessionCountMain returns the active Sessions in the main window.
+func (s *State) ActiveSessionCountMain() int {
+	return activePaneCountIn(s.tabs)
+}
+
+// ActiveSessionCountDetached returns the active Sessions in one detached
+// window.
+func (s *State) ActiveSessionCountDetached(id model.TabID) int {
+	tab := s.detachedTabByID(id)
+	if tab == nil {
+		return 0
+	}
+	return activePaneCountIn([]*Tab{tab})
+}
+
+// CloseMainSessions ends the Sessions shown by the main window without
+// touching detached windows. The persisted layout is left intact.
+func (s *State) CloseMainSessions() {
+	for _, tab := range s.tabs {
+		closeTab(tab)
+	}
+}
+
+// CloseAllSessions ends the Sessions of every window. The app calls it on
+// quit, after the windows are already gone.
+func (s *State) CloseAllSessions() {
+	s.CloseMainSessions()
+	for _, tab := range s.detached {
+		closeTab(tab)
+	}
+	s.detached = nil
+}
+
+// CloseDetachedTab closes a Tab that left the main window, ending its
+// Sessions. It is also the idempotent close hook for a detached window.
 func (s *State) CloseDetachedTab(id model.TabID) bool {
 	for index, tab := range s.detached {
 		if tab.ID != id {
@@ -561,6 +805,57 @@ func (s *State) CloseDetachedTab(id model.TabID) bool {
 		return true
 	}
 	return false
+}
+
+// detachedTabByID finds a Tab owned by a detached window.
+func (s *State) detachedTabByID(id model.TabID) *Tab {
+	for _, tab := range s.detached {
+		if tab.ID == id {
+			return tab
+		}
+	}
+	return nil
+}
+
+// activePaneCountIn counts Panes with a running Session or an open in flight.
+func activePaneCountIn(tabs []*Tab) int {
+	count := 0
+	for _, tab := range tabs {
+		if tab == nil {
+			continue
+		}
+		for _, value := range tab.panes {
+			if value == nil {
+				continue
+			}
+			if value.pending {
+				count++
+				continue
+			}
+			if value.session != nil && value.session.Snapshot().Status == appsession.StatusRunning {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// paneInfo describes one Pane for either a main or a detached Tab.
+func paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
+	value, ok := tab.panes[id]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, id) {
+		return PaneInfo{}, false
+	}
+	focused, focusedID := tab.focusedPane()
+	return PaneInfo{
+		ID:      id,
+		Number:  value.descriptor.Number,
+		Label:   value.descriptor.Label,
+		Focused: id == focusedID && focused != nil,
+		Pending: value.pending,
+		Err:     value.err,
+		Surface: value.surface,
+	}, true
 }
 
 // SplitFocusedPane splits the focused Pane on side and opens a Session of the
@@ -987,7 +1282,7 @@ func (s *State) requestPaneOpen(tabID model.TabID, paneID model.PaneID,
 }
 
 func (s *State) applyPaneOutcome(outcome paneOutcome) {
-	tab, _ := s.tabByID(outcome.tabID)
+	tab, _ := s.tabByAnyID(outcome.tabID)
 	if tab == nil {
 		if outcome.session != nil {
 			_ = outcome.session.Close()

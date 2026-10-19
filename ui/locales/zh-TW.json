@@ -288,6 +288,7 @@
   "tabCloseRight": "關閉右側分頁",
   "tabDuplicate": "複製分頁",
   "tabDetach": "分離分頁",
+  "tabCopyToNewWindow": "複製分頁到新視窗",
   "tabCopyTitle": "{title}（副本 {count}）",
   "@tabCopyTitle": {"description": "重複分頁的標題及其副本序號。", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
   "tabDirtyMarker": "●",
@@ -298,6 +299,7 @@
   "paneSplitRight": "向右分割",
   "paneSplitDown": "向下分割",
   "paneClose": "關閉窗格",
+  "paneDetach": "分離工作階段",
   "paneFocusLeft": "聚焦左側",
   "paneFocusRight": "聚焦右側",
   "paneFocusUp": "聚焦上方",
@@ -309,5 +311,16 @@
   "paneDragHandle": "::",
   "@paneDragHandle": {"description": "拖動窗格的手柄。"},
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "關閉分頁或窗格的按鈕。"}
+  "@closeGlyph": {"description": "關閉分頁或窗格的按鈕。"},
+  "detachedMoveToMain": "移到主視窗",
+  "detachedCloseWindow": "關閉視窗",
+  "closeWindowTitle": "關閉視窗？",
+  "closeWindowMessage": "{count, plural, other {關閉此視窗將結束 # 個使用中的工作階段。}}",
+  "@closeWindowMessage": {"description": "關閉視窗確認提示，說明將結束多少個使用中的工作階段。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "closeWindowCancel": "取消",
+  "closeWindowConfirm": "關閉視窗",
+  "quitConfirmTitle": "結束 Natcatty？",
+  "quitConfirmMessage": "{count, plural, other {結束 Natcatty 將結束 # 個使用中的工作階段。}}",
+  "@quitConfirmMessage": {"description": "結束確認提示，說明將結束多少個使用中的工作階段。", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "quitConfirmConfirm": "結束"
 }

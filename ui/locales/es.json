@@ -288,6 +288,7 @@
   "tabCloseRight": "Cerrar pestañas a la derecha",
   "tabDuplicate": "Duplicar pestaña",
   "tabDetach": "Separar pestaña",
+  "tabCopyToNewWindow": "Copiar pestaña a ventana nueva",
   "tabCopyTitle": "{title} (copia {count})",
   "@tabCopyTitle": {"description": "El título de una pestaña duplicada y su número de copia.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
   "tabDirtyMarker": "●",
@@ -298,6 +299,7 @@
   "paneSplitRight": "Dividir a la derecha",
   "paneSplitDown": "Dividir abajo",
   "paneClose": "Cerrar panel",
+  "paneDetach": "Separar sesión",
   "paneFocusLeft": "Enfocar a la izquierda",
   "paneFocusRight": "Enfocar a la derecha",
   "paneFocusUp": "Enfocar arriba",
@@ -309,5 +311,16 @@
   "paneDragHandle": "::",
   "@paneDragHandle": {"description": "El tirador para arrastrar un panel."},
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "El botón que cierra una pestaña o un panel."}
+  "@closeGlyph": {"description": "El botón que cierra una pestaña o un panel."},
+  "detachedMoveToMain": "Mover a la ventana principal",
+  "detachedCloseWindow": "Cerrar ventana",
+  "closeWindowTitle": "¿Cerrar ventana?",
+  "closeWindowMessage": "{count, plural, one {# sesión activa finalizará si se cierra esta ventana.} many {# de sesiones activas finalizarán si se cierra esta ventana.} other {# sesiones activas finalizarán si se cierra esta ventana.}}",
+  "@closeWindowMessage": {"description": "El mensaje de confirmación al cerrar una ventana que indica cuántas sesiones finalizan.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "closeWindowCancel": "Cancelar",
+  "closeWindowConfirm": "Cerrar ventana",
+  "quitConfirmTitle": "¿Salir de Natcatty?",
+  "quitConfirmMessage": "{count, plural, one {# sesión activa finalizará si se sale de Natcatty.} many {# de sesiones activas finalizarán si se sale de Natcatty.} other {# sesiones activas finalizarán si se sale de Natcatty.}}",
+  "@quitConfirmMessage": {"description": "El mensaje de confirmación al salir que indica cuántas sesiones finalizan.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "quitConfirmConfirm": "Salir"
 }

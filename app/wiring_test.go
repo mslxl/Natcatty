@@ -37,7 +37,9 @@ func (f *wiringFactory) Open(context.Context, appsession.StartSpec) (appsession.
 	return f.transport, nil
 }
 
-type wiringSurface struct{}
+// wiringSurface is non-empty so distinct surfaces have distinct pointers;
+// Go may give distinct zero-size values the same address.
+type wiringSurface struct{ id int }
 
 func (wiringSurface) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal").Fill() }
 func (wiringSurface) Close()                        {}
@@ -47,7 +49,7 @@ func newWiringState(t *testing.T) *state.State {
 	service := appsession.NewService(&wiringFactory{transport: &wiringTransport{closed: make(chan struct{})}})
 	t.Cleanup(service.CloseAll)
 	return state.NewState(state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
-		return wiringSurface{}, nil
+		return &wiringSurface{}, nil
 	}))
 }
 
@@ -58,7 +60,7 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 	shellState := state.NewState(
 		state.WithLocaleRequest(func(tag string) { locales = append(locales, tag) }),
 		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
-			return wiringSurface{}, nil
+			return &wiringSurface{}, nil
 		}),
 	)
 	quits := 0
@@ -114,9 +116,11 @@ func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
 		command.CloseTabsRight,
 		command.DuplicateTab,
 		command.DetachTab,
+		command.CopyTabToNewWindow,
 		command.SplitPaneRight,
 		command.SplitPaneDown,
 		command.ClosePane,
+		command.DetachPane,
 		command.FocusPaneLeft,
 		command.FocusPaneRight,
 		command.FocusPaneUp,
