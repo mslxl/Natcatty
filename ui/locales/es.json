@@ -366,6 +366,7 @@
     }
   },
   "tabDirtyMarker": "●",
+  "workTabsLabel": "Pestañas de sesiones",
   "@tabDirtyMarker": {
     "description": "El marcador de actividad junto a una pestaña con salida no vista."
   },
@@ -548,7 +549,7 @@
   "composeButton": "Redactar",
   "broadcastPanelTitle": "Entrada de difusión",
   "broadcastTargetsTitle": "Enviar a sesiones",
-  "broadcastActive": "Difundiendo a {count} sesiones",
+  "broadcastActive": "Difundiendo a {count, plural, one {# sesión} other {# sesiones} many {# de sesiones}}",
   "broadcastStopped": "Difusión detenida",
   "broadcastStart": "Iniciar difusión",
   "broadcastStop": "Detener difusión",
@@ -559,6 +560,7 @@
   "broadcastFailed": "Falló",
   "broadcastGated": "Bloqueado por transferencia",
   "broadcastMissing": "Sesión cerrada",
+  "broadcastTargetsRemoved": "Se quitaron {count, plural, one {# destino} other {# destinos} many {# de destinos}} que salieron de la ventana principal.",
   "broadcastSummary": "{delivered} de {total} entregados",
   "broadcastSelectAll": "Seleccionar todo",
   "broadcastSelectNone": "Limpiar",
@@ -574,9 +576,9 @@
   "composePreview": "Vista previa",
   "composePreviewEmpty": "Nada que enviar",
   "composeTargetFocused": "Sesión enfocada",
-  "composeTargetFocusedNamed": "Sesión enfocada · {name}",
-  "composeTargetBroadcast": "Difusión ({count} sesiones)",
+  "composeTargetFocusedNamed": "Enfocada: {name}",
+  "composeTargetBroadcast": "Difusión ({count, plural, one {# sesión} other {# sesiones} many {# de sesiones}})",
   "composeSending": "Enviando…",
-  "composeSent": "Enviado a {delivered} sesiones",
+  "composeSent": "Enviado a {delivered, plural, one {# sesión} other {# sesiones} many {# de sesiones}}",
   "composeFailed": "No se pudo entregar el texto"
 }

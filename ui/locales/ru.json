@@ -366,6 +366,7 @@
     }
   },
   "tabDirtyMarker": "●",
+  "workTabsLabel": "Вкладки сеансов",
   "@tabDirtyMarker": {
     "description": "Маркер активности рядом с вкладкой с непросмотренным выводом."
   },
@@ -548,7 +549,7 @@
   "composeButton": "Ввод",
   "broadcastPanelTitle": "Трансляция ввода",
   "broadcastTargetsTitle": "Отправить сеансам",
-  "broadcastActive": "Трансляция в {count} сеансов",
+  "broadcastActive": "Трансляция в {count, plural, one {# сеанс} few {# сеанса} many {# сеансов} other {# сеанса}}",
   "broadcastStopped": "Трансляция остановлена",
   "broadcastStart": "Начать трансляцию",
   "broadcastStop": "Остановить трансляцию",
@@ -559,6 +560,7 @@
   "broadcastFailed": "Ошибка",
   "broadcastGated": "Заблокировано передачей",
   "broadcastMissing": "Сеанс закрыт",
+  "broadcastTargetsRemoved": "Удалено {count, plural, one {# цель} few {# цели} many {# целей} other {# цели}} из главного окна.",
   "broadcastSummary": "Доставлено {delivered} из {total}",
   "broadcastSelectAll": "Выбрать все",
   "broadcastSelectNone": "Снять",
@@ -574,9 +576,9 @@
   "composePreview": "Предпросмотр",
   "composePreviewEmpty": "Нечего отправлять",
   "composeTargetFocused": "Сеанс в фокусе",
-  "composeTargetFocusedNamed": "Сеанс в фокусе · {name}",
-  "composeTargetBroadcast": "Трансляция ({count} сеансов)",
+  "composeTargetFocusedNamed": "В фокусе: {name}",
+  "composeTargetBroadcast": "Трансляция ({count, plural, one {# сеанс} few {# сеанса} many {# сеансов} other {# сеанса}})",
   "composeSending": "Отправка…",
-  "composeSent": "Отправлено в {delivered} сеансов",
+  "composeSent": "Отправлено в {delivered, plural, one {# сеанс} few {# сеанса} many {# сеансов} other {# сеанса}}",
   "composeFailed": "Текст не доставлен"
 }

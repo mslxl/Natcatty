@@ -2992,6 +2992,20 @@ func (msgs Messages) TabDirtyMarker() string {
 	return Catalog.Format(msgs.locale, "tabDirtyMarker", nil)
 }
 
+// WorkTabsLabel says "Session tabs"
+// in the language the app shows.
+//
+// The accessible name of the horizontally scrolling Session tab strip.
+func WorkTabsLabel() string { return In(i18n.Locale()).WorkTabsLabel() }
+
+// WorkTabsLabel says "Session tabs"
+// in the language of msgs.
+//
+// The accessible name of the horizontally scrolling Session tab strip.
+func (msgs Messages) WorkTabsLabel() string {
+	return Catalog.Format(msgs.locale, "workTabsLabel", nil)
+}
+
 // PaneConnecting says "Connecting…"
 // in the language the app shows.
 func PaneConnecting() string { return In(i18n.Locale()).PaneConnecting() }
@@ -4300,13 +4314,13 @@ func (msgs Messages) BroadcastTargetsTitle() string {
 	return Catalog.Format(msgs.locale, "broadcastTargetsTitle", nil)
 }
 
-// BroadcastActive says "Broadcasting to {count} Sessions"
+// BroadcastActive says "Broadcasting to {count, plural, one {# Session} other {# Sessions}}"
 // in the language the app shows.
 //
 // Broadcast is active and reaches this many Sessions.
 func BroadcastActive(count int) string { return In(i18n.Locale()).BroadcastActive(count) }
 
-// BroadcastActive says "Broadcasting to {count} Sessions"
+// BroadcastActive says "Broadcasting to {count, plural, one {# Session} other {# Sessions}}"
 // in the language of msgs.
 //
 // Broadcast is active and reaches this many Sessions.
@@ -4412,6 +4426,22 @@ func BroadcastMissing() string { return In(i18n.Locale()).BroadcastMissing() }
 // in the language of msgs.
 func (msgs Messages) BroadcastMissing() string {
 	return Catalog.Format(msgs.locale, "broadcastMissing", nil)
+}
+
+// BroadcastTargetsRemoved says "Removed {count, plural, one {# target} other {# targets}} that left the main window."
+// in the language the app shows.
+//
+// Selected targets left the main window, so broadcast pruned them.
+func BroadcastTargetsRemoved(count int) string {
+	return In(i18n.Locale()).BroadcastTargetsRemoved(count)
+}
+
+// BroadcastTargetsRemoved says "Removed {count, plural, one {# target} other {# targets}} that left the main window."
+// in the language of msgs.
+//
+// Selected targets left the main window, so broadcast pruned them.
+func (msgs Messages) BroadcastTargetsRemoved(count int) string {
+	return Catalog.Format(msgs.locale, "broadcastTargetsRemoved", map[string]any{"count": count})
 }
 
 // BroadcastSummary says "{delivered} of {total} delivered"
@@ -4570,7 +4600,7 @@ func (msgs Messages) ComposeTargetFocused() string {
 	return Catalog.Format(msgs.locale, "composeTargetFocused", nil)
 }
 
-// ComposeTargetFocusedNamed says "Focused Session · {name}"
+// ComposeTargetFocusedNamed says "Focused: {name}"
 // in the language the app shows.
 //
 // Compose sends to the focused Session, named after it.
@@ -4578,7 +4608,7 @@ func ComposeTargetFocusedNamed(name string) string {
 	return In(i18n.Locale()).ComposeTargetFocusedNamed(name)
 }
 
-// ComposeTargetFocusedNamed says "Focused Session · {name}"
+// ComposeTargetFocusedNamed says "Focused: {name}"
 // in the language of msgs.
 //
 // Compose sends to the focused Session, named after it.
@@ -4586,13 +4616,13 @@ func (msgs Messages) ComposeTargetFocusedNamed(name string) string {
 	return Catalog.Format(msgs.locale, "composeTargetFocusedNamed", map[string]any{"name": name})
 }
 
-// ComposeTargetBroadcast says "Broadcast ({count} Sessions)"
+// ComposeTargetBroadcast says "Broadcast ({count, plural, one {# Session} other {# Sessions}})"
 // in the language the app shows.
 //
 // Compose sends to the broadcast target set.
 func ComposeTargetBroadcast(count int) string { return In(i18n.Locale()).ComposeTargetBroadcast(count) }
 
-// ComposeTargetBroadcast says "Broadcast ({count} Sessions)"
+// ComposeTargetBroadcast says "Broadcast ({count, plural, one {# Session} other {# Sessions}})"
 // in the language of msgs.
 //
 // Compose sends to the broadcast target set.
@@ -4610,13 +4640,13 @@ func (msgs Messages) ComposeSending() string {
 	return Catalog.Format(msgs.locale, "composeSending", nil)
 }
 
-// ComposeSent says "Sent to {delivered} Sessions"
+// ComposeSent says "Sent to {delivered, plural, one {# Session} other {# Sessions}}"
 // in the language the app shows.
 //
 // How many targets accepted the composed input.
 func ComposeSent(delivered int) string { return In(i18n.Locale()).ComposeSent(delivered) }
 
-// ComposeSent says "Sent to {delivered} Sessions"
+// ComposeSent says "Sent to {delivered, plural, one {# Session} other {# Sessions}}"
 // in the language of msgs.
 //
 // How many targets accepted the composed input.

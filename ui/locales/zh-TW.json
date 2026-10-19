@@ -366,6 +366,7 @@
     }
   },
   "tabDirtyMarker": "●",
+  "workTabsLabel": "工作階段分頁",
   "@tabDirtyMarker": {
     "description": "分頁有未檢視輸出時顯示的活動標記。"
   },
@@ -548,7 +549,7 @@
   "composeButton": "編寫",
   "broadcastPanelTitle": "廣播輸入",
   "broadcastTargetsTitle": "傳送到工作階段",
-  "broadcastActive": "正在向 {count} 個工作階段廣播",
+  "broadcastActive": "正在向 {count, plural, other {# 個工作階段}}廣播",
   "broadcastStopped": "廣播已停止",
   "broadcastStart": "開始廣播",
   "broadcastStop": "停止廣播",
@@ -559,6 +560,7 @@
   "broadcastFailed": "失敗",
   "broadcastGated": "被傳輸阻擋",
   "broadcastMissing": "工作階段已關閉",
+  "broadcastTargetsRemoved": "已移除 {count, plural, other {# 個}}離開主視窗的目標。",
   "broadcastSummary": "已送達 {delivered}/{total}",
   "broadcastSelectAll": "全選",
   "broadcastSelectNone": "清除",
@@ -574,9 +576,9 @@
   "composePreview": "預覽",
   "composePreviewEmpty": "沒有可傳送的內容",
   "composeTargetFocused": "焦點工作階段",
-  "composeTargetFocusedNamed": "焦點工作階段 · {name}",
-  "composeTargetBroadcast": "廣播（{count} 個工作階段）",
+  "composeTargetFocusedNamed": "焦點：{name}",
+  "composeTargetBroadcast": "廣播（{count, plural, other {# 個工作階段}}）",
   "composeSending": "正在傳送…",
-  "composeSent": "已傳送到 {delivered} 個工作階段",
+  "composeSent": "已傳送到 {delivered, plural, other {# 個工作階段}}",
   "composeFailed": "文字未送達"
 }
