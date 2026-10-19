@@ -265,6 +265,9 @@ func (s *State) OpenHost(host domainvault.Host) error {
 			Hostname: host.Hostname,
 			Port:     host.Port,
 			Username: host.Username,
+			// X11 forwarding requires both the Host preference and an explicit
+			// security acknowledgement.
+			X11Forwarding: host.X11Enabled(),
 			// A dropped SSH transport retries every five seconds under the
 			// original reason predicate. Local shells have no policy.
 			Reconnect: &appsession.ReconnectPolicy{},

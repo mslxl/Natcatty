@@ -133,6 +133,50 @@ func TestVaultViewListsHostDetails(t *testing.T) {
 	}
 }
 
+func TestVaultViewShowsTheX11WarningOnlyAfterEnablingForSSH(t *testing.T) {
+	m := locales.In("en")
+	repo := &fakeHosts{}
+	state := vaultstate.NewState(repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	// The Host editor is long; a taller frame keeps the X11 controls clickable.
+	tt := ui.NewTester(View(state), 900, 1800)
+	state.BeginCreate()
+	tt.Frame()
+
+	if !tt.HasText(m.VaultHostX11Forwarding()) {
+		t.Fatal("the SSH Host editor does not offer X11 forwarding")
+	}
+	if tt.HasText(m.VaultHostX11Warning()) {
+		t.Fatal("the X11 warning was shown before X11 was enabled")
+	}
+	if tt.HasText(m.VaultHostX11Acknowledge()) {
+		t.Fatal("the X11 acknowledgement was shown before X11 was enabled")
+	}
+
+	if err := tt.Click(m.VaultHostX11Forwarding()); err != nil {
+		t.Fatalf("click X11 forwarding: %v", err)
+	}
+	tt.Frame()
+	if !state.Form().X11Forwarding {
+		t.Fatal("the click did not enable X11 on the form")
+	}
+	if !tt.HasText(m.VaultHostX11Warning()) {
+		t.Fatal("enabling X11 did not show the security warning")
+	}
+	if !tt.HasText(m.VaultHostX11Acknowledge()) {
+		t.Fatal("enabling X11 did not show the acknowledgement")
+	}
+
+	// A non-SSH protocol cannot use X11, so the editor must not offer it.
+	state.Form().Protocol = string(domainvault.ProtocolLocal)
+	tt.Frame()
+	if tt.HasText(m.VaultHostX11Forwarding()) {
+		t.Fatal("the X11 option was shown for a non-SSH Host")
+	}
+}
+
 func TestVaultViewDeleteConfirmationNeverShowsARawID(t *testing.T) {
 	repo := &fakeHosts{items: []domainvault.Host{
 		{ID: "host-1", Label: "web", Hostname: "example.com", Port: 22, Protocol: domainvault.ProtocolSSH},

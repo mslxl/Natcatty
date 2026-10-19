@@ -335,6 +335,9 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	if graph.factory.spec.Reconnect == nil {
 		t.Fatal("SSH Sessions do not carry the reconnect policy")
 	}
+	if graph.factory.spec.X11Forwarding {
+		t.Fatal("X11 forwarding was requested without a Host preference")
+	}
 	if pending := graph.state.PendingConnections(); len(pending) != 0 {
 		t.Fatalf("pending connections = %q after Flush, want none", pending)
 	}
@@ -351,6 +354,26 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	}
 	if graph.state.Problem() != "" {
 		t.Fatalf("problem = %q after a successful connection", graph.state.Problem())
+	}
+}
+
+func TestOpenHostCarriesTheAcknowledgedX11Preference(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-x11", Label: "gui", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}
+
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the X11 SSH tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+	if !graph.factory.spec.X11Forwarding {
+		t.Fatalf("factory spec X11 = %v, want enabled", graph.factory.spec.X11Forwarding)
 	}
 }
 

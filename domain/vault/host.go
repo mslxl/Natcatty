@@ -147,6 +147,12 @@ type Host struct {
 	UseSSHAgent bool `json:"useSshAgent,omitempty"`
 	// RequiresMFA prefers keyboard-interactive before password or key probing.
 	RequiresMFA bool `json:"requiresMfa,omitempty"`
+	// X11Forwarding requests X11 forwarding for SSH Sessions on this Host. It
+	// is off by default and requires X11WarningAcknowledged.
+	X11Forwarding bool `json:"x11Forwarding,omitempty"`
+	// X11WarningAcknowledged records that the user accepted the X11 security
+	// warning. It is meaningful only while X11Forwarding is true.
+	X11WarningAcknowledged bool `json:"x11WarningAcknowledged,omitempty"`
 	// HostChain lists the jump Host references used before this Host. It is an
 	// ordered reference list, not an existence guarantee: a deleted jump Host
 	// remains dangling, as in the original's non-cascading Vault.
@@ -187,6 +193,10 @@ type Draft struct {
 	AuthMethod  HostAuthMethod
 	UseSSHAgent bool
 	RequiresMFA bool
+	// X11Forwarding and X11WarningAcknowledged enable X11 forwarding. The
+	// acknowledgement must be set before the preference can be saved.
+	X11Forwarding          bool
+	X11WarningAcknowledged bool
 	// HostChain and Proxy configure the route to this Host. Proxy.Password is
 	// plaintext form input; the Vault encrypts it into the field-secret store.
 	HostChain *HostChain
@@ -225,6 +235,7 @@ const (
 	FieldChain       Field = "chain"
 	FieldProxy       Field = "proxy"
 	FieldAlgorithms  Field = "algorithms"
+	FieldX11         Field = "x11"
 )
 
 // Rule names the validation rule a value broke. The UI maps Field and Rule to
@@ -238,6 +249,9 @@ const (
 	RuleOutOfRange  Rule = "out_of_range"
 	RuleTooLong     Rule = "too_long"
 	RuleUnsupported Rule = "unsupported"
+	// RuleAcknowledgementRequired reports a security-sensitive preference that
+	// cannot be saved until the user explicitly accepts its warning.
+	RuleAcknowledgementRequired Rule = "acknowledgement_required"
 )
 
 // ValidationError reports the first rule a Host value broke.
@@ -271,6 +285,11 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
+	// Disabling X11 drops the acknowledgement, so re-enabling it always asks
+	// the user to accept the warning again.
+	if !draft.X11Forwarding {
+		draft.X11WarningAcknowledged = false
+	}
 	if draft.Label == "" {
 		draft.Label = draft.Hostname
 	}
@@ -320,21 +339,30 @@ func (h Host) MergeKey() string {
 // Validate checks that a Host already in canonical form is saveable.
 func (h Host) Validate() error {
 	return validateFields(Draft{
-		Label:       h.Label,
-		Hostname:    h.Hostname,
-		Port:        h.Port,
-		Username:    h.Username,
-		Protocol:    h.Protocol,
-		Group:       h.Group,
-		Tags:        h.Tags,
-		Notes:       h.Notes,
-		AuthMethod:  h.AuthMethod,
-		RequiresMFA: h.RequiresMFA,
-		UseSSHAgent: h.UseSSHAgent,
-		HostChain:   h.HostChain,
-		Proxy:       h.Proxy,
-		Algorithms:  h.Algorithms,
+		Label:                  h.Label,
+		Hostname:               h.Hostname,
+		Port:                   h.Port,
+		Username:               h.Username,
+		Protocol:               h.Protocol,
+		Group:                  h.Group,
+		Tags:                   h.Tags,
+		Notes:                  h.Notes,
+		AuthMethod:             h.AuthMethod,
+		RequiresMFA:            h.RequiresMFA,
+		UseSSHAgent:            h.UseSSHAgent,
+		X11Forwarding:          h.X11Forwarding,
+		X11WarningAcknowledged: h.X11WarningAcknowledged,
+		HostChain:              h.HostChain,
+		Proxy:                  h.Proxy,
+		Algorithms:             h.Algorithms,
 	})
+}
+
+// X11Enabled reports whether a saved Host may request X11 forwarding. Both the
+// preference and the security acknowledgement must be present, so a record
+// created before the warning existed never enables forwarding silently.
+func (h Host) X11Enabled() bool {
+	return h.X11Forwarding && h.X11WarningAcknowledged
 }
 
 func validateFields(draft Draft) error {
@@ -348,6 +376,15 @@ func validateFields(draft Draft) error {
 	case "", HostAuthAuto, HostAuthPassword, HostAuthKey, HostAuthCertificate:
 	default:
 		return validation(FieldAuthMethod, RuleUnsupported)
+	}
+
+	if draft.X11Forwarding {
+		if draft.Protocol != ProtocolSSH {
+			return validation(FieldX11, RuleUnsupported)
+		}
+		if !draft.X11WarningAcknowledged {
+			return validation(FieldX11, RuleAcknowledgementRequired)
+		}
 	}
 
 	if draft.Label == "" {

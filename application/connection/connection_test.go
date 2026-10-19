@@ -185,6 +185,46 @@ func sshRequest() Request {
 	return Request{HostID: "host-1", Hostname: "example.com", Port: 22, Username: "root"}
 }
 
+func TestAcquireNeverPoolsX11Connections(t *testing.T) {
+	dialer := &sequenceDialer{}
+	manager := poolTestManager(t, dialer)
+
+	x11 := sshRequest()
+	x11.X11Forwarding = true
+	first, err := manager.Acquire(context.Background(), x11)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	second, err := manager.Acquire(context.Background(), x11)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	if dialer.dialCount() != 2 {
+		t.Fatalf("dials = %d, want 2: an X11 Connection was shared", dialer.dialCount())
+	}
+	if first.conn == second.conn {
+		t.Fatal("two X11 Sessions shared one Connection")
+	}
+
+	// A plain request for the same endpoint must not join the X11 transport
+	// either, because X11 forwarding is negotiated for the whole connection.
+	plain, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("plain Acquire: %v", err)
+	}
+	if dialer.dialCount() != 3 {
+		t.Fatalf("dials = %d, want 3: a plain Session reused an X11 Connection", dialer.dialCount())
+	}
+
+	firstClient := dialer.clients[0]
+	_ = second.Release()
+	_ = plain.Release()
+	_ = first.Release()
+	if !firstClient.isClosed() {
+		t.Fatal("an X11 Connection was parked instead of closed")
+	}
+}
+
 func TestAcquireUsesTheStoredPasswordAndParksTheTransport(t *testing.T) {
 	manager, passwords, dialer, _, _ := newTestManager(t)
 

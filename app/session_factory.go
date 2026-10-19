@@ -52,17 +52,32 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		route = resolved
 	}
 
-	lease, terminal, err := f.acquireTerminal(ctx, spec, route)
+	lease, terminal, notices, err := f.acquireTerminal(ctx, spec, route)
 	if err != nil {
 		return nil, err
 	}
-	return &leasedTransport{terminal: terminal, lease: lease}, nil
+	return &leasedTransport{terminal: terminal, lease: lease, notices: notices}, nil
 }
 
 // acquireTerminal opens a shell on a Connection lease. A parked transport that
 // dies during the liveness window is discarded by the pool; one retry opens a
 // fresh transport instead of failing the Session.
-func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, error) {
+func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, error) {
+	var notices chan appsession.Notice
+	var onX11Notice func(appconnection.X11Notice)
+	if spec.X11Forwarding {
+		notices = make(chan appsession.Notice, 4)
+		onX11Notice = func(notice appconnection.X11Notice) {
+			mapped, ok := mapX11Notice(notice)
+			if !ok {
+				return
+			}
+			select {
+			case notices <- mapped:
+			default:
+			}
+		}
+	}
 	request := appconnection.Request{
 		HostID:            spec.HostID,
 		Hostname:          spec.Hostname,
@@ -74,6 +89,9 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
 		Keepalive:         &appconnection.DefaultKeepalive,
+		X11Forwarding:     spec.X11Forwarding,
+		X11Display:        spec.X11Display,
+		OnX11Notice:       onX11Notice,
 	}
 	specification := appconnection.TerminalSpec{
 		Cols: spec.Cols,
@@ -83,17 +101,32 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		terminal, err := lease.OpenTerminal(ctx, specification)
 		if err == nil {
-			return lease, terminal, nil
+			return lease, terminal, notices, nil
 		}
 		_ = lease.Discard()
 		if attempt == 0 && errors.Is(err, appconnection.ErrStaleTransport) {
 			continue
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+}
+
+// mapX11Notice translates the adapter's X11 notice onto the Session's
+// UI-facing vocabulary. Unknown codes are dropped.
+func mapX11Notice(notice appconnection.X11Notice) (appsession.Notice, bool) {
+	switch notice.Code {
+	case appconnection.X11NoticeLocalDisplay:
+		return appsession.Notice{Code: appsession.NoticeX11LocalDisplay, Target: notice.Display}, true
+	case appconnection.X11NoticeCookie:
+		return appsession.Notice{Code: appsession.NoticeX11Cookie, Target: notice.Display}, true
+	case appconnection.X11NoticeChannel:
+		return appsession.Notice{Code: appsession.NoticeX11Channel, Target: notice.Display}, true
+	default:
+		return appsession.Notice{}, false
 	}
 }
 
@@ -134,12 +167,19 @@ func testConnection(ctx context.Context, manager *appconnection.Manager, routes 
 type leasedTransport struct {
 	terminal appconnection.Terminal
 	lease    *appconnection.Lease
+	notices  <-chan appsession.Notice
 
 	mu     sync.Mutex
 	closed bool
 	ended  bool
 	end    appsession.End
 }
+
+var _ appsession.Notifier = (*leasedTransport)(nil)
+
+// Notices returns the Session-facing notices produced by the Connection. X11
+// forwarding reports a dead local display here without ending the shell.
+func (t *leasedTransport) Notices() <-chan appsession.Notice { return t.notices }
 
 func (t *leasedTransport) Read(p []byte) (int, error) {
 	n, err := t.terminal.Read(p)

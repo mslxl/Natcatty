@@ -483,11 +483,15 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 				ui.TextInput(c, &form.Username).Placeholder("root").Width(220)
 			})
 			ui.Field(c, m.VaultHostProtocol(), func() {
-				ui.Select(c, &form.Protocol, []string{
+				changed := ui.Select(c, &form.Protocol, []string{
 					string(domainvault.ProtocolSSH),
 					string(domainvault.ProtocolTelnet),
 					string(domainvault.ProtocolLocal),
-				}).Width(140)
+				}).Width(140).Changed()
+				if changed && form.Protocol != string(domainvault.ProtocolSSH) {
+					s.SetX11Forwarding(false)
+					c.Invalidate()
+				}
 			})
 		})
 		ui.Field(c, m.VaultHostGroup(), func() {
@@ -536,6 +540,18 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 		})
 		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
 		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+		if form.Protocol == string(domainvault.ProtocolSSH) {
+			if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
+				// Turning X11 off clears the acknowledgement, so re-enabling it
+				// always asks the user to accept the warning again.
+				s.SetX11Forwarding(form.X11Forwarding)
+				c.Invalidate()
+			}
+			if form.X11Forwarding {
+				ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(t.Danger)
+				ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
+			}
+		}
 		ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 	})
 
@@ -745,6 +761,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemProxy()
 	case vaultstate.ProblemAlgorithms:
 		return m.VaultProblemAlgorithms()
+	case vaultstate.ProblemX11:
+		return m.VaultProblemX11()
+	case vaultstate.ProblemX11Acknowledged:
+		return m.VaultProblemX11Acknowledged()
 	}
 	return ""
 }

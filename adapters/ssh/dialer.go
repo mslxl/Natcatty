@@ -46,6 +46,7 @@ type Dialer struct {
 	keyExchanges []string
 	macs         []string
 	hostKeyAlgos []string
+	x11Local     X11LocalFactory
 }
 
 // Option customizes a Dialer.
@@ -77,6 +78,16 @@ func WithProcessStart(fn ProcessStartFunc) Option {
 	return func(d *Dialer) {
 		if fn != nil {
 			d.processStart = fn
+		}
+	}
+}
+
+// WithX11Local replaces the local X11 display seam. Tests inject an in-process
+// X server; production uses platform/xauth.
+func WithX11Local(fn X11LocalFactory) Option {
+	return func(d *Dialer) {
+		if fn != nil {
+			d.x11Local = fn
 		}
 	}
 }
@@ -125,6 +136,7 @@ func NewDialer(opts ...Option) *Dialer {
 		keyExchanges: copyStrings(defaultKeyExchanges),
 		macs:         copyStrings(defaultMACs),
 		hostKeyAlgos: copyStrings(defaultHostKeys),
+		x11Local:     defaultX11Local,
 	}
 	for _, opt := range opts {
 		opt(dialer)
@@ -256,11 +268,20 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	}
 
 	final := clients[len(clients)-1]
-	return &sshClient{
+	client := &sshClient{
 		client:        final,
 		ancestors:     clients[:len(clients)-1],
 		remoteVersion: versions[len(versions)-1],
-	}, nil
+	}
+	if req.X11 != nil {
+		bridge, err := newX11Bridge(final, req.X11, d.x11Local)
+		if err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+		client.x11 = bridge
+	}
+	return client, nil
 }
 
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {

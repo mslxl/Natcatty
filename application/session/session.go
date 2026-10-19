@@ -171,6 +171,36 @@ type Snapshot struct {
 	PendingBytes int
 	// Paused reports that output backpressure is engaged.
 	Paused bool
+	// Notice is the most recent non-fatal runtime problem, such as a local X11
+	// display that could not be reached. It is nil when there is none.
+	Notice *Notice
+}
+
+// NoticeCode classifies a non-fatal runtime notice.
+type NoticeCode string
+
+const (
+	// NoticeX11LocalDisplay reports that an X11 channel could not reach the
+	// local X server.
+	NoticeX11LocalDisplay NoticeCode = "x11_local_display"
+	// NoticeX11Cookie reports that no local xauth cookie was available, so the
+	// forwarded setup packet kept the fake cookie.
+	NoticeX11Cookie NoticeCode = "x11_cookie"
+	// NoticeX11Channel reports that an X11 channel could not be accepted.
+	NoticeX11Channel NoticeCode = "x11_channel"
+)
+
+// Notice is a non-fatal problem reported while a Session keeps running.
+type Notice struct {
+	Code   NoticeCode
+	Target string
+}
+
+// Notifier is implemented by transports that report non-fatal runtime notices.
+// The channel closes when the transport stops reporting; a transport without a
+// channel simply does not implement Notifier.
+type Notifier interface {
+	Notices() <-chan Notice
 }
 
 // Transport is one Session's byte stream. Read is output, Write is input, and
@@ -201,6 +231,13 @@ type StartSpec struct {
 	Hostname string
 	Port     int
 	Username string
+	// X11Forwarding requests X11 forwarding for this SSH Session when the Host
+	// has it enabled and acknowledged. The transport factory turns it into a
+	// non-pooled Connection.
+	X11Forwarding bool
+	// X11Display overrides the local display target. Empty uses DISPLAY or the
+	// platform default.
+	X11Display string
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy
@@ -474,6 +511,7 @@ func (s *Session) start() {
 	go s.loop()
 	go s.readLoop(s.generation, s.transport)
 	go s.writeLoop(s.generation, s.transport, s.genDone)
+	go s.noticeLoop(s.transport, s.genDone)
 }
 
 // loop serializes lifecycle commands and publishes the final snapshot. It is
@@ -537,9 +575,11 @@ func (s *Session) loop() {
 				s.transport = cmd.transport
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
+					snapshot.Notice = nil
 				})
 				go s.readLoop(s.generation, cmd.transport)
 				go s.writeLoop(s.generation, cmd.transport, s.genDone)
+				go s.noticeLoop(cmd.transport, s.genDone)
 			case commandTransportFailed:
 				if cmd.generation != s.generation || !s.reopening {
 					continue
@@ -636,6 +676,34 @@ func (s *Session) readLoop(generation int, transport Transport) {
 				end:        endOf(transport),
 			})
 			return
+		}
+	}
+}
+
+// noticeLoop publishes non-fatal notices from one transport generation. It
+// stops when the Session ends or the generation is abandoned.
+func (s *Session) noticeLoop(transport Transport, genDone <-chan struct{}) {
+	notifier, ok := transport.(Notifier)
+	if !ok {
+		return
+	}
+	notices := notifier.Notices()
+	if notices == nil {
+		return
+	}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-genDone:
+			return
+		case notice, ok := <-notices:
+			if !ok {
+				return
+			}
+			s.update(func(snapshot *Snapshot) {
+				snapshot.Notice = &notice
+			})
 		}
 	}
 }
