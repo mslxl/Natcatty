@@ -55,6 +55,22 @@ func (t *fakeTerminal) SetOSCNotifications(mode domainterminal.NotificationMode)
 	return t.update(func(settings *domainterminal.Settings) { settings.OSCNotifications = mode })
 }
 
+func (t *fakeTerminal) SetEncoding(encoding domainterminal.Encoding) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.Encoding = encoding })
+}
+
+func (t *fakeTerminal) SetPasteProtection(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.PasteProtection = enabled })
+}
+
+func (t *fakeTerminal) SetPasteMinLines(lines int) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.PasteMinLines = lines })
+}
+
+func (t *fakeTerminal) SetDropAction(action domainterminal.DropAction) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.DropAction = action })
+}
+
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -82,7 +98,21 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.OSCNotifications != domainterminal.NotificationUnfocused {
 		t.Fatal("the notification mode was not stored")
 	}
-	if state.Problem() || redraws != 6 {
+	if !state.SetEncoding(domainterminal.EncodingGB18030) ||
+		fake.settings.Encoding != domainterminal.EncodingGB18030 {
+		t.Fatal("the terminal encoding was not stored")
+	}
+	if !state.SetPasteProtection(true) || !fake.settings.PasteProtection {
+		t.Fatal("paste protection was not stored")
+	}
+	if !state.SetPasteMinLines(4) || fake.settings.PasteMinLines != 4 {
+		t.Fatal("the paste threshold was not stored")
+	}
+	if !state.SetDropAction(domainterminal.DropUpload) ||
+		fake.settings.DropAction != domainterminal.DropUpload {
+		t.Fatal("the drop action was not stored")
+	}
+	if state.Problem() || redraws != 10 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 
@@ -121,6 +151,10 @@ func TestTerminalSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 			m.SettingsOSC52WriteOnly(),
 			m.SettingsOSCNotificationsTitle(),
 			m.SettingsOSCNotificationsAlways(),
+			m.SettingsTerminalEncoding(),
+			m.SettingsPasteProtection(),
+			m.SettingsPasteMinLines(),
+			m.SettingsDropAction(),
 			m.SettingsAppLockTitle(),
 		}
 		const epsilon = 0.5

@@ -18,6 +18,7 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -193,6 +194,9 @@ type Snapshot struct {
 	Clipboard *ClipboardEvent
 	// Logging is the current Session log state.
 	Logging LogStatus
+	// Encoding is the character encoding this Session decodes output and
+	// encodes input with.
+	Encoding domainterminal.Encoding
 }
 
 // NoticeCode classifies a non-fatal runtime notice.
@@ -263,6 +267,12 @@ type StartSpec struct {
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy
+	// Encoding is the wire encoding for this Session. Empty asks the service's
+	// resolver; an unresolved value is UTF-8.
+	Encoding domainterminal.Encoding
+	// EncodingScope is the persisted preference key. Empty derives "local" or
+	// "host:<id>" from Kind and HostID.
+	EncodingScope string
 }
 
 // Factory opens a Transport for a StartSpec. It is the application's port for
@@ -301,6 +311,7 @@ type Session struct {
 
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
+	codec           Codec
 
 	logMu   sync.Mutex
 	logger  *sessionLogger
@@ -353,6 +364,8 @@ type Service struct {
 	// automatic logs; the user can still start one from the Session surface.
 	autoLog         func(StartSpec) *LogOptions
 	clipboardPolicy func() domainterminal.ClipboardAccess
+	encodingPolicy  func(StartSpec) domainterminal.Encoding
+	codecFactory    CodecFactory
 	onNotification  func(model.SessionID, TerminalNotification)
 	onTransfer      func(model.SessionID, TransferState)
 	onInput         func(model.SessionID, []byte)
@@ -393,6 +406,19 @@ func WithAutoLogging(fn func(StartSpec) *LogOptions) Option {
 // keeps the original write-only default.
 func WithClipboardPolicy(fn func() domainterminal.ClipboardAccess) Option {
 	return func(s *Service) { s.clipboardPolicy = fn }
+}
+
+// WithEncodingResolver supplies the initial encoding when a StartSpec does
+// not name one. The app reads the per-Host preference here; nil means UTF-8.
+func WithEncodingResolver(fn func(StartSpec) domainterminal.Encoding) Option {
+	return func(s *Service) { s.encodingPolicy = fn }
+}
+
+// WithCodecFactory supplies the codec that converts a Session's legacy wire
+// encoding. Without one a Session is UTF-8 only. The app injects the
+// adapters/textcodec implementation.
+func WithCodecFactory(factory CodecFactory) Option {
+	return func(s *Service) { s.codecFactory = factory }
 }
 
 // WithNotificationHook receives accepted program notifications. The app applies
@@ -437,6 +463,32 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	if spec.Rows <= 0 {
 		spec.Rows = 24
 	}
+	if spec.EncodingScope == "" {
+		if spec.Kind == KindSSH && spec.HostID != "" {
+			spec.EncodingScope = domainterminal.EncodingScopeHost(string(spec.HostID))
+		} else {
+			spec.EncodingScope = domainterminal.EncodingScopeLocal
+		}
+	}
+	if !spec.Encoding.Valid() {
+		spec.Encoding = domainterminal.EncodingUTF8
+		if s.encodingPolicy != nil {
+			if candidate := s.encodingPolicy(spec); candidate.Valid() {
+				spec.Encoding = candidate
+			}
+		}
+	}
+	spec.Encoding = domainterminal.NormalizeEncoding(spec.Encoding)
+	if spec.Encoding != domainterminal.EncodingUTF8 && s.codecFactory == nil {
+		return nil, fmt.Errorf("session: no codec factory for encoding %q", spec.Encoding)
+	}
+	codec := Codec(identityCodec{})
+	if s.codecFactory != nil {
+		codec = s.codecFactory(spec.Encoding)
+	}
+	if codec == nil {
+		return nil, fmt.Errorf("session: codec factory returned nil for %q", spec.Encoding)
+	}
 
 	transport, err := s.factory.Open(ctx, spec)
 	if err != nil {
@@ -468,6 +520,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		spec:            spec,
 		tap:             tap,
 		clipboardAccess: policy,
+		codec:           codec,
 		genDone:         make(chan struct{}),
 		writeCh:         make(chan []byte, s.writeDepth),
 		commands:        make(chan command, 16),
@@ -482,6 +535,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 			Connection: ConnectionStatusActive,
 			Cols:       spec.Cols,
 			Rows:       spec.Rows,
+			Encoding:   spec.Encoding,
 		},
 		onEnd:    s.remove,
 		onChange: s.changed,
@@ -812,7 +866,8 @@ func (s *Session) readLoop(generation int, transport Transport) {
 		n, err := transport.Read(buffer)
 		if n > 0 {
 			now := time.Now()
-			output, effects := s.tap.observe(buffer[:n], now)
+			decoded := s.decodeOutput(buffer[:n])
+			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))
 				s.conn.appendOutput(output)

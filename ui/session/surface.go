@@ -6,9 +6,11 @@
 package sessionui
 
 import (
+	"runtime"
 	"sync"
 
 	"github.com/egoist/mygo/plugins/terminal"
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -21,6 +23,25 @@ import (
 type Options struct {
 	LogDefaults func() appsession.LogOptions
 	Redraw      func()
+	// PastePolicy reads the live multiline paste setting.
+	PastePolicy func() (protection bool, minLines int)
+	// DropAction reads what a file drop should do.
+	DropAction func() domainterminal.DropAction
+	// Upload is the seam for a future SFTP/ZMODEM engine. Nil reports that
+	// uploads are unavailable instead of inserting paths.
+	Upload UploadFunc
+	// OnEncoding persists a user's live encoding choice.
+	OnEncoding func(domainterminal.Encoding)
+}
+
+// PaneActions are the Pane commands the Session menu offers. The shell
+// supplies them for a Pane in a split-capable Tab; a detached Pane leaves
+// them nil and the items show disabled.
+type PaneActions struct {
+	SplitRight func()
+	SplitDown  func()
+	Detach     func()
+	Close      func()
 }
 
 // Option customizes Surface options.
@@ -33,9 +54,30 @@ func WithLogDefaults(fn func() appsession.LogOptions) Option {
 }
 
 // WithRedraw supplies the window invalidation used for asynchronous clipboard
-// requests.
+// requests, paste confirmation, and drop feedback.
 func WithRedraw(fn func()) Option {
 	return func(options *Options) { options.Redraw = fn }
+}
+
+// WithPastePolicy supplies the live multiline paste setting.
+func WithPastePolicy(fn func() (bool, int)) Option {
+	return func(options *Options) { options.PastePolicy = fn }
+}
+
+// WithDropAction supplies the live drop action setting.
+func WithDropAction(fn func() domainterminal.DropAction) Option {
+	return func(options *Options) { options.DropAction = fn }
+}
+
+// WithUpload supplies the upload seam a later ticket implements.
+func WithUpload(fn UploadFunc) Option {
+	return func(options *Options) { options.Upload = fn }
+}
+
+// WithEncodingChange observes a live encoding choice so the app can persist
+// it for the Session's scope.
+func WithEncodingChange(fn func(domainterminal.Encoding)) Option {
+	return func(options *Options) { options.OnEncoding = fn }
 }
 
 // Surface is one Tab's terminal view.
@@ -45,12 +87,16 @@ type Surface struct {
 	options   Options
 	closeOnce sync.Once
 
+	gate             *PasteGate
+	drops            *DropHandler
 	mu               sync.Mutex
 	pendingClipboard *terminal.ClipboardRequest
 
 	// UI-thread state.
-	logFormat domainterminal.LogFormat
-	logError  bool
+	logFormat   domainterminal.LogFormat
+	logError    bool
+	dropOver    bool
+	paneActions PaneActions
 }
 
 // New connects a MyGo terminal to session's TerminalConn. It returns an error
@@ -74,6 +120,14 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 	if snapshot.Logging.Active && validLogFormat(snapshot.Logging.Format) {
 		surface.logFormat = snapshot.Logging.Format
 	}
+	surface.gate = NewPasteGate(options.PastePolicy, func(text string) {
+		if surface.terminal != nil {
+			surface.terminal.Paste(text)
+		}
+	})
+	surface.drops = NewDropHandler(options.DropAction, func(text string) {
+		_, _ = session.TerminalConn().Write([]byte(text))
+	}, options.Upload)
 
 	// The application's tap is the single authority for OSC 52: it removes
 	// rejected writes and reads before the terminal sees them, and applies the
@@ -93,6 +147,17 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 			default:
 				request.Deny()
 			}
+		},
+		// Every paste path that reaches the terminal passes the policy here.
+		// A guarded paste is consumed and stored; nothing reaches the program
+		// until the surface's Send action calls Gate.Accept.
+		OnPaste: func(data transfer.Data) bool {
+			text, err := data.Read(transfer.Text)
+			if err != nil || len(text) == 0 {
+				return false
+			}
+			surface.requestPaste(string(text))
+			return true
 		},
 	})
 	if err != nil {
@@ -128,6 +193,20 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 	clipboardPending := s.pendingClipboard != nil
 	s.mu.Unlock()
 
+	var pending *PendingPaste
+	if waiting, ok := s.gate.Pending(); ok {
+		copy := waiting
+		pending = &copy
+	}
+	dropNotice, dropCount := s.drops.Notice()
+	dropAction := domainterminal.DropInsert
+	if s.options.DropAction != nil {
+		if configured := s.options.DropAction(); configured.Valid() {
+			dropAction = configured
+		}
+	}
+	clipboardText := c.ReadClipboard()
+
 	model := chromeModel{
 		Command:          snapshot.Command,
 		Busy:             snapshot.Busy,
@@ -137,6 +216,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		LogFormat:        s.logFormat,
 		LogDirectory:     directory,
 		LogProblem:       s.logError || snapshot.Logging.Problem != "",
+		Encoding:         snapshot.Encoding,
+		PendingPaste:     pending,
+		DropActive:       s.dropOver,
+		DropCount:        dropCount,
+		DropAction:       dropAction,
+		DropNotice:       dropNotice,
 	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
@@ -146,12 +231,80 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		AllowClipboard: func() { s.answerClipboard(true) },
 		DenyClipboard:  func() { s.answerClipboard(false) },
 		CancelTransfer: func() { s.session.CancelTransfer() },
+		SetEncoding:    func(encoding domainterminal.Encoding) { s.setEncoding(encoding) },
+		Paste: func() {
+			if clipboardText != "" {
+				s.requestPaste(clipboardText)
+			}
+		},
+		ClearBuffer: func() { s.terminal.Feed([]byte("\x1b[3J")) },
+		AcceptPaste: func() {
+			s.gate.Accept()
+			s.redraw()
+		},
+		CancelPaste: func() {
+			s.gate.Cancel()
+			s.redraw()
+		},
+		DismissDrop: func() {
+			s.drops.Dismiss()
+			s.redraw()
+		},
+		SplitRight: s.paneActions.SplitRight,
+		SplitDown:  s.paneActions.SplitDown,
+		Detach:     s.paneActions.Detach,
+		ClosePane:  s.paneActions.Close,
 	}
 
 	return ui.Column(c).Fill().Children(func() {
 		renderChrome(c, model, m, t, actions)
-		terminal.View(c, s.terminal).Grow(1)
+		termView := terminal.View(c, s.terminal).Grow(1)
+		// File drag/drop belongs to the terminal element. Reading it here
+		// marks the terminal as the drop target and consumes a completed
+		// drop once; the resulting banner appears on the next frame.
+		if over := termView.FileDragOver(); over != s.dropOver {
+			s.dropOver = over
+			// Both entering and leaving change the banner, so redraw either
+			// way; otherwise the drop hint would stay after the pointer left.
+			s.redraw()
+		}
+		if files := termView.DroppedFiles(); len(files) > 0 {
+			s.dropOver = false
+			s.drops.Drop(files, s.windowsShell())
+			s.redraw()
+		}
 	})
+}
+
+// requestPaste applies the multiline paste policy and redraws when the paste
+// is waiting for confirmation.
+func (s *Surface) requestPaste(text string) {
+	if !s.gate.Request(text) {
+		s.redraw()
+	}
+}
+
+// setEncoding applies a live encoding change and reports it to the app for
+// persistence. The terminal keeps running; only the Session codec changes.
+func (s *Surface) setEncoding(encoding domainterminal.Encoding) {
+	if s.session.SetEncoding(encoding) && s.options.OnEncoding != nil {
+		s.options.OnEncoding(encoding)
+	}
+	s.redraw()
+}
+
+// SetPaneActions supplies the Pane commands the Session menu offers. The shell
+// calls it while rendering the Pane; a detached Pane clears them with the zero
+// value.
+func (s *Surface) SetPaneActions(actions PaneActions) { s.paneActions = actions }
+
+// windowsShell reports whether inserted drop paths should use the Windows
+// quoting dialect. Local Windows Sessions run a Windows shell; SSH Sessions are
+// POSIX shells regardless of where the client runs. Both cmd.exe and
+// PowerShell accept the double-quoted form, which avoids guessing which one
+// the local transport selected.
+func (s *Surface) windowsShell() bool {
+	return runtime.GOOS == "windows" && s.session.Snapshot().Kind == appsession.KindLocal
 }
 
 func (s *Surface) toggleLog() {
@@ -238,6 +391,8 @@ func (s *Surface) Close() {
 		if request != nil {
 			request.Deny()
 		}
+		s.gate.Cancel()
+		s.drops.Dismiss()
 		_ = s.terminal.Close()
 	})
 }

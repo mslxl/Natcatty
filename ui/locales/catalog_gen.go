@@ -4663,3 +4663,363 @@ func ComposeFailed() string { return In(i18n.Locale()).ComposeFailed() }
 func (msgs Messages) ComposeFailed() string {
 	return Catalog.Format(msgs.locale, "composeFailed", nil)
 }
+
+// SessionMenuLabel says "Session menu"
+// in the language the app shows.
+func SessionMenuLabel() string { return In(i18n.Locale()).SessionMenuLabel() }
+
+// SessionMenuLabel says "Session menu"
+// in the language of msgs.
+func (msgs Messages) SessionMenuLabel() string {
+	return Catalog.Format(msgs.locale, "sessionMenuLabel", nil)
+}
+
+// SessionMenuPaste says "Paste"
+// in the language the app shows.
+func SessionMenuPaste() string { return In(i18n.Locale()).SessionMenuPaste() }
+
+// SessionMenuPaste says "Paste"
+// in the language of msgs.
+func (msgs Messages) SessionMenuPaste() string {
+	return Catalog.Format(msgs.locale, "sessionMenuPaste", nil)
+}
+
+// SessionMenuClearBuffer says "Clear Buffer"
+// in the language the app shows.
+func SessionMenuClearBuffer() string { return In(i18n.Locale()).SessionMenuClearBuffer() }
+
+// SessionMenuClearBuffer says "Clear Buffer"
+// in the language of msgs.
+func (msgs Messages) SessionMenuClearBuffer() string {
+	return Catalog.Format(msgs.locale, "sessionMenuClearBuffer", nil)
+}
+
+// SessionMenuSplitRight says "Split Right"
+// in the language the app shows.
+func SessionMenuSplitRight() string { return In(i18n.Locale()).SessionMenuSplitRight() }
+
+// SessionMenuSplitRight says "Split Right"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSplitRight() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSplitRight", nil)
+}
+
+// SessionMenuSplitDown says "Split Down"
+// in the language the app shows.
+func SessionMenuSplitDown() string { return In(i18n.Locale()).SessionMenuSplitDown() }
+
+// SessionMenuSplitDown says "Split Down"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSplitDown() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSplitDown", nil)
+}
+
+// SessionMenuDetach says "Detach Pane"
+// in the language the app shows.
+func SessionMenuDetach() string { return In(i18n.Locale()).SessionMenuDetach() }
+
+// SessionMenuDetach says "Detach Pane"
+// in the language of msgs.
+func (msgs Messages) SessionMenuDetach() string {
+	return Catalog.Format(msgs.locale, "sessionMenuDetach", nil)
+}
+
+// SessionMenuClosePane says "Close Pane"
+// in the language the app shows.
+func SessionMenuClosePane() string { return In(i18n.Locale()).SessionMenuClosePane() }
+
+// SessionMenuClosePane says "Close Pane"
+// in the language of msgs.
+func (msgs Messages) SessionMenuClosePane() string {
+	return Catalog.Format(msgs.locale, "sessionMenuClosePane", nil)
+}
+
+// SessionMenuEncoding says "Encoding"
+// in the language the app shows.
+func SessionMenuEncoding() string { return In(i18n.Locale()).SessionMenuEncoding() }
+
+// SessionMenuEncoding says "Encoding"
+// in the language of msgs.
+func (msgs Messages) SessionMenuEncoding() string {
+	return Catalog.Format(msgs.locale, "sessionMenuEncoding", nil)
+}
+
+// SessionMenuLogging says "Logging"
+// in the language the app shows.
+func SessionMenuLogging() string { return In(i18n.Locale()).SessionMenuLogging() }
+
+// SessionMenuLogging says "Logging"
+// in the language of msgs.
+func (msgs Messages) SessionMenuLogging() string {
+	return Catalog.Format(msgs.locale, "sessionMenuLogging", nil)
+}
+
+// SessionMenuLogFormat says "Format"
+// in the language the app shows.
+func SessionMenuLogFormat() string { return In(i18n.Locale()).SessionMenuLogFormat() }
+
+// SessionMenuLogFormat says "Format"
+// in the language of msgs.
+func (msgs Messages) SessionMenuLogFormat() string {
+	return Catalog.Format(msgs.locale, "sessionMenuLogFormat", nil)
+}
+
+// SessionEncoding says "Encoding"
+// in the language the app shows.
+func SessionEncoding() string { return In(i18n.Locale()).SessionEncoding() }
+
+// SessionEncoding says "Encoding"
+// in the language of msgs.
+func (msgs Messages) SessionEncoding() string {
+	return Catalog.Format(msgs.locale, "sessionEncoding", nil)
+}
+
+// SessionEncodingUTF8 says "UTF-8"
+// in the language the app shows.
+func SessionEncodingUTF8() string { return In(i18n.Locale()).SessionEncodingUTF8() }
+
+// SessionEncodingUTF8 says "UTF-8"
+// in the language of msgs.
+func (msgs Messages) SessionEncodingUTF8() string {
+	return Catalog.Format(msgs.locale, "sessionEncodingUTF8", nil)
+}
+
+// SessionEncodingGB18030 says "GB18030"
+// in the language the app shows.
+func SessionEncodingGB18030() string { return In(i18n.Locale()).SessionEncodingGB18030() }
+
+// SessionEncodingGB18030 says "GB18030"
+// in the language of msgs.
+func (msgs Messages) SessionEncodingGB18030() string {
+	return Catalog.Format(msgs.locale, "sessionEncodingGB18030", nil)
+}
+
+// SessionEncodingShiftJIS says "Shift_JIS"
+// in the language the app shows.
+func SessionEncodingShiftJIS() string { return In(i18n.Locale()).SessionEncodingShiftJIS() }
+
+// SessionEncodingShiftJIS says "Shift_JIS"
+// in the language of msgs.
+func (msgs Messages) SessionEncodingShiftJIS() string {
+	return Catalog.Format(msgs.locale, "sessionEncodingShiftJIS", nil)
+}
+
+// SessionEncodingLatin1 says "ISO-8859-1"
+// in the language the app shows.
+func SessionEncodingLatin1() string { return In(i18n.Locale()).SessionEncodingLatin1() }
+
+// SessionEncodingLatin1 says "ISO-8859-1"
+// in the language of msgs.
+func (msgs Messages) SessionEncodingLatin1() string {
+	return Catalog.Format(msgs.locale, "sessionEncodingLatin1", nil)
+}
+
+// SessionPasteConfirmTitle says "Send {lines, plural, one {# line} other {# lines}}?"
+// in the language the app shows.
+//
+// A multiline paste is waiting; ask before sending it.
+func SessionPasteConfirmTitle(lines int) string {
+	return In(i18n.Locale()).SessionPasteConfirmTitle(lines)
+}
+
+// SessionPasteConfirmTitle says "Send {lines, plural, one {# line} other {# lines}}?"
+// in the language of msgs.
+//
+// A multiline paste is waiting; ask before sending it.
+func (msgs Messages) SessionPasteConfirmTitle(lines int) string {
+	return Catalog.Format(msgs.locale, "sessionPasteConfirmTitle", map[string]any{"lines": lines})
+}
+
+// SessionPasteConfirmBody says "Waiting to send {chars, plural, one {# character} other {# characters}}. Nothing is sent until you choose Send."
+// in the language the app shows.
+//
+// How much text the guarded paste holds.
+func SessionPasteConfirmBody(chars int) string {
+	return In(i18n.Locale()).SessionPasteConfirmBody(chars)
+}
+
+// SessionPasteConfirmBody says "Waiting to send {chars, plural, one {# character} other {# characters}}. Nothing is sent until you choose Send."
+// in the language of msgs.
+//
+// How much text the guarded paste holds.
+func (msgs Messages) SessionPasteConfirmBody(chars int) string {
+	return Catalog.Format(msgs.locale, "sessionPasteConfirmBody", map[string]any{"chars": chars})
+}
+
+// SessionPastePreviewLabel says "Preview"
+// in the language the app shows.
+func SessionPastePreviewLabel() string { return In(i18n.Locale()).SessionPastePreviewLabel() }
+
+// SessionPastePreviewLabel says "Preview"
+// in the language of msgs.
+func (msgs Messages) SessionPastePreviewLabel() string {
+	return Catalog.Format(msgs.locale, "sessionPastePreviewLabel", nil)
+}
+
+// SessionPasteSend says "Send"
+// in the language the app shows.
+func SessionPasteSend() string { return In(i18n.Locale()).SessionPasteSend() }
+
+// SessionPasteSend says "Send"
+// in the language of msgs.
+func (msgs Messages) SessionPasteSend() string {
+	return Catalog.Format(msgs.locale, "sessionPasteSend", nil)
+}
+
+// SessionPasteCancel says "Cancel"
+// in the language the app shows.
+func SessionPasteCancel() string { return In(i18n.Locale()).SessionPasteCancel() }
+
+// SessionPasteCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SessionPasteCancel() string {
+	return Catalog.Format(msgs.locale, "sessionPasteCancel", nil)
+}
+
+// SessionPasteTruncated says "Preview shortened. The full text will be sent."
+// in the language the app shows.
+func SessionPasteTruncated() string { return In(i18n.Locale()).SessionPasteTruncated() }
+
+// SessionPasteTruncated says "Preview shortened. The full text will be sent."
+// in the language of msgs.
+func (msgs Messages) SessionPasteTruncated() string {
+	return Catalog.Format(msgs.locale, "sessionPasteTruncated", nil)
+}
+
+// SessionDropActive says "Drop files here to {action}."
+// in the language the app shows.
+func SessionDropActive(action string) string { return In(i18n.Locale()).SessionDropActive(action) }
+
+// SessionDropActive says "Drop files here to {action}."
+// in the language of msgs.
+func (msgs Messages) SessionDropActive(action string) string {
+	return Catalog.Format(msgs.locale, "sessionDropActive", map[string]any{"action": action})
+}
+
+// SessionDropInsertAction says "insert quoted paths"
+// in the language the app shows.
+func SessionDropInsertAction() string { return In(i18n.Locale()).SessionDropInsertAction() }
+
+// SessionDropInsertAction says "insert quoted paths"
+// in the language of msgs.
+func (msgs Messages) SessionDropInsertAction() string {
+	return Catalog.Format(msgs.locale, "sessionDropInsertAction", nil)
+}
+
+// SessionDropUploadAction says "upload"
+// in the language the app shows.
+func SessionDropUploadAction() string { return In(i18n.Locale()).SessionDropUploadAction() }
+
+// SessionDropUploadAction says "upload"
+// in the language of msgs.
+func (msgs Messages) SessionDropUploadAction() string {
+	return Catalog.Format(msgs.locale, "sessionDropUploadAction", nil)
+}
+
+// SessionDropInserted says "Inserted {count, plural, one {# file path} other {# file paths}}."
+// in the language the app shows.
+//
+// How many dropped file paths were inserted.
+func SessionDropInserted(count int) string { return In(i18n.Locale()).SessionDropInserted(count) }
+
+// SessionDropInserted says "Inserted {count, plural, one {# file path} other {# file paths}}."
+// in the language of msgs.
+//
+// How many dropped file paths were inserted.
+func (msgs Messages) SessionDropInserted(count int) string {
+	return Catalog.Format(msgs.locale, "sessionDropInserted", map[string]any{"count": count})
+}
+
+// SessionDropUploaded says "Uploaded {count, plural, one {# file} other {# files}}."
+// in the language the app shows.
+//
+// How many dropped files were uploaded.
+func SessionDropUploaded(count int) string { return In(i18n.Locale()).SessionDropUploaded(count) }
+
+// SessionDropUploaded says "Uploaded {count, plural, one {# file} other {# files}}."
+// in the language of msgs.
+//
+// How many dropped files were uploaded.
+func (msgs Messages) SessionDropUploaded(count int) string {
+	return Catalog.Format(msgs.locale, "sessionDropUploaded", map[string]any{"count": count})
+}
+
+// SessionDropUnavailable says "Upload is not available for this Session. No files were changed."
+// in the language the app shows.
+func SessionDropUnavailable() string { return In(i18n.Locale()).SessionDropUnavailable() }
+
+// SessionDropUnavailable says "Upload is not available for this Session. No files were changed."
+// in the language of msgs.
+func (msgs Messages) SessionDropUnavailable() string {
+	return Catalog.Format(msgs.locale, "sessionDropUnavailable", nil)
+}
+
+// SessionDropFailed says "The upload failed. No files were changed."
+// in the language the app shows.
+func SessionDropFailed() string { return In(i18n.Locale()).SessionDropFailed() }
+
+// SessionDropFailed says "The upload failed. No files were changed."
+// in the language of msgs.
+func (msgs Messages) SessionDropFailed() string {
+	return Catalog.Format(msgs.locale, "sessionDropFailed", nil)
+}
+
+// SettingsTerminalEncoding says "Terminal encoding"
+// in the language the app shows.
+func SettingsTerminalEncoding() string { return In(i18n.Locale()).SettingsTerminalEncoding() }
+
+// SettingsTerminalEncoding says "Terminal encoding"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalEncoding() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalEncoding", nil)
+}
+
+// SettingsPasteProtection says "Confirm multi-line paste"
+// in the language the app shows.
+func SettingsPasteProtection() string { return In(i18n.Locale()).SettingsPasteProtection() }
+
+// SettingsPasteProtection says "Confirm multi-line paste"
+// in the language of msgs.
+func (msgs Messages) SettingsPasteProtection() string {
+	return Catalog.Format(msgs.locale, "settingsPasteProtection", nil)
+}
+
+// SettingsPasteMinLines says "Confirm at line count"
+// in the language the app shows.
+func SettingsPasteMinLines() string { return In(i18n.Locale()).SettingsPasteMinLines() }
+
+// SettingsPasteMinLines says "Confirm at line count"
+// in the language of msgs.
+func (msgs Messages) SettingsPasteMinLines() string {
+	return Catalog.Format(msgs.locale, "settingsPasteMinLines", nil)
+}
+
+// SettingsDropAction says "Dropped files"
+// in the language the app shows.
+func SettingsDropAction() string { return In(i18n.Locale()).SettingsDropAction() }
+
+// SettingsDropAction says "Dropped files"
+// in the language of msgs.
+func (msgs Messages) SettingsDropAction() string {
+	return Catalog.Format(msgs.locale, "settingsDropAction", nil)
+}
+
+// SettingsDropInsert says "Insert quoted paths"
+// in the language the app shows.
+func SettingsDropInsert() string { return In(i18n.Locale()).SettingsDropInsert() }
+
+// SettingsDropInsert says "Insert quoted paths"
+// in the language of msgs.
+func (msgs Messages) SettingsDropInsert() string {
+	return Catalog.Format(msgs.locale, "settingsDropInsert", nil)
+}
+
+// SettingsDropUpload says "Upload"
+// in the language the app shows.
+func SettingsDropUpload() string { return In(i18n.Locale()).SettingsDropUpload() }
+
+// SettingsDropUpload says "Upload"
+// in the language of msgs.
+func (msgs Messages) SettingsDropUpload() string {
+	return Catalog.Format(msgs.locale, "settingsDropUpload", nil)
+}

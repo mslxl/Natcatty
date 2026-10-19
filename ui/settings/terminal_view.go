@@ -64,6 +64,57 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			}
 		})
 
+		ui.Text(c, m.SettingsTerminalEncoding()).Bold()
+		encodingLabels := make([]string, 0, len(domainterminal.SupportedEncodings()))
+		encodings := domainterminal.SupportedEncodings()
+		for _, encoding := range encodings {
+			encodingLabels = append(encodingLabels, locales.EncodingLabel(m, encoding))
+		}
+		encodingLabel := locales.EncodingLabel(m, settings.Encoding)
+		ui.Field(c, m.SettingsTerminalEncoding(), func() {
+			if ui.Select(c, &encodingLabel, encodingLabels).Width(160).Changed() {
+				for index, label := range encodingLabels {
+					if label == encodingLabel {
+						state.SetEncoding(encodings[index])
+						break
+					}
+				}
+				c.Invalidate()
+			}
+		})
+
+		ui.Text(c, m.SettingsPasteProtection()).Bold()
+		protection := settings.PasteProtection
+		if ui.Checkbox(c, &protection, m.SettingsPasteProtection()).Changed() {
+			state.SetPasteProtection(protection)
+			c.Invalidate()
+		}
+		minLines := float64(domainterminal.NormalizePasteMinLines(settings.PasteMinLines))
+		ui.Field(c, m.SettingsPasteMinLines(), func() {
+			if ui.NumberInput(c, &minLines, 1, 1000, 1).Width(96).Changed() {
+				state.SetPasteMinLines(int(minLines))
+				c.Invalidate()
+			}
+		})
+
+		dropLabels := []string{m.SettingsDropInsert(), m.SettingsDropUpload()}
+		dropActions := []domainterminal.DropAction{domainterminal.DropInsert, domainterminal.DropUpload}
+		dropLabel := dropLabels[0]
+		if settings.DropAction == domainterminal.DropUpload {
+			dropLabel = dropLabels[1]
+		}
+		ui.Field(c, m.SettingsDropAction(), func() {
+			if ui.Select(c, &dropLabel, dropLabels).Width(180).Changed() {
+				for index, label := range dropLabels {
+					if label == dropLabel {
+						state.SetDropAction(dropActions[index])
+						break
+					}
+				}
+				c.Invalidate()
+			}
+		})
+
 		if state.Problem() {
 			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(t.Danger).FontSize(12)
 		}
