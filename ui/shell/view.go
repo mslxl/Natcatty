@@ -11,6 +11,10 @@ import (
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
+// sidebarWidth is the fixed width of the Vault navigation column. The content
+// column takes the rest of the window.
+const sidebarWidth float32 = 232
+
 // View returns the main window's shell: the fixed Vault navigation, the
 // Settings entry point, the five-language selector, and the ordered work tabs.
 func View(s *state.State) func(*ui.Context) {
@@ -37,7 +41,10 @@ func View(s *state.State) func(*ui.Context) {
 }
 
 func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Width(232).Fill().Padding(16).Gap(8).Background(t.Surface).Children(func() {
+	// FillHeight, not Fill: the sidebar shares the window's row with the
+	// content, and Fill would set its width to the whole window and push the
+	// content past the right edge.
+	ui.Column(c).Width(sidebarWidth).FillHeight().Padding(16).Gap(8).Background(t.Surface).Children(func() {
 		ui.Text(c, m.AppName()).FontSize(20).Bold()
 
 		// Vault is the main window's root surface. SFTP joins it in a later
@@ -67,7 +74,9 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 }
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Grow(1).Fill().Padding(16).Gap(12).Children(func() {
+	// Grow takes the width the sidebar leaves; Fill would ask for the whole
+	// window again and clip the tab strip and Panes at the right edge.
+	ui.Column(c).Grow(1).FillHeight().Padding(16).Gap(12).Children(func() {
 		for _, label := range s.PendingConnections() {
 			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
 		}
