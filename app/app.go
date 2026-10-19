@@ -18,11 +18,13 @@ import (
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/command"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
+	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
@@ -140,6 +142,20 @@ func run(afterReady func(*mygo.Window)) error {
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
 	routes := vaultRoutes{vault: vaultService}
+
+	// Port Forwarding Rules reuse the same Vault routes and connection pool as
+	// a Session. Runtime state is owned by this manager and never persisted.
+	forwardingManager := appforwarding.NewManager(database, forwardingConnector{
+		vault:       vaultService,
+		routes:      routes,
+		connections: connections,
+	})
+	forwardingState := uiforwarding.NewState(
+		forwardingManager,
+		vaultService,
+		uiforwarding.WithRedrawRequest(invalidate),
+	)
+
 	var shellState *state.State
 	vaultState := vaultstate.NewState(
 		vaultService,
@@ -157,6 +173,9 @@ func run(afterReady func(*mygo.Window)) error {
 		}),
 	)
 	_ = vaultState.Reload()
+	// A malformed stored rule is dropped by the repository; a read failure
+	// leaves the section empty and shows its localized internal problem.
+	_ = forwardingState.Reload()
 
 	sessions := appsession.NewService(newTransportFactory(
 		localpty.Factory{}, connections, routes,
@@ -176,7 +195,7 @@ func run(afterReady func(*mygo.Window)) error {
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return sessionui.New(s)
 		}),
-		state.WithVault(vaultui.View(vaultState)),
+		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
 	)
@@ -185,6 +204,7 @@ func run(afterReady func(*mygo.Window)) error {
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		closeForwarding(forwardingManager, forwardingState)
 		shellState.Shutdown()
 		sessions.CloseAll()
 		connections.CloseAll()
@@ -192,6 +212,8 @@ func run(afterReady func(*mygo.Window)) error {
 
 	mygo.App.WhenReady(func() {
 		mygo.App.SetMenu(BuildMenu(registry, mygo.App.Locale()))
+		// Start is asynchronous, so launch never waits on a network handshake.
+		forwardingManager.AutoStart(context.Background())
 
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     locales.In(mygo.App.Locale()).AppName(),
@@ -212,6 +234,7 @@ func run(afterReady func(*mygo.Window)) error {
 			win.Invalidate()
 		})
 		win.OnClosed(func() {
+			closeForwarding(forwardingManager, forwardingState)
 			shellState.Shutdown()
 			sessions.CloseAll()
 			connections.CloseAll()
