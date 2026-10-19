@@ -26,9 +26,10 @@ type HostRepository interface {
 
 // Service implements the Vault use cases.
 type Service struct {
-	repo  HostRepository
-	newID func() model.HostID
-	now   func() time.Time
+	repo    HostRepository
+	secrets FieldSecrets
+	newID   func() model.HostID
+	now     func() time.Time
 }
 
 // Option customizes a Service.
@@ -52,6 +53,13 @@ func WithClock(fn func() time.Time) Option {
 			s.now = fn
 		}
 	}
+}
+
+// WithSecrets gives the Service the field-secret store that encrypts Host
+// credentials. Without it, a draft that carries a password is refused rather
+// than written in plaintext.
+func WithSecrets(secrets FieldSecrets) Option {
+	return func(s *Service) { s.secrets = secrets }
 }
 
 // NewService returns a Service that persists Hosts through repo.
@@ -94,7 +102,16 @@ func (s *Service) Create(ctx context.Context, draft domainvault.Draft) (domainva
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, normalized)
+	if err := s.persistPassword(ctx, host.ID, normalized.Password); err != nil {
+		return domainvault.Host{}, err
+	}
+	// Session-only credentials are deliberately forgotten on restart, so the
+	// Host record must not claim a persisted password.
+	host.HasPassword = normalized.Password != "" && s.SecretMode() != SecretModeSession
 	if err := s.repo.Save(ctx, host); err != nil {
+		if host.HasPassword {
+			_ = s.secrets.Delete(ctx, HostSecretRef(host.ID, FieldPassword))
+		}
 		return domainvault.Host{}, internal(err)
 	}
 	return host, nil
@@ -127,6 +144,38 @@ func (s *Service) Update(ctx context.Context, id model.HostID, draft domainvault
 	updated := applyDraft(existing, normalized)
 	updated.UpdatedAt = s.now()
 
+	if normalized.Password != "" {
+		if s.secrets == nil {
+			return domainvault.Host{}, unsupported(ErrSecretsUnavailable)
+		}
+		ref := HostSecretRef(updated.ID, FieldPassword)
+		previous, previousErr := s.secrets.Get(ctx, ref)
+		switch {
+		case previousErr == nil:
+			// Keep the old plaintext only long enough to roll back a failed
+			// Host save.
+		case errors.Is(previousErr, ErrSecretNotFound):
+			previous = ""
+		default:
+			// Never overwrite ciphertext that cannot be read.
+			return domainvault.Host{}, secretError(previousErr)
+		}
+		if err := s.persistPassword(ctx, updated.ID, normalized.Password); err != nil {
+			return domainvault.Host{}, err
+		}
+		if s.SecretMode() != SecretModeSession {
+			updated.HasPassword = true
+		}
+		if err := s.repo.Save(ctx, updated); err != nil {
+			if previousErr == nil {
+				_ = s.secrets.Set(ctx, ref, previous)
+			} else {
+				_ = s.secrets.Delete(ctx, ref)
+			}
+			return domainvault.Host{}, internal(err)
+		}
+		return updated, nil
+	}
 	if err := s.repo.Save(ctx, updated); err != nil {
 		return domainvault.Host{}, internal(err)
 	}
@@ -141,6 +190,29 @@ func (s *Service) Delete(ctx context.Context, id model.HostID) error {
 	}
 	if err != nil {
 		return internal(err)
+	}
+	// Remove the Host's credentials best-effort. A locked or unavailable
+	// secret store leaves an orphan ciphertext, never plaintext, and must
+	// not block deleting the Host.
+	if s.secrets != nil {
+		for _, field := range []string{FieldPassword, FieldPassphrase} {
+			_ = s.secrets.Delete(ctx, HostSecretRef(id, field))
+		}
+	}
+	return nil
+}
+
+// persistPassword encrypts a draft's password into the field-secret store.
+// An empty password means "leave the stored credential as it is".
+func (s *Service) persistPassword(ctx context.Context, id model.HostID, password string) error {
+	if password == "" {
+		return nil
+	}
+	if s.secrets == nil {
+		return unsupported(ErrSecretsUnavailable)
+	}
+	if err := s.secrets.Set(ctx, HostSecretRef(id, FieldPassword), password); err != nil {
+		return secretError(err)
 	}
 	return nil
 }

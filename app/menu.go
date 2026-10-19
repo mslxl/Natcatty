@@ -41,6 +41,11 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			Accelerator: "CmdOrCtrl+W",
 			Click:       dispatch(command.CloseTab),
 		},
+		{
+			ID:    "menu.lockApp",
+			Label: m.MenuLockApp(),
+			Click: dispatch(command.LockApp),
+		},
 	}
 	if runtime.GOOS != "darwin" {
 		// macOS keeps Quit in its standard application menu, whose role

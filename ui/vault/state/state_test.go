@@ -307,3 +307,184 @@ func TestStorageFailureProducesTheInternalProblem(t *testing.T) {
 		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemInternal)
 	}
 }
+
+type fakeSecrets struct {
+	mode       appvault.SecretMode
+	setErr     error
+	unlockErr  error
+	sessionErr error
+	passphrase string
+}
+
+func (f *fakeSecrets) SecretMode() appvault.SecretMode { return f.mode }
+
+func (f *fakeSecrets) SetSecretsPassphrase(_ context.Context, passphrase string) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.passphrase = passphrase
+	f.mode = appvault.SecretModePassphrase
+	return nil
+}
+
+func (f *fakeSecrets) UnlockSecrets(_ context.Context, passphrase string) error {
+	if f.unlockErr != nil {
+		return f.unlockErr
+	}
+	f.passphrase = passphrase
+	f.mode = appvault.SecretModePassphrase
+	return nil
+}
+
+func (f *fakeSecrets) UseSessionSecrets(context.Context) error {
+	if f.sessionErr != nil {
+		return f.sessionErr
+	}
+	f.mode = appvault.SecretModeSession
+	return nil
+}
+
+func newStateWithSecrets(t *testing.T, repo *fakeHosts, secrets Secrets) *State {
+	t.Helper()
+	return NewState(repo, WithSecrets(secrets), WithRedrawRequest(func() {}))
+}
+
+func TestSaveSubmitsThePasswordAndClearsTheForm(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	state.Form().Hostname = "example.com"
+	state.Form().Password = "hunter2"
+
+	if err := state.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.created) != 1 || repo.created[0].Password != "hunter2" {
+		t.Fatalf("created drafts = %+v, want the password", repo.created)
+	}
+	if state.Editing() {
+		t.Fatal("the editor stayed open")
+	}
+}
+
+func TestEditNeverLoadsTheStoredPasswordIntoTheForm(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, HasPassword: true,
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit returned false")
+	}
+	if state.Form().Password != "" {
+		t.Fatalf("form password = %q, want empty", state.Form().Password)
+	}
+	if !state.Form().HasPassword {
+		t.Error("the form does not know that a password is stored")
+	}
+}
+
+func TestPassphraseSetupValidatesAndChangesTheMode(t *testing.T) {
+	secrets := &fakeSecrets{mode: appvault.SecretModeUnavailable}
+	state := newStateWithSecrets(t, &fakeHosts{}, secrets)
+
+	*state.SecretPassphrase() = ""
+	if state.SetSecretPassphrase() {
+		t.Fatal("an empty passphrase was accepted")
+	}
+	if state.SecretProblem() != ProblemSecretPassphraseRequired {
+		t.Fatalf("problem = %q, want %q", state.SecretProblem(), ProblemSecretPassphraseRequired)
+	}
+
+	*state.SecretPassphrase() = "one"
+	*state.SecretConfirmation() = "two"
+	if state.SetSecretPassphrase() {
+		t.Fatal("mismatched passphrases were accepted")
+	}
+	if state.SecretProblem() != ProblemSecretPassphraseMismatch {
+		t.Fatalf("problem = %q, want %q", state.SecretProblem(), ProblemSecretPassphraseMismatch)
+	}
+
+	*state.SecretPassphrase() = "pass"
+	*state.SecretConfirmation() = "pass"
+	if !state.SetSecretPassphrase() {
+		t.Fatalf("SetSecretPassphrase failed: %q", state.SecretProblem())
+	}
+	if secrets.passphrase != "pass" || secrets.mode != appvault.SecretModePassphrase {
+		t.Fatalf("secrets = %+v, want passphrase mode", secrets)
+	}
+	if *state.SecretPassphrase() != "" || state.SecretProblem() != ProblemNone {
+		t.Fatal("a successful setup left input or a problem behind")
+	}
+}
+
+func TestUnlockSecretsReportsAWrongPassphrase(t *testing.T) {
+	secrets := &fakeSecrets{mode: appvault.SecretModePassphraseLocked, unlockErr: &appvault.Error{Kind: appvault.KindPermission}}
+	state := newStateWithSecrets(t, &fakeHosts{}, secrets)
+	*state.SecretPassphrase() = "wrong"
+
+	if state.UnlockSecrets() {
+		t.Fatal("a wrong passphrase unlocked the store")
+	}
+	if state.SecretProblem() != ProblemSecretWrongPassphrase {
+		t.Fatalf("problem = %q, want %q", state.SecretProblem(), ProblemSecretWrongPassphrase)
+	}
+}
+
+func TestUseSessionSecretsChangesTheMode(t *testing.T) {
+	secrets := &fakeSecrets{mode: appvault.SecretModeUnavailable}
+	state := newStateWithSecrets(t, &fakeHosts{}, secrets)
+	if !state.UseSessionSecrets() {
+		t.Fatalf("UseSessionSecrets failed: %q", state.SecretProblem())
+	}
+	if secrets.mode != appvault.SecretModeSession {
+		t.Fatalf("mode = %q, want session", secrets.mode)
+	}
+}
+
+func TestSecretServiceErrorsMapToProblems(t *testing.T) {
+	tests := []struct {
+		kind appvault.Kind
+		want Problem
+	}{
+		{appvault.KindPermission, ProblemSecretsLocked},
+		{appvault.KindUnsupported, ProblemSecretsUnavailable},
+	}
+	for _, test := range tests {
+		repo := &fakeHosts{err: &appvault.Error{Kind: test.kind}}
+		state, _ := newTestState(t, repo)
+		state.BeginCreate()
+		state.Form().Hostname = "example.com"
+		state.Form().Password = "hunter2"
+		if err := state.Save(); err != nil {
+			t.Fatal(err)
+		}
+		if state.Problem() != test.want {
+			t.Errorf("kind %q mapped to %q, want %q", test.kind, state.Problem(), test.want)
+		}
+	}
+}
+
+func TestUnreadableSecretMapsToItsOwnProblem(t *testing.T) {
+	repo := &fakeHosts{err: &appvault.Error{Kind: appvault.KindInternal, Cause: appvault.ErrSecretUnreadable}}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	state.Form().Hostname = "example.com"
+	state.Form().Password = "hunter2"
+	if err := state.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if state.Problem() != ProblemSecretUnreadable {
+		t.Fatalf("problem = %q, want %q", state.Problem(), ProblemSecretUnreadable)
+	}
+}
+
+func TestSecretModeWithoutASeamIsOS(t *testing.T) {
+	state, _ := newTestState(t, &fakeHosts{})
+	if state.SecretMode() != appvault.SecretModeOS {
+		t.Fatalf("SecretMode = %q, want os", state.SecretMode())
+	}
+}

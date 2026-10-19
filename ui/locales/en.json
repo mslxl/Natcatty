@@ -15,14 +15,20 @@
   "@tabTitle": {
     "description": "The title of a work tab, numbered from 1.",
     "placeholders": {
-      "number": { "type": "int", "example": "1" }
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
     }
   },
   "localSessionTab": "Local Session {number}",
   "@localSessionTab": {
     "description": "The title of a Tab that hosts a local shell Session.",
     "placeholders": {
-      "number": { "type": "int", "example": "1" }
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
     }
   },
   "sessionRunning": "Running",
@@ -31,7 +37,10 @@
   "@sessionExitedWithCode": {
     "description": "The status of a Session whose program ended with an exit code.",
     "placeholders": {
-      "code": { "type": "int", "example": "0" }
+      "code": {
+        "type": "int",
+        "example": "0"
+      }
     }
   },
   "sessionClosed": "Closed",
@@ -40,7 +49,10 @@
   "@vaultHostListTitle": {
     "description": "The Vault's Host list heading and its Host count.",
     "placeholders": {
-      "count": { "type": "int", "example": "3" }
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "vaultHostNew": "New Host",
@@ -65,12 +77,15 @@
   "vaultHostTagsHint": "Separate tags with commas.",
   "vaultHostNotes": "Notes",
   "vaultHostPinned": "Pin this Host",
-  "vaultHostCredentialsNote": "Credentials are not saved until encrypted storage is available.",
+  "vaultHostCredentialsNote": "Passwords are encrypted before they are saved.",
   "vaultHostDeleteConfirm": "Delete Host “{label}”? This cannot be undone.",
   "@vaultHostDeleteConfirm": {
     "description": "The delete confirmation naming the Host about to be removed.",
     "placeholders": {
-      "label": { "type": "String", "example": "web-1" }
+      "label": {
+        "type": "String",
+        "example": "web-1"
+      }
     }
   },
   "vaultHostDeleteConfirmUnknown": "Delete this Host? This cannot be undone.",
@@ -87,5 +102,61 @@
   "vaultProblemNotes": "The notes are too long.",
   "vaultProblemDuplicate": "A Host with this address already exists in the Vault.",
   "vaultProblemNotFound": "That Host no longer exists.",
-  "vaultProblemInternal": "The Vault could not be updated."
+  "vaultProblemInternal": "The Vault could not be updated.",
+  "vaultHostPassword": "Password",
+  "vaultHostPasswordStored": "Password stored",
+  "vaultHostPasswordKeep": "A password is stored. Leave blank to keep it.",
+  "vaultHostPasswordHint": "Stored encrypted and never shown again.",
+  "vaultProblemSecretField": "The password could not be stored.",
+  "vaultProblemSecretsUnavailable": "Encrypted storage is unavailable. Choose how to protect credentials.",
+  "vaultProblemSecretsLocked": "Unlock encrypted storage to save credentials.",
+  "vaultProblemSecretWrongPassphrase": "That passphrase did not unlock your credentials.",
+  "vaultProblemSecretPassphraseRequired": "Enter a passphrase.",
+  "vaultProblemSecretPassphraseMismatch": "The passphrases do not match.",
+  "vaultProblemSecretUnreadable": "A stored credential could not be read.",
+  "vaultProblemSecretSetupFailed": "Encrypted storage could not be set up.",
+  "vaultSecretSetupTitle": "Protect your credentials",
+  "vaultSecretSetupBody": "This system has no credential store. Choose a passphrase (recommended) or keep credentials only for this session.",
+  "vaultSecretPassphrase": "Passphrase",
+  "vaultSecretConfirm": "Confirm passphrase",
+  "vaultSecretUsePassphrase": "Use a passphrase",
+  "vaultSecretUseSession": "Session only",
+  "vaultSecretSessionNote": "Credentials will be forgotten when Natcatty quits.",
+  "vaultSecretLockedTitle": "Encrypted storage is locked",
+  "vaultSecretLockedBody": "Enter your passphrase to read and save credentials.",
+  "vaultSecretUnlock": "Unlock",
+  "settingsAppLockTitle": "App Lock",
+  "settingsAppLockDescription": "Require a password when Natcatty starts, after it is idle, or when you lock it.",
+  "settingsAppLockEnabled": "App Lock is on",
+  "settingsAppLockDisabled": "App Lock is off",
+  "settingsAppLockPassword": "Password",
+  "settingsAppLockConfirm": "Confirm password",
+  "settingsAppLockCurrentPassword": "Current password",
+  "settingsAppLockEnable": "Turn on App Lock",
+  "settingsAppLockDisable": "Turn off App Lock",
+  "settingsAppLockTimeout": "Lock after idle",
+  "settingsAppLockTimeoutNever": "Never",
+  "settingsAppLockTimeoutMinutes": "{minutes} min",
+  "settingsAppLockLockNow": "Lock Now",
+  "settingsAppLockProblemEmpty": "Enter a password.",
+  "settingsAppLockProblemMismatch": "The passwords do not match.",
+  "settingsAppLockProblemIncorrect": "That password is incorrect.",
+  "settingsAppLockProblemFailed": "App Lock could not be updated.",
+  "appLockTitle": "Natcatty is locked",
+  "appLockBody": "Enter your password to continue.",
+  "appLockPassword": "Password",
+  "appLockUnlock": "Unlock",
+  "appLockProblemIncorrect": "That password is incorrect.",
+  "appLockProblemEmpty": "Enter your password.",
+  "menuLockApp": "Lock Now",
+  "@settingsAppLockTimeoutMinutes": {
+    "description": "An App Lock idle timeout choice, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "appLockProblemFailed": "The app could not be unlocked."
 }

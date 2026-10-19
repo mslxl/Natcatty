@@ -5,6 +5,7 @@ package command
 // palette name the same actions.
 const (
 	Quit     ID = "app.quit"
+	LockApp  ID = "app.lock"
 	NewTab   ID = "tab.new"
 	CloseTab ID = "tab.close"
 )

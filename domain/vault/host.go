@@ -40,8 +40,9 @@ const (
 )
 
 // Host is one saved target in the Vault. Credential material is deliberately
-// absent: ticket 04 adds encrypted secret storage, and this version never
-// writes a plaintext password to disk.
+// absent: the Vault application encrypts a submitted password into the
+// field-secret store, and the Host carries only the non-secret HasPassword
+// flag. Nothing on this struct is ever credential plaintext.
 type Host struct {
 	ID       model.HostID `json:"id"`
 	Label    string       `json:"label"`
@@ -56,6 +57,9 @@ type Host struct {
 	Tags   []string `json:"tags"`
 	Notes  string   `json:"notes,omitempty"`
 	Pinned bool     `json:"pinned"`
+	// HasPassword reports that an encrypted password exists for this Host.
+	// The ciphertext lives in secret_values, never in this record.
+	HasPassword bool `json:"hasPassword,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -74,6 +78,10 @@ type Draft struct {
 	Tags     []string
 	Notes    string
 	Pinned   bool
+	// Password is plaintext form input. The Vault application encrypts it
+	// into the field-secret store; it is never copied onto Host or written
+	// to the JSON tail. An empty value on Update keeps the stored password.
+	Password string
 }
 
 // Field names the part of a Host a validation error concerns.
