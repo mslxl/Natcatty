@@ -624,6 +624,26 @@ func (msgs Messages) VaultProblemProtocol() string {
 	return Catalog.Format(msgs.locale, "vaultProblemProtocol", nil)
 }
 
+// VaultProblemX11 says "X11 forwarding is available only for SSH Hosts."
+// in the language the app shows.
+func VaultProblemX11() string { return In(i18n.Locale()).VaultProblemX11() }
+
+// VaultProblemX11 says "X11 forwarding is available only for SSH Hosts."
+// in the language of msgs.
+func (msgs Messages) VaultProblemX11() string {
+	return Catalog.Format(msgs.locale, "vaultProblemX11", nil)
+}
+
+// VaultProblemX11Acknowledged says "Acknowledge the X11 security warning before enabling forwarding."
+// in the language the app shows.
+func VaultProblemX11Acknowledged() string { return In(i18n.Locale()).VaultProblemX11Acknowledged() }
+
+// VaultProblemX11Acknowledged says "Acknowledge the X11 security warning before enabling forwarding."
+// in the language of msgs.
+func (msgs Messages) VaultProblemX11Acknowledged() string {
+	return Catalog.Format(msgs.locale, "vaultProblemX11Acknowledged", nil)
+}
+
 // VaultProblemUsername says "The username is invalid."
 // in the language the app shows.
 func VaultProblemUsername() string { return In(i18n.Locale()).VaultProblemUsername() }
@@ -1294,6 +1314,66 @@ func (msgs Messages) ConnectionErrorInternal() string {
 	return Catalog.Format(msgs.locale, "connectionErrorInternal", nil)
 }
 
+// ConnectionErrorX11 says "X11 forwarding could not be started. Make sure the Host allows X11 forwarding and xauth is installed."
+// in the language the app shows.
+func ConnectionErrorX11() string { return In(i18n.Locale()).ConnectionErrorX11() }
+
+// ConnectionErrorX11 says "X11 forwarding could not be started. Make sure the Host allows X11 forwarding and xauth is installed."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorX11() string {
+	return Catalog.Format(msgs.locale, "connectionErrorX11", nil)
+}
+
+// ConnectionX11DisplayUnavailable says "X11 forwarding could not reach the local display at {target}. Start an X server or check the DISPLAY setting."
+// in the language the app shows.
+//
+// A non-fatal X11 forwarding notice: the local X server could not be
+// reached.
+func ConnectionX11DisplayUnavailable(target string) string {
+	return In(i18n.Locale()).ConnectionX11DisplayUnavailable(target)
+}
+
+// ConnectionX11DisplayUnavailable says "X11 forwarding could not reach the local display at {target}. Start an X server or check the DISPLAY setting."
+// in the language of msgs.
+//
+// A non-fatal X11 forwarding notice: the local X server could not be
+// reached.
+func (msgs Messages) ConnectionX11DisplayUnavailable(target string) string {
+	return Catalog.Format(msgs.locale, "connectionX11DisplayUnavailable", map[string]any{"target": target})
+}
+
+// ConnectionX11ChannelFailed says "X11 forwarding could not open a channel for the local display at {target}."
+// in the language the app shows.
+//
+// A non-fatal X11 forwarding notice: an X11 channel could not be opened.
+func ConnectionX11ChannelFailed(target string) string {
+	return In(i18n.Locale()).ConnectionX11ChannelFailed(target)
+}
+
+// ConnectionX11ChannelFailed says "X11 forwarding could not open a channel for the local display at {target}."
+// in the language of msgs.
+//
+// A non-fatal X11 forwarding notice: an X11 channel could not be opened.
+func (msgs Messages) ConnectionX11ChannelFailed(target string) string {
+	return Catalog.Format(msgs.locale, "connectionX11ChannelFailed", map[string]any{"target": target})
+}
+
+// ConnectionX11CookieUnavailable says "X11 forwarding could not read a local xauth cookie for {target}. Run xauth add for the display, or configure it to al…"
+// in the language the app shows.
+//
+// A non-fatal X11 forwarding notice: no local xauth cookie was available.
+func ConnectionX11CookieUnavailable(target string) string {
+	return In(i18n.Locale()).ConnectionX11CookieUnavailable(target)
+}
+
+// ConnectionX11CookieUnavailable says "X11 forwarding could not read a local xauth cookie for {target}. Run xauth add for the display, or configure it to al…"
+// in the language of msgs.
+//
+// A non-fatal X11 forwarding notice: no local xauth cookie was available.
+func (msgs Messages) ConnectionX11CookieUnavailable(target string) string {
+	return Catalog.Format(msgs.locale, "connectionX11CookieUnavailable", map[string]any{"target": target})
+}
+
 // HostKeyPromptUnknownTitle says "Unknown host key"
 // in the language the app shows.
 func HostKeyPromptUnknownTitle() string { return In(i18n.Locale()).HostKeyPromptUnknownTitle() }
@@ -1960,6 +2040,36 @@ func VaultHostRequiresMFA() string { return In(i18n.Locale()).VaultHostRequiresM
 // in the language of msgs.
 func (msgs Messages) VaultHostRequiresMFA() string {
 	return Catalog.Format(msgs.locale, "vaultHostRequiresMFA", nil)
+}
+
+// VaultHostX11Forwarding says "Enable X11 forwarding"
+// in the language the app shows.
+func VaultHostX11Forwarding() string { return In(i18n.Locale()).VaultHostX11Forwarding() }
+
+// VaultHostX11Forwarding says "Enable X11 forwarding"
+// in the language of msgs.
+func (msgs Messages) VaultHostX11Forwarding() string {
+	return Catalog.Format(msgs.locale, "vaultHostX11Forwarding", nil)
+}
+
+// VaultHostX11Warning says "X11 forwarding lets programs on the remote Host access your local X server. Only enable it for Hosts you trust."
+// in the language the app shows.
+func VaultHostX11Warning() string { return In(i18n.Locale()).VaultHostX11Warning() }
+
+// VaultHostX11Warning says "X11 forwarding lets programs on the remote Host access your local X server. Only enable it for Hosts you trust."
+// in the language of msgs.
+func (msgs Messages) VaultHostX11Warning() string {
+	return Catalog.Format(msgs.locale, "vaultHostX11Warning", nil)
+}
+
+// VaultHostX11Acknowledge says "I understand the security risk and want to enable X11 forwarding."
+// in the language the app shows.
+func VaultHostX11Acknowledge() string { return In(i18n.Locale()).VaultHostX11Acknowledge() }
+
+// VaultHostX11Acknowledge says "I understand the security risk and want to enable X11 forwarding."
+// in the language of msgs.
+func (msgs Messages) VaultHostX11Acknowledge() string {
+	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
 }
 
 // VaultProblemKeyRequired says "Select an SSH Key."

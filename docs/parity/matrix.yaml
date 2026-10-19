@@ -877,6 +877,67 @@
   status: verified
   notes: "EADDRINUSE, EACCES, EADDRNOTAVAIL, and a denied remote tcpip-forward are permanent failures. Authentication and host-key failures are permanent too; a network or timeout failure is retried."
 
+# --- Ticket 11: X11 forwarding ---
+
+- id: x11.host-setting
+  area: terminal
+  feature: Enable X11 forwarding per Host only after an explicit security acknowledgement
+  original_paths:
+    - domain/models/connection.ts
+    - application/i18n/locales/en/vault.ts
+    - application/state/useHostOpenSessionReuse.ts
+  module: ui/vault/state
+  tickets: [11]
+  acceptance_tests:
+    - domain/vault.TestNormalizeDraftRequiresTheX11WarningAcknowledgement
+    - domain/vault.TestNormalizeDraftDisablingX11DropsTheAcknowledgement
+    - domain/vault.TestNormalizeDraftRejectsX11OutsideSSH
+    - domain/vault.TestHostX11EnabledNeedsBothPreferenceAndAcknowledgement
+    - ui/vault/state.TestX11ForwardingIsOffByDefaultAndNeedsTheWarningAcknowledgement
+    - ui/vault/state.TestDisablingX11ClearsTheAcknowledgement
+    - ui/vault/state.TestX11IsRejectedOutsideSSH
+    - ui/vault/state.TestEditingAnotherFieldPreservesEnabledX11
+    - ui/vault.TestVaultViewShowsTheX11WarningOnlyAfterEnablingForSSH
+    - ui/shell/state.TestOpenHostCarriesTheAcknowledgedX11Preference
+  status: verified
+  notes: "X11 is off by default. A Host validates only when both the preference and its acknowledgement are set; clearing the preference clears the acknowledgement, and X11 is SSH-only."
+
+- id: x11.forwarding-runtime
+  area: terminal
+  feature: Forward X11 channels to the local display with a rewritten MIT-MAGIC-COOKIE-1
+  original_paths:
+    - electron/bridges/x11Forwarding.cjs
+    - electron/bridges/x11Forwarding.test.cjs
+  module: adapters/ssh
+  tickets: [11]
+  acceptance_tests:
+    - adapters/ssh.TestX11ForwardsACookieRewrittenChannel
+    - adapters/ssh.TestX11RequestDeniedFailsTheShell
+    - adapters/ssh.TestX11LocalDisplayFailureReportsANotice
+    - adapters/ssh.TestX11WithoutALocalCookieReportsANoticeAndStillProxies
+    - adapters/ssh.TestX11ChannelSetupFailureReportsANotice
+    - adapters/ssh.TestX11ChannelTeardownClosesTheLocalDisplay
+    - adapters/ssh.TestRewriteX11AuthSetupPacket
+    - platform/xauth.TestResolveMapsUnixDisplays
+    - platform/xauth.TestParseCookieSelectsTheRequestedDisplay
+    - platform/xauth.TestParseCookieMatchesSocketPaths
+    - app.TestX11SessionsPassTheDisplayAndReportNotices
+  status: verified
+  notes: "The adapter sends x11-req with a random fake cookie, resolves the display by the original TCP/Unix-socket rules, reads the local cookie through xauth, and rewrites only a matching MIT-MAGIC-COOKIE-1 setup packet. A refused x11-req fails the shell; a dead local display rejects the channel and reports a non-fatal notice."
+
+- id: x11.pool-exclusion
+  area: terminal
+  feature: Never reuse an X11 Connection across Sessions
+  original_paths:
+    - electron/bridges/x11Forwarding.cjs
+    - application/state/useHostOpenSessionReuse.ts
+  module: application/connection
+  tickets: [11]
+  acceptance_tests:
+    - application/connection.TestAcquireNeverPoolsX11Connections
+  status: verified
+  notes: "An X11 request marks the endpoint no-reuse. It is neither parked nor joined as a pending dial and serves only its own first lease; the transport closes when that lease is released."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

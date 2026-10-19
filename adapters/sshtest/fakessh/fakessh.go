@@ -51,6 +51,17 @@ type Options struct {
 	// unanswered, modelling a server whose unforward hangs. The fixture then
 	// closes the listener when the server itself closes.
 	IgnoreRemoteForwardCancel bool
+	// AcceptX11 accepts x11-req requests. The default rejects them, matching a
+	// server with X11Forwarding disabled.
+	AcceptX11 bool
+}
+
+// X11Request is one recorded x11-req session request.
+type X11Request struct {
+	SingleConnection bool
+	Protocol         string
+	Cookie           string
+	ScreenNumber     uint32
 }
 
 // RemoteForward is one recorded tcpip-forward request.
@@ -86,7 +97,10 @@ type Server struct {
 	closeOnce   sync.Once
 	forwardDial func(host string, port int) (net.Conn, error)
 
+	serverConn        *ssh.ServerConn
 	mu                sync.Mutex
+	acceptX11         bool
+	x11Requests       []X11Request
 	passwordAttempts  int
 	lastPassword      string
 	lastUsername      string
@@ -124,6 +138,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		forwardDial:     options.ForwardDial,
 		remoteListeners: map[string]net.Listener{},
 		ignoreCancel:    options.IgnoreRemoteForwardCancel,
+		acceptX11:       options.AcceptX11,
 	}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
@@ -302,6 +317,35 @@ func (s *Server) RemoteForwards() []RemoteForward {
 	return append([]RemoteForward(nil), s.remoteForwards...)
 }
 
+// X11Requests reports every x11-req session request in order.
+func (s *Server) X11Requests() []X11Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]X11Request(nil), s.x11Requests...)
+}
+
+// OpenX11 opens a server-to-client x11 channel, standing in for a remote X11
+// client that connected to the forwarded display. The caller must wait until
+// the handshake and the x11-req have completed.
+func (s *Server) OpenX11() (ssh.Channel, error) {
+	s.mu.Lock()
+	conn := s.serverConn
+	s.mu.Unlock()
+	if conn == nil {
+		return nil, errors.New("fakessh: server is not ready")
+	}
+	payload := ssh.Marshal(struct {
+		OriginHost string
+		OriginPort uint32
+	}{"127.0.0.1", 1234})
+	channel, requests, err := conn.OpenChannel("x11", payload)
+	if err != nil {
+		return nil, err
+	}
+	go ssh.DiscardRequests(requests)
+	return channel, nil
+}
+
 // Err reports the handshake error, if any. It is valid after Wait returns.
 func (s *Server) Err() error {
 	s.mu.Lock()
@@ -344,6 +388,9 @@ func (s *Server) serve() {
 		s.mu.Unlock()
 		return
 	}
+	s.mu.Lock()
+	s.serverConn = serverConn
+	s.mu.Unlock()
 	go s.handleGlobalRequests(serverConn, requests)
 	for incoming := range channels {
 		switch incoming.ChannelType() {
@@ -553,6 +600,26 @@ func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request
 				s.mu.Unlock()
 			}
 			request.Reply(true, nil)
+		case "x11-req":
+			var payload struct {
+				SingleConnection bool
+				Protocol         string
+				Cookie           string
+				ScreenNumber     uint32
+			}
+			record := ssh.Unmarshal(request.Payload, &payload) == nil
+			s.mu.Lock()
+			accepted := record && s.acceptX11
+			if record {
+				s.x11Requests = append(s.x11Requests, X11Request{
+					SingleConnection: payload.SingleConnection,
+					Protocol:         payload.Protocol,
+					Cookie:           payload.Cookie,
+					ScreenNumber:     payload.ScreenNumber,
+				})
+			}
+			s.mu.Unlock()
+			request.Reply(accepted, nil)
 		case "shell":
 			s.mu.Lock()
 			s.shellOpened = true

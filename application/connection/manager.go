@@ -58,9 +58,15 @@ type Request struct {
 	// SingleChannel marks a bastion that accepts one session channel. Such a
 	// transport is never reused and never serves another lease.
 	SingleChannel bool
-	// X11Forwarding marks an X11 transport. X11 sessions never enter the
-	// general reuse pool; ticket 11 supplies the forwarding itself.
+	// X11Forwarding requests X11 forwarding on the connection's shell. X11
+	// transports never enter the general reuse pool.
 	X11Forwarding bool
+	// X11Display overrides the local display target. Empty uses DISPLAY or the
+	// platform default.
+	X11Display string
+	// OnX11Notice, when non-nil, receives non-fatal X11 forwarding problems.
+	// It runs on the channel goroutine and must not block.
+	OnX11Notice func(X11Notice)
 	// Keepalive overrides the keepalive schedule. Nil keeps the original
 	// 10 s / 3 fallback; a negative Interval disables it.
 	Keepalive *KeepalivePolicy
@@ -111,8 +117,19 @@ type DialRequest struct {
 	// Proxy applies to the first endpoint only: the first jump when present,
 	// otherwise the target.
 	Proxy *Proxy
+	// X11, when non-nil, enables X11 forwarding for the shell opened on this
+	// transport. It is never set on a reused or pooled transport.
+	X11 *X11Options
 	// OnProgress, when non-nil, receives chain progress on the dial goroutine.
 	OnProgress func(ChainProgress)
+}
+
+// X11Options configures X11 forwarding for one Connection. Display is the
+// optional local display override; an empty value uses DISPLAY or the platform
+// default. OnNotice receives non-fatal failures.
+type X11Options struct {
+	Display  string
+	OnNotice func(X11Notice)
 }
 
 // DialHop is one jump endpoint as the transport needs it. Password and Auth
@@ -450,6 +467,12 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 		Proxy:      req.Proxy,
 		Algorithms: req.Algorithms,
 		OnProgress: req.OnProgress,
+	}
+	if req.X11Forwarding {
+		dialRequest.X11 = &X11Options{
+			Display:  req.X11Display,
+			OnNotice: req.OnX11Notice,
+		}
 	}
 	for i := range endpoints {
 		endpoint := &endpoints[i]

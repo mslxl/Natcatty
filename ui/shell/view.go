@@ -115,9 +115,30 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		if status := statusText(m, snapshot); status != "" {
 			ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
 		}
+		if notice := noticeText(m, snapshot.Notice); notice != "" {
+			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
+		}
 	}
 	if surface := s.ActiveSurface(); surface != nil {
 		surface.View(c)
+	}
+}
+
+// noticeText localizes a non-fatal Session notice. Unknown codes render
+// nothing, so the UI never shows an untranslated token.
+func noticeText(m locales.Messages, notice *appsession.Notice) string {
+	if notice == nil {
+		return ""
+	}
+	switch notice.Code {
+	case appsession.NoticeX11LocalDisplay:
+		return m.ConnectionX11DisplayUnavailable(notice.Target)
+	case appsession.NoticeX11Cookie:
+		return m.ConnectionX11CookieUnavailable(notice.Target)
+	case appsession.NoticeX11Channel:
+		return m.ConnectionX11ChannelFailed(notice.Target)
+	default:
+		return ""
 	}
 }
 

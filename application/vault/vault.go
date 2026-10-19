@@ -387,6 +387,8 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host
 	host.AuthMethod = draft.AuthMethod
 	host.UseSSHAgent = draft.UseSSHAgent
 	host.RequiresMFA = draft.RequiresMFA
+	host.X11Forwarding = draft.X11Forwarding
+	host.X11WarningAcknowledged = draft.X11WarningAcknowledged
 	host.HostChain = domainvault.CloneHostChain(draft.HostChain)
 	host.Proxy = domainvault.CloneProxy(draft.Proxy)
 	host.LegacyAlgorithms = draft.LegacyAlgorithms

@@ -45,6 +45,66 @@ func TestNormalizeDraftTrimsFillsDefaultsAndFallsBackToHostname(t *testing.T) {
 	}
 }
 
+func TestNormalizeDraftRequiresTheX11WarningAcknowledgement(t *testing.T) {
+	_, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", X11Forwarding: true,
+	})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("NormalizeDraft error = %v, want a ValidationError", err)
+	}
+	if invalid.Field != FieldX11 || invalid.Rule != RuleAcknowledgementRequired {
+		t.Fatalf("validation = %+v, want X11 acknowledgement required", invalid)
+	}
+
+	draft, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com",
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if !draft.X11Forwarding || !draft.X11WarningAcknowledged {
+		t.Fatalf("draft = %+v, want X11 enabled and acknowledged", draft)
+	}
+}
+
+func TestNormalizeDraftDisablingX11DropsTheAcknowledgement(t *testing.T) {
+	draft, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", X11WarningAcknowledged: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if draft.X11Forwarding || draft.X11WarningAcknowledged {
+		t.Fatalf("draft = %+v, want X11 disabled and the acknowledgement cleared", draft)
+	}
+}
+
+func TestNormalizeDraftRejectsX11OutsideSSH(t *testing.T) {
+	for _, protocol := range []Protocol{ProtocolLocal, ProtocolTelnet} {
+		_, err := NormalizeDraft(Draft{
+			Label: "web", Hostname: "example.com", Protocol: protocol,
+			X11Forwarding: true, X11WarningAcknowledged: true,
+		})
+		var invalid *ValidationError
+		if !errors.As(err, &invalid) || invalid.Field != FieldX11 || invalid.Rule != RuleUnsupported {
+			t.Errorf("%s: error = %v, want unsupported X11", protocol, err)
+		}
+	}
+}
+
+func TestHostX11EnabledNeedsBothPreferenceAndAcknowledgement(t *testing.T) {
+	host := Host{X11Forwarding: true}
+	if host.X11Enabled() {
+		t.Fatal("an unacknowledged X11 preference enabled forwarding")
+	}
+	host.X11WarningAcknowledged = true
+	if !host.X11Enabled() {
+		t.Fatal("an acknowledged X11 preference did not enable forwarding")
+	}
+}
+
 func TestNormalizeDraftDefaultsTheProtocolPort(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -38,27 +38,29 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 	}
 	f.nextID++
 	host := domainvault.Host{
-		ID:               model.HostID("host-" + strconv.Itoa(f.nextID)),
-		Label:            normalized.Label,
-		Hostname:         normalized.Hostname,
-		Port:             normalized.Port,
-		Username:         normalized.Username,
-		Protocol:         normalized.Protocol,
-		Group:            normalized.Group,
-		Tags:             normalized.Tags,
-		Notes:            normalized.Notes,
-		Pinned:           normalized.Pinned,
-		IdentityID:       normalized.IdentityID,
-		KeyID:            normalized.KeyID,
-		AuthMethod:       normalized.AuthMethod,
-		UseSSHAgent:      normalized.UseSSHAgent,
-		RequiresMFA:      normalized.RequiresMFA,
-		HostChain:        domainvault.CloneHostChain(normalized.HostChain),
-		Proxy:            domainvault.CloneProxy(normalized.Proxy),
-		LegacyAlgorithms: normalized.LegacyAlgorithms,
-		SkipEcdsaHostKey: normalized.SkipEcdsaHostKey,
-		Algorithms:       domainvault.CloneAlgorithms(normalized.Algorithms),
-		OrderKey:         int64(f.nextID) * 1000,
+		ID:                     model.HostID("host-" + strconv.Itoa(f.nextID)),
+		Label:                  normalized.Label,
+		Hostname:               normalized.Hostname,
+		Port:                   normalized.Port,
+		Username:               normalized.Username,
+		Protocol:               normalized.Protocol,
+		Group:                  normalized.Group,
+		Tags:                   normalized.Tags,
+		Notes:                  normalized.Notes,
+		Pinned:                 normalized.Pinned,
+		IdentityID:             normalized.IdentityID,
+		KeyID:                  normalized.KeyID,
+		AuthMethod:             normalized.AuthMethod,
+		UseSSHAgent:            normalized.UseSSHAgent,
+		RequiresMFA:            normalized.RequiresMFA,
+		X11Forwarding:          normalized.X11Forwarding,
+		X11WarningAcknowledged: normalized.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(normalized.HostChain),
+		Proxy:                  domainvault.CloneProxy(normalized.Proxy),
+		LegacyAlgorithms:       normalized.LegacyAlgorithms,
+		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
+		OrderKey:               int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
 	f.items = append(f.items, host)
@@ -91,6 +93,8 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.AuthMethod = normalized.AuthMethod
 		host.UseSSHAgent = normalized.UseSSHAgent
 		host.RequiresMFA = normalized.RequiresMFA
+		host.X11Forwarding = normalized.X11Forwarding
+		host.X11WarningAcknowledged = normalized.X11WarningAcknowledged
 		host.HostChain = domainvault.CloneHostChain(normalized.HostChain)
 		host.Proxy = domainvault.CloneProxy(normalized.Proxy)
 		host.LegacyAlgorithms = normalized.LegacyAlgorithms
@@ -168,6 +172,123 @@ func TestCreateFlowSavesAndReloads(t *testing.T) {
 	}
 	if state.HostCount() != 1 {
 		t.Fatalf("Hosts after Save = %d, want 1", state.HostCount())
+	}
+}
+
+func TestX11ForwardingIsOffByDefaultAndNeedsTheWarningAcknowledgement(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+
+	form := state.Form()
+	if form.X11Forwarding || form.X11WarningAcknowledged {
+		t.Fatalf("new Host form X11 fields = %+v, want both off", form)
+	}
+	form.Label = "gui"
+	form.Hostname = "example.com"
+	form.X11Forwarding = true
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemX11Acknowledged {
+		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11Acknowledged)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("created drafts = %d, want 0 before acknowledgement", len(repo.created))
+	}
+
+	state.Form().X11WarningAcknowledged = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save after acknowledgement: %v", err)
+	}
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q, want none", state.Problem())
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created drafts = %d, want 1", len(repo.created))
+	}
+	if !repo.created[0].X11Forwarding || !repo.created[0].X11WarningAcknowledged {
+		t.Fatalf("created draft X11 fields = %+v, want both set", repo.created[0])
+	}
+}
+
+func TestDisablingX11ClearsTheAcknowledgement(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "gui", Hostname: "example.com",
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	if !state.Form().X11Forwarding || !state.Form().X11WarningAcknowledged {
+		t.Fatalf("form X11 fields = %+v, want the saved values", state.Form())
+	}
+
+	state.SetX11Forwarding(false)
+	if state.Form().X11WarningAcknowledged {
+		t.Fatal("disabling X11 kept the acknowledgement")
+	}
+
+	// Re-enabling in the same edit must not resurrect the old acknowledgement.
+	state.SetX11Forwarding(true)
+	if state.Form().X11WarningAcknowledged {
+		t.Fatal("re-enabling X11 kept the acknowledgement")
+	}
+	state.Form().Label = "gui"
+	state.Form().Hostname = "example.com"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemX11Acknowledged {
+		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11Acknowledged)
+	}
+}
+
+func TestX11IsRejectedOutsideSSH(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "telnet"
+	form.Hostname = "example.com"
+	form.Protocol = string(domainvault.ProtocolTelnet)
+	form.X11Forwarding = true
+	form.X11WarningAcknowledged = true
+
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemX11 {
+		t.Fatalf("Problem = %q, want %q", state.Problem(), ProblemX11)
+	}
+}
+
+func TestEditingAnotherFieldPreservesEnabledX11(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "gui", Hostname: "example.com",
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-1") {
+		t.Fatal("BeginEdit failed")
+	}
+	state.Form().Notes = "updated"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemNone {
+		t.Fatalf("Problem = %q, want none", state.Problem())
+	}
+	if len(repo.updated) != 1 || !repo.updated[0].X11Forwarding || !repo.updated[0].X11WarningAcknowledged {
+		t.Fatalf("updated draft = %+v, want X11 preserved", repo.updated)
 	}
 }
 

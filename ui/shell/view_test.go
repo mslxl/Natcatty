@@ -266,3 +266,31 @@ func TestStatusTextShowsConnectionIndicators(t *testing.T) {
 		t.Errorf("exited connection error = %q, want %q", got, m.ConnectionStatusError())
 	}
 }
+
+func TestNoticeTextLocalizesX11Failures(t *testing.T) {
+	m := locales.In("en")
+	if got := noticeText(m, nil); got != "" {
+		t.Fatalf("noticeText(nil) = %q, want empty", got)
+	}
+	if got := noticeText(m, &appsession.Notice{
+		Code:   appsession.NoticeX11LocalDisplay,
+		Target: "localhost:6000",
+	}); got != m.ConnectionX11DisplayUnavailable("localhost:6000") {
+		t.Fatalf("local-display notice = %q", got)
+	}
+	if got := noticeText(m, &appsession.Notice{
+		Code:   appsession.NoticeX11Channel,
+		Target: "localhost:6000",
+	}); got != m.ConnectionX11ChannelFailed("localhost:6000") {
+		t.Fatalf("channel notice = %q", got)
+	}
+	if got := noticeText(m, &appsession.Notice{
+		Code:   appsession.NoticeX11Cookie,
+		Target: "localhost:6000",
+	}); got != m.ConnectionX11CookieUnavailable("localhost:6000") {
+		t.Fatalf("cookie notice = %q", got)
+	}
+	if got := noticeText(m, &appsession.Notice{Code: "unknown"}); got != "" {
+		t.Fatalf("unknown notice = %q, want empty", got)
+	}
+}
