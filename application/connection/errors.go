@@ -72,6 +72,10 @@ var (
 	// ErrClosed reports an operation on a released lease or closed
 	// Connection.
 	ErrClosed = errors.New("connection: closed")
+	// ErrStaleTransport reports a parked transport whose new shell died
+	// before the liveness window elapsed. The transport was discarded, so a
+	// retry opens a fresh Connection.
+	ErrStaleTransport = errors.New("connection: reused transport closed before use")
 	// ErrPromptCancelled reports that the user dismissed a passphrase or
 	// keyboard-interactive prompt.
 	ErrPromptCancelled = errors.New("connection: authentication prompt cancelled")
@@ -97,6 +101,13 @@ var (
 // credential as a typed auth failure rather than an internal error.
 func AuthFailure(cause error) error { return authError(cause) }
 
+// Permanent reports whether reconnecting cannot fix this failure. A terminal
+// Session must not retry a rejected credential or host key; the user has to
+// change the Host or trust decision first.
+func (e *Error) Permanent() bool {
+	return e != nil && (e.Kind == KindAuth || e.Kind == KindHostKey)
+}
+
 func hostKeyError(cause error) error     { return &Error{Kind: KindHostKey, Cause: cause} }
 func authError(cause error) error        { return &Error{Kind: KindAuth, Cause: cause} }
 func networkError(cause error) error     { return &Error{Kind: KindNetwork, Cause: cause} }
@@ -104,3 +115,4 @@ func timeoutError(cause error) error     { return &Error{Kind: KindTimeout, Caus
 func unsupportedError(cause error) error { return &Error{Kind: KindUnsupported, Cause: cause} }
 func cancelledError(cause error) error   { return &Error{Kind: KindCancelled, Cause: cause} }
 func internalError(cause error) error    { return &Error{Kind: KindInternal, Cause: cause} }
+func staleTransportError() error         { return networkError(ErrStaleTransport) }

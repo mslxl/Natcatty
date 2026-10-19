@@ -314,6 +314,11 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	if err := graph.state.OpenHost(host); err != nil {
 		t.Fatalf("OpenHost: %v", err)
 	}
+	// The dial is in flight until Flush applies the outcome, so the shell can
+	// show its connecting indicator.
+	if pending := graph.state.PendingConnections(); len(pending) != 1 || pending[0] != "prod" {
+		t.Fatalf("pending connections = %q, want prod", pending)
+	}
 	// The dial goroutine only queues its outcome; Tabs change in Flush.
 	if graph.state.TabCount() != 0 {
 		t.Fatalf("tabs = %d before Flush, want 0", graph.state.TabCount())
@@ -326,6 +331,12 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	if got := graph.factory.spec; got.Kind != appsession.KindSSH || got.HostID != "host-1" ||
 		got.Hostname != "example.com" || got.Port != 2222 || got.Username != "root" {
 		t.Fatalf("factory spec = %+v, want the Host's SSH target", got)
+	}
+	if graph.factory.spec.Reconnect == nil {
+		t.Fatal("SSH Sessions do not carry the reconnect policy")
+	}
+	if pending := graph.state.PendingConnections(); len(pending) != 0 {
+		t.Fatalf("pending connections = %q after Flush, want none", pending)
 	}
 	label, number, ok := graph.state.TabLabel(0)
 	if !ok || label != "prod" || number != 1 {

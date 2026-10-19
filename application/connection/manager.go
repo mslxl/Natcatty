@@ -11,6 +11,7 @@
 package connection
 
 import (
+	"container/list"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
@@ -39,9 +40,44 @@ type Request struct {
 	Jumps      []Hop
 	Proxy      *Proxy
 	Algorithms AlgorithmPolicy
+	// ConfigFingerprint is an opaque, non-secret digest of the effective
+	// credential selection and connection policy. The Manager only compares
+	// it: two requests with different values never share a Connection. The
+	// application computes it, so credential references can scope reuse
+	// without exposing secret material to the pool.
+	ConfigFingerprint string
+	// LeaseKind selects the reuse rule. The zero value is LeaseShell.
+	LeaseKind LeaseKind
+	// AgentForwarding records whether the transport exposes the local agent to
+	// the remote Host. A shell requires an exact match; a channel may reuse a
+	// forwarding transport but not the reverse.
+	AgentForwarding bool
+	// ForwardingAgentFingerprint identifies the forwarded agent socket
+	// without storing its path in a pool key.
+	ForwardingAgentFingerprint string
+	// SingleChannel marks a bastion that accepts one session channel. Such a
+	// transport is never reused and never serves another lease.
+	SingleChannel bool
+	// X11Forwarding marks an X11 transport. X11 sessions never enter the
+	// general reuse pool; ticket 11 supplies the forwarding itself.
+	X11Forwarding bool
+	// Keepalive overrides the keepalive schedule. Nil keeps the original
+	// 10 s / 3 fallback; a negative Interval disables it.
+	Keepalive *KeepalivePolicy
 	// OnProgress, when non-nil, receives chain progress. It runs on the dial
 	// goroutine and must not block.
 	OnProgress func(ChainProgress)
+}
+
+// Test connects, authenticates, and verifies the Host key, then releases the
+// lease it took. It is the application use case behind the Vault's Test
+// connection action.
+func (m *Manager) Test(ctx context.Context, req Request) error {
+	lease, err := m.Acquire(ctx, req)
+	if err != nil {
+		return err
+	}
+	return lease.Release()
 }
 
 // DialRequest is what the SSH adapter needs to dial one endpoint. VerifyHostKey
@@ -154,15 +190,20 @@ type Prompter interface {
 // Manager opens Connections and reads their credentials, Known Hosts, and
 // trust decisions through its ports.
 type Manager struct {
-	dialer       Dialer
-	passwords    PasswordSource
-	authSource   AuthSource
-	authPrompter AuthPrompter
-	authCache    *AuthMethodCache
-	known        KnownHostRepository
-	prompter     Prompter
-	newID        func() string
-	now          func() time.Time
+	dialer        Dialer
+	passwords     PasswordSource
+	authSource    AuthSource
+	authPrompter  AuthPrompter
+	authCache     *AuthMethodCache
+	known         KnownHostRepository
+	prompter      Prompter
+	newID         func() string
+	now           func() time.Time
+	idleTTL       time.Duration
+	maxIdle       int
+	livenessProbe time.Duration
+	schedule      timerScheduler
+	pool          *pool
 }
 
 // Option customizes a Manager.
@@ -214,20 +255,75 @@ func WithClock(fn func() time.Time) Option {
 	}
 }
 
+// WithIdleTTL sets how long a zero-lease Connection parks before it closes.
+// Zero means until the Manager closes, matching the original "Until app quit".
+func WithIdleTTL(ttl time.Duration) Option {
+	return func(m *Manager) { m.idleTTL = ttl }
+}
+
+// WithMaxIdleConnections bounds parked Connections. Active Connections are
+// never evicted.
+func WithMaxIdleConnections(limit int) Option {
+	return func(m *Manager) {
+		if limit > 0 {
+			m.maxIdle = limit
+		}
+	}
+}
+
+// WithLivenessProbe sets how long a shell opened on a reused parked transport
+// must survive before it is accepted. Zero disables the probe.
+func WithLivenessProbe(duration time.Duration) Option {
+	return func(m *Manager) {
+		if duration >= 0 {
+			m.livenessProbe = duration
+		}
+	}
+}
+
+// WithTimerScheduler replaces wall-clock idle timers. Tests use it to fire a
+// parked Connection's deadline deterministically.
+func WithTimerScheduler(fn func(time.Duration, func()) (stop func())) Option {
+	return func(m *Manager) {
+		if fn != nil {
+			m.schedule = fn
+		}
+	}
+}
+
 // NewManager returns a Manager over its ports.
 func NewManager(dialer Dialer, passwords PasswordSource, known KnownHostRepository, opts ...Option) *Manager {
 	manager := &Manager{
-		dialer:    dialer,
-		passwords: passwords,
-		authCache: NewAuthMethodCache(MaxAuthMethodCacheEntries),
-		known:     known,
-		newID:     newKnownHostID,
-		now:       time.Now,
+		dialer:        dialer,
+		passwords:     passwords,
+		authCache:     NewAuthMethodCache(MaxAuthMethodCacheEntries),
+		known:         known,
+		newID:         newKnownHostID,
+		now:           time.Now,
+		idleTTL:       DefaultIdleTTL,
+		maxIdle:       MaxIdleConnections,
+		livenessProbe: DefaultLivenessProbe,
 	}
 	for _, opt := range opts {
 		opt(manager)
 	}
+	if manager.schedule == nil {
+		manager.schedule = func(duration time.Duration, fn func()) func() {
+			timer := time.AfterFunc(duration, fn)
+			return func() { timer.Stop() }
+		}
+	}
+	manager.pool = newPool(manager.idleTTL, manager.maxIdle, manager.now, manager.schedule)
 	return manager
+}
+
+// CloseAll closes every pooled Connection and stops accepting new ones. The
+// app calls it on quit after closing Sessions.
+func (m *Manager) CloseAll() {
+	if m == nil || m.pool == nil {
+		return
+	}
+	closeConnections(m.pool.closeAll())
 }
 
 // Acquire opens a new Connection and returns its first Lease. The caller's
@@ -242,6 +338,61 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, internalError(ErrNoDialer)
 	}
 
+	endpoint := endpointFor(req)
+	kind := req.LeaseKind.orShell()
+	reuse, wait, lead := m.pool.begin(endpoint, kind)
+	if reuse != nil {
+		return m.readyLease(reuse), nil
+	}
+	if wait != nil {
+		select {
+		case <-wait.done:
+			if wait.err != nil {
+				var typed *Error
+				if errors.As(wait.err, &typed) {
+					return nil, wait.err
+				}
+				return nil, internalError(wait.err)
+			}
+			lease := m.pool.borrow(wait.conn, endpoint, kind)
+			if lease == nil {
+				return nil, internalError(ErrClosed)
+			}
+			return m.readyLease(lease), nil
+		case <-ctx.Done():
+			return nil, classifyDialError(ctx.Err())
+		}
+	}
+	if lead.err != nil {
+		return nil, internalError(lead.err)
+	}
+
+	conn, err := m.dial(ctx, req, endpoint)
+	if completeErr := m.pool.complete(lead, conn, err); completeErr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, internalError(completeErr)
+	}
+	lease := m.pool.borrow(conn, endpoint, kind)
+	if lease == nil {
+		return nil, internalError(ErrClosed)
+	}
+	return m.readyLease(lease), nil
+}
+
+// readyLease arms the reused-shell liveness probe. Only a shell opened on a
+// transport that was parked needs it; a live transport already proved itself.
+func (m *Manager) readyLease(lease *Lease) *Lease {
+	if lease != nil && lease.kind == LeaseShell && lease.fromIdle &&
+		m.livenessProbe > 0 && lease.conn.needsLivenessCheck() {
+		lease.probeDuration = m.livenessProbe
+	}
+	return lease
+}
+
+// dial opens a physical transport and returns its first Connection.
+func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig) (*Connection, error) {
 	known, err := m.knownHosts(ctx)
 	if err != nil {
 		return nil, err
@@ -358,7 +509,9 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 			m.authCache.Put(endpoints[i].cacheKey, succeeded[i])
 		}
 	}
-	return newConnection(client).acquire(), nil
+	conn := newPooledConnection(client, endpoint, m)
+	conn.startKeepalive(endpoint.keepalive, func() { m.pool.discard(conn, "keepalive") })
+	return conn, nil
 }
 
 // requestForHop turns a jump Hop into the Request an AuthSource consumes.
@@ -546,6 +699,20 @@ func classifyDialError(err error) error {
 	return networkError(err)
 }
 
+// KeepaliveClient is implemented by transports that can send an
+// openssh-style keepalive request. A failed request counts toward the
+// configured unanswered-probe limit.
+type KeepaliveClient interface {
+	Keepalive() error
+}
+
+// VersionedClient is implemented by transports that know the server's SSH
+// identification banner. The pool uses it to skip the reused-shell liveness
+// probe for OpenSSH and Dropbear, which multiplex cleanly.
+type VersionedClient interface {
+	RemoteVersion() string
+}
+
 // Connection is one authenticated transport with a lease count. It is the
 // application's owner of the adapter's Client; the UI and domain never see it.
 type Connection struct {
@@ -553,10 +720,32 @@ type Connection struct {
 	client Client
 	refs   int
 	closed bool
+	// idle is true while the Connection is parked with no leases.
+	idle      bool
+	idleSince time.Time
+	endpoint  endpointConfig
+	// allowIdlePark is false for single-channel, X11, and vendor bastions
+	// that cannot host a later shell.
+	allowIdlePark bool
+	lruElement    *list.Element
+	stopTimer     func()
+	keepaliveStop chan struct{}
+	onZero        func(*Connection)
+	onDiscard     func(*Connection, string)
 }
 
 func newConnection(client Client) *Connection {
 	return &Connection{client: client}
+}
+
+func newPooledConnection(client Client, endpoint endpointConfig, manager *Manager) *Connection {
+	return &Connection{
+		client:        client,
+		endpoint:      endpoint,
+		allowIdlePark: !endpoint.noReuse && RemoteAllowsIdleParkedShellReuse(remoteVersion(client)),
+		onZero:        manager.pool.park,
+		onDiscard:     manager.pool.discard,
+	}
 }
 
 // acquire takes a reference and returns a Lease. It returns nil when the
@@ -568,10 +757,11 @@ func (c *Connection) acquire() *Lease {
 		return nil
 	}
 	c.refs++
-	return &Lease{conn: c}
+	return &Lease{conn: c, kind: LeaseShell}
 }
 
-// release drops a reference and closes the physical connection at zero.
+// release drops a reference. The last release either returns the Connection
+// to idle parking or closes it when it has no pool owner.
 func (c *Connection) release() error {
 	c.mu.Lock()
 	if c.closed {
@@ -579,28 +769,148 @@ func (c *Connection) release() error {
 		return nil
 	}
 	c.refs--
-	if c.refs > 0 {
-		c.mu.Unlock()
+	zero := c.refs <= 0
+	onZero := c.onZero
+	var client Client
+	if zero && onZero == nil {
+		c.closed = true
+		client = c.client
+		c.client = nil
+	}
+	c.mu.Unlock()
+	if !zero {
 		return nil
 	}
-	c.closed = true
-	client := c.client
-	c.mu.Unlock()
+	if onZero != nil {
+		onZero(c)
+		return nil
+	}
 	if client != nil {
 		return client.Close()
 	}
 	return nil
 }
 
+// discard removes a Connection that can no longer be reused and closes it.
+func (c *Connection) discard(reason string) {
+	if c.onDiscard != nil {
+		c.onDiscard(c, reason)
+		return
+	}
+	_ = c.closeTransport(reason)
+}
+
+// closeTransport closes the physical transport exactly once.
+func (c *Connection) closeTransport(reason string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.idle = false
+	client := c.client
+	c.client = nil
+	stop := c.keepaliveStop
+	c.keepaliveStop = nil
+	c.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	if client != nil {
+		return client.Close()
+	}
+	return nil
+}
+
+func (c *Connection) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+func remoteVersion(client Client) string {
+	if versioned, ok := client.(VersionedClient); ok {
+		return versioned.RemoteVersion()
+	}
+	return ""
+}
+
+// needsLivenessCheck reports whether a shell opened on this parked transport
+// must survive the settle probe.
+func (c *Connection) needsLivenessCheck() bool {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	return RemoteNeedsReusedShellLivenessCheck(remoteVersion(client))
+}
+
+// startKeepalive sends keepalive requests until the transport closes or the
+// configured number of consecutive requests go unanswered.
+func (c *Connection) startKeepalive(policy KeepalivePolicy, onFailure func()) {
+	policy = policy.resolved()
+	client, ok := c.client.(KeepaliveClient)
+	if !ok || policy.Interval <= 0 || policy.CountMax <= 0 {
+		return
+	}
+	stop := make(chan struct{})
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.keepaliveStop = stop
+	c.mu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(policy.Interval)
+		defer ticker.Stop()
+		failures := 0
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				closed := c.closed
+				c.mu.Unlock()
+				if closed {
+					return
+				}
+				if err := client.Keepalive(); err != nil {
+					failures++
+					if failures >= policy.CountMax {
+						onFailure()
+						return
+					}
+					continue
+				}
+				failures = 0
+			}
+		}
+	}()
+}
+
 // Lease is a counted claim on a Connection. It is safe to release more than
 // once.
 type Lease struct {
-	conn     *Connection
-	mu       sync.Mutex
-	released bool
+	conn *Connection
+	kind LeaseKind
+	// fromIdle records that the lease woke a parked transport. A shell opened
+	// on one needs the 350 ms liveness probe.
+	fromIdle      bool
+	probeDuration time.Duration
+	mu            sync.Mutex
+	released      bool
 }
 
+// ReusedFromIdle reports whether this lease woke a parked Connection.
+func (l *Lease) ReusedFromIdle() bool { return l != nil && l.fromIdle }
+
 // OpenTerminal opens an interactive shell channel on the leased Connection.
+// When the lease woke a parked transport whose server banner is unknown, the
+// shell must survive the liveness window first; a transport that dies
+// immediately is discarded and reported as a stale-transport failure.
 func (l *Lease) OpenTerminal(ctx context.Context, spec TerminalSpec) (Terminal, error) {
 	l.mu.Lock()
 	released := l.released
@@ -621,10 +931,35 @@ func (l *Lease) OpenTerminal(ctx context.Context, spec TerminalSpec) (Terminal, 
 	if err != nil {
 		return nil, classifyDialError(err)
 	}
+	if l.kind == LeaseShell && l.probeDuration > 0 {
+		probed, alive := probeReusedTerminal(terminal, l.probeDuration)
+		if !alive {
+			l.conn.discard("reused-shell-liveness")
+			return nil, staleTransportError()
+		}
+		terminal = probed
+	}
 	return terminal, nil
 }
 
-// Release drops the lease. Releasing the last lease closes the Connection.
+// Discard abandons the Connection after the transport proved unusable. The
+// lease is released and the physical transport is closed instead of parked.
+func (l *Lease) Discard() error {
+	l.mu.Lock()
+	if l.released {
+		l.mu.Unlock()
+		return nil
+	}
+	l.released = true
+	l.mu.Unlock()
+	if l.conn != nil {
+		l.conn.discard("discarded")
+	}
+	return nil
+}
+
+// Release drops the lease. The last lease parks the Connection for reuse, or
+// closes it when it has no pool owner.
 func (l *Lease) Release() error {
 	l.mu.Lock()
 	if l.released {

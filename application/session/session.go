@@ -65,11 +65,102 @@ const (
 	StatusClosed Status = "closed"
 )
 
+// ConnectionStatus is the state of the transport beneath a Session. The UI
+// shows it beside the lifecycle status.
+type ConnectionStatus string
+
+const (
+	// ConnectionStatusConnecting is the initial dial. A Session is not
+	// published in this state; the shell shows it while Open is pending.
+	ConnectionStatusConnecting ConnectionStatus = "connecting"
+	// ConnectionStatusActive reports an open transport.
+	ConnectionStatusActive ConnectionStatus = "active"
+	// ConnectionStatusReconnecting reports that the transport ended under the
+	// original retry predicate and a replacement dial is underway.
+	ConnectionStatusReconnecting ConnectionStatus = "reconnecting"
+	// ConnectionStatusError reports a terminal failure, including a
+	// reconnect that stopped on an authentication or host-key failure.
+	ConnectionStatusError ConnectionStatus = "error"
+)
+
+// EndReason classifies why a transport stopped, matching the original exit
+// vocabulary.
+type EndReason string
+
+const (
+	// EndReasonExited is a normal shell exit.
+	EndReasonExited EndReason = "exited"
+	// EndReasonSignaled is a server-side signal; reconnecting would fight the
+	// server's policy.
+	EndReasonSignaled EndReason = "signaled"
+	// EndReasonError is a transport failure.
+	EndReasonError EndReason = "error"
+	// EndReasonClosed is a bare channel close with no exit status.
+	EndReasonClosed EndReason = "closed"
+	// EndReasonTimeout is an administrative idle logout or connect timeout.
+	EndReasonTimeout EndReason = "timeout"
+)
+
+// End is a transport's final state.
+type End struct {
+	Reason      EndReason
+	ExitCode    int
+	HasExitCode bool
+}
+
+// EndReporter is implemented by transports that can classify why they
+// stopped. Without it, a transport implementing ExitWaiter reports an exit
+// code; every other end is an error.
+type EndReporter interface {
+	End() End
+}
+
+// ReconnectPolicy reopens a dropped SSH transport. The original retries every
+// five seconds only after a first successful connection and only for an
+// "error" or bare "closed" end. A deliberate exit, a timeout, or a signal
+// does not reconnect.
+type ReconnectPolicy struct {
+	// Delay defaults to DefaultReconnectDelay.
+	Delay time.Duration
+	// ShouldRetry overrides the default predicate when non-nil.
+	ShouldRetry func(End) bool
+}
+
+// DefaultReconnectDelay is the original terminal auto-reconnect interval.
+const DefaultReconnectDelay = 5 * time.Second
+
+// shouldRetry reports the original reason predicate.
+func (p *ReconnectPolicy) shouldRetry(end End) bool {
+	if p == nil {
+		return false
+	}
+	if p.ShouldRetry != nil {
+		return p.ShouldRetry(end)
+	}
+	switch end.Reason {
+	case EndReasonError:
+		return true
+	case EndReasonClosed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *ReconnectPolicy) delay() time.Duration {
+	if p == nil || p.Delay <= 0 {
+		return DefaultReconnectDelay
+	}
+	return p.Delay
+}
+
 // Snapshot is the immutable state the UI consumes.
 type Snapshot struct {
 	ID     model.SessionID
 	Kind   Kind
 	Status Status
+	// Connection is the transport state beneath the Session.
+	Connection ConnectionStatus
 	// ExitCode is meaningful when HasExitCode is true: a program that ended
 	// normally reports its code, a signalled one reports 128+signal.
 	ExitCode    int
@@ -110,6 +201,9 @@ type StartSpec struct {
 	Hostname string
 	Port     int
 	Username string
+	// Reconnect reopens the transport after a retryable end. A nil policy
+	// disables reconnection, which is the rule for local shells.
+	Reconnect *ReconnectPolicy
 }
 
 // Factory opens a Transport for a StartSpec. It is the application's port for
@@ -128,6 +222,15 @@ type Session struct {
 	cancel    context.CancelFunc
 	transport Transport
 	conn      *TerminalConn
+	factory   Factory
+	spec      StartSpec
+
+	// generation changes whenever the transport is replaced. The loop is the
+	// only writer; readers and writers carry the generation they were started
+	// with so a late event from an abandoned transport is ignored.
+	generation int
+	reopening  bool
+	genDone    chan struct{}
 
 	commands chan command
 	writeCh  chan []byte
@@ -145,16 +248,26 @@ type commandKind uint8
 
 const (
 	commandResize commandKind = iota
-	commandExit
+	commandTransportEnded
+	commandTransportOpen
+	commandTransportFailed
 	commandClose
 )
 
 type command struct {
-	kind    commandKind
-	cols    int
-	rows    int
-	code    int
-	hasCode bool
+	kind       commandKind
+	cols       int
+	rows       int
+	generation int
+	transport  Transport
+	end        End
+	err        error
+}
+
+// permanentFailure is implemented by typed open failures that must not be
+// retried, namely authentication and host-key rejections.
+type permanentFailure interface {
+	Permanent() bool
 }
 
 // Service opens and tracks Sessions for the app.
@@ -234,15 +347,19 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		ctx:       sessionCtx,
 		cancel:    cancel,
 		transport: transport,
+		factory:   s.factory,
+		spec:      spec,
+		genDone:   make(chan struct{}),
 		writeCh:   make(chan []byte, s.writeDepth),
 		commands:  make(chan command, 16),
 		done:      make(chan struct{}),
 		snapshot: Snapshot{
-			ID:     id,
-			Kind:   spec.Kind,
-			Status: StatusRunning,
-			Cols:   spec.Cols,
-			Rows:   spec.Rows,
+			ID:         id,
+			Kind:       spec.Kind,
+			Status:     StatusRunning,
+			Connection: ConnectionStatusActive,
+			Cols:       spec.Cols,
+			Rows:       spec.Rows,
 		},
 		onEnd:    s.remove,
 		onChange: s.changed,
@@ -355,13 +472,16 @@ func (s *Session) Close() error {
 
 func (s *Session) start() {
 	go s.loop()
-	go s.readLoop()
-	go s.writeLoop()
+	go s.readLoop(s.generation, s.transport)
+	go s.writeLoop(s.generation, s.transport, s.genDone)
 }
 
-// loop serializes lifecycle commands and publishes the final snapshot.
+// loop serializes lifecycle commands and publishes the final snapshot. It is
+// the only goroutine that replaces the transport, so generation changes are
+// ordered against resize and close commands.
 func (s *Session) loop() {
 	status := StatusClosed
+	connection := ConnectionStatusActive
 	code := -1
 	hasCode := false
 	for {
@@ -371,14 +491,61 @@ func (s *Session) loop() {
 		case cmd := <-s.commands:
 			switch cmd.kind {
 			case commandResize:
+				if s.reopening {
+					continue
+				}
 				if err := s.transport.Resize(cmd.cols, cmd.rows); err != nil {
 					continue
 				}
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Cols, snapshot.Rows = cmd.cols, cmd.rows
 				})
-			case commandExit:
-				status, code, hasCode = StatusExited, cmd.code, cmd.hasCode
+			case commandTransportEnded:
+				if cmd.generation != s.generation || s.reopening {
+					// A late read or write error from a transport this Session
+					// already abandoned.
+					if cmd.transport != nil {
+						_ = cmd.transport.Close()
+					}
+					continue
+				}
+				_ = cmd.transport.Close()
+				if s.spec.Reconnect == nil || !s.spec.Reconnect.shouldRetry(cmd.end) {
+					status = StatusExited
+					connection = connectionForEnd(cmd.end)
+					code, hasCode = cmd.end.ExitCode, cmd.end.HasExitCode
+					goto finished
+				}
+				// Advance the generation before starting the dial so a second
+				// end event from the dead transport is ignored.
+				s.generation++
+				s.reopening = true
+				close(s.genDone)
+				s.genDone = make(chan struct{})
+				s.update(func(snapshot *Snapshot) {
+					snapshot.Connection = ConnectionStatusReconnecting
+				})
+				go s.reconnect(s.generation)
+			case commandTransportOpen:
+				if cmd.generation != s.generation || !s.reopening {
+					if cmd.transport != nil {
+						_ = cmd.transport.Close()
+					}
+					continue
+				}
+				s.reopening = false
+				s.transport = cmd.transport
+				s.update(func(snapshot *Snapshot) {
+					snapshot.Connection = ConnectionStatusActive
+				})
+				go s.readLoop(s.generation, cmd.transport)
+				go s.writeLoop(s.generation, cmd.transport, s.genDone)
+			case commandTransportFailed:
+				if cmd.generation != s.generation || !s.reopening {
+					continue
+				}
+				status = StatusExited
+				connection = ConnectionStatusError
 				goto finished
 			case commandClose:
 				status = StatusClosed
@@ -389,10 +556,14 @@ func (s *Session) loop() {
 
 finished:
 	s.cancel()
+	close(s.genDone)
 	s.conn.finish()
-	_ = s.transport.Close()
+	if s.transport != nil {
+		_ = s.transport.Close()
+	}
 	s.update(func(snapshot *Snapshot) {
 		snapshot.Status = status
+		snapshot.Connection = connection
 		snapshot.ExitCode = code
 		snapshot.HasExitCode = hasCode
 	})
@@ -402,40 +573,116 @@ finished:
 	}
 }
 
-// readLoop moves transport output into the bounded TerminalConn backlog.
-func (s *Session) readLoop() {
+// connectionForEnd reports the indicator a final transport end leaves. A
+// dropped transport is an error; a deliberate shell end is not.
+func connectionForEnd(end End) ConnectionStatus {
+	if end.Reason == EndReasonError {
+		return ConnectionStatusError
+	}
+	return ConnectionStatusActive
+}
+
+// reconnect retries opening the transport on the policy's interval. It stops
+// on Session close and on a permanent authentication or host-key failure.
+func (s *Session) reconnect(generation int) {
+	delay := s.spec.Reconnect.delay()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-timer.C:
+		}
+		transport, err := s.factory.Open(s.ctx, s.spec)
+		if err == nil {
+			s.post(command{kind: commandTransportOpen, generation: generation, transport: transport})
+			return
+		}
+		if s.ctx.Err() != nil {
+			return
+		}
+		if permanentOpenError(err) {
+			s.post(command{kind: commandTransportFailed, generation: generation, err: err})
+			return
+		}
+		timer.Reset(delay)
+	}
+}
+
+// permanentOpenError reports failures that must not be retried.
+func permanentOpenError(err error) bool {
+	var failure permanentFailure
+	return errors.As(err, &failure) && failure.Permanent()
+}
+
+// readLoop moves transport output into the bounded TerminalConn backlog. Each
+// invocation belongs to one transport generation.
+func (s *Session) readLoop(generation int, transport Transport) {
 	buffer := make([]byte, readChunkSize)
 	for {
 		if !s.conn.waitReadable() {
 			return
 		}
-		n, err := s.transport.Read(buffer)
+		n, err := transport.Read(buffer)
 		if n > 0 {
 			s.conn.appendOutput(buffer[:n])
 		}
 		if err != nil {
-			code := -1
-			hasCode := false
-			if waiter, ok := s.transport.(ExitWaiter); ok {
-				if waited, waitErr := waiter.Wait(); waitErr == nil {
-					code, hasCode = waited, true
-				}
-			}
-			s.post(command{kind: commandExit, code: code, hasCode: hasCode})
+			s.post(command{
+				kind:       commandTransportEnded,
+				generation: generation,
+				transport:  transport,
+				end:        endOf(transport),
+			})
 			return
 		}
 	}
 }
 
-// writeLoop drains the bounded input queue into the transport.
-func (s *Session) writeLoop() {
+// endOf classifies a finished transport. EndReporter is authoritative; a
+// transport that can only report an exit code maps a normal wait to "exited".
+func endOf(transport Transport) End {
+	if reporter, ok := transport.(EndReporter); ok {
+		end := reporter.End()
+		if end.Reason == "" {
+			end.Reason = EndReasonError
+		}
+		return end
+	}
+	if waiter, ok := transport.(ExitWaiter); ok {
+		if code, err := waiter.Wait(); err == nil {
+			return End{Reason: EndReasonExited, ExitCode: code, HasExitCode: true}
+		}
+	}
+	return End{Reason: EndReasonError}
+}
+
+// writeLoop drains the bounded input queue into one transport generation.
+func (s *Session) writeLoop(generation int, transport Transport, genDone <-chan struct{}) {
 	for {
+		// Prefer leaving over consuming input for a transport this Session
+		// has already abandoned.
 		select {
 		case <-s.ctx.Done():
 			return
+		case <-genDone:
+			return
+		default:
+		}
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-genDone:
+			return
 		case input := <-s.writeCh:
-			if _, err := s.transport.Write(input); err != nil {
-				s.post(command{kind: commandExit, code: -1})
+			if _, err := transport.Write(input); err != nil {
+				s.post(command{
+					kind:       commandTransportEnded,
+					generation: generation,
+					transport:  transport,
+					end:        End{Reason: EndReasonError},
+				})
 				return
 			}
 		}

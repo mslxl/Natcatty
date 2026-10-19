@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 
@@ -15,13 +16,33 @@ import (
 // chain alive until the transport closes: each hop is the carrier for the next
 // hop's direct-tcpip channel.
 type sshClient struct {
-	client    *xssh.Client
-	ancestors []*xssh.Client
-	mu        sync.Mutex
-	closed    bool
+	client        *xssh.Client
+	ancestors     []*xssh.Client
+	remoteVersion string
+	mu            sync.Mutex
+	closed        bool
 }
 
 var _ appconnection.Client = (*sshClient)(nil)
+var _ appconnection.KeepaliveClient = (*sshClient)(nil)
+var _ appconnection.VersionedClient = (*sshClient)(nil)
+
+// Keepalive sends an OpenSSH keepalive global request. A failed request means
+// the transport is no longer answering.
+func (c *sshClient) Keepalive() error {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return appconnection.ErrClosed
+	}
+	_, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil)
+	return err
+}
+
+// RemoteVersion returns the server's full SSH identification line (for
+// example "SSH-2.0-OpenSSH_9.6") when the handshake captured it.
+func (c *sshClient) RemoteVersion() string { return c.remoteVersion }
 
 // OpenTerminal requests a PTY and an interactive shell.
 func (c *sshClient) OpenTerminal(ctx context.Context, spec appconnection.TerminalSpec) (appconnection.Terminal, error) {
@@ -107,11 +128,47 @@ type channelTerminal struct {
 	stdin   io.WriteCloser
 	stdout  io.Reader
 
-	mu     sync.Mutex
-	closed bool
+	mu       sync.Mutex
+	closed   bool
+	waitOnce sync.Once
+	end      appconnection.TerminalEnd
 }
 
 var _ appconnection.Terminal = (*channelTerminal)(nil)
+var _ appconnection.EndingTerminal = (*channelTerminal)(nil)
+
+// End waits for the remote exit status and classifies the end. A normal exit
+// (including a non-zero status) is "exited"; a signal is "signaled"; a
+// dropped transport reports an error because no exit status arrived.
+func (t *channelTerminal) End() appconnection.TerminalEnd {
+	t.waitOnce.Do(func() {
+		err := t.session.Wait()
+		switch {
+		case err == nil:
+			t.end = appconnection.TerminalEnd{Reason: appconnection.TerminalEndExited, ExitCode: 0, HasExitCode: true}
+		default:
+			var exit *xssh.ExitError
+			if errors.As(err, &exit) {
+				if signal := exit.Signal(); signal != "" {
+					t.end = appconnection.TerminalEnd{Reason: appconnection.TerminalEndSignaled}
+					return
+				}
+				t.end = appconnection.TerminalEnd{
+					Reason:   appconnection.TerminalEndExited,
+					ExitCode: exit.ExitStatus(), HasExitCode: true,
+				}
+				return
+			}
+			var missing *xssh.ExitMissingError
+			if errors.As(err, &missing) {
+				t.end = appconnection.TerminalEnd{Reason: appconnection.TerminalEndError}
+				return
+			}
+			t.end = appconnection.TerminalEnd{Reason: appconnection.TerminalEndError}
+		}
+	})
+	return t.end
+}
 
 // Read returns remote output.
 func (t *channelTerminal) Read(p []byte) (int, error) { return t.stdout.Read(p) }

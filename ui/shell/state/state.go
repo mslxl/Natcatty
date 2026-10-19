@@ -13,6 +13,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
@@ -67,6 +68,10 @@ type State struct {
 	surfaces        SurfaceFactory
 	trustPrompt     *sessionui.TrustPrompt
 	authPrompt      *sessionui.AuthPrompt
+
+	// pending lists Host labels whose initial dial is still running. It is
+	// mutated only on the UI thread.
+	pending []string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -145,6 +150,21 @@ func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
 // Problem returns the last connection failure, or "" when the last attempt
 // succeeded or none has run.
 func (s *State) Problem() appconnection.Kind { return s.problem }
+
+// PendingConnections returns the labels of Hosts whose initial dial has not
+// finished. The view renders them as the "connecting" indicator.
+func (s *State) PendingConnections() []string {
+	return append([]string(nil), s.pending...)
+}
+
+func (s *State) clearPending(label string) {
+	for i, pending := range s.pending {
+		if pending == label {
+			s.pending = append(s.pending[:i], s.pending[i+1:]...)
+			return
+		}
+	}
+}
 
 // Shutdown cancels pending connections and trust prompts. The app calls it on
 // quit, before closing Sessions.
@@ -235,6 +255,7 @@ func (s *State) OpenHost(host domainvault.Host) error {
 		label = host.Hostname
 	}
 	s.problem = ""
+	s.pending = append(s.pending, label)
 
 	ctx := s.ctx
 	go func() {
@@ -244,6 +265,9 @@ func (s *State) OpenHost(host domainvault.Host) error {
 			Hostname: host.Hostname,
 			Port:     host.Port,
 			Username: host.Username,
+			// A dropped SSH transport retries every five seconds under the
+			// original reason predicate. Local shells have no policy.
+			Reconnect: &appsession.ReconnectPolicy{},
 		})
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{session: session, label: label, err: err})
@@ -263,8 +287,9 @@ func (s *State) Flush() {
 	s.mu.Unlock()
 
 	for _, outcome := range outcomes {
+		s.clearPending(outcome.label)
 		if outcome.err != nil {
-			s.problem = connectionKind(outcome.err)
+			s.problem = uiconnection.Kind(outcome.err)
 			continue
 		}
 		surface, err := s.surfaces(outcome.session)
@@ -293,14 +318,6 @@ func (s *State) TabLabel(index int) (string, int, bool) {
 		return "", 0, false
 	}
 	return s.tabs[index].Label, s.tabs[index].Number, true
-}
-
-func connectionKind(err error) appconnection.Kind {
-	var typed *appconnection.Error
-	if errors.As(err, &typed) {
-		return typed.Kind
-	}
-	return appconnection.KindInternal
 }
 
 // ActiveSurface returns the terminal surface of the active tab, or nil when

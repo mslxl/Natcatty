@@ -18,6 +18,9 @@ type Hop struct {
 	Port       int
 	Username   string
 	Algorithms AlgorithmPolicy
+	// ConfigFingerprint is the opaque digest of this jump's credential
+	// selection, so a credential change opens a fresh transport.
+	ConfigFingerprint string
 }
 
 // AlgorithmPolicy is one endpoint's SSH negotiation policy. Legacy widens the
@@ -78,6 +81,9 @@ type Route struct {
 	Jumps      []Hop
 	Proxy      *Proxy
 	Algorithms AlgorithmPolicy
+	// ConfigFingerprint is the target Host's opaque credential and policy
+	// digest. It scopes pool reuse without carrying credential material.
+	ConfigFingerprint string
 }
 
 // ChainStatus is one step in a jump chain's progress, mirroring the original
