@@ -335,6 +335,102 @@
   status: verified
   notes: ""
 
+# --- Ticket 06: SSH password connection and host-key trust ---
+
+- id: connections.ssh-password
+  area: connections
+  feature: Connect to an SSH Host with its saved password and open an interactive shell
+  original_paths:
+    - electron/bridges/sshBridge/startSession.cjs
+    - electron/bridges/sshAuthHelper.cjs
+    - domain/models/connection.ts
+  module: application/connection
+  tickets: [06]
+  acceptance_tests:
+    - application/connection.TestAcquireUsesTheStoredPasswordAndOpensATerminal
+    - application/connection.TestPasswordLookupFailureIsAnAuthError
+    - adapters/ssh.TestDialAuthenticatesWithPasswordAndOpensATerminal
+    - app.TestSSHSessionAcquiresAndReleasesALease
+  status: verified
+  notes: "Keys, certificates, agent, and MFA belong to ticket 07; jump chains and pooling to tickets 08 and 09."
+
+- id: connections.host-key-trust
+  area: connections
+  feature: Fingerprint-first unknown, trusted, and changed host-key classification with persisted trust
+  original_paths:
+    - electron/bridges/hostKeyVerifier.cjs
+    - domain/knownHosts.ts
+    - domain/hostKey.ts
+    - components/terminal/TerminalHostKeyVerification.tsx
+  module: domain/connection
+  tickets: [06]
+  acceptance_tests:
+    - domain/connection.TestFingerprintIsSHA256Base64WithoutPadding
+    - domain/connection.TestClassifyTrustedKeyUsesFingerprintFirst
+    - domain/connection.TestClassifyChangedKeyRequiresTheSameKeyType
+    - application/connection.TestTrustedHostKeySkipsThePrompt
+    - application/connection.TestUnknownHostKeyIsPromptedAndTrustPersists
+    - application/connection.TestChangedHostKeyIsDistinctAndRejectionAbortsBeforeAuth
+    - adapters/ssh.TestHostKeyRejectionAbortsBeforeAuthentication
+    - ui/session.TestTrustPromptWaitsForTheUserDecision
+    - ui/session.TestTrustPromptExpiresAnUnansweredDecision
+    - ui/session.TestTrustViewShowsDistinctUnknownAndChangedPrompts
+  status: verified
+  notes: "Rejection happens during the handshake, before any credential is offered. A new key type on a known endpoint is unknown, not changed."
+
+- id: connections.known-host-persistence
+  area: connections
+  feature: Trusted host keys survive restart and rotate in place
+  original_paths:
+    - domain/knownHosts.ts
+    - electron/bridges/sshConnectionPool.cjs
+  module: adapters/store
+  tickets: [06]
+  acceptance_tests:
+    - adapters/store.TestKnownHostsSurviveReopen
+    - adapters/store.TestUpsertKnownHostMatchesTheEndpointAndKeepsIdentity
+    - adapters/store.TestUpsertKnownHostByIDDoesNotDuplicate
+  status: verified
+  notes: ""
+
+- id: connections.ssh-terminal
+  area: terminal
+  feature: SSH terminal input, output, and resize use the Session aggregate
+  original_paths:
+    - electron/bridges/sshBridge/startSession.cjs
+    - electron/bridges/sshBridge.cjs
+  module: adapters/ssh
+  tickets: [06]
+  acceptance_tests:
+    - adapters/ssh.TestDialAuthenticatesWithPasswordAndOpensATerminal
+    - application/session.TestTerminalConnCarriesOutputAndInput
+    - application/session.TestResizeReachesTheTransportAndTheSnapshot
+    - application/session.TestOpenSSHPassesTheConnectionTargetToTheFactory
+    - ui/shell/state.TestOpenHostAddsAnSSHTabOnTheNextFlush
+  status: verified
+  notes: "One Connection per Session; ticket 09 adds pooling, keepalive, and reconnect."
+
+- id: connections.typed-errors
+  area: connections
+  feature: Auth, network, timeout, host-key, and unsupported-algorithm failures are typed for localization
+  original_paths:
+    - electron/bridges/sshAuthHelper.cjs
+    - electron/bridges/sshBridge/startSession.cjs
+    - electron/bridges/sshAlgorithms.cjs
+  module: application/connection
+  tickets: [06]
+  acceptance_tests:
+    - application/connection.TestDialFailuresAreTyped
+    - adapters/ssh.TestWrongPasswordIsAnAuthError
+    - adapters/ssh.TestDialTimeoutIsTyped
+    - adapters/ssh.TestAuthTimeoutIsTyped
+    - adapters/ssh.TestAuthTimeoutCancelsTheHostKeyDecision
+    - adapters/ssh.TestNoCommonAlgorithmIsTypedUnsupported
+    - app.TestSSHSessionWithALockedSecretStoreIsNotAnAuthFailure
+    - ui/shell/state.TestOpenHostReportsATypedConnectionProblemWithoutATab
+  status: verified
+  notes: "The TCP dial has a 20 s deadline and authentication a separate 120 s deadline, matching the original."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

@@ -138,6 +138,12 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 			ui.Text(c, hostSummary(host, m)).FontSize(12).TextColor(t.TextMuted)
 		})
 
+		if host.Protocol == domainvault.ProtocolSSH {
+			if ui.PrimaryButton(c, m.VaultHostConnect()).Clicked() {
+				s.Connect(host.ID)
+				c.Invalidate()
+			}
+		}
 		if ui.Button(c, m.VaultHostEdit()).Clicked() {
 			s.BeginEdit(host.ID)
 			c.Invalidate()

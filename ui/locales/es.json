@@ -113,5 +113,22 @@
       }
     }
   },
-  "appLockProblemFailed": "No se pudo desbloquear la app."
+  "appLockProblemFailed": "No se pudo desbloquear la app.",
+  "vaultHostConnect": "Conectar",
+  "connectionErrorAuth": "No se pudo autenticar. Revisa el usuario y la contraseña guardada.",
+  "connectionErrorNetwork": "No se pudo alcanzar el host. Revisa la red y el puerto.",
+  "connectionErrorTimeout": "La conexión agotó el tiempo de espera.",
+  "connectionErrorHostKey": "La clave del host no está verificada, así que la conexión se canceló.",
+  "connectionErrorUnsupported": "El host y este equipo no comparten un algoritmo compatible.",
+  "connectionErrorCancelled": "La conexión se canceló.",
+  "connectionErrorInternal": "No se pudo abrir la conexión.",
+  "hostKeyPromptUnknownTitle": "Clave del host desconocida",
+  "hostKeyPromptChangedTitle": "La clave del host ha cambiado",
+  "hostKeyPromptUnknownBody": "El host {host} aún no es de confianza. Verifica su huella antes de conectarte.",
+  "hostKeyPromptChangedBody": "La clave del host {host} ha cambiado. Esto puede ocurrir tras reinstalar el servidor o indicar que la conexión está siendo interceptada.",
+  "hostKeyPromptFingerprint": "Huella {keyType}: {fingerprint}",
+  "hostKeyPromptExpected": "Huella de confianza anterior: {fingerprint}",
+  "hostKeyPromptChangedHint": "No continúes salvo que sepas por qué cambió la clave.",
+  "hostKeyPromptTrust": "Confiar y conectar",
+  "hostKeyPromptReject": "Rechazar"
 }

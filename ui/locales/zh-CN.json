@@ -113,5 +113,22 @@
       }
     }
   },
-  "appLockProblemFailed": "无法解锁应用。"
+  "appLockProblemFailed": "无法解锁应用。",
+  "vaultHostConnect": "连接",
+  "connectionErrorAuth": "身份验证失败。请检查用户名和已保存的密码。",
+  "connectionErrorNetwork": "无法连接到主机。请检查网络和端口。",
+  "connectionErrorTimeout": "连接超时。",
+  "connectionErrorHostKey": "主机密钥未通过验证，连接已取消。",
+  "connectionErrorUnsupported": "主机与本机没有兼容的算法。",
+  "connectionErrorCancelled": "连接已取消。",
+  "connectionErrorInternal": "无法打开连接。",
+  "hostKeyPromptUnknownTitle": "未知主机密钥",
+  "hostKeyPromptChangedTitle": "主机密钥已更改",
+  "hostKeyPromptUnknownBody": "尚未信任主机 {host}。连接前请核对其指纹。",
+  "hostKeyPromptChangedBody": "主机 {host} 的密钥已更改。这可能是服务器重装，也可能意味着连接被拦截。",
+  "hostKeyPromptFingerprint": "{keyType} 指纹：{fingerprint}",
+  "hostKeyPromptExpected": "之前信任的指纹：{fingerprint}",
+  "hostKeyPromptChangedHint": "除非你确定密钥更改的原因，否则不要继续。",
+  "hostKeyPromptTrust": "信任并连接",
+  "hostKeyPromptReject": "拒绝"
 }

@@ -4,8 +4,10 @@ import (
 	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/locales"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -13,6 +15,10 @@ import (
 // Settings entry point, the five-language selector, and the ordered work tabs.
 func View(s *state.State) func(*ui.Context) {
 	return func(c *ui.Context) {
+		// Connections complete off the UI thread; applying them here keeps
+		// every Tab mutation on this thread.
+		s.Flush()
+
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
@@ -20,6 +26,10 @@ func View(s *state.State) func(*ui.Context) {
 			sidebar(c, s, m, t)
 			content(c, s, m, t)
 		})
+
+		if prompt := s.TrustPrompt(); prompt != nil {
+			sessionui.TrustView(prompt)(c)
+		}
 	}
 }
 
@@ -55,6 +65,9 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).Fill().Padding(16).Gap(12).Children(func() {
+		if problem := connectionProblemText(m, s.Problem()); problem != "" {
+			ui.Text(c, problem).TextColor(t.Danger)
+		}
 		if s.VaultVisible() {
 			if view := s.VaultView(); view != nil {
 				view(c)
@@ -78,8 +91,12 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 func workTabs(c *ui.Context, s *state.State, m locales.Messages) {
 	selected := s.ActiveTab()
 	labels := make([]string, 0, s.TabCount())
-	for _, number := range s.TabNumbers() {
-		labels = append(labels, m.LocalSessionTab(number))
+	for index := 0; index < s.TabCount(); index++ {
+		label, number, _ := s.TabLabel(index)
+		if label == "" {
+			label = m.LocalSessionTab(number)
+		}
+		labels = append(labels, label)
 	}
 	if ui.Tabs(c, &selected, labels...).Changed() && selected != s.ActiveTab() {
 		s.SelectTab(selected)
@@ -96,6 +113,28 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	if surface := s.ActiveSurface(); surface != nil {
 		surface.View(c)
 	}
+}
+
+// connectionProblemText localizes a connection failure. Unknown kinds render
+// nothing, so the UI never shows an untranslated token.
+func connectionProblemText(m locales.Messages, kind appconnection.Kind) string {
+	switch kind {
+	case appconnection.KindAuth:
+		return m.ConnectionErrorAuth()
+	case appconnection.KindNetwork:
+		return m.ConnectionErrorNetwork()
+	case appconnection.KindTimeout:
+		return m.ConnectionErrorTimeout()
+	case appconnection.KindHostKey:
+		return m.ConnectionErrorHostKey()
+	case appconnection.KindUnsupported:
+		return m.ConnectionErrorUnsupported()
+	case appconnection.KindCancelled:
+		return m.ConnectionErrorCancelled()
+	case appconnection.KindInternal:
+		return m.ConnectionErrorInternal()
+	}
+	return ""
 }
 
 // statusText localizes a Session snapshot's status. It returns "" for a state

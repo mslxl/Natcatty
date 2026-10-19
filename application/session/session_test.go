@@ -124,6 +124,29 @@ func TestOpenLocalStartsARunningLocalSession(t *testing.T) {
 	}
 }
 
+func TestOpenSSHPassesTheConnectionTargetToTheFactory(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	service := newTestService(factory, WithIDGenerator(func() model.SessionID { return "session-ssh" }))
+
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindSSH, HostID: "host-1", Hostname: "example.com", Port: 2222,
+		Username: "root", Cols: 120, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	spec := factory.spec
+	if spec.Kind != KindSSH || spec.HostID != "host-1" || spec.Hostname != "example.com" ||
+		spec.Port != 2222 || spec.Username != "root" {
+		t.Fatalf("factory spec = %+v, want the SSH connection target", spec)
+	}
+	if snapshot := session.Snapshot(); snapshot.Kind != KindSSH {
+		t.Fatalf("snapshot kind = %q, want %q", snapshot.Kind, KindSSH)
+	}
+}
+
 func TestSessionsHaveUniqueULIDIdentifiers(t *testing.T) {
 	service := newTestService(&fakeFactory{transport: newFakeTransport()})
 	t.Cleanup(service.CloseAll)
@@ -152,54 +175,66 @@ func TestSessionsHaveUniqueULIDIdentifiers(t *testing.T) {
 }
 
 func TestTerminalConnCarriesOutputAndInput(t *testing.T) {
-	factory := &fakeFactory{transport: newFakeTransport()}
-	service := newTestService(factory)
-	session, err := service.OpenLocal(context.Background())
-	if err != nil {
-		t.Fatalf("OpenLocal: %v", err)
-	}
-	t.Cleanup(func() { _ = session.Close() })
+	for _, kind := range []Kind{KindLocal, KindSSH} {
+		t.Run(string(kind), func(t *testing.T) {
+			factory := &fakeFactory{transport: newFakeTransport()}
+			service := newTestService(factory)
+			session, err := service.Open(context.Background(), StartSpec{
+				Kind: kind, HostID: "host-1", Hostname: "example.com", Username: "root",
+			})
+			if err != nil {
+				t.Fatalf("Open(%s): %v", kind, err)
+			}
+			t.Cleanup(func() { _ = session.Close() })
 
-	conn := session.TerminalConn()
-	factory.transport.send("hello")
+			conn := session.TerminalConn()
+			factory.transport.send("hello")
 
-	got := make([]byte, 5)
-	if _, err := readWithTimeout(t, conn, got); err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if string(got) != "hello" {
-		t.Fatalf("output = %q, want hello", got)
-	}
+			got := make([]byte, 5)
+			if _, err := readWithTimeout(t, conn, got); err != nil {
+				t.Fatalf("Read: %v", err)
+			}
+			if string(got) != "hello" {
+				t.Fatalf("output = %q, want hello", got)
+			}
 
-	if _, err := conn.Write([]byte("ls\n")); err != nil {
-		t.Fatalf("Write: %v", err)
+			if _, err := conn.Write([]byte("ls\n")); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			eventually(t, "input to reach the transport", func() bool {
+				return factory.transport.input() == "ls\n"
+			})
+		})
 	}
-	eventually(t, "input to reach the transport", func() bool {
-		return factory.transport.input() == "ls\n"
-	})
 }
 
 func TestResizeReachesTheTransportAndTheSnapshot(t *testing.T) {
-	factory := &fakeFactory{transport: newFakeTransport()}
-	service := newTestService(factory)
-	session, err := service.OpenLocal(context.Background())
-	if err != nil {
-		t.Fatalf("OpenLocal: %v", err)
-	}
-	t.Cleanup(func() { _ = session.Close() })
+	for _, kind := range []Kind{KindLocal, KindSSH} {
+		t.Run(string(kind), func(t *testing.T) {
+			factory := &fakeFactory{transport: newFakeTransport()}
+			service := newTestService(factory)
+			session, err := service.Open(context.Background(), StartSpec{
+				Kind: kind, HostID: "host-1", Hostname: "example.com", Username: "root",
+			})
+			if err != nil {
+				t.Fatalf("Open(%s): %v", kind, err)
+			}
+			t.Cleanup(func() { _ = session.Close() })
 
-	if err := session.TerminalConn().Resize(120, 40); err != nil {
-		t.Fatalf("Resize: %v", err)
-	}
+			if err := session.TerminalConn().Resize(120, 40); err != nil {
+				t.Fatalf("Resize: %v", err)
+			}
 
-	eventually(t, "the transport to be resized", func() bool {
-		calls := factory.transport.resizeCalls()
-		return len(calls) == 1 && calls[0] == [2]int{120, 40}
-	})
-	eventually(t, "the snapshot to carry the new size", func() bool {
-		snapshot := session.Snapshot()
-		return snapshot.Cols == 120 && snapshot.Rows == 40
-	})
+			eventually(t, "the transport to be resized", func() bool {
+				calls := factory.transport.resizeCalls()
+				return len(calls) == 1 && calls[0] == [2]int{120, 40}
+			})
+			eventually(t, "the snapshot to carry the new size", func() bool {
+				snapshot := session.Snapshot()
+				return snapshot.Cols == 120 && snapshot.Rows == 40
+			})
+		})
+	}
 }
 
 func TestNaturalExitPublishesTheStatusAndExitCode(t *testing.T) {
