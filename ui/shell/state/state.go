@@ -1,6 +1,7 @@
-// Package state owns the main window's shell state: the ordered work tabs and
-// the requests the shell makes of the app. Window-scoped state lives in
-// ui/<area>/state, as ADR 0006 requires, apart from the view that renders it.
+// Package state owns the main window's shell state: the ordered Tabs, their
+// recursive split trees, and the requests the shell makes of the app.
+// Window-scoped state lives in ui/<area>/state, as ADR 0006 requires, apart
+// from the view that renders it.
 package state
 
 import (
@@ -12,7 +13,10 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appworkspace "github.com/mslxl/natcatty/application/workspace"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
@@ -21,7 +25,15 @@ import (
 // cannot open a Tab's Session.
 var ErrNoSessions = errors.New("shell: no session service")
 
-// Surface is the terminal surface a Tab shows. The UI owns it and the
+// ErrNoActiveTab reports a Pane action taken while no Tab is active.
+var ErrNoActiveTab = errors.New("shell: no active Tab")
+
+// ErrHostUnavailable reports a restored Pane whose Host is no longer in the
+// Vault. The Pane stays in the layout as an error surface so the user can see
+// which Session is missing; nothing is invented in its place.
+var ErrHostUnavailable = errors.New("shell: restored Host is unavailable")
+
+// Surface is the terminal surface a Pane shows. The UI owns it and the
 // application owns the transport beneath it; the shell only renders and closes
 // it.
 type Surface interface {
@@ -33,30 +45,38 @@ type Surface interface {
 // real MyGo terminal; tests wire a fake.
 type SurfaceFactory func(*appsession.Session) (Surface, error)
 
-// Tab is one work tab in the shell. Its number is stable for its lifetime and
-// is what the title shows for a local Session. An SSH Tab shows its Host's
-// Label instead. A Tab hosts one Session and its terminal surface.
-type Tab struct {
-	Number  int
-	Label   string
-	session *appsession.Session
-	surface Surface
+// HostResolver looks a Host up for restore and for reopening a split. It
+// reports false when the Host no longer exists.
+type HostResolver func(context.Context, model.HostID) (domainvault.Host, bool)
+
+// openOutcome is the result of an SSH connection started off the UI thread for
+// a new Tab. Outcome fields are written by the dial goroutine and applied on
+// the UI thread by Flush.
+type openOutcome struct {
+	session    *appsession.Session
+	label      string
+	descriptor domainworkspace.SessionDescriptor
+	err        error
 }
 
-// openOutcome is the result of an SSH connection started off the UI thread.
-// Outcome fields are written by the dial goroutine and applied on the UI
-// thread by Flush.
-type openOutcome struct {
+// paneOutcome is the result of opening the Session behind one Pane that
+// already exists in a Tab: a split, a duplicate, or a restore.
+type paneOutcome struct {
+	tabID   model.TabID
+	paneID  model.PaneID
 	session *appsession.Session
-	label   string
+	// restore asks the Pane to reproduce its stored working directory after
+	// the Session connects. Restores, splits, and duplicates all carry the
+	// source Pane's last known directory.
+	restore bool
 	err     error
 }
 
 // State is the main window's shell state. It is mutated only on the UI thread,
-// except the lock-protected outcome queue that the SSH dial goroutine appends
-// to and the host-key prompt, which synchronizes itself.
+// except the lock-protected queues that dial and Session goroutines append to
+// and the host-key prompt, which synchronizes itself.
 type State struct {
-	tabs            []Tab
+	tabs            []*Tab
 	active          int
 	nextTabNumber   int
 	vaultVisible    bool
@@ -69,6 +89,17 @@ type State struct {
 	trustPrompt     *sessionui.TrustPrompt
 	authPrompt      *sessionui.AuthPrompt
 
+	// workspace persists layout changes and supplies the restore payload.
+	workspace   *appworkspace.Service
+	resolveHost HostResolver
+	// onDetach receives the ID of a Tab that left the main window. Ticket 13
+	// owns the detached window itself; the seam keeps ownership explicit.
+	onDetach func(model.TabID)
+	// detached keeps Tabs whose Sessions stay alive outside the main window.
+	detached []*Tab
+	// restoring suppresses persistence while a payload is being applied.
+	restoring bool
+
 	// pending lists Host labels whose initial dial is still running. It is
 	// mutated only on the UI thread.
 	pending []string
@@ -76,8 +107,12 @@ type State struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	outcomes []openOutcome
+	mu           sync.Mutex
+	outcomes     []openOutcome
+	paneOutcomes []paneOutcome
+	// activity queues Session change notifications from Session goroutines.
+	// Flush transfers them to the activity markers on the UI thread.
+	activity []model.SessionID
 	problem  appconnection.Kind
 }
 
@@ -96,14 +131,14 @@ func WithSettingsRequest(fn func()) Option {
 	return func(s *State) { s.requestSettings = fn }
 }
 
-// WithRedrawRequest sets the function called when a Tab opens or closes. The
-// app wires it to the main window's Invalidate.
+// WithRedrawRequest sets the function called when the layout changes. The app
+// wires it to the main window's Invalidate.
 func WithRedrawRequest(fn func()) Option {
 	return func(s *State) { s.requestRedraw = fn }
 }
 
 // WithSessions gives the shell the Session service that opens local shells and
-// the factory that builds their terminal surfaces.
+// SSH Sessions, and the factory that builds their terminal surfaces.
 func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 	return func(s *State) {
 		s.sessions = service
@@ -130,8 +165,22 @@ func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 	return func(s *State) { s.authPrompt = prompt }
 }
 
+// WithWorkspace gives the shell the Workspace persistence service and the Host
+// resolver restore needs. Either may be nil, which disables restore.
+func WithWorkspace(service *appworkspace.Service, resolve HostResolver) Option {
+	return func(s *State) {
+		s.workspace = service
+		s.resolveHost = resolve
+	}
+}
+
+// WithDetachHandler receives a Tab's ID after the Tab leaves the main window.
+func WithDetachHandler(fn func(model.TabID)) Option {
+	return func(s *State) { s.onDetach = fn }
+}
+
 // NewState returns the initial shell state: the Vault is visible and there
-// are no work tabs.
+// are no work Tabs.
 func NewState(opts ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &State{active: -1, nextTabNumber: 1, vaultVisible: true, ctx: ctx, cancel: cancel}
@@ -187,33 +236,8 @@ func (s *State) ShowVault() {
 	s.RequestRedraw()
 }
 
-// TabCount returns the number of work tabs.
-func (s *State) TabCount() int { return len(s.tabs) }
-
-// ActiveTab returns the index of the active work tab, or -1 when there is
-// none.
-func (s *State) ActiveTab() int { return s.active }
-
-// TabNumbers returns the stable numbers of the work tabs, in order.
-func (s *State) TabNumbers() []int {
-	numbers := make([]int, len(s.tabs))
-	for i, tab := range s.tabs {
-		numbers[i] = tab.Number
-	}
-	return numbers
-}
-
-// SelectTab makes the tab at index active and shows it. Out-of-range indexes
-// are ignored.
-func (s *State) SelectTab(index int) {
-	if index >= 0 && index < len(s.tabs) {
-		s.active = index
-		s.vaultVisible = false
-	}
-}
-
 // NewTab opens a local shell Session, builds its terminal surface, appends it
-// as a work tab, and makes it active.
+// as a work Tab, and makes it active.
 func (s *State) NewTab() error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
@@ -229,14 +253,14 @@ func (s *State) NewTab() error {
 		return err
 	}
 
-	s.tabs = append(s.tabs, Tab{
-		Number:  s.nextTabNumber,
-		session: session,
-		surface: surface,
-	})
-	s.nextTabNumber++
+	tab := s.newTab(TabOptions{AutoTitle: true, Descriptor: domainworkspace.SessionDescriptor{
+		Kind: domainworkspace.SessionLocal,
+	}})
+	tab.attachOnlySession(session, surface)
+	s.tabs = append(s.tabs, tab)
 	s.active = len(s.tabs) - 1
 	s.vaultVisible = false
+	s.save()
 	s.RequestRedraw()
 	return nil
 }
@@ -273,7 +297,20 @@ func (s *State) OpenHost(host domainvault.Host) error {
 			Reconnect: &appsession.ReconnectPolicy{},
 		})
 		s.mu.Lock()
-		s.outcomes = append(s.outcomes, openOutcome{session: session, label: label, err: err})
+		s.outcomes = append(s.outcomes, openOutcome{
+			session: session,
+			label:   label,
+			descriptor: domainworkspace.SessionDescriptor{
+				Kind:          domainworkspace.SessionSSH,
+				Label:         label,
+				HostID:        host.ID,
+				Hostname:      host.Hostname,
+				Port:          host.Port,
+				Username:      host.Username,
+				X11Forwarding: host.X11Enabled(),
+			},
+			err: err,
+		})
 		s.mu.Unlock()
 		s.RequestRedraw()
 	}()
@@ -284,11 +321,23 @@ func (s *State) OpenHost(host domainvault.Host) error {
 // view calls it on the UI thread before rendering, so Tabs and their terminal
 // surfaces are still built and mutated only there.
 func (s *State) Flush() {
+	s.refreshWorkingDirectories()
+
 	s.mu.Lock()
+	paneOutcomes := s.paneOutcomes
+	s.paneOutcomes = nil
 	outcomes := s.outcomes
 	s.outcomes = nil
+	activity := s.activity
+	s.activity = nil
 	s.mu.Unlock()
 
+	for _, id := range activity {
+		s.applySessionActivity(id)
+	}
+	for _, outcome := range paneOutcomes {
+		s.applyPaneOutcome(outcome)
+	}
 	for _, outcome := range outcomes {
 		s.clearPending(outcome.label)
 		if outcome.err != nil {
@@ -301,74 +350,17 @@ func (s *State) Flush() {
 			s.problem = appconnection.KindInternal
 			continue
 		}
-		s.tabs = append(s.tabs, Tab{
-			Number:  s.nextTabNumber,
-			Label:   outcome.label,
-			session: outcome.session,
-			surface: surface,
-		})
-		s.nextTabNumber++
+		number := s.nextTabNumber
+		descriptor := outcome.descriptor
+		descriptor.Number = number
+		tab := s.newTab(TabOptions{Label: outcome.label, AutoTitle: true, Descriptor: descriptor})
+		tab.attachOnlySession(outcome.session, surface)
+		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
 		s.vaultVisible = false
 		s.problem = ""
+		s.save()
 	}
-}
-
-// TabLabel returns a Tab's title label and stable number. An empty label means
-// a local Session, whose title the view localizes from the number.
-func (s *State) TabLabel(index int) (string, int, bool) {
-	if index < 0 || index >= len(s.tabs) {
-		return "", 0, false
-	}
-	return s.tabs[index].Label, s.tabs[index].Number, true
-}
-
-// ActiveSurface returns the terminal surface of the active tab, or nil when
-// there is no tab.
-func (s *State) ActiveSurface() Surface {
-	if s.active < 0 || s.active >= len(s.tabs) {
-		return nil
-	}
-	return s.tabs[s.active].surface
-}
-
-// ActiveSnapshot returns the Session snapshot of the active tab. It reports
-// false when there is no tab.
-func (s *State) ActiveSnapshot() (appsession.Snapshot, bool) {
-	if s.active < 0 || s.active >= len(s.tabs) {
-		return appsession.Snapshot{}, false
-	}
-	return s.tabs[s.active].session.Snapshot(), true
-}
-
-// CloseActiveTab closes the active work tab's terminal surface and Session,
-// then removes the tab and selects the preceding tab, or the new first tab.
-// It reports whether a tab was closed.
-func (s *State) CloseActiveTab() bool {
-	if s.active < 0 || s.active >= len(s.tabs) {
-		return false
-	}
-	tab := s.tabs[s.active]
-	if tab.surface != nil {
-		tab.surface.Close()
-	}
-	if tab.session != nil {
-		_ = tab.session.Close()
-	}
-
-	s.tabs = append(s.tabs[:s.active], s.tabs[s.active+1:]...)
-	if len(s.tabs) == 0 {
-		s.active = -1
-		s.vaultVisible = true
-		s.RequestRedraw()
-		return true
-	}
-	if s.active >= len(s.tabs) {
-		s.active = len(s.tabs) - 1
-	}
-	s.vaultVisible = false
-	s.RequestRedraw()
-	return true
 }
 
 // RequestRedraw asks the app to redraw the shell.

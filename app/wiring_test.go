@@ -107,7 +107,23 @@ func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
 	shellState := newWiringState(t)
 	registry := newRegistry(shellState, func() {}, func() error { return nil })
 
-	ids := []command.ID{command.NewTab, command.CloseTab, command.LockApp, command.Quit}
+	ids := []command.ID{
+		command.NewTab,
+		command.CloseTab,
+		command.CloseOtherTabs,
+		command.CloseTabsRight,
+		command.DuplicateTab,
+		command.DetachTab,
+		command.SplitPaneRight,
+		command.SplitPaneDown,
+		command.ClosePane,
+		command.FocusPaneLeft,
+		command.FocusPaneRight,
+		command.FocusPaneUp,
+		command.FocusPaneDown,
+		command.LockApp,
+		command.Quit,
+	}
 	for _, tag := range locales.Tags() {
 		ids = append(ids, command.LocaleCommandID(tag))
 	}

@@ -8,6 +8,19 @@ const (
 	LockApp  ID = "app.lock"
 	NewTab   ID = "tab.new"
 	CloseTab ID = "tab.close"
+
+	CloseOtherTabs ID = "tab.closeOthers"
+	CloseTabsRight ID = "tab.closeRight"
+	DuplicateTab   ID = "tab.duplicate"
+	DetachTab      ID = "tab.detach"
+
+	SplitPaneRight ID = "pane.splitRight"
+	SplitPaneDown  ID = "pane.splitDown"
+	ClosePane      ID = "pane.close"
+	FocusPaneLeft  ID = "pane.focusLeft"
+	FocusPaneRight ID = "pane.focusRight"
+	FocusPaneUp    ID = "pane.focusUp"
+	FocusPaneDown  ID = "pane.focusDown"
 )
 
 // LocaleCommandID returns the ID of the command that shows the language of

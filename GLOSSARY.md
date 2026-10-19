@@ -62,13 +62,19 @@ with its own lifecycle, transport, and terminal surface.
 _Avoid_: terminal, tab, shell
 
 **Workspace**:
-A persisted tree of panes that defines a window's layout, independent of the live
-sessions it currently displays.
+The persisted ordered Tabs and split layout of one window, independent of the live
+Sessions it currently displays. Detached windows have their own Workspace.
 _Avoid_: layout, arrangement
 
 **Tab**:
-A named pane within a Workspace that hosts one Session or a file editor.
-_Avoid_: session, window
+One ordered entry in a Workspace's Tab strip. A Tab owns a recursive split tree of one
+or more Panes and is shown as a single strip item.
+_Avoid_: session, window, pane
+
+**Pane**:
+One leaf of a Tab's recursive split tree, bound to one Session or file editor. A Tab
+with one Pane looks like a plain terminal tab.
+_Avoid_: split, terminal, tab
 
 **Transfer**:
 A single tracked file or directory operation in the transfer queue.

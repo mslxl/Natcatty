@@ -938,6 +938,122 @@
   status: verified
   notes: "An X11 request marks the endpoint no-reuse. It is neither parked nor joined as a pending dial and serves only its own first lease; the transport closes when that lease is released."
 
+# --- Ticket 12: Workspace Tabs, splits, and restore ---
+
+- id: workspace.tab-actions
+  area: shell
+  feature: Ordered Tabs with close, close-others, close-right, duplicate, and detach actions
+  original_paths:
+    - components/TopTabs.tsx
+    - components/top-tabs/SessionTabContextMenuContent.tsx
+    - components/top-tabs/TopTabItems.tsx
+    - application/state/sessionWorkspaceDetach.ts
+    - domain/models/workspace.ts
+  module: ui/shell/state
+  tickets: [12]
+  acceptance_tests:
+    - ui/shell/state.TestTabActionsCloseOthersCloseRightDuplicateAndDetach
+    - ui/shell.TestShellTabMenuDuplicatesWithCopyTitle
+    - ui/shell.TestShellTabMenuClosesOtherTabs
+    - ui/shell.TestShellKeepsWorkTabsVisibleOverTheVault
+    - app.TestRegistryKnowsEveryMenuCommand
+  status: verified
+  notes: "Detach removes the Tab from the main window and leaves its Sessions running; the detached window itself belongs to ticket 13."
+
+- id: workspace.tab-chrome
+  area: shell
+  feature: Tab titles, duplicate naming, and active/activity indicators
+  original_paths:
+    - components/TopTabs.tsx
+    - components/top-tabs/TopTabItems.tsx
+    - domain/sessionTabTitle.ts
+  module: ui/shell
+  tickets: [12]
+  acceptance_tests:
+    - ui/shell.TestShellShowsTheTabActivityMarker
+    - ui/shell.TestShellTabMenuDuplicatesWithCopyTitle
+    - ui/shell/state.TestSetTabDirtyAndSelectClearsIt
+    - ui/shell/state.TestQueuedSessionActivityMarksTheTabOnFlush
+  status: verified
+  notes: "A duplicate keeps the source's title number and gains a copy marker while receiving its own stable Tab Number. The activity marker reflects any off-screen Session change and clears when the Tab becomes active."
+
+- id: workspace.split-tree
+  area: terminal
+  feature: Recursive horizontal and vertical splits with a single focus path
+  original_paths:
+    - domain/workspace.ts
+    - domain/models/workspace.ts
+    - components/terminalLayer/TerminalLayerWorkspaceSection.tsx
+    - components/terminalLayer/useTerminalWorkspaceLayout.ts
+    - components/terminalLayer/workspaceSplitResize.ts
+    - components/terminal/TerminalContextMenu.tsx
+  module: ui/shell/state
+  tickets: [12]
+  acceptance_tests:
+    - ui/shell/state.TestSplitFocusedPaneBuildsRecursiveTreeAndFocus
+    - ui/shell/state.TestCloseFocusedPaneCollapsesTheSiblingSubtree
+    - ui/shell/state.TestDirectionalFocusMovesAcrossSplitGeometry
+    - ui/shell.TestShellRendersRecursiveSplitPanes
+    - ui/shell.TestShellPaneMenuSplitsAndCloses
+  status: verified
+  notes: "The tree is binary and recursive. Horizontal splits stack top/bottom and vertical splits sit left/right, matching the original domain terms. Closing the focused Pane collapses its parent split; directional focus follows split geometry and wraps around."
+
+- id: workspace.drag-drop
+  area: shell
+  feature: Reorder Tabs and move Panes by drag and drop
+  original_paths:
+    - components/TopTabs.tsx
+    - components/terminalLayer/TerminalLayerSupport.tsx
+    - domain/workspace.ts
+  module: ui/shell
+  tickets: [12]
+  acceptance_tests:
+    - ui/shell/state.TestMoveTabReordersAndFollowsTheActiveTab
+    - ui/shell/state.TestMovePaneWithinAndAcrossTabs
+    - ui/shell/state.TestMovePaneToTabUsesTheTargetFocus
+    - ui/shell.TestShellDragReordersTabs
+    - ui/shell.TestShellDragMovesAPaneOntoAnotherTab
+  status: verified
+  notes: "A Pane drop targets a side of another Pane or a Tab strip item; a rejected self-drop leaves the layout unchanged. The last Pane leaving a Tab removes that Tab."
+
+- id: workspace.restore
+  area: terminal
+  feature: Restore Tabs, splits, Session descriptors, and the last working directory after restart
+  original_paths:
+    - application/state/sessionRestoreState.ts
+    - application/state/sessionRestoreStorage.ts
+    - domain/sessionRestore.ts
+    - docs/session-restore.md
+  module: application/workspace
+  tickets: [12]
+  acceptance_tests:
+    - adapters/store.TestWorkspaceLayoutSurvivesReopen
+    - adapters/store.TestWorkspaceSaveReplacesTheSingleRowAndClearRemovesIt
+    - adapters/store.TestCorruptWorkspaceRowLoadsAsEmpty
+    - ui/shell/state.TestWorkspacePayloadRoundTripsThroughRestore
+    - ui/shell/state.TestRestoreDegradesMissingHostAndInvalidWorkingDirectory
+    - ui/shell/state.TestRestoreKeepsNumbersActiveTabAndFocus
+    - ui/shell/state.TestOpenHostPersistsItsRestoreDescriptor
+    - domain/workspace.TestSanitizePayloadMapsActiveTabPastDroppedTabs
+  status: verified
+  notes: "Payload version 1 stores only layout and non-secret Session descriptors; terminal output and scrollback are deliberately absent. A missing Host renders an error Pane in place, and an invalid local directory is cleared. Dropped Tabs remap the active Tab instead of shifting it by index. A corrupt row restores an empty Workspace."
+
+- id: workspace.cwd-restore
+  area: terminal
+  feature: Track OSC 7 working directories and reopen restored Sessions there
+  original_paths:
+    - components/terminalLayer/commandCwdProbe.ts
+    - application/state/sessionRestoreState.ts
+  module: ui/shell/state
+  tickets: [12]
+  acceptance_tests:
+    - ui/shell/state.TestReportedWorkingDirectoryIsPersisted
+    - ui/shell/state.TestRestoreReplaysTheRemoteWorkingDirectory
+    - ui/shell/state.TestRemoteWorkingDirectoryEligibility
+    - ui/shell/state.TestSplittingAnSSHPaneReplaysTheWorkingDirectory
+  status: verified
+  notes: "Local Sessions start in the stored directory. SSH restore and split replay a shell-quoted cd -- for POSIX absolute, ~, and ~/ OSC 7 paths; a rejected cd leaves the Session open."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 
