@@ -280,6 +280,32 @@ func TestTogglePinnedPersistsThePreferenceThroughUpdate(t *testing.T) {
 	}
 }
 
+func TestConnectCallsTheConnectActionForAListedHost(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "a", Label: "alpha", Hostname: "example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	}}}
+	var connected domainvault.Host
+	state := NewState(repo, WithConnect(func(host domainvault.Host) { connected = host }))
+	if err := state.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !state.Connect("a") {
+		t.Fatal("Connect reported failure for a listed Host")
+	}
+	if connected.ID != "a" || connected.Hostname != "example.com" {
+		t.Fatalf("connected Host = %+v, want the listed Host", connected)
+	}
+
+	if state.Connect("missing") {
+		t.Fatal("Connect reported success for an unknown Host")
+	}
+	if state.Problem() != ProblemNotFound {
+		t.Fatalf("problem = %q, want %q", state.Problem(), ProblemNotFound)
+	}
+}
+
 func TestReloadDropsASelectionThatNoLongerExists(t *testing.T) {
 	repo := &fakeHosts{items: []domainvault.Host{{ID: "host-1", Label: "web"}}}
 	state, _ := newTestState(t, repo)

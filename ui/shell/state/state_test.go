@@ -4,12 +4,15 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // fakeTransport keeps a Session alive until the test closes it.
@@ -57,9 +60,17 @@ func (f *fakeTransport) Close() error {
 	return nil
 }
 
-type fakeFactory struct{ transport *fakeTransport }
+type fakeFactory struct {
+	transport *fakeTransport
+	err       error
+	spec      appsession.StartSpec
+}
 
-func (f *fakeFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	f.spec = spec
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.transport, nil
 }
 
@@ -79,17 +90,19 @@ type testGraph struct {
 	state    *State
 	surface  *fakeSurface
 	sessions []*appsession.Session
-	changes  int
+	factory  *fakeFactory
+	changes  atomic.Int32
 }
 
 func newTestGraph(t *testing.T) *testGraph {
 	t.Helper()
 	graph := &testGraph{}
-	service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
+	graph.factory = &fakeFactory{transport: newFakeTransport()}
+	service := appsession.NewService(graph.factory)
 	t.Cleanup(service.CloseAll)
 	graph.surface = &fakeSurface{}
 	graph.state = NewState(
-		WithRedrawRequest(func() { graph.changes++ }),
+		WithRedrawRequest(func() { graph.changes.Add(1) }),
 		WithSessions(service, func(session *appsession.Session) (Surface, error) {
 			graph.sessions = append(graph.sessions, session)
 			return graph.surface, nil
@@ -197,14 +210,14 @@ func TestTabChangesRequestARedraw(t *testing.T) {
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
-	if graph.changes != 1 {
-		t.Fatalf("change requests after NewTab = %d, want 1", graph.changes)
+	if got := graph.changes.Load(); got != 1 {
+		t.Fatalf("change requests after NewTab = %d, want 1", got)
 	}
 	if !graph.state.CloseActiveTab() {
 		t.Fatal("CloseActiveTab returned false")
 	}
-	if graph.changes != 2 {
-		t.Fatalf("change requests after CloseActiveTab = %d, want 2", graph.changes)
+	if got := graph.changes.Load(); got != 2 {
+		t.Fatalf("change requests after CloseActiveTab = %d, want 2", got)
 	}
 }
 
@@ -289,4 +302,78 @@ func TestClosingTheLastTabShowsTheVault(t *testing.T) {
 	if !graph.state.VaultVisible() {
 		t.Fatal("the Vault is not visible after closing the last Tab")
 	}
+}
+
+func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 2222,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+	}
+
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	// The dial goroutine only queues its outcome; Tabs change in Flush.
+	if graph.state.TabCount() != 0 {
+		t.Fatalf("tabs = %d before Flush, want 0", graph.state.TabCount())
+	}
+
+	waitFor(t, "the SSH tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+	if got := graph.factory.spec; got.Kind != appsession.KindSSH || got.HostID != "host-1" ||
+		got.Hostname != "example.com" || got.Port != 2222 || got.Username != "root" {
+		t.Fatalf("factory spec = %+v, want the Host's SSH target", got)
+	}
+	label, number, ok := graph.state.TabLabel(0)
+	if !ok || label != "prod" || number != 1 {
+		t.Fatalf("tab label = %q, number = %d, %v; want prod and 1", label, number, ok)
+	}
+	if graph.state.VaultVisible() {
+		t.Fatal("the Vault is still visible after an SSH Tab opened")
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindSSH || snapshot.Status != appsession.StatusRunning {
+		t.Fatalf("snapshot = %+v, %v; want a running SSH Session", snapshot, ok)
+	}
+	if graph.state.Problem() != "" {
+		t.Fatalf("problem = %q after a successful connection", graph.state.Problem())
+	}
+}
+
+func TestOpenHostReportsATypedConnectionProblemWithoutATab(t *testing.T) {
+	graph := newTestGraph(t)
+	graph.factory.err = &appconnection.Error{
+		Kind:  appconnection.KindAuth,
+		Cause: appconnection.ErrAuthentication,
+	}
+
+	if err := graph.state.OpenHost(domainvault.Host{
+		ID: "host-1", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+	}); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+
+	waitFor(t, "the connection problem", func() bool {
+		graph.state.Flush()
+		return graph.state.Problem() == appconnection.KindAuth
+	})
+	if graph.state.TabCount() != 0 {
+		t.Fatalf("tabs = %d after a failed connection, want 0", graph.state.TabCount())
+	}
+}
+
+func waitFor(t *testing.T, what string, ready func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }

@@ -158,5 +158,62 @@
       }
     }
   },
-  "appLockProblemFailed": "The app could not be unlocked."
+  "appLockProblemFailed": "The app could not be unlocked.",
+  "vaultHostConnect": "Connect",
+  "connectionErrorAuth": "Authentication failed. Check the username and the saved password.",
+  "connectionErrorNetwork": "Could not reach the host. Check the network and the port.",
+  "connectionErrorTimeout": "The connection timed out.",
+  "connectionErrorHostKey": "The host key was not verified, so the connection was cancelled.",
+  "connectionErrorUnsupported": "The host and this computer share no supported algorithm.",
+  "connectionErrorCancelled": "The connection was cancelled.",
+  "connectionErrorInternal": "The connection could not be opened.",
+  "hostKeyPromptUnknownTitle": "Unknown host key",
+  "hostKeyPromptChangedTitle": "Host key has changed",
+  "hostKeyPromptUnknownBody": "The host {host} is not trusted yet. Verify its fingerprint before connecting.",
+  "@hostKeyPromptUnknownBody": {
+    "description": "The host-key prompt for an endpoint with no saved trust record.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "example.com"
+      }
+    }
+  },
+  "hostKeyPromptChangedBody": "The host key for {host} has changed. This can happen after a server reinstall, or it can mean the connection is being intercepted.",
+  "@hostKeyPromptChangedBody": {
+    "description": "The host-key prompt warning that a saved fingerprint no longer matches.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "example.com"
+      }
+    }
+  },
+  "hostKeyPromptFingerprint": "{keyType} fingerprint: {fingerprint}",
+  "@hostKeyPromptFingerprint": {
+    "description": "The live host key's type and SHA-256 fingerprint.",
+    "placeholders": {
+      "keyType": {
+        "type": "String",
+        "example": "ssh-ed25519"
+      },
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptExpected": "Previously trusted fingerprint: {fingerprint}",
+  "@hostKeyPromptExpected": {
+    "description": "The fingerprint the Vault trusted before a host key changed.",
+    "placeholders": {
+      "fingerprint": {
+        "type": "String",
+        "example": "uqlUaJEm3yLsW7r4i4a5I0LgW5jDcMKWYoNA/8Nn0Eo"
+      }
+    }
+  },
+  "hostKeyPromptChangedHint": "Do not continue unless you know why the key changed.",
+  "hostKeyPromptTrust": "Trust and connect",
+  "hostKeyPromptReject": "Reject"
 }

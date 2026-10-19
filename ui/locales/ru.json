@@ -113,5 +113,22 @@
       }
     }
   },
-  "appLockProblemFailed": "Не удалось разблокировать приложение."
+  "appLockProblemFailed": "Не удалось разблокировать приложение.",
+  "vaultHostConnect": "Подключиться",
+  "connectionErrorAuth": "Не удалось войти. Проверьте имя пользователя и сохранённый пароль.",
+  "connectionErrorNetwork": "Не удалось подключиться к хосту. Проверьте сеть и порт.",
+  "connectionErrorTimeout": "Время подключения истекло.",
+  "connectionErrorHostKey": "Ключ хоста не подтверждён, поэтому подключение отменено.",
+  "connectionErrorUnsupported": "У хоста и этого компьютера нет общего поддерживаемого алгоритма.",
+  "connectionErrorCancelled": "Подключение отменено.",
+  "connectionErrorInternal": "Не удалось открыть подключение.",
+  "hostKeyPromptUnknownTitle": "Неизвестный ключ хоста",
+  "hostKeyPromptChangedTitle": "Ключ хоста изменился",
+  "hostKeyPromptUnknownBody": "Хост {host} ещё не является доверенным. Проверьте отпечаток перед подключением.",
+  "hostKeyPromptChangedBody": "Ключ хоста {host} изменился. Это бывает после переустановки сервера или указывает на перехват подключения.",
+  "hostKeyPromptFingerprint": "Отпечаток {keyType}: {fingerprint}",
+  "hostKeyPromptExpected": "Ранее доверенный отпечаток: {fingerprint}",
+  "hostKeyPromptChangedHint": "Не продолжайте, если не знаете, почему ключ изменился.",
+  "hostKeyPromptTrust": "Доверять и подключиться",
+  "hostKeyPromptReject": "Отклонить"
 }

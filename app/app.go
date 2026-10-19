@@ -13,15 +13,18 @@ import (
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	"github.com/mslxl/natcatty/adapters/localpty"
+	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/command"
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/locales"
-	"github.com/mslxl/natcatty/ui/session"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -105,18 +108,38 @@ func run(afterReady func(*mygo.Window)) error {
 	gate = uiapplock.NewGate(appLock, uiapplock.WithRedrawRequest(invalidate))
 	settingsState = settings.NewAppLockState(appLock, settings.WithAppLockRedrawRequest(invalidate))
 
+	// The trust prompt is both the Manager's Prompter and the shell's modal.
+	// It bridges the dial goroutine, which blocks on the user's decision, and
+	// the UI thread.
+	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
+
+	// One SSH Connection per Session. The lease seam is what tickets 08 and 09
+	// extend into jump chains and a shared pool.
+	connections := appconnection.NewManager(
+		sshadapter.NewDialer(),
+		vaultPasswords{vault: vaultService},
+		database,
+		appconnection.WithPrompter(trustPrompt),
+	)
+
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
+	var shellState *state.State
 	vaultState := vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
 		vaultstate.WithRedrawRequest(invalidate),
+		vaultstate.WithConnect(func(host domainvault.Host) {
+			if shellState != nil {
+				_ = shellState.OpenHost(host)
+			}
+		}),
 	)
 	_ = vaultState.Reload()
 
-	sessions := appsession.NewService(localpty.Factory{})
-	shellState := state.NewState(
+	sessions := appsession.NewService(newTransportFactory(localpty.Factory{}, connections))
+	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
 		}),
@@ -132,12 +155,16 @@ func run(afterReady func(*mygo.Window)) error {
 			return sessionui.New(s)
 		}),
 		state.WithVault(vaultui.View(vaultState)),
+		state.WithTrustPrompt(trustPrompt),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
-	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { sessions.CloseAll() })
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		shellState.Shutdown()
+		sessions.CloseAll()
+	})
 
 	mygo.App.WhenReady(func() {
 		mygo.App.SetMenu(BuildMenu(registry, mygo.App.Locale()))
@@ -160,7 +187,10 @@ func run(afterReady func(*mygo.Window)) error {
 			gate.RecordActivity()
 			win.Invalidate()
 		})
-		win.OnClosed(func() { sessions.CloseAll() })
+		win.OnClosed(func() {
+			shellState.Shutdown()
+			sessions.CloseAll()
+		})
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			win.SetTitle(locales.In(tag).AppName())
