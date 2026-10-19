@@ -10,8 +10,11 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/adapters/localpty"
 	"github.com/mslxl/natcatty/application/command"
+	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -24,6 +27,7 @@ func Run() error { return run(nil) }
 // thread after the main window exists; the launch smoke build uses it to quit.
 func run(afterReady func(*mygo.Window)) error {
 	var settingsWindow *mygo.Window
+	var mainWindow *mygo.Window
 
 	// openSettings keeps one Settings window per app, as ADR 0006 requires.
 	// Shell callbacks run on the UI thread, so creating and focusing the
@@ -47,13 +51,28 @@ func run(afterReady func(*mygo.Window)) error {
 		settingsWindow.OnClosed(func() { settingsWindow = nil })
 	}
 
+	sessions := appsession.NewService(localpty.Factory{})
 	shellState := state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
 		}),
 		state.WithSettingsRequest(openSettings),
+		// Opening and closing a Tab changes the shell's structure; ask for the
+		// frame that shows the new tab strip or Vault placeholder.
+		state.WithRedrawRequest(func() {
+			if mainWindow != nil && !mainWindow.IsDestroyed() {
+				mainWindow.Invalidate()
+			}
+		}),
+		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
+			return sessionui.New(s)
+		}),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit)
+
+	// A Session's end may run on any goroutine; Invalidate is safe from
+	// any goroutine and asks for the frame that shows the new status.
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { sessions.CloseAll() })
 
 	mygo.App.WhenReady(func() {
 		mygo.App.SetMenu(BuildMenu(registry, mygo.App.Locale()))
@@ -67,6 +86,9 @@ func run(afterReady func(*mygo.Window)) error {
 			StateKey:  "main",
 			Content:   ui.View(shell.View(shellState)),
 		})
+		mainWindow = win
+		sessions.SetChangeHook(func(appsession.Snapshot) { win.Invalidate() })
+		win.OnClosed(func() { sessions.CloseAll() })
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			win.SetTitle(locales.In(tag).AppName())
@@ -97,8 +119,7 @@ func newRegistry(shellState *state.State, quit func()) *command.Registry {
 	}
 
 	register(command.NewTab, func(context.Context) error {
-		shellState.NewTab()
-		return nil
+		return shellState.NewTab()
 	})
 	register(command.CloseTab, func(context.Context) error {
 		shellState.CloseActiveTab()

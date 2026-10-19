@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -51,23 +52,54 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 }
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Grow(1).Fill().Padding(24).Gap(16).Children(func() {
+	ui.Column(c).Grow(1).Fill().Padding(16).Gap(12).Children(func() {
 		if s.TabCount() > 0 {
-			ui.Row(c).Gap(8).Children(func() {
-				for index, number := range s.TabNumbers() {
-					label := m.TabTitle(number)
-					if index == s.ActiveTab() {
-						if ui.PrimaryButton(c.Key(number), label).Clicked() {
-							s.SelectTab(index)
-						}
-					} else if ui.Button(c.Key(number), label).Clicked() {
-						s.SelectTab(index)
-					}
-				}
-			})
+			workTabs(c, s, m)
+			activeTab(c, s, m, t)
+			return
 		}
 
 		ui.Text(c, m.NavVault()).FontSize(24).Bold()
 		ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
 	})
+}
+
+func workTabs(c *ui.Context, s *state.State, m locales.Messages) {
+	selected := s.ActiveTab()
+	labels := make([]string, 0, s.TabCount())
+	for _, number := range s.TabNumbers() {
+		labels = append(labels, m.LocalSessionTab(number))
+	}
+	if ui.Tabs(c, &selected, labels...).Changed() && selected != s.ActiveTab() {
+		s.SelectTab(selected)
+		c.Invalidate()
+	}
+}
+
+func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	if snapshot, ok := s.ActiveSnapshot(); ok {
+		if status := statusText(m, snapshot); status != "" {
+			ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
+		}
+	}
+	if surface := s.ActiveSurface(); surface != nil {
+		surface.View(c)
+	}
+}
+
+// statusText localizes a Session snapshot's status. It returns "" for a state
+// this slice does not know, so the UI never shows an untranslated token.
+func statusText(m locales.Messages, snapshot appsession.Snapshot) string {
+	switch snapshot.Status {
+	case appsession.StatusRunning:
+		return m.SessionRunning()
+	case appsession.StatusExited:
+		if snapshot.HasExitCode {
+			return m.SessionExitedWithCode(snapshot.ExitCode)
+		}
+		return m.SessionExited()
+	case appsession.StatusClosed:
+		return m.SessionClosed()
+	}
+	return ""
 }

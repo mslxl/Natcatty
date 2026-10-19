@@ -11,5 +11,11 @@
   "menuNewTab": "Nueva pestaña",
   "menuCloseTab": "Cerrar pestaña",
   "menuQuit": "Salir",
-  "tabTitle": "Pestaña {number}"
+  "tabTitle": "Pestaña {number}",
+  "localSessionTab": "Sesión local {number}",
+  "sessionRunning": "En ejecución",
+  "sessionExited": "Finalizada",
+  "sessionExitedWithCode": "Finalizada con código {code}",
+  "sessionClosed": "Cerrada",
+  "commandFailed": "No se pudo completar el comando"
 }

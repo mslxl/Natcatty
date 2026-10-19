@@ -17,5 +17,23 @@
     "placeholders": {
       "number": { "type": "int", "example": "1" }
     }
-  }
+  },
+  "localSessionTab": "Local Session {number}",
+  "@localSessionTab": {
+    "description": "The title of a Tab that hosts a local shell Session.",
+    "placeholders": {
+      "number": { "type": "int", "example": "1" }
+    }
+  },
+  "sessionRunning": "Running",
+  "sessionExited": "Exited",
+  "sessionExitedWithCode": "Exited with code {code}",
+  "@sessionExitedWithCode": {
+    "description": "The status of a Session whose program ended with an exit code.",
+    "placeholders": {
+      "code": { "type": "int", "example": "0" }
+    }
+  },
+  "sessionClosed": "Closed",
+  "commandFailed": "Could not complete the command"
 }

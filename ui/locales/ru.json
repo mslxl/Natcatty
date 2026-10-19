@@ -11,5 +11,11 @@
   "menuNewTab": "Новая вкладка",
   "menuCloseTab": "Закрыть вкладку",
   "menuQuit": "Выход",
-  "tabTitle": "Вкладка {number}"
+  "tabTitle": "Вкладка {number}",
+  "localSessionTab": "Локальный сеанс {number}",
+  "sessionRunning": "Выполняется",
+  "sessionExited": "Завершена",
+  "sessionExitedWithCode": "Завершена с кодом {code}",
+  "sessionClosed": "Закрыта",
+  "commandFailed": "Не удалось выполнить команду"
 }

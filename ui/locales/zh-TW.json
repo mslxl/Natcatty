@@ -11,5 +11,11 @@
   "menuNewTab": "新增分頁",
   "menuCloseTab": "關閉分頁",
   "menuQuit": "結束",
-  "tabTitle": "分頁 {number}"
+  "tabTitle": "分頁 {number}",
+  "localSessionTab": "本機工作階段 {number}",
+  "sessionRunning": "執行中",
+  "sessionExited": "已結束",
+  "sessionExitedWithCode": "已結束，代碼 {code}",
+  "sessionClosed": "已關閉",
+  "commandFailed": "無法完成命令"
 }
