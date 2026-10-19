@@ -55,16 +55,26 @@ func (s *Session) AcknowledgeActivity() {
 	s.publishTap(time.Now())
 }
 
-func (s *Session) handleInput(data []byte) ([]byte, bool) {
+// handleInput passes input through the tap. source is true for input typed in
+// this Session's own terminal: only that input is observed by the input hook,
+// so a broadcast delivery cannot recursively fan out again. gated reports that
+// an active transfer consumed the input.
+func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
 	forwarded, changed, transfer := s.tap.handleInput(data, now)
+	// The tap returns no bytes only while a transfer consumes normal input.
+	// A Ctrl+C abort returns the five CAN bytes, so it is not gated.
+	gated = len(data) > 0 && len(forwarded) == 0
 	if changed {
 		s.publishTap(now)
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
 	}
-	return forwarded, changed
+	if source && len(forwarded) > 0 && s.onInput != nil {
+		s.onInput(s.id, forwarded)
+	}
+	return forwarded, changed, gated
 }
 
 func (s *Session) publishTap(now time.Time) {

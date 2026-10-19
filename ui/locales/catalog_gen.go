@@ -4245,3 +4245,391 @@ func SettingsTerminalSaveFailed() string { return In(i18n.Locale()).SettingsTerm
 func (msgs Messages) SettingsTerminalSaveFailed() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalSaveFailed", nil)
 }
+
+// BroadcastButton says "Broadcast"
+// in the language the app shows.
+func BroadcastButton() string { return In(i18n.Locale()).BroadcastButton() }
+
+// BroadcastButton says "Broadcast"
+// in the language of msgs.
+func (msgs Messages) BroadcastButton() string {
+	return Catalog.Format(msgs.locale, "broadcastButton", nil)
+}
+
+// BroadcastButtonActive says "Broadcast ({count})"
+// in the language the app shows.
+//
+// The broadcast button while broadcasting is active.
+func BroadcastButtonActive(count int) string { return In(i18n.Locale()).BroadcastButtonActive(count) }
+
+// BroadcastButtonActive says "Broadcast ({count})"
+// in the language of msgs.
+//
+// The broadcast button while broadcasting is active.
+func (msgs Messages) BroadcastButtonActive(count int) string {
+	return Catalog.Format(msgs.locale, "broadcastButtonActive", map[string]any{"count": count})
+}
+
+// ComposeButton says "Compose"
+// in the language the app shows.
+func ComposeButton() string { return In(i18n.Locale()).ComposeButton() }
+
+// ComposeButton says "Compose"
+// in the language of msgs.
+func (msgs Messages) ComposeButton() string {
+	return Catalog.Format(msgs.locale, "composeButton", nil)
+}
+
+// BroadcastPanelTitle says "Broadcast input"
+// in the language the app shows.
+func BroadcastPanelTitle() string { return In(i18n.Locale()).BroadcastPanelTitle() }
+
+// BroadcastPanelTitle says "Broadcast input"
+// in the language of msgs.
+func (msgs Messages) BroadcastPanelTitle() string {
+	return Catalog.Format(msgs.locale, "broadcastPanelTitle", nil)
+}
+
+// BroadcastTargetsTitle says "Send to Sessions"
+// in the language the app shows.
+func BroadcastTargetsTitle() string { return In(i18n.Locale()).BroadcastTargetsTitle() }
+
+// BroadcastTargetsTitle says "Send to Sessions"
+// in the language of msgs.
+func (msgs Messages) BroadcastTargetsTitle() string {
+	return Catalog.Format(msgs.locale, "broadcastTargetsTitle", nil)
+}
+
+// BroadcastActive says "Broadcasting to {count} Sessions"
+// in the language the app shows.
+//
+// Broadcast is active and reaches this many Sessions.
+func BroadcastActive(count int) string { return In(i18n.Locale()).BroadcastActive(count) }
+
+// BroadcastActive says "Broadcasting to {count} Sessions"
+// in the language of msgs.
+//
+// Broadcast is active and reaches this many Sessions.
+func (msgs Messages) BroadcastActive(count int) string {
+	return Catalog.Format(msgs.locale, "broadcastActive", map[string]any{"count": count})
+}
+
+// BroadcastStopped says "Broadcast stopped"
+// in the language the app shows.
+func BroadcastStopped() string { return In(i18n.Locale()).BroadcastStopped() }
+
+// BroadcastStopped says "Broadcast stopped"
+// in the language of msgs.
+func (msgs Messages) BroadcastStopped() string {
+	return Catalog.Format(msgs.locale, "broadcastStopped", nil)
+}
+
+// BroadcastStart says "Start broadcast"
+// in the language the app shows.
+func BroadcastStart() string { return In(i18n.Locale()).BroadcastStart() }
+
+// BroadcastStart says "Start broadcast"
+// in the language of msgs.
+func (msgs Messages) BroadcastStart() string {
+	return Catalog.Format(msgs.locale, "broadcastStart", nil)
+}
+
+// BroadcastStop says "Stop broadcast"
+// in the language the app shows.
+func BroadcastStop() string { return In(i18n.Locale()).BroadcastStop() }
+
+// BroadcastStop says "Stop broadcast"
+// in the language of msgs.
+func (msgs Messages) BroadcastStop() string {
+	return Catalog.Format(msgs.locale, "broadcastStop", nil)
+}
+
+// BroadcastSelectHint says "Select at least one other Session."
+// in the language the app shows.
+func BroadcastSelectHint() string { return In(i18n.Locale()).BroadcastSelectHint() }
+
+// BroadcastSelectHint says "Select at least one other Session."
+// in the language of msgs.
+func (msgs Messages) BroadcastSelectHint() string {
+	return Catalog.Format(msgs.locale, "broadcastSelectHint", nil)
+}
+
+// BroadcastClose says "Close"
+// in the language the app shows.
+func BroadcastClose() string { return In(i18n.Locale()).BroadcastClose() }
+
+// BroadcastClose says "Close"
+// in the language of msgs.
+func (msgs Messages) BroadcastClose() string {
+	return Catalog.Format(msgs.locale, "broadcastClose", nil)
+}
+
+// BroadcastFocused says "Focused"
+// in the language the app shows.
+func BroadcastFocused() string { return In(i18n.Locale()).BroadcastFocused() }
+
+// BroadcastFocused says "Focused"
+// in the language of msgs.
+func (msgs Messages) BroadcastFocused() string {
+	return Catalog.Format(msgs.locale, "broadcastFocused", nil)
+}
+
+// BroadcastDelivered says "Delivered"
+// in the language the app shows.
+func BroadcastDelivered() string { return In(i18n.Locale()).BroadcastDelivered() }
+
+// BroadcastDelivered says "Delivered"
+// in the language of msgs.
+func (msgs Messages) BroadcastDelivered() string {
+	return Catalog.Format(msgs.locale, "broadcastDelivered", nil)
+}
+
+// BroadcastFailed says "Failed"
+// in the language the app shows.
+func BroadcastFailed() string { return In(i18n.Locale()).BroadcastFailed() }
+
+// BroadcastFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) BroadcastFailed() string {
+	return Catalog.Format(msgs.locale, "broadcastFailed", nil)
+}
+
+// BroadcastGated says "Blocked by transfer"
+// in the language the app shows.
+func BroadcastGated() string { return In(i18n.Locale()).BroadcastGated() }
+
+// BroadcastGated says "Blocked by transfer"
+// in the language of msgs.
+func (msgs Messages) BroadcastGated() string {
+	return Catalog.Format(msgs.locale, "broadcastGated", nil)
+}
+
+// BroadcastMissing says "Session closed"
+// in the language the app shows.
+func BroadcastMissing() string { return In(i18n.Locale()).BroadcastMissing() }
+
+// BroadcastMissing says "Session closed"
+// in the language of msgs.
+func (msgs Messages) BroadcastMissing() string {
+	return Catalog.Format(msgs.locale, "broadcastMissing", nil)
+}
+
+// BroadcastSummary says "{delivered} of {total} delivered"
+// in the language the app shows.
+//
+// How many targets accepted the last broadcast.
+func BroadcastSummary(delivered int, total int) string {
+	return In(i18n.Locale()).BroadcastSummary(delivered, total)
+}
+
+// BroadcastSummary says "{delivered} of {total} delivered"
+// in the language of msgs.
+//
+// How many targets accepted the last broadcast.
+func (msgs Messages) BroadcastSummary(delivered int, total int) string {
+	return Catalog.Format(msgs.locale, "broadcastSummary", map[string]any{"delivered": delivered, "total": total})
+}
+
+// BroadcastSelectAll says "Select all"
+// in the language the app shows.
+func BroadcastSelectAll() string { return In(i18n.Locale()).BroadcastSelectAll() }
+
+// BroadcastSelectAll says "Select all"
+// in the language of msgs.
+func (msgs Messages) BroadcastSelectAll() string {
+	return Catalog.Format(msgs.locale, "broadcastSelectAll", nil)
+}
+
+// BroadcastSelectNone says "Clear"
+// in the language the app shows.
+func BroadcastSelectNone() string { return In(i18n.Locale()).BroadcastSelectNone() }
+
+// BroadcastSelectNone says "Clear"
+// in the language of msgs.
+func (msgs Messages) BroadcastSelectNone() string {
+	return Catalog.Format(msgs.locale, "broadcastSelectNone", nil)
+}
+
+// ComposeTitle says "Compose input"
+// in the language the app shows.
+func ComposeTitle() string { return In(i18n.Locale()).ComposeTitle() }
+
+// ComposeTitle says "Compose input"
+// in the language of msgs.
+func (msgs Messages) ComposeTitle() string {
+	return Catalog.Format(msgs.locale, "composeTitle", nil)
+}
+
+// ComposePlaceholder says "Type a command. Enter sends; Shift+Enter adds a line."
+// in the language the app shows.
+func ComposePlaceholder() string { return In(i18n.Locale()).ComposePlaceholder() }
+
+// ComposePlaceholder says "Type a command. Enter sends; Shift+Enter adds a line."
+// in the language of msgs.
+func (msgs Messages) ComposePlaceholder() string {
+	return Catalog.Format(msgs.locale, "composePlaceholder", nil)
+}
+
+// ComposeSend says "Send"
+// in the language the app shows.
+func ComposeSend() string { return In(i18n.Locale()).ComposeSend() }
+
+// ComposeSend says "Send"
+// in the language of msgs.
+func (msgs Messages) ComposeSend() string {
+	return Catalog.Format(msgs.locale, "composeSend", nil)
+}
+
+// ComposeCancel says "Cancel"
+// in the language the app shows.
+func ComposeCancel() string { return In(i18n.Locale()).ComposeCancel() }
+
+// ComposeCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) ComposeCancel() string {
+	return Catalog.Format(msgs.locale, "composeCancel", nil)
+}
+
+// ComposeTrim says "Trim"
+// in the language the app shows.
+func ComposeTrim() string { return In(i18n.Locale()).ComposeTrim() }
+
+// ComposeTrim says "Trim"
+// in the language of msgs.
+func (msgs Messages) ComposeTrim() string {
+	return Catalog.Format(msgs.locale, "composeTrim", nil)
+}
+
+// ComposeDecodeEscapes says "Decode \\n \\t \\e"
+// in the language the app shows.
+func ComposeDecodeEscapes() string { return In(i18n.Locale()).ComposeDecodeEscapes() }
+
+// ComposeDecodeEscapes says "Decode \\n \\t \\e"
+// in the language of msgs.
+func (msgs Messages) ComposeDecodeEscapes() string {
+	return Catalog.Format(msgs.locale, "composeDecodeEscapes", nil)
+}
+
+// ComposeLineMode says "Line mode"
+// in the language the app shows.
+func ComposeLineMode() string { return In(i18n.Locale()).ComposeLineMode() }
+
+// ComposeLineMode says "Line mode"
+// in the language of msgs.
+func (msgs Messages) ComposeLineMode() string {
+	return Catalog.Format(msgs.locale, "composeLineMode", nil)
+}
+
+// ComposePaste says "Paste"
+// in the language the app shows.
+func ComposePaste() string { return In(i18n.Locale()).ComposePaste() }
+
+// ComposePaste says "Paste"
+// in the language of msgs.
+func (msgs Messages) ComposePaste() string {
+	return Catalog.Format(msgs.locale, "composePaste", nil)
+}
+
+// ComposeLineByLine says "Line by line"
+// in the language the app shows.
+func ComposeLineByLine() string { return In(i18n.Locale()).ComposeLineByLine() }
+
+// ComposeLineByLine says "Line by line"
+// in the language of msgs.
+func (msgs Messages) ComposeLineByLine() string {
+	return Catalog.Format(msgs.locale, "composeLineByLine", nil)
+}
+
+// ComposePreview says "Preview"
+// in the language the app shows.
+func ComposePreview() string { return In(i18n.Locale()).ComposePreview() }
+
+// ComposePreview says "Preview"
+// in the language of msgs.
+func (msgs Messages) ComposePreview() string {
+	return Catalog.Format(msgs.locale, "composePreview", nil)
+}
+
+// ComposePreviewEmpty says "Nothing to send"
+// in the language the app shows.
+func ComposePreviewEmpty() string { return In(i18n.Locale()).ComposePreviewEmpty() }
+
+// ComposePreviewEmpty says "Nothing to send"
+// in the language of msgs.
+func (msgs Messages) ComposePreviewEmpty() string {
+	return Catalog.Format(msgs.locale, "composePreviewEmpty", nil)
+}
+
+// ComposeTargetFocused says "Focused Session"
+// in the language the app shows.
+func ComposeTargetFocused() string { return In(i18n.Locale()).ComposeTargetFocused() }
+
+// ComposeTargetFocused says "Focused Session"
+// in the language of msgs.
+func (msgs Messages) ComposeTargetFocused() string {
+	return Catalog.Format(msgs.locale, "composeTargetFocused", nil)
+}
+
+// ComposeTargetFocusedNamed says "Focused Session · {name}"
+// in the language the app shows.
+//
+// Compose sends to the focused Session, named after it.
+func ComposeTargetFocusedNamed(name string) string {
+	return In(i18n.Locale()).ComposeTargetFocusedNamed(name)
+}
+
+// ComposeTargetFocusedNamed says "Focused Session · {name}"
+// in the language of msgs.
+//
+// Compose sends to the focused Session, named after it.
+func (msgs Messages) ComposeTargetFocusedNamed(name string) string {
+	return Catalog.Format(msgs.locale, "composeTargetFocusedNamed", map[string]any{"name": name})
+}
+
+// ComposeTargetBroadcast says "Broadcast ({count} Sessions)"
+// in the language the app shows.
+//
+// Compose sends to the broadcast target set.
+func ComposeTargetBroadcast(count int) string { return In(i18n.Locale()).ComposeTargetBroadcast(count) }
+
+// ComposeTargetBroadcast says "Broadcast ({count} Sessions)"
+// in the language of msgs.
+//
+// Compose sends to the broadcast target set.
+func (msgs Messages) ComposeTargetBroadcast(count int) string {
+	return Catalog.Format(msgs.locale, "composeTargetBroadcast", map[string]any{"count": count})
+}
+
+// ComposeSending says "Sending…"
+// in the language the app shows.
+func ComposeSending() string { return In(i18n.Locale()).ComposeSending() }
+
+// ComposeSending says "Sending…"
+// in the language of msgs.
+func (msgs Messages) ComposeSending() string {
+	return Catalog.Format(msgs.locale, "composeSending", nil)
+}
+
+// ComposeSent says "Sent to {delivered} Sessions"
+// in the language the app shows.
+//
+// How many targets accepted the composed input.
+func ComposeSent(delivered int) string { return In(i18n.Locale()).ComposeSent(delivered) }
+
+// ComposeSent says "Sent to {delivered} Sessions"
+// in the language of msgs.
+//
+// How many targets accepted the composed input.
+func (msgs Messages) ComposeSent(delivered int) string {
+	return Catalog.Format(msgs.locale, "composeSent", map[string]any{"delivered": delivered})
+}
+
+// ComposeFailed says "Compose was not delivered"
+// in the language the app shows.
+func ComposeFailed() string { return In(i18n.Locale()).ComposeFailed() }
+
+// ComposeFailed says "Compose was not delivered"
+// in the language of msgs.
+func (msgs Messages) ComposeFailed() string {
+	return Catalog.Format(msgs.locale, "composeFailed", nil)
+}
