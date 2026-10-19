@@ -765,5 +765,99 @@
         "example": "ZMODEM"
       }
     }
+  },
+  "broadcastButton": "Broadcast",
+  "broadcastButtonActive": "Broadcast ({count})",
+  "composeButton": "Compose",
+  "broadcastPanelTitle": "Broadcast input",
+  "broadcastTargetsTitle": "Send to Sessions",
+  "broadcastActive": "Broadcasting to {count} Sessions",
+  "broadcastStopped": "Broadcast stopped",
+  "broadcastStart": "Start broadcast",
+  "broadcastStop": "Stop broadcast",
+  "broadcastSelectHint": "Select at least one other Session.",
+  "broadcastClose": "Close",
+  "broadcastFocused": "Focused",
+  "broadcastDelivered": "Delivered",
+  "broadcastFailed": "Failed",
+  "broadcastGated": "Blocked by transfer",
+  "broadcastMissing": "Session closed",
+  "broadcastSummary": "{delivered} of {total} delivered",
+  "broadcastSelectAll": "Select all",
+  "broadcastSelectNone": "Clear",
+  "composeTitle": "Compose input",
+  "composePlaceholder": "Type a command. Enter sends; Shift+Enter adds a line.",
+  "composeSend": "Send",
+  "composeCancel": "Cancel",
+  "composeTrim": "Trim",
+  "composeDecodeEscapes": "Decode \\n \\t \\e",
+  "composeLineMode": "Line mode",
+  "composePaste": "Paste",
+  "composeLineByLine": "Line by line",
+  "composePreview": "Preview",
+  "composePreviewEmpty": "Nothing to send",
+  "composeTargetFocused": "Focused Session",
+  "composeTargetFocusedNamed": "Focused Session · {name}",
+  "composeTargetBroadcast": "Broadcast ({count} Sessions)",
+  "composeSending": "Sending…",
+  "composeSent": "Sent to {delivered} Sessions",
+  "composeFailed": "Compose was not delivered",
+  "@broadcastButtonActive": {
+    "description": "The broadcast button while broadcasting is active.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "@broadcastActive": {
+    "description": "Broadcast is active and reaches this many Sessions.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "@broadcastSummary": {
+    "description": "How many targets accepted the last broadcast.",
+    "placeholders": {
+      "delivered": {
+        "type": "int",
+        "example": "2"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@composeTargetFocusedNamed": {
+    "description": "Compose sends to the focused Session, named after it.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Local Session 1"
+      }
+    }
+  },
+  "@composeTargetBroadcast": {
+    "description": "Compose sends to the broadcast target set.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "@composeSent": {
+    "description": "How many targets accepted the composed input.",
+    "placeholders": {
+      "delivered": {
+        "type": "int",
+        "example": "2"
+      }
+    }
   }
 }

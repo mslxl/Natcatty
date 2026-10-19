@@ -311,6 +311,7 @@ type Session struct {
 
 	onNotification func(model.SessionID, TerminalNotification)
 	onTransfer     func(model.SessionID, TransferState)
+	onInput        func(model.SessionID, []byte)
 
 	onEnd    func(model.SessionID)
 	onChange func(Snapshot)
@@ -354,6 +355,7 @@ type Service struct {
 	clipboardPolicy func() domainterminal.ClipboardAccess
 	onNotification  func(model.SessionID, TerminalNotification)
 	onTransfer      func(model.SessionID, TransferState)
+	onInput         func(model.SessionID, []byte)
 	mu              sync.Mutex
 	sessions        map[model.SessionID]*Session
 	closing         bool
@@ -472,6 +474,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		done:            make(chan struct{}),
 		onNotification:  s.onNotification,
 		onTransfer:      s.onTransfer,
+		onInput:         s.onInput,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
