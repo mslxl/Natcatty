@@ -28,17 +28,21 @@ const (
 )
 
 // Error is a typed connection error. Cause carries the transport or storage
-// detail; it is never user-visible text.
+// detail; it is never user-visible text. Hop identifies the chain endpoint
+// that failed when the failure happened during a jump chain. Error() is a
+// developer diagnostic; the UI localizes Kind and Hop.Label instead.
 type Error struct {
 	Kind  Kind
 	Cause error
+	Hop   *HopInfo
 }
 
 func (e *Error) Error() string {
+	message := fmt.Sprintf("connection: %s", e.Kind)
 	if e.Cause != nil {
-		return fmt.Sprintf("connection: %s: %v", e.Kind, e.Cause)
+		message += fmt.Sprintf(": %v", e.Cause)
 	}
-	return fmt.Sprintf("connection: %s", e.Kind)
+	return message + hopErrorText(e.Hop)
 }
 
 func (e *Error) Unwrap() error { return e.Cause }
@@ -78,6 +82,14 @@ var (
 	// no stored private material. Explicit key and certificate modes fail
 	// closed instead of substituting another credential.
 	ErrKeyUnavailable = errors.New("connection: selected SSH Key unavailable")
+	// ErrUnsupportedProxy reports a proxy transport this adapter does not
+	// implement.
+	ErrUnsupportedProxy = errors.New("connection: unsupported proxy type")
+	// ErrInvalidProxy reports a proxy configuration the transport cannot use.
+	ErrInvalidProxy = errors.New("connection: invalid proxy configuration")
+	// ErrProxyHandshake reports a proxy that accepted the connection but
+	// refused or malformed its tunnel handshake.
+	ErrProxyHandshake = errors.New("connection: proxy handshake failed")
 )
 
 // AuthFailure wraps cause as an authentication error. AuthSource

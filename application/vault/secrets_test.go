@@ -15,14 +15,15 @@ import (
 
 // fakeSecrets is the field-secret port the Service is tested against.
 type fakeSecrets struct {
-	mode       SecretMode
-	values     map[SecretRef]string
-	setErr     error
-	getErr     error
-	deleteErr  error
-	unlockErr  error
-	setPassErr error
-	sessionErr error
+	mode        SecretMode
+	values      map[SecretRef]string
+	setErr      error
+	setFieldErr map[string]error
+	getErr      error
+	deleteErr   error
+	unlockErr   error
+	setPassErr  error
+	sessionErr  error
 }
 
 func newFakeSecrets() *fakeSecrets {
@@ -34,6 +35,9 @@ func (f *fakeSecrets) Mode() SecretMode { return f.mode }
 func (f *fakeSecrets) Set(_ context.Context, ref SecretRef, value string) error {
 	if f.setErr != nil {
 		return f.setErr
+	}
+	if err := f.setFieldErr[ref.Field]; err != nil {
+		return err
 	}
 	f.values[ref] = value
 	return nil
@@ -125,6 +129,162 @@ func TestCreateHostEncryptsThePasswordOutsideTheHostRecord(t *testing.T) {
 	}
 	if strings.Contains(string(data), "enc:v1:") {
 		t.Fatalf("Host JSON contains a placeholder instead of structured metadata: %s", data)
+	}
+}
+
+func TestCreateAndUpdatePersistTheAlgorithmSettings(t *testing.T) {
+	repo := &fakeHosts{}
+	service := newSecretService(t, repo, newFakeSecrets())
+
+	draft := domainvault.Draft{
+		Hostname:         "example.com",
+		LegacyAlgorithms: true,
+		SkipEcdsaHostKey: true,
+		Algorithms: &domainvault.AlgorithmOverrides{
+			Ciphers: []string{"aes128-cbc"},
+		},
+	}
+	host, err := service.Create(context.Background(), draft)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !host.LegacyAlgorithms || !host.SkipEcdsaHostKey || host.Algorithms == nil ||
+		len(host.Algorithms.Ciphers) != 1 || host.Algorithms.Ciphers[0] != "aes128-cbc" {
+		t.Fatalf("Host algorithms = %+v, %+v", host.Algorithms, host)
+	}
+	draft.Algorithms.Ciphers[0] = "mutated"
+	if host.Algorithms.Ciphers[0] != "aes128-cbc" {
+		t.Fatal("Create shared the draft's algorithm slice")
+	}
+
+	updated, err := service.Update(context.Background(), host.ID, domainvault.Draft{
+		Hostname: "example.com",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.LegacyAlgorithms || updated.SkipEcdsaHostKey || updated.Algorithms != nil {
+		t.Fatalf("updated algorithms = %+v, %+v; want them cleared", updated.Algorithms, updated)
+	}
+}
+
+func TestCreateHostEncryptsTheProxyPasswordOutsideTheHostRecord(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+
+	host, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy.example.com", Port: 8080,
+			Username: "alice", Password: "proxy-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if host.Proxy == nil || !host.Proxy.HasPassword || host.Proxy.Password != "" {
+		t.Fatalf("Host proxy = %+v, want HasPassword without plaintext", host.Proxy)
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldProxyPassword)]; got != "proxy-secret" {
+		t.Errorf("stored proxy secret = %q", got)
+	}
+	data, err := json.Marshal(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "proxy-secret") {
+		t.Fatalf("Host JSON contains the proxy password: %s", data)
+	}
+
+	loaded, err := service.Get(context.Background(), host.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if loaded.ID != host.ID || loaded.Proxy == nil || loaded.Proxy.Type != domainvault.ProxyHTTP {
+		t.Fatalf("Get = %+v", loaded)
+	}
+}
+
+func TestAFailedProxyPasswordWriteDoesNotLeaveTheCreatePassword(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	secrets.setFieldErr = map[string]error{FieldProxyPassword: ErrSecretsUnavailable}
+	service := newSecretService(t, repo, secrets)
+
+	_, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com", Password: "hunter2",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080, Password: "proxy-secret",
+		},
+	})
+	if err == nil {
+		t.Fatal("Create succeeded while the proxy password could not be stored")
+	}
+	if len(secrets.values) != 0 {
+		t.Fatalf("stored secrets = %v, want a rollback after the Host was not saved", secrets.values)
+	}
+	if hosts, _ := repo.List(context.Background()); len(hosts) != 0 {
+		t.Fatalf("Hosts = %v, want none", hosts)
+	}
+}
+
+func TestUpdateRemovesTheProxyPasswordWhenTheProxyIsRemoved(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	created, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxySOCKS5, Host: "proxy", Port: 1080, Password: "secret",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := service.Update(context.Background(), created.ID, domainvault.Draft{
+		Hostname: "example.com",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Proxy != nil {
+		t.Fatalf("Proxy = %+v, want nil", updated.Proxy)
+	}
+	if _, ok := secrets.values[HostSecretRef(created.ID, FieldProxyPassword)]; ok {
+		t.Fatal("the proxy password survived proxy removal")
+	}
+}
+
+func TestUpdateKeepsTheStoredProxyPasswordWhenNoneIsSubmitted(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	created, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080, Password: "secret",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := service.Update(context.Background(), created.ID, domainvault.Draft{
+		Hostname: "example.com",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Proxy == nil || !updated.Proxy.HasPassword {
+		t.Fatalf("Proxy = %+v, want HasPassword preserved", updated.Proxy)
+	}
+	if got := secrets.values[HostSecretRef(created.ID, FieldProxyPassword)]; got != "secret" {
+		t.Fatalf("stored proxy secret = %q", got)
 	}
 }
 
@@ -387,5 +547,105 @@ func TestSecretSetupReportsATypedPermissionError(t *testing.T) {
 	var typed *Error
 	if !errors.As(err, &typed) || typed.Kind != KindPermission {
 		t.Fatalf("UnlockSecrets error = %v, want a permission Error", err)
+	}
+}
+
+func TestAFailedProxySecretWriteRestoresTheNewPassword(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	host, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com", Password: "old",
+		Proxy: &domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Removing the proxy deletes its secret before the Host record is saved.
+	// The new Host password must not survive that failure.
+	secrets.deleteErr = errors.New("secret store unavailable")
+	_, err = service.Update(context.Background(), host.ID, domainvault.Draft{
+		Hostname: "example.com", Password: "new",
+	})
+	if err == nil {
+		t.Fatal("Update succeeded while the proxy secret delete failed")
+	}
+	if got := secrets.values[HostSecretRef(host.ID, FieldPassword)]; got != "old" {
+		t.Fatalf("stored password = %q, want the previous value after rollback", got)
+	}
+}
+
+func TestSetSecretMaintainsTheProxyPasswordFlag(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	host, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com",
+		Proxy:    &domainvault.ProxyConfig{Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.SetSecret(context.Background(), host.ID, FieldProxyPassword, "proxy-pw"); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+	loaded, err := service.Get(context.Background(), host.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Proxy == nil || !loaded.Proxy.HasPassword {
+		t.Fatalf("proxy = %+v, want HasPassword after a stored proxy password", loaded.Proxy)
+	}
+
+	if err := service.SetSecret(context.Background(), host.ID, FieldProxyPassword, ""); err != nil {
+		t.Fatalf("clear proxy password: %v", err)
+	}
+	loaded, err = service.Get(context.Background(), host.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Proxy != nil && loaded.Proxy.HasPassword {
+		t.Fatal("HasPassword stayed set after the proxy password was removed")
+	}
+}
+
+func TestFailedSaveDoesNotDeleteAnUnchangedPassword(t *testing.T) {
+	repo := &fakeHosts{}
+	secrets := newFakeSecrets()
+	service := newSecretService(t, repo, secrets)
+	created, err := service.Create(context.Background(), domainvault.Draft{
+		Hostname: "example.com", Username: "root", Password: "hunter2",
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080, Password: "proxy-secret",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The editor round-trips empty credential inputs to mean "keep the saved
+	// secret". A failed Host save must not be mistaken for a credential write
+	// and roll back (delete) the untouched values.
+	repo.saveErr = errors.New("disk full")
+	_, err = service.Update(context.Background(), created.ID, domainvault.Draft{
+		Label:    created.Label,
+		Hostname: created.Hostname,
+		Port:     created.Port,
+		Username: created.Username,
+		Protocol: created.Protocol,
+		Proxy: &domainvault.ProxyConfig{
+			Type: domainvault.ProxyHTTP, Host: "proxy", Port: 8080,
+		},
+	})
+	if err == nil {
+		t.Fatal("Update succeeded despite a failed save")
+	}
+	if got := secrets.values[HostSecretRef(created.ID, FieldPassword)]; got != "hunter2" {
+		t.Fatalf("password after a failed save = %q, want it preserved", got)
+	}
+	if got := secrets.values[HostSecretRef(created.ID, FieldProxyPassword)]; got != "proxy-secret" {
+		t.Fatalf("proxy password after a failed save = %q, want it preserved", got)
 	}
 }

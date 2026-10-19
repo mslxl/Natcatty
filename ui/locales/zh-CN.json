@@ -192,6 +192,8 @@
   "vaultProblemIdentityKeyRequired": "使用密钥或证书认证的身份需要选择一个 SSH 密钥。",
   "vaultProblemIdentityUsernameRequired": "密码身份需要用户名。",
   "vaultProblemAuthMethod": "请选择支持的认证方式。",
+  "vaultProblemProxy": "请检查跳板链和代理设置。",
+  "vaultProblemAlgorithms": "请检查 SSH 算法选择。",
   "authPromptPassphraseTitle": "解锁 {username}@{hostname}",
   "authPromptPassphraseBody": "输入 SSH 密钥“{key}”的密码短语。",
   "authPromptPassphraseInvalid": "该密码短语无法解锁“{key}”。请重试。",

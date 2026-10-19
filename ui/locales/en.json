@@ -282,6 +282,8 @@
   "vaultProblemIdentityKeyRequired": "An Identity with key or certificate authentication needs an SSH Key.",
   "vaultProblemIdentityUsernameRequired": "A password Identity needs a username.",
   "vaultProblemAuthMethod": "Choose a supported authentication method.",
+  "vaultProblemProxy": "Check the jump chain and proxy settings.",
+  "vaultProblemAlgorithms": "Check the SSH algorithm selection.",
   "authPromptPassphraseTitle": "Unlock {username}@{hostname}",
   "@authPromptPassphraseTitle": {"description": "The passphrase prompt title for an SSH Key used by a connection.", "placeholders": {"username": {"type": "String", "example": "root"}, "hostname": {"type": "String", "example": "example.com"}}},
   "authPromptPassphraseBody": "Enter the passphrase for SSH Key “{key}”.",

@@ -192,6 +192,8 @@
   "vaultProblemIdentityKeyRequired": "Идентификатору с аутентификацией по ключу или сертификату нужен ключ SSH.",
   "vaultProblemIdentityUsernameRequired": "Идентификатору с паролем нужно имя пользователя.",
   "vaultProblemAuthMethod": "Выберите поддерживаемый метод аутентификации.",
+  "vaultProblemProxy": "Проверьте цепочку переходов и настройки прокси.",
+  "vaultProblemAlgorithms": "Проверьте выбор алгоритмов SSH.",
   "authPromptPassphraseTitle": "Разблокировать {username}@{hostname}",
   "authPromptPassphraseBody": "Введите парольную фразу для ключа SSH «{key}».",
   "authPromptPassphraseInvalid": "Эта фраза не разблокировала «{key}». Попробуйте снова.",

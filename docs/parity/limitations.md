@@ -181,13 +181,15 @@ ticket 06.
 
 ### `connections.legacy-algorithms`
 
-`hmac-md5`, Diffie-Hellman group 15/17, and `aes192/256-cbc` are unsupported by
-`x/crypto/ssh` and fail with a typed error. `ssh-rsa` and `ssh-dss` are available
-only behind an explicit insecure opt-in.
+`hmac-md5`, `hmac-md5-96`, `hmac-sha2-256-96`, `hmac-ripemd160`, and
+Diffie-Hellman group 15/17/18 are not implemented by `x/crypto/ssh` and cannot
+be offered even in legacy mode. `aes256-cbc` is likewise absent. Legacy mode
+does add `aes128-cbc`, `3des-cbc`, DH group14/1-sha1, group-exchange-sha1,
+`ssh-rsa`, and `ssh-dss` through an explicit insecure opt-in per Host.
 
 Decision: accepted by the rewrite spec "Connections and SSH" and ADR-0002;
+per-Host legacy mode added by ticket 08.
 Ticket: 06
-ticket 06.
 
 ### `platform.windows-arm64`
 
