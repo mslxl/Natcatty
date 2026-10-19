@@ -772,6 +772,111 @@
   status: verified
   notes: "The shell lists pending Host dials as connecting, maps a running Session's connection state to active, reconnecting, or error, and keeps the Session visible with its output while a reconnect runs."
 
+# --- Ticket 10: Port Forwarding Rules ---
+
+- id: forwarding.rule-crud
+  area: forwarding
+  feature: Create, edit, and delete local, remote, and dynamic Port Forwarding Rules
+  original_paths:
+    - domain/models/portForwarding.ts
+    - components/PortForwardingNew.tsx
+    - components/port-forwarding/NewFormPanel.tsx
+    - components/port-forwarding/EditPanel.tsx
+  module: ui/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - ui/forwarding.TestStateCreatesEditsAndDeletesARule
+    - ui/forwarding.TestStateRejectsMalformedPortsBeforeCallingTheService
+    - ui/forwarding.TestViewShowsTheEmptyStateAndOpensTheEditor
+    - ui/forwarding.TestViewDeleteConfirmationNamesTheRule
+    - domain/forwarding.TestNormalizeDraftDefaultsAndValidatesEachKind
+    - domain/forwarding.TestNormalizeDraftRejectsInvalidRules
+  status: verified
+  notes: "The editor binds a Host reference, one of the three forwarding types, bind address, local port, destination, auto-start, auto-reconnect, and a durable enabled flag. A malformed port is rejected before the service is called."
+
+- id: forwarding.runtime-local
+  area: forwarding
+  feature: Run local (-L) and dynamic SOCKS5 (-D) forwards through the SSH Host
+  original_paths:
+    - electron/bridges/portForwardingBridge.cjs
+    - application/state/usePortForwardingState.ts
+  module: application/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - application/forwarding.TestStartLocalForwardsThroughTheConnection
+    - application/forwarding.TestDynamicRuleSpeaksSOCKS5AndTimesOutIdleConnections
+    - adapters/ssh.TestLocalForwardingThroughRealSSHTransport
+    - adapters/ssh.TestDynamicForwardingThroughRealSSHTransport
+  status: verified
+  notes: "Local rules listen on this machine and dial the destination through the Connection. Dynamic rules speak SOCKS5 with no authentication and close an idle session after 15 s."
+
+- id: forwarding.runtime-remote
+  area: forwarding
+  feature: Run remote (-R) forwards and release the remote listener on stop
+  original_paths:
+    - electron/bridges/portForwardingBridge.cjs
+    - application/state/usePortForwardingState.ts
+  module: application/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - application/forwarding.TestStartRemoteForwardsInboundConnectionsLocally
+    - application/forwarding.TestUnforwardTimeoutDiscardsTheTransport
+    - adapters/ssh.TestRemoteForwardingThroughRealSSHTransport
+  status: verified
+  notes: "A remote rule sends tcpip-forward and dials the destination locally for each forwarded-tcpip channel. Stop sends cancel-tcpip-forward; a release that takes longer than 5 s closes the transport and reports an unforward failure."
+
+- id: forwarding.status
+  area: forwarding
+  feature: Show inactive, connecting, active, and error runtime status without persisting it
+  original_paths:
+    - application/state/usePortForwardingState.ts
+    - components/port-forwarding/RuleCard.tsx
+  module: ui/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - ui/forwarding.TestStateStartsAndStopsAndProjectsRuntimeStatus
+    - ui/forwarding.TestViewListsRuleSummaryStatusAndActions
+    - ui/forwarding.TestViewShowsRuntimeErrorsAndTheFailingHop
+    - application/forwarding.TestSnapshotRevisionsIncreaseAndEventsCarryTheView
+    - adapters/store.TestForwardingRulesRoundTripAndPersistAcrossReopen
+    - adapters/store.TestForwardingRulesSanitizeMalformedStoredRecords
+  status: verified
+  notes: "Status and error are a projection owned by the runtime manager. The stored rule has no status field, stale status keys in old data are ignored, and the UI discards an event whose revision is not newer."
+
+- id: forwarding.auto-start-reconnect
+  area: forwarding
+  feature: Auto-start enabled rules and reconnect a failed forward at most five times
+  original_paths:
+    - application/state/usePortForwardingAutoStart.ts
+    - electron/bridges/portForwardingBridge.cjs
+  module: application/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - application/forwarding.TestAutoStartStartsOnlyEligibleRules
+    - application/forwarding.TestStartRefusesADisabledRuleAndAutoStartSkipsIt
+    - application/forwarding.TestAutoReconnectIsBoundedToFiveAttemptsWithThreeSecondDelays
+    - application/forwarding.TestStopCancelsAPendingReconnect
+    - application/forwarding.TestReconnectReReadsTheAutoReconnectGate
+    - application/forwarding.TestAutoReconnectRecoversAndResetsTheAttemptCount
+    - application/forwarding.TestTransportLossMarksTheRuleFailedAndReconnects
+    - application/forwarding.TestRemoteEstablishNetworkFailureRetries
+    - ui/forwarding.TestStateKeepsTheAutoReconnectTriState
+  status: verified
+  notes: "Reconnect is five attempts three seconds apart. An explicit autoReconnect value wins over autoStart, is re-read before every attempt, and a manual stop cancels the loop. A successful run resets the attempt count. A dead transport and a transient remote establish failure both enter the same bounded retry; a bind conflict, rejected credential, or rejected host key does not."
+
+- id: forwarding.bind-conflict
+  area: forwarding
+  feature: Report a bind conflict as a permanent error instead of reconnecting
+  original_paths:
+    - electron/bridges/portForwardingBridge.cjs
+  module: application/forwarding
+  tickets: [10]
+  acceptance_tests:
+    - application/forwarding.TestBindConflictIsPermanentAndNeverReconnects
+    - ui/forwarding.TestStateReportsDisabledRulesAndRuntimeFailures
+  status: verified
+  notes: "EADDRINUSE, EACCES, EADDRNOTAVAIL, and a denied remote tcpip-forward are permanent failures. Authentication and host-key failures are permanent too; a network or timeout failure is retried."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

@@ -3,7 +3,10 @@ package ssh
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"strings"
 	"sync"
 
 	xssh "golang.org/x/crypto/ssh"
@@ -26,6 +29,57 @@ type sshClient struct {
 var _ appconnection.Client = (*sshClient)(nil)
 var _ appconnection.KeepaliveClient = (*sshClient)(nil)
 var _ appconnection.VersionedClient = (*sshClient)(nil)
+var _ appconnection.ForwardingClient = (*sshClient)(nil)
+
+// DialContext opens a direct-tcpip channel through the SSH Host. It is the
+// transport behind a local or dynamic Port Forwarding Rule.
+func (c *sshClient) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, &appconnection.Error{Kind: appconnection.KindNetwork, Cause: appconnection.ErrClosed}
+	}
+	conn, err := c.client.DialContext(ctx, network, address)
+	if err != nil {
+		return nil, classifyDialFailure(ctx, ctx, err)
+	}
+	return conn, nil
+}
+
+// ListenTCP asks the SSH Host to listen for remote forwarding. Closing the
+// returned listener sends cancel-tcpip-forward; the caller bounds that wait.
+func (c *sshClient) ListenTCP(address string) (net.Listener, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, &appconnection.Error{Kind: appconnection.KindNetwork, Cause: appconnection.ErrClosed}
+	}
+	listener, err := c.client.Listen("tcp", address)
+	if err != nil {
+		// A denied tcpip-forward request is how a remote bind conflict reaches
+		// the client; there is no local errno to inspect.
+		return nil, bindForwardFailure(err)
+	}
+	return listener, nil
+}
+
+// bindForwardFailure classifies a server-side forward denial. The SSH protocol
+// does not carry a structured errno, so the server's reason text is the only
+// signal available.
+func bindForwardFailure(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "address already in use") ||
+		strings.Contains(message, "permission denied") ||
+		strings.Contains(message, "cannot assign requested address") {
+		return &appconnection.Error{
+			Kind:  appconnection.KindNetwork,
+			Cause: fmt.Errorf("%w: %v", appconnection.ErrBindConflict, err),
+		}
+	}
+	return &appconnection.Error{Kind: appconnection.KindNetwork, Cause: err}
+}
 
 // Keepalive sends an OpenSSH keepalive global request. A failed request means
 // the transport is no longer answering.

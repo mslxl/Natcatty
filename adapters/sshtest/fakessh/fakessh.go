@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -46,6 +47,16 @@ type Options struct {
 	// ForwardDial answers direct-tcpip channel requests. It lets a fixture
 	// play the next hop in a jump chain. Without it, forwarding is rejected.
 	ForwardDial func(host string, port int) (net.Conn, error)
+	// IgnoreRemoteForwardCancel leaves a cancel-tcpip-forward request
+	// unanswered, modelling a server whose unforward hangs. The fixture then
+	// closes the listener when the server itself closes.
+	IgnoreRemoteForwardCancel bool
+}
+
+// RemoteForward is one recorded tcpip-forward request.
+type RemoteForward struct {
+	Addr string
+	Port int
 }
 
 // Forward is one recorded direct-tcpip request.
@@ -88,6 +99,9 @@ type Server struct {
 	resizes           []Size
 	shellOpened       bool
 	forwards          []Forward
+	remoteForwards    []RemoteForward
+	remoteListeners   map[string]net.Listener
+	ignoreCancel      bool
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -103,7 +117,14 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		return nil, err
 	}
 
-	server := &Server{conn: conn, signer: signer, done: make(chan struct{}), forwardDial: options.ForwardDial}
+	server := &Server{
+		conn:            conn,
+		signer:          signer,
+		done:            make(chan struct{}),
+		forwardDial:     options.ForwardDial,
+		remoteListeners: map[string]net.Listener{},
+		ignoreCancel:    options.IgnoreRemoteForwardCancel,
+	}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
 	if options.KeyboardInteractive != nil {
@@ -274,6 +295,13 @@ func (s *Server) Forwards() []Forward {
 	return append([]Forward(nil), s.forwards...)
 }
 
+// RemoteForwards reports every accepted tcpip-forward request in order.
+func (s *Server) RemoteForwards() []RemoteForward {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]RemoteForward(nil), s.remoteForwards...)
+}
+
 // Err reports the handshake error, if any. It is valid after Wait returns.
 func (s *Server) Err() error {
 	s.mu.Lock()
@@ -284,13 +312,27 @@ func (s *Server) Err() error {
 // Wait blocks until the server's channel loop ends.
 func (s *Server) Wait() { <-s.done }
 
-// Close closes the server connection.
+// Close closes every remote listener and the server connection.
 func (s *Server) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.closeRemoteListeners()
 		err = s.conn.Close()
 	})
 	return err
+}
+
+func (s *Server) closeRemoteListeners() {
+	s.mu.Lock()
+	listeners := make([]net.Listener, 0, len(s.remoteListeners))
+	for key, listener := range s.remoteListeners {
+		listeners = append(listeners, listener)
+		delete(s.remoteListeners, key)
+	}
+	s.mu.Unlock()
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
 }
 
 func (s *Server) serve() {
@@ -302,7 +344,7 @@ func (s *Server) serve() {
 		s.mu.Unlock()
 		return
 	}
-	go ssh.DiscardRequests(requests)
+	go s.handleGlobalRequests(serverConn, requests)
 	for incoming := range channels {
 		switch incoming.ChannelType() {
 		case "session":
@@ -317,7 +359,115 @@ func (s *Server) serve() {
 			_ = incoming.Reject(ssh.UnknownChannelType, "only session and direct-tcpip channels are supported")
 		}
 	}
+	s.closeRemoteListeners()
 	_ = serverConn.Close()
+}
+
+// handleGlobalRequests serves tcpip-forward and cancel-tcpip-forward, which are
+// the server side of remote Port Forwarding Rules. Other global requests are
+// declined.
+func (s *Server) handleGlobalRequests(conn *ssh.ServerConn, requests <-chan *ssh.Request) {
+	for request := range requests {
+		switch request.Type {
+		case "tcpip-forward":
+			var payload struct {
+				Addr string
+				Port uint32
+			}
+			if err := ssh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			listener, err := net.Listen("tcp", net.JoinHostPort(payload.Addr, strconv.Itoa(int(payload.Port))))
+			if err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			assigned := payload.Port
+			if address, ok := listener.Addr().(*net.TCPAddr); ok {
+				assigned = uint32(address.Port)
+			}
+			key := net.JoinHostPort(payload.Addr, strconv.Itoa(int(assigned)))
+			s.mu.Lock()
+			s.remoteListeners[key] = listener
+			s.remoteForwards = append(s.remoteForwards, RemoteForward{Addr: payload.Addr, Port: int(assigned)})
+			s.mu.Unlock()
+
+			var reply []byte
+			if payload.Port == 0 {
+				reply = ssh.Marshal(struct{ Port uint32 }{assigned})
+			}
+			request.Reply(true, reply)
+			go s.acceptRemoteForward(conn, key, listener)
+		case "cancel-tcpip-forward":
+			if s.ignoreCancel {
+				// Deliberately leave the request unanswered so a client-side
+				// unforward timeout can be exercised.
+				continue
+			}
+			var payload struct {
+				Addr string
+				Port uint32
+			}
+			if err := ssh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			key := net.JoinHostPort(payload.Addr, strconv.Itoa(int(payload.Port)))
+			s.mu.Lock()
+			listener := s.remoteListeners[key]
+			delete(s.remoteListeners, key)
+			s.mu.Unlock()
+			if listener != nil {
+				_ = listener.Close()
+			}
+			request.Reply(true, nil)
+		default:
+			request.Reply(false, nil)
+		}
+	}
+}
+
+// acceptRemoteForward turns each connection to the server-side listener into
+// a forwarded-tcpip channel back to the client.
+func (s *Server) acceptRemoteForward(conn *ssh.ServerConn, key string, listener net.Listener) {
+	host, portText, err := net.SplitHostPort(key)
+	if err != nil {
+		return
+	}
+	port, _ := strconv.Atoi(portText)
+	for {
+		incoming, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		originHost, originPort := remoteAddress(incoming.RemoteAddr())
+		payload := ssh.Marshal(struct {
+			Addr       string
+			Port       uint32
+			OriginHost string
+			OriginPort uint32
+		}{host, uint32(port), originHost, uint32(originPort)})
+		channel, requests, err := conn.OpenChannel("forwarded-tcpip", payload)
+		if err != nil {
+			_ = incoming.Close()
+			continue
+		}
+		go ssh.DiscardRequests(requests)
+		go proxyStream(channel, incoming)
+	}
+}
+
+func remoteAddress(address net.Addr) (string, int) {
+	if tcp, ok := address.(*net.TCPAddr); ok {
+		return tcp.IP.String(), tcp.Port
+	}
+	host, portText, err := net.SplitHostPort(address.String())
+	if err != nil {
+		return address.String(), 0
+	}
+	port, _ := strconv.Atoi(portText)
+	return host, port
 }
 
 // handleDirectTCPIP serves one forwarding request by dialing the requested
