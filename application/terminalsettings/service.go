@@ -146,3 +146,73 @@ func (s *Service) SetOSCNotifications(mode domainterminal.NotificationMode) erro
 		settings.OSCNotifications = mode
 	})
 }
+
+// EncodingFor returns the encoding a new Session in scope inherits. A Host
+// that remembers its last choice wins over the default.
+func (s *Service) EncodingFor(scope string) domainterminal.Encoding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if encoding, ok := s.settings.Encodings[scope]; ok && encoding.Valid() {
+		return encoding
+	}
+	return domainterminal.NormalizeEncoding(s.settings.Encoding)
+}
+
+// SetEncoding sets the default encoding for Sessions without a remembered
+// scope.
+func (s *Service) SetEncoding(encoding domainterminal.Encoding) error {
+	if !encoding.Valid() {
+		return nil
+	}
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.Encoding = encoding
+	})
+}
+
+// SetEncodingFor remembers the encoding a Session in scope is using. It is
+// called when the user switches encoding in a live Session, so reopening the
+// Host inherits the choice as the original did.
+func (s *Service) SetEncodingFor(scope string, encoding domainterminal.Encoding) error {
+	if scope == "" || !encoding.Valid() {
+		return nil
+	}
+	return s.Update(func(settings *domainterminal.Settings) {
+		if settings.Encodings == nil {
+			settings.Encodings = make(map[string]domainterminal.Encoding)
+		}
+		settings.Encodings[scope] = encoding
+		if scope == domainterminal.EncodingScopeLocal {
+			settings.Encoding = encoding
+		}
+	})
+}
+
+// PasteConfirmation returns the multiline paste policy.
+func (s *Service) PasteConfirmation() (bool, int) {
+	settings := s.Settings()
+	return settings.PasteProtection, domainterminal.NormalizePasteMinLines(settings.PasteMinLines)
+}
+
+// SetPasteProtection enables or disables multiline paste confirmation.
+func (s *Service) SetPasteProtection(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.PasteProtection = enabled
+	})
+}
+
+// SetPasteMinLines sets the line count at which a protected paste asks.
+func (s *Service) SetPasteMinLines(lines int) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.PasteMinLines = domainterminal.NormalizePasteMinLines(lines)
+	})
+}
+
+// SetDropAction sets what dropping files on a terminal does.
+func (s *Service) SetDropAction(action domainterminal.DropAction) error {
+	if !action.Valid() {
+		return nil
+	}
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.DropAction = action
+	})
+}

@@ -23,14 +23,24 @@ func OpenTerminalSettings(path string) *TerminalSettingsStore {
 }
 
 type terminalSettingsRecord struct {
-	Version          int                             `json:"version"`
-	LoggingEnabled   bool                            `json:"loggingEnabled"`
-	LogDirectory     string                          `json:"logDirectory"`
-	LogFormat        domainterminal.LogFormat        `json:"logFormat"`
-	LogTimestamps    bool                            `json:"logTimestamps"`
-	OSC52            domainterminal.ClipboardAccess  `json:"osc52"`
-	OSCNotifications domainterminal.NotificationMode `json:"oscNotifications"`
+	Version          int                                `json:"version"`
+	LoggingEnabled   bool                               `json:"loggingEnabled"`
+	LogDirectory     string                             `json:"logDirectory"`
+	LogFormat        domainterminal.LogFormat           `json:"logFormat"`
+	LogTimestamps    bool                               `json:"logTimestamps"`
+	OSC52            domainterminal.ClipboardAccess     `json:"osc52"`
+	OSCNotifications domainterminal.NotificationMode    `json:"oscNotifications"`
+	Encoding         domainterminal.Encoding            `json:"encoding"`
+	Encodings        map[string]domainterminal.Encoding `json:"encodings,omitempty"`
+	PasteProtection  bool                               `json:"pasteProtection"`
+	PasteMinLines    int                                `json:"pasteMinLines"`
+	DropAction       domainterminal.DropAction          `json:"dropAction"`
 }
+
+// terminalSettingsVersion is the current record version. Version 1 files
+// lack the encoding, paste, and drop fields; zero values are normalized to
+// the original defaults on load.
+const terminalSettingsVersion = 2
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -53,6 +63,11 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 		LogTimestamps:    record.LogTimestamps,
 		OSC52:            record.OSC52,
 		OSCNotifications: record.OSCNotifications,
+		Encoding:         record.Encoding,
+		Encodings:        record.Encodings,
+		PasteProtection:  record.PasteProtection,
+		PasteMinLines:    record.PasteMinLines,
+		DropAction:       record.DropAction,
 	}), nil
 }
 
@@ -60,13 +75,18 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 // truncated file behind.
 func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.Settings) error {
 	record := terminalSettingsRecord{
-		Version:          1,
+		Version:          terminalSettingsVersion,
 		LoggingEnabled:   settings.LoggingEnabled,
 		LogDirectory:     settings.LogDirectory,
 		LogFormat:        settings.LogFormat,
 		LogTimestamps:    settings.LogTimestamps,
 		OSC52:            settings.OSC52,
 		OSCNotifications: settings.OSCNotifications,
+		Encoding:         settings.Encoding,
+		Encodings:        settings.Encodings,
+		PasteProtection:  settings.PasteProtection,
+		PasteMinLines:    settings.PasteMinLines,
+		DropAction:       settings.DropAction,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

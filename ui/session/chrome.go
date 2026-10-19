@@ -23,19 +23,46 @@ type chromeModel struct {
 	LogFormat        domainterminal.LogFormat
 	LogDirectory     string
 	LogProblem       bool
+	Encoding         domainterminal.Encoding
+
+	// PendingPaste is a guarded paste waiting for the user's decision.
+	PendingPaste *PendingPaste
+	// DropActive reports files dragged over the terminal. DropNotice is the
+	// result of the most recent drop.
+	DropActive bool
+	DropCount  int
+	DropAction domainterminal.DropAction
+	DropNotice DropNotice
 }
 
-// chromeActions are the interactions the chrome offers. Tests pass nil.
+// chromeActions are the interactions the chrome offers. Tests pass nil, which
+// also shows the corresponding menu and banner controls as disabled.
 type chromeActions struct {
 	ToggleLog      func()
 	SetLogFormat   func(domainterminal.LogFormat)
 	AllowClipboard func()
 	DenyClipboard  func()
 	CancelTransfer func()
+	SetEncoding    func(domainterminal.Encoding)
+	Paste          func()
+	ClearBuffer    func()
+	AcceptPaste    func()
+	CancelPaste    func()
+	DismissDrop    func()
+	SplitRight     func()
+	SplitDown      func()
+	Detach         func()
+	ClosePane      func()
 }
 
 func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	statusBar(c, model, m, t, actions)
+	if model.PendingPaste != nil {
+		pastePrompt(c, *model.PendingPaste, m, t, actions)
+	}
+	if model.DropActive || model.DropNotice != DropNoticeNone {
+		dropBanner(c, model, m, t, actions)
+	}
 	if model.Logging.Active || model.LogProblem || model.LogDirectory == "" {
 		logDetail(c, model, m, t)
 	}
@@ -85,7 +112,124 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 		if button.Clicked() && actions.ToggleLog != nil {
 			actions.ToggleLog()
 		}
+
+		// The encoding selector is always visible: a Session that renders
+		// mojibake must not require opening a menu to fix it.
+		encoding := domainterminal.NormalizeEncoding(model.Encoding)
+		encodingChoices := encodingLabels(m)
+		selectedEncoding := locales.EncodingLabel(m, encoding)
+		encodingSelect := ui.Select(c, &selectedEncoding, encodingChoices).Width(104)
+		encodingSelect.Label(m.SessionEncoding())
+		if encodingSelect.Changed() && actions.SetEncoding != nil {
+			actions.SetEncoding(encodingAtLabel(m, selectedEncoding))
+		}
+
+		sessionMenuButton(c, sessionMenuModel{
+			Encoding:     encoding,
+			Logging:      model.Logging.Active,
+			LogFormat:    model.LogFormat,
+			LogDirectory: model.LogDirectory,
+			CanPaste:     actions.Paste != nil,
+			CanClear:     actions.ClearBuffer != nil,
+			CanSplit:     actions.SplitRight != nil || actions.SplitDown != nil,
+			CanDetach:    actions.Detach != nil,
+			CanClosePane: actions.ClosePane != nil,
+		}, m, t, sessionMenuActions{
+			Paste:        actions.Paste,
+			ClearBuffer:  actions.ClearBuffer,
+			SetEncoding:  actions.SetEncoding,
+			ToggleLog:    actions.ToggleLog,
+			SetLogFormat: actions.SetLogFormat,
+			SplitRight:   actions.SplitRight,
+			SplitDown:    actions.SplitDown,
+			Detach:       actions.Detach,
+			ClosePane:    actions.ClosePane,
+		})
 	})
+}
+
+func encodingLabels(m locales.Messages) []string {
+	labels := make([]string, 0, len(domainterminal.SupportedEncodings()))
+	for _, encoding := range domainterminal.SupportedEncodings() {
+		labels = append(labels, locales.EncodingLabel(m, encoding))
+	}
+	return labels
+}
+
+func encodingAtLabel(m locales.Messages, label string) domainterminal.Encoding {
+	for _, encoding := range domainterminal.SupportedEncodings() {
+		if locales.EncodingLabel(m, encoding) == label {
+			return encoding
+		}
+	}
+	return domainterminal.EncodingUTF8
+}
+
+// pastePrompt is the multiline paste confirmation. The preview is scrollable
+// and the Send and Cancel actions sit in a fixed header, so a long paste
+// cannot push either action out of the window.
+func pastePrompt(c *ui.Context, pending PendingPaste, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	ui.Column(c).FillWidth().Padding(6).Gap(4).Background(t.Surface).
+		Border(1, t.Accent).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SessionPasteConfirmTitle(pending.Lines)).FontSize(12).
+				Bold().SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+			send := ui.PrimaryButton(c, m.SessionPasteSend())
+			if send.Clicked() && actions.AcceptPaste != nil {
+				actions.AcceptPaste()
+			}
+			if ui.Button(c, m.SessionPasteCancel()).Clicked() && actions.CancelPaste != nil {
+				actions.CancelPaste()
+			}
+		})
+		ui.Text(c, m.SessionPasteConfirmBody(pending.Chars)).FontSize(10).
+			SingleLine().MinWidth(0).TextColor(t.TextMuted)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
+			ui.Text(c, m.SessionPastePreviewLabel()).FontSize(10).TextColor(t.TextMuted)
+			ui.Scroll(c).Grow(1).Height(42).Children(func() {
+				ui.Text(c, pending.Preview).FontSize(11).Wrap().TextColor(t.Text)
+			})
+		})
+		if pending.Truncated {
+			ui.Text(c, m.SessionPasteTruncated()).FontSize(10).
+				SingleLine().TextColor(t.Warning)
+		}
+	})
+}
+
+// dropBanner shows files over the terminal and the result of a drop.
+func dropBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	text := dropBannerText(model, m)
+	ui.Row(c).FillWidth().Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
+		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, text).FontSize(11).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+		if !model.DropActive && ui.Button(c, m.SessionPasteCancel()).Clicked() && actions.DismissDrop != nil {
+			actions.DismissDrop()
+		}
+	})
+}
+
+func dropBannerText(model chromeModel, m locales.Messages) string {
+	if model.DropActive {
+		return m.SessionDropActive(dropActionLabel(model.DropAction, m))
+	}
+	switch model.DropNotice {
+	case DropNoticeUploaded:
+		return m.SessionDropUploaded(model.DropCount)
+	case DropNoticeUnavailable:
+		return m.SessionDropUnavailable()
+	case DropNoticeFailed:
+		return m.SessionDropFailed()
+	default:
+		return m.SessionDropInserted(model.DropCount)
+	}
+}
+
+func dropActionLabel(action domainterminal.DropAction, m locales.Messages) string {
+	if action == domainterminal.DropUpload {
+		return m.SessionDropUploadAction()
+	}
+	return m.SessionDropInsertAction()
 }
 
 func commandText(m locales.Messages, command appsession.CommandState) string {

@@ -74,6 +74,11 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	if source && len(forwarded) > 0 && s.onInput != nil {
 		s.onInput(s.id, forwarded)
 	}
+	// Encode only the bytes that leave the Session. The tap, input hook, and
+	// broadcast fan-out above operate on the user's UTF-8 text.
+	if len(forwarded) > 0 {
+		forwarded = s.encodeInput(forwarded)
+	}
 	return forwarded, changed, gated
 }
 

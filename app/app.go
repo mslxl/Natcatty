@@ -17,6 +17,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/localpty"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
+	"github.com/mslxl/natcatty/adapters/textcodec"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/command"
 	appconnection "github.com/mslxl/natcatty/application/connection"
@@ -265,6 +266,17 @@ func run(afterReady func(hostWindow)) error {
 		appsession.WithClipboardPolicy(func() domainterminal.ClipboardAccess {
 			return terminalService.Settings().OSC52
 		}),
+		// A new Session inherits the encoding remembered for its Host, or the
+		// global default. The terminal surface applies live changes and
+		// persists them through the same Settings service.
+		appsession.WithEncodingResolver(func(spec appsession.StartSpec) domainterminal.Encoding {
+			return terminalService.EncodingFor(spec.EncodingScope)
+		}),
+		// The legacy charset tables are an adapter; the Session service sees
+		// only its Codec port.
+		appsession.WithCodecFactory(func(encoding domainterminal.Encoding) appsession.Codec {
+			return textcodec.New(encoding)
+		}),
 		// Typed input that passed a Session's tap fans out to the selected
 		// broadcast targets. shellState is assigned after this service; the
 		// closure reads it only when input arrives.
@@ -314,6 +326,13 @@ func run(afterReady func(hostWindow)) error {
 					return terminalLogDefaults(s.Label())
 				}),
 				sessionui.WithRedraw(invalidate),
+				sessionui.WithPastePolicy(terminalService.PasteConfirmation),
+				sessionui.WithDropAction(func() domainterminal.DropAction {
+					return terminalService.Settings().DropAction
+				}),
+				sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
+					_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
+				}),
 			)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),

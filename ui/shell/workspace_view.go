@@ -8,6 +8,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	"github.com/mslxl/natcatty/ui/locales"
+	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -222,6 +223,39 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	info, ok := ref.pane(paneID)
 	if !ok {
 		return
+	}
+	// The Session menu lives inside the terminal surface, so the shell hands
+	// it the Pane commands for this exact Pane. A detached Pane gets the zero
+	// value and its split/close items show disabled.
+	if aware, ok := info.Surface.(interface {
+		SetPaneActions(sessionui.PaneActions)
+	}); ok {
+		actions := sessionui.PaneActions{}
+		if ref.managesPanes {
+			actions = sessionui.PaneActions{
+				SplitRight: func() {
+					ref.focus(info.ID)
+					_ = ref.splitRight()
+					c.Invalidate()
+				},
+				SplitDown: func() {
+					ref.focus(info.ID)
+					_ = ref.splitDown()
+					c.Invalidate()
+				},
+				Detach: func() {
+					if ref.detach(info.ID) {
+						c.Invalidate()
+					}
+				},
+				Close: func() {
+					ref.focus(info.ID)
+					ref.closeFocused()
+					c.Invalidate()
+				},
+			}
+		}
+		aware.SetPaneActions(actions)
 	}
 	tabID := ref.id
 	column := ui.Column(c).Fill().Background(t.Background)

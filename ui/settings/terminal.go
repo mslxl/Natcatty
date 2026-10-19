@@ -14,6 +14,10 @@ type Terminal interface {
 	SetLogTimestamps(bool) error
 	SetOSC52(domainterminal.ClipboardAccess) error
 	SetOSCNotifications(domainterminal.NotificationMode) error
+	SetEncoding(domainterminal.Encoding) error
+	SetPasteProtection(bool) error
+	SetPasteMinLines(int) error
+	SetDropAction(domainterminal.DropAction) error
 }
 
 // TerminalState owns the Settings window's terminal form. It is mutated only
@@ -79,6 +83,26 @@ func (s *TerminalState) SetOSC52(access domainterminal.ClipboardAccess) bool {
 // SetOSCNotifications stores when program notifications appear.
 func (s *TerminalState) SetOSCNotifications(mode domainterminal.NotificationMode) bool {
 	return s.apply(func() error { return s.terminal.SetOSCNotifications(mode) })
+}
+
+// SetEncoding stores the default terminal encoding.
+func (s *TerminalState) SetEncoding(encoding domainterminal.Encoding) bool {
+	return s.apply(func() error { return s.terminal.SetEncoding(encoding) })
+}
+
+// SetPasteProtection stores the multiline paste guard.
+func (s *TerminalState) SetPasteProtection(enabled bool) bool {
+	return s.apply(func() error { return s.terminal.SetPasteProtection(enabled) })
+}
+
+// SetPasteMinLines stores the line count at which the guard asks.
+func (s *TerminalState) SetPasteMinLines(lines int) bool {
+	return s.apply(func() error { return s.terminal.SetPasteMinLines(lines) })
+}
+
+// SetDropAction stores what dropping files on a terminal does.
+func (s *TerminalState) SetDropAction(action domainterminal.DropAction) bool {
+	return s.apply(func() error { return s.terminal.SetDropAction(action) })
 }
 
 func (s *TerminalState) apply(change func() error) bool {
