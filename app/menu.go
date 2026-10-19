@@ -62,6 +62,11 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			Click: dispatch(command.DetachTab),
 		},
 		{
+			ID:    "menu.copyTabToWindow",
+			Label: m.TabCopyToNewWindow(),
+			Click: dispatch(command.CopyTabToNewWindow),
+		},
+		{
 			ID:    "menu.lockApp",
 			Label: m.MenuLockApp(),
 			Click: dispatch(command.LockApp),
@@ -116,6 +121,11 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 				Label:       m.PaneClose(),
 				Accelerator: "CmdOrCtrl+Shift+W",
 				Click:       dispatch(command.ClosePane),
+			},
+			{
+				ID:    "menu.detachPane",
+				Label: m.PaneDetach(),
+				Click: dispatch(command.DetachPane),
 			},
 			mygo.Separator(),
 			{

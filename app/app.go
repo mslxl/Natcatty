@@ -31,7 +31,6 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
-	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -42,43 +41,43 @@ func Run() error { return run(nil) }
 
 // run is the composition root proper. afterReady, when non-nil, runs on the UI
 // thread after the main window exists; the launch smoke build uses it to quit.
-func run(afterReady func(*mygo.Window)) error {
-	var settingsWindow *mygo.Window
-	var mainWindow *mygo.Window
+func run(afterReady func(hostWindow)) error {
+	var windows *windowManager
+	var mainWindow hostWindow
 	var gate *uiapplock.Gate
 	var settingsState *settings.AppLockState
+	var ready bool
+	var focusRequested bool
+
+	// A later launch hands its command line to the running instance and exits.
+	// Focus the existing main window; if readiness has not run yet, the flag is
+	// consumed after the window is created. The selftest build invokes this
+	// same callback to prove the production second-instance path raises main.
+	secondInstance := func() {
+		if !ready {
+			focusRequested = true
+			return
+		}
+		if windows != nil {
+			windows.SecondInstance()
+		}
+	}
+	if !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
+		return nil
+	}
 
 	invalidate := func() {
+		if windows != nil {
+			windows.InvalidateAll()
+			return
+		}
 		if mainWindow != nil && !mainWindow.IsDestroyed() {
 			mainWindow.Invalidate()
 		}
-		if settingsWindow != nil && !settingsWindow.IsDestroyed() {
-			settingsWindow.Invalidate()
-		}
 	}
 
-	// openSettings keeps one Settings window per app, as ADR 0006 requires.
-	// Shell callbacks run on the UI thread, so creating and focusing the
-	// window here is safe.
-	openSettings := func() {
-		if settingsWindow != nil && !settingsWindow.IsDestroyed() {
-			settingsWindow.Show()
-			settingsWindow.Focus()
-			return
-		}
-
-		settingsWindow = mygo.NewWindow(mygo.WindowOptions{
-			Title:     locales.In(mygo.App.Locale()).NavSettings(),
-			Width:     640,
-			Height:    480,
-			MinWidth:  480,
-			MinHeight: 360,
-			StateKey:  "settings",
-			Content:   ui.View(gate.Wrap(settings.View(settingsState))),
-		})
-		settingsWindow.OnFocus(func() { gate.RecordActivity() })
-		settingsWindow.OnClosed(func() { settingsWindow = nil })
-	}
+	// openSettings is provided by the window manager below: one Settings
+	// window per app, as ADR 0006 requires.
 
 	userData, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
@@ -190,16 +189,20 @@ func run(afterReady func(*mygo.Window)) error {
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
 		}),
-		state.WithSettingsRequest(openSettings),
-		// Opening and closing a Tab changes the shell's structure; ask for the
-		// frame that shows the new tab strip or Vault placeholder.
-		state.WithRedrawRequest(func() {
-			if mainWindow != nil && !mainWindow.IsDestroyed() {
-				mainWindow.Invalidate()
+		state.WithSettingsRequest(func() {
+			if windows != nil {
+				windows.OpenSettings()
 			}
 		}),
+		// Opening and closing a Tab changes the shell's structure; ask for the
+		// frame that shows the new tab strip or Vault placeholder. Every
+		// window redraws so a lock or unlock propagates.
+		state.WithRedrawRequest(invalidate),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			return sessionui.New(s)
+			// A focused terminal takes keys before window shortcuts; the
+			// selftest build forwards its plain F12 prefix from here. The
+			// normal build's option list is empty, so no test code is linked.
+			return sessionui.New(s, sessionSurfaceOptions()...)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithTrustPrompt(trustPrompt),
@@ -211,8 +214,38 @@ func run(afterReady func(*mygo.Window)) error {
 			}
 			return host, true
 		}),
+		// Detached Tabs get a real window; moving one back closes that window.
+		state.WithDetachHandler(func(id model.TabID) {
+			if windows != nil {
+				windows.OpenDetached(id)
+			}
+		}),
+		state.WithDetachReattachHandler(func(id model.TabID) {
+			if windows != nil {
+				windows.ReattachClose(id)
+			}
+		}),
+		state.WithDetachedCloseRequest(func(id model.TabID) {
+			if windows != nil {
+				windows.RequestDetachedClose(id)
+			}
+		}),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
+
+	// Every window is created through this manager, which wraps its content in
+	// the one App Lock gate and owns close/exit intent.
+	windows = newWindowManager(
+		mygoWindowHost{},
+		nativeConfirmer{},
+		gate,
+		shellState,
+		func() func(*ui.Context) { return settings.View(settingsState) },
+		func() string { return mygo.App.Locale() },
+	)
+	// The selftest build installs the F12 keyboard facility here; the normal
+	// build's installer is a no-op.
+	installSelftest(windows, shellState, secondInstance)
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
@@ -220,8 +253,20 @@ func run(afterReady func(*mygo.Window)) error {
 		shellState.Persist()
 		closeForwarding(forwardingManager, forwardingState)
 		shellState.Shutdown()
+		shellState.CloseAllSessions()
 		sessions.CloseAll()
 		connections.CloseAll()
+	})
+
+	// Quit intent is asked once, before any window closes. Detached windows
+	// then close without a second prompt.
+	mygo.App.OnBeforeQuit(func(event *mygo.QuitEvent) {
+		if windows == nil {
+			return
+		}
+		if !windows.ConfirmQuit() {
+			event.PreventDefault()
+		}
 	})
 
 	mygo.App.WhenReady(func() {
@@ -229,31 +274,15 @@ func run(afterReady func(*mygo.Window)) error {
 		// Start is asynchronous, so launch never waits on a network handshake.
 		forwardingManager.AutoStart(context.Background())
 
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     locales.In(mygo.App.Locale()).AppName(),
-			Width:     1100,
-			Height:    720,
-			MinWidth:  720,
-			MinHeight: 480,
-			StateKey:  "main",
-			Content:   ui.View(gate.Wrap(shell.View(shellState))),
-		})
-		mainWindow = win
-		win.OnFocus(func() { gate.RecordActivity() })
+		mainWindow = windows.OpenMain()
+		ready = true
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
 		// that input) is the observable activity.
 		sessions.SetChangeHook(func(snapshot appsession.Snapshot) {
 			gate.RecordActivity()
 			shellState.NoteSessionActivity(snapshot.ID)
-			win.Invalidate()
-		})
-		win.OnClosed(func() {
-			shellState.Persist()
-			closeForwarding(forwardingManager, forwardingState)
-			shellState.Shutdown()
-			sessions.CloseAll()
-			connections.CloseAll()
+			windows.InvalidateAll()
 		})
 
 		// Tabs, splits, and working directories come back; their Sessions open
@@ -261,17 +290,19 @@ func run(afterReady func(*mygo.Window)) error {
 		shellState.Restore(context.Background())
 
 		mygo.App.OnLocaleChanged(func(tag string) {
-			win.SetTitle(locales.In(tag).AppName())
-			if settingsWindow != nil && !settingsWindow.IsDestroyed() {
-				settingsWindow.SetTitle(locales.In(tag).NavSettings())
-				settingsWindow.Invalidate()
-			}
+			windows.ApplyLocale()
 			mygo.App.SetMenu(BuildMenu(registry, tag))
-			win.Invalidate()
 		})
 
+		// A second launch that handed over before readiness still gets its
+		// existing window raised.
+		if focusRequested {
+			focusRequested = false
+			windows.FocusMain()
+		}
+
 		if afterReady != nil {
-			afterReady(win)
+			afterReady(mainWindow)
 		}
 	})
 
@@ -308,6 +339,16 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error) *co
 	})
 	register(command.DetachTab, func(context.Context) error {
 		shellState.DetachTab(shellState.ActiveTab())
+		return nil
+	})
+	register(command.CopyTabToNewWindow, func(context.Context) error {
+		return shellState.DuplicateTabToWindow(shellState.ActiveTab())
+	})
+	register(command.DetachPane, func(context.Context) error {
+		index := shellState.ActiveTab()
+		if paneID, ok := shellState.FocusedPaneID(index); ok {
+			shellState.DetachPane(index, paneID)
+		}
 		return nil
 	})
 	register(command.SplitPaneRight, func(context.Context) error {

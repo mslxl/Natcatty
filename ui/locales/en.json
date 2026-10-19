@@ -391,6 +391,7 @@
   "tabCloseRight": "Close Tabs to the Right",
   "tabDuplicate": "Duplicate Tab",
   "tabDetach": "Detach Tab",
+  "tabCopyToNewWindow": "Copy Tab to New Window",
   "tabCopyTitle": "{title} (copy {count})",
   "@tabCopyTitle": {"description": "The title of a duplicated Tab, counting its copy generation.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
   "tabDirtyMarker": "●",
@@ -401,6 +402,7 @@
   "paneSplitRight": "Split Right",
   "paneSplitDown": "Split Down",
   "paneClose": "Close Pane",
+  "paneDetach": "Detach Session",
   "paneFocusLeft": "Focus Left",
   "paneFocusRight": "Focus Right",
   "paneFocusUp": "Focus Up",
@@ -412,5 +414,16 @@
   "paneDragHandle": "::",
   "@paneDragHandle": {"description": "The handle that drags a Pane."},
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "The button that closes a Tab or Pane."}
+  "@closeGlyph": {"description": "The button that closes a Tab or Pane."},
+  "detachedMoveToMain": "Move to Main Window",
+  "detachedCloseWindow": "Close Window",
+  "closeWindowTitle": "Close Window?",
+  "closeWindowMessage": "{count, plural, one {# active Session will end if this window closes.} other {# active Sessions will end if this window closes.}}",
+  "@closeWindowMessage": {"description": "The close-window intent prompt naming how many Sessions end.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "closeWindowCancel": "Cancel",
+  "closeWindowConfirm": "Close Window",
+  "quitConfirmTitle": "Quit Natcatty?",
+  "quitConfirmMessage": "{count, plural, one {# active Session will end if Natcatty quits.} other {# active Sessions will end if Natcatty quits.}}",
+  "@quitConfirmMessage": {"description": "The quit intent prompt naming how many Sessions end.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "quitConfirmConfirm": "Quit"
 }

@@ -19,10 +19,32 @@ type Surface struct {
 	closeOnce sync.Once
 }
 
+// options are the terminal choices a Surface accepts.
+type options struct {
+	onKey func(ui.Modifiers, ui.Key) bool
+}
+
+// Option customizes a Surface.
+type Option func(*options)
+
+// WithKeyInterceptor installs a handler that sees key presses before the
+// terminal does, as the selftest build uses to keep its plain F12 prefix from
+// being sent to the program. Returning true consumes the key.
+func WithKeyInterceptor(fn func(ui.Modifiers, ui.Key) bool) Option {
+	return func(o *options) { o.onKey = fn }
+}
+
 // New connects a MyGo terminal to session's TerminalConn. It returns an error
 // when the terminal plugin's native library is unavailable.
-func New(session *appsession.Session) (*Surface, error) {
-	term, err := terminal.New(terminal.Options{Conn: session.TerminalConn()})
+func New(session *appsession.Session, opts ...Option) (*Surface, error) {
+	var options options
+	for _, opt := range opts {
+		opt(&options)
+	}
+	term, err := terminal.New(terminal.Options{
+		Conn:  session.TerminalConn(),
+		OnKey: options.onKey,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -72,14 +72,15 @@ func (m *memoryWorkspaceRepository) Clear(context.Context) error {
 }
 
 type workspaceGraph struct {
-	state    *State
-	factory  *workspaceFactory
-	sessions []*appsession.Session
-	surfaces []*fakeSurface
-	repo     *memoryWorkspaceRepository
-	service  *appsession.Service
-	hosts    map[model.HostID]domainvault.Host
-	detached []model.TabID
+	state      *State
+	factory    *workspaceFactory
+	sessions   []*appsession.Session
+	surfaces   []*fakeSurface
+	repo       *memoryWorkspaceRepository
+	service    *appsession.Service
+	hosts      map[model.HostID]domainvault.Host
+	detached   []model.TabID
+	reattached []model.TabID
 }
 
 func newWorkspaceGraph(t *testing.T) *workspaceGraph {
@@ -105,6 +106,9 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 			}),
 		WithDetachHandler(func(id model.TabID) {
 			graph.detached = append(graph.detached, id)
+		}),
+		WithDetachReattachHandler(func(id model.TabID) {
+			graph.reattached = append(graph.reattached, id)
 		}),
 	)
 	return graph
