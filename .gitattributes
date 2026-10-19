@@ -1,0 +1,14 @@
+# Keep sources and CI files byte-identical across checkouts so gofmt, the i18n
+# catalog diff, and the generated parity matrix behave the same on every OS.
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.sql text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
