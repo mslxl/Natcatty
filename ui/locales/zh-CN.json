@@ -11,5 +11,11 @@
   "menuNewTab": "新建标签页",
   "menuCloseTab": "关闭标签页",
   "menuQuit": "退出",
-  "tabTitle": "标签页 {number}"
+  "tabTitle": "标签页 {number}",
+  "localSessionTab": "本地会话 {number}",
+  "sessionRunning": "运行中",
+  "sessionExited": "已退出",
+  "sessionExitedWithCode": "已退出，代码 {code}",
+  "sessionClosed": "已关闭",
+  "commandFailed": "无法完成命令"
 }

@@ -2,18 +2,65 @@ package app
 
 import (
 	"context"
+	"io"
+	"sync"
 	"testing"
 
+	"github.com/egoist/mygo/ui"
+
 	"github.com/mslxl/natcatty/application/command"
+	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
+type wiringTransport struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (t *wiringTransport) Read([]byte) (int, error) {
+	<-t.closed
+	return 0, io.EOF
+}
+func (t *wiringTransport) Write(p []byte) (int, error) { return len(p), nil }
+func (t *wiringTransport) Resize(int, int) error       { return nil }
+func (t *wiringTransport) Wait() (int, error)          { return 0, nil }
+func (t *wiringTransport) Close() error {
+	t.closeOnce.Do(func() { close(t.closed) })
+	return nil
+}
+
+type wiringFactory struct{ transport *wiringTransport }
+
+func (f *wiringFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+	return f.transport, nil
+}
+
+type wiringSurface struct{}
+
+func (wiringSurface) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal").Fill() }
+func (wiringSurface) Close()                        {}
+
+func newWiringState(t *testing.T) *state.State {
+	t.Helper()
+	service := appsession.NewService(&wiringFactory{transport: &wiringTransport{closed: make(chan struct{})}})
+	t.Cleanup(service.CloseAll)
+	return state.NewState(state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+		return wiringSurface{}, nil
+	}))
+}
+
 func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 	var locales []string
-	shellState := state.NewState(state.WithLocaleRequest(func(tag string) {
-		locales = append(locales, tag)
-	}))
+	service := appsession.NewService(&wiringFactory{transport: &wiringTransport{closed: make(chan struct{})}})
+	t.Cleanup(service.CloseAll)
+	shellState := state.NewState(
+		state.WithLocaleRequest(func(tag string) { locales = append(locales, tag) }),
+		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+			return wiringSurface{}, nil
+		}),
+	)
 	quits := 0
 	registry := newRegistry(shellState, func() { quits++ })
 
@@ -46,7 +93,7 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 }
 
 func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
-	shellState := state.NewState()
+	shellState := newWiringState(t)
 	registry := newRegistry(shellState, func() {})
 
 	ids := []command.ID{command.NewTab, command.CloseTab, command.Quit}

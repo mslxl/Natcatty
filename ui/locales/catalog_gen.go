@@ -159,3 +159,71 @@ func TabTitle(number int) string { return In(i18n.Locale()).TabTitle(number) }
 func (msgs Messages) TabTitle(number int) string {
 	return Catalog.Format(msgs.locale, "tabTitle", map[string]any{"number": number})
 }
+
+// LocalSessionTab says "Local Session {number}"
+// in the language the app shows.
+//
+// The title of a Tab that hosts a local shell Session.
+func LocalSessionTab(number int) string { return In(i18n.Locale()).LocalSessionTab(number) }
+
+// LocalSessionTab says "Local Session {number}"
+// in the language of msgs.
+//
+// The title of a Tab that hosts a local shell Session.
+func (msgs Messages) LocalSessionTab(number int) string {
+	return Catalog.Format(msgs.locale, "localSessionTab", map[string]any{"number": number})
+}
+
+// SessionRunning says "Running"
+// in the language the app shows.
+func SessionRunning() string { return In(i18n.Locale()).SessionRunning() }
+
+// SessionRunning says "Running"
+// in the language of msgs.
+func (msgs Messages) SessionRunning() string {
+	return Catalog.Format(msgs.locale, "sessionRunning", nil)
+}
+
+// SessionExited says "Exited"
+// in the language the app shows.
+func SessionExited() string { return In(i18n.Locale()).SessionExited() }
+
+// SessionExited says "Exited"
+// in the language of msgs.
+func (msgs Messages) SessionExited() string {
+	return Catalog.Format(msgs.locale, "sessionExited", nil)
+}
+
+// SessionExitedWithCode says "Exited with code {code}"
+// in the language the app shows.
+//
+// The status of a Session whose program ended with an exit code.
+func SessionExitedWithCode(code int) string { return In(i18n.Locale()).SessionExitedWithCode(code) }
+
+// SessionExitedWithCode says "Exited with code {code}"
+// in the language of msgs.
+//
+// The status of a Session whose program ended with an exit code.
+func (msgs Messages) SessionExitedWithCode(code int) string {
+	return Catalog.Format(msgs.locale, "sessionExitedWithCode", map[string]any{"code": code})
+}
+
+// SessionClosed says "Closed"
+// in the language the app shows.
+func SessionClosed() string { return In(i18n.Locale()).SessionClosed() }
+
+// SessionClosed says "Closed"
+// in the language of msgs.
+func (msgs Messages) SessionClosed() string {
+	return Catalog.Format(msgs.locale, "sessionClosed", nil)
+}
+
+// CommandFailed says "Could not complete the command"
+// in the language the app shows.
+func CommandFailed() string { return In(i18n.Locale()).CommandFailed() }
+
+// CommandFailed says "Could not complete the command"
+// in the language of msgs.
+func (msgs Messages) CommandFailed() string {
+	return Catalog.Format(msgs.locale, "commandFailed", nil)
+}

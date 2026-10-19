@@ -22,7 +22,9 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 	m := locales.In(tag)
 	dispatch := func(id command.ID) func(*mygo.MenuItem, *mygo.Window) {
 		return func(*mygo.MenuItem, *mygo.Window) {
-			_ = registry.Dispatch(context.Background(), id)
+			if err := registry.Dispatch(context.Background(), id); err != nil {
+				mygo.Dialog.Error(m.CommandFailed(), err.Error())
+			}
 		}
 	}
 
