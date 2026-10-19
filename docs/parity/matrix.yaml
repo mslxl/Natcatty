@@ -1,0 +1,556 @@
+# Parity matrix: the editable definition of done (ADR-0008).
+#
+# Each row is one user-visible capability. The generator in
+# internal/tools/paritygen validates this file and regenerates matrix.md.
+# See docs/parity/limitations.md for every row with status: excluded.
+#
+# Schema: rewrite spec §17. Supported YAML is deliberately narrow: a top-level
+# sequence of rows, scalar fields, block string sequences, and bracketed
+# inline string sequences. Comments must occupy a whole line.
+#
+# Row seeding follows delivery: tickets seed their own rows as they land, so
+# the full ~300-row inventory arrives with ticket 60. Module names use the
+# repository's actual package paths (root-level layers), which internal/archtest
+# enforces; rewrite spec §2's internal/ prefix describes the same layers.
+
+# --- Ticket 01: native shell, i18n, menu, command registry ---
+
+- id: shell.window-navigation
+  area: shell
+  feature: Native window with Vault and Settings navigation
+  original_paths:
+    - application/app/AppShell.tsx
+    - application/app/AppView.tsx
+    - electron/main.cjs
+  module: ui/shell
+  tickets: [01]
+  acceptance_tests:
+    - ui/shell.TestShellShowsVaultAndSettingsNavigation
+    - ui/shell.TestShellShowsTheVaultSurfaceAndReturnsToIt
+    - ui/shell.TestShellSettingsNavigationRequestsTheSettingsWindow
+  status: verified
+  notes: ""
+
+- id: shell.application-menu
+  area: shell
+  feature: Native application menu dispatches app commands
+  original_paths:
+    - electron/bridges/windowManager.cjs
+    - application/app/AppHandlers.ts
+  module: app
+  tickets: [01]
+  acceptance_tests:
+    - app.TestMenuDispatchesNewAndCloseTabCommands
+    - app.TestMenuCarriesTheStandardQuitRoleOnMacOS
+    - app.TestMenuLocalizesItsLabels
+  status: verified
+  notes: ""
+
+- id: shell.command-registry
+  area: shell
+  feature: Command registry dispatches shell and quit commands
+  original_paths:
+    - application/app/AppHandlers.ts
+    - application/app/AppView.tsx
+  module: application/command
+  tickets: [01]
+  acceptance_tests:
+    - application/command.TestDispatchRunsRegisteredHandler
+    - app.TestRegistryKnowsEveryMenuCommand
+    - app.TestCommandsDriveTheShellAndQuit
+  status: verified
+  notes: ""
+
+- id: shell.launch
+  area: shell
+  feature: App launches a visible native window and quits cleanly
+  original_paths:
+    - electron/main.cjs
+    - electron/launch.cjs
+  module: app
+  tickets: [01]
+  acceptance_tests:
+    - app.TestLaunchSmoke
+  status: implemented
+  notes: "The smoke test is opt-in because it needs a display; it is not part of the PR gate. Packaging tickets 59-60 own the per-target run."
+
+- id: i18n.catalogs
+  area: i18n
+  feature: Five-locale ARB catalogs with identical keys and ICU arguments
+  original_paths:
+    - application/i18n/I18nProvider.tsx
+    - application/i18n/locales/en.ts
+    - application/i18n/locales/es.ts
+    - application/i18n/locales/ru.ts
+    - application/i18n/locales/zh-CN.ts
+    - application/i18n/locales/zh-TW.ts
+  module: ui/locales
+  tickets: [01]
+  acceptance_tests:
+    - ui/locales.TestCatalogsHaveIdenticalKeySetsAndArguments
+    - ui/locales.TestCatalogFormatsTabTitlesInEveryLocale
+    - ui/shell.TestShellSwitchesAllFiveLocalesWithoutRestart
+  status: verified
+  notes: ""
+
+- id: i18n.generated-accessors
+  area: i18n
+  feature: Committed generated accessors stay in sync with the catalogs
+  original_paths:
+    - application/i18n/messages.ts
+    - application/i18n/locales/en.ts
+  module: ui/locales
+  tickets: [01]
+  acceptance_tests:
+    - ui/locales.TestTagsStartWithTheSourceLanguage
+    - ui/locales.TestCatalogFormatsTabTitlesInEveryLocale
+    - ui/locales.TestGeneratedAccessorsCoverEveryCatalogKey
+  status: verified
+  notes: "CI additionally regenerates with mygo generate and diffs ui/locales."
+
+- id: crosscutting.layer-boundaries
+  area: cross-cutting
+  feature: Layered dependency rules and the WebView allowlist
+  original_paths:
+    - application/app/AppShell.architecture.test.ts
+  module: internal/archtest
+  tickets: [05]
+  acceptance_tests:
+    - internal/archtest.TestArchitecture
+    - internal/archtest.TestCheckImportRejectsLayerViolations
+    - internal/archtest.TestFileUsesWebViewRecognizesAnyImportName
+  status: verified
+  notes: ""
+
+- id: crosscutting.parity-matrix
+  area: cross-cutting
+  feature: Parity matrix is linted and regenerated deterministically
+  original_paths:
+    - AGENTS.md
+  module: internal/tools/paritygen
+  tickets: [05]
+  acceptance_tests:
+    - internal/tools/paritygen.TestRunGeneratesThenVerifiesTheMatrix
+    - internal/tools/paritygen.TestLintRejectsBrokenRows
+    - internal/tools/paritygen.TestRenderSortsByAreaThenIDAndIsDeterministic
+  status: verified
+  notes: "The original has no parity-matrix implementation; this guard is specified by rewrite spec §17 and ADR-0008. AGENTS.md is the original repository-policy artifact."
+
+# --- Ticket 02: local shell Session ---
+
+- id: terminal.local-shell
+  area: terminal
+  feature: Open, type into, and close a local shell Session
+  original_paths:
+    - lib/localShell.cjs
+    - lib/localShell.ts
+    - electron/bridges/terminalBridge.cjs
+  module: application/session
+  tickets: [02]
+  acceptance_tests:
+    - application/session.TestOpenLocalStartsARunningLocalSession
+    - adapters/localpty.TestLocalShellProducesOutputAndExitStatus
+    - ui/shell.TestShellShowsOpenLocalSessionTabsAndTheirTerminal
+    - ui/shell/state.TestNewTabOpensALocalShellSessionAndSurface
+  status: verified
+  notes: ""
+
+- id: terminal.resize
+  area: terminal
+  feature: Terminal resize reaches the PTY and the Session snapshot
+  original_paths:
+    - electron/bridges/terminalBridge.cjs
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [02]
+  acceptance_tests:
+    - application/session.TestResizeReachesTheTransportAndTheSnapshot
+    - adapters/localpty.TestLocalShellAcceptsInputAndResize
+  status: verified
+  notes: ""
+
+- id: terminal.flow-control
+  area: terminal
+  feature: Output backpressure pauses at the high watermark and resumes at the low watermark
+  original_paths:
+    - components/terminal/runtime/outputFlowController.ts
+    - components/terminal/runtime/terminalFlowConstants.ts
+    - electron/bridges/terminalFlowAck.cjs
+  module: application/session
+  tickets: [02]
+  acceptance_tests:
+    - application/session.TestFlowControlPausesAtTheHighWatermarkAndResumesAtTheLow
+  status: verified
+  notes: ""
+
+- id: terminal.session-status
+  area: terminal
+  feature: Session status and exit code are published and visible
+  original_paths:
+    - components/terminal/TerminalView.tsx
+    - application/app/AppHandlers.ts
+  module: ui/shell
+  tickets: [02]
+  acceptance_tests:
+    - application/session.TestNaturalExitPublishesTheStatusAndExitCode
+    - application/session.TestClosePublishesTheClosedStatus
+    - ui/shell.TestShellShowsExitStatusAndCode
+  status: verified
+  notes: ""
+
+# --- Ticket 03: Host Vault CRUD ---
+
+- id: vault.host-crud
+  area: vault
+  feature: Create, edit, and delete a Host through the Vault
+  original_paths:
+    - domain/models.ts
+    - domain/host.ts
+    - application/state/useVaultState.ts
+    - components/HostDetailsPanel.tsx
+  module: application/vault
+  tickets: [03]
+  acceptance_tests:
+    - application/vault.TestCreateHostNormalizesAndPersists
+    - application/vault.TestUpdateHostPreservesIdentityAndOrder
+    - application/vault.TestDeleteHostLeavesOtherHosts
+    - ui/vault/state.TestCreateFlowSavesAndReloads
+    - ui/vault/state.TestEditPopulatesTheFormAndUpdatesTheSameHost
+  status: verified
+  notes: ""
+
+- id: vault.host-persistence
+  area: vault
+  feature: Hosts survive an app restart and deletes leave unrelated records
+  original_paths:
+    - application/state/vaultSnapshotStore.ts
+    - application/state/useVaultState.ts
+  module: adapters/store
+  tickets: [03]
+  acceptance_tests:
+    - adapters/store.TestHostsSurviveReopen
+    - adapters/store.TestDeleteHostLeavesUnrelatedVaultRecords
+  status: verified
+  notes: ""
+
+- id: vault.host-validation
+  area: vault
+  feature: Invalid or duplicate Host input is rejected with a localized message
+  original_paths:
+    - domain/host.ts
+    - domain/host.test.ts
+  module: domain/vault
+  tickets: [03]
+  acceptance_tests:
+    - domain/vault.TestNormalizeDraftRejectsInvalidInput
+    - application/vault.TestCreateHostRejectsInvalidDraftsWithATypedError
+    - application/vault.TestCreateHostRejectsADuplicateEndpoint
+    - ui/vault/state.TestInvalidHostProducesAProblemKey
+    - ui/vault.TestVaultViewLocalizesValidationProblems
+  status: verified
+  notes: ""
+
+- id: vault.host-preferences
+  area: vault
+  feature: Per-Host preferences such as pinned order persist
+  original_paths:
+    - components/VaultView.sortPersistence.test.tsx
+    - application/state/useVaultState.ts
+    - application/state/vaultHostTreeActionsStore.ts
+  module: adapters/store
+  tickets: [03]
+  acceptance_tests:
+    - ui/vault/state.TestTogglePinnedPersistsThePreferenceThroughUpdate
+    - adapters/store.TestListOrdersPinnedHostsThenOrderKeys
+  status: verified
+  notes: ""
+
+# --- Ticket 04: encrypted fields and App Lock ---
+
+- id: applock.password-gate
+  area: app-lock
+  feature: Password-gated App Lock hides Vault content until unlock
+  original_paths:
+    - domain/appLock.ts
+    - application/state/useAppLockState.ts
+    - components/settings/tabs/AppLockSettingsSection.tsx
+    - electron/bridges/appLockSettingsStore.cjs
+  module: application/applock
+  tickets: [04]
+  acceptance_tests:
+    - domain/applock.TestNewVerifierProducesAVersionedPBKDF2Record
+    - application/applock.TestUnlockAcceptsOnlyTheCorrectPassword
+    - ui/applock.TestLockedGateHidesContentAndUnlocks
+    - ui/applock.TestWrongPasswordKeepsTheGateClosed
+  status: verified
+  notes: ""
+
+- id: applock.idle-timeout
+  area: app-lock
+  feature: Idle timeout locks the app at the configured minute
+  original_paths:
+    - domain/appLock.ts
+    - application/state/useAppLockRuntime.ts
+  module: application/applock
+  tickets: [04]
+  acceptance_tests:
+    - domain/applock.TestShouldLockAfterIdle
+    - application/applock.TestIdleTimeoutLocksAtTheConfiguredMinute
+    - application/applock.TestActivityPostponesTheIdleLock
+    - ui/applock.TestIdleTimeoutLocksTheGate
+    - ui/settings.TestSetTimeoutUsesAnOfferedValue
+  status: verified
+  notes: ""
+
+- id: vault.field-encryption
+  area: vault
+  feature: Stored Host passwords are ciphertext at rest and bound to their entity and field
+  original_paths:
+    - electron/bridges/credentialBridge.cjs
+    - domain/encryptedObjectStorage.ts
+    - domain/credentials.ts
+  module: adapters/store
+  tickets: [04]
+  acceptance_tests:
+    - adapters/store.TestSecretRoundTripsAndIsCiphertextAtRest
+    - adapters/store.TestEachWriteUsesAFreshNonce
+    - adapters/store.TestCiphertextIsBoundToItsField
+    - application/vault.TestCreateHostEncryptsThePasswordOutsideTheHostRecord
+  status: verified
+  notes: ""
+
+- id: vault.secret-storage-modes
+  area: vault
+  feature: Missing OS secret storage offers passphrase or session-only mode, never plaintext
+  original_paths:
+    - electron/bridges/credentialBridge.cjs
+    - application/state/useAppLockBridge.ts
+  module: adapters/store
+  tickets: [04]
+  acceptance_tests:
+    - adapters/store.TestNoOSStoreNeedsTheUserToChooseAMode
+    - adapters/store.TestPassphraseModeWrapsAndUnlocksTheFieldKey
+    - adapters/store.TestSessionOnlyModeWritesNoSecretRows
+    - application/vault.TestCreateHostRefusesAPasswordWithoutASecretStore
+  status: verified
+  notes: ""
+
+# --- Accepted gaps and deliberate exclusions ---
+# Every row below needs a matching section in docs/parity/limitations.md.
+
+- id: terminal.search
+  area: terminal
+  feature: Terminal content search
+  original_paths:
+    - components/terminal/hooks/useTerminalSearch.ts
+    - components/terminal/TerminalSearchBar.tsx
+  module: application/session
+  tickets: [18]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no terminal search API; recorded as a v1 limitation."
+
+- id: terminal.selection-export
+  area: terminal
+  feature: Read terminal selection through a public API
+  original_paths:
+    - application/state/terminalSelectionAttachment.ts
+    - components/terminal/normalizeTerminalSelection.ts
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no exported selection getter."
+
+- id: terminal.cursor-geometry
+  area: terminal
+  feature: Query cursor and cell geometry
+  original_paths:
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no cursor or cell geometry API."
+
+- id: terminal.inline-images
+  area: terminal
+  feature: Inline terminal images
+  original_paths:
+    - domain/terminalInlineImages.ts
+  module: application/session
+  tickets: [18]
+  status: excluded
+  notes: "MyGo v0.5.5 renders no inline images."
+
+- id: terminal.live-multiview
+  area: terminal
+  feature: Multiple live views of one Session
+  original_paths:
+    - components/terminal/paneVisibilityStore.ts
+  module: application/session
+  tickets: [19]
+  status: excluded
+  notes: "MyGo v0.5.5 allows one live view; snapshots and observers replace it."
+
+- id: terminal.accessibility-tree
+  area: terminal
+  feature: Accessibility tree over terminal content
+  original_paths:
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no accessibility tree for terminal cells."
+
+- id: terminal.write-receipts
+  area: terminal
+  feature: Write receipts for terminal input
+  original_paths:
+    - electron/bridges/terminalBridge.pasteWriteReceipt.test.cjs
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no write receipts."
+
+- id: terminal.kitty-key-encoding
+  area: terminal
+  feature: Exact per-target Kitty keyboard encoding
+  original_paths:
+    - components/terminal/runtime/kittyKeyboardProtocol.ts
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "MyGo v0.5.5 cannot encode exact per-target Kitty key sequences."
+
+- id: terminal.process-isolation
+  area: terminal
+  feature: Process-isolated terminal workers
+  original_paths:
+    - electron/terminalWorker/process.cjs
+  module: application/session
+  tickets: [17]
+  status: excluded
+  notes: "The native app has no Renderer process to isolate; terminal work runs in Go."
+
+- id: applock.biometric
+  area: app-lock
+  feature: Biometric App Lock unlock
+  original_paths:
+    - electron/bridges/appLockSystemAuthBridge.cjs
+  module: application/applock
+  tickets: [04]
+  status: excluded
+  notes: "MyGo v0.5.5 exposes no biometric API; the flags remain inert."
+
+- id: connections.ssh-compression
+  area: connections
+  feature: SSH transport compression
+  original_paths:
+    - electron/bridges/sshAlgorithms.cjs
+  module: application/connection
+  tickets: [06]
+  status: excluded
+  notes: "x/crypto/ssh supports only compression none; surfaced as a typed error."
+
+- id: connections.legacy-algorithms
+  area: connections
+  feature: Unsupported legacy SSH algorithms
+  original_paths:
+    - electron/bridges/sshAlgorithms.cjs
+    - electron/bridges/boringSslDhCompat.cjs
+  module: application/connection
+  tickets: [06]
+  status: excluded
+  notes: "hmac-md5, DH group 15/17, and aes-cbc are unsupported; ssh-rsa and ssh-dss require an explicit insecure opt-in."
+
+- id: browser.cookie-partitioning
+  area: browser
+  feature: Per-host browser cookie isolation
+  original_paths:
+    - infrastructure/services/hostBrowserService.ts
+    - electron/hostBrowser/hostBrowserManager.cjs
+  module: application/browser
+  tickets: [48]
+  status: excluded
+  notes: "MyGo v0.5.5 has no per-webview session partition."
+
+- id: sync.smb-provider
+  area: sync
+  feature: SMB sync provider
+  original_paths:
+    - domain/cloudProviderIds.ts
+  module: application/sync
+  tickets: [49]
+  status: excluded
+  notes: "The provider was declared-only in the original and is out of scope."
+
+- id: plugins.runtime
+  area: cross-cutting
+  feature: Plugin runtime and plugin contributions
+  original_paths:
+    - electron/plugins/browserPluginRuntime.cjs
+    - electron/pluginRuntime.test.cjs
+  module: app
+  tickets: [01]
+  status: excluded
+  notes: "The plugin runtime is removed from the native product."
+
+- id: ai.features
+  area: cross-cutting
+  feature: AI assistant features
+  original_paths:
+    - electron/bridges/aiBridge.cjs
+  module: app
+  tickets: [01]
+  status: excluded
+  notes: "All AI features are removed from the native product."
+
+- id: migration.electron-data
+  area: cross-cutting
+  feature: Migration of user data from the Electron app
+  original_paths:
+    - application/state/vaultInitStore.ts
+  module: app
+  tickets: [01]
+  status: excluded
+  notes: "There is no incremental migration path; importing from other products remains in scope."
+
+- id: cli.internal-tool
+  area: cross-cutting
+  feature: Original internal tool CLI
+  original_paths:
+    - electron/cli/netcatty-tool-cli.cjs
+  module: app
+  tickets: [60]
+  status: excluded
+  notes: "The external MCP server is the required programmatic surface."
+
+- id: release.signing-update
+  area: packaging
+  feature: Code signing, notarization, and auto-update
+  original_paths:
+    - electron/bridges/autoUpdateBridge.cjs
+    - .github/workflows/build.yml
+  module: app
+  tickets: [60]
+  status: excluded
+  notes: "Only buildable installers are required; signing and update metadata are out of scope."
+
+- id: settings.custom-css
+  area: settings
+  feature: Custom CSS
+  original_paths:
+    - lib/customCss.ts
+  module: ui/shell
+  tickets: [27]
+  status: excluded
+  notes: "Custom CSS is removed; the legacy setting becomes inert."
+
+- id: platform.windows-arm64
+  area: packaging
+  feature: Windows arm64 build with bundled mosh and ET
+  original_paths:
+    - scripts/fetch-mosh-binaries.cjs
+    - scripts/fetch-et-binaries.cjs
+  module: app
+  tickets: [59]
+  status: excluded
+  notes: "Windows arm64 is unsupported because mosh and ET binaries are unavailable for the target."
