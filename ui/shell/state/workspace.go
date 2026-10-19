@@ -1354,6 +1354,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		return nil, ErrNoSessions
 	}
 	spec := appsession.StartSpec{
+		Label:         descriptor.Label,
 		Dir:           validLocalDir(descriptor.Dir),
 		X11Forwarding: descriptor.X11Forwarding,
 	}

@@ -3805,3 +3805,443 @@ func DeepLinkProblemUnsupported() string { return In(i18n.Locale()).DeepLinkProb
 func (msgs Messages) DeepLinkProblemUnsupported() string {
 	return Catalog.Format(msgs.locale, "deepLinkProblemUnsupported", nil)
 }
+
+// SessionActivityBusy says "Terminal activity"
+// in the language the app shows.
+func SessionActivityBusy() string { return In(i18n.Locale()).SessionActivityBusy() }
+
+// SessionActivityBusy says "Terminal activity"
+// in the language of msgs.
+func (msgs Messages) SessionActivityBusy() string {
+	return Catalog.Format(msgs.locale, "sessionActivityBusy", nil)
+}
+
+// SessionActivityIdle says "No terminal activity"
+// in the language the app shows.
+func SessionActivityIdle() string { return In(i18n.Locale()).SessionActivityIdle() }
+
+// SessionActivityIdle says "No terminal activity"
+// in the language of msgs.
+func (msgs Messages) SessionActivityIdle() string {
+	return Catalog.Format(msgs.locale, "sessionActivityIdle", nil)
+}
+
+// SessionCommandIdle says "No command"
+// in the language the app shows.
+func SessionCommandIdle() string { return In(i18n.Locale()).SessionCommandIdle() }
+
+// SessionCommandIdle says "No command"
+// in the language of msgs.
+func (msgs Messages) SessionCommandIdle() string {
+	return Catalog.Format(msgs.locale, "sessionCommandIdle", nil)
+}
+
+// SessionCommandRunning says "Running: {command}"
+// in the language the app shows.
+//
+// The command line that is running.
+func SessionCommandRunning(command string) string {
+	return In(i18n.Locale()).SessionCommandRunning(command)
+}
+
+// SessionCommandRunning says "Running: {command}"
+// in the language of msgs.
+//
+// The command line that is running.
+func (msgs Messages) SessionCommandRunning(command string) string {
+	return Catalog.Format(msgs.locale, "sessionCommandRunning", map[string]any{"command": command})
+}
+
+// SessionCommandExited says "{command} — exit {code}"
+// in the language the app shows.
+//
+// The finished command and its exit code.
+func SessionCommandExited(command string, code int) string {
+	return In(i18n.Locale()).SessionCommandExited(command, code)
+}
+
+// SessionCommandExited says "{command} — exit {code}"
+// in the language of msgs.
+//
+// The finished command and its exit code.
+func (msgs Messages) SessionCommandExited(command string, code int) string {
+	return Catalog.Format(msgs.locale, "sessionCommandExited", map[string]any{"command": command, "code": code})
+}
+
+// SessionCommandFinished says "{command}"
+// in the language the app shows.
+func SessionCommandFinished(command string) string {
+	return In(i18n.Locale()).SessionCommandFinished(command)
+}
+
+// SessionCommandFinished says "{command}"
+// in the language of msgs.
+func (msgs Messages) SessionCommandFinished(command string) string {
+	return Catalog.Format(msgs.locale, "sessionCommandFinished", map[string]any{"command": command})
+}
+
+// SessionLoggingStart says "Start log"
+// in the language the app shows.
+func SessionLoggingStart() string { return In(i18n.Locale()).SessionLoggingStart() }
+
+// SessionLoggingStart says "Start log"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingStart() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingStart", nil)
+}
+
+// SessionLoggingStop says "Stop log"
+// in the language the app shows.
+func SessionLoggingStop() string { return In(i18n.Locale()).SessionLoggingStop() }
+
+// SessionLoggingStop says "Stop log"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingStop() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingStop", nil)
+}
+
+// SessionLoggingOn says "Logging"
+// in the language the app shows.
+func SessionLoggingOn() string { return In(i18n.Locale()).SessionLoggingOn() }
+
+// SessionLoggingOn says "Logging"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingOn() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingOn", nil)
+}
+
+// SessionLoggingOff says "Not logging"
+// in the language the app shows.
+func SessionLoggingOff() string { return In(i18n.Locale()).SessionLoggingOff() }
+
+// SessionLoggingOff says "Not logging"
+// in the language of msgs.
+func (msgs Messages) SessionLoggingOff() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingOff", nil)
+}
+
+// SessionLoggingPath says "Log: {path}"
+// in the language the app shows.
+//
+// The log file path.
+func SessionLoggingPath(path string) string { return In(i18n.Locale()).SessionLoggingPath(path) }
+
+// SessionLoggingPath says "Log: {path}"
+// in the language of msgs.
+//
+// The log file path.
+func (msgs Messages) SessionLoggingPath(path string) string {
+	return Catalog.Format(msgs.locale, "sessionLoggingPath", map[string]any{"path": path})
+}
+
+// SessionLoggingFailed says "The Session log could not be written."
+// in the language the app shows.
+func SessionLoggingFailed() string { return In(i18n.Locale()).SessionLoggingFailed() }
+
+// SessionLoggingFailed says "The Session log could not be written."
+// in the language of msgs.
+func (msgs Messages) SessionLoggingFailed() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingFailed", nil)
+}
+
+// SessionLoggingNoDirectory says "Choose a log folder in Settings."
+// in the language the app shows.
+func SessionLoggingNoDirectory() string { return In(i18n.Locale()).SessionLoggingNoDirectory() }
+
+// SessionLoggingNoDirectory says "Choose a log folder in Settings."
+// in the language of msgs.
+func (msgs Messages) SessionLoggingNoDirectory() string {
+	return Catalog.Format(msgs.locale, "sessionLoggingNoDirectory", nil)
+}
+
+// SessionLogFormatText says "Text"
+// in the language the app shows.
+func SessionLogFormatText() string { return In(i18n.Locale()).SessionLogFormatText() }
+
+// SessionLogFormatText says "Text"
+// in the language of msgs.
+func (msgs Messages) SessionLogFormatText() string {
+	return Catalog.Format(msgs.locale, "sessionLogFormatText", nil)
+}
+
+// SessionLogFormatRaw says "Raw"
+// in the language the app shows.
+func SessionLogFormatRaw() string { return In(i18n.Locale()).SessionLogFormatRaw() }
+
+// SessionLogFormatRaw says "Raw"
+// in the language of msgs.
+func (msgs Messages) SessionLogFormatRaw() string {
+	return Catalog.Format(msgs.locale, "sessionLogFormatRaw", nil)
+}
+
+// SessionLogFormatHTML says "HTML"
+// in the language the app shows.
+func SessionLogFormatHTML() string { return In(i18n.Locale()).SessionLogFormatHTML() }
+
+// SessionLogFormatHTML says "HTML"
+// in the language of msgs.
+func (msgs Messages) SessionLogFormatHTML() string {
+	return Catalog.Format(msgs.locale, "sessionLogFormatHTML", nil)
+}
+
+// SessionTransferActive says "{kind} transfer detected. Protocol data is gated."
+// in the language the app shows.
+//
+// The detected transfer protocol.
+func SessionTransferActive(kind string) string { return In(i18n.Locale()).SessionTransferActive(kind) }
+
+// SessionTransferActive says "{kind} transfer detected. Protocol data is gated."
+// in the language of msgs.
+//
+// The detected transfer protocol.
+func (msgs Messages) SessionTransferActive(kind string) string {
+	return Catalog.Format(msgs.locale, "sessionTransferActive", map[string]any{"kind": kind})
+}
+
+// SessionTransferCancel says "Cancel transfer"
+// in the language the app shows.
+func SessionTransferCancel() string { return In(i18n.Locale()).SessionTransferCancel() }
+
+// SessionTransferCancel says "Cancel transfer"
+// in the language of msgs.
+func (msgs Messages) SessionTransferCancel() string {
+	return Catalog.Format(msgs.locale, "sessionTransferCancel", nil)
+}
+
+// SessionClipboardRequest says "A program wants to read the clipboard."
+// in the language the app shows.
+func SessionClipboardRequest() string { return In(i18n.Locale()).SessionClipboardRequest() }
+
+// SessionClipboardRequest says "A program wants to read the clipboard."
+// in the language of msgs.
+func (msgs Messages) SessionClipboardRequest() string {
+	return Catalog.Format(msgs.locale, "sessionClipboardRequest", nil)
+}
+
+// SessionClipboardAllow says "Allow"
+// in the language the app shows.
+func SessionClipboardAllow() string { return In(i18n.Locale()).SessionClipboardAllow() }
+
+// SessionClipboardAllow says "Allow"
+// in the language of msgs.
+func (msgs Messages) SessionClipboardAllow() string {
+	return Catalog.Format(msgs.locale, "sessionClipboardAllow", nil)
+}
+
+// SessionClipboardDeny says "Deny"
+// in the language the app shows.
+func SessionClipboardDeny() string { return In(i18n.Locale()).SessionClipboardDeny() }
+
+// SessionClipboardDeny says "Deny"
+// in the language of msgs.
+func (msgs Messages) SessionClipboardDeny() string {
+	return Catalog.Format(msgs.locale, "sessionClipboardDeny", nil)
+}
+
+// SettingsTerminalTitle says "Terminal"
+// in the language the app shows.
+func SettingsTerminalTitle() string { return In(i18n.Locale()).SettingsTerminalTitle() }
+
+// SettingsTerminalTitle says "Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalTitle() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalTitle", nil)
+}
+
+// SettingsTerminalDescription says "Session logging and terminal program behavior."
+// in the language the app shows.
+func SettingsTerminalDescription() string { return In(i18n.Locale()).SettingsTerminalDescription() }
+
+// SettingsTerminalDescription says "Session logging and terminal program behavior."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalDescription() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalDescription", nil)
+}
+
+// SettingsTerminalLoggingTitle says "Session logging"
+// in the language the app shows.
+func SettingsTerminalLoggingTitle() string { return In(i18n.Locale()).SettingsTerminalLoggingTitle() }
+
+// SettingsTerminalLoggingTitle says "Session logging"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalLoggingTitle() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalLoggingTitle", nil)
+}
+
+// SettingsTerminalLoggingDescription says "Write Session output to a folder you choose."
+// in the language the app shows.
+func SettingsTerminalLoggingDescription() string {
+	return In(i18n.Locale()).SettingsTerminalLoggingDescription()
+}
+
+// SettingsTerminalLoggingDescription says "Write Session output to a folder you choose."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalLoggingDescription() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalLoggingDescription", nil)
+}
+
+// SettingsLogEnabled says "Log new Sessions automatically"
+// in the language the app shows.
+func SettingsLogEnabled() string { return In(i18n.Locale()).SettingsLogEnabled() }
+
+// SettingsLogEnabled says "Log new Sessions automatically"
+// in the language of msgs.
+func (msgs Messages) SettingsLogEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsLogEnabled", nil)
+}
+
+// SettingsLogDirectory says "Log folder"
+// in the language the app shows.
+func SettingsLogDirectory() string { return In(i18n.Locale()).SettingsLogDirectory() }
+
+// SettingsLogDirectory says "Log folder"
+// in the language of msgs.
+func (msgs Messages) SettingsLogDirectory() string {
+	return Catalog.Format(msgs.locale, "settingsLogDirectory", nil)
+}
+
+// SettingsLogFormat says "Format"
+// in the language the app shows.
+func SettingsLogFormat() string { return In(i18n.Locale()).SettingsLogFormat() }
+
+// SettingsLogFormat says "Format"
+// in the language of msgs.
+func (msgs Messages) SettingsLogFormat() string {
+	return Catalog.Format(msgs.locale, "settingsLogFormat", nil)
+}
+
+// SettingsLogTimestamps says "Add timestamps to text and HTML logs"
+// in the language the app shows.
+func SettingsLogTimestamps() string { return In(i18n.Locale()).SettingsLogTimestamps() }
+
+// SettingsLogTimestamps says "Add timestamps to text and HTML logs"
+// in the language of msgs.
+func (msgs Messages) SettingsLogTimestamps() string {
+	return Catalog.Format(msgs.locale, "settingsLogTimestamps", nil)
+}
+
+// SettingsOSC52Title says "Clipboard access"
+// in the language the app shows.
+func SettingsOSC52Title() string { return In(i18n.Locale()).SettingsOSC52Title() }
+
+// SettingsOSC52Title says "Clipboard access"
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52Title() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52Title", nil)
+}
+
+// SettingsOSC52Description says "Choose what programs may do with OSC 52."
+// in the language the app shows.
+func SettingsOSC52Description() string { return In(i18n.Locale()).SettingsOSC52Description() }
+
+// SettingsOSC52Description says "Choose what programs may do with OSC 52."
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52Description() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52Description", nil)
+}
+
+// SettingsOSC52Off says "Off"
+// in the language the app shows.
+func SettingsOSC52Off() string { return In(i18n.Locale()).SettingsOSC52Off() }
+
+// SettingsOSC52Off says "Off"
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52Off() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52Off", nil)
+}
+
+// SettingsOSC52WriteOnly says "Write only"
+// in the language the app shows.
+func SettingsOSC52WriteOnly() string { return In(i18n.Locale()).SettingsOSC52WriteOnly() }
+
+// SettingsOSC52WriteOnly says "Write only"
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52WriteOnly() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52WriteOnly", nil)
+}
+
+// SettingsOSC52ReadWrite says "Read and write"
+// in the language the app shows.
+func SettingsOSC52ReadWrite() string { return In(i18n.Locale()).SettingsOSC52ReadWrite() }
+
+// SettingsOSC52ReadWrite says "Read and write"
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52ReadWrite() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52ReadWrite", nil)
+}
+
+// SettingsOSC52Prompt says "Ask before reading"
+// in the language the app shows.
+func SettingsOSC52Prompt() string { return In(i18n.Locale()).SettingsOSC52Prompt() }
+
+// SettingsOSC52Prompt says "Ask before reading"
+// in the language of msgs.
+func (msgs Messages) SettingsOSC52Prompt() string {
+	return Catalog.Format(msgs.locale, "settingsOSC52Prompt", nil)
+}
+
+// SettingsOSCNotificationsTitle says "Program notifications"
+// in the language the app shows.
+func SettingsOSCNotificationsTitle() string { return In(i18n.Locale()).SettingsOSCNotificationsTitle() }
+
+// SettingsOSCNotificationsTitle says "Program notifications"
+// in the language of msgs.
+func (msgs Messages) SettingsOSCNotificationsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsOSCNotificationsTitle", nil)
+}
+
+// SettingsOSCNotificationsDescription says "Choose when OSC 9, 777, and 99 notifications appear."
+// in the language the app shows.
+func SettingsOSCNotificationsDescription() string {
+	return In(i18n.Locale()).SettingsOSCNotificationsDescription()
+}
+
+// SettingsOSCNotificationsDescription says "Choose when OSC 9, 777, and 99 notifications appear."
+// in the language of msgs.
+func (msgs Messages) SettingsOSCNotificationsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsOSCNotificationsDescription", nil)
+}
+
+// SettingsOSCNotificationsOff says "Never"
+// in the language the app shows.
+func SettingsOSCNotificationsOff() string { return In(i18n.Locale()).SettingsOSCNotificationsOff() }
+
+// SettingsOSCNotificationsOff says "Never"
+// in the language of msgs.
+func (msgs Messages) SettingsOSCNotificationsOff() string {
+	return Catalog.Format(msgs.locale, "settingsOSCNotificationsOff", nil)
+}
+
+// SettingsOSCNotificationsUnfocused says "When unfocused"
+// in the language the app shows.
+func SettingsOSCNotificationsUnfocused() string {
+	return In(i18n.Locale()).SettingsOSCNotificationsUnfocused()
+}
+
+// SettingsOSCNotificationsUnfocused says "When unfocused"
+// in the language of msgs.
+func (msgs Messages) SettingsOSCNotificationsUnfocused() string {
+	return Catalog.Format(msgs.locale, "settingsOSCNotificationsUnfocused", nil)
+}
+
+// SettingsOSCNotificationsAlways says "Always"
+// in the language the app shows.
+func SettingsOSCNotificationsAlways() string {
+	return In(i18n.Locale()).SettingsOSCNotificationsAlways()
+}
+
+// SettingsOSCNotificationsAlways says "Always"
+// in the language of msgs.
+func (msgs Messages) SettingsOSCNotificationsAlways() string {
+	return Catalog.Format(msgs.locale, "settingsOSCNotificationsAlways", nil)
+}
+
+// SettingsTerminalSaveFailed says "The terminal settings could not be saved."
+// in the language the app shows.
+func SettingsTerminalSaveFailed() string { return In(i18n.Locale()).SettingsTerminalSaveFailed() }
+
+// SettingsTerminalSaveFailed says "The terminal settings could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalSaveFailed() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalSaveFailed", nil)
+}

@@ -7,6 +7,8 @@ import (
 	"github.com/egoist/mygo"
 
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
+	appsession "github.com/mslxl/natcatty/application/session"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -52,6 +54,57 @@ func (n *nativeNotifier) Notify(request appdesktop.Notification) error {
 		notification.OnClick(n.onClick)
 	}
 	return notification.Show()
+}
+
+// notificationAllowed applies the original OSC notification modes. The
+// unfocused mode suppresses notifications only while the main window is
+// visible and focused.
+func notificationAllowed(mode domainterminal.NotificationMode, focused bool) bool {
+	switch mode {
+	case domainterminal.NotificationOff:
+		return false
+	case domainterminal.NotificationUnfocused:
+		return !focused
+	default:
+		return true
+	}
+}
+
+// showProgramNotification displays an OSC 9/777/99 notification. The title and
+// body are exactly what the terminal displays; the tap has already stripped
+// control characters and capped their length.
+func showProgramNotification(notification appsession.TerminalNotification, onClick func()) error {
+	if !mygo.NotificationsSupported() {
+		return nil
+	}
+	title := notification.Title
+	if title == "" {
+		title = "Netcatty"
+	}
+	shown := mygo.NewNotification(mygo.NotificationOptions{
+		ID:    fmt.Sprintf("program:%d:%s", notification.At.UnixNano(), title),
+		Title: title,
+		Body:  notification.Body,
+		Group: "natcatty",
+	})
+	if onClick != nil {
+		shown.OnClick(onClick)
+	}
+	return shown.Show()
+}
+
+// deliverProgramNotification applies the user's mode and focus policy on the
+// UI thread, where the main window's focus state is current.
+func deliverProgramNotification(mode domainterminal.NotificationMode,
+	notification appsession.TerminalNotification, focused func() bool, onClick func()) {
+	if mode == domainterminal.NotificationOff {
+		return
+	}
+	mygo.RunOnMain(func() {
+		if notificationAllowed(mode, focused != nil && focused()) {
+			_ = showProgramNotification(notification, onClick)
+		}
+	})
 }
 
 // autoLauncher adapts MyGo's login-item API. MyGo strips its own login marker

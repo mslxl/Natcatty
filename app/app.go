@@ -23,9 +23,11 @@ import (
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
@@ -50,7 +52,10 @@ func run(afterReady func(hostWindow)) error {
 	var gate *uiapplock.Gate
 	var settingsState *settings.AppLockState
 	var desktopState *settings.DesktopState
+	var terminalState *settings.TerminalState
 	var desktopService *appdesktop.Service
+	var terminalService *appterminalsettings.Service
+	var sessions *appsession.Service
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
@@ -115,6 +120,24 @@ func run(afterReady func(hostWindow)) error {
 	}
 	desktopState = settings.NewDesktopState(desktopService,
 		settings.WithDesktopRedrawRequest(invalidate))
+
+	// Terminal behavior settings live beside the desktop settings. A missing
+	// file is the original defaults; a malformed one also loads as defaults so
+	// it cannot stop the app from starting.
+	terminalService = appterminalsettings.NewService(
+		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")),
+		appterminalsettings.WithChangeHook(func(current domainterminal.Settings) {
+			invalidate()
+			// The original's OSC 52 handler read Settings on every request.
+			// Apply a change to live Sessions as well as future ones.
+			if sessions != nil {
+				sessions.SetClipboardPolicy(current.OSC52)
+			}
+		}),
+	)
+	_ = terminalService.Load(context.Background())
+	terminalState = settings.NewTerminalState(terminalService,
+		settings.WithTerminalRedrawRequest(invalidate))
 
 	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
 	if err != nil {
@@ -212,9 +235,52 @@ func run(afterReady func(hostWindow)) error {
 	// leaves the section empty and shows its localized internal problem.
 	_ = forwardingState.Reload()
 
-	sessions := appsession.NewService(newTransportFactory(
+	terminalLogDefaults := func(label string) appsession.LogOptions {
+		current := terminalService.Settings()
+		return appsession.LogOptions{
+			Directory:  current.LogDirectory,
+			Format:     current.LogFormat,
+			Timestamps: current.LogTimestamps,
+			Label:      label,
+		}
+	}
+
+	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, connections, routes,
-	))
+	),
+		// Automatic logging starts with the Session, as the original's
+		// configured log did. An empty directory keeps it off.
+		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {
+			current := terminalService.Settings()
+			if !current.LoggingEnabled || current.LogDirectory == "" {
+				return nil
+			}
+			label := spec.Label
+			if label == "" {
+				label = string(spec.Kind)
+			}
+			options := terminalLogDefaults(label)
+			return &options
+		}),
+		appsession.WithClipboardPolicy(func() domainterminal.ClipboardAccess {
+			return terminalService.Settings().OSC52
+		}),
+		// The app applies the notification mode and window focus before
+		// showing an OS notification.
+		appsession.WithNotificationHook(func(_ model.SessionID, notification appsession.TerminalNotification) {
+			mode := terminalService.Settings().OSCNotifications
+			deliverProgramNotification(mode, notification, func() bool {
+				if mainWindow == nil || mainWindow.IsDestroyed() {
+					return false
+				}
+				return mainWindow.IsVisible() && mainWindow.IsFocused()
+			}, func() {
+				if windows != nil {
+					windows.FocusMain()
+				}
+			})
+		}),
+	)
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
@@ -232,7 +298,12 @@ func run(afterReady func(hostWindow)) error {
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			return sessionui.New(s)
+			return sessionui.New(s,
+				sessionui.WithLogDefaults(func() appsession.LogOptions {
+					return terminalLogDefaults(s.Label())
+				}),
+				sessionui.WithRedraw(invalidate),
+			)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithTrustPrompt(trustPrompt),
@@ -270,7 +341,9 @@ func run(afterReady func(hostWindow)) error {
 		nativeConfirmer{},
 		gate,
 		shellState,
-		func() func(*ui.Context) { return settings.ViewWithDesktop(settingsState, desktopState) },
+		func() func(*ui.Context) {
+			return settings.ViewWithDesktop(settingsState, desktopState, terminalState)
+		},
 		func() string { return mygo.App.Locale() },
 	)
 	// The tray owns show/hide, recent Hosts, active Port Forwarding Rules, and

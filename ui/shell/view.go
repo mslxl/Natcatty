@@ -76,7 +76,11 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	// Grow takes the width the sidebar leaves; Fill would ask for the whole
 	// window again and clip the tab strip and Panes at the right edge.
-	ui.Column(c).Grow(1).FillHeight().Padding(16).Gap(12).Children(func() {
+	// MinWidth(0) keeps the content column at the window's width when the
+	// ordered tab strip is wider than the window. Without it the strip's
+	// min-content width stretches the column, and a Pane's right-aligned
+	// chrome is laid out beyond the window's edge.
+	ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(16).Gap(12).Children(func() {
 		for _, label := range s.PendingConnections() {
 			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
 		}

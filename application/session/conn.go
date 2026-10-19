@@ -60,12 +60,25 @@ func (c *TerminalConn) Read(p []byte) (int, error) {
 }
 
 // Write queues input for the transport. It blocks while the bounded writer
-// queue is full and returns io.ErrClosedPipe once the Session ended.
+// queue is full and returns io.ErrClosedPipe once the Session ended. Input is
+// observed first so command tracking sees the keys the user typed and a file
+// transfer gate can drop normal input.
 func (c *TerminalConn) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	copied := append([]byte(nil), p...)
+	forwarded, _ := c.session.handleInput(p)
+	if len(forwarded) == 0 {
+		select {
+		case <-c.session.done:
+			return 0, io.ErrClosedPipe
+		case <-c.session.ctx.Done():
+			return 0, io.ErrClosedPipe
+		default:
+			return len(p), nil
+		}
+	}
+	copied := append([]byte(nil), forwarded...)
 	select {
 	case c.session.writeCh <- copied:
 		return len(p), nil
