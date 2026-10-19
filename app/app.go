@@ -21,7 +21,10 @@ import (
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	appworkspace "github.com/mslxl/natcatty/application/workspace"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -180,6 +183,9 @@ func run(afterReady func(*mygo.Window)) error {
 	sessions := appsession.NewService(newTransportFactory(
 		localpty.Factory{}, connections, routes,
 	))
+	// The Workspace restores Tabs, splits, and working directories at startup
+	// and persists them after every structural change. Output is never stored.
+	workspaceService := appworkspace.NewService(database.Workspace())
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -198,12 +204,20 @@ func run(afterReady func(*mygo.Window)) error {
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
+		state.WithWorkspace(workspaceService, func(ctx context.Context, id model.HostID) (domainvault.Host, bool) {
+			host, err := vaultService.Get(ctx, id)
+			if err != nil {
+				return domainvault.Host{}, false
+			}
+			return host, true
+		}),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		shellState.Persist()
 		closeForwarding(forwardingManager, forwardingState)
 		shellState.Shutdown()
 		sessions.CloseAll()
@@ -229,16 +243,22 @@ func run(afterReady func(*mygo.Window)) error {
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
 		// that input) is the observable activity.
-		sessions.SetChangeHook(func(appsession.Snapshot) {
+		sessions.SetChangeHook(func(snapshot appsession.Snapshot) {
 			gate.RecordActivity()
+			shellState.NoteSessionActivity(snapshot.ID)
 			win.Invalidate()
 		})
 		win.OnClosed(func() {
+			shellState.Persist()
 			closeForwarding(forwardingManager, forwardingState)
 			shellState.Shutdown()
 			sessions.CloseAll()
 			connections.CloseAll()
 		})
+
+		// Tabs, splits, and working directories come back; their Sessions open
+		// asynchronously and apply on the next frame. Output does not survive.
+		shellState.Restore(context.Background())
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			win.SetTitle(locales.In(tag).AppName())
@@ -275,6 +295,43 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error) *co
 		shellState.CloseActiveTab()
 		return nil
 	})
+	register(command.CloseOtherTabs, func(context.Context) error {
+		shellState.CloseOtherTabs(shellState.ActiveTab())
+		return nil
+	})
+	register(command.CloseTabsRight, func(context.Context) error {
+		shellState.CloseTabsRight(shellState.ActiveTab())
+		return nil
+	})
+	register(command.DuplicateTab, func(context.Context) error {
+		return shellState.DuplicateTab(shellState.ActiveTab())
+	})
+	register(command.DetachTab, func(context.Context) error {
+		shellState.DetachTab(shellState.ActiveTab())
+		return nil
+	})
+	register(command.SplitPaneRight, func(context.Context) error {
+		return shellState.SplitRight()
+	})
+	register(command.SplitPaneDown, func(context.Context) error {
+		return shellState.SplitDown()
+	})
+	register(command.ClosePane, func(context.Context) error {
+		shellState.CloseFocusedPane()
+		return nil
+	})
+	for id, direction := range map[command.ID]domainworkspace.FocusDirection{
+		command.FocusPaneLeft:  domainworkspace.FocusLeft,
+		command.FocusPaneRight: domainworkspace.FocusRight,
+		command.FocusPaneUp:    domainworkspace.FocusUp,
+		command.FocusPaneDown:  domainworkspace.FocusDown,
+	} {
+		direction := direction
+		register(id, func(context.Context) error {
+			shellState.FocusPane(direction)
+			return nil
+		})
+	}
 	register(command.LockApp, func(context.Context) error {
 		return lockApp()
 	})
