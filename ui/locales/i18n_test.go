@@ -83,6 +83,53 @@ func TestCatalogFormatsTabTitlesInEveryLocale(t *testing.T) {
 	}
 }
 
+// TestBroadcastCountsUsePluralForms proves the broadcast and compose counts
+// read as sentences for every count, including the singular one that a
+// single-target selection shows most often.
+func TestBroadcastCountsUsePluralForms(t *testing.T) {
+	tests := []struct {
+		tag        string
+		activeOne  string
+		activeTwo  string
+		sentOne    string
+		removedOne string
+	}{
+		{"en",
+			"Broadcasting to 1 Session", "Broadcasting to 2 Sessions",
+			"Sent to 1 Session", "Removed 1 target that left the main window."},
+		{"es",
+			"Difundiendo a 1 sesión", "Difundiendo a 2 sesiones",
+			"Enviado a 1 sesión", "Se quitaron 1 destino que salieron de la ventana principal."},
+		{"ru",
+			"Трансляция в 1 сеанс", "Трансляция в 2 сеанса",
+			"Отправлено в 1 сеанс", "Удалено 1 цель из главного окна."},
+		{"zh-CN",
+			"正在向 1 个会话广播", "正在向 2 个会话广播",
+			"已发送到 1 个会话", "已移除 1 个离开主窗口的目标。"},
+		{"zh-TW",
+			"正在向 1 個工作階段廣播", "正在向 2 個工作階段廣播",
+			"已傳送到 1 個工作階段", "已移除 1 個離開主視窗的目標。"},
+	}
+	for _, test := range tests {
+		messages := In(test.tag)
+		if got := messages.BroadcastActive(1); got != test.activeOne {
+			t.Errorf("%s BroadcastActive(1) = %q, want %q", test.tag, got, test.activeOne)
+		}
+		if got := messages.BroadcastActive(2); got != test.activeTwo {
+			t.Errorf("%s BroadcastActive(2) = %q, want %q", test.tag, got, test.activeTwo)
+		}
+		if got := messages.ComposeSent(1); got != test.sentOne {
+			t.Errorf("%s ComposeSent(1) = %q, want %q", test.tag, got, test.sentOne)
+		}
+		if got := messages.BroadcastTargetsRemoved(1); got != test.removedOne {
+			t.Errorf("%s BroadcastTargetsRemoved(1) = %q, want %q", test.tag, got, test.removedOne)
+		}
+	}
+	if got := In("ru").BroadcastActive(5); got != "Трансляция в 5 сеансов" {
+		t.Errorf("ru BroadcastActive(5) = %q, want the many form", got)
+	}
+}
+
 func tagsIn(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob("*.json")

@@ -60,6 +60,33 @@ type selftest16 struct {
 	broadcastSent    bool
 	broadcastAt      time.Time
 	broadcastPreview string
+
+	// detachStep removes one selected target from the main window and proves
+	// that neither typed nor composed broadcast input reaches it until it is
+	// moved back.
+	detachedTabID      model.TabID
+	detachedSession    *appsession.Session
+	detachTypedSent    bool
+	detachTypedAt      time.Time
+	detachSourceSent   bool
+	detachSourceAt     time.Time
+	detachComposeSent  bool
+	detachComposeAt    time.Time
+	detachPreview      string
+	detachRestoredSent bool
+	detachRestoredAt   time.Time
+
+	detachStarted          bool
+	detachTypedVerified    bool
+	detachSourceVerified   bool
+	detachComposeVerified  bool
+	detachRestoredVerified bool
+
+	// demoStep ends one selected Session so the final panel shows a Missing
+	// row beside a Delivered one and the compose header uses the singular.
+	demoClosed bool
+	demoAt     time.Time
+	demoSent   bool
 }
 
 func (t *selftest16) check() selftest.Check {
@@ -72,6 +99,7 @@ func (t *selftest16) check() selftest.Check {
 			{Name: "broadcast-stop-focused-only", Run: t.stopStep},
 			{Name: "compose-focused-send", Run: t.composeFocusedStep},
 			{Name: "compose-broadcast-send", Run: t.composeBroadcastStep},
+			{Name: "broadcast-detached-target", Run: t.detachStep},
 			{Name: "broadcast-compose-layout", Run: t.layoutStep},
 			{Name: "broadcast-compose-visible", Run: t.demoStep},
 		},
@@ -82,6 +110,32 @@ func (t *selftest16) resetRunState() {
 	if t.state == nil {
 		return
 	}
+	// A run interrupted after the detach step must put the Tab back before it
+	// is closed, or the selection and the visible Tabs would disagree.
+	if t.detachedTabID != "" {
+		if !t.state.ReattachDetachedTab(t.detachedTabID) {
+			t.state.CloseDetachedTab(t.detachedTabID)
+		}
+		t.detachedTabID = ""
+	}
+	t.detachedSession = nil
+	t.detachTypedSent = false
+	t.detachTypedAt = time.Time{}
+	t.detachSourceSent = false
+	t.detachSourceAt = time.Time{}
+	t.detachComposeSent = false
+	t.detachComposeAt = time.Time{}
+	t.detachPreview = ""
+	t.detachRestoredSent = false
+	t.detachRestoredAt = time.Time{}
+	t.detachStarted = false
+	t.detachTypedVerified = false
+	t.detachSourceVerified = false
+	t.detachComposeVerified = false
+	t.detachRestoredVerified = false
+	t.demoClosed = false
+	t.demoAt = time.Time{}
+	t.demoSent = false
 	t.state.StopBroadcast()
 	t.state.CloseCompose()
 	t.state.CloseBroadcastPanel()
@@ -413,6 +467,228 @@ func (t *selftest16) composeBroadcastStep(*ui.Context) selftest.Outcome {
 		"shell State")
 }
 
+// detachStep is the detached-target regression on the real artifact: one of
+// the two selected Sessions leaves the main window, and both typed and
+// composed broadcast input must stop reaching it while the panel and compose
+// header agree on the one remaining target. Typing inside the detached window
+// must not fan out through the main selection either. The Tab is moved back
+// afterwards so the later layout and demo steps see two live targets again.
+func (t *selftest16) detachStep(*ui.Context) selftest.Outcome {
+	if len(t.ids) < 3 {
+		return selftest.Failed(errors.New("the broadcast Sessions are not prepared"))
+	}
+	if !t.detachStarted {
+		if !t.state.Broadcasting() {
+			return selftest.Failed(errors.New("broadcast is not active for the detach check"))
+		}
+		if got := len(t.state.BroadcastTargets()); got != 2 {
+			return selftest.Failed(fmt.Errorf("targets before detach = %d, want 2", got))
+		}
+		source, ok := t.state.SessionByID(t.ids[0])
+		if !ok {
+			return selftest.Failed(errors.New("the first target is no longer open"))
+		}
+		index := tabIndex(t.state, t.tabs[0])
+		if index < 0 {
+			return selftest.Failed(errors.New("the first target has no Tab"))
+		}
+		if !t.state.DetachTab(index) {
+			return selftest.Failed(errors.New("the first target did not detach"))
+		}
+		t.detachedTabID = t.tabs[0]
+		t.detachedSession = source
+
+		targets := t.state.BroadcastTargets()
+		if len(targets) != 1 || targets[0] != t.ids[1] {
+			return selftest.Failed(fmt.Errorf("targets after detach = %v, want only %q", targets, t.ids[1]))
+		}
+		if got := t.state.BroadcastNotice(); got != 1 {
+			return selftest.Failed(fmt.Errorf("removal notice = %d, want 1", got))
+		}
+		if info := selftest16Info(t.state.BroadcastSessions(), t.ids[0]); info != nil {
+			return selftest.Failed(fmt.Errorf("the detached Session still has a target row: %+v", info))
+		}
+		if _, ok := t.state.BroadcastResult(); ok {
+			return selftest.Failed(errors.New("a delivery result survived the detach"))
+		}
+		composeTargets, broadcast := t.state.ComposeTargets()
+		if !broadcast || len(composeTargets) != 1 || composeTargets[0] != t.ids[1] {
+			return selftest.Failed(fmt.Errorf("compose targets after detach = %v broadcast=%v", composeTargets, broadcast))
+		}
+		t.detachStarted = true
+	}
+
+	if !t.detachTypedSent {
+		session, ok := t.state.SessionByID(t.ids[2])
+		if !ok {
+			return selftest.Failed(errors.New("the source Session is no longer open"))
+		}
+		command := selftest16WriteCommand(t.root, "detach-typed", "", t.marker)
+		if _, err := session.TerminalConn().Write([]byte(command + "\r")); err != nil {
+			return selftest.Failed(fmt.Errorf("type while a target is detached: %w", err))
+		}
+		t.detachTypedSent = true
+		t.detachTypedAt = time.Now().Add(selftestTimeout)
+	}
+	if !t.detachTypedVerified {
+		result, ok := t.state.BroadcastResult()
+		if !ok || len(result.Deliveries) != 1 || result.Deliveries[0].SessionID != t.ids[1] ||
+			result.Deliveries[0].Status != appsession.DeliveryDelivered || result.DeliveredCount() != 1 {
+			if !ok && time.Now().Before(t.detachTypedAt) {
+				return pending(t.detachTypedAt, "the typed result after the detach")
+			}
+			return selftest.Failed(fmt.Errorf("typed broadcasts after detach = %+v, want only the second Session", result.Deliveries))
+		}
+		count, err := t.markerCount("detach-typed", t.marker)
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if count > 2 {
+			return selftest.Failed(fmt.Errorf("%d Sessions ran the typed marker, want the source and the one remaining target", count))
+		}
+		if count < 2 {
+			return pending(t.detachTypedAt, "the source and the remaining target to write the typed marker")
+		}
+		t.detachTypedVerified = true
+	}
+
+	// Typing inside the detached window must not fan out through the main
+	// target set. The detached shell runs its own command, nobody else.
+	if !t.detachSourceSent {
+		if t.detachedSession == nil {
+			return selftest.Failed(errors.New("the detached Session is not retained"))
+		}
+		command := selftest16WriteCommand(t.root, "detach-source", "", t.marker)
+		if _, err := t.detachedSession.TerminalConn().Write([]byte(command + "\r")); err != nil {
+			return selftest.Failed(fmt.Errorf("type in the detached window: %w", err))
+		}
+		t.detachSourceSent = true
+		t.detachSourceAt = time.Now().Add(selftestTimeout)
+	}
+	if !t.detachSourceVerified {
+		count, err := t.markerCount("detach-source", t.marker)
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if count > 1 {
+			return selftest.Failed(fmt.Errorf("input typed in the detached window reached %d Sessions, want only itself", count))
+		}
+		if count < 1 {
+			return pending(t.detachSourceAt, "the detached shell to write its own marker")
+		}
+		t.detachSourceVerified = true
+	}
+
+	if !t.detachComposeSent {
+		t.state.OpenCompose()
+		*t.state.ComposeTrim() = true
+		*t.state.ComposeDecodeEscapes() = true
+		t.state.SetComposeLineMode(appsession.ComposePaste)
+		command := selftest16WriteCommand(t.root, "detach-compose", "", t.marker)
+		t.detachPreview = command
+		t.setDraft(command)
+		if t.state.ComposePreview().Text != command {
+			return selftest.Failed(fmt.Errorf("detach compose preview = %q, want %q",
+				t.state.ComposePreview().Text, command))
+		}
+		composeTargets, broadcast := t.state.ComposeTargets()
+		if !broadcast || len(composeTargets) != 1 || composeTargets[0] != t.ids[1] {
+			return selftest.Failed(fmt.Errorf("compose targets before the detached send = %v broadcast=%v", composeTargets, broadcast))
+		}
+		if !t.state.SendCompose() {
+			return selftest.Failed(errors.New("compose did not send after the detach"))
+		}
+		t.detachComposeSent = true
+		t.detachComposeAt = time.Now().Add(selftestTimeout)
+	}
+	if !t.detachComposeVerified {
+		composeResult, ok := t.state.ComposeResult()
+		if !ok || composeResult.DeliveredCount() != 1 || len(composeResult.Deliveries) != 1 ||
+			composeResult.Deliveries[0].SessionID != t.ids[1] {
+			if !ok && time.Now().Before(t.detachComposeAt) {
+				return pending(t.detachComposeAt, "the composed result after the detach")
+			}
+			return selftest.Failed(fmt.Errorf("composed broadcast after detach = %+v, want only the second Session", composeResult.Deliveries))
+		}
+		count, err := t.markerCount("detach-compose", t.marker)
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if count > 1 {
+			return selftest.Failed(fmt.Errorf("the composed draft reached %d Sessions, want only the remaining target", count))
+		}
+		if count < 1 {
+			return pending(t.detachComposeAt, "the remaining target to run the composed marker")
+		}
+		infos := t.state.BroadcastSessions()
+		if info := selftest16Info(infos, t.ids[1]); info == nil || !info.HasStatus || info.Status != appsession.DeliveryDelivered {
+			return selftest.Failed(fmt.Errorf("the remaining target status = %+v, want delivered", info))
+		}
+		if info := selftest16Info(infos, t.ids[0]); info != nil {
+			return selftest.Failed(fmt.Errorf("the detached Session reappeared in the target list: %+v", info))
+		}
+		t.detachComposeVerified = true
+	}
+
+	// Put the Tab back and restore the two-target selection. A reattached
+	// target must receive broadcast input again.
+	if t.detachedTabID != "" {
+		if !t.state.ReattachDetachedTab(t.detachedTabID) {
+			return selftest.Failed(errors.New("the detached Tab did not reattach"))
+		}
+		t.detachedTabID = ""
+		t.detachedSession = nil
+		t.state.SetBroadcastTarget(t.ids[0], true)
+		if got := len(t.state.BroadcastTargets()); got != 2 {
+			return selftest.Failed(fmt.Errorf("targets after reattach = %d, want 2", got))
+		}
+		if !t.state.StartBroadcast() {
+			return selftest.Failed(errors.New("broadcast did not restart after the reattach"))
+		}
+	}
+	if !t.detachRestoredSent {
+		session, ok := t.state.SessionByID(t.ids[2])
+		if !ok {
+			return selftest.Failed(errors.New("the source Session is no longer open after the reattach"))
+		}
+		command := selftest16WriteCommand(t.root, "detach-restored", "", t.marker)
+		if _, err := session.TerminalConn().Write([]byte(command + "\r")); err != nil {
+			return selftest.Failed(fmt.Errorf("type after the reattach: %w", err))
+		}
+		t.detachRestoredSent = true
+		t.detachRestoredAt = time.Now().Add(selftestTimeout)
+	}
+	if !t.detachRestoredVerified {
+		result, ok := t.state.BroadcastResult()
+		if !ok || len(result.Deliveries) != 2 || result.DeliveredCount() != 2 {
+			if !ok && time.Now().Before(t.detachRestoredAt) {
+				return pending(t.detachRestoredAt, "the broadcast result after the reattach")
+			}
+			return selftest.Failed(fmt.Errorf("broadcast after the reattach = %+v, want two deliveries", result.Deliveries))
+		}
+		for _, id := range t.ids[:2] {
+			info := selftest16Info(t.state.BroadcastSessions(), id)
+			if info == nil || !info.HasStatus || info.Status != appsession.DeliveryDelivered {
+				return selftest.Failed(fmt.Errorf("the reattached target status for %q = %+v", id, info))
+			}
+		}
+		count, err := t.markerCount("detach-restored", t.marker)
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if count > 3 {
+			return selftest.Failed(fmt.Errorf("%d Sessions ran the post-reattach marker, want the source and both targets", count))
+		}
+		if count < 3 {
+			return pending(t.detachRestoredAt, "the source and both targets to run the post-reattach marker")
+		}
+		t.detachRestoredVerified = true
+	}
+	return selftest.Passed(
+		"a selected target left the main window: typed and composed broadcast input reached only the one remaining target, the panel and compose header agreed, input typed in the detached window stayed there, and the reattached target received broadcast input again",
+		"shell State")
+}
+
 type selftest16ComposeFinish struct {
 	waiting   bool
 	delivered int
@@ -496,9 +772,16 @@ func (t *selftest16) layoutStep(*ui.Context) selftest.Outcome {
 		"shell.RenderSelftestInputs")
 }
 
+// demoStep leaves a state that shows every ticket-16 surface at once: an
+// active two-target selection where one Session has ended (a visible Missing
+// row beside a Delivered one), a compose header with a singular result on one
+// line, a long multi-line preview, and three Tabs. The next F11,1,6 resets it.
 func (t *selftest16) demoStep(*ui.Context) selftest.Outcome {
 	if t.state == nil {
 		return selftest.Failed(errors.New("the shell is not wired"))
+	}
+	if len(t.ids) < 3 {
+		return selftest.Failed(errors.New("the broadcast Sessions are not prepared"))
 	}
 	if !t.state.Broadcasting() {
 		if !t.state.StartBroadcast() {
@@ -509,11 +792,73 @@ func (t *selftest16) demoStep(*ui.Context) selftest.Outcome {
 	if !t.state.ComposeOpen() {
 		t.state.OpenCompose()
 	}
+
+	if !t.demoClosed {
+		session, ok := t.state.SessionByID(t.ids[1])
+		if !ok {
+			return selftest.Failed(errors.New("the demo target is no longer open"))
+		}
+		// Ending the Session keeps its Tab and selected row; the next send
+		// reports it as Missing instead of hiding it.
+		_ = session.Close()
+		t.demoClosed = true
+		t.demoAt = time.Now().Add(selftestTimeout)
+	}
+	info := selftest16Info(t.state.BroadcastSessions(), t.ids[1])
+	if info == nil {
+		return selftest.Failed(errors.New("the ended target lost its panel row"))
+	}
+	if info.Running {
+		if time.Now().After(t.demoAt) {
+			return selftest.Failed(errors.New("the demo target did not end"))
+		}
+		return pending(t.demoAt, "the second target to end")
+	}
+
+	if !t.demoSent {
+		*t.state.ComposeTrim() = true
+		*t.state.ComposeDecodeEscapes() = true
+		t.state.SetComposeLineMode(appsession.ComposePaste)
+		t.state.SetComposeDraft("echo selftest demo")
+		if !t.state.SendCompose() {
+			return selftest.Failed(errors.New("the demo compose send failed"))
+		}
+		t.demoSent = true
+	}
+	result, ok := t.state.ComposeResult()
+	if !ok {
+		if time.Now().After(t.demoAt) {
+			return selftest.Failed(errors.New("the demo compose recorded no result"))
+		}
+		return pending(t.demoAt, "the demo compose result")
+	}
+	if len(result.Deliveries) != 2 || result.DeliveredCount() != 1 {
+		return selftest.Failed(fmt.Errorf("demo compose result = %+v, want one delivered and one missing", result.Deliveries))
+	}
+	statuses := map[model.SessionID]appsession.DeliveryStatus{}
+	for _, delivery := range result.Deliveries {
+		statuses[delivery.SessionID] = delivery.Status
+	}
+	if statuses[t.ids[0]] != appsession.DeliveryDelivered || statuses[t.ids[1]] != appsession.DeliveryMissing {
+		return selftest.Failed(fmt.Errorf("demo statuses = %+v, want delivered and missing", statuses))
+	}
+	if broadcast, ok := t.state.BroadcastResult(); !ok || len(broadcast.Deliveries) != 2 ||
+		broadcast.DeliveredCount() != 1 {
+		return selftest.Failed(fmt.Errorf("demo panel result = %+v", broadcast.Deliveries))
+	}
+
+	// A long, multi-line draft proves the preview wraps and scrolls instead of
+	// showing only the first line.
+	t.state.SetComposeDraft("echo demo header\n" +
+		"echo first long argument --flag value --another value\n" +
+		"echo second long argument --flag value --another value\n" +
+		"echo third long argument --flag value --another value\n" +
+		"echo fourth long argument --flag value --another value\n" +
+		"echo fifth long argument --flag value --another value\n" +
+		"echo demo footer")
 	t.state.Flush()
-	// The next F11,1,6 resets this state, closing these Sessions and removing
-	// the marker files before it starts.
 	return selftest.Passed(
-		"three real local Session Tabs, the active broadcast panel with statuses, and the compose bar are visible",
+		"three real local Session Tabs, an active broadcast with Delivered and Missing rows, a one-line compose header, and a long multi-line preview are visible",
 		"shell State")
 }
 

@@ -427,6 +427,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 	s.tabs = []*Tab{keep}
 	s.active = 0
 	s.vaultVisible = false
+	s.refreshBroadcastState()
 	if closed {
 		s.save()
 		s.RequestRedraw()
@@ -449,6 +450,7 @@ func (s *State) CloseTabsRight(index int) bool {
 	if s.active > index {
 		s.active = index
 	}
+	s.refreshBroadcastState()
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -686,6 +688,9 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
 		s.vaultVisible = false
+		// A reattached Session is again part of the main target list. It is
+		// not selected automatically; the panel shows it as an available row.
+		s.refreshBroadcastState()
 		s.save()
 		if s.onDetachReattached != nil {
 			s.onDetachReattached(id)
@@ -745,6 +750,7 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 		detached.TitleNumber = number
 	}
 	s.detached = append(s.detached, detached)
+	s.refreshBroadcastState()
 	if s.onDetach != nil {
 		s.onDetach(detached.ID)
 	}
@@ -928,6 +934,7 @@ func (s *State) CloseFocusedPane() bool {
 		return s.CloseTab(index)
 	}
 	tab.setFocus(next)
+	s.refreshBroadcastState()
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -1428,6 +1435,7 @@ func (s *State) removeTabAt(index int) {
 	if len(s.tabs) == 0 {
 		s.active = -1
 		s.vaultVisible = true
+		s.refreshBroadcastState()
 		return
 	}
 	if s.active == index {
@@ -1438,4 +1446,5 @@ func (s *State) removeTabAt(index int) {
 		s.active--
 	}
 	s.vaultVisible = false
+	s.refreshBroadcastState()
 }

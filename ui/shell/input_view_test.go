@@ -171,9 +171,12 @@ func TestComposeFocusedTargetIndication(t *testing.T) {
 	assertInputInside(t, tester, 720, 480, "echo hi")
 	assertInputInside(t, tester, 720, 480, m.ComposeSend())
 	// The focused Session is the last Tab opened, so its target label is the
-	// one the bar names.
-	if !tester.HasText(m.ComposeTargetFocused()) {
-		t.Fatalf("the compose bar does not identify its target: %v", tester.Texts())
+	// one the bar names, not the generic or broadcast label.
+	if tester.HasText(m.ComposeTargetFocused()) {
+		t.Fatalf("the compose bar still shows the unnamed target label: %v", tester.Texts())
+	}
+	if tester.HasText(m.ComposeTargetBroadcast(1)) {
+		t.Fatalf("the compose bar shows a broadcast target without an active broadcast: %v", tester.Texts())
 	}
 }
 
@@ -319,4 +322,196 @@ func TestBroadcastPanelDoesNotStartWithOnlyTheFocusedSource(t *testing.T) {
 	tester.SetLocale("en")
 	tester.Frame()
 	assertInputInside(t, tester, 720, 480, m.BroadcastSelectHint())
+}
+
+// TestDetachedTargetLeavesThePanelAndCountsAgree is the UI half of the
+// detached-target regression: after a selected Tab is detached, the panel and
+// the compose header report the same one remaining target, a visible notice
+// explains the removal, and the detached Session has no row.
+func TestDetachedTargetLeavesThePanelAndCountsAgree(t *testing.T) {
+	m := locales.In("en")
+	graph := newInputGraph(t)
+	prepareBroadcastAndCompose(t, graph)
+	if !graph.state.DetachTab(0) {
+		t.Fatal("detach failed")
+	}
+
+	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	assertInputInside(t, tester, 720, 480, m.BroadcastActive(1))
+	assertInputInside(t, tester, 720, 480, m.ComposeTargetBroadcast(1))
+	assertInputInside(t, tester, 720, 480, m.BroadcastTargetsRemoved(1))
+	if tester.HasText(m.BroadcastActive(2)) {
+		t.Fatalf("the panel still counts the detached Session: %v", tester.Texts())
+	}
+	if tester.HasText(m.ComposeTargetBroadcast(2)) {
+		t.Fatalf("compose still counts the detached Session: %v", tester.Texts())
+	}
+	if tester.HasText("Local Session 1") {
+		t.Fatalf("the detached Session still has a tab or target row: %v", tester.Texts())
+	}
+	if tester.HasText(m.BroadcastDelivered()) {
+		t.Fatalf("a status row survived the detach: %v", tester.Texts())
+	}
+}
+
+// TestComposeHeaderStaysOnOneLineAtMinimumWidth keeps the target and result
+// beside the title instead of wrapping into a ragged block above Cancel.
+func TestComposeHeaderStaysOnOneLineAtMinimumWidth(t *testing.T) {
+	m := locales.In("en")
+	graph := newInputGraph(t)
+	prepareBroadcastAndCompose(t, graph)
+	if !graph.state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+
+	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	title := assertInputInside(t, tester, 720, 480, m.ComposeTitle())
+	target := assertInputInside(t, tester, 720, 480, m.ComposeTargetBroadcast(2))
+	result := assertInputInside(t, tester, 720, 480, m.ComposeSent(2))
+	cancel := assertInputInside(t, tester, 720, 480, m.ComposeCancel())
+	titleCenter := title.Y + title.H/2
+	for name, rect := range map[string]ui.Rect{"target": target, "result": result} {
+		if center := rect.Y + rect.H/2; center < titleCenter-0.5 || center > titleCenter+0.5 {
+			t.Fatalf("compose %s wrapped above or below the title: %s %+v title %+v",
+				name, name, rect, title)
+		}
+		if rect.H > 20 {
+			t.Fatalf("compose %s is a %0.1f DIP block, want one text line: %+v",
+				name, rect.H, rect)
+		}
+	}
+	if target.W < 20 || result.W < 20 {
+		t.Fatalf("header text is squeezed away: target %+v result %+v", target, result)
+	}
+	if cancelCenter := cancel.Y + cancel.H/2; cancelCenter < titleCenter-0.5 || cancelCenter > titleCenter+0.5 {
+		t.Fatalf("Cancel was pushed below the header row: %+v", cancel)
+	}
+}
+
+// TestComposePreviewShowsTheFullWrappedResult proves a long draft is not cut
+// at the first line: the preview holds the complete transformed text, wraps
+// it over several lines, and scrolls the region.
+func TestComposePreviewShowsTheFullWrappedResult(t *testing.T) {
+	m := locales.In("en")
+	graph := newInputGraph(t)
+	graph.state.OpenCompose()
+	draft := "line 01 with a fairly long command argument\n" +
+		"line 02 with a fairly long command argument\n" +
+		"line 03 with a fairly long command argument\n" +
+		"line 04 with a fairly long command argument\n" +
+		"line 05 with a fairly long command argument\n" +
+		"line 06 with a fairly long command argument"
+	graph.state.SetComposeDraft(draft)
+	preview := graph.state.ComposePreview().PreviewText()
+
+	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	if !tester.HasText(preview) {
+		t.Fatalf("the preview does not hold the full transformed draft: %v", tester.Texts())
+	}
+	rect, ok := tester.Find(preview)
+	if !ok {
+		t.Fatalf("the preview text is not rendered: %v", tester.Texts())
+	}
+	if rect.W < 200 || rect.H < 30 {
+		t.Fatalf("the wrapped preview is only %0.1fx%0.1f: %+v", rect.W, rect.H, rect)
+	}
+	// The preview sits in a short scroll region; scrolling it must leave the
+	// controls and the full text in place.
+	tester.Scroll(rect.X+rect.W/2, rect.Y+rect.H/2, 0, 200)
+	tester.Frame()
+	if !tester.HasText(preview) {
+		t.Fatal("scrolling dropped the preview text")
+	}
+	assertInputInside(t, tester, 720, 480, m.ComposeSend())
+	assertInputInside(t, tester, 720, 480, m.ComposePreview())
+}
+
+// TestTabStripScrollsToReachEveryTabAtMinimumWidth covers the overflow of the
+// Tab strip: the last Tab of a wide strip is reachable by scrolling, and the
+// first one comes back.
+func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
+	m := locales.In("en")
+	graph := newTestGraph(t)
+	for index := 0; index < 6; index++ {
+		if err := graph.state.NewTab(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	graph.state.Flush()
+
+	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	strip := assertInputInside(t, tester, 720, 480, m.WorkTabsLabel())
+	first := assertInputInside(t, tester, 720, 480, "Local Session 1")
+	if first.X < strip.X-0.5 || first.X+first.W > strip.X+strip.W+0.5 {
+		t.Fatalf("the first Tab leaves the strip: tab %+v strip %+v", first, strip)
+	}
+	if last, ok := tester.Find("Local Session 6"); ok && last.W < 20 {
+		// Offscreen at the start is expected; it must become reachable below.
+	} else if ok {
+		t.Fatalf("the strip did not overflow at 720 DIPs: last Tab %+v", last)
+	}
+
+	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, 2000, 0)
+	tester.Frame()
+	last := assertInputInside(t, tester, 720, 480, "Local Session 6")
+	if last.W < 40 {
+		t.Fatalf("the last Tab is still clipped after scrolling: %+v", last)
+	}
+	if last.X < strip.X-0.5 || last.X+last.W > strip.X+strip.W+0.5 {
+		t.Fatalf("the last Tab is outside the strip: tab %+v strip %+v", last, strip)
+	}
+
+	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, -2000, 0)
+	tester.Frame()
+	first = assertInputInside(t, tester, 720, 480, "Local Session 1")
+	if first.W < 40 {
+		t.Fatalf("the first Tab did not come back after scrolling: %+v", first)
+	}
+}
+
+// TestDenseBroadcastComposeKeepsTabStripAtMinimumSize is the layout pressure
+// regression: the active panel, target rows, compose controls, and a long
+// preview together must not shrink the Tab strip away at 720x480.
+func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
+	m := locales.In("en")
+	graph := newInputGraph(t)
+	prepareBroadcastAndCompose(t, graph)
+	// A long draft makes the compose panel taller, as the demo state does.
+	graph.state.SetComposeDraft("echo one long argument\n" +
+		"echo two long argument\n" +
+		"echo three long argument\n" +
+		"echo four long argument\n" +
+		"echo five long argument")
+	// End one selected Session so its row reports Missing beside Delivered.
+	_ = graph.sessions[1].Close()
+
+	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	strip := assertInputInside(t, tester, 720, 480, m.WorkTabsLabel())
+	if strip.H < 25 {
+		t.Fatalf("the Tab strip shrank to %.1f DIPs: %+v", strip.H, strip)
+	}
+	first := assertInputInside(t, tester, 720, 480, "Local Session 1")
+	if first.W < 40 {
+		t.Fatalf("the first Tab is clipped: %+v", first)
+	}
+	if first.Y+first.H > strip.Y+strip.H+0.5 {
+		t.Fatalf("the Tab leaves the strip: tab %+v strip %+v", first, strip)
+	}
+	assertInputInside(t, tester, 720, 480, m.ComposeSend())
+	assertInputInside(t, tester, 720, 480, m.ComposeCancel())
 }
