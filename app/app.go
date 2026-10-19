@@ -6,18 +6,23 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/adapters/localpty"
+	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/application/command"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	vaultui "github.com/mslxl/natcatty/ui/vault"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
 // Run starts Natcatty and blocks until the application quits.
@@ -51,6 +56,29 @@ func run(afterReady func(*mygo.Window)) error {
 		settingsWindow.OnClosed(func() { settingsWindow = nil })
 	}
 
+	userData, err := mygo.App.Path(mygo.PathUserData)
+	if err != nil {
+		return err
+	}
+	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	// The Vault starts from the database. A read failure leaves the surface
+	// empty and shows the localized internal-error message rather than
+	// preventing the app from starting.
+	vaultState := vaultstate.NewState(
+		appvault.NewService(database),
+		vaultstate.WithRedrawRequest(func() {
+			if mainWindow != nil && !mainWindow.IsDestroyed() {
+				mainWindow.Invalidate()
+			}
+		}),
+	)
+	_ = vaultState.Reload()
+
 	sessions := appsession.NewService(localpty.Factory{})
 	shellState := state.NewState(
 		state.WithLocaleRequest(func(tag string) {
@@ -67,6 +95,7 @@ func run(afterReady func(*mygo.Window)) error {
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			return sessionui.New(s)
 		}),
+		state.WithVault(vaultui.View(vaultState)),
 	)
 	registry := newRegistry(shellState, mygo.App.Quit)
 

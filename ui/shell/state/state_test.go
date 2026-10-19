@@ -250,3 +250,43 @@ func TestRequestSettingsReportsTheRequest(t *testing.T) {
 		t.Fatalf("settings requests = %d, want 2", requests)
 	}
 }
+
+func TestVaultIsTheDefaultSurface(t *testing.T) {
+	state := NewState()
+	if !state.VaultVisible() {
+		t.Fatal("the Vault is not visible in a new shell")
+	}
+}
+
+func TestNewTabHidesTheVaultAndShowVaultReturns(t *testing.T) {
+	graph := newTestGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if graph.state.VaultVisible() {
+		t.Fatal("the Vault is still visible after opening a Tab")
+	}
+
+	graph.state.ShowVault()
+	if !graph.state.VaultVisible() {
+		t.Fatal("ShowVault did not show the Vault")
+	}
+
+	graph.state.SelectTab(0)
+	if graph.state.VaultVisible() {
+		t.Fatal("SelectTab did not show the Tab")
+	}
+}
+
+func TestClosingTheLastTabShowsTheVault(t *testing.T) {
+	graph := newTestGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if !graph.state.CloseActiveTab() {
+		t.Fatal("CloseActiveTab returned false")
+	}
+	if !graph.state.VaultVisible() {
+		t.Fatal("the Vault is not visible after closing the last Tab")
+	}
+}

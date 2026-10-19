@@ -27,9 +27,11 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Width(232).Fill().Padding(16).Gap(8).Background(t.Surface).Children(func() {
 		ui.Text(c, m.AppName()).FontSize(20).Bold()
 
-		// Vault is the main window's root surface, so its navigation entry is
-		// already selected. SFTP joins it in a later ticket.
-		ui.PrimaryButton(c.Key("nav-vault"), m.NavVault()).Width(200)
+		// Vault is the main window's root surface. SFTP joins it in a later
+		// ticket.
+		if ui.PrimaryButton(c.Key("nav-vault"), m.NavVault()).Width(200).Clicked() {
+			s.ShowVault()
+		}
 
 		if ui.Button(c.Key("nav-settings"), m.NavSettings()).Width(200).Clicked() {
 			s.RequestSettings()
@@ -53,6 +55,15 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).Fill().Padding(16).Gap(12).Children(func() {
+		if s.VaultVisible() {
+			if view := s.VaultView(); view != nil {
+				view(c)
+				return
+			}
+			ui.Text(c, m.NavVault()).FontSize(24).Bold()
+			ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
+			return
+		}
 		if s.TabCount() > 0 {
 			workTabs(c, s, m)
 			activeTab(c, s, m, t)

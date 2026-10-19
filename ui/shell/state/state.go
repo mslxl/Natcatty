@@ -41,6 +41,8 @@ type State struct {
 	tabs            []Tab
 	active          int
 	nextTabNumber   int
+	vaultVisible    bool
+	vaultView       func(*ui.Context)
 	requestLocale   func(string)
 	requestSettings func()
 	requestRedraw   func()
@@ -78,13 +80,33 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 	}
 }
 
-// NewState returns the initial shell state: no work tabs.
+// WithVault gives the shell the Vault surface. The app wires the real Vault
+// view; tests wire a fake.
+func WithVault(view func(*ui.Context)) Option {
+	return func(s *State) { s.vaultView = view }
+}
+
+// NewState returns the initial shell state: the Vault is visible and there
+// are no work tabs.
 func NewState(opts ...Option) *State {
-	s := &State{active: -1, nextTabNumber: 1}
+	s := &State{active: -1, nextTabNumber: 1, vaultVisible: true}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// VaultVisible reports whether the main window shows the Vault rather than a
+// work Tab.
+func (s *State) VaultVisible() bool { return s.vaultVisible }
+
+// VaultView returns the Vault surface the app supplied, or nil.
+func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
+
+// ShowVault makes the Vault the visible surface.
+func (s *State) ShowVault() {
+	s.vaultVisible = true
+	s.RequestRedraw()
 }
 
 // TabCount returns the number of work tabs.
@@ -103,10 +125,12 @@ func (s *State) TabNumbers() []int {
 	return numbers
 }
 
-// SelectTab makes the tab at index active. Out-of-range indexes are ignored.
+// SelectTab makes the tab at index active and shows it. Out-of-range indexes
+// are ignored.
 func (s *State) SelectTab(index int) {
 	if index >= 0 && index < len(s.tabs) {
 		s.active = index
+		s.vaultVisible = false
 	}
 }
 
@@ -133,6 +157,7 @@ func (s *State) NewTab() error {
 	})
 	s.nextTabNumber++
 	s.active = len(s.tabs) - 1
+	s.vaultVisible = false
 	s.RequestRedraw()
 	return nil
 }
@@ -173,12 +198,14 @@ func (s *State) CloseActiveTab() bool {
 	s.tabs = append(s.tabs[:s.active], s.tabs[s.active+1:]...)
 	if len(s.tabs) == 0 {
 		s.active = -1
+		s.vaultVisible = true
 		s.RequestRedraw()
 		return true
 	}
 	if s.active >= len(s.tabs) {
 		s.active = len(s.tabs) - 1
 	}
+	s.vaultVisible = false
 	s.RequestRedraw()
 	return true
 }
