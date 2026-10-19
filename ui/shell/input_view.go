@@ -14,7 +14,7 @@ import (
 // reported per Session. Compose edits a draft, previews the original
 // transformations, and sends to the focused Session or the broadcast set.
 func terminalInputs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Gap(8).Children(func() {
+	ui.Column(c).FillWidth().Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			broadcastLabel := m.BroadcastButton()
 			if s.Broadcasting() {
@@ -61,7 +61,7 @@ func terminalInputs(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 // the most recent per-Session delivery result.
 func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	sessions := s.BroadcastSessions()
-	ui.Column(c).FillWidth().Padding(6).Gap(4).Radius(t.Radius).
+	ui.Column(c).FillWidth().Padding(4).Gap(2).Radius(t.Radius).
 		Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.BroadcastPanelTitle()).FontSize(13).Bold()
@@ -122,6 +122,10 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 		ui.Text(c, m.BroadcastTargetsTitle()).FontSize(11).TextColor(t.TextMuted)
 		for _, info := range sessions {
 			broadcastTargetRow(c, s, m, t, info)
+		}
+		if notice := s.BroadcastNotice(); notice > 0 {
+			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(11).
+				TextColor(t.Warning)
 		}
 		if result, ok := s.BroadcastResult(); ok {
 			ui.Text(c, m.BroadcastSummary(result.DeliveredCount(), len(result.Deliveries))).
@@ -199,14 +203,18 @@ func summaryColor(result appsession.SendResult, t *ui.Theme) ui.Color {
 // transformations before sending to the focused Session or the broadcast set.
 func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	preview := s.ComposePreview()
-	ui.Column(c).FillWidth().Padding(6).Gap(4).Radius(t.Radius).
+	ui.Column(c).FillWidth().Padding(6).Gap(3).Radius(t.Radius).
 		Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.ComposeTitle()).FontSize(13).Bold()
-			ui.Text(c, composeTargetText(s, m)).FontSize(11).TextColor(t.TextMuted)
+			// At the minimum width the target and result stay on one line:
+			// the compact target label truncates rather than wrapping the
+			// header into a ragged block above Cancel.
+			ui.Text(c, composeTargetText(s, m)).FontSize(11).
+				TextColor(t.TextMuted).SingleLine()
 			if result, ok := s.ComposeResult(); ok {
 				ui.Text(c, composeResultText(m, result)).FontSize(11).
-					TextColor(summaryColor(result, t))
+					TextColor(summaryColor(result, t)).SingleLine()
 			}
 			ui.Column(c).Grow(1)
 			if ui.Button(c, m.ComposeCancel()).Clicked() {
@@ -215,7 +223,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			}
 		})
 
-		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(48).
+		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(40).
 			Placeholder(m.ComposePlaceholder()).Label(m.ComposePlaceholder())
 		area.OnTextKey(func(k ui.TextKey) bool {
 			switch {
@@ -243,10 +251,14 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 		if !preview.Empty() {
 			previewText = preview.PreviewText()
 		}
-		ui.Row(c).FillWidth().Gap(6).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
 			ui.Text(c, m.ComposePreview()).FontSize(10).TextColor(t.TextMuted)
-			ui.Text(c, previewText).FontSize(11).SingleLine().
-				TextColor(t.Text).Grow(1)
+			// The transformed draft wraps in a short scroll view: a long
+			// multi-line command can be inspected in full before Send instead
+			// of being cut at the first line.
+			ui.Scroll(c).Grow(1).Height(36).Children(func() {
+				ui.Text(c, previewText).FontSize(11).Wrap().TextColor(t.Text)
+			})
 		})
 
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {

@@ -35,21 +35,73 @@ func (s *State) selectedBroadcastTargetSetLocked() map[model.SessionID]bool {
 	return selected
 }
 
-// selectedBroadcastTargetIDsLocked lists the selected IDs for delivery. The
-// caller holds inputMu, so it never reads UI-thread Tab state.
+// selectedBroadcastTargetIDsLocked lists the delivery recipients: selected
+// Sessions that are still represented in the main window, in Tab and Pane
+// order. The caller holds inputMu, so it never reads UI-thread Tab state.
 func (s *State) selectedBroadcastTargetIDsLocked() []model.SessionID {
-	ids := make([]model.SessionID, 0, len(s.broadcastTargets))
-	for id, selected := range s.broadcastTargets {
-		if selected {
-			ids = append(ids, id)
+	return append([]model.SessionID(nil), s.broadcastTargetIDs...)
+}
+
+// refreshBroadcastState reconciles the input-thread delivery snapshot with
+// the main window's Tabs. It runs on the UI thread after every structural
+// change. A selected Session that was detached or closed leaves the target
+// set and cannot receive typed or composed broadcast input; its ID is never a
+// hidden recipient. The removal is reported as a visible notice.
+func (s *State) refreshBroadcastState() {
+	present := make(map[model.SessionID]bool, len(s.tabs))
+	order := make([]model.SessionID, 0, len(s.tabs))
+	for _, tab := range s.tabs {
+		if tab == nil {
+			continue
+		}
+		for _, paneID := range tab.paneIDs() {
+			value := tab.panes[paneID]
+			if value == nil || value.session == nil {
+				continue
+			}
+			id := value.session.ID()
+			if present[id] {
+				continue
+			}
+			present[id] = true
+			order = append(order, id)
 		}
 	}
-	return ids
+
+	s.inputMu.Lock()
+	removed := 0
+	for id := range s.broadcastTargets {
+		if !present[id] {
+			delete(s.broadcastTargets, id)
+			removed++
+		}
+	}
+	targets := make([]model.SessionID, 0, len(order))
+	for _, id := range order {
+		if s.broadcastTargets[id] {
+			targets = append(targets, id)
+		}
+	}
+	s.broadcastSessions = present
+	s.broadcastTargetIDs = targets
+	if removed > 0 {
+		s.broadcastNotice += removed
+		// Results and per-Session statuses described the old target set.
+		s.broadcastResult = appsession.SendResult{}
+		s.composeResult = appsession.SendResult{}
+		if s.composeBroadcast {
+			// Stop a composed broadcast before its next line so a Session
+			// that just left the main window receives no further chunks.
+			s.cancelComposeSendLocked()
+		}
+	}
+	s.inputMu.Unlock()
 }
 
 // BroadcastSessions lists the running Sessions in the main window in Tab and
 // split-tree order. Only Sessions that can receive input are included.
 func (s *State) BroadcastSessions() []BroadcastSessionInfo {
+	s.refreshBroadcastState()
 	s.inputMu.Lock()
 	selected := s.selectedBroadcastTargetSetLocked()
 	statuses := make(map[model.SessionID]appsession.DeliveryStatus, len(s.broadcastResult.Deliveries))
@@ -139,7 +191,7 @@ func (s *State) OpenBroadcastPanel() {
 	s.inputMu.Unlock()
 	if !alreadyOpen && needDefault {
 		for _, info := range s.BroadcastSessions() {
-			if !info.Focused {
+			if info.Running && !info.Focused {
 				s.SetBroadcastTarget(info.ID, true)
 			}
 		}
@@ -175,7 +227,13 @@ func (s *State) SetBroadcastTarget(id model.SessionID, selected bool) {
 	} else {
 		delete(s.broadcastTargets, id)
 	}
+	// A target-set change makes the previous delivery and compose results
+	// stale, and answers any notice about removed targets.
+	s.broadcastResult = appsession.SendResult{}
+	s.composeResult = appsession.SendResult{}
+	s.broadcastNotice = 0
 	s.inputMu.Unlock()
+	s.refreshBroadcastState()
 	s.RequestRedraw()
 }
 
@@ -189,34 +247,34 @@ func (s *State) ToggleBroadcastTarget(id model.SessionID) {
 	}
 }
 
-// BroadcastTargets returns the selected Session IDs in Tab and Pane order.
+// BroadcastTargets returns the selected recipients represented in the main
+// window, in Tab and Pane order. An ended Session whose Tab is still open
+// stays a recipient: delivery reports its failure in a visible row. Sessions
+// in detached windows are never recipients.
 func (s *State) BroadcastTargets() []model.SessionID {
+	s.refreshBroadcastState()
 	s.inputMu.Lock()
-	selected := s.selectedBroadcastTargetSetLocked()
-	s.inputMu.Unlock()
-	var ids []model.SessionID
-	for _, info := range s.BroadcastSessions() {
-		if selected[info.ID] && info.Running {
-			ids = append(ids, info.ID)
-		}
-	}
-	return ids
+	defer s.inputMu.Unlock()
+	return s.selectedBroadcastTargetIDsLocked()
 }
 
-// BroadcastTargetCount returns how many live Sessions are selected.
+// BroadcastTargetCount returns how many main-window Sessions are selected.
 func (s *State) BroadcastTargetCount() int { return len(s.BroadcastTargets()) }
+
+// BroadcastNotice returns how many selected targets left the main window in
+// the latest structural change. The panel shows it so pruning is never silent.
+func (s *State) BroadcastNotice() int {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.broadcastNotice
+}
 
 // BroadcastCanStart reports whether the selection contains a live target
 // other than the focused Session. Fan-out excludes the typed source, so a
 // selection of only the focused Session would send nowhere.
 func (s *State) BroadcastCanStart() bool {
-	targets := s.BroadcastTargets()
-	if len(targets) == 0 {
-		return false
-	}
-	focused, hasFocused := s.FocusedSessionID()
-	for _, id := range targets {
-		if !hasFocused || id != focused {
+	for _, info := range s.BroadcastSessions() {
+		if info.Selected && info.Running && !info.Focused {
 			return true
 		}
 	}
@@ -232,6 +290,8 @@ func (s *State) StartBroadcast() bool {
 	s.inputMu.Lock()
 	s.broadcasting = true
 	s.broadcastResult = appsession.SendResult{}
+	s.composeResult = appsession.SendResult{}
+	s.broadcastNotice = 0
 	s.inputMu.Unlock()
 	s.RequestRedraw()
 	return true
@@ -244,10 +304,16 @@ func (s *State) StopBroadcast() {
 	s.inputMu.Lock()
 	changed := s.broadcasting
 	s.broadcasting = false
-	if changed && s.composeBroadcast {
-		// Stop reaches an in-flight composed broadcast too: it cancels before
-		// the next line instead of letting the remaining chunks through.
-		s.cancelComposeSendLocked()
+	if changed {
+		// Compose now targets the focused Session rather than the old
+		// broadcast set, so its previous result no longer describes Send.
+		s.composeResult = appsession.SendResult{}
+		if s.composeBroadcast {
+			// Stop reaches an in-flight composed broadcast too: it cancels
+			// before the next line instead of letting the remaining chunks
+			// through.
+			s.cancelComposeSendLocked()
+		}
 	}
 	s.inputMu.Unlock()
 	if changed {
@@ -278,7 +344,10 @@ func (s *State) NoteSessionInput(id model.SessionID, data []byte) {
 		return
 	}
 	s.inputMu.Lock()
-	if !s.broadcasting {
+	if !s.broadcasting || !s.broadcastSessions[id] {
+		// The source must be a Session of the main window. Typing in a
+		// detached window never fans out through the main target set, and
+		// the recipients below are only main-window Sessions.
 		s.inputMu.Unlock()
 		return
 	}
@@ -411,6 +480,7 @@ func (s *State) ComposePreview() appsession.ComposePreview {
 // ComposeTargets reports where Send would deliver: the active broadcast set,
 // or the focused Session.
 func (s *State) ComposeTargets() (ids []model.SessionID, broadcast bool) {
+	s.refreshBroadcastState()
 	s.inputMu.Lock()
 	broadcasting := s.broadcasting
 	selected := s.selectedBroadcastTargetIDsLocked()
@@ -463,6 +533,7 @@ func (s *State) sendCompose() bool {
 	if s.sessions == nil {
 		return false
 	}
+	s.refreshBroadcastState()
 	s.inputMu.Lock()
 	if s.composeSending {
 		s.inputMu.Unlock()

@@ -269,18 +269,12 @@ func run(afterReady func(hostWindow)) error {
 		// broadcast targets. shellState is assigned after this service; the
 		// closure reads it only when input arrives.
 		appsession.WithInputHook(func(id model.SessionID, data []byte) {
-			if shellState == nil {
-				return
+			if shellState != nil {
+				// State ignores a source outside the main window and only
+				// delivers to main-window recipients, so detached windows
+				// need no window-focus special case here.
+				shellState.NoteSessionInput(id, data)
 			}
-			// Broadcast belongs to the main window's Workspace. A detached
-			// window has its own focus and is never part of the main window's
-			// target set, so typing there must not fan out through main-window
-			// state. Only the main window can be focused while its terminal
-			// receives keys.
-			if mainWindow == nil || mainWindow.IsDestroyed() || !mainWindow.IsFocused() {
-				return
-			}
-			shellState.NoteSessionInput(id, data)
 		}),
 		// The app applies the notification mode and window focus before
 		// showing an OS notification.

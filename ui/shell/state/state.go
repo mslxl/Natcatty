@@ -128,7 +128,10 @@ type State struct {
 	broadcastPanel       bool
 	broadcasting         bool
 	broadcastTargets     map[model.SessionID]bool
+	broadcastSessions    map[model.SessionID]bool
+	broadcastTargetIDs   []model.SessionID
 	broadcastResult      appsession.SendResult
+	broadcastNotice      int
 	composeOpen          bool
 	composeDraft         string
 	composeTrim          bool
@@ -226,8 +229,9 @@ func NewState(opts ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &State{
 		active: -1, nextTabNumber: 1, vaultVisible: true, ctx: ctx, cancel: cancel,
-		broadcastTargets: make(map[model.SessionID]bool),
-		composeLineMode:  appsession.ComposePaste,
+		broadcastTargets:  make(map[model.SessionID]bool),
+		broadcastSessions: make(map[model.SessionID]bool),
+		composeLineMode:   appsession.ComposePaste,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -425,6 +429,9 @@ func (s *State) Flush() {
 		s.problem = ""
 		s.save()
 	}
+	// Tabs and Panes may have changed; keep the input-thread broadcast
+	// recipient snapshot exact.
+	s.refreshBroadcastState()
 }
 
 // RequestRedraw asks the app to redraw the shell.

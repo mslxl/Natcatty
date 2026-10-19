@@ -366,6 +366,7 @@
     }
   },
   "tabDirtyMarker": "●",
+  "workTabsLabel": "会话标签页",
   "@tabDirtyMarker": {
     "description": "标签页有未查看输出时显示的活动标记。"
   },
@@ -548,7 +549,7 @@
   "composeButton": "编写",
   "broadcastPanelTitle": "广播输入",
   "broadcastTargetsTitle": "发送到会话",
-  "broadcastActive": "正在向 {count} 个会话广播",
+  "broadcastActive": "正在向 {count, plural, other {# 个会话}}广播",
   "broadcastStopped": "广播已停止",
   "broadcastStart": "开始广播",
   "broadcastStop": "停止广播",
@@ -559,6 +560,7 @@
   "broadcastFailed": "失败",
   "broadcastGated": "被传输阻止",
   "broadcastMissing": "会话已关闭",
+  "broadcastTargetsRemoved": "已移除 {count, plural, other {# 个}}离开主窗口的目标。",
   "broadcastSummary": "已送达 {delivered}/{total}",
   "broadcastSelectAll": "全选",
   "broadcastSelectNone": "清除",
@@ -574,9 +576,9 @@
   "composePreview": "预览",
   "composePreviewEmpty": "没有可发送内容",
   "composeTargetFocused": "焦点会话",
-  "composeTargetFocusedNamed": "焦点会话 · {name}",
-  "composeTargetBroadcast": "广播（{count} 个会话）",
+  "composeTargetFocusedNamed": "焦点：{name}",
+  "composeTargetBroadcast": "广播（{count, plural, other {# 个会话}}）",
   "composeSending": "正在发送…",
-  "composeSent": "已发送到 {delivered} 个会话",
+  "composeSent": "已发送到 {delivered, plural, other {# 个会话}}",
   "composeFailed": "文本未送达"
 }

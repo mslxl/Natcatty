@@ -374,3 +374,201 @@ func TestBroadcastCannotStartWithOnlyTheFocusedSource(t *testing.T) {
 		t.Fatal("broadcast is active with only the focused source")
 	}
 }
+
+// TestDetachingASelectedTargetPrunesTypedAndComposedBroadcast is the
+// regression test for the detached-target leak: a Session that leaves the
+// main window must stop being a broadcast recipient immediately, for typed
+// input and for compose, and must not remain a hidden ID.
+func TestDetachingASelectedTargetPrunesTypedAndComposedBroadcast(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	detachedID := graph.sessionID(t, 0)
+	peerID := graph.sessionID(t, 1)
+	source := graph.sessionID(t, 2)
+
+	state.OpenBroadcastPanel()
+	if got := state.BroadcastTargetCount(); got != 2 {
+		t.Fatalf("default targets = %d, want 2", got)
+	}
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	if !state.DetachTab(0) {
+		t.Fatal("detach failed")
+	}
+
+	targets := state.BroadcastTargets()
+	if len(targets) != 1 || targets[0] != peerID {
+		t.Fatalf("targets after detach = %v, want only %q", targets, peerID)
+	}
+	if got := state.BroadcastNotice(); got != 1 {
+		t.Fatalf("removal notice = %d, want 1", got)
+	}
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("a delivery result from the old target set survived detach")
+	}
+	if _, ok := state.ComposeResult(); ok {
+		t.Fatal("a compose result from the old target set survived detach")
+	}
+	for _, info := range state.BroadcastSessions() {
+		if info.ID == detachedID {
+			t.Fatalf("detached Session %q is still a visible target row", detachedID)
+		}
+		if info.ID == peerID && (!info.Selected || !info.Running) {
+			t.Fatalf("remaining target is not a live selected row: %+v", info)
+		}
+	}
+	ids, broadcast := state.ComposeTargets()
+	if !broadcast || len(ids) != 1 || ids[0] != peerID {
+		t.Fatalf("compose targets after detach = %v broadcast = %v", ids, broadcast)
+	}
+
+	// Typed broadcast from the main window reaches only the remaining target.
+	state.NoteSessionInput(source, []byte("typed\r"))
+	waitTransportInput(t, graph.factory.transport(1), "typed\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("detached Session received typed broadcast input: %q", got)
+	}
+
+	// Typing inside the detached window must not fan out through main either.
+	state.NoteSessionInput(detachedID, []byte("detached-typed\r"))
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(1).inputString(); got != "typed\r" {
+		t.Fatalf("detached typing fanned out to the main target: %q", got)
+	}
+	if got := graph.factory.transport(2).inputString(); got != "" {
+		t.Fatalf("detached typing reached the main source: %q", got)
+	}
+
+	// The composed broadcast follows the same filtered target set.
+	state.OpenCompose()
+	state.SetComposeDraft("composed")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "typed\rcomposed\r")
+	time.Sleep(20 * time.Millisecond)
+	if got := graph.factory.transport(0).inputString(); got != "" {
+		t.Fatalf("detached Session received composed broadcast input: %q", got)
+	}
+	if got := state.BroadcastTargetCount(); got != 1 {
+		t.Fatalf("target count after compose = %d, want 1", got)
+	}
+	result, ok := state.BroadcastResult()
+	if !ok || len(result.Deliveries) != 1 || result.Deliveries[0].SessionID != peerID {
+		t.Fatalf("broadcast result after composed send = %+v", result)
+	}
+	if targets, _ := state.ComposeTargets(); len(targets) != 1 || targets[0] != peerID {
+		t.Fatalf("compose targets after send = %v", targets)
+	}
+}
+
+// TestClosingASelectedTargetPrunesItAndReportsTheRemoval covers the closed
+// Tab case: the selection shrinks, the panel says so, and results that
+// described the old recipients are discarded.
+func TestClosingASelectedTargetPrunesItAndReportsTheRemoval(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	closedID := graph.sessionID(t, 0)
+	peerID := graph.sessionID(t, 1)
+	source := graph.sessionID(t, 2)
+
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.NoteSessionInput(source, []byte("before\r"))
+	waitTransportInput(t, graph.factory.transport(0), "before\r")
+	if !state.CloseTab(0) {
+		t.Fatal("close failed")
+	}
+
+	if targets := state.BroadcastTargets(); len(targets) != 1 || targets[0] != peerID {
+		t.Fatalf("targets after close = %v, want only %q", targets, peerID)
+	}
+	if got := state.BroadcastNotice(); got != 1 {
+		t.Fatalf("removal notice = %d, want 1", got)
+	}
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("a delivery result survived closing a target")
+	}
+	for _, info := range state.BroadcastSessions() {
+		if info.ID == closedID {
+			t.Fatalf("closed Session %q is still a target row", closedID)
+		}
+	}
+
+	state.NoteSessionInput(source, []byte("after\r"))
+	waitTransportInput(t, graph.factory.transport(1), "before\rafter\r")
+	if got := graph.factory.transport(0).inputString(); got != "before\r" {
+		t.Fatalf("closed Session received input after being pruned: %q", got)
+	}
+}
+
+// TestTargetChangesDiscardStaleResults proves a result from an earlier target
+// set can never describe the current one.
+func TestTargetChangesDiscardStaleResults(t *testing.T) {
+	graph := newInputGraph(t, 3)
+	state := graph.state
+	peerID := graph.sessionID(t, 1)
+	source := graph.sessionID(t, 2)
+
+	state.OpenBroadcastPanel()
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast did not start")
+	}
+	state.NoteSessionInput(source, []byte("typed\r"))
+	waitTransportInput(t, graph.factory.transport(0), "typed\r")
+	if _, ok := state.BroadcastResult(); !ok {
+		t.Fatal("no typed broadcast result")
+	}
+
+	state.OpenCompose()
+	state.SetComposeDraft("composed")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	waitTransportInput(t, graph.factory.transport(0), "typed\rcomposed\r")
+	if _, ok := state.ComposeResult(); !ok {
+		t.Fatal("no compose result")
+	}
+
+	// Deselecting a target invalidates both results.
+	state.SetBroadcastTarget(peerID, false)
+	if _, ok := state.ComposeResult(); ok {
+		t.Fatal("compose result survived a target change")
+	}
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("broadcast result survived a target change")
+	}
+
+	// Starting a new broadcast clears results left over from the old one.
+	state.SetBroadcastTarget(peerID, true)
+	state.NoteSessionInput(source, []byte("again\r"))
+	if _, ok := state.BroadcastResult(); !ok {
+		t.Fatal("no result before the restart")
+	}
+	if !state.StartBroadcast() {
+		t.Fatal("broadcast could not restart")
+	}
+	if _, ok := state.BroadcastResult(); ok {
+		t.Fatal("broadcast result survived starting a new broadcast")
+	}
+	waitTransportInput(t, graph.factory.transport(1), "typed\rcomposed\ragain\r")
+
+	// Stopping switches compose back to the focused Session, so its old
+	// broadcast result no longer describes Send.
+	state.OpenCompose()
+	state.SetComposeDraft("last")
+	if !state.SendCompose() {
+		t.Fatal("compose send failed")
+	}
+	if _, ok := state.ComposeResult(); !ok {
+		t.Fatal("no compose result before Stop")
+	}
+	state.StopBroadcast()
+	if _, ok := state.ComposeResult(); ok {
+		t.Fatal("compose result survived Stop")
+	}
+}

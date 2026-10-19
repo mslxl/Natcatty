@@ -58,17 +58,26 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 // strips on either side of it are the insertion targets that show where a
 // dropped Tab will land. A drop directly on a Tab inserts before it.
 func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Gap(2).Children(func() {
-		for index := 0; index < s.TabCount(); index++ {
-			info, ok := s.TabInfo(index)
-			if !ok {
-				continue
-			}
-			tabInsertionStrip(c, s, t, info.ID, false)
-			tabBody(c, s, m, t, index, info)
-			tabInsertionStrip(c, s, t, info.ID, true)
-		}
-	})
+	// The strip scrolls sideways at the minimum window width. Tabs keep a
+	// readable title width instead of shrinking or clipping the last Tab;
+	// every Tab stays reachable with the wheel, trackpad or keyboard.
+	// The strip keeps its 30 DIPs when the panels below need room. Without
+	// Shrink(0) a Column under height pressure shrinks the first flexible
+	// child to nothing, hiding every Tab at the minimum window size.
+	ui.ScrollHorizontal(c).FillWidth().Height(30).Shrink(0).Label(m.WorkTabsLabel()).
+		Children(func() {
+			ui.Row(c).Gap(2).Children(func() {
+				for index := 0; index < s.TabCount(); index++ {
+					info, ok := s.TabInfo(index)
+					if !ok {
+						continue
+					}
+					tabInsertionStrip(c, s, t, info.ID, false)
+					tabBody(c, s, m, t, index, info)
+					tabInsertionStrip(c, s, t, info.ID, true)
+				}
+			})
+		})
 }
 
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {

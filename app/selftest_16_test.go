@@ -99,8 +99,8 @@ func runTicket16(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 	if !result.Pass {
 		t.Fatalf("ticket 16 self-test failed: %+v", result)
 	}
-	if len(result.Steps) != 7 {
-		t.Fatalf("steps = %d, want 7: %+v", len(result.Steps), result.Steps)
+	if len(result.Steps) != 8 {
+		t.Fatalf("steps = %d, want 8: %+v", len(result.Steps), result.Steps)
 	}
 	return result
 }

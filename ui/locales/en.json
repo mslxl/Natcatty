@@ -549,6 +549,10 @@
     }
   },
   "tabDirtyMarker": "●",
+  "workTabsLabel": "Session tabs",
+  "@workTabsLabel": {
+    "description": "The accessible name of the horizontally scrolling Session tab strip."
+  },
   "@tabDirtyMarker": {
     "description": "The activity marker shown beside a Tab that has unseen output."
   },
@@ -771,7 +775,7 @@
   "composeButton": "Compose",
   "broadcastPanelTitle": "Broadcast input",
   "broadcastTargetsTitle": "Send to Sessions",
-  "broadcastActive": "Broadcasting to {count} Sessions",
+  "broadcastActive": "Broadcasting to {count, plural, one {# Session} other {# Sessions}}",
   "broadcastStopped": "Broadcast stopped",
   "broadcastStart": "Start broadcast",
   "broadcastStop": "Stop broadcast",
@@ -782,6 +786,7 @@
   "broadcastFailed": "Failed",
   "broadcastGated": "Blocked by transfer",
   "broadcastMissing": "Session closed",
+  "broadcastTargetsRemoved": "Removed {count, plural, one {# target} other {# targets}} that left the main window.",
   "broadcastSummary": "{delivered} of {total} delivered",
   "broadcastSelectAll": "Select all",
   "broadcastSelectNone": "Clear",
@@ -797,10 +802,10 @@
   "composePreview": "Preview",
   "composePreviewEmpty": "Nothing to send",
   "composeTargetFocused": "Focused Session",
-  "composeTargetFocusedNamed": "Focused Session · {name}",
-  "composeTargetBroadcast": "Broadcast ({count} Sessions)",
+  "composeTargetFocusedNamed": "Focused: {name}",
+  "composeTargetBroadcast": "Broadcast ({count, plural, one {# Session} other {# Sessions}})",
   "composeSending": "Sending…",
-  "composeSent": "Sent to {delivered} Sessions",
+  "composeSent": "Sent to {delivered, plural, one {# Session} other {# Sessions}}",
   "composeFailed": "Compose was not delivered",
   "@broadcastButtonActive": {
     "description": "The broadcast button while broadcasting is active.",
@@ -817,6 +822,15 @@
       "count": {
         "type": "int",
         "example": "2"
+      }
+    }
+  },
+  "@broadcastTargetsRemoved": {
+    "description": "Selected targets left the main window, so broadcast pruned them.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1"
       }
     }
   },
