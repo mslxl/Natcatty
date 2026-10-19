@@ -66,6 +66,7 @@ type State struct {
 	sessions        *appsession.Service
 	surfaces        SurfaceFactory
 	trustPrompt     *sessionui.TrustPrompt
+	authPrompt      *sessionui.AuthPrompt
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -117,6 +118,13 @@ func WithTrustPrompt(prompt *sessionui.TrustPrompt) Option {
 	return func(s *State) { s.trustPrompt = prompt }
 }
 
+// WithAuthPrompt gives the shell the passphrase and keyboard-interactive
+// prompt to render. The same prompt is the SSH connection manager's
+// AuthPrompter.
+func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
+	return func(s *State) { s.authPrompt = prompt }
+}
+
 // NewState returns the initial shell state: the Vault is visible and there
 // are no work tabs.
 func NewState(opts ...Option) *State {
@@ -130,6 +138,9 @@ func NewState(opts ...Option) *State {
 
 // TrustPrompt returns the host-key prompt the shell renders, or nil.
 func (s *State) TrustPrompt() *sessionui.TrustPrompt { return s.trustPrompt }
+
+// AuthPrompt returns the authentication prompt the shell renders, or nil.
+func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
 
 // Problem returns the last connection failure, or "" when the last attempt
 // succeeded or none has run.

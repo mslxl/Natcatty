@@ -19,7 +19,11 @@ type Store struct {
 	db *platformsqlite.DB
 }
 
-var _ appvault.HostRepository = (*Store)(nil)
+var (
+	_ appvault.HostRepository     = (*Store)(nil)
+	_ appvault.KeyRepository      = (*Store)(nil)
+	_ appvault.IdentityRepository = (*Store)(nil)
+)
 
 // Open opens path, configures the connection, and applies missing migrations.
 // The caller closes the Store at app shutdown.
