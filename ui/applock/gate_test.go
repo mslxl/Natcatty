@@ -131,6 +131,49 @@ func TestActivityPostponesTheIdleTimeout(t *testing.T) {
 	}
 }
 
+// TestLockScreenFitsAtDefaultAndMinimumSizes renders the gate at the main
+// window's default and minimum sizes and at the detached window's minimum. The
+// lock screen must stay inside the window and its lines must not overlap.
+func TestLockScreenFitsAtDefaultAndMinimumSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range [][2]int{{1100, 720}, {720, 480}, {480, 320}} {
+		gate, _ := newGate(t, enabledSettings(t, 15))
+		tester := ui.NewTester(gate.Wrap(func(c *ui.Context) {
+			ui.Text(c, "content")
+		}), size[0], size[1])
+		tester.SetLocale("en")
+		tester.Frame()
+
+		if tester.HasText("content") {
+			t.Fatalf("%dx%d rendered content while locked", size[0], size[1])
+		}
+		title := gateTextInside(t, tester, size[0], size[1], m.AppLockTitle())
+		body := gateTextInside(t, tester, size[0], size[1], m.AppLockBody())
+		password := gateTextInside(t, tester, size[0], size[1], m.AppLockPassword())
+		unlock := gateTextInside(t, tester, size[0], size[1], m.AppLockUnlock())
+		for index, pair := range [][2]ui.Rect{{title, body}, {body, password}, {password, unlock}} {
+			if pair[0].Y+pair[0].H > pair[1].Y+0.5 {
+				t.Fatalf("%dx%d lock-screen lines %d overlap: %+v then %+v",
+					size[0], size[1], index, pair[0], pair[1])
+			}
+		}
+	}
+}
+
+func gateTextInside(t *testing.T, tester *ui.Tester, width, height int, text string) ui.Rect {
+	t.Helper()
+	r, ok := tester.Find(text)
+	if !ok {
+		t.Fatalf("the lock screen does not show %q: %v", text, tester.Texts())
+	}
+	const epsilon = 0.5
+	if r.X < -epsilon || r.Y < -epsilon ||
+		r.X+r.W > float32(width)+epsilon || r.Y+r.H > float32(height)+epsilon {
+		t.Fatalf("%q is clipped at %dx%d: box %+v", text, width, height, r)
+	}
+	return r
+}
+
 func TestDisabledAppLockNeverLocks(t *testing.T) {
 	gate, now := newGate(t, domainapplock.DefaultSettings())
 	tester := newGateTester(gate)

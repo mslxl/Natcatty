@@ -288,6 +288,7 @@
   "tabCloseRight": "Закрыть вкладки справа",
   "tabDuplicate": "Дублировать вкладку",
   "tabDetach": "Отделить вкладку",
+  "tabCopyToNewWindow": "Копировать вкладку в новое окно",
   "tabCopyTitle": "{title} (копия {count})",
   "@tabCopyTitle": {"description": "Заголовок дублированной вкладки и номер копии.", "placeholders": {"title": {"type": "String", "example": "web"}, "count": {"type": "int", "example": "1"}}},
   "tabDirtyMarker": "●",
@@ -298,6 +299,7 @@
   "paneSplitRight": "Разделить справа",
   "paneSplitDown": "Разделить снизу",
   "paneClose": "Закрыть панель",
+  "paneDetach": "Отделить сеанс",
   "paneFocusLeft": "Фокус влево",
   "paneFocusRight": "Фокус вправо",
   "paneFocusUp": "Фокус вверх",
@@ -309,5 +311,16 @@
   "paneDragHandle": "::",
   "@paneDragHandle": {"description": "Ручка для перетаскивания панели."},
   "closeGlyph": "×",
-  "@closeGlyph": {"description": "Кнопка, закрывающая вкладку или панель."}
+  "@closeGlyph": {"description": "Кнопка, закрывающая вкладку или панель."},
+  "detachedMoveToMain": "Переместить в главное окно",
+  "detachedCloseWindow": "Закрыть окно",
+  "closeWindowTitle": "Закрыть окно?",
+  "closeWindowMessage": "{count, plural, one {# активный сеанс завершится при закрытии этого окна.} few {# активных сеанса завершатся при закрытии этого окна.} many {# активных сеансов завершатся при закрытии этого окна.} other {# активных сеансов завершатся при закрытии этого окна.}}",
+  "@closeWindowMessage": {"description": "Запрос подтверждения закрытия окна с числом завершаемых сеансов.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "closeWindowCancel": "Отмена",
+  "closeWindowConfirm": "Закрыть окно",
+  "quitConfirmTitle": "Выйти из Natcatty?",
+  "quitConfirmMessage": "{count, plural, one {# активный сеанс завершится при выходе из Natcatty.} few {# активных сеанса завершатся при выходе из Natcatty.} many {# активных сеансов завершатся при выходе из Natcatty.} other {# активных сеансов завершатся при выходе из Natcatty.}}",
+  "@quitConfirmMessage": {"description": "Запрос подтверждения выхода с числом завершаемых сеансов.", "placeholders": {"count": {"type": "int", "example": "2"}}},
+  "quitConfirmConfirm": "Выйти"
 }

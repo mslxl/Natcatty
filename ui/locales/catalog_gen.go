@@ -2952,6 +2952,16 @@ func (msgs Messages) TabDetach() string {
 	return Catalog.Format(msgs.locale, "tabDetach", nil)
 }
 
+// TabCopyToNewWindow says "Copy Tab to New Window"
+// in the language the app shows.
+func TabCopyToNewWindow() string { return In(i18n.Locale()).TabCopyToNewWindow() }
+
+// TabCopyToNewWindow says "Copy Tab to New Window"
+// in the language of msgs.
+func (msgs Messages) TabCopyToNewWindow() string {
+	return Catalog.Format(msgs.locale, "tabCopyToNewWindow", nil)
+}
+
 // TabCopyTitle says "{title} (copy {count})"
 // in the language the app shows.
 //
@@ -3040,6 +3050,16 @@ func PaneClose() string { return In(i18n.Locale()).PaneClose() }
 // in the language of msgs.
 func (msgs Messages) PaneClose() string {
 	return Catalog.Format(msgs.locale, "paneClose", nil)
+}
+
+// PaneDetach says "Detach Session"
+// in the language the app shows.
+func PaneDetach() string { return In(i18n.Locale()).PaneDetach() }
+
+// PaneDetach says "Detach Session"
+// in the language of msgs.
+func (msgs Messages) PaneDetach() string {
+	return Catalog.Format(msgs.locale, "paneDetach", nil)
 }
 
 // PaneFocusLeft says "Focus Left"
@@ -3136,4 +3156,102 @@ func CloseGlyph() string { return In(i18n.Locale()).CloseGlyph() }
 // The button that closes a Tab or Pane.
 func (msgs Messages) CloseGlyph() string {
 	return Catalog.Format(msgs.locale, "closeGlyph", nil)
+}
+
+// DetachedMoveToMain says "Move to Main Window"
+// in the language the app shows.
+func DetachedMoveToMain() string { return In(i18n.Locale()).DetachedMoveToMain() }
+
+// DetachedMoveToMain says "Move to Main Window"
+// in the language of msgs.
+func (msgs Messages) DetachedMoveToMain() string {
+	return Catalog.Format(msgs.locale, "detachedMoveToMain", nil)
+}
+
+// DetachedCloseWindow says "Close Window"
+// in the language the app shows.
+func DetachedCloseWindow() string { return In(i18n.Locale()).DetachedCloseWindow() }
+
+// DetachedCloseWindow says "Close Window"
+// in the language of msgs.
+func (msgs Messages) DetachedCloseWindow() string {
+	return Catalog.Format(msgs.locale, "detachedCloseWindow", nil)
+}
+
+// CloseWindowTitle says "Close Window?"
+// in the language the app shows.
+func CloseWindowTitle() string { return In(i18n.Locale()).CloseWindowTitle() }
+
+// CloseWindowTitle says "Close Window?"
+// in the language of msgs.
+func (msgs Messages) CloseWindowTitle() string {
+	return Catalog.Format(msgs.locale, "closeWindowTitle", nil)
+}
+
+// CloseWindowMessage says "{count, plural, one {# active Session will end if this window closes.} other {# active Sessions will end if this wind…"
+// in the language the app shows.
+//
+// The close-window intent prompt naming how many Sessions end.
+func CloseWindowMessage(count int) string { return In(i18n.Locale()).CloseWindowMessage(count) }
+
+// CloseWindowMessage says "{count, plural, one {# active Session will end if this window closes.} other {# active Sessions will end if this wind…"
+// in the language of msgs.
+//
+// The close-window intent prompt naming how many Sessions end.
+func (msgs Messages) CloseWindowMessage(count int) string {
+	return Catalog.Format(msgs.locale, "closeWindowMessage", map[string]any{"count": count})
+}
+
+// CloseWindowCancel says "Cancel"
+// in the language the app shows.
+func CloseWindowCancel() string { return In(i18n.Locale()).CloseWindowCancel() }
+
+// CloseWindowCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) CloseWindowCancel() string {
+	return Catalog.Format(msgs.locale, "closeWindowCancel", nil)
+}
+
+// CloseWindowConfirm says "Close Window"
+// in the language the app shows.
+func CloseWindowConfirm() string { return In(i18n.Locale()).CloseWindowConfirm() }
+
+// CloseWindowConfirm says "Close Window"
+// in the language of msgs.
+func (msgs Messages) CloseWindowConfirm() string {
+	return Catalog.Format(msgs.locale, "closeWindowConfirm", nil)
+}
+
+// QuitConfirmTitle says "Quit Natcatty?"
+// in the language the app shows.
+func QuitConfirmTitle() string { return In(i18n.Locale()).QuitConfirmTitle() }
+
+// QuitConfirmTitle says "Quit Natcatty?"
+// in the language of msgs.
+func (msgs Messages) QuitConfirmTitle() string {
+	return Catalog.Format(msgs.locale, "quitConfirmTitle", nil)
+}
+
+// QuitConfirmMessage says "{count, plural, one {# active Session will end if Natcatty quits.} other {# active Sessions will end if Natcatty quit…"
+// in the language the app shows.
+//
+// The quit intent prompt naming how many Sessions end.
+func QuitConfirmMessage(count int) string { return In(i18n.Locale()).QuitConfirmMessage(count) }
+
+// QuitConfirmMessage says "{count, plural, one {# active Session will end if Natcatty quits.} other {# active Sessions will end if Natcatty quit…"
+// in the language of msgs.
+//
+// The quit intent prompt naming how many Sessions end.
+func (msgs Messages) QuitConfirmMessage(count int) string {
+	return Catalog.Format(msgs.locale, "quitConfirmMessage", map[string]any{"count": count})
+}
+
+// QuitConfirmConfirm says "Quit"
+// in the language the app shows.
+func QuitConfirmConfirm() string { return In(i18n.Locale()).QuitConfirmConfirm() }
+
+// QuitConfirmConfirm says "Quit"
+// in the language of msgs.
+func (msgs Messages) QuitConfirmConfirm() string {
+	return Catalog.Format(msgs.locale, "quitConfirmConfirm", nil)
 }

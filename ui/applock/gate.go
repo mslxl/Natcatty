@@ -80,6 +80,11 @@ func (g *Gate) Lock() error {
 	if errors.Is(err, appaplock.ErrLockDisabled) {
 		return nil
 	}
+	if err == nil {
+		// Every window is behind this one gate; ask them all to show the
+		// lock screen rather than waiting for the next input event.
+		g.requestRedraw()
+	}
 	return err
 }
 
@@ -149,6 +154,9 @@ func (g *Gate) unlock(c *ui.Context) {
 	case err == nil:
 		g.password = ""
 		g.problem = ProblemNone
+		// An unlock applies to every window, not only the one that entered
+		// the password.
+		g.requestRedraw()
 	case errors.Is(err, appaplock.ErrEmptyPassword):
 		g.problem = ProblemEmpty
 	case errors.Is(err, appaplock.ErrIncorrectPassword):

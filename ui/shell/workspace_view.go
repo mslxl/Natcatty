@@ -11,6 +11,49 @@ import (
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
+// tabRef binds the split renderer to either a main-window Tab or a detached
+// Tab. The renderer asks it for Pane state and hands back focus and resize.
+type tabRef struct {
+	id       model.TabID
+	pane     func(model.PaneID) (state.PaneInfo, bool)
+	setRatio func(model.SplitID, float32) bool
+	focus    func(model.PaneID) bool
+	// managesPanes marks a Tab whose window owns Pane commands, drag/drop, and
+	// Pane close. A detached window holds one Tab and has no split commands
+	// yet.
+	managesPanes bool
+	splitRight   func() error
+	splitDown    func() error
+	closeFocused func() bool
+	detach       func(model.PaneID) bool
+}
+
+func mainTabRef(s *state.State, tabIndex int) tabRef {
+	id, _ := s.TabID(tabIndex)
+	return tabRef{
+		id:           id,
+		pane:         func(id model.PaneID) (state.PaneInfo, bool) { return s.PaneInfoAt(tabIndex, id) },
+		setRatio:     func(id model.SplitID, ratio float32) bool { return s.SetSplitRatio(tabIndex, id, ratio) },
+		focus:        func(id model.PaneID) bool { return s.FocusPaneID(tabIndex, id) },
+		managesPanes: true,
+		splitRight:   s.SplitRight,
+		splitDown:    s.SplitDown,
+		closeFocused: func() bool {
+			return s.CloseFocusedPane()
+		},
+		detach: func(paneID model.PaneID) bool { return s.DetachPane(tabIndex, paneID) },
+	}
+}
+
+func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
+	return tabRef{
+		id:       tabID,
+		pane:     func(id model.PaneID) (state.PaneInfo, bool) { return s.DetachedPaneInfoAt(tabID, id) },
+		setRatio: func(id model.SplitID, ratio float32) bool { return s.SetDetachedSplitRatio(tabID, id, ratio) },
+		focus:    func(id model.PaneID) bool { return s.FocusDetachedPaneID(tabID, id) },
+	}
+}
+
 // workTabs renders the ordered Tab strip. Each Tab is a drag source; the thin
 // strips on either side of it are the insertion targets that show where a
 // dropped Tab will land. A drop directly on a Tab inserts before it.
@@ -98,6 +141,10 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 				}
 				c.Invalidate()
 			}
+			if menu.Item(m.TabCopyToNewWindow()).Chosen() {
+				_ = s.DuplicateTabToWindow(index)
+				c.Invalidate()
+			}
 			if menu.Item(m.TabDetach()).Chosen() {
 				s.DetachTab(index)
 				c.Invalidate()
@@ -130,12 +177,12 @@ func tabTitle(m locales.Messages, info state.TabInfo) string {
 // horizontal split in the domain is top/bottom, so it renders with
 // SplitVerticalPercent; a vertical split is left/right. Dragging a divider
 // updates the domain ratio so it survives restore.
-func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, tabIndex int, node *domainworkspace.Node, focus []int) {
+func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, node *domainworkspace.Node, focus []int) {
 	if node == nil {
 		return
 	}
 	if node.IsPane() {
-		paneView(c, s, m, t, tabIndex, node.PaneID)
+		paneView(c, s, m, t, ref, node.PaneID)
 		return
 	}
 	ratio := node.Ratio
@@ -143,8 +190,8 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ta
 		ratio = domainworkspace.DefaultRatio
 	}
 	splitID := node.SplitID
-	first := func() { paneTree(c, s, m, t, tabIndex, node.First, focus) }
-	second := func() { paneTree(c, s, m, t, tabIndex, node.Second, focus) }
+	first := func() { paneTree(c, s, m, t, ref, node.First, focus) }
+	second := func() { paneTree(c, s, m, t, ref, node.Second, focus) }
 	var split ui.Element
 	if node.Direction == domainworkspace.Horizontal {
 		split = ui.SplitVerticalPercent(c, &ratio, first, second)
@@ -152,33 +199,41 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ta
 		split = ui.SplitPercent(c, &ratio, first, second)
 	}
 	if split.Changed() {
-		s.SetSplitRatio(tabIndex, splitID, ratio)
+		ref.setRatio(splitID, ratio)
 	}
 	split.Fill()
 }
 
-func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, tabIndex int, paneID model.PaneID) {
-	info, ok := s.PaneInfoAt(tabIndex, paneID)
+func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, paneID model.PaneID) {
+	info, ok := ref.pane(paneID)
 	if !ok {
 		return
 	}
-	tabID, _ := s.TabID(tabIndex)
+	tabID := ref.id
 	column := ui.Column(c).Fill().Background(t.Background)
 	column.Children(func() {
-		paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
+		if ref.managesPanes {
+			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
+		}
 		ui.Row(c).Fill().Children(func() {
-			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
+			if ref.managesPanes {
+				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
+			}
 			pane := ui.Column(c).Fill().Background(t.Background)
 			if info.Focused {
 				pane.Border(1, t.Accent)
 			}
 			pane.Children(func() {
-				paneHeader(c, s, m, t, tabIndex, tabID, info)
+				paneHeader(c, s, m, t, ref, info)
 				paneContent(c, s, m, t, info)
 			})
-			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideRight, false)
+			if ref.managesPanes {
+				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideRight, false)
+			}
 		})
-		paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideBottom, true)
+		if ref.managesPanes {
+			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideBottom, true)
+		}
 	})
 }
 
@@ -205,12 +260,14 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 }
 
 func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
-	tabIndex int, tabID model.TabID, info state.PaneInfo) {
+	ref tabRef, info state.PaneInfo) {
 	header := ui.Row(c).Height(24).Padding(1, 6).Gap(6).
 		Background(t.Surface).AlignItems(ui.Center)
 	header.Children(func() {
 		handle := ui.Text(c, m.PaneDragHandle()).FontSize(11).TextColor(t.TextMuted)
-		handle.Drag(state.PaneDrag(tabID, info.ID))
+		if ref.managesPanes {
+			handle.Drag(state.PaneDrag(ref.id, info.ID))
+		}
 
 		title := info.Label
 		if title == "" {
@@ -223,8 +280,9 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			titleElement.TextColor(t.TextMuted)
 		}
 		if titleElement.Clicked() {
-			s.FocusPaneID(tabIndex, info.ID)
-			c.Invalidate()
+			if ref.focus(info.ID) {
+				c.Invalidate()
+			}
 		}
 		if info.Pending {
 			ui.Text(c, m.PaneConnecting()).FontSize(10).TextColor(t.TextMuted)
@@ -232,29 +290,37 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 
 		ui.Column(c).Grow(1)
 
-		ui.MenuButton(c, m.PaneMenuGlyph(), func(menu *ui.Menu) {
-			if menu.Item(m.PaneSplitRight()).Chosen() {
-				s.FocusPaneID(tabIndex, info.ID)
-				_ = s.SplitRight()
+		if ref.managesPanes {
+			ui.MenuButton(c, m.PaneMenuGlyph(), func(menu *ui.Menu) {
+				if menu.Item(m.PaneSplitRight()).Chosen() {
+					ref.focus(info.ID)
+					_ = ref.splitRight()
+					c.Invalidate()
+				}
+				if menu.Item(m.PaneSplitDown()).Chosen() {
+					ref.focus(info.ID)
+					_ = ref.splitDown()
+					c.Invalidate()
+				}
+				menu.Separator()
+				if menu.Item(m.PaneDetach()).Chosen() {
+					if ref.detach(info.ID) {
+						c.Invalidate()
+					}
+				}
+				menu.Separator()
+				if menu.Item(m.PaneClose()).Chosen() {
+					ref.focus(info.ID)
+					ref.closeFocused()
+					c.Invalidate()
+				}
+			})
+			closeButton := ui.Text(c, m.CloseGlyph()).FontSize(13).TextColor(t.TextMuted).Padding(0, 2)
+			if closeButton.Clicked() {
+				ref.focus(info.ID)
+				ref.closeFocused()
 				c.Invalidate()
 			}
-			if menu.Item(m.PaneSplitDown()).Chosen() {
-				s.FocusPaneID(tabIndex, info.ID)
-				_ = s.SplitDown()
-				c.Invalidate()
-			}
-			menu.Separator()
-			if menu.Item(m.PaneClose()).Chosen() {
-				s.FocusPaneID(tabIndex, info.ID)
-				s.CloseFocusedPane()
-				c.Invalidate()
-			}
-		})
-		closeButton := ui.Text(c, m.CloseGlyph()).FontSize(13).TextColor(t.TextMuted).Padding(0, 2)
-		if closeButton.Clicked() {
-			s.FocusPaneID(tabIndex, info.ID)
-			s.CloseFocusedPane()
-			c.Invalidate()
 		}
 	})
 }

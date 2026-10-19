@@ -13,10 +13,16 @@ const (
 	CloseTabsRight ID = "tab.closeRight"
 	DuplicateTab   ID = "tab.duplicate"
 	DetachTab      ID = "tab.detach"
+	// CopyTabToNewWindow opens a detached window holding a copy of the active
+	// Tab; the source Tab stays where it is.
+	CopyTabToNewWindow ID = "tab.copyToWindow"
 
 	SplitPaneRight ID = "pane.splitRight"
 	SplitPaneDown  ID = "pane.splitDown"
 	ClosePane      ID = "pane.close"
+	// DetachPane moves the focused Pane's Session into its own detached
+	// window.
+	DetachPane     ID = "pane.detach"
 	FocusPaneLeft  ID = "pane.focusLeft"
 	FocusPaneRight ID = "pane.focusRight"
 	FocusPaneUp    ID = "pane.focusUp"

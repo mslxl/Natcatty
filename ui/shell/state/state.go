@@ -95,6 +95,12 @@ type State struct {
 	// onDetach receives the ID of a Tab that left the main window. Ticket 13
 	// owns the detached window itself; the seam keeps ownership explicit.
 	onDetach func(model.TabID)
+	// onDetachReattached receives the ID of a detached Tab that moved back
+	// into the main Workspace, so the composition root can close its window.
+	onDetachReattached func(model.TabID)
+	// onDetachedClose receives a request from a detached window to close. The
+	// composition root owns the window and its close intent.
+	onDetachedClose func(model.TabID)
 	// detached keeps Tabs whose Sessions stay alive outside the main window.
 	detached []*Tab
 	// restoring suppresses persistence while a payload is being applied.
@@ -177,6 +183,18 @@ func WithWorkspace(service *appworkspace.Service, resolve HostResolver) Option {
 // WithDetachHandler receives a Tab's ID after the Tab leaves the main window.
 func WithDetachHandler(fn func(model.TabID)) Option {
 	return func(s *State) { s.onDetach = fn }
+}
+
+// WithDetachReattachHandler receives a detached Tab's ID after it moves back
+// into the main Workspace. The composition root closes that Tab's window.
+func WithDetachReattachHandler(fn func(model.TabID)) Option {
+	return func(s *State) { s.onDetachReattached = fn }
+}
+
+// WithDetachedCloseRequest receives a detached window's close request. The
+// composition root prompts for close intent and owns the window lifecycle.
+func WithDetachedCloseRequest(fn func(model.TabID)) Option {
+	return func(s *State) { s.onDetachedClose = fn }
 }
 
 // NewState returns the initial shell state: the Vault is visible and there
