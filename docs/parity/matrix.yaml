@@ -1107,6 +1107,58 @@
   status: implemented
   notes: "Detection recognizes the ZMODEM ** CAN B prefix and YMODEM block-0 headers across chunks. The gate strips protocol bytes before the terminal and log, keeps the activity indicator lit, drops normal input, and turns Ctrl+C into the original five-CAN abort. There is no transfer engine: CancelTransfer and CompleteTransfer are seams for a later engine, so the row is implemented rather than fully verified against a real transfer. Without an engine the end marker is a heuristic, and a stray YMODEM EOT byte can close the gate early."
 
+- id: terminal.broadcast-input
+  area: terminal
+  feature: Broadcast typed input to selected Sessions with per-Session delivery status and immediate stop
+  original_paths:
+    - components/TerminalLayer.tsx
+    - domain/terminalBroadcast.ts
+  module: ui/shell/state
+  tickets: [16]
+  acceptance_tests:
+    - application/session.TestSendInputReachesExactlyTheSelectedSessions
+    - application/session.TestSendInputDeduplicatesTargetsAndKeepsTheirOrder
+    - application/session.TestSendInputReportsMissingAndClosedTargetsAsPartialFailure
+    - application/session.TestSendInputReportsTheTransferGateWithoutCorruptingTheTransport
+    - application/session.TestInputHookObservesTypedInputButNotDeliveredBroadcastInput
+    - ui/shell/state.TestBroadcastReachesOnlySelectedSessionsAndStopsImmediately
+    - ui/shell/state.TestBroadcastReportsAPeerThatClosedMidSession
+    - ui/shell/state.TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim
+    - ui/shell.TestBroadcastAndComposeFitAtDefaultAndMinimumSizes
+    - ui/shell.TestBroadcastControlsShowStoppedState
+    - app.TestTicket16CheckRunsThroughTheKeyboard
+    - app.TestTicket16CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The target panel lists running Sessions in Tab and Pane order and defaults to every other Session, matching the original workspace broadcast. Typed input that passed the source's tap is fanned out without re-entering the input hook, so it cannot recurse. Deliveries are queued per Session without blocking the others; closed, gated, missing, and saturated targets are reported individually and never corrupt the terminal or log. Stop clears the active flag synchronously, so later typing reaches only the focused Session."
+
+- id: terminal.compose-bar
+  area: terminal
+  feature: Multi-line compose draft with the original transformations, preview, and focused or broadcast send
+  original_paths:
+    - components/TerminalLayer.tsx
+    - components/terminal/TerminalComposeBar.tsx
+    - components/terminal/composeBarHelpers.ts
+    - components/terminal/runtime/shiftEnterText.ts
+    - components/terminal/runtime/terminalInputSanitize.ts
+    - domain/snippetRunMode.ts
+  module: ui/shell
+  tickets: [16]
+  acceptance_tests:
+    - application/session.TestTransformComposeDefaultsToPasteWithSubmit
+    - application/session.TestTransformComposeNormalizesLineEndingsAndKeepsOneSubmit
+    - application/session.TestTransformComposeLineByLineSubmitsEachLineSeparately
+    - application/session.TestTransformComposeDecodesEscapesBeforeNormalizing
+    - application/session.TestTransformComposeTrimsAndStripsZeroWidthInput
+    - application/session.TestTransformComposeDoesNotSubmitAnEmptyDraft
+    - application/session.TestTransformComposeNoAutoRunOmitsTheCarriageReturn
+    - application/session.TestSendChunksDeliversEveryLineInOrder
+    - ui/shell/state.TestComposeTransformsTheDraftAndSendsToTheFocusedSession
+    - ui/shell/state.TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim
+    - ui/shell.TestComposeFocusedTargetIndication
+    - app.TestTicket16CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The bar previews the exact transformed payload. Sanitizing removes IME zero-width characters while preserving ZWNJ and ZWJ; escape decoding runs before CRLF/CR normalization, and trimming is optional. Paste is the default and appends one submit carriage return; line-by-line trims the final newline and submits each line with the original 250 ms delay. Empty drafts are not sent. Send targets the focused Session, or the active broadcast set, and clears the draft only after at least one target accepted it; Cancel discards it."
+
 - id: settings.terminal-behavior
   area: settings
   feature: Settings for logging, OSC 52, and OSC notification behavior

@@ -121,6 +121,25 @@ type State struct {
 	activity []model.SessionID
 	problem  appconnection.Kind
 
+	// Broadcast and compose input state. The Session input hook runs off the
+	// UI thread and touches only the fields under inputMu; Tabs and surfaces
+	// remain UI-thread state. See input.go.
+	inputMu              sync.Mutex
+	broadcastPanel       bool
+	broadcasting         bool
+	broadcastTargets     map[model.SessionID]bool
+	broadcastResult      appsession.SendResult
+	composeOpen          bool
+	composeDraft         string
+	composeTrim          bool
+	composeDecodeEscapes bool
+	composeLineMode      appsession.ComposeLineMode
+	composeSending       bool
+	composeBroadcast     bool
+	composeResult        appsession.SendResult
+	composeSeq           uint64
+	composeCancel        context.CancelFunc
+
 	// desktopNotice is a non-blocking message for a deep-link or command-line
 	// target the app could not open. It is set and read on the UI thread.
 	desktopNotice DesktopNotice
@@ -205,7 +224,11 @@ func WithDetachedCloseRequest(fn func(model.TabID)) Option {
 // are no work Tabs.
 func NewState(opts ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &State{active: -1, nextTabNumber: 1, vaultVisible: true, ctx: ctx, cancel: cancel}
+	s := &State{
+		active: -1, nextTabNumber: 1, vaultVisible: true, ctx: ctx, cancel: cancel,
+		broadcastTargets: make(map[model.SessionID]bool),
+		composeLineMode:  appsession.ComposePaste,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

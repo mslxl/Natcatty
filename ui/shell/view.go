@@ -105,6 +105,7 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			return
 		}
 		if s.TabCount() > 0 {
+			terminalInputs(c, s, m, t)
 			activeTab(c, s, m, t)
 			return
 		}
