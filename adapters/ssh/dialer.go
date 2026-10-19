@@ -7,12 +7,14 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	xssh "golang.org/x/crypto/ssh"
@@ -201,6 +203,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 	endpoints := endpointsFor(req)
 	total := len(endpoints)
 	clients := make([]*xssh.Client, 0, total)
+	versions := make([]string, 0, total)
 	closeChain := func() {
 		for i := len(clients) - 1; i >= 0; i-- {
 			_ = clients[i].Close()
@@ -238,7 +241,8 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		reportChain(req, total, i+1, label, appconnection.ChainTCPConnected, nil)
 		reportChain(req, total, i+1, label, appconnection.ChainAuthenticating, nil)
 
-		client, err := d.handshake(ctx, raw, ep)
+		versioned := &versionRecorder{Conn: raw}
+		client, remoteVersion, err := d.handshake(ctx, versioned, ep)
 		if err != nil {
 			_ = raw.Close()
 			closeChain()
@@ -247,11 +251,16 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			return nil, annotated
 		}
 		clients = append(clients, client)
+		versions = append(versions, remoteVersion)
 		reportChain(req, total, i+1, label, appconnection.ChainConnected, nil)
 	}
 
 	final := clients[len(clients)-1]
-	return &sshClient{client: final, ancestors: clients[:len(clients)-1]}, nil
+	return &sshClient{
+		client:        final,
+		ancestors:     clients[:len(clients)-1],
+		remoteVersion: versions[len(versions)-1],
+	}, nil
 }
 
 func reportChain(req appconnection.DialRequest, total, index int, label string, status appconnection.ChainStatus, err error) {
@@ -293,7 +302,7 @@ func (d *Dialer) openForward(ctx context.Context, previous *xssh.Client, ep endp
 
 // handshake verifies the host key, authenticates, and returns the client. raw
 // is closed by the caller on failure.
-func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, error) {
+func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xssh.Client, string, error) {
 	port := ep.portOr22()
 	address := net.JoinHostPort(ep.hostname, strconv.Itoa(port))
 
@@ -318,13 +327,13 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	}
 	machine := newAuthMachine(authCtx, plan, ep.prompter, ep.hostname, d.agentDial)
 	if err := machine.Prepare(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer machine.Close()
 
 	offer, err := d.offerFor(ep.algorithms)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	config := &xssh.ClientConfig{
 		User:         ep.username,
@@ -381,22 +390,83 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 	select {
 	case result := <-done:
 		if result.err != nil {
-			return nil, classifyHandshakeFailure(ctx, handshakeDetail(raw, result.err))
+			return nil, "", classifyHandshakeFailure(ctx, handshakeDetail(raw, result.err))
 		}
 		if ep.onAuth != nil {
 			if candidate := machine.SuccessID(); candidate != "" {
 				ep.onAuth(candidate)
 			}
 		}
-		return xssh.NewClient(result.conn, result.chans, result.reqs), nil
+		return xssh.NewClient(result.conn, result.chans, result.reqs), versionOf(raw), nil
 	case <-timer.C:
-		return nil, abort(&appconnection.Error{
+		return nil, "", abort(&appconnection.Error{
 			Kind:  appconnection.KindTimeout,
 			Cause: fmt.Errorf("%w: authentication did not become ready within %s", appconnection.ErrAuthTimeout, d.authTimeout),
 		})
 	case <-ctx.Done():
-		return nil, abort(classifyDialFailure(ctx, ctx, ctx.Err()))
+		return nil, "", abort(classifyDialFailure(ctx, ctx, ctx.Err()))
 	}
+}
+
+// versionRecorder passively captures the server's SSH identification line as
+// x/crypto reads from the transport. It never consumes bytes the handshake
+// needs.
+type versionRecorder struct {
+	net.Conn
+	mu      sync.Mutex
+	buffer  []byte
+	version string
+	done    bool
+}
+
+func (v *versionRecorder) Read(p []byte) (int, error) {
+	n, err := v.Conn.Read(p)
+	if n > 0 {
+		v.record(p[:n])
+	}
+	return n, err
+}
+
+func (v *versionRecorder) record(data []byte) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.done {
+		return
+	}
+	v.buffer = append(v.buffer, data...)
+	for {
+		index := bytes.IndexByte(v.buffer, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSpace(string(v.buffer[:index]))
+		v.buffer = v.buffer[index+1:]
+		if strings.HasPrefix(line, "SSH-") {
+			v.version = line
+			v.done = true
+			v.buffer = nil
+			return
+		}
+	}
+	// A malformed or absurd banner must not grow without bound; x/crypto will
+	// reject the handshake itself.
+	if len(v.buffer) > 4<<10 {
+		v.buffer = nil
+		v.done = true
+	}
+}
+
+func (v *versionRecorder) Version() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.version
+}
+
+func versionOf(raw net.Conn) string {
+	if recorder, ok := raw.(*versionRecorder); ok {
+		return recorder.Version()
+	}
+	return ""
 }
 
 // handshakeDetail folds a process-backed transport's stderr into the

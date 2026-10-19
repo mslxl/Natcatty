@@ -139,7 +139,7 @@ func TestShellShowsOpenLocalSessionTabsAndTheirTerminal(t *testing.T) {
 	}
 	tt.Frame()
 
-	for _, want := range []string{"Local Session 1", "Local Session 2", "Running", "terminal-surface"} {
+	for _, want := range []string{"Local Session 1", "Local Session 2", "Active", "terminal-surface"} {
 		if !tt.HasText(want) {
 			t.Errorf("shell does not show %q, texts %q", want, tt.Texts())
 		}
@@ -164,8 +164,8 @@ func TestShellShowsExitStatusAndCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("Running") {
-		t.Fatalf("shell does not show the running status, texts %q", tt.Texts())
+	if !tt.HasText("Active") {
+		t.Fatalf("shell does not show the active connection status, texts %q", tt.Texts())
 	}
 
 	graph.transport.end()
@@ -180,8 +180,8 @@ func TestShellShowsExitStatusAndCode(t *testing.T) {
 	if !tt.HasText(want) {
 		t.Errorf("shell does not show %q, texts %q", want, tt.Texts())
 	}
-	if tt.HasText("Running") {
-		t.Errorf("shell still shows Running after the session exited, texts %q", tt.Texts())
+	if tt.HasText("Active") {
+		t.Errorf("shell still shows Active after the session exited, texts %q", tt.Texts())
 	}
 }
 
@@ -230,5 +230,39 @@ func TestShellLanguageControlRequestsLocale(t *testing.T) {
 	}
 	if len(requested) != 1 || requested[0] != "es" {
 		t.Fatalf("requested locales = %v, want [es]", requested)
+	}
+}
+
+func TestStatusTextShowsConnectionIndicators(t *testing.T) {
+	m := locales.In("en")
+	cases := []struct {
+		connection appsession.ConnectionStatus
+		want       string
+	}{
+		{appsession.ConnectionStatusActive, m.ConnectionStatusActive()},
+		{appsession.ConnectionStatusConnecting, m.ConnectionStatusConnecting()},
+		{appsession.ConnectionStatusReconnecting, m.ConnectionStatusReconnecting()},
+		{appsession.ConnectionStatusError, m.ConnectionStatusError()},
+		{"", m.ConnectionStatusActive()},
+	}
+	for _, test := range cases {
+		got := statusText(m, appsession.Snapshot{
+			Status:     appsession.StatusRunning,
+			Connection: test.connection,
+		})
+		if got != test.want {
+			t.Errorf("statusText(%q) = %q, want %q", test.connection, got, test.want)
+		}
+	}
+
+	// A permanent reconnect failure leaves the Session exited; the error
+	// indicator must not be hidden by the exit placeholder.
+	if got := statusText(m, appsession.Snapshot{
+		Status:      appsession.StatusExited,
+		Connection:  appsession.ConnectionStatusError,
+		ExitCode:    255,
+		HasExitCode: true,
+	}); got != m.ConnectionStatusError() {
+		t.Errorf("exited connection error = %q, want %q", got, m.ConnectionStatusError())
 	}
 }

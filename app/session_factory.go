@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -49,50 +52,169 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		route = resolved
 	}
 
-	lease, err := f.manager.Acquire(ctx, appconnection.Request{
-		HostID:     spec.HostID,
-		Hostname:   spec.Hostname,
-		Port:       spec.Port,
-		Username:   spec.Username,
-		Jumps:      route.Jumps,
-		Proxy:      route.Proxy,
-		Algorithms: route.Algorithms,
-	})
+	lease, terminal, err := f.acquireTerminal(ctx, spec, route)
 	if err != nil {
-		return nil, err
-	}
-
-	terminal, err := lease.OpenTerminal(ctx, appconnection.TerminalSpec{
-		Cols: spec.Cols,
-		Rows: spec.Rows,
-		Term: "xterm-256color",
-	})
-	if err != nil {
-		_ = lease.Release()
 		return nil, err
 	}
 	return &leasedTransport{terminal: terminal, lease: lease}, nil
 }
 
+// acquireTerminal opens a shell on a Connection lease. A parked transport that
+// dies during the liveness window is discarded by the pool; one retry opens a
+// fresh transport instead of failing the Session.
+func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, error) {
+	request := appconnection.Request{
+		HostID:            spec.HostID,
+		Hostname:          spec.Hostname,
+		Port:              spec.Port,
+		Username:          spec.Username,
+		Jumps:             route.Jumps,
+		Proxy:             route.Proxy,
+		Algorithms:        route.Algorithms,
+		ConfigFingerprint: route.ConfigFingerprint,
+		LeaseKind:         appconnection.LeaseShell,
+		Keepalive:         &appconnection.DefaultKeepalive,
+	}
+	specification := appconnection.TerminalSpec{
+		Cols: spec.Cols,
+		Rows: spec.Rows,
+		Term: "xterm-256color",
+	}
+	for attempt := 0; ; attempt++ {
+		lease, err := f.manager.Acquire(ctx, request)
+		if err != nil {
+			return nil, nil, err
+		}
+		terminal, err := lease.OpenTerminal(ctx, specification)
+		if err == nil {
+			return lease, terminal, nil
+		}
+		_ = lease.Discard()
+		if attempt == 0 && errors.Is(err, appconnection.ErrStaleTransport) {
+			continue
+		}
+		return nil, nil, err
+	}
+}
+
+// testConnection opens and releases a Connection for a Host without opening a
+// shell. Success means TCP, every jump hop, host-key verification, and
+// authentication all completed; a typed failure keeps its kind for the Vault
+// to localize.
+func testConnection(ctx context.Context, manager *appconnection.Manager, routes routeSource, host domainvault.Host) error {
+	if manager == nil {
+		return routeError(errors.New("app: no SSH connection manager"))
+	}
+	var route appconnection.Route
+	if routes != nil {
+		resolved, err := routes.Route(ctx, host.ID)
+		if err != nil {
+			return err
+		}
+		route = resolved
+	}
+	return manager.Test(ctx, appconnection.Request{
+		HostID:            host.ID,
+		Hostname:          host.Hostname,
+		Port:              host.Port,
+		Username:          host.Username,
+		Jumps:             route.Jumps,
+		Proxy:             route.Proxy,
+		Algorithms:        route.Algorithms,
+		ConfigFingerprint: route.ConfigFingerprint,
+		LeaseKind:         appconnection.LeaseShell,
+		Keepalive:         &appconnection.DefaultKeepalive,
+	})
+}
+
 // leasedTransport adapts an SSH terminal to the Session transport port and
-// ties the Connection lease to the transport's lifetime.
+// ties the Connection lease to the transport's lifetime. A transport that ends
+// in an error is discarded; a deliberate shell exit or a user-initiated close
+// of a live shell leaves the Connection parked for reuse.
 type leasedTransport struct {
 	terminal appconnection.Terminal
 	lease    *appconnection.Lease
+
+	mu     sync.Mutex
+	closed bool
+	ended  bool
+	end    appsession.End
 }
 
-func (t *leasedTransport) Read(p []byte) (int, error)  { return t.terminal.Read(p) }
-func (t *leasedTransport) Write(p []byte) (int, error) { return t.terminal.Write(p) }
+func (t *leasedTransport) Read(p []byte) (int, error) {
+	n, err := t.terminal.Read(p)
+	if err != nil {
+		// Classify now, while the channel still carries the remote exit status.
+		// Close must not have to ask a channel it just hung up why it ended.
+		t.End()
+	}
+	return n, err
+}
+
+func (t *leasedTransport) Write(p []byte) (int, error) {
+	n, err := t.terminal.Write(p)
+	if err != nil {
+		t.remember(appsession.End{Reason: appsession.EndReasonError})
+	}
+	return n, err
+}
 
 func (t *leasedTransport) Resize(cols, rows int) error { return t.terminal.Resize(cols, rows) }
 
-func (t *leasedTransport) Close() error {
-	terminalErr := t.terminal.Close()
-	leaseErr := t.lease.Release()
-	if terminalErr != nil {
-		return terminalErr
+// End maps the adapter's exit vocabulary onto the Session's. A terminal that
+// cannot classify its end is treated as a transport error so reconnect policy
+// gives it a chance. The first classification is cached, because asking after
+// Close loses the remote exit status.
+func (t *leasedTransport) End() appsession.End {
+	t.mu.Lock()
+	ended, end := t.ended, t.end
+	t.mu.Unlock()
+	if ended {
+		return end
 	}
-	return leaseErr
+
+	ending, ok := t.terminal.(appconnection.EndingTerminal)
+	if !ok {
+		return t.remember(appsession.End{Reason: appsession.EndReasonError})
+	}
+	reported := ending.End()
+	return t.remember(appsession.End{
+		Reason:      appsession.EndReason(reported.Reason),
+		ExitCode:    reported.ExitCode,
+		HasExitCode: reported.HasExitCode,
+	})
+}
+
+func (t *leasedTransport) remember(end appsession.End) appsession.End {
+	t.mu.Lock()
+	if !t.ended {
+		t.ended = true
+		t.end = end
+	}
+	t.mu.Unlock()
+	return end
+}
+
+func (t *leasedTransport) Close() error {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return nil
+	}
+	t.closed = true
+	ended, end := t.ended, t.end
+	t.mu.Unlock()
+
+	terminalErr := t.terminal.Close()
+	// Only a transport that itself ended in an error or a bare close is
+	// unusable. Closing a live shell (user close, app quit) frees the lease so
+	// the Connection can be parked while other leases keep it open.
+	if ended && (end.Reason == appsession.EndReasonError || end.Reason == appsession.EndReasonClosed) {
+		_ = t.lease.Discard()
+	} else {
+		_ = t.lease.Release()
+	}
+	return terminalErr
 }
 
 // hostSecrets is the Vault read the password source needs.
@@ -133,6 +255,13 @@ type routeVault interface {
 	Secret(ctx context.Context, id model.HostID, field string) (string, error)
 }
 
+// authMaterialResolver is implemented by the Vault service. Route fakes need
+// not implement it; when present, its digest scopes pool reuse to the resolved
+// credentials so rotating a password or Key never reuses a parked transport.
+type authMaterialResolver interface {
+	ResolveAuth(ctx context.Context, hostID model.HostID) (appvault.ResolvedAuth, error)
+}
+
 // vaultRoutes resolves a Host's ordered jump chain and its effective proxy.
 // The proxy belongs to the first endpoint, matching the original: the first
 // jump's proxy wins, otherwise the target Host's proxy is used. Later hops
@@ -150,7 +279,10 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 		return appconnection.Route{}, routeError(fmt.Errorf("Host %s: %w", id, err))
 	}
 
-	route := appconnection.Route{Algorithms: algorithmPolicy(target)}
+	route := appconnection.Route{
+		Algorithms:        algorithmPolicy(target),
+		ConfigFingerprint: r.configFingerprint(ctx, target),
+	}
 	var first *domainvault.Host
 	if target.HostChain != nil {
 		for _, jumpID := range target.HostChain.HostIDs {
@@ -162,12 +294,13 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 				first = &jump
 			}
 			route.Jumps = append(route.Jumps, appconnection.Hop{
-				HostID:     jump.ID,
-				Label:      jump.Label,
-				Hostname:   jump.Hostname,
-				Port:       jump.Port,
-				Username:   jump.Username,
-				Algorithms: algorithmPolicy(jump),
+				HostID:            jump.ID,
+				Label:             jump.Label,
+				Hostname:          jump.Hostname,
+				Port:              jump.Port,
+				Username:          jump.Username,
+				Algorithms:        algorithmPolicy(jump),
+				ConfigFingerprint: r.configFingerprint(ctx, jump),
 			})
 		}
 	}
@@ -229,6 +362,48 @@ func algorithmPolicy(host domainvault.Host) appconnection.AlgorithmPolicy {
 		policy.HostKeys = append([]string(nil), overrides.HostKeys...)
 	}
 	return policy
+}
+
+// configFingerprint digests the connection configuration that scopes pool
+// reuse. A changed credential selection, rotated credential, MFA requirement,
+// or algorithm policy opens a fresh authenticated transport instead of reusing
+// a parked one built from the old configuration.
+func (r vaultRoutes) configFingerprint(ctx context.Context, host domainvault.Host) string {
+	return configFingerprint(host, r.authMaterial(ctx, host.ID))
+}
+
+// authMaterial digests the credentials the Vault would offer this Host. The
+// raw values are never retained: only the digest reaches the pool key. A Vault
+// that cannot resolve them yields a stable placeholder, and the dial itself
+// reports the typed failure.
+func (r vaultRoutes) authMaterial(ctx context.Context, id model.HostID) string {
+	resolver, ok := r.vault.(authMaterialResolver)
+	if !ok {
+		return ""
+	}
+	resolved, err := resolver.ResolveAuth(ctx, id)
+	if err != nil {
+		return "unresolved"
+	}
+	digest := sha256.New()
+	fmt.Fprintf(digest, "password=%q\nmissing=%t\n", resolved.Password, resolved.MissingKey)
+	if resolved.Key != nil {
+		fmt.Fprintf(digest, "key=%q\npassphrase=%q\ncertificate=%q\n",
+			resolved.Key.PrivateKey, resolved.Key.Passphrase, resolved.Key.Certificate)
+	}
+	return hex.EncodeToString(digest.Sum(nil))[:32]
+}
+
+func configFingerprint(host domainvault.Host, material string) string {
+	digest := sha256.New()
+	fmt.Fprintf(digest, "auth=%q\nidentity=%q\nkey=%q\nagent=%t\nmfa=%t\nlegacy=%t\necdsa=%t\nmaterial=%s\n",
+		host.AuthMethod, host.IdentityID, host.KeyID, host.UseSSHAgent, host.RequiresMFA,
+		host.LegacyAlgorithms, host.SkipEcdsaHostKey, material)
+	if overrides := host.Algorithms; overrides != nil {
+		fmt.Fprintf(digest, "ciphers=%q\nkex=%q\nmacs=%q\nhostkeys=%q\n",
+			overrides.Ciphers, overrides.KeyExchanges, overrides.MACs, overrides.HostKeys)
+	}
+	return hex.EncodeToString(digest.Sum(nil))[:32]
 }
 
 func routeError(cause error) error {

@@ -44,6 +44,20 @@
     }
   },
   "sessionClosed": "Closed",
+  "connectionStatusActive": "Active",
+  "connectionStatusConnecting": "Connecting…",
+  "connectionStatusReconnecting": "Reconnecting…",
+  "connectionStatusError": "Connection error",
+  "connectionConnectingTo": "Connecting to {host}…",
+  "@connectionConnectingTo": {
+    "description": "The shell's connecting indicator naming the Host being reached.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-1"
+      }
+    }
+  },
   "commandFailed": "Could not complete the command",
   "vaultHostListTitle": "Hosts ({count})",
   "@vaultHostListTitle": {
@@ -160,6 +174,9 @@
   },
   "appLockProblemFailed": "The app could not be unlocked.",
   "vaultHostConnect": "Connect",
+  "vaultHostTest": "Test",
+  "vaultHostTesting": "Testing…",
+  "vaultHostTestSuccess": "Connection successful.",
   "connectionErrorAuth": "Authentication failed. Check the username and the saved password.",
   "connectionErrorNetwork": "Could not reach the host. Check the network and the port.",
   "connectionErrorTimeout": "The connection timed out.",

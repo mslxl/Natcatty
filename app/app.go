@@ -139,6 +139,7 @@ func run(afterReady func(*mygo.Window)) error {
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
 	// preventing the app from starting.
+	routes := vaultRoutes{vault: vaultService}
 	var shellState *state.State
 	vaultState := vaultstate.NewState(
 		vaultService,
@@ -151,11 +152,14 @@ func run(afterReady func(*mygo.Window)) error {
 				_ = shellState.OpenHost(host)
 			}
 		}),
+		vaultstate.WithConnectionTest(func(ctx context.Context, host domainvault.Host) error {
+			return testConnection(ctx, connections, routes, host)
+		}),
 	)
 	_ = vaultState.Reload()
 
 	sessions := appsession.NewService(newTransportFactory(
-		localpty.Factory{}, connections, vaultRoutes{vault: vaultService},
+		localpty.Factory{}, connections, routes,
 	))
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
@@ -183,6 +187,7 @@ func run(afterReady func(*mygo.Window)) error {
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		shellState.Shutdown()
 		sessions.CloseAll()
+		connections.CloseAll()
 	})
 
 	mygo.App.WhenReady(func() {
@@ -209,6 +214,7 @@ func run(afterReady func(*mygo.Window)) error {
 		win.OnClosed(func() {
 			shellState.Shutdown()
 			sessions.CloseAll()
+			connections.CloseAll()
 		})
 
 		mygo.App.OnLocaleChanged(func(tag string) {

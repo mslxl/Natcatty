@@ -51,6 +51,11 @@ _Avoid_: client, socket
 A counted claim on a shared Connection held by a session or forwarding rule.
 _Avoid_: reference, handle
 
+**Idle Parking**:
+The zero-lease state of a Connection kept open for reuse until its idle TTL expires
+or the app quits.
+_Avoid_: cache, warm pool
+
 **Session**:
 A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTerminal)
 with its own lifecycle, transport, and terminal surface.

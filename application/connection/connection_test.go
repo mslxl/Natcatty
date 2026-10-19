@@ -78,11 +78,13 @@ type fakeDialer struct {
 	authMethod    string
 	client        *fakeClient
 	err           error
+	dials         int
 }
 
 func (f *fakeDialer) Dial(ctx context.Context, req DialRequest) (Client, error) {
 	f.mu.Lock()
 	f.req = req
+	f.dials++
 	f.mu.Unlock()
 	if f.verify && req.VerifyHostKey != nil {
 		if err := req.VerifyHostKey(ctx, f.key); err != nil {
@@ -114,6 +116,12 @@ func (f *fakeDialer) authenticated() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.authAttempted
+}
+
+func (f *fakeDialer) dialCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dials
 }
 
 type fakeKnownHosts struct {
@@ -177,7 +185,7 @@ func sshRequest() Request {
 	return Request{HostID: "host-1", Hostname: "example.com", Port: 22, Username: "root"}
 }
 
-func TestAcquireUsesTheStoredPasswordAndOpensATerminal(t *testing.T) {
+func TestAcquireUsesTheStoredPasswordAndParksTheTransport(t *testing.T) {
 	manager, passwords, dialer, _, _ := newTestManager(t)
 
 	lease, err := manager.Acquire(context.Background(), sshRequest())
@@ -207,8 +215,22 @@ func TestAcquireUsesTheStoredPasswordAndOpensATerminal(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
+	// Ticket 09 parks the last released transport for reuse instead of
+	// closing it. A second consumer reaches the same physical connection.
+	if dialer.client.isClosed() {
+		t.Fatal("releasing the last lease closed a transport that should be parked")
+	}
+	second, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	if got := dialer.dialCount(); got != 1 {
+		t.Fatalf("dial count = %d, want 1 while the transport is parked", got)
+	}
+	_ = second.Release()
+	manager.CloseAll()
 	if !dialer.client.isClosed() {
-		t.Fatal("releasing the last lease did not close the physical connection")
+		t.Fatal("CloseAll did not close the parked transport")
 	}
 }
 
@@ -473,13 +495,16 @@ func TestAcquireCachesTheSuccessfulMethodAndClearsItOnFailure(t *testing.T) {
 		t.Fatalf("cached method = %q, %v, want password", method, ok)
 	}
 
-	// The next automatic connection asks to promote the cached password, but
-	// password promotion is intentionally disabled, so the order is unchanged.
+	// Force a fresh dial each round: the parked transport is reused only for
+	// an identical effective configuration, and this test exercises what a
+	// later physical connection asks for.
+	second := sshRequest()
+	second.ConfigFingerprint = "round-2"
 	source.plan = BuildAuthPlan(AuthSpec{
 		Username: "root", Mode: AuthModeAuto, Password: "s3cret", UseAgent: true,
 	})
 	dialer.authMethod = CandidateAgent
-	lease, err = manager.Acquire(context.Background(), sshRequest())
+	lease, err = manager.Acquire(context.Background(), second)
 	if err != nil {
 		t.Fatalf("second Acquire: %v", err)
 	}
@@ -493,7 +518,9 @@ func TestAcquireCachesTheSuccessfulMethodAndClearsItOnFailure(t *testing.T) {
 	}
 
 	dialer.err = &Error{Kind: KindAuth, Cause: ErrAuthentication}
-	if _, err := manager.Acquire(context.Background(), sshRequest()); err == nil {
+	third := sshRequest()
+	third.ConfigFingerprint = "round-3"
+	if _, err := manager.Acquire(context.Background(), third); err == nil {
 		t.Fatal("Acquire succeeded, want an auth failure")
 	}
 	if _, ok := manager.authCache.Get("root@example.com:22"); ok {
