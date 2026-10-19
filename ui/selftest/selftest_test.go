@@ -11,11 +11,21 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// TestF12ThenTicket13RunsTheCheck is the deterministic keyboard proof: it
-// sends the real F12, 1, 3 key events through MyGo's shortcut registration and
+// install mirrors the composition root: Bind runs at the window's root
+// scope, while View may sit inside a gate or another container.
+func install(harness *Harness, content func(*ui.Context)) func(*ui.Context) {
+	view := harness.View(content)
+	return func(c *ui.Context) {
+		harness.Bind(c)
+		view(c)
+	}
+}
+
+// TestF11ThenTicket13RunsTheCheck is the deterministic keyboard proof: it
+// sends the real F11, 1, 3 key events through MyGo's shortcut registration and
 // asserts that the overlay opened and the ticket 13 check ran. It needs no
 // foreground window or OS modifier state.
-func TestF12ThenTicket13RunsTheCheck(t *testing.T) {
+func TestF11ThenTicket13RunsTheCheck(t *testing.T) {
 	registry := NewRegistry()
 	invoked := 0
 	registry.Register(Check{
@@ -36,15 +46,15 @@ func TestF12ThenTicket13RunsTheCheck(t *testing.T) {
 		WithResultDir(dir),
 		WithClock(func() time.Time { return stamp }),
 	)
-	view := harness.Wrap(func(c *ui.Context) { ui.Text(c, "content") })
+	view := install(harness, func(c *ui.Context) { ui.Text(c, "content") })
 	tester := ui.NewTester(view, 800, 600)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	tester.Key(0, ui.KeyF12)
+	tester.Key(0, ui.KeyF11)
 	tester.Frame()
 	if !harness.Visible() || harness.State() != StateMenu {
-		t.Fatalf("F12 did not open the self-test overlay: state = %v", harness.State())
+		t.Fatalf("F11 did not open the self-test overlay: state = %v", harness.State())
 	}
 	if !tester.HasText("Self-test") || !tester.HasText("13  keyboard proof") {
 		t.Fatalf("the overlay does not list the registered check: %v", tester.Texts())
@@ -58,7 +68,7 @@ func TestF12ThenTicket13RunsTheCheck(t *testing.T) {
 	tester.Key(0, ui.Key3)
 	tester.Frame()
 	if invoked != 1 {
-		t.Fatalf("F12 1 3 invoked the check %d times, want 1", invoked)
+		t.Fatalf("F11 1 3 invoked the check %d times, want 1", invoked)
 	}
 	if harness.State() != StatePassed {
 		t.Fatalf("state = %v after the check passed, want StatePassed", harness.State())
@@ -133,11 +143,11 @@ func TestOverlayFitsAtDefaultAndMinimumSizes(t *testing.T) {
 			},
 		})
 		harness := NewHarness(registry, WithResultDir(t.TempDir()))
-		tester := ui.NewTester(harness.Wrap(func(c *ui.Context) { ui.Text(c, "content") }), size[0], size[1])
+		tester := ui.NewTester(install(harness, func(c *ui.Context) { ui.Text(c, "content") }), size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
-		tester.Key(0, ui.KeyF12)
+		tester.Key(0, ui.KeyF11)
 		tester.Frame()
 		assertOverlayFits(t, tester, size[0], size[1])
 		if !tester.HasText("Self-test") || !tester.HasText("13  Detached windows") {
@@ -168,7 +178,8 @@ func assertOverlayFits(t *testing.T, tester *ui.Tester, width, height int) {
 	const epsilon = 0.5
 	var previous ui.Rect
 	for _, text := range tester.Texts() {
-		if text == "content" {
+		// The backdrop's accessibility label spans the window on purpose.
+		if text == "content" || text == "Self-test overlay" {
 			continue
 		}
 		r, ok := tester.Find(text)
@@ -198,11 +209,11 @@ func TestEscapeCancelsTheOverlay(t *testing.T) {
 		},
 	}}})
 	harness := NewHarness(registry, WithResultDir(t.TempDir()))
-	tester := ui.NewTester(harness.Wrap(nil), 640, 480)
+	tester := ui.NewTester(install(harness, nil), 640, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	tester.Key(0, ui.KeyF12)
+	tester.Key(0, ui.KeyF11)
 	tester.Frame()
 	tester.Key(0, ui.KeyEscape)
 	tester.Frame()
@@ -211,34 +222,67 @@ func TestEscapeCancelsTheOverlay(t *testing.T) {
 	}
 }
 
-// TestInterceptKeyIsTheTerminalBridge proves the focused-terminal path uses
-// the same handler as the window shortcut.
-func TestInterceptKeyIsTheTerminalBridge(t *testing.T) {
+// TestOverlayOpensThroughGateAndConsumesTypedDigits proves the shortcut is a
+// window shortcut even when the view is built inside a container (as the App
+// Lock gate wraps it), and that the overlay takes the keyboard so the digits
+// that select a check never reach the terminal behind it.
+func TestOverlayOpensThroughGateAndConsumesTypedDigits(t *testing.T) {
 	registry := NewRegistry()
 	invoked := 0
-	registry.Register(Check{Ticket: 13, Name: "bridge", Steps: []Step{{
-		Name: "bridge",
+	registry.Register(Check{Ticket: 13, Name: "gate proof", Steps: []Step{{
+		Name: "invoke",
 		Run: func(*ui.Context) Outcome {
 			invoked++
 			return Passed("ran", "")
 		},
 	}}})
 	harness := NewHarness(registry, WithResultDir(t.TempDir()))
-	tester := ui.NewTester(harness.Wrap(nil), 640, 480)
+
+	var typed []string
+	content := func(c *ui.Context) {
+		// A focused terminal stand-in: it would receive any text the overlay
+		// failed to take.
+		ui.Column(c).Fill().Children(func() {
+			ui.Box(c.Key("terminal")).Size(600, 400).Focusable().AutoFocus().
+				HandleInput(func(event ui.InputEvent) bool {
+					if event.Kind == ui.InputText {
+						typed = append(typed, event.Text)
+						return true
+					}
+					return false
+				})
+		})
+	}
+	tester := ui.NewTester(install(harness, content), 800, 600)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	handled := harness.InterceptKey(0, ui.KeyF12)
-	if !handled || harness.State() != StateMenu {
-		t.Fatalf("the terminal bridge did not open the overlay: %v, %v", handled, harness.State())
+	// Control: text typed before the overlay reaches the focused terminal.
+	tester.Type("x")
+	tester.Frame()
+	if len(typed) != 1 || typed[0] != "x" {
+		t.Fatalf("the focused terminal received %q before the overlay", typed)
 	}
-	harness.InterceptKey(0, ui.Key1)
-	harness.InterceptKey(0, ui.Key3)
+
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	if harness.State() != StateMenu {
+		t.Fatalf("F11 inside a container did not open the overlay: %v", harness.State())
+	}
+	typed = nil
+	tester.TypeKey(0, ui.Key1, "1")
+	tester.Frame()
+	tester.TypeKey(0, ui.Key3, "3")
 	tester.Frame()
 	if invoked != 1 {
-		t.Fatalf("the terminal bridge invoked the check %d times, want 1", invoked)
+		t.Fatalf("F11 1 3 invoked the check %d times, want 1", invoked)
 	}
-	if harness.InterceptKey(ui.Modifiers(1), ui.KeyF12) {
-		t.Fatal("the bridge took a modified key")
+	if len(typed) != 0 {
+		t.Fatalf("the overlay leaked %q into the focused terminal", typed)
+	}
+	tester.Type("13")
+	tester.Frame()
+	if len(typed) != 0 {
+		t.Fatalf("the overlay leaked raw text %q into the focused terminal", typed)
 	}
 }

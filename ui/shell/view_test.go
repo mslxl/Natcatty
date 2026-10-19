@@ -10,9 +10,26 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	vaultui "github.com/mslxl/natcatty/ui/vault"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
+
+// emptyVaultHosts is the Vault's repository port with no Hosts, so the shell
+// tests render the real Vault surface and its New control.
+type emptyVaultHosts struct{}
+
+func (emptyVaultHosts) List(context.Context) ([]domainvault.Host, error) { return nil, nil }
+func (emptyVaultHosts) Create(context.Context, domainvault.Draft) (domainvault.Host, error) {
+	return domainvault.Host{}, nil
+}
+func (emptyVaultHosts) Update(context.Context, model.HostID, domainvault.Draft) (domainvault.Host, error) {
+	return domainvault.Host{}, nil
+}
+func (emptyVaultHosts) Delete(context.Context, model.HostID) error { return nil }
 
 // fakeTransport keeps a Session alive until the test ends it.
 type fakeTransport struct {
@@ -77,6 +94,79 @@ func newTestGraph(t *testing.T) *testGraph {
 		return fakeSurface{}, nil
 	}))
 	return graph
+}
+
+// TestShellLayoutFitsAtDefaultAndMinimumSizes proves the responsive layout:
+// the tab strip, the Vault's New control, and the terminal Pane stay inside
+// the content column (right of the fixed sidebar) and inside the window, and
+// the Pane does not overlap the tab strip.
+func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range [][2]int{{1100, 720}, {720, 480}, {1300, 800}} {
+		service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
+		t.Cleanup(service.CloseAll)
+		vault := vaultstate.NewState(emptyVaultHosts{})
+		shellState := state.NewState(
+			state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+				return fakeSurface{}, nil
+			}),
+			state.WithVault(vaultui.View(vault)),
+		)
+		tt := ui.NewTester(View(shellState), size[0], size[1])
+		tt.SetLocale("en")
+		tt.Frame()
+
+		// The Vault lists Hosts and offers New Host.
+		tt.Frame()
+		newHost := assertContentInside(t, tt, size[0], size[1], m.VaultHostNew())
+		listTitle := assertContentInside(t, tt, size[0], size[1], m.VaultHostListTitle(0))
+		if listTitle.X+listTitle.W > newHost.X {
+			t.Fatalf("%dx%d New Host overlaps the host list title: %+v, %+v",
+				size[0], size[1], listTitle, newHost)
+		}
+
+		if err := shellState.NewTab(); err != nil {
+			t.Fatal(err)
+		}
+		shellState.ShowVault()
+		tt.Frame()
+
+		// The tab strip stays in the content column and the title is readable.
+		title := assertContentInside(t, tt, size[0], size[1], "Local Session 1")
+		if title.W < 60 {
+			t.Fatalf("%dx%d tab title is squeezed to %.1f DIPs: %+v",
+				size[0], size[1], title.W, title)
+		}
+		assertContentInside(t, tt, size[0], size[1], m.VaultHostNew())
+
+		shellState.SelectTab(0)
+		tt.Frame()
+		pane := assertContentInside(t, tt, size[0], size[1], "terminal-surface")
+		if pane.W < (float32(size[0])-sidebarWidth)*0.5 {
+			t.Fatalf("%dx%d terminal Pane is squeezed to %.1f DIPs: %+v",
+				size[0], size[1], pane.W, pane)
+		}
+		if pane.Y < title.Y+title.H {
+			t.Fatalf("%dx%d terminal Pane overlaps the tab strip: pane %+v, tab %+v",
+				size[0], size[1], pane, title)
+		}
+	}
+}
+
+// assertContentInside finds text and asserts its box is right of the sidebar
+// and inside the window.
+func assertContentInside(t *testing.T, tester *ui.Tester, width, height int, text string) ui.Rect {
+	t.Helper()
+	rect, ok := tester.Find(text)
+	if !ok {
+		t.Fatalf("%dx%d does not show %q: %v", width, height, text, tester.Texts())
+	}
+	const epsilon = 0.5
+	if rect.X < sidebarWidth-epsilon || rect.Y < -epsilon ||
+		rect.X+rect.W > float32(width)+epsilon || rect.Y+rect.H > float32(height)+epsilon {
+		t.Fatalf("%q is clipped at %dx%d: box %+v", text, width, height, rect)
+	}
+	return rect
 }
 
 func TestShellShowsVaultAndSettingsNavigation(t *testing.T) {

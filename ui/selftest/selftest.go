@@ -10,13 +10,22 @@
 // path, and the automated tester cannot hold OS modifier state. The keys are
 // plain, without modifiers:
 //
-//	F12        show the check list
-//	1 3        the two-digit ticket number; F12 1 3 runs ticket 13
+//	F11        show the check list
+//	1 3        the two-digit ticket number; F11 1 3 runs ticket 13
 //	Escape     cancel the overlay or a running check
 //
-// A focused terminal consumes keys before window shortcuts, so the terminal
-// surface also forwards keys through InterceptKey; both paths call the same
-// handler.
+// F11 is deliberate: MyGo v0.5.5 reserves plain F12 for its inspector
+// (ui/input.go, ui/inspector.go), which is enabled in a normal `go build`.
+// F11 is not reserved by the framework's native UI.
+//
+// Bind must be called with the window's root Context, before any App Lock
+// gate or other container builds children: Context.OnShortcut then registers
+// a window shortcut rather than an element-scoped one. View builds the
+// content and the overlay; it can live inside the gate.
+//
+// While the overlay is open, its backdrop takes the keyboard focus and
+// consumes text input, so the digits that select a check never reach a
+// focused terminal behind it.
 //
 // # Result
 //
@@ -115,7 +124,7 @@ func NewRegistry() *Registry {
 	return &Registry{checks: make(map[int]Check)}
 }
 
-// Register adds a check. Tickets are exactly two digits so F12 plus two keys
+// Register adds a check. Tickets are exactly two digits so F11 plus two keys
 // identifies every check.
 func (r *Registry) Register(check Check) {
 	if check.Ticket < 10 || check.Ticket > 99 {
@@ -157,7 +166,7 @@ func (r *Registry) Checks() []Check {
 type State int
 
 const (
-	// StateHidden draws nothing and accepts only F12.
+	// StateHidden draws nothing and accepts only F11.
 	StateHidden State = iota
 	// StateMenu lists the checks and accepts a two-digit ticket.
 	StateMenu
@@ -190,21 +199,12 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// WithRedrawRequest sets the function that asks the window host to draw the
-// next frame after a key arrives outside a build, as from a focused terminal.
-func WithRedrawRequest(fn func()) Option {
-	return func(h *Harness) {
-		h.redraw = fn
-	}
-}
-
 // Harness owns the overlay and the running check. It is touched only on the
 // UI thread.
 type Harness struct {
 	registry  *Registry
 	resultDir string
 	now       func() time.Time
-	redraw    func()
 
 	state   State
 	digits  string
@@ -231,70 +231,14 @@ func NewHarness(registry *Registry, opts ...Option) *Harness {
 	return harness
 }
 
-// Wrap renders content and adds the self-test shortcut, overlay, and step
-// driver around it. Install it on the main window only.
-func (h *Harness) Wrap(content func(*ui.Context)) func(*ui.Context) {
-	return func(c *ui.Context) {
-		if content != nil {
-			content(c)
-		}
-		h.register(c)
-		h.advance(c)
-		h.draw(c)
+// Bind registers the self-test window shortcuts. Call it with the window's
+// root Context before any container builds children, so MyGo treats the keys
+// as window shortcuts. Install it on the main window only.
+func (h *Harness) Bind(c *ui.Context) {
+	if c == nil {
+		return
 	}
-}
-
-// State returns the overlay phase.
-func (h *Harness) State() State { return h.state }
-
-// Visible reports whether the overlay is drawn.
-func (h *Harness) Visible() bool { return h.state != StateHidden }
-
-// Running reports whether a check is executing.
-func (h *Harness) Running() bool { return h.state == StateRunning }
-
-// LastResult returns the most recent finished result.
-func (h *Harness) LastResult() (Result, bool) {
-	if h.state != StatePassed && h.state != StateFailed {
-		return Result{}, false
-	}
-	return h.result, true
-}
-
-// InterceptKey is the bridge for a focused terminal, whose key handler takes
-// keys before window shortcuts. It reports whether the key belongs to the
-// self-test and was handled, so the terminal must not send it to the program.
-func (h *Harness) InterceptKey(mods ui.Modifiers, key ui.Key) bool {
-	if mods != 0 {
-		return false
-	}
-	switch {
-	case key == ui.KeyF12 && h.state != StateRunning:
-		h.toggle()
-		h.requestRedraw()
-		return true
-	case h.state == StateHidden:
-		return false
-	case key == ui.KeyEscape:
-		h.cancel()
-		h.requestRedraw()
-		return true
-	case key >= ui.Key0 && key <= ui.Key9 && h.state != StateRunning:
-		h.pressDigit(int(key - ui.Key0))
-		h.requestRedraw()
-		return true
-	}
-	return false
-}
-
-func (h *Harness) requestRedraw() {
-	if h.redraw != nil {
-		h.redraw()
-	}
-}
-
-func (h *Harness) register(c *ui.Context) {
-	c.OnShortcut(0, ui.KeyF12, func() {
+	c.OnShortcut(0, ui.KeyF11, func() {
 		if h.state != StateRunning {
 			h.toggle()
 			c.Invalidate()
@@ -317,6 +261,35 @@ func (h *Harness) register(c *ui.Context) {
 			c.Invalidate()
 		})
 	}
+}
+
+// View renders content and, above it, the overlay and step driver. Bind must
+// already have run at the window's root scope.
+func (h *Harness) View(content func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		if content != nil {
+			content(c)
+		}
+		h.advance(c)
+		h.draw(c)
+	}
+}
+
+// State returns the overlay phase.
+func (h *Harness) State() State { return h.state }
+
+// Visible reports whether the overlay is drawn.
+func (h *Harness) Visible() bool { return h.state != StateHidden }
+
+// Running reports whether a check is executing.
+func (h *Harness) Running() bool { return h.state == StateRunning }
+
+// LastResult returns the most recent finished result.
+func (h *Harness) LastResult() (Result, bool) {
+	if h.state != StatePassed && h.state != StateFailed {
+		return Result{}, false
+	}
+	return h.result, true
 }
 
 func (h *Harness) toggle() {
@@ -478,15 +451,27 @@ func (h *Harness) draw(c *ui.Context) {
 	theme := c.Theme()
 	ui.Overlay(c, func() {
 		// Dim the window so the developer overlay is unmistakably on top and
-		// the content behind it stays readable but muted.
-		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			Background(ui.RGBA(0, 0, 0, 0.30))
+		// the content behind it stays readable but muted. The backdrop also
+		// takes the keyboard focus and swallows text: a focused terminal
+		// behind the overlay must not receive the digits that select a check.
+		backdrop := ui.Box(c.Key("selftest-backdrop")).Absolute().
+			Left(0).Top(0).Right(0).Bottom(0).
+			Background(ui.RGBA(0, 0, 0, 0.30)).
+			Focusable().AutoFocus().Label("Self-test overlay")
+		backdrop.HandleInput(func(event ui.InputEvent) bool {
+			switch event.Kind {
+			case ui.InputText, ui.InputCompose, ui.InputCommand,
+				ui.InputKeyDown, ui.InputKeyUp:
+				return true
+			}
+			return false
+		})
 		ui.Column(c).Absolute().Top(16).Left(16).Width(520).Padding(12).Gap(6).
 			Radius(8).Background(theme.Surface).Border(1, theme.Accent).Children(func() {
 			ui.Text(c, "Self-test").FontSize(15).Bold().TextColor(theme.Accent)
 			switch h.state {
 			case StateMenu:
-				ui.Text(c, "F12, then a two-digit ticket number. Escape cancels.").
+				ui.Text(c, "F11, then a two-digit ticket number. Escape cancels.").
 					FontSize(12).TextColor(theme.TextMuted)
 				for _, check := range h.registry.Checks() {
 					ui.Text(c, fmt.Sprintf("%02d  %s", check.Ticket, check.Name)).FontSize(12)
@@ -519,7 +504,7 @@ func (h *Harness) draw(c *ui.Context) {
 				if h.result.Path != "" {
 					ui.Text(c, "Result: "+h.result.Path).FontSize(11).TextColor(theme.TextMuted)
 				}
-				ui.Text(c, "F12 closes, Escape cancels.").FontSize(11).TextColor(theme.TextMuted)
+				ui.Text(c, "F11 closes, Escape cancels.").FontSize(11).TextColor(theme.TextMuted)
 			}
 		})
 	})

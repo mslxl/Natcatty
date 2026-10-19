@@ -72,7 +72,9 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 }
 
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
-	strip := ui.Column(c).Width(5).Fill().Background(t.Border)
+	// FillHeight, not Fill: Fill would make this 5-DIP insertion strip claim
+	// the whole tab strip width and push the Tab bodies apart.
+	strip := ui.Column(c).Width(5).FillHeight().Background(t.Border)
 	if drag, over := ui.DragOver[state.DragItem](strip); over &&
 		drag.Kind == state.DragKindTab && drag.TabID != target {
 		strip.Background(t.Accent)
@@ -113,7 +115,10 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		}
 	}
 	body.Children(func() {
-		title := ui.Text(c, tabTitle(m, info)).FontSize(12).SingleLine()
+		// SingleLine text can shrink to nothing in a flex row; give the title
+		// a readable minimum so it is not squeezed out beside the menu and
+		// close controls.
+		title := ui.Text(c, tabTitle(m, info)).FontSize(12).SingleLine().MinWidth(96)
 		if info.Active {
 			title.Bold()
 		}
@@ -219,7 +224,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}
-			pane := ui.Column(c).Fill().Background(t.Background)
+			pane := ui.Column(c).Grow(1).FillHeight().Background(t.Background)
 			if info.Focused {
 				pane.Border(1, t.Accent)
 			}
@@ -245,7 +250,9 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 	if horizontal {
 		zone = ui.Column(c).Height(6).FillWidth().Background(t.Border)
 	} else {
-		zone = ui.Column(c).Width(6).Fill().Background(t.Border)
+		// FillHeight, not Fill: a side zone is 6 DIPs wide, and Fill would
+		// claim the row's whole width and squeeze the Pane beside it.
+		zone = ui.Column(c).Width(6).FillHeight().Background(t.Border)
 	}
 	if drag, over := ui.DragOver[state.DragItem](zone); over &&
 		drag.Kind == state.DragKindPane && drag.PaneID != paneID {
