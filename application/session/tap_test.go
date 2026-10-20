@@ -154,7 +154,7 @@ func TestTapOSC9And777Notifications(t *testing.T) {
 
 func TestTapOSC133TracksCommands(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
-	if _, changed, _ := tap.handleInput([]byte("echo hi\r"), tapAt(0)); !changed {
+	if _, changed, _, _ := tap.handleInput([]byte("echo hi\r"), tapAt(0)); !changed {
 		t.Fatal("submitting a command did not change state")
 	}
 	state := tap.state(tapAt(0))
@@ -279,14 +279,14 @@ func TestTapGatesYMODEM(t *testing.T) {
 func TestTapTransferInputGateAndCtrlC(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.observe([]byte("**\x18Bdata"), tapAt(0))
-	forwarded, changed, _ := tap.handleInput([]byte("rm -rf /\r"), tapAt(time.Second))
+	forwarded, changed, _, _ := tap.handleInput([]byte("rm -rf /\r"), tapAt(time.Second))
 	if forwarded != nil || changed {
 		t.Fatalf("normal input passed through the gate: %q", forwarded)
 	}
 	if !tap.state(tapAt(time.Second)).Transfer.Active {
 		t.Fatal("gate closed on normal input")
 	}
-	forwarded, changed, transfer := tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
+	forwarded, changed, _, transfer := tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
 	if !changed || !bytes.Equal(forwarded, []byte{0x18, 0x18, 0x18, 0x18, 0x18}) {
 		t.Fatalf("Ctrl+C abort = %q changed=%v", forwarded, changed)
 	}

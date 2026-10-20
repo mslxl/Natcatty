@@ -9,11 +9,13 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -45,6 +47,16 @@ type Options struct {
 	ReceiveYmodem func()
 	// OnEncoding persists a user's live encoding choice.
 	OnEncoding func(domainterminal.Encoding)
+	// Suggest returns command suggestions for the line being typed. Nil leaves
+	// autocomplete off.
+	Suggest func(input, scope string) []autocomplete.Suggestion
+	// AutocompleteDisplay reports whether the popup and ghost hint are shown.
+	AutocompleteDisplay func() (popup, ghost bool)
+	// AutocompleteDelay is the debounce in milliseconds before suggestions are
+	// recomputed. Nil means immediately.
+	AutocompleteDelay func() int
+	// ShowStats reports whether the Session counters are drawn.
+	ShowStats func() bool
 }
 
 // ScreenWriter saves text and reports the path it wrote, or an error.
@@ -125,6 +137,27 @@ func WithEncodingChange(fn func(domainterminal.Encoding)) Option {
 	return func(options *Options) { options.OnEncoding = fn }
 }
 
+// WithSuggestions supplies the autocomplete provider and the live popup/ghost
+// switches.
+func WithSuggestions(suggest func(input, scope string) []autocomplete.Suggestion,
+	display func() (popup, ghost bool)) Option {
+	return func(options *Options) {
+		options.Suggest = suggest
+		options.AutocompleteDisplay = display
+	}
+}
+
+// WithAutocompleteDelay supplies the debounce applied after the typed line
+// changes.
+func WithAutocompleteDelay(fn func() int) Option {
+	return func(options *Options) { options.AutocompleteDelay = fn }
+}
+
+// WithSessionStats supplies the live statistics visibility setting.
+func WithSessionStats(show func() bool) Option {
+	return func(options *Options) { options.ShowStats = show }
+}
+
 // Surface is one Tab's terminal view.
 type Surface struct {
 	session   *appsession.Session
@@ -145,6 +178,17 @@ type Surface struct {
 	renaming     bool
 	renameValue  string
 	paneActions  PaneActions
+
+	// Autocomplete state, refreshed once per frame from the Session's typed
+	// line.
+	suggestions         []autocomplete.Suggestion
+	suggestionIndex     int
+	suggestionInput     string
+	suggestionPending   time.Time
+	suggestionDismissed bool
+	suggestionTimer     *time.Timer
+	showAutocomplete    bool
+	showGhost           bool
 }
 
 // New connects a MyGo terminal to session's TerminalConn. It returns an error
@@ -207,6 +251,7 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 			surface.requestPaste(string(text))
 			return true
 		},
+		OnKey: surface.handleAutocompleteKey,
 	})
 	if err != nil {
 		return nil, err
@@ -258,6 +303,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 	if canReconnect && s.options.Reconnectable != nil {
 		canReconnect = s.options.Reconnectable()
 	}
+	s.refreshSuggestions(snapshot.Input, snapshot.Command.Running)
+	showStats := s.options.ShowStats != nil && s.options.ShowStats()
+	ghostText := ""
+	if s.showGhost && len(s.suggestions) > 0 {
+		ghostText = s.suggestions[0].Text
+	}
 
 	var renameAction func()
 	if s.paneActions.Rename != nil {
@@ -282,6 +333,14 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		MenuLabel:        s.paneActions.MenuLabel,
 		CanPaste:         clipboardText != "",
 		CanReconnect:     canReconnect,
+		Input:            snapshot.Input,
+		Suggestions:      append([]autocomplete.Suggestion(nil), s.suggestions...),
+		SuggestionIndex:  s.suggestionIndex,
+		ShowAutocomplete: s.showAutocomplete,
+		ShowGhost:        s.showGhost,
+		GhostText:        ghostText,
+		ShowStats:        showStats,
+		Stats:            snapshot.Stats,
 	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
@@ -323,6 +382,9 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		SplitDown:  s.paneActions.SplitDown,
 		Detach:     s.paneActions.Detach,
 		ClosePane:  s.paneActions.Close,
+		AcceptSuggestion: func(index int) {
+			s.acceptSuggestion(index)
+		},
 	}
 
 	return ui.Column(c).Fill().Children(func() {

@@ -67,6 +67,66 @@ const (
 // DefaultLogFormat is the original default log format.
 const DefaultLogFormat = LogFormatText
 
+// AutocompleteHistoryScope selects the command history autocomplete searches.
+type AutocompleteHistoryScope string
+
+const (
+	// AutocompleteHistoryHost searches only the current Host's recorded
+	// commands. It is the original default.
+	AutocompleteHistoryHost AutocompleteHistoryScope = "host"
+	// AutocompleteHistoryGlobal searches commands recorded across every Host.
+	AutocompleteHistoryGlobal AutocompleteHistoryScope = "global"
+)
+
+// Valid reports whether the history scope is one the application knows.
+func (scope AutocompleteHistoryScope) Valid() bool {
+	return scope == AutocompleteHistoryHost || scope == AutocompleteHistoryGlobal
+}
+
+// Autocomplete bounds. The defaults are the original values; the upper bounds
+// keep a malformed settings file from making the popup huge or slow.
+const (
+	DefaultAutocompleteMinChars       = 1
+	DefaultAutocompleteMaxSuggestions = 50
+	DefaultAutocompleteDebounceMs     = 100
+	MinAutocompleteMinChars           = 1
+	MaxAutocompleteMinChars           = 100
+	MaxAutocompleteMaxSuggestions     = 200
+)
+
+// NormalizeAutocompleteMinChars clamps the minimum prefix length.
+func NormalizeAutocompleteMinChars(value int) int {
+	if value < MinAutocompleteMinChars {
+		return DefaultAutocompleteMinChars
+	}
+	if value > MaxAutocompleteMinChars {
+		return MaxAutocompleteMinChars
+	}
+	return value
+}
+
+// NormalizeAutocompleteMaxSuggestions clamps the result count.
+func NormalizeAutocompleteMaxSuggestions(value int) int {
+	if value <= 0 {
+		return DefaultAutocompleteMaxSuggestions
+	}
+	if value > MaxAutocompleteMaxSuggestions {
+		return MaxAutocompleteMaxSuggestions
+	}
+	return value
+}
+
+// NormalizeAutocompleteDebounce clamps the suggestion delay in milliseconds.
+func NormalizeAutocompleteDebounce(value int) int {
+	if value < 0 {
+		return DefaultAutocompleteDebounceMs
+	}
+	if value > 5000 {
+		return 5000
+	}
+	return value
+}
+
 // Settings is the persisted terminal behavior group.
 type Settings struct {
 	// LoggingEnabled starts a log automatically for each new Session when
@@ -98,6 +158,28 @@ type Settings struct {
 	PasteMinLines int
 	// DropAction is what dropping files on a terminal does.
 	DropAction DropAction
+	// AutocompleteEnabled shows command suggestions from configured sources.
+	AutocompleteEnabled bool
+	// AutocompleteGhostText draws the first suggestion inline. It is off by
+	// default; the popup menu is the original default surface.
+	AutocompleteGhostText bool
+	// AutocompletePopupMenu shows the list of suggestions.
+	AutocompletePopupMenu bool
+	// AutocompleteDebounceMs delays recomputing suggestions after a keystroke.
+	AutocompleteDebounceMs int
+	// AutocompleteMinChars is the prefix length at which suggestions appear.
+	AutocompleteMinChars int
+	// AutocompleteMaxSuggestions caps the result list.
+	AutocompleteMaxSuggestions int
+	// AutocompleteHistoryScope selects host-only or global history.
+	AutocompleteHistoryScope AutocompleteHistoryScope
+	// KeywordHighlightEnabled applies the configured rules to terminal output.
+	KeywordHighlightEnabled bool
+	// KeywordHighlightRules are the configured regular expressions and colors.
+	KeywordHighlightRules []KeywordHighlightRule
+	// ShowSessionStats draws the Session's byte, command, bell, and
+	// notification counters in the status bar.
+	ShowSessionStats bool
 }
 
 // EncodingScopeLocal is the encoding scope of local shell Sessions.
@@ -126,6 +208,17 @@ func Defaults() Settings {
 		PasteProtection:  false,
 		PasteMinLines:    DefaultPasteMinLines,
 		DropAction:       DropInsert,
+
+		AutocompleteEnabled:        true,
+		AutocompleteGhostText:      false,
+		AutocompletePopupMenu:      true,
+		AutocompleteDebounceMs:     DefaultAutocompleteDebounceMs,
+		AutocompleteMinChars:       DefaultAutocompleteMinChars,
+		AutocompleteMaxSuggestions: DefaultAutocompleteMaxSuggestions,
+		AutocompleteHistoryScope:   AutocompleteHistoryHost,
+		KeywordHighlightEnabled:    true,
+		KeywordHighlightRules:      DefaultKeywordHighlightRules(),
+		ShowSessionStats:           true,
 	}
 }
 
@@ -149,6 +242,13 @@ func Normalize(settings Settings) Settings {
 	if !settings.DropAction.Valid() {
 		settings.DropAction = DropInsert
 	}
+	if !settings.AutocompleteHistoryScope.Valid() {
+		settings.AutocompleteHistoryScope = AutocompleteHistoryHost
+	}
+	settings.AutocompleteMinChars = NormalizeAutocompleteMinChars(settings.AutocompleteMinChars)
+	settings.AutocompleteMaxSuggestions = NormalizeAutocompleteMaxSuggestions(settings.AutocompleteMaxSuggestions)
+	settings.AutocompleteDebounceMs = NormalizeAutocompleteDebounce(settings.AutocompleteDebounceMs)
+	settings.KeywordHighlightRules = NormalizeKeywordHighlightRules(settings.KeywordHighlightRules)
 	if len(settings.Encodings) > 0 {
 		encodings := make(map[string]Encoding, len(settings.Encodings))
 		for scope, encoding := range settings.Encodings {

@@ -61,12 +61,15 @@ func (s *Session) AcknowledgeActivity() {
 // an active transfer consumed the input.
 func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
-	forwarded, changed, transfer := s.tap.handleInput(data, now)
+	forwarded, changed, submitted, transfer := s.tap.handleInput(data, now)
 	// The tap returns no bytes only while a transfer consumes normal input.
 	// A Ctrl+C abort returns the five CAN bytes, so it is not gated.
 	gated = len(data) > 0 && len(forwarded) == 0
 	if changed {
 		s.publishTap(now)
+	}
+	if submitted != "" && s.onCommand != nil {
+		s.onCommand(s.id, s.spec.EncodingScope, submitted)
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
@@ -88,11 +91,13 @@ func (s *Session) publishTap(now time.Time) {
 		snapshot.CWD = state.CWD
 		snapshot.Title = state.Title
 		snapshot.Command = state.Command
+		snapshot.Input = state.Input
 		snapshot.Busy = state.Busy
 		snapshot.LastActivity = state.LastActivity
 		snapshot.Transfer = state.Transfer
 		snapshot.Notification = state.Notification
 		snapshot.Clipboard = state.Clipboard
+		snapshot.Stats = state.Stats
 	})
 }
 

@@ -13,6 +13,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
@@ -42,6 +43,13 @@ const defaultWriteQueueDepth = 64
 
 // readChunkSize is the size of one transport read.
 const readChunkSize = 32 << 10
+
+// highlightIdleFlush bounds how long a partial line waits for its newline. A
+// prompt has no trailing newline, so it is flushed after this quiet period.
+const highlightIdleFlush = 30 * time.Millisecond
+
+// maxHighlightCarry bounds the partial line held for highlighting.
+const maxHighlightCarry = 64 << 10
 
 // Kind is the protocol of a Session. Local shells and password-authenticated
 // SSH exist in this slice; later tickets add keys, serial, Telnet, mosh, and
@@ -182,6 +190,9 @@ type Snapshot struct {
 	Title string
 	// Command is the command tracked from typed input and OSC 133 marks.
 	Command CommandState
+	// Input is the line being typed but not yet submitted. Autocomplete reads
+	// it without reaching into the terminal's screen buffer.
+	Input string
 	// Busy reports recent output, a running command, or an active transfer.
 	Busy bool
 	// LastActivity is when terminal output last arrived.
@@ -197,6 +208,8 @@ type Snapshot struct {
 	// Encoding is the character encoding this Session decodes output and
 	// encodes input with.
 	Encoding domainterminal.Encoding
+	// Stats are the byte, command, bell, notification, and transfer counters.
+	Stats Stats
 }
 
 // NoticeCode classifies a non-fatal runtime notice.
@@ -312,6 +325,7 @@ type Session struct {
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
 	codec           Codec
+	highlighter     *domainterminal.Highlighter
 
 	logMu   sync.Mutex
 	logger  *sessionLogger
@@ -320,9 +334,18 @@ type Session struct {
 	activitySeq   uint64
 	activityTimer *time.Timer
 
+	// highlightMu guards a partial output line held so a keyword split across
+	// two transport reads is still highlighted. Only the read-loop goroutine,
+	// its idle timer, and transport end touch it.
+	highlightMu    sync.Mutex
+	highlightCarry []byte
+	highlightTimer *time.Timer
+
 	onNotification func(model.SessionID, TerminalNotification)
 	onTransfer     func(model.SessionID, TransferState)
 	onInput        func(model.SessionID, []byte)
+	onCommand      func(model.SessionID, string, string)
+	onBell         func(model.SessionID)
 
 	onEnd    func(model.SessionID)
 	onChange func(Snapshot)
@@ -370,6 +393,9 @@ type Service struct {
 	onNotification  func(model.SessionID, TerminalNotification)
 	onTransfer      func(model.SessionID, TransferState)
 	onInput         func(model.SessionID, []byte)
+	onCommand       func(model.SessionID, string, string)
+	onBell          func(model.SessionID)
+	highlightPolicy func() (bool, []domainterminal.KeywordHighlightRule)
 	mu              sync.Mutex
 	sessions        map[model.SessionID]*Session
 	closing         bool
@@ -433,6 +459,25 @@ func WithNotificationHook(fn func(model.SessionID, TerminalNotification)) Option
 // for a future transfer engine; the gate itself is always active.
 func WithTransferHook(fn func(model.SessionID, TransferState)) Option {
 	return func(s *Service) { s.onTransfer = fn }
+}
+
+// WithCommandHook receives each non-empty command submitted in a Session,
+// together with its history scope. The app records it for autocomplete.
+func WithCommandHook(fn func(model.SessionID, string, string)) Option {
+	return func(s *Service) { s.onCommand = fn }
+}
+
+// WithBellHook receives a BEL from the transport. The app marks the Session's
+// tab as having new activity, as the original did.
+func WithBellHook(fn func(model.SessionID)) Option {
+	return func(s *Service) { s.onBell = fn }
+}
+
+// WithHighlightPolicy supplies the keyword highlight switch and rules read
+// when a Session opens. SetHighlightPolicy applies later Settings changes to
+// live Sessions.
+func WithHighlightPolicy(fn func() (bool, []domainterminal.KeywordHighlightRule)) Option {
+	return func(s *Service) { s.highlightPolicy = fn }
 }
 
 // NewService returns a Service that opens transports through factory.
@@ -512,6 +557,10 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		}
 	}
 	tap := newTerminalTap(policy)
+	highlightEnabled, highlightRules := false, []domainterminal.KeywordHighlightRule(nil)
+	if s.highlightPolicy != nil {
+		highlightEnabled, highlightRules = s.highlightPolicy()
+	}
 	session := &Session{
 		id:              id,
 		ctx:             sessionCtx,
@@ -522,6 +571,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		tap:             tap,
 		clipboardAccess: policy,
 		codec:           codec,
+		highlighter:     domainterminal.NewHighlighter(highlightEnabled, highlightRules),
 		genDone:         make(chan struct{}),
 		writeCh:         make(chan []byte, s.writeDepth),
 		commands:        make(chan command, 16),
@@ -529,6 +579,8 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		onNotification:  s.onNotification,
 		onTransfer:      s.onTransfer,
 		onInput:         s.onInput,
+		onCommand:       s.onCommand,
+		onBell:          s.onBell,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
@@ -608,6 +660,116 @@ func (s *Service) SetClipboardPolicy(policy domainterminal.ClipboardAccess) {
 	}
 }
 
+// SetHighlightPolicy applies a keyword highlight change to every live Session
+// and to Sessions opened later. Rules are normalized by the domain highlighter.
+func (s *Service) SetHighlightPolicy(enabled bool, rules []domainterminal.KeywordHighlightRule) {
+	highlighter := domainterminal.NewHighlighter(enabled, rules)
+	storedRules := append([]domainterminal.KeywordHighlightRule(nil), rules...)
+	s.mu.Lock()
+	s.highlightPolicy = func() (bool, []domainterminal.KeywordHighlightRule) {
+		return enabled, storedRules
+	}
+	live := make([]*Session, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		live = append(live, session)
+	}
+	s.mu.Unlock()
+	for _, session := range live {
+		session.setHighlighter(highlighter)
+	}
+}
+
+func (s *Session) setHighlighter(highlighter *domainterminal.Highlighter) {
+	if highlighter == nil {
+		return
+	}
+	s.mu.Lock()
+	s.highlighter = highlighter
+	s.mu.Unlock()
+}
+
+// highlightChunk appends output to the highlight carry and emits complete
+// lines. Holding the trailing partial line keeps a keyword split across two
+// reads intact; a short idle flush emits it when the program wrote no newline,
+// as a prompt does.
+func (s *Session) highlightChunk(p []byte) {
+	if !s.highlightActive() {
+		s.conn.appendOutput(p)
+		return
+	}
+	s.highlightMu.Lock()
+	defer s.highlightMu.Unlock()
+	s.highlightCarry = append(s.highlightCarry, p...)
+	flushed := 0
+	if index := bytes.LastIndexByte(s.highlightCarry, '\n'); index >= 0 {
+		flushed = index + 1
+	}
+	if len(s.highlightCarry) > maxHighlightCarry || !endsInHighlightWord(s.highlightCarry) {
+		flushed = len(s.highlightCarry)
+	}
+	if flushed > 0 {
+		part := append([]byte(nil), s.highlightCarry[:flushed]...)
+		s.highlightCarry = s.highlightCarry[flushed:]
+		s.conn.appendOutput(s.highlightOutput(part))
+	}
+	if len(s.highlightCarry) > 0 {
+		if s.highlightTimer == nil {
+			s.highlightTimer = time.AfterFunc(highlightIdleFlush, s.flushHighlightCarry)
+		}
+		return
+	}
+	if s.highlightTimer != nil {
+		s.highlightTimer.Stop()
+		s.highlightTimer = nil
+	}
+}
+
+// highlightActive reports whether a highlighter is installed. With none, output
+// takes the old path and is never delayed.
+func (s *Session) highlightActive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.highlighter != nil
+}
+
+// endsInHighlightWord reports whether data ends in a character a keyword could
+// continue through. Only then is holding it worth a possible delay; a newline,
+// prompt marker, or other punctuation can never complete a split match.
+func endsInHighlightWord(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	last := data[len(data)-1]
+	return last >= 0x80 || last == '_' || last == '-' || last == '.' ||
+		last == '/' || last == ':' ||
+		(last >= '0' && last <= '9') ||
+		(last >= 'A' && last <= 'Z') ||
+		(last >= 'a' && last <= 'z')
+}
+
+// flushHighlightCarry emits the partial line and stops the idle timer.
+func (s *Session) flushHighlightCarry() {
+	s.highlightMu.Lock()
+	defer s.highlightMu.Unlock()
+	s.highlightTimer = nil
+	if len(s.highlightCarry) == 0 {
+		return
+	}
+	part := append([]byte(nil), s.highlightCarry...)
+	s.highlightCarry = nil
+	s.conn.appendOutput(s.highlightOutput(part))
+}
+
+func (s *Session) highlightOutput(p []byte) []byte {
+	s.mu.Lock()
+	highlighter := s.highlighter
+	s.mu.Unlock()
+	if highlighter == nil {
+		return p
+	}
+	return highlighter.Apply(p)
+}
+
 // SetChangeHook replaces the function called when a Session changes.
 func (s *Service) SetChangeHook(fn func(Snapshot)) {
 	s.mu.Lock()
@@ -663,11 +825,13 @@ func (s *Session) Snapshot() Snapshot {
 	snapshot.CWD = state.CWD
 	snapshot.Title = state.Title
 	snapshot.Command = state.Command
+	snapshot.Input = state.Input
 	snapshot.Busy = state.Busy
 	snapshot.LastActivity = state.LastActivity
 	snapshot.Transfer = state.Transfer
 	snapshot.Notification = state.Notification
 	snapshot.Clipboard = state.Clipboard
+	snapshot.Stats = state.Stats
 	snapshot.Logging = s.logStatus()
 	return snapshot
 }
@@ -919,11 +1083,14 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))
-				s.conn.appendOutput(output)
+				s.highlightChunk(output)
 			}
 			if effects.Changed {
 				s.publishTap(now)
 				s.scheduleActivityClear()
+			}
+			if effects.Bell && s.onBell != nil {
+				s.onBell(s.id)
 			}
 			if effects.Notification != nil && s.onNotification != nil {
 				s.onNotification(s.id, *effects.Notification)
@@ -933,6 +1100,7 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			}
 		}
 		if err != nil {
+			s.flushHighlightCarry()
 			s.post(command{
 				kind:       commandTransportEnded,
 				generation: generation,

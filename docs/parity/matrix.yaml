@@ -1541,6 +1541,99 @@
   status: verified
   notes: "One shared gate wraps the content of the main, Settings, and every detached window. No window builds its content while locked, and a lock or unlock redraws all windows. App Lock is evaluated in the composition root, not per window. The lock screen fits the default, main-minimum, and detached-minimum window sizes without overlapping lines."
 
+# --- Ticket 18: autocomplete, keyword highlighting, statistics, and bell ---
+
+- id: terminal.autocomplete
+  area: terminal
+  feature: Command autocomplete from recorded history and the local shell's history files
+  original_paths:
+    - components/terminal/TerminalAutocomplete.tsx
+    - components/terminal/autocomplete/useTerminalAutocomplete.ts
+    - components/terminal/autocomplete/localShellHistorySeed.ts
+    - application/state/commandHistoryStore.ts
+    - application/state/shellHistoryPersistence.ts
+  module: application/session
+  tickets: [18]
+  acceptance_tests:
+    - application/autocomplete.TestSuggestionsComeFromRecordedHistory
+    - application/autocomplete.TestSuggestionsRespectTheHistoryScope
+    - application/autocomplete.TestSuggestionsComeFromConfiguredSources
+    - application/autocomplete.TestSuggestionsDedupeAndPreferTheHigherScore
+    - application/autocomplete.TestSuggestionsRankPrefixAboveSubstringAndRecentAboveOld
+    - application/autocomplete.TestRecordPersistsDeduplicatedHistory
+    - adapters/histfile.TestParseZshHistoryHandlesExtendedRecordsAndContinuations
+    - adapters/histfile.TestParseBashHistoryGroupsTimestampedMultilineRecords
+    - adapters/histfile.TestParseFishHistoryUnescapesValues
+    - adapters/histfile.TestSourceSuggestsFromShellHistoryFiles
+    - adapters/histfile.TestSourceToleratesMissingAndUnreadableFiles
+    - adapters/store.TestCommandHistoryRoundTrip
+    - ui/session.TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts
+    - ui/session.TestSurfaceAutocompleteKeysDismissSelectAndAccept
+    - app.TestTicket18CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Recorded commands and the zsh, bash, and fish history files share one bounded, deduplicated ranking. The scope selects this Host only or every Host. Typing opens a six-row popup and an optional inline hint; Tab or a click replaces the line with Ctrl+U and the command, so the shell sees the same input path as typing. Settings control the feature, popup, hint, minimum prefix, result cap, delay, and scope."
+
+- id: terminal.keyword-highlight
+  area: terminal
+  feature: Color configured keywords in terminal output
+  original_paths:
+    - components/terminal/keywordHighlight.ts
+    - components/terminal/keywordHighlightRegex.ts
+    - components/terminal/terminalKeywordHighlightRules.ts
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [18]
+  acceptance_tests:
+    - domain/terminal.TestDefaultKeywordHighlightRulesMatchTheOriginalCatalog
+    - domain/terminal.TestHighlighterMatchesTheConfiguredPatternsCaseInsensitively
+    - domain/terminal.TestHighlighterKeepsTheEarliestThenHighestPriorityMatch
+    - domain/terminal.TestHighlighterAppliesSGRWithoutTouchingTerminalSequences
+    - domain/terminal.TestHighlighterIgnoresDisabledRulesInvalidPatternsAndColors
+    - domain/terminal.TestHighlighterLeavesIncompleteTrailingEscapeAlone
+    - application/session.TestSessionHighlightRewritesOutputButNotTheLog
+    - application/session.TestSessionHighlightPolicyAppliesToLiveSessions
+    - app.TestTicket18CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The seven original rules ship enabled. Highlighting runs in the Session read path after raw logging, so a log keeps the program's exact bytes. Matches use 24-bit SGR and restore the default foreground, and existing escape sequences are never split. Invalid patterns stay editable but are ignored at match time, as the original did."
+
+- id: terminal.session-stats
+  area: terminal
+  feature: Session counters for input, output, commands, failures, bells, notifications, and transfers
+  original_paths:
+    - application/state/useSessionState.ts
+    - components/terminal/TerminalView.tsx
+    - components/terminal/runtime/createXTermRuntime.ts
+  module: application/session
+  tickets: [18]
+  acceptance_tests:
+    - application/session.TestSessionStatisticsCountOutputInputCommandsAndBells
+    - application/session.TestSessionStatisticsCountFailedCommands
+    - application/session.TestSessionStatisticsCountNotificationsAndTransfers
+    - application/session.TestSessionBellInATitleSequenceIsNotCounted
+    - ui/session.TestSurfaceSessionStatsSettingHidesAndShowsTheCounters
+    - ui/session.TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes
+    - app.TestTicket18CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Counters are per Session and reset when it closes. Output counts post-filter bytes, input counts bytes accepted by the transport queue, commands count submitted lines, and failures come from a non-zero OSC 133;D exit code. A plain BEL counts, a BEL used as an OSC terminator does not. A compact row shows all seven counters when the setting is on."
+
+- id: terminal.bell-and-notification-policy
+  area: terminal
+  feature: BEL marks the Session active and OSC notifications honor the off, unfocused, and always modes
+  original_paths:
+    - application/state/oscDesktopNotifications.ts
+    - application/state/useSessionState.ts
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [18]
+  acceptance_tests:
+    - application/session.TestSessionStatisticsCountOutputInputCommandsAndBells
+    - application/session.TestSessionNotificationHookReceivesOSC99
+    - application/session.TestTapOSC9And777Notifications
+    - app.TestNotificationModePolicy
+    - app.TestTicket18CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The Session's bell hook marks that Session active, which the shell shows as the Tab activity marker. As in the original there is no separate bell toggle; the settings that take effect are the notification modes. Program notifications reach the app's notification hook, and the composition root applies the configured mode: off suppresses all, unfocused suppresses while the main window is visible and focused, and always shows."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

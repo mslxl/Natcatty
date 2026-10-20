@@ -35,12 +35,24 @@ type terminalSettingsRecord struct {
 	PasteProtection  bool                               `json:"pasteProtection"`
 	PasteMinLines    int                                `json:"pasteMinLines"`
 	DropAction       domainterminal.DropAction          `json:"dropAction"`
+
+	AutocompleteEnabled        bool                                    `json:"autocompleteEnabled"`
+	AutocompleteGhostText      bool                                    `json:"autocompleteGhostText"`
+	AutocompletePopupMenu      bool                                    `json:"autocompletePopupMenu"`
+	AutocompleteDebounceMs     int                                     `json:"autocompleteDebounceMs"`
+	AutocompleteMinChars       int                                     `json:"autocompleteMinChars"`
+	AutocompleteMaxSuggestions int                                     `json:"autocompleteMaxSuggestions"`
+	AutocompleteHistoryScope   domainterminal.AutocompleteHistoryScope `json:"autocompleteHistoryScope"`
+	KeywordHighlightEnabled    bool                                    `json:"keywordHighlightEnabled"`
+	KeywordHighlightRules      []domainterminal.KeywordHighlightRule   `json:"keywordHighlightRules,omitempty"`
+	ShowSessionStats           bool                                    `json:"showSessionStats"`
 }
 
 // terminalSettingsVersion is the current record version. Version 1 files
-// lack the encoding, paste, and drop fields; zero values are normalized to
-// the original defaults on load.
-const terminalSettingsVersion = 2
+// lack the encoding, paste, and drop fields; version 2 files lack the
+// autocomplete, keyword highlight, and statistics fields. Zero values for a
+// missing group are replaced by the original defaults on load.
+const terminalSettingsVersion = 3
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -56,19 +68,33 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	if err := json.Unmarshal(data, &record); err != nil {
 		return domainterminal.Defaults(), err
 	}
-	return domainterminal.Normalize(domainterminal.Settings{
-		LoggingEnabled:   record.LoggingEnabled,
-		LogDirectory:     record.LogDirectory,
-		LogFormat:        record.LogFormat,
-		LogTimestamps:    record.LogTimestamps,
-		OSC52:            record.OSC52,
-		OSCNotifications: record.OSCNotifications,
-		Encoding:         record.Encoding,
-		Encodings:        record.Encodings,
-		PasteProtection:  record.PasteProtection,
-		PasteMinLines:    record.PasteMinLines,
-		DropAction:       record.DropAction,
-	}), nil
+	settings := domainterminal.Defaults()
+	settings.LoggingEnabled = record.LoggingEnabled
+	settings.LogDirectory = record.LogDirectory
+	settings.LogFormat = record.LogFormat
+	settings.LogTimestamps = record.LogTimestamps
+	settings.OSC52 = record.OSC52
+	settings.OSCNotifications = record.OSCNotifications
+	settings.Encoding = record.Encoding
+	settings.Encodings = record.Encodings
+	settings.PasteProtection = record.PasteProtection
+	settings.PasteMinLines = record.PasteMinLines
+	settings.DropAction = record.DropAction
+	if record.Version >= 3 {
+		// Version 2 files have no power-UX group. Leaving the defaults in
+		// place keeps autocomplete, highlighting, and statistics on for them.
+		settings.AutocompleteEnabled = record.AutocompleteEnabled
+		settings.AutocompleteGhostText = record.AutocompleteGhostText
+		settings.AutocompletePopupMenu = record.AutocompletePopupMenu
+		settings.AutocompleteDebounceMs = record.AutocompleteDebounceMs
+		settings.AutocompleteMinChars = record.AutocompleteMinChars
+		settings.AutocompleteMaxSuggestions = record.AutocompleteMaxSuggestions
+		settings.AutocompleteHistoryScope = record.AutocompleteHistoryScope
+		settings.KeywordHighlightEnabled = record.KeywordHighlightEnabled
+		settings.KeywordHighlightRules = record.KeywordHighlightRules
+		settings.ShowSessionStats = record.ShowSessionStats
+	}
+	return domainterminal.Normalize(settings), nil
 }
 
 // Save writes the settings atomically so an interrupted write cannot leave a
@@ -87,6 +113,17 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 		PasteProtection:  settings.PasteProtection,
 		PasteMinLines:    settings.PasteMinLines,
 		DropAction:       settings.DropAction,
+
+		AutocompleteEnabled:        settings.AutocompleteEnabled,
+		AutocompleteGhostText:      settings.AutocompleteGhostText,
+		AutocompletePopupMenu:      settings.AutocompletePopupMenu,
+		AutocompleteDebounceMs:     settings.AutocompleteDebounceMs,
+		AutocompleteMinChars:       settings.AutocompleteMinChars,
+		AutocompleteMaxSuggestions: settings.AutocompleteMaxSuggestions,
+		AutocompleteHistoryScope:   settings.AutocompleteHistoryScope,
+		KeywordHighlightEnabled:    settings.KeywordHighlightEnabled,
+		KeywordHighlightRules:      settings.KeywordHighlightRules,
+		ShowSessionStats:           settings.ShowSessionStats,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
