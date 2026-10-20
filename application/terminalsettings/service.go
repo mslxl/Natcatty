@@ -216,3 +216,77 @@ func (s *Service) SetDropAction(action domainterminal.DropAction) error {
 		settings.DropAction = action
 	})
 }
+
+// SetAutocompleteEnabled enables or disables command suggestions.
+func (s *Service) SetAutocompleteEnabled(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteEnabled = enabled
+	})
+}
+
+// SetAutocompleteGhostText draws the first suggestion inline.
+func (s *Service) SetAutocompleteGhostText(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteGhostText = enabled
+	})
+}
+
+// SetAutocompletePopupMenu shows the suggestion list.
+func (s *Service) SetAutocompletePopupMenu(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompletePopupMenu = enabled
+	})
+}
+
+// SetAutocompleteDebounceMs sets the delay before suggestions recompute.
+func (s *Service) SetAutocompleteDebounceMs(milliseconds int) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteDebounceMs = milliseconds
+	})
+}
+
+// SetAutocompleteMinChars sets the prefix length at which suggestions appear.
+func (s *Service) SetAutocompleteMinChars(characters int) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteMinChars = characters
+	})
+}
+
+// SetAutocompleteMaxSuggestions caps the result list.
+func (s *Service) SetAutocompleteMaxSuggestions(count int) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteMaxSuggestions = count
+	})
+}
+
+// SetAutocompleteHistoryScope selects host-only or global history.
+func (s *Service) SetAutocompleteHistoryScope(scope domainterminal.AutocompleteHistoryScope) error {
+	if !scope.Valid() {
+		return nil
+	}
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.AutocompleteHistoryScope = scope
+	})
+}
+
+// SetKeywordHighlightEnabled enables or disables output highlighting.
+func (s *Service) SetKeywordHighlightEnabled(enabled bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.KeywordHighlightEnabled = enabled
+	})
+}
+
+// SetKeywordHighlightRules replaces the rule list. An empty list restores the
+// original catalog through Normalize.
+func (s *Service) SetKeywordHighlightRules(rules []domainterminal.KeywordHighlightRule) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.KeywordHighlightRules = rules
+	})
+}
+
+// SetShowSessionStats shows or hides the Session counters in the status bar.
+func (s *Service) SetShowSessionStats(show bool) error {
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.ShowSessionStats = show
+	})
+}

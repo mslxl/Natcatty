@@ -75,9 +75,23 @@ type TerminalNotification struct {
 	At       time.Time
 }
 
+// Stats are the per-Session counters the status bar shows. OutputBytes counts
+// the bytes the terminal received after filtering; InputBytes counts the bytes
+// queued for the transport, including broadcast input.
+type Stats struct {
+	OutputBytes    int64
+	InputBytes     int64
+	Commands       int64
+	FailedCommands int64
+	Bells          int64
+	Notifications  int64
+	Transfers      int64
+}
+
 // tapEffects reports state changes that need publication after a chunk.
 type tapEffects struct {
 	Changed      bool
+	Bell         bool
 	Notification *TerminalNotification
 	Transfer     *TransferState
 }
@@ -87,11 +101,13 @@ type tapState struct {
 	CWD          string
 	Title        string
 	Command      CommandState
+	Input        string
 	Busy         bool
 	LastActivity time.Time
 	Notification *TerminalNotification
 	Clipboard    *ClipboardEvent
 	Transfer     TransferState
+	Stats        Stats
 }
 
 // activityWindow is how long output keeps the activity indicator lit after
@@ -141,6 +157,8 @@ type terminalTap struct {
 	notification *TerminalNotification
 	clipboard    *ClipboardEvent
 	transfer     TransferState
+	stats        Stats
+	bellPending  bool
 
 	osc99              osc99Assembler
 	notificationStamps []time.Time
@@ -166,6 +184,7 @@ func newTerminalTap(policy domainterminal.ClipboardAccess) *terminalTap {
 	return &terminalTap{
 		policy: policy,
 		osc99:  osc99Assembler{pending: make(map[string]*osc99Pending)},
+		stats:  Stats{},
 	}
 }
 
@@ -297,6 +316,11 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 
 done:
 	t.checkPrompt(now)
+	if t.bellPending {
+		t.bellPending = false
+		effects.Bell = true
+		effects.Changed = true
+	}
 	if !effects.Changed && len(output) > 0 {
 		// Output itself is a visible state change (activity, command buffer).
 		effects.Changed = true
@@ -309,6 +333,11 @@ func (t *terminalTap) noteOutput(data []byte, now time.Time) {
 		return
 	}
 	t.lastOutput = now
+	t.stats.OutputBytes += int64(len(data))
+	if bytes.IndexByte(data, 0x07) >= 0 {
+		t.stats.Bells += int64(bytes.Count(data, []byte{0x07}))
+		t.bellPending = true
+	}
 	t.tail = append(t.tail, data...)
 	if len(t.tail) > 512 {
 		t.tail = append([]byte(nil), t.tail[len(t.tail)-512:]...)
@@ -322,6 +351,7 @@ func (t *terminalTap) startTransfer(kind TransferKind, prefix int, now time.Time
 		StartedAt:  now,
 		Suppressed: prefix,
 	}
+	t.stats.Transfers++
 }
 
 func transferEndMarker(kind TransferKind) []byte {
@@ -517,6 +547,9 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) bool {
 			if code, err := parseInt(rest[2:]); err == nil {
 				t.command.ExitCode = code
 				t.command.HasExitCode = true
+				if code != 0 {
+					t.stats.FailedCommands++
+				}
 			}
 		}
 		return true
@@ -746,6 +779,7 @@ func (t *terminalTap) publishNotification(raw rawNotification, now time.Time) ta
 		At:       now,
 	}
 	t.notification = notification
+	t.stats.Notifications++
 	copyNotification := *notification
 	return tapEffects{Changed: true, Notification: &copyNotification}
 }
@@ -888,10 +922,11 @@ func promptLike(line string) bool {
 	return false
 }
 
-// handleInput observes typed bytes and returns what may reach the transport.
+// handleInput observes typed bytes and returns what may reach the transport,
+// the submitted command if Enter completed one, and the transfer state change.
 // During a transfer all normal input is dropped; Ctrl+C aborts with the
 // original five CAN bytes.
-func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, *TransferState) {
+func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, string, *TransferState) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.transfer.Active {
@@ -901,16 +936,17 @@ func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, *Tr
 			t.transfer.End = TransferEndCancelled
 			t.buffer = nil
 			copyState := t.transfer
-			return []byte{0x18, 0x18, 0x18, 0x18, 0x18}, true, &copyState
+			return []byte{0x18, 0x18, 0x18, 0x18, 0x18}, true, "", &copyState
 		}
-		return nil, false, nil
+		return nil, false, "", nil
 	}
-	changed := t.recordInput(data, now)
-	return data, changed, nil
+	changed, submitted := t.recordInput(data, now)
+	return data, changed, submitted, nil
 }
 
-func (t *terminalTap) recordInput(data []byte, now time.Time) bool {
+func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
 	changed := false
+	submitted := ""
 	for _, value := range data {
 		switch t.inputEscape {
 		case inputEscape:
@@ -974,6 +1010,8 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) bool {
 					Running:   true,
 					StartedAt: now,
 				}
+				t.stats.Commands++
+				submitted = command
 			}
 			changed = true
 		default:
@@ -982,7 +1020,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) bool {
 			}
 		}
 	}
-	return changed
+	return changed, submitted
 }
 
 // appendInputByte records typed text one byte at a time, waiting for a
@@ -1048,9 +1086,11 @@ func (t *terminalTap) state(now time.Time) tapState {
 		CWD:          t.cwd,
 		Title:        t.title,
 		Command:      t.command,
+		Input:        t.inputBuffer,
 		Busy:         t.busyLocked(now),
 		LastActivity: t.lastOutput,
 		Transfer:     t.transfer,
+		Stats:        t.stats,
 	}
 	if t.notification != nil {
 		copyNotification := *t.notification
@@ -1079,4 +1119,15 @@ func (t *terminalTap) acknowledgeActivity() bool {
 	t.lastOutput = time.Time{}
 	t.tail = nil
 	return true
+}
+
+// addInputBytes counts input queued for the transport. The Session calls it
+// after a write is accepted, so a rejected write is not counted.
+func (t *terminalTap) addInputBytes(count int) {
+	if count <= 0 {
+		return
+	}
+	t.mu.Lock()
+	t.stats.InputBytes += int64(count)
+	t.mu.Unlock()
 }

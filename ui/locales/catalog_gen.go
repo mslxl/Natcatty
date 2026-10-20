@@ -4230,6 +4230,108 @@ func (msgs Messages) SessionTransferActive(kind string) string {
 	return Catalog.Format(msgs.locale, "sessionTransferActive", map[string]any{"kind": kind})
 }
 
+// SessionStatsLabel says "Session statistics"
+// in the language the app shows.
+func SessionStatsLabel() string { return In(i18n.Locale()).SessionStatsLabel() }
+
+// SessionStatsLabel says "Session statistics"
+// in the language of msgs.
+func (msgs Messages) SessionStatsLabel() string {
+	return Catalog.Format(msgs.locale, "sessionStatsLabel", nil)
+}
+
+// SessionStatsSummary says "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications…"
+// in the language the app shows.
+//
+// Compact Session counters: input bytes, output bytes, commands, failed
+// commands, bells, notifications, and transfers.
+func SessionStatsSummary(input int, output int, commands int, failed int, bells int, notifications int, transfers int) string {
+	return In(i18n.Locale()).SessionStatsSummary(input, output, commands, failed, bells, notifications, transfers)
+}
+
+// SessionStatsSummary says "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications…"
+// in the language of msgs.
+//
+// Compact Session counters: input bytes, output bytes, commands, failed
+// commands, bells, notifications, and transfers.
+func (msgs Messages) SessionStatsSummary(input int, output int, commands int, failed int, bells int, notifications int, transfers int) string {
+	return Catalog.Format(msgs.locale, "sessionStatsSummary", map[string]any{"input": input, "output": output, "commands": commands, "failed": failed, "bells": bells, "notifications": notifications, "transfers": transfers})
+}
+
+// SessionAutocompleteLabel says "Command suggestions"
+// in the language the app shows.
+func SessionAutocompleteLabel() string { return In(i18n.Locale()).SessionAutocompleteLabel() }
+
+// SessionAutocompleteLabel says "Command suggestions"
+// in the language of msgs.
+func (msgs Messages) SessionAutocompleteLabel() string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteLabel", nil)
+}
+
+// SessionAutocompleteHint says "Tab to accept · Esc to dismiss"
+// in the language the app shows.
+func SessionAutocompleteHint() string { return In(i18n.Locale()).SessionAutocompleteHint() }
+
+// SessionAutocompleteHint says "Tab to accept · Esc to dismiss"
+// in the language of msgs.
+func (msgs Messages) SessionAutocompleteHint() string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteHint", nil)
+}
+
+// SessionAutocompleteHistory says "History"
+// in the language the app shows.
+func SessionAutocompleteHistory() string { return In(i18n.Locale()).SessionAutocompleteHistory() }
+
+// SessionAutocompleteHistory says "History"
+// in the language of msgs.
+func (msgs Messages) SessionAutocompleteHistory() string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteHistory", nil)
+}
+
+// SessionAutocompleteShellHistory says "Shell history"
+// in the language the app shows.
+func SessionAutocompleteShellHistory() string {
+	return In(i18n.Locale()).SessionAutocompleteShellHistory()
+}
+
+// SessionAutocompleteShellHistory says "Shell history"
+// in the language of msgs.
+func (msgs Messages) SessionAutocompleteShellHistory() string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteShellHistory", nil)
+}
+
+// SessionAutocompleteGhost says "Suggestion: {suggestion}"
+// in the language the app shows.
+//
+// A one-line hint showing the first suggested command.
+func SessionAutocompleteGhost(suggestion string) string {
+	return In(i18n.Locale()).SessionAutocompleteGhost(suggestion)
+}
+
+// SessionAutocompleteGhost says "Suggestion: {suggestion}"
+// in the language of msgs.
+//
+// A one-line hint showing the first suggested command.
+func (msgs Messages) SessionAutocompleteGhost(suggestion string) string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteGhost", map[string]any{"suggestion": suggestion})
+}
+
+// SessionAutocompleteFrequency says "×{count}"
+// in the language the app shows.
+//
+// How many times a command was used.
+func SessionAutocompleteFrequency(count int) string {
+	return In(i18n.Locale()).SessionAutocompleteFrequency(count)
+}
+
+// SessionAutocompleteFrequency says "×{count}"
+// in the language of msgs.
+//
+// How many times a command was used.
+func (msgs Messages) SessionAutocompleteFrequency(count int) string {
+	return Catalog.Format(msgs.locale, "sessionAutocompleteFrequency", map[string]any{"count": count})
+}
+
 // SessionTransferCancel says "Cancel transfer"
 // in the language the app shows.
 func SessionTransferCancel() string { return In(i18n.Locale()).SessionTransferCancel() }
@@ -4466,6 +4568,264 @@ func SettingsOSCNotificationsAlways() string {
 // in the language of msgs.
 func (msgs Messages) SettingsOSCNotificationsAlways() string {
 	return Catalog.Format(msgs.locale, "settingsOSCNotificationsAlways", nil)
+}
+
+// SettingsAutocompleteTitle says "Autocomplete"
+// in the language the app shows.
+func SettingsAutocompleteTitle() string { return In(i18n.Locale()).SettingsAutocompleteTitle() }
+
+// SettingsAutocompleteTitle says "Autocomplete"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteTitle", nil)
+}
+
+// SettingsAutocompleteDescription says "Suggest commands from recorded history and your shell history files."
+// in the language the app shows.
+func SettingsAutocompleteDescription() string {
+	return In(i18n.Locale()).SettingsAutocompleteDescription()
+}
+
+// SettingsAutocompleteDescription says "Suggest commands from recorded history and your shell history files."
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteDescription", nil)
+}
+
+// SettingsAutocompleteEnabled says "Show command suggestions"
+// in the language the app shows.
+func SettingsAutocompleteEnabled() string { return In(i18n.Locale()).SettingsAutocompleteEnabled() }
+
+// SettingsAutocompleteEnabled says "Show command suggestions"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteEnabled", nil)
+}
+
+// SettingsAutocompletePopupMenu says "Show the suggestion list"
+// in the language the app shows.
+func SettingsAutocompletePopupMenu() string { return In(i18n.Locale()).SettingsAutocompletePopupMenu() }
+
+// SettingsAutocompletePopupMenu says "Show the suggestion list"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompletePopupMenu() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompletePopupMenu", nil)
+}
+
+// SettingsAutocompleteGhostText says "Show the first suggestion inline"
+// in the language the app shows.
+func SettingsAutocompleteGhostText() string { return In(i18n.Locale()).SettingsAutocompleteGhostText() }
+
+// SettingsAutocompleteGhostText says "Show the first suggestion inline"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteGhostText() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteGhostText", nil)
+}
+
+// SettingsAutocompleteMinChars says "Show after this many characters"
+// in the language the app shows.
+func SettingsAutocompleteMinChars() string { return In(i18n.Locale()).SettingsAutocompleteMinChars() }
+
+// SettingsAutocompleteMinChars says "Show after this many characters"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteMinChars() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteMinChars", nil)
+}
+
+// SettingsAutocompleteMaxSuggestions says "Maximum suggestions"
+// in the language the app shows.
+func SettingsAutocompleteMaxSuggestions() string {
+	return In(i18n.Locale()).SettingsAutocompleteMaxSuggestions()
+}
+
+// SettingsAutocompleteMaxSuggestions says "Maximum suggestions"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteMaxSuggestions() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteMaxSuggestions", nil)
+}
+
+// SettingsAutocompleteDebounce says "Suggestion delay (ms)"
+// in the language the app shows.
+func SettingsAutocompleteDebounce() string { return In(i18n.Locale()).SettingsAutocompleteDebounce() }
+
+// SettingsAutocompleteDebounce says "Suggestion delay (ms)"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteDebounce() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteDebounce", nil)
+}
+
+// SettingsAutocompleteHistoryScope says "History scope"
+// in the language the app shows.
+func SettingsAutocompleteHistoryScope() string {
+	return In(i18n.Locale()).SettingsAutocompleteHistoryScope()
+}
+
+// SettingsAutocompleteHistoryScope says "History scope"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteHistoryScope() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteHistoryScope", nil)
+}
+
+// SettingsAutocompleteScopeHost says "This Host"
+// in the language the app shows.
+func SettingsAutocompleteScopeHost() string { return In(i18n.Locale()).SettingsAutocompleteScopeHost() }
+
+// SettingsAutocompleteScopeHost says "This Host"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteScopeHost() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteScopeHost", nil)
+}
+
+// SettingsAutocompleteScopeGlobal says "All Hosts"
+// in the language the app shows.
+func SettingsAutocompleteScopeGlobal() string {
+	return In(i18n.Locale()).SettingsAutocompleteScopeGlobal()
+}
+
+// SettingsAutocompleteScopeGlobal says "All Hosts"
+// in the language of msgs.
+func (msgs Messages) SettingsAutocompleteScopeGlobal() string {
+	return Catalog.Format(msgs.locale, "settingsAutocompleteScopeGlobal", nil)
+}
+
+// SettingsKeywordHighlightTitle says "Keyword highlighting"
+// in the language the app shows.
+func SettingsKeywordHighlightTitle() string { return In(i18n.Locale()).SettingsKeywordHighlightTitle() }
+
+// SettingsKeywordHighlightTitle says "Keyword highlighting"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightTitle() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightTitle", nil)
+}
+
+// SettingsKeywordHighlightDescription says "Color configured words in terminal output."
+// in the language the app shows.
+func SettingsKeywordHighlightDescription() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightDescription()
+}
+
+// SettingsKeywordHighlightDescription says "Color configured words in terminal output."
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightDescription() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightDescription", nil)
+}
+
+// SettingsKeywordHighlightEnabled says "Highlight keywords"
+// in the language the app shows.
+func SettingsKeywordHighlightEnabled() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightEnabled()
+}
+
+// SettingsKeywordHighlightEnabled says "Highlight keywords"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightEnabled", nil)
+}
+
+// SettingsKeywordHighlightPatterns says "Patterns (one per line)"
+// in the language the app shows.
+func SettingsKeywordHighlightPatterns() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightPatterns()
+}
+
+// SettingsKeywordHighlightPatterns says "Patterns (one per line)"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightPatterns() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightPatterns", nil)
+}
+
+// SettingsShowSessionStats says "Show Session statistics"
+// in the language the app shows.
+func SettingsShowSessionStats() string { return In(i18n.Locale()).SettingsShowSessionStats() }
+
+// SettingsShowSessionStats says "Show Session statistics"
+// in the language of msgs.
+func (msgs Messages) SettingsShowSessionStats() string {
+	return Catalog.Format(msgs.locale, "settingsShowSessionStats", nil)
+}
+
+// SettingsKeywordHighlightRuleError says "Error"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleError() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleError()
+}
+
+// SettingsKeywordHighlightRuleError says "Error"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleError() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleError", nil)
+}
+
+// SettingsKeywordHighlightRuleWarning says "Warning"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleWarning() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleWarning()
+}
+
+// SettingsKeywordHighlightRuleWarning says "Warning"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleWarning() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleWarning", nil)
+}
+
+// SettingsKeywordHighlightRuleOK says "OK"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleOK() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleOK()
+}
+
+// SettingsKeywordHighlightRuleOK says "OK"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleOK() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleOK", nil)
+}
+
+// SettingsKeywordHighlightRuleInfo says "Info"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleInfo() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleInfo()
+}
+
+// SettingsKeywordHighlightRuleInfo says "Info"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleInfo() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleInfo", nil)
+}
+
+// SettingsKeywordHighlightRuleDebug says "Debug"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleDebug() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleDebug()
+}
+
+// SettingsKeywordHighlightRuleDebug says "Debug"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleDebug() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleDebug", nil)
+}
+
+// SettingsKeywordHighlightRuleIPMAC says "URL, IP & MAC"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleIPMAC() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleIPMAC()
+}
+
+// SettingsKeywordHighlightRuleIPMAC says "URL, IP & MAC"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleIPMAC() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleIPMAC", nil)
+}
+
+// SettingsKeywordHighlightRuleUnixPath says "Unix paths"
+// in the language the app shows.
+func SettingsKeywordHighlightRuleUnixPath() string {
+	return In(i18n.Locale()).SettingsKeywordHighlightRuleUnixPath()
+}
+
+// SettingsKeywordHighlightRuleUnixPath says "Unix paths"
+// in the language of msgs.
+func (msgs Messages) SettingsKeywordHighlightRuleUnixPath() string {
+	return Catalog.Format(msgs.locale, "settingsKeywordHighlightRuleUnixPath", nil)
 }
 
 // SettingsTerminalSaveFailed says "The terminal settings could not be saved."

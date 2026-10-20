@@ -6,10 +6,15 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
 )
+
+// maxVisibleSuggestions bounds the popup so it cannot cover the terminal at
+// the minimum window height.
+const maxVisibleSuggestions = 6
 
 // chromeModel is the Session status and banner state the chrome renders.
 // Keeping it a plain value lets geometry tests render the real controls
@@ -44,6 +49,20 @@ type chromeModel struct {
 	// CanReconnect reports whether the Session has a reconnect policy and is
 	// still able to use it.
 	CanReconnect bool
+
+	// Input is the line being typed. Suggestions are the autocomplete rows for
+	// it, with SuggestionIndex selecting the row Tab accepts.
+	Input            string
+	Suggestions      []autocomplete.Suggestion
+	SuggestionIndex  int
+	ShowAutocomplete bool
+	// ShowGhost draws the first suggestion as a one-line hint. GhostText is
+	// its text.
+	ShowGhost bool
+	GhostText string
+	// ShowStats draws the Session counters. Stats is the source.
+	ShowStats bool
+	Stats     appsession.Stats
 }
 
 // ScreenNotice is the result of saving the terminal screen. It is a code, not
@@ -59,35 +78,48 @@ const (
 // chromeActions are the interactions the chrome offers. Tests pass nil, which
 // also shows the corresponding menu and banner controls as disabled.
 type chromeActions struct {
-	ToggleLog      func()
-	SetLogFormat   func(domainterminal.LogFormat)
-	AllowClipboard func()
-	DenyClipboard  func()
-	CancelTransfer func()
-	SetEncoding    func(domainterminal.Encoding)
-	Copy           func()
-	Paste          func()
-	PasteSelection func()
-	SelectAll      func()
-	OpenBrowser    func()
-	Reconnect      func()
-	SendYmodem     func()
-	ReceiveYmodem  func()
-	SaveScreen     func()
-	ClearBuffer    func()
-	Rename         func()
-	AcceptPaste    func()
-	CancelPaste    func()
-	DismissDrop    func()
-	DismissScreen  func()
-	SplitRight     func()
-	SplitDown      func()
-	Detach         func()
-	ClosePane      func()
+	ToggleLog        func()
+	SetLogFormat     func(domainterminal.LogFormat)
+	AllowClipboard   func()
+	DenyClipboard    func()
+	CancelTransfer   func()
+	SetEncoding      func(domainterminal.Encoding)
+	Copy             func()
+	Paste            func()
+	PasteSelection   func()
+	SelectAll        func()
+	OpenBrowser      func()
+	Reconnect        func()
+	SendYmodem       func()
+	ReceiveYmodem    func()
+	SaveScreen       func()
+	ClearBuffer      func()
+	Rename           func()
+	AcceptPaste      func()
+	CancelPaste      func()
+	DismissDrop      func()
+	DismissScreen    func()
+	SplitRight       func()
+	SplitDown        func()
+	Detach           func()
+	ClosePane        func()
+	AcceptSuggestion func(index int)
 }
 
 func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	statusBar(c, model, m, t, actions)
+	if model.ShowStats {
+		statsBar(c, model, m, t)
+	}
+	if model.ShowAutocomplete && len(model.Suggestions) > 0 {
+		autocompletePopup(c, model, m, t, actions)
+	}
+	if model.ShowGhost && model.GhostText != "" {
+		ui.Row(c).FillWidth().Padding(0, 6).Height(18).Children(func() {
+			ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(10).
+				SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
+		})
+	}
 	if model.PendingPaste != nil {
 		pastePrompt(c, *model.PendingPaste, m, t, actions)
 	}
@@ -182,6 +214,75 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 			ClosePane:      actions.ClosePane,
 		})
 	})
+}
+
+// statsBar is a compact, single-line summary of the Session counters. It sits
+// under the status bar so all seven counters fit at 720x480 without squeezing
+// the command indicator.
+func statsBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Height(18).Padding(0, 6).Background(t.Surface).Children(func() {
+		ui.Text(c, m.SessionStatsSummary(
+			int(model.Stats.InputBytes), int(model.Stats.OutputBytes),
+			int(model.Stats.Commands), int(model.Stats.FailedCommands),
+			int(model.Stats.Bells), int(model.Stats.Notifications),
+			int(model.Stats.Transfers),
+		)).FontSize(9).SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
+	})
+}
+
+// autocompletePopup lists the matching commands above the terminal. It shows
+// at most six rows; the selected row is the one Tab accepts.
+func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	visible := model.Suggestions
+	if len(visible) > maxVisibleSuggestions {
+		visible = visible[:maxVisibleSuggestions]
+	}
+	ui.Column(c).FillWidth().Padding(3, 6).Gap(1).Background(t.Surface).
+		Border(1, t.Accent).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(10).Bold().
+				TextColor(t.TextMuted)
+			ui.Text(c, m.SessionAutocompleteHint()).FontSize(9).SingleLine().
+				MinWidth(0).Grow(1).TextColor(t.TextMuted)
+		})
+		for index, suggestion := range visible {
+			index := index
+			display := suggestion.Display
+			if display == "" {
+				display = suggestion.Text
+			}
+			source := suggestionSourceLabel(suggestion.Source, m)
+			ui.Row(c).FillWidth().Height(20).Gap(8).AlignItems(ui.Center).Children(func() {
+				if index == model.SuggestionIndex {
+					ui.Text(c, "›").FontSize(11).TextColor(t.Accent)
+				} else {
+					ui.Text(c, " ").FontSize(11).TextColor(t.TextMuted)
+				}
+				button := ui.Button(c, display)
+				if button.Clicked() && actions.AcceptSuggestion != nil {
+					actions.AcceptSuggestion(index)
+				}
+				if source != "" {
+					ui.Text(c, source).FontSize(9).TextColor(t.TextMuted)
+				}
+				if suggestion.Frequency > 1 {
+					ui.Text(c, m.SessionAutocompleteFrequency(suggestion.Frequency)).
+						FontSize(9).TextColor(t.TextMuted)
+				}
+			})
+		}
+	})
+}
+
+func suggestionSourceLabel(source string, m locales.Messages) string {
+	switch source {
+	case autocomplete.SourceHistory:
+		return m.SessionAutocompleteHistory()
+	case autocomplete.SourceShellHistory:
+		return m.SessionAutocompleteShellHistory()
+	default:
+		return source
+	}
 }
 
 func encodingLabels(m locales.Messages) []string {

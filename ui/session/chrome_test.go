@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -176,6 +177,95 @@ func TestChromeShowsLogFailure(t *testing.T) {
 		if tester.HasText(m.SessionLoggingNoDirectory()) {
 			t.Fatalf("%dx%d shows the no-directory hint despite a saved directory", size[0], size[1])
 		}
+	}
+}
+
+func TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes(t *testing.T) {
+	m := locales.In("en")
+	stats := appsession.Stats{
+		InputBytes: 120, OutputBytes: 4096, Commands: 3,
+		FailedCommands: 1, Bells: 2, Notifications: 4, Transfers: 5,
+	}
+	suggestions := []autocomplete.Suggestion{
+		{Text: "git status", Display: "git status", Source: "history", Frequency: 3},
+		{Text: "git stash", Display: "git stash", Source: "shell-history"},
+		{Text: "git rebase --interactive", Display: "git rebase --interactive", Source: "history"},
+		{Text: "git log --oneline", Display: "git log --oneline", Source: "history"},
+		{Text: "git diff", Display: "git diff", Source: "history"},
+		{Text: "git push", Display: "git push", Source: "history"},
+		{Text: "git pull", Display: "git pull", Source: "history"},
+	}
+	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+		model := chromeModel{
+			Command:          appsession.CommandState{Text: "git", Running: true},
+			Busy:             true,
+			LogFormat:        domainterminal.LogFormatText,
+			LogDirectory:     `C:\logs`,
+			Input:            "git",
+			Suggestions:      suggestions,
+			SuggestionIndex:  1,
+			ShowAutocomplete: true,
+			ShowGhost:        true,
+			GhostText:        "git status",
+			ShowStats:        true,
+			Stats:            stats,
+		}
+		tester := ui.NewTester(func(c *ui.Context) {
+			renderChrome(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
+		}, size[0], size[1])
+		tester.SetLocale("en")
+		tester.Frame()
+
+		summary := m.SessionStatsSummary(120, 4096, 3, 1, 2, 4, 5)
+		wanted := []string{
+			m.SessionActivityBusy(),
+			m.SessionCommandRunning("git"),
+			m.SessionMenuLabel(),
+			summary,
+			m.SessionAutocompleteLabel(),
+			m.SessionAutocompleteHint(),
+			m.SessionAutocompleteGhost("git status"),
+			suggestions[0].Display,
+			suggestions[5].Display,
+		}
+		rects := make(map[string]ui.Rect, len(wanted))
+		const epsilon = 0.5
+		for _, text := range wanted {
+			rect, ok := tester.Find(text)
+			if !ok {
+				t.Fatalf("%dx%d does not show %q: %v", size[0], size[1], text, tester.Texts())
+			}
+			if rect.X < -epsilon || rect.Y < -epsilon ||
+				rect.X+rect.W > float32(size[0])+epsilon ||
+				rect.Y+rect.H > float32(size[1])+epsilon {
+				t.Fatalf("%dx%d clips %q: %+v", size[0], size[1], text, rect)
+			}
+			rects[text] = rect
+		}
+		// The popup is bounded to six rows: the seventh suggestion must not
+		// be rendered.
+		if tester.HasText(suggestions[6].Display) {
+			t.Fatalf("%dx%d rendered more than six suggestions", size[0], size[1])
+		}
+		if !(rects[m.SessionActivityBusy()].Y < rects[summary].Y &&
+			rects[summary].Y < rects[m.SessionAutocompleteLabel()].Y) {
+			t.Fatalf("%dx%d rows are out of order: status %+v stats %+v popup %+v",
+				size[0], size[1], rects[m.SessionActivityBusy()], rects[summary],
+				rects[m.SessionAutocompleteLabel()])
+		}
+	}
+}
+
+func TestSuggestionSourceLabels(t *testing.T) {
+	m := locales.In("en")
+	if got := suggestionSourceLabel("history", m); got != m.SessionAutocompleteHistory() {
+		t.Fatalf("history label = %q", got)
+	}
+	if got := suggestionSourceLabel("shell-history", m); got != m.SessionAutocompleteShellHistory() {
+		t.Fatalf("shell label = %q", got)
+	}
+	if got := suggestionSourceLabel("plugin", m); got != "plugin" {
+		t.Fatalf("unknown label = %q", got)
 	}
 }
 

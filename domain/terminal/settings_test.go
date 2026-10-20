@@ -54,8 +54,7 @@ func TestNormalizeKeepsKnownValues(t *testing.T) {
 	}
 }
 
-func TestClipboardPolicy(t *testing.T) {
-	tests := []struct {
+func TestClipboardPolicy(t *testing.T) {	tests := []struct {
 		access        ClipboardAccess
 		writes, reads bool
 		asks          bool

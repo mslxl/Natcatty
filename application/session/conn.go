@@ -81,6 +81,7 @@ func (c *TerminalConn) Write(p []byte) (int, error) {
 	copied := append([]byte(nil), forwarded...)
 	select {
 	case c.session.writeCh <- copied:
+		c.session.tap.addInputBytes(len(copied))
 		return len(p), nil
 	case <-c.session.done:
 		return 0, io.ErrClosedPipe
