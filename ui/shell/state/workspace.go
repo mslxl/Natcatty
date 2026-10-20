@@ -252,6 +252,33 @@ func (s *State) TabLabel(index int) (string, int, bool) {
 	return s.tabs[index].Label, s.tabs[index].Number, true
 }
 
+// RenameTab sets a Tab's user title. An empty title is rejected, so a Pane's
+// Rename dialog cannot leave the tab strip blank. The title persists and stops
+// following the automatic local-session counter.
+func (s *State) RenameTab(index int, title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" || index < 0 || index >= len(s.tabs) {
+		return false
+	}
+	s.tabs[index].Label = title
+	s.tabs[index].AutoTitle = false
+	s.save()
+	return true
+}
+
+// RenameDetachedTab sets a detached window's Tab title under the same rules.
+func (s *State) RenameDetachedTab(id model.TabID, title string) bool {
+	title = strings.TrimSpace(title)
+	tab := s.detachedTabByID(id)
+	if title == "" || tab == nil {
+		return false
+	}
+	tab.Label = title
+	tab.AutoTitle = false
+	s.save()
+	return true
+}
+
 // TabInfo returns everything the tab strip renders for one Tab.
 func (s *State) TabInfo(index int) (TabInfo, bool) {
 	if index < 0 || index >= len(s.tabs) {

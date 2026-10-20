@@ -473,16 +473,28 @@ func (t *selftest17) menuStep(*ui.Context) selftest.Outcome {
 		Encoding:     domainterminal.EncodingUTF8,
 	}
 	var selected domainterminal.Encoding
-	var split bool
+	var splitRight, splitDown bool
+	noop := func() {}
+	model.CanPaste = true
+	model.CanReconnect = true
 	render := func(c *ui.Context) {
 		sessionui.RenderSelftestInteraction(c, model, sessionui.SelftestInteractionActions{
-			ToggleLog:    func() {},
-			SetLogFormat: func(domainterminal.LogFormat) {},
-			SetEncoding:  func(encoding domainterminal.Encoding) { selected = encoding },
-			Paste:        func() {},
-			ClearBuffer:  func() {},
-			SplitRight:   func() { split = true },
-			SplitDown:    func() {},
+			Copy:           noop,
+			Paste:          noop,
+			PasteSelection: noop,
+			SelectAll:      noop,
+			OpenBrowser:    noop,
+			Reconnect:      noop,
+			SendYmodem:     noop,
+			ReceiveYmodem:  noop,
+			SaveScreen:     noop,
+			ToggleLog:      noop,
+			SetLogFormat:   func(domainterminal.LogFormat) {},
+			SetEncoding:    func(encoding domainterminal.Encoding) { selected = encoding },
+			ClearBuffer:    noop,
+			Rename:         noop,
+			SplitRight:     func() { splitRight = true },
+			SplitDown:      func() { splitDown = true },
 		})
 	}
 	tester := ui.NewTester(render, 720, 480)
@@ -493,11 +505,16 @@ func (t *selftest17) menuStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("open the Session menu: %w", err))
 	}
 	want := []string{
-		m.SessionMenuPaste(), "-",
-		m.SessionMenuSplitRight(), m.SessionMenuSplitDown(), "-",
-		m.SessionMenuClearBuffer(), "-",
+		m.SessionMenuCopy(), m.SessionMenuPaste(), m.SessionMenuPasteSelection(), m.SessionMenuSelectAll(), "-",
+		m.SessionMenuOpenBrowser(), "-",
+		m.SessionMenuReconnect(), "-",
+		m.SessionMenuSendYmodem(), m.SessionMenuReceiveYmodem(), "-",
+		m.SessionMenuSplitHorizontal(), m.SessionMenuSplitVertical(), "-",
+		m.SessionMenuSaveScreen(), m.SessionMenuClearBuffer(),
 		m.SessionMenuEncoding(), m.SessionMenuLogging(), "-",
-		m.SessionMenuDetach(), m.SessionMenuClosePane(),
+		m.SessionMenuRename(), "-",
+		m.SessionMenuDetach(), "-",
+		m.SessionMenuCloseTerminal(),
 	}
 	if got := tester.Menu(); strings.Join(got, "|") != strings.Join(want, "|") {
 		return selftest.Failed(fmt.Errorf("menu = %v, want %v", got, want))
@@ -512,14 +529,14 @@ func (t *selftest17) menuStep(*ui.Context) selftest.Outcome {
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
 		return selftest.Failed(err)
 	}
-	if err := tester.ChooseMenuItem(m.SessionMenuSplitRight()); err != nil {
-		return selftest.Failed(fmt.Errorf("choose Split Right: %w", err))
+	if err := tester.ChooseMenuItem(m.SessionMenuSplitVertical()); err != nil {
+		return selftest.Failed(fmt.Errorf("choose Split Vertical: %w", err))
 	}
-	if !split {
-		return selftest.Failed(errors.New("Split Right did not reach the action"))
+	if !splitRight || splitDown {
+		return selftest.Failed(fmt.Errorf("Split Vertical reached right=%t down=%t", splitRight, splitDown))
 	}
-	// Detach and Close Pane have no backend in this rendering; they are
-	// visible but must refuse selection.
+	// Detach and Close have no backend in this rendering; they are visible but
+	// must refuse selection.
 	tester.Frame()
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
 		return selftest.Failed(err)
@@ -528,7 +545,7 @@ func (t *selftest17) menuStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(errors.New("a disabled Pane action was choosable"))
 	}
 	return selftest.Passed(
-		"the real Session menu showed the production item order, applied encoding and split choices, and refused a disabled Pane action",
+		"the Session menu showed the original action order, applied encoding and the vertical split, and refused a disabled Pane action",
 		"sessionui.RenderSelftestInteraction + ui.Tester")
 }
 
@@ -537,29 +554,41 @@ func (t *selftest17) layoutStep(*ui.Context) selftest.Outcome {
 	pending := &sessionui.PendingPaste{
 		Text: "one\ntwo\nthree", Lines: 3, Chars: 13, Preview: "one\ntwo\nthree",
 	}
-	model := sessionui.SelftestInteractionModel{
-		Command:      appsession.CommandState{Text: "make test", Running: true},
-		Busy:         true,
-		Logging:      appsession.LogStatus{Active: true, Format: domainterminal.LogFormatText, Path: `C:\logs\session.txt`},
-		LogFormat:    domainterminal.LogFormatText,
-		LogDirectory: `C:\logs`,
-		Encoding:     domainterminal.EncodingLatin1,
-		PendingPaste: pending,
-		DropActive:   true,
-		DropAction:   domainterminal.DropInsert,
-	}
-	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+	// 240x360 is the width of a Pane in a 720-DIP window after the 240-DIP
+	// sidebar and a left/right split. The Session menu must fit there too.
+	for _, size := range [][2]int{{1100, 720}, {720, 480}, {240, 360}} {
+		model := sessionui.SelftestInteractionModel{
+			Command:      appsession.CommandState{Text: "make test", Running: true},
+			Busy:         true,
+			Logging:      appsession.LogStatus{Active: true, Format: domainterminal.LogFormatText, Path: `C:\logs\session.txt`},
+			LogFormat:    domainterminal.LogFormatText,
+			LogDirectory: `C:\logs`,
+			Encoding:     domainterminal.EncodingLatin1,
+			PendingPaste: pending,
+			DropActive:   true,
+			DropAction:   domainterminal.DropInsert,
+			CanPaste:     true,
+			CanReconnect: true,
+		}
+		dismissed := false
 		tester := ui.NewTester(func(c *ui.Context) {
 			sessionui.RenderSelftestInteraction(c, model, sessionui.SelftestInteractionActions{
-				Paste: func() {}, ClearBuffer: func() {}, SetEncoding: func(domainterminal.Encoding) {},
-				AcceptPaste: func() {}, CancelPaste: func() {}, DismissDrop: func() {},
-				SplitRight: func() {}, SplitDown: func() {}, Detach: func() {}, ClosePane: func() {},
+				Copy: func() {}, Paste: func() {}, PasteSelection: func() {}, SelectAll: func() {},
+				OpenBrowser: func() {}, Reconnect: func() {}, SendYmodem: func() {}, ReceiveYmodem: func() {},
+				SaveScreen: func() {}, ToggleLog: func() {}, SetLogFormat: func(domainterminal.LogFormat) {},
+				SetEncoding: func(domainterminal.Encoding) {}, ClearBuffer: func() {}, Rename: func() {},
+				AcceptPaste: func() {}, CancelPaste: func() {},
+				DismissDrop: func() {
+					dismissed = true
+					model.DropNotice = sessionui.DropNoticeNone
+				},
+				DismissScreen: func() {}, SplitRight: func() {}, SplitDown: func() {},
+				Detach: func() {}, ClosePane: func() {},
 			})
 		}, size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 		for _, text := range []string{
-			m.SessionEncoding(),
 			m.SessionMenuLabel(),
 			m.SessionPasteConfirmTitle(3),
 			m.SessionPasteConfirmBody(13),
@@ -567,9 +596,6 @@ func (t *selftest17) layoutStep(*ui.Context) selftest.Outcome {
 			m.SessionPasteSend(),
 			m.SessionPasteCancel(),
 			m.SessionDropActive(m.SessionDropInsertAction()),
-			m.SessionLoggingOn(),
-			m.SessionLoggingStop(),
-			m.SessionLogFormatText(),
 		} {
 			rect, ok := tester.Find(text)
 			if !ok {
@@ -586,9 +612,31 @@ func (t *selftest17) layoutStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(fmt.Errorf("%dx%d Send overlaps Cancel: %+v %+v",
 				size[0], size[1], send, cancel))
 		}
+
+		// The completed drop's result must stay inside the window and its
+		// Cancel must actually dismiss it.
+		model.DropActive = false
+		model.DropNotice = sessionui.DropNoticeInserted
+		model.DropCount = 2
+		tester.Frame()
+		notice, ok := tester.Find(m.SessionDropInserted(2))
+		if !ok {
+			return selftest.Failed(fmt.Errorf("%dx%d lacks the drop result: %v", size[0], size[1], tester.Texts()))
+		}
+		if notice.X < 0 || notice.Y < 0 ||
+			notice.X+notice.W > float32(size[0]) || notice.Y+notice.H > float32(size[1]) {
+			return selftest.Failed(fmt.Errorf("%dx%d clips the drop result: %+v", size[0], size[1], notice))
+		}
+		if err := tester.Click(m.SessionDropDismissLabel()); err != nil {
+			return selftest.Failed(fmt.Errorf("%dx%d dismiss the drop result: %w", size[0], size[1], err))
+		}
+		tester.Frame()
+		if !dismissed || tester.HasText(m.SessionDropInserted(2)) {
+			return selftest.Failed(fmt.Errorf("%dx%d drop result survived Cancel", size[0], size[1]))
+		}
 	}
 	return selftest.Passed(
-		"the encoding selector, Session menu, paste confirmation, and drop banner stayed inside 1100x720 and 720x480 without overlap",
+		"the Session menu, paste confirmation, and drop result stayed inside 1100x720, 720x480, and a 240-DIP split Pane; Cancel dismissed the drop result",
 		"sessionui.RenderSelftestInteraction")
 }
 
@@ -611,7 +659,7 @@ func (t *selftest17) demoStep(*ui.Context) selftest.Outcome {
 	if preparer, ok := surface.(interface{ PrepareSelftestInteraction() }); ok {
 		preparer.PrepareSelftestInteraction()
 		return selftest.Passed(
-			"a real local Session surface shows the encoding selector, a guarded three-line paste, and a completed two-file drop",
+			"a real local Session surface shows a guarded three-line paste and a dismissible completed two-file drop",
 			"sessionui.Surface.PrepareSelftestInteraction")
 	}
 	return selftest.Passed(
