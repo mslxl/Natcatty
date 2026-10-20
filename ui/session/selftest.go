@@ -42,6 +42,7 @@ type SelftestInteractionModel struct {
 	GhostText        string
 	ShowStats        bool
 	Stats            appsession.Stats
+	Hibernated       bool
 }
 
 // SelftestInteractionActions are the production menu and banner callbacks. The
@@ -70,6 +71,9 @@ type SelftestInteractionActions struct {
 	SplitDown        func()
 	Detach           func()
 	ClosePane        func()
+	Hibernate        func()
+	Resume           func()
+	Observe          func()
 	AcceptSuggestion func(index int)
 }
 
@@ -140,6 +144,7 @@ func RenderSelftestInteraction(c *ui.Context, model SelftestInteractionModel,
 		GhostText:        model.GhostText,
 		ShowStats:        model.ShowStats,
 		Stats:            model.Stats,
+		Hibernated:       model.Hibernated,
 	}, locales.In(c.Locale()), c.Theme(), chromeActions{
 		Copy:             actions.Copy,
 		Paste:            actions.Paste,
@@ -163,6 +168,9 @@ func RenderSelftestInteraction(c *ui.Context, model SelftestInteractionModel,
 		SplitDown:        actions.SplitDown,
 		Detach:           actions.Detach,
 		ClosePane:        actions.ClosePane,
+		Hibernate:        actions.Hibernate,
+		Resume:           actions.Resume,
+		Observe:          actions.Observe,
 		AcceptSuggestion: actions.AcceptSuggestion,
 	})
 }

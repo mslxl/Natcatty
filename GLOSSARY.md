@@ -61,6 +61,16 @@ A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTe
 with its own lifecycle, transport, and terminal surface.
 _Avoid_: terminal, tab, shell
 
+**Hibernate**:
+The state of a running Session whose one live terminal view is detached while its
+transport and application state stay alive, so Resume can reattach a view.
+_Avoid_: suspend, park, freeze
+
+**Observer**:
+A read-only view of a Session's bounded screen snapshot and later output, fed to a
+shadow terminal without claiming the Session's one live view.
+_Avoid_: mirror, duplicate view, second terminal
+
 **Workspace**:
 The persisted ordered Tabs and split layout of one window, independent of the live
 Sessions it currently displays. Detached windows have their own Workspace.

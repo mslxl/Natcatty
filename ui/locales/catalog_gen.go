@@ -226,6 +226,86 @@ func (msgs Messages) SessionScreenFailed() string {
 	return Catalog.Format(msgs.locale, "sessionScreenFailed", nil)
 }
 
+// SessionMenuHibernate says "Hibernate"
+// in the language the app shows.
+func SessionMenuHibernate() string { return In(i18n.Locale()).SessionMenuHibernate() }
+
+// SessionMenuHibernate says "Hibernate"
+// in the language of msgs.
+func (msgs Messages) SessionMenuHibernate() string {
+	return Catalog.Format(msgs.locale, "sessionMenuHibernate", nil)
+}
+
+// SessionMenuObserveSnapshot says "Observer snapshot"
+// in the language the app shows.
+func SessionMenuObserveSnapshot() string { return In(i18n.Locale()).SessionMenuObserveSnapshot() }
+
+// SessionMenuObserveSnapshot says "Observer snapshot"
+// in the language of msgs.
+func (msgs Messages) SessionMenuObserveSnapshot() string {
+	return Catalog.Format(msgs.locale, "sessionMenuObserveSnapshot", nil)
+}
+
+// SessionHibernatedTitle says "Session hibernated"
+// in the language the app shows.
+func SessionHibernatedTitle() string { return In(i18n.Locale()).SessionHibernatedTitle() }
+
+// SessionHibernatedTitle says "Session hibernated"
+// in the language of msgs.
+func (msgs Messages) SessionHibernatedTitle() string {
+	return Catalog.Format(msgs.locale, "sessionHibernatedTitle", nil)
+}
+
+// SessionHibernatedBody says "The Session stays connected. Resume to render its screen, or inspect the snapshot without opening a live view."
+// in the language the app shows.
+func SessionHibernatedBody() string { return In(i18n.Locale()).SessionHibernatedBody() }
+
+// SessionHibernatedBody says "The Session stays connected. Resume to render its screen, or inspect the snapshot without opening a live view."
+// in the language of msgs.
+func (msgs Messages) SessionHibernatedBody() string {
+	return Catalog.Format(msgs.locale, "sessionHibernatedBody", nil)
+}
+
+// SessionResume says "Resume"
+// in the language the app shows.
+func SessionResume() string { return In(i18n.Locale()).SessionResume() }
+
+// SessionResume says "Resume"
+// in the language of msgs.
+func (msgs Messages) SessionResume() string {
+	return Catalog.Format(msgs.locale, "sessionResume", nil)
+}
+
+// SessionObserverTitle says "Observer snapshot"
+// in the language the app shows.
+func SessionObserverTitle() string { return In(i18n.Locale()).SessionObserverTitle() }
+
+// SessionObserverTitle says "Observer snapshot"
+// in the language of msgs.
+func (msgs Messages) SessionObserverTitle() string {
+	return Catalog.Format(msgs.locale, "sessionObserverTitle", nil)
+}
+
+// SessionObserverHint says "Read-only view of the owning Session. Input is not forwarded."
+// in the language the app shows.
+func SessionObserverHint() string { return In(i18n.Locale()).SessionObserverHint() }
+
+// SessionObserverHint says "Read-only view of the owning Session. Input is not forwarded."
+// in the language of msgs.
+func (msgs Messages) SessionObserverHint() string {
+	return Catalog.Format(msgs.locale, "sessionObserverHint", nil)
+}
+
+// SessionObserverClose says "Close"
+// in the language the app shows.
+func SessionObserverClose() string { return In(i18n.Locale()).SessionObserverClose() }
+
+// SessionObserverClose says "Close"
+// in the language of msgs.
+func (msgs Messages) SessionObserverClose() string {
+	return Catalog.Format(msgs.locale, "sessionObserverClose", nil)
+}
+
 // SessionMenuFor says "Session menu for pane {number}"
 // in the language the app shows.
 //
