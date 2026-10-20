@@ -71,6 +71,46 @@ func (t *fakeTerminal) SetDropAction(action domainterminal.DropAction) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.DropAction = action })
 }
 
+func (t *fakeTerminal) SetAutocompleteEnabled(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteEnabled = enabled })
+}
+
+func (t *fakeTerminal) SetAutocompleteGhostText(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteGhostText = enabled })
+}
+
+func (t *fakeTerminal) SetAutocompletePopupMenu(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompletePopupMenu = enabled })
+}
+
+func (t *fakeTerminal) SetAutocompleteDebounceMs(milliseconds int) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteDebounceMs = milliseconds })
+}
+
+func (t *fakeTerminal) SetAutocompleteMinChars(characters int) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteMinChars = characters })
+}
+
+func (t *fakeTerminal) SetAutocompleteMaxSuggestions(count int) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteMaxSuggestions = count })
+}
+
+func (t *fakeTerminal) SetAutocompleteHistoryScope(scope domainterminal.AutocompleteHistoryScope) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.AutocompleteHistoryScope = scope })
+}
+
+func (t *fakeTerminal) SetKeywordHighlightEnabled(enabled bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.KeywordHighlightEnabled = enabled })
+}
+
+func (t *fakeTerminal) SetKeywordHighlightRules(rules []domainterminal.KeywordHighlightRule) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.KeywordHighlightRules = rules })
+}
+
+func (t *fakeTerminal) SetShowSessionStats(show bool) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.ShowSessionStats = show })
+}
+
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -112,7 +152,40 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.DropAction != domainterminal.DropUpload {
 		t.Fatal("the drop action was not stored")
 	}
-	if state.Problem() || redraws != 10 {
+	if !state.SetAutocompleteEnabled(false) || fake.settings.AutocompleteEnabled {
+		t.Fatal("autocomplete was not disabled")
+	}
+	if !state.SetAutocompleteGhostText(true) || !fake.settings.AutocompleteGhostText {
+		t.Fatal("ghost text was not enabled")
+	}
+	if !state.SetAutocompletePopupMenu(false) || fake.settings.AutocompletePopupMenu {
+		t.Fatal("the popup menu was not disabled")
+	}
+	if !state.SetAutocompleteDebounceMs(250) || fake.settings.AutocompleteDebounceMs != 250 {
+		t.Fatal("the debounce delay was not stored")
+	}
+	if !state.SetAutocompleteMinChars(3) || fake.settings.AutocompleteMinChars != 3 {
+		t.Fatal("the minimum prefix was not stored")
+	}
+	if !state.SetAutocompleteMaxSuggestions(12) ||
+		fake.settings.AutocompleteMaxSuggestions != 12 {
+		t.Fatal("the suggestion cap was not stored")
+	}
+	if !state.SetAutocompleteHistoryScope(domainterminal.AutocompleteHistoryGlobal) ||
+		fake.settings.AutocompleteHistoryScope != domainterminal.AutocompleteHistoryGlobal {
+		t.Fatal("the history scope was not stored")
+	}
+	if !state.SetKeywordHighlightEnabled(false) || fake.settings.KeywordHighlightEnabled {
+		t.Fatal("keyword highlighting was not disabled")
+	}
+	if !state.SetKeywordHighlightRuleEnabled("warning", false) ||
+		fake.settings.KeywordHighlightRules[1].Enabled {
+		t.Fatal("the warning rule was not disabled")
+	}
+	if !state.SetShowSessionStats(false) || fake.settings.ShowSessionStats {
+		t.Fatal("session statistics were not disabled")
+	}
+	if state.Problem() || redraws != 20 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 
@@ -221,6 +294,77 @@ func TestTerminalOptionLabelsMatchThePolicyValues(t *testing.T) {
 		}
 		if got := labelForFormat(labels, formats, format); got != labels[index] {
 			t.Fatalf("labelForFormat(%q) = %q, want %q", format, got, labels[index])
+		}
+	}
+}
+
+// TestTerminalStateEditsRulePatternsPerLine keeps RE2 repetition counts such
+// as {1,7} intact: the editor separates patterns with newlines, not commas.
+func TestTerminalStateEditsRulePatternsPerLine(t *testing.T) {
+	fake := newFakeTerminal()
+	fake.settings.KeywordHighlightRules = []domainterminal.KeywordHighlightRule{
+		{ID: "ip", Color: "#EC4899", Enabled: true,
+			Patterns: []string{`\b(?:[0-9A-Fa-f]{1,4}:){1,7}:`, `\b10\.0\.0\.1\b`}},
+	}
+	state := NewTerminalState(fake)
+	patterns := state.RulePatterns("ip")
+	if *patterns != "\\b(?:[0-9A-Fa-f]{1,4}:){1,7}:\n\\b10\\.0\\.0\\.1\\b" {
+		t.Fatalf("draft = %q", *patterns)
+	}
+	if !state.SetRulePatterns("ip", "\\b{2,4}\\b\n\n  \\bwarn\\b  ") {
+		t.Fatal("the patterns were not saved")
+	}
+	rules := fake.settings.KeywordHighlightRules
+	if len(rules) != 1 {
+		t.Fatalf("rules = %+v", rules)
+	}
+	want := []string{`\b{2,4}\b`, `\bwarn\b`}
+	if len(rules[0].Patterns) != len(want) {
+		t.Fatalf("patterns = %q", rules[0].Patterns)
+	}
+	for index := range want {
+		if rules[0].Patterns[index] != want[index] {
+			t.Fatalf("pattern %d = %q, want %q", index, rules[0].Patterns[index], want[index])
+		}
+	}
+	// A blank draft removes the rule instead of leaving an empty pattern.
+	if !state.SetRulePatterns("ip", "  \n ") {
+		t.Fatal("blank patterns reported failure")
+	}
+	if len(fake.settings.KeywordHighlightRules) != 0 {
+		t.Fatalf("blank patterns kept the rule: %+v", fake.settings.KeywordHighlightRules)
+	}
+}
+
+func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
+	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+		fake := newFakeTerminal()
+		fake.settings.LogDirectory = `C:\logs`
+		state := NewTerminalState(fake)
+		tester := ui.NewTester(ViewWithDesktop(
+			NewAppLockState(&fakeAppLock{}), nil, state), size[0], size[1])
+		tester.SetLocale("en")
+		tester.Frame()
+		m := locales.In("en")
+		for _, text := range []string{
+			m.SettingsAutocompleteTitle(),
+			m.SettingsAutocompleteEnabled(),
+			m.SettingsAutocompletePopupMenu(),
+			m.SettingsAutocompleteGhostText(),
+			m.SettingsAutocompleteMinChars(),
+			m.SettingsAutocompleteMaxSuggestions(),
+			m.SettingsAutocompleteDebounce(),
+			m.SettingsAutocompleteHistoryScope(),
+			m.SettingsAutocompleteScopeHost(),
+			m.SettingsKeywordHighlightTitle(),
+			m.SettingsKeywordHighlightEnabled(),
+			m.SettingsKeywordHighlightPatterns(),
+			"Error",
+			m.SettingsShowSessionStats(),
+		} {
+			if !tester.HasText(text) {
+				t.Fatalf("%dx%d does not show %q: %v", size[0], size[1], text, tester.Texts())
+			}
 		}
 	}
 }

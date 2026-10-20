@@ -64,6 +64,8 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			}
 		})
 
+		renderPowerUxSection(c, state, settings, m, t)
+
 		ui.Text(c, m.SettingsTerminalEncoding()).Bold()
 		encodingLabels := make([]string, 0, len(domainterminal.SupportedEncodings()))
 		encodings := domainterminal.SupportedEncodings()
@@ -121,6 +123,98 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 	})
 }
 
+// renderPowerUxSection draws autocomplete, keyword highlighting, and the
+// Session statistics switch. It is separate from the logging and encoding
+// controls so each group changes for its own reasons.
+func renderPowerUxSection(c *ui.Context, state *TerminalState,
+	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsAutocompleteTitle()).Bold()
+	ui.Text(c, m.SettingsAutocompleteDescription()).FontSize(12).TextColor(t.TextMuted)
+
+	autocomplete := settings.AutocompleteEnabled
+	if ui.Checkbox(c, &autocomplete, m.SettingsAutocompleteEnabled()).Changed() {
+		state.SetAutocompleteEnabled(autocomplete)
+		c.Invalidate()
+	}
+	popup := settings.AutocompletePopupMenu
+	if ui.Checkbox(c, &popup, m.SettingsAutocompletePopupMenu()).Changed() {
+		state.SetAutocompletePopupMenu(popup)
+		c.Invalidate()
+	}
+	ghost := settings.AutocompleteGhostText
+	if ui.Checkbox(c, &ghost, m.SettingsAutocompleteGhostText()).Changed() {
+		state.SetAutocompleteGhostText(ghost)
+		c.Invalidate()
+	}
+	minChars := float64(domainterminal.NormalizeAutocompleteMinChars(settings.AutocompleteMinChars))
+	ui.Field(c, m.SettingsAutocompleteMinChars(), func() {
+		if ui.NumberInput(c, &minChars, 1,
+			float64(domainterminal.MaxAutocompleteMinChars), 1).Width(96).Changed() {
+			state.SetAutocompleteMinChars(int(minChars))
+			c.Invalidate()
+		}
+	})
+	maxSuggestions := float64(domainterminal.NormalizeAutocompleteMaxSuggestions(settings.AutocompleteMaxSuggestions))
+	ui.Field(c, m.SettingsAutocompleteMaxSuggestions(), func() {
+		if ui.NumberInput(c, &maxSuggestions, 1,
+			float64(domainterminal.MaxAutocompleteMaxSuggestions), 1).Width(96).Changed() {
+			state.SetAutocompleteMaxSuggestions(int(maxSuggestions))
+			c.Invalidate()
+		}
+	})
+	debounce := float64(domainterminal.NormalizeAutocompleteDebounce(settings.AutocompleteDebounceMs))
+	ui.Field(c, m.SettingsAutocompleteDebounce(), func() {
+		if ui.NumberInput(c, &debounce, 0, 5000, 10).Width(96).Changed() {
+			state.SetAutocompleteDebounceMs(int(debounce))
+			c.Invalidate()
+		}
+	})
+	scopeLabels, scopes := autocompleteScopeOptions(m)
+	scopeLabel := labelForScope(scopeLabels, scopes, settings.AutocompleteHistoryScope)
+	ui.Field(c, m.SettingsAutocompleteHistoryScope(), func() {
+		if ui.Select(c, &scopeLabel, scopeLabels).Width(180).Changed() {
+			state.SetAutocompleteHistoryScope(scopes[indexOf(scopeLabels, scopeLabel)])
+			c.Invalidate()
+		}
+	})
+
+	ui.Text(c, m.SettingsKeywordHighlightTitle()).Bold()
+	ui.Text(c, m.SettingsKeywordHighlightDescription()).FontSize(12).TextColor(t.TextMuted)
+	highlight := settings.KeywordHighlightEnabled
+	if ui.Checkbox(c, &highlight, m.SettingsKeywordHighlightEnabled()).Changed() {
+		state.SetKeywordHighlightEnabled(highlight)
+		c.Invalidate()
+	}
+	for _, rule := range settings.KeywordHighlightRules {
+		rule := rule
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Start).Children(func() {
+			ruleEnabled := rule.Enabled
+			ui.Column(c).Width(180).Children(func() {
+				if ui.Checkbox(c, &ruleEnabled, keywordRuleLabel(m, rule.ID)).Changed() {
+					state.SetKeywordHighlightRuleEnabled(rule.ID, ruleEnabled)
+					c.Invalidate()
+				}
+				ui.Text(c, rule.Color).FontSize(10).TextColor(t.TextMuted)
+			})
+			ui.Field(c, m.SettingsKeywordHighlightPatterns(), func() {
+				patterns := state.RulePatterns(rule.ID)
+				if ui.TextArea(c, patterns).Width(420).Height(56).Changed() {
+					if !state.SetRulePatterns(rule.ID, *patterns) {
+						c.Invalidate()
+					}
+				}
+			})
+		})
+	}
+
+	showStats := settings.ShowSessionStats
+	if ui.Checkbox(c, &showStats, m.SettingsShowSessionStats()).Changed() {
+		state.SetShowSessionStats(showStats)
+		c.Invalidate()
+	}
+
+}
+
 func logFormatOptions(m locales.Messages) ([]string, []domainterminal.LogFormat) {
 	return []string{m.SessionLogFormatText(), m.SessionLogFormatRaw(), m.SessionLogFormatHTML()},
 		[]domainterminal.LogFormat{
@@ -156,6 +250,51 @@ func notificationOptions(m locales.Messages) ([]string, []domainterminal.Notific
 			domainterminal.NotificationUnfocused,
 			domainterminal.NotificationAlways,
 		}
+}
+
+// keywordRuleLabel resolves a rule's display name. The domain catalog carries
+// machine IDs only, as ADR-0009 requires; an unknown ID (a user rule) shows as
+// itself.
+func keywordRuleLabel(m locales.Messages, id string) string {
+	switch id {
+	case "error":
+		return m.SettingsKeywordHighlightRuleError()
+	case "warning":
+		return m.SettingsKeywordHighlightRuleWarning()
+	case "ok":
+		return m.SettingsKeywordHighlightRuleOK()
+	case "info":
+		return m.SettingsKeywordHighlightRuleInfo()
+	case "debug":
+		return m.SettingsKeywordHighlightRuleDebug()
+	case "ip-mac":
+		return m.SettingsKeywordHighlightRuleIPMAC()
+	case "unix-path":
+		return m.SettingsKeywordHighlightRuleUnixPath()
+	default:
+		return id
+	}
+}
+
+func autocompleteScopeOptions(m locales.Messages) ([]string, []domainterminal.AutocompleteHistoryScope) {
+	return []string{
+			m.SettingsAutocompleteScopeHost(),
+			m.SettingsAutocompleteScopeGlobal(),
+		},
+		[]domainterminal.AutocompleteHistoryScope{
+			domainterminal.AutocompleteHistoryHost,
+			domainterminal.AutocompleteHistoryGlobal,
+		}
+}
+
+func labelForScope(labels []string, scopes []domainterminal.AutocompleteHistoryScope,
+	scope domainterminal.AutocompleteHistoryScope) string {
+	for index, candidate := range scopes {
+		if candidate == scope {
+			return labels[index]
+		}
+	}
+	return labels[0]
 }
 
 func indexOf(labels []string, label string) int {

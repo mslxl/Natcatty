@@ -14,11 +14,13 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
+	"github.com/mslxl/natcatty/adapters/histfile"
 	"github.com/mslxl/natcatty/adapters/localpty"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	appapplock "github.com/mslxl/natcatty/application/applock"
+	"github.com/mslxl/natcatty/application/autocomplete"
 	"github.com/mslxl/natcatty/application/command"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
@@ -133,12 +135,34 @@ func run(afterReady func(hostWindow)) error {
 			// Apply a change to live Sessions as well as future ones.
 			if sessions != nil {
 				sessions.SetClipboardPolicy(current.OSC52)
+				sessions.SetHighlightPolicy(current.KeywordHighlightEnabled,
+					current.KeywordHighlightRules)
 			}
 		}),
 	)
 	_ = terminalService.Load(context.Background())
 	terminalState = settings.NewTerminalState(terminalService,
 		settings.WithTerminalRedrawRequest(invalidate))
+
+	// Autocomplete combines the commands recorded in this app with the shell's
+	// own history files, as the original did. Both sources are bounded and
+	// degrade to empty so a missing or malformed history cannot block startup.
+	home, _ := os.UserHomeDir()
+	autocompleteService := autocomplete.NewService(
+		store.OpenCommandHistory(filepath.Join(userData, "command-history.json")),
+		func() autocomplete.Config {
+			current := terminalService.Settings()
+			return autocomplete.Config{
+				Enabled:        current.AutocompleteEnabled,
+				MinChars:       current.AutocompleteMinChars,
+				MaxSuggestions: current.AutocompleteMaxSuggestions,
+				DebounceMs:     current.AutocompleteDebounceMs,
+				Scope:          current.AutocompleteHistoryScope,
+			}
+		},
+		autocomplete.WithSource(histfile.Default(home)),
+	)
+	autocompleteService.Load(context.Background())
 
 	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
 	if err != nil {
@@ -288,6 +312,22 @@ func run(afterReady func(hostWindow)) error {
 				shellState.NoteSessionInput(id, data)
 			}
 		}),
+		// Commands that ran in a Session feed autocomplete under that Session's
+		// scope. The Host scope keeps an SSH Host's history separate.
+		appsession.WithCommandHook(func(_ model.SessionID, scope, command string) {
+			autocompleteService.Record(scope, command)
+		}),
+		// A BEL marks the Session active, matching the original's tab badge.
+		// The notification mode is applied separately by the notification hook.
+		appsession.WithBellHook(func(id model.SessionID) {
+			if shellState != nil {
+				shellState.NoteSessionActivity(id)
+			}
+		}),
+		appsession.WithHighlightPolicy(func() (bool, []domainterminal.KeywordHighlightRule) {
+			current := terminalService.Settings()
+			return current.KeywordHighlightEnabled, current.KeywordHighlightRules
+		}),
 		// The app applies the notification mode and window focus before
 		// showing an OS notification.
 		appsession.WithNotificationHook(func(_ model.SessionID, notification appsession.TerminalNotification) {
@@ -332,6 +372,19 @@ func run(afterReady func(hostWindow)) error {
 				}),
 				sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
 					_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
+				}),
+				// Suggestions and counters read Settings on each frame, so a
+				// Settings change applies to open Sessions without reopening.
+				sessionui.WithSuggestions(autocompleteService.Suggestions,
+					func() (bool, bool) {
+						current := terminalService.Settings()
+						return current.AutocompletePopupMenu, current.AutocompleteGhostText
+					}),
+				sessionui.WithAutocompleteDelay(func() int {
+					return terminalService.Settings().AutocompleteDebounceMs
+				}),
+				sessionui.WithSessionStats(func() bool {
+					return terminalService.Settings().ShowSessionStats
 				}),
 				// Reconnect is the original's manual retry: it abandons the
 				// current transport and dials again without the policy delay.

@@ -727,6 +727,14 @@
   "sessionLogFormatRaw": "Raw",
   "sessionLogFormatHTML": "HTML",
   "sessionTransferActive": "{kind} transfer detected. Protocol data is gated.",
+  "sessionStatsLabel": "Session statistics",
+  "sessionStatsSummary": "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications} · transfers {transfers}",
+  "sessionAutocompleteLabel": "Command suggestions",
+  "sessionAutocompleteHint": "Tab to accept · Esc to dismiss",
+  "sessionAutocompleteHistory": "History",
+  "sessionAutocompleteShellHistory": "Shell history",
+  "sessionAutocompleteGhost": "Suggestion: {suggestion}",
+  "sessionAutocompleteFrequency": "×{count}",
   "sessionTransferCancel": "Cancel transfer",
   "sessionClipboardRequest": "A program wants to read the clipboard.",
   "sessionClipboardAllow": "Allow",
@@ -750,6 +758,29 @@
   "settingsOSCNotificationsOff": "Never",
   "settingsOSCNotificationsUnfocused": "When unfocused",
   "settingsOSCNotificationsAlways": "Always",
+  "settingsAutocompleteTitle": "Autocomplete",
+  "settingsAutocompleteDescription": "Suggest commands from recorded history and your shell history files.",
+  "settingsAutocompleteEnabled": "Show command suggestions",
+  "settingsAutocompletePopupMenu": "Show the suggestion list",
+  "settingsAutocompleteGhostText": "Show the first suggestion inline",
+  "settingsAutocompleteMinChars": "Show after this many characters",
+  "settingsAutocompleteMaxSuggestions": "Maximum suggestions",
+  "settingsAutocompleteDebounce": "Suggestion delay (ms)",
+  "settingsAutocompleteHistoryScope": "History scope",
+  "settingsAutocompleteScopeHost": "This Host",
+  "settingsAutocompleteScopeGlobal": "All Hosts",
+  "settingsKeywordHighlightTitle": "Keyword highlighting",
+  "settingsKeywordHighlightDescription": "Color configured words in terminal output.",
+  "settingsKeywordHighlightEnabled": "Highlight keywords",
+  "settingsKeywordHighlightPatterns": "Patterns (one per line)",
+  "settingsShowSessionStats": "Show Session statistics",
+  "settingsKeywordHighlightRuleError": "Error",
+  "settingsKeywordHighlightRuleWarning": "Warning",
+  "settingsKeywordHighlightRuleOK": "OK",
+  "settingsKeywordHighlightRuleInfo": "Info",
+  "settingsKeywordHighlightRuleDebug": "Debug",
+  "settingsKeywordHighlightRuleIPMAC": "URL, IP & MAC",
+  "settingsKeywordHighlightRuleUnixPath": "Unix paths",
   "settingsTerminalSaveFailed": "The terminal settings could not be saved.",
   "@sessionCommandRunning": {
     "description": "The command line that is running.",
@@ -789,6 +820,30 @@
         "type": "String",
         "example": "ZMODEM"
       }
+    }
+  },
+  "@sessionStatsSummary": {
+    "description": "Compact Session counters: input bytes, output bytes, commands, failed commands, bells, notifications, and transfers.",
+    "placeholders": {
+      "input": {"type": "int", "example": "120"},
+      "output": {"type": "int", "example": "4096"},
+      "commands": {"type": "int", "example": "3"},
+      "failed": {"type": "int", "example": "1"},
+      "bells": {"type": "int", "example": "0"},
+      "notifications": {"type": "int", "example": "0"},
+      "transfers": {"type": "int", "example": "0"}
+    }
+  },
+  "@sessionAutocompleteGhost": {
+    "description": "A one-line hint showing the first suggested command.",
+    "placeholders": {
+      "suggestion": {"type": "String", "example": "git status"}
+    }
+  },
+  "@sessionAutocompleteFrequency": {
+    "description": "How many times a command was used.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
     }
   },
   "broadcastButton": "Broadcast",

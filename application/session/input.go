@@ -188,6 +188,7 @@ func (s *Session) deliver(data []byte) (DeliveryStatus, error) {
 	copied := append([]byte(nil), forwarded...)
 	select {
 	case s.writeCh <- copied:
+		s.tap.addInputBytes(len(copied))
 		return DeliveryDelivered, nil
 	case <-s.done:
 		return DeliveryFailed, ErrClosed
