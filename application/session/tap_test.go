@@ -217,6 +217,47 @@ func TestTapCommandFallbackPrompt(t *testing.T) {
 	}
 }
 
+// A fast command's prompt can arrive inside the guard window. Nothing follows
+// it, so an output-driven check would never run again and the command would
+// stay Running forever; the deferred check must settle it once the window
+// expires.
+func TestTapPromptFallbackSettlesAFastPromptAfterTheGuardWindow(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("echo world\r"), tapAt(0))
+	_, effects := tap.observe([]byte("world\r\nPS C:\\work> "), tapAt(20*time.Millisecond))
+	if !effects.PromptRecheck {
+		t.Fatal("the prompt inside the guard window did not request a deferred check")
+	}
+	if !tap.state(tapAt(20 * time.Millisecond)).Command.Running {
+		t.Fatal("a prompt inside the guard window finished the command")
+	}
+	if tap.resolvePrompt(tapAt(40 * time.Millisecond)) {
+		t.Fatal("the deferred check finished the command inside the guard window")
+	}
+	if !tap.resolvePrompt(tapAt(80 * time.Millisecond)) {
+		t.Fatal("the deferred check did not finish the command")
+	}
+	state := tap.state(tapAt(80 * time.Millisecond))
+	if state.Command.Running || !state.Command.FinishedAt.Equal(tapAt(80*time.Millisecond)) {
+		t.Fatalf("command after the deferred check = %+v", state.Command)
+	}
+}
+
+// The prompt from the previous command is already in the tail when Enter is
+// pressed. It says nothing about the new command and must not finish it, even
+// after the guard window, when no output for the new command arrived.
+func TestTapPromptFallbackIgnoresThePreviousPrompt(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte("PS C:\\work> "), tapAt(0))
+	tap.handleInput([]byte("sleep 10\r"), tapAt(time.Second))
+	if tap.resolvePrompt(tapAt(time.Second + 500*time.Millisecond)) {
+		t.Fatal("the previous prompt finished the new command")
+	}
+	if state := tap.state(tapAt(time.Second + 500*time.Millisecond)); !state.Command.Running {
+		t.Fatalf("a stale prompt finished the running command: %+v", state.Command)
+	}
+}
+
 func TestTapActivityTracksOutput(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.observe([]byte("output"), tapAt(0))

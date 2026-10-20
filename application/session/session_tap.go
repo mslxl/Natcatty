@@ -68,8 +68,12 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 	if changed {
 		s.publishTap(now)
 	}
-	if submitted != "" && s.onCommand != nil {
-		s.onCommand(s.id, s.spec.EncodingScope, submitted)
+	if submitted != "" {
+		// A deferred check belongs to the command just replaced.
+		s.stopPromptTimer()
+		if s.onCommand != nil {
+			s.onCommand(s.id, s.spec.EncodingScope, submitted)
+		}
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
@@ -130,6 +134,47 @@ func (s *Session) stopActivityTimer() {
 	if s.activityTimer != nil {
 		s.activityTimer.Stop()
 		s.activityTimer = nil
+	}
+	s.mu.Unlock()
+}
+
+// promptRecheckDelay leaves the prompt fallback's guard window behind before
+// the deferred check, so coarse timer resolution cannot land inside it.
+const promptRecheckDelay = promptWindow + 10*time.Millisecond
+
+// schedulePromptRecheck settles a command whose prompt arrived inside the
+// fallback guard window and was followed by no output. The output-driven path
+// cannot see it, because the prompt was the last chunk. A new submission or a
+// newer deferral supersedes the previous timer, exactly like the activity
+// timer.
+func (s *Session) schedulePromptRecheck() {
+	s.mu.Lock()
+	s.promptSeq++
+	seq := s.promptSeq
+	if s.promptTimer != nil {
+		s.promptTimer.Stop()
+	}
+	s.promptTimer = time.AfterFunc(promptRecheckDelay, func() {
+		s.mu.Lock()
+		if seq != s.promptSeq {
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		now := time.Now()
+		if s.tap.resolvePrompt(now) {
+			s.publishTap(now)
+		}
+	})
+	s.mu.Unlock()
+}
+
+func (s *Session) stopPromptTimer() {
+	s.mu.Lock()
+	s.promptSeq++
+	if s.promptTimer != nil {
+		s.promptTimer.Stop()
+		s.promptTimer = nil
 	}
 	s.mu.Unlock()
 }
