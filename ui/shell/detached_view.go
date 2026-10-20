@@ -41,7 +41,8 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 			})
 
 			if root, focus, ok := s.DetachedTabTree(tabID); ok {
-				paneTree(c, s, m, t, detachedTabRef(s, tabID), root, focus)
+				ordinal := 0
+				paneTree(c, s, m, t, detachedTabRef(s, tabID), root, focus, &ordinal)
 			}
 		})
 	}

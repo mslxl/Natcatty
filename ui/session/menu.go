@@ -14,69 +14,130 @@ type sessionMenuModel struct {
 	Logging      bool
 	LogFormat    domainterminal.LogFormat
 	LogDirectory string
+	CanPaste     bool
+	CanReconnect bool
+	CanClear     bool
+	CanSave      bool
+	CanRename    bool
 	CanSplit     bool
 	CanDetach    bool
 	CanClosePane bool
-	CanPaste     bool
-	CanClear     bool
 }
 
 // sessionMenuActions are the Session menu's commands. Nil entries show their
 // item disabled, so an unavailable action is visibly unavailable rather than
 // silently doing nothing.
 type sessionMenuActions struct {
-	Paste        func()
-	ClearBuffer  func()
-	SetEncoding  func(domainterminal.Encoding)
-	ToggleLog    func()
-	SetLogFormat func(domainterminal.LogFormat)
-	SplitRight   func()
-	SplitDown    func()
-	Detach       func()
-	ClosePane    func()
+	Copy           func()
+	Paste          func()
+	PasteSelection func()
+	SelectAll      func()
+	OpenBrowser    func()
+	Reconnect      func()
+	SendYmodem     func()
+	ReceiveYmodem  func()
+	SaveScreen     func()
+	ClearBuffer    func()
+	Rename         func()
+	SetEncoding    func(domainterminal.Encoding)
+	ToggleLog      func()
+	SetLogFormat   func(domainterminal.LogFormat)
+	SplitRight     func()
+	SplitDown      func()
+	Detach         func()
+	ClosePane      func()
 }
 
-// sessionMenuButton renders the Session menu as a menu button in the status
-// bar. MyGo's terminal owns its own right-click menu (Copy, Paste, Select All,
-// Clear Scrollback), so the Session commands live here where they are always
-// reachable and testable.
-func sessionMenuButton(c *ui.Context, model sessionMenuModel, m locales.Messages,
-	t *ui.Theme, actions sessionMenuActions) {
-	button := ui.MenuButton(c, m.PaneMenuGlyph(), func(menu *ui.Menu) {
+// sessionMenuButton renders the Session menu in the status bar. MyGo's terminal
+// owns its own right-click menu (Copy, Paste, Select All, Clear Scrollback),
+// so the Session commands live here where they are always reachable and
+// testable. The visible label, rather than a bare glyph, keeps the control
+// discoverable when a Pane is only a few hundred DIPs wide.
+func sessionMenuButton(c *ui.Context, model sessionMenuModel, label string,
+	m locales.Messages, t *ui.Theme, actions sessionMenuActions) {
+	button := ui.MenuButton(c, m.SessionMenuLabel(), func(menu *ui.Menu) {
 		buildSessionMenu(menu, model, m, actions)
 	})
-	button.Label(m.SessionMenuLabel())
+	button.Label(label)
 	button.TextColor(t.TextMuted)
 }
 
-// buildSessionMenu fills the Session menu. The order follows the original
-// where the native terminal does not already supply the item: paste, split,
-// clear, then pane lifetime, encoding, and logging.
+// buildSessionMenu fills the Session menu in the original's order: selection,
+// browser, reconnect, YMODEM, splits, screen, identity, and lifetime. Encoding
+// and logging sit after the screen commands because the original exposed them
+// in its toolbar rather than this menu. Every item stays visible and shows a
+// disabled state when its backend is absent; the parity notes list the three
+// selection actions the terminal plugin exposes only through its native menu.
 func buildSessionMenu(menu *ui.Menu, model sessionMenuModel, m locales.Messages,
 	actions sessionMenuActions) {
+	copyItem := menu.Item(m.SessionMenuCopy()).Disabled(actions.Copy == nil)
+	copyItem.Shortcut(ui.Ctrl|ui.Shift, ui.KeyC)
+	if copyItem.Chosen() && actions.Copy != nil {
+		actions.Copy()
+	}
 	paste := menu.Item(m.SessionMenuPaste()).Disabled(actions.Paste == nil || !model.CanPaste)
 	paste.Shortcut(ui.Ctrl|ui.Shift, ui.KeyV)
 	if paste.Chosen() && actions.Paste != nil {
 		actions.Paste()
 	}
+	pasteSelection := menu.Item(m.SessionMenuPasteSelection()).Disabled(actions.PasteSelection == nil)
+	if pasteSelection.Chosen() && actions.PasteSelection != nil {
+		actions.PasteSelection()
+	}
+	selectAll := menu.Item(m.SessionMenuSelectAll()).Disabled(actions.SelectAll == nil)
+	selectAll.Shortcut(ui.Ctrl|ui.Shift, ui.KeyA)
+	if selectAll.Chosen() && actions.SelectAll != nil {
+		actions.SelectAll()
+	}
 
 	menu.Separator()
-	splitRight := menu.Item(m.SessionMenuSplitRight()).Disabled(actions.SplitRight == nil || !model.CanSplit)
-	if splitRight.Chosen() && actions.SplitRight != nil {
-		actions.SplitRight()
+	openBrowser := menu.Item(m.SessionMenuOpenBrowser()).Disabled(actions.OpenBrowser == nil)
+	if openBrowser.Chosen() && actions.OpenBrowser != nil {
+		actions.OpenBrowser()
 	}
-	splitDown := menu.Item(m.SessionMenuSplitDown()).Disabled(actions.SplitDown == nil || !model.CanSplit)
-	if splitDown.Chosen() && actions.SplitDown != nil {
+
+	menu.Separator()
+	reconnect := menu.Item(m.SessionMenuReconnect()).Disabled(actions.Reconnect == nil || !model.CanReconnect)
+	if reconnect.Chosen() && actions.Reconnect != nil {
+		actions.Reconnect()
+	}
+
+	menu.Separator()
+	send := menu.Item(m.SessionMenuSendYmodem()).Disabled(actions.SendYmodem == nil)
+	if send.Chosen() && actions.SendYmodem != nil {
+		actions.SendYmodem()
+	}
+	receive := menu.Item(m.SessionMenuReceiveYmodem()).Disabled(actions.ReceiveYmodem == nil)
+	if receive.Chosen() && actions.ReceiveYmodem != nil {
+		actions.ReceiveYmodem()
+	}
+
+	menu.Separator()
+	// The original calls the top/bottom split Horizontal and the left/right
+	// split Vertical. Keep those names; the shell's SplitDown is top/bottom
+	// and SplitRight is left/right.
+	splitHorizontal := menu.Item(m.SessionMenuSplitHorizontal()).Disabled(actions.SplitDown == nil || !model.CanSplit)
+	splitHorizontal.Shortcut(ui.Ctrl|ui.Shift, ui.KeyD)
+	if splitHorizontal.Chosen() && actions.SplitDown != nil {
 		actions.SplitDown()
 	}
+	splitVertical := menu.Item(m.SessionMenuSplitVertical()).Disabled(actions.SplitRight == nil || !model.CanSplit)
+	splitVertical.Shortcut(ui.Ctrl|ui.Shift, ui.KeyE)
+	if splitVertical.Chosen() && actions.SplitRight != nil {
+		actions.SplitRight()
+	}
 
 	menu.Separator()
+	saveScreen := menu.Item(m.SessionMenuSaveScreen()).Disabled(actions.SaveScreen == nil || !model.CanSave)
+	if saveScreen.Chosen() && actions.SaveScreen != nil {
+		actions.SaveScreen()
+	}
 	clear := menu.Item(m.SessionMenuClearBuffer()).Disabled(actions.ClearBuffer == nil || !model.CanClear)
+	clear.Shortcut(ui.Ctrl|ui.Shift, ui.KeyK)
 	if clear.Chosen() && actions.ClearBuffer != nil {
 		actions.ClearBuffer()
 	}
 
-	menu.Separator()
 	menu.Submenu(m.SessionMenuEncoding(), func(sub *ui.Menu) {
 		for _, encoding := range domainterminal.SupportedEncodings() {
 			item := sub.Item(locales.EncodingLabel(m, encoding)).Checked(encoding == model.Encoding)
@@ -110,11 +171,20 @@ func buildSessionMenu(menu *ui.Menu, model sessionMenuModel, m locales.Messages,
 	})
 
 	menu.Separator()
+	rename := menu.Item(m.SessionMenuRename()).Disabled(actions.Rename == nil || !model.CanRename)
+	if rename.Chosen() && actions.Rename != nil {
+		actions.Rename()
+	}
+
+	menu.Separator()
 	detach := menu.Item(m.SessionMenuDetach()).Disabled(actions.Detach == nil || !model.CanDetach)
 	if detach.Chosen() && actions.Detach != nil {
 		actions.Detach()
 	}
-	closePane := menu.Item(m.SessionMenuClosePane()).Disabled(actions.ClosePane == nil || !model.CanClosePane)
+
+	menu.Separator()
+	closePane := menu.Item(m.SessionMenuCloseTerminal()).Disabled(actions.ClosePane == nil || !model.CanClosePane)
+	closePane.Shortcut(ui.Ctrl|ui.Shift, ui.KeyW)
 	if closePane.Chosen() && actions.ClosePane != nil {
 		actions.ClosePane()
 	}

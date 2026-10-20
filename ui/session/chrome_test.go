@@ -43,9 +43,7 @@ func TestChromeFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		wanted := []string{
 			m.SessionActivityBusy(),
 			m.SessionCommandRunning("make test"),
-			m.SessionLoggingOn(),
-			m.SessionLoggingStop(),
-			m.SessionLogFormatText(),
+			m.SessionMenuLabel(),
 			m.SessionLoggingPath(model.Logging.Path),
 			m.SessionTransferActive("ZMODEM"),
 			m.SessionTransferCancel(),
@@ -79,23 +77,17 @@ func TestChromeFitsAtDefaultAndMinimumSizes(t *testing.T) {
 				size[0], size[1], status, detail, transfer, clipboard)
 		}
 
-		// Within the status bar, the activity dot and command text do not
-		// overlap the logging state or the controls.
-		if status.X+status.W > rects[m.SessionCommandRunning("make test")].X+epsilon {
+		// Within the status bar, the activity dot, command text, and Session
+		// menu do not overlap. The menu is the only fixed control at the right
+		// edge, so it stays inside the Pane at every width.
+		command := rects[m.SessionCommandRunning("make test")]
+		if status.X+status.W > command.X+epsilon {
 			t.Fatalf("%dx%d activity dot overlaps the command text", size[0], size[1])
 		}
-		command := rects[m.SessionCommandRunning("make test")]
-		logging := rects[m.SessionLoggingOn()]
-		if command.X+command.W > logging.X+epsilon {
-			t.Fatalf("%dx%d command text overlaps the logging state: command %+v logging %+v",
-				size[0], size[1], command, logging)
-		}
-		if logging.X+logging.W > rects[m.SessionLogFormatText()].X+epsilon {
-			t.Fatalf("%dx%d logging state overlaps the format select", size[0], size[1])
-		}
-		stop := rects[m.SessionLoggingStop()]
-		if rects[m.SessionLogFormatText()].X+rects[m.SessionLogFormatText()].W > stop.X+epsilon {
-			t.Fatalf("%dx%d format select overlaps the log button", size[0], size[1])
+		menu := rects[m.SessionMenuLabel()]
+		if command.X+command.W > menu.X+epsilon {
+			t.Fatalf("%dx%d command text overlaps the Session menu: command %+v menu %+v",
+				size[0], size[1], command, menu)
 		}
 		allow := rects[m.SessionClipboardAllow()]
 		deny := rects[m.SessionClipboardDeny()]
@@ -121,8 +113,13 @@ func TestChromeExplainsMissingLogDirectory(t *testing.T) {
 	if !tester.HasText(m.SessionLoggingNoDirectory()) {
 		t.Fatalf("missing directory is not explained: %v", tester.Texts())
 	}
-	if !tester.HasText(m.SessionLoggingStart()) {
-		t.Fatalf("Start is missing: %v", tester.Texts())
+	// Start is in the Session menu now; with no directory it must be visible
+	// but refused.
+	if err := tester.Click(m.SessionMenuLabel()); err != nil {
+		t.Fatalf("open the Session menu: %v", err)
+	}
+	if err := tester.ChooseMenuItem(m.SessionMenuLogging(), m.SessionLoggingStart()); err == nil {
+		t.Fatal("Start was choosable with no log directory")
 	}
 	if tester.HasText(m.SessionLoggingPath("")) {
 		t.Fatalf("an empty path was rendered")

@@ -11,8 +11,8 @@ import (
 )
 
 // SelftestInteractionModel is the terminal-interaction chrome state the
-// ticket 17 self-test renders: encoding, logging, the paste confirmation, and
-// drop feedback.
+// ticket 17 self-test renders: encoding, logging, the Session menu, the paste
+// confirmation, and drop feedback.
 type SelftestInteractionModel struct {
 	Command          appsession.CommandState
 	Busy             bool
@@ -28,29 +28,43 @@ type SelftestInteractionModel struct {
 	DropCount        int
 	DropAction       domainterminal.DropAction
 	DropNotice       DropNotice
+	ScreenNotice     ScreenNotice
+	MenuLabel        string
+	CanPaste         bool
+	CanReconnect     bool
 }
 
 // SelftestInteractionActions are the production menu and banner callbacks. The
 // self-test supplies recording functions and drives the same controls a user
 // clicks.
 type SelftestInteractionActions struct {
-	ToggleLog    func()
-	SetLogFormat func(domainterminal.LogFormat)
-	SetEncoding  func(domainterminal.Encoding)
-	Paste        func()
-	ClearBuffer  func()
-	AcceptPaste  func()
-	CancelPaste  func()
-	DismissDrop  func()
-	SplitRight   func()
-	SplitDown    func()
-	Detach       func()
-	ClosePane    func()
+	Copy           func()
+	Paste          func()
+	PasteSelection func()
+	SelectAll      func()
+	OpenBrowser    func()
+	Reconnect      func()
+	SendYmodem     func()
+	ReceiveYmodem  func()
+	SaveScreen     func()
+	ToggleLog      func()
+	SetLogFormat   func(domainterminal.LogFormat)
+	SetEncoding    func(domainterminal.Encoding)
+	ClearBuffer    func()
+	Rename         func()
+	AcceptPaste    func()
+	CancelPaste    func()
+	DismissDrop    func()
+	DismissScreen  func()
+	SplitRight     func()
+	SplitDown      func()
+	Detach         func()
+	ClosePane      func()
 }
 
 // PrepareSelftestInteraction puts a real Session surface into the state the
 // ticket 17 demonstration shows: a guarded three-line paste waiting for Send
-// and a completed two-file drop, with files over the terminal. The next run
+// and a completed two-file drop whose result can be dismissed. The next run
 // replaces it.
 func (s *Surface) PrepareSelftestInteraction() {
 	text := "echo first\necho second\necho third"
@@ -64,7 +78,7 @@ func (s *Surface) PrepareSelftestInteraction() {
 		Truncated: truncated,
 	}
 	s.gate.mu.Unlock()
-	s.dropOver = true
+	s.dropOver = false
 	s.drops.mu.Lock()
 	s.drops.notice = DropNoticeInserted
 	s.drops.count = 2
@@ -95,19 +109,33 @@ func RenderSelftestInteraction(c *ui.Context, model SelftestInteractionModel,
 		DropCount:        model.DropCount,
 		DropAction:       model.DropAction,
 		DropNotice:       model.DropNotice,
+		ScreenNotice:     model.ScreenNotice,
+		MenuLabel:        model.MenuLabel,
+		CanPaste:         model.CanPaste,
+		CanReconnect:     model.CanReconnect,
 	}, locales.In(c.Locale()), c.Theme(), chromeActions{
-		ToggleLog:    actions.ToggleLog,
-		SetLogFormat: actions.SetLogFormat,
-		SetEncoding:  actions.SetEncoding,
-		Paste:        actions.Paste,
-		ClearBuffer:  actions.ClearBuffer,
-		AcceptPaste:  actions.AcceptPaste,
-		CancelPaste:  actions.CancelPaste,
-		DismissDrop:  actions.DismissDrop,
-		SplitRight:   actions.SplitRight,
-		SplitDown:    actions.SplitDown,
-		Detach:       actions.Detach,
-		ClosePane:    actions.ClosePane,
+		Copy:           actions.Copy,
+		Paste:          actions.Paste,
+		PasteSelection: actions.PasteSelection,
+		SelectAll:      actions.SelectAll,
+		OpenBrowser:    actions.OpenBrowser,
+		Reconnect:      actions.Reconnect,
+		SendYmodem:     actions.SendYmodem,
+		ReceiveYmodem:  actions.ReceiveYmodem,
+		SaveScreen:     actions.SaveScreen,
+		ToggleLog:      actions.ToggleLog,
+		SetLogFormat:   actions.SetLogFormat,
+		SetEncoding:    actions.SetEncoding,
+		ClearBuffer:    actions.ClearBuffer,
+		Rename:         actions.Rename,
+		AcceptPaste:    actions.AcceptPaste,
+		CancelPaste:    actions.CancelPaste,
+		DismissDrop:    actions.DismissDrop,
+		DismissScreen:  actions.DismissScreen,
+		SplitRight:     actions.SplitRight,
+		SplitDown:      actions.SplitDown,
+		Detach:         actions.Detach,
+		ClosePane:      actions.ClosePane,
 	})
 }
 

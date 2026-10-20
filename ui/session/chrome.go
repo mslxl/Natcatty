@@ -33,7 +33,28 @@ type chromeModel struct {
 	DropCount  int
 	DropAction domainterminal.DropAction
 	DropNotice DropNotice
+	// ScreenNotice reports the result of Save current screen.
+	ScreenNotice ScreenNotice
+	// MenuLabel is the accessible name of this Pane's Session menu. The shell
+	// supplies a Pane-specific name so several Panes in one window each expose
+	// a distinct, clickable menu control. Empty falls back to the generic name.
+	MenuLabel string
+	// CanPaste reports whether the clipboard holds text right now.
+	CanPaste bool
+	// CanReconnect reports whether the Session has a reconnect policy and is
+	// still able to use it.
+	CanReconnect bool
 }
+
+// ScreenNotice is the result of saving the terminal screen. It is a code, not
+// user-visible text.
+type ScreenNotice string
+
+const (
+	ScreenNoticeNone   ScreenNotice = ""
+	ScreenNoticeSaved  ScreenNotice = "saved"
+	ScreenNoticeFailed ScreenNotice = "failed"
+)
 
 // chromeActions are the interactions the chrome offers. Tests pass nil, which
 // also shows the corresponding menu and banner controls as disabled.
@@ -44,11 +65,21 @@ type chromeActions struct {
 	DenyClipboard  func()
 	CancelTransfer func()
 	SetEncoding    func(domainterminal.Encoding)
+	Copy           func()
 	Paste          func()
+	PasteSelection func()
+	SelectAll      func()
+	OpenBrowser    func()
+	Reconnect      func()
+	SendYmodem     func()
+	ReceiveYmodem  func()
+	SaveScreen     func()
 	ClearBuffer    func()
+	Rename         func()
 	AcceptPaste    func()
 	CancelPaste    func()
 	DismissDrop    func()
+	DismissScreen  func()
 	SplitRight     func()
 	SplitDown      func()
 	Detach         func()
@@ -66,6 +97,9 @@ func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 	if model.Logging.Active || model.LogProblem || model.LogDirectory == "" {
 		logDetail(c, model, m, t)
 	}
+	if model.ScreenNotice != ScreenNoticeNone {
+		screenBanner(c, model, m, t, actions)
+	}
 	if model.Transfer.Active {
 		transferBanner(c, model, m, t, actions)
 	}
@@ -74,6 +108,28 @@ func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 	}
 }
 
+// screenBanner reports Save current screen's result and offers Dismiss.
+func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	text := m.SessionScreenSaved()
+	if model.ScreenNotice == ScreenNoticeFailed {
+		text = m.SessionScreenFailed()
+	}
+	ui.Row(c).FillWidth().Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
+		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, text).FontSize(11).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
+		if ui.Button(c, m.SessionDismiss()).Clicked() && actions.DismissScreen != nil {
+			actions.DismissScreen()
+		}
+	})
+}
+
+// statusBar keeps only the activity dot, the command, and the Session menu.
+// The logging selector, its Start/Stop button, and the encoding selector live
+// in the menu: at the minimum window width a split Pane can be narrower than
+// those controls combined, and a Row draws what does not fit outside the Pane.
+// The Session menu is the one control that must always stay reachable, so it
+// is the only fixed-width item at the right edge and the command takes the
+// remaining width.
 func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
 	ui.Row(c).Height(28).Padding(0, 6).Gap(8).Background(t.Surface).AlignItems(ui.Center).Children(func() {
 		dotColor := t.TextMuted
@@ -87,63 +143,43 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 		ui.Text(c, commandText(m, model.Command)).FontSize(11).
 			SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
 
-		// With no folder configured the detail row explains why Start is
-		// disabled. Repeating that long sentence here would squeeze the
-		// command to a few DIPs at the minimum window width.
-		if model.Logging.Active {
-			ui.Text(c, m.SessionLoggingOn()).FontSize(10).TextColor(t.Success)
-		} else if model.LogDirectory != "" {
-			ui.Text(c, m.SessionLoggingOff()).FontSize(10).TextColor(t.TextMuted)
-		}
-
-		labels := formatLabels(m)
-		selected := labels[indexOfFormat(model.LogFormat)]
-		selectElement := ui.Select(c, &selected, labels).Width(88)
-		if selectElement.Changed() && actions.SetLogFormat != nil {
-			actions.SetLogFormat(formatAtIndex(indexOfLabel(labels, selected)))
-		}
-
-		buttonLabel := m.SessionLoggingStart()
-		if model.Logging.Active {
-			buttonLabel = m.SessionLoggingStop()
-		}
-		button := ui.Button(c, buttonLabel)
-		button.Disabled(model.LogDirectory == "" && !model.Logging.Active)
-		if button.Clicked() && actions.ToggleLog != nil {
-			actions.ToggleLog()
-		}
-
-		// The encoding selector is always visible: a Session that renders
-		// mojibake must not require opening a menu to fix it.
 		encoding := domainterminal.NormalizeEncoding(model.Encoding)
-		encodingChoices := encodingLabels(m)
-		selectedEncoding := locales.EncodingLabel(m, encoding)
-		encodingSelect := ui.Select(c, &selectedEncoding, encodingChoices).Width(104)
-		encodingSelect.Label(m.SessionEncoding())
-		if encodingSelect.Changed() && actions.SetEncoding != nil {
-			actions.SetEncoding(encodingAtLabel(m, selectedEncoding))
+		menuLabel := model.MenuLabel
+		if menuLabel == "" {
+			menuLabel = m.SessionMenuLabel()
 		}
-
 		sessionMenuButton(c, sessionMenuModel{
 			Encoding:     encoding,
 			Logging:      model.Logging.Active,
 			LogFormat:    model.LogFormat,
 			LogDirectory: model.LogDirectory,
-			CanPaste:     actions.Paste != nil,
+			CanPaste:     model.CanPaste && actions.Paste != nil,
+			CanReconnect: model.CanReconnect && actions.Reconnect != nil,
 			CanClear:     actions.ClearBuffer != nil,
+			CanSave:      actions.SaveScreen != nil,
+			CanRename:    actions.Rename != nil,
 			CanSplit:     actions.SplitRight != nil || actions.SplitDown != nil,
 			CanDetach:    actions.Detach != nil,
 			CanClosePane: actions.ClosePane != nil,
-		}, m, t, sessionMenuActions{
-			Paste:        actions.Paste,
-			ClearBuffer:  actions.ClearBuffer,
-			SetEncoding:  actions.SetEncoding,
-			ToggleLog:    actions.ToggleLog,
-			SetLogFormat: actions.SetLogFormat,
-			SplitRight:   actions.SplitRight,
-			SplitDown:    actions.SplitDown,
-			Detach:       actions.Detach,
-			ClosePane:    actions.ClosePane,
+		}, menuLabel, m, t, sessionMenuActions{
+			Copy:           actions.Copy,
+			Paste:          actions.Paste,
+			PasteSelection: actions.PasteSelection,
+			SelectAll:      actions.SelectAll,
+			OpenBrowser:    actions.OpenBrowser,
+			Reconnect:      actions.Reconnect,
+			SendYmodem:     actions.SendYmodem,
+			ReceiveYmodem:  actions.ReceiveYmodem,
+			SaveScreen:     actions.SaveScreen,
+			ClearBuffer:    actions.ClearBuffer,
+			Rename:         actions.Rename,
+			SetEncoding:    actions.SetEncoding,
+			ToggleLog:      actions.ToggleLog,
+			SetLogFormat:   actions.SetLogFormat,
+			SplitRight:     actions.SplitRight,
+			SplitDown:      actions.SplitDown,
+			Detach:         actions.Detach,
+			ClosePane:      actions.ClosePane,
 		})
 	})
 }
@@ -203,8 +239,15 @@ func dropBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Them
 	ui.Row(c).FillWidth().Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Accent).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, text).FontSize(11).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
-		if !model.DropActive && ui.Button(c, m.SessionPasteCancel()).Clicked() && actions.DismissDrop != nil {
-			actions.DismissDrop()
+		if !model.DropActive {
+			dismiss := ui.Button(c, m.SessionDropDismiss())
+			// The visible label matches the original Cancel. The accessible
+			// name stays unique so it cannot collide with the paste prompt's
+			// Cancel in a window that shows both banners.
+			dismiss.Label(m.SessionDropDismissLabel())
+			if dismiss.Clicked() && actions.DismissDrop != nil {
+				actions.DismissDrop()
+			}
 		}
 	})
 }

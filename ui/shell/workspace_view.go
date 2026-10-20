@@ -27,6 +27,7 @@ type tabRef struct {
 	splitDown    func() error
 	closeFocused func() bool
 	detach       func(model.PaneID) bool
+	rename       func(string) bool
 }
 
 func mainTabRef(s *state.State, tabIndex int) tabRef {
@@ -43,6 +44,7 @@ func mainTabRef(s *state.State, tabIndex int) tabRef {
 			return s.CloseFocusedPane()
 		},
 		detach: func(paneID model.PaneID) bool { return s.DetachPane(tabIndex, paneID) },
+		rename: func(title string) bool { return s.RenameTab(tabIndex, title) },
 	}
 }
 
@@ -52,6 +54,7 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 		pane:     func(id model.PaneID) (state.PaneInfo, bool) { return s.DetachedPaneInfoAt(tabID, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool { return s.SetDetachedSplitRatio(tabID, id, ratio) },
 		focus:    func(id model.PaneID) bool { return s.FocusDetachedPaneID(tabID, id) },
+		rename:   func(title string) bool { return s.RenameDetachedTab(tabID, title) },
 	}
 }
 
@@ -192,12 +195,12 @@ func tabTitle(m locales.Messages, info state.TabInfo) string {
 // horizontal split in the domain is top/bottom, so it renders with
 // SplitVerticalPercent; a vertical split is left/right. Dragging a divider
 // updates the domain ratio so it survives restore.
-func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, node *domainworkspace.Node, focus []int) {
+func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, node *domainworkspace.Node, focus []int, ordinal *int) {
 	if node == nil {
 		return
 	}
 	if node.IsPane() {
-		paneView(c, s, m, t, ref, node.PaneID)
+		paneView(c, s, m, t, ref, node.PaneID, ordinal)
 		return
 	}
 	ratio := node.Ratio
@@ -205,8 +208,8 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 		ratio = domainworkspace.DefaultRatio
 	}
 	splitID := node.SplitID
-	first := func() { paneTree(c, s, m, t, ref, node.First, focus) }
-	second := func() { paneTree(c, s, m, t, ref, node.Second, focus) }
+	first := func() { paneTree(c, s, m, t, ref, node.First, focus, ordinal) }
+	second := func() { paneTree(c, s, m, t, ref, node.Second, focus, ordinal) }
 	var split ui.Element
 	if node.Direction == domainworkspace.Horizontal {
 		split = ui.SplitVerticalPercent(c, &ratio, first, second)
@@ -219,7 +222,7 @@ func paneTree(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	split.Fill()
 }
 
-func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, paneID model.PaneID) {
+func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ref tabRef, paneID model.PaneID, ordinal *int) {
 	info, ok := ref.pane(paneID)
 	if !ok {
 		return
@@ -227,32 +230,41 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	// The Session menu lives inside the terminal surface, so the shell hands
 	// it the Pane commands for this exact Pane. A detached Pane gets the zero
 	// value and its split/close items show disabled.
+	title := paneTitle(m, info)
+	*ordinal++
+	paneNumber := *ordinal
 	if aware, ok := info.Surface.(interface {
 		SetPaneActions(sessionui.PaneActions)
 	}); ok {
-		actions := sessionui.PaneActions{}
+		actions := sessionui.PaneActions{
+			Title:     title,
+			MenuLabel: m.SessionMenuFor(paneNumber),
+		}
 		if ref.managesPanes {
-			actions = sessionui.PaneActions{
-				SplitRight: func() {
-					ref.focus(info.ID)
-					_ = ref.splitRight()
+			actions.SplitRight = func() {
+				ref.focus(info.ID)
+				_ = ref.splitRight()
+				c.Invalidate()
+			}
+			actions.SplitDown = func() {
+				ref.focus(info.ID)
+				_ = ref.splitDown()
+				c.Invalidate()
+			}
+			actions.Detach = func() {
+				if ref.detach(info.ID) {
 					c.Invalidate()
-				},
-				SplitDown: func() {
-					ref.focus(info.ID)
-					_ = ref.splitDown()
+				}
+			}
+			actions.Close = func() {
+				ref.focus(info.ID)
+				ref.closeFocused()
+				c.Invalidate()
+			}
+			actions.Rename = func(newTitle string) {
+				if ref.rename != nil && ref.rename(newTitle) {
 					c.Invalidate()
-				},
-				Detach: func() {
-					if ref.detach(info.ID) {
-						c.Invalidate()
-					}
-				},
-				Close: func() {
-					ref.focus(info.ID)
-					ref.closeFocused()
-					c.Invalidate()
-				},
+				}
 			}
 		}
 		aware.SetPaneActions(actions)
@@ -268,6 +280,10 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}
 			pane := ui.Column(c).Grow(1).FillHeight().Background(t.Background)
+			// Naming the Pane region gives assistive technology and the
+			// layout tests the Pane's exact box. Several Panes in one window
+			// must be distinguishable by their titles.
+			pane.Label(m.PaneRegion(paneNumber))
 			if info.Focused {
 				pane.Border(1, t.Accent)
 			}
@@ -319,11 +335,7 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			handle.Drag(state.PaneDrag(ref.id, info.ID))
 		}
 
-		title := info.Label
-		if title == "" {
-			title = m.LocalSessionTab(info.Number)
-		}
-		titleElement := ui.Text(c, title).FontSize(11)
+		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11)
 		if info.Focused {
 			titleElement.Bold().TextColor(t.Text)
 		} else {
@@ -373,6 +385,15 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			}
 		}
 	})
+}
+
+// paneTitle is the Pane's display name: the Session/Host label, or the
+// numbered local-session name when the Session has none.
+func paneTitle(m locales.Messages, info state.PaneInfo) string {
+	if info.Label != "" {
+		return info.Label
+	}
+	return m.LocalSessionTab(info.Number)
 }
 
 func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, info state.PaneInfo) {

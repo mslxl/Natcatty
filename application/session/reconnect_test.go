@@ -118,6 +118,72 @@ func waitForCondition(t *testing.T, what string, ready func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// TestReconnectNowDialsImmediately backs the Session menu's Reconnect action:
+// it must be available only while a reconnectable Session is running, and it
+// must open a new transport without waiting for the policy delay.
+func TestReconnectNowDialsImmediately(t *testing.T) {
+	first := newScriptedTransport()
+	second := newScriptedTransport()
+	factory := &scriptedFactory{transports: []*scriptedTransport{first, second}}
+	service := reconnectTestService(factory)
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind:      KindSSH,
+		Reconnect: &ReconnectPolicy{Delay: time.Hour},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	if !session.CanReconnect() {
+		t.Fatal("CanReconnect = false for a running SSH Session with a policy")
+	}
+	if !session.ReconnectNow() {
+		t.Fatal("ReconnectNow was refused")
+	}
+	waitForCondition(t, "the immediate reconnect", func() bool { return factory.callCount() == 2 })
+	if snapshot := session.Snapshot(); snapshot.Status != StatusRunning {
+		t.Fatalf("status after reconnect = %q", snapshot.Status)
+	}
+	_ = session.Close()
+
+	localService := reconnectTestService(&scriptedFactory{transports: []*scriptedTransport{newScriptedTransport()}})
+	local, err := localService.Open(context.Background(), StartSpec{Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	if local.CanReconnect() || local.ReconnectNow() {
+		t.Fatal("a local Session without a reconnect policy offered Reconnect")
+	}
+
+	// A failed manual attempt must not turn into a zero-delay retry loop; it
+	// falls back to the policy interval for the next attempt.
+	third := newScriptedTransport()
+	retrying := &scriptedFactory{
+		transports: []*scriptedTransport{newScriptedTransport(), third, third},
+		errs:       []error{nil, io.ErrUnexpectedEOF, nil},
+	}
+	retryService := reconnectTestService(retrying)
+	retrySession, err := retryService.Open(context.Background(), StartSpec{
+		Kind: KindSSH, Reconnect: &ReconnectPolicy{Delay: 100 * time.Millisecond},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = retrySession.Close() })
+	if !retrySession.ReconnectNow() {
+		t.Fatal("the second ReconnectNow was refused")
+	}
+	waitForCondition(t, "the failed immediate attempt", func() bool { return retrying.callCount() == 2 })
+	time.Sleep(20 * time.Millisecond)
+	if calls := retrying.callCount(); calls != 2 {
+		t.Fatalf("factory calls = %d, want the policy delay before the third attempt", calls)
+	}
+	waitForCondition(t, "the delayed retry", func() bool {
+		return retrying.callCount() == 3 && retrySession.Snapshot().Connection == ConnectionStatusActive
+	})
+}
+
 func TestReconnectReasonPredicate(t *testing.T) {
 	policy := &ReconnectPolicy{}
 	cases := map[EndReason]bool{

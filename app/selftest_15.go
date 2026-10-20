@@ -606,8 +606,7 @@ func (t *selftest15) layoutStep(*ui.Context) selftest.Outcome {
 		for _, text := range []string{
 			m.SessionActivityBusy(),
 			m.SessionCommandRunning("go test ./..."),
-			m.SessionLoggingOn(),
-			m.SessionLoggingStop(),
+			m.SessionMenuLabel(),
 			m.SessionTransferActive("ZMODEM"),
 			m.SessionTransferCancel(),
 			m.SessionClipboardRequest(),
@@ -623,9 +622,25 @@ func (t *selftest15) layoutStep(*ui.Context) selftest.Outcome {
 				return selftest.Failed(fmt.Errorf("%dx%d clips %q: %+v", size[0], size[1], text, rect))
 			}
 		}
+		// Logging moved from the status bar into the Session menu so a narrow
+		// split Pane can never clip its controls. The menu must still expose it.
+		if err := tester.Click(m.SessionMenuLabel()); err != nil {
+			return selftest.Failed(fmt.Errorf("%dx%d open the Session menu: %w", size[0], size[1], err))
+		}
+		found := false
+		for _, item := range tester.Menu() {
+			if item == m.SessionMenuLogging() {
+				found = true
+			}
+		}
+		if !found {
+			return selftest.Failed(fmt.Errorf("%dx%d Logging is not in the Session menu: %v",
+				size[0], size[1], tester.Menu()))
+		}
+		tester.CloseMenu()
 	}
 	return selftest.Passed(
-		"the production chrome rendered command, activity, logging, transfer, and clipboard controls inside 1100x720 and 720x480",
+		"the production chrome rendered command, activity, the Session menu with Logging, transfer, and clipboard controls inside 1100x720 and 720x480",
 		"sessionui.RenderSelftestChrome")
 }
 

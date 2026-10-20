@@ -335,6 +335,7 @@ const (
 	commandTransportEnded
 	commandTransportOpen
 	commandTransportFailed
+	commandReconnectNow
 	commandClose
 )
 
@@ -690,6 +691,31 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 }
 
+// CanReconnect reports whether ReconnectNow can reopen the transport: the
+// Session has a reconnect policy and has not ended.
+func (s *Session) CanReconnect() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spec.Reconnect != nil && s.ctx.Err() == nil &&
+		s.snapshot.Status == StatusRunning &&
+		s.snapshot.Connection != ConnectionStatusReconnecting
+}
+
+// ReconnectNow abandons the current transport and dials again immediately
+// instead of waiting for the policy's delay. It reports whether the request
+// was accepted. The Session's shell restarts, as any reconnect does.
+func (s *Session) ReconnectNow() bool {
+	if !s.CanReconnect() {
+		return false
+	}
+	select {
+	case s.commands <- command{kind: commandReconnectNow}:
+		return true
+	default:
+		return false
+	}
+}
+
 // Close ends the Session. It is idempotent and returns once the command is
 // queued; Done reports when teardown finished.
 func (s *Session) Close() error {
@@ -759,7 +785,24 @@ func (s *Session) loop() {
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusReconnecting
 				})
-				go s.reconnect(s.generation)
+				go s.reconnect(s.generation, false)
+			case commandReconnectNow:
+				if s.reopening || s.spec.Reconnect == nil {
+					continue
+				}
+				// Advance the generation before closing the live transport so
+				// its end event is ignored, as an automatic reconnect does.
+				s.generation++
+				s.reopening = true
+				close(s.genDone)
+				s.genDone = make(chan struct{})
+				if s.transport != nil {
+					_ = s.transport.Close()
+				}
+				s.update(func(snapshot *Snapshot) {
+					snapshot.Connection = ConnectionStatusReconnecting
+				})
+				go s.reconnect(s.generation, true)
 			case commandTransportOpen:
 				if cmd.generation != s.generation || !s.reopening {
 					if cmd.transport != nil {
@@ -823,9 +866,15 @@ func connectionForEnd(end End) ConnectionStatus {
 
 // reconnect retries opening the transport on the policy's interval. It stops
 // on Session close and on a permanent authentication or host-key failure.
-func (s *Session) reconnect(generation int) {
+func (s *Session) reconnect(generation int, immediate bool) {
 	delay := s.spec.Reconnect.delay()
-	timer := time.NewTimer(delay)
+	initial := delay
+	if immediate {
+		// Only the first attempt skips the policy delay. A failed manual
+		// attempt falls back to the same interval as an automatic retry.
+		initial = 0
+	}
+	timer := time.NewTimer(initial)
 	defer timer.Stop()
 	for {
 		select {

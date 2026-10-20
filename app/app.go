@@ -333,6 +333,9 @@ func run(afterReady func(hostWindow)) error {
 				sessionui.WithEncodingChange(func(encoding domainterminal.Encoding) {
 					_ = terminalService.SetEncodingFor(s.EncodingScope(), encoding)
 				}),
+				// Reconnect is the original's manual retry: it abandons the
+				// current transport and dials again without the policy delay.
+				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
 			)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
