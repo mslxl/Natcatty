@@ -209,6 +209,31 @@ func TestSessionTracksOSC7AndOSC133(t *testing.T) {
 	}
 }
 
+// A fast command's prompt can arrive while the fallback is still inside its
+// guard window, and no further output follows. The Session must settle the
+// command without more output; otherwise Running sticks and autocomplete stays
+// suppressed forever.
+func TestSessionFastPromptFinishesTheCommandWithoutFurtherOutput(t *testing.T) {
+	factory := &fakeFactory{transport: newFakeTransport()}
+	service := newTestService(factory)
+	session, err := service.OpenLocal(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if _, err := session.TerminalConn().Write([]byte("echo world\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "typed input", func() bool { return factory.transport.input() == "echo world\r" })
+
+	factory.transport.send("world\r\nPS C:\\work> ")
+	eventually(t, "the fast command to finish", func() bool {
+		return !session.Snapshot().Command.Running
+	})
+	_ = readOutput(t, session)
+}
+
 func TestSessionClipboardPolicySnapshot(t *testing.T) {
 	service := NewService(&fakeFactory{transport: newFakeTransport()}, WithClipboardPolicy(func() domainterminal.ClipboardAccess {
 		return domainterminal.ClipboardPrompt

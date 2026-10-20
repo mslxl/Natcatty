@@ -333,6 +333,8 @@ type Session struct {
 
 	activitySeq   uint64
 	activityTimer *time.Timer
+	promptSeq     uint64
+	promptTimer   *time.Timer
 
 	// highlightMu guards a partial output line held so a keyword split across
 	// two transport reads is still highlighted. Only the read-loop goroutine,
@@ -1001,6 +1003,7 @@ finished:
 	s.cancel()
 	close(s.genDone)
 	s.stopActivityTimer()
+	s.stopPromptTimer()
 	s.conn.finish()
 	if s.transport != nil {
 		_ = s.transport.Close()
@@ -1088,6 +1091,9 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			if effects.Changed {
 				s.publishTap(now)
 				s.scheduleActivityClear()
+			}
+			if effects.PromptRecheck {
+				s.schedulePromptRecheck()
 			}
 			if effects.Bell && s.onBell != nil {
 				s.onBell(s.id)
