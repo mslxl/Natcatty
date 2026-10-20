@@ -40,6 +40,9 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 	return func(c *ui.Context) {
 		// Test connection attempts complete off the UI thread.
 		s.FlushTests()
+		// A host-key trust decision persists off the UI thread and marks the
+		// Known Host list stale; apply it here, on the UI thread.
+		s.FlushKnownHosts()
 		if configured.forwarding != nil {
 			// Runtime status arrives on the forwarding manager's goroutine;
 			// apply it on the UI thread before rendering.
@@ -111,13 +114,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	knownHostDeleteBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).Children(func() {
-		groupSection(c, s, m, t)
-		if s.HostCount() == 0 {
-			ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
-		}
-		for _, host := range s.EffectiveItems() {
-			hostRow(c, s, host, m, t)
-		}
+		hostSections(c, s, m, t)
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)
 		proxySection(c, s, m, t)
@@ -128,7 +125,17 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	})
 }
 
-func groupSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+// hostGroupSection is one Host Group, or one group path a Host references
+// without a saved group record, and the Hosts directly in it.
+type hostGroupSection struct {
+	path   string
+	group  domainvault.Group
+	stored bool
+	depth  int
+	hosts  []domainvault.Host
+}
+
+func hostSections(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
 		ui.Text(c, m.VaultGroupListTitle(s.GroupCount())).FontSize(16).Bold()
 		ui.Column(c).Grow(1)
@@ -140,14 +147,101 @@ func groupSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 	if s.GroupCount() == 0 {
 		ui.Text(c, m.VaultGroupEmpty()).FontSize(12).TextColor(t.TextMuted)
 	}
-	for _, group := range s.Groups() {
-		groupRow(c, s, group, m, t)
+
+	sections, rootHosts := groupSections(s)
+	for _, section := range sections {
+		if section.stored {
+			groupRow(c, s, section, m, t)
+		} else {
+			implicitGroupRow(c, s, section, m, t)
+		}
+		for _, host := range section.hosts {
+			hostRow(c, s, host, m, t, section.depth+1)
+		}
 	}
+
+	// The Vault root is always a drop target, even with no ungrouped Host, so
+	// every Host can be moved out of a group.
 	rootDropTarget(c, s, m, t)
+	for _, host := range rootHosts {
+		hostRow(c, s, host, m, t, 0)
+	}
+	if s.HostCount() == 0 {
+		ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
+	}
 }
 
-func groupRow(c *ui.Context, s *vaultstate.State, group domainvault.Group, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface)
+// groupSections arranges the listed Hosts under their Host Group. A group a
+// Host references without a saved record still gets a section, so an implicit
+// path never disguises itself as the Vault root. An implicit section is
+// inserted below its deepest listed ancestor, which keeps it inside that
+// group's subtree instead of after every unrelated root group.
+func groupSections(s *vaultstate.State) ([]hostGroupSection, []domainvault.Host) {
+	hosts := s.EffectiveItems()
+	sections := make([]hostGroupSection, 0, s.GroupCount())
+	for _, group := range s.Groups() {
+		sections = append(sections, hostGroupSection{
+			path: group.Path, group: group, stored: true,
+			depth: groupDepth(group.Path),
+		})
+	}
+	var root []domainvault.Host
+	for _, host := range hosts {
+		path := domainvault.NormalizeGroup(host.Group)
+		if path == "" {
+			root = append(root, host)
+			continue
+		}
+		at := sectionIndex(sections, path)
+		if at < 0 {
+			at = implicitSectionIndex(sections, path)
+			sections = append(sections, hostGroupSection{})
+			copy(sections[at+1:], sections[at:])
+			sections[at] = hostGroupSection{path: path, depth: groupDepth(path)}
+		}
+		sections[at].hosts = append(sections[at].hosts, host)
+	}
+	return sections, root
+}
+
+func sectionIndex(sections []hostGroupSection, path string) int {
+	for i, section := range sections {
+		if section.path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// implicitSectionIndex returns where a section for path belongs: after its
+// deepest listed ancestor, or at the end when no listed section contains it.
+func implicitSectionIndex(sections []hostGroupSection, path string) int {
+	at := len(sections)
+	for i, section := range sections {
+		if section.path != path && domainvault.IsGroupAtOrBelow(path, section.path) {
+			at = i + 1
+		}
+	}
+	return at
+}
+
+// groupDepth counts a group path's nesting level, which sets its indent.
+func groupDepth(path string) int {
+	path = domainvault.NormalizeGroup(path)
+	if path == "" {
+		return 0
+	}
+	return strings.Count(path, "/")
+}
+
+func groupIndent(depth int) float32 {
+	return 8 + float32(depth)*16
+}
+
+func groupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, m locales.Messages, t *ui.Theme) {
+	group := section.group
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(section.depth)).
+		Background(t.Surface)
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
 		row.Border(1, t.Accent)
 	}
@@ -158,7 +252,7 @@ func groupRow(c *ui.Context, s *vaultstate.State, group domainvault.Group, m loc
 	row.Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, group.Path).Bold()
-			ui.Text(c, groupSummary(s, group, m)).FontSize(12).TextColor(t.TextMuted)
+			tokenRow(c, groupSummary(s, group, m), t)
 		})
 		if ui.Button(c, m.VaultHostEdit()).Clicked() {
 			s.BeginEditGroup(group.Path)
@@ -171,7 +265,29 @@ func groupRow(c *ui.Context, s *vaultstate.State, group domainvault.Group, m loc
 	})
 }
 
-func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messages) string {
+// implicitGroupRow shows a group path only Hosts reference. It has no stored
+// defaults to edit, so it carries no edit or delete action, but it is still a
+// drop target like every other visible group row.
+func implicitGroupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, m locales.Messages, t *ui.Theme) {
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(section.depth)).
+		Background(t.Surface)
+	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+		row.Border(1, t.Accent)
+	}
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
+		s.MoveHostToGroup(drag.HostID, section.path)
+		c.Invalidate()
+	}
+	row.Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, section.path).Bold()
+			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
+				FontSize(12).TextColor(t.TextMuted)
+		})
+	})
+}
+
+func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messages) []string {
 	parts := make([]string, 0, 5)
 	parts = append(parts, m.VaultGroupMemberCount(s.GroupMemberCount(group.Path)))
 	if group.Username != "" {
@@ -183,22 +299,27 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 	if profile, ok := s.ProxyProfileByID(group.ProxyProfileID); ok {
 		parts = append(parts, profile.Label)
 	}
-	return strings.Join(parts, " · ")
+	return parts
 }
 
 // rootDropTarget accepts a dragged Host and moves it out of every group. It
-// stays visible with no groups so a Host can always return to the root.
+// stays visible with no groups so a Host can always return to the root, and it
+// is tall enough that a dragged row does not hide its label.
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(6, 8).Radius(t.Radius)
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Radius(t.Radius).Border(1, t.Border)
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
-		row.Background(t.Surface).Border(1, t.Accent)
+		row.Background(t.Surface).Border(2, t.Accent)
 	}
 	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
 		s.MoveHostToGroup(drag.HostID, "")
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).
+				FontSize(12).TextColor(t.TextMuted)
+		})
 	})
 }
 
@@ -563,13 +684,15 @@ func secretProblem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
 	ui.Text(c, message).TextColor(t.Danger)
 }
 
-func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface)
-	row.Drag(vaultstate.HostDrag(host.ID))
+func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme, indent int) {
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(indent)).
+		Background(t.Surface)
 	row.Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			ui.Text(c, host.Label).Bold()
-			ui.Text(c, hostSummary(s, host, m)).FontSize(12).TextColor(t.TextMuted)
+			// Only the label drags, so the drag ghost stays a small copy of the
+			// label instead of a full row that hides the drop target's name.
+			ui.Text(c, host.Label).Bold().Drag(vaultstate.HostDrag(host.ID))
+			summaryRow(c, s, host, m, t)
 			if problem := s.TestProblem(host.ID); problem != "" {
 				if text := uiconnection.ProblemText(m, problem); text != "" {
 					ui.Text(c, text).FontSize(12).TextColor(t.Danger)
@@ -612,8 +735,23 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 	})
 }
 
-func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages) string {
-	parts := make([]string, 0, 6)
+// summaryRow lays the Host's summary out as separate wrapped tokens. No token
+// is a bare separator, so a narrow window never starts a line with "·".
+func summaryRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
+	tokenRow(c, hostSummary(s, host, m), t)
+}
+
+// tokenRow wraps summary tokens without inserting separator glyphs of its own.
+func tokenRow(c *ui.Context, parts []string, t *ui.Theme) {
+	ui.Row(c).Wrap().Gap(6).Children(func() {
+		for _, part := range parts {
+			ui.Text(c, part).FontSize(12).TextColor(t.TextMuted)
+		}
+	})
+}
+
+func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages) []string {
+	parts := make([]string, 0, 5)
 	if host.Protocol == domainvault.ProtocolLocal {
 		parts = append(parts, m.VaultHostLocal())
 	} else {
@@ -622,9 +760,6 @@ func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages)
 	if host.Username != "" {
 		parts = append(parts, host.Username)
 	}
-	if host.Group != "" {
-		parts = append(parts, host.Group)
-	}
 	parts = append(parts, authSummary(s, host, m))
 	if len(host.Tags) > 0 {
 		parts = append(parts, strings.Join(host.Tags, ", "))
@@ -632,7 +767,7 @@ func hostSummary(s *vaultstate.State, host domainvault.Host, m locales.Messages)
 	if host.Pinned {
 		parts = append(parts, "★")
 	}
-	return strings.Join(parts, " · ")
+	return parts
 }
 
 // authSummary reports the method a connection will use after the Identity,
@@ -697,113 +832,123 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 		title = m.VaultHostFormEditTitle()
 	}
 
-	ui.Text(c, title).FontSize(20).Bold()
+	// The form scrolls independently of the actions, so Save and Cancel stay
+	// on screen at every supported window size.
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultHostLabel(), func() {
-			ui.TextInput(c, &form.Label)
-		})
-		ui.Field(c, m.VaultHostHostname(), func() {
-			ui.TextInput(c, &form.Hostname).Placeholder("example.com")
-		})
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Field(c, m.VaultHostPort(), func() {
-				ui.TextInput(c, &form.Port).Placeholder("22").Width(120)
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultHostLabel(), func() {
+				ui.TextInput(c, &form.Label)
 			})
-			ui.Field(c, m.VaultHostUsername(), func() {
-				ui.TextInput(c, &form.Username).Placeholder("root").Width(220)
+			ui.Field(c, m.VaultHostHostname(), func() {
+				ui.TextInput(c, &form.Hostname).Placeholder("example.com")
 			})
-			ui.Field(c, m.VaultHostProtocol(), func() {
-				changed := ui.Select(c, &form.Protocol, []string{
-					string(domainvault.ProtocolSSH),
-					string(domainvault.ProtocolTelnet),
-					string(domainvault.ProtocolLocal),
-				}).Width(140).Changed()
-				if changed && form.Protocol != string(domainvault.ProtocolSSH) {
-					s.SetX11Forwarding(false)
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				ui.Field(c, m.VaultHostPort(), func() {
+					ui.TextInput(c, &form.Port).Placeholder("22").Width(120)
+				})
+				ui.Field(c, m.VaultHostUsername(), func() {
+					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
+				})
+				ui.Field(c, m.VaultHostProtocol(), func() {
+					changed := ui.Select(c, &form.Protocol, []string{
+						string(domainvault.ProtocolSSH),
+						string(domainvault.ProtocolTelnet),
+						string(domainvault.ProtocolLocal),
+					}).Width(140).Changed()
+					if changed && form.Protocol != string(domainvault.ProtocolSSH) {
+						s.SetX11Forwarding(false)
+						c.Invalidate()
+					}
+				})
+			})
+			ui.Field(c, m.VaultHostGroup(), func() {
+				ui.TextInput(c, &form.Group).Placeholder("prod/web")
+			}).Description(m.VaultHostGroupHint())
+			ui.Field(c, m.VaultHostTags(), func() {
+				ui.TextInput(c, &form.Tags).Placeholder("prod, web")
+			}).Description(m.VaultHostTagsHint())
+			ui.Field(c, m.VaultHostNotes(), func() {
+				ui.TextArea(c, &form.Notes).Height(80)
+			})
+			passwordHint := m.VaultHostPasswordHint()
+			if form.HasPassword {
+				passwordHint = m.VaultHostPasswordKeep()
+			}
+			ui.Field(c, m.VaultHostPassword(), func() {
+				// The input is plaintext only while the editor is open. It is
+				// never loaded back from storage and never rendered again.
+				ui.TextInput(c, &form.Password).Password()
+			}).Description(passwordHint)
+
+			ui.Text(c, m.VaultHostAuthSection()).Bold()
+			ui.Field(c, m.VaultHostIdentity(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.IdentityID, "", m.VaultNone())
+					for _, identity := range s.Identities() {
+						ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
+					}
+				})
+			}).Description(m.VaultHostIdentityHint())
+			ui.Field(c, m.VaultHostKey(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.KeyID, "", m.VaultNone())
+					for _, key := range s.Keys() {
+						ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+					}
+				})
+			}).Description(m.VaultHostKeyHint())
+			ui.Field(c, m.VaultHostAuthMethod(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
+				})
+			})
+			ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+			ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+			ui.Field(c, m.VaultHostProxyProfile(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+					for _, profile := range s.ProxyProfiles() {
+						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+					}
+				})
+			}).Description(m.VaultHostProxyProfileHint())
+			if form.Protocol == string(domainvault.ProtocolSSH) {
+				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
+					// Turning X11 off clears the acknowledgement, so re-enabling it
+					// always asks the user to accept the warning again.
+					s.SetX11Forwarding(form.X11Forwarding)
 					c.Invalidate()
 				}
-			})
+				if form.X11Forwarding {
+					ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(t.Danger)
+					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
+				}
+			}
+			ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 		})
-		ui.Field(c, m.VaultHostGroup(), func() {
-			ui.TextInput(c, &form.Group).Placeholder("prod/web")
-		}).Description(m.VaultHostGroupHint())
-		ui.Field(c, m.VaultHostTags(), func() {
-			ui.TextInput(c, &form.Tags).Placeholder("prod, web")
-		}).Description(m.VaultHostTagsHint())
-		ui.Field(c, m.VaultHostNotes(), func() {
-			ui.TextArea(c, &form.Notes).Height(80)
-		})
-		passwordHint := m.VaultHostPasswordHint()
-		if form.HasPassword {
-			passwordHint = m.VaultHostPasswordKeep()
-		}
-		ui.Field(c, m.VaultHostPassword(), func() {
-			// The input is plaintext only while the editor is open. It is
-			// never loaded back from storage and never rendered again.
-			ui.TextInput(c, &form.Password).Password()
-		}).Description(passwordHint)
 
-		ui.Text(c, m.VaultHostAuthSection()).Bold()
-		ui.Field(c, m.VaultHostIdentity(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.IdentityID, "", m.VaultNone())
-				for _, identity := range s.Identities() {
-					ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
-				}
-			})
-		}).Description(m.VaultHostIdentityHint())
-		ui.Field(c, m.VaultHostKey(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.KeyID, "", m.VaultNone())
-				for _, key := range s.Keys() {
-					ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
-				}
-			})
-		}).Description(m.VaultHostKeyHint())
-		ui.Field(c, m.VaultHostAuthMethod(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
-			})
-		})
-		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
-		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
-		ui.Field(c, m.VaultHostProxyProfile(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
-				for _, profile := range s.ProxyProfiles() {
-					ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
-				}
-			})
-		}).Description(m.VaultHostProxyProfileHint())
-		if form.Protocol == string(domainvault.ProtocolSSH) {
-			if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
-				// Turning X11 off clears the acknowledgement, so re-enabling it
-				// always asks the user to accept the warning again.
-				s.SetX11Forwarding(form.X11Forwarding)
-				c.Invalidate()
-			}
-			if form.X11Forwarding {
-				ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(t.Danger)
-				ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
-			}
-		}
-		ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
+		ui.Text(c, m.VaultHostCredentialsNote()).FontSize(12).TextColor(t.TextMuted)
+		problem(c, s, t)
 	})
 
-	ui.Text(c, m.VaultHostCredentialsNote()).FontSize(12).TextColor(t.TextMuted)
-	problem(c, s, t)
+	editorActions(c, func() { _ = s.Save() }, s.CancelEdit, m)
+}
 
+// editorActions renders the fixed action bar every editor shares, below its
+// scrolling form, so Save and Cancel stay reachable however long the form is.
+func editorActions(c *ui.Context, save, cancel func(), m locales.Messages) {
 	ui.Row(c).Gap(8).Children(func() {
 		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
-			_ = s.Save()
+			save()
 			c.Invalidate()
 		}
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelEdit()
+			cancel()
 			c.Invalidate()
 		}
 	})
@@ -816,51 +961,44 @@ func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.The
 		title = m.VaultKeyFormEditTitle()
 	}
 
-	ui.Text(c, title).FontSize(20).Bold()
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultHostLabel(), func() {
-			ui.TextInput(c, &form.Label)
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultHostLabel(), func() {
+				ui.TextInput(c, &form.Label)
+			})
+			materialHint := m.VaultKeyMaterialHint()
+			if form.HasPrivateKey {
+				materialHint = m.VaultKeyMaterialKeep()
+			}
+			ui.Field(c, m.VaultKeyMaterial(), func() {
+				ui.TextArea(c, &form.PrivateKey).Height(120)
+			}).Description(materialHint)
+			passphraseHint := m.VaultKeyPassphraseHint()
+			if form.HasPassphrase {
+				passphraseHint = m.VaultKeyPassphraseKeep()
+			}
+			ui.Field(c, m.VaultKeyPassphrase(), func() {
+				ui.TextInput(c, &form.Passphrase).Password()
+			}).Description(passphraseHint)
+			ui.Checkbox(c, &form.SavePassphrase, m.VaultKeySavePassphrase())
+			if form.HasPassphrase {
+				ui.Checkbox(c, &form.ClearPassphrase, m.VaultKeyClearPassphrase())
+			}
+			ui.Field(c, m.VaultKeyCertificate(), func() {
+				ui.TextArea(c, &form.Certificate).Height(60)
+			}).Description(m.VaultKeyCertificateHint())
+			if form.HasCertificate {
+				ui.Checkbox(c, &form.ClearCertificate, m.VaultKeyClearCertificate())
+			}
 		})
-		materialHint := m.VaultKeyMaterialHint()
-		if form.HasPrivateKey {
-			materialHint = m.VaultKeyMaterialKeep()
-		}
-		ui.Field(c, m.VaultKeyMaterial(), func() {
-			ui.TextArea(c, &form.PrivateKey).Height(120)
-		}).Description(materialHint)
-		passphraseHint := m.VaultKeyPassphraseHint()
-		if form.HasPassphrase {
-			passphraseHint = m.VaultKeyPassphraseKeep()
-		}
-		ui.Field(c, m.VaultKeyPassphrase(), func() {
-			ui.TextInput(c, &form.Passphrase).Password()
-		}).Description(passphraseHint)
-		ui.Checkbox(c, &form.SavePassphrase, m.VaultKeySavePassphrase())
-		if form.HasPassphrase {
-			ui.Checkbox(c, &form.ClearPassphrase, m.VaultKeyClearPassphrase())
-		}
-		ui.Field(c, m.VaultKeyCertificate(), func() {
-			ui.TextArea(c, &form.Certificate).Height(60)
-		}).Description(m.VaultKeyCertificateHint())
-		if form.HasCertificate {
-			ui.Checkbox(c, &form.ClearCertificate, m.VaultKeyClearCertificate())
-		}
+
+		ui.Text(c, m.VaultKeyNote()).FontSize(12).TextColor(t.TextMuted)
+		problem(c, s, t)
 	})
 
-	ui.Text(c, m.VaultKeyNote()).FontSize(12).TextColor(t.TextMuted)
-	problem(c, s, t)
-
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
-			_ = s.SaveKey()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelKeyEdit()
-			c.Invalidate()
-		}
-	})
+	editorActions(c, func() { _ = s.SaveKey() }, s.CancelKeyEdit, m)
 }
 
 func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -870,58 +1008,51 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 		title = m.VaultIdentityFormEditTitle()
 	}
 
-	ui.Text(c, title).FontSize(20).Bold()
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultHostLabel(), func() {
-			ui.TextInput(c, &form.Label)
-		})
-		ui.Field(c, m.VaultHostUsername(), func() {
-			ui.TextInput(c, &form.Username).Placeholder("root")
-		})
-		ui.Field(c, m.VaultIdentityMethod(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthPassword), m.VaultIdentityMethodPassword())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthKey), m.VaultIdentityMethodKey())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthCertificate), m.VaultIdentityMethodCertificate())
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultHostLabel(), func() {
+				ui.TextInput(c, &form.Label)
 			})
-		})
-		if form.AuthMethod != string(domainvault.IdentityAuthPassword) {
-			ui.Field(c, m.VaultIdentityKey(), func() {
+			ui.Field(c, m.VaultHostUsername(), func() {
+				ui.TextInput(c, &form.Username).Placeholder("root")
+			})
+			ui.Field(c, m.VaultIdentityMethod(), func() {
 				ui.RadioGroup(c, func() {
-					for _, key := range s.Keys() {
-						ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
-					}
+					ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthPassword), m.VaultIdentityMethodPassword())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthKey), m.VaultIdentityMethodKey())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.IdentityAuthCertificate), m.VaultIdentityMethodCertificate())
 				})
-			}).Description(m.VaultIdentityKeyHint())
-		}
-		if form.AuthMethod == string(domainvault.IdentityAuthPassword) {
-			passwordHint := m.VaultHostPasswordHint()
-			if form.HasPassword {
-				passwordHint = m.VaultHostPasswordKeep()
+			})
+			if form.AuthMethod != string(domainvault.IdentityAuthPassword) {
+				ui.Field(c, m.VaultIdentityKey(), func() {
+					ui.RadioGroup(c, func() {
+						for _, key := range s.Keys() {
+							ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+						}
+					})
+				}).Description(m.VaultIdentityKeyHint())
 			}
-			ui.Field(c, m.VaultHostPassword(), func() {
-				ui.TextInput(c, &form.Password).Password()
-			}).Description(passwordHint)
-			if form.HasPassword {
-				ui.Checkbox(c, &form.ClearPassword, m.VaultIdentityClearPassword())
+			if form.AuthMethod == string(domainvault.IdentityAuthPassword) {
+				passwordHint := m.VaultHostPasswordHint()
+				if form.HasPassword {
+					passwordHint = m.VaultHostPasswordKeep()
+				}
+				ui.Field(c, m.VaultHostPassword(), func() {
+					ui.TextInput(c, &form.Password).Password()
+				}).Description(passwordHint)
+				if form.HasPassword {
+					ui.Checkbox(c, &form.ClearPassword, m.VaultIdentityClearPassword())
+				}
 			}
-		}
+		})
+
+		ui.Text(c, m.VaultIdentityNote()).FontSize(12).TextColor(t.TextMuted)
+		problem(c, s, t)
 	})
 
-	ui.Text(c, m.VaultIdentityNote()).FontSize(12).TextColor(t.TextMuted)
-	problem(c, s, t)
-
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
-			_ = s.SaveIdentity()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelIdentityEdit()
-			c.Invalidate()
-		}
-	})
+	editorActions(c, func() { _ = s.SaveIdentity() }, s.CancelIdentityEdit, m)
 }
 
 func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -931,79 +1062,72 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		title = m.VaultGroupFormEditTitle()
 	}
 
-	ui.Text(c, title).FontSize(20).Bold()
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultHostGroup(), func() {
-			ui.TextInput(c, &form.Path).Placeholder("prod/web")
-		}).Description(m.VaultHostGroupHint())
-		ui.Field(c, m.VaultHostNotes(), func() {
-			ui.TextArea(c, &form.Notes).Height(60)
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultHostGroup(), func() {
+				ui.TextInput(c, &form.Path).Placeholder("prod/web")
+			}).Description(m.VaultHostGroupHint())
+			ui.Field(c, m.VaultHostNotes(), func() {
+				ui.TextArea(c, &form.Notes).Height(60)
+			})
+			ui.Text(c, m.VaultGroupDefaults()).Bold()
+			ui.Row(c).Gap(8).Wrap().Children(func() {
+				ui.Field(c, m.VaultHostPort(), func() {
+					ui.TextInput(c, &form.Port).Placeholder("22").Width(120)
+				})
+				ui.Field(c, m.VaultHostUsername(), func() {
+					ui.TextInput(c, &form.Username).Placeholder("root").Width(200)
+				})
+				ui.Field(c, m.VaultHostProtocol(), func() {
+					ui.Select(c, &form.Protocol, []string{
+						string(domainvault.ProtocolSSH),
+						string(domainvault.ProtocolTelnet),
+					}).Width(140)
+				})
+			})
+			ui.Field(c, m.VaultHostAuthMethod(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.AuthMethod, "", m.VaultNone())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
+					ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
+				})
+			})
+			ui.Field(c, m.VaultHostIdentity(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.IdentityID, "", m.VaultNone())
+					for _, identity := range s.Identities() {
+						ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
+					}
+				})
+			})
+			ui.Field(c, m.VaultHostKey(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.KeyID, "", m.VaultNone())
+					for _, key := range s.Keys() {
+						ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+					}
+				})
+			})
+			ui.Field(c, m.VaultHostProxyProfile(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+					for _, profile := range s.ProxyProfiles() {
+						ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+					}
+				})
+			})
+			ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+			ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 		})
-		ui.Text(c, m.VaultGroupDefaults()).Bold()
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Field(c, m.VaultHostPort(), func() {
-				ui.TextInput(c, &form.Port).Placeholder("22").Width(120)
-			})
-			ui.Field(c, m.VaultHostUsername(), func() {
-				ui.TextInput(c, &form.Username).Placeholder("root").Width(220)
-			})
-			ui.Field(c, m.VaultHostProtocol(), func() {
-				ui.Select(c, &form.Protocol, []string{
-					string(domainvault.ProtocolSSH),
-					string(domainvault.ProtocolTelnet),
-				}).Width(140)
-			})
-		})
-		ui.Field(c, m.VaultHostAuthMethod(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.AuthMethod, "", m.VaultNone())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
-				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
-			})
-		})
-		ui.Field(c, m.VaultHostIdentity(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.IdentityID, "", m.VaultNone())
-				for _, identity := range s.Identities() {
-					ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
-				}
-			})
-		})
-		ui.Field(c, m.VaultHostKey(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.KeyID, "", m.VaultNone())
-				for _, key := range s.Keys() {
-					ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
-				}
-			})
-		})
-		ui.Field(c, m.VaultHostProxyProfile(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
-				for _, profile := range s.ProxyProfiles() {
-					ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
-				}
-			})
-		})
-		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
-		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+
+		problem(c, s, t)
 	})
 
-	problem(c, s, t)
-
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
-			_ = s.SaveGroup()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelGroupEdit()
-			c.Invalidate()
-		}
-	})
+	editorActions(c, func() { _ = s.SaveGroup() }, s.CancelGroupEdit, m)
 }
 
 func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
@@ -1013,51 +1137,44 @@ func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		title = m.VaultProxyFormEditTitle()
 	}
 
-	ui.Text(c, title).FontSize(20).Bold()
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultHostLabel(), func() {
-			ui.TextInput(c, &form.Label)
-		})
-		ui.Field(c, m.VaultProxyType(), func() {
-			ui.Select(c, &form.Type, []string{
-				string(domainvault.ProxyCommand),
-				string(domainvault.ProxyHTTP),
-				string(domainvault.ProxySOCKS5),
-			}).Width(160)
-		})
-		switch domainvault.ProxyType(form.Type) {
-		case domainvault.ProxyCommand:
-			ui.Field(c, m.VaultProxyCommand(), func() {
-				ui.TextInput(c, &form.Command).Placeholder("ssh -W %h:%p jump")
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultHostLabel(), func() {
+				ui.TextInput(c, &form.Label)
 			})
-		default:
-			ui.Row(c).Gap(8).Children(func() {
-				ui.Field(c, m.VaultProxyHost(), func() {
-					ui.TextInput(c, &form.Host).Placeholder("proxy.example.com")
-				})
-				ui.Field(c, m.VaultHostPort(), func() {
-					ui.TextInput(c, &form.Port).Placeholder("1080").Width(120)
-				})
-				ui.Field(c, m.VaultProxyUsername(), func() {
-					ui.TextInput(c, &form.Username).Width(180)
-				})
+			ui.Field(c, m.VaultProxyType(), func() {
+				ui.Select(c, &form.Type, []string{
+					string(domainvault.ProxyCommand),
+					string(domainvault.ProxyHTTP),
+					string(domainvault.ProxySOCKS5),
+				}).Width(160)
 			})
-		}
+			switch domainvault.ProxyType(form.Type) {
+			case domainvault.ProxyCommand:
+				ui.Field(c, m.VaultProxyCommand(), func() {
+					ui.TextInput(c, &form.Command).Placeholder("ssh -W %h:%p jump")
+				})
+			default:
+				ui.Row(c).Gap(8).Wrap().Children(func() {
+					ui.Field(c, m.VaultProxyHost(), func() {
+						ui.TextInput(c, &form.Host).Placeholder("proxy.example.com")
+					})
+					ui.Field(c, m.VaultHostPort(), func() {
+						ui.TextInput(c, &form.Port).Placeholder("1080").Width(120)
+					})
+					ui.Field(c, m.VaultProxyUsername(), func() {
+						ui.TextInput(c, &form.Username).Width(180)
+					})
+				})
+			}
+		})
+
+		problem(c, s, t)
 	})
 
-	problem(c, s, t)
-
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
-			_ = s.SaveProxyProfile()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostCancel()).Clicked() {
-			s.CancelProxyEdit()
-			c.Invalidate()
-		}
-	})
+	editorActions(c, func() { _ = s.SaveProxyProfile() }, s.CancelProxyEdit, m)
 }
 
 // problem renders the current problem's localized message. An unknown problem

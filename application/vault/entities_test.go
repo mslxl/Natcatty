@@ -272,6 +272,27 @@ func TestAssignHostGroupMovesOneHostAndRejectsAnUnknownGroup(t *testing.T) {
 	}
 }
 
+// TestAssignHostGroupAcceptsAnImplicitGroupPath covers the Vault list's
+// visible drop targets: a path Hosts already reference has no saved Group
+// record, but moving a Host there must agree with what the list displays.
+func TestAssignHostGroupAcceptsAnImplicitGroupPath(t *testing.T) {
+	repo := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
+		{ID: "host-2", Label: "db", Hostname: "db.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{{Path: "prod"}}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	if err := service.AssignHostGroup(context.Background(), "host-2", "prod/web"); err != nil {
+		t.Fatalf("AssignHostGroup to an implicit group: %v", err)
+	}
+	if repo.hosts[1].Group != "prod/web" {
+		t.Fatalf("Group = %q, want the implicit path", repo.hosts[1].Group)
+	}
+}
+
 func TestGroupDefaultsApplyToAnEffectiveHostAndHostWins(t *testing.T) {
 	repo := &fakeHosts{hosts: []domainvault.Host{
 		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,
@@ -311,6 +332,85 @@ func TestGroupDefaultsApplyToAnEffectiveHostAndHostWins(t *testing.T) {
 	}
 	if effective.Username != "deploy" || effective.Port != 22 {
 		t.Fatalf("effective = %+v, want the group username and the Host port", effective)
+	}
+}
+
+func TestAnEmptyHostPortInheritsTheGroupPort(t *testing.T) {
+	repo := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "inherited", Label: "inherited", Hostname: "one.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "own", Label: "own", Hostname: "two.example.com", Port: 2200,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "root", Label: "root", Hostname: "three.example.com",
+			Protocol: domainvault.ProtocolSSH},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{{Path: "prod", Port: 2222}}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	inherited, err := service.Get(context.Background(), "inherited")
+	if err != nil {
+		t.Fatalf("Get inherited: %v", err)
+	}
+	if inherited.Port != 2222 {
+		t.Fatalf("inherited port = %d, want the group's 2222", inherited.Port)
+	}
+	own, err := service.Get(context.Background(), "own")
+	if err != nil {
+		t.Fatalf("Get own: %v", err)
+	}
+	if own.Port != 2200 {
+		t.Fatalf("own port = %d, want the Host's 2200 to win", own.Port)
+	}
+	root, err := service.Get(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("Get root: %v", err)
+	}
+	if root.Port != 22 {
+		t.Fatalf("root port = %d, want the SSH default 22", root.Port)
+	}
+	if repo.hosts[0].Port != 0 || repo.hosts[2].Port != 0 {
+		t.Fatalf("stored ports changed: %+v", repo.hosts)
+	}
+}
+
+// TestABlankPortAndAnExplicitDefaultAreNotDuplicatesInAPortGroup guards the
+// duplicate check: the blank Host resolves to the group's 2222 while the
+// explicit Host resolves to 22, so rejecting the second as a duplicate would
+// make a valid endpoint unreachable.
+func TestABlankPortAndAnExplicitDefaultAreNotDuplicatesInAPortGroup(t *testing.T) {
+	repo := &fakeHosts{}
+	groups := &fakeGroups{items: []domainvault.Group{{Path: "prod", Port: 2222}}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	inherited, err := service.Create(context.Background(), domainvault.Draft{
+		Label: "inherited", Hostname: "example.com", Username: "root", Group: "prod",
+	})
+	if err != nil {
+		t.Fatalf("Create inherited: %v", err)
+	}
+	explicit, err := service.Create(context.Background(), domainvault.Draft{
+		Label: "explicit", Hostname: "example.com", Port: 22, Username: "root", Group: "prod",
+	})
+	if err != nil {
+		t.Fatalf("Create explicit: %v", err)
+	}
+
+	effectiveInherited, err := service.Get(context.Background(), inherited.ID)
+	if err != nil {
+		t.Fatalf("Get inherited: %v", err)
+	}
+	if effectiveInherited.Port != 2222 {
+		t.Fatalf("inherited port = %d, want the group's 2222", effectiveInherited.Port)
+	}
+	effectiveExplicit, err := service.Get(context.Background(), explicit.ID)
+	if err != nil {
+		t.Fatalf("Get explicit: %v", err)
+	}
+	if effectiveExplicit.Port != 22 {
+		t.Fatalf("explicit port = %d, want the Host's 22", effectiveExplicit.Port)
+	}
+	if len(repo.hosts) != 2 {
+		t.Fatalf("hosts = %d, want both endpoints", len(repo.hosts))
 	}
 }
 

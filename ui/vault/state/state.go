@@ -169,6 +169,11 @@ type State struct {
 	testMu       sync.Mutex
 	testOutcomes []testOutcome
 
+	// knownMu guards knownStale, which a trust decision made on the dial
+	// goroutine sets. The list itself is still loaded only on the UI thread.
+	knownMu    sync.Mutex
+	knownStale bool
+
 	editingKey            bool
 	keyForm               KeyForm
 	pendingDeleteKey      model.KeyID
@@ -513,7 +518,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		ID:       host.ID,
 		Label:    host.Label,
 		Hostname: host.Hostname,
-		Port:     strconv.Itoa(host.Port),
+		Port:     hostPortText(host),
 		Username: host.Username,
 		Protocol: string(host.Protocol),
 		Group:    host.Group,
@@ -715,13 +720,8 @@ func (s *State) load() error {
 		}
 		s.proxyItems = proxies
 	}
-	if s.knownHosts != nil {
-		known, err := s.knownHosts.ListKnownHosts(context.Background())
-		if err != nil {
-			s.problem = ProblemInternal
-			return err
-		}
-		s.knownItems = known
+	if err := s.loadKnownHosts(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -734,6 +734,16 @@ func (s *State) find(id model.HostID) (domainvault.Host, bool) {
 		}
 	}
 	return domainvault.Host{}, false
+}
+
+// hostPortText returns the editor's Port text. A zero Port means the Host
+// inherits its Host Group's port, so it stays blank rather than showing a
+// default that would silently become the Host's own value.
+func hostPortText(host domainvault.Host) string {
+	if host.Port == 0 {
+		return ""
+	}
+	return strconv.Itoa(host.Port)
 }
 
 // draftFromHost turns a Host into the draft an edit would submit, optionally

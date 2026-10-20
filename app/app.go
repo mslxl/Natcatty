@@ -208,6 +208,10 @@ func run(afterReady func(hostWindow)) error {
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
 	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
 
+	// The Vault state is created below; a persisted host-key trust decision
+	// marks its Known Host list stale through this pointer.
+	var vaultState *vaultstate.State
+
 	// One SSH Connection per Session. The lease seam is what tickets 08 and 09
 	// extend into jump chains and a shared pool.
 	connections := appconnection.NewManager(
@@ -215,6 +219,11 @@ func run(afterReady func(hostWindow)) error {
 		vaultPasswords{vault: vaultService},
 		database,
 		appconnection.WithPrompter(trustPrompt),
+		appconnection.WithKnownHostsChanged(func() {
+			if vaultState != nil {
+				vaultState.InvalidateKnownHosts()
+			}
+		}),
 		appconnection.WithAuthSource(vaultAuthSource{
 			vault:    vaultService,
 			defaults: newSSHDefaultKeys(),
@@ -243,7 +252,7 @@ func run(afterReady func(hostWindow)) error {
 	)
 
 	var shellState *state.State
-	vaultState := vaultstate.NewState(
+	vaultState = vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
 		vaultstate.WithKeys(vaultService),

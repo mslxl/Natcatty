@@ -28,8 +28,8 @@ func TestNormalizeDraftTrimsFillsDefaultsAndFallsBackToHostname(t *testing.T) {
 	if draft.Hostname != "example.com" {
 		t.Errorf("Hostname = %q, want example.com", draft.Hostname)
 	}
-	if draft.Port != 22 {
-		t.Errorf("Port = %d, want the SSH default 22", draft.Port)
+	if draft.Port != 0 {
+		t.Errorf("Port = %d, want 0 so the Host can inherit its group's port", draft.Port)
 	}
 	if draft.Protocol != ProtocolSSH {
 		t.Errorf("Protocol = %q, want %q", draft.Protocol, ProtocolSSH)
@@ -105,30 +105,41 @@ func TestHostX11EnabledNeedsBothPreferenceAndAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftDefaultsTheProtocolPort(t *testing.T) {
-	tests := []struct {
-		name     string
-		protocol Protocol
-		label    string
-		hostname string
-		want     int
-	}{
-		{"ssh", ProtocolSSH, "example.com", "example.com", 22},
-		{"telnet", ProtocolTelnet, "example.com", "example.com", 23},
-		{"local", ProtocolLocal, "Local shell", "", 0},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+func TestNormalizeDraftKeepsAnEmptyPortForGroupInheritance(t *testing.T) {
+	for _, protocol := range []Protocol{ProtocolSSH, ProtocolTelnet, ProtocolLocal} {
+		t.Run(string(protocol), func(t *testing.T) {
 			draft, err := NormalizeDraft(Draft{
-				Label:    test.label,
-				Hostname: test.hostname,
-				Protocol: test.protocol,
+				Label:    "example.com",
+				Hostname: "example.com",
+				Protocol: protocol,
 			})
 			if err != nil {
 				t.Fatalf("NormalizeDraft: %v", err)
 			}
-			if draft.Port != test.want {
-				t.Fatalf("Port = %d, want %d", draft.Port, test.want)
+			if draft.Port != 0 {
+				t.Fatalf("Port = %d, want 0 so the Host can inherit its group's port", draft.Port)
+			}
+		})
+	}
+}
+
+func TestEffectivePortUsesTheHostThenTheProtocolDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol Protocol
+		port     int
+		want     int
+	}{
+		{"explicit SSH port wins", ProtocolSSH, 2222, 2222},
+		{"SSH default", ProtocolSSH, 0, 22},
+		{"telnet default", ProtocolTelnet, 0, 23},
+		{"local has no port", ProtocolLocal, 0, 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EffectivePort(test.protocol, test.port); got != test.want {
+				t.Fatalf("EffectivePort(%q, %d) = %d, want %d",
+					test.protocol, test.port, got, test.want)
 			}
 		})
 	}
