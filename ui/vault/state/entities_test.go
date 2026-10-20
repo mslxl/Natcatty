@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -113,5 +114,75 @@ func assertEffectiveConnectionHost(t *testing.T, host domainvault.Host) {
 	if host.Proxy == nil || host.Proxy.Type != domainvault.ProxySOCKS5 ||
 		host.Proxy.Host != "socks.example.com" || host.Proxy.Port != 1080 {
 		t.Fatalf("effective Proxy = %+v, want the selected profile", host.Proxy)
+	}
+}
+
+// fakeKnownHostList is the Known Host seam for the refresh tests.
+type fakeKnownHostList struct {
+	items []domainconn.KnownHost
+}
+
+func (f *fakeKnownHostList) ListKnownHosts(context.Context) ([]domainconn.KnownHost, error) {
+	return append([]domainconn.KnownHost(nil), f.items...), nil
+}
+
+func (f *fakeKnownHostList) DeleteKnownHost(context.Context, string) error { return nil }
+
+func TestEffectiveHostInheritsTheGroupPortAndFallsBackTo22(t *testing.T) {
+	hosts := &fakeHosts{items: []domainvault.Host{
+		{ID: "inherited", Label: "inherited", Hostname: "one.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "own", Label: "own", Hostname: "two.example.com", Port: 2200,
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "root", Label: "root", Hostname: "three.example.com",
+			Protocol: domainvault.ProtocolSSH},
+	}}
+	groups := &effectiveGroups{items: []domainvault.Group{{Path: "prod", Port: 2222}}}
+	state := NewState(hosts, WithGroups(groups))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if inherited, _ := state.EffectiveHost("inherited"); inherited.Port != 2222 {
+		t.Fatalf("inherited Port = %d, want the group's 2222", inherited.Port)
+	}
+	if own, _ := state.EffectiveHost("own"); own.Port != 2200 {
+		t.Fatalf("own Port = %d, want the Host's 2200", own.Port)
+	}
+	if root, _ := state.EffectiveHost("root"); root.Port != 22 {
+		t.Fatalf("root Port = %d, want the SSH default 22", root.Port)
+	}
+	if hosts.items[0].Port != 0 || hosts.items[2].Port != 0 {
+		t.Fatalf("stored ports changed: %+v", hosts.items)
+	}
+	if items := state.EffectiveItems(); len(items) != 3 {
+		t.Fatalf("EffectiveItems = %+v, want three Hosts", items)
+	}
+}
+
+func TestKnownHostsReloadOnlyWhenMarkedStale(t *testing.T) {
+	known := &fakeKnownHostList{}
+	state := NewState(&fakeHosts{}, WithKnownHosts(known))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	known.items = []domainconn.KnownHost{{
+		ID: "kh-1", Hostname: "example.com", Port: 22,
+		KeyType: "ssh-ed25519", Fingerprint: "SHA256:abc",
+	}}
+	state.InvalidateKnownHosts()
+	if state.KnownHostCount() != 0 {
+		t.Fatal("the list changed before the UI-thread flush")
+	}
+	state.FlushKnownHosts()
+	if state.KnownHostCount() != 1 || state.KnownHosts()[0].ID != "kh-1" {
+		t.Fatalf("Known Hosts = %+v, want the persisted trust record", state.KnownHosts())
+	}
+
+	// A second flush without a new decision is a no-op and keeps the list.
+	state.FlushKnownHosts()
+	if state.KnownHostCount() != 1 {
+		t.Fatalf("Known Hosts after a no-op flush = %d, want 1", state.KnownHostCount())
 	}
 }

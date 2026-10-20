@@ -67,7 +67,7 @@ func TestTicket20CheckRunsThroughTheKeyboard(t *testing.T) {
 	}
 	for _, want := range []string{
 		"appvault.Service + store.Store + vaultui.View + ui.Tester",
-		"store.Store + appvault.Service + vaultui.View + ui.Tester",
+		"appconnection.Manager + store.Store + vaultui.View + ui.Tester",
 		"vaultui.View + ui.Tester",
 	} {
 		if !seams[want] {

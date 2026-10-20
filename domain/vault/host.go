@@ -301,9 +301,9 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	if draft.Label == "" {
 		draft.Label = draft.Hostname
 	}
-	if draft.Port == 0 {
-		draft.Port = defaultPort(draft.Protocol)
-	}
+	// A zero Port is left empty on purpose: it means "inherit the Host Group's
+	// port", and EffectivePort falls back to the protocol default only when no
+	// group supplies one. Filling 22 here would make group defaults unreachable.
 	if err := validateFields(draft); err != nil {
 		return Draft{}, err
 	}
@@ -327,9 +327,12 @@ func NormalizeGroup(path string) string {
 }
 
 // MergeKey is the identity the Vault treats as a duplicate: two Hosts with
-// the same protocol, normalized address, port, username, and Host Group would
-// connect to the same endpoint. A local Host additionally needs its label,
-// because its address is the machine the app runs on.
+// the same protocol, normalized address, recorded port, username, and Host
+// Group would connect to the same endpoint. The recorded port is compared, not
+// the effective one: only the Host Group can resolve an empty port, so a blank
+// port and an explicit protocol default are different endpoints when the group
+// supplies its own port. A local Host additionally needs its label, because
+// its address is the machine the app runs on.
 func (h Host) MergeKey() string {
 	parts := []string{
 		string(h.Protocol),
@@ -419,7 +422,9 @@ func validateFields(draft Draft) error {
 		if err := validateText(FieldHostname, draft.Hostname, maxHostnameLength, true); err != nil {
 			return err
 		}
-		if draft.Port < 1 || draft.Port > 65535 {
+		// Zero means the Host inherits its Host Group's port, or the protocol
+		// default when the group sets none.
+		if draft.Port != 0 && (draft.Port < 1 || draft.Port > 65535) {
 			return validation(FieldPort, RuleOutOfRange)
 		}
 	}
@@ -694,6 +699,17 @@ func defaultPort(protocol Protocol) int {
 	default:
 		return 22
 	}
+}
+
+// EffectivePort returns the port a connection uses. A Host with a port of its
+// own wins; a zero port means it inherits its Host Group's port, and when no
+// group sets one the protocol's default applies (22 for SSH, 23 for Telnet).
+// The Vault stores the zero so the inheritance survives a group change.
+func EffectivePort(protocol Protocol, port int) int {
+	if port != 0 {
+		return port
+	}
+	return defaultPort(protocol)
 }
 
 func validation(field Field, rule Rule) error {
