@@ -512,6 +512,7 @@ func (t *selftest17) menuStep(*ui.Context) selftest.Outcome {
 		m.SessionMenuSplitHorizontal(), m.SessionMenuSplitVertical(), "-",
 		m.SessionMenuSaveScreen(), m.SessionMenuClearBuffer(),
 		m.SessionMenuEncoding(), m.SessionMenuLogging(), "-",
+		m.SessionMenuHibernate(), m.SessionMenuObserveSnapshot(), "-",
 		m.SessionMenuRename(), "-",
 		m.SessionMenuDetach(), "-",
 		m.SessionMenuCloseTerminal(),

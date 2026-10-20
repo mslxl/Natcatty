@@ -183,6 +183,46 @@
   status: verified
   notes: ""
 
+- id: terminal.hibernate
+  area: terminal
+  feature: Hibernate a Session and resume it with its live state intact
+  original_paths:
+    - domain/terminalHibernate.ts
+    - components/terminal/terminalHibernateRuntime.ts
+    - components/terminal/useTerminalHibernateEffect.ts
+  module: application/session
+  tickets: [19]
+  acceptance_tests:
+    - application/session.TestHibernateAndResumePreserveTheSessionState
+    - application/session.TestObservationSnapshotIsBounded
+    - ui/session.TestHibernateAndResumeKeepTheScreenAndSessionState
+    - ui/session.TestObserverSnapshotsAHibernatedSessionWithoutAttachingAView
+    - ui/session.TestSessionMenuLifetimeSlotOffersResumeWhileHibernated
+    - ui/session.TestHibernateAndObserverEntryPointsFitTheMinimumWindow
+    - app.TestTicket19CheckRunsThroughTheKeyboard
+    - app.TestTicket19CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Hibernate releases the Session's one live view; the transport, command loop, statistics, logging, and a bounded replay (3000 lines / 512 KiB, the original snapshot bounds) stay alive. Output produced while hibernated is retained and replayed on Resume before live output; Resume reattaches exactly one view. The Session menu owns the lifetime slot, which turns into Resume while hibernated, and the hibernated placeholder offers Resume and Observer snapshot. The original auto-hibernated hidden tabs only for non-local protocols; the rewrite allows manual hibernation of app-owned local Sessions because the application owns the PTY, so detaching the view cannot orphan a remote session. Hide-triggered auto-hibernation is not wired."
+
+- id: terminal.observer-snapshot
+  area: terminal
+  feature: Observe a Session through a read-only snapshot and live feed
+  original_paths:
+    - application/state/sessionSnapshotStore.ts
+    - components/terminal/TerminalView.tsx
+  module: application/session
+  tickets: [19]
+  acceptance_tests:
+    - application/session.TestObserverSnapshotMatchesTheOwnerAndReceivesFeed
+    - application/session.TestObserverCannotWriteOrConsumeTheLiveView
+    - application/session.TestObservationSnapshotIsBounded
+    - ui/session.TestObserverRendersTheOwningScreensSnapshotAndFeed
+    - ui/session.TestObserverSnapshotsAHibernatedSessionWithoutAttachingAView
+    - ui/session.TestHibernateAndObserverEntryPointsFitTheMinimumWindow
+    - app.TestTicket19CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Observe atomically captures the owning Session's bounded rendered output and subscribes to a bounded blocking feed. The UI feeds that stream to a shadow MyGo terminal in the same Pane; it never reads or writes the live TerminalConn, so an observer cannot consume, backpressure, resize, or type into the owning Session. Write returns ErrObserverReadOnly and Resize is ignored. LiveViews stays at zero or one: observers do not claim the Session's single live view, and AttachView refuses a second one with ErrViewAttached. The original had no separate observer surface; the rewrite and native spec User Story 29 define this read-only view as the replacement for a second live view. An observation ends with io.EOF when its Session ends, and Clear buffer runs through the same output path so later snapshots cannot resurrect cleared scrollback."
+
 - id: terminal.session-status
   area: terminal
   feature: Session status and exit code are published and visible

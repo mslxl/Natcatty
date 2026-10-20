@@ -210,6 +210,10 @@ type Snapshot struct {
 	Encoding domainterminal.Encoding
 	// Stats are the byte, command, bell, notification, and transfer counters.
 	Stats Stats
+	// Hibernated reports that the Session's live view was released while the
+	// transport and application state stayed alive. Resume reattaches one
+	// view with the captured screen.
+	Hibernated bool
 }
 
 // NoticeCode classifies a non-fatal runtime notice.
@@ -326,6 +330,13 @@ type Session struct {
 	clipboardAccess domainterminal.ClipboardAccess
 	codec           Codec
 	highlighter     *domainterminal.Highlighter
+
+	// outputMu orders rendered output against hibernate/resume. replay holds
+	// the bounded screen snapshot, feeds holds the observers, and the live
+	// view's queue is appended under the same lock.
+	outputMu sync.Mutex
+	replay   snapshotBuffer
+	feeds    map[*outputFeed]struct{}
 
 	logMu   sync.Mutex
 	logger  *sessionLogger
@@ -696,7 +707,7 @@ func (s *Session) setHighlighter(highlighter *domainterminal.Highlighter) {
 // as a prompt does.
 func (s *Session) highlightChunk(p []byte) {
 	if !s.highlightActive() {
-		s.conn.appendOutput(p)
+		s.emitOutput(p)
 		return
 	}
 	s.highlightMu.Lock()
@@ -712,7 +723,7 @@ func (s *Session) highlightChunk(p []byte) {
 	if flushed > 0 {
 		part := append([]byte(nil), s.highlightCarry[:flushed]...)
 		s.highlightCarry = s.highlightCarry[flushed:]
-		s.conn.appendOutput(s.highlightOutput(part))
+		s.emitOutput(s.highlightOutput(part))
 	}
 	if len(s.highlightCarry) > 0 {
 		if s.highlightTimer == nil {
@@ -759,7 +770,7 @@ func (s *Session) flushHighlightCarry() {
 	}
 	part := append([]byte(nil), s.highlightCarry...)
 	s.highlightCarry = nil
-	s.conn.appendOutput(s.highlightOutput(part))
+	s.emitOutput(s.highlightOutput(part))
 }
 
 func (s *Session) highlightOutput(p []byte) []byte {
@@ -1005,6 +1016,7 @@ finished:
 	s.stopActivityTimer()
 	s.stopPromptTimer()
 	s.conn.finish()
+	s.closeObservations()
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
@@ -1015,6 +1027,9 @@ finished:
 		snapshot.ExitCode = code
 		snapshot.HasExitCode = hasCode
 		snapshot.Logging = logging
+		// A hibernation only names a live transport whose screen was
+		// detached; the transport is gone now.
+		snapshot.Hibernated = false
 	})
 	close(s.done)
 	if s.onEnd != nil {
