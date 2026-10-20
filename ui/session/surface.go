@@ -7,6 +7,7 @@ package sessionui
 
 import (
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/egoist/mygo/plugins/terminal"
@@ -30,9 +31,24 @@ type Options struct {
 	// Upload is the seam for a future SFTP/ZMODEM engine. Nil reports that
 	// uploads are unavailable instead of inserting paths.
 	Upload UploadFunc
+	// SaveScreen writes the terminal's text and returns the saved path. Nil
+	// uses SaveScreenFile.
+	SaveScreen ScreenWriter
+	// Reconnect retries the transport immediately. Nil leaves the Session
+	// menu's Reconnect item disabled.
+	Reconnect func()
+	// Reconnectable reports whether Reconnect can be used now.
+	Reconnectable func() bool
+	// SendYmodem and ReceiveYmodem are the transfer seam a later ticket
+	// implements. Nil leaves the corresponding item disabled.
+	SendYmodem    func()
+	ReceiveYmodem func()
 	// OnEncoding persists a user's live encoding choice.
 	OnEncoding func(domainterminal.Encoding)
 }
+
+// ScreenWriter saves text and reports the path it wrote, or an error.
+type ScreenWriter func(text string) (string, error)
 
 // PaneActions are the Pane commands the Session menu offers. The shell
 // supplies them for a Pane in a split-capable Tab; a detached Pane leaves
@@ -42,6 +58,12 @@ type PaneActions struct {
 	SplitDown  func()
 	Detach     func()
 	Close      func()
+	// Rename sets the Pane's Tab title to the trimmed, non-empty argument.
+	Rename func(title string)
+	// Title is the Pane's current title. MenuLabel is the accessible name of
+	// this Pane's Session menu, unique among the Panes of one window.
+	Title     string
+	MenuLabel string
 }
 
 // Option customizes Surface options.
@@ -74,6 +96,29 @@ func WithUpload(fn UploadFunc) Option {
 	return func(options *Options) { options.Upload = fn }
 }
 
+// WithSaveScreen supplies the screen writer. The zero value writes to the
+// user's Downloads directory (or the temporary directory).
+func WithSaveScreen(fn ScreenWriter) Option {
+	return func(options *Options) { options.SaveScreen = fn }
+}
+
+// WithReconnect supplies the immediate-retry seam and its availability test.
+func WithReconnect(attempt func(), available func() bool) Option {
+	return func(options *Options) {
+		options.Reconnect = attempt
+		options.Reconnectable = available
+	}
+}
+
+// WithYmodem supplies the YMODEM transfer seams. A later transfer ticket
+// implements them; nil leaves both menu items disabled.
+func WithYmodem(send, receive func()) Option {
+	return func(options *Options) {
+		options.SendYmodem = send
+		options.ReceiveYmodem = receive
+	}
+}
+
 // WithEncodingChange observes a live encoding choice so the app can persist
 // it for the Session's scope.
 func WithEncodingChange(fn func(domainterminal.Encoding)) Option {
@@ -93,10 +138,13 @@ type Surface struct {
 	pendingClipboard *terminal.ClipboardRequest
 
 	// UI-thread state.
-	logFormat   domainterminal.LogFormat
-	logError    bool
-	dropOver    bool
-	paneActions PaneActions
+	logFormat    domainterminal.LogFormat
+	logError     bool
+	dropOver     bool
+	screenNotice ScreenNotice
+	renaming     bool
+	renameValue  string
+	paneActions  PaneActions
 }
 
 // New connects a MyGo terminal to session's TerminalConn. It returns an error
@@ -206,7 +254,15 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		}
 	}
 	clipboardText := c.ReadClipboard()
+	canReconnect := s.options.Reconnect != nil
+	if canReconnect && s.options.Reconnectable != nil {
+		canReconnect = s.options.Reconnectable()
+	}
 
+	var renameAction func()
+	if s.paneActions.Rename != nil {
+		renameAction = s.beginRename
+	}
 	model := chromeModel{
 		Command:          snapshot.Command,
 		Busy:             snapshot.Busy,
@@ -222,6 +278,10 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		DropCount:        dropCount,
 		DropAction:       dropAction,
 		DropNotice:       dropNotice,
+		ScreenNotice:     s.screenNotice,
+		MenuLabel:        s.paneActions.MenuLabel,
+		CanPaste:         clipboardText != "",
+		CanReconnect:     canReconnect,
 	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
@@ -237,7 +297,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 				s.requestPaste(clipboardText)
 			}
 		},
-		ClearBuffer: func() { s.terminal.Feed([]byte("\x1b[3J")) },
+		Reconnect:     s.options.Reconnect,
+		SendYmodem:    s.options.SendYmodem,
+		ReceiveYmodem: s.options.ReceiveYmodem,
+		SaveScreen:    func() { s.saveScreen() },
+		ClearBuffer:   func() { s.terminal.Feed([]byte("\x1b[3J")) },
+		Rename:        renameAction,
 		AcceptPaste: func() {
 			s.gate.Accept()
 			s.redraw()
@@ -248,6 +313,10 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		},
 		DismissDrop: func() {
 			s.drops.Dismiss()
+			s.redraw()
+		},
+		DismissScreen: func() {
+			s.screenNotice = ScreenNoticeNone
 			s.redraw()
 		},
 		SplitRight: s.paneActions.SplitRight,
@@ -273,7 +342,45 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 			s.drops.Drop(files, s.windowsShell())
 			s.redraw()
 		}
+		if s.renaming {
+			s.renameDialog(c, m, t)
+		}
 	})
+}
+
+// renameDialog collects the Pane title. The shell owns the Tab that actually
+// carries the name, so Rename hands the trimmed text to PaneActions.Rename.
+func (s *Surface) renameDialog(c *ui.Context, m locales.Messages, t *ui.Theme) {
+	ui.Modal(c, &s.renaming, func() {
+		ui.Column(c).Width(320).Padding(14).Gap(10).Background(t.Surface).
+			Radius(t.Radius).Border(1, t.Border).Children(func() {
+			ui.Text(c, m.SessionMenuRenameTitle()).FontSize(13).Bold().TextColor(t.Text)
+			input := ui.TextInput(c, &s.renameValue)
+			input.Label(m.SessionRenameField())
+			submitted := input.Submitted()
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Column(c).Grow(1)
+				confirm := ui.PrimaryButton(c, m.SessionMenuRenameConfirm())
+				if (confirm.Clicked() || submitted) && s.applyRename() {
+					s.renaming = false
+					s.redraw()
+				}
+				if ui.Button(c, m.SessionPasteCancel()).Clicked() {
+					s.renaming = false
+					s.redraw()
+				}
+			})
+		})
+	})
+}
+
+func (s *Surface) applyRename() bool {
+	title := strings.TrimSpace(s.renameValue)
+	if title == "" || s.paneActions.Rename == nil {
+		return false
+	}
+	s.paneActions.Rename(title)
+	return true
 }
 
 // requestPaste applies the multiline paste policy and redraws when the paste
@@ -297,6 +404,31 @@ func (s *Surface) setEncoding(encoding domainterminal.Encoding) {
 // calls it while rendering the Pane; a detached Pane clears them with the zero
 // value.
 func (s *Surface) SetPaneActions(actions PaneActions) { s.paneActions = actions }
+
+// beginRename opens the title dialog with the Pane's current title.
+func (s *Surface) beginRename() {
+	if s.paneActions.Rename == nil {
+		return
+	}
+	s.renameValue = s.paneActions.Title
+	s.renaming = true
+	s.redraw()
+}
+
+// saveScreen writes the terminal's scrollback and screen and reports the
+// result in a dismissible banner.
+func (s *Surface) saveScreen() {
+	writer := s.options.SaveScreen
+	if writer == nil {
+		writer = SaveScreenFile
+	}
+	if _, err := writer(s.terminal.Text()); err != nil {
+		s.screenNotice = ScreenNoticeFailed
+	} else {
+		s.screenNotice = ScreenNoticeSaved
+	}
+	s.redraw()
+}
 
 // windowsShell reports whether inserted drop paths should use the Windows
 // quoting dialect. Local Windows Sessions run a Windows shell; SSH Sessions are

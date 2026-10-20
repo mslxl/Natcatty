@@ -1,4 +1,25 @@
 {
+  "sessionMenuCopy": "Copy",
+  "sessionMenuPasteSelection": "Paste Selection",
+  "sessionMenuSelectAll": "Select All",
+  "sessionMenuOpenBrowser": "Open Browser",
+  "sessionMenuReconnect": "Reconnect",
+  "sessionMenuSendYmodem": "Send with YMODEM",
+  "sessionMenuReceiveYmodem": "Receive with YMODEM",
+  "sessionMenuSplitHorizontal": "Split Horizontal",
+  "sessionMenuSplitVertical": "Split Vertical",
+  "sessionMenuSaveScreen": "Save current screen",
+  "sessionMenuRename": "Rename",
+  "sessionMenuCloseTerminal": "Close terminal",
+  "sessionMenuRenameTitle": "Rename Session",
+  "sessionMenuRenameConfirm": "Rename",
+  "sessionDropDismiss": "Cancel",
+  "sessionDropDismissLabel": "Dismiss file drop result",
+  "sessionDismiss": "Dismiss",
+  "sessionScreenSaved": "Saved the current screen.",
+  "sessionScreenFailed": "Could not save the current screen.",
+  "sessionMenuFor": "Session menu for pane {number}",
+  "paneRegion": "Pane {number}",
   "@@locale": "en",
   "appName": "Natcatty",
   "navVault": "Vault",
@@ -879,7 +900,7 @@
   "sessionMenuClearBuffer": "Clear Buffer",
   "sessionMenuSplitRight": "Split Right",
   "sessionMenuSplitDown": "Split Down",
-  "sessionMenuDetach": "Detach Pane",
+  "sessionMenuDetach": "Detach from workspace",
   "sessionMenuClosePane": "Close Pane",
   "sessionMenuEncoding": "Encoding",
   "sessionMenuLogging": "Logging",
@@ -943,5 +964,27 @@
         "example": "2"
       }
     }
+  },
+  "@sessionMenuFor": {
+    "description": "The accessible name of a Pane's Session menu, unique per Pane.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "@paneRegion": {
+    "description": "The accessible name of a terminal Pane region.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "sessionRenameField": "New name",
+  "@sessionRenameField": {
+    "description": "The text field in the Pane Rename dialog."
   }
 }

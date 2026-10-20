@@ -1180,11 +1180,11 @@
     - application/session.TestSessionEncodingResolverUsesTheHostScope
     - app.TestTicket17CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The Session codec decodes transport output before the tap, log, and terminal, so a GB18030, Shift_JIS, or ISO-8859-1 sequence split across reads becomes one UTF-8 character. Input is encoded after the tap and broadcast hook, so command tracking and fan-out always see UTF-8 while the wire receives the selected bytes. The status bar and Session menu both switch encoding live; the choice persists in terminal-settings.json under the Host scope (or local) and a reopened Host inherits it. UTF-8 and GB18030 keep the original labels and order; Shift_JIS and ISO-8859-1 extend the selector for legacy hosts."
+  notes: "The Session codec decodes transport output before the tap, log, and terminal, so a GB18030, Shift_JIS, or ISO-8859-1 sequence split across reads becomes one UTF-8 character. Input is encoded after the tap and broadcast hook, so command tracking and fan-out always see UTF-8 while the wire receives the selected bytes. The Session menu switches encoding live; the status bar deliberately keeps only the activity dot, the command, and that menu, so a narrow split Pane cannot clip the selector. The choice persists in terminal-settings.json under the Host scope (or local) and a reopened Host inherits it. UTF-8 and GB18030 keep the original labels and order; Shift_JIS and ISO-8859-1 extend the selector for legacy hosts."
 
 - id: terminal.context-menu
   area: terminal
-  feature: Session context menu with paste, clear, split, pane lifetime, encoding, and logging
+  feature: Session context menu with the original actions, shortcuts, disabled states, and pane lifetime commands
   original_paths:
     - components/terminal/TerminalContextMenu.tsx
     - components/terminal/TerminalView.tsx
@@ -1195,9 +1195,15 @@
     - ui/session.TestSessionMenuActionsReachTheSurfaceAndUnavailableItemsAreDisabled
     - ui/session.TestSessionMenuRefusesDisabledItems
     - ui/session.TestInteractionControlsFitAtBothSizes
+    - ui/session.TestDropNoticeDismissIsHitTestableAndClearsTheBanner
+    - ui/session.TestPasteItemFollowsTheClipboardState
+    - ui/session.TestSaveScreenWritesAndDismissesItsBanner
+    - ui/session.TestRenameMenuOpensTheDialogAndAppliesTheTitle
+    - application/session.TestReconnectNowDialsImmediately
+    - ui/shell.TestSessionMenuStaysReachableInRealWindowLayouts
     - app.TestTicket17CheckRunsThroughTheKeyboard
   status: implemented
-  notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The native menu keeps Copy, Paste, Select All, and Clear Scrollback with the widget's correct selection-disabled state. The Session menu button in the status bar adds the original's Session commands: Paste, Split Right/Down, Clear Buffer, Encoding (radio list), Logging (start/stop and format submenu), Detach Pane, and Close Pane, with shortcuts where the shell has one and disabled states when an action has no backend. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
+  notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The Session menu in the status bar is the functional equivalent and follows the original order: Copy, Paste, Paste Selection, Select All, Open Browser, Reconnect, Send/Receive with YMODEM, Split Horizontal, Split Vertical, Save current screen, Clear Buffer, Encoding, Logging, Rename, Detach from workspace, Close terminal. Paste is enabled only while the clipboard holds text and goes through the multiline gate. Reconnect immediately opens a replacement transport and is available only while the Session is running with a reconnect policy. Save current screen writes the terminal text to Downloads (or the temporary directory) and reports a dismissible result; Rename edits the Tab title; both splits, Detach, and Close use the shell's real Pane commands. Copy, Paste Selection, and Select All stay visible but disabled because MyGo exposes no selection or select-all API and its native menu already provides all three with correct selection state. Open Browser stays disabled because this app has no host file-browser to open, and the YMODEM items are disabled seams until a transfer engine exists. Plugin menus, Upload clipboard image, and Add to Conversation remain out of scope as the ticket permits. The menu control itself is the only fixed-width status item and the layout test proves it sits inside its Pane and is clickable in single, left/right, and stacked Panes at 720x480 and 1100x720, including a 240-DIP split Pane. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
 
 - id: terminal.file-drop
   area: terminal
@@ -1214,9 +1220,10 @@
     - ui/session.TestDropHandlerUploadWithoutTransportIsExplicitAndNonDestructive
     - ui/session.TestDropHandlerUploadFailureIsReportedWithoutInserting
     - ui/session.TestDropBannerShowsDragAndOutcomeStates
+    - ui/session.TestDropNoticeDismissIsHitTestableAndClearsTheBanner
     - app.TestTicket17CheckRunsThroughTheKeyboard
   status: implemented
-  notes: "The terminal element is the drop target and shows a banner while files are over it and after a drop. Multiple paths are joined and every path is quoted: a Windows local Session uses double quotes (accepted by both cmd.exe and PowerShell; Windows names cannot contain a double quote), and a POSIX Session single-quotes with the '\"'\"' close-escape-reopen form. The default action inserts the quoted paths without running anything. Upload is a configured seam (sessionui.UploadFunc); because no SFTP/ZMODEM upload transport exists yet, choosing Upload with no seam changes nothing and reports that upload is unavailable, never silently inserting a path. Directories, spaces, and quotes pass through the same quoting. Original raw-path insertion is superseded by quoting as the ticket requires."
+  notes: "The terminal element is the drop target and shows a banner while files are over it and after a drop. Multiple paths are joined and every path is quoted: a Windows local Session uses double quotes (accepted by both cmd.exe and PowerShell; Windows names cannot contain a double quote), and a POSIX Session single-quotes with the '\"'\"' close-escape-reopen form. The default action inserts the quoted paths without running anything. Upload is a configured seam (sessionui.UploadFunc); because no SFTP/ZMODEM upload transport exists yet, choosing Upload with no seam changes nothing and reports that upload is unavailable, never silently inserting a path. Directories, spaces, and quotes pass through the same quoting. Original raw-path insertion is superseded by quoting as the ticket requires. A completed drop's result banner carries a real Cancel control; it is hit-testable and clears the notice and its text, rather than leaving the banner painted."
 
 - id: terminal.paste-protection
   area: terminal

@@ -36,6 +36,224 @@ type Messages struct{ locale string }
 // source language.
 func In(locale string) Messages { return Messages{locale} }
 
+// SessionMenuCopy says "Copy"
+// in the language the app shows.
+func SessionMenuCopy() string { return In(i18n.Locale()).SessionMenuCopy() }
+
+// SessionMenuCopy says "Copy"
+// in the language of msgs.
+func (msgs Messages) SessionMenuCopy() string {
+	return Catalog.Format(msgs.locale, "sessionMenuCopy", nil)
+}
+
+// SessionMenuPasteSelection says "Paste Selection"
+// in the language the app shows.
+func SessionMenuPasteSelection() string { return In(i18n.Locale()).SessionMenuPasteSelection() }
+
+// SessionMenuPasteSelection says "Paste Selection"
+// in the language of msgs.
+func (msgs Messages) SessionMenuPasteSelection() string {
+	return Catalog.Format(msgs.locale, "sessionMenuPasteSelection", nil)
+}
+
+// SessionMenuSelectAll says "Select All"
+// in the language the app shows.
+func SessionMenuSelectAll() string { return In(i18n.Locale()).SessionMenuSelectAll() }
+
+// SessionMenuSelectAll says "Select All"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSelectAll() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSelectAll", nil)
+}
+
+// SessionMenuOpenBrowser says "Open Browser"
+// in the language the app shows.
+func SessionMenuOpenBrowser() string { return In(i18n.Locale()).SessionMenuOpenBrowser() }
+
+// SessionMenuOpenBrowser says "Open Browser"
+// in the language of msgs.
+func (msgs Messages) SessionMenuOpenBrowser() string {
+	return Catalog.Format(msgs.locale, "sessionMenuOpenBrowser", nil)
+}
+
+// SessionMenuReconnect says "Reconnect"
+// in the language the app shows.
+func SessionMenuReconnect() string { return In(i18n.Locale()).SessionMenuReconnect() }
+
+// SessionMenuReconnect says "Reconnect"
+// in the language of msgs.
+func (msgs Messages) SessionMenuReconnect() string {
+	return Catalog.Format(msgs.locale, "sessionMenuReconnect", nil)
+}
+
+// SessionMenuSendYmodem says "Send with YMODEM"
+// in the language the app shows.
+func SessionMenuSendYmodem() string { return In(i18n.Locale()).SessionMenuSendYmodem() }
+
+// SessionMenuSendYmodem says "Send with YMODEM"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSendYmodem() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSendYmodem", nil)
+}
+
+// SessionMenuReceiveYmodem says "Receive with YMODEM"
+// in the language the app shows.
+func SessionMenuReceiveYmodem() string { return In(i18n.Locale()).SessionMenuReceiveYmodem() }
+
+// SessionMenuReceiveYmodem says "Receive with YMODEM"
+// in the language of msgs.
+func (msgs Messages) SessionMenuReceiveYmodem() string {
+	return Catalog.Format(msgs.locale, "sessionMenuReceiveYmodem", nil)
+}
+
+// SessionMenuSplitHorizontal says "Split Horizontal"
+// in the language the app shows.
+func SessionMenuSplitHorizontal() string { return In(i18n.Locale()).SessionMenuSplitHorizontal() }
+
+// SessionMenuSplitHorizontal says "Split Horizontal"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSplitHorizontal() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSplitHorizontal", nil)
+}
+
+// SessionMenuSplitVertical says "Split Vertical"
+// in the language the app shows.
+func SessionMenuSplitVertical() string { return In(i18n.Locale()).SessionMenuSplitVertical() }
+
+// SessionMenuSplitVertical says "Split Vertical"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSplitVertical() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSplitVertical", nil)
+}
+
+// SessionMenuSaveScreen says "Save current screen"
+// in the language the app shows.
+func SessionMenuSaveScreen() string { return In(i18n.Locale()).SessionMenuSaveScreen() }
+
+// SessionMenuSaveScreen says "Save current screen"
+// in the language of msgs.
+func (msgs Messages) SessionMenuSaveScreen() string {
+	return Catalog.Format(msgs.locale, "sessionMenuSaveScreen", nil)
+}
+
+// SessionMenuRename says "Rename"
+// in the language the app shows.
+func SessionMenuRename() string { return In(i18n.Locale()).SessionMenuRename() }
+
+// SessionMenuRename says "Rename"
+// in the language of msgs.
+func (msgs Messages) SessionMenuRename() string {
+	return Catalog.Format(msgs.locale, "sessionMenuRename", nil)
+}
+
+// SessionMenuCloseTerminal says "Close terminal"
+// in the language the app shows.
+func SessionMenuCloseTerminal() string { return In(i18n.Locale()).SessionMenuCloseTerminal() }
+
+// SessionMenuCloseTerminal says "Close terminal"
+// in the language of msgs.
+func (msgs Messages) SessionMenuCloseTerminal() string {
+	return Catalog.Format(msgs.locale, "sessionMenuCloseTerminal", nil)
+}
+
+// SessionMenuRenameTitle says "Rename Session"
+// in the language the app shows.
+func SessionMenuRenameTitle() string { return In(i18n.Locale()).SessionMenuRenameTitle() }
+
+// SessionMenuRenameTitle says "Rename Session"
+// in the language of msgs.
+func (msgs Messages) SessionMenuRenameTitle() string {
+	return Catalog.Format(msgs.locale, "sessionMenuRenameTitle", nil)
+}
+
+// SessionMenuRenameConfirm says "Rename"
+// in the language the app shows.
+func SessionMenuRenameConfirm() string { return In(i18n.Locale()).SessionMenuRenameConfirm() }
+
+// SessionMenuRenameConfirm says "Rename"
+// in the language of msgs.
+func (msgs Messages) SessionMenuRenameConfirm() string {
+	return Catalog.Format(msgs.locale, "sessionMenuRenameConfirm", nil)
+}
+
+// SessionDropDismiss says "Cancel"
+// in the language the app shows.
+func SessionDropDismiss() string { return In(i18n.Locale()).SessionDropDismiss() }
+
+// SessionDropDismiss says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SessionDropDismiss() string {
+	return Catalog.Format(msgs.locale, "sessionDropDismiss", nil)
+}
+
+// SessionDropDismissLabel says "Dismiss file drop result"
+// in the language the app shows.
+func SessionDropDismissLabel() string { return In(i18n.Locale()).SessionDropDismissLabel() }
+
+// SessionDropDismissLabel says "Dismiss file drop result"
+// in the language of msgs.
+func (msgs Messages) SessionDropDismissLabel() string {
+	return Catalog.Format(msgs.locale, "sessionDropDismissLabel", nil)
+}
+
+// SessionDismiss says "Dismiss"
+// in the language the app shows.
+func SessionDismiss() string { return In(i18n.Locale()).SessionDismiss() }
+
+// SessionDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) SessionDismiss() string {
+	return Catalog.Format(msgs.locale, "sessionDismiss", nil)
+}
+
+// SessionScreenSaved says "Saved the current screen."
+// in the language the app shows.
+func SessionScreenSaved() string { return In(i18n.Locale()).SessionScreenSaved() }
+
+// SessionScreenSaved says "Saved the current screen."
+// in the language of msgs.
+func (msgs Messages) SessionScreenSaved() string {
+	return Catalog.Format(msgs.locale, "sessionScreenSaved", nil)
+}
+
+// SessionScreenFailed says "Could not save the current screen."
+// in the language the app shows.
+func SessionScreenFailed() string { return In(i18n.Locale()).SessionScreenFailed() }
+
+// SessionScreenFailed says "Could not save the current screen."
+// in the language of msgs.
+func (msgs Messages) SessionScreenFailed() string {
+	return Catalog.Format(msgs.locale, "sessionScreenFailed", nil)
+}
+
+// SessionMenuFor says "Session menu for pane {number}"
+// in the language the app shows.
+//
+// The accessible name of a Pane's Session menu, unique per Pane.
+func SessionMenuFor(number int) string { return In(i18n.Locale()).SessionMenuFor(number) }
+
+// SessionMenuFor says "Session menu for pane {number}"
+// in the language of msgs.
+//
+// The accessible name of a Pane's Session menu, unique per Pane.
+func (msgs Messages) SessionMenuFor(number int) string {
+	return Catalog.Format(msgs.locale, "sessionMenuFor", map[string]any{"number": number})
+}
+
+// PaneRegion says "Pane {number}"
+// in the language the app shows.
+//
+// The accessible name of a terminal Pane region.
+func PaneRegion(number int) string { return In(i18n.Locale()).PaneRegion(number) }
+
+// PaneRegion says "Pane {number}"
+// in the language of msgs.
+//
+// The accessible name of a terminal Pane region.
+func (msgs Messages) PaneRegion(number int) string {
+	return Catalog.Format(msgs.locale, "paneRegion", map[string]any{"number": number})
+}
+
 // AppName says "Natcatty"
 // in the language the app shows.
 func AppName() string { return In(i18n.Locale()).AppName() }
@@ -4714,11 +4932,11 @@ func (msgs Messages) SessionMenuSplitDown() string {
 	return Catalog.Format(msgs.locale, "sessionMenuSplitDown", nil)
 }
 
-// SessionMenuDetach says "Detach Pane"
+// SessionMenuDetach says "Detach from workspace"
 // in the language the app shows.
 func SessionMenuDetach() string { return In(i18n.Locale()).SessionMenuDetach() }
 
-// SessionMenuDetach says "Detach Pane"
+// SessionMenuDetach says "Detach from workspace"
 // in the language of msgs.
 func (msgs Messages) SessionMenuDetach() string {
 	return Catalog.Format(msgs.locale, "sessionMenuDetach", nil)
@@ -5022,4 +5240,18 @@ func SettingsDropUpload() string { return In(i18n.Locale()).SettingsDropUpload()
 // in the language of msgs.
 func (msgs Messages) SettingsDropUpload() string {
 	return Catalog.Format(msgs.locale, "settingsDropUpload", nil)
+}
+
+// SessionRenameField says "New name"
+// in the language the app shows.
+//
+// The text field in the Pane Rename dialog.
+func SessionRenameField() string { return In(i18n.Locale()).SessionRenameField() }
+
+// SessionRenameField says "New name"
+// in the language of msgs.
+//
+// The text field in the Pane Rename dialog.
+func (msgs Messages) SessionRenameField() string {
+	return Catalog.Format(msgs.locale, "sessionRenameField", nil)
 }

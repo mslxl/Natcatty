@@ -125,7 +125,8 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		}
 	}
 	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
-		paneTree(c, s, m, t, mainTabRef(s, s.ActiveTab()), root, focus)
+		ordinal := 0
+		paneTree(c, s, m, t, mainTabRef(s, s.ActiveTab()), root, focus, &ordinal)
 	}
 }
 

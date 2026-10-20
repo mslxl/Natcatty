@@ -28,29 +28,48 @@ func TestSessionMenuListsTheProductionItemsInOrder(t *testing.T) {
 		Encoding:     domainterminal.EncodingGB18030,
 		LogFormat:    domainterminal.LogFormatText,
 		LogDirectory: `C:\logs`,
+		CanPaste:     true,
+		CanReconnect: true,
 	}
 	noop := func() {}
 	tester := newInteractionTester(t, model, chromeActions{
-		Paste:        noop,
-		ClearBuffer:  noop,
-		SetEncoding:  func(domainterminal.Encoding) {},
-		ToggleLog:    noop,
-		SetLogFormat: func(domainterminal.LogFormat) {},
-		SplitRight:   noop,
-		SplitDown:    noop,
-		Detach:       noop,
-		ClosePane:    noop,
+		Copy:           noop,
+		Paste:          noop,
+		PasteSelection: noop,
+		SelectAll:      noop,
+		OpenBrowser:    noop,
+		Reconnect:      noop,
+		SendYmodem:     noop,
+		ReceiveYmodem:  noop,
+		SaveScreen:     noop,
+		ClearBuffer:    noop,
+		Rename:         noop,
+		SetEncoding:    func(domainterminal.Encoding) {},
+		ToggleLog:      noop,
+		SetLogFormat:   func(domainterminal.LogFormat) {},
+		SplitRight:     noop,
+		SplitDown:      noop,
+		Detach:         noop,
+		ClosePane:      noop,
 	}, 720, 480)
 
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
 		t.Fatalf("open the Session menu: %v (texts %v)", err, tester.Texts())
 	}
+	// The order follows the original terminal context menu, with Encoding and
+	// Logging after the screen commands because the original put those in its
+	// toolbar.
 	want := []string{
-		m.SessionMenuPaste(), "-",
-		m.SessionMenuSplitRight(), m.SessionMenuSplitDown(), "-",
-		m.SessionMenuClearBuffer(), "-",
+		m.SessionMenuCopy(), m.SessionMenuPaste(), m.SessionMenuPasteSelection(), m.SessionMenuSelectAll(), "-",
+		m.SessionMenuOpenBrowser(), "-",
+		m.SessionMenuReconnect(), "-",
+		m.SessionMenuSendYmodem(), m.SessionMenuReceiveYmodem(), "-",
+		m.SessionMenuSplitHorizontal(), m.SessionMenuSplitVertical(), "-",
+		m.SessionMenuSaveScreen(), m.SessionMenuClearBuffer(),
 		m.SessionMenuEncoding(), m.SessionMenuLogging(), "-",
-		m.SessionMenuDetach(), m.SessionMenuClosePane(),
+		m.SessionMenuRename(), "-",
+		m.SessionMenuDetach(), "-",
+		m.SessionMenuCloseTerminal(),
 	}
 	got := tester.Menu()
 	if strings.Join(got, "|") != strings.Join(want, "|") {
@@ -67,14 +86,17 @@ func TestSessionMenuActionsReachTheSurfaceAndUnavailableItemsAreDisabled(t *test
 	}
 	var encoded domainterminal.Encoding
 	var format domainterminal.LogFormat
-	var split bool
+	var splitRight, splitDown bool
 	tester := newInteractionTester(t, model, chromeActions{
-		Paste:        func() {},
-		ClearBuffer:  func() {},
-		SetEncoding:  func(value domainterminal.Encoding) { encoded = value },
-		ToggleLog:    func() {},
-		SetLogFormat: func(value domainterminal.LogFormat) { format = value },
-		SplitRight:   func() { split = true },
+		Paste:       func() {},
+		ClearBuffer: func() {},
+		SetEncoding: func(value domainterminal.Encoding) { encoded = value },
+		ToggleLog:   func() {},
+		SetLogFormat: func(value domainterminal.LogFormat) {
+			format = value
+		},
+		SplitRight: func() { splitRight = true },
+		SplitDown:  func() { splitDown = true },
 	}, 1100, 720)
 
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
@@ -102,11 +124,14 @@ func TestSessionMenuActionsReachTheSurfaceAndUnavailableItemsAreDisabled(t *test
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
 		t.Fatal(err)
 	}
-	if err := tester.ChooseMenuItem(m.SessionMenuSplitRight()); err != nil {
+	if err := tester.ChooseMenuItem(m.SessionMenuSplitHorizontal()); err != nil {
 		t.Fatalf("split action: %v", err)
 	}
-	if !split {
-		t.Fatal("Split Right did not reach the action")
+	if !splitDown {
+		t.Fatal("Split Horizontal did not reach the top/bottom split action")
+	}
+	if splitRight {
+		t.Fatal("Split Horizontal reached the left/right split action")
 	}
 
 	// With no log directory and no Pane backends, Start, Detach, and Close
@@ -218,16 +243,13 @@ func TestInteractionControlsFitAtBothSizes(t *testing.T) {
 	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
 		tester := newInteractionTester(t, model, actions, size[0], size[1])
 		wanted := []string{
-			m.SessionEncoding(),
 			m.SessionMenuLabel(),
 			m.SessionPasteConfirmTitle(3),
 			m.SessionPasteSend(),
 			m.SessionPasteCancel(),
 			m.SessionPastePreviewLabel(),
 			m.SessionDropActive(m.SessionDropInsertAction()),
-			m.SessionLoggingStop(),
-			m.SessionLoggingOn(),
-			m.SessionLogFormatText(),
+			m.SessionLoggingPath(model.Logging.Path),
 		}
 		rects := make(map[string]ui.Rect, len(wanted))
 		const epsilon = 0.5
@@ -254,6 +276,85 @@ func TestInteractionControlsFitAtBothSizes(t *testing.T) {
 	}
 }
 
+// TestDropNoticeDismissIsHitTestableAndClearsTheBanner covers the demo state's
+// Cancel bug: the drop banner had no uniquely named control, so clicking the
+// visible Cancel resolved to the paste prompt's Cancel instead.
+func TestDropNoticeDismissIsHitTestableAndClearsTheBanner(t *testing.T) {
+	m := locales.In("en")
+	model := chromeModel{DropNotice: DropNoticeInserted, DropCount: 2}
+	dismissed := 0
+	tester := ui.NewTester(func(c *ui.Context) {
+		renderChrome(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{
+			DismissDrop: func() {
+				dismissed++
+				model.DropNotice = DropNoticeNone
+				model.DropCount = 0
+			},
+		})
+	}, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	notice := m.SessionDropInserted(2)
+	if !tester.HasText(notice) {
+		t.Fatalf("the drop result is not shown: %v", tester.Texts())
+	}
+	rect, ok := tester.Find(m.SessionDropDismissLabel())
+	if !ok {
+		t.Fatalf("the drop result has no uniquely named Dismiss: %v", tester.Texts())
+	}
+	if rect.X < 0 || rect.Y < 0 || rect.X+rect.W > 720 || rect.Y+rect.H > 480 {
+		t.Fatalf("Dismiss is outside the window: %+v", rect)
+	}
+	if err := tester.Click(m.SessionDropDismissLabel()); err != nil {
+		t.Fatal(err)
+	}
+	if dismissed != 1 {
+		t.Fatalf("Dismiss calls = %d, want 1", dismissed)
+	}
+	tester.Frame()
+	if tester.HasText(notice) {
+		t.Fatalf("the drop result survived Dismiss: %v", tester.Texts())
+	}
+}
+
+// TestPasteItemFollowsTheClipboardState is D4: Paste used to be enabled
+// whenever the surface had a paste closure, even with an empty clipboard.
+func TestPasteItemFollowsTheClipboardState(t *testing.T) {
+	m := locales.In("en")
+	for _, canPaste := range []bool{false, true} {
+		canPaste := canPaste
+		pasted := 0
+		model := chromeModel{
+			Encoding:  domainterminal.EncodingUTF8,
+			LogFormat: domainterminal.LogFormatText,
+			CanPaste:  canPaste,
+		}
+		tester := newInteractionTester(t, model, chromeActions{
+			Paste: func() { pasted++ },
+		}, 720, 480)
+		if err := tester.Click(m.SessionMenuLabel()); err != nil {
+			t.Fatal(err)
+		}
+		err := tester.ChooseMenuItem(m.SessionMenuPaste())
+		if !canPaste {
+			if err == nil {
+				t.Fatal("Paste was choosable with an empty clipboard")
+			}
+			if pasted != 0 {
+				t.Fatalf("empty-clipboard Paste ran %d times", pasted)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("Paste was refused with a non-empty clipboard: %v", err)
+		}
+		if pasted != 1 {
+			t.Fatalf("Paste ran %d times, want 1", pasted)
+		}
+	}
+}
+
 // TestSessionMenuRefusesDisabledItems names the disabled-item contract
 // directly, so a future enabled-looking but inert item fails.
 func TestSessionMenuRefusesDisabledItems(t *testing.T) {
@@ -266,13 +367,22 @@ func TestSessionMenuRefusesDisabledItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range [][]string{
+		{m.SessionMenuCopy()},
 		{m.SessionMenuPaste()},
+		{m.SessionMenuPasteSelection()},
+		{m.SessionMenuSelectAll()},
+		{m.SessionMenuOpenBrowser()},
+		{m.SessionMenuReconnect()},
+		{m.SessionMenuSendYmodem()},
+		{m.SessionMenuReceiveYmodem()},
+		{m.SessionMenuSaveScreen()},
 		{m.SessionMenuClearBuffer()},
-		{m.SessionMenuSplitRight()},
-		{m.SessionMenuSplitDown()},
+		{m.SessionMenuSplitHorizontal()},
+		{m.SessionMenuSplitVertical()},
 		{m.SessionMenuLogging(), m.SessionLoggingStart()},
+		{m.SessionMenuRename()},
 		{m.SessionMenuDetach()},
-		{m.SessionMenuClosePane()},
+		{m.SessionMenuCloseTerminal()},
 	} {
 		tester.Frame()
 		if err := tester.Click(m.SessionMenuLabel()); err != nil {
