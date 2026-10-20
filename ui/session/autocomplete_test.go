@@ -96,18 +96,24 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 		t.Fatalf("the popup does not show the suggestions: %v", tester.Texts())
 	}
 
-	// The popup rows are real buttons: clicking one accepts it through the same
-	// path Tab uses.
+	// The popup rows are plain rows with a click action: clicking one accepts
+	// it through the same path Tab uses.
 	if err := tester.Click("git status"); err != nil {
 		t.Fatalf("click the suggestion: %v", err)
 	}
 	if !waitFor(t, func() bool {
-		return bytes.Contains([]byte(transport.input()), []byte("\x15git status"))
+		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7fgit status"))
 	}) {
 		t.Fatalf("accepted input = %q", transport.input())
 	}
 	if bytes.Contains([]byte(transport.input()), []byte("\t")) {
 		t.Fatalf("Tab reached the transport: %q", transport.input())
+	}
+	if bytes.Contains([]byte(transport.input()), []byte{0x15}) {
+		t.Fatalf("Ctrl+U reached the transport: %q", transport.input())
+	}
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "git status" }) {
+		t.Fatalf("the shell line tracked after accepting = %q", session.Snapshot().Input)
 	}
 }
 
@@ -175,9 +181,12 @@ func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 		t.Fatalf("Tab was not taken with suggestions: %v", surface.SuggestionRows())
 	}
 	if !waitFor(t, func() bool {
-		return bytes.Contains([]byte(transport.input()), []byte("\x15git status"))
+		return bytes.Contains([]byte(transport.input()), []byte("\x7f\x7f\x7fgit status"))
 	}) {
 		t.Fatalf("accepted input = %q", transport.input())
+	}
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "git status" }) {
+		t.Fatalf("the shell line tracked after accepting = %q", session.Snapshot().Input)
 	}
 }
 

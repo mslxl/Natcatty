@@ -389,7 +389,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 
 	return ui.Column(c).Fill().Children(func() {
 		renderChrome(c, model, m, t, actions)
-		termView := terminal.View(c, s.terminal).Grow(1)
+		// Key the terminal so its node keeps the same identity when chrome
+		// inserts or removes a row above it (autocomplete popup, statistics,
+		// banners). MyGo derives unkeyed node ids from the child position, so
+		// an inserted row above the terminal would move the keyboard focus to
+		// the new row and the user's next keystroke would go nowhere.
+		termView := terminal.View(c, s.terminal).Grow(1).Key("session-terminal")
 		// File drag/drop belongs to the terminal element. Reading it here
 		// marks the terminal as the drop target and consumes a completed
 		// drop once; the resulting banner appears on the next frame.
@@ -573,6 +578,12 @@ func (s *Surface) redraw() {
 	if s.options.Redraw != nil {
 		s.options.Redraw()
 	}
+}
+
+// ScreenText returns the text the terminal shows, including scrollback. Tests
+// and diagnostics use it to inspect the line a shell actually rendered.
+func (s *Surface) ScreenText() string {
+	return s.terminal.Text()
 }
 
 // Close closes the terminal. MyGo closes the Conn, which closes the Session.

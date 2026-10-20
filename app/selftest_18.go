@@ -266,12 +266,23 @@ func (t *selftest18) autocompleteStep(*ui.Context) selftest.Outcome {
 		a.deadline = time.Now().Add(selftestTimeout)
 		return selftest.Pending
 	case 3:
-		if !strings.Contains(a.transport.written(), "\x15git status") {
+		// Accepting must clear the two typed characters with Backspaces and
+		// then write the suggestion; Ctrl+U is Undo in PSReadLine and must
+		// never reach the shell.
+		if !strings.Contains(a.transport.written(), "\x7f\x7fgit status") {
 			return pending(a.deadline, "the accepted command to reach the transport")
 		}
 		if strings.Contains(a.transport.written(), "\t") {
 			return t.finishAutocompleteWith(selftest.Failed(fmt.Errorf(
 				"a tab character reached the transport: %q", a.transport.written())))
+		}
+		if strings.Contains(a.transport.written(), "\x15") {
+			return t.finishAutocompleteWith(selftest.Failed(fmt.Errorf(
+				"Ctrl+U reached the transport: %q", a.transport.written())))
+		}
+		if a.session.Snapshot().Input != "git status" {
+			return t.finishAutocompleteWith(selftest.Failed(fmt.Errorf(
+				"the replaced line is %q, want git status", a.session.Snapshot().Input)))
 		}
 		if len(a.rows) < 2 {
 			return t.finishAutocompleteWith(selftest.Failed(
