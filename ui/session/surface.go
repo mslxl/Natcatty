@@ -6,6 +6,7 @@
 package sessionui
 
 import (
+	"io"
 	"runtime"
 	"strings"
 	"sync"
@@ -57,6 +58,10 @@ type Options struct {
 	AutocompleteDelay func() int
 	// ShowStats reports whether the Session counters are drawn.
 	ShowStats func() bool
+	// View is an already claimed live connection. Resume supplies the
+	// ResumedView that replays the hibernated screen; nil claims the
+	// Session's one live view with AttachView.
+	View io.ReadWriteCloser
 }
 
 // ScreenWriter saves text and reports the path it wrote, or an error.
@@ -158,6 +163,12 @@ func WithSessionStats(show func() bool) Option {
 	return func(options *Options) { options.ShowStats = show }
 }
 
+// WithView binds the Surface to a connection the caller already claimed. A
+// resumed Session passes the ResumedView returned by Session.Resume.
+func WithView(conn io.ReadWriteCloser) Option {
+	return func(options *Options) { options.View = conn }
+}
+
 // Surface is one Tab's terminal view.
 type Surface struct {
 	session   *appsession.Session
@@ -178,6 +189,15 @@ type Surface struct {
 	renaming     bool
 	renameValue  string
 	paneActions  PaneActions
+
+	// Hibernate replaces the live terminal with a resumable screen while the
+	// application Session and its transport stay alive. The observer is a
+	// read-only shadow terminal fed by the application's Snapshot/Feed facade;
+	// it never claims a live view.
+	hibernated  bool
+	observing   bool
+	observer    *terminal.Terminal
+	observation *appsession.Observation
 
 	// Autocomplete state, refreshed once per frame from the Session's typed
 	// line.
@@ -221,21 +241,42 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 		_, _ = session.TerminalConn().Write([]byte(text))
 	}, options.Upload)
 
-	// The application's tap is the single authority for OSC 52: it removes
-	// rejected writes and reads before the terminal sees them, and applies the
-	// live Settings policy. MyGo must therefore stay permissive here, and this
-	// callback applies what the Session currently allows. Reading the policy
-	// per request is what makes a Settings change affect live Sessions.
+	conn := options.View
+	claimed := false
+	if conn == nil {
+		view, err := session.AttachView()
+		if err != nil {
+			return nil, err
+		}
+		conn = view
+		claimed = true
+	}
+	if err := surface.attach(conn); err != nil {
+		if claimed {
+			_ = conn.Close()
+		}
+		return nil, err
+	}
+	return surface, nil
+}
+
+// attach builds MyGo's terminal over conn. The application's tap is the single
+// authority for OSC 52: it removes rejected writes and reads before the
+// terminal sees them, and applies the live Settings policy. MyGo must
+// therefore stay permissive here, and this callback applies what the Session
+// currently allows. Reading the policy per request is what makes a Settings
+// change affect live Sessions.
+func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	term, err := terminal.New(terminal.Options{
-		Conn:             session.TerminalConn(),
+		Conn:             conn,
 		NoClipboardWrite: false,
 		ClipboardRead:    terminal.ClipboardAsk,
 		OnClipboardRequest: func(request terminal.ClipboardRequest) {
-			switch access := session.ClipboardAccess(); {
+			switch access := s.session.ClipboardAccess(); {
 			case access.ReadsAllowed():
 				request.Allow()
 			case access.AsksOnRead():
-				surface.requestClipboard(request)
+				s.requestClipboard(request)
 			default:
 				request.Deny()
 			}
@@ -248,16 +289,16 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 			if err != nil || len(text) == 0 {
 				return false
 			}
-			surface.requestPaste(string(text))
+			s.requestPaste(string(text))
 			return true
 		},
-		OnKey: surface.handleAutocompleteKey,
+		OnKey: s.handleAutocompleteKey,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	surface.terminal = term
-	return surface, nil
+	s.terminal = term
+	return nil
 }
 
 func validLogFormat(format domainterminal.LogFormat) bool {
@@ -272,12 +313,18 @@ func validLogFormat(format domainterminal.LogFormat) bool {
 // View shows the Session chrome above the terminal and gives the terminal the
 // keyboard focus.
 func (s *Surface) View(c *ui.Context) ui.Element {
+	// A dismissed observer stops rendering immediately; its feed and shadow
+	// terminal are released before the next frame builds anything over them.
+	if !s.observing && s.observation != nil {
+		s.releaseObserver()
+	}
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
 	if snapshot.Logging.Active && validLogFormat(snapshot.Logging.Format) {
 		s.logFormat = snapshot.Logging.Format
 	}
+	hibernated := s.hibernated || snapshot.Hibernated
 	directory := ""
 	if s.options.LogDefaults != nil {
 		directory = s.options.LogDefaults().Directory
@@ -341,6 +388,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		GhostText:        ghostText,
 		ShowStats:        showStats,
 		Stats:            snapshot.Stats,
+		Hibernated:       hibernated,
+	}
+	var saveScreen, clearBuffer func()
+	if !hibernated && s.terminal != nil {
+		saveScreen = func() { s.saveScreen() }
+		clearBuffer = func() { s.session.ClearBuffer() }
 	}
 	actions := chromeActions{
 		ToggleLog: func() { s.toggleLog() },
@@ -359,8 +412,8 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		Reconnect:     s.options.Reconnect,
 		SendYmodem:    s.options.SendYmodem,
 		ReceiveYmodem: s.options.ReceiveYmodem,
-		SaveScreen:    func() { s.saveScreen() },
-		ClearBuffer:   func() { s.terminal.Feed([]byte("\x1b[3J")) },
+		SaveScreen:    saveScreen,
+		ClearBuffer:   clearBuffer,
 		Rename:        renameAction,
 		AcceptPaste: func() {
 			s.gate.Accept()
@@ -382,6 +435,9 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 		SplitDown:  s.paneActions.SplitDown,
 		Detach:     s.paneActions.Detach,
 		ClosePane:  s.paneActions.Close,
+		Hibernate:  func() { s.Hibernate() },
+		Resume:     func() { _ = s.Resume() },
+		Observe:    func() { _ = s.OpenObserver() },
 		AcceptSuggestion: func(index int) {
 			s.acceptSuggestion(index)
 		},
@@ -389,29 +445,80 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 
 	return ui.Column(c).Fill().Children(func() {
 		renderChrome(c, model, m, t, actions)
-		// Key the terminal so its node keeps the same identity when chrome
-		// inserts or removes a row above it (autocomplete popup, statistics,
-		// banners). MyGo derives unkeyed node ids from the child position, so
-		// an inserted row above the terminal would move the keyboard focus to
-		// the new row and the user's next keystroke would go nowhere.
-		termView := terminal.View(c, s.terminal).Grow(1).Key("session-terminal")
-		// File drag/drop belongs to the terminal element. Reading it here
-		// marks the terminal as the drop target and consumes a completed
-		// drop once; the resulting banner appears on the next frame.
-		if over := termView.FileDragOver(); over != s.dropOver {
-			s.dropOver = over
-			// Both entering and leaving change the banner, so redraw either
-			// way; otherwise the drop hint would stay after the pointer left.
-			s.redraw()
-		}
-		if files := termView.DroppedFiles(); len(files) > 0 {
-			s.dropOver = false
-			s.drops.Drop(files, s.windowsShell())
-			s.redraw()
+		switch {
+		case s.observing && s.observer != nil:
+			s.observerView(c, m, t)
+		case hibernated || s.terminal == nil:
+			s.hibernatedView(c, m, t)
+		default:
+			s.terminalView(c)
 		}
 		if s.renaming {
 			s.renameDialog(c, m, t)
 		}
+	})
+}
+
+// terminalView shows the live terminal. It is the Session's one live view.
+func (s *Surface) terminalView(c *ui.Context) {
+	// Key the terminal so its node keeps the same identity when chrome
+	// inserts or removes a row above it (autocomplete popup, statistics,
+	// banners). MyGo derives unkeyed node ids from the child position, so an
+	// inserted row above the terminal would move the keyboard focus to the new
+	// row and the user's next keystroke would go nowhere.
+	termView := terminal.View(c, s.terminal).Grow(1).Key("session-terminal")
+	// File drag/drop belongs to the terminal element. Reading it here marks
+	// the terminal as the drop target and consumes a completed drop once; the
+	// resulting banner appears on the next frame.
+	if over := termView.FileDragOver(); over != s.dropOver {
+		s.dropOver = over
+		// Both entering and leaving change the banner, so redraw either way;
+		// otherwise the drop hint would stay after the pointer left.
+		s.redraw()
+	}
+	if files := termView.DroppedFiles(); len(files) > 0 {
+		s.dropOver = false
+		s.drops.Drop(files, s.windowsShell())
+		s.redraw()
+	}
+}
+
+// hibernatedView replaces the live screen with the Session's resumable state.
+// The Session and its transport keep running; Resume reattaches the one live
+// view, and the observer can still open a read-only snapshot.
+func (s *Surface) hibernatedView(c *ui.Context, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Grow(1).FillWidth().Padding(24).Gap(10).
+		Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, m.SessionHibernatedTitle()).FontSize(16).Bold().
+			TextAlign(ui.Center).TextColor(t.Text)
+		ui.Text(c, m.SessionHibernatedBody()).FontSize(11).Wrap().
+			TextAlign(ui.Center).MaxWidth(520).TextColor(t.TextMuted)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if ui.PrimaryButton(c, m.SessionResume()).Clicked() {
+				_ = s.Resume()
+			}
+			if ui.Button(c, m.SessionMenuObserveSnapshot()).Clicked() {
+				_ = s.OpenObserver()
+			}
+		})
+	})
+}
+
+// observerView renders the read-only shadow terminal fed by the application's
+// Snapshot/Feed facade. It replaces the live terminal in the same Pane and
+// never attaches a second live view.
+func (s *Surface) observerView(c *ui.Context, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Grow(1).FillWidth().Gap(6).Padding(8).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SessionObserverTitle()).FontSize(13).Bold().SingleLine().
+				TextColor(t.Text)
+			ui.Text(c, m.SessionObserverHint()).FontSize(10).SingleLine().
+				MinWidth(0).Grow(1).TextColor(t.TextMuted)
+			if ui.Button(c, m.SessionObserverClose()).Clicked() {
+				s.CloseObserver()
+			}
+		})
+		terminal.View(c, s.observer).Grow(1).Key("session-observer")
 	})
 }
 
@@ -485,6 +592,9 @@ func (s *Surface) beginRename() {
 // saveScreen writes the terminal's scrollback and screen and reports the
 // result in a dismissible banner.
 func (s *Surface) saveScreen() {
+	if s.terminal == nil {
+		return
+	}
 	writer := s.options.SaveScreen
 	if writer == nil {
 		writer = SaveScreenFile
@@ -496,6 +606,146 @@ func (s *Surface) saveScreen() {
 	}
 	s.redraw()
 }
+
+// Hibernate releases the Session's live view while keeping the transport and
+// every application-level field alive. The screen becomes a resumable
+// placeholder; output produced now still enters the Session's bounded replay.
+func (s *Surface) Hibernate() bool {
+	if s.session == nil || s.terminal == nil || s.hibernated {
+		return false
+	}
+	if !s.session.Hibernate() {
+		return false
+	}
+	s.hibernated = true
+	s.dropOver = false
+	// Closing the terminal closes its ViewConn, which only detaches this
+	// view: the Session, the transport, and the observer feeds stay alive.
+	_ = s.terminal.Close()
+	s.terminal = nil
+	s.redraw()
+	return true
+}
+
+// Resume reattaches the Session's one live view. The resumed connection
+// replays the bounded screen snapshot before live output, so the new
+// terminal shows the same screen the hibernated Session produced.
+func (s *Surface) Resume() error {
+	if s.session == nil || !s.hibernated {
+		return appsession.ErrNotHibernated
+	}
+	resumed, err := s.session.Resume()
+	if err != nil {
+		return err
+	}
+	if err := s.attach(resumed); err != nil {
+		// The Session assumed a view; put it back into its hibernated state
+		// so a later Resume starts from a consistent snapshot.
+		_ = resumed.Close()
+		s.session.Hibernate()
+		return err
+	}
+	// The replay was captured at the Session's last grid size. Give the new
+	// terminal that geometry before the Pane's first frame can resize it.
+	if cols, rows := resumed.ScreenSize(); cols > 0 && rows > 0 {
+		s.terminal.Resize(cols, rows)
+	}
+	s.hibernated = false
+	s.redraw()
+	return nil
+}
+
+// OpenObserver opens a read-only shadow terminal over the application's
+// Snapshot/Feed facade. It is independent of the Session's one live view and
+// never receives typed input.
+func (s *Surface) OpenObserver() error {
+	if s.session == nil || s.observing {
+		return nil
+	}
+	// A closed observer's resources are released before the next frame; drop
+	// them now so a quick reopen always starts from a fresh snapshot.
+	s.releaseObserver()
+	observation, err := s.session.Observe()
+	if err != nil {
+		return err
+	}
+	term, err := terminal.New(terminal.Options{
+		Conn:             observation,
+		NoClipboardWrite: true,
+		ClipboardRead:    terminal.ClipboardDeny,
+	})
+	if err != nil {
+		_ = observation.Close()
+		return err
+	}
+	// Capture the owner's geometry before the Pane sizes the view, so the
+	// feed renders at the width the snapshot was produced for.
+	if screen := observation.Screen(); screen.Cols > 0 && screen.Rows > 0 {
+		term.Resize(screen.Cols, screen.Rows)
+	}
+	s.observation = observation
+	s.observer = term
+	s.observing = true
+	s.redraw()
+	return nil
+}
+
+// CloseObserver stops rendering the observer. Its resources are released
+// before the next frame, when the live terminal takes the Pane again.
+func (s *Surface) CloseObserver() {
+	if !s.observing {
+		return
+	}
+	s.observing = false
+	s.redraw()
+}
+
+// releaseObserver closes the observer terminal and its feed. Closing the
+// terminal closes the Observation, which only unsubscribes the feed; the
+// owning Session and its live view are unaffected.
+func (s *Surface) releaseObserver() {
+	if s.observer != nil {
+		_ = s.observer.Close()
+		s.observer = nil
+	}
+	if s.observation != nil {
+		_ = s.observation.Close()
+		s.observation = nil
+	}
+	s.observing = false
+}
+
+// Hibernated reports whether the Session has no live screen. It follows both
+// the surface's attached state and the Session's own snapshot.
+func (s *Surface) Hibernated() bool {
+	if s.hibernated {
+		return true
+	}
+	return s.session != nil && s.session.Snapshot().Hibernated
+}
+
+// Observing reports whether the observer Pane is showing.
+func (s *Surface) Observing() bool { return s.observing }
+
+// ObserverText returns the shadow terminal's text, including its scrollback.
+func (s *Surface) ObserverText() string {
+	if s.observer == nil {
+		return ""
+	}
+	return s.observer.Text()
+}
+
+// ObserverScreen returns the snapshot the observer opened with, and whether
+// an observer is open.
+func (s *Surface) ObserverScreen() (appsession.ScreenSnapshot, bool) {
+	if s.observation == nil {
+		return appsession.ScreenSnapshot{}, false
+	}
+	return s.observation.Screen(), true
+}
+
+// Session returns the owning application Session.
+func (s *Surface) Session() *appsession.Session { return s.session }
 
 // windowsShell reports whether inserted drop paths should use the Windows
 // quoting dialect. Local Windows Sessions run a Windows shell; SSH Sessions are
@@ -581,12 +831,18 @@ func (s *Surface) redraw() {
 }
 
 // ScreenText returns the text the terminal shows, including scrollback. Tests
-// and diagnostics use it to inspect the line a shell actually rendered.
+// and diagnostics use it to inspect the line a shell actually rendered. A
+// hibernated Session has no live screen and returns "".
 func (s *Surface) ScreenText() string {
+	if s.terminal == nil {
+		return ""
+	}
 	return s.terminal.Text()
 }
 
-// Close closes the terminal. MyGo closes the Conn, which closes the Session.
+// Close closes the terminal and the observer. MyGo closes the ViewConn, which
+// detaches the live view without ending the Session; the shell closes the
+// Session explicitly.
 func (s *Surface) Close() {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
@@ -596,9 +852,13 @@ func (s *Surface) Close() {
 		if request != nil {
 			request.Deny()
 		}
+		s.releaseObserver()
 		s.gate.Cancel()
 		s.drops.Dismiss()
-		_ = s.terminal.Close()
+		if s.terminal != nil {
+			_ = s.terminal.Close()
+			s.terminal = nil
+		}
 	})
 }
 
@@ -607,6 +867,9 @@ func (s *Surface) Close() {
 func (s *Surface) Dir() string {
 	if cwd := s.session.Snapshot().CWD; cwd != "" {
 		return cwd
+	}
+	if s.terminal == nil {
+		return ""
 	}
 	return s.terminal.Dir()
 }

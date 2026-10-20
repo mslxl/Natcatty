@@ -22,6 +22,7 @@ type sessionMenuModel struct {
 	CanSplit     bool
 	CanDetach    bool
 	CanClosePane bool
+	Hibernated   bool
 }
 
 // sessionMenuActions are the Session menu's commands. Nil entries show their
@@ -46,6 +47,9 @@ type sessionMenuActions struct {
 	SplitDown      func()
 	Detach         func()
 	ClosePane      func()
+	Hibernate      func()
+	Resume         func()
+	Observe        func()
 }
 
 // sessionMenuButton renders the Session menu in the status bar. MyGo's terminal
@@ -169,6 +173,25 @@ func buildSessionMenu(menu *ui.Menu, model sessionMenuModel, m locales.Messages,
 			}
 		})
 	})
+
+	menu.Separator()
+	// The lifetime slot holds Hibernate while the Session has a live screen
+	// and Resume while it is hibernated. One item keeps the menu's shape
+	// stable and its state always visible.
+	lifetimeLabel := m.SessionMenuHibernate()
+	lifetimeAction := actions.Hibernate
+	if model.Hibernated {
+		lifetimeLabel = m.SessionResume()
+		lifetimeAction = actions.Resume
+	}
+	lifetime := menu.Item(lifetimeLabel).Disabled(lifetimeAction == nil)
+	if lifetime.Chosen() && lifetimeAction != nil {
+		lifetimeAction()
+	}
+	observe := menu.Item(m.SessionMenuObserveSnapshot()).Disabled(actions.Observe == nil)
+	if observe.Chosen() && actions.Observe != nil {
+		actions.Observe()
+	}
 
 	menu.Separator()
 	rename := menu.Item(m.SessionMenuRename()).Disabled(actions.Rename == nil || !model.CanRename)

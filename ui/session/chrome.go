@@ -63,6 +63,8 @@ type chromeModel struct {
 	// ShowStats draws the Session counters. Stats is the source.
 	ShowStats bool
 	Stats     appsession.Stats
+	// Hibernated reports that the Session has no live screen.
+	Hibernated bool
 }
 
 // ScreenNotice is the result of saving the terminal screen. It is a code, not
@@ -103,6 +105,9 @@ type chromeActions struct {
 	SplitDown        func()
 	Detach           func()
 	ClosePane        func()
+	Hibernate        func()
+	Resume           func()
+	Observe          func()
 	AcceptSuggestion func(index int)
 }
 
@@ -193,6 +198,7 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 			CanSplit:     actions.SplitRight != nil || actions.SplitDown != nil,
 			CanDetach:    actions.Detach != nil,
 			CanClosePane: actions.ClosePane != nil,
+			Hibernated:   model.Hibernated,
 		}, menuLabel, m, t, sessionMenuActions{
 			Copy:           actions.Copy,
 			Paste:          actions.Paste,
@@ -212,6 +218,9 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 			SplitDown:      actions.SplitDown,
 			Detach:         actions.Detach,
 			ClosePane:      actions.ClosePane,
+			Hibernate:      actions.Hibernate,
+			Resume:         actions.Resume,
+			Observe:        actions.Observe,
 		})
 	})
 }

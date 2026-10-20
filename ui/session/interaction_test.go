@@ -67,6 +67,7 @@ func TestSessionMenuListsTheProductionItemsInOrder(t *testing.T) {
 		m.SessionMenuSplitHorizontal(), m.SessionMenuSplitVertical(), "-",
 		m.SessionMenuSaveScreen(), m.SessionMenuClearBuffer(),
 		m.SessionMenuEncoding(), m.SessionMenuLogging(), "-",
+		m.SessionMenuHibernate(), m.SessionMenuObserveSnapshot(), "-",
 		m.SessionMenuRename(), "-",
 		m.SessionMenuDetach(), "-",
 		m.SessionMenuCloseTerminal(),
@@ -75,6 +76,43 @@ func TestSessionMenuListsTheProductionItemsInOrder(t *testing.T) {
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("menu = %v, want %v", got, want)
 	}
+}
+
+func TestSessionMenuLifetimeSlotOffersResumeWhileHibernated(t *testing.T) {
+	m := locales.In("en")
+	resumed := false
+	model := chromeModel{
+		Encoding:   domainterminal.EncodingUTF8,
+		LogFormat:  domainterminal.LogFormatText,
+		Hibernated: true,
+	}
+	tester := newInteractionTester(t, model, chromeActions{
+		Hibernate: func() { t.Error("Hibernate chosen while hibernated") },
+		Resume:    func() { resumed = true },
+	}, 720, 480)
+
+	if err := tester.Click(m.SessionMenuLabel()); err != nil {
+		t.Fatal(err)
+	}
+	menu := tester.Menu()
+	if contains(menu, m.SessionMenuHibernate()) {
+		t.Fatalf("a hibernated Session still offers Hibernate: %v", menu)
+	}
+	if err := tester.ChooseMenuItem(m.SessionResume()); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if !resumed {
+		t.Fatal("Resume did not reach the surface")
+	}
+}
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSessionMenuActionsReachTheSurfaceAndUnavailableItemsAreDisabled(t *testing.T) {
