@@ -94,6 +94,10 @@ type tapEffects struct {
 	Bell         bool
 	Notification *TerminalNotification
 	Transfer     *TransferState
+	// PromptRecheck asks the Session for one deferred prompt check: a prompt
+	// was seen inside the fallback guard window, and no further output may
+	// arrive to trigger another check.
+	PromptRecheck bool
 }
 
 // tapState is the immutable per-chunk view the Session copies into Snapshot.
@@ -113,6 +117,15 @@ type tapState struct {
 // activityWindow is how long output keeps the activity indicator lit after
 // the latest byte. A running command or active transfer keeps it lit longer.
 const activityWindow = 2 * time.Second
+
+// promptWindow is how long the prompt fallback holds back after a command
+// starts. A prompt already in the tail belongs to the previous command, and
+// that command's output can still be in flight when Enter is pressed, so the
+// new command must not be ended the instant it starts. A fast command's own
+// prompt can also land inside the window, so the hold is bounded: the tap
+// reports promptDeferred and resolvePrompt settles the command once the window
+// expires, even when no further output arrives.
+const promptWindow = 50 * time.Millisecond
 
 // Notification policy, matching the original.
 const (
@@ -154,11 +167,15 @@ type terminalTap struct {
 	inputPending []byte
 	inputEscape  inputState
 	lastOutput   time.Time
-	notification *TerminalNotification
-	clipboard    *ClipboardEvent
-	transfer     TransferState
-	stats        Stats
-	bellPending  bool
+	// outputSinceStart marks that text output arrived after the current
+	// command started. The prompt fallback must ignore the previous command's
+	// prompt still sitting in the tail.
+	outputSinceStart bool
+	notification     *TerminalNotification
+	clipboard        *ClipboardEvent
+	transfer         TransferState
+	stats            Stats
+	bellPending      bool
 
 	osc99              osc99Assembler
 	notificationStamps []time.Time
@@ -315,7 +332,12 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 	}
 
 done:
-	t.checkPrompt(now)
+	switch t.checkPrompt(now) {
+	case promptFinished:
+		effects.Changed = true
+	case promptDeferred:
+		effects.PromptRecheck = true
+	}
 	if t.bellPending {
 		t.bellPending = false
 		effects.Bell = true
@@ -333,6 +355,9 @@ func (t *terminalTap) noteOutput(data []byte, now time.Time) {
 		return
 	}
 	t.lastOutput = now
+	if t.command.Running {
+		t.outputSinceStart = true
+	}
 	t.stats.OutputBytes += int64(len(data))
 	if bytes.IndexByte(data, 0x07) >= 0 {
 		t.stats.Bells += int64(bytes.Count(data, []byte{0x07}))
@@ -539,6 +564,8 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) bool {
 			t.command.StartedAt = now
 		}
 		t.command.FinishedAt = time.Time{}
+		// Only output after the command starts can carry its prompt.
+		t.outputSinceStart = false
 		return true
 	case 'D':
 		t.command.Running = false
@@ -837,23 +864,46 @@ func sanitizeNotificationText(value string, max int) string {
 	return strings.TrimRight(string(runes[:max-1]), " ") + "…"
 }
 
+// promptResult is the prompt fallback's outcome for one check.
+type promptResult uint8
+
+const (
+	promptNoChange promptResult = iota
+	promptFinished
+	// promptDeferred means a prompt-like line arrived inside the guard window.
+	// It cannot settle the command yet, but nothing may follow it, so the
+	// caller must check again once the window expires.
+	promptDeferred
+)
+
 // checkPrompt is the OSC 133-free fallback: a recognizable shell prompt at the
-// end of output finishes a command that was submitted with Enter.
-func (t *terminalTap) checkPrompt(now time.Time) {
-	if !t.command.Running || len(t.tail) == 0 {
-		return
-	}
-	if !t.command.StartedAt.IsZero() && now.Sub(t.command.StartedAt) < 50*time.Millisecond {
-		return
+// end of output finishes a command that was submitted with Enter. Only output
+// that arrived after the command started can carry the new prompt; a prompt
+// already in the tail from before Enter belongs to the previous command.
+func (t *terminalTap) checkPrompt(now time.Time) promptResult {
+	if !t.command.Running || !t.outputSinceStart || len(t.tail) == 0 {
+		return promptNoChange
 	}
 	line := lastVisibleLine(t.tail)
-	if line == "" {
-		return
+	if line == "" || !promptLike(line) {
+		return promptNoChange
 	}
-	if promptLike(line) {
-		t.command.Running = false
-		t.command.FinishedAt = now
+	if !t.command.StartedAt.IsZero() && now.Sub(t.command.StartedAt) < promptWindow {
+		return promptDeferred
 	}
+	t.command.Running = false
+	t.command.FinishedAt = now
+	return promptFinished
+}
+
+// resolvePrompt re-runs the prompt fallback once the guard window has expired.
+// A fast command's prompt can arrive while checkPrompt is still holding back,
+// and with no further output nothing else would revisit it, leaving Running
+// set and autocomplete suppressed until Ctrl+C.
+func (t *terminalTap) resolvePrompt(now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.checkPrompt(now) == promptFinished
 }
 
 func lastVisibleLine(data []byte) string {
@@ -1010,6 +1060,9 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
 					Running:   true,
 					StartedAt: now,
 				}
+				// Only output after the command starts can carry its prompt;
+				// the previous prompt may still be in the tail.
+				t.outputSinceStart = false
 				t.stats.Commands++
 				submitted = command
 			}
