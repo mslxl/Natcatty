@@ -1,2 +1,5 @@
 # Local planning and issue-tracker scratch space
 .scratch/
+
+# Build output
+build/
