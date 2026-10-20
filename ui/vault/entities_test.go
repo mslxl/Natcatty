@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -182,7 +183,18 @@ func (f *entityGroups) AssignHostGroup(_ context.Context, id model.HostID, group
 	path := domainvault.NormalizeGroup(groupPath)
 	if path != "" {
 		if _, ok := f.find(path); !ok {
-			return &appvault.Error{Kind: appvault.KindValidation}
+			// Mirror the application service: a path Hosts already reference
+			// is an implicit group and is a valid membership target.
+			referenced := false
+			for _, host := range f.hosts.items {
+				if domainvault.IsGroupAtOrBelow(host.Group, path) {
+					referenced = true
+					break
+				}
+			}
+			if !referenced {
+				return &appvault.Error{Kind: appvault.KindValidation}
+			}
 		}
 	}
 	host, ok := f.hosts.find(id)
@@ -314,6 +326,11 @@ func (f *entityKnownHosts) DeleteKnownHost(_ context.Context, id string) error {
 
 func newEntityView(t *testing.T) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
 	t.Helper()
+	return newEntityViewSized(t, 1400, 1200)
+}
+
+func newEntityViewSized(t *testing.T, width, height int) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
+	t.Helper()
 	hosts := &entityHosts{items: []domainvault.Host{{
 		ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
 		Protocol: domainvault.ProtocolSSH,
@@ -333,7 +350,7 @@ func newEntityView(t *testing.T) (*vaultstate.State, *entityHosts, *entityGroups
 		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).Children(func() {
 			View(state)(c)
 		})
-	}, 1400, 1200)
+	}, width, height)
 	return state, hosts, groups, proxies, known, tt
 }
 
@@ -564,5 +581,498 @@ func TestDeletingAGroupDoesNotDeleteHostsWhenTheGroupIsNested(t *testing.T) {
 	}
 	if len(groups.items) != 1 || groups.items[0].Path != "prod" {
 		t.Fatalf("groups after delete = %+v, want only prod", groups.items)
+	}
+}
+
+// scrollToEnd moves the pointer over the window and wheels to the bottom of
+// the scroll container under it.
+func scrollToEnd(tt *ui.Tester, width, height int) {
+	tt.Move(float32(width)/2, float32(height)/2)
+	tt.Scroll(float32(width)/2, float32(height)/2, 0, 10000)
+	tt.Frame()
+}
+
+func assertVisible(t *testing.T, tt *ui.Tester, text string, width, height int) {
+	t.Helper()
+	rect, ok := tt.Find(text)
+	if !ok {
+		t.Fatalf("%q is not rendered, texts %q", text, tt.Texts())
+	}
+	if rect.Y < -0.5 || rect.Y+rect.H > float32(height)+0.5 ||
+		rect.X < -0.5 || rect.X+rect.W > float32(width)+0.5 {
+		t.Fatalf("%q is outside the %dx%d window: %+v", text, width, height, rect)
+	}
+}
+
+func assertNoHorizontalOverflow(t *testing.T, tt *ui.Tester, width, height int) {
+	t.Helper()
+	for _, text := range tt.Texts() {
+		rect, ok := tt.Find(text)
+		if !ok || rect.W <= 0 || rect.H <= 0 {
+			continue
+		}
+		if rect.X < -0.5 || rect.X+rect.W > float32(width)+0.5 {
+			t.Fatalf("%dx%d: %q overflows horizontally: %+v", width, height, text, rect)
+		}
+	}
+}
+
+var editorSizes = []struct{ width, height int }{{1100, 720}, {720, 480}}
+
+func TestHostEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range editorSizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			state, _, _, _, _, tt := newEntityViewSized(t, size.width, size.height)
+
+			state.BeginEdit("host-1")
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			assertVisible(t, tt, m.VaultHostPinned(), size.width, size.height)
+			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
+			assertVisible(t, tt, m.VaultHostCancel(), size.width, size.height)
+			assertNoHorizontalOverflow(t, tt, size.width, size.height)
+
+			if err := tt.Click(m.VaultHostCancel()); err != nil {
+				t.Fatalf("click Cancel: %v", err)
+			}
+			tt.Frame()
+			if state.Editing() {
+				t.Fatal("Cancel did not close the Host editor")
+			}
+
+			state.BeginEdit("host-1")
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			if err := tt.Click(m.VaultHostSave()); err != nil {
+				t.Fatalf("click Save: %v", err)
+			}
+			tt.Frame()
+			if state.Editing() {
+				t.Fatal("Save did not close the Host editor")
+			}
+		})
+	}
+}
+
+func TestHostEditorScrollsWithTheKeyboard(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newEntityViewSized(t, 720, 480)
+	state.BeginEdit("host-1")
+	tt.Frame()
+	tt.Move(360, 240)
+	tt.Key(0, ui.KeyEnd)
+	tt.Frame()
+	assertVisible(t, tt, m.VaultHostPinned(), 720, 480)
+	assertVisible(t, tt, m.VaultHostSave(), 720, 480)
+}
+
+func TestGroupEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range editorSizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			state, _, groups, _, _, tt := newEntityViewSized(t, size.width, size.height)
+
+			state.BeginCreateGroup()
+			state.GroupForm().Path = "prod2"
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			assertVisible(t, tt, m.VaultHostRequiresMFA(), size.width, size.height)
+			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
+			assertNoHorizontalOverflow(t, tt, size.width, size.height)
+			if err := tt.Click(m.VaultHostSave()); err != nil {
+				t.Fatalf("click Save: %v", err)
+			}
+			tt.Frame()
+			if state.EditingGroup() {
+				t.Fatal("Save did not close the Host Group editor")
+			}
+			if len(groups.items) != 1 || groups.items[0].Path != "prod2" {
+				t.Fatalf("groups = %+v", groups.items)
+			}
+
+			state.BeginCreateGroup()
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			if err := tt.Click(m.VaultHostCancel()); err != nil {
+				t.Fatalf("click Cancel: %v", err)
+			}
+			tt.Frame()
+			if state.EditingGroup() {
+				t.Fatal("Cancel did not close the Host Group editor")
+			}
+		})
+	}
+}
+
+func TestProxyEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range editorSizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			state, _, _, proxies, _, tt := newEntityViewSized(t, size.width, size.height)
+
+			state.BeginCreateProxyProfile()
+			state.ProxyForm().Label = "office"
+			state.ProxyForm().Host = "socks.example.com"
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			assertVisible(t, tt, m.VaultHostSave(), size.width, size.height)
+			assertNoHorizontalOverflow(t, tt, size.width, size.height)
+			if err := tt.Click(m.VaultHostSave()); err != nil {
+				t.Fatalf("click Save: %v", err)
+			}
+			tt.Frame()
+			if state.EditingProxyProfile() {
+				t.Fatal("Save did not close the Proxy Profile editor")
+			}
+			if len(proxies.items) != 1 || proxies.items[0].Label != "office" {
+				t.Fatalf("profiles = %+v", proxies.items)
+			}
+
+			state.BeginCreateProxyProfile()
+			tt.Frame()
+			scrollToEnd(tt, size.width, size.height)
+			if err := tt.Click(m.VaultHostCancel()); err != nil {
+				t.Fatalf("click Cancel: %v", err)
+			}
+			tt.Frame()
+			if state.EditingProxyProfile() {
+				t.Fatal("Cancel did not close the Proxy Profile editor")
+			}
+		})
+	}
+}
+
+func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	groups.items = []domainvault.Group{{Path: "prod2", Port: 2222}}
+	hosts.items[0].Group = "prod2"
+	hosts.items[0].Port = 0
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	if !textsContain(tt, "10.0.0.1:2222") {
+		t.Fatalf("the list does not show the inherited port, texts %q", tt.Texts())
+	}
+
+	state.BeginEdit("host-1")
+	tt.Frame()
+	if state.Form().Port != "" {
+		t.Fatalf("editor Port = %q, want blank for an inherited port", state.Form().Port)
+	}
+	scrollToEnd(tt, 720, 480)
+	if err := tt.Click(m.VaultHostSave()); err != nil {
+		t.Fatalf("click Save: %v", err)
+	}
+	tt.Frame()
+	if hosts.items[0].Port != 0 {
+		t.Fatalf("stored Port = %d, want 0 to keep inheriting", hosts.items[0].Port)
+	}
+	if effective, ok := state.EffectiveHost("host-1"); !ok || effective.Port != 2222 {
+		t.Fatalf("effective Port = %d, want 2222", effective.Port)
+	}
+	if !textsContain(tt, "10.0.0.1:2222") {
+		t.Fatalf("the list lost the inherited port, texts %q", tt.Texts())
+	}
+}
+
+func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, known, tt := newEntityViewSized(t, 1100, 720)
+	if !textsContain(tt, m.VaultKnownHostsTitle(0)) {
+		t.Fatalf("the empty Known Hosts state is missing, texts %q", tt.Texts())
+	}
+
+	known.items = []domainconn.KnownHost{{
+		ID: "kh-1", Hostname: "example.com", Port: 22, KeyType: "ssh-ed25519",
+		Fingerprint: "SHA256:abc",
+	}}
+	state.InvalidateKnownHosts()
+	tt.Frame()
+
+	if !textsContain(tt, m.VaultKnownHostsTitle(1)) || !tt.HasText("example.com:22") {
+		t.Fatalf("the trusted Known Host did not appear without a full reload, texts %q", tt.Texts())
+	}
+}
+
+func TestHostsAreDisplayedUnderTheirGroupAt720x480(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	hosts.items = []domainvault.Host{
+		{ID: "grouped", Label: "grouped-1", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod2"},
+		{ID: "loose", Label: "loose-1", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod2"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	groupRect, ok := tt.Find("prod2")
+	if !ok {
+		t.Fatalf("group row missing, texts %q", tt.Texts())
+	}
+	groupedRect, ok := tt.Find("grouped-1")
+	if !ok {
+		t.Fatalf("grouped Host row missing, texts %q", tt.Texts())
+	}
+	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
+	if !ok {
+		t.Fatalf("Vault root row missing, texts %q", tt.Texts())
+	}
+	looseRect, ok := tt.Find("loose-1")
+	if !ok {
+		t.Fatalf("ungrouped Host row missing, texts %q", tt.Texts())
+	}
+	if groupedRect.Y <= groupRect.Y {
+		t.Fatalf("grouped Host is not below its group: group %+v, Host %+v", groupRect, groupedRect)
+	}
+	if groupedRect.Y >= rootRect.Y {
+		t.Fatalf("grouped Host is not kept out of the root section: Host %+v, root %+v",
+			groupedRect, rootRect)
+	}
+	if looseRect.Y <= rootRect.Y {
+		t.Fatalf("ungrouped Host is not under the root: root %+v, Host %+v", rootRect, looseRect)
+	}
+	if groupedRect.X <= groupRect.X {
+		t.Fatalf("grouped Host is not indented under its group: group %+v, Host %+v",
+			groupRect, groupedRect)
+	}
+	if !textsContain(tt, m.VaultGroupMemberCount(1)) {
+		t.Fatalf("the group row does not show its member count, texts %q", tt.Texts())
+	}
+	counts := 0
+	for _, text := range tt.Texts() {
+		if text == m.VaultGroupMemberCount(1) {
+			counts++
+		}
+	}
+	if counts < 2 {
+		t.Fatalf("the root row does not show its member count, texts %q", tt.Texts())
+	}
+}
+
+func TestNestedGroupsIndentTheirMembers(t *testing.T) {
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	hosts.items = []domainvault.Host{
+		{ID: "deep", Label: "deep-1", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "prod/web"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	parent, ok := tt.Find("prod")
+	if !ok {
+		t.Fatalf("parent group row missing, texts %q", tt.Texts())
+	}
+	child, ok := tt.Find("prod/web")
+	if !ok {
+		t.Fatalf("child group row missing, texts %q", tt.Texts())
+	}
+	host, ok := tt.Find("deep-1")
+	if !ok {
+		t.Fatalf("Host row missing, texts %q", tt.Texts())
+	}
+	if child.X <= parent.X {
+		t.Fatalf("child group is not indented: parent %+v, child %+v", parent, child)
+	}
+	if host.X <= child.X {
+		t.Fatalf("Host is not indented under its child group: child %+v, Host %+v", child, host)
+	}
+	if host.Y <= child.Y {
+		t.Fatalf("Host is not below its group row: child %+v, Host %+v", child, host)
+	}
+}
+
+func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	hosts.items = []domainvault.Host{
+		{ID: "web", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
+		{ID: "db", Label: "db-1", Hostname: "10.0.0.2", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web/db"},
+		{ID: "loose", Label: "loose-1", Hostname: "10.0.0.3", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "other"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	prod, ok := tt.Find("prod")
+	if !ok {
+		t.Fatalf("parent group row missing, texts %q", tt.Texts())
+	}
+	implicit, ok := tt.Find("prod/web")
+	if !ok {
+		t.Fatalf("implicit group row missing, texts %q", tt.Texts())
+	}
+	other, ok := tt.Find("other")
+	if !ok {
+		t.Fatalf("unrelated group row missing, texts %q", tt.Texts())
+	}
+	if implicit.Y <= prod.Y || implicit.Y >= other.Y {
+		t.Fatalf("implicit group is outside its parent's subtree: prod %+v, implicit %+v, other %+v",
+			prod, implicit, other)
+	}
+	if implicit.X <= prod.X {
+		t.Fatalf("implicit group is not indented: parent %+v, implicit %+v", prod, implicit)
+	}
+	// The implicit row counts descendants just like a stored row: prod/web
+	// directly holds web-1 and contains db-1's prod/web/db.
+	counts := 0
+	for _, text := range tt.Texts() {
+		if text == "2 Hosts" {
+			counts++
+		}
+	}
+	if counts < 2 {
+		t.Fatalf("implicit group does not report its recursive member count, texts %q", tt.Texts())
+	}
+
+	// A visible group row must also accept a drop, whether or not a record
+	// exists for it.
+	loose, ok := tt.Find("loose-1")
+	if !ok {
+		t.Fatalf("ungrouped Host missing, texts %q", tt.Texts())
+	}
+	tt.Press(loose.X+loose.W/2, loose.Y+loose.H/2)
+	tt.Move(implicit.X+implicit.W/2, implicit.Y+implicit.H/2)
+	tt.Release(implicit.X+implicit.W/2, implicit.Y+implicit.H/2)
+	tt.Frame()
+	if hosts.items[2].Group != "prod/web" {
+		t.Fatalf("Host Group after dropping on an implicit group = %q, want prod/web",
+			hosts.items[2].Group)
+	}
+}
+
+func TestTheDragGhostLeavesTheDropTargetLabelsVisibleAt720x480(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	groups.items = []domainvault.Group{{Path: "prod2"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	// Drag onto the group row's middle, not its label, and prove both the
+	// target name and the other drop target stay laid out during the drag.
+	groupRect := dragTo(t, tt, "web-1", "prod2")
+	if !tt.HasText("prod2") || !tt.HasText(m.VaultGroupUngrouped()) {
+		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
+	}
+	tt.Release(float32(720)/2, groupRect.Y+groupRect.H/2)
+	tt.Frame()
+	if hosts.items[0].Group != "prod2" {
+		t.Fatalf("Host Group after dropping on the group = %q, want prod2",
+			hosts.items[0].Group)
+	}
+
+	// Drag back out; the root label stays visible during the drag and the
+	// Host returns to the root.
+	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
+	if !ok {
+		t.Fatalf("root row missing, texts %q", tt.Texts())
+	}
+	hostRect, ok := tt.Find("web-1")
+	if !ok {
+		t.Fatalf("grouped Host row missing, texts %q", tt.Texts())
+	}
+	tt.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
+	tt.Move(float32(720)/2, rootRect.Y+rootRect.H/2)
+	tt.Frame()
+	if !tt.HasText(m.VaultGroupUngrouped()) || !tt.HasText("prod2") {
+		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
+	}
+	tt.Release(float32(720)/2, rootRect.Y+rootRect.H/2)
+	tt.Frame()
+	if hosts.items[0].Group != "" {
+		t.Fatalf("Host Group after dropping on the root = %q, want root",
+			hosts.items[0].Group)
+	}
+}
+
+// dragTo presses a Host label and moves the pointer to the target row's
+// middle without releasing, leaving a drag active.
+func dragTo(t *testing.T, tt *ui.Tester, hostText, targetText string) ui.Rect {
+	t.Helper()
+	host, ok := tt.Find(hostText)
+	if !ok {
+		t.Fatalf("%q missing, texts %q", hostText, tt.Texts())
+	}
+	target, ok := tt.Find(targetText)
+	if !ok {
+		t.Fatalf("%q missing, texts %q", targetText, tt.Texts())
+	}
+	tt.Press(host.X+host.W/2, host.Y+host.H/2)
+	tt.Frame()
+	tt.Move(float32(720)/2, target.Y+target.H/2)
+	tt.Frame()
+	return target
+}
+
+func TestDraggingAHostBackToTheRootUsesTheVisibleRootTarget(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	hosts.items[0].Group = "prod2"
+	groups.items = []domainvault.Group{{Path: "prod2"}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	hostRect, ok := tt.Find("web-1")
+	if !ok {
+		t.Fatalf("Host row not found, texts %q", tt.Texts())
+	}
+	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
+	if !ok {
+		t.Fatalf("root drop target not found, texts %q", tt.Texts())
+	}
+	tt.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
+	tt.Move(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
+	tt.Release(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
+	tt.Frame()
+	if hosts.items[0].Group != "" {
+		t.Fatalf("Host Group after dropping on the root = %q, want root", hosts.items[0].Group)
+	}
+}
+
+func TestHostSummaryHasNoOrphanSeparatorsAt720x480(t *testing.T) {
+	state, hosts, _, _, _, tt := newEntityViewSized(t, 720, 480)
+	hosts.items[0].Tags = []string{"production", "web", "internal"}
+	hosts.items[0].Username = "deploy"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	label, ok := tt.Find("web-1")
+	if !ok {
+		t.Fatalf("Host row not found, texts %q", tt.Texts())
+	}
+	for _, text := range tt.Texts() {
+		if text == "·" || strings.HasPrefix(text, "·") {
+			t.Fatalf("summary has an orphan separator %q: %q", text, tt.Texts())
+		}
+	}
+	for _, token := range []string{"10.0.0.1:22", "deploy", "production, web, internal"} {
+		rect, ok := tt.Find(token)
+		if !ok {
+			t.Fatalf("summary token %q is missing, texts %q", token, tt.Texts())
+		}
+		if rect.Y > label.Y+48 {
+			t.Fatalf("summary token %q is more than two lines below the label: label %+v, token %+v",
+				token, label, rect)
+		}
 	}
 }

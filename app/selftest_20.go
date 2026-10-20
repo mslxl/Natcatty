@@ -24,6 +24,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/adapters/store"
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
@@ -70,6 +71,7 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 	t.tester.Frame()
 	t.state.GroupForm().Path = "prod/web"
 	t.state.GroupForm().Username = "deploy"
+	t.state.GroupForm().Port = "2222"
 	if err := t.state.SaveGroup(); err != nil {
 		return t.fail(fmt.Errorf("save Host Group: %w", err))
 	}
@@ -82,13 +84,18 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 	form := t.state.Form()
 	form.Label = "web-1"
 	form.Hostname = "10.0.0.1"
-	form.Port = "22"
+	// The Port stays blank: the Host inherits the group's 2222 instead of
+	// silently writing the protocol default onto the record.
 	if err := t.state.Save(); err != nil {
 		return t.fail(fmt.Errorf("save Host: %w", err))
 	}
 	t.tester.Frame()
 	if t.state.HostCount() != 1 {
 		return t.fail(fmt.Errorf("Hosts = %d, want 1", t.state.HostCount()))
+	}
+	if stored := t.state.Items()[0]; stored.Port != 0 {
+		return t.fail(fmt.Errorf("stored Port = %d, want 0 so it inherits the group port",
+			stored.Port))
 	}
 
 	// Drag the Host row onto the group row: this exercises the view's drag
@@ -125,16 +132,23 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("effective Host username = %q, want the group default",
 			effective.Username))
 	}
-	if stored := t.state.Items()[0]; stored.Username != "" {
-		return t.fail(fmt.Errorf("the group default was written onto the Host: %q",
-			stored.Username))
+	if effective.Port != 2222 {
+		return t.fail(fmt.Errorf("effective Host port = %d, want the group port 2222",
+			effective.Port))
+	}
+	if stored := t.state.Items()[0]; stored.Username != "" || stored.Port != 0 {
+		return t.fail(fmt.Errorf("a group default was written onto the Host: %+v", stored))
 	}
 	if !textsContained(t.tester.Texts(), "deploy") {
 		return t.fail(fmt.Errorf("the Host row does not show the group default: %v",
 			t.tester.Texts()))
 	}
+	if !textsContained(t.tester.Texts(), "10.0.0.1:2222") {
+		return t.fail(fmt.Errorf("the Host row does not show the inherited port: %v",
+			t.tester.Texts()))
+	}
 	return selftest.Passed(
-		"real store: group create, Host create, drag/drop membership, inherited username",
+		"real store: group create, Host create, drag/drop membership, inherited username and port",
 		"appvault.Service + store.Store + vaultui.View + ui.Tester")
 }
 
@@ -204,20 +218,29 @@ func (t *selftest20) proxyStep(*ui.Context) selftest.Outcome {
 
 func (t *selftest20) knownHostStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
-	record := domainconn.KnownHost{
-		ID: "kh-selftest-20", Hostname: "known.example.com", Port: 2222,
-		KeyType: "ssh-ed25519", PublicKey: "ssh-ed25519 AAAA",
-		Fingerprint: "SHA256:selftest20",
+	// Trust a host key through the real connection Manager and the real
+	// SQLite store. The Manager notifies the Vault state, whose next frame
+	// reloads the list: no manual Reload and no restart.
+	key := domainconn.Key{
+		Hostname: "known.example.com", Port: 2222, KeyType: "ssh-ed25519",
+		PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:selftest20",
 	}
-	if err := t.store.UpsertKnownHost(context.Background(), record); err != nil {
-		return t.fail(fmt.Errorf("record Known Host: %w", err))
-	}
-	if err := t.state.Reload(); err != nil {
-		return t.fail(fmt.Errorf("reload Vault: %w", err))
+	manager := appconnection.NewManager(
+		selftest20Dialer{key: key}, nil, t.store,
+		appconnection.WithPrompter(selftest20Trust{}),
+		appconnection.WithAuthSource(selftest20Auth{}),
+		appconnection.WithKnownHostsChanged(t.state.InvalidateKnownHosts),
+	)
+	if err := manager.Test(context.Background(), appconnection.Request{
+		HostID: "host-known", Hostname: key.Hostname, Port: key.Port, Username: "root",
+	}); err != nil {
+		return t.fail(fmt.Errorf("trust the host key: %w", err))
 	}
 	t.tester.Frame()
+
 	if t.state.KnownHostCount() != 1 {
-		return t.fail(fmt.Errorf("Known Hosts = %d, want 1", t.state.KnownHostCount()))
+		return t.fail(fmt.Errorf("Known Hosts = %d, want 1 after the trust decision",
+			t.state.KnownHostCount()))
 	}
 	if !t.tester.HasText("known.example.com:2222") ||
 		!t.tester.HasText(m.VaultKnownHostTrusted()) ||
@@ -250,8 +273,47 @@ func (t *selftest20) knownHostStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("store still has %d Known Hosts", len(records)))
 	}
 	return selftest.Passed(
-		"real store: trusted Known Host listed with key state and removed",
-		"store.Store + appvault.Service + vaultui.View + ui.Tester")
+		"real store: a trusted host key appears without a reload and can be removed",
+		"appconnection.Manager + store.Store + vaultui.View + ui.Tester")
+}
+
+// selftest20Dialer presents one host key and returns a transport whose shell is
+// never opened: the trust path runs before authentication and terminal use.
+type selftest20Dialer struct{ key domainconn.Key }
+
+func (d selftest20Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appconnection.Client, error) {
+	if req.VerifyHostKey != nil {
+		if err := req.VerifyHostKey(ctx, d.key); err != nil {
+			return nil, err
+		}
+	}
+	return selftest20Client{}, nil
+}
+
+type selftest20Client struct{}
+
+func (selftest20Client) OpenTerminal(context.Context, appconnection.TerminalSpec) (appconnection.Terminal, error) {
+	return nil, fmt.Errorf("no terminal in the trust self-test")
+}
+
+func (selftest20Client) Close() error { return nil }
+
+type selftest20Trust struct{}
+
+func (selftest20Trust) Confirm(context.Context, domainconn.Key) (appconnection.PromptDecision, error) {
+	return appconnection.PromptDecision{Trust: true, Persist: true}, nil
+}
+
+type selftest20Auth struct{}
+
+func (selftest20Auth) AuthPlan(context.Context, appconnection.Request) (appconnection.AuthPlan, error) {
+	return appconnection.AuthPlan{
+		Username: "root",
+		Password: "pw",
+		Candidates: []appconnection.AuthCandidate{{
+			Kind: appconnection.AuthKindPassword, ID: appconnection.CandidatePassword,
+		}},
+	}, nil
 }
 
 func (t *selftest20) deleteGroupStep(*ui.Context) selftest.Outcome {

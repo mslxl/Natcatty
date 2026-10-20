@@ -83,8 +83,8 @@ func TestCreateHostNormalizesAndPersists(t *testing.T) {
 	if host.ID != "host-1" {
 		t.Errorf("ID = %q, want host-1", host.ID)
 	}
-	if host.Label != "example.com" || host.Port != 22 || host.Protocol != domainvault.ProtocolSSH {
-		t.Errorf("Host = %+v, want a normalized SSH Host", host)
+	if host.Label != "example.com" || host.Port != 0 || host.Protocol != domainvault.ProtocolSSH {
+		t.Errorf("Host = %+v, want a normalized SSH Host with an empty port for inheritance", host)
 	}
 	if host.OrderKey != 1000 {
 		t.Errorf("OrderKey = %d, want 1000", host.OrderKey)

@@ -214,6 +214,7 @@ type Manager struct {
 	authCache     *AuthMethodCache
 	known         KnownHostRepository
 	prompter      Prompter
+	knownChanged  func()
 	newID         func() string
 	now           func() time.Time
 	idleTTL       time.Duration
@@ -230,6 +231,13 @@ type Option func(*Manager)
 // key.
 func WithPrompter(prompter Prompter) Option {
 	return func(m *Manager) { m.prompter = prompter }
+}
+
+// WithKnownHostsChanged sets the function called after a trust decision has
+// been persisted as a Known Host. The Vault uses it to refresh its Known Host
+// list without a restart. It runs on the dial goroutine and must not block.
+func WithKnownHostsChanged(fn func()) Option {
+	return func(m *Manager) { m.knownChanged = fn }
 }
 
 // WithAuthSource gives the Manager the Vault-backed authentication resolver.
@@ -692,6 +700,11 @@ func (m *Manager) verifyHostKey(ctx context.Context, key domainconn.Key, known [
 	}
 	if err := m.known.UpsertKnownHost(ctx, record); err != nil {
 		return internalError(err)
+	}
+	// A trust decision is durable now: tell the Vault so the Known Hosts view
+	// shows it at once instead of waiting for the next reload.
+	if m.knownChanged != nil {
+		m.knownChanged()
 	}
 	return nil
 }

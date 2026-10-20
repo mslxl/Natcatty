@@ -200,9 +200,19 @@ func (s *Service) AssignHostGroup(ctx context.Context, id model.HostID, groupPat
 			return internal(err)
 		}
 		if _, ok := findGroup(groups, path); !ok {
-			return invalid(&domainvault.ValidationError{
-				Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
-			})
+			// A path that only Hosts reference is an implicit group: it has
+			// no saved defaults yet, but the Vault already displays it and the
+			// editor lets a Host use it. Accepting it here keeps the visible
+			// drop target and the saved membership in agreement.
+			hosts, listErr := s.repo.List(ctx)
+			if listErr != nil {
+				return internal(listErr)
+			}
+			if !hostsReferenceGroup(hosts, path) {
+				return invalid(&domainvault.ValidationError{
+					Field: domainvault.FieldGroup, Rule: domainvault.RuleInvalid,
+				})
+			}
 		}
 	}
 	host, err := s.repo.Get(ctx, id)
@@ -231,13 +241,13 @@ func (s *Service) EffectiveHost(ctx context.Context, id model.HostID) (domainvau
 	if err != nil {
 		return domainvault.Host{}, internal(err)
 	}
-	return s.effectiveHost(ctx, host)
+	return s.resolveEffective(ctx, host)
 }
 
-func (s *Service) effectiveHost(ctx context.Context, host domainvault.Host) (domainvault.Host, error) {
-	if s.groups == nil && s.proxies == nil {
-		return host, nil
-	}
+// resolveEffective applies group defaults, the protocol's port fallback, and a
+// selected Proxy Profile to a stored Host. The stored record itself is
+// unchanged.
+func (s *Service) resolveEffective(ctx context.Context, host domainvault.Host) (domainvault.Host, error) {
 	effective := host
 	if s.groups != nil {
 		groups, err := s.groups.ListGroups(ctx)
@@ -247,6 +257,10 @@ func (s *Service) effectiveHost(ctx context.Context, host domainvault.Host) (dom
 		effective = domainvault.ApplyGroupDefaults(host,
 			domainvault.ResolveGroupDefaults(groups, host.Group))
 	}
+	// A Host that leaves Port empty inherits its group's port; without one the
+	// protocol default is what the connection would use anyway, so resolve it
+	// here and every caller sees the same endpoint.
+	effective.Port = domainvault.EffectivePort(effective.Protocol, effective.Port)
 	if effective.Proxy == nil && effective.ProxyProfileID != "" && s.proxies != nil {
 		profile, err := s.proxies.GetProxyProfile(ctx, effective.ProxyProfileID)
 		switch {

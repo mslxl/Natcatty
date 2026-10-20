@@ -108,6 +108,17 @@ func (s *State) GroupMemberCount(path string) int {
 	return count
 }
 
+// RootHostCount returns the number of Hosts with no Host Group.
+func (s *State) RootHostCount() int {
+	count := 0
+	for _, host := range s.items {
+		if domainvault.NormalizeGroup(host.Group) == "" {
+			count++
+		}
+	}
+	return count
+}
+
 // EditingGroup reports whether the Host Group editor is open.
 func (s *State) EditingGroup() bool { return s.editingGroup }
 
@@ -411,6 +422,45 @@ func (s *State) ConfirmDeleteProxyProfile() error {
 // KnownHosts returns the recorded trust decisions in display order.
 func (s *State) KnownHosts() []domainconn.KnownHost { return s.knownItems }
 
+// InvalidateKnownHosts marks the trust list stale after a decision made off the
+// UI thread, such as a host-key prompt answered during a connection. It is safe
+// to call from any goroutine; FlushKnownHosts applies the change on the UI
+// thread, following the same pattern as Test outcomes.
+func (s *State) InvalidateKnownHosts() {
+	s.knownMu.Lock()
+	s.knownStale = true
+	s.knownMu.Unlock()
+	s.redraw()
+}
+
+// FlushKnownHosts reloads the trust list when InvalidateKnownHosts marked it
+// stale. The view calls it on the UI thread before rendering.
+func (s *State) FlushKnownHosts() {
+	s.knownMu.Lock()
+	stale := s.knownStale
+	s.knownStale = false
+	s.knownMu.Unlock()
+	if !stale {
+		return
+	}
+	_ = s.loadKnownHosts()
+}
+
+// loadKnownHosts replaces the listed Known Hosts from the seam. Reload and the
+// off-thread invalidation both go through it so the two paths cannot drift.
+func (s *State) loadKnownHosts() error {
+	if s.knownHosts == nil {
+		return nil
+	}
+	known, err := s.knownHosts.ListKnownHosts(context.Background())
+	if err != nil {
+		s.problem = ProblemInternal
+		return err
+	}
+	s.knownItems = known
+	return nil
+}
+
 // KnownHostCount returns the number of recorded Known Hosts.
 func (s *State) KnownHostCount() int { return len(s.knownItems) }
 
@@ -476,6 +526,9 @@ func (s *State) EffectiveHost(id model.HostID) (domainvault.Host, bool) {
 	}
 	effective := domainvault.ApplyGroupDefaults(host,
 		domainvault.ResolveGroupDefaults(s.groupItems, host.Group))
+	// A Host that left Port empty inherits its group's port, and without one
+	// the protocol default is the endpoint a connection would use.
+	effective.Port = domainvault.EffectivePort(effective.Protocol, effective.Port)
 	if effective.Proxy == nil && effective.ProxyProfileID != "" {
 		if profile, ok := s.ProxyProfileByID(effective.ProxyProfileID); ok {
 			effective.Proxy = domainvault.CloneProxy(&profile.Config)

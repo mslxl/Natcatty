@@ -343,6 +343,63 @@ func TestUnknownHostKeyIsPromptedAndTrustPersists(t *testing.T) {
 	}
 }
 
+func TestPersistedTrustNotifiesTheVaultToRefreshKnownHosts(t *testing.T) {
+	changes := 0
+	manager, _, dialer, known, _ := newTestManager(t,
+		WithKnownHostsChanged(func() { changes++ }))
+	dialer.verify = true
+	dialer.key = domainconn.Key{
+		Hostname: "example.com", Port: 22, KeyType: "ssh-ed25519",
+		Fingerprint: "fingerprint-1",
+	}
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	_ = lease.Release()
+	if changes != 1 {
+		t.Fatalf("change notifications = %d, want one after the upsert", changes)
+	}
+	if len(known.upserts) != 1 {
+		t.Fatalf("upserts = %+v, want one", known.upserts)
+	}
+}
+
+func TestRejectedOrUnpersistedTrustDoesNotNotifyTheVault(t *testing.T) {
+	cases := []struct {
+		name     string
+		decision PromptDecision
+	}{
+		{"rejected", PromptDecision{}},
+		{"trusted for this connection only", PromptDecision{Trust: true}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			changes := 0
+			manager, _, dialer, known, prompter := newTestManager(t,
+				WithKnownHostsChanged(func() { changes++ }))
+			prompter.decision = test.decision
+			dialer.verify = true
+			dialer.key = domainconn.Key{
+				Hostname: "example.com", Port: 22, KeyType: "ssh-ed25519",
+				Fingerprint: "fingerprint-1",
+			}
+
+			lease, _ := manager.Acquire(context.Background(), sshRequest())
+			if lease != nil {
+				_ = lease.Release()
+			}
+			if changes != 0 {
+				t.Fatalf("change notifications = %d, want none", changes)
+			}
+			if len(known.upserts) != 0 {
+				t.Fatalf("upserts = %+v, want none", known.upserts)
+			}
+		})
+	}
+}
+
 func TestChangedHostKeyIsDistinctAndRejectionAbortsBeforeAuth(t *testing.T) {
 	manager, _, dialer, known, prompter := newTestManager(t)
 	known.records = []domainconn.KnownHost{{
