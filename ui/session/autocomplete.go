@@ -1,7 +1,9 @@
 package sessionui
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -110,9 +112,15 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 	return true
 }
 
-// acceptSuggestion replaces the typed line with the suggestion. Ctrl+U is how
-// every supported shell clears its line; sending it through the terminal keeps
-// the Session's tap, statistics, and command tracking in step.
+// acceptSuggestion replaces the typed line with the suggestion. The line is
+// cleared with one Backspace (DEL) per character rather than Ctrl+U: PSReadLine
+// binds Ctrl+U to Undo, so PowerShell rendered the raw byte and merged the
+// suggestion into the typed text ("git s^Ugit stash", #18). Backspace is the
+// one erase every target understands — readline, zle, and PSReadLine all
+// delete the character to its left — and the Session's tap counts the same
+// runes, so the tracked line stays aligned with the shell's. The bytes go
+// through the terminal, keeping the tap, statistics, and command tracking in
+// step, and no Tab byte is ever sent.
 func (s *Surface) acceptSuggestion(index int) {
 	if index < 0 || index >= len(s.suggestions) {
 		return
@@ -121,14 +129,18 @@ func (s *Surface) acceptSuggestion(index int) {
 	if text == "" {
 		return
 	}
-	s.suggestionInput = s.session.Snapshot().Input
+	input := s.session.Snapshot().Input
+	s.suggestionInput = input
 	s.suggestions = nil
 	s.suggestionIndex = 0
 	s.suggestionDismissed = true
 	s.showAutocomplete = false
 	s.showGhost = false
-	s.terminal.Send([]byte{0x15})
-	s.terminal.Send([]byte(text))
+	eraseCount := utf8.RuneCountInString(input)
+	payload := make([]byte, 0, eraseCount+len(text))
+	payload = append(payload, strings.Repeat("\x7f", eraseCount)...)
+	payload = append(payload, text...)
+	s.terminal.Send(payload)
 	s.redraw()
 }
 

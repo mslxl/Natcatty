@@ -252,22 +252,43 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 				display = suggestion.Text
 			}
 			source := suggestionSourceLabel(suggestion.Source, m)
-			ui.Row(c).FillWidth().Height(20).Gap(8).AlignItems(ui.Center).Children(func() {
-				if index == model.SuggestionIndex {
-					ui.Text(c, "›").FontSize(11).TextColor(t.Accent)
-				} else {
-					ui.Text(c, " ").FontSize(11).TextColor(t.TextMuted)
+			selected := index == model.SuggestionIndex
+			// Rows are plain full-width rows with a click action, not theme
+			// buttons: the styled Button painted a rounded Surface card per
+			// label, so a short suggestion showed a narrow pill and neighbors
+			// overlapped by a pixel. One full-width row per suggestion, with the
+			// selection painted on the row itself, keeps the list even and the
+			// selected line legible. KeepFocus leaves the keyboard with the
+			// terminal while a row is clicked, so typing continues after an
+			// accepted suggestion.
+			row := ui.Row(c).FillWidth().Height(20).Padding(0, 4).Gap(8).
+				AlignItems(ui.Center).KeepFocus()
+			if selected {
+				row.Background(t.SurfaceHover)
+			}
+			row.Children(func() {
+				marker := " "
+				markerColor := t.TextMuted
+				if selected {
+					marker, markerColor = "›", t.Accent
 				}
-				button := ui.Button(c, display)
-				if button.Clicked() && actions.AcceptSuggestion != nil {
-					actions.AcceptSuggestion(index)
+				ui.Text(c, marker).FontSize(11).TextColor(markerColor)
+				command := ui.Text(c, display).FontSize(10).SingleLine().
+					MinWidth(0).Grow(1).TextColor(t.Text)
+				if selected {
+					command.Bold()
 				}
 				if source != "" {
-					ui.Text(c, source).FontSize(9).TextColor(t.TextMuted)
+					ui.Text(c, source).FontSize(9).SingleLine().TextColor(t.TextMuted)
 				}
 				if suggestion.Frequency > 1 {
 					ui.Text(c, m.SessionAutocompleteFrequency(suggestion.Frequency)).
-						FontSize(9).TextColor(t.TextMuted)
+						FontSize(9).SingleLine().TextColor(t.TextMuted)
+				}
+			})
+			row.OnClick(func() {
+				if actions.AcceptSuggestion != nil {
+					actions.AcceptSuggestion(index)
 				}
 			})
 		}
