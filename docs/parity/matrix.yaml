@@ -1674,6 +1674,97 @@
   status: verified
   notes: "The Session's bell hook marks that Session active, which the shell shows as the Tab activity marker. As in the original there is no separate bell toggle; the settings that take effect are the notification modes. Program notifications reach the app's notification hook, and the composition root applies the configured mode: off suppresses all, unfocused suppresses while the main window is visible and focused, and always shows."
 
+# --- Ticket 20: Host Groups, Proxy Profiles, and Known Hosts ---
+
+- id: vault.host-groups
+  area: vault
+  feature: Create, rename, delete, and list Host Groups and move Hosts by drag and drop
+  original_paths:
+    - domain/hostGroupTree.ts
+    - domain/hostGroupPathMutations.ts
+    - application/state/vaultGroupMutationPersistence.ts
+    - application/state/useVaultGroupDeletion.ts
+    - components/GroupDetailsPanel.tsx
+    - components/host-details/CreateGroupPanel.tsx
+    - components/SelectGroupDialog.tsx
+    - components/vault/useVaultGroupDragHandlers.ts
+  module: application/vault
+  tickets: [20]
+  acceptance_tests:
+    - domain/vault.TestNormalizeGroupDraftCanonicalizesAndValidates
+    - domain/vault.TestGroupPathHelpers
+    - application/vault.TestCreateGroupNormalizesAndPersists
+    - application/vault.TestRenameGroupRemapsHostsAndDescendantGroups
+    - application/vault.TestAssignHostGroupMovesOneHostAndRejectsAnUnknownGroup
+    - application/vault.TestDeleteGroupMovesHostsToRootAndKeepsThem
+    - adapters/store.TestHostGroupsPersistAndReorder
+    - adapters/store.TestDeletingAGroupDoesNotDeleteItsHosts
+    - ui/vault.TestVaultViewCreatesAEditsAndDeletesAGroupWithoutDeletingItsHosts
+    - ui/vault.TestDeletingAGroupDoesNotDeleteHostsWhenTheGroupIsNested
+    - app.TestTicket20CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A group's identity is its normalized path, so a rename remaps member Hosts and descendant groups in one operation. Deleting a group also deletes its descendants, clears the member Hosts' group reference, and never deletes a Host; nested deletion behaves the same way. Membership also moves through the Vault list's drag-and-drop target, which accepts a Host on a saved group row or on the Vault root."
+
+- id: vault.group-defaults
+  area: vault
+  feature: Group-level connection defaults apply to member Hosts and the Host's own value wins
+  original_paths:
+    - domain/groupConfig.ts
+    - components/GroupSshSettingsSection.tsx
+    - application/state/useVaultState.ts
+  module: application/vault
+  tickets: [20]
+  acceptance_tests:
+    - domain/vault.TestResolveGroupDefaultsMergesAncestorsChildLast
+    - domain/vault.TestResolveGroupDefaultsKeepsCredentialBundlesWhole
+    - domain/vault.TestApplyGroupDefaultsHostWinsAndLocalShellsDoNotInherit
+    - domain/vault.TestApplyGroupDefaultsKeepsCredentialBundlesWhole
+    - application/vault.TestGroupDefaultsApplyToAnEffectiveHostAndHostWins
+    - ui/vault/state.TestConnectAndTestCarryTheEffectiveHost
+    - ui/vault.TestVaultViewCreatesAEditsAndDeletesAGroupWithoutDeletingItsHosts
+    - app.TestTicket20CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Defaults merge from the root toward the group, a child group overrides an ancestor, and a non-zero value on the Host itself wins. SSH credentials move as one bundle: a group Identity replaces inherited manual credentials and a group's manual credentials replace an inherited Identity, so a Host or group never resolves to a mixed method. Effective values are computed on read for the Vault list and for the Connect and Test connection actions, so a group-only username or port is what the connection dials; they are never written back to the Host record. Boolean preferences are true-only defaults because the stored Host cannot distinguish an explicit false from unset, so an explicit off does not suppress a group's on."
+
+- id: vault.proxy-profiles
+  area: vault
+  feature: Create, edit, delete, and select Proxy Profiles for Hosts
+  original_paths:
+    - domain/proxyProfiles.ts
+    - components/ProxyProfilesManager.tsx
+    - components/host-details/ProxyPanel.tsx
+  module: application/vault
+  tickets: [20]
+  acceptance_tests:
+    - domain/vault.TestNormalizeProxyProfileDraftAcceptsEveryProxyType
+    - domain/vault.TestNormalizeProxyProfileDraftRejectsIncompleteProfiles
+    - application/vault.TestProxyProfileCRUDAndDeleteClearsReferences
+    - application/vault.TestEffectiveHostMaterializesTheSelectedProxyProfile
+    - adapters/store.TestProxyProfilesPersistAndDeleteIndependentlyOfHosts
+    - ui/vault.TestVaultProxyRowSummarizesTheEndpointWithoutCredentials
+    - ui/vault.TestVaultHostEditorSelectsAProxyProfile
+    - ui/vault/state.TestConnectAndTestCarryTheEffectiveHost
+    - app.TestTicket20CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A profile stores a SOCKS5, HTTP CONNECT, or ProxyCommand configuration, and its summary never echoes credentials. A Host stores only the profile ID; the effective Host materializes the profile into the connection proxy, so the resolved route is the selected profile, while a manual proxy on the Host still wins. Deleting a profile clears Host and Group references instead of leaving a dangling selection."
+
+- id: vault.known-hosts-management
+  area: vault
+  feature: List Known Hosts with their trust state and remove a trusted key
+  original_paths:
+    - domain/knownHosts.ts
+    - components/KnownHostsManager.tsx
+    - application/state/useKnownHostsBackend.ts
+  module: application/vault
+  tickets: [20]
+  acceptance_tests:
+    - application/vault.TestKnownHostsListAndDelete
+    - adapters/store.TestDeleteKnownHostRevokesOneTrustRecord
+    - ui/vault.TestVaultViewListsTrustedKnownHostsAndRemovesTrust
+    - app.TestTicket20CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The Vault lists every stored host key with its endpoint, key type, fingerprint, and trusted state. Removing trust deletes only that record; Hosts and other Known Hosts are untouched, and the next connection prompts again."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

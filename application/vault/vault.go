@@ -26,15 +26,19 @@ type HostRepository interface {
 
 // Service implements the Vault use cases.
 type Service struct {
-	repo          HostRepository
-	keys          KeyRepository
-	identities    IdentityRepository
-	inspector     KeyInspector
-	secrets       FieldSecrets
-	newID         func() model.HostID
-	newKeyID      func() model.KeyID
-	newIdentityID func() model.IdentityID
-	now           func() time.Time
+	repo              HostRepository
+	keys              KeyRepository
+	identities        IdentityRepository
+	groups            GroupRepository
+	proxies           ProxyProfileRepository
+	knownHosts        KnownHostRepository
+	inspector         KeyInspector
+	secrets           FieldSecrets
+	newID             func() model.HostID
+	newKeyID          func() model.KeyID
+	newIdentityID     func() model.IdentityID
+	newProxyProfileID func() string
+	now               func() time.Time
 }
 
 // Option customizes a Service.
@@ -102,14 +106,24 @@ func WithIdentityIDGenerator(fn func() model.IdentityID) Option {
 	}
 }
 
+// WithProxyProfileIDGenerator sets how the Service names Proxy Profiles.
+func WithProxyProfileIDGenerator(fn func() string) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.newProxyProfileID = fn
+		}
+	}
+}
+
 // NewService returns a Service that persists Hosts through repo.
 func NewService(repo HostRepository, opts ...Option) *Service {
 	service := &Service{
-		repo:          repo,
-		newID:         newHostID,
-		newKeyID:      newSSHKeyID,
-		newIdentityID: newIdentityID,
-		now:           time.Now,
+		repo:              repo,
+		newID:             newHostID,
+		newKeyID:          newSSHKeyID,
+		newIdentityID:     newIdentityID,
+		newProxyProfileID: newProxyProfileID,
+		now:               time.Now,
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -126,15 +140,16 @@ func (s *Service) List(ctx context.Context) ([]domainvault.Host, error) {
 	return hosts, nil
 }
 
-// Get returns one Host. The connection layer uses it to resolve a jump chain
-// and the Host's proxy configuration.
+// Get returns one Host with its Host Group defaults applied and its Proxy
+// Profile materialized. The connection layer uses it to resolve a jump chain
+// and the Host's proxy configuration; the stored record itself is unchanged.
 func (s *Service) Get(ctx context.Context, id model.HostID) (domainvault.Host, error) {
-	host, err := s.repo.Get(ctx, id)
+	host, err := s.EffectiveHost(ctx, id)
 	if errors.Is(err, ErrNotFound) {
 		return domainvault.Host{}, ErrNotFound
 	}
 	if err != nil {
-		return domainvault.Host{}, internal(err)
+		return domainvault.Host{}, err
 	}
 	return host, nil
 }
@@ -391,6 +406,7 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host
 	host.X11WarningAcknowledged = draft.X11WarningAcknowledged
 	host.HostChain = domainvault.CloneHostChain(draft.HostChain)
 	host.Proxy = domainvault.CloneProxy(draft.Proxy)
+	host.ProxyProfileID = draft.ProxyProfileID
 	host.LegacyAlgorithms = draft.LegacyAlgorithms
 	host.SkipEcdsaHostKey = draft.SkipEcdsaHostKey
 	host.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)

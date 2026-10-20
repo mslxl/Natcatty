@@ -12,6 +12,7 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -131,6 +132,9 @@ type Form struct {
 	// and requires X11WarningAcknowledged before the Host validates.
 	X11Forwarding          bool
 	X11WarningAcknowledged bool
+	// ProxyProfileID selects a saved Proxy Profile. A manually configured
+	// Proxy still wins; an empty reference means no profile is selected.
+	ProxyProfileID string
 }
 
 // State is the Vault surface's state.
@@ -138,10 +142,16 @@ type State struct {
 	hosts         Hosts
 	keys          Keys
 	identities    Identities
+	groups        Groups
+	proxies       ProxyProfiles
+	knownHosts    KnownHosts
 	secrets       Secrets
 	items         []domainvault.Host
 	keyItems      []domainvault.Key
 	identityItems []domainvault.Identity
+	groupItems    []domainvault.Group
+	proxyItems    []domainvault.ProxyProfile
+	knownItems    []domainconn.KnownHost
 	selected      model.HostID
 	editing       bool
 	form          Form
@@ -165,6 +175,13 @@ type State struct {
 	editingIdentity       bool
 	identityForm          IdentityForm
 	pendingDeleteIdentity model.IdentityID
+	editingGroup          bool
+	groupForm             GroupForm
+	pendingDeleteGroup    string
+	editingProxy          bool
+	proxyForm             ProxyForm
+	pendingDeleteProxy    string
+	pendingDeleteKnown    string
 
 	// hostChain, proxy, and algorithms are preserved across an edit. They are
 	// not exposed in the Host editor yet, so the editor must round-trip them
@@ -255,8 +272,10 @@ func (s *State) Selected() model.HostID { return s.selected }
 
 // Connect opens the SSH Session for one listed Host. It reports false and
 // records a problem when the Host is gone or the shell has no connect action.
+// The action receives the effective Host, so group defaults and a selected
+// Proxy Profile reach the connection exactly as the list shows them.
 func (s *State) Connect(id model.HostID) bool {
-	host, ok := s.find(id)
+	host, ok := s.EffectiveHost(id)
 	if !ok {
 		s.problem = ProblemNotFound
 		s.redraw()
@@ -275,9 +294,10 @@ func (s *State) Connect(id model.HostID) bool {
 // Test starts a Test connection attempt for one listed Host. The dial runs on
 // its own goroutine; FlushTests applies the outcome on the UI thread. It
 // reports false and records a problem when the Host is gone, the action is not
-// wired, or another attempt is already running.
+// wired, or another attempt is already running. The attempt uses the effective
+// Host, so it tests the same endpoint the list shows.
 func (s *State) Test(id model.HostID) bool {
-	host, ok := s.find(id)
+	host, ok := s.EffectiveHost(id)
 	if !ok {
 		s.problem = ProblemNotFound
 		s.redraw()
@@ -461,6 +481,7 @@ func (s *State) PendingDelete() model.HostID { return s.pendingDelete }
 
 // BeginCreate opens the editor with a new Host.
 func (s *State) BeginCreate() {
+	s.closeEntityEditors()
 	s.editing = true
 	s.form = Form{
 		Protocol:   string(domainvault.ProtocolSSH),
@@ -483,6 +504,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 	if !ok {
 		return false
 	}
+	s.closeEntityEditors()
 	s.editing = true
 	s.selected = host.ID
 	s.problem = ProblemNone
@@ -500,13 +522,13 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		Pinned:   host.Pinned,
 		// The stored password is never loaded into the form. Leaving the
 		// field blank keeps the existing encrypted value.
-		HasPassword: host.HasPassword,
-		IdentityID:  string(host.IdentityID),
-		KeyID:       string(host.KeyID),
-		AuthMethod:  string(host.AuthMethod),
-		UseSSHAgent: host.UseSSHAgent,
-		RequiresMFA: host.RequiresMFA,
-
+		HasPassword:            host.HasPassword,
+		IdentityID:             string(host.IdentityID),
+		KeyID:                  string(host.KeyID),
+		AuthMethod:             string(host.AuthMethod),
+		UseSSHAgent:            host.UseSSHAgent,
+		RequiresMFA:            host.RequiresMFA,
+		ProxyProfileID:         host.ProxyProfileID,
 		X11Forwarding:          host.X11Forwarding,
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
 	}
@@ -677,6 +699,30 @@ func (s *State) load() error {
 		}
 		s.identityItems = identities
 	}
+	if s.groups != nil {
+		groups, err := s.groups.ListGroups(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.groupItems = groups
+	}
+	if s.proxies != nil {
+		proxies, err := s.proxies.ListProxyProfiles(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.proxyItems = proxies
+	}
+	if s.knownHosts != nil {
+		known, err := s.knownHosts.ListKnownHosts(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.knownItems = known
+	}
 	return nil
 }
 
@@ -712,6 +758,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
 		HostChain:              domainvault.CloneHostChain(host.HostChain),
 		Proxy:                  domainvault.CloneProxy(host.Proxy),
+		ProxyProfileID:         host.ProxyProfileID,
 		LegacyAlgorithms:       host.LegacyAlgorithms,
 		SkipEcdsaHostKey:       host.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
@@ -759,6 +806,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		// and proxy so editing another field cannot erase them.
 		HostChain:        domainvault.CloneHostChain(s.hostChain),
 		Proxy:            domainvault.CloneProxy(s.proxy),
+		ProxyProfileID:   s.form.ProxyProfileID,
 		LegacyAlgorithms: s.legacyAlgorithms,
 		SkipEcdsaHostKey: s.skipEcdsaHostKey,
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),

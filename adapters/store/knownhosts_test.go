@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 )
 
@@ -121,5 +123,34 @@ func TestUpsertKnownHostByIDDoesNotDuplicate(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].Fingerprint != "two" {
 		t.Fatalf("records = %+v, want one updated record", records)
+	}
+}
+
+func TestDeleteKnownHostRevokesOneTrustRecord(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openTestStore(t)
+	when := time.Unix(1700000000, 0).UTC()
+	for i, id := range []string{"kh-1", "kh-2"} {
+		record := domainconn.KnownHost{
+			ID: id, Hostname: "example.com", Port: 22 + i, KeyType: "ssh-ed25519",
+			Fingerprint: id, DiscoveredAt: when, LastSeen: when,
+		}
+		if err := store.UpsertKnownHost(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.DeleteKnownHost(ctx, "kh-1"); err != nil {
+		t.Fatalf("DeleteKnownHost: %v", err)
+	}
+	records, err := store.ListKnownHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListKnownHosts: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != "kh-2" {
+		t.Fatalf("records = %+v, want only kh-2", records)
+	}
+	if err := store.DeleteKnownHost(ctx, "missing"); !errors.Is(err, appvault.ErrNotFound) {
+		t.Fatalf("missing delete = %v, want ErrNotFound", err)
 	}
 }
