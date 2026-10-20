@@ -160,6 +160,9 @@ type Host struct {
 	// Proxy is the transport used to reach the first endpoint. It applies to
 	// hop 1 only; later hops run over the nested SSH stream.
 	Proxy *ProxyConfig `json:"proxy,omitempty"`
+	// ProxyProfileID selects a saved Proxy Profile. A manual Proxy wins over a
+	// profile; an empty reference means the Host has no proxy of its own.
+	ProxyProfileID string `json:"proxyProfileId,omitempty"`
 	// LegacyAlgorithms widens the offered algorithms for older servers. On a
 	// jump Host it is additive with the target's setting.
 	LegacyAlgorithms bool `json:"legacyAlgorithms,omitempty"`
@@ -201,6 +204,10 @@ type Draft struct {
 	// plaintext form input; the Vault encrypts it into the field-secret store.
 	HostChain *HostChain
 	Proxy     *ProxyConfig
+	// ProxyProfileID selects a saved Proxy Profile. It is a soft reference:
+	// deleting a profile clears it on every Host and Host Group, but a record
+	// written by an older version may still hold an unknown identifier.
+	ProxyProfileID string
 	// LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms configure SSH
 	// negotiation. Each jump Host carries its own copy.
 	LegacyAlgorithms bool
@@ -284,6 +291,7 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.Tags = normalizeTags(draft.Tags)
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
+	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// Disabling X11 drops the acknowledgement, so re-enabling it always asks
 	// the user to accept the warning again.
@@ -354,6 +362,7 @@ func (h Host) Validate() error {
 		X11WarningAcknowledged: h.X11WarningAcknowledged,
 		HostChain:              h.HostChain,
 		Proxy:                  h.Proxy,
+		ProxyProfileID:         h.ProxyProfileID,
 		Algorithms:             h.Algorithms,
 	})
 }
@@ -456,6 +465,9 @@ func validateFields(draft Draft) error {
 	}
 
 	if err := validateProxy(draft.Proxy); err != nil {
+		return err
+	}
+	if err := validateText(FieldProxy, draft.ProxyProfileID, maxLabelLength, false); err != nil {
 		return err
 	}
 	return validateAlgorithms(draft.Algorithms)

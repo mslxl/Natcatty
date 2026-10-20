@@ -183,6 +183,9 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithSecrets(secretStore),
 		appvault.WithKeys(database),
 		appvault.WithIdentities(database),
+		appvault.WithGroups(database),
+		appvault.WithProxyProfiles(database),
+		appvault.WithKnownHosts(database),
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 	)
 
@@ -245,6 +248,9 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithSecrets(vaultService),
 		vaultstate.WithKeys(vaultService),
 		vaultstate.WithIdentities(vaultService),
+		vaultstate.WithGroups(vaultService),
+		vaultstate.WithProxyProfiles(vaultService),
+		vaultstate.WithKnownHosts(vaultService),
 		vaultstate.WithRedrawRequest(invalidate),
 		vaultstate.WithConnect(func(host domainvault.Host) {
 			if shellState != nil {

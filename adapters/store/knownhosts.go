@@ -6,10 +6,14 @@ import (
 	"fmt"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 )
 
-var _ appconnection.KnownHostRepository = (*Store)(nil)
+var (
+	_ appconnection.KnownHostRepository = (*Store)(nil)
+	_ appvault.KnownHostRepository      = (*Store)(nil)
+)
 
 // ListKnownHosts returns every Known Host. A record whose JSON tail cannot be
 // decoded is skipped rather than failing the whole trust store, so one
@@ -37,6 +41,19 @@ func (s *Store) ListKnownHosts(ctx context.Context) ([]domainconn.KnownHost, err
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+// DeleteKnownHost removes one trust record. Deleting a Known Host never
+// touches a Host.
+func (s *Store) DeleteKnownHost(ctx context.Context, id string) error {
+	result, err := s.db.Execute(ctx, `DELETE FROM known_hosts WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: delete Known Host: %w", err)
+	}
+	if result.Changes == 0 {
+		return appvault.ErrNotFound
+	}
+	return nil
 }
 
 // UpsertKnownHost inserts a trust record or updates the record with the same

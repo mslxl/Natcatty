@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -58,6 +59,10 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				keyEditor(c, s, m, t)
 			case s.EditingIdentity():
 				identityEditor(c, s, m, t)
+			case s.EditingGroup():
+				groupEditor(c, s, m, t)
+			case s.EditingProxyProfile():
+				proxyEditor(c, s, m, t)
 			default:
 				list(c, s, configured.forwarding, m, t)
 			}
@@ -66,7 +71,7 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 }
 
 func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Children(func() {
 		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
 		ui.Column(c).Grow(1)
 		if ui.PrimaryButton(c, m.VaultHostNew()).Clicked() {
@@ -86,7 +91,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 				break
 			}
 		}
-		ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 			ui.Text(c, message).Grow(1).TextColor(t.Danger)
 			if ui.Button(c, m.VaultHostCancel()).Clicked() {
 				s.CancelDelete()
@@ -101,24 +106,121 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 
 	keyDeleteBanner(c, s, m, t)
 	identityDeleteBanner(c, s, m, t)
+	groupDeleteBanner(c, s, m, t)
+	proxyDeleteBanner(c, s, m, t)
+	knownHostDeleteBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).Children(func() {
+		groupSection(c, s, m, t)
 		if s.HostCount() == 0 {
 			ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
 		}
-		for _, host := range s.Items() {
+		for _, host := range s.EffectiveItems() {
 			hostRow(c, s, host, m, t)
 		}
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)
+		proxySection(c, s, m, t)
+		knownHostSection(c, s, m, t)
 		if forwarding != nil {
 			uiforwarding.Section(c, forwarding)
 		}
 	})
 }
 
+func groupSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
+		ui.Text(c, m.VaultGroupListTitle(s.GroupCount())).FontSize(16).Bold()
+		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultGroupNew()).Clicked() {
+			s.BeginCreateGroup()
+			c.Invalidate()
+		}
+	})
+	if s.GroupCount() == 0 {
+		ui.Text(c, m.VaultGroupEmpty()).FontSize(12).TextColor(t.TextMuted)
+	}
+	for _, group := range s.Groups() {
+		groupRow(c, s, group, m, t)
+	}
+	rootDropTarget(c, s, m, t)
+}
+
+func groupRow(c *ui.Context, s *vaultstate.State, group domainvault.Group, m locales.Messages, t *ui.Theme) {
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface)
+	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+		row.Border(1, t.Accent)
+	}
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
+		s.MoveHostToGroup(drag.HostID, group.Path)
+		c.Invalidate()
+	}
+	row.Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, group.Path).Bold()
+			ui.Text(c, groupSummary(s, group, m)).FontSize(12).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+			s.BeginEditGroup(group.Path)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			s.RequestDeleteGroup(group.Path)
+			c.Invalidate()
+		}
+	})
+}
+
+func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messages) string {
+	parts := make([]string, 0, 5)
+	parts = append(parts, m.VaultGroupMemberCount(s.GroupMemberCount(group.Path)))
+	if group.Username != "" {
+		parts = append(parts, group.Username)
+	}
+	if group.Port != 0 {
+		parts = append(parts, strconv.Itoa(group.Port))
+	}
+	if profile, ok := s.ProxyProfileByID(group.ProxyProfileID); ok {
+		parts = append(parts, profile.Label)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// rootDropTarget accepts a dragged Host and moves it out of every group. It
+// stays visible with no groups so a Host can always return to the root.
+func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	row := ui.Row(c).FillWidth().Gap(8).Padding(6, 8).Radius(t.Radius)
+	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
+		row.Background(t.Surface).Border(1, t.Accent)
+	}
+	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
+		s.MoveHostToGroup(drag.HostID, "")
+		c.Invalidate()
+	}
+	row.Children(func() {
+		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
+	})
+}
+
+func groupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteGroup() == "" {
+		return
+	}
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Text(c, m.VaultGroupDeleteConfirm(s.PendingDeleteGroup())).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteGroup()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteGroup()
+			c.Invalidate()
+		}
+	})
+}
+
 func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Padding(0, 8).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
 		ui.Text(c, m.VaultKeyListTitle(s.KeyCount())).FontSize(16).Bold()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultKeyNew()).Clicked() {
@@ -135,7 +237,7 @@ func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 }
 
 func keyRow(c *ui.Context, s *vaultstate.State, key domainvault.Key, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, key.Label).Bold()
 			ui.Text(c, keySummary(key, m)).FontSize(12).TextColor(t.TextMuted)
@@ -183,7 +285,7 @@ func keyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Text(c, message).Grow(1).TextColor(t.Danger)
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteKey()
@@ -197,7 +299,7 @@ func keyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 }
 
 func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Padding(0, 8).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
 		ui.Text(c, m.VaultIdentityListTitle(s.IdentityCount())).FontSize(16).Bold()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultIdentityNew()).Clicked() {
@@ -214,7 +316,7 @@ func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 }
 
 func identityRow(c *ui.Context, s *vaultstate.State, identity domainvault.Identity, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, identity.Label).Bold()
 			ui.Text(c, identitySummary(identity, m)).FontSize(12).TextColor(t.TextMuted)
@@ -268,7 +370,7 @@ func identityDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
 		ui.Text(c, message).Grow(1).TextColor(t.Danger)
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteIdentity()
@@ -276,6 +378,133 @@ func identityDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages
 		}
 		if ui.Button(c, m.VaultHostDelete()).Clicked() {
 			_ = s.ConfirmDeleteIdentity()
+			c.Invalidate()
+		}
+	})
+}
+
+func proxySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
+		ui.Text(c, m.VaultProxyListTitle(s.ProxyProfileCount())).FontSize(16).Bold()
+		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultProxyNew()).Clicked() {
+			s.BeginCreateProxyProfile()
+			c.Invalidate()
+		}
+	})
+	if s.ProxyProfileCount() == 0 {
+		ui.Text(c, m.VaultProxyEmpty()).FontSize(12).TextColor(t.TextMuted)
+	}
+	for _, profile := range s.ProxyProfiles() {
+		proxyRow(c, s, profile, m, t)
+	}
+}
+
+func proxyRow(c *ui.Context, s *vaultstate.State, profile domainvault.ProxyProfile, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, profile.Label).Bold()
+			ui.Text(c, proxySummary(m, profile)).
+				FontSize(12).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+			s.BeginEditProxyProfile(profile.ID)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			s.RequestDeleteProxyProfile(profile.ID)
+			c.Invalidate()
+		}
+	})
+}
+
+// proxySummary names a profile's type and endpoint for a list row. It never
+// includes a credential.
+func proxySummary(m locales.Messages, profile domainvault.ProxyProfile) string {
+	endpoint := profile.Config.Host
+	if endpoint != "" {
+		endpoint += ":" + strconv.Itoa(profile.Config.Port)
+	}
+	switch profile.Config.Type {
+	case domainvault.ProxyCommand:
+		return m.VaultProxyTypeCommand()
+	case domainvault.ProxyHTTP:
+		return m.VaultProxySummary(m.VaultProxyTypeHTTP(), endpoint)
+	case domainvault.ProxySOCKS5:
+		return m.VaultProxySummary(m.VaultProxyTypeSOCKS5(), endpoint)
+	default:
+		return endpoint
+	}
+}
+
+func proxyDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteProxyProfile() == "" {
+		return
+	}
+	label := ""
+	if profile, ok := s.ProxyProfileByID(s.PendingDeleteProxyProfile()); ok {
+		label = profile.Label
+	}
+	message := m.VaultDeleteConfirmUnknown()
+	if label != "" {
+		message = m.VaultDeleteConfirm(label)
+	}
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Text(c, message).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteProxyProfile()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteProxyProfile()
+			c.Invalidate()
+		}
+	})
+}
+
+func knownHostSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.VaultKnownHostsTitle(s.KnownHostCount())).FontSize(16).Bold()
+	if s.KnownHostCount() == 0 {
+		ui.Text(c, m.VaultKnownHostsEmpty()).FontSize(12).TextColor(t.TextMuted)
+	}
+	for _, record := range s.KnownHosts() {
+		knownHostRow(c, s, record, m, t)
+	}
+}
+
+func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHost, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
+			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
+				FontSize(12).TextColor(t.TextMuted)
+		})
+		ui.Text(c, m.VaultKnownHostTrusted()).FontSize(12).TextColor(t.TextMuted)
+		if ui.Button(c, m.VaultKnownHostRemove()).Clicked() {
+			s.RequestDeleteKnownHost(record.ID)
+			c.Invalidate()
+		}
+	})
+}
+
+func knownHostDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteKnownHost() == "" {
+		return
+	}
+	record, ok := s.KnownHostByID(s.PendingDeleteKnownHost())
+	if !ok {
+		s.CancelDeleteKnownHost()
+		return
+	}
+	endpoint := net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+		ui.Text(c, m.VaultKnownHostRemoveConfirm(endpoint)).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteKnownHost()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteKnownHost()
 			c.Invalidate()
 		}
 	})
@@ -335,7 +564,9 @@ func secretProblem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
 }
 
 func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
+	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface)
+	row.Drag(vaultstate.HostDrag(host.ID))
+	row.Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, host.Label).Bold()
 			ui.Text(c, hostSummary(s, host, m)).FontSize(12).TextColor(t.TextMuted)
@@ -540,6 +771,14 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 		})
 		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
 		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+		ui.Field(c, m.VaultHostProxyProfile(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+				for _, profile := range s.ProxyProfiles() {
+					ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+				}
+			})
+		}).Description(m.VaultHostProxyProfileHint())
 		if form.Protocol == string(domainvault.ProtocolSSH) {
 			if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
 				// Turning X11 off clears the acknowledgement, so re-enabling it
@@ -685,8 +924,144 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 	})
 }
 
-// problem renders the state's problem in the current language. Unknown ids
-// render nothing, so the UI never shows an untranslated token.
+func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.GroupForm()
+	title := m.VaultGroupFormCreateTitle()
+	if form.OriginalPath != "" {
+		title = m.VaultGroupFormEditTitle()
+	}
+
+	ui.Text(c, title).FontSize(20).Bold()
+
+	ui.Form(c, func() {
+		ui.Field(c, m.VaultHostGroup(), func() {
+			ui.TextInput(c, &form.Path).Placeholder("prod/web")
+		}).Description(m.VaultHostGroupHint())
+		ui.Field(c, m.VaultHostNotes(), func() {
+			ui.TextArea(c, &form.Notes).Height(60)
+		})
+		ui.Text(c, m.VaultGroupDefaults()).Bold()
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Field(c, m.VaultHostPort(), func() {
+				ui.TextInput(c, &form.Port).Placeholder("22").Width(120)
+			})
+			ui.Field(c, m.VaultHostUsername(), func() {
+				ui.TextInput(c, &form.Username).Placeholder("root").Width(220)
+			})
+			ui.Field(c, m.VaultHostProtocol(), func() {
+				ui.Select(c, &form.Protocol, []string{
+					string(domainvault.ProtocolSSH),
+					string(domainvault.ProtocolTelnet),
+				}).Width(140)
+			})
+		})
+		ui.Field(c, m.VaultHostAuthMethod(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.AuthMethod, "", m.VaultNone())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthAuto), m.VaultHostAuthAuto())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthPassword), m.VaultHostAuthPassword())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthKey), m.VaultHostAuthKey())
+				ui.Radio(c, &form.AuthMethod, string(domainvault.HostAuthCertificate), m.VaultHostAuthCertificate())
+			})
+		})
+		ui.Field(c, m.VaultHostIdentity(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.IdentityID, "", m.VaultNone())
+				for _, identity := range s.Identities() {
+					ui.Radio(c, &form.IdentityID, string(identity.ID), identity.Label)
+				}
+			})
+		})
+		ui.Field(c, m.VaultHostKey(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.KeyID, "", m.VaultNone())
+				for _, key := range s.Keys() {
+					ui.Radio(c, &form.KeyID, string(key.ID), key.Label)
+				}
+			})
+		})
+		ui.Field(c, m.VaultHostProxyProfile(), func() {
+			ui.RadioGroup(c, func() {
+				ui.Radio(c, &form.ProxyProfileID, "", m.VaultNone())
+				for _, profile := range s.ProxyProfiles() {
+					ui.Radio(c, &form.ProxyProfileID, profile.ID, profile.Label)
+				}
+			})
+		})
+		ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+		ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
+	})
+
+	problem(c, s, t)
+
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
+			_ = s.SaveGroup()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelGroupEdit()
+			c.Invalidate()
+		}
+	})
+}
+
+func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.ProxyForm()
+	title := m.VaultProxyFormCreateTitle()
+	if form.ID != "" {
+		title = m.VaultProxyFormEditTitle()
+	}
+
+	ui.Text(c, title).FontSize(20).Bold()
+
+	ui.Form(c, func() {
+		ui.Field(c, m.VaultHostLabel(), func() {
+			ui.TextInput(c, &form.Label)
+		})
+		ui.Field(c, m.VaultProxyType(), func() {
+			ui.Select(c, &form.Type, []string{
+				string(domainvault.ProxyCommand),
+				string(domainvault.ProxyHTTP),
+				string(domainvault.ProxySOCKS5),
+			}).Width(160)
+		})
+		switch domainvault.ProxyType(form.Type) {
+		case domainvault.ProxyCommand:
+			ui.Field(c, m.VaultProxyCommand(), func() {
+				ui.TextInput(c, &form.Command).Placeholder("ssh -W %h:%p jump")
+			})
+		default:
+			ui.Row(c).Gap(8).Children(func() {
+				ui.Field(c, m.VaultProxyHost(), func() {
+					ui.TextInput(c, &form.Host).Placeholder("proxy.example.com")
+				})
+				ui.Field(c, m.VaultHostPort(), func() {
+					ui.TextInput(c, &form.Port).Placeholder("1080").Width(120)
+				})
+				ui.Field(c, m.VaultProxyUsername(), func() {
+					ui.TextInput(c, &form.Username).Width(180)
+				})
+			})
+		}
+	})
+
+	problem(c, s, t)
+
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, m.VaultHostSave()).Clicked() {
+			_ = s.SaveProxyProfile()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelProxyEdit()
+			c.Invalidate()
+		}
+	})
+}
+
+// problem renders the current problem's localized message. An unknown problem
+// renders nothing, so the UI never shows an untranslated token.
 func problem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
 	message := problemText(locales.In(c.Locale()), s.Problem())
 	if message == "" {

@@ -776,6 +776,330 @@ func (msgs Messages) VaultHostGroupHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostGroupHint", nil)
 }
 
+// VaultGroupListTitle says "Host Groups ({count})"
+// in the language the app shows.
+//
+// The Vault's Host Group list heading and its group count.
+func VaultGroupListTitle(count int) string { return In(i18n.Locale()).VaultGroupListTitle(count) }
+
+// VaultGroupListTitle says "Host Groups ({count})"
+// in the language of msgs.
+//
+// The Vault's Host Group list heading and its group count.
+func (msgs Messages) VaultGroupListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultGroupListTitle", map[string]any{"count": count})
+}
+
+// VaultGroupNew says "New Group"
+// in the language the app shows.
+func VaultGroupNew() string { return In(i18n.Locale()).VaultGroupNew() }
+
+// VaultGroupNew says "New Group"
+// in the language of msgs.
+func (msgs Messages) VaultGroupNew() string {
+	return Catalog.Format(msgs.locale, "vaultGroupNew", nil)
+}
+
+// VaultGroupEmpty says "No Host Groups yet."
+// in the language the app shows.
+func VaultGroupEmpty() string { return In(i18n.Locale()).VaultGroupEmpty() }
+
+// VaultGroupEmpty says "No Host Groups yet."
+// in the language of msgs.
+func (msgs Messages) VaultGroupEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultGroupEmpty", nil)
+}
+
+// VaultGroupUngrouped says "Vault root (no Host Group)"
+// in the language the app shows.
+func VaultGroupUngrouped() string { return In(i18n.Locale()).VaultGroupUngrouped() }
+
+// VaultGroupUngrouped says "Vault root (no Host Group)"
+// in the language of msgs.
+func (msgs Messages) VaultGroupUngrouped() string {
+	return Catalog.Format(msgs.locale, "vaultGroupUngrouped", nil)
+}
+
+// VaultGroupMemberCount says "{count} Hosts"
+// in the language the app shows.
+//
+// The number of Hosts at or below a Host Group.
+func VaultGroupMemberCount(count int) string { return In(i18n.Locale()).VaultGroupMemberCount(count) }
+
+// VaultGroupMemberCount says "{count} Hosts"
+// in the language of msgs.
+//
+// The number of Hosts at or below a Host Group.
+func (msgs Messages) VaultGroupMemberCount(count int) string {
+	return Catalog.Format(msgs.locale, "vaultGroupMemberCount", map[string]any{"count": count})
+}
+
+// VaultGroupFormCreateTitle says "New Host Group"
+// in the language the app shows.
+func VaultGroupFormCreateTitle() string { return In(i18n.Locale()).VaultGroupFormCreateTitle() }
+
+// VaultGroupFormCreateTitle says "New Host Group"
+// in the language of msgs.
+func (msgs Messages) VaultGroupFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultGroupFormCreateTitle", nil)
+}
+
+// VaultGroupFormEditTitle says "Edit Host Group"
+// in the language the app shows.
+func VaultGroupFormEditTitle() string { return In(i18n.Locale()).VaultGroupFormEditTitle() }
+
+// VaultGroupFormEditTitle says "Edit Host Group"
+// in the language of msgs.
+func (msgs Messages) VaultGroupFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultGroupFormEditTitle", nil)
+}
+
+// VaultGroupDefaults says "Defaults for member Hosts"
+// in the language the app shows.
+func VaultGroupDefaults() string { return In(i18n.Locale()).VaultGroupDefaults() }
+
+// VaultGroupDefaults says "Defaults for member Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultGroupDefaults() string {
+	return Catalog.Format(msgs.locale, "vaultGroupDefaults", nil)
+}
+
+// VaultGroupDeleteConfirm says "Delete Host Group “{path}”? Its Hosts move to the Vault root and are not deleted."
+// in the language the app shows.
+//
+// The delete confirmation naming the Host Group about to be removed.
+func VaultGroupDeleteConfirm(path string) string {
+	return In(i18n.Locale()).VaultGroupDeleteConfirm(path)
+}
+
+// VaultGroupDeleteConfirm says "Delete Host Group “{path}”? Its Hosts move to the Vault root and are not deleted."
+// in the language of msgs.
+//
+// The delete confirmation naming the Host Group about to be removed.
+func (msgs Messages) VaultGroupDeleteConfirm(path string) string {
+	return Catalog.Format(msgs.locale, "vaultGroupDeleteConfirm", map[string]any{"path": path})
+}
+
+// VaultHostProxyProfile says "Proxy Profile"
+// in the language the app shows.
+func VaultHostProxyProfile() string { return In(i18n.Locale()).VaultHostProxyProfile() }
+
+// VaultHostProxyProfile says "Proxy Profile"
+// in the language of msgs.
+func (msgs Messages) VaultHostProxyProfile() string {
+	return Catalog.Format(msgs.locale, "vaultHostProxyProfile", nil)
+}
+
+// VaultHostProxyProfileHint says "A Host's own proxy settings win over the selected profile."
+// in the language the app shows.
+func VaultHostProxyProfileHint() string { return In(i18n.Locale()).VaultHostProxyProfileHint() }
+
+// VaultHostProxyProfileHint says "A Host's own proxy settings win over the selected profile."
+// in the language of msgs.
+func (msgs Messages) VaultHostProxyProfileHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostProxyProfileHint", nil)
+}
+
+// VaultProxyListTitle says "Proxy Profiles ({count})"
+// in the language the app shows.
+//
+// The Vault's Proxy Profile list heading and its profile count.
+func VaultProxyListTitle(count int) string { return In(i18n.Locale()).VaultProxyListTitle(count) }
+
+// VaultProxyListTitle says "Proxy Profiles ({count})"
+// in the language of msgs.
+//
+// The Vault's Proxy Profile list heading and its profile count.
+func (msgs Messages) VaultProxyListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultProxyListTitle", map[string]any{"count": count})
+}
+
+// VaultProxyNew says "New Proxy Profile"
+// in the language the app shows.
+func VaultProxyNew() string { return In(i18n.Locale()).VaultProxyNew() }
+
+// VaultProxyNew says "New Proxy Profile"
+// in the language of msgs.
+func (msgs Messages) VaultProxyNew() string {
+	return Catalog.Format(msgs.locale, "vaultProxyNew", nil)
+}
+
+// VaultProxyEmpty says "No Proxy Profiles yet."
+// in the language the app shows.
+func VaultProxyEmpty() string { return In(i18n.Locale()).VaultProxyEmpty() }
+
+// VaultProxyEmpty says "No Proxy Profiles yet."
+// in the language of msgs.
+func (msgs Messages) VaultProxyEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultProxyEmpty", nil)
+}
+
+// VaultProxyFormCreateTitle says "New Proxy Profile"
+// in the language the app shows.
+func VaultProxyFormCreateTitle() string { return In(i18n.Locale()).VaultProxyFormCreateTitle() }
+
+// VaultProxyFormCreateTitle says "New Proxy Profile"
+// in the language of msgs.
+func (msgs Messages) VaultProxyFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultProxyFormCreateTitle", nil)
+}
+
+// VaultProxyFormEditTitle says "Edit Proxy Profile"
+// in the language the app shows.
+func VaultProxyFormEditTitle() string { return In(i18n.Locale()).VaultProxyFormEditTitle() }
+
+// VaultProxyFormEditTitle says "Edit Proxy Profile"
+// in the language of msgs.
+func (msgs Messages) VaultProxyFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultProxyFormEditTitle", nil)
+}
+
+// VaultProxyType says "Proxy type"
+// in the language the app shows.
+func VaultProxyType() string { return In(i18n.Locale()).VaultProxyType() }
+
+// VaultProxyType says "Proxy type"
+// in the language of msgs.
+func (msgs Messages) VaultProxyType() string {
+	return Catalog.Format(msgs.locale, "vaultProxyType", nil)
+}
+
+// VaultProxyCommand says "Proxy command"
+// in the language the app shows.
+func VaultProxyCommand() string { return In(i18n.Locale()).VaultProxyCommand() }
+
+// VaultProxyCommand says "Proxy command"
+// in the language of msgs.
+func (msgs Messages) VaultProxyCommand() string {
+	return Catalog.Format(msgs.locale, "vaultProxyCommand", nil)
+}
+
+// VaultProxyHost says "Proxy host"
+// in the language the app shows.
+func VaultProxyHost() string { return In(i18n.Locale()).VaultProxyHost() }
+
+// VaultProxyHost says "Proxy host"
+// in the language of msgs.
+func (msgs Messages) VaultProxyHost() string {
+	return Catalog.Format(msgs.locale, "vaultProxyHost", nil)
+}
+
+// VaultProxyUsername says "Proxy username"
+// in the language the app shows.
+func VaultProxyUsername() string { return In(i18n.Locale()).VaultProxyUsername() }
+
+// VaultProxyUsername says "Proxy username"
+// in the language of msgs.
+func (msgs Messages) VaultProxyUsername() string {
+	return Catalog.Format(msgs.locale, "vaultProxyUsername", nil)
+}
+
+// VaultProxySummary says "{type} {endpoint}"
+// in the language the app shows.
+//
+// A Proxy Profile row's type and endpoint.
+func VaultProxySummary(type_ string, endpoint string) string {
+	return In(i18n.Locale()).VaultProxySummary(type_, endpoint)
+}
+
+// VaultProxySummary says "{type} {endpoint}"
+// in the language of msgs.
+//
+// A Proxy Profile row's type and endpoint.
+func (msgs Messages) VaultProxySummary(type_ string, endpoint string) string {
+	return Catalog.Format(msgs.locale, "vaultProxySummary", map[string]any{"type": type_, "endpoint": endpoint})
+}
+
+// VaultProxyTypeHTTP says "HTTP"
+// in the language the app shows.
+func VaultProxyTypeHTTP() string { return In(i18n.Locale()).VaultProxyTypeHTTP() }
+
+// VaultProxyTypeHTTP says "HTTP"
+// in the language of msgs.
+func (msgs Messages) VaultProxyTypeHTTP() string {
+	return Catalog.Format(msgs.locale, "vaultProxyTypeHTTP", nil)
+}
+
+// VaultProxyTypeSOCKS5 says "SOCKS5"
+// in the language the app shows.
+func VaultProxyTypeSOCKS5() string { return In(i18n.Locale()).VaultProxyTypeSOCKS5() }
+
+// VaultProxyTypeSOCKS5 says "SOCKS5"
+// in the language of msgs.
+func (msgs Messages) VaultProxyTypeSOCKS5() string {
+	return Catalog.Format(msgs.locale, "vaultProxyTypeSOCKS5", nil)
+}
+
+// VaultProxyTypeCommand says "ProxyCommand"
+// in the language the app shows.
+func VaultProxyTypeCommand() string { return In(i18n.Locale()).VaultProxyTypeCommand() }
+
+// VaultProxyTypeCommand says "ProxyCommand"
+// in the language of msgs.
+func (msgs Messages) VaultProxyTypeCommand() string {
+	return Catalog.Format(msgs.locale, "vaultProxyTypeCommand", nil)
+}
+
+// VaultKnownHostsTitle says "Known Hosts ({count})"
+// in the language the app shows.
+//
+// The Vault's Known Host list heading and its record count.
+func VaultKnownHostsTitle(count int) string { return In(i18n.Locale()).VaultKnownHostsTitle(count) }
+
+// VaultKnownHostsTitle says "Known Hosts ({count})"
+// in the language of msgs.
+//
+// The Vault's Known Host list heading and its record count.
+func (msgs Messages) VaultKnownHostsTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostsTitle", map[string]any{"count": count})
+}
+
+// VaultKnownHostsEmpty says "No Known Hosts yet. Trusted host keys appear after a connection."
+// in the language the app shows.
+func VaultKnownHostsEmpty() string { return In(i18n.Locale()).VaultKnownHostsEmpty() }
+
+// VaultKnownHostsEmpty says "No Known Hosts yet. Trusted host keys appear after a connection."
+// in the language of msgs.
+func (msgs Messages) VaultKnownHostsEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostsEmpty", nil)
+}
+
+// VaultKnownHostTrusted says "Trusted"
+// in the language the app shows.
+func VaultKnownHostTrusted() string { return In(i18n.Locale()).VaultKnownHostTrusted() }
+
+// VaultKnownHostTrusted says "Trusted"
+// in the language of msgs.
+func (msgs Messages) VaultKnownHostTrusted() string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostTrusted", nil)
+}
+
+// VaultKnownHostRemove says "Remove trust"
+// in the language the app shows.
+func VaultKnownHostRemove() string { return In(i18n.Locale()).VaultKnownHostRemove() }
+
+// VaultKnownHostRemove says "Remove trust"
+// in the language of msgs.
+func (msgs Messages) VaultKnownHostRemove() string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostRemove", nil)
+}
+
+// VaultKnownHostRemoveConfirm says "Remove trust for {endpoint}? The next connection will ask again."
+// in the language the app shows.
+//
+// The confirmation naming the endpoint whose host key trust is removed.
+func VaultKnownHostRemoveConfirm(endpoint string) string {
+	return In(i18n.Locale()).VaultKnownHostRemoveConfirm(endpoint)
+}
+
+// VaultKnownHostRemoveConfirm says "Remove trust for {endpoint}? The next connection will ask again."
+// in the language of msgs.
+//
+// The confirmation naming the endpoint whose host key trust is removed.
+func (msgs Messages) VaultKnownHostRemoveConfirm(endpoint string) string {
+	return Catalog.Format(msgs.locale, "vaultKnownHostRemoveConfirm", map[string]any{"endpoint": endpoint})
+}
+
 // VaultHostTags says "Tags"
 // in the language the app shows.
 func VaultHostTags() string { return In(i18n.Locale()).VaultHostTags() }

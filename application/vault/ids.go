@@ -31,6 +31,10 @@ func newIdentityID() model.IdentityID {
 	return model.IdentityID(newULID())
 }
 
+// newProxyProfileID returns a Proxy Profile identifier with the same opaque
+// ULID shape as a Host identifier.
+func newProxyProfileID() string { return newULID() }
+
 func newULID() string {
 	var id [16]byte
 	milliseconds := uint64(time.Now().UnixMilli())
