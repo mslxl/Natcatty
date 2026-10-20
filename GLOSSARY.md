@@ -13,6 +13,7 @@ _Avoid_: server, target, machine
 
 **Host Group**:
 A user-defined grouping of hosts with shared display and connection defaults.
+In Go, `domain/vault.Group` is a Host Group and `Host.Group` holds its path.
 _Avoid_: folder, category
 
 **SSH Key**:

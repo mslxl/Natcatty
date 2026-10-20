@@ -40,12 +40,12 @@ func (s *Service) ResolveAuth(ctx context.Context, hostID model.HostID) (Resolve
 	if s.repo == nil {
 		return ResolvedAuth{}, internal(errors.New("vault: no Host store"))
 	}
-	host, err := s.repo.Get(ctx, hostID)
+	host, err := s.EffectiveHost(ctx, hostID)
 	if errors.Is(err, ErrNotFound) {
 		return ResolvedAuth{}, ErrNotFound
 	}
 	if err != nil {
-		return ResolvedAuth{}, internal(err)
+		return ResolvedAuth{}, err
 	}
 
 	var identity *domainvault.Identity

@@ -116,6 +116,102 @@
   "vaultHostProtocol": "Protocol",
   "vaultHostGroup": "Host Group",
   "vaultHostGroupHint": "Use slashes for nested Host Groups.",
+  "vaultGroupListTitle": "Host Groups ({count})",
+  "@vaultGroupListTitle": {
+    "description": "The Vault's Host Group list heading and its group count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultGroupNew": "New Group",
+  "vaultGroupEmpty": "No Host Groups yet.",
+  "vaultGroupUngrouped": "Vault root (no Host Group)",
+  "vaultGroupMemberCount": "{count} Hosts",
+  "@vaultGroupMemberCount": {
+    "description": "The number of Hosts at or below a Host Group.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultGroupFormCreateTitle": "New Host Group",
+  "vaultGroupFormEditTitle": "Edit Host Group",
+  "vaultGroupDefaults": "Defaults for member Hosts",
+  "vaultGroupDeleteConfirm": "Delete Host Group “{path}”? Its Hosts move to the Vault root and are not deleted.",
+  "@vaultGroupDeleteConfirm": {
+    "description": "The delete confirmation naming the Host Group about to be removed.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "prod/web"
+      }
+    }
+  },
+  "vaultHostProxyProfile": "Proxy Profile",
+  "vaultHostProxyProfileHint": "A Host's own proxy settings win over the selected profile.",
+  "vaultProxyListTitle": "Proxy Profiles ({count})",
+  "@vaultProxyListTitle": {
+    "description": "The Vault's Proxy Profile list heading and its profile count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultProxyNew": "New Proxy Profile",
+  "vaultProxyEmpty": "No Proxy Profiles yet.",
+  "vaultProxyFormCreateTitle": "New Proxy Profile",
+  "vaultProxyFormEditTitle": "Edit Proxy Profile",
+  "vaultProxyType": "Proxy type",
+  "vaultProxyCommand": "Proxy command",
+  "vaultProxyHost": "Proxy host",
+  "vaultProxyUsername": "Proxy username",
+  "vaultProxySummary": "{type} {endpoint}",
+  "@vaultProxySummary": {
+    "description": "A Proxy Profile row's type and endpoint.",
+    "placeholders": {
+      "type": {
+        "type": "String",
+        "example": "SOCKS5"
+      },
+      "endpoint": {
+        "type": "String",
+        "example": "proxy.example.com:1080"
+      }
+    }
+  },
+  "vaultProxyTypeHTTP": "HTTP",
+  "vaultProxyTypeSOCKS5": "SOCKS5",
+  "vaultProxyTypeCommand": "ProxyCommand",
+  "vaultKnownHostsTitle": "Known Hosts ({count})",
+  "@vaultKnownHostsTitle": {
+    "description": "The Vault's Known Host list heading and its record count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultKnownHostsEmpty": "No Known Hosts yet. Trusted host keys appear after a connection.",
+  "vaultKnownHostTrusted": "Trusted",
+  "vaultKnownHostRemove": "Remove trust",
+  "vaultKnownHostRemoveConfirm": "Remove trust for {endpoint}? The next connection will ask again.",
+  "@vaultKnownHostRemoveConfirm": {
+    "description": "The confirmation naming the endpoint whose host key trust is removed.",
+    "placeholders": {
+      "endpoint": {
+        "type": "String",
+        "example": "web-1.example.com:22"
+      }
+    }
+  },
   "vaultHostTags": "Tags",
   "vaultHostTagsHint": "Separate tags with commas.",
   "vaultHostNotes": "Notes",

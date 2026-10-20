@@ -20,9 +20,11 @@ type Store struct {
 }
 
 var (
-	_ appvault.HostRepository     = (*Store)(nil)
-	_ appvault.KeyRepository      = (*Store)(nil)
-	_ appvault.IdentityRepository = (*Store)(nil)
+	_ appvault.HostRepository         = (*Store)(nil)
+	_ appvault.KeyRepository          = (*Store)(nil)
+	_ appvault.IdentityRepository     = (*Store)(nil)
+	_ appvault.GroupRepository        = (*Store)(nil)
+	_ appvault.ProxyProfileRepository = (*Store)(nil)
 )
 
 // Open opens path, configures the connection, and applies missing migrations.

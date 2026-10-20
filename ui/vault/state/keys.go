@@ -178,6 +178,20 @@ func (s *State) closeEditors() {
 	s.pendingDelete = ""
 	s.pendingDeleteKey = ""
 	s.pendingDeleteIdentity = ""
+	s.closeEntityEditors()
+}
+
+// closeEntityEditors closes the Host Group and Proxy Profile editors and their
+// pending confirmations. It is separate so the Host editor can reset them
+// without clearing its own open state.
+func (s *State) closeEntityEditors() {
+	s.editingGroup = false
+	s.groupForm = GroupForm{}
+	s.pendingDeleteGroup = ""
+	s.editingProxy = false
+	s.proxyForm = ProxyForm{}
+	s.pendingDeleteProxy = ""
+	s.pendingDeleteKnown = ""
 }
 
 func keyProblemFor(err error) Problem {
