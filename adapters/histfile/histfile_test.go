@@ -140,7 +140,7 @@ func TestSourceToleratesMissingAndUnreadableFiles(t *testing.T) {
 	}
 
 	failing := New(Options{
-		Name: "shell-history",
+		Name:  "shell-history",
 		Files: []File{{Path: "ignored", Kind: Zsh}},
 		ReadFile: func(string) ([]byte, error) {
 			return nil, errors.New("denied")
