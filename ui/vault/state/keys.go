@@ -201,6 +201,15 @@ func (s *State) closeEntityEditors() {
 	s.snippetRun = nil
 	s.snippetRunMissing = nil
 	s.snippetRunProblem = ProblemNone
+	s.editingNote = false
+	s.noteForm = NoteForm{}
+	s.pendingDeleteNote = ""
+	s.viewingNote = ""
+	s.noteExportPath = ""
+	s.noteExportProblem = ProblemNone
+	s.editingNoteGroup = false
+	s.noteGroupForm = NoteGroupForm{}
+	s.pendingDeleteNoteGroup = ""
 }
 
 func keyProblemFor(err error) Problem {

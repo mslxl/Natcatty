@@ -753,5 +753,195 @@
   "vaultSnippetProblemTargets": "此程式碼片段不以使用中的工作階段為目標，也沒有目標主機。",
   "vaultSnippetProblemMissingVariables": "執行前請填寫所有必填變數。",
   "vaultSnippetProblem": "程式碼片段無效。",
-  "vaultSnippetProblemPackage": "程式碼片段套件路徑無效。"
+  "vaultSnippetProblemPackage": "程式碼片段套件路徑無效。",
+  "vaultNoteListTitle": "筆記（{count}）",
+  "@vaultNoteListTitle": {
+    "description": "The Vault's Note list heading and its Note count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultNoteEmpty": "還沒有筆記。寫一則 Markdown 筆記吧。",
+  "@vaultNoteEmpty": {
+    "description": "Shown when the Vault has no Notes."
+  },
+  "vaultNoteNew": "新增筆記",
+  "@vaultNoteNew": {
+    "description": "The button that opens the Note editor for a new Note."
+  },
+  "vaultNoteGroupNew": "新增群組",
+  "@vaultNoteGroupNew": {
+    "description": "The button that opens the Note Group editor."
+  },
+  "vaultNoteSearchPlaceholder": "搜尋筆記",
+  "@vaultNoteSearchPlaceholder": {
+    "description": "The Note search field's placeholder."
+  },
+  "vaultNoteSearchLabel": "搜尋筆記",
+  "@vaultNoteSearchLabel": {
+    "description": "The accessible name of the Note search field."
+  },
+  "vaultNoteSearchEmpty": "沒有與「{query}」相符的筆記。",
+  "@vaultNoteSearchEmpty": {
+    "description": "Shown when a Note search matches nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "vaultNoteOpen": "開啟",
+  "@vaultNoteOpen": {
+    "description": "The button that opens a Note in the native Markdown viewer."
+  },
+  "vaultNoteExportMarkdown": "匯出 Markdown",
+  "@vaultNoteExportMarkdown": {
+    "description": "The button that saves a Note's Markdown source."
+  },
+  "vaultNoteExportHTML": "匯出 HTML",
+  "@vaultNoteExportHTML": {
+    "description": "The button that saves a Note as self-contained HTML."
+  },
+  "vaultNoteExportZIP": "匯出 ZIP",
+  "@vaultNoteExportZIP": {
+    "description": "The button that saves a Note in a ZIP archive."
+  },
+  "vaultNoteExportAll": "全部匯出為 ZIP",
+  "@vaultNoteExportAll": {
+    "description": "The button that saves every Note as a ZIP archive."
+  },
+  "vaultNoteExportSaved": "已儲存到 {path}。",
+  "@vaultNoteExportSaved": {
+    "description": "Confirms where a Note export was written.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Users/me/note.md"
+      }
+    }
+  },
+  "vaultNoteExportEmpty": "沒有可匯出的筆記。",
+  "@vaultNoteExportEmpty": {
+    "description": "Shown when a ZIP export finds an empty Vault."
+  },
+  "vaultNoteExportUnavailable": "此版本不支援匯出。",
+  "@vaultNoteExportUnavailable": {
+    "description": "Shown when no export writer is configured."
+  },
+  "vaultNoteExportFailed": "無法寫入匯出檔案。",
+  "@vaultNoteExportFailed": {
+    "description": "Shown when saving an export fails."
+  },
+  "vaultNoteFormCreateTitle": "新增筆記",
+  "@vaultNoteFormCreateTitle": {
+    "description": "The Note editor's heading when creating."
+  },
+  "vaultNoteFormEditTitle": "編輯筆記",
+  "@vaultNoteFormEditTitle": {
+    "description": "The Note editor's heading when editing."
+  },
+  "vaultNoteTitle": "標題",
+  "@vaultNoteTitle": {
+    "description": "The Note title field."
+  },
+  "vaultNoteGroup": "群組",
+  "@vaultNoteGroup": {
+    "description": "The Note group field."
+  },
+  "vaultNoteGroupHint": "選填。使用斜線表示巢狀，例如 ops/runbooks。",
+  "@vaultNoteGroupHint": {
+    "description": "The Note group field's hint."
+  },
+  "vaultNoteContent": "Markdown",
+  "@vaultNoteContent": {
+    "description": "The Note Markdown source field."
+  },
+  "vaultNoteContentHint": "Markdown 會顯示在原生筆記檢視器中。",
+  "@vaultNoteContentHint": {
+    "description": "The Note Markdown field's hint."
+  },
+  "vaultNoteGroupFormCreateTitle": "新增筆記群組",
+  "@vaultNoteGroupFormCreateTitle": {
+    "description": "The Note Group editor's heading when creating."
+  },
+  "vaultNoteGroupFormEditTitle": "重新命名筆記群組",
+  "@vaultNoteGroupFormEditTitle": {
+    "description": "The Note Group editor's heading when renaming."
+  },
+  "vaultNoteGroupPath": "群組路徑",
+  "@vaultNoteGroupPath": {
+    "description": "The Note Group path field."
+  },
+  "vaultNoteGroupPathHint": "使用斜線表示巢狀，例如 ops/runbooks。",
+  "@vaultNoteGroupPathHint": {
+    "description": "The Note Group path field's hint."
+  },
+  "vaultNoteGroupNoteCount": "{count} 則筆記",
+  "@vaultNoteGroupNoteCount": {
+    "description": "How many Notes one Note Group directly contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNoteDeleteConfirm": "刪除筆記「{title}」？",
+  "@vaultNoteDeleteConfirm": {
+    "description": "The confirmation naming the Note to delete.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "RESTART"
+      }
+    }
+  },
+  "vaultNoteGroupDeleteConfirm": "刪除群組「{path}」？其中的筆記會移到 Vault 根目錄。",
+  "@vaultNoteGroupDeleteConfirm": {
+    "description": "The confirmation naming the Note Group to delete.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteViewerRoot": "Vault 根目錄",
+  "@vaultNoteViewerRoot": {
+    "description": "The viewer's metadata when a Note is at the Vault root."
+  },
+  "vaultNoteViewerGroup": "群組：{path}",
+  "@vaultNoteViewerGroup": {
+    "description": "The viewer's metadata naming a Note's group.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteBack": "返回",
+  "@vaultNoteBack": {
+    "description": "The button that closes the Note viewer."
+  },
+  "vaultNoteProblem": "請輸入筆記標題。",
+  "@vaultNoteProblem": {
+    "description": "Shown when a Note title is missing or invalid."
+  },
+  "vaultNoteProblemContent": "筆記 Markdown 過大。",
+  "@vaultNoteProblemContent": {
+    "description": "Shown when a Note's Markdown exceeds the limit."
+  },
+  "vaultNoteProblemGroup": "請輸入有效的群組路徑。",
+  "@vaultNoteProblemGroup": {
+    "description": "Shown when a Note or Note Group path is invalid."
+  },
+  "vaultNoteRoot": "無群組",
+  "@vaultNoteRoot": {
+    "description": "Vault 根目錄中筆記的標題。"
+  }
 }

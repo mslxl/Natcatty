@@ -248,6 +248,11 @@ const (
 	FieldSnippet        Field = "snippet"
 	FieldSnippetCommand Field = "snippet_command"
 	FieldSnippetPackage Field = "snippet_package"
+	// FieldNote, FieldNoteContent, and FieldNoteGroup name the parts of a
+	// Vault Note a validation error concerns.
+	FieldNote        Field = "note"
+	FieldNoteContent Field = "note_content"
+	FieldNoteGroup   Field = "note_group"
 )
 
 // Rule names the validation rule a value broke. The UI maps Field and Rule to

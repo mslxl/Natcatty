@@ -929,25 +929,52 @@
   "@sessionStatsSummary": {
     "description": "Compact Session counters: input bytes, output bytes, commands, failed commands, bells, notifications, and transfers.",
     "placeholders": {
-      "input": {"type": "int", "example": "120"},
-      "output": {"type": "int", "example": "4096"},
-      "commands": {"type": "int", "example": "3"},
-      "failed": {"type": "int", "example": "1"},
-      "bells": {"type": "int", "example": "0"},
-      "notifications": {"type": "int", "example": "0"},
-      "transfers": {"type": "int", "example": "0"}
+      "input": {
+        "type": "int",
+        "example": "120"
+      },
+      "output": {
+        "type": "int",
+        "example": "4096"
+      },
+      "commands": {
+        "type": "int",
+        "example": "3"
+      },
+      "failed": {
+        "type": "int",
+        "example": "1"
+      },
+      "bells": {
+        "type": "int",
+        "example": "0"
+      },
+      "notifications": {
+        "type": "int",
+        "example": "0"
+      },
+      "transfers": {
+        "type": "int",
+        "example": "0"
+      }
     }
   },
   "@sessionAutocompleteGhost": {
     "description": "A one-line hint showing the first suggested command.",
     "placeholders": {
-      "suggestion": {"type": "String", "example": "git status"}
+      "suggestion": {
+        "type": "String",
+        "example": "git status"
+      }
     }
   },
   "@sessionAutocompleteFrequency": {
     "description": "How many times a command was used.",
     "placeholders": {
-      "count": {"type": "int", "example": "3"}
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "broadcastButton": "Broadcast",
@@ -1284,5 +1311,195 @@
   "vaultSnippetProblemTargets": "This Snippet does not target the active Session and has no target Hosts.",
   "vaultSnippetProblemMissingVariables": "Fill in every required variable before running.",
   "vaultSnippetProblem": "The Snippet is invalid.",
-  "vaultSnippetProblemPackage": "The Snippet package path is invalid."
+  "vaultSnippetProblemPackage": "The Snippet package path is invalid.",
+  "vaultNoteListTitle": "Notes ({count})",
+  "@vaultNoteListTitle": {
+    "description": "The Vault's Note list heading and its Note count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultNoteEmpty": "No Notes yet. Write a Markdown note.",
+  "@vaultNoteEmpty": {
+    "description": "Shown when the Vault has no Notes."
+  },
+  "vaultNoteNew": "New Note",
+  "@vaultNoteNew": {
+    "description": "The button that opens the Note editor for a new Note."
+  },
+  "vaultNoteGroupNew": "New group",
+  "@vaultNoteGroupNew": {
+    "description": "The button that opens the Note Group editor."
+  },
+  "vaultNoteSearchPlaceholder": "Search notes",
+  "@vaultNoteSearchPlaceholder": {
+    "description": "The Note search field's placeholder."
+  },
+  "vaultNoteSearchLabel": "Search notes",
+  "@vaultNoteSearchLabel": {
+    "description": "The accessible name of the Note search field."
+  },
+  "vaultNoteSearchEmpty": "No Notes match “{query}”.",
+  "@vaultNoteSearchEmpty": {
+    "description": "Shown when a Note search matches nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "vaultNoteOpen": "Open",
+  "@vaultNoteOpen": {
+    "description": "The button that opens a Note in the native Markdown viewer."
+  },
+  "vaultNoteExportMarkdown": "Export Markdown",
+  "@vaultNoteExportMarkdown": {
+    "description": "The button that saves a Note's Markdown source."
+  },
+  "vaultNoteExportHTML": "Export HTML",
+  "@vaultNoteExportHTML": {
+    "description": "The button that saves a Note as self-contained HTML."
+  },
+  "vaultNoteExportZIP": "Export ZIP",
+  "@vaultNoteExportZIP": {
+    "description": "The button that saves a Note in a ZIP archive."
+  },
+  "vaultNoteExportAll": "Export all as ZIP",
+  "@vaultNoteExportAll": {
+    "description": "The button that saves every Note as a ZIP archive."
+  },
+  "vaultNoteExportSaved": "Saved to {path}.",
+  "@vaultNoteExportSaved": {
+    "description": "Confirms where a Note export was written.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Users/me/note.md"
+      }
+    }
+  },
+  "vaultNoteExportEmpty": "There are no Notes to export.",
+  "@vaultNoteExportEmpty": {
+    "description": "Shown when a ZIP export finds an empty Vault."
+  },
+  "vaultNoteExportUnavailable": "Exporting is unavailable in this build.",
+  "@vaultNoteExportUnavailable": {
+    "description": "Shown when no export writer is configured."
+  },
+  "vaultNoteExportFailed": "Could not write the export.",
+  "@vaultNoteExportFailed": {
+    "description": "Shown when saving an export fails."
+  },
+  "vaultNoteFormCreateTitle": "New Note",
+  "@vaultNoteFormCreateTitle": {
+    "description": "The Note editor's heading when creating."
+  },
+  "vaultNoteFormEditTitle": "Edit Note",
+  "@vaultNoteFormEditTitle": {
+    "description": "The Note editor's heading when editing."
+  },
+  "vaultNoteTitle": "Title",
+  "@vaultNoteTitle": {
+    "description": "The Note title field."
+  },
+  "vaultNoteGroup": "Group",
+  "@vaultNoteGroup": {
+    "description": "The Note group field."
+  },
+  "vaultNoteGroupHint": "Optional. Use slashes for nesting, for example ops/runbooks.",
+  "@vaultNoteGroupHint": {
+    "description": "The Note group field's hint."
+  },
+  "vaultNoteContent": "Markdown",
+  "@vaultNoteContent": {
+    "description": "The Note Markdown source field."
+  },
+  "vaultNoteContentHint": "Markdown renders in the native Note viewer.",
+  "@vaultNoteContentHint": {
+    "description": "The Note Markdown field's hint."
+  },
+  "vaultNoteGroupFormCreateTitle": "New Note Group",
+  "@vaultNoteGroupFormCreateTitle": {
+    "description": "The Note Group editor's heading when creating."
+  },
+  "vaultNoteGroupFormEditTitle": "Rename Note Group",
+  "@vaultNoteGroupFormEditTitle": {
+    "description": "The Note Group editor's heading when renaming."
+  },
+  "vaultNoteGroupPath": "Group path",
+  "@vaultNoteGroupPath": {
+    "description": "The Note Group path field."
+  },
+  "vaultNoteGroupPathHint": "Use slashes for nesting, for example ops/runbooks.",
+  "@vaultNoteGroupPathHint": {
+    "description": "The Note Group path field's hint."
+  },
+  "vaultNoteGroupNoteCount": "{count} notes",
+  "@vaultNoteGroupNoteCount": {
+    "description": "How many Notes one Note Group directly contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNoteDeleteConfirm": "Delete Note “{title}”?",
+  "@vaultNoteDeleteConfirm": {
+    "description": "The confirmation naming the Note to delete.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "RESTART"
+      }
+    }
+  },
+  "vaultNoteGroupDeleteConfirm": "Delete group “{path}”? Its Notes move to the Vault root.",
+  "@vaultNoteGroupDeleteConfirm": {
+    "description": "The confirmation naming the Note Group to delete.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteViewerRoot": "Vault root",
+  "@vaultNoteViewerRoot": {
+    "description": "The viewer's metadata when a Note is at the Vault root."
+  },
+  "vaultNoteViewerGroup": "Group: {path}",
+  "@vaultNoteViewerGroup": {
+    "description": "The viewer's metadata naming a Note's group.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteBack": "Back",
+  "@vaultNoteBack": {
+    "description": "The button that closes the Note viewer."
+  },
+  "vaultNoteProblem": "Enter a Note title.",
+  "@vaultNoteProblem": {
+    "description": "Shown when a Note title is missing or invalid."
+  },
+  "vaultNoteProblemContent": "The Note Markdown is too large.",
+  "@vaultNoteProblemContent": {
+    "description": "Shown when a Note's Markdown exceeds the limit."
+  },
+  "vaultNoteProblemGroup": "Enter a valid group path.",
+  "@vaultNoteProblemGroup": {
+    "description": "Shown when a Note or Note Group path is invalid."
+  },
+  "vaultNoteRoot": "No group",
+  "@vaultNoteRoot": {
+    "description": "The Notes list's heading for Notes at the Vault root."
+  }
 }

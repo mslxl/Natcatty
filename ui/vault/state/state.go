@@ -105,6 +105,12 @@ const (
 	ProblemSnippetTargets           Problem = "snippet_targets"
 	ProblemSnippetNoSession         Problem = "snippet_no_session"
 	ProblemSnippetRunFailed         Problem = "snippet_run_failed"
+	ProblemNote                     Problem = "note"
+	ProblemNoteContent              Problem = "note_content"
+	ProblemNoteGroup                Problem = "note_group"
+	ProblemNoteExport               Problem = "note_export"
+	ProblemNoteExportEmpty          Problem = "note_export_empty"
+	ProblemNoteExportWriter         Problem = "note_export_writer"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -154,6 +160,8 @@ type State struct {
 	secrets             Secrets
 	snippets            Snippets
 	snippetRunner       SnippetRunner
+	notes               Notes
+	noteWriter          NoteFileWriter
 	items               []domainvault.Host
 	keyItems            []domainvault.Key
 	identityItems       []domainvault.Identity
@@ -162,6 +170,8 @@ type State struct {
 	knownItems          []domainconn.KnownHost
 	snippetItems        []domainvault.Snippet
 	snippetPackageItems []domainvault.SnippetPackage
+	noteItems           []domainvault.Note
+	noteGroupItems      []domainvault.NoteGroup
 	selected            model.HostID
 	editing             bool
 	form                Form
@@ -207,6 +217,17 @@ type State struct {
 	snippetRun                  *SnippetRunForm
 	snippetRunMissing           []string
 	snippetRunProblem           Problem
+
+	editingNote            bool
+	noteForm               NoteForm
+	pendingDeleteNote      string
+	viewingNote            string
+	noteSearch             string
+	noteExportPath         string
+	noteExportProblem      Problem
+	editingNoteGroup       bool
+	noteGroupForm          NoteGroupForm
+	pendingDeleteNoteGroup string
 
 	// hostChain, proxy, and algorithms are preserved across an edit. They are
 	// not exposed in the Host editor yet, so the editor must round-trip them
@@ -754,6 +775,30 @@ func (s *State) load() error {
 		}
 		s.snippetPackageItems = packages
 	}
+	if s.notes != nil {
+		notes, err := s.notes.ListNotes(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.noteItems = notes
+		groups, err := s.notes.ListNoteGroups(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.noteGroupItems = groups
+		if s.viewingNote != "" {
+			if _, ok := s.NoteByID(s.viewingNote); !ok {
+				s.viewingNote = ""
+			}
+		}
+		if s.pendingDeleteNote != "" {
+			if _, ok := s.NoteByID(s.pendingDeleteNote); !ok {
+				s.pendingDeleteNote = ""
+			}
+		}
+	}
 	if err := s.loadKnownHosts(); err != nil {
 		return err
 	}
@@ -944,6 +989,12 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemSnippet
 	case domainvault.FieldSnippetPackage:
 		return ProblemSnippetPackage
+	case domainvault.FieldNote:
+		return ProblemNote
+	case domainvault.FieldNoteContent:
+		return ProblemNoteContent
+	case domainvault.FieldNoteGroup:
+		return ProblemNoteGroup
 	default:
 		return ProblemInternal
 	}
