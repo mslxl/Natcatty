@@ -292,6 +292,21 @@ type StartSpec struct {
 	EncodingScope string
 }
 
+// ConnectionEvent reports one completed connection attempt. Err is nil when a
+// Session opened; otherwise the attempt failed and SessionID is empty. The app
+// records it as a connection log.
+type ConnectionEvent struct {
+	SessionID model.SessionID
+	HostID    model.HostID
+	Label     string
+	Hostname  string
+	Username  string
+	Kind      Kind
+	StartedAt time.Time
+	EndedAt   time.Time
+	Err       error
+}
+
 // Factory opens a Transport for a StartSpec. It is the application's port for
 // local PTYs, SSH channels, and the other transports.
 type Factory interface {
@@ -408,6 +423,7 @@ type Service struct {
 	onInput         func(model.SessionID, []byte)
 	onCommand       func(model.SessionID, string, string)
 	onBell          func(model.SessionID)
+	onConnection    func(ConnectionEvent)
 	highlightPolicy func() (bool, []domainterminal.KeywordHighlightRule)
 	mu              sync.Mutex
 	sessions        map[model.SessionID]*Session
@@ -486,6 +502,13 @@ func WithBellHook(fn func(model.SessionID)) Option {
 	return func(s *Service) { s.onBell = fn }
 }
 
+// WithConnectionHook receives one event per completed connection attempt. The
+// app records it as a connection log. The hook runs on the dialing goroutine,
+// before a successful Session joins the Service.
+func WithConnectionHook(fn func(ConnectionEvent)) Option {
+	return func(s *Service) { s.onConnection = fn }
+}
+
 // WithHighlightPolicy supplies the keyword highlight switch and rules read
 // when a Session opens. SetHighlightPolicy applies later Settings changes to
 // live Sessions.
@@ -510,6 +533,7 @@ func NewService(factory Factory, opts ...Option) *Service {
 // Open opens a Session from spec. The caller's context bounds opening the
 // transport; once open, the Session owns a long-lived context of its own.
 func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
+	startedAt := time.Now()
 	if s.factory == nil {
 		return nil, errors.New("session: no transport factory")
 	}
@@ -551,10 +575,20 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 
 	transport, err := s.factory.Open(ctx, spec)
 	if err != nil {
+		s.reportConnection(ConnectionEvent{
+			HostID: spec.HostID, Label: specLabel(spec), Hostname: spec.Hostname,
+			Username: spec.Username, Kind: spec.Kind, StartedAt: startedAt,
+			EndedAt: time.Now(), Err: err,
+		})
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		_ = transport.Close()
+		s.reportConnection(ConnectionEvent{
+			HostID: spec.HostID, Label: specLabel(spec), Hostname: spec.Hostname,
+			Username: spec.Username, Kind: spec.Kind, StartedAt: startedAt,
+			EndedAt: time.Now(), Err: err,
+		})
 		return nil, err
 	}
 
@@ -618,6 +652,17 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 	s.sessions[id] = session
 	s.mu.Unlock()
 
+	s.reportConnection(ConnectionEvent{
+		SessionID: id,
+		HostID:    spec.HostID,
+		Label:     specLabel(spec),
+		Hostname:  spec.Hostname,
+		Username:  spec.Username,
+		Kind:      spec.Kind,
+		StartedAt: startedAt,
+		EndedAt:   time.Now(),
+	})
+
 	if s.autoLog != nil {
 		if options := s.autoLog(spec); options != nil {
 			if options.Label == "" {
@@ -639,19 +684,47 @@ func (s *Service) OpenLocal(ctx context.Context) (*Session, error) {
 
 // Label names the Session for logging. It is the Host label the shell opened,
 // or "Local Terminal" for a local shell.
-func (s *Session) Label() string {
-	if s.spec.Label != "" {
-		return s.spec.Label
+func (s *Session) Label() string { return specLabel(s.spec) }
+
+// specLabel resolves the display label a Session and its connection log use.
+func specLabel(spec StartSpec) string {
+	if spec.Label != "" {
+		return spec.Label
 	}
-	switch s.spec.Kind {
+	switch spec.Kind {
 	case KindSSH:
-		if s.spec.Hostname != "" {
-			return s.spec.Hostname
+		if spec.Hostname != "" {
+			return spec.Hostname
 		}
 	case KindLocal:
 		return "Local Terminal"
 	}
 	return "session"
+}
+
+// reportConnection delivers one attempt outcome to the app's hook. It is safe
+// on the dialing goroutine.
+func (s *Service) reportConnection(event ConnectionEvent) {
+	if s.onConnection == nil {
+		return
+	}
+	if event.Kind == "" {
+		event.Kind = KindLocal
+	}
+	s.onConnection(event)
+}
+
+// SessionInfo returns the Host identity, display label, and kind of a live
+// Session. The command hook uses it to associate a recorded command with the
+// terminal it ran in.
+func (s *Service) SessionInfo(id model.SessionID) (model.HostID, string, Kind, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return "", "", "", false
+	}
+	return session.spec.HostID, session.Label(), session.spec.Kind, true
 }
 
 // SetClipboardPolicy applies an OSC 52 policy change to every live Session

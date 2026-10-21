@@ -7101,3 +7101,627 @@ func VaultNoteRoot() string { return In(i18n.Locale()).VaultNoteRoot() }
 func (msgs Messages) VaultNoteRoot() string {
 	return Catalog.Format(msgs.locale, "vaultNoteRoot", nil)
 }
+
+// NavLogs says "Logs"
+// in the language the app shows.
+//
+// The sidebar entry that opens connection logs and history.
+func NavLogs() string { return In(i18n.Locale()).NavLogs() }
+
+// NavLogs says "Logs"
+// in the language of msgs.
+//
+// The sidebar entry that opens connection logs and history.
+func (msgs Messages) NavLogs() string {
+	return Catalog.Format(msgs.locale, "navLogs", nil)
+}
+
+// LogsTitle says "Connection logs and history"
+// in the language the app shows.
+//
+// The Logs surface's title.
+func LogsTitle() string { return In(i18n.Locale()).LogsTitle() }
+
+// LogsTitle says "Connection logs and history"
+// in the language of msgs.
+//
+// The Logs surface's title.
+func (msgs Messages) LogsTitle() string {
+	return Catalog.Format(msgs.locale, "logsTitle", nil)
+}
+
+// LogsTabConnections says "Connection logs ({count})"
+// in the language the app shows.
+//
+// The tab that lists connection attempts with their count.
+func LogsTabConnections(count int) string { return In(i18n.Locale()).LogsTabConnections(count) }
+
+// LogsTabConnections says "Connection logs ({count})"
+// in the language of msgs.
+//
+// The tab that lists connection attempts with their count.
+func (msgs Messages) LogsTabConnections(count int) string {
+	return Catalog.Format(msgs.locale, "logsTabConnections", map[string]any{"count": count})
+}
+
+// LogsTabHistory says "Command history ({count})"
+// in the language the app shows.
+//
+// The tab that lists recorded commands with their count.
+func LogsTabHistory(count int) string { return In(i18n.Locale()).LogsTabHistory(count) }
+
+// LogsTabHistory says "Command history ({count})"
+// in the language of msgs.
+//
+// The tab that lists recorded commands with their count.
+func (msgs Messages) LogsTabHistory(count int) string {
+	return Catalog.Format(msgs.locale, "logsTabHistory", map[string]any{"count": count})
+}
+
+// LogsSearch says "Search"
+// in the language the app shows.
+//
+// The label of the free-text record filter.
+func LogsSearch() string { return In(i18n.Locale()).LogsSearch() }
+
+// LogsSearch says "Search"
+// in the language of msgs.
+//
+// The label of the free-text record filter.
+func (msgs Messages) LogsSearch() string {
+	return Catalog.Format(msgs.locale, "logsSearch", nil)
+}
+
+// LogsHostFilter says "Host"
+// in the language the app shows.
+//
+// The label of the Host filter.
+func LogsHostFilter() string { return In(i18n.Locale()).LogsHostFilter() }
+
+// LogsHostFilter says "Host"
+// in the language of msgs.
+//
+// The label of the Host filter.
+func (msgs Messages) LogsHostFilter() string {
+	return Catalog.Format(msgs.locale, "logsHostFilter", nil)
+}
+
+// LogsHostAll says "All hosts"
+// in the language the app shows.
+//
+// The Host filter value that matches every Host.
+func LogsHostAll() string { return In(i18n.Locale()).LogsHostAll() }
+
+// LogsHostAll says "All hosts"
+// in the language of msgs.
+//
+// The Host filter value that matches every Host.
+func (msgs Messages) LogsHostAll() string {
+	return Catalog.Format(msgs.locale, "logsHostAll", nil)
+}
+
+// LogsHostLocal says "Local"
+// in the language the app shows.
+//
+// The Host filter value for local shell records.
+func LogsHostLocal() string { return In(i18n.Locale()).LogsHostLocal() }
+
+// LogsHostLocal says "Local"
+// in the language of msgs.
+//
+// The Host filter value for local shell records.
+func (msgs Messages) LogsHostLocal() string {
+	return Catalog.Format(msgs.locale, "logsHostLocal", nil)
+}
+
+// LogsStatusFilter says "Status"
+// in the language the app shows.
+//
+// The label of the connection status filter.
+func LogsStatusFilter() string { return In(i18n.Locale()).LogsStatusFilter() }
+
+// LogsStatusFilter says "Status"
+// in the language of msgs.
+//
+// The label of the connection status filter.
+func (msgs Messages) LogsStatusFilter() string {
+	return Catalog.Format(msgs.locale, "logsStatusFilter", nil)
+}
+
+// LogsStatusAll says "All statuses"
+// in the language the app shows.
+//
+// The status filter value that matches every outcome.
+func LogsStatusAll() string { return In(i18n.Locale()).LogsStatusAll() }
+
+// LogsStatusAll says "All statuses"
+// in the language of msgs.
+//
+// The status filter value that matches every outcome.
+func (msgs Messages) LogsStatusAll() string {
+	return Catalog.Format(msgs.locale, "logsStatusAll", nil)
+}
+
+// LogsStatusConnected says "Connected"
+// in the language the app shows.
+//
+// A connection attempt that opened a Session.
+func LogsStatusConnected() string { return In(i18n.Locale()).LogsStatusConnected() }
+
+// LogsStatusConnected says "Connected"
+// in the language of msgs.
+//
+// A connection attempt that opened a Session.
+func (msgs Messages) LogsStatusConnected() string {
+	return Catalog.Format(msgs.locale, "logsStatusConnected", nil)
+}
+
+// LogsStatusFailed says "Failed"
+// in the language the app shows.
+//
+// A connection attempt that did not open a Session.
+func LogsStatusFailed() string { return In(i18n.Locale()).LogsStatusFailed() }
+
+// LogsStatusFailed says "Failed"
+// in the language of msgs.
+//
+// A connection attempt that did not open a Session.
+func (msgs Messages) LogsStatusFailed() string {
+	return Catalog.Format(msgs.locale, "logsStatusFailed", nil)
+}
+
+// LogsSourceFilter says "Source"
+// in the language the app shows.
+//
+// The label of the command source filter.
+func LogsSourceFilter() string { return In(i18n.Locale()).LogsSourceFilter() }
+
+// LogsSourceFilter says "Source"
+// in the language of msgs.
+//
+// The label of the command source filter.
+func (msgs Messages) LogsSourceFilter() string {
+	return Catalog.Format(msgs.locale, "logsSourceFilter", nil)
+}
+
+// LogsSourceAll says "All sources"
+// in the language the app shows.
+//
+// The source filter value that matches every source.
+func LogsSourceAll() string { return In(i18n.Locale()).LogsSourceAll() }
+
+// LogsSourceAll says "All sources"
+// in the language of msgs.
+//
+// The source filter value that matches every source.
+func (msgs Messages) LogsSourceAll() string {
+	return Catalog.Format(msgs.locale, "logsSourceAll", nil)
+}
+
+// LogsSourceSession says "Session"
+// in the language the app shows.
+//
+// A command recorded inside a Natcatty Session.
+func LogsSourceSession() string { return In(i18n.Locale()).LogsSourceSession() }
+
+// LogsSourceSession says "Session"
+// in the language of msgs.
+//
+// A command recorded inside a Natcatty Session.
+func (msgs Messages) LogsSourceSession() string {
+	return Catalog.Format(msgs.locale, "logsSourceSession", nil)
+}
+
+// LogsSourceShell says "Shell history"
+// in the language the app shows.
+//
+// A command imported from the local shell's history.
+func LogsSourceShell() string { return In(i18n.Locale()).LogsSourceShell() }
+
+// LogsSourceShell says "Shell history"
+// in the language of msgs.
+//
+// A command imported from the local shell's history.
+func (msgs Messages) LogsSourceShell() string {
+	return Catalog.Format(msgs.locale, "logsSourceShell", nil)
+}
+
+// LogsFrom says "From (YYYY-MM-DD)"
+// in the language the app shows.
+//
+// The inclusive start-date filter.
+func LogsFrom() string { return In(i18n.Locale()).LogsFrom() }
+
+// LogsFrom says "From (YYYY-MM-DD)"
+// in the language of msgs.
+//
+// The inclusive start-date filter.
+func (msgs Messages) LogsFrom() string {
+	return Catalog.Format(msgs.locale, "logsFrom", nil)
+}
+
+// LogsTo says "To (YYYY-MM-DD)"
+// in the language the app shows.
+//
+// The inclusive end-date filter.
+func LogsTo() string { return In(i18n.Locale()).LogsTo() }
+
+// LogsTo says "To (YYYY-MM-DD)"
+// in the language of msgs.
+//
+// The inclusive end-date filter.
+func (msgs Messages) LogsTo() string {
+	return Catalog.Format(msgs.locale, "logsTo", nil)
+}
+
+// LogsOpenTerminal says "Open terminal"
+// in the language the app shows.
+//
+// The row action that opens or focuses the related terminal.
+func LogsOpenTerminal() string { return In(i18n.Locale()).LogsOpenTerminal() }
+
+// LogsOpenTerminal says "Open terminal"
+// in the language of msgs.
+//
+// The row action that opens or focuses the related terminal.
+func (msgs Messages) LogsOpenTerminal() string {
+	return Catalog.Format(msgs.locale, "logsOpenTerminal", nil)
+}
+
+// LogsDelete says "Delete"
+// in the language the app shows.
+//
+// The row action that removes one record.
+func LogsDelete() string { return In(i18n.Locale()).LogsDelete() }
+
+// LogsDelete says "Delete"
+// in the language of msgs.
+//
+// The row action that removes one record.
+func (msgs Messages) LogsDelete() string {
+	return Catalog.Format(msgs.locale, "logsDelete", nil)
+}
+
+// LogsShowMore says "Show more"
+// in the language the app shows.
+//
+// The button that reveals the next page of records.
+func LogsShowMore() string { return In(i18n.Locale()).LogsShowMore() }
+
+// LogsShowMore says "Show more"
+// in the language of msgs.
+//
+// The button that reveals the next page of records.
+func (msgs Messages) LogsShowMore() string {
+	return Catalog.Format(msgs.locale, "logsShowMore", nil)
+}
+
+// LogsClearHistory says "Clear history"
+// in the language the app shows.
+//
+// The button that opens the clear-history confirmation.
+func LogsClearHistory() string { return In(i18n.Locale()).LogsClearHistory() }
+
+// LogsClearHistory says "Clear history"
+// in the language of msgs.
+//
+// The button that opens the clear-history confirmation.
+func (msgs Messages) LogsClearHistory() string {
+	return Catalog.Format(msgs.locale, "logsClearHistory", nil)
+}
+
+// LogsClearConfirm says "Remove every recorded command?"
+// in the language the app shows.
+//
+// The clear-history confirmation.
+func LogsClearConfirm() string { return In(i18n.Locale()).LogsClearConfirm() }
+
+// LogsClearConfirm says "Remove every recorded command?"
+// in the language of msgs.
+//
+// The clear-history confirmation.
+func (msgs Messages) LogsClearConfirm() string {
+	return Catalog.Format(msgs.locale, "logsClearConfirm", nil)
+}
+
+// LogsClearYes says "Clear"
+// in the language the app shows.
+//
+// The confirmation button that clears the history.
+func LogsClearYes() string { return In(i18n.Locale()).LogsClearYes() }
+
+// LogsClearYes says "Clear"
+// in the language of msgs.
+//
+// The confirmation button that clears the history.
+func (msgs Messages) LogsClearYes() string {
+	return Catalog.Format(msgs.locale, "logsClearYes", nil)
+}
+
+// LogsCancel says "Cancel"
+// in the language the app shows.
+//
+// The button that dismisses the clear-history confirmation.
+func LogsCancel() string { return In(i18n.Locale()).LogsCancel() }
+
+// LogsCancel says "Cancel"
+// in the language of msgs.
+//
+// The button that dismisses the clear-history confirmation.
+func (msgs Messages) LogsCancel() string {
+	return Catalog.Format(msgs.locale, "logsCancel", nil)
+}
+
+// LogsHistoryCleared says "History cleared ({count} entries removed)."
+// in the language the app shows.
+//
+// Confirms that the history was cleared.
+func LogsHistoryCleared(count int) string { return In(i18n.Locale()).LogsHistoryCleared(count) }
+
+// LogsHistoryCleared says "History cleared ({count} entries removed)."
+// in the language of msgs.
+//
+// Confirms that the history was cleared.
+func (msgs Messages) LogsHistoryCleared(count int) string {
+	return Catalog.Format(msgs.locale, "logsHistoryCleared", map[string]any{"count": count})
+}
+
+// LogsEmptyConnections says "No connection attempts recorded."
+// in the language the app shows.
+//
+// Shown when there are no connection logs at all.
+func LogsEmptyConnections() string { return In(i18n.Locale()).LogsEmptyConnections() }
+
+// LogsEmptyConnections says "No connection attempts recorded."
+// in the language of msgs.
+//
+// Shown when there are no connection logs at all.
+func (msgs Messages) LogsEmptyConnections() string {
+	return Catalog.Format(msgs.locale, "logsEmptyConnections", nil)
+}
+
+// LogsEmptyHistory says "No commands recorded."
+// in the language the app shows.
+//
+// Shown when there is no command history at all.
+func LogsEmptyHistory() string { return In(i18n.Locale()).LogsEmptyHistory() }
+
+// LogsEmptyHistory says "No commands recorded."
+// in the language of msgs.
+//
+// Shown when there is no command history at all.
+func (msgs Messages) LogsEmptyHistory() string {
+	return Catalog.Format(msgs.locale, "logsEmptyHistory", nil)
+}
+
+// LogsNoMatches says "No records match the filters."
+// in the language the app shows.
+//
+// Shown when records exist but the filters exclude all of them.
+func LogsNoMatches() string { return In(i18n.Locale()).LogsNoMatches() }
+
+// LogsNoMatches says "No records match the filters."
+// in the language of msgs.
+//
+// Shown when records exist but the filters exclude all of them.
+func (msgs Messages) LogsNoMatches() string {
+	return Catalog.Format(msgs.locale, "logsNoMatches", nil)
+}
+
+// LogsLocalTerminal says "Local terminal"
+// in the language the app shows.
+//
+// The record title for a local shell Session.
+func LogsLocalTerminal() string { return In(i18n.Locale()).LogsLocalTerminal() }
+
+// LogsLocalTerminal says "Local terminal"
+// in the language of msgs.
+//
+// The record title for a local shell Session.
+func (msgs Messages) LogsLocalTerminal() string {
+	return Catalog.Format(msgs.locale, "logsLocalTerminal", nil)
+}
+
+// LogsConnectionMeta says "{status} · {kind}"
+// in the language the app shows.
+//
+// The status and transport family of a connection log row.
+func LogsConnectionMeta(status string, kind string) string {
+	return In(i18n.Locale()).LogsConnectionMeta(status, kind)
+}
+
+// LogsConnectionMeta says "{status} · {kind}"
+// in the language of msgs.
+//
+// The status and transport family of a connection log row.
+func (msgs Messages) LogsConnectionMeta(status string, kind string) string {
+	return Catalog.Format(msgs.locale, "logsConnectionMeta", map[string]any{"status": status, "kind": kind})
+}
+
+// LogsHistoryMeta says "{host} · {source} · {time}"
+// in the language the app shows.
+//
+// The Host, source, and time of a history row.
+func LogsHistoryMeta(host string, source string, time_ string) string {
+	return In(i18n.Locale()).LogsHistoryMeta(host, source, time_)
+}
+
+// LogsHistoryMeta says "{host} · {source} · {time}"
+// in the language of msgs.
+//
+// The Host, source, and time of a history row.
+func (msgs Messages) LogsHistoryMeta(host string, source string, time_ string) string {
+	return Catalog.Format(msgs.locale, "logsHistoryMeta", map[string]any{"host": host, "source": source, "time": time_})
+}
+
+// LogsProblemLoad says "Could not load the records."
+// in the language the app shows.
+//
+// Shown when reading the records failed.
+func LogsProblemLoad() string { return In(i18n.Locale()).LogsProblemLoad() }
+
+// LogsProblemLoad says "Could not load the records."
+// in the language of msgs.
+//
+// Shown when reading the records failed.
+func (msgs Messages) LogsProblemLoad() string {
+	return Catalog.Format(msgs.locale, "logsProblemLoad", nil)
+}
+
+// LogsProblemDelete says "Could not delete the record."
+// in the language the app shows.
+//
+// Shown when deleting one record failed.
+func LogsProblemDelete() string { return In(i18n.Locale()).LogsProblemDelete() }
+
+// LogsProblemDelete says "Could not delete the record."
+// in the language of msgs.
+//
+// Shown when deleting one record failed.
+func (msgs Messages) LogsProblemDelete() string {
+	return Catalog.Format(msgs.locale, "logsProblemDelete", nil)
+}
+
+// LogsProblemClear says "Could not clear the history."
+// in the language the app shows.
+//
+// Shown when clearing the history failed.
+func LogsProblemClear() string { return In(i18n.Locale()).LogsProblemClear() }
+
+// LogsProblemClear says "Could not clear the history."
+// in the language of msgs.
+//
+// Shown when clearing the history failed.
+func (msgs Messages) LogsProblemClear() string {
+	return Catalog.Format(msgs.locale, "logsProblemClear", nil)
+}
+
+// LogsProblemOpen says "Could not open the terminal."
+// in the language the app shows.
+//
+// Shown when a row action could not open a terminal.
+func LogsProblemOpen() string { return In(i18n.Locale()).LogsProblemOpen() }
+
+// LogsProblemOpen says "Could not open the terminal."
+// in the language of msgs.
+//
+// Shown when a row action could not open a terminal.
+func (msgs Messages) LogsProblemOpen() string {
+	return Catalog.Format(msgs.locale, "logsProblemOpen", nil)
+}
+
+// LogsProblemHostMissing says "The related Host no longer exists."
+// in the language the app shows.
+//
+// Shown when a record refers to a Host deleted from the Vault.
+func LogsProblemHostMissing() string { return In(i18n.Locale()).LogsProblemHostMissing() }
+
+// LogsProblemHostMissing says "The related Host no longer exists."
+// in the language of msgs.
+//
+// Shown when a record refers to a Host deleted from the Vault.
+func (msgs Messages) LogsProblemHostMissing() string {
+	return Catalog.Format(msgs.locale, "logsProblemHostMissing", nil)
+}
+
+// LogsProblemDate says "Enter dates as YYYY-MM-DD, with the start before the end."
+// in the language the app shows.
+//
+// Shown when a date filter is malformed or inverted.
+func LogsProblemDate() string { return In(i18n.Locale()).LogsProblemDate() }
+
+// LogsProblemDate says "Enter dates as YYYY-MM-DD, with the start before the end."
+// in the language of msgs.
+//
+// Shown when a date filter is malformed or inverted.
+func (msgs Messages) LogsProblemDate() string {
+	return Catalog.Format(msgs.locale, "logsProblemDate", nil)
+}
+
+// SettingsRetentionTitle says "Log and history retention"
+// in the language the app shows.
+//
+// The Settings section that bounds connection logs and history.
+func SettingsRetentionTitle() string { return In(i18n.Locale()).SettingsRetentionTitle() }
+
+// SettingsRetentionTitle says "Log and history retention"
+// in the language of msgs.
+//
+// The Settings section that bounds connection logs and history.
+func (msgs Messages) SettingsRetentionTitle() string {
+	return Catalog.Format(msgs.locale, "settingsRetentionTitle", nil)
+}
+
+// SettingsRetentionDescription says "A count of 0 keeps every record; a maximum age of 0 days keeps records forever."
+// in the language the app shows.
+//
+// Explains the zero values of the retention controls.
+func SettingsRetentionDescription() string { return In(i18n.Locale()).SettingsRetentionDescription() }
+
+// SettingsRetentionDescription says "A count of 0 keeps every record; a maximum age of 0 days keeps records forever."
+// in the language of msgs.
+//
+// Explains the zero values of the retention controls.
+func (msgs Messages) SettingsRetentionDescription() string {
+	return Catalog.Format(msgs.locale, "settingsRetentionDescription", nil)
+}
+
+// SettingsConnectionLogRetentionCount says "Connection logs kept"
+// in the language the app shows.
+//
+// The maximum number of connection logs to keep.
+func SettingsConnectionLogRetentionCount() string {
+	return In(i18n.Locale()).SettingsConnectionLogRetentionCount()
+}
+
+// SettingsConnectionLogRetentionCount says "Connection logs kept"
+// in the language of msgs.
+//
+// The maximum number of connection logs to keep.
+func (msgs Messages) SettingsConnectionLogRetentionCount() string {
+	return Catalog.Format(msgs.locale, "settingsConnectionLogRetentionCount", nil)
+}
+
+// SettingsConnectionLogRetentionDays says "Connection log max age (days)"
+// in the language the app shows.
+//
+// The maximum age of a connection log in days.
+func SettingsConnectionLogRetentionDays() string {
+	return In(i18n.Locale()).SettingsConnectionLogRetentionDays()
+}
+
+// SettingsConnectionLogRetentionDays says "Connection log max age (days)"
+// in the language of msgs.
+//
+// The maximum age of a connection log in days.
+func (msgs Messages) SettingsConnectionLogRetentionDays() string {
+	return Catalog.Format(msgs.locale, "settingsConnectionLogRetentionDays", nil)
+}
+
+// SettingsHistoryRetentionCount says "History entries kept"
+// in the language the app shows.
+//
+// The maximum number of command history entries to keep.
+func SettingsHistoryRetentionCount() string { return In(i18n.Locale()).SettingsHistoryRetentionCount() }
+
+// SettingsHistoryRetentionCount says "History entries kept"
+// in the language of msgs.
+//
+// The maximum number of command history entries to keep.
+func (msgs Messages) SettingsHistoryRetentionCount() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryRetentionCount", nil)
+}
+
+// SettingsHistoryRetentionDays says "History max age (days)"
+// in the language the app shows.
+//
+// The maximum age of a command history entry in days.
+func SettingsHistoryRetentionDays() string { return In(i18n.Locale()).SettingsHistoryRetentionDays() }
+
+// SettingsHistoryRetentionDays says "History max age (days)"
+// in the language of msgs.
+//
+// The maximum age of a command history entry in days.
+func (msgs Messages) SettingsHistoryRetentionDays() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryRetentionDays", nil)
+}

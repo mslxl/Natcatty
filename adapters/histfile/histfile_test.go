@@ -167,6 +167,30 @@ func TestSourceCapsTheImportedHistory(t *testing.T) {
 	}
 }
 
+func TestHistoryReturnsTheDeduplicatedImportedEntries(t *testing.T) {
+	directory := t.TempDir()
+	writeFile(t, filepath.Join(directory, ".zsh_history"), strings.Join([]string{
+		": 1700000000:0;git status",
+		": 1700000002:0;make test",
+		": 1700000001:0;git status",
+		"",
+	}, "\n"))
+	source := Default(directory)
+	history := source.History()
+	if len(history) != 2 {
+		t.Fatalf("history = %+v, want two deduplicated entries", history)
+	}
+	if history[0].Command != "make test" || history[1].Command != "git status" {
+		t.Fatalf("history order = %+v, want newest first", history)
+	}
+	// The returned slice is a copy: callers importing it into the shared
+	// command history must not corrupt later suggestion reads.
+	history[0].Command = "mutated"
+	if again := source.History(); again[0].Command != "make test" {
+		t.Fatalf("History shared its backing slice: %+v", again)
+	}
+}
+
 func TestDefaultUsesTheShellHistoryLocations(t *testing.T) {
 	home := t.TempDir()
 	source := Default(home)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -20,8 +21,8 @@ import (
 // making the popup expensive.
 const (
 	maxHistoryEntries = 2000
-	maxCommandLength  = 4096
-	maxInputLength    = 4096
+	maxCommandLength  = domainhistory.MaxCommandLength
+	maxInputLength    = domainhistory.MaxCommandLength
 )
 
 // Suggested source names. Sources may choose their own; the recorded history
@@ -29,7 +30,7 @@ const (
 // strings.
 const (
 	SourceHistory      = "history"
-	SourceShellHistory = "shell-history"
+	SourceShellHistory = domainhistory.SourceShellHistory
 )
 
 // Entry is one remembered command and the Host scope it ran in. Scope is
@@ -57,6 +58,14 @@ type Suggestion struct {
 type Store interface {
 	Load(context.Context) ([]Entry, error)
 	Save(context.Context, []Entry) error
+}
+
+// Journal is the shared shell/command history the history surface lists. When
+// set, autocomplete aggregates its per-execution rows instead of keeping a
+// second, forked store. The history application service implements it.
+type Journal interface {
+	Load(context.Context) ([]domainhistory.Entry, error)
+	Record(context.Context, domainhistory.Entry) error
 }
 
 // Source contributes suggestions besides the recorded history, for example the
@@ -100,12 +109,23 @@ func WithClock(clock func() time.Time) Option {
 	}
 }
 
+// WithJournal shares one persisted command history with the history surface.
+// When set, it replaces the Store for loading and persistence.
+func WithJournal(journal Journal) Option {
+	return func(service *Service) {
+		if journal != nil {
+			service.journal = journal
+		}
+	}
+}
+
 // Service records commands and composes suggestions. It is safe for
 // concurrent use: the reader goroutine records commands while the UI asks for
 // suggestions.
 type Service struct {
 	mu      sync.Mutex
 	store   Store
+	journal Journal
 	config  func() Config
 	sources []Source
 	now     func() time.Time
@@ -129,8 +149,20 @@ func NewService(store Store, config func() Config, opts ...Option) *Service {
 }
 
 // Load reads the persisted history. A missing or unreadable store leaves
-// autocomplete usable from the commands recorded in this process.
+// autocomplete usable from the commands recorded in this process. With a
+// shared journal, the per-execution rows are aggregated here so the history
+// surface and autocomplete observe the same records.
 func (s *Service) Load(ctx context.Context) {
+	if s.journal != nil {
+		entries, err := s.journal.Load(ctx)
+		if err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.entries = aggregate(entries)
+		s.mu.Unlock()
+		return
+	}
 	if s.store == nil {
 		return
 	}
@@ -138,8 +170,45 @@ func (s *Service) Load(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	s.setEntries(entries)
+}
+
+// setEntries validates, orders, and bounds aggregated history rows.
+func (s *Service) setEntries(entries []Entry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.entries = sanitize(entries)
+}
+
+// aggregate folds per-execution journal rows into one row per scope and
+// command, keeping the newest execution time and the execution count.
+func aggregate(entries []domainhistory.Entry) []Entry {
+	indices := make(map[string]int, len(entries))
+	aggregated := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		command := strings.TrimSpace(entry.Command)
+		scope := strings.TrimSpace(entry.Scope)
+		if command == "" || scope == "" || len(command) > maxCommandLength {
+			continue
+		}
+		key := scope + "\x00" + command
+		if index, ok := indices[key]; ok {
+			aggregated[index].Count++
+			if entry.RecordedAt.After(aggregated[index].LastUsed) {
+				aggregated[index].LastUsed = entry.RecordedAt
+			}
+			continue
+		}
+		indices[key] = len(aggregated)
+		aggregated = append(aggregated, Entry{
+			Command: command, Scope: scope, Count: 1, LastUsed: entry.RecordedAt,
+		})
+	}
+	return sanitize(aggregated)
+}
+
+// sanitize orders aggregated rows newest first and bounds the set.
+func sanitize(entries []Entry) []Entry {
 	cleaned := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
 		entry.Command = strings.TrimSpace(entry.Command)
@@ -156,7 +225,7 @@ func (s *Service) Load(ctx context.Context) {
 	if len(cleaned) > maxHistoryEntries {
 		cleaned = cleaned[:maxHistoryEntries]
 	}
-	s.entries = cleaned
+	return cleaned
 }
 
 // Record remembers a command that was submitted in scope. Blank commands and
@@ -169,15 +238,35 @@ func (s *Service) Record(scope, command string) {
 // RecordAt is Record with an explicit time, used by tests and deterministic
 // imports.
 func (s *Service) RecordAt(scope, command string, at time.Time) {
-	command = strings.TrimSpace(command)
-	scope = strings.TrimSpace(scope)
+	s.RecordEntry(domainhistory.Entry{
+		Scope:      scope,
+		Command:    command,
+		Source:     domainhistory.SourceSession,
+		RecordedAt: at,
+	})
+}
+
+// RecordEntry remembers one command execution together with the Session and
+// Host it ran in, and forwards the full row to the shared journal when one is
+// configured. The app's command hook uses it; Record and RecordAt are the
+// narrower convenience forms.
+func (s *Service) RecordEntry(entry domainhistory.Entry) {
+	command := strings.TrimSpace(entry.Command)
+	scope := strings.TrimSpace(entry.Scope)
+	if scope == "" {
+		scope = domainhistory.NormalizeScope(entry.HostID)
+	}
 	if command == "" || scope == "" || len(command) > maxCommandLength {
 		return
 	}
-	if at.IsZero() {
-		at = s.now()
+	if entry.RecordedAt.IsZero() {
+		entry.RecordedAt = s.now()
 	}
+	entry.Command = command
+	entry.Scope = scope
+	entry = domainhistory.NormalizeEntry(entry)
 
+	at := entry.RecordedAt
 	s.mu.Lock()
 	updated := make([]Entry, len(s.entries))
 	copy(updated, s.entries)
@@ -202,8 +291,12 @@ func (s *Service) RecordAt(scope, command string, at time.Time) {
 	s.entries = updated
 	s.mu.Unlock()
 
-	if s.store != nil {
+	if s.journal != nil {
 		// Persistence is best effort: a failure must not break typing.
+		_ = s.journal.Record(context.Background(), entry)
+		return
+	}
+	if s.store != nil {
 		_ = s.store.Save(context.Background(), updated)
 	}
 }
