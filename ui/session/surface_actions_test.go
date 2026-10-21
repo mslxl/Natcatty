@@ -117,7 +117,10 @@ func TestRenameMenuOpensTheDialogAndAppliesTheTitle(t *testing.T) {
 	if err := tester.Click(m.SessionRenameField()); err != nil {
 		t.Fatalf("focus the name field: %v", err)
 	}
-	tester.Key(ui.Ctrl, ui.KeyA)
+	// Select all with the platform's shortcut: Command+A on macOS, Control+A
+	// elsewhere. On macOS Control+A is emacs beginning-of-line, which leaves
+	// the old title in place and would buffer "prod" in front of it.
+	tester.Key(ui.Cmd, ui.KeyA)
 	tester.Type("prod")
 	if err := tester.Click(m.SessionMenuRenameConfirm()); err != nil {
 		t.Fatal(err)
