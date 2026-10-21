@@ -820,8 +820,12 @@ func (s *Service) changed(snapshot Snapshot) {
 	}
 }
 
-// ID returns the Session's opaque identifier.
+// ID returns the Session's stable runtime identifier.
 func (s *Session) ID() model.SessionID { return s.id }
+
+// HostID returns the Vault Host the Session was opened for. A local Session
+// has no Host and reports "".
+func (s *Session) HostID() model.HostID { return s.spec.HostID }
 
 // Done is closed once the Session has ended and its final snapshot is
 // published.

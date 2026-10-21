@@ -42,6 +42,9 @@ const (
 	surfaceIdentity
 	surfaceGroup
 	surfaceProxy
+	surfaceSnippetRun
+	surfaceSnippet
+	surfaceSnippetPackage
 )
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
@@ -68,6 +71,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 	switch {
 	case forwarding != nil && forwarding.Editing():
 		return surfaceForwarding
+	case s.SnippetRunOpen():
+		return surfaceSnippetRun
 	case s.Editing():
 		return surfaceHost
 	case s.EditingKey():
@@ -78,6 +83,10 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceGroup
 	case s.EditingProxyProfile():
 		return surfaceProxy
+	case s.EditingSnippetPackage():
+		return surfaceSnippetPackage
+	case s.EditingSnippet():
+		return surfaceSnippet
 	default:
 		return surfaceList
 	}
@@ -122,6 +131,12 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				groupEditor(c, s, m, t, &positions.editor)
 			case surfaceProxy:
 				proxyEditor(c, s, m, t, &positions.editor)
+			case surfaceSnippetRun:
+				snippetRunEditor(c, s, m, t, &positions.editor)
+			case surfaceSnippet:
+				snippetEditor(c, s, m, t, &positions.editor)
+			case surfaceSnippetPackage:
+				snippetPackageEditor(c, s, m, t, &positions.editor)
 			default:
 				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
@@ -168,6 +183,8 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	groupDeleteBanner(c, s, m, t)
 	proxyDeleteBanner(c, s, m, t)
 	knownHostDeleteBanner(c, s, m, t)
+	snippetDeleteBanner(c, s, m, t)
+	snippetPackageDeleteBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
@@ -175,6 +192,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 		identitySection(c, s, m, t)
 		proxySection(c, s, m, t)
 		knownHostSection(c, s, m, t)
+		snippetSection(c, s, m, t)
 		if forwarding != nil {
 			uiforwarding.Section(c, forwarding)
 		}
@@ -685,6 +703,331 @@ func knownHostDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Message
 			c.Invalidate()
 		}
 	})
+}
+
+func snippetSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Wrap().Children(func() {
+		ui.Text(c, m.VaultSnippetListTitle(s.SnippetCount())).FontSize(16).Bold()
+		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultSnippetPackageNew()).Clicked() {
+			s.BeginCreateSnippetPackage()
+			c.Invalidate()
+		}
+		if ui.PrimaryButton(c, m.VaultSnippetNew()).Clicked() {
+			s.BeginCreateSnippet()
+			c.Invalidate()
+		}
+	})
+	if s.SnippetCount() == 0 && s.SnippetPackageCount() == 0 {
+		ui.Text(c, m.VaultSnippetEmpty()).FontSize(12).TextColor(t.TextMuted)
+		return
+	}
+	for _, pkg := range s.SnippetPackages() {
+		snippetPackageRow(c, s, pkg, m, t)
+		for _, snippet := range s.SnippetsInPackage(pkg.Path) {
+			snippetRow(c, s, snippet, m, t, 1)
+		}
+	}
+	root := s.SnippetsInPackage("")
+	if len(root) > 0 {
+		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
+		for _, snippet := range root {
+			snippetRow(c, s, snippet, m, t, 0)
+		}
+	}
+}
+
+func snippetPackageRow(c *ui.Context, s *vaultstate.State, pkg domainvault.SnippetPackage, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, pkg.Path).Bold()
+			ui.Text(c, m.VaultSnippetPackageSnippetCount(len(s.SnippetsInPackage(pkg.Path)))).
+				FontSize(12).TextColor(t.TextMuted)
+		})
+		if ui.Button(c, m.VaultHostEdit()).Clicked() {
+			s.BeginEditSnippetPackage(pkg.Path)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			s.RequestDeleteSnippetPackage(pkg.Path)
+			c.Invalidate()
+		}
+	})
+}
+
+func snippetRow(c *ui.Context, s *vaultstate.State, snippet domainvault.Snippet, m locales.Messages, t *ui.Theme, indent int) {
+	ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(indent)).
+		Background(t.Surface).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Row(c).FillWidth().Gap(6).Wrap().Children(func() {
+				ui.Text(c, snippet.Label).Bold()
+				ui.Column(c).Grow(1)
+				if ui.PrimaryButton(c, m.VaultSnippetRunActive()).Clicked() {
+					s.BeginSnippetRun(snippet.ID, vaultstate.SnippetDestinationActive)
+					c.Invalidate()
+				}
+				if ui.Button(c, m.VaultSnippetRunHosts()).Clicked() {
+					s.BeginSnippetRun(snippet.ID, vaultstate.SnippetDestinationHosts)
+					c.Invalidate()
+				}
+				if ui.Button(c, m.VaultHostEdit()).Clicked() {
+					s.BeginEditSnippet(snippet.ID)
+					c.Invalidate()
+				}
+				if ui.Button(c, m.VaultHostDelete()).Clicked() {
+					s.RequestDeleteSnippet(snippet.ID)
+					c.Invalidate()
+				}
+			})
+			tokens := snippetSummary(s, snippet, m)
+			tokenRow(c, tokens, t)
+		})
+	})
+}
+
+// snippetSummary names where a Snippet runs and how it is sent, so the list
+// answers "will this go to the Session I am looking at?" without opening the
+// editor.
+func snippetSummary(s *vaultstate.State, snippet domainvault.Snippet, m locales.Messages) []string {
+	parts := []string{m.VaultSnippetSummaryTargets(snippetTargetText(s, snippet, m))}
+	if count := len(domainvault.ParseSnippetVariables(snippet.Command)); count > 0 {
+		parts = append(parts, m.VaultSnippetVariableCount(count))
+	}
+	if snippet.MultiLineRunMode == domainvault.SnippetRunLineDelay {
+		parts = append(parts, m.VaultSnippetLineDelay())
+	}
+	if snippet.NoAutoRun {
+		parts = append(parts, m.VaultSnippetNoAutoRun())
+	}
+	if len(snippet.Tags) > 0 {
+		parts = append(parts, strings.Join(snippet.Tags, ", "))
+	}
+	return parts
+}
+
+func snippetTargetText(s *vaultstate.State, snippet domainvault.Snippet, m locales.Messages) string {
+	if snippet.TargetsAllHosts {
+		return m.VaultSnippetSummaryAllHosts()
+	}
+	if !domainvault.SnippetHasRunTargets(snippet) {
+		return m.VaultSnippetSummaryNoTargets()
+	}
+	parts := make([]string, 0, len(snippet.Targets)+len(snippet.TargetGroups))
+	for _, path := range snippet.TargetGroups {
+		parts = append(parts, path)
+	}
+	for _, id := range snippet.Targets {
+		label := string(id)
+		for _, host := range s.Items() {
+			if host.ID == id {
+				label = host.Label
+				break
+			}
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func snippetDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteSnippet() == "" {
+		return
+	}
+	label := ""
+	if snippet, ok := s.SnippetByID(s.PendingDeleteSnippet()); ok {
+		label = snippet.Label
+	}
+	if label == "" {
+		s.CancelDeleteSnippet()
+		return
+	}
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
+		ui.Text(c, m.VaultSnippetDeleteConfirm(label)).Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteSnippet()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteSnippet()
+			c.Invalidate()
+		}
+	})
+}
+
+func snippetPackageDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	if s.PendingDeleteSnippetPackage() == "" {
+		return
+	}
+	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
+		ui.Text(c, m.VaultSnippetPackageDeleteConfirm(s.PendingDeleteSnippetPackage())).
+			Grow(1).TextColor(t.Danger)
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelDeleteSnippetPackage()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			_ = s.ConfirmDeleteSnippetPackage()
+			c.Invalidate()
+		}
+	})
+}
+
+func snippetEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+	form := s.SnippetForm()
+	title := m.VaultSnippetFormCreateTitle()
+	if form.ID != "" {
+		title = m.VaultSnippetFormEditTitle()
+	}
+
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
+
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultSnippetLabel(), func() {
+				ui.TextInput(c, &form.Label)
+			})
+			ui.Field(c, m.VaultSnippetCommand(), func() {
+				ui.TextArea(c, &form.Command).Height(120)
+			}).Description(m.VaultSnippetCommandHint())
+			ui.Field(c, m.VaultSnippetPackage(), func() {
+				ui.TextInput(c, &form.Package).Placeholder("ops/linux")
+			}).Description(m.VaultSnippetPackageHint())
+			ui.Field(c, m.VaultHostTags(), func() {
+				ui.TextInput(c, &form.Tags).Placeholder("prod, web")
+			})
+
+			ui.Text(c, m.VaultSnippetTargets()).Bold()
+			if ui.Checkbox(c, &form.TargetsAllHosts, m.VaultSnippetAllHosts()).Changed() {
+				c.Invalidate()
+			}
+			if !form.TargetsAllHosts {
+				ui.Text(c, m.VaultSnippetNoTargetsHint()).FontSize(12).TextColor(t.TextMuted)
+				groups := s.SnippetTargetGroupPaths()
+				if len(groups) > 0 {
+					ui.Text(c, m.VaultSnippetTargetGroups()).FontSize(12).TextColor(t.TextMuted)
+					ui.Row(c).Gap(8).Wrap().Children(func() {
+						for _, path := range groups {
+							checked := form.TargetGroups[path]
+							if ui.Checkbox(c, &checked, path).Changed() {
+								form.TargetGroups[path] = checked
+								c.Invalidate()
+							}
+						}
+					})
+				}
+				if s.HostCount() > 0 {
+					ui.Row(c).Gap(8).Wrap().Children(func() {
+						for _, host := range s.Items() {
+							checked := form.TargetHosts[string(host.ID)]
+							if ui.Checkbox(c, &checked, host.Label).Changed() {
+								form.TargetHosts[string(host.ID)] = checked
+								c.Invalidate()
+							}
+						}
+					})
+				}
+			}
+
+			ui.Field(c, m.VaultSnippetRunMode(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.MultiLineRunMode,
+						string(domainvault.SnippetRunPaste), m.VaultSnippetRunModePaste())
+					ui.Radio(c, &form.MultiLineRunMode,
+						string(domainvault.SnippetRunLineDelay), m.VaultSnippetRunModeLineDelay())
+				})
+			})
+			ui.Checkbox(c, &form.NoAutoRun, m.VaultSnippetNoAutoRunLabel())
+		})
+
+		problem(c, s, t)
+	})
+
+	editorActions(c, func() { _ = s.SaveSnippet() }, s.CancelSnippetEdit, m)
+}
+
+func snippetPackageEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+	form := s.SnippetPackageForm()
+	title := m.VaultSnippetPackageFormCreateTitle()
+	if form.OriginalPath != "" {
+		title = m.VaultSnippetPackageFormEditTitle()
+	}
+
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultSnippetPackagePath(), func() {
+				ui.TextInput(c, &form.Path).Placeholder("ops/linux")
+			}).Description(m.VaultSnippetPackagePathHint())
+		})
+		problem(c, s, t)
+	})
+
+	editorActions(c, func() { _ = s.SaveSnippetPackage() }, s.CancelSnippetPackageEdit, m)
+}
+
+func snippetRunEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+	form := s.SnippetRunForm()
+	if form == nil {
+		return
+	}
+	label := ""
+	if snippet, ok := s.SnippetByID(form.SnippetID); ok {
+		label = snippet.Label
+	}
+
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
+		ui.Text(c, m.VaultSnippetRunTitle(label)).FontSize(20).Bold()
+		destination := m.VaultSnippetRunDestinationActive()
+		if form.Destination == vaultstate.SnippetDestinationHosts {
+			destination = m.VaultSnippetRunDestinationHosts()
+		}
+		ui.Text(c, destination).FontSize(12).TextColor(t.TextMuted)
+
+		ui.Form(c, func() {
+			for index := range form.Variables {
+				variable := &form.Variables[index]
+				ui.Field(c, m.VaultSnippetRunVariable(variable.Name), func() {
+					ui.TextInput(c, &variable.Value)
+				})
+				if variable.HasDefault {
+					ui.Text(c, m.VaultSnippetRunVariableDefault(variable.DefaultValue)).
+						FontSize(12).TextColor(t.TextMuted)
+				}
+			}
+			ui.Text(c, m.VaultSnippetRunPreview()).Bold()
+			ui.Text(c, s.SnippetRunPreview()).FontSize(12).TextColor(t.TextMuted)
+		})
+
+		ui.Text(c, m.VaultSnippetVariablesHint()).FontSize(12).TextColor(t.TextMuted)
+		snippetRunProblem(c, s, m, t)
+	})
+
+	// The run form's primary action is Run, not Save: nothing is persisted here
+	// except the remembered variable values, after a successful run.
+	ui.Row(c).Gap(8).Children(func() {
+		if ui.PrimaryButton(c, m.VaultSnippetRunConfirm()).Clicked() {
+			s.ConfirmSnippetRun()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultHostCancel()).Clicked() {
+			s.CancelSnippetRun()
+			c.Invalidate()
+		}
+	})
+}
+
+func snippetRunProblem(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	problem := s.SnippetRunProblem()
+	if problem == vaultstate.ProblemNone {
+		return
+	}
+	if missing := s.SnippetRunMissing(); len(missing) > 0 {
+		ui.Text(c, m.VaultSnippetMissingVariables(strings.Join(missing, ", "))).
+			TextColor(t.Danger)
+	}
+	if text := problemText(m, problem); text != "" {
+		ui.Text(c, text).TextColor(t.Danger)
+	}
 }
 
 // secretBanner offers the credential-protection choice when the OS store is
@@ -1320,6 +1663,18 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemX11()
 	case vaultstate.ProblemX11Acknowledged:
 		return m.VaultProblemX11Acknowledged()
+	case vaultstate.ProblemSnippet:
+		return m.VaultSnippetProblem()
+	case vaultstate.ProblemSnippetPackage:
+		return m.VaultSnippetProblemPackage()
+	case vaultstate.ProblemSnippetMissingVariables:
+		return m.VaultSnippetProblemMissingVariables()
+	case vaultstate.ProblemSnippetTargets:
+		return m.VaultSnippetProblemTargets()
+	case vaultstate.ProblemSnippetNoSession:
+		return m.VaultSnippetProblemNoSession()
+	case vaultstate.ProblemSnippetRunFailed:
+		return m.VaultSnippetProblemRun()
 	}
 	return ""
 }

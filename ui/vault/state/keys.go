@@ -192,6 +192,15 @@ func (s *State) closeEntityEditors() {
 	s.proxyForm = ProxyForm{}
 	s.pendingDeleteProxy = ""
 	s.pendingDeleteKnown = ""
+	s.editingSnippet = false
+	s.snippetForm = SnippetForm{}
+	s.pendingDeleteSnippet = ""
+	s.editingSnippetPackage = false
+	s.snippetPackageForm = SnippetPackageForm{}
+	s.pendingDeleteSnippetPackage = ""
+	s.snippetRun = nil
+	s.snippetRunMissing = nil
+	s.snippetRunProblem = ProblemNone
 }
 
 func keyProblemFor(err error) Problem {
