@@ -65,6 +65,12 @@ _Avoid_: client, socket
 A counted claim on a shared Connection held by a session or forwarding rule.
 _Avoid_: reference, handle
 
+**Connection Log**:
+One recorded connect attempt or outcome for a Host or the local shell: Host, kind,
+status, error, and start/end timestamps. Connection Logs are browsed in the Logs
+surface and bounded by retention.
+_Avoid_: session log, terminal log, connection history
+
 **Idle Parking**:
 The zero-lease state of a Connection kept open for reuse until its idle TTL expires
 or the app quits.
@@ -74,6 +80,17 @@ _Avoid_: cache, warm pool
 A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTerminal)
 with its own lifecycle, transport, and terminal surface.
 _Avoid_: terminal, tab, shell
+
+**Command History**:
+The persisted record of commands executed in Sessions and local shells, one row per
+execution with Session, Host, command, source, and timestamp. Autocomplete aggregates
+the same rows instead of keeping its own copy.
+_Avoid_: shell history, command log
+
+**Shell History File**:
+A zsh, bash, or fish history file that autocomplete may read as a suggestion source.
+It belongs to the user's shell and is distinct from the app's Command History.
+_Avoid_: history, command history
 
 **Hibernate**:
 The state of a running Session whose one live terminal view is detached while its

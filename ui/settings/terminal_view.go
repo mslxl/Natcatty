@@ -65,6 +65,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		})
 
 		renderPowerUxSection(c, state, settings, m, t)
+		renderRetentionSection(c, state, settings, m, t)
 
 		ui.Text(c, m.SettingsTerminalEncoding()).Bold()
 		encodingLabels := make([]string, 0, len(domainterminal.SupportedEncodings()))
@@ -213,6 +214,50 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		c.Invalidate()
 	}
 
+}
+
+// renderRetentionSection draws the connection log and command history
+// retention bounds. The two count fields and the two age fields are edited
+// independently; each save carries the other field's current value so an
+// edit never silently resets its neighbour.
+func renderRetentionSection(c *ui.Context, state *TerminalState,
+	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsRetentionTitle()).Bold()
+	ui.Text(c, m.SettingsRetentionDescription()).FontSize(12).TextColor(t.TextMuted)
+
+	logCount := float64(domainterminal.NormalizeRetentionCount(settings.ConnectionLogRetentionCount))
+	ui.Field(c, m.SettingsConnectionLogRetentionCount(), func() {
+		if ui.NumberInput(c, &logCount, 0,
+			float64(domainterminal.MaxRetentionCount), 100).Width(120).Changed() {
+			state.SetConnectionLogRetention(int(logCount), settings.ConnectionLogRetentionDays)
+			c.Invalidate()
+		}
+	})
+	logDays := float64(domainterminal.NormalizeRetentionDays(settings.ConnectionLogRetentionDays))
+	ui.Field(c, m.SettingsConnectionLogRetentionDays(), func() {
+		if ui.NumberInput(c, &logDays, 0,
+			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
+			state.SetConnectionLogRetention(settings.ConnectionLogRetentionCount, int(logDays))
+			c.Invalidate()
+		}
+	})
+
+	historyCount := float64(domainterminal.NormalizeRetentionCount(settings.HistoryRetentionCount))
+	ui.Field(c, m.SettingsHistoryRetentionCount(), func() {
+		if ui.NumberInput(c, &historyCount, 0,
+			float64(domainterminal.MaxRetentionCount), 100).Width(120).Changed() {
+			state.SetHistoryRetention(int(historyCount), settings.HistoryRetentionDays)
+			c.Invalidate()
+		}
+	})
+	historyDays := float64(domainterminal.NormalizeRetentionDays(settings.HistoryRetentionDays))
+	ui.Field(c, m.SettingsHistoryRetentionDays(), func() {
+		if ui.NumberInput(c, &historyDays, 0,
+			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
+			state.SetHistoryRetention(settings.HistoryRetentionCount, int(historyDays))
+			c.Invalidate()
+		}
+	})
 }
 
 func logFormatOptions(m locales.Messages) ([]string, []domainterminal.LogFormat) {
