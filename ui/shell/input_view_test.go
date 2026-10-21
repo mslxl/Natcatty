@@ -126,6 +126,39 @@ func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 	}
 }
 
+// TestInputControlsKeepTheirTextLineUnderShortFontMetrics pins the text line
+// of the broadcast and compose controls to a height of their own. macOS lays
+// the same labels out at 15.3 DIPs, below the 16-DIP minimum a control needs
+// to stay readable; a scaled default theme reproduces shorter metrics on any
+// platform, so a control that leaves its line height to the font is caught
+// everywhere.
+func TestInputControlsKeepTheirTextLineUnderShortFontMetrics(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+		graph := newInputGraph(t)
+		prepareBroadcastAndCompose(t, graph)
+
+		tester := ui.NewTester(View(graph.state), size[0], size[1])
+		tester.SetLocale("en")
+		tester.SetPreferences(ui.Preferences{TextScale: 0.8})
+		tester.Frame()
+
+		for _, want := range []string{
+			m.BroadcastStop(),
+			m.ComposeTrim(),
+			m.ComposeDecodeEscapes(),
+			m.ComposeSend(),
+			m.ComposeCancel(),
+		} {
+			rect := assertInputInside(t, tester, size[0], size[1], want)
+			if rect.H < 16 {
+				t.Fatalf("%dx%d with short font metrics %q is %.1f DIPs, want at least 16: %+v",
+					size[0], size[1], want, rect.H, rect)
+			}
+		}
+	}
+}
+
 // TestBroadcastControlsShowStoppedState proves the active state disappears
 // when broadcast stops while the target panel stays usable.
 func TestBroadcastControlsShowStoppedState(t *testing.T) {
