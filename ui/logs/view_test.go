@@ -86,6 +86,27 @@ func seededSource() *fakeSource {
 	return source
 }
 
+// seededLogSource records count connection attempts, enough to exercise
+// paging and the scroll path a real wheel and keyboard use.
+func seededLogSource(count int) *fakeSource {
+	now := time.Now()
+	source := &fakeSource{}
+	for index := 0; index < count; index++ {
+		source.logs = append(source.logs, domainhistory.ConnectionLog{
+			ID:        fmt.Sprintf("log-%03d", index),
+			SessionID: "session-1",
+			HostID:    "host-1",
+			HostLabel: fmt.Sprintf("web-%03d", index),
+			Hostname:  fmt.Sprintf("10.1.0.%d", index+1),
+			Username:  "deploy",
+			Kind:      "ssh",
+			Status:    domainhistory.ConnectionConnected,
+			StartedAt: now.Add(-time.Duration(index) * time.Minute),
+		})
+	}
+	return source
+}
+
 // newProductionLogsView builds the real shell, opens one work Tab so the tab
 // strip renders, and shows Logs. This is the chrome the production window
 // gives the surface, not a bare component.
@@ -253,6 +274,140 @@ func TestClearHistoryConfirmationIsReachable(t *testing.T) {
 	tt.Frame()
 	if state.PendingClear() {
 		t.Fatal("Cancel did not close the clear confirmation")
+	}
+}
+
+// TestLogsSurfaceReachesTheEndWithRealInputAtAShortHeight drives the same
+// input path a user does (wheel, PageDown, End) at a height where the fixed
+// title, tabs, and filters once consumed the whole list viewport. Every step
+// must move the list and the last row must end up inside the window.
+func TestLogsSurfaceReachesTheEndWithRealInputAtAShortHeight(t *testing.T) {
+	tt, state := newProductionLogsView(t, 720, 300, seededLogSource(130), &fakeActions{})
+	state.ShowMore()
+	tt.Frame()
+
+	// The pointer sits in the list viewport, away from the filter fields.
+	x, y := float32(360), float32(260)
+	tt.Move(x, y)
+	tt.Scroll(x, y, 0, 400)
+	tt.Frame()
+	if !textsContain(tt, "web-000") {
+		t.Fatalf("the wheel did not reveal the first rows: %v", tt.Texts())
+	}
+
+	tt.Key(0, ui.KeyPageDown)
+	tt.Frame()
+	tt.Key(0, ui.KeyEnd)
+	tt.Frame()
+	assertVisible(t, tt, "web-129", 720, 300)
+}
+
+// TestUnsavedHostRowKeepsItsTypedLabel proves a typed Host with no saved record
+// is not a local shell: its row shows what the user typed, the Local filter
+// excludes it, and the unsaved filter finds it.
+func TestUnsavedHostRowKeepsItsTypedLabel(t *testing.T) {
+	m := locales.In("en")
+	source := &fakeSource{logs: []domainhistory.ConnectionLog{{
+		ID: "unsaved", HostLabel: "deploy@typed.example", Hostname: "typed.example",
+		Username: "deploy", Kind: "ssh", Status: domainhistory.ConnectionConnected,
+		StartedAt: time.Now(),
+	}}}
+	tt, state := newProductionLogsView(t, 1100, 720, source, &fakeActions{})
+	if !textsContain(tt, "deploy@typed.example") {
+		t.Fatalf("the typed label is not rendered: %v", tt.Texts())
+	}
+	if textsContain(tt, m.LogsLocalTerminal()) {
+		t.Fatalf("the unsaved Host row is labelled Local terminal: %v", tt.Texts())
+	}
+
+	state.SetHostKey(domainhistory.LocalHostKey)
+	tt.Frame()
+	if textsContain(tt, "deploy@typed.example") {
+		t.Fatalf("the Local filter matched the unsaved Host: %v", tt.Texts())
+	}
+	state.SetHostKey(domainhistory.UnsavedHostKey)
+	tt.Frame()
+	if !textsContain(tt, "deploy@typed.example") {
+		t.Fatalf("the unsaved filter lost the unsaved Host: %v", tt.Texts())
+	}
+}
+
+// TestHistoryUnsavedHostRowKeepsItsTypedLabel proves the History tab names a
+// typed Host by what the user typed, not by either the local shell or a saved
+// Host identity.
+func TestHistoryUnsavedHostRowKeepsItsTypedLabel(t *testing.T) {
+	source := &fakeSource{entries: []domainhistory.Entry{{
+		ID: "unsaved", HostLabel: "deploy@typed.example", UnsavedHost: true,
+		Scope: "local", Command: "uptime", Source: domainhistory.SourceSession,
+		RecordedAt: time.Now(),
+	}}}
+	tt, state := newProductionLogsView(t, 1100, 720, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+	if !textsContain(tt, "deploy@typed.example") {
+		t.Fatalf("the History row lost the typed Host label: %v", tt.Texts())
+	}
+
+	state.SetHostKey(domainhistory.LocalHostKey)
+	tt.Frame()
+	if textsContain(tt, "uptime") {
+		t.Fatalf("the Local filter matched the typed Host command: %v", tt.Texts())
+	}
+}
+
+// TestClearConnectionLogsConfirmationAndBanner proves the Connections tab has
+// the same two-step clear as history: Cancel leaves the rows and Confirm
+// removes them, leaves command history alone, and shows a localized banner.
+func TestClearConnectionLogsConfirmationAndBanner(t *testing.T) {
+	m := locales.In("en")
+	tt, state := newProductionLogsView(t, 720, 480, seededSource(), &fakeActions{})
+
+	if err := tt.Click(m.LogsClearConnections()); err != nil {
+		t.Fatalf("click Clear connection logs: %v", err)
+	}
+	tt.Frame()
+	assertVisible(t, tt, m.LogsClearConnectionsConfirm(), 720, 480)
+	if err := tt.Click(m.LogsCancel()); err != nil {
+		t.Fatalf("click Cancel: %v", err)
+	}
+	tt.Frame()
+	if state.PendingClear() || state.TotalLogs() != 30 || state.TotalEntries() != 30 {
+		t.Fatalf("Cancel changed records: pending = %v, logs = %d, entries = %d",
+			state.PendingClear(), state.TotalLogs(), state.TotalEntries())
+	}
+
+	if err := tt.Click(m.LogsClearConnections()); err != nil {
+		t.Fatalf("reopen Clear connection logs: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(m.LogsClearYes()); err != nil {
+		t.Fatalf("click Clear: %v", err)
+	}
+	tt.Frame()
+	if state.TotalLogs() != 0 || state.TotalEntries() != 30 {
+		t.Fatalf("after clearing logs: logs = %d, entries = %d",
+			state.TotalLogs(), state.TotalEntries())
+	}
+	assertVisible(t, tt, m.LogsConnectionsCleared(30), 720, 480)
+	assertVisible(t, tt, m.LogsEmptyConnections(), 720, 480)
+	assertNoHorizontalOverflow(t, tt, 720, 480)
+}
+
+// TestClearErrorNamesTheHistoryFamily proves a failed history clear says so
+// even though the confirmation and banner code is shared with connections.
+func TestClearErrorNamesTheHistoryFamily(t *testing.T) {
+	m := locales.In("en")
+	source := &fakeSource{}
+	tt, state := newProductionLogsView(t, 720, 480, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	source.deleteErr = fmt.Errorf("disk")
+	state.ConfirmClear()
+	tt.Frame()
+	if !textsContain(tt, m.LogsProblemClear()) {
+		t.Fatalf("the history clear failure is not shown: %v", tt.Texts())
+	}
+	if textsContain(tt, m.LogsProblemClearConnections()) {
+		t.Fatalf("the history clear failure was labelled a connection-log failure: %v", tt.Texts())
 	}
 }
 
