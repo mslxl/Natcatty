@@ -9,6 +9,12 @@
 *.yml text eol=lf
 *.md text eol=lf
 
+# The CSV import fixtures assert exact bytes (UTF-8 BOM, CRLF row endings), and
+# the rest of the import fixture tree must stay byte-stable too. The JSON rule
+# above still sets eol for these paths unless it is unset here as well.
+domain/vaultimport/testdata/** -text -eol
+app/testdata/selftest24/** -text -eol
+
 *.png binary
 *.ico binary
 *.icns binary
