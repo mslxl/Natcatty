@@ -44,6 +44,9 @@ func (e *Error) Unwrap() error { return e.Cause }
 // ErrSnippetsUnavailable reports a Service without Snippet persistence.
 var ErrSnippetsUnavailable = errors.New("snippet storage is unavailable")
 
+// ErrNotesUnavailable reports a Service without Vault Note persistence.
+var ErrNotesUnavailable = errors.New("note storage is unavailable")
+
 // ErrNotFound reports a Host that does not exist. Repositories return it, and
 // the Service passes it through unchanged.
 var ErrNotFound = &Error{Kind: KindNotFound}

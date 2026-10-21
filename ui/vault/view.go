@@ -45,6 +45,9 @@ const (
 	surfaceSnippetRun
 	surfaceSnippet
 	surfaceSnippetPackage
+	surfaceNote
+	surfaceNoteView
+	surfaceNoteGroup
 )
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
@@ -53,6 +56,7 @@ const (
 type scrolls struct {
 	list   ui.ScrollState
 	editor ui.ScrollState
+	viewer ui.ScrollState
 	last   surface
 }
 
@@ -62,6 +66,7 @@ type scrolls struct {
 func (p *scrolls) trackEditor(now surface) {
 	if now != p.last && now != surfaceList {
 		p.editor.X, p.editor.Y = 0, 0
+		p.viewer.X, p.viewer.Y = 0, 0
 	}
 	p.last = now
 }
@@ -73,6 +78,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceForwarding
 	case s.SnippetRunOpen():
 		return surfaceSnippetRun
+	case s.ViewingNote():
+		return surfaceNoteView
 	case s.Editing():
 		return surfaceHost
 	case s.EditingKey():
@@ -87,6 +94,10 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceSnippetPackage
 	case s.EditingSnippet():
 		return surfaceSnippet
+	case s.EditingNoteGroup():
+		return surfaceNoteGroup
+	case s.EditingNote():
+		return surfaceNote
 	default:
 		return surfaceList
 	}
@@ -137,6 +148,12 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				snippetEditor(c, s, m, t, &positions.editor)
 			case surfaceSnippetPackage:
 				snippetPackageEditor(c, s, m, t, &positions.editor)
+			case surfaceNote:
+				noteEditor(c, s, m, t, &positions.editor)
+			case surfaceNoteView:
+				noteViewer(c, s, m, t, &positions.viewer)
+			case surfaceNoteGroup:
+				noteGroupEditor(c, s, m, t, &positions.editor)
 			default:
 				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
@@ -185,6 +202,9 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	knownHostDeleteBanner(c, s, m, t)
 	snippetDeleteBanner(c, s, m, t)
 	snippetPackageDeleteBanner(c, s, m, t)
+	noteDeleteBanner(c, s, m, t)
+	noteGroupDeleteBanner(c, s, m, t)
+	noteExportBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
@@ -193,6 +213,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 		proxySection(c, s, m, t)
 		knownHostSection(c, s, m, t)
 		snippetSection(c, s, m, t)
+		notesSection(c, s, m, t)
 		if forwarding != nil {
 			uiforwarding.Section(c, forwarding)
 		}
@@ -1675,6 +1696,12 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultSnippetProblemNoSession()
 	case vaultstate.ProblemSnippetRunFailed:
 		return m.VaultSnippetProblemRun()
+	case vaultstate.ProblemNote:
+		return m.VaultNoteProblem()
+	case vaultstate.ProblemNoteContent:
+		return m.VaultNoteProblemContent()
+	case vaultstate.ProblemNoteGroup:
+		return m.VaultNoteProblemGroup()
 	}
 	return ""
 }

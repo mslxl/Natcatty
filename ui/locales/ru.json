@@ -753,5 +753,195 @@
   "vaultSnippetProblemTargets": "Этот сниппет не нацелен на активный сеанс, и у него нет целевых хостов.",
   "vaultSnippetProblemMissingVariables": "Заполните все обязательные переменные перед запуском.",
   "vaultSnippetProblem": "Сниппет некорректен.",
-  "vaultSnippetProblemPackage": "Некорректный путь пакета сниппетов."
+  "vaultSnippetProblemPackage": "Некорректный путь пакета сниппетов.",
+  "vaultNoteListTitle": "Заметки ({count})",
+  "@vaultNoteListTitle": {
+    "description": "The Vault's Note list heading and its Note count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultNoteEmpty": "Заметок пока нет. Создайте заметку в Markdown.",
+  "@vaultNoteEmpty": {
+    "description": "Shown when the Vault has no Notes."
+  },
+  "vaultNoteNew": "Новая заметка",
+  "@vaultNoteNew": {
+    "description": "The button that opens the Note editor for a new Note."
+  },
+  "vaultNoteGroupNew": "Новая группа",
+  "@vaultNoteGroupNew": {
+    "description": "The button that opens the Note Group editor."
+  },
+  "vaultNoteSearchPlaceholder": "Поиск заметок",
+  "@vaultNoteSearchPlaceholder": {
+    "description": "The Note search field's placeholder."
+  },
+  "vaultNoteSearchLabel": "Поиск заметок",
+  "@vaultNoteSearchLabel": {
+    "description": "The accessible name of the Note search field."
+  },
+  "vaultNoteSearchEmpty": "Нет заметок, соответствующих «{query}».",
+  "@vaultNoteSearchEmpty": {
+    "description": "Shown when a Note search matches nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "vaultNoteOpen": "Открыть",
+  "@vaultNoteOpen": {
+    "description": "The button that opens a Note in the native Markdown viewer."
+  },
+  "vaultNoteExportMarkdown": "Экспорт Markdown",
+  "@vaultNoteExportMarkdown": {
+    "description": "The button that saves a Note's Markdown source."
+  },
+  "vaultNoteExportHTML": "Экспорт HTML",
+  "@vaultNoteExportHTML": {
+    "description": "The button that saves a Note as self-contained HTML."
+  },
+  "vaultNoteExportZIP": "Экспорт ZIP",
+  "@vaultNoteExportZIP": {
+    "description": "The button that saves a Note in a ZIP archive."
+  },
+  "vaultNoteExportAll": "Экспорт всех в ZIP",
+  "@vaultNoteExportAll": {
+    "description": "The button that saves every Note as a ZIP archive."
+  },
+  "vaultNoteExportSaved": "Сохранено в {path}.",
+  "@vaultNoteExportSaved": {
+    "description": "Confirms where a Note export was written.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Users/me/note.md"
+      }
+    }
+  },
+  "vaultNoteExportEmpty": "Нет заметок для экспорта.",
+  "@vaultNoteExportEmpty": {
+    "description": "Shown when a ZIP export finds an empty Vault."
+  },
+  "vaultNoteExportUnavailable": "Экспорт недоступен в этой сборке.",
+  "@vaultNoteExportUnavailable": {
+    "description": "Shown when no export writer is configured."
+  },
+  "vaultNoteExportFailed": "Не удалось записать экспорт.",
+  "@vaultNoteExportFailed": {
+    "description": "Shown when saving an export fails."
+  },
+  "vaultNoteFormCreateTitle": "Новая заметка",
+  "@vaultNoteFormCreateTitle": {
+    "description": "The Note editor's heading when creating."
+  },
+  "vaultNoteFormEditTitle": "Изменить заметку",
+  "@vaultNoteFormEditTitle": {
+    "description": "The Note editor's heading when editing."
+  },
+  "vaultNoteTitle": "Заголовок",
+  "@vaultNoteTitle": {
+    "description": "The Note title field."
+  },
+  "vaultNoteGroup": "Группа",
+  "@vaultNoteGroup": {
+    "description": "The Note group field."
+  },
+  "vaultNoteGroupHint": "Необязательно. Используйте косые черты для вложенности, например ops/runbooks.",
+  "@vaultNoteGroupHint": {
+    "description": "The Note group field's hint."
+  },
+  "vaultNoteContent": "Markdown",
+  "@vaultNoteContent": {
+    "description": "The Note Markdown source field."
+  },
+  "vaultNoteContentHint": "Markdown отображается во встроенном просмотрщике заметок.",
+  "@vaultNoteContentHint": {
+    "description": "The Note Markdown field's hint."
+  },
+  "vaultNoteGroupFormCreateTitle": "Новая группа заметок",
+  "@vaultNoteGroupFormCreateTitle": {
+    "description": "The Note Group editor's heading when creating."
+  },
+  "vaultNoteGroupFormEditTitle": "Переименовать группу заметок",
+  "@vaultNoteGroupFormEditTitle": {
+    "description": "The Note Group editor's heading when renaming."
+  },
+  "vaultNoteGroupPath": "Путь группы",
+  "@vaultNoteGroupPath": {
+    "description": "The Note Group path field."
+  },
+  "vaultNoteGroupPathHint": "Используйте косые черты для вложенности, например ops/runbooks.",
+  "@vaultNoteGroupPathHint": {
+    "description": "The Note Group path field's hint."
+  },
+  "vaultNoteGroupNoteCount": "Заметок: {count}",
+  "@vaultNoteGroupNoteCount": {
+    "description": "How many Notes one Note Group directly contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNoteDeleteConfirm": "Удалить заметку «{title}»?",
+  "@vaultNoteDeleteConfirm": {
+    "description": "The confirmation naming the Note to delete.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "RESTART"
+      }
+    }
+  },
+  "vaultNoteGroupDeleteConfirm": "Удалить группу «{path}»? Её заметки перейдут в корень Vault.",
+  "@vaultNoteGroupDeleteConfirm": {
+    "description": "The confirmation naming the Note Group to delete.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteViewerRoot": "Корень Vault",
+  "@vaultNoteViewerRoot": {
+    "description": "The viewer's metadata when a Note is at the Vault root."
+  },
+  "vaultNoteViewerGroup": "Группа: {path}",
+  "@vaultNoteViewerGroup": {
+    "description": "The viewer's metadata naming a Note's group.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteBack": "Назад",
+  "@vaultNoteBack": {
+    "description": "The button that closes the Note viewer."
+  },
+  "vaultNoteProblem": "Введите заголовок заметки.",
+  "@vaultNoteProblem": {
+    "description": "Shown when a Note title is missing or invalid."
+  },
+  "vaultNoteProblemContent": "Markdown заметки слишком велик.",
+  "@vaultNoteProblemContent": {
+    "description": "Shown when a Note's Markdown exceeds the limit."
+  },
+  "vaultNoteProblemGroup": "Введите допустимый путь группы.",
+  "@vaultNoteProblemGroup": {
+    "description": "Shown when a Note or Note Group path is invalid."
+  },
+  "vaultNoteRoot": "Без группы",
+  "@vaultNoteRoot": {
+    "description": "Заголовок заметок в корне Vault."
+  }
 }

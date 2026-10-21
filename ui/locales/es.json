@@ -753,5 +753,195 @@
   "vaultSnippetProblemTargets": "Este fragmento no tiene como destino la sesión activa y no tiene hosts de destino.",
   "vaultSnippetProblemMissingVariables": "Completa todas las variables obligatorias antes de ejecutar.",
   "vaultSnippetProblem": "El fragmento no es válido.",
-  "vaultSnippetProblemPackage": "La ruta del paquete de fragmentos no es válida."
+  "vaultSnippetProblemPackage": "La ruta del paquete de fragmentos no es válida.",
+  "vaultNoteListTitle": "Notas ({count})",
+  "@vaultNoteListTitle": {
+    "description": "The Vault's Note list heading and its Note count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultNoteEmpty": "Aún no hay notas. Escribe una nota en Markdown.",
+  "@vaultNoteEmpty": {
+    "description": "Shown when the Vault has no Notes."
+  },
+  "vaultNoteNew": "Nueva nota",
+  "@vaultNoteNew": {
+    "description": "The button that opens the Note editor for a new Note."
+  },
+  "vaultNoteGroupNew": "Nuevo grupo",
+  "@vaultNoteGroupNew": {
+    "description": "The button that opens the Note Group editor."
+  },
+  "vaultNoteSearchPlaceholder": "Buscar notas",
+  "@vaultNoteSearchPlaceholder": {
+    "description": "The Note search field's placeholder."
+  },
+  "vaultNoteSearchLabel": "Buscar notas",
+  "@vaultNoteSearchLabel": {
+    "description": "The accessible name of the Note search field."
+  },
+  "vaultNoteSearchEmpty": "Ninguna nota coincide con «{query}».",
+  "@vaultNoteSearchEmpty": {
+    "description": "Shown when a Note search matches nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "vaultNoteOpen": "Abrir",
+  "@vaultNoteOpen": {
+    "description": "The button that opens a Note in the native Markdown viewer."
+  },
+  "vaultNoteExportMarkdown": "Exportar Markdown",
+  "@vaultNoteExportMarkdown": {
+    "description": "The button that saves a Note's Markdown source."
+  },
+  "vaultNoteExportHTML": "Exportar HTML",
+  "@vaultNoteExportHTML": {
+    "description": "The button that saves a Note as self-contained HTML."
+  },
+  "vaultNoteExportZIP": "Exportar ZIP",
+  "@vaultNoteExportZIP": {
+    "description": "The button that saves a Note in a ZIP archive."
+  },
+  "vaultNoteExportAll": "Exportar todo como ZIP",
+  "@vaultNoteExportAll": {
+    "description": "The button that saves every Note as a ZIP archive."
+  },
+  "vaultNoteExportSaved": "Guardado en {path}.",
+  "@vaultNoteExportSaved": {
+    "description": "Confirms where a Note export was written.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Users/me/note.md"
+      }
+    }
+  },
+  "vaultNoteExportEmpty": "No hay notas para exportar.",
+  "@vaultNoteExportEmpty": {
+    "description": "Shown when a ZIP export finds an empty Vault."
+  },
+  "vaultNoteExportUnavailable": "La exportación no está disponible en esta compilación.",
+  "@vaultNoteExportUnavailable": {
+    "description": "Shown when no export writer is configured."
+  },
+  "vaultNoteExportFailed": "No se pudo escribir la exportación.",
+  "@vaultNoteExportFailed": {
+    "description": "Shown when saving an export fails."
+  },
+  "vaultNoteFormCreateTitle": "Nueva nota",
+  "@vaultNoteFormCreateTitle": {
+    "description": "The Note editor's heading when creating."
+  },
+  "vaultNoteFormEditTitle": "Editar nota",
+  "@vaultNoteFormEditTitle": {
+    "description": "The Note editor's heading when editing."
+  },
+  "vaultNoteTitle": "Título",
+  "@vaultNoteTitle": {
+    "description": "The Note title field."
+  },
+  "vaultNoteGroup": "Grupo",
+  "@vaultNoteGroup": {
+    "description": "The Note group field."
+  },
+  "vaultNoteGroupHint": "Opcional. Usa barras para anidar, por ejemplo ops/runbooks.",
+  "@vaultNoteGroupHint": {
+    "description": "The Note group field's hint."
+  },
+  "vaultNoteContent": "Markdown",
+  "@vaultNoteContent": {
+    "description": "The Note Markdown source field."
+  },
+  "vaultNoteContentHint": "Markdown se muestra en el visor nativo de notas.",
+  "@vaultNoteContentHint": {
+    "description": "The Note Markdown field's hint."
+  },
+  "vaultNoteGroupFormCreateTitle": "Nuevo grupo de notas",
+  "@vaultNoteGroupFormCreateTitle": {
+    "description": "The Note Group editor's heading when creating."
+  },
+  "vaultNoteGroupFormEditTitle": "Cambiar nombre del grupo de notas",
+  "@vaultNoteGroupFormEditTitle": {
+    "description": "The Note Group editor's heading when renaming."
+  },
+  "vaultNoteGroupPath": "Ruta del grupo",
+  "@vaultNoteGroupPath": {
+    "description": "The Note Group path field."
+  },
+  "vaultNoteGroupPathHint": "Usa barras para anidar, por ejemplo ops/runbooks.",
+  "@vaultNoteGroupPathHint": {
+    "description": "The Note Group path field's hint."
+  },
+  "vaultNoteGroupNoteCount": "{count} notas",
+  "@vaultNoteGroupNoteCount": {
+    "description": "How many Notes one Note Group directly contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNoteDeleteConfirm": "¿Eliminar la nota «{title}»?",
+  "@vaultNoteDeleteConfirm": {
+    "description": "The confirmation naming the Note to delete.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "RESTART"
+      }
+    }
+  },
+  "vaultNoteGroupDeleteConfirm": "¿Eliminar el grupo «{path}»? Sus notas pasan a la raíz del Vault.",
+  "@vaultNoteGroupDeleteConfirm": {
+    "description": "The confirmation naming the Note Group to delete.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteViewerRoot": "Raíz del Vault",
+  "@vaultNoteViewerRoot": {
+    "description": "The viewer's metadata when a Note is at the Vault root."
+  },
+  "vaultNoteViewerGroup": "Grupo: {path}",
+  "@vaultNoteViewerGroup": {
+    "description": "The viewer's metadata naming a Note's group.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteBack": "Volver",
+  "@vaultNoteBack": {
+    "description": "The button that closes the Note viewer."
+  },
+  "vaultNoteProblem": "Introduce un título para la nota.",
+  "@vaultNoteProblem": {
+    "description": "Shown when a Note title is missing or invalid."
+  },
+  "vaultNoteProblemContent": "El Markdown de la nota es demasiado grande.",
+  "@vaultNoteProblemContent": {
+    "description": "Shown when a Note's Markdown exceeds the limit."
+  },
+  "vaultNoteProblemGroup": "Introduce una ruta de grupo válida.",
+  "@vaultNoteProblemGroup": {
+    "description": "Shown when a Note or Note Group path is invalid."
+  },
+  "vaultNoteRoot": "Sin grupo",
+  "@vaultNoteRoot": {
+    "description": "El encabezado de las notas en la raíz del Vault."
+  }
 }

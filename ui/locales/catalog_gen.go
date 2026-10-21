@@ -6577,3 +6577,527 @@ func VaultSnippetProblemPackage() string { return In(i18n.Locale()).VaultSnippet
 func (msgs Messages) VaultSnippetProblemPackage() string {
 	return Catalog.Format(msgs.locale, "vaultSnippetProblemPackage", nil)
 }
+
+// VaultNoteListTitle says "Notes ({count})"
+// in the language the app shows.
+//
+// The Vault's Note list heading and its Note count.
+func VaultNoteListTitle(count int) string { return In(i18n.Locale()).VaultNoteListTitle(count) }
+
+// VaultNoteListTitle says "Notes ({count})"
+// in the language of msgs.
+//
+// The Vault's Note list heading and its Note count.
+func (msgs Messages) VaultNoteListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultNoteListTitle", map[string]any{"count": count})
+}
+
+// VaultNoteEmpty says "No Notes yet. Write a Markdown note."
+// in the language the app shows.
+//
+// Shown when the Vault has no Notes.
+func VaultNoteEmpty() string { return In(i18n.Locale()).VaultNoteEmpty() }
+
+// VaultNoteEmpty says "No Notes yet. Write a Markdown note."
+// in the language of msgs.
+//
+// Shown when the Vault has no Notes.
+func (msgs Messages) VaultNoteEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultNoteEmpty", nil)
+}
+
+// VaultNoteNew says "New Note"
+// in the language the app shows.
+//
+// The button that opens the Note editor for a new Note.
+func VaultNoteNew() string { return In(i18n.Locale()).VaultNoteNew() }
+
+// VaultNoteNew says "New Note"
+// in the language of msgs.
+//
+// The button that opens the Note editor for a new Note.
+func (msgs Messages) VaultNoteNew() string {
+	return Catalog.Format(msgs.locale, "vaultNoteNew", nil)
+}
+
+// VaultNoteGroupNew says "New group"
+// in the language the app shows.
+//
+// The button that opens the Note Group editor.
+func VaultNoteGroupNew() string { return In(i18n.Locale()).VaultNoteGroupNew() }
+
+// VaultNoteGroupNew says "New group"
+// in the language of msgs.
+//
+// The button that opens the Note Group editor.
+func (msgs Messages) VaultNoteGroupNew() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupNew", nil)
+}
+
+// VaultNoteSearchPlaceholder says "Search notes"
+// in the language the app shows.
+//
+// The Note search field's placeholder.
+func VaultNoteSearchPlaceholder() string { return In(i18n.Locale()).VaultNoteSearchPlaceholder() }
+
+// VaultNoteSearchPlaceholder says "Search notes"
+// in the language of msgs.
+//
+// The Note search field's placeholder.
+func (msgs Messages) VaultNoteSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "vaultNoteSearchPlaceholder", nil)
+}
+
+// VaultNoteSearchLabel says "Search notes"
+// in the language the app shows.
+//
+// The accessible name of the Note search field.
+func VaultNoteSearchLabel() string { return In(i18n.Locale()).VaultNoteSearchLabel() }
+
+// VaultNoteSearchLabel says "Search notes"
+// in the language of msgs.
+//
+// The accessible name of the Note search field.
+func (msgs Messages) VaultNoteSearchLabel() string {
+	return Catalog.Format(msgs.locale, "vaultNoteSearchLabel", nil)
+}
+
+// VaultNoteSearchEmpty says "No Notes match “{query}”."
+// in the language the app shows.
+//
+// Shown when a Note search matches nothing.
+func VaultNoteSearchEmpty(query string) string { return In(i18n.Locale()).VaultNoteSearchEmpty(query) }
+
+// VaultNoteSearchEmpty says "No Notes match “{query}”."
+// in the language of msgs.
+//
+// Shown when a Note search matches nothing.
+func (msgs Messages) VaultNoteSearchEmpty(query string) string {
+	return Catalog.Format(msgs.locale, "vaultNoteSearchEmpty", map[string]any{"query": query})
+}
+
+// VaultNoteOpen says "Open"
+// in the language the app shows.
+//
+// The button that opens a Note in the native Markdown viewer.
+func VaultNoteOpen() string { return In(i18n.Locale()).VaultNoteOpen() }
+
+// VaultNoteOpen says "Open"
+// in the language of msgs.
+//
+// The button that opens a Note in the native Markdown viewer.
+func (msgs Messages) VaultNoteOpen() string {
+	return Catalog.Format(msgs.locale, "vaultNoteOpen", nil)
+}
+
+// VaultNoteExportMarkdown says "Export Markdown"
+// in the language the app shows.
+//
+// The button that saves a Note's Markdown source.
+func VaultNoteExportMarkdown() string { return In(i18n.Locale()).VaultNoteExportMarkdown() }
+
+// VaultNoteExportMarkdown says "Export Markdown"
+// in the language of msgs.
+//
+// The button that saves a Note's Markdown source.
+func (msgs Messages) VaultNoteExportMarkdown() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportMarkdown", nil)
+}
+
+// VaultNoteExportHTML says "Export HTML"
+// in the language the app shows.
+//
+// The button that saves a Note as self-contained HTML.
+func VaultNoteExportHTML() string { return In(i18n.Locale()).VaultNoteExportHTML() }
+
+// VaultNoteExportHTML says "Export HTML"
+// in the language of msgs.
+//
+// The button that saves a Note as self-contained HTML.
+func (msgs Messages) VaultNoteExportHTML() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportHTML", nil)
+}
+
+// VaultNoteExportZIP says "Export ZIP"
+// in the language the app shows.
+//
+// The button that saves a Note in a ZIP archive.
+func VaultNoteExportZIP() string { return In(i18n.Locale()).VaultNoteExportZIP() }
+
+// VaultNoteExportZIP says "Export ZIP"
+// in the language of msgs.
+//
+// The button that saves a Note in a ZIP archive.
+func (msgs Messages) VaultNoteExportZIP() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportZIP", nil)
+}
+
+// VaultNoteExportAll says "Export all as ZIP"
+// in the language the app shows.
+//
+// The button that saves every Note as a ZIP archive.
+func VaultNoteExportAll() string { return In(i18n.Locale()).VaultNoteExportAll() }
+
+// VaultNoteExportAll says "Export all as ZIP"
+// in the language of msgs.
+//
+// The button that saves every Note as a ZIP archive.
+func (msgs Messages) VaultNoteExportAll() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportAll", nil)
+}
+
+// VaultNoteExportSaved says "Saved to {path}."
+// in the language the app shows.
+//
+// Confirms where a Note export was written.
+func VaultNoteExportSaved(path string) string { return In(i18n.Locale()).VaultNoteExportSaved(path) }
+
+// VaultNoteExportSaved says "Saved to {path}."
+// in the language of msgs.
+//
+// Confirms where a Note export was written.
+func (msgs Messages) VaultNoteExportSaved(path string) string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportSaved", map[string]any{"path": path})
+}
+
+// VaultNoteExportEmpty says "There are no Notes to export."
+// in the language the app shows.
+//
+// Shown when a ZIP export finds an empty Vault.
+func VaultNoteExportEmpty() string { return In(i18n.Locale()).VaultNoteExportEmpty() }
+
+// VaultNoteExportEmpty says "There are no Notes to export."
+// in the language of msgs.
+//
+// Shown when a ZIP export finds an empty Vault.
+func (msgs Messages) VaultNoteExportEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportEmpty", nil)
+}
+
+// VaultNoteExportUnavailable says "Exporting is unavailable in this build."
+// in the language the app shows.
+//
+// Shown when no export writer is configured.
+func VaultNoteExportUnavailable() string { return In(i18n.Locale()).VaultNoteExportUnavailable() }
+
+// VaultNoteExportUnavailable says "Exporting is unavailable in this build."
+// in the language of msgs.
+//
+// Shown when no export writer is configured.
+func (msgs Messages) VaultNoteExportUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportUnavailable", nil)
+}
+
+// VaultNoteExportFailed says "Could not write the export."
+// in the language the app shows.
+//
+// Shown when saving an export fails.
+func VaultNoteExportFailed() string { return In(i18n.Locale()).VaultNoteExportFailed() }
+
+// VaultNoteExportFailed says "Could not write the export."
+// in the language of msgs.
+//
+// Shown when saving an export fails.
+func (msgs Messages) VaultNoteExportFailed() string {
+	return Catalog.Format(msgs.locale, "vaultNoteExportFailed", nil)
+}
+
+// VaultNoteFormCreateTitle says "New Note"
+// in the language the app shows.
+//
+// The Note editor's heading when creating.
+func VaultNoteFormCreateTitle() string { return In(i18n.Locale()).VaultNoteFormCreateTitle() }
+
+// VaultNoteFormCreateTitle says "New Note"
+// in the language of msgs.
+//
+// The Note editor's heading when creating.
+func (msgs Messages) VaultNoteFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNoteFormCreateTitle", nil)
+}
+
+// VaultNoteFormEditTitle says "Edit Note"
+// in the language the app shows.
+//
+// The Note editor's heading when editing.
+func VaultNoteFormEditTitle() string { return In(i18n.Locale()).VaultNoteFormEditTitle() }
+
+// VaultNoteFormEditTitle says "Edit Note"
+// in the language of msgs.
+//
+// The Note editor's heading when editing.
+func (msgs Messages) VaultNoteFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNoteFormEditTitle", nil)
+}
+
+// VaultNoteTitle says "Title"
+// in the language the app shows.
+//
+// The Note title field.
+func VaultNoteTitle() string { return In(i18n.Locale()).VaultNoteTitle() }
+
+// VaultNoteTitle says "Title"
+// in the language of msgs.
+//
+// The Note title field.
+func (msgs Messages) VaultNoteTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNoteTitle", nil)
+}
+
+// VaultNoteGroup says "Group"
+// in the language the app shows.
+//
+// The Note group field.
+func VaultNoteGroup() string { return In(i18n.Locale()).VaultNoteGroup() }
+
+// VaultNoteGroup says "Group"
+// in the language of msgs.
+//
+// The Note group field.
+func (msgs Messages) VaultNoteGroup() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroup", nil)
+}
+
+// VaultNoteGroupHint says "Optional. Use slashes for nesting, for example ops/runbooks."
+// in the language the app shows.
+//
+// The Note group field's hint.
+func VaultNoteGroupHint() string { return In(i18n.Locale()).VaultNoteGroupHint() }
+
+// VaultNoteGroupHint says "Optional. Use slashes for nesting, for example ops/runbooks."
+// in the language of msgs.
+//
+// The Note group field's hint.
+func (msgs Messages) VaultNoteGroupHint() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupHint", nil)
+}
+
+// VaultNoteContent says "Markdown"
+// in the language the app shows.
+//
+// The Note Markdown source field.
+func VaultNoteContent() string { return In(i18n.Locale()).VaultNoteContent() }
+
+// VaultNoteContent says "Markdown"
+// in the language of msgs.
+//
+// The Note Markdown source field.
+func (msgs Messages) VaultNoteContent() string {
+	return Catalog.Format(msgs.locale, "vaultNoteContent", nil)
+}
+
+// VaultNoteContentHint says "Markdown renders in the native Note viewer."
+// in the language the app shows.
+//
+// The Note Markdown field's hint.
+func VaultNoteContentHint() string { return In(i18n.Locale()).VaultNoteContentHint() }
+
+// VaultNoteContentHint says "Markdown renders in the native Note viewer."
+// in the language of msgs.
+//
+// The Note Markdown field's hint.
+func (msgs Messages) VaultNoteContentHint() string {
+	return Catalog.Format(msgs.locale, "vaultNoteContentHint", nil)
+}
+
+// VaultNoteGroupFormCreateTitle says "New Note Group"
+// in the language the app shows.
+//
+// The Note Group editor's heading when creating.
+func VaultNoteGroupFormCreateTitle() string { return In(i18n.Locale()).VaultNoteGroupFormCreateTitle() }
+
+// VaultNoteGroupFormCreateTitle says "New Note Group"
+// in the language of msgs.
+//
+// The Note Group editor's heading when creating.
+func (msgs Messages) VaultNoteGroupFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupFormCreateTitle", nil)
+}
+
+// VaultNoteGroupFormEditTitle says "Rename Note Group"
+// in the language the app shows.
+//
+// The Note Group editor's heading when renaming.
+func VaultNoteGroupFormEditTitle() string { return In(i18n.Locale()).VaultNoteGroupFormEditTitle() }
+
+// VaultNoteGroupFormEditTitle says "Rename Note Group"
+// in the language of msgs.
+//
+// The Note Group editor's heading when renaming.
+func (msgs Messages) VaultNoteGroupFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupFormEditTitle", nil)
+}
+
+// VaultNoteGroupPath says "Group path"
+// in the language the app shows.
+//
+// The Note Group path field.
+func VaultNoteGroupPath() string { return In(i18n.Locale()).VaultNoteGroupPath() }
+
+// VaultNoteGroupPath says "Group path"
+// in the language of msgs.
+//
+// The Note Group path field.
+func (msgs Messages) VaultNoteGroupPath() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupPath", nil)
+}
+
+// VaultNoteGroupPathHint says "Use slashes for nesting, for example ops/runbooks."
+// in the language the app shows.
+//
+// The Note Group path field's hint.
+func VaultNoteGroupPathHint() string { return In(i18n.Locale()).VaultNoteGroupPathHint() }
+
+// VaultNoteGroupPathHint says "Use slashes for nesting, for example ops/runbooks."
+// in the language of msgs.
+//
+// The Note Group path field's hint.
+func (msgs Messages) VaultNoteGroupPathHint() string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupPathHint", nil)
+}
+
+// VaultNoteGroupNoteCount says "{count} notes"
+// in the language the app shows.
+//
+// How many Notes one Note Group directly contains.
+func VaultNoteGroupNoteCount(count int) string {
+	return In(i18n.Locale()).VaultNoteGroupNoteCount(count)
+}
+
+// VaultNoteGroupNoteCount says "{count} notes"
+// in the language of msgs.
+//
+// How many Notes one Note Group directly contains.
+func (msgs Messages) VaultNoteGroupNoteCount(count int) string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupNoteCount", map[string]any{"count": count})
+}
+
+// VaultNoteDeleteConfirm says "Delete Note “{title}”?"
+// in the language the app shows.
+//
+// The confirmation naming the Note to delete.
+func VaultNoteDeleteConfirm(title string) string {
+	return In(i18n.Locale()).VaultNoteDeleteConfirm(title)
+}
+
+// VaultNoteDeleteConfirm says "Delete Note “{title}”?"
+// in the language of msgs.
+//
+// The confirmation naming the Note to delete.
+func (msgs Messages) VaultNoteDeleteConfirm(title string) string {
+	return Catalog.Format(msgs.locale, "vaultNoteDeleteConfirm", map[string]any{"title": title})
+}
+
+// VaultNoteGroupDeleteConfirm says "Delete group “{path}”? Its Notes move to the Vault root."
+// in the language the app shows.
+//
+// The confirmation naming the Note Group to delete.
+func VaultNoteGroupDeleteConfirm(path string) string {
+	return In(i18n.Locale()).VaultNoteGroupDeleteConfirm(path)
+}
+
+// VaultNoteGroupDeleteConfirm says "Delete group “{path}”? Its Notes move to the Vault root."
+// in the language of msgs.
+//
+// The confirmation naming the Note Group to delete.
+func (msgs Messages) VaultNoteGroupDeleteConfirm(path string) string {
+	return Catalog.Format(msgs.locale, "vaultNoteGroupDeleteConfirm", map[string]any{"path": path})
+}
+
+// VaultNoteViewerRoot says "Vault root"
+// in the language the app shows.
+//
+// The viewer's metadata when a Note is at the Vault root.
+func VaultNoteViewerRoot() string { return In(i18n.Locale()).VaultNoteViewerRoot() }
+
+// VaultNoteViewerRoot says "Vault root"
+// in the language of msgs.
+//
+// The viewer's metadata when a Note is at the Vault root.
+func (msgs Messages) VaultNoteViewerRoot() string {
+	return Catalog.Format(msgs.locale, "vaultNoteViewerRoot", nil)
+}
+
+// VaultNoteViewerGroup says "Group: {path}"
+// in the language the app shows.
+//
+// The viewer's metadata naming a Note's group.
+func VaultNoteViewerGroup(path string) string { return In(i18n.Locale()).VaultNoteViewerGroup(path) }
+
+// VaultNoteViewerGroup says "Group: {path}"
+// in the language of msgs.
+//
+// The viewer's metadata naming a Note's group.
+func (msgs Messages) VaultNoteViewerGroup(path string) string {
+	return Catalog.Format(msgs.locale, "vaultNoteViewerGroup", map[string]any{"path": path})
+}
+
+// VaultNoteBack says "Back"
+// in the language the app shows.
+//
+// The button that closes the Note viewer.
+func VaultNoteBack() string { return In(i18n.Locale()).VaultNoteBack() }
+
+// VaultNoteBack says "Back"
+// in the language of msgs.
+//
+// The button that closes the Note viewer.
+func (msgs Messages) VaultNoteBack() string {
+	return Catalog.Format(msgs.locale, "vaultNoteBack", nil)
+}
+
+// VaultNoteProblem says "Enter a Note title."
+// in the language the app shows.
+//
+// Shown when a Note title is missing or invalid.
+func VaultNoteProblem() string { return In(i18n.Locale()).VaultNoteProblem() }
+
+// VaultNoteProblem says "Enter a Note title."
+// in the language of msgs.
+//
+// Shown when a Note title is missing or invalid.
+func (msgs Messages) VaultNoteProblem() string {
+	return Catalog.Format(msgs.locale, "vaultNoteProblem", nil)
+}
+
+// VaultNoteProblemContent says "The Note Markdown is too large."
+// in the language the app shows.
+//
+// Shown when a Note's Markdown exceeds the limit.
+func VaultNoteProblemContent() string { return In(i18n.Locale()).VaultNoteProblemContent() }
+
+// VaultNoteProblemContent says "The Note Markdown is too large."
+// in the language of msgs.
+//
+// Shown when a Note's Markdown exceeds the limit.
+func (msgs Messages) VaultNoteProblemContent() string {
+	return Catalog.Format(msgs.locale, "vaultNoteProblemContent", nil)
+}
+
+// VaultNoteProblemGroup says "Enter a valid group path."
+// in the language the app shows.
+//
+// Shown when a Note or Note Group path is invalid.
+func VaultNoteProblemGroup() string { return In(i18n.Locale()).VaultNoteProblemGroup() }
+
+// VaultNoteProblemGroup says "Enter a valid group path."
+// in the language of msgs.
+//
+// Shown when a Note or Note Group path is invalid.
+func (msgs Messages) VaultNoteProblemGroup() string {
+	return Catalog.Format(msgs.locale, "vaultNoteProblemGroup", nil)
+}
+
+// VaultNoteRoot says "No group"
+// in the language the app shows.
+//
+// The Notes list's heading for Notes at the Vault root.
+func VaultNoteRoot() string { return In(i18n.Locale()).VaultNoteRoot() }
+
+// VaultNoteRoot says "No group"
+// in the language of msgs.
+//
+// The Notes list's heading for Notes at the Vault root.
+func (msgs Messages) VaultNoteRoot() string {
+	return Catalog.Format(msgs.locale, "vaultNoteRoot", nil)
+}
