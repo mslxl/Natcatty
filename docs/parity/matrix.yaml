@@ -1855,6 +1855,70 @@
   status: verified
   notes: "Targets may be no Hosts (anywhere), explicit Host IDs, Host Group paths, or all Hosts; group paths follow group renames and deletions. Run here sends to the focused Session only when the Snippet's scope admits that Host, and a local shell is out of scope for a targeted Snippet. Run on targets opens one focused Tab per selected Host and delivers the command after the Tab attaches, rather than reusing an unrelated Session. With no variables the run happens immediately; with variables the ordered form previews the exact payload. Paste is the default, line-delay mode sends one chunk per line with the original 250 ms pause, and NoAutoRun omits the final carriage return. Empty target selections and a missing focused Session produce localized errors, and a transport failure keeps the form open and sends nothing further."
 
+# --- Ticket 23: connection logs and shell/command history ---
+
+- id: connections.connection-logs
+  area: connections
+  feature: Record, filter, and prune connection logs
+  original_paths:
+    - components/ConnectionLogsManager.tsx
+    - components/terminal/connectionLogBuffer.ts
+    - application/state/connectionLogsStore.ts
+  module: application/history
+  tickets: [23]
+  acceptance_tests:
+    - domain/history.TestConnectionFilterMatchesHostStatusTextAndRange
+    - domain/history.TestNormalizeConnectionLogDerivesStatus
+    - application/history.TestRecordConnectionDerivesIdentityStatusAndTimestamps
+    - application/history.TestRetentionPrunesAtTheConfiguredLimitOnRecord
+    - adapters/store.TestConnectionLogsRoundTripInNewestFirstOrder
+    - adapters/store.TestPruneConnectionLogsKeepsExactlyTheConfiguredCount
+    - adapters/store.TestZeroRetentionPruneRemovesNothing
+    - ui/logs.TestFiltersNarrowByHostStatusTextAndDate
+    - ui/logs.TestLogsSurfaceIsReadableAndScrollableAtBothSizes
+    - ui/logs.TestConnectionRowActionReportsAMissingHost
+    - app.TestTicket23CheckRunsThroughTheKeyboard
+    - app.TestTicket23CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Every connect attempt reaches the Session connection hook, so success, failure, and local Sessions record the Host, kind, status, error, and timestamps without a second code path. Rows live in SQLite with indexed columns beside the JSON record, list newest first, and narrow by Host, status, text, and an inclusive from/to date range; a malformed date reports a localized problem and matches nothing. Age retention removes old rows first, then the newest configured count is kept; zero disables that bound, and pruning never removes more than the configured limit."
+
+- id: terminal.command-history
+  area: terminal
+  feature: Persist shell and command history and open a terminal from an entry
+  original_paths:
+    - components/HistorySidePanel.tsx
+    - application/state/shellHistoryStore.ts
+    - application/state/shellHistoryPersistence.ts
+    - application/state/commandHistoryStore.ts
+    - application/state/sessionHistorySearch.ts
+  module: application/history
+  tickets: [23]
+  acceptance_tests:
+    - domain/history.TestEntryFilterMatchesCommandHostSourceAndRange
+    - domain/history.TestPruneKeepsTheNewestCountAndIsDeterministic
+    - domain/history.TestAgeRetentionRemovesOnlyEntriesOlderThanTheBoundary
+    - application/history.TestRecordAppendsEveryExecutionAndDefaultsScope
+    - application/history.TestPruneAppliesLoweredRetentionWithoutRecording
+    - application/autocomplete.TestJournalReceivesEveryExecution
+    - application/autocomplete.TestLoadAggregatesTheSharedJournal
+    - application/autocomplete.TestRecordEntryCarriesTheSessionHostAndSource
+    - adapters/store.TestHistoryEntriesRoundTripAndDeleteIsIdempotent
+    - adapters/store.TestPruneHistoryEntriesAppliesAgeThenCount
+    - adapters/store.TestClearHistoryReportsTheRemovedCount
+    - ui/logs.TestHistoryFiltersAndPaging
+    - ui/logs.TestHistoryTabRendersRowsAndOpensTheRelatedTerminal
+    - ui/logs.TestClearHistoryConfirmationIsReachable
+    - ui/shell/state.TestFocusSessionSelectsTheTabAndPaneOwningTheSession
+    - ui/shell/state.TestFocusSessionReattachesADetachedTab
+    - ui/shell/state.TestOpenHistoryTargetFocusesALiveHost
+    - ui/shell/state.TestOpenHistoryTargetOpensALocalTerminal
+    - ui/shell/state.TestOpenHistoryTargetReportsAMissingHost
+    - ui/settings.TestTerminalStateSavesEachSettingAndReportsFailure
+    - app.TestTicket23CheckRunsThroughTheKeyboard
+    - app.TestTicket23CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The command hook records one row per execution with the Session, Host, command, source, and timestamp. Autocomplete aggregates those same rows through a journal instead of keeping a forked store, so clearing or deleting history updates suggestions immediately. The History tab filters by text, Host, source, and date and pages through long lists. Open terminal focuses a live Session (reattaching a detached Tab), reuses a live Session for the same Host, opens the local shell for a local row, or dials the Host; a deleted Host shows a localized error instead of inventing a Tab. Retention is configured in Settings and applied on record, on a Settings change, and once at startup."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

@@ -97,6 +97,8 @@ type State struct {
 	nextTabNumber   int
 	vaultVisible    bool
 	vaultView       func(*ui.Context)
+	logsVisible     bool
+	logsView        func(*ui.Context)
 	requestLocale   func(string)
 	requestSettings func()
 	requestRedraw   func()
@@ -201,6 +203,12 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 // view; tests wire a fake.
 func WithVault(view func(*ui.Context)) Option {
 	return func(s *State) { s.vaultView = view }
+}
+
+// WithLogs gives the shell the Logs and History surface. The app wires it;
+// tests wire a fake or the real view over a test store.
+func WithLogs(view func(*ui.Context)) Option {
+	return func(s *State) { s.logsView = view }
 }
 
 // WithTrustPrompt gives the shell the host-key prompt to render. The same
@@ -319,6 +327,23 @@ func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
 	s.vaultVisible = true
+	s.logsVisible = false
+	s.RequestRedraw()
+}
+
+// LogsVisible reports whether the main window shows Logs and History rather
+// than a work Tab.
+func (s *State) LogsVisible() bool { return s.logsVisible }
+
+// LogsView returns the Logs surface the app supplied, or nil.
+func (s *State) LogsView() func(*ui.Context) { return s.logsView }
+
+// ShowLogs makes the Logs and History surface visible. The work Tab strip
+// stays over it, so a user can return to a Session without leaving Logs
+// first.
+func (s *State) ShowLogs() {
+	s.logsVisible = true
+	s.vaultVisible = false
 	s.RequestRedraw()
 }
 
@@ -346,6 +371,7 @@ func (s *State) NewTab() error {
 	s.tabs = append(s.tabs, tab)
 	s.active = len(s.tabs) - 1
 	s.vaultVisible = false
+	s.logsVisible = false
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -455,6 +481,7 @@ func (s *State) Flush() {
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
 		s.vaultVisible = false
+		s.logsVisible = false
 		s.problem = ""
 		s.save()
 		if !outcome.startup.Empty() {

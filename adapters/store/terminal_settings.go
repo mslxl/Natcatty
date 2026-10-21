@@ -46,13 +46,19 @@ type terminalSettingsRecord struct {
 	KeywordHighlightEnabled    bool                                    `json:"keywordHighlightEnabled"`
 	KeywordHighlightRules      []domainterminal.KeywordHighlightRule   `json:"keywordHighlightRules,omitempty"`
 	ShowSessionStats           bool                                    `json:"showSessionStats"`
+
+	ConnectionLogRetentionCount int `json:"connectionLogRetentionCount"`
+	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
+	HistoryRetentionCount       int `json:"historyRetentionCount"`
+	HistoryRetentionDays        int `json:"historyRetentionDays"`
 }
 
 // terminalSettingsVersion is the current record version. Version 1 files
 // lack the encoding, paste, and drop fields; version 2 files lack the
-// autocomplete, keyword highlight, and statistics fields. Zero values for a
-// missing group are replaced by the original defaults on load.
-const terminalSettingsVersion = 3
+// autocomplete, keyword highlight, and statistics fields; version 3 files
+// lack the log and history retention fields. Zero values for a missing group
+// are replaced by the original defaults on load.
+const terminalSettingsVersion = 4
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -94,6 +100,12 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 		settings.KeywordHighlightRules = record.KeywordHighlightRules
 		settings.ShowSessionStats = record.ShowSessionStats
 	}
+	if record.Version >= 4 {
+		settings.ConnectionLogRetentionCount = record.ConnectionLogRetentionCount
+		settings.ConnectionLogRetentionDays = record.ConnectionLogRetentionDays
+		settings.HistoryRetentionCount = record.HistoryRetentionCount
+		settings.HistoryRetentionDays = record.HistoryRetentionDays
+	}
 	return domainterminal.Normalize(settings), nil
 }
 
@@ -124,6 +136,11 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 		KeywordHighlightEnabled:    settings.KeywordHighlightEnabled,
 		KeywordHighlightRules:      settings.KeywordHighlightRules,
 		ShowSessionStats:           settings.ShowSessionStats,
+
+		ConnectionLogRetentionCount: settings.ConnectionLogRetentionCount,
+		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,
+		HistoryRetentionCount:       settings.HistoryRetentionCount,
+		HistoryRetentionDays:        settings.HistoryRetentionDays,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

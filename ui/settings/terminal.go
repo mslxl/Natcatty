@@ -30,6 +30,8 @@ type Terminal interface {
 	SetKeywordHighlightEnabled(bool) error
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetShowSessionStats(bool) error
+	SetConnectionLogRetention(count, days int) error
+	SetHistoryRetention(count, days int) error
 }
 
 // TerminalState owns the Settings window's terminal form. It is mutated only
@@ -245,6 +247,18 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 // SetShowSessionStats shows or hides the counter row.
 func (s *TerminalState) SetShowSessionStats(show bool) bool {
 	return s.apply(func() error { return s.terminal.SetShowSessionStats(show) })
+}
+
+// SetConnectionLogRetention stores how many connection logs are kept and for
+// how many days. Zero in either field keeps every matching log.
+func (s *TerminalState) SetConnectionLogRetention(count, days int) bool {
+	return s.apply(func() error { return s.terminal.SetConnectionLogRetention(count, days) })
+}
+
+// SetHistoryRetention stores how much command history is kept. Zero in either
+// field keeps every matching entry.
+func (s *TerminalState) SetHistoryRetention(count, days int) bool {
+	return s.apply(func() error { return s.terminal.SetHistoryRetention(count, days) })
 }
 
 func (s *TerminalState) apply(change func() error) bool {

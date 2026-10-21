@@ -53,6 +53,10 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			s.ShowVault()
 		}
 
+		if ui.Button(c.Key("nav-logs"), m.NavLogs()).Width(200).Clicked() {
+			s.ShowLogs()
+		}
+
 		if ui.Button(c.Key("nav-settings"), m.NavSettings()).Width(200).Clicked() {
 			s.RequestSettings()
 		}
@@ -102,6 +106,14 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			}
 			ui.Text(c, m.NavVault()).FontSize(24).Bold()
 			ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
+			return
+		}
+		if s.LogsVisible() {
+			if view := s.LogsView(); view != nil {
+				view(c)
+				return
+			}
+			ui.Text(c, m.NavLogs()).FontSize(24).Bold()
 			return
 		}
 		if s.TabCount() > 0 {

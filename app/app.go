@@ -6,9 +6,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -25,10 +27,12 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
+	apphistory "github.com/mslxl/natcatty/application/history"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -37,6 +41,7 @@ import (
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
+	logsui "github.com/mslxl/natcatty/ui/logs"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -58,6 +63,8 @@ func run(afterReady func(hostWindow)) error {
 	var terminalState *settings.TerminalState
 	var desktopService *appdesktop.Service
 	var terminalService *appterminalsettings.Service
+	var historyService *apphistory.Service
+	var logsState *logsui.State
 	var sessions *appsession.Service
 	var desktopCtl *desktopController
 	var ready bool
@@ -131,6 +138,11 @@ func run(afterReady func(hostWindow)) error {
 		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")),
 		appterminalsettings.WithChangeHook(func(current domainterminal.Settings) {
 			invalidate()
+			// A lowered retention limit takes effect immediately instead of
+			// waiting for the next recorded command.
+			if historyService != nil {
+				_, _ = historyService.Prune(context.Background())
+			}
 			// The original's OSC 52 handler read Settings on every request.
 			// Apply a change to live Sessions as well as future ones.
 			if sessions != nil {
@@ -144,12 +156,49 @@ func run(afterReady func(hostWindow)) error {
 	terminalState = settings.NewTerminalState(terminalService,
 		settings.WithTerminalRedrawRequest(invalidate))
 
+	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	// Connection logs and command history share the Vault database. Retention
+	// is read live from Settings on every record and prune, so a change
+	// applies without rebuilding the service.
+	historyService = apphistory.NewService(database,
+		apphistory.WithRetention(func() apphistory.Retention {
+			current := terminalService.Settings()
+			return apphistory.Retention{
+				Logs: domainhistory.Retention{
+					Count:  current.ConnectionLogRetentionCount,
+					MaxAge: time.Duration(current.ConnectionLogRetentionDays) * 24 * time.Hour,
+				},
+				History: domainhistory.Retention{
+					Count:  current.HistoryRetentionCount,
+					MaxAge: time.Duration(current.HistoryRetentionDays) * 24 * time.Hour,
+				},
+			}
+		}),
+	)
+	// Apply retention once at startup so a lowered limit takes effect even
+	// before the next record arrives.
+	_, _ = historyService.Prune(context.Background())
+
 	// Autocomplete combines the commands recorded in this app with the shell's
 	// own history files, as the original did. Both sources are bounded and
 	// degrade to empty so a missing or malformed history cannot block startup.
+	// The journal is the same per-execution store the History surface lists,
+	// so the two views never fork the records.
 	home, _ := os.UserHomeDir()
+	shellHistory := histfile.Default(home)
+	legacyCommandHistory := store.OpenCommandHistory(filepath.Join(userData, "command-history.json"))
+	// Import the pre-journal aggregate and the local shell's files once, so
+	// the History surface lists them too and an upgrade does not silently
+	// drop autocomplete's earlier history.
+	importLegacyCommandHistory(context.Background(), historyService, legacyCommandHistory)
+	importShellHistory(context.Background(), historyService, shellHistory)
 	autocompleteService := autocomplete.NewService(
-		store.OpenCommandHistory(filepath.Join(userData, "command-history.json")),
+		legacyCommandHistory,
 		func() autocomplete.Config {
 			current := terminalService.Settings()
 			return autocomplete.Config{
@@ -160,15 +209,10 @@ func run(afterReady func(hostWindow)) error {
 				Scope:          current.AutocompleteHistoryScope,
 			}
 		},
-		autocomplete.WithSource(histfile.Default(home)),
+		autocomplete.WithSource(shellHistory),
+		autocomplete.WithJournal(historyService),
 	)
 	autocompleteService.Load(context.Background())
-
-	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
-	if err != nil {
-		return err
-	}
-	defer database.Close()
 
 	// Host credentials live in the field-secret store. It reports OS,
 	// passphrase, or session mode; it never falls back to plaintext.
@@ -338,10 +382,53 @@ func run(afterReady func(hostWindow)) error {
 				shellState.NoteSessionInput(id, data)
 			}
 		}),
+		// Every connect attempt, successful or failed, becomes one connection
+		// log row. Failures record the error so the Logs surface can explain
+		// them; local attempts keep an empty Host identity.
+		appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {
+			if historyService == nil {
+				return
+			}
+			errorText := ""
+			if event.Err != nil {
+				errorText = event.Err.Error()
+			}
+			label := event.Label
+			if event.HostID == "" {
+				// A local attempt has no Host; the Logs surface localizes its
+				// title instead of persisting an application display string.
+				label = ""
+			}
+			_ = historyService.RecordConnection(context.Background(), domainhistory.ConnectionLog{
+				SessionID: event.SessionID,
+				HostID:    event.HostID,
+				HostLabel: label,
+				Hostname:  event.Hostname,
+				Username:  event.Username,
+				Kind:      string(event.Kind),
+				Error:     errorText,
+				StartedAt: event.StartedAt,
+				EndedAt:   event.EndedAt,
+			})
+		}),
 		// Commands that ran in a Session feed autocomplete under that Session's
 		// scope. The Host scope keeps an SSH Host's history separate.
-		appsession.WithCommandHook(func(_ model.SessionID, scope, command string) {
-			autocompleteService.Record(scope, command)
+		// RecordEntry updates autocomplete's aggregation and forwards the same
+		// per-execution row to the shared history journal, so a command is
+		// persisted exactly once.
+		appsession.WithCommandHook(func(id model.SessionID, scope, command string) {
+			hostID, label, _, _ := sessions.SessionInfo(id)
+			if hostID == "" {
+				label = ""
+			}
+			autocompleteService.RecordEntry(domainhistory.Entry{
+				SessionID: id,
+				HostID:    hostID,
+				HostLabel: label,
+				Scope:     scope,
+				Command:   command,
+				Source:    domainhistory.SourceSession,
+			})
 		}),
 		// A BEL marks the Session active, matching the original's tab badge.
 		// The notification mode is applied separately by the notification hook.
@@ -373,6 +460,22 @@ func run(afterReady func(hostWindow)) error {
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
+	logsState = logsui.NewState(historyService, terminalActionsFunc(func(
+		sessionID model.SessionID, hostID model.HostID) error {
+		if shellState == nil {
+			return state.ErrNoSessions
+		}
+		err := shellState.OpenHistoryTarget(sessionID, hostID)
+		if errors.Is(err, state.ErrHostUnavailable) {
+			return logsui.ErrHostMissing
+		}
+		return err
+	}), logsui.WithRefreshRequest(invalidate),
+		logsui.WithMutationHook(func() {
+			// Autocomplete aggregates the same journal; a deleted or cleared
+			// row must stop being suggested without a restart.
+			autocompleteService.Load(context.Background())
+		}))
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -418,6 +521,7 @@ func run(afterReady func(hostWindow)) error {
 			)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
+		state.WithLogs(logsui.View(logsState)),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
 		state.WithWorkspace(workspaceService, func(ctx context.Context, id model.HostID) (domainvault.Host, bool) {
@@ -647,4 +751,96 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error) *co
 	}
 
 	return registry
+}
+
+// importLegacyCommandHistory moves the pre-journal aggregate file into the
+// shared per-execution store. Rows already present are left alone, so running
+// the migration on every launch is idempotent.
+func importLegacyCommandHistory(ctx context.Context, service *apphistory.Service,
+	legacy *store.CommandHistoryStore) {
+	if service == nil || legacy == nil {
+		return
+	}
+	entries, err := legacy.Load(ctx)
+	if err != nil {
+		return
+	}
+	stored, err := service.Entries(ctx)
+	if err != nil {
+		return
+	}
+	seen := make(map[string]bool, len(stored))
+	for _, entry := range stored {
+		seen[entry.Scope+"\x00"+entry.Command] = true
+	}
+	for _, entry := range entries {
+		key := entry.Scope + "\x00" + entry.Command
+		if entry.Command == "" || entry.Scope == "" || seen[key] {
+			continue
+		}
+		recordedAt := entry.LastUsed
+		if recordedAt.IsZero() {
+			recordedAt = time.Now()
+		}
+		if err := service.Record(ctx, domainhistory.Entry{
+			Scope:      entry.Scope,
+			Command:    entry.Command,
+			Source:     domainhistory.SourceSession,
+			RecordedAt: recordedAt,
+		}); err != nil {
+			return
+		}
+		seen[key] = true
+	}
+}
+
+// importShellHistory persists the local shell's deduplicated commands as
+// shell-history rows. Without it the History surface's shell-history source
+// would exist only as an autocomplete suggestion. Commands already imported
+// are skipped, so repeated launches do not duplicate them.
+func importShellHistory(ctx context.Context, service *apphistory.Service,
+	source *histfile.Source) {
+	if service == nil || source == nil {
+		return
+	}
+	entries := source.History()
+	if len(entries) == 0 {
+		return
+	}
+	stored, err := service.Entries(ctx)
+	if err != nil {
+		return
+	}
+	seen := make(map[string]bool, len(stored))
+	for _, entry := range stored {
+		if entry.Source == domainhistory.SourceShellHistory {
+			seen[entry.Command] = true
+		}
+	}
+	for _, entry := range entries {
+		if entry.Command == "" || seen[entry.Command] {
+			continue
+		}
+		recordedAt := time.Now()
+		if entry.Timestamp > 0 {
+			recordedAt = time.Unix(entry.Timestamp, 0)
+		}
+		if err := service.Record(ctx, domainhistory.Entry{
+			Scope:      domainhistory.NormalizeScope(""),
+			Command:    entry.Command,
+			Source:     domainhistory.SourceShellHistory,
+			RecordedAt: recordedAt,
+		}); err != nil {
+			return
+		}
+		seen[entry.Command] = true
+	}
+}
+
+// terminalActionsFunc adapts a function to the Logs surface's row action.
+type terminalActionsFunc func(model.SessionID, model.HostID) error
+
+// OpenTerminal opens or focuses the terminal related to a log or history row.
+func (fn terminalActionsFunc) OpenTerminal(sessionID model.SessionID, hostID model.HostID) error {
+	return fn(sessionID, hostID)
 }

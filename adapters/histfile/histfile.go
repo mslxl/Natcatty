@@ -78,6 +78,10 @@ type Source struct {
 
 	once    sync.Once
 	entries []autocomplete.Suggestion
+	// history keeps the same deduplicated, newest-first rows with their
+	// timestamps, so the app can persist the import alongside Session
+	// commands instead of leaving it suggestion-only.
+	history []Entry
 }
 
 // New builds a Source from options.
@@ -142,6 +146,14 @@ func (s *Source) Suggestions(input string, limit int) []autocomplete.Suggestion 
 	return result
 }
 
+// History returns the imported, deduplicated commands newest first. The app
+// persists them once at startup so the History surface lists shell commands
+// as well as Session commands, subject to the same retention.
+func (s *Source) History() []Entry {
+	s.once.Do(s.load)
+	return append([]Entry(nil), s.history...)
+}
+
 func (s *Source) paths() []string {
 	paths := make([]string, 0, len(s.files))
 	for _, file := range s.files {
@@ -196,6 +208,7 @@ func (s *Source) load() {
 
 	seen := make(map[string]struct{}, len(merged))
 	entries := make([]autocomplete.Suggestion, 0, s.maxEntries)
+	history := make([]Entry, 0, s.maxEntries)
 	for _, entry := range merged {
 		if entry.Command == "" || strings.Contains(entry.Command, aiHistoryMarker) {
 			continue
@@ -214,11 +227,13 @@ func (s *Source) load() {
 			Source:  s.name,
 			Score:   score,
 		})
+		history = append(history, entry.Entry)
 		if len(entries) >= s.maxEntries {
 			break
 		}
 	}
 	s.entries = entries
+	s.history = history
 }
 
 // decodeHistfile converts a tail-possibly-truncated file read. A read that

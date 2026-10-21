@@ -127,6 +127,40 @@ func NormalizeAutocompleteDebounce(value int) int {
 	return value
 }
 
+// Connection log and command history retention. A count of zero keeps every
+// record; an age of zero keeps records of every age. The upper bounds keep a
+// malformed settings file from turning pruning into an unbounded scan.
+const (
+	DefaultConnectionLogRetentionCount = 500
+	DefaultHistoryRetentionCount       = 1000
+	MaxRetentionCount                  = 100000
+	MaxRetentionDays                   = 3650
+)
+
+// NormalizeRetentionCount clamps a record count. Zero is meaningful: it keeps
+// every record.
+func NormalizeRetentionCount(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > MaxRetentionCount {
+		return MaxRetentionCount
+	}
+	return value
+}
+
+// NormalizeRetentionDays clamps an age in days. Zero is meaningful: it keeps
+// records of every age.
+func NormalizeRetentionDays(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > MaxRetentionDays {
+		return MaxRetentionDays
+	}
+	return value
+}
+
 // Settings is the persisted terminal behavior group.
 type Settings struct {
 	// LoggingEnabled starts a log automatically for each new Session when
@@ -180,6 +214,18 @@ type Settings struct {
 	// ShowSessionStats draws the Session's byte, command, bell, and
 	// notification counters in the status bar.
 	ShowSessionStats bool
+	// ConnectionLogRetentionCount is how many connection logs are kept. Zero
+	// keeps every log.
+	ConnectionLogRetentionCount int
+	// ConnectionLogRetentionDays is how many days of connection logs are
+	// kept. Zero keeps logs of every age.
+	ConnectionLogRetentionDays int
+	// HistoryRetentionCount is how many command history entries are kept.
+	// Zero keeps every entry.
+	HistoryRetentionCount int
+	// HistoryRetentionDays is how many days of command history are kept.
+	// Zero keeps entries of every age.
+	HistoryRetentionDays int
 }
 
 // EncodingScopeLocal is the encoding scope of local shell Sessions.
@@ -219,6 +265,11 @@ func Defaults() Settings {
 		KeywordHighlightEnabled:    true,
 		KeywordHighlightRules:      DefaultKeywordHighlightRules(),
 		ShowSessionStats:           true,
+
+		ConnectionLogRetentionCount: DefaultConnectionLogRetentionCount,
+		ConnectionLogRetentionDays:  0,
+		HistoryRetentionCount:       DefaultHistoryRetentionCount,
+		HistoryRetentionDays:        0,
 	}
 }
 
@@ -249,6 +300,10 @@ func Normalize(settings Settings) Settings {
 	settings.AutocompleteMaxSuggestions = NormalizeAutocompleteMaxSuggestions(settings.AutocompleteMaxSuggestions)
 	settings.AutocompleteDebounceMs = NormalizeAutocompleteDebounce(settings.AutocompleteDebounceMs)
 	settings.KeywordHighlightRules = NormalizeKeywordHighlightRules(settings.KeywordHighlightRules)
+	settings.ConnectionLogRetentionCount = NormalizeRetentionCount(settings.ConnectionLogRetentionCount)
+	settings.ConnectionLogRetentionDays = NormalizeRetentionDays(settings.ConnectionLogRetentionDays)
+	settings.HistoryRetentionCount = NormalizeRetentionCount(settings.HistoryRetentionCount)
+	settings.HistoryRetentionDays = NormalizeRetentionDays(settings.HistoryRetentionDays)
 	if len(settings.Encodings) > 0 {
 		encodings := make(map[string]Encoding, len(settings.Encodings))
 		for scope, encoding := range settings.Encodings {

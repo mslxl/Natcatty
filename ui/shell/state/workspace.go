@@ -293,7 +293,7 @@ func (s *State) TabInfo(index int) (TabInfo, bool) {
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
 		Dirty:       tab.Dirty,
-		Active:      index == s.active && !s.vaultVisible,
+		Active:      index == s.active && !s.vaultVisible && !s.logsVisible,
 	}, true
 }
 
@@ -339,6 +339,7 @@ func (s *State) SelectTab(index int) {
 	s.active = index
 	s.tabs[index].Dirty = false
 	s.vaultVisible = false
+	s.logsVisible = false
 	s.save()
 }
 
@@ -454,6 +455,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 	s.tabs = []*Tab{keep}
 	s.active = 0
 	s.vaultVisible = false
+	s.logsVisible = false
 	s.refreshBroadcastState()
 	if closed {
 		s.save()
@@ -503,6 +505,7 @@ func (s *State) DuplicateTab(index int) error {
 	s.tabs[index+1] = copyTab
 	s.active = index + 1
 	s.vaultVisible = false
+	s.logsVisible = false
 
 	for newID, value := range copyTab.panes {
 		// A duplicate opens where its source last was.
@@ -715,6 +718,7 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
 		s.vaultVisible = false
+		s.logsVisible = false
 		// A reattached Session is again part of the main target list. It is
 		// not selected automatically; the panel shows it as an available row.
 		s.refreshBroadcastState()
@@ -1127,6 +1131,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		s.active = targetIndex
 	}
 	s.vaultVisible = false
+	s.logsVisible = false
 	s.save()
 	s.RequestRedraw()
 	return true
@@ -1290,6 +1295,7 @@ func (s *State) Restore(ctx context.Context) {
 		s.active = 0
 	}
 	s.vaultVisible = false
+	s.logsVisible = false
 	for _, tab := range s.tabs {
 		for id, value := range tab.panes {
 			s.requestPaneOpen(tab.ID, id, value.descriptor, true)
@@ -1473,5 +1479,6 @@ func (s *State) removeTabAt(index int) {
 		s.active--
 	}
 	s.vaultVisible = false
+	s.logsVisible = false
 	s.refreshBroadcastState()
 }
