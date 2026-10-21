@@ -258,6 +258,96 @@ func TestTapPromptFallbackIgnoresThePreviousPrompt(t *testing.T) {
 	}
 }
 
+// stripTerminalControls must drop a whole CSI sequence, not just its ESC [.
+// ConPTY appends cursor controls such as ESC [?25h after a prompt, and their
+// parameter bytes must not survive as visible text.
+func TestStripTerminalControlsRemovesControlSequences(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"cursor show", "PS C:\\work> \x1b[?25h", "PS C:\\work> "},
+		{"cursor hide and color", "\x1b[?25l\x1b[93mecho\x1b[m hi", "echo hi"},
+		{"cursor position", "out\x1b[3;1H\x1b[?25h", "out"},
+		{"erase screen", "\x1b[2J\x1b[Hdone", "done"},
+		{"osc title", "\x1b]0;title\x07done", "done"},
+		{"split csi is dropped", "prompt> \x1b[?25", "prompt> "},
+	}
+	for _, test := range cases {
+		if got := stripTerminalControls([]byte(test.in)); got != test.want {
+			t.Errorf("%s: stripTerminalControls(%q) = %q, want %q", test.name, test.in, got, test.want)
+		}
+	}
+}
+
+// An escape sequence is forwarded whole and its bytes never count as visible
+// output. Before, only the OSC branch did this: a CSI's ESC was forwarded
+// alone and its parameter bytes ("?25h") landed in the tail as text.
+func TestTapForwardsEscapeSequencesWithoutNotingTheirBytes(t *testing.T) {
+	input := []byte("\x1b[?25lPS C:\\work> \x1b[?25h\x1b(B\x1bOP")
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	output, _ := tap.observe(input, tapAt(0))
+	if string(output) != string(input) {
+		t.Fatalf("output = %q, want the sequences forwarded whole", output)
+	}
+	if got := lastVisibleLine(tap.tail); got != "PS C:\\work>" {
+		t.Fatalf("visible tail = %q, want %q", got, "PS C:\\work>")
+	}
+}
+
+// A CSI split across two reads is held until its final byte, then forwarded
+// whole, with none of its parameter bytes in the visible tail.
+func TestTapHoldsASplitEscapeSequence(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	output, _ := tap.observe([]byte("prompt> \x1b[?25"), tapAt(0))
+	if string(output) != "prompt> " {
+		t.Fatalf("visible output before the split sequence = %q", output)
+	}
+	output, _ = tap.observe([]byte("h"), tapAt(time.Second))
+	if string(output) != "\x1b[?25h" {
+		t.Fatalf("the completed sequence = %q", output)
+	}
+	if got := lastVisibleLine(tap.tail); got != "prompt>" {
+		t.Fatalf("visible tail = %q, want %q", got, "prompt>")
+	}
+}
+
+// PowerShell on the Windows CI runner ends its final chunk with ESC [?25h, and
+// no further output follows, so a miss here leaves Running set forever.
+func TestTapPromptFallbackSeesAPromptBehindTrailingCursorControls(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("echo world\r"), tapAt(0))
+	_, effects := tap.observe([]byte("world\r\nPS C:\\work> \x1b[?25h"), tapAt(20*time.Millisecond))
+	if !effects.PromptRecheck {
+		t.Fatal("a prompt behind cursor controls did not request a deferred check")
+	}
+	if !tap.state(tapAt(20 * time.Millisecond)).Command.Running {
+		t.Fatal("a prompt inside the guard window finished the command")
+	}
+	if !tap.resolvePrompt(tapAt(80 * time.Millisecond)) {
+		t.Fatal("the deferred check did not finish the command behind cursor controls")
+	}
+}
+
+// Output that does not end in a prompt must still request a bounded recheck:
+// the deferred check is the only look a quiet session gets after its last
+// chunk. It must not finish the command, because no prompt was seen.
+func TestTapRunningOutputRequestsABoundedRecheckWithoutAPrompt(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("sleep 10\r"), tapAt(0))
+	_, effects := tap.observe([]byte("still working\r\n"), tapAt(time.Second))
+	if !effects.PromptRecheck {
+		t.Fatal("running output did not request a bounded recheck")
+	}
+	if tap.resolvePrompt(tapAt(time.Second + 500*time.Millisecond)) {
+		t.Fatal("the bounded recheck finished a command without a prompt")
+	}
+	if state := tap.state(tapAt(time.Second + 500*time.Millisecond)); !state.Command.Running {
+		t.Fatalf("the bounded recheck cleared a running command: %+v", state.Command)
+	}
+}
+
 func TestTapActivityTracksOutput(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.observe([]byte("output"), tapAt(0))

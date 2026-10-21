@@ -94,9 +94,10 @@ type tapEffects struct {
 	Bell         bool
 	Notification *TerminalNotification
 	Transfer     *TransferState
-	// PromptRecheck asks the Session for one deferred prompt check: a prompt
-	// was seen inside the fallback guard window, and no further output may
-	// arrive to trigger another check.
+	// PromptRecheck asks the Session for one deferred prompt check after the
+	// guard window: a command is still running with output after it started,
+	// but its chunk did not settle it, and no further output may arrive to
+	// trigger another check. The check only finishes a prompt-like tail.
 	PromptRecheck bool
 }
 
@@ -127,6 +128,11 @@ const activityWindow = 2 * time.Second
 // expires, even when no further output arrives.
 const promptWindow = 50 * time.Millisecond
 
+// sequenceCarryMax bounds an unterminated OSC or other escape sequence held
+// for the rest of it. Past it the bytes are forwarded as they are rather than
+// buffered without limit.
+const sequenceCarryMax = 1 << 20
+
 // Notification policy, matching the original.
 const (
 	oscNotificationFallbackTitle = "Netcatty"
@@ -137,7 +143,6 @@ const (
 	oscNotificationWindow        = 10 * time.Second
 	oscNotificationMax           = 4
 	oscNotificationMinGap        = 400 * time.Millisecond
-	oscCarryMax                  = 1 << 20
 )
 
 // ZMODEM starts with the hex header prefix ** CAN B. YMODEM starts with a
@@ -270,11 +275,7 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 			if t.buffer[1] == ']' {
 				contentEnd, totalEnd, complete := findOSC(t.buffer)
 				if !complete {
-					if len(t.buffer) > oscCarryMax {
-						output = append(output, t.buffer...)
-						t.noteOutput(t.buffer, now)
-						t.buffer = nil
-					}
+					t.carryIncomplete(now, &output)
 					goto done
 				}
 				forward, effect := t.handleOSC(t.buffer[2:contentEnd], now)
@@ -291,8 +292,17 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 				t.buffer = t.buffer[totalEnd:]
 				continue
 			}
-			output = append(output, t.buffer[0])
-			t.buffer = t.buffer[1:]
+			// Any other escape sequence is one unit of output. Forwarding its
+			// ESC alone and treating the rest as text left CSI parameter bytes
+			// such as "?25h" in the tail as visible output, where they hid a
+			// prompt that followed a command's output.
+			end, complete := escapeEnd(t.buffer)
+			if !complete {
+				t.carryIncomplete(now, &output)
+				goto done
+			}
+			output = append(output, t.buffer[:end]...)
+			t.buffer = t.buffer[end:]
 		case '*':
 			if bytes.HasPrefix(t.buffer, zmodemStart) {
 				t.startTransfer(TransferZMODEM, len(zmodemStart), now)
@@ -332,10 +342,14 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 	}
 
 done:
-	switch t.checkPrompt(now) {
-	case promptFinished:
+	if t.checkPrompt(now) == promptFinished {
 		effects.Changed = true
-	case promptDeferred:
+	}
+	if t.command.Running && t.outputSinceStart {
+		// The fallback did not settle the command in this chunk. A prompt can
+		// arrive in a chunk whose visible tail is not prompt-like, and a quiet
+		// session gets no next chunk to look again. Ask for one bounded recheck
+		// after the guard window; it only finishes a prompt-like tail.
 		effects.PromptRecheck = true
 	}
 	if t.bellPending {
@@ -348,6 +362,18 @@ done:
 		effects.Changed = true
 	}
 	return output, effects
+}
+
+// carryIncomplete forwards an unterminated sequence once it outgrows the
+// carry bound, rather than buffering it without limit. The tap then starts
+// over with the next read.
+func (t *terminalTap) carryIncomplete(now time.Time, output *[]byte) {
+	if len(t.buffer) <= sequenceCarryMax {
+		return
+	}
+	*output = append(*output, t.buffer...)
+	t.noteOutput(t.buffer, now)
+	t.buffer = nil
 }
 
 func (t *terminalTap) noteOutput(data []byte, now time.Time) {
@@ -436,6 +462,48 @@ func nextTapSpecial(data []byte) int {
 
 func isPartialPrefix(data, marker []byte) bool {
 	return len(data) < len(marker) && bytes.Equal(data, marker[:len(data)])
+}
+
+// escapeEnd returns the length of the escape sequence starting at data[0],
+// which is ESC, and whether the buffer holds all of it. It covers control
+// sequences, such as the cursor-show ESC [?25h ConPTY writes after a prompt,
+// and the two- or three-byte escapes of charsets and keypad modes.
+func escapeEnd(data []byte) (int, bool) {
+	if len(data) < 2 {
+		return 0, false
+	}
+	if data[1] == '[' {
+		for index := 2; index < len(data); index++ {
+			if data[index] >= 0x40 && data[index] <= 0x7e {
+				return index + 1, true
+			}
+		}
+		return 0, false
+	}
+	if data[1] == 'O' || data[1] == 'N' {
+		// SS3 (ESC O) and SS2 (ESC N) carry one final byte.
+		if len(data) < 3 {
+			return 0, false
+		}
+		if data[2] >= 0x40 && data[2] <= 0x7e {
+			return 3, true
+		}
+		return 1, true
+	}
+	// ESC with optional intermediate bytes (0x20 to 0x2f) and one final byte.
+	index := 1
+	for index < len(data) && data[index] >= 0x20 && data[index] <= 0x2f {
+		index++
+	}
+	if index >= len(data) {
+		return 0, false
+	}
+	if data[index] >= 0x30 && data[index] <= 0x7e {
+		return index + 1, true
+	}
+	// Not a sequence the grammar knows: forward the ESC alone rather than
+	// waiting forever for a terminator that will not come.
+	return 1, true
 }
 
 // findOSC locates an OSC terminator (BEL or ST). An ESC that does not start ST
