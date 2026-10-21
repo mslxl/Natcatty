@@ -77,6 +77,42 @@ func TestConnectionHookReportsAFailedDial(t *testing.T) {
 	}
 }
 
+func TestConnectionHookMarksTypedHostsAsUnsaved(t *testing.T) {
+	events := make(chan ConnectionEvent, 2)
+	transport := newFakeTransport()
+	service := NewService(&fakeFactory{transport: transport},
+		WithConnectionHook(func(event ConnectionEvent) { events <- event }))
+	t.Cleanup(service.CloseAll)
+
+	// A typed Host has no Vault identity but is still an SSH attempt.
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindSSH, Label: "deploy@typed.example", Hostname: "typed.example",
+		Username: "deploy",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	event := <-events
+	if event.HostID != "" || !event.UnsavedHost {
+		t.Fatalf("typed Host event = %+v, want an unsaved Host", event)
+	}
+	if event.Label != "deploy@typed.example" || event.Hostname != "typed.example" {
+		t.Fatalf("typed Host target = %q / %q", event.Label, event.Hostname)
+	}
+
+	// A local shell is not an unsaved Host.
+	local, err := service.OpenLocal(context.Background())
+	if err != nil {
+		t.Fatalf("OpenLocal: %v", err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	event = <-events
+	if event.UnsavedHost {
+		t.Fatalf("local event marked unsaved: %+v", event)
+	}
+}
+
 func TestSessionInfoReportsTheLocalLabel(t *testing.T) {
 	transport := newFakeTransport()
 	service := NewService(&fakeFactory{transport: transport})

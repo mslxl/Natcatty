@@ -1546,6 +1546,10 @@
   "@logsHostLocal": {
     "description": "The Host filter value for local shell records."
   },
+  "logsHostUnsaved": "Unsaved hosts",
+  "@logsHostUnsaved": {
+    "description": "The Host filter value for typed Hosts with no saved Vault record."
+  },
   "logsStatusFilter": "Status",
   "@logsStatusFilter": {
     "description": "The label of the connection status filter."
@@ -1602,9 +1606,17 @@
   "@logsClearHistory": {
     "description": "The button that opens the clear-history confirmation."
   },
+  "logsClearConnections": "Clear connection logs",
+  "@logsClearConnections": {
+    "description": "The button that opens the clear-connection-logs confirmation."
+  },
   "logsClearConfirm": "Remove every recorded command?",
   "@logsClearConfirm": {
     "description": "The clear-history confirmation."
+  },
+  "logsClearConnectionsConfirm": "Remove every connection log?",
+  "@logsClearConnectionsConfirm": {
+    "description": "The clear-connection-logs confirmation."
   },
   "logsClearYes": "Clear",
   "@logsClearYes": {
@@ -1614,9 +1626,19 @@
   "@logsCancel": {
     "description": "The button that dismisses the clear-history confirmation."
   },
-  "logsHistoryCleared": "History cleared ({count} entries removed).",
+  "logsHistoryCleared": "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}",
   "@logsHistoryCleared": {
-    "description": "Confirms that the history was cleared.",
+    "description": "Confirms that the command history was cleared.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsConnectionsCleared": "{count, plural, one {Connection log cleared (# entry removed).} other {Connection logs cleared (# entries removed).}}",
+  "@logsConnectionsCleared": {
+    "description": "Confirms that the connection logs were cleared.",
     "placeholders": {
       "count": {
         "type": "int",
@@ -1643,6 +1665,20 @@
   "logsConnectionMeta": "{status} · {kind}",
   "@logsConnectionMeta": {
     "description": "The status and transport family of a connection log row.",
+    "placeholders": {
+      "status": {
+        "type": "String",
+        "example": "Connected"
+      },
+      "kind": {
+        "type": "String",
+        "example": "ssh"
+      }
+    }
+  },
+  "logsConnectionMetaUnsaved": "{status} · {kind} · unsaved host",
+  "@logsConnectionMetaUnsaved": {
+    "description": "The status, transport family, and unsaved target of a connection log row for a typed Host.",
     "placeholders": {
       "status": {
         "type": "String",
@@ -1683,6 +1719,10 @@
   "logsProblemClear": "Could not clear the history.",
   "@logsProblemClear": {
     "description": "Shown when clearing the history failed."
+  },
+  "logsProblemClearConnections": "Could not clear the connection logs.",
+  "@logsProblemClearConnections": {
+    "description": "Shown when clearing the connection logs failed."
   },
   "logsProblemOpen": "Could not open the terminal.",
   "@logsProblemOpen": {

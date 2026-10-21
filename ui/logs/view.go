@@ -9,23 +9,23 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
-// View renders Logs and History. The scroll offset is view state: the two
-// tabs share one surface, so returning to a tab starts where the user left it
-// rather than at a stale editor offset.
+// View renders Logs and History. The whole surface scrolls as one region, so
+// at any window height the records stay reachable even after the title, tabs,
+// and filters take their space. The offset lives in State, both to survive
+// frames and so tests can drive real input and assert that it moved.
 func View(s *State) func(*ui.Context) {
-	var scroll ui.ScrollState
 	return func(c *ui.Context) {
 		s.Refresh()
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
-		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Gap(8).Children(func() {
-			ui.Text(c, m.LogsTitle()).FontSize(20).Bold()
-			tabs(c, s, m, t)
-			problems(c, s, m, t)
-			filters(c, s, m, t)
+		ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).TrackScroll(s.Scroll()).Children(func() {
+			ui.Column(c).FillWidth().MinWidth(0).Gap(8).Children(func() {
+				ui.Text(c, m.LogsTitle()).FontSize(20).Bold()
+				tabs(c, s, m, t)
+				problems(c, s, m, t)
+				filters(c, s, m, t)
 
-			ui.Scroll(c).Grow(1).FillWidth().MinWidth(0).TrackScroll(&scroll).Children(func() {
 				if s.Tab() == TabConnections {
 					connectionRows(c, s, m, t)
 				} else {
@@ -36,6 +36,11 @@ func View(s *State) func(*ui.Context) {
 	}
 }
 
+// tabs renders the record-family selector and the selected family's clear-all
+// action. At 720 DIPs the two tab labels and the clear button fit; no wrapping
+// is attempted, so a longer translation would clip this strip. That clipping
+// is a known, accepted limitation rather than a redesign target here: the
+// records below stay reachable because the whole surface scrolls.
 func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
 		connections := m.LogsTabConnections(s.TotalLogs())
@@ -57,15 +62,17 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			c.Invalidate()
 		}
 	})
+	clearLabel, clearConfirm := m.LogsClearConnections(), m.LogsClearConnectionsConfirm()
 	if s.Tab() == TabHistory {
-		if ui.Button(c, m.LogsClearHistory()).Clicked() {
-			s.RequestClear()
-			c.Invalidate()
-		}
+		clearLabel, clearConfirm = m.LogsClearHistory(), m.LogsClearConfirm()
+	}
+	if ui.Button(c, clearLabel).Clicked() {
+		s.RequestClear()
+		c.Invalidate()
 	}
 	if s.PendingClear() {
 		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, m.LogsClearConfirm()).Grow(1).TextColor(t.Danger)
+			ui.Text(c, clearConfirm).Grow(1).TextColor(t.Danger)
 			if ui.Button(c, m.LogsCancel()).Clicked() {
 				s.CancelClear()
 				c.Invalidate()
@@ -79,27 +86,34 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 }
 
 func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	if text := problemText(m, s.Problem()); text != "" {
+	if text := problemText(m, s.ProblemTab(), s.Problem()); text != "" {
 		ui.Text(c, text).TextColor(t.Danger).FontSize(12)
 	}
-	if text := problemText(m, s.OpenProblem()); text != "" {
+	if text := problemText(m, s.Tab(), s.OpenProblem()); text != "" {
 		ui.Text(c, text).TextColor(t.Danger).FontSize(12)
 	}
 	if s.DateProblem() {
 		ui.Text(c, m.LogsProblemDate()).TextColor(t.Danger).FontSize(12)
 	}
-	if s.Cleared() > 0 {
-		ui.Text(c, m.LogsHistoryCleared(s.Cleared())).FontSize(12).TextColor(t.TextMuted)
+	if count := s.Cleared(); count > 0 {
+		if s.ClearedTab() == TabConnections {
+			ui.Text(c, m.LogsConnectionsCleared(count)).FontSize(12).TextColor(t.TextMuted)
+		} else {
+			ui.Text(c, m.LogsHistoryCleared(count)).FontSize(12).TextColor(t.TextMuted)
+		}
 	}
 }
 
-func problemText(m locales.Messages, problem Problem) string {
+func problemText(m locales.Messages, tab Tab, problem Problem) string {
 	switch problem {
 	case ProblemLoad:
 		return m.LogsProblemLoad()
 	case ProblemDelete:
 		return m.LogsProblemDelete()
 	case ProblemClear:
+		if tab == TabConnections {
+			return m.LogsProblemClearConnections()
+		}
 		return m.LogsProblemClear()
 	case ProblemOpen:
 		return m.LogsProblemOpen()
@@ -218,6 +232,8 @@ func hostOptionLabel(m locales.Messages, option HostOption) string {
 		return m.LogsHostAll()
 	case domainhistory.LocalHostKey:
 		return m.LogsHostLocal()
+	case domainhistory.UnsavedHostKey:
+		return m.LogsHostUnsaved()
 	default:
 		if option.Label != "" {
 			return option.Label
@@ -236,8 +252,12 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			ui.Row(c).FillWidth().Gap(8).Padding(6, 8).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, connectionTitle(m, log)).Bold()
-					ui.Text(c, m.LogsConnectionMeta(statusLabel(m, log.Status), log.Kind)).
-						FontSize(12).TextColor(t.TextMuted)
+					status := statusLabel(m, log.Status)
+					meta := m.LogsConnectionMeta(status, log.Kind)
+					if log.IsUnsaved() {
+						meta = m.LogsConnectionMetaUnsaved(status, log.Kind)
+					}
+					ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
 					if address := connectionAddress(log); address != "" {
 						ui.Text(c, address).FontSize(12).TextColor(t.TextMuted)
 					}
@@ -306,9 +326,11 @@ func empty(c *ui.Context, total int, emptyText string, m locales.Messages, t *ui
 }
 
 func connectionTitle(m locales.Messages, log domainhistory.ConnectionLog) string {
-	// A local attempt has no Host, and the stored Label is the app's English
-	// default; the localized local-terminal name is the useful title.
-	if log.HostID == "" {
+	// A local attempt has no Host and stores no label; the localized
+	// local-terminal name is the useful title. An unsaved Host also has no
+	// Host identity, but it is not local: its recorded typed label (or
+	// address) names the target.
+	if log.IsLocal() {
 		return m.LogsLocalTerminal()
 	}
 	if log.HostLabel != "" {
@@ -317,7 +339,10 @@ func connectionTitle(m locales.Messages, log domainhistory.ConnectionLog) string
 	if log.Hostname != "" {
 		return log.Hostname
 	}
-	return m.LogsLocalTerminal()
+	if log.HostID != "" {
+		return string(log.HostID)
+	}
+	return m.LogsHostUnsaved()
 }
 
 func connectionAddress(log domainhistory.ConnectionLog) string {
@@ -328,7 +353,13 @@ func connectionAddress(log domainhistory.ConnectionLog) string {
 }
 
 func historyHostLabel(m locales.Messages, entry domainhistory.Entry) string {
-	if entry.HostID == "" {
+	if entry.IsUnsaved() {
+		if entry.HostLabel != "" {
+			return entry.HostLabel
+		}
+		return m.LogsHostUnsaved()
+	}
+	if entry.IsLocal() {
 		return m.LogsHostLocal()
 	}
 	if entry.HostLabel != "" {

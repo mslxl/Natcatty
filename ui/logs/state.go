@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/ui"
+
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 )
@@ -50,6 +52,7 @@ type Source interface {
 	Entries(context.Context) ([]domainhistory.Entry, error)
 	DeleteConnectionLog(context.Context, string) error
 	DeleteEntry(context.Context, string) error
+	ClearConnectionLogs(context.Context) (int, error)
 	ClearHistory(context.Context) (int, error)
 	Revision() uint64
 	Subscribe(func()) func()
@@ -62,7 +65,7 @@ type TerminalActions interface {
 
 // HostOption is one value of the Host filter.
 type HostOption struct {
-	// Key is "", "local", or a Host identity.
+	// Key is "", "local", "unsaved", or a Host identity.
 	Key   string
 	Label string
 }
@@ -99,8 +102,19 @@ type State struct {
 
 	pendingClear bool
 	cleared      int
+	clearedTab   Tab
 	problem      Problem
-	openProblem  Problem
+	// problemTab names the record family a clear failed for, so the banner
+	// says "connection logs" or "history" based on the action, not on the tab
+	// the user happens to be looking at now.
+	problemTab  Tab
+	openProblem Problem
+
+	// scroll is the surface's vertical offset. The whole surface scrolls, so
+	// the records stay reachable even when the window is too short for the
+	// title, tabs, and filters. The view binds it, and tests read it to prove
+	// real wheel and key input moved the list.
+	scroll ui.ScrollState
 }
 
 // Option customizes a State.
@@ -148,6 +162,16 @@ func (s *State) SelectTab(tab Tab) {
 	s.visible = PageSize
 	s.pendingClear = false
 	s.cleared = 0
+	// Each tab starts at its top rather than at the other list's offset. The
+	// unsaved Host key belongs to the record family that offered it; carrying
+	// it across would hide every row of a family with no unsaved records.
+	// Search, source/status, and date filters stay shared: they apply to both
+	// families and losing them on every tab switch would surprise more than it
+	// helps.
+	s.scroll.Y = 0
+	if s.hostKey == domainhistory.UnsavedHostKey {
+		s.hostKey = ""
+	}
 }
 
 // Refresh reloads the lists when the source revision changed. The view calls
@@ -181,11 +205,22 @@ func (s *State) Refresh() {
 // Problem returns the current problem code.
 func (s *State) Problem() Problem { return s.problem }
 
+// ProblemTab returns the record family the current problem belongs to. It
+// matters only for ProblemClear, whose message names the family.
+func (s *State) ProblemTab() Tab { return s.problemTab }
+
 // OpenProblem returns the problem from the last row action.
 func (s *State) OpenProblem() Problem { return s.openProblem }
 
-// Cleared returns how many history entries the last confirmed clear removed.
+// Cleared returns how many records the last confirmed clear removed.
 func (s *State) Cleared() int { return s.cleared }
+
+// ClearedTab returns which record family the last confirmed clear removed.
+func (s *State) ClearedTab() Tab { return s.clearedTab }
+
+// Scroll returns the surface's vertical offset. The view binds it; a test can
+// drive real input and assert that the offset moved.
+func (s *State) Scroll() *ui.ScrollState { return &s.scroll }
 
 // Search returns the editable search draft.
 func (s *State) Search() *string { return &s.search }
@@ -238,46 +273,92 @@ func (s *State) SetDateRange(from, to string) {
 }
 
 // HostOptions lists the Host filter values present in the records plus the
-// local shell. Labels come from the records, so a deleted Host remains
-// identifiable by its recorded label.
+// local shell and, when the selected tab has any, unsaved Hosts. Labels come
+// from the records, so a deleted Host remains identifiable by its recorded
+// label. Saved Hosts sharing a label are qualified by their address, or by
+// their identity when even the address is shared, so the selector cannot show
+// two indistinguishable entries.
 func (s *State) HostOptions() []HostOption {
 	options := []HostOption{{Key: "", Label: ""}, {Key: domainhistory.LocalHostKey, Label: ""}}
 	labels := make(map[string]string)
+	hostnames := make(map[string]string)
+	unsaved := false
 	add := func(hostID model.HostID, label, hostname string) {
-		key := string(hostID)
 		if hostID == "" {
-			key = domainhistory.LocalHostKey
+			return
 		}
+		key := string(hostID)
 		display := label
 		if display == "" {
 			display = hostname
 		}
 		if display == "" {
-			display = string(hostID)
+			display = key
 		}
-		if key != domainhistory.LocalHostKey {
-			if existing, ok := labels[key]; !ok || existing == string(hostID) {
-				labels[key] = display
-			}
+		if existing, ok := labels[key]; !ok || existing == key {
+			labels[key] = display
+			hostnames[key] = hostname
 		}
 	}
 	for _, log := range s.logs {
+		if log.IsUnsaved() {
+			if s.tab == TabConnections {
+				unsaved = true
+			}
+			continue
+		}
 		add(log.HostID, log.HostLabel, log.Hostname)
 	}
 	for _, entry := range s.entries {
+		if entry.IsUnsaved() {
+			if s.tab == TabHistory {
+				unsaved = true
+			}
+			continue
+		}
 		add(entry.HostID, entry.HostLabel, "")
+	}
+	if unsaved {
+		options = append(options, HostOption{Key: domainhistory.UnsavedHostKey})
 	}
 	keys := make([]string, 0, len(labels))
 	for key := range labels {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		return strings.ToLower(labels[keys[i]]) < strings.ToLower(labels[keys[j]])
+		left := strings.ToLower(labels[keys[i]])
+		right := strings.ToLower(labels[keys[j]])
+		if left == right {
+			return keys[i] < keys[j]
+		}
+		return left < right
 	})
+	sharedLabels := make(map[string]int, len(labels))
+	sharedHostnames := make(map[string]int, len(labels))
+	for key, label := range labels {
+		sharedLabels[strings.ToLower(label)]++
+		sharedHostnames[strings.ToLower(hostnames[key])]++
+	}
 	for _, key := range keys {
-		options = append(options, HostOption{Key: key, Label: labels[key]})
+		display := labels[key]
+		if sharedLabels[strings.ToLower(display)] > 1 {
+			display = qualifyHostLabel(display, hostnames[key], key,
+				sharedHostnames[strings.ToLower(hostnames[key])] > 1)
+		}
+		options = append(options, HostOption{Key: key, Label: display})
 	}
 	return options
+}
+
+// qualifyHostLabel disambiguates a label shared by saved Hosts. The address
+// tells them apart unless the address is shared too, in which case only the
+// identity is unique.
+func qualifyHostLabel(label, hostname, key string, addressShared bool) string {
+	qualifier := hostname
+	if qualifier == "" || addressShared {
+		qualifier = key
+	}
+	return label + " (" + qualifier + ")"
 }
 
 // dateRange parses the drafts into a filter range. A blank field is open; a
@@ -439,25 +520,39 @@ func (s *State) DeleteEntry(id string) {
 	s.mutated()
 }
 
-// RequestClear opens the clear-history confirmation.
+// RequestClear opens the clear-all confirmation for the selected tab.
 func (s *State) RequestClear() { s.pendingClear = true }
 
-// CancelClear closes the clear-history confirmation.
+// CancelClear closes the clear-all confirmation.
 func (s *State) CancelClear() { s.pendingClear = false }
 
-// ConfirmClear removes every history entry.
+// ConfirmClear removes every record on the selected tab. Connection logs and
+// command history are separate families; clearing one leaves the other in
+// place.
 func (s *State) ConfirmClear() {
 	s.pendingClear = false
 	if s.source == nil {
 		return
 	}
-	removed, err := s.source.ClearHistory(context.Background())
+	tab := s.tab
+	var removed int
+	var err error
+	if tab == TabConnections {
+		removed, err = s.source.ClearConnectionLogs(context.Background())
+	} else {
+		removed, err = s.source.ClearHistory(context.Background())
+	}
+	s.problemTab = tab
 	if err != nil {
+		// Do not leave an earlier family's success banner claiming records
+		// were removed when this clear failed.
+		s.cleared = 0
 		s.problem = ProblemClear
 		return
 	}
 	s.problem = ProblemNone
 	s.cleared = removed
+	s.clearedTab = tab
 	s.reload()
 	s.mutated()
 }

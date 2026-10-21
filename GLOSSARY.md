@@ -16,6 +16,13 @@ A user-defined grouping of hosts with shared display and connection defaults.
 In Go, `domain/vault.Group` is a Host Group and `Host.Group` holds its path.
 _Avoid_: folder, category
 
+**Unsaved Host**:
+A connection target the user typed but did not save as a Host, so it has no
+`HostID`. Records keep the typed label and address and mark it as unsaved; it is
+not the local shell and must not be reported or filtered as one. "Draft Host"
+means the same thing but is not the preferred term in code or UI.
+_Avoid_: local terminal, typed target, ad-hoc host, temporary host
+
 **SSH Key**:
 A saved private/public key pair, optionally protected by a passphrase.
 _Avoid_: credential, keypair

@@ -27,6 +27,7 @@ type Store interface {
 	ListConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error)
 	SaveConnectionLog(context.Context, domainhistory.ConnectionLog) error
 	DeleteConnectionLog(context.Context, string) error
+	ClearConnectionLogs(context.Context) (int, error)
 	PruneConnectionLogs(context.Context, domainhistory.Retention, time.Time) (int, error)
 
 	ListHistoryEntries(context.Context) ([]domainhistory.Entry, error)
@@ -214,6 +215,20 @@ func (s *Service) DeleteEntry(ctx context.Context, id string) error {
 	}
 	s.notify()
 	return nil
+}
+
+// ClearConnectionLogs removes every connection log and reports how many were
+// deleted. Command history is a separate record family and is untouched.
+func (s *Service) ClearConnectionLogs(ctx context.Context) (int, error) {
+	if s.store == nil {
+		return 0, ErrInvalid
+	}
+	removed, err := s.store.ClearConnectionLogs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.notify()
+	return removed, nil
 }
 
 // ClearHistory removes every recorded command and reports how many were

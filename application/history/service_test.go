@@ -265,6 +265,40 @@ func TestPruneAppliesLoweredRetentionWithoutRecording(t *testing.T) {
 	}
 }
 
+func TestClearConnectionLogsRemovesOnlyLogsAndNotifies(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, Retention{})
+	var notifications int
+	unsubscribe := service.Subscribe(func() { notifications++ })
+	defer unsubscribe()
+
+	for index := 0; index < 2; index++ {
+		if err := service.RecordConnection(context.Background(), domainhistory.ConnectionLog{
+			HostID: "host-1", HostLabel: "web-1", Kind: "ssh",
+			Status: domainhistory.ConnectionConnected,
+		}); err != nil {
+			t.Fatalf("RecordConnection: %v", err)
+		}
+	}
+	if err := service.Record(context.Background(), domainhistory.Entry{Command: "ls"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	removed, err := service.ClearConnectionLogs(context.Background())
+	if err != nil || removed != 2 {
+		t.Fatalf("ClearConnectionLogs = %d, %v; want 2", removed, err)
+	}
+	if len(store.logs) != 0 {
+		t.Fatalf("logs remain: %d", len(store.logs))
+	}
+	if len(store.entries) != 1 {
+		t.Fatalf("clearing logs removed %d commands, want 1 left", len(store.entries))
+	}
+	if notifications < 4 {
+		t.Fatalf("notifications = %d, want at least 4", notifications)
+	}
+}
+
 func TestDeleteAndClearNotifySubscribers(t *testing.T) {
 	store := &memoryStore{}
 	service := newTestService(store, Retention{})
