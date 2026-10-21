@@ -98,7 +98,7 @@ func parseSecureCRT(text string, opts Options) Result {
 
 	// The file stem is user data, not display copy. When there is no usable
 	// stem, fall back to the endpoint so the parser stays free of UI strings.
-	fallbackLabel := strings.TrimSuffix(filepath.Base(opts.FileName), filepath.Ext(opts.FileName))
+	fallbackLabel := secureCRTFileStem(opts.FileName)
 	for index, item := range sessions {
 		protocol := item.protocol
 		if protocol == "" {
@@ -151,6 +151,16 @@ func parseSecureCRT(text string, opts Options) Result {
 		result.Issues = append(result.Issues, issue(IssueNothingParsed, 0, "", ""))
 	}
 	return result
+}
+
+// secureCRTFileStem returns the final path element without its extension.
+// SecureCRT exports may be imported from another OS, so both separator styles
+// are accepted regardless of the host platform.
+func secureCRTFileStem(name string) string {
+	if index := strings.LastIndexAny(name, `\/`); index >= 0 {
+		name = name[index+1:]
+	}
+	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
 // parseSecureCRTPort accepts SecureCRT's 8-hex-digit encoding and decimal
