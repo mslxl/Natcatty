@@ -461,9 +461,27 @@ func TestParseSecureCRTFixture(t *testing.T) {
 
 func TestSecureCRTFilenameFallback(t *testing.T) {
 	text := "S:\"Hostname\"=\"web.example.test\"\nS:\"Protocol Name\"=\"SSH2\"\n"
-	result := Parse(FormatSecureCRT, text, Options{FileName: `C:\sessions\web-host.ini`})
-	if len(result.Records) != 1 || result.Records[0].Label != "web-host" {
-		t.Fatalf("records = %+v", result.Records)
+	cases := []struct {
+		name  string
+		file  string
+		label string
+	}{
+		{"windows path", `C:\sessions\web-host.ini`, "web-host"},
+		{"posix path", "/sessions/web-host.ini", "web-host"},
+		{"mixed separators", `/sessions\web-host.ini`, "web-host"},
+		{"mixed separators reversed", `C:\sessions/web-host.ini`, "web-host"},
+		{"bare filename", "web-host.ini", "web-host"},
+		{"bare name without extension", "web-host", "web-host"},
+		{"trailing separator", `C:\sessions\`, "web.example.test"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result := Parse(FormatSecureCRT, text, Options{FileName: test.file})
+			if len(result.Records) != 1 || result.Records[0].Label != test.label {
+				t.Fatalf("filename %q: records = %+v, want label %q",
+					test.file, result.Records, test.label)
+			}
+		})
 	}
 }
 
