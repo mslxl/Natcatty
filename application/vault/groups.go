@@ -115,6 +115,11 @@ func (s *Service) UpdateGroup(ctx context.Context, path string, draft domainvaul
 		if err := s.renameDescendantGroups(ctx, groups, oldPath, normalized.Path); err != nil {
 			return domainvault.Group{}, err
 		}
+		// Snippet target group paths follow the rename, the same as Host
+		// references do.
+		if err := s.remapSnippetTargetGroups(ctx, oldPath, normalized.Path); err != nil {
+			return domainvault.Group{}, err
+		}
 	}
 
 	now := s.now()
@@ -182,6 +187,11 @@ func (s *Service) DeleteGroup(ctx context.Context, path string) error {
 	}
 	if !matched {
 		return ErrNotFound
+	}
+	// Snippet target group references are cleared, never deleted with the
+	// group; the Snippets stay in the Vault.
+	if err := s.removeSnippetTargetGroups(ctx, root); err != nil {
+		return err
 	}
 	return nil
 }

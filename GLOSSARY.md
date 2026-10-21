@@ -28,6 +28,14 @@ _Avoid_: account, user
 A reusable command or script fragment the user can run in a session.
 _Avoid_: macro, command
 
+**Snippet Package**:
+A hierarchical path that groups Snippets in the Vault.
+_Avoid_: folder, category
+
+**Snippet Variable**:
+A named placeholder in a Snippet command, optionally with a default, substituted before the command runs.
+_Avoid_: parameter, macro
+
 **Vault Note**:
 Free-form user documentation attached to a host or kept standalone.
 _Avoid_: comment, memo

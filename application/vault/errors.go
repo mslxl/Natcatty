@@ -1,6 +1,9 @@
 package vault
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Kind classifies a Vault error so the UI can choose a localized message.
 type Kind string
@@ -37,6 +40,9 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error { return e.Cause }
+
+// ErrSnippetsUnavailable reports a Service without Snippet persistence.
+var ErrSnippetsUnavailable = errors.New("snippet storage is unavailable")
 
 // ErrNotFound reports a Host that does not exist. Repositories return it, and
 // the Service passes it through unchanged.

@@ -6019,3 +6019,561 @@ func SessionRenameField() string { return In(i18n.Locale()).SessionRenameField()
 func (msgs Messages) SessionRenameField() string {
 	return Catalog.Format(msgs.locale, "sessionRenameField", nil)
 }
+
+// VaultSnippetListTitle says "Snippets ({count})"
+// in the language the app shows.
+//
+// The Vault's Snippet list heading and its Snippet count.
+func VaultSnippetListTitle(count int) string { return In(i18n.Locale()).VaultSnippetListTitle(count) }
+
+// VaultSnippetListTitle says "Snippets ({count})"
+// in the language of msgs.
+//
+// The Vault's Snippet list heading and its Snippet count.
+func (msgs Messages) VaultSnippetListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetListTitle", map[string]any{"count": count})
+}
+
+// VaultSnippetEmpty says "No Snippets yet. Save a command you run often."
+// in the language the app shows.
+func VaultSnippetEmpty() string { return In(i18n.Locale()).VaultSnippetEmpty() }
+
+// VaultSnippetEmpty says "No Snippets yet. Save a command you run often."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetEmpty", nil)
+}
+
+// VaultSnippetNew says "New Snippet"
+// in the language the app shows.
+func VaultSnippetNew() string { return In(i18n.Locale()).VaultSnippetNew() }
+
+// VaultSnippetNew says "New Snippet"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetNew() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetNew", nil)
+}
+
+// VaultSnippetPackageNew says "New package"
+// in the language the app shows.
+func VaultSnippetPackageNew() string { return In(i18n.Locale()).VaultSnippetPackageNew() }
+
+// VaultSnippetPackageNew says "New package"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackageNew() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageNew", nil)
+}
+
+// VaultSnippetRunActive says "Run here"
+// in the language the app shows.
+func VaultSnippetRunActive() string { return In(i18n.Locale()).VaultSnippetRunActive() }
+
+// VaultSnippetRunActive says "Run here"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunActive() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunActive", nil)
+}
+
+// VaultSnippetRunHosts says "Run on targets"
+// in the language the app shows.
+func VaultSnippetRunHosts() string { return In(i18n.Locale()).VaultSnippetRunHosts() }
+
+// VaultSnippetRunHosts says "Run on targets"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunHosts() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunHosts", nil)
+}
+
+// VaultSnippetSummaryTargets says "Targets: {targets}"
+// in the language the app shows.
+//
+// A Snippet row's target summary.
+func VaultSnippetSummaryTargets(targets string) string {
+	return In(i18n.Locale()).VaultSnippetSummaryTargets(targets)
+}
+
+// VaultSnippetSummaryTargets says "Targets: {targets}"
+// in the language of msgs.
+//
+// A Snippet row's target summary.
+func (msgs Messages) VaultSnippetSummaryTargets(targets string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetSummaryTargets", map[string]any{"targets": targets})
+}
+
+// VaultSnippetSummaryAllHosts says "All Hosts"
+// in the language the app shows.
+func VaultSnippetSummaryAllHosts() string { return In(i18n.Locale()).VaultSnippetSummaryAllHosts() }
+
+// VaultSnippetSummaryAllHosts says "All Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetSummaryAllHosts() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetSummaryAllHosts", nil)
+}
+
+// VaultSnippetSummaryNoTargets says "Any session"
+// in the language the app shows.
+func VaultSnippetSummaryNoTargets() string { return In(i18n.Locale()).VaultSnippetSummaryNoTargets() }
+
+// VaultSnippetSummaryNoTargets says "Any session"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetSummaryNoTargets() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetSummaryNoTargets", nil)
+}
+
+// VaultSnippetVariableCount says "{count} variables"
+// in the language the app shows.
+//
+// How many variables a Snippet asks for.
+func VaultSnippetVariableCount(count int) string {
+	return In(i18n.Locale()).VaultSnippetVariableCount(count)
+}
+
+// VaultSnippetVariableCount says "{count} variables"
+// in the language of msgs.
+//
+// How many variables a Snippet asks for.
+func (msgs Messages) VaultSnippetVariableCount(count int) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetVariableCount", map[string]any{"count": count})
+}
+
+// VaultSnippetNoAutoRun says "No auto-run"
+// in the language the app shows.
+func VaultSnippetNoAutoRun() string { return In(i18n.Locale()).VaultSnippetNoAutoRun() }
+
+// VaultSnippetNoAutoRun says "No auto-run"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetNoAutoRun() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetNoAutoRun", nil)
+}
+
+// VaultSnippetLineDelay says "Line by line"
+// in the language the app shows.
+func VaultSnippetLineDelay() string { return In(i18n.Locale()).VaultSnippetLineDelay() }
+
+// VaultSnippetLineDelay says "Line by line"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetLineDelay() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetLineDelay", nil)
+}
+
+// VaultSnippetFormCreateTitle says "New Snippet"
+// in the language the app shows.
+func VaultSnippetFormCreateTitle() string { return In(i18n.Locale()).VaultSnippetFormCreateTitle() }
+
+// VaultSnippetFormCreateTitle says "New Snippet"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetFormCreateTitle", nil)
+}
+
+// VaultSnippetFormEditTitle says "Edit Snippet"
+// in the language the app shows.
+func VaultSnippetFormEditTitle() string { return In(i18n.Locale()).VaultSnippetFormEditTitle() }
+
+// VaultSnippetFormEditTitle says "Edit Snippet"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetFormEditTitle", nil)
+}
+
+// VaultSnippetLabel says "Label"
+// in the language the app shows.
+func VaultSnippetLabel() string { return In(i18n.Locale()).VaultSnippetLabel() }
+
+// VaultSnippetLabel says "Label"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetLabel() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetLabel", nil)
+}
+
+// VaultSnippetCommand says "Command"
+// in the language the app shows.
+func VaultSnippetCommand() string { return In(i18n.Locale()).VaultSnippetCommand() }
+
+// VaultSnippetCommand says "Command"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetCommand() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetCommand", nil)
+}
+
+// VaultSnippetCommandHint says "Wrap variable names in double curly brackets; add a default after a colon, as in host:localhost."
+// in the language the app shows.
+func VaultSnippetCommandHint() string { return In(i18n.Locale()).VaultSnippetCommandHint() }
+
+// VaultSnippetCommandHint says "Wrap variable names in double curly brackets; add a default after a colon, as in host:localhost."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetCommandHint() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetCommandHint", nil)
+}
+
+// VaultSnippetPackage says "Package"
+// in the language the app shows.
+func VaultSnippetPackage() string { return In(i18n.Locale()).VaultSnippetPackage() }
+
+// VaultSnippetPackage says "Package"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackage() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackage", nil)
+}
+
+// VaultSnippetPackageHint says "Slash-separated path. An empty value keeps the Snippet at the Vault root."
+// in the language the app shows.
+func VaultSnippetPackageHint() string { return In(i18n.Locale()).VaultSnippetPackageHint() }
+
+// VaultSnippetPackageHint says "Slash-separated path. An empty value keeps the Snippet at the Vault root."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackageHint() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageHint", nil)
+}
+
+// VaultSnippetTargets says "Targets"
+// in the language the app shows.
+func VaultSnippetTargets() string { return In(i18n.Locale()).VaultSnippetTargets() }
+
+// VaultSnippetTargets says "Targets"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetTargets() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetTargets", nil)
+}
+
+// VaultSnippetAllHosts says "All Hosts"
+// in the language the app shows.
+func VaultSnippetAllHosts() string { return In(i18n.Locale()).VaultSnippetAllHosts() }
+
+// VaultSnippetAllHosts says "All Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetAllHosts() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetAllHosts", nil)
+}
+
+// VaultSnippetTargetGroups says "Host Groups"
+// in the language the app shows.
+func VaultSnippetTargetGroups() string { return In(i18n.Locale()).VaultSnippetTargetGroups() }
+
+// VaultSnippetTargetGroups says "Host Groups"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetTargetGroups() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetTargetGroups", nil)
+}
+
+// VaultSnippetNoTargetsHint says "With no target, the Snippet runs in any active Session."
+// in the language the app shows.
+func VaultSnippetNoTargetsHint() string { return In(i18n.Locale()).VaultSnippetNoTargetsHint() }
+
+// VaultSnippetNoTargetsHint says "With no target, the Snippet runs in any active Session."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetNoTargetsHint() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetNoTargetsHint", nil)
+}
+
+// VaultSnippetNoAutoRunLabel says "Do not press Enter after pasting"
+// in the language the app shows.
+func VaultSnippetNoAutoRunLabel() string { return In(i18n.Locale()).VaultSnippetNoAutoRunLabel() }
+
+// VaultSnippetNoAutoRunLabel says "Do not press Enter after pasting"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetNoAutoRunLabel() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetNoAutoRunLabel", nil)
+}
+
+// VaultSnippetRunMode says "Multi-line run mode"
+// in the language the app shows.
+func VaultSnippetRunMode() string { return In(i18n.Locale()).VaultSnippetRunMode() }
+
+// VaultSnippetRunMode says "Multi-line run mode"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunMode() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunMode", nil)
+}
+
+// VaultSnippetRunModePaste says "Paste all lines at once"
+// in the language the app shows.
+func VaultSnippetRunModePaste() string { return In(i18n.Locale()).VaultSnippetRunModePaste() }
+
+// VaultSnippetRunModePaste says "Paste all lines at once"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunModePaste() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunModePaste", nil)
+}
+
+// VaultSnippetRunModeLineDelay says "Submit each line with a delay"
+// in the language the app shows.
+func VaultSnippetRunModeLineDelay() string { return In(i18n.Locale()).VaultSnippetRunModeLineDelay() }
+
+// VaultSnippetRunModeLineDelay says "Submit each line with a delay"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunModeLineDelay() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunModeLineDelay", nil)
+}
+
+// VaultSnippetPackageFormCreateTitle says "New Snippet package"
+// in the language the app shows.
+func VaultSnippetPackageFormCreateTitle() string {
+	return In(i18n.Locale()).VaultSnippetPackageFormCreateTitle()
+}
+
+// VaultSnippetPackageFormCreateTitle says "New Snippet package"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackageFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageFormCreateTitle", nil)
+}
+
+// VaultSnippetPackageFormEditTitle says "Rename Snippet package"
+// in the language the app shows.
+func VaultSnippetPackageFormEditTitle() string {
+	return In(i18n.Locale()).VaultSnippetPackageFormEditTitle()
+}
+
+// VaultSnippetPackageFormEditTitle says "Rename Snippet package"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackageFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageFormEditTitle", nil)
+}
+
+// VaultSnippetPackagePath says "Package path"
+// in the language the app shows.
+func VaultSnippetPackagePath() string { return In(i18n.Locale()).VaultSnippetPackagePath() }
+
+// VaultSnippetPackagePath says "Package path"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackagePath() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackagePath", nil)
+}
+
+// VaultSnippetPackagePathHint says "Packages nest with '/', for example ops/linux."
+// in the language the app shows.
+func VaultSnippetPackagePathHint() string { return In(i18n.Locale()).VaultSnippetPackagePathHint() }
+
+// VaultSnippetPackagePathHint says "Packages nest with '/', for example ops/linux."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetPackagePathHint() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackagePathHint", nil)
+}
+
+// VaultSnippetPackageSnippetCount says "{count} Snippets"
+// in the language the app shows.
+//
+// How many Snippets one package contains.
+func VaultSnippetPackageSnippetCount(count int) string {
+	return In(i18n.Locale()).VaultSnippetPackageSnippetCount(count)
+}
+
+// VaultSnippetPackageSnippetCount says "{count} Snippets"
+// in the language of msgs.
+//
+// How many Snippets one package contains.
+func (msgs Messages) VaultSnippetPackageSnippetCount(count int) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageSnippetCount", map[string]any{"count": count})
+}
+
+// VaultSnippetDeleteConfirm says "Delete Snippet “{label}”?"
+// in the language the app shows.
+//
+// The confirmation naming the Snippet to delete.
+func VaultSnippetDeleteConfirm(label string) string {
+	return In(i18n.Locale()).VaultSnippetDeleteConfirm(label)
+}
+
+// VaultSnippetDeleteConfirm says "Delete Snippet “{label}”?"
+// in the language of msgs.
+//
+// The confirmation naming the Snippet to delete.
+func (msgs Messages) VaultSnippetDeleteConfirm(label string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetDeleteConfirm", map[string]any{"label": label})
+}
+
+// VaultSnippetPackageDeleteConfirm says "Delete package “{path}”? Its Snippets stay and move to the Vault root."
+// in the language the app shows.
+//
+// The confirmation naming the package to delete and its non-cascading
+// effect.
+func VaultSnippetPackageDeleteConfirm(path string) string {
+	return In(i18n.Locale()).VaultSnippetPackageDeleteConfirm(path)
+}
+
+// VaultSnippetPackageDeleteConfirm says "Delete package “{path}”? Its Snippets stay and move to the Vault root."
+// in the language of msgs.
+//
+// The confirmation naming the package to delete and its non-cascading
+// effect.
+func (msgs Messages) VaultSnippetPackageDeleteConfirm(path string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetPackageDeleteConfirm", map[string]any{"path": path})
+}
+
+// VaultSnippetRunTitle says "Run “{label}”"
+// in the language the app shows.
+//
+// The variable form heading naming the Snippet to run.
+func VaultSnippetRunTitle(label string) string { return In(i18n.Locale()).VaultSnippetRunTitle(label) }
+
+// VaultSnippetRunTitle says "Run “{label}”"
+// in the language of msgs.
+//
+// The variable form heading naming the Snippet to run.
+func (msgs Messages) VaultSnippetRunTitle(label string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunTitle", map[string]any{"label": label})
+}
+
+// VaultSnippetRunDestinationActive says "Destination: the active Session"
+// in the language the app shows.
+func VaultSnippetRunDestinationActive() string {
+	return In(i18n.Locale()).VaultSnippetRunDestinationActive()
+}
+
+// VaultSnippetRunDestinationActive says "Destination: the active Session"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunDestinationActive() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunDestinationActive", nil)
+}
+
+// VaultSnippetRunDestinationHosts says "Destination: the Snippet's target Hosts"
+// in the language the app shows.
+func VaultSnippetRunDestinationHosts() string {
+	return In(i18n.Locale()).VaultSnippetRunDestinationHosts()
+}
+
+// VaultSnippetRunDestinationHosts says "Destination: the Snippet's target Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunDestinationHosts() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunDestinationHosts", nil)
+}
+
+// VaultSnippetRunVariable says "Variable {name}"
+// in the language the app shows.
+//
+// One variable input's label.
+func VaultSnippetRunVariable(name string) string {
+	return In(i18n.Locale()).VaultSnippetRunVariable(name)
+}
+
+// VaultSnippetRunVariable says "Variable {name}"
+// in the language of msgs.
+//
+// One variable input's label.
+func (msgs Messages) VaultSnippetRunVariable(name string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunVariable", map[string]any{"name": name})
+}
+
+// VaultSnippetRunVariableDefault says "Default: {value}"
+// in the language the app shows.
+//
+// The default value a variable offers.
+func VaultSnippetRunVariableDefault(value string) string {
+	return In(i18n.Locale()).VaultSnippetRunVariableDefault(value)
+}
+
+// VaultSnippetRunVariableDefault says "Default: {value}"
+// in the language of msgs.
+//
+// The default value a variable offers.
+func (msgs Messages) VaultSnippetRunVariableDefault(value string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunVariableDefault", map[string]any{"value": value})
+}
+
+// VaultSnippetRunPreview says "Command preview"
+// in the language the app shows.
+func VaultSnippetRunPreview() string { return In(i18n.Locale()).VaultSnippetRunPreview() }
+
+// VaultSnippetRunPreview says "Command preview"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunPreview() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunPreview", nil)
+}
+
+// VaultSnippetRunConfirm says "Run now"
+// in the language the app shows.
+func VaultSnippetRunConfirm() string { return In(i18n.Locale()).VaultSnippetRunConfirm() }
+
+// VaultSnippetRunConfirm says "Run now"
+// in the language of msgs.
+func (msgs Messages) VaultSnippetRunConfirm() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetRunConfirm", nil)
+}
+
+// VaultSnippetMissingVariables says "Missing required variables: {names}"
+// in the language the app shows.
+//
+// Names every required Snippet variable left blank.
+func VaultSnippetMissingVariables(names string) string {
+	return In(i18n.Locale()).VaultSnippetMissingVariables(names)
+}
+
+// VaultSnippetMissingVariables says "Missing required variables: {names}"
+// in the language of msgs.
+//
+// Names every required Snippet variable left blank.
+func (msgs Messages) VaultSnippetMissingVariables(names string) string {
+	return Catalog.Format(msgs.locale, "vaultSnippetMissingVariables", map[string]any{"names": names})
+}
+
+// VaultSnippetVariablesHint says "Values are substituted before the command is sent."
+// in the language the app shows.
+func VaultSnippetVariablesHint() string { return In(i18n.Locale()).VaultSnippetVariablesHint() }
+
+// VaultSnippetVariablesHint says "Values are substituted before the command is sent."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetVariablesHint() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetVariablesHint", nil)
+}
+
+// VaultSnippetProblemRun says "The Snippet could not be sent to the Session."
+// in the language the app shows.
+func VaultSnippetProblemRun() string { return In(i18n.Locale()).VaultSnippetProblemRun() }
+
+// VaultSnippetProblemRun says "The Snippet could not be sent to the Session."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblemRun() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblemRun", nil)
+}
+
+// VaultSnippetProblemNoSession says "Open a Session before running this Snippet."
+// in the language the app shows.
+func VaultSnippetProblemNoSession() string { return In(i18n.Locale()).VaultSnippetProblemNoSession() }
+
+// VaultSnippetProblemNoSession says "Open a Session before running this Snippet."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblemNoSession() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblemNoSession", nil)
+}
+
+// VaultSnippetProblemTargets says "This Snippet does not target the active Session and has no target Hosts."
+// in the language the app shows.
+func VaultSnippetProblemTargets() string { return In(i18n.Locale()).VaultSnippetProblemTargets() }
+
+// VaultSnippetProblemTargets says "This Snippet does not target the active Session and has no target Hosts."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblemTargets() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblemTargets", nil)
+}
+
+// VaultSnippetProblemMissingVariables says "Fill in every required variable before running."
+// in the language the app shows.
+func VaultSnippetProblemMissingVariables() string {
+	return In(i18n.Locale()).VaultSnippetProblemMissingVariables()
+}
+
+// VaultSnippetProblemMissingVariables says "Fill in every required variable before running."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblemMissingVariables() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblemMissingVariables", nil)
+}
+
+// VaultSnippetProblem says "The Snippet is invalid."
+// in the language the app shows.
+func VaultSnippetProblem() string { return In(i18n.Locale()).VaultSnippetProblem() }
+
+// VaultSnippetProblem says "The Snippet is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblem() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblem", nil)
+}
+
+// VaultSnippetProblemPackage says "The Snippet package path is invalid."
+// in the language the app shows.
+func VaultSnippetProblemPackage() string { return In(i18n.Locale()).VaultSnippetProblemPackage() }
+
+// VaultSnippetProblemPackage says "The Snippet package path is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultSnippetProblemPackage() string {
+	return Catalog.Format(msgs.locale, "vaultSnippetProblemPackage", nil)
+}

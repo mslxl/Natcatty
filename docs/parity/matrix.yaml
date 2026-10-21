@@ -1765,6 +1765,96 @@
   status: verified
   notes: "The Vault lists every stored host key with its endpoint, key type, fingerprint, and trusted state. Removing trust deletes only that record; Hosts and other Known Hosts are untouched, and the next connection prompts again."
 
+# --- Ticket 21: Snippets, packages, variables, and targets ---
+
+- id: vault.snippets-and-packages
+  area: vault
+  feature: Create, edit, delete, and list Snippets and their hierarchical packages
+  original_paths:
+    - components/SnippetsManager.tsx
+    - components/SnippetsPackageDialogs.tsx
+    - domain/snippetPackage.ts
+    - application/state/useVaultState.ts
+  module: application/vault
+  tickets: [21]
+  acceptance_tests:
+    - domain/vault.TestNormalizeSnippetDraftValidatesAndCanonicalizes
+    - domain/vault.TestNormalizeSnippetPackagePathCanonicalizesAndValidates
+    - domain/vault.TestNormalizeSnippetPackageDraftRequiresAPath
+    - domain/vault.TestSnippetPackagePathHelpers
+    - application/vault.TestSnippetCRUDPersistsTargetsAndRememberedValues
+    - application/vault.TestSnippetPackageRenameRewritesSnippetsAndDeleteKeepsThem
+    - adapters/store.TestSnippetsAndPackagesPersistAcrossReopen
+    - adapters/store.TestDeletingASnippetPackageDoesNotDeleteItsSnippets
+    - ui/vault/state.TestSnippetCRUDPersistsThroughTheStateSeam
+    - ui/vault/state.TestSnippetValidationProblemsAreLocalizable
+    - ui/vault/state.TestBeginEditSnippetClosesOtherEditors
+    - ui/vault.TestVaultViewListsSnippetsAndPackages
+    - ui/vault.TestVaultViewCreatesASnippetThroughTheEditor
+    - ui/vault.TestVaultViewCreatesASnippetPackageThroughTheEditor
+    - ui/vault.TestSnippetEditorScrollsToItsActionsAtBothSizes
+    - ui/vault.TestSnippetListFitsAt720x480
+    - app.TestTicket21CheckRunsThroughTheKeyboard
+    - app.TestTicket21CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "A Snippet stores its command, package path, tags, run mode, NoAutoRun flag, targets, and remembered variable values. Package paths are normalized and infer their ancestors for display. Renaming a package rewrites the path of every member Snippet, while deleting a package never deletes its Snippets, matching the original non-cascading behavior. Snippet and package editors use the Vault's scrollable form with a fixed Save and Cancel bar, so both fit at 720x480 under the real shell."
+
+- id: vault.snippet-variables
+  area: vault
+  feature: Substitute Snippet variables and defaults before execution, remember values, and report missing variables
+  original_paths:
+    - domain/snippetVariables.ts
+    - domain/snippetPreview.ts
+    - application/state/snippetVariableValues.ts
+    - infrastructure/persistence/snippetVariableValuesStorage.ts
+  module: domain/vault
+  tickets: [21]
+  acceptance_tests:
+    - domain/vault.TestParseSnippetVariablesFindsEveryVariableInFirstOccurrenceOrder
+    - domain/vault.TestParseSnippetVariablesReadsDefaultsAndUnicodeNames
+    - domain/vault.TestParseSnippetVariablesIgnoresDockerGoTemplates
+    - domain/vault.TestApplySnippetVariablesSubstitutesValuesAndDefaults
+    - domain/vault.TestApplySnippetVariablesReportsMissingAndChangesNothing
+    - domain/vault.TestApplySnippetVariablesPreservesGoTemplatesAndSubstitutesNeighbours
+    - domain/vault.TestApplySnippetVariablesKeepsControlNamesThatAreRealVariables
+    - domain/vault.TestPreviewSnippetCommandLeavesRequiredPlaceholders
+    - application/vault.TestPrepareSnippetSubstitutesVariablesAndResolvesTargets
+    - application/vault.TestPrepareSnippetReportsMissingVariables
+    - ui/vault/state.TestSnippetRunSubstitutesVariablesBeforeSending
+    - ui/vault/state.TestSnippetRunNamesEveryMissingVariableAndSendsNothing
+    - ui/vault.TestVaultViewRunPanelSubstitutesAndShowsThePreview
+    - ui/vault.TestVaultViewRunPanelShowsMissingVariablesAndSendsNothing
+    - app.TestTicket21CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Variables use the original double-curly syntax, with an optional colon default and Unicode names, in first-occurrence order. Docker and Go template actions such as {{.Names}} are deliberately left alone, including when they sit beside a real variable. Supplied values win over defaults; an unresolved required variable aborts the run with the localized missing-variable message naming every affected variable, keeps the run form open with its values, and sends no bytes. Successful values are remembered per Snippet."
+
+- id: vault.snippet-targets-and-execution
+  area: vault
+  feature: Run Snippets in the active Session or selected Hosts with the original paste, line-delay, and NoAutoRun behavior
+  original_paths:
+    - domain/snippetTargets.ts
+    - domain/snippetRunMode.ts
+    - components/snippets/SnippetTargetsSection.tsx
+    - components/SnippetExecutionProvider.tsx
+  module: application/vault
+  tickets: [21]
+  acceptance_tests:
+    - domain/vault.TestNormalizeSnippetDraftAllHostsDropsExplicitTargets
+    - domain/vault.TestSnippetTargetsAndGroupRename
+    - domain/vault.TestSnippetRunnableHostsFollowsTargetsAndAllHosts
+    - application/vault.TestSnippetTargetGroupsFollowHostGroupRenameAndDelete
+    - application/vault.TestPrepareSnippetSubstitutesVariablesAndResolvesTargets
+    - ui/vault/state.TestSnippetRunWithoutVariablesExecutesImmediately
+    - ui/vault/state.TestSnippetRunTargetsSelectedHostsAndTheActiveSession
+    - ui/vault/state.TestSnippetRunAllHostsOpensEveryConnectableHost
+    - ui/vault/state.TestSnippetRunFailureKeepsTheFormAndReportsALocalizableProblem
+    - ui/shell/state.TestOpenHostWithStartupSendsTheExactChunksAfterAttaching
+    - ui/shell/state.TestFocusedHostIDReportsOnlySSHSessions
+    - ui/vault.TestVaultViewRunOnTargetsUsesTheResolvedHosts
+    - app.TestTicket21CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Targets may be no Hosts (anywhere), explicit Host IDs, Host Group paths, or all Hosts; group paths follow group renames and deletions. Run here sends to the focused Session only when the Snippet's scope admits that Host, and a local shell is out of scope for a targeted Snippet. Run on targets opens one focused Tab per selected Host and delivers the command after the Tab attaches, rather than reusing an unrelated Session. With no variables the run happens immediately; with variables the ordered form previews the exact payload. Paste is the default, line-delay mode sends one chunk per line with the original 250 ms pause, and NoAutoRun omits the final carriage return. Empty target selections and a missing focused Session produce localized errors, and a transport failure keeps the form open and sends nothing further."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

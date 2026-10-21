@@ -99,6 +99,12 @@ const (
 	ProblemAlgorithms               Problem = "algorithms"
 	ProblemX11                      Problem = "x11"
 	ProblemX11Acknowledged          Problem = "x11_acknowledged"
+	ProblemSnippet                  Problem = "snippet"
+	ProblemSnippetPackage           Problem = "snippet_package"
+	ProblemSnippetMissingVariables  Problem = "snippet_missing_variables"
+	ProblemSnippetTargets           Problem = "snippet_targets"
+	ProblemSnippetNoSession         Problem = "snippet_no_session"
+	ProblemSnippetRunFailed         Problem = "snippet_run_failed"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -139,27 +145,31 @@ type Form struct {
 
 // State is the Vault surface's state.
 type State struct {
-	hosts         Hosts
-	keys          Keys
-	identities    Identities
-	groups        Groups
-	proxies       ProxyProfiles
-	knownHosts    KnownHosts
-	secrets       Secrets
-	items         []domainvault.Host
-	keyItems      []domainvault.Key
-	identityItems []domainvault.Identity
-	groupItems    []domainvault.Group
-	proxyItems    []domainvault.ProxyProfile
-	knownItems    []domainconn.KnownHost
-	selected      model.HostID
-	editing       bool
-	form          Form
-	problem       Problem
-	pendingDelete model.HostID
-	requestRedraw func()
-	connect       func(domainvault.Host)
-	tester        ConnectionTester
+	hosts               Hosts
+	keys                Keys
+	identities          Identities
+	groups              Groups
+	proxies             ProxyProfiles
+	knownHosts          KnownHosts
+	secrets             Secrets
+	snippets            Snippets
+	snippetRunner       SnippetRunner
+	items               []domainvault.Host
+	keyItems            []domainvault.Key
+	identityItems       []domainvault.Identity
+	groupItems          []domainvault.Group
+	proxyItems          []domainvault.ProxyProfile
+	knownItems          []domainconn.KnownHost
+	snippetItems        []domainvault.Snippet
+	snippetPackageItems []domainvault.SnippetPackage
+	selected            model.HostID
+	editing             bool
+	form                Form
+	problem             Problem
+	pendingDelete       model.HostID
+	requestRedraw       func()
+	connect             func(domainvault.Host)
+	tester              ConnectionTester
 
 	// Test results are keyed by Host. The maps are mutated only on the UI
 	// thread; completed attempts arrive through the lock-protected queue.
@@ -187,6 +197,16 @@ type State struct {
 	proxyForm             ProxyForm
 	pendingDeleteProxy    string
 	pendingDeleteKnown    string
+
+	editingSnippet              bool
+	snippetForm                 SnippetForm
+	pendingDeleteSnippet        string
+	editingSnippetPackage       bool
+	snippetPackageForm          SnippetPackageForm
+	pendingDeleteSnippetPackage string
+	snippetRun                  *SnippetRunForm
+	snippetRunMissing           []string
+	snippetRunProblem           Problem
 
 	// hostChain, proxy, and algorithms are preserved across an edit. They are
 	// not exposed in the Host editor yet, so the editor must round-trip them
@@ -720,6 +740,20 @@ func (s *State) load() error {
 		}
 		s.proxyItems = proxies
 	}
+	if s.snippets != nil {
+		snippets, err := s.snippets.ListSnippets(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.snippetItems = snippets
+		packages, err := s.snippets.ListSnippetPackages(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.snippetPackageItems = packages
+	}
 	if err := s.loadKnownHosts(); err != nil {
 		return err
 	}
@@ -906,6 +940,10 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 			return ProblemX11Acknowledged
 		}
 		return ProblemX11
+	case domainvault.FieldSnippet, domainvault.FieldSnippetCommand:
+		return ProblemSnippet
+	case domainvault.FieldSnippetPackage:
+		return ProblemSnippetPackage
 	default:
 		return ProblemInternal
 	}

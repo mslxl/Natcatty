@@ -32,12 +32,14 @@ type Service struct {
 	groups            GroupRepository
 	proxies           ProxyProfileRepository
 	knownHosts        KnownHostRepository
+	snippets          SnippetRepository
 	inspector         KeyInspector
 	secrets           FieldSecrets
 	newID             func() model.HostID
 	newKeyID          func() model.KeyID
 	newIdentityID     func() model.IdentityID
 	newProxyProfileID func() string
+	newSnippetID      func() string
 	now               func() time.Time
 }
 
@@ -123,6 +125,7 @@ func NewService(repo HostRepository, opts ...Option) *Service {
 		newKeyID:          newSSHKeyID,
 		newIdentityID:     newIdentityID,
 		newProxyProfileID: newProxyProfileID,
+		newSnippetID:      newSnippetID,
 		now:               time.Now,
 	}
 	for _, opt := range opts {
