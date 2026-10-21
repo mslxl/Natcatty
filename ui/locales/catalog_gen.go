@@ -7214,6 +7214,20 @@ func (msgs Messages) LogsHostLocal() string {
 	return Catalog.Format(msgs.locale, "logsHostLocal", nil)
 }
 
+// LogsHostUnsaved says "Unsaved hosts"
+// in the language the app shows.
+//
+// The Host filter value for typed Hosts with no saved Vault record.
+func LogsHostUnsaved() string { return In(i18n.Locale()).LogsHostUnsaved() }
+
+// LogsHostUnsaved says "Unsaved hosts"
+// in the language of msgs.
+//
+// The Host filter value for typed Hosts with no saved Vault record.
+func (msgs Messages) LogsHostUnsaved() string {
+	return Catalog.Format(msgs.locale, "logsHostUnsaved", nil)
+}
+
 // LogsStatusFilter says "Status"
 // in the language the app shows.
 //
@@ -7410,6 +7424,20 @@ func (msgs Messages) LogsClearHistory() string {
 	return Catalog.Format(msgs.locale, "logsClearHistory", nil)
 }
 
+// LogsClearConnections says "Clear connection logs"
+// in the language the app shows.
+//
+// The button that opens the clear-connection-logs confirmation.
+func LogsClearConnections() string { return In(i18n.Locale()).LogsClearConnections() }
+
+// LogsClearConnections says "Clear connection logs"
+// in the language of msgs.
+//
+// The button that opens the clear-connection-logs confirmation.
+func (msgs Messages) LogsClearConnections() string {
+	return Catalog.Format(msgs.locale, "logsClearConnections", nil)
+}
+
 // LogsClearConfirm says "Remove every recorded command?"
 // in the language the app shows.
 //
@@ -7422,6 +7450,20 @@ func LogsClearConfirm() string { return In(i18n.Locale()).LogsClearConfirm() }
 // The clear-history confirmation.
 func (msgs Messages) LogsClearConfirm() string {
 	return Catalog.Format(msgs.locale, "logsClearConfirm", nil)
+}
+
+// LogsClearConnectionsConfirm says "Remove every connection log?"
+// in the language the app shows.
+//
+// The clear-connection-logs confirmation.
+func LogsClearConnectionsConfirm() string { return In(i18n.Locale()).LogsClearConnectionsConfirm() }
+
+// LogsClearConnectionsConfirm says "Remove every connection log?"
+// in the language of msgs.
+//
+// The clear-connection-logs confirmation.
+func (msgs Messages) LogsClearConnectionsConfirm() string {
+	return Catalog.Format(msgs.locale, "logsClearConnectionsConfirm", nil)
 }
 
 // LogsClearYes says "Clear"
@@ -7452,18 +7494,32 @@ func (msgs Messages) LogsCancel() string {
 	return Catalog.Format(msgs.locale, "logsCancel", nil)
 }
 
-// LogsHistoryCleared says "History cleared ({count} entries removed)."
+// LogsHistoryCleared says "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}"
 // in the language the app shows.
 //
-// Confirms that the history was cleared.
+// Confirms that the command history was cleared.
 func LogsHistoryCleared(count int) string { return In(i18n.Locale()).LogsHistoryCleared(count) }
 
-// LogsHistoryCleared says "History cleared ({count} entries removed)."
+// LogsHistoryCleared says "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}"
 // in the language of msgs.
 //
-// Confirms that the history was cleared.
+// Confirms that the command history was cleared.
 func (msgs Messages) LogsHistoryCleared(count int) string {
 	return Catalog.Format(msgs.locale, "logsHistoryCleared", map[string]any{"count": count})
+}
+
+// LogsConnectionsCleared says "{count, plural, one {Connection log cleared (# entry removed).} other {Connection logs cleared (# entries removed).}}"
+// in the language the app shows.
+//
+// Confirms that the connection logs were cleared.
+func LogsConnectionsCleared(count int) string { return In(i18n.Locale()).LogsConnectionsCleared(count) }
+
+// LogsConnectionsCleared says "{count, plural, one {Connection log cleared (# entry removed).} other {Connection logs cleared (# entries removed).}}"
+// in the language of msgs.
+//
+// Confirms that the connection logs were cleared.
+func (msgs Messages) LogsConnectionsCleared(count int) string {
+	return Catalog.Format(msgs.locale, "logsConnectionsCleared", map[string]any{"count": count})
 }
 
 // LogsEmptyConnections says "No connection attempts recorded."
@@ -7538,6 +7594,24 @@ func (msgs Messages) LogsConnectionMeta(status string, kind string) string {
 	return Catalog.Format(msgs.locale, "logsConnectionMeta", map[string]any{"status": status, "kind": kind})
 }
 
+// LogsConnectionMetaUnsaved says "{status} · {kind} · unsaved host"
+// in the language the app shows.
+//
+// The status, transport family, and unsaved target of a connection log row
+// for a typed Host.
+func LogsConnectionMetaUnsaved(status string, kind string) string {
+	return In(i18n.Locale()).LogsConnectionMetaUnsaved(status, kind)
+}
+
+// LogsConnectionMetaUnsaved says "{status} · {kind} · unsaved host"
+// in the language of msgs.
+//
+// The status, transport family, and unsaved target of a connection log row
+// for a typed Host.
+func (msgs Messages) LogsConnectionMetaUnsaved(status string, kind string) string {
+	return Catalog.Format(msgs.locale, "logsConnectionMetaUnsaved", map[string]any{"status": status, "kind": kind})
+}
+
 // LogsHistoryMeta says "{host} · {source} · {time}"
 // in the language the app shows.
 //
@@ -7594,6 +7668,20 @@ func LogsProblemClear() string { return In(i18n.Locale()).LogsProblemClear() }
 // Shown when clearing the history failed.
 func (msgs Messages) LogsProblemClear() string {
 	return Catalog.Format(msgs.locale, "logsProblemClear", nil)
+}
+
+// LogsProblemClearConnections says "Could not clear the connection logs."
+// in the language the app shows.
+//
+// Shown when clearing the connection logs failed.
+func LogsProblemClearConnections() string { return In(i18n.Locale()).LogsProblemClearConnections() }
+
+// LogsProblemClearConnections says "Could not clear the connection logs."
+// in the language of msgs.
+//
+// Shown when clearing the connection logs failed.
+func (msgs Messages) LogsProblemClearConnections() string {
+	return Catalog.Format(msgs.locale, "logsProblemClearConnections", nil)
 }
 
 // LogsProblemOpen says "Could not open the terminal."

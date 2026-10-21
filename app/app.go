@@ -389,27 +389,8 @@ func run(afterReady func(hostWindow)) error {
 			if historyService == nil {
 				return
 			}
-			errorText := ""
-			if event.Err != nil {
-				errorText = event.Err.Error()
-			}
-			label := event.Label
-			if event.HostID == "" {
-				// A local attempt has no Host; the Logs surface localizes its
-				// title instead of persisting an application display string.
-				label = ""
-			}
-			_ = historyService.RecordConnection(context.Background(), domainhistory.ConnectionLog{
-				SessionID: event.SessionID,
-				HostID:    event.HostID,
-				HostLabel: label,
-				Hostname:  event.Hostname,
-				Username:  event.Username,
-				Kind:      string(event.Kind),
-				Error:     errorText,
-				StartedAt: event.StartedAt,
-				EndedAt:   event.EndedAt,
-			})
+			_ = historyService.RecordConnection(context.Background(),
+				connectionLogFromEvent(event))
 		}),
 		// Commands that ran in a Session feed autocomplete under that Session's
 		// scope. The Host scope keeps an SSH Host's history separate.
@@ -417,17 +398,22 @@ func run(afterReady func(hostWindow)) error {
 		// per-execution row to the shared history journal, so a command is
 		// persisted exactly once.
 		appsession.WithCommandHook(func(id model.SessionID, scope, command string) {
-			hostID, label, _, _ := sessions.SessionInfo(id)
-			if hostID == "" {
+			hostID, label, kind, ok := sessions.SessionInfo(id)
+			// A command from a typed Host has no identity but is not a local
+			// shell: keep the typed label and mark the row unsaved so the
+			// History surface and its Local filter do not call it local.
+			unsaved := ok && hostID == "" && kind != appsession.KindLocal
+			if hostID == "" && !unsaved {
 				label = ""
 			}
 			autocompleteService.RecordEntry(domainhistory.Entry{
-				SessionID: id,
-				HostID:    hostID,
-				HostLabel: label,
-				Scope:     scope,
-				Command:   command,
-				Source:    domainhistory.SourceSession,
+				SessionID:   id,
+				HostID:      hostID,
+				HostLabel:   label,
+				UnsavedHost: unsaved,
+				Scope:       scope,
+				Command:     command,
+				Source:      domainhistory.SourceSession,
 			})
 		}),
 		// A BEL marks the Session active, matching the original's tab badge.
@@ -834,6 +820,29 @@ func importShellHistory(ctx context.Context, service *apphistory.Service,
 			return
 		}
 		seen[entry.Command] = true
+	}
+}
+
+// connectionLogFromEvent maps one Session connection outcome to the persisted
+// log row. Classification (local versus an unsaved Host, and dropping the
+// local application label) belongs to domain/history.NormalizeConnectionLog,
+// which every recorded row passes through.
+func connectionLogFromEvent(event appsession.ConnectionEvent) domainhistory.ConnectionLog {
+	errorText := ""
+	if event.Err != nil {
+		errorText = event.Err.Error()
+	}
+	return domainhistory.ConnectionLog{
+		SessionID:   event.SessionID,
+		HostID:      event.HostID,
+		HostLabel:   event.Label,
+		Hostname:    event.Hostname,
+		Username:    event.Username,
+		UnsavedHost: event.UnsavedHost,
+		Kind:        string(event.Kind),
+		Error:       errorText,
+		StartedAt:   event.StartedAt,
+		EndedAt:     event.EndedAt,
 	}
 }
 

@@ -16,9 +16,13 @@ package app
 //     rows, proving persistence.
 //   - Row action: a history row focuses the related live terminal; a row whose
 //     Host was deleted shows the localized missing-Host problem.
+//   - Clear-all: Cancel leaves the rows, Confirm removes every connection log
+//     and later every command without touching the other family, and a second
+//     store handle sees the deletions.
 //   - Layout: the production shell, sidebar, and tab strip render the surface
-//     at 1100x720 and 720x480 without horizontal overflow, and the list
-//     scrolls to its last row.
+//     at 1100x720, 720x480, and 720x300 without horizontal overflow; a real
+//     wheel, PageDown, and End move the surface through its own scroll state,
+//     and the last row ends up inside the window.
 //
 // Result: %TEMP%\natcatty-selftest-23.json. Every store, Session, and
 // temporary directory is closed and removed, so F11,2,3 passes twice in one
@@ -48,6 +52,10 @@ import (
 )
 
 const selftest23Ticket = 23
+
+// selftest23LayoutCommands is more than one page (logsui.PageSize), so the
+// surface overflows at every layout size.
+const selftest23LayoutCommands = 130
 
 type selftest23 struct {
 	dir      string
@@ -79,6 +87,7 @@ func (t *selftest23) check() selftest.Check {
 			{Name: "record-and-filter", Run: t.recordStep},
 			{Name: "persistence-and-retention", Run: t.retentionStep},
 			{Name: "open-related-terminal", Run: t.openStep},
+			{Name: "clear-all", Run: t.clearStep},
 			{Name: "layout", Run: t.layoutStep},
 		},
 	}
@@ -350,6 +359,92 @@ func (t *selftest23) openStep(*ui.Context) selftest.Outcome {
 	return pending(t.openDeadline, "the new Host Session")
 }
 
+func (t *selftest23) clearStep(*ui.Context) selftest.Outcome {
+	if err := t.start(); err != nil {
+		return t.fail(err)
+	}
+	m := locales.In("en")
+	t.retention = apphistory.Retention{}
+	if err := t.recordBaseline(); err != nil {
+		return t.fail(err)
+	}
+	t.logs.Refresh()
+	logsBefore := t.logs.TotalLogs()
+	entriesBefore := t.logs.TotalEntries()
+	if logsBefore == 0 || entriesBefore == 0 {
+		return t.fail(fmt.Errorf("clear-all has no records to clear: %d logs, %d entries",
+			logsBefore, entriesBefore))
+	}
+
+	// Cancel leaves the rows in place.
+	t.logs.SelectTab(logsui.TabConnections)
+	t.logs.RequestClear()
+	t.logs.CancelClear()
+	if t.logs.PendingClear() || t.logs.TotalLogs() != logsBefore {
+		return t.fail(fmt.Errorf("Cancel: pending = %v, logs = %d",
+			t.logs.PendingClear(), t.logs.TotalLogs()))
+	}
+
+	// Confirm removes every connection log and leaves command history alone.
+	t.logs.RequestClear()
+	t.logs.ConfirmClear()
+	if t.logs.TotalLogs() != 0 || t.logs.Cleared() != logsBefore ||
+		t.logs.ClearedTab() != logsui.TabConnections {
+		return t.fail(fmt.Errorf("cleared logs: remaining = %d, cleared = %d on tab %v",
+			t.logs.TotalLogs(), t.logs.Cleared(), t.logs.ClearedTab()))
+	}
+	if t.logs.TotalEntries() != entriesBefore {
+		return t.fail(fmt.Errorf("clearing connection logs left %d of %d commands",
+			t.logs.TotalEntries(), entriesBefore))
+	}
+	t.shell.ShowLogs()
+	t.tester.Frame()
+	if !t.tester.HasText(m.LogsConnectionsCleared(logsBefore)) {
+		return t.fail(fmt.Errorf("the connection-clear banner is not shown: %v",
+			t.tester.Texts()))
+	}
+
+	// A second handle proves the deletion reached the store and the commands
+	// were not part of it.
+	logs, entries, err := t.readBack()
+	if err != nil {
+		return t.fail(err)
+	}
+	if logs != 0 || entries != entriesBefore {
+		return t.fail(fmt.Errorf("store after clearing logs has %d logs and %d entries, want 0 and %d",
+			logs, entries, entriesBefore))
+	}
+
+	// The history tab owns the same confirmation for commands.
+	t.logs.SelectTab(logsui.TabHistory)
+	t.logs.RequestClear()
+	t.logs.ConfirmClear()
+	if t.logs.TotalEntries() != 0 || t.logs.Cleared() != entriesBefore ||
+		t.logs.ClearedTab() != logsui.TabHistory {
+		return t.fail(fmt.Errorf("cleared history: remaining = %d, cleared = %d on tab %v",
+			t.logs.TotalEntries(), t.logs.Cleared(), t.logs.ClearedTab()))
+	}
+	t.tester.Frame()
+	if !t.tester.HasText(m.LogsHistoryCleared(entriesBefore)) {
+		return t.fail(fmt.Errorf("the history-clear banner is not shown: %v",
+			t.tester.Texts()))
+	}
+
+	logs, entries, err = t.readBack()
+	if err != nil {
+		return t.fail(err)
+	}
+	if logs != 0 || entries != 0 {
+		return t.fail(fmt.Errorf("store after clearing history has %d logs and %d entries",
+			logs, entries))
+	}
+
+	t.cleanup()
+	return selftest.Passed(
+		"Cancel kept rows; Confirm cleared each family only; reopen saw the deletions",
+		"logsui.State + apphistory.Service + store.Store")
+}
+
 func (t *selftest23) layoutStep(*ui.Context) selftest.Outcome {
 	if err := t.start(); err != nil {
 		return t.fail(err)
@@ -357,13 +452,18 @@ func (t *selftest23) layoutStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
 	t.retention = apphistory.Retention{}
 	t.commandIndex = 0
-	if err := t.recordEntries(40); err != nil {
+	if err := t.recordEntries(selftest23LayoutCommands); err != nil {
 		return t.fail(err)
 	}
-	for _, size := range []struct{ width, height int }{{1100, 720}, {720, 480}} {
+	for _, size := range []struct{ width, height int }{
+		{1100, 720}, {720, 480}, {720, 300},
+	} {
 		t.shell.ShowLogs()
 		t.logs.SelectTab(logsui.TabHistory)
+		t.logs.ShowMore()
 		t.logs.Refresh()
+		scroll := t.logs.Scroll()
+		scroll.Y = 0
 		tester := ui.NewTester(shellui.View(t.shell), size.width, size.height)
 		tester.SetLocale("en")
 		tester.Frame()
@@ -375,11 +475,33 @@ func (t *selftest23) layoutStep(*ui.Context) selftest.Outcome {
 		if err := selftest23NoOverflow(tester, size.width, size.height); err != nil {
 			return t.fail(err)
 		}
-		x, y := float32(size.width)/2, float32(size.height)-80
+
+		// Drive the same input a user does: the pointer over the list, then a
+		// wheel, PageDown, and End. Each must move the surface's own offset.
+		x, y := float32(size.width)/2, float32(size.height)*3/4
 		tester.Move(x, y)
-		tester.Scroll(x, y, 0, 100000)
+		start := scroll.Y
+		tester.Scroll(x, y, 0, 200)
 		tester.Frame()
-		last := "layout-command-39"
+		if scroll.Y <= start {
+			return t.fail(fmt.Errorf("%dx%d: the wheel did not scroll (offset %.1f of %.1f)",
+				size.width, size.height, scroll.Y, scroll.MaxY))
+		}
+		afterWheel := scroll.Y
+		tester.Key(0, ui.KeyPageDown)
+		tester.Frame()
+		if scroll.Y <= afterWheel {
+			return t.fail(fmt.Errorf("%dx%d: PageDown did not scroll (offset %.1f of %.1f)",
+				size.width, size.height, scroll.Y, scroll.MaxY))
+		}
+		tester.Key(0, ui.KeyEnd)
+		tester.Frame()
+		if scroll.MaxY <= 0 || scroll.Y < scroll.MaxY-0.5 {
+			return t.fail(fmt.Errorf("%dx%d: End stopped at %.1f of %.1f",
+				size.width, size.height, scroll.Y, scroll.MaxY))
+		}
+
+		last := fmt.Sprintf("layout-command-%02d", selftest23LayoutCommands-1)
 		if !tester.HasText(last) {
 			return t.fail(fmt.Errorf("%dx%d: %q is not visible after scrolling: %v",
 				size.width, size.height, last, tester.Texts()))
@@ -392,7 +514,8 @@ func (t *selftest23) layoutStep(*ui.Context) selftest.Outcome {
 		}
 	}
 	t.cleanup()
-	return selftest.Passed("1100x720 and 720x480, no overflow, scrolls to the end",
+	return selftest.Passed(
+		"1100x720, 720x480, and 720x300: wheel, PageDown, and End move the surface to the last row",
 		"shellui.View + logsui.View + ui.Tester")
 }
 
@@ -432,27 +555,15 @@ func (t *selftest23) start() error {
 		// records the attempt without the self-test calling the service
 		// directly.
 		appsession.WithConnectionHook(func(event appsession.ConnectionEvent) {
-			label := event.Label
-			if event.HostID == "" {
-				label = ""
-			}
-			errorText := ""
-			if event.Err != nil {
-				errorText = event.Err.Error()
-			}
-			started, ended := event.StartedAt, event.EndedAt
+			log := connectionLogFromEvent(event)
 			if event.HostID == "" {
 				// The local Session opened in start uses the wall clock. Pin it
 				// to the scenario time so the date-range assertion does not
-				// depend on the day the self-test runs.
-				started, ended = t.base, t.base
+				// depend on the day the self-test runs. A typed Host has no
+				// identity either, and is pinned for the same reason.
+				log.StartedAt, log.EndedAt = t.base, t.base
 			}
-			_ = service.RecordConnection(context.Background(), domainhistory.ConnectionLog{
-				SessionID: event.SessionID, HostID: event.HostID, HostLabel: label,
-				Hostname: event.Hostname, Username: event.Username,
-				Kind: string(event.Kind), Error: errorText,
-				StartedAt: started, EndedAt: ended,
-			})
+			_ = service.RecordConnection(context.Background(), log)
 		}),
 	)
 	var shell *shellstate.State
@@ -575,6 +686,23 @@ func (t *selftest23) mustEntries() []domainhistory.Entry {
 func (t *selftest23) mustLogs() []domainhistory.ConnectionLog {
 	logs, _ := t.service.ConnectionLogs(context.Background())
 	return logs
+}
+
+// readBack opens a second handle on the same database and counts both record
+// families, proving the UI's mutations reached persisted storage.
+func (t *selftest23) readBack() (int, int, error) {
+	second, err := store.Open(context.Background(), t.dbPath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("reopen the store: %w", err)
+	}
+	reader := apphistory.NewService(second)
+	logs, logsErr := reader.ConnectionLogs(context.Background())
+	entries, entriesErr := reader.Entries(context.Background())
+	_ = second.Close()
+	if logsErr != nil || entriesErr != nil {
+		return 0, 0, fmt.Errorf("read reopened rows: %v / %v", logsErr, entriesErr)
+	}
+	return len(logs), len(entries), nil
 }
 
 func (t *selftest23) fail(err error) selftest.Outcome {

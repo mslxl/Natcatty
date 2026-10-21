@@ -130,6 +130,42 @@ func TestBroadcastCountsUsePluralForms(t *testing.T) {
 	}
 }
 
+// TestClearBannersUsePluralForms proves the clear confirmations read as
+// sentences for one record and for several in every catalog.
+func TestClearBannersUsePluralForms(t *testing.T) {
+	tests := []struct {
+		tag            string
+		historyOne     string
+		connectionsTwo string
+	}{
+		{"en",
+			"History cleared (1 entry removed).",
+			"Connection logs cleared (2 entries removed)."},
+		{"es",
+			"Historial borrado (1 entrada eliminada).",
+			"Registros de conexión borrados (2 entradas eliminadas)."},
+		{"ru",
+			"История очищена (удалена 1 запись).",
+			"Журнал подключений очищен (удалено 2 записи)."},
+		{"zh-CN",
+			"历史已清除（已删除 1 条记录）。",
+			"连接日志已清除（已删除 2 条记录）。"},
+		{"zh-TW",
+			"歷史已清除（已刪除 1 筆記錄）。",
+			"連線記錄已清除（已刪除 2 筆記錄）。"},
+	}
+	for _, test := range tests {
+		messages := In(test.tag)
+		if got := messages.LogsHistoryCleared(1); got != test.historyOne {
+			t.Errorf("%s LogsHistoryCleared(1) = %q, want %q", test.tag, got, test.historyOne)
+		}
+		if got := messages.LogsConnectionsCleared(2); got != test.connectionsTwo {
+			t.Errorf("%s LogsConnectionsCleared(2) = %q, want %q",
+				test.tag, got, test.connectionsTwo)
+		}
+	}
+}
+
 func tagsIn(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob("*.json")

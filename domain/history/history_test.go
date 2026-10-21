@@ -51,6 +51,48 @@ func TestConnectionFilterMatchesHostStatusTextAndRange(t *testing.T) {
 	}
 }
 
+func TestUnsavedHostIsNotLocal(t *testing.T) {
+	unsaved := ConnectionLog{
+		ID: "unsaved", HostLabel: "deploy@typed.example", Hostname: "typed.example",
+		Username: "deploy", Kind: "ssh", Status: ConnectionConnected, StartedAt: at(9),
+	}
+	local := ConnectionLog{ID: "local", Kind: KindLocal, Status: ConnectionConnected, StartedAt: at(9)}
+	saved := ConnectionLog{
+		ID: "saved", HostID: "host-1", HostLabel: "web-1", Kind: "ssh",
+		Status: ConnectionConnected, StartedAt: at(9),
+	}
+
+	if unsaved.IsLocal() || !unsaved.IsUnsaved() {
+		t.Fatalf("unsaved classification: local = %v, unsaved = %v",
+			unsaved.IsLocal(), unsaved.IsUnsaved())
+	}
+	if !local.IsLocal() || local.IsUnsaved() {
+		t.Fatalf("local classification: local = %v, unsaved = %v",
+			local.IsLocal(), local.IsUnsaved())
+	}
+	if saved.IsLocal() || saved.IsUnsaved() {
+		t.Fatalf("saved classification: local = %v, unsaved = %v",
+			saved.IsLocal(), saved.IsUnsaved())
+	}
+	if !(ConnectionFilter{Host: UnsavedHostKey}).Match(unsaved) {
+		t.Fatal("the unsaved filter did not match a typed Host")
+	}
+	if (ConnectionFilter{Host: LocalHostKey}).Match(unsaved) {
+		t.Fatal("the Local filter matched a typed Host")
+	}
+	if (ConnectionFilter{Host: LocalHostKey}).Match(saved) {
+		t.Fatal("the Local filter matched a saved Host")
+	}
+
+	// A row written before UnsavedHost existed is still recognized by kind.
+	legacy := unsaved
+	legacy.UnsavedHost = false
+	if !legacy.IsUnsaved() || legacy.IsLocal() {
+		t.Fatalf("legacy unsaved classification: unsaved = %v, local = %v",
+			legacy.IsUnsaved(), legacy.IsLocal())
+	}
+}
+
 func TestEntryFilterMatchesCommandHostSourceAndRange(t *testing.T) {
 	entries := []Entry{
 		{ID: "a", HostID: "host-1", HostLabel: "web-1", Scope: "host:host-1",
@@ -85,6 +127,60 @@ func TestEntryFilterMatchesCommandHostSourceAndRange(t *testing.T) {
 				t.Fatalf("matches = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestEntryFilterSeparatesUnsavedHostsFromLocal(t *testing.T) {
+	entries := []Entry{
+		{ID: "local", Command: "ls", Scope: "local", Source: SourceSession, RecordedAt: at(9)},
+		{ID: "unsaved", HostLabel: "deploy@typed.example", UnsavedHost: true,
+			Command: "uptime", Scope: "local", Source: SourceSession, RecordedAt: at(9)},
+		{ID: "saved", HostID: "host-1", HostLabel: "web-1",
+			Command: "df", Scope: "host:host-1", Source: SourceSession, RecordedAt: at(9)},
+	}
+	if got := matchingEntryIDs(entries, EntryFilter{Host: LocalHostKey}); fmt.Sprint(got) != "[local]" {
+		t.Fatalf("Local filter matched %v, want only the local shell", got)
+	}
+	if got := matchingEntryIDs(entries, EntryFilter{Host: UnsavedHostKey}); fmt.Sprint(got) != "[unsaved]" {
+		t.Fatalf("unsaved filter matched %v, want only the typed Host", got)
+	}
+	if got := matchingEntryIDs(entries, EntryFilter{Host: "host-1"}); fmt.Sprint(got) != "[saved]" {
+		t.Fatalf("Host filter matched %v, want the saved Host", got)
+	}
+}
+
+func matchingEntryIDs(entries []Entry, filter EntryFilter) []string {
+	var matched []string
+	for _, entry := range entries {
+		if filter.Match(entry) {
+			matched = append(matched, entry.ID)
+		}
+	}
+	return matched
+}
+
+func TestNormalizeConnectionLogClassifiesLocalAndUnsavedHosts(t *testing.T) {
+	local := NormalizeConnectionLog(ConnectionLog{Kind: "", HostLabel: "Local Terminal"})
+	if !local.IsLocal() || local.HostLabel != "" {
+		t.Fatalf("default-kind log classified as local = %v with label %q",
+			local.IsLocal(), local.HostLabel)
+	}
+	if !NormalizeConnectionLog(ConnectionLog{Kind: "LOCAL"}).IsLocal() {
+		t.Fatal("the local kind is case-insensitive")
+	}
+
+	unsaved := NormalizeConnectionLog(ConnectionLog{
+		Kind: "ssh", HostLabel: " deploy@typed.example ", Hostname: " typed.example ",
+	})
+	if !unsaved.IsUnsaved() || unsaved.IsLocal() {
+		t.Fatalf("typed Host classified as unsaved = %v, local = %v",
+			unsaved.IsUnsaved(), unsaved.IsLocal())
+	}
+	if unsaved.HostLabel != "deploy@typed.example" || unsaved.Hostname != "typed.example" {
+		t.Fatalf("typed target was not trimmed: %+v", unsaved)
+	}
+	if NormalizeConnectionLog(ConnectionLog{HostID: "host-1", Kind: "ssh"}).IsUnsaved() {
+		t.Fatal("a saved Host was classified as unsaved")
 	}
 }
 
