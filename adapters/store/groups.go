@@ -7,6 +7,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListGroups returns every Host Group in display order.
@@ -58,15 +59,30 @@ func (s *Store) GetGroup(ctx context.Context, path string) (domainvault.Group, e
 // SaveGroup inserts or replaces one Host Group. The indexed columns are copies
 // of the JSON fields and are written in the same statement.
 func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
+	statement, err := groupSaveStatement(group)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Execute(ctx, statement.SQL, statement.Args...)
+	if err != nil {
+		return fmt.Errorf("store: save Host Group: %w", err)
+	}
+	return nil
+}
+
+// groupSaveStatement builds the insert-or-replace statement for one Host
+// Group. The import batch uses it to put groups and Hosts in one transaction.
+func groupSaveStatement(group domainvault.Group) (platformsqlite.Statement, error) {
 	if group.Path == "" {
-		return fmt.Errorf("store: Host Group has no path")
+		return platformsqlite.Statement{}, fmt.Errorf("store: Host Group has no path")
 	}
 	data, err := json.Marshal(group)
 	if err != nil {
-		return fmt.Errorf("store: encode Host Group: %w", err)
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Host Group: %w", err)
 	}
 
-	_, err = s.db.Execute(ctx, `INSERT INTO host_groups (
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO host_groups (
 			path, notes, username, port, protocol, auth_method,
 			identity_id, key_id, use_ssh_agent, requires_mfa,
 			legacy_algorithms, skip_ecdsa_host_key, proxy_profile_id,
@@ -88,28 +104,26 @@ func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
 			order_key = excluded.order_key,
 			updated_at = excluded.updated_at,
 			data = excluded.data`,
-		group.Path,
-		group.Notes,
-		group.Username,
-		group.Port,
-		string(group.Protocol),
-		string(group.AuthMethod),
-		string(group.IdentityID),
-		string(group.KeyID),
-		boolInt(group.UseSSHAgent),
-		boolInt(group.RequiresMFA),
-		boolInt(group.LegacyAlgorithms),
-		boolInt(group.SkipEcdsaHostKey),
-		group.ProxyProfileID,
-		group.OrderKey,
-		group.CreatedAt.UnixMilli(),
-		group.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
-		return fmt.Errorf("store: save Host Group: %w", err)
-	}
-	return nil
+		Args: []any{
+			group.Path,
+			group.Notes,
+			group.Username,
+			group.Port,
+			string(group.Protocol),
+			string(group.AuthMethod),
+			string(group.IdentityID),
+			string(group.KeyID),
+			boolInt(group.UseSSHAgent),
+			boolInt(group.RequiresMFA),
+			boolInt(group.LegacyAlgorithms),
+			boolInt(group.SkipEcdsaHostKey),
+			group.ProxyProfileID,
+			group.OrderKey,
+			group.CreatedAt.UnixMilli(),
+			group.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteGroup removes one Host Group. Hosts and descendant groups are not

@@ -43,6 +43,8 @@ type Service struct {
 	newSnippetID      func() string
 	newNoteID         func() string
 	now               func() time.Time
+	importStore       ImportStore
+	importFiles       ImportFileReader
 }
 
 // Option customizes a Service.
@@ -394,29 +396,12 @@ func (s *Service) persistProxyPassword(ctx context.Context, id model.HostID, pro
 // applyDraft copies a normalized draft's editable fields onto host, leaving
 // identity, ordering, and timestamps to the caller.
 func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host {
-	host.Label = draft.Label
-	host.Hostname = draft.Hostname
-	host.Port = draft.Port
-	host.Username = draft.Username
-	host.Protocol = draft.Protocol
-	host.Group = draft.Group
-	host.Tags = draft.Tags
-	host.Notes = draft.Notes
-	host.Pinned = draft.Pinned
-	host.IdentityID = draft.IdentityID
-	host.KeyID = draft.KeyID
-	host.AuthMethod = draft.AuthMethod
-	host.UseSSHAgent = draft.UseSSHAgent
-	host.RequiresMFA = draft.RequiresMFA
-	host.X11Forwarding = draft.X11Forwarding
-	host.X11WarningAcknowledged = draft.X11WarningAcknowledged
-	host.HostChain = domainvault.CloneHostChain(draft.HostChain)
-	host.Proxy = domainvault.CloneProxy(draft.Proxy)
-	host.ProxyProfileID = draft.ProxyProfileID
-	host.LegacyAlgorithms = draft.LegacyAlgorithms
-	host.SkipEcdsaHostKey = draft.SkipEcdsaHostKey
-	host.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)
-	return host
+	edited := hostFromDraft(draft)
+	edited.ID = host.ID
+	edited.OrderKey = host.OrderKey
+	edited.CreatedAt = host.CreatedAt
+	edited.UpdatedAt = host.UpdatedAt
+	return edited
 }
 
 // duplicate reports whether any Host other than except has the same merge key

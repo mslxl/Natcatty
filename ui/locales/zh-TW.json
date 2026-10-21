@@ -123,6 +123,125 @@
   "vaultProblemDuplicate": "Vault 中已存在使用此位址的主機。",
   "vaultProblemNotFound": "該主機已不存在。",
   "vaultProblemInternal": "無法更新 Vault。",
+  "vaultImportTitle": "匯入主機",
+  "vaultImportIntro": "選擇由 Netcatty、PuTTY、MobaXterm、FinalShell、SecureCRT 或 OpenSSH 匯出的檔案。",
+  "vaultImportChooseFile": "選擇檔案…",
+  "vaultImportFileFilterHosts": "主機清單",
+  "vaultImportFileFilterAll": "所有檔案",
+  "vaultImportImport": "匯入",
+  "vaultImportFormat": "檔案格式",
+  "vaultImportFormatAuto": "自動偵測",
+  "vaultImportFormatCSV": "Netcatty CSV",
+  "vaultImportFormatPuTTY": "PuTTY",
+  "vaultImportFormatMobaXterm": "MobaXterm",
+  "vaultImportFormatFinalShell": "FinalShell",
+  "vaultImportFormatSecureCRT": "SecureCRT",
+  "vaultImportFormatSSHConfig": "OpenSSH ssh_config",
+  "vaultImportMasterPassword": "主密碼",
+  "vaultImportMasterHint": "僅受主密碼保護的 MobaXterm 檔案需要。",
+  "vaultImportSummary": "共 {total} 列：{added} 個新增，{conflicts} 個衝突，{duplicates} 個重複，{invalid} 個無效",
+  "@vaultImportSummary": {
+    "description": "One import preview's row counts.",
+    "placeholders": {
+      "total": {"type": "int", "example": "12"},
+      "added": {"type": "int", "example": "7"},
+      "conflicts": {"type": "int", "example": "2"},
+      "duplicates": {"type": "int", "example": "1"},
+      "invalid": {"type": "int", "example": "2"}
+    }
+  },
+  "vaultImportGroups": "{count, plural, other {將建立 # 個主機群組。}}",
+  "@vaultImportGroups": {
+    "description": "How many Host Groups the import will create.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportMerge": "衝突時",
+  "vaultImportMergeSkip": "保留現有主機",
+  "vaultImportMergeOverwrite": "覆寫現有主機",
+  "vaultImportRows": "列",
+  "vaultImportIssues": "問題",
+  "vaultImportNoIssues": "未發現問題。",
+  "vaultImportSelected": "已選取 {count} 項",
+  "@vaultImportSelected": {
+    "description": "How many rows the user selected.",
+    "placeholders": {
+      "count": {"type": "int", "example": "8"}
+    }
+  },
+  "vaultImportNoneSelected": "請至少選取一列再匯入。",
+  "vaultImportDone": "已匯入 {imported} 台主機，覆寫 {overwritten} 台，略過 {skipped} 台，建立 {groups} 個主機群組。",
+  "@vaultImportDone": {
+    "description": "The result of a completed import.",
+    "placeholders": {
+      "imported": {"type": "int", "example": "8"},
+      "overwritten": {"type": "int", "example": "2"},
+      "skipped": {"type": "int", "example": "1"},
+      "groups": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportDismiss": "關閉",
+  "vaultImportConflictWith": "現有：{label}",
+  "@vaultImportConflictWith": {
+    "description": "The existing Host a row conflicts with.",
+    "placeholders": {
+      "label": {"type": "String", "example": "web-1"}
+    }
+  },
+  "vaultImportRowNumber": "第 {row} 列",
+  "@vaultImportRowNumber": {
+    "description": "The source row number beside an import preview row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "7"}
+    }
+  },
+  "vaultImportStatusNew": "新增",
+  "vaultImportStatusConflict": "衝突",
+  "vaultImportStatusDuplicate": "重複",
+  "vaultImportStatusInvalid": "無效",
+  "vaultImportIssueDocument": "文件：{message}",
+  "@vaultImportIssueDocument": {
+    "description": "One problem about the whole document.",
+    "placeholders": {
+      "message": {"type": "String", "example": "The file is empty."}
+    }
+  },
+  "vaultImportIssueLine": "第 {row} 列：{message}",
+  "@vaultImportIssueLine": {
+    "description": "One problem tied to a source row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "4"},
+      "message": {"type": "String", "example": "The port is invalid."}
+    }
+  },
+  "vaultImportIssueCSVEmpty": "檔案是空的。",
+  "vaultImportIssueCSVHeader": "找不到 Hostname 欄。",
+  "vaultImportIssueCSVQuoting": "CSV 引號格式有誤。",
+  "vaultImportIssueInvalidHostname": "主機名稱無效。",
+  "vaultImportIssueMissingHostname": "項目缺少主機名稱。",
+  "vaultImportIssueInvalidPort": "連接埠無效。",
+  "vaultImportIssueUnsupportedProtocol": "不支援此協定。",
+  "vaultImportIssueUnsupportedEntry": "不支援此項目類型。",
+  "vaultImportIssueInvalidProxy": "代理設定無效。",
+  "vaultImportIssueInvalidField": "有欄位未通過驗證。",
+  "vaultImportIssueInvalidJSON": "JSON 文件格式有誤。",
+  "vaultImportIssuePasswordUndecryptable": "無法解密已儲存的密碼。",
+  "vaultImportIssueMasterPassword": "需要主密碼才能解密已儲存的密碼。",
+  "vaultImportIssuePasswordsInRegistry": "密碼儲存在登錄中，無法匯入。",
+  "vaultImportIssuePasswordUnmatched": "無法將已儲存的密碼對應到主機。",
+  "vaultImportIssueDuplicateInFile": "此端點與前面的列重複。",
+  "vaultImportIssueInvalidJump": "ProxyJump 目標未宣告，已新增內嵌主機。",
+  "vaultImportIssueCyclicJump": "已移除 ProxyJump 循環。",
+  "vaultImportIssueKeyUnreadable": "無法讀取引用的金鑰檔案。",
+  "vaultImportIssuePassphraseConflict": "金鑰已加密，但未提供可用的密碼短語。",
+  "vaultImportIssueFormulaNeutralized": "類似公式的值已被中和。",
+  "vaultImportIssueNothingParsed": "檔案中未找到主機。",
+  "vaultImportIssueX11": "未啟用 X11 轉送；請先在主機上確認其安全警告。",
+  "vaultProblemImportFile": "無法讀取所選檔案。",
+  "vaultProblemImportParse": "無法解析所選檔案。",
+  "vaultProblemImportStore": "匯入儲存空間無法使用。",
+  "vaultProblemImportUnavailable": "匯入無法使用。",
   "vaultHostPassword": "密碼",
   "vaultHostPasswordStored": "已儲存密碼",
   "vaultHostPasswordKeep": "已儲存密碼。留空可保留現有密碼。",

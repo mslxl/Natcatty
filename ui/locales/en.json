@@ -244,6 +244,125 @@
   "vaultProblemDuplicate": "A Host with this address already exists in the Vault.",
   "vaultProblemNotFound": "That Host no longer exists.",
   "vaultProblemInternal": "The Vault could not be updated.",
+  "vaultImportTitle": "Import Hosts",
+  "vaultImportIntro": "Choose a file exported from Netcatty, PuTTY, MobaXterm, FinalShell, SecureCRT, or OpenSSH.",
+  "vaultImportChooseFile": "Choose File…",
+  "vaultImportFileFilterHosts": "Host inventories",
+  "vaultImportFileFilterAll": "All files",
+  "vaultImportImport": "Import",
+  "vaultImportFormat": "File format",
+  "vaultImportFormatAuto": "Detect automatically",
+  "vaultImportFormatCSV": "Netcatty CSV",
+  "vaultImportFormatPuTTY": "PuTTY",
+  "vaultImportFormatMobaXterm": "MobaXterm",
+  "vaultImportFormatFinalShell": "FinalShell",
+  "vaultImportFormatSecureCRT": "SecureCRT",
+  "vaultImportFormatSSHConfig": "OpenSSH ssh_config",
+  "vaultImportMasterPassword": "Master password",
+  "vaultImportMasterHint": "Only needed for MobaXterm files protected by a master password.",
+  "vaultImportSummary": "Rows: {total}, new: {added}, conflicts: {conflicts}, duplicates: {duplicates}, invalid: {invalid}",
+  "@vaultImportSummary": {
+    "description": "One import preview's row counts.",
+    "placeholders": {
+      "total": {"type": "int", "example": "12"},
+      "added": {"type": "int", "example": "7"},
+      "conflicts": {"type": "int", "example": "2"},
+      "duplicates": {"type": "int", "example": "1"},
+      "invalid": {"type": "int", "example": "2"}
+    }
+  },
+  "vaultImportGroups": "{count, plural, one {# Host Group will be created.} other {# Host Groups will be created.}}",
+  "@vaultImportGroups": {
+    "description": "How many Host Groups the import will create.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportMerge": "On conflict",
+  "vaultImportMergeSkip": "Keep existing Host",
+  "vaultImportMergeOverwrite": "Overwrite existing Host",
+  "vaultImportRows": "Rows",
+  "vaultImportIssues": "Problems",
+  "vaultImportNoIssues": "No problems found.",
+  "vaultImportSelected": "{count} selected",
+  "@vaultImportSelected": {
+    "description": "How many rows the user selected.",
+    "placeholders": {
+      "count": {"type": "int", "example": "8"}
+    }
+  },
+  "vaultImportNoneSelected": "Select at least one row to import.",
+  "vaultImportDone": "Import complete. Imported: {imported}, overwritten: {overwritten}, skipped: {skipped}, Host Groups created: {groups}.",
+  "@vaultImportDone": {
+    "description": "The result of a completed import.",
+    "placeholders": {
+      "imported": {"type": "int", "example": "8"},
+      "overwritten": {"type": "int", "example": "2"},
+      "skipped": {"type": "int", "example": "1"},
+      "groups": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportDismiss": "Dismiss",
+  "vaultImportConflictWith": "Existing: {label}",
+  "@vaultImportConflictWith": {
+    "description": "The existing Host a row conflicts with.",
+    "placeholders": {
+      "label": {"type": "String", "example": "web-1"}
+    }
+  },
+  "vaultImportRowNumber": "Row {row}",
+  "@vaultImportRowNumber": {
+    "description": "The source row number beside an import preview row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "7"}
+    }
+  },
+  "vaultImportStatusNew": "New",
+  "vaultImportStatusConflict": "Conflict",
+  "vaultImportStatusDuplicate": "Duplicate",
+  "vaultImportStatusInvalid": "Invalid",
+  "vaultImportIssueDocument": "Document: {message}",
+  "@vaultImportIssueDocument": {
+    "description": "One problem about the whole document.",
+    "placeholders": {
+      "message": {"type": "String", "example": "The file is empty."}
+    }
+  },
+  "vaultImportIssueLine": "Row {row}: {message}",
+  "@vaultImportIssueLine": {
+    "description": "One problem tied to a source row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "4"},
+      "message": {"type": "String", "example": "The port is invalid."}
+    }
+  },
+  "vaultImportIssueCSVEmpty": "The file is empty.",
+  "vaultImportIssueCSVHeader": "No Hostname column was found.",
+  "vaultImportIssueCSVQuoting": "The CSV quoting is malformed.",
+  "vaultImportIssueInvalidHostname": "The Hostname is invalid.",
+  "vaultImportIssueMissingHostname": "The entry has no Hostname.",
+  "vaultImportIssueInvalidPort": "The port is invalid.",
+  "vaultImportIssueUnsupportedProtocol": "The protocol is not supported.",
+  "vaultImportIssueUnsupportedEntry": "The entry type is not supported.",
+  "vaultImportIssueInvalidProxy": "The proxy setting is invalid.",
+  "vaultImportIssueInvalidField": "A field failed validation.",
+  "vaultImportIssueInvalidJSON": "The JSON document is malformed.",
+  "vaultImportIssuePasswordUndecryptable": "A saved password could not be decrypted.",
+  "vaultImportIssueMasterPassword": "A master password is required to decrypt saved passwords.",
+  "vaultImportIssuePasswordsInRegistry": "Passwords are stored in the registry and cannot be imported.",
+  "vaultImportIssuePasswordUnmatched": "A saved password could not be matched to a Host.",
+  "vaultImportIssueDuplicateInFile": "This endpoint repeats an earlier row.",
+  "vaultImportIssueInvalidJump": "A ProxyJump target is not declared; an inline Host was added.",
+  "vaultImportIssueCyclicJump": "A ProxyJump cycle was removed.",
+  "vaultImportIssueKeyUnreadable": "The referenced key file could not be read.",
+  "vaultImportIssuePassphraseConflict": "The key is encrypted but no usable passphrase was provided.",
+  "vaultImportIssueFormulaNeutralized": "A formula-like value was neutralized.",
+  "vaultImportIssueNothingParsed": "No Hosts were found in the file.",
+  "vaultImportIssueX11": "X11 forwarding was not enabled; accept its warning on the Host first.",
+  "vaultProblemImportFile": "Could not read the selected file.",
+  "vaultProblemImportParse": "Could not parse the selected file.",
+  "vaultProblemImportStore": "Import storage is unavailable.",
+  "vaultProblemImportUnavailable": "Import is not available.",
   "vaultHostPassword": "Password",
   "vaultHostPasswordStored": "Password stored",
   "vaultHostPasswordKeep": "A password is stored. Leave blank to keep it.",

@@ -1,0 +1,8 @@
+﻿Groups,Label,Tags,Notes,Hostname/IP,Protocol,Port,Username,Password,KeyPath,Passphrase,Proxy,LocalShell
+"Acme/Prod","Web, ""edge""",web;prod,"First line
+Second line",10.0.0.10,ssh,2222,deploy,s3cr3t,__netcatty_csv_keypath_v1__:%3Dweird%2Fid_ed25519,pa ss,socks5://proxyuser:p%40ss@127.0.0.1:1080,
+Acme/Dev,"=HYPERLINK(""http://example.test"")",dev,"'=SUM(A1:A2)",dev.example.test,ssh,22,root,pw2,,,,
+Lab,DB,db,MySQL,db.example.test,telnet,,admin,,,,http://user:pass@proxy.example.test:3128,
+Lab,Bad hostname,bad,,bad host,ssh,22,root,,,,,
+Lab,Bad port,bad,,10.0.0.12,ssh,notaport,root,,,,,
+Lab,DB duplicate,dup,,db.example.test,telnet,,admin,,,,,
