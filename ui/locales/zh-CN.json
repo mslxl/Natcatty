@@ -123,6 +123,125 @@
   "vaultProblemDuplicate": "Vault 中已存在使用此地址的主机。",
   "vaultProblemNotFound": "该主机已不存在。",
   "vaultProblemInternal": "无法更新 Vault。",
+  "vaultImportTitle": "导入主机",
+  "vaultImportIntro": "选择由 Netcatty、PuTTY、MobaXterm、FinalShell、SecureCRT 或 OpenSSH 导出的文件。",
+  "vaultImportChooseFile": "选择文件…",
+  "vaultImportFileFilterHosts": "主机清单",
+  "vaultImportFileFilterAll": "所有文件",
+  "vaultImportImport": "导入",
+  "vaultImportFormat": "文件格式",
+  "vaultImportFormatAuto": "自动检测",
+  "vaultImportFormatCSV": "Netcatty CSV",
+  "vaultImportFormatPuTTY": "PuTTY",
+  "vaultImportFormatMobaXterm": "MobaXterm",
+  "vaultImportFormatFinalShell": "FinalShell",
+  "vaultImportFormatSecureCRT": "SecureCRT",
+  "vaultImportFormatSSHConfig": "OpenSSH ssh_config",
+  "vaultImportMasterPassword": "主密码",
+  "vaultImportMasterHint": "仅受主密码保护的 MobaXterm 文件需要。",
+  "vaultImportSummary": "共 {total} 行：{added} 个新增，{conflicts} 个冲突，{duplicates} 个重复，{invalid} 个无效",
+  "@vaultImportSummary": {
+    "description": "One import preview's row counts.",
+    "placeholders": {
+      "total": {"type": "int", "example": "12"},
+      "added": {"type": "int", "example": "7"},
+      "conflicts": {"type": "int", "example": "2"},
+      "duplicates": {"type": "int", "example": "1"},
+      "invalid": {"type": "int", "example": "2"}
+    }
+  },
+  "vaultImportGroups": "{count, plural, other {将创建 # 个主机组。}}",
+  "@vaultImportGroups": {
+    "description": "How many Host Groups the import will create.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportMerge": "冲突时",
+  "vaultImportMergeSkip": "保留现有主机",
+  "vaultImportMergeOverwrite": "覆盖现有主机",
+  "vaultImportRows": "行",
+  "vaultImportIssues": "问题",
+  "vaultImportNoIssues": "未发现问题。",
+  "vaultImportSelected": "已选择 {count} 项",
+  "@vaultImportSelected": {
+    "description": "How many rows the user selected.",
+    "placeholders": {
+      "count": {"type": "int", "example": "8"}
+    }
+  },
+  "vaultImportNoneSelected": "请至少选择一行再导入。",
+  "vaultImportDone": "已导入 {imported} 台主机，覆盖 {overwritten} 台，跳过 {skipped} 台，创建 {groups} 个主机组。",
+  "@vaultImportDone": {
+    "description": "The result of a completed import.",
+    "placeholders": {
+      "imported": {"type": "int", "example": "8"},
+      "overwritten": {"type": "int", "example": "2"},
+      "skipped": {"type": "int", "example": "1"},
+      "groups": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportDismiss": "关闭",
+  "vaultImportConflictWith": "现有：{label}",
+  "@vaultImportConflictWith": {
+    "description": "The existing Host a row conflicts with.",
+    "placeholders": {
+      "label": {"type": "String", "example": "web-1"}
+    }
+  },
+  "vaultImportRowNumber": "第 {row} 行",
+  "@vaultImportRowNumber": {
+    "description": "The source row number beside an import preview row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "7"}
+    }
+  },
+  "vaultImportStatusNew": "新增",
+  "vaultImportStatusConflict": "冲突",
+  "vaultImportStatusDuplicate": "重复",
+  "vaultImportStatusInvalid": "无效",
+  "vaultImportIssueDocument": "文档：{message}",
+  "@vaultImportIssueDocument": {
+    "description": "One problem about the whole document.",
+    "placeholders": {
+      "message": {"type": "String", "example": "The file is empty."}
+    }
+  },
+  "vaultImportIssueLine": "第 {row} 行：{message}",
+  "@vaultImportIssueLine": {
+    "description": "One problem tied to a source row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "4"},
+      "message": {"type": "String", "example": "The port is invalid."}
+    }
+  },
+  "vaultImportIssueCSVEmpty": "文件为空。",
+  "vaultImportIssueCSVHeader": "找不到 Hostname 列。",
+  "vaultImportIssueCSVQuoting": "CSV 引号格式有误。",
+  "vaultImportIssueInvalidHostname": "主机名无效。",
+  "vaultImportIssueMissingHostname": "条目缺少主机名。",
+  "vaultImportIssueInvalidPort": "端口无效。",
+  "vaultImportIssueUnsupportedProtocol": "不支持该协议。",
+  "vaultImportIssueUnsupportedEntry": "不支持该条目类型。",
+  "vaultImportIssueInvalidProxy": "代理设置无效。",
+  "vaultImportIssueInvalidField": "有字段未通过验证。",
+  "vaultImportIssueInvalidJSON": "JSON 文档格式有误。",
+  "vaultImportIssuePasswordUndecryptable": "无法解密已保存的密码。",
+  "vaultImportIssueMasterPassword": "需要主密码才能解密已保存的密码。",
+  "vaultImportIssuePasswordsInRegistry": "密码保存在注册表中，无法导入。",
+  "vaultImportIssuePasswordUnmatched": "无法将已保存的密码匹配到主机。",
+  "vaultImportIssueDuplicateInFile": "该端点与前面的行重复。",
+  "vaultImportIssueInvalidJump": "ProxyJump 目标未声明，已添加内联主机。",
+  "vaultImportIssueCyclicJump": "已移除 ProxyJump 循环。",
+  "vaultImportIssueKeyUnreadable": "无法读取引用的密钥文件。",
+  "vaultImportIssuePassphraseConflict": "密钥已加密，但未提供可用的密码短语。",
+  "vaultImportIssueFormulaNeutralized": "类似公式的值已被中和。",
+  "vaultImportIssueNothingParsed": "文件中未找到主机。",
+  "vaultImportIssueX11": "未启用 X11 转发；请先在主机上确认其安全警告。",
+  "vaultProblemImportFile": "无法读取所选文件。",
+  "vaultProblemImportParse": "无法解析所选文件。",
+  "vaultProblemImportStore": "导入存储不可用。",
+  "vaultProblemImportUnavailable": "导入不可用。",
   "vaultHostPassword": "密码",
   "vaultHostPasswordStored": "已保存密码",
   "vaultHostPasswordKeep": "已保存密码。留空可保留现有密码。",

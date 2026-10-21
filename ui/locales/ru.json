@@ -123,6 +123,125 @@
   "vaultProblemDuplicate": "Хост с таким адресом уже есть в хранилище.",
   "vaultProblemNotFound": "Этот хост больше не существует.",
   "vaultProblemInternal": "Не удалось обновить хранилище.",
+  "vaultImportTitle": "Импорт хостов",
+  "vaultImportIntro": "Выберите файл, экспортированный из Netcatty, PuTTY, MobaXterm, FinalShell, SecureCRT или OpenSSH.",
+  "vaultImportChooseFile": "Выбрать файл…",
+  "vaultImportFileFilterHosts": "Инвентаризация хостов",
+  "vaultImportFileFilterAll": "Все файлы",
+  "vaultImportImport": "Импортировать",
+  "vaultImportFormat": "Формат файла",
+  "vaultImportFormatAuto": "Определять автоматически",
+  "vaultImportFormatCSV": "CSV Netcatty",
+  "vaultImportFormatPuTTY": "PuTTY",
+  "vaultImportFormatMobaXterm": "MobaXterm",
+  "vaultImportFormatFinalShell": "FinalShell",
+  "vaultImportFormatSecureCRT": "SecureCRT",
+  "vaultImportFormatSSHConfig": "ssh_config OpenSSH",
+  "vaultImportMasterPassword": "Мастер-пароль",
+  "vaultImportMasterHint": "Нужен только для файлов MobaXterm, защищённых мастер-паролем.",
+  "vaultImportSummary": "Строк: {total}, новых: {added}, конфликтов: {conflicts}, дубликатов: {duplicates}, неверных: {invalid}",
+  "@vaultImportSummary": {
+    "description": "One import preview's row counts.",
+    "placeholders": {
+      "total": {"type": "int", "example": "12"},
+      "added": {"type": "int", "example": "7"},
+      "conflicts": {"type": "int", "example": "2"},
+      "duplicates": {"type": "int", "example": "1"},
+      "invalid": {"type": "int", "example": "2"}
+    }
+  },
+  "vaultImportGroups": "{count, plural, one {Будет создана # группа хостов.} few {Будет создано # группы хостов.} many {Будет создано # групп хостов.} other {Будет создано # группы хостов.}}",
+  "@vaultImportGroups": {
+    "description": "How many Host Groups the import will create.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportMerge": "При конфликте",
+  "vaultImportMergeSkip": "Сохранить существующий хост",
+  "vaultImportMergeOverwrite": "Перезаписать существующий хост",
+  "vaultImportRows": "Строки",
+  "vaultImportIssues": "Проблемы",
+  "vaultImportNoIssues": "Проблем не найдено.",
+  "vaultImportSelected": "Выбрано: {count}",
+  "@vaultImportSelected": {
+    "description": "How many rows the user selected.",
+    "placeholders": {
+      "count": {"type": "int", "example": "8"}
+    }
+  },
+  "vaultImportNoneSelected": "Выберите хотя бы одну строку для импорта.",
+  "vaultImportDone": "Импортировано хостов: {imported}, перезаписано: {overwritten}, пропущено: {skipped}, создано групп: {groups}.",
+  "@vaultImportDone": {
+    "description": "The result of a completed import.",
+    "placeholders": {
+      "imported": {"type": "int", "example": "8"},
+      "overwritten": {"type": "int", "example": "2"},
+      "skipped": {"type": "int", "example": "1"},
+      "groups": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportDismiss": "Закрыть",
+  "vaultImportConflictWith": "Существующий: {label}",
+  "@vaultImportConflictWith": {
+    "description": "The existing Host a row conflicts with.",
+    "placeholders": {
+      "label": {"type": "String", "example": "web-1"}
+    }
+  },
+  "vaultImportRowNumber": "Строка {row}",
+  "@vaultImportRowNumber": {
+    "description": "The source row number beside an import preview row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "7"}
+    }
+  },
+  "vaultImportStatusNew": "Новый",
+  "vaultImportStatusConflict": "Конфликт",
+  "vaultImportStatusDuplicate": "Дубликат",
+  "vaultImportStatusInvalid": "Неверный",
+  "vaultImportIssueDocument": "Документ: {message}",
+  "@vaultImportIssueDocument": {
+    "description": "One problem about the whole document.",
+    "placeholders": {
+      "message": {"type": "String", "example": "The file is empty."}
+    }
+  },
+  "vaultImportIssueLine": "Строка {row}: {message}",
+  "@vaultImportIssueLine": {
+    "description": "One problem tied to a source row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "4"},
+      "message": {"type": "String", "example": "The port is invalid."}
+    }
+  },
+  "vaultImportIssueCSVEmpty": "Файл пуст.",
+  "vaultImportIssueCSVHeader": "Столбец Hostname не найден.",
+  "vaultImportIssueCSVQuoting": "Кавычки в CSV повреждены.",
+  "vaultImportIssueInvalidHostname": "Недопустимое имя хоста.",
+  "vaultImportIssueMissingHostname": "В записи нет имени хоста.",
+  "vaultImportIssueInvalidPort": "Недопустимый порт.",
+  "vaultImportIssueUnsupportedProtocol": "Протокол не поддерживается.",
+  "vaultImportIssueUnsupportedEntry": "Тип записи не поддерживается.",
+  "vaultImportIssueInvalidProxy": "Недопустимые настройки прокси.",
+  "vaultImportIssueInvalidField": "Поле не прошло проверку.",
+  "vaultImportIssueInvalidJSON": "Документ JSON повреждён.",
+  "vaultImportIssuePasswordUndecryptable": "Не удалось расшифровать сохранённый пароль.",
+  "vaultImportIssueMasterPassword": "Для расшифровки сохранённых паролей нужен мастер-пароль.",
+  "vaultImportIssuePasswordsInRegistry": "Пароли хранятся в реестре и не могут быть импортированы.",
+  "vaultImportIssuePasswordUnmatched": "Не удалось сопоставить сохранённый пароль с хостом.",
+  "vaultImportIssueDuplicateInFile": "Эта конечная точка повторяет предыдущую строку.",
+  "vaultImportIssueInvalidJump": "Цель ProxyJump не объявлена; добавлен встроенный хост.",
+  "vaultImportIssueCyclicJump": "Цикл ProxyJump удалён.",
+  "vaultImportIssueKeyUnreadable": "Не удалось прочитать указанный файл ключа.",
+  "vaultImportIssuePassphraseConflict": "Ключ зашифрован, но подходящая парольная фраза не указана.",
+  "vaultImportIssueFormulaNeutralized": "Значение, похожее на формулу, было нейтрализовано.",
+  "vaultImportIssueNothingParsed": "В файле не найдено хостов.",
+  "vaultImportIssueX11": "Переадресация X11 не включена; сначала примите её предупреждение на хосте.",
+  "vaultProblemImportFile": "Не удалось прочитать выбранный файл.",
+  "vaultProblemImportParse": "Не удалось разобрать выбранный файл.",
+  "vaultProblemImportStore": "Хранилище импорта недоступно.",
+  "vaultProblemImportUnavailable": "Импорт недоступен.",
   "vaultHostPassword": "Пароль",
   "vaultHostPasswordStored": "Пароль сохранён",
   "vaultHostPasswordKeep": "Пароль уже сохранён. Оставьте поле пустым, чтобы сохранить его.",

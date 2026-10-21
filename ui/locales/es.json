@@ -123,6 +123,125 @@
   "vaultProblemDuplicate": "Ya existe un host con esta dirección en el Vault.",
   "vaultProblemNotFound": "Ese host ya no existe.",
   "vaultProblemInternal": "No se pudo actualizar el Vault.",
+  "vaultImportTitle": "Importar Hosts",
+  "vaultImportIntro": "Elige un archivo exportado de Netcatty, PuTTY, MobaXterm, FinalShell, SecureCRT u OpenSSH.",
+  "vaultImportChooseFile": "Elegir archivo…",
+  "vaultImportFileFilterHosts": "Inventarios de hosts",
+  "vaultImportFileFilterAll": "Todos los archivos",
+  "vaultImportImport": "Importar",
+  "vaultImportFormat": "Formato del archivo",
+  "vaultImportFormatAuto": "Detectar automáticamente",
+  "vaultImportFormatCSV": "CSV de Netcatty",
+  "vaultImportFormatPuTTY": "PuTTY",
+  "vaultImportFormatMobaXterm": "MobaXterm",
+  "vaultImportFormatFinalShell": "FinalShell",
+  "vaultImportFormatSecureCRT": "SecureCRT",
+  "vaultImportFormatSSHConfig": "ssh_config de OpenSSH",
+  "vaultImportMasterPassword": "Contraseña maestra",
+  "vaultImportMasterHint": "Solo es necesaria para archivos MobaXterm protegidos con una contraseña maestra.",
+  "vaultImportSummary": "Filas: {total}, nuevas: {added}, conflictos: {conflicts}, duplicadas: {duplicates}, no válidas: {invalid}",
+  "@vaultImportSummary": {
+    "description": "One import preview's row counts.",
+    "placeholders": {
+      "total": {"type": "int", "example": "12"},
+      "added": {"type": "int", "example": "7"},
+      "conflicts": {"type": "int", "example": "2"},
+      "duplicates": {"type": "int", "example": "1"},
+      "invalid": {"type": "int", "example": "2"}
+    }
+  },
+  "vaultImportGroups": "{count, plural, one {Se creará # grupo de Hosts.} many {Se crearán # de grupos de Hosts.} other {Se crearán # grupos de Hosts.}}",
+  "@vaultImportGroups": {
+    "description": "How many Host Groups the import will create.",
+    "placeholders": {
+      "count": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportMerge": "En caso de conflicto",
+  "vaultImportMergeSkip": "Conservar el Host existente",
+  "vaultImportMergeOverwrite": "Sobrescribir el Host existente",
+  "vaultImportRows": "Filas",
+  "vaultImportIssues": "Problemas",
+  "vaultImportNoIssues": "No se encontraron problemas.",
+  "vaultImportSelected": "{count} seleccionadas",
+  "@vaultImportSelected": {
+    "description": "How many rows the user selected.",
+    "placeholders": {
+      "count": {"type": "int", "example": "8"}
+    }
+  },
+  "vaultImportNoneSelected": "Selecciona al menos una fila para importar.",
+  "vaultImportDone": "Importación completada. Importados: {imported}, sobrescritos: {overwritten}, omitidos: {skipped}, grupos de Hosts creados: {groups}.",
+  "@vaultImportDone": {
+    "description": "The result of a completed import.",
+    "placeholders": {
+      "imported": {"type": "int", "example": "8"},
+      "overwritten": {"type": "int", "example": "2"},
+      "skipped": {"type": "int", "example": "1"},
+      "groups": {"type": "int", "example": "3"}
+    }
+  },
+  "vaultImportDismiss": "Descartar",
+  "vaultImportConflictWith": "Existente: {label}",
+  "@vaultImportConflictWith": {
+    "description": "The existing Host a row conflicts with.",
+    "placeholders": {
+      "label": {"type": "String", "example": "web-1"}
+    }
+  },
+  "vaultImportRowNumber": "Fila {row}",
+  "@vaultImportRowNumber": {
+    "description": "The source row number beside an import preview row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "7"}
+    }
+  },
+  "vaultImportStatusNew": "Nuevo",
+  "vaultImportStatusConflict": "Conflicto",
+  "vaultImportStatusDuplicate": "Duplicado",
+  "vaultImportStatusInvalid": "No válido",
+  "vaultImportIssueDocument": "Documento: {message}",
+  "@vaultImportIssueDocument": {
+    "description": "One problem about the whole document.",
+    "placeholders": {
+      "message": {"type": "String", "example": "The file is empty."}
+    }
+  },
+  "vaultImportIssueLine": "Fila {row}: {message}",
+  "@vaultImportIssueLine": {
+    "description": "One problem tied to a source row.",
+    "placeholders": {
+      "row": {"type": "int", "example": "4"},
+      "message": {"type": "String", "example": "The port is invalid."}
+    }
+  },
+  "vaultImportIssueCSVEmpty": "El archivo está vacío.",
+  "vaultImportIssueCSVHeader": "No se encontró una columna Hostname.",
+  "vaultImportIssueCSVQuoting": "Las comillas del CSV no son válidas.",
+  "vaultImportIssueInvalidHostname": "El Hostname no es válido.",
+  "vaultImportIssueMissingHostname": "La entrada no tiene Hostname.",
+  "vaultImportIssueInvalidPort": "El puerto no es válido.",
+  "vaultImportIssueUnsupportedProtocol": "El protocolo no es compatible.",
+  "vaultImportIssueUnsupportedEntry": "El tipo de entrada no es compatible.",
+  "vaultImportIssueInvalidProxy": "La configuración del proxy no es válida.",
+  "vaultImportIssueInvalidField": "Un campo no superó la validación.",
+  "vaultImportIssueInvalidJSON": "El documento JSON no es válido.",
+  "vaultImportIssuePasswordUndecryptable": "No se pudo descifrar una contraseña guardada.",
+  "vaultImportIssueMasterPassword": "Se necesita una contraseña maestra para descifrar las contraseñas guardadas.",
+  "vaultImportIssuePasswordsInRegistry": "Las contraseñas están en el registro y no se pueden importar.",
+  "vaultImportIssuePasswordUnmatched": "No se pudo asociar una contraseña guardada a un Host.",
+  "vaultImportIssueDuplicateInFile": "Este destino repite una fila anterior.",
+  "vaultImportIssueInvalidJump": "Un destino ProxyJump no está declarado; se añadió un Host en línea.",
+  "vaultImportIssueCyclicJump": "Se eliminó un ciclo de ProxyJump.",
+  "vaultImportIssueKeyUnreadable": "No se pudo leer el archivo de clave indicado.",
+  "vaultImportIssuePassphraseConflict": "La clave está cifrada y no se proporcionó una frase de contraseña válida.",
+  "vaultImportIssueFormulaNeutralized": "Se neutralizó un valor con aspecto de fórmula.",
+  "vaultImportIssueNothingParsed": "No se encontraron Hosts en el archivo.",
+  "vaultImportIssueX11": "No se activó el reenvío X11; acepta primero su aviso en el Host.",
+  "vaultProblemImportFile": "No se pudo leer el archivo seleccionado.",
+  "vaultProblemImportParse": "No se pudo analizar el archivo seleccionado.",
+  "vaultProblemImportStore": "El almacenamiento de importación no está disponible.",
+  "vaultProblemImportUnavailable": "La importación no está disponible.",
   "vaultHostPassword": "Contraseña",
   "vaultHostPasswordStored": "Contraseña guardada",
   "vaultHostPasswordKeep": "Ya hay una contraseña guardada. Déjalo vacío para conservarla.",

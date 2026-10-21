@@ -1,0 +1,912 @@
+package vault
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path"
+	"sort"
+	"strings"
+
+	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/domain/vaultimport"
+)
+
+// ImportStore saves a chunk of imported Hosts and Host Groups in one
+// transaction. The Vault service writes credentials to the field-secret store
+// before calling it and rolls them back when the batch fails, so a database
+// failure never leaves a Host advertising a password that was not written or
+// a half-imported chunk.
+type ImportStore interface {
+	SaveImportBatch(ctx context.Context, batch ImportBatch) error
+}
+
+// ImportBatch is one atomic import chunk: Host Groups first, then Hosts.
+type ImportBatch struct {
+	Groups []domainvault.Group
+	Hosts  []domainvault.Host
+}
+
+// ImportFileReader reads a referenced key file. The app implementation expands
+// "~" and resolves the path; the service treats the path as opaque.
+type ImportFileReader interface {
+	ReadImportFile(path string) ([]byte, error)
+}
+
+// WithImportStore gives the Service transactional batch persistence for
+// imported Hosts and Host Groups.
+func WithImportStore(store ImportStore) Option {
+	return func(s *Service) { s.importStore = store }
+}
+
+// WithImportFiles gives the Service the key-file reader used to import
+// IdentityFile references from external inventories.
+func WithImportFiles(reader ImportFileReader) Option {
+	return func(s *Service) { s.importFiles = reader }
+}
+
+// ImportStatus classifies one parsed row in the preview.
+type ImportStatus string
+
+const (
+	// ImportStatusNew is a Host the Vault does not have yet.
+	ImportStatusNew ImportStatus = "new"
+	// ImportStatusConflict is a Host whose merge key already exists.
+	ImportStatusConflict ImportStatus = "conflict"
+	// ImportStatusDuplicate repeats an earlier row in the same file.
+	ImportStatusDuplicate ImportStatus = "duplicate"
+	// ImportStatusInvalid failed validation and cannot be imported.
+	ImportStatusInvalid ImportStatus = "invalid"
+)
+
+// ImportMerge chooses what happens to a conflicting row. There is no implicit
+// overwrite: the user must select it.
+type ImportMerge string
+
+const (
+	// ImportMergeSkip leaves the existing Host untouched.
+	ImportMergeSkip ImportMerge = "skip"
+	// ImportMergeOverwrite replaces the existing Host's editable fields.
+	ImportMergeOverwrite ImportMerge = "overwrite"
+)
+
+// ImportRow is the non-secret preview of one parsed record. Password, key
+// material, and key passphrase stay in the plan, never in this struct.
+type ImportRow struct {
+	Index         int
+	SourceRow     int
+	Label         string
+	Hostname      string
+	Username      string
+	Port          int
+	Protocol      string
+	Group         string
+	Status        ImportStatus
+	Selected      bool
+	Existing      model.HostID
+	ExistingLabel string
+	KeyLabel      string
+	HasProxy      bool
+	Issues        []vaultimport.Issue
+}
+
+// ImportCounts summarizes a preview.
+type ImportCounts struct {
+	Total      int
+	New        int
+	Conflicts  int
+	Duplicates int
+	Invalid    int
+	Selected   int
+}
+
+// ImportPreview is a parsed, validated, conflict-analyzed inventory. Nothing
+// is written until CommitImport is called. The plan's credential material is
+// in memory only and is never rendered by the UI.
+type ImportPreview struct {
+	Format         vaultimport.Format
+	FileName       string
+	Rows           []ImportRow
+	Issues         []vaultimport.Issue
+	Counts         ImportCounts
+	GroupsToCreate []string
+
+	records  []vaultimport.Record
+	drafts   []domainvault.Draft
+	keyFiles map[string]*importKeyFile
+	// keyIDs caches Keys created for an IdentityFile path, so a chunked
+	// import creates one Key per referenced file rather than one per chunk.
+	keyIDs map[string]model.KeyID
+	// newIDs are the stable identities of rows the Vault does not have yet.
+	// They are assigned during preview so a ProxyJump chain can reference a
+	// Host that a later chunk imports, and a retried chunk keeps the same ID.
+	newIDs []model.HostID
+}
+
+type importKeyFile struct {
+	label      string
+	privateKey string
+	passphrase string
+}
+
+// PreviewImportOptions configure parsing and detection.
+type PreviewImportOptions struct {
+	Format         vaultimport.Format
+	FileName       string
+	MasterPassword string
+}
+
+// PreviewImport parses text, validates every row, and reports conflicts
+// against the current Vault. It never writes.
+func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewImportOptions) (ImportPreview, error) {
+	format := opts.Format
+	if format == "" {
+		format = vaultimport.Detect(text)
+	}
+	if !format.Valid() {
+		return ImportPreview{}, invalid(fmt.Errorf("vault: unsupported import format %q", format))
+	}
+
+	parsed := vaultimport.Parse(format, text, vaultimport.Options{
+		FileName: opts.FileName, MasterPassword: opts.MasterPassword,
+	})
+	preview := ImportPreview{
+		Format:   parsed.Format,
+		FileName: opts.FileName,
+		Issues:   append([]vaultimport.Issue(nil), parsed.Issues...),
+		records:  parsed.Records,
+		drafts:   make([]domainvault.Draft, len(parsed.Records)),
+		keyFiles: make(map[string]*importKeyFile),
+		keyIDs:   make(map[string]model.KeyID),
+		newIDs:   make([]model.HostID, len(parsed.Records)),
+	}
+
+	hosts, err := s.repo.List(ctx)
+	if err != nil {
+		return ImportPreview{}, internal(err)
+	}
+	existing := make(map[string]domainvault.Host, len(hosts))
+	for _, host := range hosts {
+		existing[host.MergeKey()] = host
+	}
+	groups, err := s.importExistingGroups(ctx)
+	if err != nil {
+		return ImportPreview{}, err
+	}
+	existingGroups := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		existingGroups[group.Path] = true
+	}
+
+	seen := make(map[string]int, len(parsed.Records))
+	missingGroups := make(map[string]bool)
+	keyCache := make(map[string]*importKeyFile)
+
+	for index, record := range parsed.Records {
+		row := ImportRow{
+			Index:     index,
+			SourceRow: record.Row,
+			Label:     record.Label,
+			Hostname:  record.Hostname,
+			Username:  record.Username,
+			Port:      record.Port,
+			Protocol:  record.Protocol,
+			Group:     record.Group,
+			HasProxy:  record.Proxy != nil,
+			Selected:  true,
+		}
+		draft := draftFromRecord(record)
+		if record.X11Forwarding {
+			// Imported configuration cannot accept a security warning on the
+			// user's behalf, so forwarding is not enabled silently.
+			preview.Issues = append(preview.Issues, vaultimport.Issue{
+				Severity: vaultimport.SeverityWarning,
+				Code:     vaultimport.IssueX11NotImported,
+				Row:      record.Row,
+			})
+			row.Issues = append(row.Issues, preview.Issues[len(preview.Issues)-1])
+		}
+		if record.KeyPath != "" {
+			key, keyIssue := s.importKeyFile(record, keyCache)
+			if keyIssue != nil {
+				preview.Issues = append(preview.Issues, *keyIssue)
+				row.Issues = append(row.Issues, *keyIssue)
+			}
+			if key != nil {
+				row.KeyLabel = key.label
+				preview.keyFiles[record.KeyPath] = key
+			}
+		}
+
+		normalized, err := domainvault.NormalizeDraft(draft)
+		if err != nil {
+			row.Status = ImportStatusInvalid
+			row.Selected = false
+			item := validationIssue(err, record.Row)
+			preview.Issues = append(preview.Issues, item)
+			row.Issues = append(row.Issues, item)
+			preview.Rows = append(preview.Rows, row)
+			preview.Counts.Total++
+			preview.Counts.Invalid++
+			continue
+		}
+		preview.drafts[index] = normalized
+
+		key := hostFromDraft(normalized).MergeKey()
+		if first, duplicate := seen[key]; duplicate {
+			row.Status = ImportStatusDuplicate
+			row.Selected = false
+			row.Existing = preview.Rows[first].Existing
+			item := vaultimport.Issue{
+				Severity: vaultimport.SeverityWarning,
+				Code:     vaultimport.IssueDuplicateInFile,
+				Row:      record.Row,
+				Value:    normalized.Hostname,
+			}
+			preview.Issues = appendUniqueImportIssue(preview.Issues, item)
+			row.Issues = append(row.Issues, item)
+			preview.Counts.Total++
+			preview.Counts.Duplicates++
+			preview.Rows = append(preview.Rows, row)
+			continue
+		}
+		seen[key] = index
+
+		if host, found := existing[key]; found {
+			row.Status = ImportStatusConflict
+			row.Existing = host.ID
+			row.ExistingLabel = host.Label
+			preview.Counts.Conflicts++
+		} else {
+			row.Status = ImportStatusNew
+			preview.Counts.New++
+			preview.newIDs[index] = s.newID()
+		}
+		preview.Counts.Total++
+		preview.Counts.Selected++
+		for _, ancestor := range groupAncestorsWithSelf(normalized.Group) {
+			if !existingGroups[ancestor] {
+				missingGroups[ancestor] = true
+			}
+		}
+		preview.Rows = append(preview.Rows, row)
+	}
+
+	// The preview rows must align with parsed records for commit indexing.
+	// Invalid and duplicate rows are already appended in order above.
+	if len(preview.Rows) != len(parsed.Records) {
+		preview.Rows = alignImportRows(preview.Rows, len(parsed.Records))
+	}
+
+	// A parser may reject a whole entry without producing a Record, for
+	// example an invalid CSV hostname or an unsupported RDP session. Those
+	// rows still belong in the summary: the issue report names their source
+	// row, and the counts must add up to every data row in the file.
+	recordRows := make(map[int]bool, len(parsed.Records))
+	for _, record := range parsed.Records {
+		recordRows[record.Row] = true
+	}
+	droppedRows := make(map[int]bool)
+	for _, item := range parsed.Issues {
+		if item.Row > 0 && !recordRows[item.Row] && rejectedImportRow(item.Code) {
+			droppedRows[item.Row] = true
+		}
+	}
+	preview.Counts.Total += len(droppedRows)
+	preview.Counts.Invalid += len(droppedRows)
+
+	preview.GroupsToCreate = sortedGroupPaths(missingGroups)
+	return preview, nil
+}
+
+// alignImportRows keeps row indexes dense if a parser ever returns a record
+// the loop could not describe. It is a defensive invariant, not a repair path
+// for user input.
+func alignImportRows(rows []ImportRow, total int) []ImportRow {
+	aligned := make([]ImportRow, total)
+	copy(aligned, rows)
+	return aligned
+}
+
+func (s *Service) importExistingGroups(ctx context.Context) ([]domainvault.Group, error) {
+	if s.groups == nil {
+		return nil, nil
+	}
+	groups, err := s.groups.ListGroups(ctx)
+	if err != nil {
+		return nil, internal(err)
+	}
+	return groups, nil
+}
+
+// importKeyFile reads and inspects a referenced IdentityFile once per path.
+// A key that cannot be read is a warning: the Host itself is still valid and
+// the user can attach a Key later.
+func (s *Service) importKeyFile(record vaultimport.Record,
+	cache map[string]*importKeyFile) (*importKeyFile, *vaultimport.Issue) {
+
+	if cached, ok := cache[record.KeyPath]; ok {
+		return cached, nil
+	}
+	issue := func(code vaultimport.IssueCode) *vaultimport.Issue {
+		return &vaultimport.Issue{
+			Severity: vaultimport.SeverityWarning, Code: code, Row: record.Row,
+			Field: "keypath", Value: record.KeyPath,
+		}
+	}
+	if s.importFiles == nil || s.inspector == nil || s.keys == nil || s.secrets == nil {
+		return nil, issue(vaultimport.IssueKeyUnreadable)
+	}
+	data, err := s.importFiles.ReadImportFile(record.KeyPath)
+	if err != nil || len(data) == 0 {
+		return nil, issue(vaultimport.IssueKeyUnreadable)
+	}
+	inspection, err := s.inspector.Inspect(string(data), record.Passphrase, "")
+	if err != nil {
+		return nil, issue(vaultimport.IssueKeyUnreadable)
+	}
+	if inspection.Encrypted && record.Passphrase == "" {
+		return nil, issue(vaultimport.IssuePassphraseConflict)
+	}
+	key := &importKeyFile{
+		label:      keyFileLabel(record.KeyPath),
+		privateKey: string(data),
+		passphrase: record.Passphrase,
+	}
+	cache[record.KeyPath] = key
+	return key, nil
+}
+
+func keyFileLabel(keyPath string) string {
+	cleaned := strings.TrimSpace(keyPath)
+	base := path.Base(strings.ReplaceAll(cleaned, `\`, "/"))
+	base = strings.TrimSuffix(base, path.Ext(base))
+	if base == "" || base == "." || base == "/" {
+		// The Key label is user data, not display copy: fall back to the
+		// referenced path when it has no usable base name.
+		return cleaned
+	}
+	return base
+}
+
+// ImportCommitOptions select rows and the conflict policy. Offset and Limit
+// make the commit chunked and resumable: Next is the row offset to pass as
+// Offset on the next call.
+type ImportCommitOptions struct {
+	Selected []bool
+	Merge    ImportMerge
+	Offset   int
+	Limit    int
+}
+
+// ImportCommitResult reports one chunk. Done is false when Limit ended the
+// chunk before the last row; the caller resumes at Next.
+type ImportCommitResult struct {
+	Next          int
+	Done          bool
+	Imported      []model.HostID
+	Overwritten   []model.HostID
+	Skipped       int
+	GroupsCreated []string
+}
+
+// CommitImport writes one chunk of the preview. Rows that are invalid,
+// duplicates, unselected, or a skipped conflict are counted and never written.
+// New Hosts and needed Host Groups are persisted in one transaction; imported
+// credentials always pass through the field-secret store.
+func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
+	opts ImportCommitOptions) (ImportCommitResult, error) {
+
+	if len(preview.records) == 0 || len(preview.records) != len(preview.Rows) {
+		return ImportCommitResult{}, invalid(fmt.Errorf("vault: import plan is empty"))
+	}
+	merge := opts.Merge
+	if merge == "" {
+		merge = ImportMergeSkip
+	}
+	if merge != ImportMergeSkip && merge != ImportMergeOverwrite {
+		return ImportCommitResult{}, invalid(fmt.Errorf("vault: unknown merge policy %q", merge))
+	}
+	selected := func(index int) bool {
+		if len(opts.Selected) == 0 {
+			return preview.Rows[index].Selected
+		}
+		if index < 0 || index >= len(opts.Selected) {
+			return false
+		}
+		return opts.Selected[index]
+	}
+
+	start := opts.Offset
+	if start < 0 {
+		start = 0
+	}
+	if start > len(preview.Rows) {
+		start = len(preview.Rows)
+	}
+	end := len(preview.Rows)
+	if opts.Limit > 0 && start+opts.Limit < end {
+		end = start + opts.Limit
+	}
+
+	result := ImportCommitResult{Next: start}
+
+	// Keys are created before any Host so a Host never references material
+	// that could not be stored. CreateKey encrypts the material; an
+	// unreferenced Key left by a later failure is harmless.
+	keyIDs, err := s.commitImportKeys(ctx, preview, selected, merge, start, end)
+	if err != nil {
+		return result, err
+	}
+
+	hosts, err := s.repo.List(ctx)
+	if err != nil {
+		return result, internal(err)
+	}
+	// ProxyJump references resolve against the preview's stable new IDs, so a
+	// forwarding chain works no matter which chunk its jump Host is in.
+	chains := preview.jumpChains(selected, hosts)
+
+	for index := start; index < end; index++ {
+		row := preview.Rows[index]
+		switch row.Status {
+		case ImportStatusInvalid, ImportStatusDuplicate:
+			result.Skipped++
+			continue
+		}
+		if !selected(index) {
+			continue
+		}
+		switch row.Status {
+		case ImportStatusConflict:
+			if merge == ImportMergeSkip {
+				result.Skipped++
+				continue
+			}
+			draft, ok := preview.commitDraft(index)
+			if !ok {
+				result.Skipped++
+				continue
+			}
+			draft.KeyID = keyIDs[preview.records[index].KeyPath]
+			draft.HostChain = chains[index]
+			updated, err := s.Update(ctx, row.Existing, draft)
+			if err != nil {
+				result.Next = index
+				return result, err
+			}
+			result.Overwritten = append(result.Overwritten, updated.ID)
+		case ImportStatusNew:
+			// Batched below.
+		default:
+			result.Skipped++
+		}
+	}
+
+	existingGroups, err := s.importExistingGroups(ctx)
+	if err != nil {
+		return result, err
+	}
+	groupByPath := make(map[string]bool, len(existingGroups))
+	for _, group := range existingGroups {
+		groupByPath[group.Path] = true
+	}
+
+	now := s.now()
+	order := nextOrder(hosts)
+	type pendingHost struct {
+		host  domainvault.Host
+		draft domainvault.Draft
+	}
+	var pending []pendingHost
+	missingGroups := make(map[string]bool)
+	for index := start; index < end; index++ {
+		if !selected(index) {
+			continue
+		}
+		row := preview.Rows[index]
+		if row.Status != ImportStatusNew && row.Status != ImportStatusConflict {
+			continue
+		}
+		if row.Status == ImportStatusConflict && merge == ImportMergeSkip {
+			continue
+		}
+		draft, ok := preview.commitDraft(index)
+		if !ok {
+			continue
+		}
+		draft.KeyID = keyIDs[preview.records[index].KeyPath]
+		draft.HostChain = chains[index]
+		for _, ancestor := range groupAncestorsWithSelf(draft.Group) {
+			if !groupByPath[ancestor] {
+				missingGroups[ancestor] = true
+			}
+		}
+		if row.Status != ImportStatusNew {
+			continue
+		}
+		if draft.Protocol == "" {
+			draft.Protocol = domainvault.ProtocolSSH
+		}
+		host := hostFromDraft(draft)
+		host.ID = preview.newIDs[index]
+		if host.ID == "" {
+			// Defensive: a plan without a stable ID is still importable, but
+			// its jump references cannot be resolved reliably.
+			host.ID = s.newID()
+		}
+		host.OrderKey = order
+		host.CreatedAt = now
+		host.UpdatedAt = now
+		host.HasPassword = draft.Password != "" && s.SecretMode() != SecretModeSession
+		if host.Proxy != nil {
+			host.Proxy.HasPassword = draft.Proxy != nil &&
+				draft.Proxy.Password != "" && s.SecretMode() != SecretModeSession
+		}
+		order += orderStep
+		pending = append(pending, pendingHost{host: host, draft: draft})
+	}
+
+	batch := ImportBatch{}
+	groupOrder := nextGroupOrder(existingGroups)
+	for _, groupPath := range sortedGroupPaths(missingGroups) {
+		batch.Groups = append(batch.Groups, domainvault.Group{
+			Path: groupPath, OrderKey: groupOrder, CreatedAt: now, UpdatedAt: now,
+		})
+		groupOrder += orderStep
+	}
+	for _, item := range pending {
+		batch.Hosts = append(batch.Hosts, item.host)
+	}
+
+	// Credentials are written first. Any failure from here through the batch
+	// transaction removes exactly what this call wrote.
+	var written []SecretRef
+	rollback := func() {
+		if s.secrets == nil {
+			return
+		}
+		for _, ref := range written {
+			_ = s.secrets.Delete(ctx, ref)
+		}
+	}
+	for _, item := range pending {
+		needsPassword := item.draft.Password != ""
+		needsProxy := item.draft.Proxy != nil && item.draft.Proxy.Password != ""
+		if (needsPassword || needsProxy) && s.secrets == nil {
+			return result, unsupported(ErrSecretsUnavailable)
+		}
+	}
+	for _, item := range pending {
+		if item.draft.Password != "" {
+			ref := HostSecretRef(item.host.ID, FieldPassword)
+			if err := s.secrets.Set(ctx, ref, item.draft.Password); err != nil {
+				rollback()
+				return result, secretError(err)
+			}
+			written = append(written, ref)
+		}
+		if item.draft.Proxy != nil && item.draft.Proxy.Password != "" {
+			ref := HostSecretRef(item.host.ID, FieldProxyPassword)
+			if err := s.secrets.Set(ctx, ref, item.draft.Proxy.Password); err != nil {
+				rollback()
+				return result, secretError(err)
+			}
+			written = append(written, ref)
+		}
+	}
+
+	if len(batch.Hosts) > 0 || len(batch.Groups) > 0 {
+		if s.importStore == nil {
+			rollback()
+			return result, unsupported(ErrImportStoreUnavailable)
+		}
+		if err := s.importStore.SaveImportBatch(ctx, batch); err != nil {
+			rollback()
+			return result, internal(err)
+		}
+	}
+	for _, host := range batch.Hosts {
+		result.Imported = append(result.Imported, host.ID)
+	}
+	for _, group := range batch.Groups {
+		result.GroupsCreated = append(result.GroupsCreated, group.Path)
+	}
+	result.Next = end
+	result.Done = end >= len(preview.Rows)
+	return result, nil
+}
+
+// ErrImportStoreUnavailable reports a Service built without batch import
+// persistence. Import never falls back to non-transactional writes.
+var ErrImportStoreUnavailable = errors.New("vault: import storage is unavailable")
+
+func (s *Service) commitImportKeys(ctx context.Context, preview ImportPreview,
+	selected func(int) bool, merge ImportMerge, start, end int) (map[string]model.KeyID, error) {
+
+	ids := make(map[string]model.KeyID)
+	if len(preview.keyFiles) == 0 {
+		return ids, nil
+	}
+	used := make(map[string]bool)
+	for index := start; index < end; index++ {
+		if !selected(index) {
+			continue
+		}
+		status := preview.Rows[index].Status
+		if status == ImportStatusConflict && merge == ImportMergeSkip {
+			continue
+		}
+		if status != ImportStatusNew && status != ImportStatusConflict {
+			continue
+		}
+		if keyPath := preview.records[index].KeyPath; keyPath != "" {
+			used[keyPath] = true
+		}
+	}
+	for keyPath := range used {
+		if id, found := preview.keyIDs[keyPath]; found {
+			ids[keyPath] = id
+			continue
+		}
+		keyFile, ok := preview.keyFiles[keyPath]
+		if !ok {
+			continue
+		}
+		key, err := s.CreateKey(ctx, domainvault.KeyDraft{
+			Label:          keyFile.label,
+			PrivateKey:     keyFile.privateKey,
+			Passphrase:     keyFile.passphrase,
+			SavePassphrase: keyFile.passphrase != "",
+			Source:         domainvault.KeySourceImported,
+		})
+		if err != nil {
+			return nil, err
+		}
+		preview.keyIDs[keyPath] = key.ID
+		ids[keyPath] = key.ID
+	}
+	return ids, nil
+}
+
+// commitDraft returns the normalized draft for one row. Credential plaintext
+// stays in this plan and is never exposed through ImportRow.
+func (preview *ImportPreview) commitDraft(index int) (domainvault.Draft, bool) {
+	if index < 0 || index >= len(preview.drafts) {
+		return domainvault.Draft{}, false
+	}
+	return preview.drafts[index], true
+}
+
+func draftFromRecord(record vaultimport.Record) domainvault.Draft {
+	draft := domainvault.Draft{
+		Label:       record.Label,
+		Hostname:    record.Hostname,
+		Port:        record.Port,
+		Username:    record.Username,
+		Protocol:    domainvault.Protocol(record.Protocol),
+		Group:       record.Group,
+		Tags:        append([]string(nil), record.Tags...),
+		Notes:       record.Notes,
+		UseSSHAgent: record.UseSSHAgent,
+		Password:    record.Password,
+	}
+	if record.Protocol == "" {
+		draft.Protocol = domainvault.ProtocolSSH
+	}
+	if record.Proxy != nil {
+		draft.Proxy = &domainvault.ProxyConfig{
+			Type:     domainvault.ProxyType(record.Proxy.Type),
+			Host:     record.Proxy.Host,
+			Port:     record.Proxy.Port,
+			Command:  record.Proxy.Command,
+			Username: record.Proxy.Username,
+			Password: record.Proxy.Password,
+		}
+	}
+	return draft
+}
+
+// jumpChains resolves every parsed ProxyJump reference to a Host identity.
+// Each row's new ID was assigned during preview, so a chain may name a Host in
+// a later commit chunk. References to rows that will not be written, and a
+// row's self-reference, are dropped rather than saved as a dangling chain.
+func (preview *ImportPreview) jumpChains(selected func(int) bool,
+	existing []domainvault.Host) map[int]*domainvault.HostChain {
+
+	existingByKey := make(map[string]model.HostID, len(existing))
+	for _, host := range existing {
+		existingByKey[host.MergeKey()] = host.ID
+	}
+	newIndexByKey := make(map[string]int, len(preview.Rows))
+	newIDByKey := make(map[string]model.HostID, len(preview.Rows))
+	for index, row := range preview.Rows {
+		if row.Status != ImportStatusNew || index >= len(preview.drafts) {
+			continue
+		}
+		key := hostFromDraft(preview.drafts[index]).MergeKey()
+		if _, found := newIndexByKey[key]; !found {
+			newIndexByKey[key] = index
+		}
+		newIDByKey[key] = preview.newIDs[index]
+	}
+
+	exists := func(index int) bool {
+		if index < 0 || index >= len(preview.Rows) {
+			return false
+		}
+		row := preview.Rows[index]
+		switch row.Status {
+		case ImportStatusConflict:
+			return row.Existing != ""
+		case ImportStatusNew:
+			return selected(index)
+		case ImportStatusDuplicate:
+			if row.Existing != "" {
+				return true
+			}
+			if index >= len(preview.drafts) {
+				return false
+			}
+			key := hostFromDraft(preview.drafts[index]).MergeKey()
+			if _, found := existingByKey[key]; found {
+				return true
+			}
+			target, found := newIndexByKey[key]
+			return found && selected(target)
+		default:
+			return false
+		}
+	}
+
+	resolve := func(index int) (model.HostID, bool) {
+		if index < 0 || index >= len(preview.Rows) {
+			return "", false
+		}
+		row := preview.Rows[index]
+		switch row.Status {
+		case ImportStatusNew:
+			return preview.newIDs[index], preview.newIDs[index] != ""
+		case ImportStatusConflict:
+			return row.Existing, row.Existing != ""
+		case ImportStatusDuplicate:
+			if row.Existing != "" {
+				return row.Existing, true
+			}
+			if index >= len(preview.drafts) {
+				return "", false
+			}
+			id, found := newIDByKey[hostFromDraft(preview.drafts[index]).MergeKey()]
+			return id, found && id != ""
+		default:
+			return "", false
+		}
+	}
+
+	chains := make(map[int]*domainvault.HostChain)
+	for index, record := range preview.records {
+		if len(record.JumpRefs) == 0 || index >= len(preview.Rows) {
+			continue
+		}
+		var ids []model.HostID
+		seen := make(map[model.HostID]bool, len(record.JumpRefs))
+		for _, ref := range record.JumpRefs {
+			id, ok := resolve(ref)
+			if !ok || !exists(ref) || seen[id] || id == preview.newIDs[index] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		if len(ids) > 0 {
+			chains[index] = &domainvault.HostChain{HostIDs: ids}
+		}
+	}
+	return chains
+}
+
+func hostFromDraft(draft domainvault.Draft) domainvault.Host {
+	return domainvault.Host{
+		Label:                  draft.Label,
+		Hostname:               draft.Hostname,
+		Port:                   draft.Port,
+		Username:               draft.Username,
+		Protocol:               draft.Protocol,
+		Group:                  draft.Group,
+		Tags:                   append([]string(nil), draft.Tags...),
+		Notes:                  draft.Notes,
+		Pinned:                 draft.Pinned,
+		IdentityID:             draft.IdentityID,
+		KeyID:                  draft.KeyID,
+		AuthMethod:             draft.AuthMethod,
+		UseSSHAgent:            draft.UseSSHAgent,
+		RequiresMFA:            draft.RequiresMFA,
+		X11Forwarding:          draft.X11Forwarding,
+		X11WarningAcknowledged: draft.X11WarningAcknowledged,
+		HostChain:              domainvault.CloneHostChain(draft.HostChain),
+		Proxy:                  domainvault.CloneProxy(draft.Proxy),
+		ProxyProfileID:         draft.ProxyProfileID,
+		LegacyAlgorithms:       draft.LegacyAlgorithms,
+		SkipEcdsaHostKey:       draft.SkipEcdsaHostKey,
+		Algorithms:             domainvault.CloneAlgorithms(draft.Algorithms),
+	}
+}
+
+func validationIssue(err error, row int) vaultimport.Issue {
+	var validation *domainvault.ValidationError
+	if errors.As(err, &validation) {
+		code := vaultimport.IssueInvalidField
+		switch {
+		case validation.Field == domainvault.FieldHostname && validation.Rule == domainvault.RuleRequired:
+			code = vaultimport.IssueMissingHostname
+		case validation.Field == domainvault.FieldProtocol:
+			code = vaultimport.IssueUnsupportedProtocol
+		case validation.Field == domainvault.FieldPort:
+			code = vaultimport.IssueInvalidPort
+		}
+		return vaultimport.Issue{
+			Severity: vaultimport.SeverityWarning, Code: code, Row: row,
+			Field: string(validation.Field), Detail: string(validation.Rule),
+		}
+	}
+	return vaultimport.Issue{
+		Severity: vaultimport.SeverityWarning, Code: vaultimport.IssueInvalidField,
+		Row: row, Detail: err.Error(),
+	}
+}
+
+// groupAncestorsWithSelf returns "" for the Vault root, then every parent and
+// the group itself for a nested path.
+func groupAncestorsWithSelf(group string) []string {
+	group = domainvault.NormalizeGroup(group)
+	if group == "" {
+		return nil
+	}
+	segments := strings.Split(group, "/")
+	out := make([]string, 0, len(segments))
+	for index := range segments {
+		out = append(out, strings.Join(segments[:index+1], "/"))
+	}
+	return out
+}
+
+func sortedGroupPaths(groups map[string]bool) []string {
+	paths := make([]string, 0, len(groups))
+	for group := range groups {
+		paths = append(paths, group)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		leftDepth := strings.Count(paths[i], "/")
+		rightDepth := strings.Count(paths[j], "/")
+		if leftDepth != rightDepth {
+			return leftDepth < rightDepth
+		}
+		return paths[i] < paths[j]
+	})
+	return paths
+}
+
+// rejectedImportRow reports parse issues that discard a whole entry instead
+// of annotating a Record the preview still lists.
+func rejectedImportRow(code vaultimport.IssueCode) bool {
+	switch code {
+	case vaultimport.IssueInvalidHostname, vaultimport.IssueUnsupportedProtocol,
+		vaultimport.IssueMissingHostname, vaultimport.IssueUnsupportedEntry:
+		return true
+	default:
+		return false
+	}
+}
+
+// appendUniqueImportIssue avoids reporting the same parser-level issue twice
+// when both the parser and the preview classification notice it.
+func appendUniqueImportIssue(issues []vaultimport.Issue, item vaultimport.Issue) []vaultimport.Issue {
+	for _, existing := range issues {
+		if existing.Code == item.Code && existing.Row == item.Row &&
+			existing.Field == item.Field {
+			return issues
+		}
+	}
+	return append(issues, item)
+}

@@ -1,0 +1,9 @@
+{
+  "name": "FinalShell Web",
+  "host": "fs.example.test",
+  "port": 2222,
+  "user_name": "tester",
+  "conection_type": 100,
+  "description": "Imported from FinalShell",
+  "password": ""
+}

@@ -48,6 +48,7 @@ const (
 	surfaceNote
 	surfaceNoteView
 	surfaceNoteGroup
+	surfaceImport
 )
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
@@ -84,6 +85,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 	switch {
 	case forwarding != nil && forwarding.Editing():
 		return surfaceForwarding
+	case s.ImportOpen():
+		return surfaceImport
 	case s.SnippetRunOpen():
 		return surfaceSnippetRun
 	case s.ViewingNote():
@@ -162,6 +165,8 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				noteViewer(c, s, m, t, &positions.viewer)
 			case surfaceNoteGroup:
 				noteGroupEditor(c, s, m, t, &positions.editor)
+			case surfaceImport:
+				importPanel(c, s, m, t, &positions.editor)
 			default:
 				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
@@ -173,6 +178,10 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
 		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
 		ui.Column(c).Grow(1)
+		if ui.Button(c, m.VaultImportTitle()).Clicked() {
+			s.BeginImport()
+			c.Invalidate()
+		}
 		if ui.PrimaryButton(c, m.VaultHostNew()).Clicked() {
 			s.BeginCreate()
 			c.Invalidate()
@@ -213,6 +222,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	noteDeleteBanner(c, s, m, t)
 	noteGroupDeleteBanner(c, s, m, t)
 	noteExportBanner(c, s, m, t)
+	importOutcomeBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
@@ -1710,6 +1720,14 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultNoteProblemContent()
 	case vaultstate.ProblemNoteGroup:
 		return m.VaultNoteProblemGroup()
+	case vaultstate.ProblemImportFile:
+		return m.VaultProblemImportFile()
+	case vaultstate.ProblemImportParse:
+		return m.VaultProblemImportParse()
+	case vaultstate.ProblemImportStore:
+		return m.VaultProblemImportStore()
+	case vaultstate.ProblemImportUnavailable:
+		return m.VaultProblemImportUnavailable()
 	}
 	return ""
 }

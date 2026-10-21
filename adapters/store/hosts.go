@@ -8,6 +8,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // List returns every Host, pinned Hosts first, then each Host Group's order.
@@ -59,15 +60,30 @@ func (s *Store) Get(ctx context.Context, id model.HostID) (domainvault.Host, err
 // Save inserts or replaces one Host aggregate. The indexed columns are copies
 // of the JSON fields and are written in the same statement.
 func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
-	if err := host.Validate(); err != nil {
+	statement, err := hostSaveStatement(host)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Execute(ctx, statement.SQL, statement.Args...)
+	if err != nil {
 		return fmt.Errorf("store: save Host: %w", err)
+	}
+	return nil
+}
+
+// hostSaveStatement builds the insert-or-replace statement for one Host. The
+// import batch uses it to put several Hosts in one transaction.
+func hostSaveStatement(host domainvault.Host) (platformsqlite.Statement, error) {
+	if err := host.Validate(); err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: save Host: %w", err)
 	}
 	data, err := json.Marshal(host)
 	if err != nil {
-		return fmt.Errorf("store: encode Host: %w", err)
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Host: %w", err)
 	}
 
-	_, err = s.db.Execute(ctx, `INSERT INTO hosts (
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO hosts (
 			id, label, hostname, port, username, protocol, group_path,
 			pinned, order_key, created_at, updated_at, data
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -82,23 +98,21 @@ func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
 			order_key = excluded.order_key,
 			updated_at = excluded.updated_at,
 			data = excluded.data`,
-		string(host.ID),
-		host.Label,
-		host.Hostname,
-		host.Port,
-		host.Username,
-		string(host.Protocol),
-		host.Group,
-		boolInt(host.Pinned),
-		host.OrderKey,
-		host.CreatedAt.UnixMilli(),
-		host.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
-		return fmt.Errorf("store: save Host: %w", err)
-	}
-	return nil
+		Args: []any{
+			string(host.ID),
+			host.Label,
+			host.Hostname,
+			host.Port,
+			host.Username,
+			string(host.Protocol),
+			host.Group,
+			boolInt(host.Pinned),
+			host.OrderKey,
+			host.CreatedAt.UnixMilli(),
+			host.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // Delete removes one Host and nothing else. Vault references are soft, as in
