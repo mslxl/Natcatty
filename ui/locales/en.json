@@ -1501,5 +1501,223 @@
   "vaultNoteRoot": "No group",
   "@vaultNoteRoot": {
     "description": "The Notes list's heading for Notes at the Vault root."
+  },
+  "navLogs": "Logs",
+  "@navLogs": {
+    "description": "The sidebar entry that opens connection logs and history."
+  },
+  "logsTitle": "Connection logs and history",
+  "@logsTitle": {
+    "description": "The Logs surface's title."
+  },
+  "logsTabConnections": "Connection logs ({count})",
+  "@logsTabConnections": {
+    "description": "The tab that lists connection attempts with their count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "logsTabHistory": "Command history ({count})",
+  "@logsTabHistory": {
+    "description": "The tab that lists recorded commands with their count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsSearch": "Search",
+  "@logsSearch": {
+    "description": "The label of the free-text record filter."
+  },
+  "logsHostFilter": "Host",
+  "@logsHostFilter": {
+    "description": "The label of the Host filter."
+  },
+  "logsHostAll": "All hosts",
+  "@logsHostAll": {
+    "description": "The Host filter value that matches every Host."
+  },
+  "logsHostLocal": "Local",
+  "@logsHostLocal": {
+    "description": "The Host filter value for local shell records."
+  },
+  "logsStatusFilter": "Status",
+  "@logsStatusFilter": {
+    "description": "The label of the connection status filter."
+  },
+  "logsStatusAll": "All statuses",
+  "@logsStatusAll": {
+    "description": "The status filter value that matches every outcome."
+  },
+  "logsStatusConnected": "Connected",
+  "@logsStatusConnected": {
+    "description": "A connection attempt that opened a Session."
+  },
+  "logsStatusFailed": "Failed",
+  "@logsStatusFailed": {
+    "description": "A connection attempt that did not open a Session."
+  },
+  "logsSourceFilter": "Source",
+  "@logsSourceFilter": {
+    "description": "The label of the command source filter."
+  },
+  "logsSourceAll": "All sources",
+  "@logsSourceAll": {
+    "description": "The source filter value that matches every source."
+  },
+  "logsSourceSession": "Session",
+  "@logsSourceSession": {
+    "description": "A command recorded inside a Natcatty Session."
+  },
+  "logsSourceShell": "Shell history",
+  "@logsSourceShell": {
+    "description": "A command imported from the local shell's history."
+  },
+  "logsFrom": "From (YYYY-MM-DD)",
+  "@logsFrom": {
+    "description": "The inclusive start-date filter."
+  },
+  "logsTo": "To (YYYY-MM-DD)",
+  "@logsTo": {
+    "description": "The inclusive end-date filter."
+  },
+  "logsOpenTerminal": "Open terminal",
+  "@logsOpenTerminal": {
+    "description": "The row action that opens or focuses the related terminal."
+  },
+  "logsDelete": "Delete",
+  "@logsDelete": {
+    "description": "The row action that removes one record."
+  },
+  "logsShowMore": "Show more",
+  "@logsShowMore": {
+    "description": "The button that reveals the next page of records."
+  },
+  "logsClearHistory": "Clear history",
+  "@logsClearHistory": {
+    "description": "The button that opens the clear-history confirmation."
+  },
+  "logsClearConfirm": "Remove every recorded command?",
+  "@logsClearConfirm": {
+    "description": "The clear-history confirmation."
+  },
+  "logsClearYes": "Clear",
+  "@logsClearYes": {
+    "description": "The confirmation button that clears the history."
+  },
+  "logsCancel": "Cancel",
+  "@logsCancel": {
+    "description": "The button that dismisses the clear-history confirmation."
+  },
+  "logsHistoryCleared": "History cleared ({count} entries removed).",
+  "@logsHistoryCleared": {
+    "description": "Confirms that the history was cleared.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsEmptyConnections": "No connection attempts recorded.",
+  "@logsEmptyConnections": {
+    "description": "Shown when there are no connection logs at all."
+  },
+  "logsEmptyHistory": "No commands recorded.",
+  "@logsEmptyHistory": {
+    "description": "Shown when there is no command history at all."
+  },
+  "logsNoMatches": "No records match the filters.",
+  "@logsNoMatches": {
+    "description": "Shown when records exist but the filters exclude all of them."
+  },
+  "logsLocalTerminal": "Local terminal",
+  "@logsLocalTerminal": {
+    "description": "The record title for a local shell Session."
+  },
+  "logsConnectionMeta": "{status} · {kind}",
+  "@logsConnectionMeta": {
+    "description": "The status and transport family of a connection log row.",
+    "placeholders": {
+      "status": {
+        "type": "String",
+        "example": "Connected"
+      },
+      "kind": {
+        "type": "String",
+        "example": "ssh"
+      }
+    }
+  },
+  "logsHistoryMeta": "{host} · {source} · {time}",
+  "@logsHistoryMeta": {
+    "description": "The Host, source, and time of a history row.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-1"
+      },
+      "source": {
+        "type": "String",
+        "example": "Session"
+      },
+      "time": {
+        "type": "String",
+        "example": "2026-10-21 14:30:00"
+      }
+    }
+  },
+  "logsProblemLoad": "Could not load the records.",
+  "@logsProblemLoad": {
+    "description": "Shown when reading the records failed."
+  },
+  "logsProblemDelete": "Could not delete the record.",
+  "@logsProblemDelete": {
+    "description": "Shown when deleting one record failed."
+  },
+  "logsProblemClear": "Could not clear the history.",
+  "@logsProblemClear": {
+    "description": "Shown when clearing the history failed."
+  },
+  "logsProblemOpen": "Could not open the terminal.",
+  "@logsProblemOpen": {
+    "description": "Shown when a row action could not open a terminal."
+  },
+  "logsProblemHostMissing": "The related Host no longer exists.",
+  "@logsProblemHostMissing": {
+    "description": "Shown when a record refers to a Host deleted from the Vault."
+  },
+  "logsProblemDate": "Enter dates as YYYY-MM-DD, with the start before the end.",
+  "@logsProblemDate": {
+    "description": "Shown when a date filter is malformed or inverted."
+  },
+  "settingsRetentionTitle": "Log and history retention",
+  "@settingsRetentionTitle": {
+    "description": "The Settings section that bounds connection logs and history."
+  },
+  "settingsRetentionDescription": "A count of 0 keeps every record; a maximum age of 0 days keeps records forever.",
+  "@settingsRetentionDescription": {
+    "description": "Explains the zero values of the retention controls."
+  },
+  "settingsConnectionLogRetentionCount": "Connection logs kept",
+  "@settingsConnectionLogRetentionCount": {
+    "description": "The maximum number of connection logs to keep."
+  },
+  "settingsConnectionLogRetentionDays": "Connection log max age (days)",
+  "@settingsConnectionLogRetentionDays": {
+    "description": "The maximum age of a connection log in days."
+  },
+  "settingsHistoryRetentionCount": "History entries kept",
+  "@settingsHistoryRetentionCount": {
+    "description": "The maximum number of command history entries to keep."
+  },
+  "settingsHistoryRetentionDays": "History max age (days)",
+  "@settingsHistoryRetentionDays": {
+    "description": "The maximum age of a command history entry in days."
   }
 }
