@@ -753,5 +753,195 @@
   "vaultSnippetProblemTargets": "此代码片段不以活动会话为目标，也没有目标主机。",
   "vaultSnippetProblemMissingVariables": "运行前请填写所有必填变量。",
   "vaultSnippetProblem": "代码片段无效。",
-  "vaultSnippetProblemPackage": "代码片段包路径无效。"
+  "vaultSnippetProblemPackage": "代码片段包路径无效。",
+  "vaultNoteListTitle": "笔记（{count}）",
+  "@vaultNoteListTitle": {
+    "description": "The Vault's Note list heading and its Note count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultNoteEmpty": "还没有笔记。写一条 Markdown 笔记吧。",
+  "@vaultNoteEmpty": {
+    "description": "Shown when the Vault has no Notes."
+  },
+  "vaultNoteNew": "新建笔记",
+  "@vaultNoteNew": {
+    "description": "The button that opens the Note editor for a new Note."
+  },
+  "vaultNoteGroupNew": "新建分组",
+  "@vaultNoteGroupNew": {
+    "description": "The button that opens the Note Group editor."
+  },
+  "vaultNoteSearchPlaceholder": "搜索笔记",
+  "@vaultNoteSearchPlaceholder": {
+    "description": "The Note search field's placeholder."
+  },
+  "vaultNoteSearchLabel": "搜索笔记",
+  "@vaultNoteSearchLabel": {
+    "description": "The accessible name of the Note search field."
+  },
+  "vaultNoteSearchEmpty": "没有与“{query}”匹配的笔记。",
+  "@vaultNoteSearchEmpty": {
+    "description": "Shown when a Note search matches nothing.",
+    "placeholders": {
+      "query": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "vaultNoteOpen": "打开",
+  "@vaultNoteOpen": {
+    "description": "The button that opens a Note in the native Markdown viewer."
+  },
+  "vaultNoteExportMarkdown": "导出 Markdown",
+  "@vaultNoteExportMarkdown": {
+    "description": "The button that saves a Note's Markdown source."
+  },
+  "vaultNoteExportHTML": "导出 HTML",
+  "@vaultNoteExportHTML": {
+    "description": "The button that saves a Note as self-contained HTML."
+  },
+  "vaultNoteExportZIP": "导出 ZIP",
+  "@vaultNoteExportZIP": {
+    "description": "The button that saves a Note in a ZIP archive."
+  },
+  "vaultNoteExportAll": "全部导出为 ZIP",
+  "@vaultNoteExportAll": {
+    "description": "The button that saves every Note as a ZIP archive."
+  },
+  "vaultNoteExportSaved": "已保存到 {path}。",
+  "@vaultNoteExportSaved": {
+    "description": "Confirms where a Note export was written.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Users/me/note.md"
+      }
+    }
+  },
+  "vaultNoteExportEmpty": "没有可导出的笔记。",
+  "@vaultNoteExportEmpty": {
+    "description": "Shown when a ZIP export finds an empty Vault."
+  },
+  "vaultNoteExportUnavailable": "此版本不支持导出。",
+  "@vaultNoteExportUnavailable": {
+    "description": "Shown when no export writer is configured."
+  },
+  "vaultNoteExportFailed": "无法写入导出文件。",
+  "@vaultNoteExportFailed": {
+    "description": "Shown when saving an export fails."
+  },
+  "vaultNoteFormCreateTitle": "新建笔记",
+  "@vaultNoteFormCreateTitle": {
+    "description": "The Note editor's heading when creating."
+  },
+  "vaultNoteFormEditTitle": "编辑笔记",
+  "@vaultNoteFormEditTitle": {
+    "description": "The Note editor's heading when editing."
+  },
+  "vaultNoteTitle": "标题",
+  "@vaultNoteTitle": {
+    "description": "The Note title field."
+  },
+  "vaultNoteGroup": "分组",
+  "@vaultNoteGroup": {
+    "description": "The Note group field."
+  },
+  "vaultNoteGroupHint": "可选。使用斜杠表示嵌套，例如 ops/runbooks。",
+  "@vaultNoteGroupHint": {
+    "description": "The Note group field's hint."
+  },
+  "vaultNoteContent": "Markdown",
+  "@vaultNoteContent": {
+    "description": "The Note Markdown source field."
+  },
+  "vaultNoteContentHint": "Markdown 会显示在原生笔记查看器中。",
+  "@vaultNoteContentHint": {
+    "description": "The Note Markdown field's hint."
+  },
+  "vaultNoteGroupFormCreateTitle": "新建笔记分组",
+  "@vaultNoteGroupFormCreateTitle": {
+    "description": "The Note Group editor's heading when creating."
+  },
+  "vaultNoteGroupFormEditTitle": "重命名笔记分组",
+  "@vaultNoteGroupFormEditTitle": {
+    "description": "The Note Group editor's heading when renaming."
+  },
+  "vaultNoteGroupPath": "分组路径",
+  "@vaultNoteGroupPath": {
+    "description": "The Note Group path field."
+  },
+  "vaultNoteGroupPathHint": "使用斜杠表示嵌套，例如 ops/runbooks。",
+  "@vaultNoteGroupPathHint": {
+    "description": "The Note Group path field's hint."
+  },
+  "vaultNoteGroupNoteCount": "{count} 条笔记",
+  "@vaultNoteGroupNoteCount": {
+    "description": "How many Notes one Note Group directly contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNoteDeleteConfirm": "删除笔记“{title}”？",
+  "@vaultNoteDeleteConfirm": {
+    "description": "The confirmation naming the Note to delete.",
+    "placeholders": {
+      "title": {
+        "type": "String",
+        "example": "RESTART"
+      }
+    }
+  },
+  "vaultNoteGroupDeleteConfirm": "删除分组“{path}”？其中的笔记会移到 Vault 根目录。",
+  "@vaultNoteGroupDeleteConfirm": {
+    "description": "The confirmation naming the Note Group to delete.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteViewerRoot": "Vault 根目录",
+  "@vaultNoteViewerRoot": {
+    "description": "The viewer's metadata when a Note is at the Vault root."
+  },
+  "vaultNoteViewerGroup": "分组：{path}",
+  "@vaultNoteViewerGroup": {
+    "description": "The viewer's metadata naming a Note's group.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/runbooks"
+      }
+    }
+  },
+  "vaultNoteBack": "返回",
+  "@vaultNoteBack": {
+    "description": "The button that closes the Note viewer."
+  },
+  "vaultNoteProblem": "请输入笔记标题。",
+  "@vaultNoteProblem": {
+    "description": "Shown when a Note title is missing or invalid."
+  },
+  "vaultNoteProblemContent": "笔记 Markdown 过大。",
+  "@vaultNoteProblemContent": {
+    "description": "Shown when a Note's Markdown exceeds the limit."
+  },
+  "vaultNoteProblemGroup": "请输入有效的分组路径。",
+  "@vaultNoteProblemGroup": {
+    "description": "Shown when a Note or Note Group path is invalid."
+  },
+  "vaultNoteRoot": "无分组",
+  "@vaultNoteRoot": {
+    "description": "Vault 根目录中笔记的标题。"
+  }
 }

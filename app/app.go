@@ -187,6 +187,7 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithProxyProfiles(database),
 		appvault.WithKnownHosts(database),
 		appvault.WithSnippets(database),
+		appvault.WithNotes(database),
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 	)
 
@@ -262,6 +263,8 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithProxyProfiles(vaultService),
 		vaultstate.WithKnownHosts(vaultService),
 		vaultstate.WithSnippets(vaultService),
+		vaultstate.WithNotes(vaultService),
+		vaultstate.WithNoteFileWriter(noteFileWriter{}),
 		vaultstate.WithSnippetRunner(snippetRunner{
 			// The runner resolves both pointers lazily: vaultState is built
 			// before the Session service and shell state exist.

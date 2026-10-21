@@ -37,8 +37,13 @@ A named placeholder in a Snippet command, optionally with a default, substituted
 _Avoid_: parameter, macro
 
 **Vault Note**:
-Free-form user documentation attached to a host or kept standalone.
+Free-form Markdown documentation kept in the Vault, optionally under a Note Group.
 _Avoid_: comment, memo
+
+**Note Group**:
+A hierarchical path that groups Vault Notes. It is independent of a Host Group;
+deleting a Note Group moves its Notes to the Vault root and never deletes them.
+_Avoid_: folder, category
 
 **Known Host**:
 A recorded host-key fingerprint and its trust decision.

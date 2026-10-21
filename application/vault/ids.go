@@ -39,6 +39,10 @@ func newProxyProfileID() string { return newULID() }
 // as a Host identifier.
 func newSnippetID() string { return newULID() }
 
+// newNoteID returns a Vault Note identifier with the same opaque ULID shape as
+// a Host identifier.
+func newNoteID() string { return newULID() }
+
 func newULID() string {
 	var id [16]byte
 	milliseconds := uint64(time.Now().UnixMilli())
