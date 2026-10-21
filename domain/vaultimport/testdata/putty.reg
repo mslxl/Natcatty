@@ -1,0 +1,15 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Prod%20Web]
+"HostName"="web.prod.example.test"
+"UserName"="deploy"
+"PortNumber"=dword:000008ae
+"Protocol"="ssh"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Legacy]
+"HostName"="legacy.example.test"
+"PortNumber"=dword:00000017
+"Protocol"="telnet"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Incomplete]
+"UserName"="nobody"

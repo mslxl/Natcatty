@@ -1,0 +1,32 @@
+# Work inventory
+Host web-1
+    HostName web1.example.test
+    User deploy
+    Port 2222
+    IdentityFile ~/.ssh/id_ed25519
+    AddKeysToAgent yes
+    UseKeychain yes
+    IdentitiesOnly yes
+    ForwardX11 yes
+
+Host db-*
+    HostName ignored.example.test
+    User root
+
+Host bastion
+    HostName bastion.example.test
+    User jump
+    Port 2200
+
+Host app
+    HostName app.example.test
+    User deploy
+    ProxyJump bastion
+
+Host loop-a
+    HostName loop-a.example.test
+    ProxyJump loop-b
+
+Host loop-b
+    HostName loop-b.example.test
+    ProxyJump loop-a

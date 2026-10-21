@@ -111,6 +111,10 @@ const (
 	ProblemNoteExport               Problem = "note_export"
 	ProblemNoteExportEmpty          Problem = "note_export_empty"
 	ProblemNoteExportWriter         Problem = "note_export_writer"
+	ProblemImportFile               Problem = "import_file"
+	ProblemImportParse              Problem = "import_parse"
+	ProblemImportStore              Problem = "import_store"
+	ProblemImportUnavailable        Problem = "import_unavailable"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -242,6 +246,20 @@ type State struct {
 	secretPassphrase string
 	secretConfirm    string
 	secretProblem    Problem
+
+	imports        Imports
+	importPicker   ImportPicker
+	importActive   bool
+	importPreview  *appvault.ImportPreview
+	importName     string
+	importData     string
+	importFormat   string
+	importMaster   string
+	importSelected []bool
+	importMerge    string
+	importOffset   int
+	importProblem  Problem
+	importOutcome  *ImportOutcome
 }
 
 // Option customizes a State.
