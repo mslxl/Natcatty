@@ -827,8 +827,9 @@ func (s *Session) ID() model.SessionID { return s.id }
 // has no Host and reports "".
 func (s *Session) HostID() model.HostID { return s.spec.HostID }
 
-// Done is closed once the Session has ended and its final snapshot is
-// published.
+// Done is closed once the Session has ended, its final snapshot is published,
+// and its Service has unregistered it. After Done fires, input addressed to the
+// Session by ID reports DeliveryMissing rather than DeliveryFailed.
 func (s *Session) Done() <-chan struct{} { return s.done }
 
 // Snapshot returns the Session's current state.
@@ -1035,10 +1036,11 @@ finished:
 		// detached; the transport is gone now.
 		snapshot.Hibernated = false
 	})
-	close(s.done)
+	// Unregister before announcing the end; see Done.
 	if s.onEnd != nil {
 		s.onEnd(s.id)
 	}
+	close(s.done)
 }
 
 // connectionForEnd reports the indicator a final transport end leaves. A
