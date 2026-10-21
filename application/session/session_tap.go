@@ -142,11 +142,12 @@ func (s *Session) stopActivityTimer() {
 // the deferred check, so coarse timer resolution cannot land inside it.
 const promptRecheckDelay = promptWindow + 10*time.Millisecond
 
-// schedulePromptRecheck settles a command whose prompt arrived inside the
-// fallback guard window and was followed by no output. The output-driven path
-// cannot see it, because the prompt was the last chunk. A new submission or a
-// newer deferral supersedes the previous timer, exactly like the activity
-// timer.
+// schedulePromptRecheck settles a command whose last chunk left it running
+// with output but did not end in a recognizable prompt, as when the renderer
+// hides the prompt behind control sequences. Nothing may follow the chunk, so
+// one check after the guard window finishes a prompt-like tail. A new
+// submission or a newer deferral supersedes the previous timer, exactly like
+// the activity timer.
 func (s *Session) schedulePromptRecheck() {
 	s.mu.Lock()
 	s.promptSeq++
