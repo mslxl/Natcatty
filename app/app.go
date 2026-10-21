@@ -233,6 +233,8 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithSnippets(database),
 		appvault.WithNotes(database),
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
+		appvault.WithImportStore(database),
+		appvault.WithImportFiles(importFileReader{}),
 	)
 
 	// App Lock is a UI gate backed by its own versioned verifier file.
@@ -309,6 +311,8 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithSnippets(vaultService),
 		vaultstate.WithNotes(vaultService),
 		vaultstate.WithNoteFileWriter(noteFileWriter{}),
+		vaultstate.WithImports(vaultService),
+		vaultstate.WithImportPicker(importFilePicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithSnippetRunner(snippetRunner{
 			// The runner resolves both pointers lazily: vaultState is built
 			// before the Session service and shell state exist.

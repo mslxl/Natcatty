@@ -1919,6 +1919,74 @@
   status: verified
   notes: "The command hook records one row per execution with the Session, Host, command, source, and timestamp. Autocomplete aggregates those same rows through a journal instead of keeping a forked store, so clearing or deleting history updates suggestions immediately. The History tab filters by text, Host, source, and date and pages through long lists. Open terminal focuses a live Session (reattaching a detached Tab), reuses a live Session for the same Host, opens the local shell for a local row, or dials the Host; a deleted Host shows a localized error instead of inventing a Tab. Retention is configured in Settings and applied on record, on a Settings change, and once at startup."
 
+# --- Ticket 24: import from external tools and CSV ---
+
+- id: vault.external-import
+  area: vault
+  feature: Preview and import Hosts and Host Groups from Netcatty CSV, PuTTY, MobaXterm, FinalShell, SecureCRT, and OpenSSH ssh_config
+  original_paths:
+    - domain/vaultImport.ts
+    - domain/vaultImport/csvUtils.ts
+    - domain/vaultImport/csvCredentialFields.ts
+    - domain/vaultImport/csvProxy.ts
+    - domain/vaultImport/mobaXtermCrypto.ts
+    - domain/vaultImport/mobaXtermPasswords.ts
+    - application/state/vaultImportFile.ts
+    - application/state/vaultImportPersistence.ts
+    - application/state/vaultImportProgress.ts
+    - application/state/vaultImportSelection.ts
+    - infrastructure/services/vaultImportBatch.ts
+    - components/vault/ImportVaultDialog.tsx
+  module: application/vault
+  tickets: [24]
+  acceptance_tests:
+    - domain/vaultimport.TestParseCSVFixtureHandlesBOMCRLFAndQuoting
+    - domain/vaultimport.TestParsePuTTYFixture
+    - domain/vaultimport.TestParseMobaXtermFixture
+    - domain/vaultimport.TestParseFinalShellFixture
+    - domain/vaultimport.TestParseSecureCRTFixture
+    - domain/vaultimport.TestParseSSHConfigFixture
+    - domain/vaultimport.TestDetectFormat
+    - domain/vaultimport.TestParseUnsupportedFormat
+    - application/vault.TestPreviewImportReportsConflictsDuplicatesAndInvalidRows
+    - application/vault.TestCommitImportIsChunkedAndPersistsThroughSecrets
+    - application/vault.TestCommitImportNeverWritesPlaintextPassword
+    - application/vault.TestCommitImportRollsBackSecretsWhenTheBatchFails
+    - application/vault.TestCommitImportSkipsConflictsByDefault
+    - application/vault.TestCommitImportKeepsTagsNotesAndProxy
+    - application/vault.TestCommitImportResolvesForwardProxyJump
+    - adapters/store.TestSaveImportBatchWritesGroupsAndHostsTogether
+    - adapters/store.TestSaveImportBatchWritesNothingWhenARecordIsInvalid
+    - ui/vault.TestImportPanelPreviewsRowsAndIssuesAtBothSizes
+    - ui/vault.TestImportPanelWritesSelectedRowsAndShowsSummary
+    - ui/vault.TestImportPanelReportsFileFailures
+    - app.TestTicket24CheckRunsThroughTheKeyboard
+    - app.TestTicket24CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Pure parsers in domain/vaultimport detect or accept each format and return neutral records. The application layer validates every record, compares its Host merge key (protocol, hostname, port, username, group) with the current Vault, and reports conflicts, in-file duplicates, and invalid source rows by row number before writing anything. The user selects rows and chooses Skip or Overwrite; there is no implicit overwrite. New Hosts and their missing ancestor Groups are saved in one SQLite transaction per 50-row chunk, and Next/Offset resumes a retried chunk without duplicate Hosts. Passwords, proxy passwords, and referenced IdentityFiles go through the field-secret store and Key inspector, so plaintext never enters a Host record or the database. Imported Hosts retain tags, notes, proxy settings, Key references, the SSH agent preference, and ProxyJump chains, and the preview exposes no credential material. Local-shell configuration has no native Host field, so a non-empty LocalShell cell is reported as an unsupported entry instead of being dropped silently."
+
+- id: vault.csv-interchange
+  area: vault
+  feature: Read the Netcatty CSV interchange format and provide export-safe field encoding
+  original_paths:
+    - domain/vaultImport.ts
+    - domain/vaultImport/csvUtils.ts
+    - domain/vaultImport/csvCredentialFields.ts
+    - domain/vaultImport/csvProxy.ts
+  module: application/vault
+  tickets: [24]
+  acceptance_tests:
+    - domain/vaultimport.TestParseCSVFixtureHandlesBOMCRLFAndQuoting
+    - domain/vaultimport.TestCSVFormulaGuardRoundTrips
+    - domain/vaultimport.TestMarkedFieldEncoding
+    - domain/vaultimport.TestParseCSVRejectsMalformedQuoting
+    - domain/vaultimport.TestParseCSVMissingHostnameColumn
+    - domain/vaultimport.TestParseCSVAcceptsTabSeparated
+    - application/vault.TestPreviewImportReportsConflictsDuplicatesAndInvalidRows
+    - app.TestTicket24CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "CSV follows RFC 4180 quoting, accepts a UTF-8 BOM, CRLF or LF row endings, and tab-separated files with the same headers. Header matching is case- and punctuation-insensitive, additional columns are ignored, and a missing hostname column is an error. Key paths, passphrases, and proxy URLs use versioned marked fields with percent encoding so a value that starts with a formula character stays unambiguous. Formula characters in exported free text are guarded with a leading apostrophe and the guard is removed on import; formulas are never evaluated, and credential cells stay byte-exact. A duplicate merge key inside one file is reported and left unselected. A LocalShell marked field is recognized but reported as unsupported because the native Host model does not store local-shell configuration. The export writer and its UI are delivered by a later ticket; this diff ships and tests the export-safe field helpers only."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

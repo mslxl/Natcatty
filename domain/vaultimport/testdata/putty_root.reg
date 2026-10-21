@@ -1,0 +1,11 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY]
+"HostCaBundle"=""
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Good]
+"HostName"="good.example.test"
+"PortNumber"=dword:00000016
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\SshHostKeys]
+"rsa2@22:good.example.test"="0x12345"

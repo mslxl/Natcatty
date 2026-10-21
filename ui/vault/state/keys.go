@@ -210,6 +210,7 @@ func (s *State) closeEntityEditors() {
 	s.editingNoteGroup = false
 	s.noteGroupForm = NoteGroupForm{}
 	s.pendingDeleteNoteGroup = ""
+	s.closeImport()
 }
 
 func keyProblemFor(err error) Problem {

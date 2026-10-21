@@ -1336,6 +1336,700 @@ func (msgs Messages) VaultProblemInternal() string {
 	return Catalog.Format(msgs.locale, "vaultProblemInternal", nil)
 }
 
+// VaultImportTitle says "Import Hosts"
+// in the language the app shows.
+func VaultImportTitle() string { return In(i18n.Locale()).VaultImportTitle() }
+
+// VaultImportTitle says "Import Hosts"
+// in the language of msgs.
+func (msgs Messages) VaultImportTitle() string {
+	return Catalog.Format(msgs.locale, "vaultImportTitle", nil)
+}
+
+// VaultImportIntro says "Choose a file exported from Netcatty, PuTTY, MobaXterm, FinalShell, SecureCRT, or OpenSSH."
+// in the language the app shows.
+func VaultImportIntro() string { return In(i18n.Locale()).VaultImportIntro() }
+
+// VaultImportIntro says "Choose a file exported from Netcatty, PuTTY, MobaXterm, FinalShell, SecureCRT, or OpenSSH."
+// in the language of msgs.
+func (msgs Messages) VaultImportIntro() string {
+	return Catalog.Format(msgs.locale, "vaultImportIntro", nil)
+}
+
+// VaultImportChooseFile says "Choose File…"
+// in the language the app shows.
+func VaultImportChooseFile() string { return In(i18n.Locale()).VaultImportChooseFile() }
+
+// VaultImportChooseFile says "Choose File…"
+// in the language of msgs.
+func (msgs Messages) VaultImportChooseFile() string {
+	return Catalog.Format(msgs.locale, "vaultImportChooseFile", nil)
+}
+
+// VaultImportFileFilterHosts says "Host inventories"
+// in the language the app shows.
+func VaultImportFileFilterHosts() string { return In(i18n.Locale()).VaultImportFileFilterHosts() }
+
+// VaultImportFileFilterHosts says "Host inventories"
+// in the language of msgs.
+func (msgs Messages) VaultImportFileFilterHosts() string {
+	return Catalog.Format(msgs.locale, "vaultImportFileFilterHosts", nil)
+}
+
+// VaultImportFileFilterAll says "All files"
+// in the language the app shows.
+func VaultImportFileFilterAll() string { return In(i18n.Locale()).VaultImportFileFilterAll() }
+
+// VaultImportFileFilterAll says "All files"
+// in the language of msgs.
+func (msgs Messages) VaultImportFileFilterAll() string {
+	return Catalog.Format(msgs.locale, "vaultImportFileFilterAll", nil)
+}
+
+// VaultImportImport says "Import"
+// in the language the app shows.
+func VaultImportImport() string { return In(i18n.Locale()).VaultImportImport() }
+
+// VaultImportImport says "Import"
+// in the language of msgs.
+func (msgs Messages) VaultImportImport() string {
+	return Catalog.Format(msgs.locale, "vaultImportImport", nil)
+}
+
+// VaultImportFormat says "File format"
+// in the language the app shows.
+func VaultImportFormat() string { return In(i18n.Locale()).VaultImportFormat() }
+
+// VaultImportFormat says "File format"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormat() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormat", nil)
+}
+
+// VaultImportFormatAuto says "Detect automatically"
+// in the language the app shows.
+func VaultImportFormatAuto() string { return In(i18n.Locale()).VaultImportFormatAuto() }
+
+// VaultImportFormatAuto says "Detect automatically"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatAuto() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatAuto", nil)
+}
+
+// VaultImportFormatCSV says "Netcatty CSV"
+// in the language the app shows.
+func VaultImportFormatCSV() string { return In(i18n.Locale()).VaultImportFormatCSV() }
+
+// VaultImportFormatCSV says "Netcatty CSV"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatCSV() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatCSV", nil)
+}
+
+// VaultImportFormatPuTTY says "PuTTY"
+// in the language the app shows.
+func VaultImportFormatPuTTY() string { return In(i18n.Locale()).VaultImportFormatPuTTY() }
+
+// VaultImportFormatPuTTY says "PuTTY"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatPuTTY() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatPuTTY", nil)
+}
+
+// VaultImportFormatMobaXterm says "MobaXterm"
+// in the language the app shows.
+func VaultImportFormatMobaXterm() string { return In(i18n.Locale()).VaultImportFormatMobaXterm() }
+
+// VaultImportFormatMobaXterm says "MobaXterm"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatMobaXterm() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatMobaXterm", nil)
+}
+
+// VaultImportFormatFinalShell says "FinalShell"
+// in the language the app shows.
+func VaultImportFormatFinalShell() string { return In(i18n.Locale()).VaultImportFormatFinalShell() }
+
+// VaultImportFormatFinalShell says "FinalShell"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatFinalShell() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatFinalShell", nil)
+}
+
+// VaultImportFormatSecureCRT says "SecureCRT"
+// in the language the app shows.
+func VaultImportFormatSecureCRT() string { return In(i18n.Locale()).VaultImportFormatSecureCRT() }
+
+// VaultImportFormatSecureCRT says "SecureCRT"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatSecureCRT() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatSecureCRT", nil)
+}
+
+// VaultImportFormatSSHConfig says "OpenSSH ssh_config"
+// in the language the app shows.
+func VaultImportFormatSSHConfig() string { return In(i18n.Locale()).VaultImportFormatSSHConfig() }
+
+// VaultImportFormatSSHConfig says "OpenSSH ssh_config"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatSSHConfig() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatSSHConfig", nil)
+}
+
+// VaultImportMasterPassword says "Master password"
+// in the language the app shows.
+func VaultImportMasterPassword() string { return In(i18n.Locale()).VaultImportMasterPassword() }
+
+// VaultImportMasterPassword says "Master password"
+// in the language of msgs.
+func (msgs Messages) VaultImportMasterPassword() string {
+	return Catalog.Format(msgs.locale, "vaultImportMasterPassword", nil)
+}
+
+// VaultImportMasterHint says "Only needed for MobaXterm files protected by a master password."
+// in the language the app shows.
+func VaultImportMasterHint() string { return In(i18n.Locale()).VaultImportMasterHint() }
+
+// VaultImportMasterHint says "Only needed for MobaXterm files protected by a master password."
+// in the language of msgs.
+func (msgs Messages) VaultImportMasterHint() string {
+	return Catalog.Format(msgs.locale, "vaultImportMasterHint", nil)
+}
+
+// VaultImportSummary says "Rows: {total}, new: {added}, conflicts: {conflicts}, duplicates: {duplicates}, invalid: {invalid}"
+// in the language the app shows.
+//
+// One import preview's row counts.
+func VaultImportSummary(total int, added int, conflicts int, duplicates int, invalid int) string {
+	return In(i18n.Locale()).VaultImportSummary(total, added, conflicts, duplicates, invalid)
+}
+
+// VaultImportSummary says "Rows: {total}, new: {added}, conflicts: {conflicts}, duplicates: {duplicates}, invalid: {invalid}"
+// in the language of msgs.
+//
+// One import preview's row counts.
+func (msgs Messages) VaultImportSummary(total int, added int, conflicts int, duplicates int, invalid int) string {
+	return Catalog.Format(msgs.locale, "vaultImportSummary", map[string]any{"total": total, "added": added, "conflicts": conflicts, "duplicates": duplicates, "invalid": invalid})
+}
+
+// VaultImportGroups says "{count, plural, one {# Host Group will be created.} other {# Host Groups will be created.}}"
+// in the language the app shows.
+//
+// How many Host Groups the import will create.
+func VaultImportGroups(count int) string { return In(i18n.Locale()).VaultImportGroups(count) }
+
+// VaultImportGroups says "{count, plural, one {# Host Group will be created.} other {# Host Groups will be created.}}"
+// in the language of msgs.
+//
+// How many Host Groups the import will create.
+func (msgs Messages) VaultImportGroups(count int) string {
+	return Catalog.Format(msgs.locale, "vaultImportGroups", map[string]any{"count": count})
+}
+
+// VaultImportMerge says "On conflict"
+// in the language the app shows.
+func VaultImportMerge() string { return In(i18n.Locale()).VaultImportMerge() }
+
+// VaultImportMerge says "On conflict"
+// in the language of msgs.
+func (msgs Messages) VaultImportMerge() string {
+	return Catalog.Format(msgs.locale, "vaultImportMerge", nil)
+}
+
+// VaultImportMergeSkip says "Keep existing Host"
+// in the language the app shows.
+func VaultImportMergeSkip() string { return In(i18n.Locale()).VaultImportMergeSkip() }
+
+// VaultImportMergeSkip says "Keep existing Host"
+// in the language of msgs.
+func (msgs Messages) VaultImportMergeSkip() string {
+	return Catalog.Format(msgs.locale, "vaultImportMergeSkip", nil)
+}
+
+// VaultImportMergeOverwrite says "Overwrite existing Host"
+// in the language the app shows.
+func VaultImportMergeOverwrite() string { return In(i18n.Locale()).VaultImportMergeOverwrite() }
+
+// VaultImportMergeOverwrite says "Overwrite existing Host"
+// in the language of msgs.
+func (msgs Messages) VaultImportMergeOverwrite() string {
+	return Catalog.Format(msgs.locale, "vaultImportMergeOverwrite", nil)
+}
+
+// VaultImportRows says "Rows"
+// in the language the app shows.
+func VaultImportRows() string { return In(i18n.Locale()).VaultImportRows() }
+
+// VaultImportRows says "Rows"
+// in the language of msgs.
+func (msgs Messages) VaultImportRows() string {
+	return Catalog.Format(msgs.locale, "vaultImportRows", nil)
+}
+
+// VaultImportIssues says "Problems"
+// in the language the app shows.
+func VaultImportIssues() string { return In(i18n.Locale()).VaultImportIssues() }
+
+// VaultImportIssues says "Problems"
+// in the language of msgs.
+func (msgs Messages) VaultImportIssues() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssues", nil)
+}
+
+// VaultImportNoIssues says "No problems found."
+// in the language the app shows.
+func VaultImportNoIssues() string { return In(i18n.Locale()).VaultImportNoIssues() }
+
+// VaultImportNoIssues says "No problems found."
+// in the language of msgs.
+func (msgs Messages) VaultImportNoIssues() string {
+	return Catalog.Format(msgs.locale, "vaultImportNoIssues", nil)
+}
+
+// VaultImportSelected says "{count} selected"
+// in the language the app shows.
+//
+// How many rows the user selected.
+func VaultImportSelected(count int) string { return In(i18n.Locale()).VaultImportSelected(count) }
+
+// VaultImportSelected says "{count} selected"
+// in the language of msgs.
+//
+// How many rows the user selected.
+func (msgs Messages) VaultImportSelected(count int) string {
+	return Catalog.Format(msgs.locale, "vaultImportSelected", map[string]any{"count": count})
+}
+
+// VaultImportNoneSelected says "Select at least one row to import."
+// in the language the app shows.
+func VaultImportNoneSelected() string { return In(i18n.Locale()).VaultImportNoneSelected() }
+
+// VaultImportNoneSelected says "Select at least one row to import."
+// in the language of msgs.
+func (msgs Messages) VaultImportNoneSelected() string {
+	return Catalog.Format(msgs.locale, "vaultImportNoneSelected", nil)
+}
+
+// VaultImportDone says "Import complete. Imported: {imported}, overwritten: {overwritten}, skipped: {skipped}, Host Groups created: {groups}."
+// in the language the app shows.
+//
+// The result of a completed import.
+func VaultImportDone(imported int, overwritten int, skipped int, groups int) string {
+	return In(i18n.Locale()).VaultImportDone(imported, overwritten, skipped, groups)
+}
+
+// VaultImportDone says "Import complete. Imported: {imported}, overwritten: {overwritten}, skipped: {skipped}, Host Groups created: {groups}."
+// in the language of msgs.
+//
+// The result of a completed import.
+func (msgs Messages) VaultImportDone(imported int, overwritten int, skipped int, groups int) string {
+	return Catalog.Format(msgs.locale, "vaultImportDone", map[string]any{"imported": imported, "overwritten": overwritten, "skipped": skipped, "groups": groups})
+}
+
+// VaultImportDismiss says "Dismiss"
+// in the language the app shows.
+func VaultImportDismiss() string { return In(i18n.Locale()).VaultImportDismiss() }
+
+// VaultImportDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) VaultImportDismiss() string {
+	return Catalog.Format(msgs.locale, "vaultImportDismiss", nil)
+}
+
+// VaultImportConflictWith says "Existing: {label}"
+// in the language the app shows.
+//
+// The existing Host a row conflicts with.
+func VaultImportConflictWith(label string) string {
+	return In(i18n.Locale()).VaultImportConflictWith(label)
+}
+
+// VaultImportConflictWith says "Existing: {label}"
+// in the language of msgs.
+//
+// The existing Host a row conflicts with.
+func (msgs Messages) VaultImportConflictWith(label string) string {
+	return Catalog.Format(msgs.locale, "vaultImportConflictWith", map[string]any{"label": label})
+}
+
+// VaultImportRowNumber says "Row {row}"
+// in the language the app shows.
+//
+// The source row number beside an import preview row.
+func VaultImportRowNumber(row int) string { return In(i18n.Locale()).VaultImportRowNumber(row) }
+
+// VaultImportRowNumber says "Row {row}"
+// in the language of msgs.
+//
+// The source row number beside an import preview row.
+func (msgs Messages) VaultImportRowNumber(row int) string {
+	return Catalog.Format(msgs.locale, "vaultImportRowNumber", map[string]any{"row": row})
+}
+
+// VaultImportStatusNew says "New"
+// in the language the app shows.
+func VaultImportStatusNew() string { return In(i18n.Locale()).VaultImportStatusNew() }
+
+// VaultImportStatusNew says "New"
+// in the language of msgs.
+func (msgs Messages) VaultImportStatusNew() string {
+	return Catalog.Format(msgs.locale, "vaultImportStatusNew", nil)
+}
+
+// VaultImportStatusConflict says "Conflict"
+// in the language the app shows.
+func VaultImportStatusConflict() string { return In(i18n.Locale()).VaultImportStatusConflict() }
+
+// VaultImportStatusConflict says "Conflict"
+// in the language of msgs.
+func (msgs Messages) VaultImportStatusConflict() string {
+	return Catalog.Format(msgs.locale, "vaultImportStatusConflict", nil)
+}
+
+// VaultImportStatusDuplicate says "Duplicate"
+// in the language the app shows.
+func VaultImportStatusDuplicate() string { return In(i18n.Locale()).VaultImportStatusDuplicate() }
+
+// VaultImportStatusDuplicate says "Duplicate"
+// in the language of msgs.
+func (msgs Messages) VaultImportStatusDuplicate() string {
+	return Catalog.Format(msgs.locale, "vaultImportStatusDuplicate", nil)
+}
+
+// VaultImportStatusInvalid says "Invalid"
+// in the language the app shows.
+func VaultImportStatusInvalid() string { return In(i18n.Locale()).VaultImportStatusInvalid() }
+
+// VaultImportStatusInvalid says "Invalid"
+// in the language of msgs.
+func (msgs Messages) VaultImportStatusInvalid() string {
+	return Catalog.Format(msgs.locale, "vaultImportStatusInvalid", nil)
+}
+
+// VaultImportIssueDocument says "Document: {message}"
+// in the language the app shows.
+//
+// One problem about the whole document.
+func VaultImportIssueDocument(message string) string {
+	return In(i18n.Locale()).VaultImportIssueDocument(message)
+}
+
+// VaultImportIssueDocument says "Document: {message}"
+// in the language of msgs.
+//
+// One problem about the whole document.
+func (msgs Messages) VaultImportIssueDocument(message string) string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueDocument", map[string]any{"message": message})
+}
+
+// VaultImportIssueLine says "Row {row}: {message}"
+// in the language the app shows.
+//
+// One problem tied to a source row.
+func VaultImportIssueLine(row int, message string) string {
+	return In(i18n.Locale()).VaultImportIssueLine(row, message)
+}
+
+// VaultImportIssueLine says "Row {row}: {message}"
+// in the language of msgs.
+//
+// One problem tied to a source row.
+func (msgs Messages) VaultImportIssueLine(row int, message string) string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueLine", map[string]any{"row": row, "message": message})
+}
+
+// VaultImportIssueCSVEmpty says "The file is empty."
+// in the language the app shows.
+func VaultImportIssueCSVEmpty() string { return In(i18n.Locale()).VaultImportIssueCSVEmpty() }
+
+// VaultImportIssueCSVEmpty says "The file is empty."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueCSVEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueCSVEmpty", nil)
+}
+
+// VaultImportIssueCSVHeader says "No Hostname column was found."
+// in the language the app shows.
+func VaultImportIssueCSVHeader() string { return In(i18n.Locale()).VaultImportIssueCSVHeader() }
+
+// VaultImportIssueCSVHeader says "No Hostname column was found."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueCSVHeader() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueCSVHeader", nil)
+}
+
+// VaultImportIssueCSVQuoting says "The CSV quoting is malformed."
+// in the language the app shows.
+func VaultImportIssueCSVQuoting() string { return In(i18n.Locale()).VaultImportIssueCSVQuoting() }
+
+// VaultImportIssueCSVQuoting says "The CSV quoting is malformed."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueCSVQuoting() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueCSVQuoting", nil)
+}
+
+// VaultImportIssueInvalidHostname says "The Hostname is invalid."
+// in the language the app shows.
+func VaultImportIssueInvalidHostname() string {
+	return In(i18n.Locale()).VaultImportIssueInvalidHostname()
+}
+
+// VaultImportIssueInvalidHostname says "The Hostname is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidHostname() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidHostname", nil)
+}
+
+// VaultImportIssueMissingHostname says "The entry has no Hostname."
+// in the language the app shows.
+func VaultImportIssueMissingHostname() string {
+	return In(i18n.Locale()).VaultImportIssueMissingHostname()
+}
+
+// VaultImportIssueMissingHostname says "The entry has no Hostname."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueMissingHostname() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueMissingHostname", nil)
+}
+
+// VaultImportIssueInvalidPort says "The port is invalid."
+// in the language the app shows.
+func VaultImportIssueInvalidPort() string { return In(i18n.Locale()).VaultImportIssueInvalidPort() }
+
+// VaultImportIssueInvalidPort says "The port is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidPort() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidPort", nil)
+}
+
+// VaultImportIssueUnsupportedProtocol says "The protocol is not supported."
+// in the language the app shows.
+func VaultImportIssueUnsupportedProtocol() string {
+	return In(i18n.Locale()).VaultImportIssueUnsupportedProtocol()
+}
+
+// VaultImportIssueUnsupportedProtocol says "The protocol is not supported."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueUnsupportedProtocol() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueUnsupportedProtocol", nil)
+}
+
+// VaultImportIssueUnsupportedEntry says "The entry type is not supported."
+// in the language the app shows.
+func VaultImportIssueUnsupportedEntry() string {
+	return In(i18n.Locale()).VaultImportIssueUnsupportedEntry()
+}
+
+// VaultImportIssueUnsupportedEntry says "The entry type is not supported."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueUnsupportedEntry() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueUnsupportedEntry", nil)
+}
+
+// VaultImportIssueInvalidProxy says "The proxy setting is invalid."
+// in the language the app shows.
+func VaultImportIssueInvalidProxy() string { return In(i18n.Locale()).VaultImportIssueInvalidProxy() }
+
+// VaultImportIssueInvalidProxy says "The proxy setting is invalid."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidProxy() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidProxy", nil)
+}
+
+// VaultImportIssueInvalidField says "A field failed validation."
+// in the language the app shows.
+func VaultImportIssueInvalidField() string { return In(i18n.Locale()).VaultImportIssueInvalidField() }
+
+// VaultImportIssueInvalidField says "A field failed validation."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidField() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidField", nil)
+}
+
+// VaultImportIssueInvalidJSON says "The JSON document is malformed."
+// in the language the app shows.
+func VaultImportIssueInvalidJSON() string { return In(i18n.Locale()).VaultImportIssueInvalidJSON() }
+
+// VaultImportIssueInvalidJSON says "The JSON document is malformed."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidJSON() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidJSON", nil)
+}
+
+// VaultImportIssuePasswordUndecryptable says "A saved password could not be decrypted."
+// in the language the app shows.
+func VaultImportIssuePasswordUndecryptable() string {
+	return In(i18n.Locale()).VaultImportIssuePasswordUndecryptable()
+}
+
+// VaultImportIssuePasswordUndecryptable says "A saved password could not be decrypted."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssuePasswordUndecryptable() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssuePasswordUndecryptable", nil)
+}
+
+// VaultImportIssueMasterPassword says "A master password is required to decrypt saved passwords."
+// in the language the app shows.
+func VaultImportIssueMasterPassword() string {
+	return In(i18n.Locale()).VaultImportIssueMasterPassword()
+}
+
+// VaultImportIssueMasterPassword says "A master password is required to decrypt saved passwords."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueMasterPassword() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueMasterPassword", nil)
+}
+
+// VaultImportIssuePasswordsInRegistry says "Passwords are stored in the registry and cannot be imported."
+// in the language the app shows.
+func VaultImportIssuePasswordsInRegistry() string {
+	return In(i18n.Locale()).VaultImportIssuePasswordsInRegistry()
+}
+
+// VaultImportIssuePasswordsInRegistry says "Passwords are stored in the registry and cannot be imported."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssuePasswordsInRegistry() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssuePasswordsInRegistry", nil)
+}
+
+// VaultImportIssuePasswordUnmatched says "A saved password could not be matched to a Host."
+// in the language the app shows.
+func VaultImportIssuePasswordUnmatched() string {
+	return In(i18n.Locale()).VaultImportIssuePasswordUnmatched()
+}
+
+// VaultImportIssuePasswordUnmatched says "A saved password could not be matched to a Host."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssuePasswordUnmatched() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssuePasswordUnmatched", nil)
+}
+
+// VaultImportIssueDuplicateInFile says "This endpoint repeats an earlier row."
+// in the language the app shows.
+func VaultImportIssueDuplicateInFile() string {
+	return In(i18n.Locale()).VaultImportIssueDuplicateInFile()
+}
+
+// VaultImportIssueDuplicateInFile says "This endpoint repeats an earlier row."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueDuplicateInFile() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueDuplicateInFile", nil)
+}
+
+// VaultImportIssueInvalidJump says "A ProxyJump target is not declared; an inline Host was added."
+// in the language the app shows.
+func VaultImportIssueInvalidJump() string { return In(i18n.Locale()).VaultImportIssueInvalidJump() }
+
+// VaultImportIssueInvalidJump says "A ProxyJump target is not declared; an inline Host was added."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidJump() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidJump", nil)
+}
+
+// VaultImportIssueCyclicJump says "A ProxyJump cycle was removed."
+// in the language the app shows.
+func VaultImportIssueCyclicJump() string { return In(i18n.Locale()).VaultImportIssueCyclicJump() }
+
+// VaultImportIssueCyclicJump says "A ProxyJump cycle was removed."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueCyclicJump() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueCyclicJump", nil)
+}
+
+// VaultImportIssueKeyUnreadable says "The referenced key file could not be read."
+// in the language the app shows.
+func VaultImportIssueKeyUnreadable() string { return In(i18n.Locale()).VaultImportIssueKeyUnreadable() }
+
+// VaultImportIssueKeyUnreadable says "The referenced key file could not be read."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueKeyUnreadable() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueKeyUnreadable", nil)
+}
+
+// VaultImportIssuePassphraseConflict says "The key is encrypted but no usable passphrase was provided."
+// in the language the app shows.
+func VaultImportIssuePassphraseConflict() string {
+	return In(i18n.Locale()).VaultImportIssuePassphraseConflict()
+}
+
+// VaultImportIssuePassphraseConflict says "The key is encrypted but no usable passphrase was provided."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssuePassphraseConflict() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssuePassphraseConflict", nil)
+}
+
+// VaultImportIssueFormulaNeutralized says "A formula-like value was neutralized."
+// in the language the app shows.
+func VaultImportIssueFormulaNeutralized() string {
+	return In(i18n.Locale()).VaultImportIssueFormulaNeutralized()
+}
+
+// VaultImportIssueFormulaNeutralized says "A formula-like value was neutralized."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueFormulaNeutralized() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueFormulaNeutralized", nil)
+}
+
+// VaultImportIssueNothingParsed says "No Hosts were found in the file."
+// in the language the app shows.
+func VaultImportIssueNothingParsed() string { return In(i18n.Locale()).VaultImportIssueNothingParsed() }
+
+// VaultImportIssueNothingParsed says "No Hosts were found in the file."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueNothingParsed() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueNothingParsed", nil)
+}
+
+// VaultImportIssueX11 says "X11 forwarding was not enabled; accept its warning on the Host first."
+// in the language the app shows.
+func VaultImportIssueX11() string { return In(i18n.Locale()).VaultImportIssueX11() }
+
+// VaultImportIssueX11 says "X11 forwarding was not enabled; accept its warning on the Host first."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueX11() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueX11", nil)
+}
+
+// VaultProblemImportFile says "Could not read the selected file."
+// in the language the app shows.
+func VaultProblemImportFile() string { return In(i18n.Locale()).VaultProblemImportFile() }
+
+// VaultProblemImportFile says "Could not read the selected file."
+// in the language of msgs.
+func (msgs Messages) VaultProblemImportFile() string {
+	return Catalog.Format(msgs.locale, "vaultProblemImportFile", nil)
+}
+
+// VaultProblemImportParse says "Could not parse the selected file."
+// in the language the app shows.
+func VaultProblemImportParse() string { return In(i18n.Locale()).VaultProblemImportParse() }
+
+// VaultProblemImportParse says "Could not parse the selected file."
+// in the language of msgs.
+func (msgs Messages) VaultProblemImportParse() string {
+	return Catalog.Format(msgs.locale, "vaultProblemImportParse", nil)
+}
+
+// VaultProblemImportStore says "Import storage is unavailable."
+// in the language the app shows.
+func VaultProblemImportStore() string { return In(i18n.Locale()).VaultProblemImportStore() }
+
+// VaultProblemImportStore says "Import storage is unavailable."
+// in the language of msgs.
+func (msgs Messages) VaultProblemImportStore() string {
+	return Catalog.Format(msgs.locale, "vaultProblemImportStore", nil)
+}
+
+// VaultProblemImportUnavailable says "Import is not available."
+// in the language the app shows.
+func VaultProblemImportUnavailable() string { return In(i18n.Locale()).VaultProblemImportUnavailable() }
+
+// VaultProblemImportUnavailable says "Import is not available."
+// in the language of msgs.
+func (msgs Messages) VaultProblemImportUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultProblemImportUnavailable", nil)
+}
+
 // VaultHostPassword says "Password"
 // in the language the app shows.
 func VaultHostPassword() string { return In(i18n.Locale()).VaultHostPassword() }
