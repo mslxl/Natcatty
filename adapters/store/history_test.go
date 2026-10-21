@@ -151,6 +151,32 @@ func TestZeroRetentionPruneRemovesNothing(t *testing.T) {
 	}
 }
 
+func TestClearConnectionLogsReportsTheRemovedCount(t *testing.T) {
+	ctx := context.Background()
+	store := openHistoryStore(t)
+	for index := 0; index < 3; index++ {
+		_ = store.SaveConnectionLog(ctx, domainhistory.ConnectionLog{
+			ID: fmt.Sprintf("log-%d", index), Kind: "ssh",
+			Status: domainhistory.ConnectionConnected, StartedAt: at(index),
+		})
+	}
+	_ = store.SaveHistoryEntry(ctx, domainhistory.Entry{
+		ID: "entry-1", Scope: "local", Command: "ls", RecordedAt: at(1),
+	})
+	removed, err := store.ClearConnectionLogs(ctx)
+	if err != nil || removed != 3 {
+		t.Fatalf("ClearConnectionLogs = %d, %v; want 3", removed, err)
+	}
+	logs, _ := store.ListConnectionLogs(ctx)
+	if len(logs) != 0 {
+		t.Fatalf("logs remain: %d", len(logs))
+	}
+	entries, _ := store.ListHistoryEntries(ctx)
+	if len(entries) != 1 {
+		t.Fatalf("clearing logs removed %d commands, want 1 left", len(entries))
+	}
+}
+
 func TestClearHistoryReportsTheRemovedCount(t *testing.T) {
 	ctx := context.Background()
 	store := openHistoryStore(t)

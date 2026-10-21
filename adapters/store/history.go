@@ -112,6 +112,15 @@ func (s *Store) PruneConnectionLogs(ctx context.Context, retention domainhistory
 	return s.runPrune(ctx, statements, "connection logs")
 }
 
+// ClearConnectionLogs removes every connection log and reports the count.
+func (s *Store) ClearConnectionLogs(ctx context.Context) (int, error) {
+	result, err := s.db.Execute(ctx, `DELETE FROM connection_logs`)
+	if err != nil {
+		return 0, fmt.Errorf("store: clear connection logs: %w", err)
+	}
+	return int(result.Changes), nil
+}
+
 // SaveHistoryEntry inserts or replaces one recorded command.
 func (s *Store) SaveHistoryEntry(ctx context.Context, entry domainhistory.Entry) error {
 	if entry.ID == "" {

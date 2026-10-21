@@ -301,10 +301,14 @@ type ConnectionEvent struct {
 	Label     string
 	Hostname  string
 	Username  string
-	Kind      Kind
-	StartedAt time.Time
-	EndedAt   time.Time
-	Err       error
+	// UnsavedHost marks a Host the user typed without a saved Vault record.
+	// Such an attempt has no HostID but is not a local shell: it keeps the
+	// typed label and address for the recorded row.
+	UnsavedHost bool
+	Kind        Kind
+	StartedAt   time.Time
+	EndedAt     time.Time
+	Err         error
 }
 
 // Factory opens a Transport for a StartSpec. It is the application's port for
@@ -711,6 +715,9 @@ func (s *Service) reportConnection(event ConnectionEvent) {
 	if event.Kind == "" {
 		event.Kind = KindLocal
 	}
+	// A Host attempt without a saved identity is a typed (unsaved) Host. A
+	// local shell is the only kind that legitimately has no Host identity.
+	event.UnsavedHost = event.HostID == "" && event.Kind != KindLocal
 	s.onConnection(event)
 }
 

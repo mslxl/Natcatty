@@ -35,8 +35,8 @@ func runTicket23(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 	if !result.Pass {
 		t.Fatalf("ticket 23 self-test failed: %+v", result)
 	}
-	if len(result.Steps) != 4 {
-		t.Fatalf("steps = %d, want 4: %+v", len(result.Steps), result.Steps)
+	if len(result.Steps) != 5 {
+		t.Fatalf("steps = %d, want 5: %+v", len(result.Steps), result.Steps)
 	}
 	for _, step := range result.Steps {
 		t.Logf("%s: %s (%s)", step.Name, step.Detail, step.Seam)
@@ -69,6 +69,7 @@ func TestTicket23CheckRunsThroughTheKeyboard(t *testing.T) {
 		"apphistory.Service + store.Store + logsui.View + ui.Tester",
 		"apphistory.Service + store.Store + domain/history.Prune*",
 		"shellstate.OpenHistoryTarget + logsui.View + ui.Tester",
+		"logsui.State + apphistory.Service + store.Store",
 		"shellui.View + logsui.View + ui.Tester",
 	} {
 		if !seams[want] {
