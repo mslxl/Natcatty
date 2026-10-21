@@ -8,6 +8,29 @@ import (
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
+// inputLineHeight is the height of one line of text in the broadcast and
+// compose controls. Platforms lay the same label out at different heights
+// (macOS draws a 12-DIP label at 15.3 DIPs), so a control that leaves the
+// line to the font can render below the 16-DIP minimum it needs. A fixed
+// line height keeps every one of them one readable line tall everywhere.
+const inputLineHeight float32 = 17
+
+// inputButton and inputPrimaryButton are the buttons of the broadcast and
+// compose controls, with their text line pinned.
+func inputButton(c *ui.Context, label string) ui.Element {
+	return ui.Button(c, label).FixedLineHeight(inputLineHeight)
+}
+
+func inputPrimaryButton(c *ui.Context, label string) ui.Element {
+	return ui.PrimaryButton(c, label).FixedLineHeight(inputLineHeight)
+}
+
+// inputCheckbox is a checkbox of the broadcast and compose controls, with
+// its label's text line pinned like the buttons'.
+func inputCheckbox(c *ui.Context, value *bool, label string) ui.Element {
+	return ui.Checkbox(c, value, label).FixedLineHeight(inputLineHeight)
+}
+
 // terminalInputs renders the broadcast and compose controls above the active
 // Tab. Broadcast is explicit: the toolbar states whether it is active, the
 // panel selects exactly which Sessions receive input, and every delivery is
@@ -20,7 +43,7 @@ func terminalInputs(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 			if s.Broadcasting() {
 				broadcastLabel = m.BroadcastButtonActive(s.BroadcastTargetCount())
 			}
-			broadcastButton := ui.Button(c, broadcastLabel)
+			broadcastButton := inputButton(c, broadcastLabel)
 			if s.Broadcasting() {
 				broadcastButton.TextColor(t.Accent).Bold()
 			}
@@ -29,12 +52,12 @@ func terminalInputs(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 				c.Invalidate()
 			}
 			if s.Broadcasting() {
-				if ui.PrimaryButton(c, m.BroadcastStop()).Clicked() {
+				if inputPrimaryButton(c, m.BroadcastStop()).Clicked() {
 					s.StopBroadcast()
 					c.Invalidate()
 				}
 			}
-			composeButton := ui.Button(c, m.ComposeButton())
+			composeButton := inputButton(c, m.ComposeButton())
 			if composeButton.Clicked() {
 				if s.ComposeOpen() {
 					s.CloseCompose()
@@ -72,7 +95,7 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 				ui.Text(c, m.BroadcastStopped()).FontSize(11).TextColor(t.TextMuted)
 			}
 			ui.Column(c).Grow(1)
-			if ui.Button(c, m.BroadcastClose()).Clicked() {
+			if inputButton(c, m.BroadcastClose()).Clicked() {
 				s.CloseBroadcastPanel()
 				c.Invalidate()
 			}
@@ -82,7 +105,7 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 		// instead of squeezing them beside the title.
 		ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			if len(sessions) > 0 {
-				if ui.Button(c, m.BroadcastSelectAll()).Clicked() {
+				if inputButton(c, m.BroadcastSelectAll()).Clicked() {
 					for _, info := range sessions {
 						if info.Running {
 							s.SetBroadcastTarget(info.ID, true)
@@ -90,7 +113,7 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 					}
 					c.Invalidate()
 				}
-				if ui.Button(c, m.BroadcastSelectNone()).Clicked() {
+				if inputButton(c, m.BroadcastSelectNone()).Clicked() {
 					for _, info := range sessions {
 						s.SetBroadcastTarget(info.ID, false)
 					}
@@ -102,7 +125,7 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 			if stop {
 				label = m.BroadcastStop()
 			}
-			start := ui.PrimaryButton(c, label)
+			start := inputPrimaryButton(c, label)
 			if !stop {
 				start.Disabled(!s.BroadcastCanStart())
 			}
@@ -138,7 +161,7 @@ func broadcastTargetRow(c *ui.Context, s *state.State, m locales.Messages, t *ui
 	info state.BroadcastSessionInfo) {
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		selected := info.Selected
-		box := ui.Checkbox(c, &selected, sessionTitle(m, info))
+		box := inputCheckbox(c, &selected, sessionTitle(m, info))
 		box.Disabled(!info.Running)
 		if box.Changed() {
 			s.SetBroadcastTarget(info.ID, selected)
@@ -217,7 +240,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 					TextColor(summaryColor(result, t)).SingleLine()
 			}
 			ui.Column(c).Grow(1)
-			if ui.Button(c, m.ComposeCancel()).Clicked() {
+			if inputButton(c, m.ComposeCancel()).Clicked() {
 				s.CloseCompose()
 				c.Invalidate()
 			}
@@ -262,10 +285,10 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 		})
 
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-			if ui.Checkbox(c, s.ComposeTrim(), m.ComposeTrim()).Changed() {
+			if inputCheckbox(c, s.ComposeTrim(), m.ComposeTrim()).Changed() {
 				c.Invalidate()
 			}
-			if ui.Checkbox(c, s.ComposeDecodeEscapes(), m.ComposeDecodeEscapes()).Changed() {
+			if inputCheckbox(c, s.ComposeDecodeEscapes(), m.ComposeDecodeEscapes()).Changed() {
 				c.Invalidate()
 			}
 			mode := m.ComposePaste()
@@ -283,7 +306,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			}
 			ui.Column(c).Grow(1)
 			targets, _ := s.ComposeTargets()
-			send := ui.PrimaryButton(c, m.ComposeSend()).
+			send := inputPrimaryButton(c, m.ComposeSend()).
 				Disabled(preview.Empty() || len(targets) == 0 || s.ComposeSending())
 			if send.Clicked() {
 				s.SendCompose()
