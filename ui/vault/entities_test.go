@@ -3,17 +3,22 @@ package vault
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	shellui "github.com/mslxl/natcatty/ui/shell"
+	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -324,12 +329,83 @@ func (f *entityKnownHosts) DeleteKnownHost(_ context.Context, id string) error {
 	return appvault.ErrNotFound
 }
 
-func newEntityView(t *testing.T) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
-	t.Helper()
-	return newEntityViewSized(t, 1400, 1200)
+// entityTransport keeps one fake Session alive so the shell can show the
+// production work Tab strip.
+type entityTransport struct {
+	output chan []byte
+	closed chan struct{}
+	once   sync.Once
 }
 
-func newEntityViewSized(t *testing.T, width, height int) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
+func newEntityTransport() *entityTransport {
+	return &entityTransport{output: make(chan []byte), closed: make(chan struct{})}
+}
+
+func (f *entityTransport) Read(p []byte) (int, error) {
+	select {
+	case data := <-f.output:
+		return copy(p, data), nil
+	case <-f.closed:
+		return 0, io.EOF
+	}
+}
+
+func (f *entityTransport) Write(p []byte) (int, error) { return len(p), nil }
+func (f *entityTransport) Resize(int, int) error       { return nil }
+func (f *entityTransport) Wait() (int, error)          { return 0, nil }
+
+func (f *entityTransport) Close() error {
+	f.once.Do(func() { close(f.closed) })
+	return nil
+}
+
+type entityFactory struct{}
+
+func (entityFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+	return newEntityTransport(), nil
+}
+
+type entitySurface struct{}
+
+func (entitySurface) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal") }
+func (entitySurface) Close()                        {}
+
+// newProductionTester renders the real shell around the Vault: the fixed
+// sidebar and, because the shell opens one work Tab, the tab strip the app
+// also shows over the Vault. The Vault therefore gets the same content width
+// and height it gets in the production window instead of the full window.
+func newProductionTester(t *testing.T, state *vaultstate.State, width, height int) *ui.Tester {
+	t.Helper()
+	service := appsession.NewService(entityFactory{})
+	t.Cleanup(service.CloseAll)
+	shell := shellstate.NewState(
+		shellstate.WithSessions(service, func(*appsession.Session) (shellstate.Surface, error) {
+			return entitySurface{}, nil
+		}),
+		shellstate.WithVault(View(state)),
+	)
+	if err := shell.NewTab(); err != nil {
+		t.Fatalf("open a work Tab for the production chrome: %v", err)
+	}
+	shell.ShowVault()
+
+	// Build the shell once, as the app does: a frame closure that builds it
+	// again would create fresh view state every frame.
+	view := shellui.View(shell)
+	tt := ui.NewTester(view, width, height)
+	tt.SetLocale("en")
+	tt.Frame()
+	return tt
+}
+
+func newEntityView(t *testing.T) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
+	t.Helper()
+	return newProductionEntityView(t, 1400, 1200)
+}
+
+// newProductionEntityView renders the Vault inside the production shell, so
+// sized tests see the real content column rather than the whole window.
+func newProductionEntityView(t *testing.T, width, height int) (*vaultstate.State, *entityHosts, *entityGroups, *entityProxies, *entityKnownHosts, *ui.Tester) {
 	t.Helper()
 	hosts := &entityHosts{items: []domainvault.Host{{
 		ID: "host-1", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
@@ -346,11 +422,7 @@ func newEntityViewSized(t *testing.T, width, height int) (*vaultstate.State, *en
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
-	tt := ui.NewTester(func(c *ui.Context) {
-		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).Children(func() {
-			View(state)(c)
-		})
-	}, width, height)
+	tt := newProductionTester(t, state, width, height)
 	return state, hosts, groups, proxies, known, tt
 }
 
@@ -604,6 +676,54 @@ func assertVisible(t *testing.T, tt *ui.Tester, text string, width, height int) 
 	}
 }
 
+// summaryLineCount reports how many visual lines the given summary tokens
+// occupy, counting a token that wraps inside itself. Tokens on the same line
+// share their top edge.
+func summaryLineCount(t *testing.T, tt *ui.Tester, tokens []string) int {
+	t.Helper()
+	type group struct {
+		y     float32
+		lines int
+	}
+	var groups []group
+	lineHeight := float32(0)
+	rects := make([]ui.Rect, 0, len(tokens))
+	for _, token := range tokens {
+		rect, ok := tt.Find(token)
+		if !ok || rect.W <= 0 {
+			t.Fatalf("summary token %q is not laid out, texts %q", token, tt.Texts())
+		}
+		rects = append(rects, rect)
+		if lineHeight == 0 || (rect.H > 0 && rect.H < lineHeight) {
+			lineHeight = rect.H
+		}
+	}
+	total := 0
+	for _, rect := range rects {
+		lines := int((rect.H + lineHeight/2) / lineHeight)
+		if lines < 1 {
+			lines = 1
+		}
+		merged := false
+		for i := range groups {
+			if rect.Y-groups[i].y < 1 && groups[i].y-rect.Y < 1 {
+				if lines > groups[i].lines {
+					groups[i].lines = lines
+				}
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			groups = append(groups, group{y: rect.Y, lines: lines})
+		}
+	}
+	for _, g := range groups {
+		total += g.lines
+	}
+	return total
+}
+
 func assertNoHorizontalOverflow(t *testing.T, tt *ui.Tester, width, height int) {
 	t.Helper()
 	for _, text := range tt.Texts() {
@@ -623,7 +743,7 @@ func TestHostEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range editorSizes {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, _, _, _, tt := newEntityViewSized(t, size.width, size.height)
+			state, _, _, _, _, tt := newProductionEntityView(t, size.width, size.height)
 
 			state.BeginEdit("host-1")
 			tt.Frame()
@@ -657,7 +777,7 @@ func TestHostEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
 
 func TestHostEditorScrollsWithTheKeyboard(t *testing.T) {
 	m := locales.In("en")
-	state, _, _, _, _, tt := newEntityViewSized(t, 720, 480)
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	state.BeginEdit("host-1")
 	tt.Frame()
 	tt.Move(360, 240)
@@ -671,7 +791,7 @@ func TestGroupEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range editorSizes {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, groups, _, _, tt := newEntityViewSized(t, size.width, size.height)
+			state, _, groups, _, _, tt := newProductionEntityView(t, size.width, size.height)
 
 			state.BeginCreateGroup()
 			state.GroupForm().Path = "prod2"
@@ -709,7 +829,7 @@ func TestProxyEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range editorSizes {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
-			state, _, _, proxies, _, tt := newEntityViewSized(t, size.width, size.height)
+			state, _, _, proxies, _, tt := newProductionEntityView(t, size.width, size.height)
 
 			state.BeginCreateProxyProfile()
 			state.ProxyForm().Label = "office"
@@ -745,7 +865,7 @@ func TestProxyEditorScrollsToItsActionsAtBothSizes(t *testing.T) {
 
 func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
 	groups.items = []domainvault.Group{{Path: "prod2", Port: 2222}}
 	hosts.items[0].Group = "prod2"
 	hosts.items[0].Port = 0
@@ -781,7 +901,7 @@ func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
 
 func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
 	m := locales.In("en")
-	state, _, _, _, known, tt := newEntityViewSized(t, 1100, 720)
+	state, _, _, _, known, tt := newProductionEntityView(t, 1100, 720)
 	if !textsContain(tt, m.VaultKnownHostsTitle(0)) {
 		t.Fatalf("the empty Known Hosts state is missing, texts %q", tt.Texts())
 	}
@@ -800,7 +920,7 @@ func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
 
 func TestHostsAreDisplayedUnderTheirGroupAt720x480(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items = []domainvault.Host{
 		{ID: "grouped", Label: "grouped-1", Hostname: "10.0.0.1", Port: 22,
 			Protocol: domainvault.ProtocolSSH, Group: "prod2"},
@@ -857,8 +977,265 @@ func TestHostsAreDisplayedUnderTheirGroupAt720x480(t *testing.T) {
 	}
 }
 
+// TestHostSummariesStayAtTwoLinesInProductionChrome renders the Vault inside
+// the real sidebar and work Tab strip at the minimum window size. The content
+// column is then about 456 DIPs wide, not the window's 720: the width where
+// the summary used to wrap to three lines.
+func TestHostSummariesStayAtTwoLinesInProductionChrome(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	hosts.items = []domainvault.Host{
+		{
+			ID: "password-host", Label: "alpha",
+			Hostname: "127.0.0.1", Port: 2200, Protocol: domainvault.ProtocolSSH,
+			Username: "deploy", HasPassword: true,
+		},
+		{
+			ID: "keyboard-host", Label: "beta",
+			Hostname: "127.0.0.2", Port: 22, Protocol: domainvault.ProtocolSSH,
+			Username: "ops",
+		},
+	}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	if lines := summaryLineCount(t, tt, []string{
+		"127.0.0.1:2200", "deploy", m.VaultAuthSummaryPassword(),
+	}); lines > 2 {
+		t.Fatalf("password Host summary uses %d lines, want at most 2", lines)
+	}
+	if lines := summaryLineCount(t, tt, []string{
+		"127.0.0.2:22", "ops", m.VaultAuthSummaryKeyboard(),
+	}); lines > 2 {
+		t.Fatalf("keyboard-interactive Host summary uses %d lines, want at most 2", lines)
+	}
+	assertNoHorizontalOverflow(t, tt, 720, 480)
+}
+
+// TestListActionsStayInsideTheProductionWindow checks that the right-aligned
+// actions of every list row, including Known Hosts, are fully inside the
+// window at the minimum size. The Vault renders inside the real shell chrome,
+// so it sees the production content width.
+func TestListActionsStayInsideTheProductionWindow(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, proxies, known, tt := newProductionEntityView(t, 720, 480)
+	hosts.items = []domainvault.Host{
+		{
+			ID: "host-1", Label: "web-1", Hostname: "127.0.0.1", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web",
+		},
+	}
+	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "prod/web"}}
+	proxies.items = []domainvault.ProxyProfile{{
+		ID: "proxy-1", Label: "office",
+		Config: domainvault.ProxyConfig{
+			Type: domainvault.ProxySOCKS5, Host: "socks.example.com", Port: 1080,
+		},
+	}}
+	known.items = []domainconn.KnownHost{{
+		ID: "kh-1", Hostname: "known-hosts.example.internal", Port: 2222,
+		KeyType:     "ssh-ed25519",
+		Fingerprint: "SHA256:0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH",
+	}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt.Frame()
+
+	// Measure the button where there is room, then require the same size at
+	// the minimum window: a squeezed row narrows the text's box instead of
+	// pushing the button past the edge, which is the clipping users see.
+	wide := newProductionTester(t, state, 1100, 720)
+	scrollToEnd(wide, 1100, 720)
+	wideRemove, ok := wide.Find(m.VaultKnownHostRemove())
+	if !ok || wideRemove.W <= 0 {
+		t.Fatalf("Remove trust is not laid out at 1100x720, texts %q", wide.Texts())
+	}
+
+	// Scroll to the Known Hosts section, which sits at the end of the list.
+	scrollToEnd(tt, 720, 480)
+	remove, ok := tt.Find(m.VaultKnownHostRemove())
+	if !ok {
+		t.Fatalf("Remove trust is not rendered, texts %q", tt.Texts())
+	}
+	if remove.W <= 0 {
+		t.Fatalf("Remove trust has no laid-out box: %+v", remove)
+	}
+	if remove.X < -0.5 || remove.X+remove.W > 720.5 ||
+		remove.Y < -0.5 || remove.Y+remove.H > 480.5 {
+		t.Fatalf("Remove trust is outside the 720x480 window: %+v", remove)
+	}
+	if remove.W < wideRemove.W-0.5 || remove.H > wideRemove.H+0.5 {
+		t.Fatalf("Remove trust is squeezed at 720x480: %+v, want the %+v it gets at 1100x720",
+			remove, wideRemove)
+	}
+	assertNoHorizontalOverflow(t, tt, 720, 480)
+
+	// The button is not only visible but still clickable at this size.
+	if err := tt.Click(m.VaultKnownHostRemove()); err != nil {
+		t.Fatalf("click Remove trust: %v", err)
+	}
+	tt.Frame()
+	if !textsContain(tt, "Remove trust for known-hosts.example.internal:2222") {
+		t.Fatalf("the confirmation is missing, texts %q", tt.Texts())
+	}
+}
+
+// TestGroupAndProxyActionsAreNotClipped checks the other list rows at the
+// production content width. Each state holds exactly one such row, so the
+// first Edit/Delete pair belongs to it and can be compared with the size the
+// same button gets when there is room.
+func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
+	m := locales.In("en")
+	cases := []struct {
+		name  string
+		setup func(*entityGroups, *entityProxies)
+	}{
+		{
+			name: "group",
+			setup: func(groups *entityGroups, _ *entityProxies) {
+				groups.items = []domainvault.Group{{
+					Path: "production/web/frontend", Username: "deploy", Port: 2222,
+				}}
+			},
+		},
+		{
+			name: "proxy",
+			setup: func(_ *entityGroups, proxies *entityProxies) {
+				proxies.items = []domainvault.ProxyProfile{{
+					ID: "proxy-1", Label: "office",
+					Config: domainvault.ProxyConfig{
+						Type: domainvault.ProxySOCKS5,
+						Host: "socks-proxy.example.internal", Port: 1080,
+					},
+				}}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state, hosts, groups, proxies, _, tt := newProductionEntityView(t, 720, 480)
+			hosts.items = nil
+			tc.setup(groups, proxies)
+			if err := state.Reload(); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			tt.Frame()
+
+			wide := newProductionTester(t, state, 1100, 720)
+			for _, label := range []string{m.VaultHostEdit(), m.VaultHostDelete()} {
+				narrow, ok := tt.Find(label)
+				if !ok || narrow.W <= 0 {
+					t.Fatalf("%s action %q is not laid out at 720x480, texts %q",
+						tc.name, label, tt.Texts())
+				}
+				roomy, ok := wide.Find(label)
+				if !ok || roomy.W <= 0 {
+					t.Fatalf("%s action %q is not laid out at 1100x720, texts %q",
+						tc.name, label, wide.Texts())
+				}
+				if narrow.X < -0.5 || narrow.X+narrow.W > 720.5 ||
+					narrow.Y < -0.5 || narrow.Y+narrow.H > 480.5 {
+					t.Fatalf("%s action %q is outside the 720x480 window: %+v",
+						tc.name, label, narrow)
+				}
+				if narrow.W < roomy.W-0.5 || narrow.H > roomy.H+0.5 {
+					t.Fatalf("%s action %q is squeezed at 720x480: %+v, want %+v",
+						tc.name, label, narrow, roomy)
+				}
+			}
+		})
+	}
+}
+
+// TestEditorsOpenAtTheTopInProductionChrome reproduces the reported case: the
+// list is scrolled, then a different editor opens. It must start at its own
+// top instead of inheriting the previous offset, and reopening after the
+// editor itself was scrolled must also start at the top.
+func TestEditorsOpenAtTheTopInProductionChrome(t *testing.T) {
+	m := locales.In("en")
+	cases := []struct {
+		name  string
+		title string
+		end   string
+		open  func(*vaultstate.State)
+	}{
+		{
+			name: "host", title: m.VaultHostFormEditTitle(), end: m.VaultHostPinned(),
+			open: func(s *vaultstate.State) { s.BeginEdit("host-1") },
+		},
+		{
+			name: "group", title: m.VaultGroupFormCreateTitle(), end: m.VaultHostRequiresMFA(),
+			open: func(s *vaultstate.State) { s.BeginCreateGroup() },
+		},
+		{
+			name: "proxy", title: m.VaultProxyFormCreateTitle(), end: m.VaultHostSave(),
+			open: func(s *vaultstate.State) { s.BeginCreateProxyProfile() },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
+			// Enough rows that the list itself can be scrolled before the
+			// editor opens.
+			hosts.items = nil
+			for i := 0; i < 10; i++ {
+				hosts.items = append(hosts.items, domainvault.Host{
+					ID:    model.HostID(fmt.Sprintf("host-%d", i)),
+					Label: fmt.Sprintf("host-%d", i), Hostname: "10.0.0.1", Port: 22,
+					Protocol: domainvault.ProtocolSSH,
+				})
+			}
+			if err := state.Reload(); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			tt.Frame()
+
+			// The editor's position with no prior scrolling is the baseline
+			// the reopened editor must match.
+			tc.open(state)
+			tt.Frame()
+			baseline, ok := tt.Find(tc.title)
+			if !ok {
+				t.Fatalf("%q is not rendered, texts %q", tc.title, tt.Texts())
+			}
+			if baseline.Y < -0.5 || baseline.Y+baseline.H > 480.5 {
+				t.Fatalf("editor title is outside the window on first open: %+v", baseline)
+			}
+			scrollToEnd(tt, 720, 480)
+			assertVisible(t, tt, tc.end, 720, 480)
+			if err := tt.Click(m.VaultHostCancel()); err != nil {
+				t.Fatalf("close the editor: %v", err)
+			}
+			tt.Frame()
+
+			// Scroll the list far enough that it has a non-zero offset, then
+			// open the editor again. Seeing the section below the Hosts proves
+			// the list really moved.
+			scrollToEnd(tt, 720, 480)
+			assertVisible(t, tt, "host-9", 720, 480)
+			tc.open(state)
+			tt.Frame()
+			title, ok := tt.Find(tc.title)
+			if !ok {
+				t.Fatalf("%q is not rendered after reopening, texts %q", tc.title, tt.Texts())
+			}
+			if title.Y < -0.5 || title.Y+title.H > 480.5 {
+				t.Fatalf("editor title is outside the window after reopening: %+v", title)
+			}
+			if delta := title.Y - baseline.Y; delta > 1 || delta < -1 {
+				t.Fatalf("editor opened at Y=%v, want the top baseline Y=%v",
+					title.Y, baseline.Y)
+			}
+			assertNoHorizontalOverflow(t, tt, 720, 480)
+		})
+	}
+}
+
 func TestNestedGroupsIndentTheirMembers(t *testing.T) {
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items = []domainvault.Host{
 		{ID: "deep", Label: "deep-1", Hostname: "10.0.0.1", Port: 22,
 			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
@@ -893,7 +1270,7 @@ func TestNestedGroupsIndentTheirMembers(t *testing.T) {
 }
 
 func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items = []domainvault.Host{
 		{ID: "web", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
 			Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
@@ -957,7 +1334,7 @@ func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
 
 func TestTheDragGhostLeavesTheDropTargetLabelsVisibleAt720x480(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 720, 480)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
 	groups.items = []domainvault.Group{{Path: "prod2"}}
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -1022,7 +1399,7 @@ func dragTo(t *testing.T, tt *ui.Tester, hostText, targetText string) ui.Rect {
 
 func TestDraggingAHostBackToTheRootUsesTheVisibleRootTarget(t *testing.T) {
 	m := locales.In("en")
-	state, hosts, groups, _, _, tt := newEntityViewSized(t, 1100, 720)
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items[0].Group = "prod2"
 	groups.items = []domainvault.Group{{Path: "prod2"}}
 	if err := state.Reload(); err != nil {
@@ -1048,7 +1425,7 @@ func TestDraggingAHostBackToTheRootUsesTheVisibleRootTarget(t *testing.T) {
 }
 
 func TestHostSummaryHasNoOrphanSeparatorsAt720x480(t *testing.T) {
-	state, hosts, _, _, _, tt := newEntityViewSized(t, 720, 480)
+	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items[0].Tags = []string{"production", "web", "internal"}
 	hosts.items[0].Username = "deploy"
 	if err := state.Reload(); err != nil {
