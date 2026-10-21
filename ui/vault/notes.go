@@ -189,7 +189,10 @@ func noteExportProblemText(m locales.Messages, problem vaultstate.Problem) strin
 	}
 }
 
-func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+// noteEditor edits a Note. On the frame it opens, justOpened puts the content
+// field's caret and scroll at the start: a text area otherwise keeps the
+// caret at the end of its value, which opens a long source at its last line.
+func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState, justOpened bool) {
 	form := s.NoteForm()
 	title := m.VaultNoteFormCreateTitle()
 	if form.ID != "" {
@@ -206,7 +209,10 @@ func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 				ui.TextInput(c, &form.Group).Placeholder("ops/runbooks")
 			}).Description(m.VaultNoteGroupHint())
 			ui.Field(c, m.VaultNoteContent(), func() {
-				ui.TextArea(c, &form.Content).Height(240)
+				area := ui.TextArea(c, &form.Content).Height(240)
+				if justOpened {
+					area.SetTextSelection(0, 0)
+				}
 			}).Description(m.VaultNoteContentHint())
 		})
 		problem(c, s, t)
@@ -343,7 +349,12 @@ func noteBlock(c *ui.Context, block markdown.Block, m locales.Messages, t *ui.Th
 				}
 				marker = strconv.Itoa(start+index) + "."
 			}
-			ui.Row(c).FillWidth().Gap(6).Children(func() {
+			// A plain Row centers its children vertically, which would put
+			// the marker against the middle of an item that holds more
+			// than a paragraph, as one with a nested list does. Align to
+			// the top instead: the marker then sits on the item's first
+			// line, and the nested blocks keep their own indentation.
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
 				ui.Text(c, marker).Width(26).TextColor(t.TextMuted)
 				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
 					noteBlocks(c, item.Blocks, m, t, depth+1)

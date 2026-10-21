@@ -16,7 +16,10 @@ package app
 //     ZIPs preserve the Note Group path. The files are written and read back.
 //   - Layout: the real shell, sidebar, and tab strip render the list and the
 //     viewer at 1100x720 and 720x480 without horizontal overflow, and the
-//     viewer scrolls to its last paragraph.
+//     viewer scrolls to its last paragraph. A nested list item's marker sits
+//     on the item's first line, not centered against its children, and the
+//     source editor opens at the beginning of a long Note, including after
+//     cancel and reopen.
 //
 // Result: %TEMP%\natcatty-selftest-22.json. Every resource is closed and the
 // temporary directory removed, so F11,2,2 passes twice in one process.
@@ -445,12 +448,121 @@ func (t *selftest22) layoutStep(*ui.Context) selftest.Outcome {
 			return t.fail(fmt.Errorf("%dx%d: close the viewer: %w", size.width, size.height, err))
 		}
 		page.Frame()
+
+		// A nested list item's marker must share its first line. Swap the
+		// Note's source for the fixture, then put the original back.
+		if _, err := t.service.UpdateNote(context.Background(), t.mainNote.ID, domainvault.NoteDraft{
+			Title: t.mainNote.Title, Group: t.mainNote.Group, Content: selftest22NestedLists,
+		}); err != nil {
+			return t.fail(fmt.Errorf("%dx%d: seed the nested lists: %w", size.width, size.height, err))
+		}
+		if err := t.state.Reload(); err != nil {
+			return t.fail(fmt.Errorf("%dx%d: reload the nested lists: %w", size.width, size.height, err))
+		}
+		if !t.state.BeginViewNote(t.mainNote.ID) {
+			return t.fail(fmt.Errorf("%dx%d: open the nested list viewer", size.width, size.height))
+		}
+		page.Frame()
+		for _, line := range []struct{ marker, text string }{
+			{"1.", "First"}, {"2.", "Second"}, {"3.", "Third"}, {"•", "sub A"},
+		} {
+			if err := selftest22MarkerOnFirstLine(page, line.marker, line.text); err != nil {
+				return t.fail(fmt.Errorf("%dx%d: %w", size.width, size.height, err))
+			}
+		}
+		t.state.CloseNoteView()
+		page.Frame()
+		if _, err := t.service.UpdateNote(context.Background(), t.mainNote.ID, domainvault.NoteDraft{
+			Title: t.mainNote.Title, Group: t.mainNote.Group, Content: t.mainNote.Content,
+		}); err != nil {
+			return t.fail(fmt.Errorf("%dx%d: restore the Note: %w", size.width, size.height, err))
+		}
+		if err := t.state.Reload(); err != nil {
+			return t.fail(fmt.Errorf("%dx%d: reload the Note: %w", size.width, size.height, err))
+		}
+		page.Frame()
+
+		// Opening, cancelling, and reopening the source editor must each
+		// start at the beginning of the long Note.
+		for round := 0; round < 2; round++ {
+			if !t.state.BeginEditNote(t.mainNote.ID) {
+				return t.fail(fmt.Errorf("%dx%d: open the Note editor", size.width, size.height))
+			}
+			page.Frame()
+			if err := selftest22SourceStartsAtTop(page, m, size.width, size.height); err != nil {
+				return t.fail(fmt.Errorf("%dx%d, round %d: %w", size.width, size.height, round, err))
+			}
+			if err := page.Click(m.VaultHostCancel()); err != nil {
+				return t.fail(fmt.Errorf("%dx%d: cancel the Note editor: %w", size.width, size.height, err))
+			}
+			page.Frame()
+		}
 	}
 	t.cleanup()
 	return selftest.Passed(
-		"the real shell, sidebar, and tab strip render the Note list and native viewer at "+
-			"1100x720 and 720x480 without clipping and scroll to the end",
+		"the real shell renders the Note list and native viewer at 1100x720 and 720x480 "+
+			"without clipping, nested list markers sit on their item's first line, and the "+
+			"source editor opens at the beginning on open and reopen",
 		"shellui.View + vaultui.View + ui.Tester")
+}
+
+// selftest22NestedLists is a list whose second item continues with a nested
+// list, the shape that exposed a centered marker.
+const selftest22NestedLists = "1. First\n" +
+	"2. Second\n" +
+	"   - sub A\n" +
+	"     - deep A\n" +
+	"   - sub B\n" +
+	"3. Third"
+
+// selftest22MarkerOnFirstLine proves from the laid out boxes that a list
+// item's marker shares the first line of the item's own text.
+func selftest22MarkerOnFirstLine(page *ui.Tester, marker, first string) error {
+	markerRect, ok := page.Find(marker)
+	if !ok || markerRect.H <= 0 {
+		return fmt.Errorf("marker %q is not laid out: %+v", marker, markerRect)
+	}
+	firstRect, ok := page.Find(first)
+	if !ok || firstRect.H <= 0 {
+		return fmt.Errorf("item text %q is not laid out: %+v", first, firstRect)
+	}
+	overlap := min(markerRect.Y+markerRect.H, firstRect.Y+firstRect.H) - max(markerRect.Y, firstRect.Y)
+	if overlap < min(markerRect.H, firstRect.H)/2 {
+		return fmt.Errorf("marker %q %+v is not on the first line of %q %+v",
+			marker, markerRect, first, firstRect)
+	}
+	return nil
+}
+
+// selftest22SourceStartsAtTop focuses the Content field without moving its
+// caret and proves the caret, and so the text area's scroll, is at the first
+// line.
+func selftest22SourceStartsAtTop(page *ui.Tester, m locales.Messages, width, height int) error {
+	label, ok := page.Find(m.VaultNoteContent())
+	if !ok || label.Y < 0 || label.Y+label.H > float32(height) {
+		return fmt.Errorf("the Content field is not visible: %+v", label)
+	}
+	if err := page.Click(m.VaultNoteContent()); err != nil {
+		return fmt.Errorf("focus the Content field: %w", err)
+	}
+	page.Frame()
+	caret, active := page.TextCaret()
+	if !active {
+		return fmt.Errorf("the text input is not active")
+	}
+	// A caret MyGo could not place in the text falls back to the whole
+	// element box (its height), which must not pass as a visible first line.
+	if caret.H <= 0 || caret.H > label.H*2 {
+		return fmt.Errorf("the caret bounds are not a visible line: %+v", caret)
+	}
+	if caret.Y < label.Y-1 || caret.Y > label.Y+label.H+1 {
+		return fmt.Errorf("the source opens away from its first line: caret %+v, label %+v",
+			caret, label)
+	}
+	if caret.X < 0 || caret.X > float32(width) {
+		return fmt.Errorf("the caret is outside the window: %+v", caret)
+	}
+	return nil
 }
 
 func (t *selftest22) start() error {
