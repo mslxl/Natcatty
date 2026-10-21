@@ -52,19 +52,27 @@ const (
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
 // layout slot, so without separate state an editor opened while the list is
-// scrolled down would start at the list's offset instead of its top.
+// scrolled down would start at the list's offset instead of its top. It also
+// tracks the surface change itself, which tells an editor opening that its
+// own content starts fresh.
 type scrolls struct {
 	list   ui.ScrollState
 	editor ui.ScrollState
 	viewer ui.ScrollState
 	last   surface
+	// justOpened is set for the frame an editor opens. A text area starts with
+	// its caret at the end of its value, which would scroll a long Note's
+	// source there, so the Note editor puts the caret and the view back at the
+	// start once per open.
+	justOpened bool
 }
 
 // trackEditor resets the editor offset whenever a different editor opens, so
 // every editor starts at its top even after the list or a previous editor was
 // scrolled.
 func (p *scrolls) trackEditor(now surface) {
-	if now != p.last && now != surfaceList {
+	p.justOpened = now != p.last && now != surfaceList
+	if p.justOpened {
 		p.editor.X, p.editor.Y = 0, 0
 		p.viewer.X, p.viewer.Y = 0, 0
 	}
@@ -149,7 +157,7 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 			case surfaceSnippetPackage:
 				snippetPackageEditor(c, s, m, t, &positions.editor)
 			case surfaceNote:
-				noteEditor(c, s, m, t, &positions.editor)
+				noteEditor(c, s, m, t, &positions.editor, positions.justOpened)
 			case surfaceNoteView:
 				noteViewer(c, s, m, t, &positions.viewer)
 			case surfaceNoteGroup:
