@@ -133,6 +133,37 @@ func TestSendInputReportsMissingAndClosedTargetsAsPartialFailure(t *testing.T) {
 	waitForInput(t, factory.transport("target-0"), "still works\r")
 }
 
+func TestDoneFiresOnlyAfterTheServiceUnregistersTheSession(t *testing.T) {
+	// A Session's end must be observable only once it is gone from the
+	// registry. Otherwise SendInput races the teardown and reports a closed
+	// Session as DeliveryFailed instead of DeliveryMissing. Repeat so the
+	// window, if it reopens, is actually hit.
+	for iteration := 0; iteration < 200; iteration++ {
+		service, _, sessions, ids := openTargets(t, 1)
+		if err := sessions[0].Close(); err != nil {
+			t.Fatalf("iteration %d: Close: %v", iteration, err)
+		}
+		select {
+		case <-sessions[0].Done():
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: the session did not close", iteration)
+		}
+
+		service.mu.Lock()
+		registered := service.sessions[ids[0]]
+		service.mu.Unlock()
+		if registered != nil {
+			t.Fatalf("iteration %d: the session is still registered after Done()", iteration)
+		}
+
+		result := service.SendInput([]model.SessionID{ids[0]}, []byte("late\r"))
+		if result.Deliveries[0].Status != DeliveryMissing {
+			t.Fatalf("iteration %d: delivery after Done() = %+v, want missing",
+				iteration, result.Deliveries[0])
+		}
+	}
+}
+
 func TestSendInputReportsTheTransferGateWithoutCorruptingTheTransport(t *testing.T) {
 	service, factory, sessions, ids := openTargets(t, 2)
 	factory.transport("target-0").send("**\x18Bzmodem")
