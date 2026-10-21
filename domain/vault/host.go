@@ -243,6 +243,11 @@ const (
 	FieldProxy       Field = "proxy"
 	FieldAlgorithms  Field = "algorithms"
 	FieldX11         Field = "x11"
+	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
+	// parts of a Snippet a validation error concerns.
+	FieldSnippet        Field = "snippet"
+	FieldSnippetCommand Field = "snippet_command"
+	FieldSnippetPackage Field = "snippet_package"
 )
 
 // Rule names the validation rule a value broke. The UI maps Field and Rule to

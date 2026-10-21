@@ -173,6 +173,24 @@ func (s *State) FocusedSessionID() (model.SessionID, bool) {
 	return value.session.ID(), true
 }
 
+// FocusedHostID returns the Vault Host of the focused Session, or false for a
+// local shell or when no Session is focused.
+func (s *State) FocusedHostID() (model.HostID, bool) {
+	id, ok := s.FocusedSessionID()
+	if !ok {
+		return "", false
+	}
+	session, ok := s.SessionByID(id)
+	if !ok {
+		return "", false
+	}
+	hostID := session.HostID()
+	if hostID == "" {
+		return "", false
+	}
+	return hostID, true
+}
+
 // BroadcastPanelOpen reports whether the target-selection panel is showing.
 func (s *State) BroadcastPanelOpen() bool {
 	s.inputMu.Lock()

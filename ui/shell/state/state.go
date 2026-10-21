@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -56,8 +57,23 @@ type openOutcome struct {
 	session    *appsession.Session
 	label      string
 	descriptor domainworkspace.SessionDescriptor
+	startup    StartupInput
 	err        error
 }
+
+// StartupInput is input a newly opened Session receives once it exists. A
+// Snippet run uses it to send the resolved command to every target Host
+// without racing the dial; the shell delivers it after the Tab is attached.
+type StartupInput struct {
+	// Chunks are the exact bytes to send, in order. A nil or empty list sends
+	// nothing.
+	Chunks [][]byte
+	// Delay waits between chunks, matching the Snippet's line-by-line mode.
+	Delay time.Duration
+}
+
+// Empty reports that there is nothing to send.
+func (i StartupInput) Empty() bool { return len(i.Chunks) == 0 }
 
 // paneOutcome is the result of opening the Session behind one Pane that
 // already exists in a Tab: a split, a duplicate, or a restore.
@@ -116,6 +132,9 @@ type State struct {
 	mu           sync.Mutex
 	outcomes     []openOutcome
 	paneOutcomes []paneOutcome
+	// startupFailures counts startup deliveries that failed since the last
+	// Flush, so a later successful open cannot hide the problem.
+	startupFailures int
 	// activity queues Session change notifications from Session goroutines.
 	// Flush transfers them to the activity markers on the UI thread.
 	activity []model.SessionID
@@ -338,6 +357,13 @@ func (s *State) NewTab() error {
 // its outcome is applied by the next Flush. It returns ErrNoSessions when the
 // shell has no Session service.
 func (s *State) OpenHost(host domainvault.Host) error {
+	return s.OpenHostWithStartup(host, StartupInput{})
+}
+
+// OpenHostWithStartup opens a Host Session like OpenHost and sends startup
+// once the Session is attached to its Tab. A Snippet run uses this to deliver
+// the resolved command to each target Host without racing the connection.
+func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput) error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
@@ -377,7 +403,8 @@ func (s *State) OpenHost(host domainvault.Host) error {
 				Username:      host.Username,
 				X11Forwarding: host.X11Enabled(),
 			},
-			err: err,
+			startup: startup,
+			err:     err,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()
@@ -398,6 +425,8 @@ func (s *State) Flush() {
 	s.outcomes = nil
 	activity := s.activity
 	s.activity = nil
+	startupFailures := s.startupFailures
+	s.startupFailures = 0
 	s.mu.Unlock()
 
 	for _, id := range activity {
@@ -428,10 +457,34 @@ func (s *State) Flush() {
 		s.vaultVisible = false
 		s.problem = ""
 		s.save()
+		if !outcome.startup.Empty() {
+			// Line-by-line delivery waits between chunks, so it cannot run on
+			// the UI thread. The Session and its transport already exist.
+			go s.deliverStartup(outcome.session.ID(), outcome.startup)
+		}
+	}
+	// Startup delivery failures belong to Sessions opened in earlier frames.
+	// Apply them after the open outcomes, whose success path clears problem,
+	// so one failed delivery stays visible even when another Tab attached.
+	if startupFailures > 0 {
+		s.problem = appconnection.KindInternal
 	}
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.
 	s.refreshBroadcastState()
+}
+
+// deliverStartup sends a new Session's startup input off the UI thread and
+// queues a failure for the next Flush.
+func (s *State) deliverStartup(id model.SessionID, startup StartupInput) {
+	result := s.sessions.SendChunks([]model.SessionID{id}, startup.Chunks, startup.Delay)
+	if result.Complete() {
+		return
+	}
+	s.mu.Lock()
+	s.startupFailures++
+	s.mu.Unlock()
+	s.RequestRedraw()
 }
 
 // RequestRedraw asks the app to redraw the shell.

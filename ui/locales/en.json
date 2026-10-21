@@ -1145,5 +1145,144 @@
   "sessionRenameField": "New name",
   "@sessionRenameField": {
     "description": "The text field in the Pane Rename dialog."
-  }
+  },
+  "vaultSnippetListTitle": "Snippets ({count})",
+  "@vaultSnippetListTitle": {
+    "description": "The Vault's Snippet list heading and its Snippet count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultSnippetEmpty": "No Snippets yet. Save a command you run often.",
+  "vaultSnippetNew": "New Snippet",
+  "vaultSnippetPackageNew": "New package",
+  "vaultSnippetRunActive": "Run here",
+  "vaultSnippetRunHosts": "Run on targets",
+  "vaultSnippetSummaryTargets": "Targets: {targets}",
+  "@vaultSnippetSummaryTargets": {
+    "description": "A Snippet row's target summary.",
+    "placeholders": {
+      "targets": {
+        "type": "String",
+        "example": "prod, web-1"
+      }
+    }
+  },
+  "vaultSnippetSummaryAllHosts": "All Hosts",
+  "vaultSnippetSummaryNoTargets": "Any session",
+  "vaultSnippetVariableCount": "{count} variables",
+  "@vaultSnippetVariableCount": {
+    "description": "How many variables a Snippet asks for.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultSnippetNoAutoRun": "No auto-run",
+  "vaultSnippetLineDelay": "Line by line",
+  "vaultSnippetFormCreateTitle": "New Snippet",
+  "vaultSnippetFormEditTitle": "Edit Snippet",
+  "vaultSnippetLabel": "Label",
+  "vaultSnippetCommand": "Command",
+  "vaultSnippetCommandHint": "Wrap variable names in double curly brackets; add a default after a colon, as in host:localhost.",
+  "vaultSnippetPackage": "Package",
+  "vaultSnippetPackageHint": "Slash-separated path. An empty value keeps the Snippet at the Vault root.",
+  "vaultSnippetTargets": "Targets",
+  "vaultSnippetAllHosts": "All Hosts",
+  "vaultSnippetTargetGroups": "Host Groups",
+  "vaultSnippetNoTargetsHint": "With no target, the Snippet runs in any active Session.",
+  "vaultSnippetNoAutoRunLabel": "Do not press Enter after pasting",
+  "vaultSnippetRunMode": "Multi-line run mode",
+  "vaultSnippetRunModePaste": "Paste all lines at once",
+  "vaultSnippetRunModeLineDelay": "Submit each line with a delay",
+  "vaultSnippetPackageFormCreateTitle": "New Snippet package",
+  "vaultSnippetPackageFormEditTitle": "Rename Snippet package",
+  "vaultSnippetPackagePath": "Package path",
+  "vaultSnippetPackagePathHint": "Packages nest with '/', for example ops/linux.",
+  "vaultSnippetPackageSnippetCount": "{count} Snippets",
+  "@vaultSnippetPackageSnippetCount": {
+    "description": "How many Snippets one package contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultSnippetDeleteConfirm": "Delete Snippet “{label}”?",
+  "@vaultSnippetDeleteConfirm": {
+    "description": "The confirmation naming the Snippet to delete.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Restart nginx"
+      }
+    }
+  },
+  "vaultSnippetPackageDeleteConfirm": "Delete package “{path}”? Its Snippets stay and move to the Vault root.",
+  "@vaultSnippetPackageDeleteConfirm": {
+    "description": "The confirmation naming the package to delete and its non-cascading effect.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "ops/linux"
+      }
+    }
+  },
+  "vaultSnippetRunTitle": "Run “{label}”",
+  "@vaultSnippetRunTitle": {
+    "description": "The variable form heading naming the Snippet to run.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Deploy"
+      }
+    }
+  },
+  "vaultSnippetRunDestinationActive": "Destination: the active Session",
+  "vaultSnippetRunDestinationHosts": "Destination: the Snippet's target Hosts",
+  "vaultSnippetRunVariable": "Variable {name}",
+  "@vaultSnippetRunVariable": {
+    "description": "One variable input's label.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "host"
+      }
+    }
+  },
+  "vaultSnippetRunVariableDefault": "Default: {value}",
+  "@vaultSnippetRunVariableDefault": {
+    "description": "The default value a variable offers.",
+    "placeholders": {
+      "value": {
+        "type": "String",
+        "example": "localhost"
+      }
+    }
+  },
+  "vaultSnippetRunPreview": "Command preview",
+  "vaultSnippetRunConfirm": "Run now",
+  "vaultSnippetMissingVariables": "Missing required variables: {names}",
+  "@vaultSnippetMissingVariables": {
+    "description": "Names every required Snippet variable left blank.",
+    "placeholders": {
+      "names": {
+        "type": "String",
+        "example": "host, user"
+      }
+    }
+  },
+  "vaultSnippetVariablesHint": "Values are substituted before the command is sent.",
+  "vaultSnippetProblemRun": "The Snippet could not be sent to the Session.",
+  "vaultSnippetProblemNoSession": "Open a Session before running this Snippet.",
+  "vaultSnippetProblemTargets": "This Snippet does not target the active Session and has no target Hosts.",
+  "vaultSnippetProblemMissingVariables": "Fill in every required variable before running.",
+  "vaultSnippetProblem": "The Snippet is invalid.",
+  "vaultSnippetProblemPackage": "The Snippet package path is invalid."
 }
