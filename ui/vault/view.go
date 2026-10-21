@@ -31,12 +31,65 @@ func WithForwarding(s *uiforwarding.State) Option {
 	return func(o *options) { o.forwarding = s }
 }
 
+// surface names what the Vault is showing: the list or one editor.
+type surface int
+
+const (
+	surfaceList surface = iota
+	surfaceForwarding
+	surfaceHost
+	surfaceKey
+	surfaceIdentity
+	surfaceGroup
+	surfaceProxy
+)
+
+// scrolls keeps the list and editor scroll offsets apart. They share one
+// layout slot, so without separate state an editor opened while the list is
+// scrolled down would start at the list's offset instead of its top.
+type scrolls struct {
+	list   ui.ScrollState
+	editor ui.ScrollState
+	last   surface
+}
+
+// trackEditor resets the editor offset whenever a different editor opens, so
+// every editor starts at its top even after the list or a previous editor was
+// scrolled.
+func (p *scrolls) trackEditor(now surface) {
+	if now != p.last && now != surfaceList {
+		p.editor.X, p.editor.Y = 0, 0
+	}
+	p.last = now
+}
+
+// editorSurface returns the editor the Vault is showing, or the list.
+func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface {
+	switch {
+	case forwarding != nil && forwarding.Editing():
+		return surfaceForwarding
+	case s.Editing():
+		return surfaceHost
+	case s.EditingKey():
+		return surfaceKey
+	case s.EditingIdentity():
+		return surfaceIdentity
+	case s.EditingGroup():
+		return surfaceGroup
+	case s.EditingProxyProfile():
+		return surfaceProxy
+	default:
+		return surfaceList
+	}
+}
+
 // View returns the Vault surface.
 func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 	var configured options
 	for _, opt := range opts {
 		opt(&configured)
 	}
+	var positions scrolls
 	return func(c *ui.Context) {
 		// Test connection attempts complete off the UI thread.
 		s.FlushTests()
@@ -52,28 +105,31 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
+		current := editorSurface(s, configured.forwarding)
+		positions.trackEditor(current)
+
 		ui.Column(c).Fill().Grow(1).Gap(12).Children(func() {
-			switch {
-			case configured.forwarding != nil && configured.forwarding.Editing():
+			switch current {
+			case surfaceForwarding:
 				uiforwarding.Editor(c, configured.forwarding)
-			case s.Editing():
-				editor(c, s, m, t)
-			case s.EditingKey():
-				keyEditor(c, s, m, t)
-			case s.EditingIdentity():
-				identityEditor(c, s, m, t)
-			case s.EditingGroup():
-				groupEditor(c, s, m, t)
-			case s.EditingProxyProfile():
-				proxyEditor(c, s, m, t)
+			case surfaceHost:
+				editor(c, s, m, t, &positions.editor)
+			case surfaceKey:
+				keyEditor(c, s, m, t, &positions.editor)
+			case surfaceIdentity:
+				identityEditor(c, s, m, t, &positions.editor)
+			case surfaceGroup:
+				groupEditor(c, s, m, t, &positions.editor)
+			case surfaceProxy:
+				proxyEditor(c, s, m, t, &positions.editor)
 			default:
-				list(c, s, configured.forwarding, m, t)
+				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
 		})
 	}
 }
 
-func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme) {
+func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
 		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
 		ui.Column(c).Grow(1)
@@ -113,7 +169,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	proxyDeleteBanner(c, s, m, t)
 	knownHostDeleteBanner(c, s, m, t)
 
-	ui.Scroll(c).Grow(1).Children(func() {
+	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)
@@ -250,7 +306,7 @@ func groupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, m lo
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, group.Path).Bold()
 			tokenRow(c, groupSummary(s, group, m), t)
 		})
@@ -279,7 +335,7 @@ func implicitGroupRow(c *ui.Context, s *vaultstate.State, section hostGroupSecti
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, section.path).Bold()
 			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
 				FontSize(12).TextColor(t.TextMuted)
@@ -315,7 +371,7 @@ func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
 			ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).
 				FontSize(12).TextColor(t.TextMuted)
@@ -359,7 +415,7 @@ func keySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 
 func keyRow(c *ui.Context, s *vaultstate.State, key domainvault.Key, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, key.Label).Bold()
 			ui.Text(c, keySummary(key, m)).FontSize(12).TextColor(t.TextMuted)
 		})
@@ -438,7 +494,7 @@ func identitySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 
 func identityRow(c *ui.Context, s *vaultstate.State, identity domainvault.Identity, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, identity.Label).Bold()
 			ui.Text(c, identitySummary(identity, m)).FontSize(12).TextColor(t.TextMuted)
 		})
@@ -523,7 +579,7 @@ func proxySection(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.
 
 func proxyRow(c *ui.Context, s *vaultstate.State, profile domainvault.ProxyProfile, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, proxySummary(m, profile)).
 				FontSize(12).TextColor(t.TextMuted)
@@ -595,7 +651,7 @@ func knownHostSection(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 
 func knownHostRow(c *ui.Context, s *vaultstate.State, record domainconn.KnownHost, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, net.JoinHostPort(record.Hostname, strconv.Itoa(record.Port))).Bold()
 			ui.Text(c, record.KeyType+" · "+record.Fingerprint).
 				FontSize(12).TextColor(t.TextMuted)
@@ -688,10 +744,48 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(indent)).
 		Background(t.Surface)
 	row.Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			// Only the label drags, so the drag ghost stays a small copy of the
-			// label instead of a full row that hides the drop target's name.
-			ui.Text(c, host.Label).Bold().Drag(vaultstate.HostDrag(host.ID))
+		// The summary gets the column's full width below the label and actions,
+		// so it stays at one or two lines at the minimum window size instead of
+		// being squeezed into a narrow column beside five action buttons.
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).Children(func() {
+				// Only the label drags, so the drag ghost stays a small copy of
+				// the label instead of a full row that hides the drop target.
+				ui.Text(c, host.Label).Bold().Drag(vaultstate.HostDrag(host.ID))
+				ui.Column(c).Grow(1)
+
+				if host.Protocol == domainvault.ProtocolSSH {
+					testLabel := m.VaultHostTest()
+					if s.Testing(host.ID) {
+						testLabel = m.VaultHostTesting()
+					}
+					if ui.Button(c, testLabel).Clicked() {
+						s.Test(host.ID)
+						c.Invalidate()
+					}
+					if ui.PrimaryButton(c, m.VaultHostConnect()).Clicked() {
+						s.Connect(host.ID)
+						c.Invalidate()
+					}
+				}
+				if ui.Button(c, m.VaultHostEdit()).Clicked() {
+					s.BeginEdit(host.ID)
+					c.Invalidate()
+				}
+				pin := m.VaultHostPin()
+				if host.Pinned {
+					pin = m.VaultHostUnpin()
+				}
+				if ui.Button(c, pin).Clicked() {
+					_ = s.TogglePinned(host.ID)
+					c.Invalidate()
+				}
+				if ui.Button(c, m.VaultHostDelete()).Clicked() {
+					s.RequestDelete(host.ID)
+					c.Invalidate()
+				}
+			})
+
 			summaryRow(c, s, host, m, t)
 			if problem := s.TestProblem(host.ID); problem != "" {
 				if text := uiconnection.ProblemText(m, problem); text != "" {
@@ -701,37 +795,6 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 				ui.Text(c, m.VaultHostTestSuccess()).FontSize(12).TextColor(t.TextMuted)
 			}
 		})
-
-		if host.Protocol == domainvault.ProtocolSSH {
-			testLabel := m.VaultHostTest()
-			if s.Testing(host.ID) {
-				testLabel = m.VaultHostTesting()
-			}
-			if ui.Button(c, testLabel).Clicked() {
-				s.Test(host.ID)
-				c.Invalidate()
-			}
-			if ui.PrimaryButton(c, m.VaultHostConnect()).Clicked() {
-				s.Connect(host.ID)
-				c.Invalidate()
-			}
-		}
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
-			s.BeginEdit(host.ID)
-			c.Invalidate()
-		}
-		pin := m.VaultHostPin()
-		if host.Pinned {
-			pin = m.VaultHostUnpin()
-		}
-		if ui.Button(c, pin).Clicked() {
-			_ = s.TogglePinned(host.ID)
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			s.RequestDelete(host.ID)
-			c.Invalidate()
-		}
 	})
 }
 
@@ -825,7 +888,7 @@ func keyAuthSummary(keys []domainvault.Key, keyID string, method domainvault.Hos
 	return m.VaultAuthSummaryKey(label)
 }
 
-func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.Form()
 	title := m.VaultHostFormCreateTitle()
 	if form.ID != "" {
@@ -834,7 +897,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme)
 
 	// The form scrolls independently of the actions, so Save and Cancel stay
 	// on screen at every supported window size.
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
 
 		ui.Form(c, func() {
@@ -954,14 +1017,14 @@ func editorActions(c *ui.Context, save, cancel func(), m locales.Messages) {
 	})
 }
 
-func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.KeyForm()
 	title := m.VaultKeyFormCreateTitle()
 	if form.ID != "" {
 		title = m.VaultKeyFormEditTitle()
 	}
 
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
 
 		ui.Form(c, func() {
@@ -1001,14 +1064,14 @@ func keyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.The
 	editorActions(c, func() { _ = s.SaveKey() }, s.CancelKeyEdit, m)
 }
 
-func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.IdentityForm()
 	title := m.VaultIdentityFormCreateTitle()
 	if form.ID != "" {
 		title = m.VaultIdentityFormEditTitle()
 	}
 
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
 
 		ui.Form(c, func() {
@@ -1055,14 +1118,14 @@ func identityEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *u
 	editorActions(c, func() { _ = s.SaveIdentity() }, s.CancelIdentityEdit, m)
 }
 
-func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.GroupForm()
 	title := m.VaultGroupFormCreateTitle()
 	if form.OriginalPath != "" {
 		title = m.VaultGroupFormEditTitle()
 	}
 
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
 
 		ui.Form(c, func() {
@@ -1130,14 +1193,14 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	editorActions(c, func() { _ = s.SaveGroup() }, s.CancelGroupEdit, m)
 }
 
-func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+func proxyEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.ProxyForm()
 	title := m.VaultProxyFormCreateTitle()
 	if form.ID != "" {
 		title = m.VaultProxyFormEditTitle()
 	}
 
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
 
 		ui.Form(c, func() {

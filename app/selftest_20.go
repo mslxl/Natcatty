@@ -17,20 +17,25 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/adapters/store"
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/selftest"
+	shellui "github.com/mslxl/natcatty/ui/shell"
+	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
@@ -352,11 +357,49 @@ func (t *selftest20) deleteGroupStep(*ui.Context) selftest.Outcome {
 
 func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
+	// The Host lost its group above, so give it a username and tags of its
+	// own: the summary then has the same token count as the reported
+	// three-line case instead of only an endpoint and an auth method.
+	host := t.state.Items()[0]
+	t.state.BeginEdit(host.ID)
+	t.state.Form().Username = "deploy"
+	t.state.Form().Tags = "prod, web"
+	if err := t.state.Save(); err != nil {
+		return t.fail(fmt.Errorf("save the Host summary fields: %w", err))
+	}
+	effective, ok := t.state.EffectiveHost(host.ID)
+	if !ok {
+		return t.fail(fmt.Errorf("Host %q is missing after the edit", host.Label))
+	}
+	summary := []string{
+		fmt.Sprintf("%s:%d", effective.Hostname, effective.Port),
+		"deploy", m.VaultAuthSummaryKeyboard(), "prod, web",
+	}
+
+	// Render through the real shell, including a work Tab, so the Vault gets
+	// the production content width and height: the window minus the fixed
+	// sidebar, content padding, and tab strip. Rendering the surface alone at
+	// 720 hid the layout bugs the real window showed.
+	service := appsession.NewService(selftest20Factory{})
+	defer service.CloseAll()
+	shell := shellstate.NewState(
+		shellstate.WithSessions(service, func(*appsession.Session) (shellstate.Surface, error) {
+			return selftest20Surface{}, nil
+		}),
+		shellstate.WithVault(vaultui.View(t.state)),
+	)
+	if err := shell.NewTab(); err != nil {
+		return t.fail(fmt.Errorf("open a work Tab for the production chrome: %w", err))
+	}
+	shell.ShowVault()
+	view := shellui.View(shell)
+
 	for _, size := range []struct {
 		width, height int
 	}{{1100, 720}, {720, 480}} {
-		t.tester.SetSize(size.width, size.height)
-		t.tester.Frame()
+		tester := ui.NewTester(view, size.width, size.height)
+		tester.SetLocale("en")
+		tester.Frame()
 
 		for _, want := range []string{
 			m.VaultHostNew(), m.VaultGroupNew(), m.VaultProxyNew(),
@@ -365,15 +408,23 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 			m.VaultIdentityListTitle(t.state.IdentityCount()),
 			"web-1",
 		} {
-			if !t.tester.HasText(want) {
+			if !tester.HasText(want) {
 				return t.fail(fmt.Errorf("%dx%d: %q is not rendered: %v",
-					size.width, size.height, want, t.tester.Texts()))
+					size.width, size.height, want, tester.Texts()))
 			}
+		}
+		lines, err := selftest20SummaryLines(tester, summary)
+		if err != nil {
+			return t.fail(fmt.Errorf("%dx%d: %w", size.width, size.height, err))
+		}
+		if lines > 2 {
+			return t.fail(fmt.Errorf("%dx%d: the Host summary uses %d lines, want at most 2",
+				size.width, size.height, lines))
 		}
 		// Every laid-out text must stay inside the window. Texts the Scroll
 		// has not reached have no geometry yet, so they are not checked.
-		for _, text := range t.tester.Texts() {
-			rect, ok := t.tester.Find(text)
+		for _, text := range tester.Texts() {
+			rect, ok := tester.Find(text)
 			if !ok || rect.W <= 0 {
 				continue
 			}
@@ -383,13 +434,99 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 			}
 		}
 	}
-	t.tester.SetSize(1100, 720)
-	t.tester.Frame()
 	t.cleanup()
 	return selftest.Passed(
-		"the Vault renders at 1100x720 and 720x480 with no horizontal overflow",
-		"vaultui.View + ui.Tester")
+		"the Vault renders inside the production shell and tab strip at 1100x720 "+
+			"and 720x480 with a two-line Host summary and no horizontal overflow",
+		"shellui.View + vaultui.View + ui.Tester")
 }
+
+// selftest20SummaryLines counts the visual lines the summary tokens occupy, including a
+// token that wraps inside itself.
+func selftest20SummaryLines(tester *ui.Tester, tokens []string) (int, error) {
+	rects := make([]ui.Rect, 0, len(tokens))
+	lineHeight := float32(0)
+	for _, token := range tokens {
+		rect, ok := tester.Find(token)
+		if !ok || rect.W <= 0 {
+			return 0, fmt.Errorf("summary token %q is not laid out", token)
+		}
+		rects = append(rects, rect)
+		if lineHeight == 0 || (rect.H > 0 && rect.H < lineHeight) {
+			lineHeight = rect.H
+		}
+	}
+	type group struct {
+		y     float32
+		lines int
+	}
+	var groups []group
+	for _, rect := range rects {
+		lines := int((rect.H + lineHeight/2) / lineHeight)
+		if lines < 1 {
+			lines = 1
+		}
+		merged := false
+		for i := range groups {
+			if rect.Y-groups[i].y < 1 && groups[i].y-rect.Y < 1 {
+				if lines > groups[i].lines {
+					groups[i].lines = lines
+				}
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			groups = append(groups, group{y: rect.Y, lines: lines})
+		}
+	}
+	total := 0
+	for _, g := range groups {
+		total += g.lines
+	}
+	return total, nil
+}
+
+// selftest20Transport keeps a fake Session alive so the layout step renders
+// the same work Tab strip the production window shows over the Vault.
+type selftest20Transport struct {
+	output chan []byte
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newSelftest20Transport() *selftest20Transport {
+	return &selftest20Transport{output: make(chan []byte), closed: make(chan struct{})}
+}
+
+func (f *selftest20Transport) Read(p []byte) (int, error) {
+	select {
+	case data := <-f.output:
+		return copy(p, data), nil
+	case <-f.closed:
+		return 0, io.EOF
+	}
+}
+
+func (f *selftest20Transport) Write(p []byte) (int, error) { return len(p), nil }
+func (f *selftest20Transport) Resize(int, int) error       { return nil }
+func (f *selftest20Transport) Wait() (int, error)          { return 0, nil }
+
+func (f *selftest20Transport) Close() error {
+	f.once.Do(func() { close(f.closed) })
+	return nil
+}
+
+type selftest20Factory struct{}
+
+func (selftest20Factory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+	return newSelftest20Transport(), nil
+}
+
+type selftest20Surface struct{}
+
+func (selftest20Surface) View(c *ui.Context) ui.Element { return ui.Text(c, "terminal") }
+func (selftest20Surface) Close()                        {}
 
 func (t *selftest20) start() error {
 	if t.state != nil {
