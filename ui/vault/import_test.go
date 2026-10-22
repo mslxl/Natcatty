@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -172,6 +173,87 @@ func TestImportPanelPreviewsRowsAndIssuesAtBothSizes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestImportMasterPasswordClearsTheScrollbar types a long masked password and
+// asserts the field's laid-out right edge stays left of the scroll bar's
+// track at both supported window sizes. The bar overlays the content, so a
+// full-width grow column would put the field's border, and text, under it.
+func TestImportMasterPasswordClearsTheScrollbar(t *testing.T) {
+	longPassword := strings.Repeat("correct-horse-battery-", 8)
+	for _, size := range editorSizes {
+		for _, locale := range []string{"en", "zh-CN"} {
+			name := fmt.Sprintf("%dx%d/%s", size.width, size.height, locale)
+			t.Run(name, func(t *testing.T) {
+				m := locales.In(locale)
+				state, _, tt := newImportView(t, size.width, size.height)
+				tt.SetLocale(locale)
+
+				if err := tt.Click(m.VaultImportTitle()); err != nil {
+					t.Fatalf("click Import: %v", err)
+				}
+				tt.Frame()
+				if err := tt.Click(m.VaultImportChooseFile()); err != nil {
+					t.Fatalf("click Choose File: %v", err)
+				}
+				tt.Frame()
+
+				// A long value makes the masked text reach the field's right
+				// padding, where the scroll bar used to cover it.
+				*state.ImportMasterPasswordInput() = longPassword
+				var layout importFieldLayout
+				restore := watchImportLayout(func(found importFieldLayout) { layout = found })
+				defer restore()
+				// The probe reports the previous frame's boxes, so a second
+				// frame records the layout built with the long value.
+				tt.Frame()
+				tt.Frame()
+
+				master, viewport := layout.master, layout.viewport
+				if master.W <= 0 || master.H <= 0 {
+					t.Fatalf("the master-password field was not laid out: %+v", master)
+				}
+				if viewport.W <= 0 || viewport.H <= 0 {
+					t.Fatalf("the import scroll viewport was not laid out: %+v", viewport)
+				}
+				// MyGo paints the vertical track from the theme's thumb width
+				// (6 DIPs by default) plus 6 DIPs of inset and padding. Assert
+				// against that independently of the padding the panel applies.
+				const mygoScrollbarTrack = 12
+				if layout.gutter != mygoScrollbarTrack {
+					t.Errorf("the panel reserved %.1f DIPs for the scroll bar, want the %.1f-DIP track",
+						layout.gutter, float32(mygoScrollbarTrack))
+				}
+				const epsilon = 0.5
+				if master.X < viewport.X-epsilon {
+					t.Errorf("the master-password field starts before the scroll viewport: field %+v, viewport %+v",
+						master, viewport)
+				}
+				if right := master.X + master.W; right > viewport.X+viewport.W-mygoScrollbarTrack+epsilon {
+					t.Errorf("the master-password field runs under the scroll bar: field right %.1f, usable right %.1f (field %+v, viewport %+v)",
+						right, viewport.X+viewport.W-mygoScrollbarTrack, master, viewport)
+				}
+				// The rest of the panel must still render at both sizes.
+				for _, want := range []string{
+					m.VaultImportFormat(), m.VaultImportFormatAuto(),
+					m.VaultImportMasterHint(), m.VaultImportMerge(), m.VaultImportMergeSkip(),
+					m.VaultImportImport(), m.VaultHostCancel(),
+				} {
+					if !tt.HasText(want) {
+						t.Errorf("%q is missing after the gutter change, texts %q", want, tt.Texts())
+					}
+				}
+			})
+		}
+	}
+}
+
+// watchImportLayout sets the import panel's layout probe and returns a
+// function that restores the previous one.
+func watchImportLayout(fn func(importFieldLayout)) (restore func()) {
+	previous := importLayoutProbe
+	importLayoutProbe = fn
+	return func() { importLayoutProbe = previous }
 }
 
 func TestImportPanelWritesSelectedRowsAndShowsSummary(t *testing.T) {

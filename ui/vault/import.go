@@ -79,6 +79,32 @@ func importMergeCode(m locales.Messages, label string) string {
 	return string(appvault.ImportMergeSkip)
 }
 
+// importScrollbarGutter is the width of the scroll bar's track for theme t:
+// the thumb (t.ScrollbarWidth DIPs, 6 when unset) plus the 6 DIPs it is inset
+// and padded by in MyGo's scrollBars geometry. Reserving it keeps the panel's
+// growing fields, such as the master-password input, from running under the
+// bar.
+func importScrollbarGutter(t *ui.Theme) float32 {
+	width := t.ScrollbarWidth
+	if width <= 0 {
+		width = 6
+	}
+	return width + 6
+}
+
+// importFieldLayout is the import panel geometry the regression tests assert:
+// the master-password field and the scroll viewport it sits in, plus the
+// gutter that viewport reserves for the bar.
+type importFieldLayout struct {
+	master, viewport ui.Rect
+	gutter           float32
+}
+
+// importLayoutProbe, when non-nil, receives the import panel's laid-out
+// geometry on each build. Tests use it to assert the field clears the scroll
+// bar; the app leaves it nil.
+var importLayoutProbe func(importFieldLayout)
+
 // importPanel renders the external-inventory preview. The header and action
 // bar stay fixed; the summary, problem report, and row list scroll, so the
 // panel stays usable at 720x480.
@@ -105,7 +131,12 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		return
 	}
 
-	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
+	// PaddingEnd reserves the overlay scroll bar's track: the scroll content
+	// is laid out in the remaining width, so grow columns and inputs end
+	// left of the bar instead of under it.
+	gutter := importScrollbarGutter(t)
+	scrollBox := ui.Scroll(c).Grow(1).FillWidth().PaddingEnd(gutter).TrackScroll(scroll)
+	scrollBox.Children(func() {
 		ui.Text(c, m.VaultImportSummary(
 			preview.Counts.Total, preview.Counts.New, preview.Counts.Conflicts,
 			preview.Counts.Duplicates, preview.Counts.Invalid,
@@ -128,9 +159,17 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					c.Invalidate()
 				}
 			})
-			ui.Column(c).Grow(1).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				ui.Text(c, m.VaultImportMasterPassword()).FontSize(12).TextColor(t.TextMuted)
-				if ui.TextInput(c, s.ImportMasterPasswordInput()).Password().Changed() {
+				field := ui.TextInput(c, s.ImportMasterPasswordInput()).Password()
+				if importLayoutProbe != nil {
+					importLayoutProbe(importFieldLayout{
+						master:   field.LayoutBounds(),
+						viewport: scrollBox.LayoutBounds(),
+						gutter:   gutter,
+					})
+				}
+				if field.Changed() {
 					s.RefreshImport()
 					c.Invalidate()
 				}
