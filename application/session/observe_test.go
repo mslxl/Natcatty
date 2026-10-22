@@ -49,6 +49,17 @@ func readObservation(t *testing.T, reader io.Reader, want string) {
 	}
 }
 
+// screenReplay returns the bytes the Session's bounded replay currently holds:
+// the same bytes Observe starts an observation with, read under the same lock.
+// The tap's OutputBytes counter is incremented before readLoop renders the
+// chunk, so waiting on it is not a barrier for "the output is emitted"; waiting
+// on the replay is.
+func screenReplay(s *Session) string {
+	s.outputMu.Lock()
+	defer s.outputMu.Unlock()
+	return string(s.replay.snapshot())
+}
+
 // TestObserverSnapshotMatchesTheOwnerAndReceivesFeed proves the Snapshot/Feed
 // facade: the observation starts with the exact output the owning Session has
 // produced, then blocks for output produced afterwards.
@@ -65,8 +76,8 @@ func TestObserverSnapshotMatchesTheOwnerAndReceivesFeed(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 
 	transport.send("first line\r\n")
-	eventually(t, "the first line", func() bool {
-		return session.Snapshot().Stats.OutputBytes >= int64(len("first line\r\n"))
+	eventually(t, "the rendered first line", func() bool {
+		return screenReplay(session) == "first line\r\n"
 	})
 
 	observation, err := session.Observe()
