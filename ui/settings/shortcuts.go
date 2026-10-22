@@ -85,6 +85,17 @@ func (s *ShortcutsState) Chord(id string) string {
 	return s.bindings.Chord(id, s.Scheme())
 }
 
+// ChordFor returns the effective chord of a binding in scheme, including a
+// user override. Settings search indexes both columns so a query finds a
+// binding even when the other scheme is active.
+func (s *ShortcutsState) ChordFor(id string, scheme domain.Scheme) string {
+	return s.bindings.Chord(id, scheme)
+}
+
+// MenuShortcuts returns the live application-menu accelerators, so Settings
+// search and conflict detection see the menu the user actually has.
+func (s *ShortcutsState) MenuShortcuts() []domain.MenuShortcut { return s.menuShortcuts() }
+
 // IsOverridden reports whether a binding differs from its catalog default.
 func (s *ShortcutsState) IsOverridden(id string) bool {
 	return s.bindings.IsOverridden(id, s.Scheme())
