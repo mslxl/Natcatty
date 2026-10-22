@@ -137,6 +137,34 @@
   "vaultImportFormatFinalShell": "FinalShell",
   "vaultImportFormatSecureCRT": "SecureCRT",
   "vaultImportFormatSSHConfig": "OpenSSH ssh_config",
+  "vaultImportFormatNetcattyJSON": "Netcatty JSON",
+  "vaultImportFormatSnippets": "Netcatty 程式碼片段",
+  "vaultImportFormatKeys": "Netcatty 金鑰",
+  "vaultImportFormatNotesZIP": "Netcatty 筆記（ZIP）",
+  "vaultImportFamily": "{count, plural, other {還將還原 # 筆主機清單之外的記錄。}}",
+  "vaultImportFamilyRows": "其他記錄",
+  "vaultImportFamilySelected": "{count, plural, other {還將還原 # 筆其他記錄。}}",
+  "@vaultImportFamilySelected": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultImportFamilyGroup": "群組",
+  "vaultImportFamilySnippetPackage": "程式碼片段套件",
+  "vaultImportFamilySnippet": "程式碼片段",
+  "vaultImportFamilyNoteGroup": "筆記群組",
+  "vaultImportFamilyNote": "筆記",
+  "vaultImportFamilyKey": "金鑰",
+  "vaultImportFamilyIdentity": "身分",
+  "vaultImportFamilyProxyProfile": "代理設定",
+  "vaultImportFamilyKnownHost": "已知主機",
+  "vaultImportIssueInvalidArchive": "ZIP 壓縮檔損毀或無效。",
+  "vaultImportIssueInvalidManifest": "筆記清單無效；將改用檔案名稱。",
+  "vaultImportIssueMissingNoteEntry": "清單中的一則筆記缺少 Markdown 檔案。",
   "vaultImportMasterPassword": "主密碼",
   "vaultImportMasterHint": "僅受主密碼保護的 MobaXterm 檔案需要。",
   "vaultImportSummary": "共 {total} 列：{added} 個新增，{conflicts} 個衝突，{duplicates} 個重複，{invalid} 個無效",
@@ -193,6 +221,16 @@
   },
   "vaultImportNoneSelected": "請至少選取一列再匯入。",
   "vaultImportDone": "已匯入 {imported} 台主機，覆寫 {overwritten} 台，略過 {skipped} 台，建立 {groups} 個主機群組。",
+  "vaultImportDoneFamily": "{count, plural, other {已還原 # 筆其他記錄。}}",
+  "@vaultImportDoneFamily": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
@@ -1200,6 +1238,7 @@
     }
   },
   "vaultExportUnreadable": "有 {count} 個憑證無法讀取，已省略。",
+  "vaultExportOmitted": "{count, plural, other {已省略 # 個已儲存的認證；啟用密鑰匯出以包含它們。}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

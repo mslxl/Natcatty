@@ -1,14 +1,10 @@
 package vault
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
-	"strconv"
-	"strings"
-	"unicode"
 
+	"github.com/mslxl/natcatty/application/vault/export"
 	"github.com/mslxl/natcatty/domain/markdown"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -91,113 +87,15 @@ func (s *Service) ExportNotes(ctx context.Context, format NoteExportFormat) (Not
 	}, nil
 }
 
-// notesArchive writes one Markdown entry per Note. Group paths become
-// directories; colliding file names get a numeric suffix rather than
-// overwriting one another.
+// notesArchive writes one Markdown entry per Note plus the versioned manifest
+// the Notes importer prefers. Group paths become directories; colliding file
+// names get a numeric suffix rather than overwriting one another, while the
+// manifest keeps the exact title.
 func notesArchive(notes []domainvault.Note) ([]byte, error) {
-	var buffer bytes.Buffer
-	archive := zip.NewWriter(&buffer)
-	used := make(map[string]int, len(notes))
-	for _, note := range notes {
-		name := noteArchiveName(note)
-		key := strings.ToLower(name)
-		used[key]++
-		if used[key] > 1 {
-			name = addNameSuffix(name, used[key])
-		}
-		writer, err := archive.Create(name)
-		if err != nil {
-			_ = archive.Close()
-			return nil, err
-		}
-		if _, err := writer.Write([]byte(note.Content)); err != nil {
-			_ = archive.Close()
-			return nil, err
-		}
-	}
-	if err := archive.Close(); err != nil {
-		return nil, err
-	}
-	return buffer.Bytes(), nil
-}
-
-// noteArchiveName builds a group-preserving, filesystem-safe entry name.
-func noteArchiveName(note domainvault.Note) string {
-	segments := make([]string, 0, 4)
-	for _, segment := range strings.Split(domainvault.NormalizeGroup(note.Group), "/") {
-		if segment == "" {
-			continue
-		}
-		segments = append(segments, sanitizeExportName(segment, "group"))
-	}
-	segments = append(segments, exportFileName(note.Title, "md"))
-	return strings.Join(segments, "/")
+	return vaultexport.NotesArchive(notes)
 }
 
 // exportFileName turns a Note title into a safe file name.
 func exportFileName(title, extension string) string {
-	return sanitizeExportName(title, "note") + "." + extension
-}
-
-// reservedWindowsNames are names Windows refuses as a file stem.
-var reservedWindowsNames = map[string]bool{
-	"con": true, "prn": true, "aux": true, "nul": true,
-	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
-	"com6": true, "com7": true, "com8": true, "com9": true,
-	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
-	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
-}
-
-// sanitizeExportName matches the original Notes export file-name rules:
-// control and Windows-unsafe characters become dashes, whitespace collapses to
-// one space, trailing dots and spaces are stripped, a reserved Windows stem
-// gains an underscore, and the result is capped at 120 runes. An empty or
-// unusable title falls back to fallback.
-func sanitizeExportName(name, fallback string) string {
-	name = strings.TrimSpace(name)
-	var builder strings.Builder
-	lastSpace := false
-	count := 0
-	for _, r := range name {
-		if count >= 120 {
-			break
-		}
-		switch {
-		case unicode.IsControl(r), r == '<', r == '>', r == ':', r == '"',
-			r == '/', r == '\\', r == '|', r == '?', r == '*':
-			builder.WriteByte('-')
-			lastSpace = false
-		case unicode.IsSpace(r):
-			if !lastSpace && builder.Len() > 0 {
-				builder.WriteByte(' ')
-				lastSpace = true
-			}
-		default:
-			builder.WriteRune(r)
-			lastSpace = false
-		}
-		count++
-	}
-	result := strings.TrimRight(builder.String(), ". ")
-	if result == "" || result == "." || result == ".." {
-		return fallback
-	}
-	stem := result
-	if dot := strings.IndexByte(stem, '.'); dot >= 0 {
-		stem = stem[:dot]
-	}
-	if reservedWindowsNames[strings.ToLower(stem)] {
-		result += "_"
-	}
-	return result
-}
-
-// addNameSuffix adds "-2" before the extension of name.
-func addNameSuffix(name string, count int) string {
-	dot := strings.LastIndexByte(name, '.')
-	suffix := "-" + strconv.Itoa(count)
-	if dot < 0 {
-		return name + suffix
-	}
-	return name[:dot] + suffix + name[dot:]
+	return vaultexport.SanitizeName(title, "note") + "." + extension
 }

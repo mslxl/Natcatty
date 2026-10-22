@@ -73,7 +73,7 @@ func TestTicket25CheckRunsThroughTheKeyboard(t *testing.T) {
 	for _, want := range []string{
 		"appvault.ExportVault + vaultexport.Export + store.SecretStore",
 		"vaultstate.Export/ConfirmExportSecrets + vaultui.View",
-		"appvault.ExportVault + appvault.PreviewImport/CommitImport + family importers",
+		"appvault.ExportVault + appvault.PreviewImport/CommitImport + family formats",
 		"vaultui.View + vaultstate.BeginExport + ui.Tester",
 	} {
 		if !seams[want] {

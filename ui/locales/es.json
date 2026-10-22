@@ -137,6 +137,34 @@
   "vaultImportFormatFinalShell": "FinalShell",
   "vaultImportFormatSecureCRT": "SecureCRT",
   "vaultImportFormatSSHConfig": "ssh_config de OpenSSH",
+  "vaultImportFormatNetcattyJSON": "JSON de Netcatty",
+  "vaultImportFormatSnippets": "Fragmentos de Netcatty",
+  "vaultImportFormatKeys": "Claves de Netcatty",
+  "vaultImportFormatNotesZIP": "Notas de Netcatty (ZIP)",
+  "vaultImportFamily": "{count, plural, one {También se restaurará # registro fuera de la lista de Hosts.} many {También se restaurarán # registros fuera de la lista de Hosts.} other {También se restaurarán # registros fuera de la lista de Hosts.}}",
+  "vaultImportFamilyRows": "Otros registros",
+  "vaultImportFamilySelected": "{count, plural, one {También se restaurará # registro adicional.} many {También se restaurarán # registros adicionales.} other {También se restaurarán # registros adicionales.}}",
+  "@vaultImportFamilySelected": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultImportFamilyGroup": "Grupo",
+  "vaultImportFamilySnippetPackage": "Paquete de fragmentos",
+  "vaultImportFamilySnippet": "Fragmento",
+  "vaultImportFamilyNoteGroup": "Grupo de notas",
+  "vaultImportFamilyNote": "Nota",
+  "vaultImportFamilyKey": "Clave",
+  "vaultImportFamilyIdentity": "Identidad",
+  "vaultImportFamilyProxyProfile": "Perfil de proxy",
+  "vaultImportFamilyKnownHost": "Host conocido",
+  "vaultImportIssueInvalidArchive": "El archivo ZIP está dañado o no es válido.",
+  "vaultImportIssueInvalidManifest": "El manifiesto de notas no es válido; se usan los nombres de archivo.",
+  "vaultImportIssueMissingNoteEntry": "Una nota del manifiesto no tiene su archivo Markdown.",
   "vaultImportMasterPassword": "Contraseña maestra",
   "vaultImportMasterHint": "Solo es necesaria para archivos MobaXterm protegidos con una contraseña maestra.",
   "vaultImportSummary": "Filas: {total}, nuevas: {added}, conflictos: {conflicts}, duplicadas: {duplicates}, no válidas: {invalid}",
@@ -193,6 +221,16 @@
   },
   "vaultImportNoneSelected": "Selecciona al menos una fila para importar.",
   "vaultImportDone": "Importación completada. Importados: {imported}, sobrescritos: {overwritten}, omitidos: {skipped}, grupos de Hosts creados: {groups}.",
+  "vaultImportDoneFamily": "{count, plural, one {Se restauró # registro adicional.} many {Se restauraron # registros adicionales.} other {Se restauraron # registros adicionales.}}",
+  "@vaultImportDoneFamily": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
@@ -1200,6 +1238,7 @@
     }
   },
   "vaultExportUnreadable": "No se pudieron leer {count} credenciales y se omitieron.",
+  "vaultExportOmitted": "{count, plural, one {Se omitió # credencial guardada; activa los secretos para incluirla.} many {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.} other {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

@@ -27,6 +27,14 @@ func importFormatLabelFor(m locales.Messages, format vaultimport.Format) string 
 	switch format {
 	case vaultimport.FormatCSV:
 		return m.VaultImportFormatCSV()
+	case vaultimport.FormatNetcattyJSON:
+		return m.VaultImportFormatNetcattyJSON()
+	case vaultimport.FormatSnippets:
+		return m.VaultImportFormatSnippets()
+	case vaultimport.FormatKeys:
+		return m.VaultImportFormatKeys()
+	case vaultimport.FormatNotesZIP:
+		return m.VaultImportFormatNotesZIP()
 	case vaultimport.FormatPuTTY:
 		return m.VaultImportFormatPuTTY()
 	case vaultimport.FormatMobaXterm:
@@ -148,6 +156,10 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			ui.Text(c, m.VaultImportGroups(len(preview.GroupsToCreate))).
 				FontSize(12).TextColor(t.TextMuted)
 		}
+		if preview.FamilyCounts.Total() > 0 {
+			ui.Text(c, m.VaultImportFamily(preview.FamilyCounts.Total())).
+				FontSize(12).TextColor(t.TextMuted)
+		}
 
 		ui.Row(c).FillWidth().Gap(12).Children(func() {
 			ui.Column(c).Grow(1).Children(func() {
@@ -202,6 +214,20 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			ui.Text(c, line).FontSize(12).TextColor(color)
 		}
 
+		if len(s.ImportFamilyRows()) > 0 {
+			ui.Text(c, m.VaultImportFamilyRows()).Bold()
+			for _, row := range s.ImportFamilyRows() {
+				ui.Row(c).FillWidth().Gap(8).Children(func() {
+					ui.Text(c, importFamilyKindText(m, row.Kind)).FontSize(12).
+						TextColor(t.TextMuted)
+					ui.Text(c, row.Label).FontSize(12).Grow(1)
+					if row.Detail != "" {
+						ui.Text(c, row.Detail).FontSize(11).TextColor(t.TextMuted)
+					}
+				})
+			}
+		}
+
 		ui.Text(c, m.VaultImportRows()).Bold()
 		for index := 0; index < s.ImportRowCount(); index++ {
 			row, ok := s.ImportRow(index)
@@ -237,10 +263,18 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		}
 	})
 
-	if selected := s.ImportSelectedCount(); selected == 0 {
+	selected := s.ImportSelectedCount()
+	familyCount := s.ImportFamilyCounts().Total()
+	if selected == 0 && familyCount == 0 {
 		ui.Text(c, m.VaultImportNoneSelected()).FontSize(12).TextColor(t.Warning)
 	} else {
-		ui.Text(c, m.VaultImportSelected(selected)).FontSize(12).TextColor(t.TextMuted)
+		if selected > 0 {
+			ui.Text(c, m.VaultImportSelected(selected)).FontSize(12).TextColor(t.TextMuted)
+		}
+		if familyCount > 0 {
+			ui.Text(c, m.VaultImportFamilySelected(familyCount)).FontSize(12).
+				TextColor(t.TextMuted)
+		}
 	}
 	ui.Row(c).Gap(8).Children(func() {
 		if ui.PrimaryButton(c, m.VaultImportImport()).Clicked() {
@@ -330,8 +364,40 @@ func importIssueMessage(m locales.Messages, code vaultimport.IssueCode) string {
 		return m.VaultImportIssueNothingParsed()
 	case vaultimport.IssueX11NotImported:
 		return m.VaultImportIssueX11()
+	case vaultimport.IssueInvalidArchive:
+		return m.VaultImportIssueInvalidArchive()
+	case vaultimport.IssueInvalidManifest:
+		return m.VaultImportIssueInvalidManifest()
+	case vaultimport.IssueMissingNoteEntry:
+		return m.VaultImportIssueMissingNoteEntry()
 	default:
 		return m.VaultImportIssueInvalidField()
+	}
+}
+
+// importFamilyKindText localizes a stable family row kind.
+func importFamilyKindText(m locales.Messages, kind string) string {
+	switch kind {
+	case appvault.FamilyKindGroup:
+		return m.VaultImportFamilyGroup()
+	case appvault.FamilyKindSnippetPackage:
+		return m.VaultImportFamilySnippetPackage()
+	case appvault.FamilyKindSnippet:
+		return m.VaultImportFamilySnippet()
+	case appvault.FamilyKindNoteGroup:
+		return m.VaultImportFamilyNoteGroup()
+	case appvault.FamilyKindNote:
+		return m.VaultImportFamilyNote()
+	case appvault.FamilyKindKey:
+		return m.VaultImportFamilyKey()
+	case appvault.FamilyKindIdentity:
+		return m.VaultImportFamilyIdentity()
+	case appvault.FamilyKindProxyProfile:
+		return m.VaultImportFamilyProxyProfile()
+	case appvault.FamilyKindKnownHost:
+		return m.VaultImportFamilyKnownHost()
+	default:
+		return kind
 	}
 }
 
@@ -343,8 +409,14 @@ func importOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 		return
 	}
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultImportDone(outcome.Imported, outcome.Overwritten,
-			outcome.Skipped, outcome.Groups)).FontSize(12).Grow(1)
+		ui.Column(c).Grow(1).Children(func() {
+			ui.Text(c, m.VaultImportDone(outcome.Imported, outcome.Overwritten,
+				outcome.Skipped, outcome.Groups)).FontSize(12)
+			if outcome.Family > 0 {
+				ui.Text(c, m.VaultImportDoneFamily(outcome.Family)).FontSize(11).
+					TextColor(t.TextMuted)
+			}
+		})
 		if ui.Button(c, m.VaultImportDismiss()).Clicked() {
 			s.DismissImportOutcome()
 			c.Invalidate()
