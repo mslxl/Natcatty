@@ -67,6 +67,7 @@ func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
 	if err != nil {
 		return fmt.Errorf("store: save Host Group: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -136,5 +137,6 @@ func (s *Store) DeleteGroup(ctx context.Context, path string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }

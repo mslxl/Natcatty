@@ -68,6 +68,7 @@ func (s *Store) Save(ctx context.Context, host domainvault.Host) error {
 	if err != nil {
 		return fmt.Errorf("store: save Host: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -125,6 +126,7 @@ func (s *Store) Delete(ctx context.Context, id model.HostID) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }
 

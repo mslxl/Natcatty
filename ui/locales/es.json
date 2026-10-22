@@ -1288,5 +1288,132 @@
   "vaultProblemExportFormat": "Elige un formato de exportación válido.",
   "vaultProblemExportUnconfirmed": "Confirma primero el aviso de texto plano.",
   "vaultProblemExportNoHost": "Selecciona un Host para exportar.",
-  "vaultExportNotesPageTitle": "Exportación de notas de la bóveda"
+  "vaultBackupTitle": "Copias de seguridad locales",
+  "vaultBackupOpen": "Copias",
+  "vaultBackupBack": "Volver a la bóveda",
+  "vaultBackupIntro": "Puntos de restauración cifrados en este dispositivo. Se crea una copia tras los cambios de la bóveda y antes de cada restauración.",
+  "vaultBackupRetentionLabel": "Copias que conservar",
+  "vaultBackupRetentionHint": "Conserva entre {min} y {max} copias. Valor predeterminado: {fallback}.",
+  "@vaultBackupRetentionHint": {
+    "description": "The allowed local-backup retention range and its default.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      },
+      "fallback": {
+        "type": "int",
+        "example": "20"
+      }
+    }
+  },
+  "vaultBackupRetentionSave": "Guardar",
+  "vaultBackupRetentionInvalid": "Introduce un número entre {min} y {max}.",
+  "@vaultBackupRetentionInvalid": {
+    "description": "Validation message for the local-backup retention field.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      }
+    }
+  },
+  "vaultBackupListTitle": "{count, plural, one {# copia guardada} many {# copias guardadas} other {# copias guardadas}}",
+  "@vaultBackupListTitle": {
+    "description": "How many local backups are stored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultBackupEmpty": "Aún no hay copias locales. Cambia algo en la bóveda para crear una.",
+  "vaultBackupReasonVaultChange": "Cambio en la bóveda",
+  "vaultBackupReasonBeforeRestore": "Antes de restaurar",
+  "vaultBackupReasonAppVersionChange": "Actualización de la aplicación",
+  "vaultBackupRecords": "{count, plural, one {# registro} many {# registros} other {# registros}}",
+  "@vaultBackupRecords": {
+    "description": "How many Vault records one backup contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "vaultBackupFingerprint": "Huella {fingerprint}",
+  "@vaultBackupFingerprint": {
+    "description": "The shortened content fingerprint of a backup.",
+    "placeholders": {
+      "fingerprint": {
+        "type": "String",
+        "example": "4f9c2a7b1e03"
+      }
+    }
+  },
+  "vaultBackupRestore": "Restaurar",
+  "vaultBackupRestoreConfirm": "¿Restaurar la copia de {time}? Primero se crea una copia protectora de la bóveda actual. Si la restauración falla, la bóveda no cambia.",
+  "@vaultBackupRestoreConfirm": {
+    "description": "Confirmation before restoring one local backup.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "2026-10-23 14:05"
+      }
+    }
+  },
+  "vaultBackupRestoreConfirmUnknown": "¿Restaurar esta copia? Primero se crea una copia protectora de la bóveda actual. Si la restauración falla, la bóveda no cambia.",
+  "vaultBackupClear": "Borrar copias",
+  "vaultBackupClearConfirm": "{count, plural, one {¿Borrar # copia local? La bóveda no cambia.} many {¿Borrar las # copias locales? La bóveda no cambia.} other {¿Borrar las # copias locales? La bóveda no cambia.}}",
+  "@vaultBackupClearConfirm": {
+    "description": "Confirmation before deleting every local backup.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupPruned": "{count, plural, one {La retención eliminó # copia anterior.} many {La retención eliminó # copias anteriores.} other {La retención eliminó # copias anteriores.}}",
+  "@vaultBackupPruned": {
+    "description": "How many backups retention removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultBackupCleared": "{count, plural, one {Se borró # copia.} many {Se borraron # copias.} other {Se borraron # copias.}}",
+  "@vaultBackupCleared": {
+    "description": "How many backups the clear action deleted.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupSkippedTooLarge": "La bóveda supera el límite de 25 MiB, así que no se escribió ninguna copia.",
+  "vaultBackupSkippedUnavailable": "El llavero seguro no está disponible, así que se omitió la copia automática.",
+  "vaultBackupSkippedFailed": "No se pudo escribir la última copia. Comprueba el espacio libre y vuelve a intentarlo.",
+  "vaultBackupRestored": "Bóveda restaurada. El estado anterior se guardó como copia.",
+  "vaultBackupUnavailable": "Las copias locales necesitan el llavero del sistema. En este dispositivo no se puede escribir ni restaurar ninguna copia.",
+  "vaultBackupProblemList": "No se pudo leer la lista de copias.",
+  "vaultBackupProblemRetention": "No se pudo guardar la retención.",
+  "vaultBackupProblemRestore": "No se pudo restaurar esta copia. La bóveda no cambió.",
+  "vaultBackupProblemProtective": "Falló la copia protectora, así que se canceló la restauración. La bóveda no cambió.",
+  "vaultBackupProblemCorrupt": "Esta copia está dañada o la escribió una versión incompatible.",
+  "vaultBackupProblemClear": "No se pudieron borrar las copias.",
+  "vaultExportNotesPageTitle": "Exportación de notas de la bóveda",
+  "vaultBackupRestoreConfirmAction": "Restaurar ahora"
 }

@@ -40,6 +40,23 @@ func WithImportStore(store ImportStore) Option {
 	return func(s *Service) { s.importStore = store }
 }
 
+// WithApplyBarrier sets the mandatory work before the first chunk of a bulk
+// import, such as a protective local backup. If it fails, no record is
+// written. Later chunks of the same apply skip it.
+func WithApplyBarrier(fn func(ctx context.Context) error) Option {
+	return func(s *Service) { s.applyBarrier = fn }
+}
+
+// ApplyBarrierError reports that a bulk apply was aborted before writing
+// because its protective action failed. The Vault is unchanged.
+type ApplyBarrierError struct{ Cause error }
+
+func (e *ApplyBarrierError) Error() string {
+	return "vault: apply barrier failed: " + e.Cause.Error()
+}
+
+func (e *ApplyBarrierError) Unwrap() error { return e.Cause }
+
 // WithImportFiles gives the Service the key-file reader used to import
 // IdentityFile references from external inventories.
 func WithImportFiles(reader ImportFileReader) Option {
@@ -517,6 +534,15 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	end := len(preview.Rows)
 	if opts.Limit > 0 && start+opts.Limit < end {
 		end = start + opts.Limit
+	}
+
+	// A bulk apply starts with its protective barrier. A resumed chunk is
+	// already past it, so it must not take another backup or be blocked after
+	// the first chunk committed.
+	if start == 0 && s.applyBarrier != nil {
+		if err := s.applyBarrier(ctx); err != nil {
+			return ImportCommitResult{Next: start}, &ApplyBarrierError{Cause: err}
+		}
 	}
 
 	result := ImportCommitResult{Next: start}

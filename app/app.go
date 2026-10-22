@@ -21,6 +21,7 @@ import (
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/adapters/textcodec"
+	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/autocomplete"
 	"github.com/mslxl/natcatty/application/command"
@@ -31,6 +32,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
@@ -222,6 +224,17 @@ func run(afterReady func(hostWindow)) error {
 	}
 	defer secretStore.Close()
 
+	// Local backups snapshot the Vault after committed changes. The store keeps
+	// its own keychain key, separate from the field-secret key, so a backup can
+	// be written even when credential support is in session-only mode.
+	backupStore := adapterbackup.Open(
+		filepath.Join(userData, "vault-backups"), platformsecrets.System{})
+	backupService := appbackup.NewService(database, backupStore,
+		appbackup.WithRetentionStore(backupStore))
+	backupService.Start()
+	defer backupService.Stop()
+	database.SetChangeHook(backupService.NotifyVaultChanged)
+
 	vaultService := appvault.NewService(
 		database,
 		appvault.WithSecrets(secretStore),
@@ -235,6 +248,10 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithKeyInspector(sshadapter.KeyParser{}),
 		appvault.WithImportStore(database),
 		appvault.WithImportFiles(importFileReader{}),
+		appvault.WithApplyBarrier(func(ctx context.Context) error {
+			_, err := backupService.CreateProtective(ctx)
+			return err
+		}),
 		appvault.WithHistoryReader(historyService),
 	)
 
@@ -316,6 +333,8 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithImportPicker(importFilePicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithExports(vaultService),
 		vaultstate.WithExportWriter(noteFileWriter{}),
+		vaultstate.WithBackups(backupService),
+		vaultstate.WithBackupAfterRestore(func() { _ = forwardingState.Reload() }),
 		vaultstate.WithSnippetRunner(snippetRunner{
 			// The runner resolves both pointers lazily: vaultState is built
 			// before the Session service and shell state exist.
@@ -541,7 +560,11 @@ func run(afterReady func(hostWindow)) error {
 			}
 		}),
 	)
-	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock)
+	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock, vaultState, func() {
+		if windows != nil {
+			windows.FocusMain()
+		}
+	})
 
 	// Every window is created through this manager, which wraps its content in
 	// the one App Lock gate and owns close/exit intent.
@@ -666,7 +689,8 @@ func run(afterReady func(hostWindow)) error {
 
 // newRegistry wires every command the shell exposes. Menu items and any later
 // key binding or command palette dispatch through this one registry.
-func newRegistry(shellState *state.State, quit func(), lockApp func() error) *command.Registry {
+func newRegistry(shellState *state.State, quit func(), lockApp func() error,
+	vaultState *vaultstate.State, focusMain func()) *command.Registry {
 	registry := command.NewRegistry()
 	register := func(id command.ID, handler command.Handler) {
 		if err := registry.Register(id, handler); err != nil {
@@ -730,6 +754,17 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error) *co
 	}
 	register(command.LockApp, func(context.Context) error {
 		return lockApp()
+	})
+	register(command.OpenBackups, func(context.Context) error {
+		if vaultState == nil {
+			return nil
+		}
+		vaultState.BeginBackups()
+		shellState.ShowVault()
+		if focusMain != nil {
+			focusMain()
+		}
+		return nil
 	})
 	register(command.Quit, func(context.Context) error {
 		quit()

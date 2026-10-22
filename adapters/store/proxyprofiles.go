@@ -89,6 +89,7 @@ func (s *Store) SaveProxyProfile(ctx context.Context, profile domainvault.ProxyP
 	if err != nil {
 		return fmt.Errorf("store: save Proxy Profile: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -103,5 +104,6 @@ func (s *Store) DeleteProxyProfile(ctx context.Context, id string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }

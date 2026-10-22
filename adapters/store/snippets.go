@@ -83,6 +83,7 @@ func (s *Store) SaveSnippet(ctx context.Context, snippet domainvault.Snippet) er
 	if err != nil {
 		return fmt.Errorf("store: save Snippet: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -95,6 +96,7 @@ func (s *Store) DeleteSnippet(ctx context.Context, id string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -168,6 +170,7 @@ func (s *Store) SaveSnippetPackage(ctx context.Context, pkg domainvault.SnippetP
 	if err != nil {
 		return fmt.Errorf("store: save Snippet package: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -182,5 +185,6 @@ func (s *Store) DeleteSnippetPackage(ctx context.Context, path string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }
