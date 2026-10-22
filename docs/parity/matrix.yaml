@@ -1328,6 +1328,96 @@
   status: verified
   notes: "The Settings window adds a Terminal section before desktop integration: automatic logging, folder, format, timestamps, OSC 52, and notification mode. Values persist atomically in terminal-settings.json; unknown enums normalize to the original defaults. A failed save keeps the previous value and shows a localized failure."
 
+- id: settings.window-search
+  area: settings
+  feature: Searchable Settings window covering every non-AI area
+  original_paths:
+    - components/SettingsPage.tsx
+    - application/state/settingsStateDefaults.ts
+  module: ui/settings
+  tickets: [27]
+  acceptance_tests:
+    - ui/settings.TestSearchFiltersAcrossAreasAndKeyboardOnlyOpensTheMatch
+    - ui/settings.TestSearchArrowKeysMoveTheHighlight
+    - ui/settings.TestSearchIndexCoversEveryArea
+    - ui/settings.TestSearchIndexesEveryTerminalSetting
+    - ui/settings.TestSettingsScreenshotsAndClipping
+    - app.TestTicket27CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The whole-tree search filters every area, the typed preference fields, the Terminal controls, and all 42 shortcut rows by localized label, stable identifier, and English keywords. Arrow keys move the highlight, Enter opens the matching area, and Escape clears the query. The window is verified at 1100x720 and 720x480 in English and Simplified Chinese without clipping."
+
+- id: settings.live-apply-reset
+  area: settings
+  feature: Preferences apply live and reset individually, by group, or all at once
+  original_paths:
+    - application/state/settingsStateDefaults.ts
+    - components/SettingsPage.tsx
+  module: application/preferences
+  tickets: [27]
+  acceptance_tests:
+    - domain/preferences.TestDefaultsMatchTheOriginal
+    - domain/preferences.TestResetFieldRestoresOnlyThatField
+    - domain/preferences.TestEveryFieldBelongsToAGroup
+    - adapters/store.TestPreferencesStoreOverlaysPartialFilesOnDefaults
+    - ui/settings.TestPreferenceChangesApplyLiveAndResetIndividually
+    - ui/settings.TestResetAllAsksBeforeRestoringEverything
+    - app.TestTicket27CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Every typed group is saved atomically in preferences.json before it is published, so the window never shows a value the app is not using. A field reset restores only that field; a group and the all-at-once reset use a localized confirmation. Window opacity, terminal font, close confirmation, and startup landing are applied without a restart. The theme catalog is ticket 28; the typed setting and its live surface exist here."
+
+- id: keyboard.catalog-schemes
+  area: shell
+  feature: The original 42 keyboard bindings, mac/PC schemes, and persisted overrides
+  original_paths:
+    - domain/models/keyBindings.ts
+    - domain/activeKeyBindings.ts
+    - domain/customKeyBindings.ts
+    - application/state/settingsStateDefaults.ts
+  module: domain/keybindings
+  tickets: [27]
+  acceptance_tests:
+    - domain/keybindings.TestCatalogMatchesTheOriginal42
+    - domain/keybindings.TestCatalogShipsMacPCDisabledDefaults
+    - domain/keybindings.TestParseSchemeAndPlatformDefault
+    - domain/keybindings.TestOverridesResolveAndReset
+    - application/keybindings.TestDefaultSchemeIsPCOnWindowsAndMacOnDarwin
+    - application/keybindings.TestSetBindingRejectsMalformedChords
+    - adapters/store.TestKeyBindingsStoreRoundTripsAndToleratesBadFiles
+    - ui/settings.TestShortcutSchemeSwitchAndDisabledScheme
+    - ui/settings.TestEveryBindingHasALocalizedLabel
+    - app.TestTicket27CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "IDs, actions, labels, categories, mac/PC defaults, and Disabled match the original catalog. The original English labels live in the five UI catalogs, so the domain catalog holds no display strings (ADR-0009). The PC scheme is the Windows default; mac and PC remain selectable on every platform, and Disabled turns every application binding off. Overrides persist per binding and scheme in keybindings.json and are localized in Settings."
+
+- id: keyboard.dispatch-precedence
+  area: shell
+  feature: Two-tier shortcut dispatch with conflict handling
+  original_paths:
+    - application/state/useGlobalHotkeys.ts
+    - components/terminal/runtime/createXTermRuntime.ts
+    - application/app/tabShortcutTargets.ts
+    - components/terminal/runtime/terminalCopyShortcut.ts
+  module: app
+  tickets: [27]
+  acceptance_tests:
+    - domain/keybindings.TestFindConflictsReportsDuplicateChordsAndMenuAccelerators
+    - domain/keybindings.TestFindConflictsIgnoresDisabledBindings
+    - domain/keybindings.TestFindConflictsReportsAGlobalBindingOnATerminalChord
+    - application/keybindings.TestSetBindingRejectsConflictsUntilResolvedByReplace
+    - application/keybindings.TestSetBindingRejectsMenuConflictAndReplaceSuppressesTheMenu
+    - ui/settings.TestShortcutRecorderRequiresReplaceOnConflict
+    - ui/settings.TestShortcutCancelLeavesEveryBindingAlone
+    - ui/settings.TestShortcutRecorderTakesAConflictingChordFromTheKeyboard
+    - app.TestMenuAcceleratorsFollowTheActiveSchemeAndOverrides
+    - app.TestATerminalChordNeverBecomesAMenuAccelerator
+    - app.TestSettingsWindowLetsTheRecorderTakeAnAppBoundChord
+    - app.TestDispatcherRunsRealActionsAndLeavesTerminalChordsAlone
+    - app.TestTerminalKeybindsFollowOverridesAndClearOldDefaults
+    - app.TestMenuSettingsAcceleratorOpensSettingsThroughTheAcceleratorEngine
+    - app.TestTicket27CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A duplicate chord in the active scheme, or a collision with a foreign menu accelerator, is reported with the binding and action; nothing is saved until the user chooses Replace or Cancel. Terminal-vs-SFTP default collisions are intentional because those surfaces never coexist; a global binding that takes a terminal chord is a conflict, because the terminal would silently keep the key. Terminal-owned chords, including Ctrl+C SIGINT, are never registered as global or menu shortcuts; terminal copy/paste/font size are applied through MyGo keybinds. The Settings window binds no global shortcut table, so its search field and shortcut recorder receive every chord before any application action. Features this build lacks keep a catalog row marked unavailable and never fire. A binding override on an open terminal applies when the next terminal is created, because MyGo applies keybinds at construction; font changes apply live."
+
 # --- Ticket 11: X11 forwarding ---
 
 - id: x11.host-setting
