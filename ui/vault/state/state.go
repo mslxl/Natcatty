@@ -15,6 +15,7 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 )
 
@@ -120,6 +121,14 @@ const (
 	ProblemExportFormat             Problem = "export_format"
 	ProblemExportUnconfirmed        Problem = "export_unconfirmed"
 	ProblemExportNoHost             Problem = "export_no_host"
+	ProblemBackupList               Problem = "backup_list"
+	ProblemBackupRetention          Problem = "backup_retention"
+	ProblemBackupRetentionInvalid   Problem = "backup_retention_invalid"
+	ProblemBackupRestore            Problem = "backup_restore"
+	ProblemBackupProtective         Problem = "backup_protective"
+	ProblemBackupCorrupt            Problem = "backup_corrupt"
+	ProblemBackupUnavailable        Problem = "backup_unavailable"
+	ProblemBackupClear              Problem = "backup_clear"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -181,6 +190,16 @@ type State struct {
 	snippetPackageItems []domainvault.SnippetPackage
 	noteItems           []domainvault.Note
 	noteGroupItems      []domainvault.NoteGroup
+	backups             Backups
+	backupsOpen         bool
+	backupItems         []domainbackup.Summary
+	backupRetention     int
+	backupInput         string
+	backupPendingID     string
+	backupPendingClear  bool
+	backupNotice        BackupNotice
+	backupProblem       Problem
+	backupAfterRestore  func()
 	selected            model.HostID
 	editing             bool
 	form                Form

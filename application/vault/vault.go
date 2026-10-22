@@ -45,6 +45,7 @@ type Service struct {
 	now               func() time.Time
 	importStore       ImportStore
 	importFiles       ImportFileReader
+	applyBarrier      func(ctx context.Context) error
 	history           HistoryReader
 	themeSource       func() string
 }

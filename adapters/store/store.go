@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -17,6 +18,28 @@ import (
 // goroutine; MyGo serializes operations on the connection.
 type Store struct {
 	db *platformsqlite.DB
+
+	changeMu sync.Mutex
+	onChange func()
+}
+
+// SetChangeHook installs the callback that runs after a Vault-mutating write
+// commits. The local-backup service uses it to queue an automatic backup; the
+// hook must not block. It is never called for workspace, history, terminal
+// settings, or a restore.
+func (s *Store) SetChangeHook(fn func()) {
+	s.changeMu.Lock()
+	s.onChange = fn
+	s.changeMu.Unlock()
+}
+
+func (s *Store) vaultChanged() {
+	s.changeMu.Lock()
+	fn := s.onChange
+	s.changeMu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 var (
@@ -94,7 +117,13 @@ func (s *Store) journalMode(ctx context.Context) (string, error) {
 // SchemaVersion reports the applied migration version. schema_migrations is
 // the authority; PRAGMA user_version is only a diagnostic mirror.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
-	rows, err := s.db.Query(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`)
+	return readSchemaVersion(ctx, s.db.Query)
+}
+
+// readSchemaVersion takes the query function so a Consistent snapshot can
+// read the version without re-entering the connection gate.
+func readSchemaVersion(ctx context.Context, query platformsqlite.QueryFunc) (int, error) {
+	rows, err := query(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`)
 	if err != nil {
 		return 0, fmt.Errorf("store: read schema version: %w", err)
 	}

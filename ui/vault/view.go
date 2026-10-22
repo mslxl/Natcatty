@@ -13,6 +13,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -50,6 +51,7 @@ const (
 	surfaceNoteGroup
 	surfaceImport
 	surfaceExport
+	surfaceBackups
 )
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
@@ -90,6 +92,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceImport
 	case s.ExportOpen():
 		return surfaceExport
+	case s.BackupsOpen():
+		return surfaceBackups
 	case s.SnippetRunOpen():
 		return surfaceSnippetRun
 	case s.ViewingNote():
@@ -172,6 +176,8 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				importPanel(c, s, m, t, &positions.editor)
 			case surfaceExport:
 				exportPanel(c, s, m, t, &positions.editor)
+			case surfaceBackups:
+				backupPanel(c, s, m, t, &positions.editor)
 			default:
 				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
@@ -189,6 +195,10 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 		}
 		if ui.Button(c, m.VaultExportTitle()).Clicked() {
 			s.BeginExport()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultBackupOpen()).Clicked() {
+			s.BeginBackups()
 			c.Invalidate()
 		}
 		if ui.PrimaryButton(c, m.VaultHostNew()).Clicked() {
@@ -1752,6 +1762,22 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemExportUnconfirmed()
 	case vaultstate.ProblemExportNoHost:
 		return m.VaultProblemExportNoHost()
+	case vaultstate.ProblemBackupList:
+		return m.VaultBackupProblemList()
+	case vaultstate.ProblemBackupRetention:
+		return m.VaultBackupProblemRetention()
+	case vaultstate.ProblemBackupRetentionInvalid:
+		return m.VaultBackupRetentionInvalid(domainbackup.MinRetention, domainbackup.MaxRetention)
+	case vaultstate.ProblemBackupRestore:
+		return m.VaultBackupProblemRestore()
+	case vaultstate.ProblemBackupProtective:
+		return m.VaultBackupProblemProtective()
+	case vaultstate.ProblemBackupCorrupt:
+		return m.VaultBackupProblemCorrupt()
+	case vaultstate.ProblemBackupUnavailable:
+		return m.VaultBackupUnavailable()
+	case vaultstate.ProblemBackupClear:
+		return m.VaultBackupProblemClear()
 	}
 	return ""
 }

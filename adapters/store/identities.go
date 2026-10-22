@@ -90,6 +90,7 @@ func (s *Store) SaveIdentity(ctx context.Context, identity domainvault.Identity)
 	if err != nil {
 		return fmt.Errorf("store: save Identity: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -102,5 +103,6 @@ func (s *Store) DeleteIdentity(ctx context.Context, id model.IdentityID) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }
