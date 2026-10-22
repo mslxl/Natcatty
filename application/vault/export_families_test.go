@@ -408,10 +408,11 @@ func TestVaultJSONRoundTripWithoutSecretsLeavesNoPlaintext(t *testing.T) {
 	}
 	if len(destination.identities.identities) != 1 ||
 		len(destination.proxies.items) != 1 ||
-		len(destination.keys.keys) != 0 {
-		t.Fatalf("families = identities %d, proxies %d, keys %d",
+		len(destination.keys.keys) != 1 ||
+		destination.keys.keys[0].HasPrivateKey {
+		t.Fatalf("families = identities %d, proxies %d, keys %+v",
 			len(destination.identities.identities), len(destination.proxies.items),
-			len(destination.keys.keys))
+			destination.keys.keys)
 	}
 	if len(destination.secrets.values) != 0 {
 		t.Fatalf("import without exported secrets wrote credentials: %v", destination.secrets.values)

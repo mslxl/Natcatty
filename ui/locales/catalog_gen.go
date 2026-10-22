@@ -1680,6 +1680,38 @@ func (msgs Messages) VaultImportIssueMissingNoteEntry() string {
 	return Catalog.Format(msgs.locale, "vaultImportIssueMissingNoteEntry", nil)
 }
 
+// VaultImportIssueKeyWithoutMaterial says "Key \"{label}\" was restored without private material; add it before using this Key to authenticate."
+// in the language the app shows.
+//
+// A Key record was restored without private material.
+func VaultImportIssueKeyWithoutMaterial(label string) string {
+	return In(i18n.Locale()).VaultImportIssueKeyWithoutMaterial(label)
+}
+
+// VaultImportIssueKeyWithoutMaterial says "Key \"{label}\" was restored without private material; add it before using this Key to authenticate."
+// in the language of msgs.
+//
+// A Key record was restored without private material.
+func (msgs Messages) VaultImportIssueKeyWithoutMaterial(label string) string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueKeyWithoutMaterial", map[string]any{"label": label})
+}
+
+// VaultImportIssueDanglingTarget says "Snippet \"{label}\" targets Host \"{target}\", which is not part of this import; the reference is preserved."
+// in the language the app shows.
+//
+// A Snippet keeps a target Host that this import does not contain.
+func VaultImportIssueDanglingTarget(label string, target string) string {
+	return In(i18n.Locale()).VaultImportIssueDanglingTarget(label, target)
+}
+
+// VaultImportIssueDanglingTarget says "Snippet \"{label}\" targets Host \"{target}\", which is not part of this import; the reference is preserved."
+// in the language of msgs.
+//
+// A Snippet keeps a target Host that this import does not contain.
+func (msgs Messages) VaultImportIssueDanglingTarget(label string, target string) string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueDanglingTarget", map[string]any{"label": label, "target": target})
+}
+
 // VaultImportMasterPassword says "Master password"
 // in the language the app shows.
 func VaultImportMasterPassword() string { return In(i18n.Locale()).VaultImportMasterPassword() }

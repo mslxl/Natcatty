@@ -51,7 +51,7 @@ func (s *Service) ExportNote(ctx context.Context, id string, format NoteExportFo
 			Content:  []byte(markdown.HTMLPage(note.Title, note.Content)),
 		}, nil
 	case NoteExportZIP:
-		content, err := notesArchive([]domainvault.Note{note})
+		content, err := notesArchive([]domainvault.Note{note}, nil)
 		if err != nil {
 			return NoteExport{}, internal(err)
 		}
@@ -76,7 +76,11 @@ func (s *Service) ExportNotes(ctx context.Context, format NoteExportFormat) (Not
 	if err != nil {
 		return NoteExport{}, err
 	}
-	content, err := notesArchive(notes)
+	groups, err := s.ListNoteGroups(ctx)
+	if err != nil {
+		return NoteExport{}, err
+	}
+	content, err := notesArchive(notes, groups)
 	if err != nil {
 		return NoteExport{}, internal(err)
 	}
@@ -91,8 +95,8 @@ func (s *Service) ExportNotes(ctx context.Context, format NoteExportFormat) (Not
 // the Notes importer prefers. Group paths become directories; colliding file
 // names get a numeric suffix rather than overwriting one another, while the
 // manifest keeps the exact title.
-func notesArchive(notes []domainvault.Note) ([]byte, error) {
-	return vaultexport.NotesArchive(notes)
+func notesArchive(notes []domainvault.Note, groups []domainvault.NoteGroup) ([]byte, error) {
+	return vaultexport.NotesArchive(notes, groups)
 }
 
 // exportFileName turns a Note title into a safe file name.
