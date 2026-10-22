@@ -164,6 +164,47 @@ func TestATerminalChordNeverBecomesAMenuAccelerator(t *testing.T) {
 	}
 }
 
+// TestTerminalReservedChordsKeepTheCatalogDefaultAfterAnOverride pins the
+// reserved set to each binding's catalog default as well as its effective
+// chord. ReplaceBinding("new-tab", PC, "Ctrl+Shift+C") disables the displaced
+// copy binding, and the freed chord must still count as terminal-owned.
+func TestTerminalReservedChordsKeepTheCatalogDefaultAfterAnOverride(t *testing.T) {
+	ctrlShiftC := chordKey{mods: ui.Ctrl | ui.Shift, key: ui.KeyC}
+
+	t.Run("disabled copy on PC", func(t *testing.T) {
+		// terminal.DefaultKeybinds() also reserves this chord on Windows, so
+		// this subtest only fails at the base revision on macOS and Linux.
+		overrides := domain.Overrides{}.Set("copy", domain.SchemePC, domain.Disabled)
+		if !terminalReservedChords(domain.SchemePC, overrides)[ctrlShiftC] {
+			t.Fatal("Ctrl+Shift+C is not reserved after copy was disabled")
+		}
+	})
+
+	t.Run("new-tab displaced copy", func(t *testing.T) {
+		service, _ := newBindingFixture(t, "windows")
+		if err := service.ReplaceBinding("new-tab", domain.SchemePC,
+			"Ctrl + Shift + C", nil); err != nil {
+			t.Fatal(err)
+		}
+		reserved := terminalReservedChords(domain.SchemePC, service.State().Overrides)
+		if !reserved[ctrlShiftC] {
+			t.Fatal("Ctrl+Shift+C is not reserved after new-tab displaced copy")
+		}
+	})
+
+	// Cmd+Ctrl+K is clear-buffer's Mac default and appears in no platform's
+	// terminal.DefaultKeybinds(), so this subtest fails at the base revision
+	// on Windows, Linux, and macOS alike. Cmd+C and Ctrl+Shift+C cannot make
+	// that claim: MyGo's native defaults reserve one on every platform.
+	t.Run("disabled clear-buffer on Mac", func(t *testing.T) {
+		overrides := domain.Overrides{}.Set("clear-buffer", domain.SchemeMac, domain.Disabled)
+		reserved := terminalReservedChords(domain.SchemeMac, overrides)
+		if !reserved[chordKey{mods: ui.Super | ui.Ctrl, key: ui.KeyK}] {
+			t.Fatal("Cmd+Ctrl+K is not reserved after clear-buffer was disabled")
+		}
+	})
+}
+
 func TestMenuShortcutsMarkBindingDerivedItems(t *testing.T) {
 	service, _ := newBindingFixture(t, "windows")
 	shortcuts := menuShortcuts(BuildMenuWithBindings(command.NewRegistry(), "en",

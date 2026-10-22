@@ -349,26 +349,33 @@ type chordKey struct {
 }
 
 // terminalReservedChords is every key the terminal itself handles: the
-// active terminal bindings and MyGo's platform defaults. A global binding on
-// one of these would shadow terminal copy or SIGINT, so the dispatcher skips
-// it and lets the terminal win.
+// catalog's terminal defaults, the active terminal bindings, and MyGo's
+// platform defaults. A global binding on one of these would shadow terminal
+// copy or SIGINT, so the dispatcher skips it and lets the terminal win.
+//
+// The catalog default stays reserved even when an override moves or disables
+// the binding: ReplaceBinding disables the displaced binding, and the freed
+// chord still belongs to the terminal rather than to a window accelerator.
 func terminalReservedChords(scheme domain.Scheme, overrides domain.Overrides) map[chordKey]bool {
 	reserved := make(map[chordKey]bool)
-	for _, binding := range domain.Catalog() {
-		if binding.Category != domain.CategoryTerminal {
-			continue
-		}
-		chord := domain.EffectiveChord(binding, scheme, overrides)
+	reserve := func(chord string) {
 		if chord == "" || chord == domain.Disabled {
-			continue
+			return
 		}
 		parsed, ok := domain.ParseChord(chord)
 		if !ok || parsed.Range || parsed.Arrows {
-			continue
+			return
 		}
 		if key, ok := mygoKey(parsed.Key); ok {
 			reserved[chordKey{mods: chordMods(parsed), key: key}] = true
 		}
+	}
+	for _, binding := range domain.Catalog() {
+		if binding.Category != domain.CategoryTerminal {
+			continue
+		}
+		reserve(domain.DefaultChord(binding, scheme))
+		reserve(domain.EffectiveChord(binding, scheme, overrides))
 	}
 	for _, binding := range terminal.DefaultKeybinds() {
 		reserved[chordKey{mods: binding.Mods, key: binding.Key}] = true
