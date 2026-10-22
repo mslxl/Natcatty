@@ -3,6 +3,7 @@ package settings
 import (
 	"strings"
 
+	domainkb "github.com/mslxl/natcatty/domain/keybindings"
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -91,8 +92,18 @@ type SearchHit struct {
 	keywords string
 }
 
-// SearchIndex returns every searchable setting with localized labels.
-func SearchIndex(m locales.Messages) []SearchHit {
+// ShortcutSource exposes the effective chords and menu accelerators of the
+// live binding document. Search indexes them so a chord query reaches the row
+// it belongs to, including a user override.
+type ShortcutSource interface {
+	ChordFor(id string, scheme domainkb.Scheme) string
+	MenuShortcuts() []domainkb.MenuShortcut
+}
+
+// SearchIndex returns every searchable setting with localized labels. A
+// ShortcutSource adds both scheme columns' effective chords, the user's
+// overrides, and the native menu's accelerators to the Shortcuts area.
+func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	hits := make([]SearchHit, 0, 100)
 	add := func(area Area, field domain.Field, label string, keywords ...string) {
 		hits = append(hits, SearchHit{Area: area, Field: field, Label: label,
@@ -187,10 +198,52 @@ func SearchIndex(m locales.Messages) []SearchHit {
 	add(AreaShortcuts, "", m.SettingsShortcutScheme(), "scheme mac pc disabled")
 	add(AreaShortcuts, "", m.SettingsShortcutResetAll(), "reset all shortcuts")
 	for _, binding := range catalogBindings() {
-		add(AreaShortcuts, "", bindingLabel(m, binding), binding.ID, binding.Action,
-			string(binding.Category))
+		keywords := []string{binding.ID, binding.Action, string(binding.Category)}
+		if len(sources) == 0 {
+			// Without the live document, the catalog defaults are the only
+			// chords there are.
+			keywords = append(keywords, binding.Mac, compactChord(binding.Mac),
+				binding.PC, compactChord(binding.PC))
+		}
+		for _, source := range sources {
+			// Index the effective chords only: a chord the user replaced is
+			// no longer a way to reach this binding.
+			for _, scheme := range []domainkb.Scheme{domainkb.SchemeMac, domainkb.SchemePC} {
+				chord := source.ChordFor(binding.ID, scheme)
+				keywords = append(keywords, chord, compactChord(chord))
+			}
+		}
+		add(AreaShortcuts, "", bindingLabel(m, binding), keywords...)
+	}
+	for _, source := range sources {
+		for _, menu := range source.MenuShortcuts() {
+			if menu.Derived || menu.Label == "" || menu.Accelerator == "" {
+				continue
+			}
+			keywords := []string{menu.ID, "menu", "shortcut"}
+			keywords = append(keywords, acceleratorSearchTerms(menu.Accelerator)...)
+			add(AreaShortcuts, "", menu.Label, keywords...)
+		}
 	}
 	return hits
+}
+
+// compactChord removes the spacing of a display chord, so a query typed as
+// Ctrl+Shift+B matches Ctrl + Shift + B.
+func compactChord(chord string) string {
+	return strings.ReplaceAll(chord, " ", "")
+}
+
+// acceleratorSearchTerms spells a native menu accelerator the ways a user may
+// type it: as stored, without spaces, and with CmdOrCtrl resolved to either
+// platform's modifier.
+func acceleratorSearchTerms(accelerator string) []string {
+	terms := []string{accelerator, compactChord(accelerator)}
+	for _, modifier := range []string{"Ctrl", "Cmd", "Command", "Super"} {
+		resolved := strings.ReplaceAll(accelerator, "CmdOrCtrl", modifier)
+		terms = append(terms, resolved, compactChord(resolved))
+	}
+	return terms
 }
 
 // FilterHits returns the hits whose localized label or keywords contain
@@ -200,10 +253,18 @@ func FilterHits(hits []SearchHit, query string) []SearchHit {
 	if query == "" {
 		return hits
 	}
+	// A chord may be typed with or without spaces, but a label keeps its
+	// words, so try the query as typed first and its compact chord form
+	// second.
+	compactQuery := compactChord(query)
 	out := make([]SearchHit, 0, len(hits))
 	for _, hit := range hits {
 		haystack := strings.ToLower(hit.Label + " " + hit.keywords + " " + hit.AreaID)
-		if strings.Contains(haystack, query) {
+		matched := strings.Contains(haystack, query)
+		if !matched && compactQuery != query {
+			matched = strings.Contains(compactChord(haystack), compactQuery)
+		}
+		if matched {
 			out = append(out, hit)
 		}
 	}

@@ -10656,6 +10656,60 @@ func (msgs Messages) SettingsShortcutRecordHint() string {
 	return Catalog.Format(msgs.locale, "settingsShortcutRecordHint", nil)
 }
 
+// SettingsShortcutConflictMenuItem says "the menu item {label}"
+// in the language the app shows.
+func SettingsShortcutConflictMenuItem(label string) string {
+	return In(i18n.Locale()).SettingsShortcutConflictMenuItem(label)
+}
+
+// SettingsShortcutConflictMenuItem says "the menu item {label}"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictMenuItem(label string) string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictMenuItem", map[string]any{"label": label})
+}
+
+// SettingsShortcutResetAllTitle says "Reset all shortcuts?"
+// in the language the app shows.
+func SettingsShortcutResetAllTitle() string { return In(i18n.Locale()).SettingsShortcutResetAllTitle() }
+
+// SettingsShortcutResetAllTitle says "Reset all shortcuts?"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutResetAllTitle() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutResetAllTitle", nil)
+}
+
+// SettingsShortcutResetAllBody says "This restores every keyboard override to its default. It cannot be undone."
+// in the language the app shows.
+func SettingsShortcutResetAllBody() string { return In(i18n.Locale()).SettingsShortcutResetAllBody() }
+
+// SettingsShortcutResetAllBody says "This restores every keyboard override to its default. It cannot be undone."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutResetAllBody() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutResetAllBody", nil)
+}
+
+// SettingsShortcutResetAllConfirm says "Reset shortcuts"
+// in the language the app shows.
+func SettingsShortcutResetAllConfirm() string {
+	return In(i18n.Locale()).SettingsShortcutResetAllConfirm()
+}
+
+// SettingsShortcutResetAllConfirm says "Reset shortcuts"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutResetAllConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutResetAllConfirm", nil)
+}
+
+// SettingsShortcutTerminalNote says "Terminal shortcut changes apply to new terminals. Already open terminals keep their current bindings."
+// in the language the app shows.
+func SettingsShortcutTerminalNote() string { return In(i18n.Locale()).SettingsShortcutTerminalNote() }
+
+// SettingsShortcutTerminalNote says "Terminal shortcut changes apply to new terminals. Already open terminals keep their current bindings."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutTerminalNote() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutTerminalNote", nil)
+}
+
 // SettingsBindingSwitchTab1to9 says "Switch to Tab [1...9]"
 // in the language the app shows.
 func SettingsBindingSwitchTab1to9() string { return In(i18n.Locale()).SettingsBindingSwitchTab1to9() }

@@ -116,6 +116,11 @@ func (t *selftest27) searchStep(*ui.Context) selftest.Outcome {
 	layout := ui.NewTester(viewAtSettings(settings.AreaLayout, settings.Config{Preferences: preferences}), 1100, 720)
 	layout.SetLocale("en")
 	layout.Frame()
+	// Every preference field carries its localized label, including the
+	// selects that used to render bare.
+	if !layout.HasText(m.SettingsTabBarPosition()) {
+		return selftest.Failed(fmt.Errorf("the Tab bar position field has no label: %v", layout.Texts()))
+	}
 	if err := layout.Click(m.SettingsShowSFTPTab()); err != nil {
 		return selftest.Failed(err)
 	}
@@ -172,9 +177,16 @@ func (t *selftest27) overrideStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
 
 	service := selftest27Bindings(dir)
-	shortcuts := settings.NewShortcutsState(service)
-	tester := ui.NewTester(viewAtSettings(settings.AreaShortcuts,
-		settings.Config{Shortcuts: shortcuts}), 1100, 720)
+	shortcuts := settings.NewShortcutsState(service,
+		settings.WithMenuShortcuts(func() []domainkeybindings.MenuShortcut {
+			return []domainkeybindings.MenuShortcut{
+				{ID: "menu.backups", Label: "Local backups", Accelerator: "CmdOrCtrl+Shift+B"},
+			}
+		}))
+	search := settings.NewSearchState()
+	search.SetArea(settings.AreaShortcuts)
+	tester := ui.NewTester(settings.ViewWithSettings(
+		settings.Config{Search: search, Shortcuts: shortcuts}), 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
 
@@ -213,6 +225,79 @@ func (t *selftest27) overrideStep(*ui.Context) selftest.Outcome {
 	shortcuts.CancelConflict()
 	if got := shortcuts.Chord("open-local"); got != "Ctrl + B" {
 		return selftest.Failed(fmt.Errorf("Cancel changed open-local to %q", got))
+	}
+
+	// A chord the application menu owns names that menu item, not just
+	// "the application menu".
+	shortcuts.BeginRecording("open-local")
+	if !shortcuts.RecordKey("open-local", ui.KeyB, ui.Ctrl|ui.Shift) {
+		return selftest.Failed(fmt.Errorf("the recorder did not consume Ctrl+Shift+B"))
+	}
+	tester.Frame()
+	pending, ok := shortcuts.Pending()
+	if !ok {
+		return selftest.Failed(fmt.Errorf("Ctrl+Shift+B reported no conflict"))
+	}
+	menuNamed := false
+	for _, conflict := range pending.Conflicts {
+		menuNamed = menuNamed || len(conflict.Menu) > 0
+	}
+	if !menuNamed {
+		return selftest.Failed(fmt.Errorf("the conflict model lost the menu accelerator: %+v",
+			pending.Conflicts))
+	}
+	if !tester.HasText("Local backups") {
+		return selftest.Failed(fmt.Errorf("the conflict does not name Local backups: %v",
+			tester.Texts()))
+	}
+	shortcuts.CancelConflict()
+
+	// A chord query finds the binding/menu row and Enter opens Shortcuts.
+	searchTester := ui.NewTester(settings.ViewWithSettings(
+		settings.Config{Search: search, Shortcuts: shortcuts}), 1100, 720)
+	searchTester.SetLocale("en")
+	searchTester.Frame()
+	searchTester.Key(0, ui.KeyTab)
+	searchTester.Type("Ctrl+Shift+B")
+	searchTester.Frame()
+	if !searchTester.HasText("Local backups") {
+		return selftest.Failed(fmt.Errorf("the chord query found no row: %v", searchTester.Texts()))
+	}
+	searchTester.Key(0, ui.KeyEnter)
+	searchTester.Frame()
+	if search.Filtering() || search.Area() != settings.AreaShortcuts {
+		return selftest.Failed(fmt.Errorf("the chord match opened area=%s filtering=%v",
+			search.Area(), search.Filtering()))
+	}
+
+	// Reset All shortcuts uses its own wording, not the preferences reset.
+	shortcuts.AskResetAll()
+	tester.Frame()
+	if !tester.HasText(m.SettingsShortcutResetAllBody()) {
+		return selftest.Failed(fmt.Errorf("the shortcut reset confirmation is missing: %v",
+			tester.Texts()))
+	}
+	if tester.HasText(m.SettingsResetAllBody()) {
+		return selftest.Failed(fmt.Errorf("the shortcut reset reuses the preferences wording"))
+	}
+	shortcuts.CancelResetAll()
+
+	// At 720x480 the content pane scrolls: the last SFTP row is a real box
+	// inside the window after the wheel reaches the bottom.
+	smallSearch := settings.NewSearchState()
+	smallSearch.SetArea(settings.AreaShortcuts)
+	small := ui.NewTester(settings.ViewWithSettings(
+		settings.Config{Shortcuts: shortcuts, Search: smallSearch}), 720, 480)
+	small.SetLocale("en")
+	small.Frame()
+	for step := 0; step < 80; step++ {
+		small.Scroll(450, 300, 0, 40)
+	}
+	small.Frame()
+	last, ok := small.Find(m.SettingsBindingSFTPNavigateTo())
+	if !ok || last.W <= 0 || last.H <= 0 || last.Y < 0 || last.Y+last.H > 480 {
+		return selftest.Failed(fmt.Errorf("the last shortcut row is not reachable at 720x480: %+v",
+			last))
 	}
 
 	// Scheme rendering and reset-to-default.

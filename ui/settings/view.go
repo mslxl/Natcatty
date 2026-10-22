@@ -26,6 +26,13 @@ type Config struct {
 	Search      *SearchState
 }
 
+// viewState owns the Settings window's scroll positions for as long as the
+// view closure lives, so a wheel or PageDown survives the next frame.
+type viewState struct {
+	content ui.ScrollState
+	sidebar ui.ScrollState
+}
+
 // View builds the Settings window's native view with App Lock only. The app
 // uses ViewWithSettings.
 func View(lock *AppLockState) func(*ui.Context) {
@@ -40,10 +47,15 @@ func ViewWithSettings(config Config) func(*ui.Context) {
 	if search == nil {
 		search = NewSearchState()
 	}
+	panes := &viewState{}
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
-		index := SearchIndex(m)
+		var sources []ShortcutSource
+		if config.Shortcuts != nil {
+			sources = append(sources, config.Shortcuts)
+		}
+		index := SearchIndex(m, sources...)
 		hits := FilterHits(index, *search.Query())
 		search.Clamp(len(hits))
 
@@ -85,7 +97,7 @@ func ViewWithSettings(config Config) func(*ui.Context) {
 				searchResults(c, config, search, hits, m, t)
 				return
 			}
-			body(c, config, search, m, t)
+			body(c, config, search, panes, m, t)
 		})
 	}
 }
@@ -132,11 +144,13 @@ func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages,
 
 func searchResults(c *ui.Context, config Config, search *SearchState, hits []SearchHit,
 	m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SettingsSearchResults(len(hits))).FontSize(12).TextColor(t.TextMuted)
 	if len(hits) == 0 {
-		ui.Text(c, m.SettingsSearchNoResults()).TextColor(t.TextMuted)
+		// The count line would say "No matching settings" for zero too, so
+		// the empty state prints it once.
+		ui.Text(c, m.SettingsSearchNoResults()).FontSize(12).TextColor(t.TextMuted)
 		return
 	}
+	ui.Text(c, m.SettingsSearchResults(len(hits))).FontSize(12).TextColor(t.TextMuted)
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(4).Children(func() {
 			for index, hit := range hits {
@@ -157,11 +171,18 @@ func searchResults(c *ui.Context, config Config, search *SearchState, hits []Sea
 	ui.Text(c, m.SettingsSearchHint()).FontSize(11).TextColor(t.TextMuted)
 }
 
-func body(c *ui.Context, config Config, search *SearchState, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Grow(1).Gap(16).AlignItems(ui.Start).Children(func() {
-		sidebar(c, search, m, t)
-		ui.Scroll(c).Grow(1).Children(func() {
-			ui.Column(c).Gap(14).Children(func() {
+// body splits the window into the sidebar and the content area. Both are
+// real, bounded scroll viewports: the row stretches them to the height left
+// under the header and search field, so content taller than that scrolls
+// instead of extending past the window edge.
+func body(c *ui.Context, config Config, search *SearchState, panes *viewState,
+	m locales.Messages, t *ui.Theme) {
+	gutter := scrollbarGutter(t)
+	ui.Row(c).Grow(1).Gap(16).MinWidth(0).Children(func() {
+		sidebar(c, search, panes, m, t)
+		ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).
+			PaddingEnd(gutter).TrackScroll(&panes.content).Children(func() {
+			ui.Column(c).FillWidth().MinWidth(0).Gap(14).Children(func() {
 				area := search.Area()
 				ui.Text(c, AreaTitle(m, area)).FontSize(20).Bold()
 				if description := AreaDescription(m, area); description != "" {
@@ -173,19 +194,38 @@ func body(c *ui.Context, config Config, search *SearchState, m locales.Messages,
 	})
 }
 
-func sidebar(c *ui.Context, search *SearchState, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Width(168).Gap(4).Children(func() {
-		for _, area := range Areas() {
-			area := area
-			button := ui.Button(c, AreaTitle(m, area)).FillWidth()
-			if area == search.Area() {
-				button = button.Background(t.Accent).TextColor(t.AccentText)
+// scrollbarGutter is the width of the overlay scroll bar's track: the thumb
+// (6 DIPs when the theme sets none) plus the 6 DIPs MyGo insets it by.
+// Reserving it keeps grown fields from running under the bar.
+func scrollbarGutter(t *ui.Theme) float32 {
+	width := t.ScrollbarWidth
+	if width <= 0 {
+		width = 6
+	}
+	return width + 6
+}
+
+// sidebar lists the areas. At 720x480 the nine buttons can exceed the height
+// left by the header, so the list scrolls instead of losing its last entry to
+// the window edge.
+func sidebar(c *ui.Context, search *SearchState, panes *viewState,
+	m locales.Messages, t *ui.Theme) {
+	gutter := scrollbarGutter(t)
+	ui.Scroll(c).Width(168).Shrink(0).FillHeight().
+		PaddingEnd(gutter).TrackScroll(&panes.sidebar).Children(func() {
+		ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
+			for _, area := range Areas() {
+				area := area
+				button := ui.Button(c, AreaTitle(m, area)).FillWidth()
+				if area == search.Area() {
+					button = button.Background(t.Accent).TextColor(t.AccentText)
+				}
+				if button.Clicked() {
+					search.SetArea(area)
+					c.Invalidate()
+				}
 			}
-			if button.Clicked() {
-				search.SetArea(area)
-				c.Invalidate()
-			}
-		}
+		})
 	})
 }
 
@@ -239,7 +279,7 @@ func appearanceArea(c *ui.Context, state *PreferencesState, m locales.Messages, 
 
 		accent := settings.Appearance.AccentMode == domain.AccentCustom
 		fieldRow(c, state, m, t, domain.FieldAccentMode, m.SettingsAccentMode(), func() {
-			if ui.Checkbox(c, &accent, m.SettingsAccentMode()).Changed() {
+			if ui.Checkbox(c, &accent, "").Changed() {
 				state.Update(func(s *domain.Settings) {
 					if accent {
 						s.Appearance.AccentMode = domain.AccentCustom
@@ -378,7 +418,7 @@ func layoutCheckbox(c *ui.Context, state *PreferencesState, m locales.Messages, 
 	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
 	fieldRow(c, state, m, t, field, label, func() {
 		enabled := value
-		if ui.Checkbox(c, &enabled, label).Changed() {
+		if ui.Checkbox(c, &enabled, "").Changed() {
 			state.Update(func(s *domain.Settings) { set(s, enabled) })
 			c.Invalidate()
 		}
@@ -445,7 +485,7 @@ func sftpCheckbox(c *ui.Context, state *PreferencesState, m locales.Messages, t 
 	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
 	fieldRow(c, state, m, t, field, label, func() {
 		enabled := value
-		if ui.Checkbox(c, &enabled, label).Changed() {
+		if ui.Checkbox(c, &enabled, "").Changed() {
 			state.Update(func(s *domain.Settings) { set(s, enabled) })
 			c.Invalidate()
 		}
@@ -459,7 +499,7 @@ func logsArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.
 		}
 		enabled := state.Settings().Logs.SSHDebug
 		fieldRow(c, state, m, t, domain.FieldSSHDebug, m.SettingsSSHDebug(), func() {
-			if ui.Checkbox(c, &enabled, m.SettingsSSHDebug()).Changed() {
+			if ui.Checkbox(c, &enabled, "").Changed() {
 				state.Update(func(s *domain.Settings) { s.Logs.SSHDebug = enabled })
 				c.Invalidate()
 			}
@@ -480,14 +520,14 @@ func syncArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.
 		settings := state.Settings()
 		enabled := settings.Sync.Enabled
 		fieldRow(c, state, m, t, domain.FieldSyncEnabled, m.SettingsSyncEnabled(), func() {
-			if ui.Checkbox(c, &enabled, m.SettingsSyncEnabled()).Changed() {
+			if ui.Checkbox(c, &enabled, "").Changed() {
 				state.Update(func(s *domain.Settings) { s.Sync.Enabled = enabled })
 				c.Invalidate()
 			}
 		})
 		auto := settings.Sync.AutoSync
 		fieldRow(c, state, m, t, domain.FieldSyncAutoSync, m.SettingsSyncAutoSync(), func() {
-			if ui.Checkbox(c, &auto, m.SettingsSyncAutoSync()).Changed() {
+			if ui.Checkbox(c, &auto, "").Changed() {
 				state.Update(func(s *domain.Settings) { s.Sync.AutoSync = auto })
 				c.Invalidate()
 			}
@@ -525,14 +565,14 @@ func securityArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme)
 			settings := state.Settings()
 			confirmClose := settings.Security.ConfirmCloseSessions
 			fieldRow(c, state, m, t, domain.FieldConfirmCloseSessions, m.SettingsConfirmCloseSessions(), func() {
-				if ui.Checkbox(c, &confirmClose, m.SettingsConfirmCloseSessions()).Changed() {
+				if ui.Checkbox(c, &confirmClose, "").Changed() {
 					state.Update(func(s *domain.Settings) { s.Security.ConfirmCloseSessions = confirmClose })
 					c.Invalidate()
 				}
 			})
 			confirmDestructive := settings.Security.ConfirmDestructive
 			fieldRow(c, state, m, t, domain.FieldConfirmDestructive, m.SettingsConfirmDestructive(), func() {
-				if ui.Checkbox(c, &confirmDestructive, m.SettingsConfirmDestructive()).Changed() {
+				if ui.Checkbox(c, &confirmDestructive, "").Changed() {
 					state.Update(func(s *domain.Settings) { s.Security.ConfirmDestructive = confirmDestructive })
 					c.Invalidate()
 				}
@@ -575,8 +615,8 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 				for _, binding := range conflict.Bindings {
 					names = append(names, bindingLabel(m, binding))
 				}
-				for range conflict.Menu {
-					names = append(names, m.SettingsShortcutConflictMenu())
+				for _, menu := range conflict.Menu {
+					names = append(names, conflictMenuName(m, menu))
 				}
 				ui.Text(c, m.SettingsShortcutConflictBody(conflict.Chord, joinNames(names))).
 					FontSize(12).TextColor(t.Warning)
@@ -590,11 +630,13 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 			}
 		})
 		if state.ResettingAll() {
+			// Shortcut overrides are their own document, so this confirmation
+			// is worded apart from the preferences reset.
 			ui.Column(c).Padding(10).Gap(6).Background(t.Surface).Border(1, t.Danger).Children(func() {
-				ui.Text(c, m.SettingsResetAllTitle()).Bold()
-				ui.Text(c, m.SettingsResetAllBody()).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, m.SettingsShortcutResetAllTitle()).Bold()
+				ui.Text(c, m.SettingsShortcutResetAllBody()).FontSize(12).TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c, m.SettingsResetAllConfirm()).Clicked() {
+					if ui.Button(c, m.SettingsShortcutResetAllConfirm()).Clicked() {
 						state.ResetAll()
 						c.Invalidate()
 					}
@@ -606,6 +648,10 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 			})
 		}
 		ui.Text(c, m.SettingsShortcutRecordHint()).FontSize(11).TextColor(t.TextMuted)
+		// MyGo v0.5.5 applies terminal keybinds when it constructs the
+		// terminal and exposes no setter, so the limitation is stated rather
+		// than silently surprising the user.
+		ui.Text(c, m.SettingsShortcutTerminalNote()).FontSize(11).TextColor(t.TextMuted)
 
 		for _, category := range kb.Categories() {
 			bindings := make([]kb.Binding, 0)
@@ -638,8 +684,8 @@ func pendingConflict(c *ui.Context, state *ShortcutsState, pending PendingConfli
 			}
 			names = append(names, bindingLabel(m, binding))
 		}
-		for range conflict.Menu {
-			names = append(names, m.SettingsShortcutConflictMenu())
+		for _, menu := range conflict.Menu {
+			names = append(names, conflictMenuName(m, menu))
 		}
 	}
 	ui.Column(c).Padding(10).Gap(6).Background(t.Surface).Border(1, t.Warning).Children(func() {
@@ -706,11 +752,13 @@ func bindingRow(c *ui.Context, state *ShortcutsState, binding kb.Binding,
 	})
 }
 
-// fieldRow places a preference control and, when the field differs from its
-// default, a reset control beside it.
+// fieldRow places a localized label above a preference control and, when the
+// field differs from its default, a reset control beside it. The label was
+// previously dropped, which left selects, numbers, and text inputs without
+// any context.
 func fieldRow(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	field domain.Field, label string, build func()) {
-	ui.Column(c).Gap(2).Children(func() {
+	ui.Field(c, label, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			build()
 			if !state.IsDefault(field) {
@@ -721,7 +769,16 @@ func fieldRow(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.
 			}
 		})
 	})
-	_ = label
+}
+
+// conflictMenuName names the menu command a chord collides with. The label
+// comes from the live menu, so it is already in the window's language; the
+// generic fallback covers a menu item built without one.
+func conflictMenuName(m locales.Messages, menu kb.MenuShortcut) string {
+	if menu.Label == "" {
+		return m.SettingsShortcutConflictMenu()
+	}
+	return m.SettingsShortcutConflictMenuItem(menu.Label)
 }
 
 func groupReset(c *ui.Context, m locales.Messages, t *ui.Theme, group string,
