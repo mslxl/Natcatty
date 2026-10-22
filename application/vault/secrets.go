@@ -31,9 +31,10 @@ const (
 // Entity types and field names the Vault encrypts. They are part of the AAD
 // and the persisted secret_values key, so do not rename them.
 const (
-	EntityHost     = "host"
-	EntitySSHKey   = "ssh_key"
-	EntityIdentity = "identity"
+	EntityHost         = "host"
+	EntitySSHKey       = "ssh_key"
+	EntityIdentity     = "identity"
+	EntityProxyProfile = "proxy_profile"
 
 	FieldPassword      = "password"
 	FieldPassphrase    = "passphrase"
@@ -67,6 +68,13 @@ func KeySecretRef(id model.KeyID, field string) SecretRef {
 // IdentitySecretRef names an Identity's credential field.
 func IdentitySecretRef(id model.IdentityID, field string) SecretRef {
 	return SecretRef{EntityType: EntityIdentity, EntityID: string(id), Field: field}
+}
+
+// ProxyProfileSecretRef names a shared Proxy Profile's credential field. The
+// profile record carries only HasPassword; the ciphertext lives in the field
+// secret store like every other credential.
+func ProxyProfileSecretRef(id string, field string) SecretRef {
+	return SecretRef{EntityType: EntityProxyProfile, EntityID: id, Field: field}
 }
 
 // FieldSecrets is the field-secret port the Vault consumes. The adapter owns

@@ -2,6 +2,7 @@ package vaultimport
 
 import (
 	"encoding/json"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -22,12 +23,32 @@ var (
 	detectSecureCRTList = regexp.MustCompile(`(?i)D:"\[Sessions\]`)
 )
 
+// DetectNamed guesses a format from the document contents, then falls back to
+// the chosen file's extension. An empty ZIP archive has no local file header
+// for Detect to sniff, so its ".zip" name is what identifies it. Content still
+// wins over the extension when the two disagree.
+func DetectNamed(text, fileName string) Format {
+	if format := Detect(text); format != "" {
+		return format
+	}
+	if strings.EqualFold(path.Ext(fileName), ".zip") {
+		return FormatNotesZIP
+	}
+	return ""
+}
+
 // Detect guesses a format from the document contents. It returns "" when no
 // format matches, so the UI can ask the user to choose one.
 func Detect(text string) Format {
 	input := strings.TrimSpace(strings.TrimPrefix(text, "\xef\xbb\xbf"))
 	if input == "" {
 		return ""
+	}
+
+	// A ZIP archive is only accepted as a Notes archive; the import preview
+	// reports an empty or foreign archive rather than guessing another parser.
+	if strings.HasPrefix(input, "PK\x03\x04") || strings.HasPrefix(input, "PK\x05\x06") {
+		return FormatNotesZIP
 	}
 
 	if detectPuttyRegistry.MatchString(input) {
@@ -56,8 +77,17 @@ func Detect(text string) Format {
 
 	var candidate map[string]any
 	if json.Unmarshal([]byte(input), &candidate) == nil && candidate != nil {
-		if kind, _ := candidate["kind"].(string); kind == KindNetcattyVault {
-			return FormatNetcattyJSON
+		if kind, _ := candidate["kind"].(string); kind != "" {
+			switch kind {
+			case KindNetcattyVault:
+				return FormatNetcattyJSON
+			case KindSnippets:
+				return FormatSnippets
+			case KindKeys:
+				return FormatKeys
+			case KindNotes:
+				return FormatNotesZIP
+			}
 		}
 		if _, ok := candidate["conection_type"]; ok {
 			if _, hasHost := candidate["host"].(string); hasHost {

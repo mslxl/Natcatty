@@ -28,7 +28,7 @@ func (p importFilePicker) PickImportFile() (string, []byte, error) {
 		Title: m.VaultImportTitle(),
 		Filters: []mygo.FileFilter{
 			{Name: m.VaultImportFileFilterHosts(), Extensions: []string{
-				"csv", "tsv", "txt", "reg", "ini", "json", "conf", "config", "mxtsessions",
+				"csv", "tsv", "txt", "reg", "ini", "json", "zip", "conf", "config", "mxtsessions",
 			}},
 			{Name: m.VaultImportFileFilterAll(), Extensions: []string{"*"}},
 		},

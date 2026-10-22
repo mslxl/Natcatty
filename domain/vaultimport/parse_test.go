@@ -556,6 +556,25 @@ func TestDetectFormat(t *testing.T) {
 	}
 }
 
+// TestDetectNamedFallsBackToTheZipExtension covers the Import screen's chosen
+// file name: an archive whose bytes carry no local file header, such as an
+// empty ZIP, is still recognized as a Notes archive. Contents still win when
+// the two disagree.
+func TestDetectNamedFallsBackToTheZipExtension(t *testing.T) {
+	if got := DetectNamed("PK\x05\x06", "empty.zip"); got != FormatNotesZIP {
+		t.Fatalf("empty archive DetectNamed = %q", got)
+	}
+	if got := DetectNamed("plain text", "notes.ZIP"); got != FormatNotesZIP {
+		t.Fatalf("extension DetectNamed = %q", got)
+	}
+	if got := DetectNamed(fixture(t, "netcatty.csv"), "notes.zip"); got != FormatCSV {
+		t.Fatalf("contents did not win: %q", got)
+	}
+	if got := DetectNamed("plain text", "notes.txt"); got != "" {
+		t.Fatalf("unrelated extension DetectNamed = %q", got)
+	}
+}
+
 func TestParseUnsupportedFormat(t *testing.T) {
 	result := Parse(Format("nope"), "", Options{})
 	item := requireIssue(t, result, IssueUnsupportedEntry)

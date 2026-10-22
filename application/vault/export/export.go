@@ -135,6 +135,11 @@ type Dataset struct {
 	NoteGroups      []domainvault.NoteGroup
 	Logs            []domainhistory.ConnectionLog
 	History         []domainhistory.Entry
+	// IdentityPasswords and ProxyProfilePasswords carry credential plaintext
+	// for the profiles a JSON export restores. They are keyed by source id and
+	// are populated only when secrets are included.
+	IdentityPasswords     map[string]string
+	ProxyProfilePasswords map[string]string
 	// ActiveTheme is the appearance theme name the settings surface reports.
 	ActiveTheme string
 }
@@ -191,19 +196,33 @@ func Export(d Dataset, format Format, opts Options) ([]byte, error) {
 // ---------------------------------------------------------------- JSON
 
 type jsonDocument struct {
-	Kind            string                     `json:"kind"`
-	Version         int                        `json:"version"`
-	ExportedAt      string                     `json:"exportedAt"`
-	Groups          []domainvault.Group        `json:"groups"`
-	Hosts           []jsonHost                 `json:"hosts"`
-	Keys            []jsonKey                  `json:"keys"`
-	Identities      []domainvault.Identity     `json:"identities"`
-	ProxyProfiles   []domainvault.ProxyProfile `json:"proxyProfiles"`
-	KnownHosts      []jsonKnownHost            `json:"knownHosts"`
-	Snippets        []jsonSnippet              `json:"snippets"`
-	SnippetPackages []string                   `json:"snippetPackages"`
-	Notes           []domainvault.Note         `json:"notes"`
-	NoteGroups      []string                   `json:"noteGroups"`
+	Kind            string              `json:"kind"`
+	Version         int                 `json:"version"`
+	ExportedAt      string              `json:"exportedAt"`
+	Groups          []domainvault.Group `json:"groups"`
+	Hosts           []jsonHost          `json:"hosts"`
+	Keys            []jsonKey           `json:"keys"`
+	Identities      []jsonIdentity      `json:"identities"`
+	ProxyProfiles   []jsonProxyProfile  `json:"proxyProfiles"`
+	KnownHosts      []jsonKnownHost     `json:"knownHosts"`
+	Snippets        []jsonSnippet       `json:"snippets"`
+	SnippetPackages []string            `json:"snippetPackages"`
+	Notes           []domainvault.Note  `json:"notes"`
+	NoteGroups      []string            `json:"noteGroups"`
+}
+
+// jsonIdentity adds the credential plaintext the domain Identity deliberately
+// omits. It is written only with IncludeSecrets.
+type jsonIdentity struct {
+	domainvault.Identity
+	Password string `json:"password,omitempty"`
+}
+
+// jsonProxyProfile adds a Proxy Profile's credential plaintext. The domain
+// Config never serializes it.
+type jsonProxyProfile struct {
+	domainvault.ProxyProfile
+	Password string `json:"password,omitempty"`
 }
 
 // jsonHost adds the fields the domain Host intentionally omits: credential
@@ -234,14 +253,17 @@ type jsonKnownHost struct {
 }
 
 type jsonSnippet struct {
+	ID              string                              `json:"id,omitempty"`
 	Label           string                              `json:"label"`
 	Command         string                              `json:"command"`
 	Tags            []string                            `json:"tags,omitempty"`
 	Package         string                              `json:"package,omitempty"`
+	Targets         []string                            `json:"targets,omitempty"`
 	TargetGroups    []string                            `json:"targetGroups,omitempty"`
 	TargetsAllHosts bool                                `json:"targetsAllHosts,omitempty"`
 	NoAutoRun       bool                                `json:"noAutoRun,omitempty"`
 	MultiLineMode   domainvault.SnippetMultiLineRunMode `json:"multiLineRunMode,omitempty"`
+	VariableValues  map[string]string                   `json:"variableValues,omitempty"`
 }
 
 func exportJSON(d Dataset, opts Options) ([]byte, error) {
@@ -250,11 +272,23 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		Version:         Version,
 		ExportedAt:      opts.exportedAt(),
 		Groups:          sortedGroups(d.Groups),
-		Identities:      sortedIdentities(d.Identities),
-		ProxyProfiles:   sortedProxies(d.ProxyProfiles),
 		SnippetPackages: sortedStrings(snippetPackagePaths(d)),
 		Notes:           sortedNotes(d.Notes),
 		NoteGroups:      sortedStrings(noteGroupPaths(d)),
+	}
+	for _, identity := range sortedIdentities(d.Identities) {
+		entry := jsonIdentity{Identity: identity}
+		if opts.IncludeSecrets {
+			entry.Password = d.IdentityPasswords[string(identity.ID)]
+		}
+		document.Identities = append(document.Identities, entry)
+	}
+	for _, profile := range sortedProxies(d.ProxyProfiles) {
+		entry := jsonProxyProfile{ProxyProfile: profile}
+		if opts.IncludeSecrets {
+			entry.Password = d.ProxyProfilePasswords[profile.ID]
+		}
+		document.ProxyProfiles = append(document.ProxyProfiles, entry)
 	}
 	keys := sortedKeys(d.Keys)
 	keyByID := make(map[string]domainvault.Key, len(keys))
@@ -428,25 +462,42 @@ func exportSnippets(d Dataset, opts Options) ([]byte, error) {
 	})
 }
 
-// snippetDocuments drops concrete Host bindings, as the original did, so the
-// document stays portable. Group scope and the all-hosts scope survive.
+// snippetDocuments keeps explicit Host targets as references. They may be
+// dangling in the destination Vault, but dropping them loses the Snippet's
+// configured scope; group scope and the all-hosts scope survive as before.
 func snippetDocuments(snippets []domainvault.Snippet) []jsonSnippet {
 	out := make([]jsonSnippet, 0, len(snippets))
 	for _, snippet := range snippets {
 		entry := jsonSnippet{
-			Label:         snippet.Label,
-			Command:       snippet.Command,
-			Tags:          append([]string(nil), snippet.Tags...),
-			Package:       snippet.Package,
-			NoAutoRun:     snippet.NoAutoRun,
-			MultiLineMode: snippet.MultiLineRunMode,
+			ID:             snippet.ID,
+			Label:          snippet.Label,
+			Command:        snippet.Command,
+			Tags:           append([]string(nil), snippet.Tags...),
+			Package:        snippet.Package,
+			NoAutoRun:      snippet.NoAutoRun,
+			MultiLineMode:  snippet.MultiLineRunMode,
+			VariableValues: cloneStringMap(snippet.VariableValues),
 		}
 		if snippet.TargetsAllHosts {
 			entry.TargetsAllHosts = true
 		} else {
 			entry.TargetGroups = append([]string(nil), snippet.TargetGroups...)
+			for _, target := range snippet.Targets {
+				entry.Targets = append(entry.Targets, string(target))
+			}
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for name, value := range values {
+		out[name] = value
 	}
 	return out
 }
@@ -504,31 +555,70 @@ func exportNotesHTML(d Dataset, opts Options) []byte {
 }
 
 func exportNotesZIP(d Dataset) ([]byte, error) {
-	notes := sortedNotes(d.Notes)
+	return NotesArchive(d.Notes)
+}
+
+// NotesArchive writes one Markdown entry per Note plus a versioned manifest.
+// The directory layout stays human-readable; the manifest records the exact
+// Note Group, title, and identity, so duplicate titles and titles containing
+// path separators round-trip without ambiguity. The manifest entry name is
+// reserved before Note names are assigned so a Note cannot shadow it.
+func NotesArchive(notes []domainvault.Note) ([]byte, error) {
+	sorted := sortedNotes(notes)
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
-	used := make(map[string]int, len(notes))
-	for _, note := range notes {
-		name := noteArchiveName(note)
-		key := strings.ToLower(name)
+	used := map[string]int{strings.ToLower(vaultimport.NotesManifestName): 1}
+	taken := map[string]bool{strings.ToLower(vaultimport.NotesManifestName): true}
+	entries := make([]vaultimport.NotesManifestEntry, 0, len(sorted))
+	for _, note := range sorted {
+		base := noteArchiveName(note)
+		key := strings.ToLower(base)
 		used[key]++
+		name := base
 		if used[key] > 1 {
-			name = addNameSuffix(name, used[key])
+			name = addNameSuffix(base, used[key])
 		}
-		writer, err := archive.Create(name)
-		if err != nil {
+		// A suffixed name can itself collide with a real title ("A" and
+		// "A-2"), and duplicate entry names would make the manifest path
+		// ambiguous. Keep counting until the path is actually free.
+		for taken[strings.ToLower(name)] {
+			used[key]++
+			name = addNameSuffix(base, used[key])
+		}
+		taken[strings.ToLower(name)] = true
+		if err := writeZipEntry(archive, name, note.Content); err != nil {
 			_ = archive.Close()
 			return nil, err
 		}
-		if _, err := writer.Write([]byte(note.Content)); err != nil {
-			_ = archive.Close()
-			return nil, err
-		}
+		entries = append(entries, vaultimport.NotesManifestEntry{
+			Path: name, Title: note.Title,
+			Group: domainvault.NormalizeGroup(note.Group), ID: note.ID,
+		})
+	}
+	manifest, err := marshal(vaultimport.NotesManifest{
+		Kind: vaultimport.KindNotes, Version: Version, Entries: entries,
+	})
+	if err != nil {
+		_ = archive.Close()
+		return nil, err
+	}
+	if err := writeZipEntry(archive, vaultimport.NotesManifestName, string(manifest)); err != nil {
+		_ = archive.Close()
+		return nil, err
 	}
 	if err := archive.Close(); err != nil {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
+}
+
+func writeZipEntry(archive *zip.Writer, name, content string) error {
+	writer, err := archive.Create(name)
+	if err != nil {
+		return err
+	}
+	_, err = writer.Write([]byte(content))
+	return err
 }
 
 func noteArchiveName(note domainvault.Note) string {
