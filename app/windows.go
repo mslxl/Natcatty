@@ -122,6 +122,9 @@ type windowManager struct {
 	// instead. It is consulted live, so disabling the tray icon or
 	// close-to-tray takes effect without reopening the window.
 	closeToTray func() bool
+	// accelerators are the menu shortcuts every window handles at window
+	// scope. SetAccelerators replaces them when the menu is rebuilt.
+	accelerators []acceleratorBinding
 	// selftestBind registers the main window's self-test shortcuts at window
 	// scope, and selftestView draws its overlay around the content. Both are
 	// nil in normal builds.
@@ -158,6 +161,22 @@ func newWindowManager(host windowHost, confirmer dialogConfirmer, gate *uiapploc
 	}
 }
 
+// SetAccelerators installs the menu shortcuts every window dispatches. It is
+// called whenever the menu is built, including after a language change.
+func (m *windowManager) SetAccelerators(bindings []acceleratorBinding) {
+	m.accelerators = bindings
+}
+
+// withAccelerators binds the menu shortcuts at the window's root context,
+// before the App Lock gate or the content builds anything. MyGo then handles
+// them as window shortcuts, ahead of the focused terminal's input handler.
+func (m *windowManager) withAccelerators(content func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		bindAccelerators(c, m.accelerators)
+		content(c)
+	}
+}
+
 // wrap puts every window's content behind the one shared App Lock gate. The
 // current gate is resolved per frame, so replacing it (as the selftest does)
 // also governs windows that already exist, and no window builds its content
@@ -176,7 +195,7 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 // behind the same shared App Lock gate as every other window. The selftest
 // reuses it to prove the gate hides detached content.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
-	return m.wrap(shell.DetachedView(m.state, tabID))
+	return m.withAccelerators(m.wrap(shell.DetachedView(m.state, tabID)))
 }
 
 func (m *windowManager) messages() locales.Messages {
@@ -200,15 +219,16 @@ func (m *windowManager) OpenMain() hostWindow {
 	// The self-test overlay is inside the gate: while App Lock is closed no
 	// window, including the developer facility, builds anything.
 	gated := m.wrap(build)
-	content := func(c *ui.Context) {
-		// Bind at the root context, before the gate builds its container, so
-		// MyGo registers a window shortcut. Inside the gate it would become
-		// element-scoped and fail from the Vault view with no terminal focus.
+	// withAccelerators binds at the root context, before the gate builds its
+	// container, so MyGo registers window shortcuts. Inside the gate they
+	// would become element-scoped and fail from the Vault view with no
+	// terminal focus.
+	content := m.withAccelerators(func(c *ui.Context) {
 		if m.selftestBind != nil {
 			m.selftestBind(c)
 		}
 		gated(c)
-	}
+	})
 	m.main = m.host.Create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
@@ -257,7 +277,7 @@ func (m *windowManager) OpenSettings() {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
-		Content:   m.wrap(m.settingsContent()),
+		Content:   m.withAccelerators(m.wrap(m.settingsContent())),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },

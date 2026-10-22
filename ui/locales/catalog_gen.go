@@ -9306,7 +9306,7 @@ func (msgs Messages) VaultBackupRestore() string {
 	return Catalog.Format(msgs.locale, "vaultBackupRestore", nil)
 }
 
-// VaultBackupRestoreConfirm says "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the …"
+// VaultBackupRestoreConfirm says "Restore the backup from {time}? The current Vault is saved as a protective backup before restoring, or is already cov…"
 // in the language the app shows.
 //
 // Confirmation before restoring one local backup.
@@ -9314,7 +9314,7 @@ func VaultBackupRestoreConfirm(time_ string) string {
 	return In(i18n.Locale()).VaultBackupRestoreConfirm(time_)
 }
 
-// VaultBackupRestoreConfirm says "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the …"
+// VaultBackupRestoreConfirm says "Restore the backup from {time}? The current Vault is saved as a protective backup before restoring, or is already cov…"
 // in the language of msgs.
 //
 // Confirmation before restoring one local backup.
@@ -9322,13 +9322,13 @@ func (msgs Messages) VaultBackupRestoreConfirm(time_ string) string {
 	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirm", map[string]any{"time": time_})
 }
 
-// VaultBackupRestoreConfirmUnknown says "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays…"
+// VaultBackupRestoreConfirmUnknown says "Restore this backup? The current Vault is saved as a protective backup before restoring, or is already covered by an …"
 // in the language the app shows.
 func VaultBackupRestoreConfirmUnknown() string {
 	return In(i18n.Locale()).VaultBackupRestoreConfirmUnknown()
 }
 
-// VaultBackupRestoreConfirmUnknown says "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays…"
+// VaultBackupRestoreConfirmUnknown says "Restore this backup? The current Vault is saved as a protective backup before restoring, or is already covered by an …"
 // in the language of msgs.
 func (msgs Messages) VaultBackupRestoreConfirmUnknown() string {
 	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirmUnknown", nil)
@@ -9418,11 +9418,11 @@ func (msgs Messages) VaultBackupSkippedFailed() string {
 	return Catalog.Format(msgs.locale, "vaultBackupSkippedFailed", nil)
 }
 
-// VaultBackupRestored says "Vault restored. The previous state was saved as a backup."
+// VaultBackupRestored says "Vault restored. The Vault state before restoring was protected by a backup (new or already identical)."
 // in the language the app shows.
 func VaultBackupRestored() string { return In(i18n.Locale()).VaultBackupRestored() }
 
-// VaultBackupRestored says "Vault restored. The previous state was saved as a backup."
+// VaultBackupRestored says "Vault restored. The Vault state before restoring was protected by a backup (new or already identical)."
 // in the language of msgs.
 func (msgs Messages) VaultBackupRestored() string {
 	return Catalog.Format(msgs.locale, "vaultBackupRestored", nil)

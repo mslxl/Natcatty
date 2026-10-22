@@ -55,7 +55,7 @@ func (f *fakeBackups) Clear(context.Context) (int, error) {
 	}
 	count := len(f.items)
 	f.items = nil
-	f.status = appbackup.Status{Kind: appbackup.StatusCleared, Pruned: count}
+	f.status = appbackup.Status{Kind: appbackup.StatusCleared, Deleted: count}
 	return count, nil
 }
 
@@ -294,8 +294,9 @@ func TestClearBackupsRequiresConfirmation(t *testing.T) {
 	if backups.clearCalls != 1 || len(state.BackupItems()) != 0 {
 		t.Fatalf("clear calls = %d items = %d", backups.clearCalls, len(state.BackupItems()))
 	}
-	if state.BackupNotice().Kind != appbackup.StatusCleared || state.BackupNotice().Pruned != 2 {
-		t.Fatalf("notice = %+v", state.BackupNotice())
+	notice := state.BackupNotice()
+	if notice.Kind != appbackup.StatusCleared || notice.Deleted != 2 || notice.Pruned != 0 {
+		t.Fatalf("notice = %+v, want a clear of 2 entries with no retention prune", notice)
 	}
 }
 

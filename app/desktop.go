@@ -146,13 +146,19 @@ func (c *desktopController) MarkReady() {
 	c.SyncNow()
 }
 
-// Shutdown releases the global shortcut and removes the tray icon.
+// Shutdown releases the global shortcut and removes the tray icon. A tray
+// sync already scheduled when quit begins must not run afterwards: it would
+// find the destroyed tray and dereference it. Clearing ready makes SyncNow a
+// no-op from here on.
 func (c *desktopController) Shutdown() {
+	c.mu.Lock()
+	c.ready = false
+	c.mu.Unlock()
 	c.service.Close()
-	if c.tray != nil {
-		c.tray.Destroy()
-		c.tray = nil
-	}
+	c.destroyTray()
+	// A failed creation leaves trayAttempted set without a tray, so reset it
+	// even when destroyTray had nothing to destroy.
+	c.trayAttempted = false
 }
 
 // ToggleMain shows, focuses, or hides the main window, as the original global
@@ -396,6 +402,12 @@ func (c *desktopController) SyncNow() {
 	}
 	if err := c.ensureTray(); err != nil {
 		c.setProblem(err.Error())
+		return
+	}
+	if c.tray == nil {
+		// ensureTray reports no error when there is nothing left to try (it
+		// already failed, or shutdown retired the surface). Never assume a
+		// tray exists just because creation reported success.
 		return
 	}
 	c.tray.SetToolTip(c.messages().AppName())

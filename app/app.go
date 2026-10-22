@@ -591,6 +591,15 @@ func run(afterReady func(hostWindow)) error {
 	// build's installer is a no-op.
 	installSelftest(windows, shellState, desktopCtl, secondInstance)
 
+	// MyGo's native surface has no TranslateAccelerator path: a menu label's
+	// shortcut only works if the app dispatches it. Build the table from the
+	// same menu the OS shows, so the labels stay truthful.
+	setMenu := func(tag string) {
+		menu := BuildMenu(registry, tag)
+		mygo.App.SetMenu(menu)
+		windows.SetAccelerators(MenuAccelerators(menu))
+	}
+
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
@@ -616,7 +625,7 @@ func run(afterReady func(hostWindow)) error {
 
 	mygo.App.WhenReady(func() {
 		desktopService.RefreshAutoStart()
-		mygo.App.SetMenu(BuildMenu(registry, mygo.App.Locale()))
+		setMenu(mygo.App.Locale())
 		// Start is asynchronous, so launch never waits on a network handshake.
 		forwardingManager.AutoStart(context.Background())
 
@@ -656,7 +665,7 @@ func run(afterReady func(hostWindow)) error {
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			windows.ApplyLocale()
-			mygo.App.SetMenu(BuildMenu(registry, tag))
+			setMenu(tag)
 			desktopCtl.SyncNow()
 		})
 
