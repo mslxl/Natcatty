@@ -16,9 +16,11 @@ import (
 )
 
 type fakeImports struct {
-	preview appvault.ImportPreview
-	err     error
-	calls   []appvault.ImportCommitOptions
+	preview       appvault.ImportPreview
+	err           error
+	calls         []appvault.ImportCommitOptions
+	familyCreated int
+	familySkipped int
 }
 
 func (f *fakeImports) PreviewImport(context.Context, string, appvault.PreviewImportOptions) (appvault.ImportPreview, error) {
@@ -44,6 +46,12 @@ func (f *fakeImports) CommitImport(_ context.Context, preview appvault.ImportPre
 		end = start + opts.Limit
 	}
 	result := appvault.ImportCommitResult{Next: end, Done: end >= len(preview.Rows)}
+	// A family-only document commits in one chunk: the non-Host records are
+	// restored once, at offset zero.
+	if opts.Offset == 0 {
+		result.FamilyCreated = f.familyCreated
+		result.FamilySkipped = f.familySkipped
+	}
 	for index := start; index < end; index++ {
 		selected := preview.Rows[index].Selected
 		if index < len(opts.Selected) {
@@ -318,6 +326,79 @@ func TestImportPanelWritesSelectedRowsAndShowsSummary(t *testing.T) {
 	tt.Frame()
 	if _, ok := state.ImportOutcome(); ok {
 		t.Fatal("Dismiss did not clear the banner")
+	}
+}
+
+// TestFamilyOnlyImportCountsRestoredRowsAndNamesIssues covers the banner and
+// warning contract for documents with no Host rows: the restored records count
+// as imported, and a degraded Key or dangling Snippet target is named in the
+// localized preview.
+func TestFamilyOnlyImportCountsRestoredRowsAndNamesIssues(t *testing.T) {
+	m := locales.In("en")
+	hosts := &fakeHosts{}
+	imports := &fakeImports{
+		preview: appvault.ImportPreview{
+			Format: vaultimport.FormatKeys, FileName: "keys.json",
+			FamilyCounts: appvault.ImportFamilyCounts{Keys: 1},
+			FamilyRows: []appvault.ImportFamilyRow{{
+				Kind: appvault.FamilyKindKey, Label: "deploy key",
+			}},
+			Issues: []vaultimport.Issue{
+				{
+					Severity: vaultimport.SeverityWarning,
+					Code:     vaultimport.IssueKeyWithoutMaterial,
+					Value:    "deploy key",
+				},
+				{
+					Severity: vaultimport.SeverityWarning,
+					Code:     vaultimport.IssueDanglingSnippetTarget,
+					Value:    "host-1", Detail: "Deploy",
+				},
+			},
+		},
+		familyCreated: 1,
+	}
+	state := vaultstate.NewState(hosts,
+		vaultstate.WithImports(imports),
+		vaultstate.WithImportPicker(fakeImportPicker{
+			name: "keys.json", content: []byte(`{"kind":"netcatty.keys"}`),
+		}),
+	)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := newProductionTester(t, state, 1100, 720)
+	if err := tt.Click(m.VaultImportTitle()); err != nil {
+		t.Fatalf("click Import: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click(m.VaultImportChooseFile()); err != nil {
+		t.Fatalf("click Choose File: %v", err)
+	}
+	tt.Frame()
+
+	for _, want := range []string{
+		m.VaultImportIssueKeyWithoutMaterial("deploy key"),
+		m.VaultImportIssueDanglingTarget("Deploy", "host-1"),
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("%q is missing from the preview, texts %q", want, tt.Texts())
+		}
+	}
+
+	scrollToEnd(tt, 1100, 720)
+	if err := tt.Click(m.VaultImportImport()); err != nil {
+		t.Fatalf("click Import: %v", err)
+	}
+	tt.Frame()
+	outcome, ok := state.ImportOutcome()
+	if !ok || outcome.Imported != 1 || outcome.Overwritten != 0 ||
+		outcome.Skipped != 0 || outcome.Family != 1 {
+		t.Fatalf("outcome = %+v, ok = %v", outcome, ok)
+	}
+	if !tt.HasText(m.VaultImportDone(1, 0, 0, 0)) ||
+		!tt.HasText(m.VaultImportDoneFamily(1)) {
+		t.Fatalf("banner does not count the restored record, texts %q", tt.Texts())
 	}
 }
 

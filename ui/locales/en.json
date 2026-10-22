@@ -286,6 +286,30 @@
   "vaultImportIssueInvalidArchive": "The ZIP archive is damaged or invalid.",
   "vaultImportIssueInvalidManifest": "The Notes manifest is invalid; file names are used instead.",
   "vaultImportIssueMissingNoteEntry": "A manifest Note has no Markdown file.",
+  "vaultImportIssueKeyWithoutMaterial": "Key \"{label}\" was restored without private material; add it before using this Key to authenticate.",
+  "@vaultImportIssueKeyWithoutMaterial": {
+    "description": "A Key record was restored without private material.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "deploy key"
+      }
+    }
+  },
+  "vaultImportIssueDanglingTarget": "Snippet \"{label}\" targets Host \"{target}\", which is not part of this import; the reference is preserved.",
+  "@vaultImportIssueDanglingTarget": {
+    "description": "A Snippet keeps a target Host that this import does not contain.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Deploy"
+      },
+      "target": {
+        "type": "String",
+        "example": "host-1"
+      }
+    }
+  },
   "vaultImportMasterPassword": "Master password",
   "vaultImportMasterHint": "Only needed for MobaXterm files protected by a master password.",
   "vaultImportSummary": "Rows: {total}, new: {added}, conflicts: {conflicts}, duplicates: {duplicates}, invalid: {invalid}",

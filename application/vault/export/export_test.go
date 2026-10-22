@@ -83,6 +83,10 @@ func exportFor(t *testing.T, format Format, opts Options) []byte {
 
 func TestCSVUsesHeaderMarkedFieldsAndGuards(t *testing.T) {
 	csvText := string(exportFor(t, FormatCSV, Options{IncludeSecrets: true}))
+	if !strings.HasPrefix(csvText, "\xef\xbb\xbf") {
+		t.Fatalf("CSV does not start with a UTF-8 BOM: %q", csvText[:min(len(csvText), 3)])
+	}
+	csvText = strings.TrimPrefix(csvText, "\xef\xbb\xbf")
 	lines := strings.Split(csvText, "\r\n")
 	if lines[0] != strings.Join(vaultimport.CSVHeader(), ",") {
 		t.Fatalf("header = %q", lines[0])
@@ -280,6 +284,10 @@ func TestLogsExportsBothFamiliesDeterministically(t *testing.T) {
 		t.Fatalf("log document = %s", jsonDoc)
 	}
 	csvDoc := string(exportFor(t, FormatLogsCSV, Options{}))
+	if !strings.HasPrefix(csvDoc, "\xef\xbb\xbf") {
+		t.Fatalf("logs CSV does not start with a UTF-8 BOM: %q", csvDoc[:min(len(csvDoc), 3)])
+	}
+	csvDoc = strings.TrimPrefix(csvDoc, "\xef\xbb\xbf")
 	if !strings.HasPrefix(csvDoc, strings.Join(logsHeader, ",")+"\r\n") {
 		t.Fatalf("log header = %q", csvDoc)
 	}

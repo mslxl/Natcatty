@@ -165,6 +165,30 @@
   "vaultImportIssueInvalidArchive": "ZIP 壓縮檔損毀或無效。",
   "vaultImportIssueInvalidManifest": "筆記清單無效；將改用檔案名稱。",
   "vaultImportIssueMissingNoteEntry": "清單中的一則筆記缺少 Markdown 檔案。",
+  "vaultImportIssueKeyWithoutMaterial": "金鑰「{label}」已還原，但缺少私鑰材料；請先補充材料，再使用該金鑰進行驗證。",
+  "@vaultImportIssueKeyWithoutMaterial": {
+    "description": "A Key record was restored without private material.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "deploy key"
+      }
+    }
+  },
+  "vaultImportIssueDanglingTarget": "片段「{label}」指向主機「{target}」，但該主機不在本次匯入中；參照已保留。",
+  "@vaultImportIssueDanglingTarget": {
+    "description": "A Snippet keeps a target Host that this import does not contain.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "Deploy"
+      },
+      "target": {
+        "type": "String",
+        "example": "host-1"
+      }
+    }
+  },
   "vaultImportMasterPassword": "主密碼",
   "vaultImportMasterHint": "僅受主密碼保護的 MobaXterm 檔案需要。",
   "vaultImportSummary": "共 {total} 列：{added} 個新增，{conflicts} 個衝突，{duplicates} 個重複，{invalid} 個無效",

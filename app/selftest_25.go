@@ -9,13 +9,15 @@ package app
 //   - Formats: Netcatty JSON, Netcatty CSV, Snippets JSON, Vault Notes
 //     Markdown, HTML, and ZIP, SSH Keys JSON, Themes JSON, and Logs JSON and
 //     CSV each write a non-empty file with the documented kind, header, or
-//     entry names and the seeded records.
+//     entry names and the seeded records. Both CSVs begin with the UTF-8 BOM
+//     the original exporter wrote, and the importer still reads them.
 //   - Conventions: the CSV header and marked KeyPath field match the importer,
 //     formula starts are guarded, and the exported records carry their group,
 //     label, tags, notes, and credentials.
 //   - Secrets: without the destructive option no password or private key
 //     material appears; with it, the values appear and are counted as
-//     destructive.
+//     destructive. A secrets-off Keys export still restores its metadata Key,
+//     with a warning that it has no private material.
 //   - Round trip: a CSV export and a JSON export import into a second store
 //     through the ticket-24 importer, preserving the Host, Group, credentials,
 //     and Key. Snippets, Notes, and Keys exports restore through their family
@@ -172,6 +174,14 @@ func (t *selftest25) formatsStep(*ui.Context) selftest.Outcome {
 				return t.fail(fmt.Errorf("%s leaked %q", check.format, unwanted))
 			}
 		}
+		if check.format == appvault.ExportCSV || check.format == appvault.ExportLogsCSV {
+			// The original exporter wrote a UTF-8 BOM; without it a spreadsheet
+			// reads a non-ASCII label in the platform code page.
+			if !bytes.HasPrefix(content, []byte{0xef, 0xbb, 0xbf}) {
+				return t.fail(fmt.Errorf("%s does not start with a UTF-8 BOM: %q",
+					check.format, content[:min(len(content), 3)]))
+			}
+		}
 		if check.format == appvault.ExportNotesZIP {
 			// The manifest is authoritative and the Markdown layout stays
 			// human-readable, including for a duplicate and a slash title.
@@ -208,13 +218,13 @@ func (t *selftest25) formatsStep(*ui.Context) selftest.Outcome {
 	csvText := ""
 	header := strings.Join(vaultimport.CSVHeader(), ",")
 	for _, content := range t.writer.files {
-		if strings.HasPrefix(string(content), header) {
+		if strings.HasPrefix(string(content), "\xef\xbb\xbf"+header) {
 			csvText = string(content)
 			break
 		}
 	}
-	if !strings.HasPrefix(csvText, strings.Join(vaultimport.CSVHeader(), ",")) {
-		return t.fail(fmt.Errorf("CSV header = %q", csvText))
+	if !strings.HasPrefix(csvText, "\xef\xbb\xbf"+header) {
+		return t.fail(fmt.Errorf("CSV BOM + header = %q", csvText))
 	}
 
 	// Every export format must have been exercised at least once.
@@ -512,9 +522,45 @@ func (t *selftest25) roundTripStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("restored Key material = %q, %v", material, err))
 	}
 
+	// A secrets-off Keys export still carries the Key metadata. It must restore
+	// the record with HasPrivateKey=false and a warning, never import nothing.
+	keysMetadata, err := t.exportFileWithSecrets(appvault.ExportKeys, false)
+	if err != nil {
+		return t.fail(err)
+	}
+	_, metadataImporter := t.secondVault()
+	metadataPreview, err := metadataImporter.PreviewImport(context.Background(),
+		string(keysMetadata), appvault.PreviewImportOptions{})
+	if err != nil {
+		return t.fail(fmt.Errorf("preview the secrets-off Keys export: %w", err))
+	}
+	warned := false
+	for _, issue := range metadataPreview.Issues {
+		if issue.Code == vaultimport.IssueKeyWithoutMaterial {
+			warned = true
+		}
+	}
+	if !warned {
+		return t.fail(fmt.Errorf("the secrets-off Keys preview does not warn about missing material: %+v",
+			metadataPreview.Issues))
+	}
+	metadataResult, err := metadataImporter.CommitImport(context.Background(), metadataPreview,
+		appvault.ImportCommitOptions{})
+	if err != nil {
+		return t.fail(fmt.Errorf("commit the secrets-off Keys export: %w", err))
+	}
+	if metadataResult.FamilyCreated != 1 {
+		return t.fail(fmt.Errorf("secrets-off Keys import doubles as a drop: %+v", metadataResult))
+	}
+	metadataKeys, err := metadataImporter.ListKeys(context.Background())
+	if err != nil || len(metadataKeys) != 1 || metadataKeys[0].Label != "export_key" ||
+		metadataKeys[0].HasPrivateKey {
+		return t.fail(fmt.Errorf("secrets-off Keys restored = %+v, %v", metadataKeys, err))
+	}
+
 	t.cleanup()
 	return selftest.Passed(
-		"JSON restored every family and link, including identity/proxy passwords and exact Note titles; Snippets, Notes ZIP, and Keys detected and imported through the production path",
+		"JSON restored every family and link, including identity/proxy passwords and exact Note titles; Snippets, Notes ZIP, and Keys detected and imported through the production path; secrets-off Keys restored metadata with a warning",
 		"appvault.ExportVault + appvault.PreviewImport/CommitImport + family formats")
 }
 
@@ -775,10 +821,20 @@ func (t *selftest25) start() error {
 // exportFile renders one format with secrets to the writer's directory and
 // returns the bytes.
 func (t *selftest25) exportFile(format appvault.ExportFormat) ([]byte, error) {
+	return t.exportFileWithSecrets(format, true)
+}
+
+// exportFileWithSecrets renders one format with or without destructive
+// secrets, so the secrets-off paths can be exercised too.
+func (t *selftest25) exportFileWithSecrets(format appvault.ExportFormat,
+	includeSecrets bool) ([]byte, error) {
+
 	t.state.BeginExport()
 	t.state.SetExportFormat(string(format))
-	t.state.SetExportIncludeSecrets(true)
-	t.state.ConfirmExportSecrets()
+	t.state.SetExportIncludeSecrets(includeSecrets)
+	if includeSecrets {
+		t.state.ConfirmExportSecrets()
+	}
 	if err := t.state.Export(""); err != nil {
 		return nil, fmt.Errorf("export %s: %w", format, err)
 	}
