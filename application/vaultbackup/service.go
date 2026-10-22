@@ -109,9 +109,14 @@ const (
 // Status is the most recent backup outcome. It exists so a skipped or pruned
 // automatic backup is visible to the user instead of failing silently.
 type Status struct {
-	Kind   StatusKind
+	Kind StatusKind
+	// Pruned is how many older entries retention removed.
 	Pruned int
-	Detail string
+	// Deleted is how many entries an explicit clear removed. It is separate
+	// from Pruned so the panel can report the two actions independently
+	// instead of counting the same entries twice.
+	Deleted int
+	Detail  string
 }
 
 // CreateResult reports one backup attempt.
@@ -428,7 +433,7 @@ func (s *Service) Clear(ctx context.Context) (int, error) {
 		s.setStatus(Status{Kind: StatusSkippedFailed, Detail: err.Error()})
 		return deleted, err
 	}
-	s.setStatus(Status{Kind: StatusCleared, Pruned: deleted})
+	s.setStatus(Status{Kind: StatusCleared, Deleted: deleted})
 	return deleted, nil
 }
 

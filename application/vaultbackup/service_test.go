@@ -639,6 +639,44 @@ func TestNotifyDoesNotBlockWhileABackupRuns(t *testing.T) {
 	}
 }
 
+// TestClearReportsDeletedSeparatelyFromPruned keeps the explicit clear count
+// out of Pruned. A panel that prints the clear message and then appends the
+// pruned message must report "Deleted N backups" once, not twice.
+func TestClearReportsDeletedSeparatelyFromPruned(t *testing.T) {
+	graph := newTestService(t, hostSnapshot("h1"))
+	ctx := context.Background()
+
+	first, err := graph.service.Create(ctx, domainbackup.ReasonVaultChange, "", "")
+	if err != nil || !first.Created {
+		t.Fatalf("first create = %+v, %v", first, err)
+	}
+	graph.advance(time.Second)
+	graph.snapshotter.set(hostSnapshot("h2"))
+	second, err := graph.service.Create(ctx, domainbackup.ReasonVaultChange, "", "")
+	if err != nil || !second.Created {
+		t.Fatalf("second create = %+v, %v", second, err)
+	}
+
+	deleted, err := graph.service.Clear(ctx)
+	if err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("Clear deleted %d, want 2", deleted)
+	}
+	status := graph.service.LastStatus()
+	if status.Kind != StatusCleared {
+		t.Fatalf("status = %q, want %q", status.Kind, StatusCleared)
+	}
+	if status.Deleted != 2 {
+		t.Errorf("Deleted = %d, want 2", status.Deleted)
+	}
+	if status.Pruned != 0 {
+		t.Errorf("Pruned = %d after a clear, want 0: the deleted entries are not retention pruning",
+			status.Pruned)
+	}
+}
+
 // TestProtectiveBackupDedupesTheCurrentState documents the barrier's dedupe:
 // an identical state already has a restore point, so a restore reuses the
 // newest record instead of writing a duplicate. The restore still applies.

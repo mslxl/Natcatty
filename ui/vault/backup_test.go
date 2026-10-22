@@ -38,7 +38,7 @@ func (f *viewBackups) Clear(context.Context) (int, error) {
 	f.clearCalls++
 	count := len(f.items)
 	f.items = nil
-	f.status = appbackup.Status{Kind: appbackup.StatusCleared, Pruned: count}
+	f.status = appbackup.Status{Kind: appbackup.StatusCleared, Deleted: count}
 	return count, nil
 }
 
@@ -278,6 +278,50 @@ func TestBackupPanelEmptyUnavailableAndNotice(t *testing.T) {
 		t.Error("a clear action is offered with no backups")
 	}
 	assertNoHorizontalOverflow(t, tt, 720, 480)
+}
+
+// TestBackupClearReportsTheDeletedCountOnce drives the real clear flow: the
+// panel prints "Deleted N backups" and must not follow it with the retention
+// pruning message for the same entries.
+func TestBackupClearReportsTheDeletedCountOnce(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		t.Run(locale, func(t *testing.T) {
+			m := locales.In(locale)
+			state, backups, tt := newBackupView(t, 1100, 720)
+			openBackupPanel(t, state, tt, locale)
+			deleted := len(backups.items)
+
+			if err := tt.Click(m.VaultBackupClear()); err != nil {
+				t.Fatalf("click Clear: %v", err)
+			}
+			tt.Frame()
+			if err := tt.Click(m.VaultBackupClear()); err != nil {
+				t.Fatalf("confirm Clear: %v", err)
+			}
+			tt.Frame()
+			if backups.clearCalls != 1 {
+				t.Fatalf("clear calls = %d, want 1", backups.clearCalls)
+			}
+
+			cleared := m.VaultBackupCleared(deleted)
+			pruned := m.VaultBackupPruned(deleted)
+			if !tt.HasText(cleared) {
+				t.Fatalf("%q is missing, texts %q", cleared, tt.Texts())
+			}
+			if tt.HasText(pruned) {
+				t.Fatalf("the clear also reported retention pruning %q, texts %q", pruned, tt.Texts())
+			}
+			occurrences := 0
+			for _, text := range tt.Texts() {
+				if strings.Contains(text, cleared) {
+					occurrences++
+				}
+			}
+			if occurrences != 1 {
+				t.Fatalf("the clear message appears %d times, want 1: %q", occurrences, tt.Texts())
+			}
+		})
+	}
 }
 
 func TestBackupPanelIsLocalizedInEveryLocale(t *testing.T) {

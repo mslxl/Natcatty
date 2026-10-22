@@ -456,3 +456,29 @@ func TestCloseToTrayNeedsATray(t *testing.T) {
 		t.Fatal("close-to-tray engaged without a tray")
 	}
 }
+
+// TestSyncAfterShutdownLeavesTheDestroyedTrayAlone reproduces the quit path:
+// ending a Session schedules a tray sync, and a fast quit runs Shutdown before
+// that sync drains. The stale sync must not dereference the destroyed tray.
+func TestSyncAfterShutdownLeavesTheDestroyedTrayAlone(t *testing.T) {
+	controller, _, backend, _, _, _, _ := newDesktopTestController(t)
+	if len(backend.surfaces) != 1 {
+		t.Fatalf("tray surfaces = %d, want 1", len(backend.surfaces))
+	}
+	tray := backend.surfaces[0]
+	before := controller.SyncCount()
+
+	controller.Shutdown()
+	if tray.alive {
+		t.Fatal("Shutdown left the tray surface alive")
+	}
+
+	controller.SyncNow()
+
+	if controller.SyncCount() != before {
+		t.Fatalf("a sync ran after Shutdown: %d -> %d", before, controller.SyncCount())
+	}
+	if len(backend.surfaces) != 1 {
+		t.Fatalf("a sync recreated the tray after Shutdown: %d surfaces", len(backend.surfaces))
+	}
+}
