@@ -36,7 +36,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -44,7 +46,9 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	apphistory "github.com/mslxl/natcatty/application/history"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -105,18 +109,24 @@ func (t *selftest25) formatsStep(*ui.Context) selftest.Outcome {
 	}{
 		{format: appvault.ExportJSON, secrets: true,
 			contains: []string{`"kind": "netcatty.vault"`, `"hostname": "export.example.test"`,
-				`"password": "s3cr3t"`, `"keyPath"`, `"groups"`}},
-		{format: appvault.ExportJSON, absent: []string{"s3cr3t", "OPENSSH PRIVATE KEY"}},
+				`"password": "s3cr3t"`, `"identp@ss"`, `"proxyp@ss"`, `"keyPath"`,
+				`"identityId"`, `"proxyProfileId"`, `"groups"`, `"identities"`,
+				`"proxyProfiles"`, `"knownHosts"`, `"snippets"`, `"snippetPackages"`,
+				`"noteGroups"`}},
+		{format: appvault.ExportJSON, absent: []string{"s3cr3t", "identp@ss", "proxyp@ss", "OPENSSH PRIVATE KEY"}},
 		{format: appvault.ExportCSV, secrets: true,
 			contains: []string{strings.Join(vaultimport.CSVHeader(), ","),
 				"'=Formula", "s3cr3t", "export.example.test"}},
 		{format: appvault.ExportCSV, absent: []string{"s3cr3t"}},
 		{format: appvault.ExportSnippets,
-			contains: []string{`"kind": "netcatty.snippets"`, `"label": "Uptime"`}},
+			contains: []string{`"kind": "netcatty.snippets"`, `"label": "Uptime"`,
+				`"targets"`, `"targetGroups"`, `"snippetPackages"`}},
 		{format: appvault.ExportNotesMarkdown,
 			contains: []string{"# Runbook", "uptime --short"}},
 		{format: appvault.ExportNotesHTML,
 			contains: []string{"<!DOCTYPE html>", "Runbook"}},
+		{format: appvault.ExportNotesZIP,
+			contains: []string{"PK"}},
 		{format: appvault.ExportKeys, secrets: true,
 			contains: []string{`"kind": "netcatty.keys"`, `"authorizedKeys"`, "OPENSSH PRIVATE KEY"}},
 		{format: appvault.ExportKeys, absent: []string{"OPENSSH PRIVATE KEY"}},
@@ -163,13 +173,25 @@ func (t *selftest25) formatsStep(*ui.Context) selftest.Outcome {
 			}
 		}
 		if check.format == appvault.ExportNotesZIP {
-			reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
-			if err != nil || len(reader.File) != 1 ||
-				reader.File[0].Name != "Ops/Runbook.md" {
-				return t.fail(fmt.Errorf("notes ZIP = %v, %v", reader, err))
+			// The manifest is authoritative and the Markdown layout stays
+			// human-readable, including for a duplicate and a slash title.
+			entries, manifest, err := selftest25Zip(content)
+			if err != nil {
+				return t.fail(err)
 			}
-		}
-		if check.format == appvault.ExportNotesZIP {
+			if len(entries) != 4 || entries["Ops/Runbook.md"] == "" {
+				return t.fail(fmt.Errorf("notes ZIP entries = %v", mapKeys(entries)))
+			}
+			for _, want := range []string{`"kind": "netcatty.notes"`,
+				`"title": "Runbook"`, `"title": "Config / Draft"`, `"group": "Ops/Config"`} {
+				if !strings.Contains(manifest, want) {
+					return t.fail(fmt.Errorf("notes manifest lacks %q: %s", want, manifest))
+				}
+			}
+			if !strings.Contains(manifest, `"title": "Runbook"`) ||
+				strings.Count(manifest, `"title": "Runbook"`) != 2 {
+				return t.fail(fmt.Errorf("duplicate Note titles are not distinct in the manifest: %s", manifest))
+			}
 			t.notes = content
 		}
 		if check.format == appvault.ExportSnippets {
@@ -195,9 +217,20 @@ func (t *selftest25) formatsStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("CSV header = %q", csvText))
 	}
 
+	// Every export format must have been exercised at least once.
+	exercised := make(map[appvault.ExportFormat]bool)
+	for _, check := range checks {
+		exercised[check.format] = true
+	}
+	for _, format := range appvault.ExportFormats() {
+		if !exercised[format] {
+			return t.fail(fmt.Errorf("format %s was not exercised", format))
+		}
+	}
+
 	t.cleanup()
 	return selftest.Passed(
-		"ten formats were produced and verified; the CSV header, formula guard, group, credentials, and secret omission behave",
+		"all ten formats including the Notes ZIP manifest were produced and verified; CSV conventions and default secret omission behave",
 		"appvault.ExportVault + vaultexport.Export + store.SecretStore")
 }
 
@@ -333,16 +366,92 @@ func (t *selftest25) roundTripStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("commit the JSON export: %w", err))
 	}
 	jsonHosts, err := jsonImporter.List(context.Background())
-	if err != nil || len(jsonHosts) != 1 || !jsonHosts[0].HasPassword ||
-		jsonHosts[0].KeyID == "" {
-		return t.fail(fmt.Errorf("JSON round trip = %+v, %v", jsonHosts, err))
+	if err != nil || len(jsonHosts) != 1 {
+		return t.fail(fmt.Errorf("JSON round trip Hosts = %+v, %v", jsonHosts, err))
+	}
+	jsonHost := jsonHosts[0]
+	if !jsonHost.HasPassword || jsonHost.KeyID == "" ||
+		jsonHost.IdentityID == "" || jsonHost.ProxyProfileID == "" ||
+		jsonHost.AuthMethod != vault.HostAuthKey || !jsonHost.Pinned ||
+		!jsonHost.RequiresMFA || !jsonHost.LegacyAlgorithms || !jsonHost.SkipEcdsaHostKey {
+		return t.fail(fmt.Errorf("JSON Host lost auth/options/links: %+v", jsonHost))
 	}
 	jsonKeys, err := jsonImporter.ListKeys(context.Background())
-	if err != nil || len(jsonKeys) != 1 {
+	if err != nil || len(jsonKeys) != 1 || jsonKeys[0].ID != jsonHost.KeyID {
 		return t.fail(fmt.Errorf("JSON Keys = %+v, %v", jsonKeys, err))
 	}
+	if material, _, err := jsonImporter.KeyMaterial(context.Background(), jsonKeys[0].ID); err != nil || material == "" {
+		return t.fail(fmt.Errorf("JSON Key material = %q, %v", material, err))
+	}
+	jsonIdentities, err := jsonImporter.ListIdentities(context.Background())
+	if err != nil || len(jsonIdentities) != 1 || !jsonIdentities[0].HasPassword ||
+		jsonIdentities[0].KeyID != jsonKeys[0].ID {
+		return t.fail(fmt.Errorf("JSON Identities = %+v, %v", jsonIdentities, err))
+	}
+	jsonProxies, err := jsonImporter.ListProxyProfiles(context.Background())
+	if err != nil || len(jsonProxies) != 1 || !jsonProxies[0].Config.HasPassword {
+		return t.fail(fmt.Errorf("JSON Proxy Profiles = %+v, %v", jsonProxies, err))
+	}
+	jsonKnown, err := jsonImporter.ListKnownHosts(context.Background())
+	if err != nil || len(jsonKnown) != 1 || jsonKnown[0].Fingerprint != "SHA256:selftest" {
+		return t.fail(fmt.Errorf("JSON Known Hosts = %+v, %v", jsonKnown, err))
+	}
+	jsonSnippets, err := jsonImporter.ListSnippets(context.Background())
+	if err != nil || len(jsonSnippets) != 1 || len(jsonSnippets[0].Targets) != 1 ||
+		jsonSnippets[0].Targets[0] != jsonHost.ID ||
+		len(jsonSnippets[0].TargetGroups) != 1 || jsonSnippets[0].TargetGroups[0] != "Prod" {
+		return t.fail(fmt.Errorf("JSON Snippets = %+v, %v", jsonSnippets, err))
+	}
+	jsonNotes, err := jsonImporter.ListNotes(context.Background())
+	if err != nil || len(jsonNotes) != 3 {
+		return t.fail(fmt.Errorf("JSON Notes = %+v, %v", jsonNotes, err))
+	}
+	titles := map[string]int{}
+	for _, note := range jsonNotes {
+		titles[note.Title]++
+		if note.Title == "Runbook" && (note.Group != "Ops" ||
+			(note.Content != "uptime --short\r\n" && note.Content != "second runbook")) {
+			return t.fail(fmt.Errorf("JSON Runbook = %+v", note))
+		}
+		if note.Title == "Config / Draft" &&
+			(note.Group != "Ops/Config" || note.Content != "# Draft") {
+			return t.fail(fmt.Errorf("JSON slash-title Note = %+v", note))
+		}
+	}
+	if titles["Runbook"] != 2 || titles["Config / Draft"] != 1 {
+		return t.fail(fmt.Errorf("JSON Note titles = %v", titles))
+	}
+	jsonNoteGroups, err := jsonImporter.ListNoteGroups(context.Background())
+	if err != nil || !hasNoteGroupPath(jsonNoteGroups, "Ops/Config") {
+		return t.fail(fmt.Errorf("JSON Note Groups = %+v, %v", jsonNoteGroups, err))
+	}
+	jsonGroups, err := jsonImporter.ListGroups(context.Background())
+	if err != nil || !hasGroupPath(jsonGroups, "Prod") {
+		return t.fail(fmt.Errorf("JSON Host Groups = %+v, %v", jsonGroups, err))
+	}
+	effective, err := jsonImporter.EffectiveHost(context.Background(), jsonHost.ID)
+	if err != nil || effective.Proxy == nil || effective.Proxy.Password != "proxyp@ss" {
+		return t.fail(fmt.Errorf("JSON Proxy Profile password = %+v, %v", effective.Proxy, err))
+	}
+	if password, err := jsonImporter.Secret(context.Background(), jsonHost.ID, appvault.FieldPassword); err != nil || password != "s3cr3t" {
+		return t.fail(fmt.Errorf("JSON Host password = %q, %v", password, err))
+	}
+	// The identity and proxy passwords are not exposed as plaintext by any
+	// read API; a re-export with secrets proves the field-secret store holds
+	// them after import.
+	reExported, err := jsonImporter.ExportVault(context.Background(),
+		appvault.ExportOptions{Format: appvault.ExportJSON, IncludeSecrets: true})
+	if err != nil {
+		return t.fail(fmt.Errorf("re-export the JSON round trip: %w", err))
+	}
+	for _, want := range []string{"s3cr3t", "identp@ss", "proxyp@ss", "OPENSSH PRIVATE KEY"} {
+		if !strings.Contains(string(reExported.Content), want) {
+			return t.fail(fmt.Errorf("JSON re-export lacks %q: %s", want, reExported.Content))
+		}
+	}
 
-	// Family exports restore through their own importers.
+	// Family exports restore through the same PreviewImport/CommitImport path
+	// the Import screen uses, with no format override so detection is tested.
 	snippets, err := t.exportFile(appvault.ExportSnippets)
 	if err != nil {
 		return t.fail(err)
@@ -356,28 +465,57 @@ func (t *selftest25) roundTripStep(*ui.Context) selftest.Outcome {
 		return t.fail(err)
 	}
 	_, familyImporter := t.secondVault()
-	snippetResult, err := familyImporter.ImportSnippetsJSON(context.Background(), string(snippets))
-	if err != nil || snippetResult.Created != 1 {
-		return t.fail(fmt.Errorf("Snippets import = %+v, %v", snippetResult, err))
+	for _, item := range []struct {
+		name   string
+		text   string
+		format vaultimport.Format
+	}{
+		{"Snippets", string(snippets), vaultimport.Format("snippets")},
+		{"Notes", string(notesZIP), vaultimport.Format("notes_zip")},
+		{"Keys", string(keysJSON), vaultimport.Format("keys")},
+	} {
+		preview, err := familyImporter.PreviewImport(context.Background(), item.text,
+			appvault.PreviewImportOptions{})
+		if err != nil {
+			return t.fail(fmt.Errorf("preview the %s export: %w", item.name, err))
+		}
+		if preview.Format != item.format {
+			return t.fail(fmt.Errorf("%s detected as %q, want %q", item.name, preview.Format, item.format))
+		}
+		if _, err := familyImporter.CommitImport(context.Background(), preview,
+			appvault.ImportCommitOptions{}); err != nil {
+			return t.fail(fmt.Errorf("commit the %s export: %w", item.name, err))
+		}
 	}
-	noteResult, err := familyImporter.ImportNotesZIP(context.Background(), notesZIP)
-	if err != nil || noteResult.Created != 1 {
-		return t.fail(fmt.Errorf("Notes import = %+v, %v", noteResult, err))
-	}
-	keyResult, err := familyImporter.ImportKeysJSON(context.Background(), string(keysJSON))
-	if err != nil || keyResult.Created != 1 {
-		return t.fail(fmt.Errorf("Keys import = %+v, %v", keyResult, err))
+	restoredSnippets, err := familyImporter.ListSnippets(context.Background())
+	if err != nil || len(restoredSnippets) != 1 ||
+		len(restoredSnippets[0].Targets) != 1 ||
+		len(restoredSnippets[0].TargetGroups) != 1 {
+		return t.fail(fmt.Errorf("restored Snippets = %+v, %v", restoredSnippets, err))
 	}
 	notes, err := familyImporter.ListNotes(context.Background())
-	if err != nil || len(notes) != 1 || notes[0].Title != "Runbook" ||
-		notes[0].Group != "Ops" || notes[0].Content != "uptime --short\r\n" {
+	if err != nil || len(notes) != 3 {
 		return t.fail(fmt.Errorf("restored Notes = %+v, %v", notes, err))
+	}
+	restoredTitles := map[string]int{}
+	for _, note := range notes {
+		restoredTitles[note.Title]++
+	}
+	if restoredTitles["Runbook"] != 2 || restoredTitles["Config / Draft"] != 1 {
+		return t.fail(fmt.Errorf("restored Note titles = %v", restoredTitles))
+	}
+	restoredKeys, err := familyImporter.ListKeys(context.Background())
+	if err != nil || len(restoredKeys) != 1 {
+		return t.fail(fmt.Errorf("restored Keys = %+v, %v", restoredKeys, err))
+	}
+	if material, _, err := familyImporter.KeyMaterial(context.Background(), restoredKeys[0].ID); err != nil || material == "" {
+		return t.fail(fmt.Errorf("restored Key material = %q, %v", material, err))
 	}
 
 	t.cleanup()
 	return selftest.Passed(
-		"CSV and JSON exports re-imported with their group, marked fields, password, and key; Snippets, Notes, and Keys restored byte-for-byte",
-		"appvault.ExportVault + appvault.PreviewImport/CommitImport + family importers")
+		"JSON restored every family and link, including identity/proxy passwords and exact Note titles; Snippets, Notes ZIP, and Keys detected and imported through the production path",
+		"appvault.ExportVault + appvault.PreviewImport/CommitImport + family formats")
 }
 
 func (t *selftest25) layoutStep(*ui.Context) selftest.Outcome {
@@ -516,13 +654,44 @@ func (t *selftest25) start() error {
 		return fmt.Errorf("create the Key: %w", err)
 	}
 	t.keyID = string(key.ID)
+	identity, err := service.CreateIdentity(ctx, vault.IdentityDraft{
+		Label: "Deploy identity", Username: "deploy",
+		AuthMethod: vault.IdentityAuthKey, KeyID: key.ID, Password: "identp@ss",
+	})
+	if err != nil {
+		t.cleanup()
+		return fmt.Errorf("create the Identity: %w", err)
+	}
+	proxyProfile, err := service.CreateProxyProfile(ctx, vault.ProxyProfileDraft{
+		Label: "Bastion",
+		Config: vault.ProxyConfig{
+			Type: vault.ProxySOCKS5, Host: "proxy.example.test", Port: 1080,
+			Username: "proxyuser", Password: "proxyp@ss",
+		},
+	})
+	if err != nil {
+		t.cleanup()
+		return fmt.Errorf("create the Proxy Profile: %w", err)
+	}
 	if _, err := service.Update(ctx, host.ID, vault.Draft{
 		Label: host.Label, Hostname: host.Hostname, Port: host.Port,
 		Username: host.Username, Protocol: host.Protocol, Group: host.Group,
 		Tags: host.Tags, Notes: host.Notes, KeyID: key.ID,
+		IdentityID: identity.ID, AuthMethod: vault.HostAuthKey,
+		ProxyProfileID: proxyProfile.ID, Pinned: true, RequiresMFA: true,
+		LegacyAlgorithms: true, SkipEcdsaHostKey: true,
 	}); err != nil {
 		t.cleanup()
-		return fmt.Errorf("attach the Key: %w", err)
+		return fmt.Errorf("attach the Key and links: %w", err)
+	}
+	if err := t.db.UpsertKnownHost(ctx, domainconn.KnownHost{
+		ID: "known-selftest", Hostname: host.Hostname, Port: host.Port,
+		KeyType: "ssh-ed25519", PublicKey: "ssh-ed25519 AAAA host",
+		Fingerprint: "SHA256:selftest", DiscoveredAt: time.Unix(1700000000, 0),
+		LastSeen: time.Unix(1700000000, 0),
+	}); err != nil {
+		t.cleanup()
+		return fmt.Errorf("record the Known Host: %w", err)
 	}
 	if _, err := service.CreateSnippetPackage(ctx, vault.SnippetPackageDraft{Path: "Ops"}); err != nil {
 		t.cleanup()
@@ -530,6 +699,8 @@ func (t *selftest25) start() error {
 	}
 	if _, err := service.CreateSnippet(ctx, vault.SnippetDraft{
 		Label: "Uptime", Command: "uptime --short", Package: "Ops",
+		Tags: []string{"ops"}, Targets: []model.HostID{host.ID},
+		TargetGroups: []string{"Prod"},
 	}); err != nil {
 		t.cleanup()
 		return fmt.Errorf("create the Snippet: %w", err)
@@ -543,6 +714,22 @@ func (t *selftest25) start() error {
 	}); err != nil {
 		t.cleanup()
 		return fmt.Errorf("create the Note: %w", err)
+	}
+	if _, err := service.CreateNote(ctx, vault.NoteDraft{
+		Title: "Runbook", Content: "second runbook", Group: "Ops",
+	}); err != nil {
+		t.cleanup()
+		return fmt.Errorf("create the duplicate Note: %w", err)
+	}
+	if _, err := service.CreateNoteGroup(ctx, vault.NoteGroupDraft{Path: "Ops/Config"}); err != nil {
+		t.cleanup()
+		return fmt.Errorf("create the second Note Group: %w", err)
+	}
+	if _, err := service.CreateNote(ctx, vault.NoteDraft{
+		Title: "Config / Draft", Content: "# Draft", Group: "Ops/Config",
+	}); err != nil {
+		t.cleanup()
+		return fmt.Errorf("create the slash-title Note: %w", err)
 	}
 	if err := history.RecordConnection(ctx, domainhistory.ConnectionLog{
 		Kind: "ssh", Status: domainhistory.ConnectionConnected,
@@ -675,4 +862,62 @@ func (w *selftest25Writer) Save(name string, content []byte) (string, error) {
 	w.names = append(w.names, name)
 	w.files[name] = append([]byte(nil), content...)
 	return path, nil
+}
+
+// selftest25Zip reads the Notes archive into path -> content and returns the
+// manifest text. It also proves every entry is readable.
+func selftest25Zip(content []byte) (map[string]string, string, error) {
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return nil, "", fmt.Errorf("open the Notes ZIP: %w", err)
+	}
+	entries := make(map[string]string, len(reader.File))
+	manifest := ""
+	for _, file := range reader.File {
+		handle, err := file.Open()
+		if err != nil {
+			return nil, "", fmt.Errorf("open %s: %w", file.Name, err)
+		}
+		data := new(bytes.Buffer)
+		_, readErr := data.ReadFrom(handle)
+		_ = handle.Close()
+		if readErr != nil {
+			return nil, "", fmt.Errorf("read %s: %w", file.Name, readErr)
+		}
+		entries[file.Name] = data.String()
+		if file.Name == "netcatty.notes.json" {
+			manifest = data.String()
+		}
+	}
+	if manifest == "" {
+		return nil, "", fmt.Errorf("the Notes ZIP has no %s", "netcatty.notes.json")
+	}
+	return entries, manifest, nil
+}
+
+func mapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func hasGroupPath(groups []vault.Group, path string) bool {
+	for _, group := range groups {
+		if group.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNoteGroupPath(groups []vault.NoteGroup, path string) bool {
+	for _, group := range groups {
+		if group.Path == path {
+			return true
+		}
+	}
+	return false
 }

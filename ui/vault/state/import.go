@@ -40,6 +40,7 @@ type ImportOutcome struct {
 	Overwritten int
 	Skipped     int
 	Groups      int
+	Family      int
 }
 
 // ImportOpen reports whether the import panel is showing.
@@ -126,6 +127,23 @@ func (s *State) ImportRow(index int) (appvault.ImportRow, bool) {
 // ImportRowSelected reports whether a row will be written.
 func (s *State) ImportRowSelected(index int) bool {
 	return index >= 0 && index < len(s.importSelected) && s.importSelected[index]
+}
+
+// ImportFamilyRows returns the non-Host records the document carries. They
+// are restored together with the host rows and keep their source links.
+func (s *State) ImportFamilyRows() []appvault.ImportFamilyRow {
+	if s.importPreview == nil {
+		return nil
+	}
+	return s.importPreview.FamilyRows
+}
+
+// ImportFamilyCounts summarizes the non-Host records.
+func (s *State) ImportFamilyCounts() appvault.ImportFamilyCounts {
+	if s.importPreview == nil {
+		return appvault.ImportFamilyCounts{}
+	}
+	return s.importPreview.FamilyCounts
 }
 
 // ImportSelectedCount returns how many rows are selected.
@@ -285,6 +303,7 @@ func (s *State) ConfirmImport() error {
 		outcome.Overwritten += len(result.Overwritten)
 		outcome.Skipped += result.Skipped
 		outcome.Groups += len(result.GroupsCreated)
+		outcome.Family += result.FamilyCreated
 		offset = result.Next
 		if result.Done {
 			break

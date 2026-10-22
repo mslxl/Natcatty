@@ -258,6 +258,34 @@
   "vaultImportFormatFinalShell": "FinalShell",
   "vaultImportFormatSecureCRT": "SecureCRT",
   "vaultImportFormatSSHConfig": "OpenSSH ssh_config",
+  "vaultImportFormatNetcattyJSON": "Netcatty JSON",
+  "vaultImportFormatSnippets": "Netcatty Snippets",
+  "vaultImportFormatKeys": "Netcatty Keys",
+  "vaultImportFormatNotesZIP": "Netcatty Notes (ZIP)",
+  "vaultImportFamily": "{count, plural, one {# record outside the Host list will also be restored.} other {# records outside the Host list will also be restored.}}",
+  "vaultImportFamilyRows": "Other records",
+  "vaultImportFamilySelected": "{count, plural, one {# other record will also be restored.} other {# other records will also be restored.}}",
+  "@vaultImportFamilySelected": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultImportFamilyGroup": "Group",
+  "vaultImportFamilySnippetPackage": "Snippet package",
+  "vaultImportFamilySnippet": "Snippet",
+  "vaultImportFamilyNoteGroup": "Note group",
+  "vaultImportFamilyNote": "Note",
+  "vaultImportFamilyKey": "Key",
+  "vaultImportFamilyIdentity": "Identity",
+  "vaultImportFamilyProxyProfile": "Proxy profile",
+  "vaultImportFamilyKnownHost": "Known host",
+  "vaultImportIssueInvalidArchive": "The ZIP archive is damaged or invalid.",
+  "vaultImportIssueInvalidManifest": "The Notes manifest is invalid; file names are used instead.",
+  "vaultImportIssueMissingNoteEntry": "A manifest Note has no Markdown file.",
   "vaultImportMasterPassword": "Master password",
   "vaultImportMasterHint": "Only needed for MobaXterm files protected by a master password.",
   "vaultImportSummary": "Rows: {total}, new: {added}, conflicts: {conflicts}, duplicates: {duplicates}, invalid: {invalid}",
@@ -314,6 +342,16 @@
   },
   "vaultImportNoneSelected": "Select at least one row to import.",
   "vaultImportDone": "Import complete. Imported: {imported}, overwritten: {overwritten}, skipped: {skipped}, Host Groups created: {groups}.",
+  "vaultImportDoneFamily": "{count, plural, one {# other record restored.} other {# other records restored.}}",
+  "@vaultImportDoneFamily": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
@@ -1966,6 +2004,7 @@
     }
   },
   "vaultExportUnreadable": "{count} credentials could not be read and were left out.",
+  "vaultExportOmitted": "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials were left out; enable secrets to include them.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

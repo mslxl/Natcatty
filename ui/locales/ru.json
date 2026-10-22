@@ -137,6 +137,34 @@
   "vaultImportFormatFinalShell": "FinalShell",
   "vaultImportFormatSecureCRT": "SecureCRT",
   "vaultImportFormatSSHConfig": "ssh_config OpenSSH",
+  "vaultImportFormatNetcattyJSON": "Netcatty JSON",
+  "vaultImportFormatSnippets": "Сниппеты Netcatty",
+  "vaultImportFormatKeys": "Ключи Netcatty",
+  "vaultImportFormatNotesZIP": "Заметки Netcatty (ZIP)",
+  "vaultImportFamily": "{count, plural, one {Также будет восстановлена # запись вне списка хостов.} few {Также будут восстановлены # записи вне списка хостов.} many {Также будет восстановлено # записей вне списка хостов.} other {Также будет восстановлено # записей вне списка хостов.}}",
+  "vaultImportFamilyRows": "Другие записи",
+  "vaultImportFamilySelected": "{count, plural, one {Также будет восстановлена # другая запись.} few {Также будут восстановлены # другие записи.} many {Также будет восстановлено # других записей.} other {Также будет восстановлено # других записей.}}",
+  "@vaultImportFamilySelected": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultImportFamilyGroup": "Группа",
+  "vaultImportFamilySnippetPackage": "Пакет сниппетов",
+  "vaultImportFamilySnippet": "Сниппет",
+  "vaultImportFamilyNoteGroup": "Группа заметок",
+  "vaultImportFamilyNote": "Заметка",
+  "vaultImportFamilyKey": "Ключ",
+  "vaultImportFamilyIdentity": "Учётные данные",
+  "vaultImportFamilyProxyProfile": "Профиль прокси",
+  "vaultImportFamilyKnownHost": "Известный хост",
+  "vaultImportIssueInvalidArchive": "Архив ZIP повреждён или недействителен.",
+  "vaultImportIssueInvalidManifest": "Манифест заметок недействителен; используются имена файлов.",
+  "vaultImportIssueMissingNoteEntry": "Для записи манифеста отсутствует файл Markdown.",
   "vaultImportMasterPassword": "Мастер-пароль",
   "vaultImportMasterHint": "Нужен только для файлов MobaXterm, защищённых мастер-паролем.",
   "vaultImportSummary": "Строк: {total}, новых: {added}, конфликтов: {conflicts}, дубликатов: {duplicates}, неверных: {invalid}",
@@ -193,6 +221,16 @@
   },
   "vaultImportNoneSelected": "Выберите хотя бы одну строку для импорта.",
   "vaultImportDone": "Импортировано хостов: {imported}, перезаписано: {overwritten}, пропущено: {skipped}, создано групп: {groups}.",
+  "vaultImportDoneFamily": "{count, plural, one {Восстановлена # другая запись.} few {Восстановлены # другие записи.} many {Восстановлено # других записей.} other {Восстановлено # других записей.}}",
+  "@vaultImportDoneFamily": {
+    "description": "How many non-Host records are restored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
@@ -1200,6 +1238,7 @@
     }
   },
   "vaultExportUnreadable": "Не удалось прочитать учётные данные: {count}; они пропущены.",
+  "vaultExportOmitted": "{count, plural, one {Пропущена # сохранённая учётная запись; включите секреты, чтобы добавить её.} few {Пропущены # сохранённые учётные записи; включите секреты, чтобы добавить их.} many {Пропущено # сохранённых учётных записей; включите секреты, чтобы добавить их.} other {Пропущено # сохранённых учётных записей; включите секреты, чтобы добавить их.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
     "placeholders": {

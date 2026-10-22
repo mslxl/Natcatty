@@ -5,7 +5,10 @@
 // the field-secret store and never writes them to a Vault record.
 package vaultimport
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Format names one supported import format.
 type Format string
@@ -25,24 +28,42 @@ const (
 	FormatSSHConfig Format = "ssh_config"
 	// FormatNetcattyJSON is Netcatty's own versioned JSON backup.
 	FormatNetcattyJSON Format = "netcatty_json"
+	// FormatSnippets is Netcatty's portable Snippets JSON document.
+	FormatSnippets Format = "snippets"
+	// FormatKeys is Netcatty's portable SSH Keys JSON document.
+	FormatKeys Format = "keys"
+	// FormatNotesZIP is Netcatty's Notes Markdown archive.
+	FormatNotesZIP Format = "notes_zip"
 )
 
 // KindNetcattyVault is the JSON document kind a Netcatty JSON export writes.
 const KindNetcattyVault = "netcatty.vault"
 
+// KindSnippets, KindKeys, and KindNotes are the versioned document markers for
+// the single-family exports.
+const (
+	KindSnippets = "netcatty.snippets"
+	KindKeys     = "netcatty.keys"
+	KindNotes    = "netcatty.notes"
+)
+
+// NotesManifestName is the reserved archive entry that maps a human-readable
+// Notes ZIP path back to its exact Note Group, title, and identity.
+const NotesManifestName = "netcatty.notes.json"
+
 // Formats returns every format the importer can parse, in menu order.
 func Formats() []Format {
 	return []Format{
-		FormatCSV, FormatNetcattyJSON, FormatPuTTY, FormatMobaXterm,
-		FormatFinalShell, FormatSecureCRT, FormatSSHConfig,
+		FormatCSV, FormatNetcattyJSON, FormatSnippets, FormatKeys, FormatNotesZIP,
+		FormatPuTTY, FormatMobaXterm, FormatFinalShell, FormatSecureCRT, FormatSSHConfig,
 	}
 }
 
 // Valid reports whether f is a supported format.
 func (f Format) Valid() bool {
 	switch f {
-	case FormatCSV, FormatNetcattyJSON, FormatPuTTY, FormatMobaXterm,
-		FormatFinalShell, FormatSecureCRT, FormatSSHConfig:
+	case FormatCSV, FormatNetcattyJSON, FormatSnippets, FormatKeys, FormatNotesZIP,
+		FormatPuTTY, FormatMobaXterm, FormatFinalShell, FormatSecureCRT, FormatSSHConfig:
 		return true
 	default:
 		return false
@@ -87,6 +108,9 @@ const (
 	IssuePassphraseConflict  IssueCode = "passphrase_conflict"
 	IssueFormulaNeutralized  IssueCode = "formula_neutralized"
 	IssueNothingParsed       IssueCode = "nothing_parsed"
+	IssueInvalidArchive      IssueCode = "invalid_archive"
+	IssueInvalidManifest     IssueCode = "invalid_manifest"
+	IssueMissingNoteEntry    IssueCode = "missing_note_entry"
 )
 
 // Issue is one parse or validation problem tied to a source row. Row is
@@ -109,6 +133,10 @@ type Proxy struct {
 	Command  string
 	Username string
 	Password string
+	// HasPassword reports that an encrypted proxy password exists. It is
+	// meaningful on a Proxy Profile, which never carries plaintext outside the
+	// secret store.
+	HasPassword bool
 }
 
 // Jump is one parsed ProxyJump hop.
@@ -157,6 +185,127 @@ type Record struct {
 	KeyRef string
 	// KeyLabelHint is the exported Key label.
 	KeyLabelHint string
+	// SourceID is the identity of the source Host in a Netcatty JSON document.
+	// It lets an import map Host references (Snippet targets, Identity and
+	// Proxy Profile links) onto the identities the import creates.
+	SourceID string
+	// Pinned, IdentityID, KeyID, AuthMethod, UseSSHAgent, RequiresMFA,
+	// X11Forwarding, X11WarningAcknowledged, ProxyProfileID,
+	// LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms are the Host options a
+	// Netcatty JSON export carries.
+	Pinned                 bool
+	IdentityID             string
+	KeyID                  string
+	AuthMethod             string
+	RequiresMFA            bool
+	X11WarningAcknowledged bool
+	ProxyProfileID         string
+	LegacyAlgorithms       bool
+	SkipEcdsaHostKey       bool
+	Algorithms             *Algorithms
+}
+
+// Algorithms is a Host's advanced SSH algorithm selection. A non-empty
+// category replaces the transport's offer for that category.
+type Algorithms struct {
+	KeyExchanges []string
+	Ciphers      []string
+	MACs         []string
+	HostKeys     []string
+}
+
+// Family is the non-Host data a Netcatty document carries. The application
+// maps these records onto the Vault domain.
+type Family struct {
+	Groups          []string
+	SnippetPackages []string
+	Snippets        []FamilySnippet
+	NoteGroups      []string
+	Notes           []FamilyNote
+	Keys            []FamilyKey
+	Identities      []FamilyIdentity
+	ProxyProfiles   []FamilyProxyProfile
+	KnownHosts      []FamilyKnownHost
+}
+
+// FamilySnippet is one portable Snippet.
+type FamilySnippet struct {
+	ID              string
+	Label           string
+	Command         string
+	Package         string
+	Tags            []string
+	Targets         []string
+	TargetGroups    []string
+	TargetsAllHosts bool
+	NoAutoRun       bool
+	MultiLineMode   string
+	VariableValues  map[string]string
+}
+
+// FamilyNote is one portable Vault Note.
+type FamilyNote struct {
+	ID      string
+	Title   string
+	Content string
+	Group   string
+}
+
+// FamilyKey is one portable SSH Key.
+type FamilyKey struct {
+	ID          string
+	Label       string
+	Type        string
+	PublicKey   string
+	Certificate string
+	Source      string
+	FilePath    string
+	PrivateKey  string
+	Passphrase  string
+}
+
+// FamilyIdentity is one portable Identity. Password is plaintext in memory
+// only and is written to the field-secret store by the application.
+type FamilyIdentity struct {
+	ID          string
+	Label       string
+	Username    string
+	AuthMethod  string
+	KeyID       string
+	HasPassword bool
+	Password    string
+}
+
+// FamilyProxyProfile is one portable Proxy Profile. Password is plaintext in
+// memory only.
+type FamilyProxyProfile struct {
+	ID       string
+	Label    string
+	Config   Proxy
+	Password string
+}
+
+// FamilyKnownHost is one recorded host-key trust decision.
+type FamilyKnownHost struct {
+	Hostname          string
+	Port              int
+	KeyType           string
+	PublicKey         string
+	Fingerprint       string
+	DiscoveredAt      time.Time
+	LastSeen          time.Time
+	ConvertedToHostID string
+}
+
+// HasData reports whether the family carries any record. A document may be a
+// valid empty family export.
+func (f *Family) HasData() bool {
+	if f == nil {
+		return false
+	}
+	return len(f.Groups) > 0 || len(f.SnippetPackages) > 0 || len(f.Snippets) > 0 ||
+		len(f.NoteGroups) > 0 || len(f.Notes) > 0 || len(f.Keys) > 0 ||
+		len(f.Identities) > 0 || len(f.ProxyProfiles) > 0 || len(f.KnownHosts) > 0
 }
 
 // Result is one document's parse output.
@@ -164,6 +313,9 @@ type Result struct {
 	Format  Format
 	Records []Record
 	Issues  []Issue
+	// Family is set for a Netcatty document that carries non-Host data. A
+	// family-only document has no Records and still previews.
+	Family *Family
 }
 
 // Options are parser inputs that do not belong to the document itself.
@@ -182,6 +334,12 @@ func Parse(f Format, text string, opts Options) Result {
 		return parseCSV(text)
 	case FormatNetcattyJSON:
 		return parseJSON(text)
+	case FormatSnippets:
+		return parseSnippetsJSON(text)
+	case FormatKeys:
+		return parseKeysJSON(text)
+	case FormatNotesZIP:
+		return parseNotesZIP(text)
 	case FormatPuTTY:
 		return parsePuTTY(text)
 	case FormatMobaXterm:

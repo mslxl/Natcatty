@@ -101,6 +101,34 @@ type ImportCounts struct {
 	Selected   int
 }
 
+// ImportFamilyRow is one non-Host record in the preview. Kind is a stable code
+// (snippet, note, key, identity, proxy, known_host, package, note_group,
+// group) the UI localizes; Label and Detail are data.
+type ImportFamilyRow struct {
+	Kind   string
+	Label  string
+	Detail string
+}
+
+// ImportFamilyCounts summarizes the non-Host records a document carries.
+type ImportFamilyCounts struct {
+	Groups          int
+	SnippetPackages int
+	Snippets        int
+	NoteGroups      int
+	Notes           int
+	Keys            int
+	Identities      int
+	ProxyProfiles   int
+	KnownHosts      int
+}
+
+// Total returns how many family records the preview will write.
+func (c ImportFamilyCounts) Total() int {
+	return c.Groups + c.SnippetPackages + c.Snippets + c.NoteGroups + c.Notes +
+		c.Keys + c.Identities + c.ProxyProfiles + c.KnownHosts
+}
+
 // ImportPreview is a parsed, validated, conflict-analyzed inventory. Nothing
 // is written until CommitImport is called. The plan's credential material is
 // in memory only and is never rendered by the UI.
@@ -111,18 +139,43 @@ type ImportPreview struct {
 	Issues         []vaultimport.Issue
 	Counts         ImportCounts
 	GroupsToCreate []string
+	// FamilyRows and FamilyCounts describe the non-Host records a Netcatty
+	// document carries. Families are additive and are committed with the first
+	// chunk.
+	FamilyRows   []ImportFamilyRow
+	FamilyCounts ImportFamilyCounts
 
 	records  []vaultimport.Record
 	drafts   []domainvault.Draft
 	keyFiles map[string]*importKeyFile
-	// keyIDs caches Keys created for an IdentityFile path, so a chunked
-	// import creates one Key per referenced file rather than one per chunk.
+	// keyIDs caches Keys created for an IdentityFile path or an inline JSON
+	// Key, so a chunked import creates one Key per source rather than one per
+	// chunk.
 	keyIDs map[string]model.KeyID
 	// newIDs are the stable identities of rows the Vault does not have yet.
 	// They are assigned during preview so a ProxyJump chain can reference a
 	// Host that a later chunk imports, and a retried chunk keeps the same ID.
 	newIDs []model.HostID
+	// Family plan state, allocated during preview. The maps are reference
+	// values, so mappings created in one commit chunk survive into the next
+	// call even though ImportPreview is passed by value.
+	family          *vaultimport.Family
+	hostIDs         map[string]model.HostID
+	identityIDs     map[string]model.IdentityID
+	proxyProfileIDs map[string]string
+	snippetIDs      map[string]string
+	noteIDs         map[string]string
+	// familyDone marks the family stages a commit finished, so a chunked
+	// commit writes each family record once. It is a reference value for the
+	// same reason the id maps are.
+	familyDone map[string]bool
 }
+
+const (
+	familyStageKeys    = "keys"
+	familyStageLinks   = "links"
+	familyStageRecords = "records"
+)
 
 type importKeyFile struct {
 	label      string
@@ -142,7 +195,7 @@ type PreviewImportOptions struct {
 func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewImportOptions) (ImportPreview, error) {
 	format := opts.Format
 	if format == "" {
-		format = vaultimport.Detect(text)
+		format = vaultimport.DetectNamed(text, opts.FileName)
 	}
 	if !format.Valid() {
 		return ImportPreview{}, invalid(fmt.Errorf("vault: unsupported import format %q", format))
@@ -152,14 +205,21 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 		FileName: opts.FileName, MasterPassword: opts.MasterPassword,
 	})
 	preview := ImportPreview{
-		Format:   parsed.Format,
-		FileName: opts.FileName,
-		Issues:   append([]vaultimport.Issue(nil), parsed.Issues...),
-		records:  parsed.Records,
-		drafts:   make([]domainvault.Draft, len(parsed.Records)),
-		keyFiles: make(map[string]*importKeyFile),
-		keyIDs:   make(map[string]model.KeyID),
-		newIDs:   make([]model.HostID, len(parsed.Records)),
+		Format:          parsed.Format,
+		FileName:        opts.FileName,
+		Issues:          append([]vaultimport.Issue(nil), parsed.Issues...),
+		records:         parsed.Records,
+		drafts:          make([]domainvault.Draft, len(parsed.Records)),
+		keyFiles:        make(map[string]*importKeyFile),
+		keyIDs:          make(map[string]model.KeyID),
+		newIDs:          make([]model.HostID, len(parsed.Records)),
+		family:          parsed.Family,
+		hostIDs:         make(map[string]model.HostID),
+		identityIDs:     make(map[string]model.IdentityID),
+		proxyProfileIDs: make(map[string]string),
+		snippetIDs:      make(map[string]string),
+		noteIDs:         make(map[string]string),
+		familyDone:      make(map[string]bool),
 	}
 
 	hosts, err := s.repo.List(ctx)
@@ -197,7 +257,7 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 			Selected:  true,
 		}
 		draft := draftFromRecord(record)
-		if record.X11Forwarding {
+		if record.X11Forwarding && !record.X11WarningAcknowledged {
 			// Imported configuration cannot accept a security warning on the
 			// user's behalf, so forwarding is not enabled silently.
 			preview.Issues = append(preview.Issues, vaultimport.Issue{
@@ -295,6 +355,8 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 	}
 	preview.Counts.Total += len(droppedRows)
 	preview.Counts.Invalid += len(droppedRows)
+
+	preview.collectFamilyPlan(missingGroups)
 
 	preview.GroupsToCreate = sortedGroupPaths(missingGroups)
 	return preview, nil
@@ -410,6 +472,11 @@ type ImportCommitResult struct {
 	Overwritten   []model.HostID
 	Skipped       int
 	GroupsCreated []string
+	// FamilyCreated and FamilySkipped count the non-Host records a Netcatty
+	// document restored. A family is written once, in the chunk that starts at
+	// offset zero.
+	FamilyCreated int
+	FamilySkipped int
 }
 
 // CommitImport writes one chunk of the preview. Rows that are invalid,
@@ -419,7 +486,8 @@ type ImportCommitResult struct {
 func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	opts ImportCommitOptions) (ImportCommitResult, error) {
 
-	if len(preview.records) == 0 || len(preview.records) != len(preview.Rows) {
+	if (len(preview.records) == 0 && preview.family == nil) ||
+		len(preview.records) != len(preview.Rows) {
 		return ImportCommitResult{}, invalid(fmt.Errorf("vault: import plan is empty"))
 	}
 	merge := opts.Merge
@@ -456,8 +524,13 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	// Keys are created before any Host so a Host never references material
 	// that could not be stored. CreateKey encrypts the material; an
 	// unreferenced Key left by a later failure is harmless.
-	keyIDs, err := s.commitImportKeys(ctx, preview, selected, merge, start, end)
+	keyIDs, err := s.commitImportKeys(ctx, preview, selected, merge, start, end, &result)
 	if err != nil {
+		return result, err
+	}
+	// Identities and Proxy Profiles are linked from Hosts, so they exist before
+	// the Host batch. The plan's maps make a retried chunk idempotent.
+	if err := s.commitFamilyLinks(ctx, preview, &result); err != nil {
 		return result, err
 	}
 
@@ -490,7 +563,9 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 				result.Skipped++
 				continue
 			}
-			draft.KeyID = keyIDs[recordKey(preview.records[index])]
+			draft.KeyID = remapKeyID(keyIDs, recordKey(preview.records[index]), draft.KeyID)
+			draft.IdentityID = preview.remapIdentityID(draft.IdentityID)
+			draft.ProxyProfileID = preview.remapProxyProfileID(draft.ProxyProfileID)
 			draft.HostChain = chains[index]
 			updated, err := s.Update(ctx, row.Existing, draft)
 			if err != nil {
@@ -521,7 +596,20 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		draft domainvault.Draft
 	}
 	var pending []pendingHost
+	// A family-only document (for example a Vault JSON whose Hosts are all
+	// skipped) still restores its empty Host Groups. Host-draft groups keep
+	// their chunk-local timing, and the existing-group check keeps a retried
+	// chunk idempotent.
 	missingGroups := make(map[string]bool)
+	if preview.family != nil {
+		for _, group := range preview.family.Groups {
+			for _, ancestor := range groupAncestorsWithSelf(group) {
+				if !groupByPath[ancestor] {
+					missingGroups[ancestor] = true
+				}
+			}
+		}
+	}
 	for index := start; index < end; index++ {
 		if !selected(index) {
 			continue
@@ -537,7 +625,9 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		if !ok {
 			continue
 		}
-		draft.KeyID = keyIDs[recordKey(preview.records[index])]
+		draft.KeyID = remapKeyID(keyIDs, recordKey(preview.records[index]), draft.KeyID)
+		draft.IdentityID = preview.remapIdentityID(draft.IdentityID)
+		draft.ProxyProfileID = preview.remapProxyProfileID(draft.ProxyProfileID)
 		draft.HostChain = chains[index]
 		for _, ancestor := range groupAncestorsWithSelf(draft.Group) {
 			if !groupByPath[ancestor] {
@@ -634,6 +724,9 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 	for _, group := range batch.Groups {
 		result.GroupsCreated = append(result.GroupsCreated, group.Path)
 	}
+	if err := s.commitFamilyRecords(ctx, preview, &result); err != nil {
+		return result, err
+	}
 	result.Next = end
 	result.Done = end >= len(preview.Rows)
 	return result, nil
@@ -644,9 +737,15 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 var ErrImportStoreUnavailable = errors.New("vault: import storage is unavailable")
 
 func (s *Service) commitImportKeys(ctx context.Context, preview ImportPreview,
-	selected func(int) bool, merge ImportMerge, start, end int) (map[string]model.KeyID, error) {
+	selected func(int) bool, merge ImportMerge, start, end int,
+	result *ImportCommitResult) (map[string]model.KeyID, error) {
 
 	ids := make(map[string]model.KeyID)
+	// Family Keys are restored even when no Host references them, so an
+	// Identity's Key link survives a round trip.
+	if err := s.commitFamilyKeys(ctx, preview, ids, result); err != nil {
+		return nil, err
+	}
 	if len(preview.keyFiles) == 0 {
 		return ids, nil
 	}
@@ -704,19 +803,34 @@ func (preview *ImportPreview) commitDraft(index int) (domainvault.Draft, bool) {
 
 func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 	draft := domainvault.Draft{
-		Label:       record.Label,
-		Hostname:    record.Hostname,
-		Port:        record.Port,
-		Username:    record.Username,
-		Protocol:    domainvault.Protocol(record.Protocol),
-		Group:       record.Group,
-		Tags:        append([]string(nil), record.Tags...),
-		Notes:       record.Notes,
-		UseSSHAgent: record.UseSSHAgent,
-		Password:    record.Password,
+		Label:            record.Label,
+		Hostname:         record.Hostname,
+		Port:             record.Port,
+		Username:         record.Username,
+		Protocol:         domainvault.Protocol(record.Protocol),
+		Group:            record.Group,
+		Tags:             append([]string(nil), record.Tags...),
+		Notes:            record.Notes,
+		Pinned:           record.Pinned,
+		IdentityID:       model.IdentityID(record.IdentityID),
+		KeyID:            model.KeyID(record.KeyID),
+		AuthMethod:       domainvault.HostAuthMethod(record.AuthMethod),
+		UseSSHAgent:      record.UseSSHAgent,
+		RequiresMFA:      record.RequiresMFA,
+		Password:         record.Password,
+		ProxyProfileID:   record.ProxyProfileID,
+		LegacyAlgorithms: record.LegacyAlgorithms,
+		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
 	}
 	if record.Protocol == "" {
 		draft.Protocol = domainvault.ProtocolSSH
+	}
+	if record.X11Forwarding && record.X11WarningAcknowledged {
+		// A Netcatty export records an acknowledgement the user already made.
+		// External inventories never carry one, so they stay off with a
+		// warning instead of enabling forwarding silently.
+		draft.X11Forwarding = true
+		draft.X11WarningAcknowledged = true
 	}
 	if record.Proxy != nil {
 		draft.Proxy = &domainvault.ProxyConfig{
@@ -726,6 +840,14 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 			Command:  record.Proxy.Command,
 			Username: record.Proxy.Username,
 			Password: record.Proxy.Password,
+		}
+	}
+	if record.Algorithms != nil {
+		draft.Algorithms = &domainvault.AlgorithmOverrides{
+			KeyExchanges: append([]string(nil), record.Algorithms.KeyExchanges...),
+			Ciphers:      append([]string(nil), record.Algorithms.Ciphers...),
+			MACs:         append([]string(nil), record.Algorithms.MACs...),
+			HostKeys:     append([]string(nil), record.Algorithms.HostKeys...),
 		}
 	}
 	return draft

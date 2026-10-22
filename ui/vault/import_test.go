@@ -348,3 +348,98 @@ func TestImportPanelReportsFileFailures(t *testing.T) {
 		t.Fatal("a failed pick left a preview")
 	}
 }
+
+func familyImportPreviewFixture() appvault.ImportPreview {
+	return appvault.ImportPreview{
+		Format:   vaultimport.FormatNotesZIP,
+		FileName: "netcatty-notes.zip",
+		FamilyCounts: appvault.ImportFamilyCounts{
+			NoteGroups: 1, Notes: 3,
+		},
+		FamilyRows: []appvault.ImportFamilyRow{
+			{Kind: appvault.FamilyKindNoteGroup, Label: "Ops"},
+			{Kind: appvault.FamilyKindNote, Label: "Runbook", Detail: "Ops"},
+			{Kind: appvault.FamilyKindNote, Label: "Config / Draft", Detail: "Ops/Config"},
+		},
+	}
+}
+
+// TestImportPanelAcceptsFamilyDocumentsAtBothSizes covers the Import screen's
+// family formats: a Notes ZIP is detected, previewed, and committed without a
+// Host row. The panel keeps the same fixed action bar and gutter behavior.
+func TestImportPanelAcceptsFamilyDocumentsAtBothSizes(t *testing.T) {
+	m := locales.In("en")
+	codes, labels := importFormatOptions(m)
+	for _, want := range []struct{ code, label string }{
+		{string(vaultimport.FormatSnippets), m.VaultImportFormatSnippets()},
+		{string(vaultimport.FormatKeys), m.VaultImportFormatKeys()},
+		{string(vaultimport.FormatNotesZIP), m.VaultImportFormatNotesZIP()},
+		{string(vaultimport.FormatNetcattyJSON), m.VaultImportFormatNetcattyJSON()},
+	} {
+		found := false
+		for index, code := range codes {
+			if code == want.code {
+				found = true
+				if labels[index] != want.label {
+					t.Fatalf("%s label = %q, want %q", code, labels[index], want.label)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("format %s is not offered: %v", want.code, codes)
+		}
+	}
+
+	for _, size := range editorSizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			hosts := &fakeHosts{}
+			imports := &fakeImports{preview: familyImportPreviewFixture()}
+			state := vaultstate.NewState(hosts,
+				vaultstate.WithImports(imports),
+				vaultstate.WithImportPicker(fakeImportPicker{
+					name: "netcatty-notes.zip", content: []byte("PK\x03\x04"),
+				}),
+			)
+			if err := state.Reload(); err != nil {
+				t.Fatal(err)
+			}
+			tt := newProductionTester(t, state, size.width, size.height)
+			if err := tt.Click(m.VaultImportTitle()); err != nil {
+				t.Fatalf("click Import: %v", err)
+			}
+			tt.Frame()
+			if err := tt.Click(m.VaultImportChooseFile()); err != nil {
+				t.Fatalf("click Choose File: %v", err)
+			}
+			tt.Frame()
+
+			if got := state.ImportFormatValue(); got != "auto" {
+				t.Fatalf("a detected file left format = %q, want auto", got)
+			}
+			for _, want := range []string{
+				m.VaultImportFamily(4),
+				m.VaultImportFamilySelected(4),
+				m.VaultImportFamilyRows(),
+				m.VaultImportFamilyNoteGroup(), m.VaultImportFamilyNote(),
+				"Runbook", "Config / Draft", "Ops/Config",
+			} {
+				if !tt.HasText(want) {
+					t.Errorf("%q is missing, texts %q", want, tt.Texts())
+				}
+			}
+			scrollToEnd(tt, size.width, size.height)
+			assertVisible(t, tt, m.VaultImportImport(), size.width, size.height)
+			assertNoHorizontalOverflow(t, tt, size.width, size.height)
+			if err := tt.Click(m.VaultImportImport()); err != nil {
+				t.Fatalf("click Import: %v", err)
+			}
+			tt.Frame()
+			if state.ImportOpen() {
+				t.Fatal("a family-only import must complete and close the panel")
+			}
+			if len(imports.calls) != 1 {
+				t.Fatalf("commit calls = %d, want 1", len(imports.calls))
+			}
+		})
+	}
+}

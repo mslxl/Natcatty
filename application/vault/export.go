@@ -74,6 +74,10 @@ type Export struct {
 	// UnreadableSecrets counts credentials that could not be decrypted for a
 	// secret-bearing export. The document is still produced without them.
 	UnreadableSecrets int
+	// OmittedSecrets counts stored credentials a non-destructive export left
+	// out on purpose. The UI reports the number so the user knows what is not
+	// in the file.
+	OmittedSecrets int
 }
 
 // ExportVault renders the requested data in opts.Format. The result is
@@ -100,7 +104,78 @@ func (s *Service) ExportVault(ctx context.Context, opts ExportOptions) (Export, 
 		Filename:          exportFilename(opts.Format),
 		Content:           content,
 		UnreadableSecrets: unreadable,
+		OmittedSecrets:    omittedSecrets(dataset, opts.Format, opts.IncludeSecrets),
 	}, nil
+}
+
+// omittedSecrets counts the stored credentials a non-destructive export left
+// out. Only the families the chosen format writes are counted: a Notes or
+// Themes export carries no credential, so it reports none. With IncludeSecrets
+// set nothing is omitted by choice.
+func omittedSecrets(dataset vaultexport.Dataset, format ExportFormat, includeSecrets bool) int {
+	if includeSecrets {
+		return 0
+	}
+	countHostCredentials := func() int {
+		count := 0
+		for _, host := range dataset.Hosts {
+			if host.Host.HasPassword {
+				count++
+			}
+			if host.Host.Proxy != nil && host.Host.Proxy.HasPassword {
+				count++
+			}
+		}
+		return count
+	}
+	switch format {
+	case ExportJSON:
+		count := countHostCredentials()
+		for _, key := range dataset.Keys {
+			if key.Key.HasPrivateKey || key.Key.HasPassphrase {
+				count++
+			}
+		}
+		for _, identity := range dataset.Identities {
+			if identity.HasPassword {
+				count++
+			}
+		}
+		for _, profile := range dataset.ProxyProfiles {
+			if profile.Config.HasPassword {
+				count++
+			}
+		}
+		return count
+	case ExportCSV:
+		count := countHostCredentials()
+		// A CSV row carries the passphrase of the Key its Host references.
+		keyPassphrases := make(map[model.KeyID]bool, len(dataset.Keys))
+		for _, key := range dataset.Keys {
+			if key.Key.HasPassphrase {
+				keyPassphrases[key.Key.ID] = true
+			}
+		}
+		counted := make(map[model.KeyID]bool, len(keyPassphrases))
+		for _, host := range dataset.Hosts {
+			if host.Host.KeyID == "" || !keyPassphrases[host.Host.KeyID] || counted[host.Host.KeyID] {
+				continue
+			}
+			counted[host.Host.KeyID] = true
+			count++
+		}
+		return count
+	case ExportKeys:
+		count := 0
+		for _, key := range dataset.Keys {
+			if key.Key.HasPrivateKey || key.Key.HasPassphrase {
+				count++
+			}
+		}
+		return count
+	default:
+		return 0
+	}
 }
 
 func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaultexport.Dataset, int, error) {
@@ -167,6 +242,21 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 			return dataset, 0, internal(err)
 		}
 		dataset.Identities = identities
+		if opts.IncludeSecrets && s.secrets != nil {
+			dataset.IdentityPasswords = make(map[string]string, len(identities))
+			for _, identity := range identities {
+				if !identity.HasPassword {
+					continue
+				}
+				value, readErr := s.secrets.Get(ctx,
+					IdentitySecretRef(identity.ID, FieldPassword))
+				if readErr != nil {
+					unreadable++
+					continue
+				}
+				dataset.IdentityPasswords[string(identity.ID)] = value
+			}
+		}
 	}
 	if s.proxies != nil {
 		proxies, err := s.proxies.ListProxyProfiles(ctx)
@@ -174,6 +264,21 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 			return dataset, 0, internal(err)
 		}
 		dataset.ProxyProfiles = proxies
+		if opts.IncludeSecrets && s.secrets != nil {
+			dataset.ProxyProfilePasswords = make(map[string]string, len(proxies))
+			for _, profile := range proxies {
+				if !profile.Config.HasPassword {
+					continue
+				}
+				value, readErr := s.secrets.Get(ctx,
+					ProxyProfileSecretRef(profile.ID, FieldProxyPassword))
+				if readErr != nil {
+					unreadable++
+					continue
+				}
+				dataset.ProxyProfilePasswords[profile.ID] = value
+			}
+		}
 	}
 	if s.knownHosts != nil {
 		known, err := s.knownHosts.ListKnownHosts(ctx)

@@ -276,6 +276,16 @@ func (s *Service) resolveEffective(ctx context.Context, host domainvault.Host) (
 		switch {
 		case err == nil:
 			effective.Proxy = domainvault.CloneProxy(&profile.Config)
+			if profile.Config.HasPassword {
+				password, secretErr := s.secretOrEmpty(ctx,
+					ProxyProfileSecretRef(profile.ID, FieldProxyPassword))
+				if secretErr != nil {
+					return domainvault.Host{}, secretErr
+				}
+				if password != "" {
+					effective.Proxy.Password = password
+				}
+			}
 		case errors.Is(err, ErrNotFound):
 			// A dangling profile reference stays dangling, matching the
 			// Vault's non-cascading delete behavior.

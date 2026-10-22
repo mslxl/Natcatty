@@ -183,6 +183,10 @@ func exportOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 				ui.Text(c, m.VaultExportUnreadable(outcome.Unreadable)).
 					FontSize(11).TextColor(t.Warning)
 			}
+			if outcome.Omitted > 0 {
+				ui.Text(c, m.VaultExportOmitted(outcome.Omitted)).
+					FontSize(11).TextColor(t.TextMuted)
+			}
 		})
 		if ui.Button(c, m.VaultExportDismiss()).Clicked() {
 			s.DismissExportOutcome()
