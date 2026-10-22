@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
@@ -29,13 +30,17 @@ import (
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
+	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
+	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -65,6 +70,13 @@ func run(afterReady func(hostWindow)) error {
 	var terminalState *settings.TerminalState
 	var desktopService *appdesktop.Service
 	var terminalService *appterminalsettings.Service
+	var preferenceService *apppreferences.Service
+	var keybindingService *appkeybindings.Service
+	var preferencesState *settings.PreferencesState
+	var shortcutsState *settings.ShortcutsState
+	var searchState *settings.SearchState
+	var registry *command.Registry
+	var currentMenu *mygo.Menu
 	var historyService *apphistory.Service
 	var logsState *logsui.State
 	var sessions *appsession.Service
@@ -157,6 +169,33 @@ func run(afterReady func(hostWindow)) error {
 	_ = terminalService.Load(context.Background())
 	terminalState = settings.NewTerminalState(terminalService,
 		settings.WithTerminalRedrawRequest(invalidate))
+
+	// Non-AI preferences and the keyboard-binding document live beside the
+	// terminal settings. Both load before the shell exists, so a new Session
+	// reads the current font and key bindings.
+	preferenceService = apppreferences.NewService(
+		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
+	if err := preferenceService.Load(context.Background()); err != nil {
+		return err
+	}
+	preferencesState = settings.NewPreferencesState(preferenceService,
+		settings.WithPreferencesRedrawRequest(invalidate))
+
+	keybindingService = appkeybindings.NewService(
+		store.OpenKeyBindings(filepath.Join(userData, "keybindings.json")),
+		appkeybindings.WithGOOS(runtime.GOOS))
+	if err := keybindingService.Load(context.Background()); err != nil {
+		return err
+	}
+	shortcutsState = settings.NewShortcutsState(keybindingService,
+		settings.WithBindingAvailability(catalogBindingAvailable),
+		// Conflict detection reads the menu the user actually sees, so a
+		// binding never silently shadows a foreign accelerator.
+		settings.WithMenuShortcuts(func() []domainkeybindings.MenuShortcut {
+			return menuShortcuts(currentMenu)
+		}),
+		settings.WithShortcutsRedrawRequest(invalidate))
+	searchState = settings.NewSearchState()
 
 	database, err := store.Open(context.Background(), filepath.Join(userData, "natcatty.db"))
 	if err != nil {
@@ -527,6 +566,19 @@ func run(afterReady func(hostWindow)) error {
 				sessionui.WithSessionStats(func() bool {
 					return terminalService.Settings().ShowSessionStats
 				}),
+				// The terminal font and its catalog bindings are read when a
+				// terminal is created; an Appearance change restyles open
+				// terminals through State.SetTerminalFont.
+				sessionui.WithTerminalFont(func() terminal.Font {
+					appearance := preferenceService.Settings().Appearance
+					return terminal.Font{
+						Family: appearance.TerminalFontFamily,
+						Size:   float32(appearance.TerminalFontSize),
+					}
+				}),
+				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
+					return terminalKeybinds(keybindingService)
+				}),
 				// Reconnect is the original's manual retry: it abandons the
 				// current transport and dials again without the policy delay.
 				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
@@ -560,7 +612,7 @@ func run(afterReady func(hostWindow)) error {
 			}
 		}),
 	)
-	registry := newRegistry(shellState, mygo.App.Quit, gate.Lock, vaultState, func() {
+	registry = newRegistry(shellState, mygo.App.Quit, gate.Lock, vaultState, func() {
 		if windows != nil {
 			windows.FocusMain()
 		}
@@ -574,7 +626,14 @@ func run(afterReady func(hostWindow)) error {
 		gate,
 		shellState,
 		func() func(*ui.Context) {
-			return settings.ViewWithDesktop(settingsState, desktopState, terminalState)
+			return settings.ViewWithSettings(settings.Config{
+				Lock:        settingsState,
+				Desktop:     desktopState,
+				Terminal:    terminalState,
+				Preferences: preferencesState,
+				Shortcuts:   shortcutsState,
+				Search:      searchState,
+			})
 		},
 		func() string { return mygo.App.Locale() },
 	)
@@ -587,18 +646,60 @@ func run(afterReady func(hostWindow)) error {
 		mygo.App.Quit,
 	)
 	windows.SetCloseToTray(desktopCtl.HideOnClose)
+	// The Security preference governs close intent live.
+	windows.SetSessionConfirmation(func() bool {
+		return preferenceService.Settings().Security.ConfirmCloseSessions
+	})
+
+	// Appearance changes apply without reopening a window or a Session. The
+	// values that only seed a future surface (terminal bindings, tab layout,
+	// SFTP and sync) are read by those surfaces when they are built.
+	applyPreferences := func(current domainpreferences.Settings) {
+		if windows != nil {
+			windows.SetOpacity(current.Appearance.WindowOpacity)
+		}
+		if shellState != nil {
+			shellState.SetTerminalFont(current.Appearance.TerminalFontFamily,
+				float32(current.Appearance.TerminalFontSize))
+		}
+		invalidate()
+	}
+	preferenceService.SetChangeHook(applyPreferences)
+	applyPreferences(preferenceService.Settings())
+
+	dispatcher := &bindingDispatcher{
+		service: keybindingService,
+		shell:   shellState,
+		toggleOpacity: func() {
+			current := preferenceService.Settings().Appearance.WindowOpacity
+			_ = preferenceService.Update(func(next *domainpreferences.Settings) {
+				next.Appearance.WindowOpacity = toggleOpacityTarget(current)
+			})
+		},
+	}
+
 	// The selftest build installs the F11 keyboard facility here; the normal
 	// build's installer is a no-op.
 	installSelftest(windows, shellState, desktopCtl, secondInstance)
 
 	// MyGo's native surface has no TranslateAccelerator path: a menu label's
 	// shortcut only works if the app dispatches it. Build the table from the
-	// same menu the OS shows, so the labels stay truthful.
+	// same menu the OS shows, so the labels stay truthful and follow the
+	// active keyboard scheme.
 	setMenu := func(tag string) {
-		menu := BuildMenu(registry, tag)
-		mygo.App.SetMenu(menu)
-		windows.SetAccelerators(MenuAccelerators(menu))
+		currentMenu = BuildMenuWithBindings(registry, tag,
+			menuBindingSource{service: keybindingService})
+		mygo.App.SetMenu(currentMenu)
+		windows.SetAccelerators(MenuAccelerators(currentMenu))
+		windows.SetShortcuts(dispatcher.Shortcuts())
 	}
+	// A binding change rebuilds both tables and repaints every window. New
+	// terminals read the new terminal bindings; open terminals keep the table
+	// MyGo captured when their terminal was created.
+	keybindingService.SetChangeHook(func(appkeybindings.State) {
+		setMenu(mygo.App.Locale())
+		invalidate()
+	})
 
 	// A Session's end may run on any goroutine; Invalidate is safe from
 	// any goroutine and asks for the frame that shows the new status.
@@ -661,7 +762,14 @@ func run(afterReady func(hostWindow)) error {
 
 		// Tabs, splits, and working directories come back; their Sessions open
 		// asynchronously and apply on the next frame. Output does not survive.
-		shellState.Restore(context.Background())
+		layout := preferenceService.Settings().Layout
+		if layout.RestorePreviousSession {
+			shellState.Restore(context.Background())
+		} else if layout.StartupLanding == domainpreferences.StartupVault {
+			shellState.ShowVault()
+		} else {
+			_ = shellState.NewTab()
+		}
 
 		mygo.App.OnLocaleChanged(func(tag string) {
 			windows.ApplyLocale()
@@ -763,6 +871,10 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 	}
 	register(command.LockApp, func(context.Context) error {
 		return lockApp()
+	})
+	register(command.OpenSettings, func(context.Context) error {
+		shellState.RequestSettings()
+		return nil
 	})
 	register(command.OpenBackups, func(context.Context) error {
 		if vaultState == nil {

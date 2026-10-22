@@ -230,8 +230,8 @@ func TestTerminalSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 		fake := newFakeTerminal()
 		fake.settings.LogDirectory = `C:\Users\example\logs`
 		state := NewTerminalState(fake)
-		tester := ui.NewTester(ViewWithDesktop(
-			NewAppLockState(&fakeAppLock{}), nil, state), size[0], size[1])
+		tester := ui.NewTester(viewAt(AreaTerminal, Config{
+			Lock: NewAppLockState(&fakeAppLock{}), Terminal: state}), size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
@@ -252,7 +252,6 @@ func TestTerminalSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 			m.SettingsPasteProtection(),
 			m.SettingsPasteMinLines(),
 			m.SettingsDropAction(),
-			m.SettingsAppLockTitle(),
 		}
 		const epsilon = 0.5
 		for _, text := range wanted {
@@ -268,10 +267,9 @@ func TestTerminalSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 		first, _ := tester.Find(m.SettingsTerminalTitle())
 		second, _ := tester.Find(m.SettingsOSC52Title())
 		third, _ := tester.Find(m.SettingsOSCNotificationsTitle())
-		fourth, _ := tester.Find(m.SettingsAppLockTitle())
-		if !(first.Y < second.Y && second.Y < third.Y && third.Y < fourth.Y) {
-			t.Fatalf("%dx%d section order = %+v %+v %+v %+v",
-				size[0], size[1], first, second, third, fourth)
+		if !(first.Y < second.Y && second.Y < third.Y) {
+			t.Fatalf("%dx%d section order = %+v %+v %+v",
+				size[0], size[1], first, second, third)
 		}
 	}
 }
@@ -365,8 +363,8 @@ func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
 		fake := newFakeTerminal()
 		fake.settings.LogDirectory = `C:\logs`
 		state := NewTerminalState(fake)
-		tester := ui.NewTester(ViewWithDesktop(
-			NewAppLockState(&fakeAppLock{}), nil, state), size[0], size[1])
+		tester := ui.NewTester(viewAt(AreaTerminal, Config{
+			Lock: NewAppLockState(&fakeAppLock{}), Terminal: state}), size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 		m := locales.In("en")
@@ -397,8 +395,7 @@ func TestTerminalSettingsInteractionUpdatesTheService(t *testing.T) {
 	fake := newFakeTerminal()
 	fake.settings.LogDirectory = `C:\logs`
 	state := NewTerminalState(fake)
-	tester := ui.NewTester(ViewWithDesktop(
-		NewAppLockState(&fakeAppLock{}), nil, state), 1100, 720)
+	tester := ui.NewTester(viewAt(AreaTerminal, Config{Lock: NewAppLockState(&fakeAppLock{}), Terminal: state}), 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
 	m := locales.In("en")

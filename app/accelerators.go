@@ -17,6 +17,14 @@ type acceleratorBinding struct {
 	item *mygo.MenuItem
 }
 
+// keyShortcut is one binding-derived action the window handles. It differs
+// from a menu accelerator only in how it runs.
+type keyShortcut struct {
+	mods ui.Modifiers
+	key  ui.Key
+	run  func()
+}
+
 // MenuAccelerators walks the menu and returns the shortcuts that run an
 // application command. Only items with both an accelerator and a Click
 // handler qualify: the standard role menus (Edit, Window, the macOS
@@ -67,6 +75,17 @@ func bindAccelerators(c *ui.Context, bindings []acceleratorBinding) {
 		c.OnShortcut(binding.mods, binding.key, func() {
 			item.Click(item, nil)
 		})
+	}
+}
+
+// bindShortcuts registers binding-derived global actions at window scope.
+func bindShortcuts(c *ui.Context, shortcuts []keyShortcut) {
+	if c == nil {
+		return
+	}
+	for _, shortcut := range shortcuts {
+		shortcut := shortcut
+		c.OnShortcut(shortcut.mods, shortcut.key, shortcut.run)
 	}
 }
 
@@ -134,6 +153,28 @@ func parseAcceleratorKey(name string) (ui.Key, bool) {
 		return ui.KeyDelete, true
 	case "INSERT":
 		return ui.KeyInsert, true
+	case ",":
+		return ui.KeyComma, true
+	case ".":
+		return ui.KeyPeriod, true
+	case "/":
+		return ui.KeySlash, true
+	case ";":
+		return ui.KeySemicolon, true
+	case "'":
+		return ui.KeyQuote, true
+	case "[":
+		return ui.KeyBracketLeft, true
+	case "]":
+		return ui.KeyBracketRight, true
+	case "\\":
+		return ui.KeyBackslash, true
+	case "`":
+		return ui.KeyBackquote, true
+	case "-":
+		return ui.KeyMinus, true
+	case "=", "+":
+		return ui.KeyEqual, true
 	}
 	if len(name) == 1 {
 		char := name[0]

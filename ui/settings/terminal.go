@@ -34,6 +34,22 @@ type Terminal interface {
 	SetHistoryRetention(count, days int) error
 }
 
+// terminalResetter is implemented by the application service. Keeping it
+// optional lets a test fake stay minimal while the real window offers a
+// group-wide reset.
+type terminalResetter interface {
+	Reset() error
+}
+
+// ResetAll restores the terminal behavior settings when the seam supports it.
+func (s *TerminalState) ResetAll() bool {
+	resetter, ok := s.terminal.(terminalResetter)
+	if !ok {
+		return false
+	}
+	return s.apply(resetter.Reset)
+}
+
 // TerminalState owns the Settings window's terminal form. It is mutated only
 // on the UI thread.
 type TerminalState struct {

@@ -58,6 +58,13 @@ type Options struct {
 	AutocompleteDelay func() int
 	// ShowStats reports whether the Session counters are drawn.
 	ShowStats func() bool
+	// Font reads the live terminal font. The app applies a Settings change to
+	// open terminals through SetTerminalFont; this is what a new terminal uses.
+	Font func() terminal.Font
+	// Keybinds reads the active application bindings that act inside the
+	// terminal. MyGo applies them at construction, and an unbound default chord
+	// is cleared so a Settings override is authoritative for new Sessions.
+	Keybinds func() []terminal.Keybind
 	// View is an already claimed live connection. Resume supplies the
 	// ResumedView that replays the hibernated screen; nil claims the
 	// Session's one live view with AttachView.
@@ -161,6 +168,18 @@ func WithAutocompleteDelay(fn func() int) Option {
 // WithSessionStats supplies the live statistics visibility setting.
 func WithSessionStats(show func() bool) Option {
 	return func(options *Options) { options.ShowStats = show }
+}
+
+// WithTerminalFont supplies the live terminal font a new terminal uses.
+func WithTerminalFont(fn func() terminal.Font) Option {
+	return func(options *Options) { options.Font = fn }
+}
+
+// WithTerminalKeybinds supplies the active bindings that act inside the
+// terminal. A change applies to terminals opened after it, because MyGo
+// resolves a terminal's bindings when it is created.
+func WithTerminalKeybinds(fn func() []terminal.Keybind) Option {
+	return func(options *Options) { options.Keybinds = fn }
 }
 
 // WithView binds the Surface to a connection the caller already claimed. A
@@ -267,8 +286,10 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 // currently allows. Reading the policy per request is what makes a Settings
 // change affect live Sessions.
 func (s *Surface) attach(conn io.ReadWriteCloser) error {
-	term, err := terminal.New(terminal.Options{
+	options := terminal.Options{
 		Conn:             conn,
+		Font:             s.terminalFont(),
+		Keybinds:         s.terminalKeybinds(),
 		NoClipboardWrite: false,
 		ClipboardRead:    terminal.ClipboardAsk,
 		OnClipboardRequest: func(request terminal.ClipboardRequest) {
@@ -293,12 +314,39 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 			return true
 		},
 		OnKey: s.handleAutocompleteKey,
-	})
+	}
+	term, err := terminal.New(options)
 	if err != nil {
 		return err
 	}
 	s.terminal = term
 	return nil
+}
+
+func (s *Surface) terminalFont() terminal.Font {
+	if s.options.Font == nil {
+		return terminal.Font{}
+	}
+	return s.options.Font()
+}
+
+func (s *Surface) terminalKeybinds() []terminal.Keybind {
+	if s.options.Keybinds == nil {
+		return nil
+	}
+	return s.options.Keybinds()
+}
+
+// SetTerminalFont restyles a live terminal without recreating its Session. It
+// is what applies the Appearance settings while Sessions are open.
+func (s *Surface) SetTerminalFont(family string, size float32) {
+	font := terminal.Font{Family: family, Size: size}
+	if s.terminal != nil {
+		s.terminal.SetFont(font)
+	}
+	if s.observer != nil {
+		s.observer.SetFont(font)
+	}
 }
 
 func validLogFormat(format domainterminal.LogFormat) bool {
@@ -671,6 +719,8 @@ func (s *Surface) OpenObserver() error {
 	}
 	term, err := terminal.New(terminal.Options{
 		Conn:             observation,
+		Font:             s.terminalFont(),
+		Keybinds:         s.terminalKeybinds(),
 		NoClipboardWrite: true,
 		ClipboardRead:    terminal.ClipboardDeny,
 	})

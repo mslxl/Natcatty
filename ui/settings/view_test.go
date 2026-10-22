@@ -14,3 +14,11 @@ func TestViewLocalizes(t *testing.T) {
 		t.Errorf("Russian settings window does not show Настройки, texts %q", tt.Texts())
 	}
 }
+
+// viewAt renders one area directly, as a user reaches it from the sidebar.
+func viewAt(area Area, config Config) func(*ui.Context) {
+	search := NewSearchState()
+	search.SetArea(area)
+	config.Search = search
+	return ViewWithSettings(config)
+}

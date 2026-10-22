@@ -9,7 +9,7 @@ import (
 
 func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t *ui.Theme) {
 	settings := state.Settings()
-	section(c, m.SettingsTerminalTitle(), m.SettingsTerminalDescription(), t, func() {
+	sectionBody(c, t, func() {
 		ui.Text(c, m.SettingsTerminalLoggingTitle()).Bold()
 		ui.Text(c, m.SettingsTerminalLoggingDescription()).FontSize(12).TextColor(t.TextMuted)
 

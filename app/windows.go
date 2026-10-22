@@ -45,6 +45,7 @@ type hostWindow interface {
 	IsVisible() bool
 	IsFocused() bool
 	SetTitle(string)
+	SetOpacity(float64)
 }
 
 // windowHost creates native windows. The real host uses MyGo; tests record
@@ -125,6 +126,15 @@ type windowManager struct {
 	// accelerators are the menu shortcuts every window handles at window
 	// scope. SetAccelerators replaces them when the menu is rebuilt.
 	accelerators []acceleratorBinding
+	// shortcuts are binding-derived global actions. They sit beside the menu
+	// accelerators at window scope, and the dispatcher omits any chord a
+	// terminal owns so terminal copy and SIGINT keep precedence.
+	shortcuts []keyShortcut
+	// opacity is the live Appearance setting applied to every window.
+	opacity float64
+	// confirmPolicy asks the Security preference whether closing Sessions
+	// needs a confirmation. Nil keeps the original behavior (always ask).
+	confirmPolicy func() bool
 	// selftestBind registers the main window's self-test shortcuts at window
 	// scope, and selftestView draws its overlay around the content. Both are
 	// nil in normal builds.
@@ -167,12 +177,48 @@ func (m *windowManager) SetAccelerators(bindings []acceleratorBinding) {
 	m.accelerators = bindings
 }
 
+// SetShortcuts installs binding-derived global actions beside the menu
+// accelerators. It is called whenever the bindings are rebuilt.
+func (m *windowManager) SetShortcuts(shortcuts []keyShortcut) {
+	m.shortcuts = shortcuts
+}
+
+// SetOpacity applies the Appearance opacity to every open window and to
+// windows created later.
+func (m *windowManager) SetOpacity(value float64) {
+	m.opacity = value
+	apply := func(window hostWindow) {
+		if window != nil && !window.IsDestroyed() {
+			window.SetOpacity(value)
+		}
+	}
+	apply(m.main)
+	apply(m.settings)
+	for _, window := range m.detached {
+		apply(window)
+	}
+}
+
+// SetSessionConfirmation installs the live Security preference. When it
+// returns false, closing Sessions skips the dialog.
+func (m *windowManager) SetSessionConfirmation(enabled func() bool) {
+	m.confirmPolicy = enabled
+}
+
+func (m *windowManager) applyOpacity(window hostWindow) {
+	if window == nil || m.opacity <= 0 {
+		return
+	}
+	window.SetOpacity(m.opacity)
+}
+
 // withAccelerators binds the menu shortcuts at the window's root context,
 // before the App Lock gate or the content builds anything. MyGo then handles
 // them as window shortcuts, ahead of the focused terminal's input handler.
 func (m *windowManager) withAccelerators(content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		bindAccelerators(c, m.accelerators)
+		bindShortcuts(c, m.shortcuts)
 		content(c)
 	}
 }
@@ -250,6 +296,7 @@ func (m *windowManager) OpenMain() hostWindow {
 			m.markQuittingIfNoWindows()
 		},
 	})
+	m.applyOpacity(m.main)
 	return m.main
 }
 
@@ -260,6 +307,13 @@ func (m *windowManager) Main() hostWindow { return m.main }
 // one. Settings holds no Sessions, so it never asks close intent. It uses the
 // same 1100x720 default and 720x480 minimum as the main window because the
 // desktop integration sections need a readable, scrollable layout.
+//
+// Unlike the workspace windows, Settings does not bind the application's
+// shortcut tables. MyGo sends a registered window shortcut to its handler
+// before a focused field sees the key, which would make the shortcut recorder
+// impossible to use for any chord an application binding already owns
+// (Ctrl+B, Ctrl+T, and so on). The window's own controls still handle typing,
+// Enter, and Escape; menu items remain reachable by pointer.
 func (m *windowManager) OpenSettings() {
 	if m.settings != nil && !m.settings.IsDestroyed() {
 		m.settings.Show()
@@ -277,11 +331,12 @@ func (m *windowManager) OpenSettings() {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
-		Content:   m.withAccelerators(m.wrap(m.settingsContent())),
+		Content:   m.wrap(m.settingsContent()),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
+	m.applyOpacity(m.settings)
 }
 
 // OpenDetached creates the window that owns one detached Tab. Every window,
@@ -319,6 +374,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 			m.markQuittingIfNoWindows()
 		},
 	})
+	m.applyOpacity(m.detached[tabID])
 }
 
 // ReattachClose closes a detached window after its Tab moved back into the
@@ -392,6 +448,9 @@ func (m *windowManager) Quitting() bool { return m.quitting }
 
 func (m *windowManager) confirmSessions(count int, quitting bool) bool {
 	if count <= 0 {
+		return true
+	}
+	if m.confirmPolicy != nil && !m.confirmPolicy() {
 		return true
 	}
 	if m.confirmer == nil {

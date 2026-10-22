@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	appapplock "github.com/mslxl/natcatty/application/applock"
@@ -14,6 +15,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	"github.com/mslxl/natcatty/ui/locales"
+	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -27,6 +29,7 @@ type fakeWindow struct {
 	destroyed     bool
 	invalidations int
 	title         string
+	opacity       float64
 }
 
 func (w *fakeWindow) Show() { w.shown = true }
@@ -56,6 +59,7 @@ func (w *fakeWindow) IsVisible() bool   { return w.shown && !w.destroyed }
 func (w *fakeWindow) SetTitle(title string) {
 	w.title = title
 }
+func (w *fakeWindow) SetOpacity(value float64) { w.opacity = value }
 
 type fakeWindowHost struct {
 	windows []*fakeWindow
@@ -291,6 +295,66 @@ func TestSettingsWindowIsASingleton(t *testing.T) {
 	if !graph.host.windows[0].shown || !graph.host.windows[0].focused {
 		t.Fatal("the existing Settings window was not raised")
 	}
+}
+
+// TestSettingsWindowLetsTheRecorderTakeAnAppBoundChord is the precedence
+// guard: Settings must not register the application shortcut tables on its
+// window. MyGo delivers a registered window shortcut before it offers the key
+// to a focused field, so a registered Ctrl+B would run Broadcast and the
+// recorder would never see the chord it was asked to capture.
+func TestSettingsWindowLetsTheRecorderTakeAnAppBoundChord(t *testing.T) {
+	service, _ := newBindingFixture(t, "windows")
+	shortcuts := settings.NewShortcutsState(service)
+	search := settings.NewSearchState()
+	search.SetArea(settings.AreaShortcuts)
+
+	graph := newWindowGraph(t, nil)
+	manager := graph.manager
+	manager.settingsContent = func() func(*ui.Context) {
+		return settings.ViewWithSettings(settings.Config{
+			Shortcuts: shortcuts,
+			Search:    search,
+		})
+	}
+	acceleratorFires, shortcutFires := 0, 0
+	manager.accelerators = []acceleratorBinding{{
+		mods: ui.Ctrl, key: ui.KeyB,
+		item: &mygo.MenuItem{Click: func(*mygo.MenuItem, *mygo.Window) { acceleratorFires++ }},
+	}}
+	manager.shortcuts = []keyShortcut{{
+		mods: ui.Ctrl, key: ui.KeyB,
+		run: func() { shortcutFires++ },
+	}}
+
+	manager.OpenSettings()
+	window := graph.host.last()
+	if window == nil || window.spec.Content == nil {
+		t.Fatal("OpenSettings created no content")
+	}
+	tester := ui.NewTester(window.spec.Content, 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	for press := 0; press < 200; press++ {
+		tester.Key(ui.Ctrl, ui.KeyB)
+		tester.Frame()
+		pending, ok := shortcuts.Pending()
+		if !ok {
+			tester.Key(0, ui.KeyTab)
+			tester.Frame()
+			continue
+		}
+		if pending.Chord != "Ctrl + B" {
+			t.Fatalf("pending chord = %q", pending.Chord)
+		}
+		if acceleratorFires != 0 || shortcutFires != 0 {
+			t.Fatalf("the app shortcut ran while recording: accelerators=%d shortcuts=%d",
+				acceleratorFires, shortcutFires)
+		}
+		return
+	}
+	t.Fatalf("Ctrl+B never reached the recorder: accelerators=%d shortcuts=%d texts=%v",
+		acceleratorFires, shortcutFires, tester.Texts())
 }
 
 func TestDetachedCloseAsksOnlyWithActiveSessionsAndKeepsMainAlive(t *testing.T) {
