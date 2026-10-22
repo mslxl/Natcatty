@@ -125,9 +125,9 @@ func restoreQuotedCR(records [][]string, sentinel string) [][]string {
 	return records
 }
 
-// escapeComponent implements encodeURIComponent's escape set so marked values
+// EscapeComponent implements encodeURIComponent's escape set so marked values
 // keep their original cross-app representation.
-func escapeComponent(value string) string {
+func EscapeComponent(value string) string {
 	const hex = "0123456789ABCDEF"
 	var out strings.Builder
 	for i := 0; i < len(value); i++ {
@@ -154,7 +154,7 @@ func EncodeMarkedField(value, marker string) string {
 		return ""
 	}
 	if isFormulaStart(value) || strings.HasPrefix(value, marker) {
-		return marker + escapeComponent(value)
+		return marker + EscapeComponent(value)
 	}
 	return value
 }

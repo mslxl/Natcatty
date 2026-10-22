@@ -112,6 +112,7 @@ func (s *Service) CreateKey(ctx context.Context, draft domainvault.KeyDraft) (do
 		PublicKey:     firstNonEmpty(inspection.PublicKey, normalized.PublicKey),
 		Certificate:   normalized.Certificate,
 		Source:        normalized.Source,
+		FilePath:      normalized.FilePath,
 		OrderKey:      nextKeyOrder(keys),
 		HasPrivateKey: s.SecretMode() != SecretModeSession,
 		CreatedAt:     now,
@@ -159,6 +160,9 @@ func (s *Service) UpdateKey(ctx context.Context, id model.KeyID, draft domainvau
 	updated := existing
 	updated.Label = normalized.Label
 	updated.Source = normalized.Source
+	if normalized.FilePath != "" {
+		updated.FilePath = normalized.FilePath
+	}
 	if normalized.ClearCertificate {
 		updated.Certificate = ""
 	} else if normalized.Certificate != "" {

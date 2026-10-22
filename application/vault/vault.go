@@ -45,6 +45,8 @@ type Service struct {
 	now               func() time.Time
 	importStore       ImportStore
 	importFiles       ImportFileReader
+	history           HistoryReader
+	themeSource       func() string
 }
 
 // Option customizes a Service.

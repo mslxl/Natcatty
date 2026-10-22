@@ -49,6 +49,7 @@ const (
 	surfaceNoteView
 	surfaceNoteGroup
 	surfaceImport
+	surfaceExport
 )
 
 // scrolls keeps the list and editor scroll offsets apart. They share one
@@ -87,6 +88,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceForwarding
 	case s.ImportOpen():
 		return surfaceImport
+	case s.ExportOpen():
+		return surfaceExport
 	case s.SnippetRunOpen():
 		return surfaceSnippetRun
 	case s.ViewingNote():
@@ -167,6 +170,8 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				noteGroupEditor(c, s, m, t, &positions.editor)
 			case surfaceImport:
 				importPanel(c, s, m, t, &positions.editor)
+			case surfaceExport:
+				exportPanel(c, s, m, t, &positions.editor)
 			default:
 				list(c, s, configured.forwarding, m, t, &positions.list)
 			}
@@ -180,6 +185,10 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultImportTitle()).Clicked() {
 			s.BeginImport()
+			c.Invalidate()
+		}
+		if ui.Button(c, m.VaultExportTitle()).Clicked() {
+			s.BeginExport()
 			c.Invalidate()
 		}
 		if ui.PrimaryButton(c, m.VaultHostNew()).Clicked() {
@@ -223,6 +232,7 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	noteGroupDeleteBanner(c, s, m, t)
 	noteExportBanner(c, s, m, t)
 	importOutcomeBanner(c, s, m, t)
+	exportOutcomeBanner(c, s, m, t)
 
 	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
@@ -1728,6 +1738,16 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemImportStore()
 	case vaultstate.ProblemImportUnavailable:
 		return m.VaultProblemImportUnavailable()
+	case vaultstate.ProblemExportUnavailable:
+		return m.VaultProblemExportUnavailable()
+	case vaultstate.ProblemExportWriter:
+		return m.VaultProblemExportWriter()
+	case vaultstate.ProblemExportFormat:
+		return m.VaultProblemExportFormat()
+	case vaultstate.ProblemExportUnconfirmed:
+		return m.VaultProblemExportUnconfirmed()
+	case vaultstate.ProblemExportNoHost:
+		return m.VaultProblemExportNoHost()
 	}
 	return ""
 }

@@ -264,18 +264,36 @@
   "@vaultImportSummary": {
     "description": "One import preview's row counts.",
     "placeholders": {
-      "total": {"type": "int", "example": "12"},
-      "added": {"type": "int", "example": "7"},
-      "conflicts": {"type": "int", "example": "2"},
-      "duplicates": {"type": "int", "example": "1"},
-      "invalid": {"type": "int", "example": "2"}
+      "total": {
+        "type": "int",
+        "example": "12"
+      },
+      "added": {
+        "type": "int",
+        "example": "7"
+      },
+      "conflicts": {
+        "type": "int",
+        "example": "2"
+      },
+      "duplicates": {
+        "type": "int",
+        "example": "1"
+      },
+      "invalid": {
+        "type": "int",
+        "example": "2"
+      }
     }
   },
   "vaultImportGroups": "{count, plural, one {# Host Group will be created.} other {# Host Groups will be created.}}",
   "@vaultImportGroups": {
     "description": "How many Host Groups the import will create.",
     "placeholders": {
-      "count": {"type": "int", "example": "3"}
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "vaultImportMerge": "On conflict",
@@ -288,7 +306,10 @@
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
-      "count": {"type": "int", "example": "8"}
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
     }
   },
   "vaultImportNoneSelected": "Select at least one row to import.",
@@ -296,10 +317,22 @@
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
-      "imported": {"type": "int", "example": "8"},
-      "overwritten": {"type": "int", "example": "2"},
-      "skipped": {"type": "int", "example": "1"},
-      "groups": {"type": "int", "example": "3"}
+      "imported": {
+        "type": "int",
+        "example": "8"
+      },
+      "overwritten": {
+        "type": "int",
+        "example": "2"
+      },
+      "skipped": {
+        "type": "int",
+        "example": "1"
+      },
+      "groups": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "vaultImportDismiss": "Dismiss",
@@ -307,14 +340,20 @@
   "@vaultImportConflictWith": {
     "description": "The existing Host a row conflicts with.",
     "placeholders": {
-      "label": {"type": "String", "example": "web-1"}
+      "label": {
+        "type": "String",
+        "example": "web-1"
+      }
     }
   },
   "vaultImportRowNumber": "Row {row}",
   "@vaultImportRowNumber": {
     "description": "The source row number beside an import preview row.",
     "placeholders": {
-      "row": {"type": "int", "example": "7"}
+      "row": {
+        "type": "int",
+        "example": "7"
+      }
     }
   },
   "vaultImportStatusNew": "New",
@@ -325,15 +364,24 @@
   "@vaultImportIssueDocument": {
     "description": "One problem about the whole document.",
     "placeholders": {
-      "message": {"type": "String", "example": "The file is empty."}
+      "message": {
+        "type": "String",
+        "example": "The file is empty."
+      }
     }
   },
   "vaultImportIssueLine": "Row {row}: {message}",
   "@vaultImportIssueLine": {
     "description": "One problem tied to a source row.",
     "placeholders": {
-      "row": {"type": "int", "example": "4"},
-      "message": {"type": "String", "example": "The port is invalid."}
+      "row": {
+        "type": "int",
+        "example": "4"
+      },
+      "message": {
+        "type": "String",
+        "example": "The port is invalid."
+      }
     }
   },
   "vaultImportIssueCSVEmpty": "The file is empty.",
@@ -1878,5 +1926,70 @@
   "settingsHistoryRetentionDays": "History max age (days)",
   "@settingsHistoryRetentionDays": {
     "description": "The maximum age of a command history entry in days."
-  }
+  },
+  "vaultExportTitle": "Export Vault",
+  "vaultExportIntro": "Choose a format and a scope. Nothing leaves this machine until you save.",
+  "vaultExportFormat": "Format",
+  "vaultExportScope": "Scope",
+  "vaultExportScopeAll": "Everything",
+  "vaultExportScopeSelected": "Selected Host",
+  "vaultExportSelectedHost": "Host: {label}",
+  "@vaultExportSelectedHost": {
+    "description": "The Host the export scope points at.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web-1"
+      }
+    }
+  },
+  "vaultExportIncludeSecrets": "Include passwords and private keys",
+  "vaultExportSecretsHint": "Without this, credentials are left out.",
+  "vaultExportSecretsWarning": "Passwords, passphrases, and private key material will be written in plaintext.",
+  "vaultExportSecretsConfirmed": "Plaintext secrets will be included.",
+  "vaultExportConfirmSecrets": "Confirm plaintext secrets",
+  "vaultExportUnconfirmed": "Confirm the plaintext warning before exporting.",
+  "vaultExportSaveHint": "You will be asked where to save.",
+  "vaultExportExport": "Export",
+  "vaultExportDone": "Exported {bytes} bytes to {path}",
+  "@vaultExportDone": {
+    "description": "The result of a saved export.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Exports/hosts.csv"
+      },
+      "bytes": {
+        "type": "int",
+        "example": "2048"
+      }
+    }
+  },
+  "vaultExportUnreadable": "{count} credentials could not be read and were left out.",
+  "@vaultExportUnreadable": {
+    "description": "Credentials that could not be decrypted and were left out.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultExportDismiss": "Dismiss",
+  "vaultExportFormatJSON": "Netcatty JSON",
+  "vaultExportFormatCSV": "Netcatty CSV",
+  "vaultExportFormatSnippets": "Snippets (JSON)",
+  "vaultExportFormatNotesMarkdown": "Notes (Markdown)",
+  "vaultExportFormatNotesHTML": "Notes (HTML)",
+  "vaultExportFormatNotesZIP": "Notes (ZIP archive)",
+  "vaultExportFormatKeys": "SSH Keys (JSON)",
+  "vaultExportFormatThemes": "Themes (JSON)",
+  "vaultExportFormatLogsJSON": "Logs (JSON)",
+  "vaultExportFormatLogsCSV": "Logs (CSV)",
+  "vaultProblemExportUnavailable": "Export is not available.",
+  "vaultProblemExportWriter": "The export could not be saved.",
+  "vaultProblemExportFormat": "Choose a valid export format.",
+  "vaultProblemExportUnconfirmed": "Confirm the plaintext warning first.",
+  "vaultProblemExportNoHost": "Select a Host to export.",
+  "vaultExportNotesPageTitle": "Vault Notes export"
 }
