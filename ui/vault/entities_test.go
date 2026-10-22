@@ -1447,7 +1447,10 @@ func TestHostSummaryHasNoOrphanSeparatorsAt720x480(t *testing.T) {
 		if !ok {
 			t.Fatalf("summary token %q is missing, texts %q", token, tt.Texts())
 		}
-		if rect.Y > label.Y+48 {
+		// At the minimum size the action strip wraps onto its own line below
+		// the label, so the summary starts lower than it did when the buttons
+		// shared the label line. It must still stay inside this Host row.
+		if rect.Y > label.Y+80 {
 			t.Fatalf("summary token %q is more than two lines below the label: label %+v, token %+v",
 				token, label, rect)
 		}

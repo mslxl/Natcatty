@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -16,6 +17,9 @@ type NotesManifest struct {
 	Kind    string               `json:"kind"`
 	Version int                  `json:"version"`
 	Entries []NotesManifestEntry `json:"entries"`
+	// NoteGroups lists every Note Group, including groups with no Note. It is
+	// optional so version-1 archives written before it existed still import.
+	NoteGroups []string `json:"noteGroups,omitempty"`
 }
 
 // NotesManifestEntry maps one archive entry to its Note.
@@ -122,6 +126,12 @@ func parseNotesZIP(text string) Result {
 		}
 	}
 	seenPaths := make(map[string]bool, len(entries))
+	groups := make(map[string]bool)
+	for _, group := range manifest.NoteGroups {
+		for _, path := range noteGroupAncestors(group) {
+			groups[path] = true
+		}
+	}
 
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
@@ -156,6 +166,11 @@ func parseNotesZIP(text string) Result {
 			note.Group = normalizeGroup(group)
 			note.Title = strings.TrimSuffix(path.Base(name), path.Ext(name))
 		}
+		// Derive the Note Group list from the entries as well, so an older
+		// manifest without noteGroups still restores its groups.
+		for _, groupPath := range noteGroupAncestors(note.Group) {
+			groups[groupPath] = true
+		}
 		family.Notes = append(family.Notes, note)
 	}
 	// A manifest entry whose file is missing is reported instead of silently
@@ -169,8 +184,31 @@ func parseNotesZIP(text string) Result {
 			Value: entryPath, Detail: entry.Title,
 		})
 	}
+	if len(groups) > 0 {
+		paths := make([]string, 0, len(groups))
+		for groupPath := range groups {
+			paths = append(paths, groupPath)
+		}
+		sort.Strings(paths)
+		family.NoteGroups = paths
+	}
 	result.Family = family
 	return result
+}
+
+// noteGroupAncestors expands one Note Group path, root first. It mirrors the
+// Host Group hierarchy so an importer creates both "Ops" and "Ops/Config".
+func noteGroupAncestors(path string) []string {
+	path = normalizeGroup(path)
+	if path == "" {
+		return nil
+	}
+	segments := strings.Split(path, "/")
+	out := make([]string, 0, len(segments))
+	for index := range segments {
+		out = append(out, strings.Join(segments[:index+1], "/"))
+	}
+	return out
 }
 
 func readNotesManifest(reader *zip.Reader) (NotesManifest, error) {

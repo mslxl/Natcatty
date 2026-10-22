@@ -202,7 +202,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			ui.Text(c, m.VaultImportNoIssues()).FontSize(12).TextColor(t.TextMuted)
 		}
 		for _, item := range preview.Issues {
-			message := importIssueMessage(m, item.Code)
+			message := importIssueText(m, item)
 			line := m.VaultImportIssueDocument(message)
 			if item.Row > 0 {
 				line = m.VaultImportIssueLine(item.Row, message)
@@ -311,6 +311,19 @@ func importStatusColor(t *ui.Theme, status appvault.ImportStatus) ui.Color {
 		return t.Danger
 	default:
 		return t.Success
+	}
+}
+
+// importIssueText localizes one issue. Issues that name an affected record use
+// the record's label or target from the parser, never a raw file path.
+func importIssueText(m locales.Messages, item vaultimport.Issue) string {
+	switch item.Code {
+	case vaultimport.IssueKeyWithoutMaterial:
+		return m.VaultImportIssueKeyWithoutMaterial(item.Value)
+	case vaultimport.IssueDanglingSnippetTarget:
+		return m.VaultImportIssueDanglingTarget(item.Detail, item.Value)
+	default:
+		return importIssueMessage(m, item.Code)
 	}
 }
 

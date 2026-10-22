@@ -299,9 +299,9 @@ func (s *State) ConfirmImport() error {
 			s.redraw()
 			return err
 		}
-		outcome.Imported += len(result.Imported)
+		outcome.Imported += len(result.Imported) + result.FamilyCreated
 		outcome.Overwritten += len(result.Overwritten)
-		outcome.Skipped += result.Skipped
+		outcome.Skipped += result.Skipped + result.FamilySkipped
 		outcome.Groups += len(result.GroupsCreated)
 		outcome.Family += result.FamilyCreated
 		offset = result.Next

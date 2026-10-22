@@ -111,6 +111,12 @@ const (
 	IssueInvalidArchive      IssueCode = "invalid_archive"
 	IssueInvalidManifest     IssueCode = "invalid_manifest"
 	IssueMissingNoteEntry    IssueCode = "missing_note_entry"
+	// IssueKeyWithoutMaterial reports a restored Key record whose private
+	// material was not in the document (for example a secrets-off export).
+	IssueKeyWithoutMaterial IssueCode = "key_without_material"
+	// IssueDanglingSnippetTarget reports a Snippet target that this import
+	// cannot resolve to a Host. The reference is preserved, not dropped.
+	IssueDanglingSnippetTarget IssueCode = "dangling_snippet_target"
 )
 
 // Issue is one parse or validation problem tied to a source row. Row is

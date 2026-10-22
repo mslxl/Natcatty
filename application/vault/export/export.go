@@ -351,6 +351,9 @@ const (
 
 func exportCSV(d Dataset, opts Options) ([]byte, error) {
 	var out strings.Builder
+	// The original Electron exporter wrote a UTF-8 BOM so spreadsheet tools
+	// read non-ASCII labels correctly. The importer strips it in Detect.
+	out.WriteString("\xef\xbb\xbf")
 	out.WriteString(strings.Join(Header(), ","))
 	out.WriteString("\r\n")
 	for _, host := range sortedHosts(d.Hosts) {
@@ -555,7 +558,7 @@ func exportNotesHTML(d Dataset, opts Options) []byte {
 }
 
 func exportNotesZIP(d Dataset) ([]byte, error) {
-	return NotesArchive(d.Notes)
+	return NotesArchive(d.Notes, d.NoteGroups)
 }
 
 // NotesArchive writes one Markdown entry per Note plus a versioned manifest.
@@ -563,8 +566,24 @@ func exportNotesZIP(d Dataset) ([]byte, error) {
 // Note Group, title, and identity, so duplicate titles and titles containing
 // path separators round-trip without ambiguity. The manifest entry name is
 // reserved before Note names are assigned so a Note cannot shadow it.
-func NotesArchive(notes []domainvault.Note) ([]byte, error) {
+func NotesArchive(notes []domainvault.Note, noteGroups []domainvault.NoteGroup) ([]byte, error) {
 	sorted := sortedNotes(notes)
+	groupSet := make(map[string]bool)
+	for _, group := range noteGroups {
+		for _, groupPath := range domainvault.GroupAncestors(group.Path) {
+			groupSet[groupPath] = true
+		}
+	}
+	for _, note := range sorted {
+		for _, groupPath := range domainvault.GroupAncestors(note.Group) {
+			groupSet[groupPath] = true
+		}
+	}
+	groups := make([]string, 0, len(groupSet))
+	for groupPath := range groupSet {
+		groups = append(groups, groupPath)
+	}
+	sort.Strings(groups)
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	used := map[string]int{strings.ToLower(vaultimport.NotesManifestName): 1}
@@ -597,6 +616,7 @@ func NotesArchive(notes []domainvault.Note) ([]byte, error) {
 	}
 	manifest, err := marshal(vaultimport.NotesManifest{
 		Kind: vaultimport.KindNotes, Version: Version, Entries: entries,
+		NoteGroups: groups,
 	})
 	if err != nil {
 		_ = archive.Close()
@@ -745,6 +765,8 @@ var logsHeader = []string{
 
 func exportLogsCSV(d Dataset) []byte {
 	var out strings.Builder
+	// Match the Hosts CSV: the original exporter wrote a UTF-8 BOM.
+	out.WriteString("\xef\xbb\xbf")
 	out.WriteString(strings.Join(logsHeader, ","))
 	out.WriteString("\r\n")
 	for _, log := range sortedLogs(d.Logs) {
