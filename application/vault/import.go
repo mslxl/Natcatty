@@ -207,7 +207,7 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 			})
 			row.Issues = append(row.Issues, preview.Issues[len(preview.Issues)-1])
 		}
-		if record.KeyPath != "" {
+		if record.KeyPath != "" || record.KeyMaterial != "" {
 			key, keyIssue := s.importKeyFile(record, keyCache)
 			if keyIssue != nil {
 				preview.Issues = append(preview.Issues, *keyIssue)
@@ -215,7 +215,7 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 			}
 			if key != nil {
 				row.KeyLabel = key.label
-				preview.keyFiles[record.KeyPath] = key
+				preview.keyFiles[recordKey(record)] = key
 			}
 		}
 
@@ -326,7 +326,8 @@ func (s *Service) importExistingGroups(ctx context.Context) ([]domainvault.Group
 func (s *Service) importKeyFile(record vaultimport.Record,
 	cache map[string]*importKeyFile) (*importKeyFile, *vaultimport.Issue) {
 
-	if cached, ok := cache[record.KeyPath]; ok {
+	cacheKey := recordKey(record)
+	if cached, ok := cache[cacheKey]; ok {
 		return cached, nil
 	}
 	issue := func(code vaultimport.IssueCode) *vaultimport.Issue {
@@ -335,27 +336,47 @@ func (s *Service) importKeyFile(record vaultimport.Record,
 			Field: "keypath", Value: record.KeyPath,
 		}
 	}
-	if s.importFiles == nil || s.inspector == nil || s.keys == nil || s.secrets == nil {
+	if s.inspector == nil || s.keys == nil || s.secrets == nil {
 		return nil, issue(vaultimport.IssueKeyUnreadable)
 	}
-	data, err := s.importFiles.ReadImportFile(record.KeyPath)
-	if err != nil || len(data) == 0 {
-		return nil, issue(vaultimport.IssueKeyUnreadable)
+	data := record.KeyMaterial
+	if data == "" {
+		if s.importFiles == nil {
+			return nil, issue(vaultimport.IssueKeyUnreadable)
+		}
+		read, err := s.importFiles.ReadImportFile(record.KeyPath)
+		if err != nil || len(read) == 0 {
+			return nil, issue(vaultimport.IssueKeyUnreadable)
+		}
+		data = string(read)
 	}
-	inspection, err := s.inspector.Inspect(string(data), record.Passphrase, "")
+	inspection, err := s.inspector.Inspect(data, record.Passphrase, "")
 	if err != nil {
 		return nil, issue(vaultimport.IssueKeyUnreadable)
 	}
 	if inspection.Encrypted && record.Passphrase == "" {
 		return nil, issue(vaultimport.IssuePassphraseConflict)
 	}
+	label := strings.TrimSpace(record.KeyLabelHint)
+	if label == "" {
+		label = keyFileLabel(record.KeyPath)
+	}
 	key := &importKeyFile{
-		label:      keyFileLabel(record.KeyPath),
-		privateKey: string(data),
+		label:      label,
+		privateKey: data,
 		passphrase: record.Passphrase,
 	}
-	cache[record.KeyPath] = key
+	cache[cacheKey] = key
 	return key, nil
+}
+
+// recordKey identifies the Key one record references. An inline JSON Key is
+// shared by its exported identity; a CSV Key by its file path.
+func recordKey(record vaultimport.Record) string {
+	if record.KeyRef != "" {
+		return "id:" + record.KeyRef
+	}
+	return record.KeyPath
 }
 
 func keyFileLabel(keyPath string) string {
@@ -469,7 +490,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 				result.Skipped++
 				continue
 			}
-			draft.KeyID = keyIDs[preview.records[index].KeyPath]
+			draft.KeyID = keyIDs[recordKey(preview.records[index])]
 			draft.HostChain = chains[index]
 			updated, err := s.Update(ctx, row.Existing, draft)
 			if err != nil {
@@ -516,7 +537,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		if !ok {
 			continue
 		}
-		draft.KeyID = keyIDs[preview.records[index].KeyPath]
+		draft.KeyID = keyIDs[recordKey(preview.records[index])]
 		draft.HostChain = chains[index]
 		for _, ancestor := range groupAncestorsWithSelf(draft.Group) {
 			if !groupByPath[ancestor] {
@@ -629,7 +650,7 @@ func (s *Service) commitImportKeys(ctx context.Context, preview ImportPreview,
 	if len(preview.keyFiles) == 0 {
 		return ids, nil
 	}
-	used := make(map[string]bool)
+	used := make(map[string]string)
 	for index := start; index < end; index++ {
 		if !selected(index) {
 			continue
@@ -641,16 +662,17 @@ func (s *Service) commitImportKeys(ctx context.Context, preview ImportPreview,
 		if status != ImportStatusNew && status != ImportStatusConflict {
 			continue
 		}
-		if keyPath := preview.records[index].KeyPath; keyPath != "" {
-			used[keyPath] = true
+		record := preview.records[index]
+		if record.KeyPath != "" || record.KeyMaterial != "" {
+			used[recordKey(record)] = record.KeyPath
 		}
 	}
-	for keyPath := range used {
-		if id, found := preview.keyIDs[keyPath]; found {
-			ids[keyPath] = id
+	for cacheKey, keyPath := range used {
+		if id, found := preview.keyIDs[cacheKey]; found {
+			ids[cacheKey] = id
 			continue
 		}
-		keyFile, ok := preview.keyFiles[keyPath]
+		keyFile, ok := preview.keyFiles[cacheKey]
 		if !ok {
 			continue
 		}
@@ -660,12 +682,13 @@ func (s *Service) commitImportKeys(ctx context.Context, preview ImportPreview,
 			Passphrase:     keyFile.passphrase,
 			SavePassphrase: keyFile.passphrase != "",
 			Source:         domainvault.KeySourceImported,
+			FilePath:       keyPath,
 		})
 		if err != nil {
 			return nil, err
 		}
-		preview.keyIDs[keyPath] = key.ID
-		ids[keyPath] = key.ID
+		preview.keyIDs[cacheKey] = key.ID
+		ids[cacheKey] = key.ID
 	}
 	return ids, nil
 }

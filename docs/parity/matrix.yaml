@@ -1985,7 +1985,33 @@
     - application/vault.TestPreviewImportReportsConflictsDuplicatesAndInvalidRows
     - app.TestTicket24CheckRunsThroughTheKeyboard
   status: verified
-  notes: "CSV follows RFC 4180 quoting, accepts a UTF-8 BOM, CRLF or LF row endings, and tab-separated files with the same headers. Header matching is case- and punctuation-insensitive, additional columns are ignored, and a missing hostname column is an error. Key paths, passphrases, and proxy URLs use versioned marked fields with percent encoding so a value that starts with a formula character stays unambiguous. Formula characters in exported free text are guarded with a leading apostrophe and the guard is removed on import; formulas are never evaluated, and credential cells stay byte-exact. A duplicate merge key inside one file is reported and left unselected. A LocalShell marked field is recognized but reported as unsupported because the native Host model does not store local-shell configuration. The export writer and its UI are delivered by a later ticket; this diff ships and tests the export-safe field helpers only."
+  notes: "CSV follows RFC 4180 quoting, accepts a UTF-8 BOM, CRLF or LF row endings, and tab-separated files with the same headers. Header matching is case- and punctuation-insensitive, additional columns are ignored, and a missing hostname column is an error. Key paths, passphrases, and proxy URLs use versioned marked fields with percent encoding so a value that starts with a formula character stays unambiguous. Formula characters in exported free text are guarded with a leading apostrophe and the guard is removed on import; formulas are never evaluated, and credential cells stay byte-exact. A duplicate merge key inside one file is reported and left unselected. A LocalShell marked field is recognized but reported as unsupported because the native Host model does not store local-shell configuration. The export writer is covered by vault.export."
+
+- id: vault.export
+  area: vault
+  feature: Export Vault, Snippets, notes, keys, themes, and logs and re-import them
+  original_paths:
+    - domain/vaultImport/csvExport.ts
+    - components/VaultView.tsx
+    - application/vaultCsvExportCredentials.ts
+    - components/KeychainExportPanel.tsx
+    - components/notes/NoteExportMenu.tsx
+    - domain/snippetTransfer.ts
+  module: application/vault
+  tickets: [25]
+  acceptance_tests:
+    - domain/vaultimport.TestJSONJumpRefsSkipInvalidHostsWithoutShifting
+    - application/vault/export.TestCSVUsesHeaderMarkedFieldsAndGuards
+    - application/vault/export.TestJSONRoundTripsThroughImporter
+    - application/vault/export.TestEveryExportIsDeterministic
+    - application/vault.TestCSVExportRoundTripsThroughImport
+    - application/vault.TestJSONExportRoundTripsThroughImport
+    - ui/vault.TestExportPanelWarnsAndConfirmsPlaintextSecrets
+    - ui/vault.TestExportPanelRendersAndScrollsAtBothWindowSizes
+    - app.TestTicket25CheckRunsThroughTheKeyboard
+    - app.TestTicket25CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Ten formats are produced deterministically in the original conventions: versioned Netcatty JSON and CSV with the ticket-24 header, marked fields, formula guard, and CRLF; Snippets JSON with Host target IDs stripped; Notes Markdown, HTML, and a byte-identical Markdown ZIP; SSH Keys JSON with authorized_keys lines; Themes JSON; Logs JSON and CSV. Passwords, passphrases, private key material, and proxy passwords are omitted by default; the destructive option writes them in plaintext and the UI requires an explicit confirmation after the warning. Keys are public by default and include material only under that option. CSV and JSON exports re-import through the ticket-24 importer and preserve Hosts, Groups, credentials, and Keys; Snippets, Notes, and Keys have family importers. JSON JumpRefs index the parsed records, not the source document, so skipped invalid Hosts do not shift a jump chain. The export panel scrolls inside a reserved scroll-bar gutter and is tested at 1100x720 and 720x480 in all five catalogs."
 
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.

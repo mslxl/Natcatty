@@ -137,3 +137,9 @@ _Avoid_: account, backend
 The complete set of stored hosts, groups, keys, identities, snippets, notes, proxies,
 forwarding rules, and known hosts.
 _Avoid_: database, store
+
+**Export**:
+A written document of selected Vault records in one of the portable formats, produced
+deterministically. A destructive Export includes credential plaintext and requires
+confirmation.
+_Avoid_: dump, backup, download

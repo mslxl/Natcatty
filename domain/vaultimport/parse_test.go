@@ -586,3 +586,20 @@ func TestParsePuTTYIgnoresNonSessionRegistryKeys(t *testing.T) {
 		t.Fatalf("issues = %+v, want none", result.Issues)
 	}
 }
+
+func TestJSONJumpRefsSkipInvalidHostsWithoutShifting(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"bad","label":"bad","hostname":"","port":22},
+		{"id":"bastion","hostname":"bastion.example.test","port":22},
+		{"id":"client","hostname":"client.example.test","port":22,
+		 "hostChain":{"hostIds":["bastion"]}}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Records) != 2 {
+		t.Fatalf("records = %d, issues = %+v", len(result.Records), result.Issues)
+	}
+	client := result.Records[1]
+	if len(client.JumpRefs) != 1 || client.JumpRefs[0] != 0 {
+		t.Fatalf("JumpRefs = %v, want [0]", client.JumpRefs)
+	}
+}

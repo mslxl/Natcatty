@@ -43,6 +43,10 @@ type Key struct {
 	// certificate credential. It is public material.
 	Certificate string    `json:"certificate,omitempty"`
 	Source      KeySource `json:"source"`
+	// FilePath is the referenced IdentityFile path for a reference Key. It is
+	// non-secret metadata, used by CSV export so an exported inventory can be
+	// re-imported against the same material.
+	FilePath string `json:"filePath,omitempty"`
 	// HasPrivateKey reports that encrypted private material exists for this
 	// Key. The ciphertext lives in secret_values, never in this record. It is
 	// false for session-only material after a restart.
@@ -79,6 +83,9 @@ type KeyDraft struct {
 	PublicKey string
 	Type      KeyType
 	Source    KeySource
+	// FilePath records where reference material lives. The app fills it for an
+	// imported IdentityFile; it is ignored for pasted material.
+	FilePath string
 }
 
 // NormalizeKeyDraft trims display input, fills defaults, and validates the
@@ -88,6 +95,7 @@ func NormalizeKeyDraft(draft KeyDraft) (KeyDraft, error) {
 	draft.Type = KeyType(strings.ToUpper(strings.TrimSpace(string(draft.Type))))
 	draft.PublicKey = strings.TrimSpace(draft.PublicKey)
 	draft.Certificate = strings.TrimSpace(draft.Certificate)
+	draft.FilePath = strings.TrimSpace(draft.FilePath)
 	if draft.Source == "" {
 		draft.Source = KeySourceImported
 	}

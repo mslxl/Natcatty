@@ -56,6 +56,9 @@ func Detect(text string) Format {
 
 	var candidate map[string]any
 	if json.Unmarshal([]byte(input), &candidate) == nil && candidate != nil {
+		if kind, _ := candidate["kind"].(string); kind == KindNetcattyVault {
+			return FormatNetcattyJSON
+		}
 		if _, ok := candidate["conection_type"]; ok {
 			if _, hasHost := candidate["host"].(string); hasHost {
 				return FormatFinalShell
