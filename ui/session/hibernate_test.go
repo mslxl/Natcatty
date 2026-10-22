@@ -119,6 +119,40 @@ func waitScreenContains(t *testing.T, surface *Surface, want string) {
 	eventually(t, func() bool { return strings.Contains(surface.ScreenText(), want) })
 }
 
+// settledSessionSnapshot pumps frames until the viewport resize that MyGo's
+// terminal started asynchronously has reached the Session.
+//
+// MyGo's terminal calls Conn.Resize from a goroutine, so a snapshot taken
+// after a fixed number of frames can race that first resize and record a
+// stale size. Hibernation then closes that terminal and Resume attaches a
+// new one that applies the real size, which makes a post-resume comparison
+// look like a legitimate state change. Waiting for the transport's last
+// recorded size to match the Session snapshot on two consecutive frames
+// gives the test a stable baseline.
+func settledSessionSnapshot(t *testing.T, surface *Surface, transport *scriptedTransport, tester *ui.Tester) appsession.Snapshot {
+	t.Helper()
+	var (
+		settled            appsession.Snapshot
+		lastCols, lastRows int
+	)
+	eventually(t, func() bool {
+		transport.mu.Lock()
+		cols, rows := transport.cols, transport.rows
+		transport.mu.Unlock()
+
+		tester.Frame()
+		snapshot := surface.Session().Snapshot()
+
+		stable := cols == lastCols && rows == lastRows
+		lastCols, lastRows = cols, rows
+		settled = snapshot
+
+		return cols > 0 && rows > 0 &&
+			snapshot.Cols == cols && snapshot.Rows == rows && stable
+	})
+	return settled
+}
+
 func TestHibernateAndResumeKeepTheScreenAndSessionState(t *testing.T) {
 	m := locales.In("en")
 	surface, transport := newScriptedSurface(t)
@@ -128,7 +162,7 @@ func TestHibernateAndResumeKeepTheScreenAndSessionState(t *testing.T) {
 	waitScreenContains(t, surface, "owner line one")
 	tester.Frame()
 
-	before := surface.Session().Snapshot()
+	before := settledSessionSnapshot(t, surface, transport, tester)
 	beforeText := surface.ScreenText()
 	if !strings.Contains(beforeText, "owner line one") {
 		t.Fatalf("owner screen lacks its output: %q", beforeText)
