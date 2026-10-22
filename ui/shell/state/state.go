@@ -46,6 +46,13 @@ type Surface interface {
 // real MyGo terminal; tests wire a fake.
 type SurfaceFactory func(*appsession.Session) (Surface, error)
 
+// TerminalFontSetter is implemented by a Surface whose terminal can restyle
+// without being recreated. The Settings window uses it to apply the live
+// terminal font to open Sessions.
+type TerminalFontSetter interface {
+	SetTerminalFont(family string, size float32)
+}
+
 // HostResolver looks a Host up for restore and for reopening a split. It
 // reports false when the Host no longer exists.
 type HostResolver func(context.Context, model.HostID) (domainvault.Host, bool)

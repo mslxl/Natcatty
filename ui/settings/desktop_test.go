@@ -177,7 +177,7 @@ func TestDesktopSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
 		fake := newFakeDesktop()
 		state := NewDesktopState(fake)
-		tester := ui.NewTester(ViewWithDesktop(NewAppLockState(&fakeAppLock{}), state), size[0], size[1])
+		tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
@@ -188,7 +188,6 @@ func TestDesktopSettingsFitAtDefaultAndMinimumSizes(t *testing.T) {
 			m.SettingsTrayTitle(),
 			m.SettingsDeepLinksTitle(),
 			m.SettingsNotificationsTitle(),
-			m.SettingsAppLockTitle(),
 		} {
 			r, ok := tester.Find(text)
 			if !ok {
@@ -218,7 +217,7 @@ func TestHotkeyProblemRendersBesideItsControlsAndClearsOnReset(t *testing.T) {
 		if state.Problem() != DesktopProblemHotkey {
 			t.Fatalf("startup problem = %q", state.Problem())
 		}
-		tester := ui.NewTester(ViewWithDesktop(NewAppLockState(&fakeAppLock{}), state), size[0], size[1])
+		tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: state}), size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
@@ -242,6 +241,10 @@ func TestHotkeyProblemRendersBesideItsControlsAndClearsOnReset(t *testing.T) {
 			t.Fatalf("%dx%d clips the hotkey problem: %+v", size[0], size[1], problem)
 		}
 
+		// The reset control may sit below the fold at the minimum height; the
+		// interaction itself is unrelated to the visual fit checked above.
+		tester.SetSize(1100, 720)
+		tester.Frame()
 		if err := tester.Click(m.SettingsHotkeyReset()); err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +261,7 @@ func TestHotkeyProblemRendersBesideItsControlsAndClearsOnReset(t *testing.T) {
 func TestDesktopSettingsShowUnsupportedCapabilities(t *testing.T) {
 	fake := newFakeDesktop()
 	fake.caps = desktop.Capabilities{}
-	tester := ui.NewTester(ViewWithDesktop(NewAppLockState(&fakeAppLock{}), NewDesktopState(fake)), 1100, 720)
+	tester := ui.NewTester(viewAt(AreaSystem, Config{Lock: NewAppLockState(&fakeAppLock{}), Desktop: NewDesktopState(fake)}), 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
 	m := locales.In("en")

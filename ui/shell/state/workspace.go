@@ -1482,3 +1482,30 @@ func (s *State) removeTabAt(index int) {
 	s.logsVisible = false
 	s.refreshBroadcastState()
 }
+
+// SetTerminalFont restyles every open terminal in the main and detached
+// windows. A Surface that cannot restyle live is left alone; a new Session
+// reads the setting when its terminal is created.
+func (s *State) SetTerminalFont(family string, size float32) {
+	apply := func(tab *Tab) {
+		if tab == nil {
+			return
+		}
+		for _, pane := range tab.panes {
+			if pane == nil {
+				continue
+			}
+			setter, ok := pane.surface.(TerminalFontSetter)
+			if !ok {
+				continue
+			}
+			setter.SetTerminalFont(family, size)
+		}
+	}
+	for _, tab := range s.tabs {
+		apply(tab)
+	}
+	for _, tab := range s.detached {
+		apply(tab)
+	}
+}

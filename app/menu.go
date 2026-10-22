@@ -11,6 +11,22 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
+// MenuBindings supplies the accelerators the menu shows from the active
+// keyboard-binding scheme. It is the only place the native menu and the
+// catalog meet, so a user override and a disabled scheme change both the
+// label and the key that runs it.
+type MenuBindings interface {
+	// Accelerator returns the Electron-style accelerator for a catalog
+	// binding, or false when the binding is disabled or cannot be shown as a
+	// single menu accelerator.
+	Accelerator(bindingID string) (string, bool)
+	// FocusAccelerator returns one direction's accelerator for move-focus.
+	FocusAccelerator(direction string) (string, bool)
+	// MenuSuppressed reports a foreign menu accelerator the user displaced
+	// while resolving a conflict.
+	MenuSuppressed(menuID string) bool
+}
+
 // BuildMenu returns the native application menu. Standard roles provide the
 // platform-conventional Edit, Window, and macOS Quit behavior; the app's
 // command registry provides New Tab, Close Tab, non-macOS Quit, and language
@@ -19,6 +35,17 @@ import (
 // Call it again when the language changes: custom labels and the checked
 // language item are part of the template.
 func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
+	return buildMenu(registry, tag, nil)
+}
+
+// BuildMenuWithBindings builds the menu with accelerators from the active
+// keyboard-binding scheme. A nil bindings uses the platform defaults.
+func BuildMenuWithBindings(registry *command.Registry, tag string,
+	bindings MenuBindings) *mygo.Menu {
+	return buildMenu(registry, tag, bindings)
+}
+
+func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *mygo.Menu {
 	m := locales.In(tag)
 	dispatch := func(id command.ID) func(*mygo.MenuItem, *mygo.Window) {
 		return func(*mygo.MenuItem, *mygo.Window) {
@@ -27,18 +54,44 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			}
 		}
 	}
+	accelerator := func(menuID, bindingID, fallback string) string {
+		if bindings == nil {
+			return fallback
+		}
+		if bindings.MenuSuppressed(menuID) {
+			return ""
+		}
+		if bindingID == "" {
+			return fallback
+		}
+		value, ok := bindings.Accelerator(bindingID)
+		if !ok {
+			return ""
+		}
+		return value
+	}
+	focusAccelerator := func(direction, fallback string) string {
+		if bindings == nil {
+			return fallback
+		}
+		value, ok := bindings.FocusAccelerator(direction)
+		if !ok {
+			return ""
+		}
+		return value
+	}
 
 	fileItems := []*mygo.MenuItem{
 		{
 			ID:          "menu.newTab",
 			Label:       m.MenuNewTab(),
-			Accelerator: "CmdOrCtrl+T",
+			Accelerator: accelerator("menu.newTab", "new-tab", "CmdOrCtrl+T"),
 			Click:       dispatch(command.NewTab),
 		},
 		{
 			ID:          "menu.closeTab",
 			Label:       m.MenuCloseTab(),
-			Accelerator: "CmdOrCtrl+W",
+			Accelerator: accelerator("menu.closeTab", "close-tab", "CmdOrCtrl+W"),
 			Click:       dispatch(command.CloseTab),
 		},
 		{
@@ -72,9 +125,15 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			Click: dispatch(command.LockApp),
 		},
 		{
+			ID:          "menu.settings",
+			Label:       m.NavSettings(),
+			Accelerator: accelerator("menu.settings", "open-settings", "CmdOrCtrl+,"),
+			Click:       dispatch(command.OpenSettings),
+		},
+		{
 			ID:          "menu.backups",
 			Label:       m.VaultBackupTitle(),
-			Accelerator: "CmdOrCtrl+Shift+B",
+			Accelerator: accelerator("menu.backups", "", "CmdOrCtrl+Shift+B"),
 			Click:       dispatch(command.OpenBackups),
 		},
 	}
@@ -87,7 +146,7 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			&mygo.MenuItem{
 				ID:          "menu.quit",
 				Label:       m.MenuQuit(),
-				Accelerator: "CmdOrCtrl+Q",
+				Accelerator: accelerator("menu.quit", "", "CmdOrCtrl+Q"),
 				Click:       dispatch(command.Quit),
 			},
 		)
@@ -113,19 +172,19 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			{
 				ID:          "menu.splitRight",
 				Label:       m.PaneSplitRight(),
-				Accelerator: "CmdOrCtrl+Shift+E",
+				Accelerator: accelerator("menu.splitRight", "split-vertical", "CmdOrCtrl+Shift+E"),
 				Click:       dispatch(command.SplitPaneRight),
 			},
 			{
 				ID:          "menu.splitDown",
 				Label:       m.PaneSplitDown(),
-				Accelerator: "CmdOrCtrl+Shift+D",
+				Accelerator: accelerator("menu.splitDown", "split-horizontal", "CmdOrCtrl+Shift+D"),
 				Click:       dispatch(command.SplitPaneDown),
 			},
 			{
 				ID:          "menu.closePane",
 				Label:       m.PaneClose(),
-				Accelerator: "CmdOrCtrl+Shift+W",
+				Accelerator: accelerator("menu.closePane", "close-session", "CmdOrCtrl+Shift+W"),
 				Click:       dispatch(command.ClosePane),
 			},
 			{
@@ -137,25 +196,25 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			{
 				ID:          "menu.focusLeft",
 				Label:       m.PaneFocusLeft(),
-				Accelerator: "CmdOrCtrl+Alt+Left",
+				Accelerator: focusAccelerator("Left", "CmdOrCtrl+Alt+Left"),
 				Click:       dispatch(command.FocusPaneLeft),
 			},
 			{
 				ID:          "menu.focusRight",
 				Label:       m.PaneFocusRight(),
-				Accelerator: "CmdOrCtrl+Alt+Right",
+				Accelerator: focusAccelerator("Right", "CmdOrCtrl+Alt+Right"),
 				Click:       dispatch(command.FocusPaneRight),
 			},
 			{
 				ID:          "menu.focusUp",
 				Label:       m.PaneFocusUp(),
-				Accelerator: "CmdOrCtrl+Alt+Up",
+				Accelerator: focusAccelerator("Up", "CmdOrCtrl+Alt+Up"),
 				Click:       dispatch(command.FocusPaneUp),
 			},
 			{
 				ID:          "menu.focusDown",
 				Label:       m.PaneFocusDown(),
-				Accelerator: "CmdOrCtrl+Alt+Down",
+				Accelerator: focusAccelerator("Down", "CmdOrCtrl+Alt+Down"),
 				Click:       dispatch(command.FocusPaneDown),
 			},
 			mygo.Separator(),

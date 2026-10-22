@@ -4,10 +4,12 @@ package command
 // command surface grows, so menus, key bindings, and the future command
 // palette name the same actions.
 const (
-	Quit     ID = "app.quit"
-	LockApp  ID = "app.lock"
-	NewTab   ID = "tab.new"
-	CloseTab ID = "tab.close"
+	Quit    ID = "app.quit"
+	LockApp ID = "app.lock"
+	// OpenSettings shows the one Settings window.
+	OpenSettings ID = "app.settings"
+	NewTab       ID = "tab.new"
+	CloseTab     ID = "tab.close"
 
 	CloseOtherTabs ID = "tab.closeOthers"
 	CloseTabsRight ID = "tab.closeRight"
