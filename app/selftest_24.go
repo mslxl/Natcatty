@@ -525,6 +525,16 @@ func (t *selftest24) layoutStep(*ui.Context) selftest.Outcome {
 		return t.fail(fmt.Errorf("the list has %d Hosts, want %d", got, selftest24LayoutRows))
 	}
 
+	// The import panel's overlay scroll bar must not cover the master-password
+	// field: the unit test checks both locales, this checks the self-test
+	// surface at both window sizes.
+	var masterField, scrollViewport ui.Rect
+	var scrollGutter float32
+	restoreLayout := vaultui.SelftestWatchImportLayout(func(field, viewport ui.Rect, gutter float32) {
+		masterField, scrollViewport, scrollGutter = field, viewport, gutter
+	})
+	defer restoreLayout()
+
 	lastHost := fmt.Sprintf("layout-%02d", selftest24LayoutRows-1)
 	for _, size := range []struct{ width, height int }{{1100, 720}, {720, 480}} {
 		// The list itself scrolls to the last imported Host.
@@ -556,9 +566,24 @@ func (t *selftest24) layoutStep(*ui.Context) selftest.Outcome {
 		if _, _, err := t.chooseContent("layout.csv", rows, vaultimport.FormatCSV); err != nil {
 			return t.fail(err)
 		}
+		*t.state.ImportMasterPasswordInput() = strings.Repeat("selftest24-master-", 8)
 		panel := ui.NewTester(vaultui.View(t.state), size.width, size.height)
 		panel.SetLocale("en")
 		panel.Frame()
+		if masterField.W <= 0 || scrollViewport.W <= 0 {
+			return t.fail(fmt.Errorf("%dx%d: the master-password field or scroll viewport was not laid out: field %+v, viewport %+v",
+				size.width, size.height, masterField, scrollViewport))
+		}
+		const layoutEpsilon = 0.5
+		if scrollGutter <= 0 {
+			return t.fail(fmt.Errorf("%dx%d: the import panel reserved no scroll-bar gutter", size.width, size.height))
+		}
+		usableRight := scrollViewport.X + scrollViewport.W - scrollGutter
+		if masterField.X < scrollViewport.X-layoutEpsilon ||
+			masterField.X+masterField.W > usableRight+layoutEpsilon {
+			return t.fail(fmt.Errorf("%dx%d: the master-password field runs under the scroll bar: field %+v, usable right %.1f, viewport %+v",
+				size.width, size.height, masterField, usableRight, scrollViewport))
+		}
 		for _, want := range []string{
 			m.VaultImportTitle(), m.VaultImportSummary(selftest24LayoutRows, 0, selftest24LayoutRows, 0, 0),
 			m.VaultImportImport(), m.VaultHostCancel(),
