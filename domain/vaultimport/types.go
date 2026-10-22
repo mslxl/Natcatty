@@ -23,12 +23,17 @@ const (
 	FormatSecureCRT Format = "securecrt"
 	// FormatSSHConfig is an OpenSSH ssh_config file.
 	FormatSSHConfig Format = "ssh_config"
+	// FormatNetcattyJSON is Netcatty's own versioned JSON backup.
+	FormatNetcattyJSON Format = "netcatty_json"
 )
+
+// KindNetcattyVault is the JSON document kind a Netcatty JSON export writes.
+const KindNetcattyVault = "netcatty.vault"
 
 // Formats returns every format the importer can parse, in menu order.
 func Formats() []Format {
 	return []Format{
-		FormatCSV, FormatPuTTY, FormatMobaXterm,
+		FormatCSV, FormatNetcattyJSON, FormatPuTTY, FormatMobaXterm,
 		FormatFinalShell, FormatSecureCRT, FormatSSHConfig,
 	}
 }
@@ -36,7 +41,7 @@ func Formats() []Format {
 // Valid reports whether f is a supported format.
 func (f Format) Valid() bool {
 	switch f {
-	case FormatCSV, FormatPuTTY, FormatMobaXterm,
+	case FormatCSV, FormatNetcattyJSON, FormatPuTTY, FormatMobaXterm,
 		FormatFinalShell, FormatSecureCRT, FormatSSHConfig:
 		return true
 	default:
@@ -144,6 +149,14 @@ type Record struct {
 	JumpSpecs []Jump
 	// JumpRefs indexes Result.Records for this record's ProxyJump chain.
 	JumpRefs []int
+	// KeyMaterial is inline private key material from a JSON export. It lets
+	// an import create the Key without a readable file at KeyPath.
+	KeyMaterial string
+	// KeyRef is the source document's Key identity, used to dedupe an inline
+	// Key shared by several Hosts.
+	KeyRef string
+	// KeyLabelHint is the exported Key label.
+	KeyLabelHint string
 }
 
 // Result is one document's parse output.
@@ -167,6 +180,8 @@ func Parse(f Format, text string, opts Options) Result {
 	switch f {
 	case FormatCSV:
 		return parseCSV(text)
+	case FormatNetcattyJSON:
+		return parseJSON(text)
 	case FormatPuTTY:
 		return parsePuTTY(text)
 	case FormatMobaXterm:

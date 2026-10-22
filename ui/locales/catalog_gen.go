@@ -8507,3 +8507,361 @@ func SettingsHistoryRetentionDays() string { return In(i18n.Locale()).SettingsHi
 func (msgs Messages) SettingsHistoryRetentionDays() string {
 	return Catalog.Format(msgs.locale, "settingsHistoryRetentionDays", nil)
 }
+
+// VaultExportTitle says "Export Vault"
+// in the language the app shows.
+func VaultExportTitle() string { return In(i18n.Locale()).VaultExportTitle() }
+
+// VaultExportTitle says "Export Vault"
+// in the language of msgs.
+func (msgs Messages) VaultExportTitle() string {
+	return Catalog.Format(msgs.locale, "vaultExportTitle", nil)
+}
+
+// VaultExportIntro says "Choose a format and a scope. Nothing leaves this machine until you save."
+// in the language the app shows.
+func VaultExportIntro() string { return In(i18n.Locale()).VaultExportIntro() }
+
+// VaultExportIntro says "Choose a format and a scope. Nothing leaves this machine until you save."
+// in the language of msgs.
+func (msgs Messages) VaultExportIntro() string {
+	return Catalog.Format(msgs.locale, "vaultExportIntro", nil)
+}
+
+// VaultExportFormat says "Format"
+// in the language the app shows.
+func VaultExportFormat() string { return In(i18n.Locale()).VaultExportFormat() }
+
+// VaultExportFormat says "Format"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormat() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormat", nil)
+}
+
+// VaultExportScope says "Scope"
+// in the language the app shows.
+func VaultExportScope() string { return In(i18n.Locale()).VaultExportScope() }
+
+// VaultExportScope says "Scope"
+// in the language of msgs.
+func (msgs Messages) VaultExportScope() string {
+	return Catalog.Format(msgs.locale, "vaultExportScope", nil)
+}
+
+// VaultExportScopeAll says "Everything"
+// in the language the app shows.
+func VaultExportScopeAll() string { return In(i18n.Locale()).VaultExportScopeAll() }
+
+// VaultExportScopeAll says "Everything"
+// in the language of msgs.
+func (msgs Messages) VaultExportScopeAll() string {
+	return Catalog.Format(msgs.locale, "vaultExportScopeAll", nil)
+}
+
+// VaultExportScopeSelected says "Selected Host"
+// in the language the app shows.
+func VaultExportScopeSelected() string { return In(i18n.Locale()).VaultExportScopeSelected() }
+
+// VaultExportScopeSelected says "Selected Host"
+// in the language of msgs.
+func (msgs Messages) VaultExportScopeSelected() string {
+	return Catalog.Format(msgs.locale, "vaultExportScopeSelected", nil)
+}
+
+// VaultExportSelectedHost says "Host: {label}"
+// in the language the app shows.
+//
+// The Host the export scope points at.
+func VaultExportSelectedHost(label string) string {
+	return In(i18n.Locale()).VaultExportSelectedHost(label)
+}
+
+// VaultExportSelectedHost says "Host: {label}"
+// in the language of msgs.
+//
+// The Host the export scope points at.
+func (msgs Messages) VaultExportSelectedHost(label string) string {
+	return Catalog.Format(msgs.locale, "vaultExportSelectedHost", map[string]any{"label": label})
+}
+
+// VaultExportIncludeSecrets says "Include passwords and private keys"
+// in the language the app shows.
+func VaultExportIncludeSecrets() string { return In(i18n.Locale()).VaultExportIncludeSecrets() }
+
+// VaultExportIncludeSecrets says "Include passwords and private keys"
+// in the language of msgs.
+func (msgs Messages) VaultExportIncludeSecrets() string {
+	return Catalog.Format(msgs.locale, "vaultExportIncludeSecrets", nil)
+}
+
+// VaultExportSecretsHint says "Without this, credentials are left out."
+// in the language the app shows.
+func VaultExportSecretsHint() string { return In(i18n.Locale()).VaultExportSecretsHint() }
+
+// VaultExportSecretsHint says "Without this, credentials are left out."
+// in the language of msgs.
+func (msgs Messages) VaultExportSecretsHint() string {
+	return Catalog.Format(msgs.locale, "vaultExportSecretsHint", nil)
+}
+
+// VaultExportSecretsWarning says "Passwords, passphrases, and private key material will be written in plaintext."
+// in the language the app shows.
+func VaultExportSecretsWarning() string { return In(i18n.Locale()).VaultExportSecretsWarning() }
+
+// VaultExportSecretsWarning says "Passwords, passphrases, and private key material will be written in plaintext."
+// in the language of msgs.
+func (msgs Messages) VaultExportSecretsWarning() string {
+	return Catalog.Format(msgs.locale, "vaultExportSecretsWarning", nil)
+}
+
+// VaultExportSecretsConfirmed says "Plaintext secrets will be included."
+// in the language the app shows.
+func VaultExportSecretsConfirmed() string { return In(i18n.Locale()).VaultExportSecretsConfirmed() }
+
+// VaultExportSecretsConfirmed says "Plaintext secrets will be included."
+// in the language of msgs.
+func (msgs Messages) VaultExportSecretsConfirmed() string {
+	return Catalog.Format(msgs.locale, "vaultExportSecretsConfirmed", nil)
+}
+
+// VaultExportConfirmSecrets says "Confirm plaintext secrets"
+// in the language the app shows.
+func VaultExportConfirmSecrets() string { return In(i18n.Locale()).VaultExportConfirmSecrets() }
+
+// VaultExportConfirmSecrets says "Confirm plaintext secrets"
+// in the language of msgs.
+func (msgs Messages) VaultExportConfirmSecrets() string {
+	return Catalog.Format(msgs.locale, "vaultExportConfirmSecrets", nil)
+}
+
+// VaultExportUnconfirmed says "Confirm the plaintext warning before exporting."
+// in the language the app shows.
+func VaultExportUnconfirmed() string { return In(i18n.Locale()).VaultExportUnconfirmed() }
+
+// VaultExportUnconfirmed says "Confirm the plaintext warning before exporting."
+// in the language of msgs.
+func (msgs Messages) VaultExportUnconfirmed() string {
+	return Catalog.Format(msgs.locale, "vaultExportUnconfirmed", nil)
+}
+
+// VaultExportSaveHint says "You will be asked where to save."
+// in the language the app shows.
+func VaultExportSaveHint() string { return In(i18n.Locale()).VaultExportSaveHint() }
+
+// VaultExportSaveHint says "You will be asked where to save."
+// in the language of msgs.
+func (msgs Messages) VaultExportSaveHint() string {
+	return Catalog.Format(msgs.locale, "vaultExportSaveHint", nil)
+}
+
+// VaultExportExport says "Export"
+// in the language the app shows.
+func VaultExportExport() string { return In(i18n.Locale()).VaultExportExport() }
+
+// VaultExportExport says "Export"
+// in the language of msgs.
+func (msgs Messages) VaultExportExport() string {
+	return Catalog.Format(msgs.locale, "vaultExportExport", nil)
+}
+
+// VaultExportDone says "Exported {bytes} bytes to {path}"
+// in the language the app shows.
+//
+// The result of a saved export.
+func VaultExportDone(path string, bytes int) string {
+	return In(i18n.Locale()).VaultExportDone(path, bytes)
+}
+
+// VaultExportDone says "Exported {bytes} bytes to {path}"
+// in the language of msgs.
+//
+// The result of a saved export.
+func (msgs Messages) VaultExportDone(path string, bytes int) string {
+	return Catalog.Format(msgs.locale, "vaultExportDone", map[string]any{"path": path, "bytes": bytes})
+}
+
+// VaultExportUnreadable says "{count} credentials could not be read and were left out."
+// in the language the app shows.
+//
+// Credentials that could not be decrypted and were left out.
+func VaultExportUnreadable(count int) string { return In(i18n.Locale()).VaultExportUnreadable(count) }
+
+// VaultExportUnreadable says "{count} credentials could not be read and were left out."
+// in the language of msgs.
+//
+// Credentials that could not be decrypted and were left out.
+func (msgs Messages) VaultExportUnreadable(count int) string {
+	return Catalog.Format(msgs.locale, "vaultExportUnreadable", map[string]any{"count": count})
+}
+
+// VaultExportDismiss says "Dismiss"
+// in the language the app shows.
+func VaultExportDismiss() string { return In(i18n.Locale()).VaultExportDismiss() }
+
+// VaultExportDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) VaultExportDismiss() string {
+	return Catalog.Format(msgs.locale, "vaultExportDismiss", nil)
+}
+
+// VaultExportFormatJSON says "Netcatty JSON"
+// in the language the app shows.
+func VaultExportFormatJSON() string { return In(i18n.Locale()).VaultExportFormatJSON() }
+
+// VaultExportFormatJSON says "Netcatty JSON"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatJSON() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatJSON", nil)
+}
+
+// VaultExportFormatCSV says "Netcatty CSV"
+// in the language the app shows.
+func VaultExportFormatCSV() string { return In(i18n.Locale()).VaultExportFormatCSV() }
+
+// VaultExportFormatCSV says "Netcatty CSV"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatCSV() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatCSV", nil)
+}
+
+// VaultExportFormatSnippets says "Snippets (JSON)"
+// in the language the app shows.
+func VaultExportFormatSnippets() string { return In(i18n.Locale()).VaultExportFormatSnippets() }
+
+// VaultExportFormatSnippets says "Snippets (JSON)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatSnippets() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatSnippets", nil)
+}
+
+// VaultExportFormatNotesMarkdown says "Notes (Markdown)"
+// in the language the app shows.
+func VaultExportFormatNotesMarkdown() string {
+	return In(i18n.Locale()).VaultExportFormatNotesMarkdown()
+}
+
+// VaultExportFormatNotesMarkdown says "Notes (Markdown)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatNotesMarkdown() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatNotesMarkdown", nil)
+}
+
+// VaultExportFormatNotesHTML says "Notes (HTML)"
+// in the language the app shows.
+func VaultExportFormatNotesHTML() string { return In(i18n.Locale()).VaultExportFormatNotesHTML() }
+
+// VaultExportFormatNotesHTML says "Notes (HTML)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatNotesHTML() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatNotesHTML", nil)
+}
+
+// VaultExportFormatNotesZIP says "Notes (ZIP archive)"
+// in the language the app shows.
+func VaultExportFormatNotesZIP() string { return In(i18n.Locale()).VaultExportFormatNotesZIP() }
+
+// VaultExportFormatNotesZIP says "Notes (ZIP archive)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatNotesZIP() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatNotesZIP", nil)
+}
+
+// VaultExportFormatKeys says "SSH Keys (JSON)"
+// in the language the app shows.
+func VaultExportFormatKeys() string { return In(i18n.Locale()).VaultExportFormatKeys() }
+
+// VaultExportFormatKeys says "SSH Keys (JSON)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatKeys() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatKeys", nil)
+}
+
+// VaultExportFormatThemes says "Themes (JSON)"
+// in the language the app shows.
+func VaultExportFormatThemes() string { return In(i18n.Locale()).VaultExportFormatThemes() }
+
+// VaultExportFormatThemes says "Themes (JSON)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatThemes() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatThemes", nil)
+}
+
+// VaultExportFormatLogsJSON says "Logs (JSON)"
+// in the language the app shows.
+func VaultExportFormatLogsJSON() string { return In(i18n.Locale()).VaultExportFormatLogsJSON() }
+
+// VaultExportFormatLogsJSON says "Logs (JSON)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatLogsJSON() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatLogsJSON", nil)
+}
+
+// VaultExportFormatLogsCSV says "Logs (CSV)"
+// in the language the app shows.
+func VaultExportFormatLogsCSV() string { return In(i18n.Locale()).VaultExportFormatLogsCSV() }
+
+// VaultExportFormatLogsCSV says "Logs (CSV)"
+// in the language of msgs.
+func (msgs Messages) VaultExportFormatLogsCSV() string {
+	return Catalog.Format(msgs.locale, "vaultExportFormatLogsCSV", nil)
+}
+
+// VaultProblemExportUnavailable says "Export is not available."
+// in the language the app shows.
+func VaultProblemExportUnavailable() string { return In(i18n.Locale()).VaultProblemExportUnavailable() }
+
+// VaultProblemExportUnavailable says "Export is not available."
+// in the language of msgs.
+func (msgs Messages) VaultProblemExportUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultProblemExportUnavailable", nil)
+}
+
+// VaultProblemExportWriter says "The export could not be saved."
+// in the language the app shows.
+func VaultProblemExportWriter() string { return In(i18n.Locale()).VaultProblemExportWriter() }
+
+// VaultProblemExportWriter says "The export could not be saved."
+// in the language of msgs.
+func (msgs Messages) VaultProblemExportWriter() string {
+	return Catalog.Format(msgs.locale, "vaultProblemExportWriter", nil)
+}
+
+// VaultProblemExportFormat says "Choose a valid export format."
+// in the language the app shows.
+func VaultProblemExportFormat() string { return In(i18n.Locale()).VaultProblemExportFormat() }
+
+// VaultProblemExportFormat says "Choose a valid export format."
+// in the language of msgs.
+func (msgs Messages) VaultProblemExportFormat() string {
+	return Catalog.Format(msgs.locale, "vaultProblemExportFormat", nil)
+}
+
+// VaultProblemExportUnconfirmed says "Confirm the plaintext warning first."
+// in the language the app shows.
+func VaultProblemExportUnconfirmed() string { return In(i18n.Locale()).VaultProblemExportUnconfirmed() }
+
+// VaultProblemExportUnconfirmed says "Confirm the plaintext warning first."
+// in the language of msgs.
+func (msgs Messages) VaultProblemExportUnconfirmed() string {
+	return Catalog.Format(msgs.locale, "vaultProblemExportUnconfirmed", nil)
+}
+
+// VaultProblemExportNoHost says "Select a Host to export."
+// in the language the app shows.
+func VaultProblemExportNoHost() string { return In(i18n.Locale()).VaultProblemExportNoHost() }
+
+// VaultProblemExportNoHost says "Select a Host to export."
+// in the language of msgs.
+func (msgs Messages) VaultProblemExportNoHost() string {
+	return Catalog.Format(msgs.locale, "vaultProblemExportNoHost", nil)
+}
+
+// VaultExportNotesPageTitle says "Vault Notes export"
+// in the language the app shows.
+func VaultExportNotesPageTitle() string { return In(i18n.Locale()).VaultExportNotesPageTitle() }
+
+// VaultExportNotesPageTitle says "Vault Notes export"
+// in the language of msgs.
+func (msgs Messages) VaultExportNotesPageTitle() string {
+	return Catalog.Format(msgs.locale, "vaultExportNotesPageTitle", nil)
+}

@@ -143,18 +143,36 @@
   "@vaultImportSummary": {
     "description": "One import preview's row counts.",
     "placeholders": {
-      "total": {"type": "int", "example": "12"},
-      "added": {"type": "int", "example": "7"},
-      "conflicts": {"type": "int", "example": "2"},
-      "duplicates": {"type": "int", "example": "1"},
-      "invalid": {"type": "int", "example": "2"}
+      "total": {
+        "type": "int",
+        "example": "12"
+      },
+      "added": {
+        "type": "int",
+        "example": "7"
+      },
+      "conflicts": {
+        "type": "int",
+        "example": "2"
+      },
+      "duplicates": {
+        "type": "int",
+        "example": "1"
+      },
+      "invalid": {
+        "type": "int",
+        "example": "2"
+      }
     }
   },
   "vaultImportGroups": "{count, plural, other {將建立 # 個主機群組。}}",
   "@vaultImportGroups": {
     "description": "How many Host Groups the import will create.",
     "placeholders": {
-      "count": {"type": "int", "example": "3"}
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "vaultImportMerge": "衝突時",
@@ -167,7 +185,10 @@
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
-      "count": {"type": "int", "example": "8"}
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
     }
   },
   "vaultImportNoneSelected": "請至少選取一列再匯入。",
@@ -175,10 +196,22 @@
   "@vaultImportDone": {
     "description": "The result of a completed import.",
     "placeholders": {
-      "imported": {"type": "int", "example": "8"},
-      "overwritten": {"type": "int", "example": "2"},
-      "skipped": {"type": "int", "example": "1"},
-      "groups": {"type": "int", "example": "3"}
+      "imported": {
+        "type": "int",
+        "example": "8"
+      },
+      "overwritten": {
+        "type": "int",
+        "example": "2"
+      },
+      "skipped": {
+        "type": "int",
+        "example": "1"
+      },
+      "groups": {
+        "type": "int",
+        "example": "3"
+      }
     }
   },
   "vaultImportDismiss": "關閉",
@@ -186,14 +219,20 @@
   "@vaultImportConflictWith": {
     "description": "The existing Host a row conflicts with.",
     "placeholders": {
-      "label": {"type": "String", "example": "web-1"}
+      "label": {
+        "type": "String",
+        "example": "web-1"
+      }
     }
   },
   "vaultImportRowNumber": "第 {row} 列",
   "@vaultImportRowNumber": {
     "description": "The source row number beside an import preview row.",
     "placeholders": {
-      "row": {"type": "int", "example": "7"}
+      "row": {
+        "type": "int",
+        "example": "7"
+      }
     }
   },
   "vaultImportStatusNew": "新增",
@@ -204,15 +243,24 @@
   "@vaultImportIssueDocument": {
     "description": "One problem about the whole document.",
     "placeholders": {
-      "message": {"type": "String", "example": "The file is empty."}
+      "message": {
+        "type": "String",
+        "example": "The file is empty."
+      }
     }
   },
   "vaultImportIssueLine": "第 {row} 列：{message}",
   "@vaultImportIssueLine": {
     "description": "One problem tied to a source row.",
     "placeholders": {
-      "row": {"type": "int", "example": "4"},
-      "message": {"type": "String", "example": "The port is invalid."}
+      "row": {
+        "type": "int",
+        "example": "4"
+      },
+      "message": {
+        "type": "String",
+        "example": "The port is invalid."
+      }
     }
   },
   "vaultImportIssueCSVEmpty": "檔案是空的。",
@@ -1112,5 +1160,70 @@
   "settingsConnectionLogRetentionCount": "保留的連線日誌數",
   "settingsConnectionLogRetentionDays": "連線日誌最長期限（天）",
   "settingsHistoryRetentionCount": "保留的歷史記錄數",
-  "settingsHistoryRetentionDays": "歷史記錄最長期限（天）"
+  "settingsHistoryRetentionDays": "歷史記錄最長期限（天）",
+  "vaultExportTitle": "匯出保管庫",
+  "vaultExportIntro": "選擇格式和範圍。儲存之前，資料不會離開本機。",
+  "vaultExportFormat": "格式",
+  "vaultExportScope": "範圍",
+  "vaultExportScopeAll": "全部",
+  "vaultExportScopeSelected": "所選主機",
+  "vaultExportSelectedHost": "主機：{label}",
+  "@vaultExportSelectedHost": {
+    "description": "The Host the export scope points at.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "web-1"
+      }
+    }
+  },
+  "vaultExportIncludeSecrets": "包含密碼和私鑰",
+  "vaultExportSecretsHint": "不勾選則省略憑證。",
+  "vaultExportSecretsWarning": "密碼、口令和私鑰內容將以明文寫入。",
+  "vaultExportSecretsConfirmed": "將包含明文機密。",
+  "vaultExportConfirmSecrets": "確認明文機密",
+  "vaultExportUnconfirmed": "匯出前請先確認明文警告。",
+  "vaultExportSaveHint": "稍後會詢問儲存位置。",
+  "vaultExportExport": "匯出",
+  "vaultExportDone": "已匯出 {bytes} 位元組到 {path}",
+  "@vaultExportDone": {
+    "description": "The result of a saved export.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "C:/Exports/hosts.csv"
+      },
+      "bytes": {
+        "type": "int",
+        "example": "2048"
+      }
+    }
+  },
+  "vaultExportUnreadable": "有 {count} 個憑證無法讀取，已省略。",
+  "@vaultExportUnreadable": {
+    "description": "Credentials that could not be decrypted and were left out.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultExportDismiss": "關閉",
+  "vaultExportFormatJSON": "Netcatty JSON",
+  "vaultExportFormatCSV": "Netcatty CSV",
+  "vaultExportFormatSnippets": "程式碼片段（JSON）",
+  "vaultExportFormatNotesMarkdown": "筆記（Markdown）",
+  "vaultExportFormatNotesHTML": "筆記（HTML）",
+  "vaultExportFormatNotesZIP": "筆記（ZIP 壓縮檔）",
+  "vaultExportFormatKeys": "SSH 金鑰（JSON）",
+  "vaultExportFormatThemes": "主題（JSON）",
+  "vaultExportFormatLogsJSON": "日誌（JSON）",
+  "vaultExportFormatLogsCSV": "日誌（CSV）",
+  "vaultProblemExportUnavailable": "匯出不可用。",
+  "vaultProblemExportWriter": "無法儲存匯出檔案。",
+  "vaultProblemExportFormat": "請選擇有效的匯出格式。",
+  "vaultProblemExportUnconfirmed": "請先確認明文警告。",
+  "vaultProblemExportNoHost": "請選擇要匯出的主機。",
+  "vaultExportNotesPageTitle": "保管庫筆記匯出"
 }

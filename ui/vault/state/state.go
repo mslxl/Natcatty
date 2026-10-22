@@ -115,6 +115,11 @@ const (
 	ProblemImportParse              Problem = "import_parse"
 	ProblemImportStore              Problem = "import_store"
 	ProblemImportUnavailable        Problem = "import_unavailable"
+	ProblemExportUnavailable        Problem = "export_unavailable"
+	ProblemExportWriter             Problem = "export_writer"
+	ProblemExportFormat             Problem = "export_format"
+	ProblemExportUnconfirmed        Problem = "export_unconfirmed"
+	ProblemExportNoHost             Problem = "export_no_host"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -260,6 +265,16 @@ type State struct {
 	importOffset   int
 	importProblem  Problem
 	importOutcome  *ImportOutcome
+
+	exports         Exports
+	exportWriter    ExportWriter
+	exportActive    bool
+	exportFormat    string
+	exportScope     string
+	exportSecrets   bool
+	exportConfirmed bool
+	exportProblem   Problem
+	exportOutcome   *ExportOutcome
 }
 
 // Option customizes a State.
