@@ -186,7 +186,9 @@ func backupNoticeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, 
 		message = m.VaultBackupSkippedFailed()
 		color = t.Warning
 	case appbackup.StatusCleared:
-		message = m.VaultBackupCleared(notice.Pruned)
+		// The clear count is its own field: appending Pruned here would
+		// report the same deleted entries a second time.
+		message = m.VaultBackupCleared(notice.Deleted)
 		color = t.TextMuted
 	case appbackup.StatusRestored:
 		message = m.VaultBackupRestored()

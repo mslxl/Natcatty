@@ -43,8 +43,10 @@
     - app.TestMenuDispatchesNewAndCloseTabCommands
     - app.TestMenuCarriesTheStandardQuitRoleOnMacOS
     - app.TestMenuLocalizesItsLabels
+    - app.TestMenuAcceleratorsComeFromTheMenu
+    - app.TestMenuAcceleratorsFireFromKeyChordsAndLeaveTheTerminalAlone
   status: verified
-  notes: ""
+  notes: "MyGo v0.5.5 has no native TranslateAccelerator path, so the app derives the accelerator table from the same menu it displays and binds each app command at the window root with Context.OnShortcut. A registered combination is claimed before the focused terminal receives it; combinations outside the table, including Ctrl+C, Ctrl+V, and the terminal's Ctrl+Shift+C/V, still reach the terminal. The platform shortcut combinations for New Tab, Local backups, and Quit are driven from real key chords."
 
 - id: shell.command-registry
   area: shell
@@ -932,11 +934,12 @@
     - app.TestTrayMenuContainsSectionsAndRaisesMain
     - app.TestTrayMenuShowsPinnedRecentHosts
     - app.TestTrayMenuOrdersPinnedThenRecentlyUpdatedHosts
+    - app.TestSyncAfterShutdownLeavesTheDestroyedTrayAlone
     - ui/tray.TestTabTextLocalizesFallbacksAndStatus
     - ui/tray.TestRuleTextMarksDirectionAndStatus
     - ui/shell/state.TestTabSummariesFollowTabsAndDetachedOrder
   status: verified
-  notes: "The menu is rebuilt from the shell, forwarding runtime snapshot, and Vault on every coalesced change. Tray rows select a Tab or toggle a rule and raise the main window; labels use the same L/R/D markers and status words as the original. Recent Hosts are pinned first, then newest UpdatedAt; the domain Host has no lastConnectedAt, so an edited Host can outrank a recently connected one."
+  notes: "The menu is rebuilt from the shell, forwarding runtime snapshot, and Vault on every coalesced change. Tray rows select a Tab or toggle a rule and raise the main window; labels use the same L/R/D markers and status words as the original. Recent Hosts are pinned first, then newest UpdatedAt; the domain Host has no lastConnectedAt, so an edited Host can outrank a recently connected one. Updates are coalesced onto the UI thread; Shutdown retires the tray and makes any still-pending sync a no-op instead of dereferencing the destroyed icon."
 
 - id: desktop.close-to-tray
   area: desktop
@@ -2027,17 +2030,21 @@
     - application/vaultbackup.TestRetentionBoundaries
     - application/vaultbackup.TestPayloadCapRejectsBeforeWriting
     - application/vaultbackup.TestProtectiveBackupIsMandatoryBeforeRestore
+    - application/vaultbackup.TestProtectiveBackupDedupesTheCurrentState
     - application/vaultbackup.TestRestoreSucceedsAndKeepsAPreRestorePoint
     - application/vaultbackup.TestFailedRestoreLeavesTheVaultUnchanged
+    - application/vaultbackup.TestClearReportsDeletedSeparatelyFromPruned
     - adapters/vaultbackup.TestSaveEncryptsAndRoundTrips
     - adapters/vaultbackup.TestAtomicWriteLeavesNoPartialFile
     - adapters/store.TestRestoreRollsBackWhenAConstraintFails
     - ui/vault.TestBackupPanelRendersAtBothSizesInEnglishAndChinese
+    - ui/vault.TestBackupClearReportsTheDeletedCountOnce
+    - ui/locales.TestBackupRestoreWordingCoversTheIdenticalProtectiveBackup
     - ui/vault/state.TestRestoreConfirmationReloadsTheVault
     - app.TestTicket26CheckRunsThroughTheKeyboard
     - app.TestTicket26CheckPassesTwiceInOneProcess
   status: verified
-  notes: "Backups live under vault-backups/ as format-version-1 records whose metadata is cleartext and whose canonical snapshot payload is AES-256-GCM ciphertext under a keychain-held key. Writes go to a synced sibling file and rename into place, a 25 MiB plaintext cap is checked before any write, retention clamps to 1-100 (default 20) and prunes immediately, and a fingerprint match against the newest record keeps that record instead of writing a duplicate. Committed Vault writes notify a coalescing worker through the store hook; imports take a protective backup before their first chunk, and every restore reads and validates the payload, takes a mandatory before_restore backup, and applies all tables in one transaction. A failed apply or verification leaves the Vault byte-for-byte unchanged. The panel lists reason, local time, size, record count, and a shortened fingerprint, requires confirmation for restore and clear, shows skipped-too-large and pruned counts, and fits 1100x720 and 720x480 in all five catalogs with the scroll-bar gutter reserved."
+  notes: "Backups live under vault-backups/ as format-version-1 records whose metadata is cleartext and whose canonical snapshot payload is AES-256-GCM ciphertext under a keychain-held key. Writes go to a synced sibling file and rename into place, a 25 MiB plaintext cap is checked before any write, retention clamps to 1-100 (default 20) and prunes immediately, and a fingerprint match against the newest record keeps that record instead of writing a duplicate. Committed Vault writes notify a coalescing worker through the store hook; imports take a protective backup before their first chunk, and every restore reads and validates the payload, takes a mandatory before_restore backup, and applies all tables in one transaction. A failed apply or verification leaves the Vault byte-for-byte unchanged. The panel lists reason, local time, size, record count, and a shortened fingerprint, requires confirmation for restore and clear, shows skipped-too-large and pruned counts, and fits 1100x720 and 720x480 in all five catalogs with the scroll-bar gutter reserved. The clear banner reports the deleted count once, keeping retention pruning in a separate status field, and the restore confirmation and success banner say the current Vault is protected by a backup that may be new or already identical."
 
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
