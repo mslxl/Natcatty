@@ -505,3 +505,61 @@ func TestCommitImportResolvesForwardProxyJump(t *testing.T) {
 		t.Fatalf("chain = %+v, want b %q", a.HostChain, b.ID)
 	}
 }
+
+// TestCommitImportRunsTheApplyBarrierOnlyAtTheStart proves a bulk apply takes
+// its protective action before the first chunk and does not repeat it on a
+// resumed chunk that is already past the barrier.
+func TestCommitImportRunsTheApplyBarrierOnlyAtTheStart(t *testing.T) {
+	service, _, _, _, store := newImportService(t)
+	preview, err := service.PreviewImport(context.Background(), importCSV(), PreviewImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	service.applyBarrier = func(context.Context) error {
+		calls++
+		return nil
+	}
+	first, err := service.CommitImport(context.Background(), preview, ImportCommitOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("first chunk: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("barrier calls after the first chunk = %d, want 1", calls)
+	}
+	if _, err := service.CommitImport(context.Background(), preview,
+		ImportCommitOptions{Offset: first.Next, Limit: 2}); err != nil {
+		t.Fatalf("second chunk: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("barrier calls after the resumed chunk = %d, want 1", calls)
+	}
+	if store.batches == 0 {
+		t.Fatal("the chunks wrote no batch")
+	}
+}
+
+// TestCommitImportAbortsBeforeWritingWhenTheBarrierFails is the objective for
+// the protective backup: a failed barrier writes no batch and reports a typed
+// error.
+func TestCommitImportAbortsBeforeWritingWhenTheBarrierFails(t *testing.T) {
+	service, _, _, _, store := newImportService(t)
+	preview, err := service.PreviewImport(context.Background(), importCSV(), PreviewImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.applyBarrier = func(context.Context) error {
+		return errors.New("protective backup failed")
+	}
+	_, err = service.CommitImport(context.Background(), preview, ImportCommitOptions{Limit: 2})
+	if err == nil {
+		t.Fatal("the import committed without its barrier")
+	}
+	var barrier *ApplyBarrierError
+	if !errors.As(err, &barrier) {
+		t.Fatalf("error = %v, want ApplyBarrierError", err)
+	}
+	if store.batches != 0 {
+		t.Fatalf("batches = %d after a failed barrier, want 0", store.batches)
+	}
+}

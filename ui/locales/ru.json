@@ -1288,5 +1288,132 @@
   "vaultProblemExportFormat": "Выберите допустимый формат экспорта.",
   "vaultProblemExportUnconfirmed": "Сначала подтвердите предупреждение об открытом тексте.",
   "vaultProblemExportNoHost": "Выберите хост для экспорта.",
-  "vaultExportNotesPageTitle": "Экспорт заметок хранилища"
+  "vaultBackupTitle": "Локальные резервные копии",
+  "vaultBackupOpen": "Резервные копии",
+  "vaultBackupBack": "Назад в хранилище",
+  "vaultBackupIntro": "Зашифрованные точки восстановления на этом устройстве. Копия создаётся после изменений хранилища и перед каждым восстановлением.",
+  "vaultBackupRetentionLabel": "Сколько копий хранить",
+  "vaultBackupRetentionHint": "Хранить от {min} до {max} копий. По умолчанию — {fallback}.",
+  "@vaultBackupRetentionHint": {
+    "description": "The allowed local-backup retention range and its default.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      },
+      "fallback": {
+        "type": "int",
+        "example": "20"
+      }
+    }
+  },
+  "vaultBackupRetentionSave": "Сохранить",
+  "vaultBackupRetentionInvalid": "Введите число от {min} до {max}.",
+  "@vaultBackupRetentionInvalid": {
+    "description": "Validation message for the local-backup retention field.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      }
+    }
+  },
+  "vaultBackupListTitle": "{count, plural, one {# сохранённая копия} few {# сохранённые копии} many {# сохранённых копий} other {# сохранённой копии}}",
+  "@vaultBackupListTitle": {
+    "description": "How many local backups are stored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultBackupEmpty": "Локальных копий пока нет. Измените что-нибудь в хранилище, чтобы создать копию.",
+  "vaultBackupReasonVaultChange": "Изменение хранилища",
+  "vaultBackupReasonBeforeRestore": "Перед восстановлением",
+  "vaultBackupReasonAppVersionChange": "Обновление приложения",
+  "vaultBackupRecords": "{count, plural, one {# запись} few {# записи} many {# записей} other {# записи}}",
+  "@vaultBackupRecords": {
+    "description": "How many Vault records one backup contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "vaultBackupFingerprint": "Отпечаток {fingerprint}",
+  "@vaultBackupFingerprint": {
+    "description": "The shortened content fingerprint of a backup.",
+    "placeholders": {
+      "fingerprint": {
+        "type": "String",
+        "example": "4f9c2a7b1e03"
+      }
+    }
+  },
+  "vaultBackupRestore": "Восстановить",
+  "vaultBackupRestoreConfirm": "Восстановить копию от {time}? Сначала будет создана защитная копия текущего хранилища. Если восстановление не удастся, хранилище останется без изменений.",
+  "@vaultBackupRestoreConfirm": {
+    "description": "Confirmation before restoring one local backup.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "2026-10-23 14:05"
+      }
+    }
+  },
+  "vaultBackupRestoreConfirmUnknown": "Восстановить эту копию? Сначала будет создана защитная копия текущего хранилища. Если восстановление не удастся, хранилище останется без изменений.",
+  "vaultBackupClear": "Удалить копии",
+  "vaultBackupClearConfirm": "{count, plural, one {Удалить # локальную копию? Само хранилище не изменится.} few {Удалить # локальные копии? Само хранилище не изменится.} many {Удалить # локальных копий? Само хранилище не изменится.} other {Удалить # локальной копии? Само хранилище не изменится.}}",
+  "@vaultBackupClearConfirm": {
+    "description": "Confirmation before deleting every local backup.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupPruned": "{count, plural, one {Правило хранения удалило # старую копию.} few {Правило хранения удалило # старые копии.} many {Правило хранения удалило # старых копий.} other {Правило хранения удалило # старой копии.}}",
+  "@vaultBackupPruned": {
+    "description": "How many backups retention removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultBackupCleared": "{count, plural, one {Удалена # копия.} few {Удалены # копии.} many {Удалено # копий.} other {Удалено # копии.}}",
+  "@vaultBackupCleared": {
+    "description": "How many backups the clear action deleted.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupSkippedTooLarge": "Хранилище превышает лимит копии в 25 МиБ, поэтому копия не была записана.",
+  "vaultBackupSkippedUnavailable": "Безопасное хранилище ключей недоступно, поэтому автоматическая копия пропущена.",
+  "vaultBackupSkippedFailed": "Не удалось записать последнюю копию. Проверьте свободное место и повторите попытку.",
+  "vaultBackupRestored": "Хранилище восстановлено. Предыдущее состояние сохранено как копия.",
+  "vaultBackupUnavailable": "Для локальных копий нужен системный брелок. На этом устройстве нельзя записать или восстановить копию.",
+  "vaultBackupProblemList": "Не удалось прочитать список копий.",
+  "vaultBackupProblemRetention": "Не удалось сохранить настройку хранения.",
+  "vaultBackupProblemRestore": "Не удалось восстановить эту копию. Хранилище не изменилось.",
+  "vaultBackupProblemProtective": "Защитная копия не удалась, поэтому восстановление отменено. Хранилище не изменилось.",
+  "vaultBackupProblemCorrupt": "Эта копия повреждена или создана несовместимой версией.",
+  "vaultBackupProblemClear": "Не удалось удалить копии.",
+  "vaultExportNotesPageTitle": "Экспорт заметок хранилища",
+  "vaultBackupRestoreConfirmAction": "Восстановить сейчас"
 }

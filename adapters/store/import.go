@@ -35,5 +35,6 @@ func (s *Store) SaveImportBatch(ctx context.Context, batch appvault.ImportBatch)
 	if _, err := s.db.Transaction(ctx, statements); err != nil {
 		return fmt.Errorf("store: save import batch: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }

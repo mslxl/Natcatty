@@ -264,8 +264,10 @@ func (s *State) ToggleImportRow(index int) bool {
 }
 
 // ConfirmImport writes the selected rows in bounded chunks until the plan is
-// done, then reloads the Vault. A failure keeps the panel open at the failed
-// chunk's offset; pressing Import again resumes without duplicating writes.
+// done, then reloads the Vault. The Vault service takes the protective backup
+// before the first chunk (WithApplyBarrier), so the UI does not own that
+// policy. A failure keeps the panel open at the failed chunk's offset;
+// pressing Import again resumes without duplicating writes.
 func (s *State) ConfirmImport() error {
 	if s.importPreview == nil {
 		return nil
@@ -370,6 +372,10 @@ func importProblemFor(err error) Problem {
 		return ProblemNone
 	case errors.Is(err, appvault.ErrImportStoreUnavailable):
 		return ProblemImportStore
+	}
+	var barrier *appvault.ApplyBarrierError
+	if errors.As(err, &barrier) {
+		return ProblemBackupProtective
 	}
 	var typed *appvault.Error
 	if errors.As(err, &typed) && typed.Kind == appvault.KindValidation {
