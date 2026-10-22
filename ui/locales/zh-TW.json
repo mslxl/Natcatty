@@ -1361,7 +1361,7 @@
     }
   },
   "vaultBackupRestore": "還原",
-  "vaultBackupRestoreConfirm": "還原 {time} 的備份？系統會先為目前保管庫建立保護性備份。如果還原失敗，保管庫保持不變。",
+  "vaultBackupRestoreConfirm": "還原 {time} 的備份？還原前會保護目前保管庫：儲存新的保護性備份，或使用已有的相同備份。如果還原失敗，保管庫保持不變。",
   "@vaultBackupRestoreConfirm": {
     "description": "Confirmation before restoring one local backup.",
     "placeholders": {
@@ -1371,7 +1371,7 @@
       }
     }
   },
-  "vaultBackupRestoreConfirmUnknown": "還原此備份？系統會先為目前保管庫建立保護性備份。如果還原失敗，保管庫保持不變。",
+  "vaultBackupRestoreConfirmUnknown": "還原此備份？還原前會保護目前保管庫：儲存新的保護性備份，或使用已有的相同備份。如果還原失敗，保管庫保持不變。",
   "vaultBackupClear": "清除備份",
   "vaultBackupClearConfirm": "{count, plural, other {刪除全部 # 個本機備份？保管庫本身不會改變。}}",
   "@vaultBackupClearConfirm": {
@@ -1406,7 +1406,7 @@
   "vaultBackupSkippedTooLarge": "保管庫超過 25 MiB 的備份上限，因此未寫入備份。",
   "vaultBackupSkippedUnavailable": "安全金鑰圈無法使用，因此略過了自動備份。",
   "vaultBackupSkippedFailed": "無法寫入上一次備份。請檢查可用磁碟空間後重試。",
-  "vaultBackupRestored": "保管庫已還原。先前的狀態已儲存為備份。",
+  "vaultBackupRestored": "保管庫已還原。還原前的保管庫狀態已受備份保護（新備份或已有的相同備份）。",
   "vaultBackupUnavailable": "本機備份需要作業系統金鑰圈。此裝置無法寫入或還原備份。",
   "vaultBackupProblemList": "無法讀取備份清單。",
   "vaultBackupProblemRetention": "無法儲存保留設定。",

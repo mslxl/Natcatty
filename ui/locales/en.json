@@ -2127,7 +2127,7 @@
     }
   },
   "vaultBackupRestore": "Restore",
-  "vaultBackupRestoreConfirm": "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the Vault stays unchanged.",
+  "vaultBackupRestoreConfirm": "Restore the backup from {time}? The current Vault is saved as a protective backup before restoring, or is already covered by an identical one. If the restore fails, the Vault stays unchanged.",
   "@vaultBackupRestoreConfirm": {
     "description": "Confirmation before restoring one local backup.",
     "placeholders": {
@@ -2137,7 +2137,7 @@
       }
     }
   },
-  "vaultBackupRestoreConfirmUnknown": "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays unchanged.",
+  "vaultBackupRestoreConfirmUnknown": "Restore this backup? The current Vault is saved as a protective backup before restoring, or is already covered by an identical one. If the restore fails, the Vault stays unchanged.",
   "vaultBackupClear": "Clear backups",
   "vaultBackupClearConfirm": "{count, plural, one {Delete # local backup? The Vault itself is not changed.} other {Delete all # local backups? The Vault itself is not changed.}}",
   "@vaultBackupClearConfirm": {
@@ -2172,7 +2172,7 @@
   "vaultBackupSkippedTooLarge": "The Vault is larger than the 25 MiB backup limit, so no backup was written.",
   "vaultBackupSkippedUnavailable": "The secure keychain is unavailable, so the automatic backup was skipped.",
   "vaultBackupSkippedFailed": "The last backup could not be written. Check free disk space and try again.",
-  "vaultBackupRestored": "Vault restored. The previous state was saved as a backup.",
+  "vaultBackupRestored": "Vault restored. The Vault state before restoring was protected by a backup (new or already identical).",
   "vaultBackupUnavailable": "Local backups need the OS keychain. No backup can be written or restored on this device.",
   "vaultBackupProblemList": "Could not read the backup list.",
   "vaultBackupProblemRetention": "Could not save the retention setting.",

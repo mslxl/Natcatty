@@ -1361,7 +1361,7 @@
     }
   },
   "vaultBackupRestore": "Restaurar",
-  "vaultBackupRestoreConfirm": "¿Restaurar la copia de {time}? Primero se crea una copia protectora de la bóveda actual. Si la restauración falla, la bóveda no cambia.",
+  "vaultBackupRestoreConfirm": "¿Restaurar la copia de {time}? La bóveda actual se guarda como copia protectora antes de restaurar, o ya está cubierta por una copia idéntica. Si la restauración falla, la bóveda no cambia.",
   "@vaultBackupRestoreConfirm": {
     "description": "Confirmation before restoring one local backup.",
     "placeholders": {
@@ -1371,7 +1371,7 @@
       }
     }
   },
-  "vaultBackupRestoreConfirmUnknown": "¿Restaurar esta copia? Primero se crea una copia protectora de la bóveda actual. Si la restauración falla, la bóveda no cambia.",
+  "vaultBackupRestoreConfirmUnknown": "¿Restaurar esta copia? La bóveda actual se guarda como copia protectora antes de restaurar, o ya está cubierta por una copia idéntica. Si la restauración falla, la bóveda no cambia.",
   "vaultBackupClear": "Borrar copias",
   "vaultBackupClearConfirm": "{count, plural, one {¿Borrar # copia local? La bóveda no cambia.} many {¿Borrar las # copias locales? La bóveda no cambia.} other {¿Borrar las # copias locales? La bóveda no cambia.}}",
   "@vaultBackupClearConfirm": {
@@ -1406,7 +1406,7 @@
   "vaultBackupSkippedTooLarge": "La bóveda supera el límite de 25 MiB, así que no se escribió ninguna copia.",
   "vaultBackupSkippedUnavailable": "El llavero seguro no está disponible, así que se omitió la copia automática.",
   "vaultBackupSkippedFailed": "No se pudo escribir la última copia. Comprueba el espacio libre y vuelve a intentarlo.",
-  "vaultBackupRestored": "Bóveda restaurada. El estado anterior se guardó como copia.",
+  "vaultBackupRestored": "Bóveda restaurada. El estado de la bóveda antes de restaurar quedó protegido por una copia (nueva o ya idéntica).",
   "vaultBackupUnavailable": "Las copias locales necesitan el llavero del sistema. En este dispositivo no se puede escribir ni restaurar ninguna copia.",
   "vaultBackupProblemList": "No se pudo leer la lista de copias.",
   "vaultBackupProblemRetention": "No se pudo guardar la retención.",
