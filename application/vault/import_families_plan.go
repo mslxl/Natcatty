@@ -94,6 +94,32 @@ func (preview *ImportPreview) collectFamilyPlan(missingGroups map[string]bool) {
 			Detail: known.KeyType,
 		})
 	}
+	// A metadata-only Key is still restored, but the user must know it cannot
+	// authenticate until private material is supplied.
+	for _, key := range family.Keys {
+		if strings.TrimSpace(key.PrivateKey) != "" {
+			continue
+		}
+		preview.Issues = append(preview.Issues, vaultimport.Issue{
+			Severity: vaultimport.SeverityWarning,
+			Code:     vaultimport.IssueKeyWithoutMaterial,
+			Value:    key.Label, Detail: key.ID,
+		})
+	}
+	// Preserve an explicit target that has no matching Host, but name it so a
+	// dangling reference is never silent.
+	for _, snippet := range family.Snippets {
+		for _, target := range snippet.Targets {
+			if _, resolved := preview.hostIDs[target]; resolved {
+				continue
+			}
+			preview.Issues = append(preview.Issues, vaultimport.Issue{
+				Severity: vaultimport.SeverityWarning,
+				Code:     vaultimport.IssueDanglingSnippetTarget,
+				Value:    target, Detail: snippet.Label,
+			})
+		}
+	}
 	preview.FamilyCounts = counts
 	preview.FamilyRows = rows
 }
@@ -168,9 +194,11 @@ func remapKeyID(ids map[string]model.KeyID, cacheKey string, fallback model.KeyI
 	return fallback
 }
 
-// commitFamilyKeys restores standalone SSH Keys. Keys that only had metadata
-// in the document (a reference with no exported material) are skipped: a Key
-// with no material cannot authenticate, and the Host link stays dangling.
+// commitFamilyKeys restores standalone SSH Keys. A Key that only had metadata
+// in the document (for example a secrets-off export) is restored as a
+// metadata-only record with HasPrivateKey=false, so the row and its links
+// survive; the preview warns that it cannot authenticate until material is
+// supplied.
 func (s *Service) commitFamilyKeys(ctx context.Context, preview ImportPreview,
 	ids map[string]model.KeyID, result *ImportCommitResult) error {
 
@@ -182,6 +210,11 @@ func (s *Service) commitFamilyKeys(ctx context.Context, preview ImportPreview,
 		preview.familyDone[familyStageKeys] = true
 		return nil
 	}
+	existingKeys, err := s.keys.ListKeys(ctx)
+	if err != nil {
+		return internal(err)
+	}
+	order := nextKeyOrder(existingKeys)
 	for _, key := range preview.family.Keys {
 		cacheKey := ""
 		if key.ID != "" {
@@ -203,9 +236,32 @@ func (s *Service) commitFamilyKeys(ctx context.Context, preview ImportPreview,
 			}
 		}
 		if strings.TrimSpace(key.PrivateKey) == "" {
-			// A metadata-only Key has no material to restore. Count it so the
-			// import result does not claim a complete restore.
-			result.FamilySkipped++
+			now := s.now()
+			source := domainvault.KeySource(key.Source)
+			if source == "" {
+				source = domainvault.KeySourceImported
+			}
+			restored := domainvault.Key{
+				ID:          s.newKeyID(),
+				Label:       key.Label,
+				Type:        domainvault.KeyType(key.Type),
+				PublicKey:   key.PublicKey,
+				Certificate: key.Certificate,
+				Source:      source,
+				FilePath:    key.FilePath,
+				OrderKey:    order,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}
+			order += orderStep
+			if err := s.keys.SaveKey(ctx, restored); err != nil {
+				return internal(err)
+			}
+			if cacheKey != "" {
+				preview.keyIDs[cacheKey] = restored.ID
+				ids[cacheKey] = restored.ID
+			}
+			result.FamilyCreated++
 			continue
 		}
 		created, err := s.CreateKey(ctx, domainvault.KeyDraft{
@@ -225,6 +281,7 @@ func (s *Service) commitFamilyKeys(ctx context.Context, preview ImportPreview,
 			preview.keyIDs[cacheKey] = created.ID
 			ids[cacheKey] = created.ID
 		}
+		result.FamilyCreated++
 	}
 	preview.familyDone[familyStageKeys] = true
 	return nil
@@ -270,6 +327,7 @@ func (s *Service) commitFamilyLinks(ctx context.Context, preview ImportPreview,
 		if identity.ID != "" {
 			preview.identityIDs[identity.ID] = created.ID
 		}
+		result.FamilyCreated++
 	}
 	for _, profile := range preview.family.ProxyProfiles {
 		if profile.ID != "" {
@@ -309,6 +367,7 @@ func (s *Service) commitFamilyLinks(ctx context.Context, preview ImportPreview,
 		if profile.ID != "" {
 			preview.proxyProfileIDs[profile.ID] = created.ID
 		}
+		result.FamilyCreated++
 	}
 	preview.familyDone[familyStageLinks] = true
 	return nil

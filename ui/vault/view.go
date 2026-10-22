@@ -1145,7 +1145,11 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 				// the label instead of a full row that hides the drop target.
 				ui.Text(c, host.Label).Bold().Drag(vaultstate.HostDrag(host.ID))
 				ui.Column(c).Grow(1)
-
+			})
+			// The actions get their own wrapping line: at the minimum window
+			// size a long label can no longer squeeze Delete to zero width, and
+			// at the default size all five still share one line.
+			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
 				if host.Protocol == domainvault.ProtocolSSH {
 					testLabel := m.VaultHostTest()
 					if s.Testing(host.ID) {
