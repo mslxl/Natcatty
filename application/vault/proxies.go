@@ -55,7 +55,21 @@ func (s *Service) CreateProxyProfile(ctx context.Context, draft domainvault.Prox
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	password := profile.Config.Password
+	profile.Config.Password = ""
+	profile.Config.HasPassword = password != "" && s.SecretMode() != SecretModeSession
+	if password != "" {
+		if s.secrets == nil {
+			return domainvault.ProxyProfile{}, unsupported(ErrSecretsUnavailable)
+		}
+		if err := s.secrets.Set(ctx, ProxyProfileSecretRef(profile.ID, FieldProxyPassword), password); err != nil {
+			return domainvault.ProxyProfile{}, secretError(err)
+		}
+	}
 	if err := s.proxies.SaveProxyProfile(ctx, profile); err != nil {
+		if password != "" {
+			_ = s.secrets.Delete(ctx, ProxyProfileSecretRef(profile.ID, FieldProxyPassword))
+		}
 		return domainvault.ProxyProfile{}, internal(err)
 	}
 	return profile, nil
@@ -78,10 +92,42 @@ func (s *Service) UpdateProxyProfile(ctx context.Context, id string, draft domai
 	if err != nil {
 		return domainvault.ProxyProfile{}, invalid(err)
 	}
+	// A profile password follows the same rule as a Host credential: a new
+	// value replaces it, an empty value keeps the stored one, and plaintext is
+	// never written onto the profile record.
+	password := normalized.Config.Password
+	normalized.Config.Password = ""
+	previous := ""
+	previousErr := ErrSecretNotFound
+	if s.secrets != nil {
+		previous, previousErr = s.secrets.Get(ctx, ProxyProfileSecretRef(existing.ID, FieldProxyPassword))
+	}
+	if password != "" {
+		if s.secrets == nil {
+			return domainvault.ProxyProfile{}, unsupported(ErrSecretsUnavailable)
+		}
+		if err := s.secrets.Set(ctx, ProxyProfileSecretRef(existing.ID, FieldProxyPassword), password); err != nil {
+			return domainvault.ProxyProfile{}, secretError(err)
+		}
+	}
 	existing.Label = normalized.Label
 	existing.Config = normalized.Config
+	// HasPassword describes the stored credential, so it is set after the
+	// normalized Config replaces the record's fields.
+	if password != "" {
+		existing.Config.HasPassword = s.SecretMode() != SecretModeSession
+	} else {
+		existing.Config.HasPassword = previousErr == nil
+	}
 	existing.UpdatedAt = s.now()
 	if err := s.proxies.SaveProxyProfile(ctx, existing); err != nil {
+		if password != "" && s.secrets != nil {
+			if previousErr == nil {
+				_ = s.secrets.Set(ctx, ProxyProfileSecretRef(existing.ID, FieldProxyPassword), previous)
+			} else {
+				_ = s.secrets.Delete(ctx, ProxyProfileSecretRef(existing.ID, FieldProxyPassword))
+			}
+		}
 		return domainvault.ProxyProfile{}, internal(err)
 	}
 	return existing, nil
@@ -136,6 +182,9 @@ func (s *Service) DeleteProxyProfile(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return internal(err)
+	}
+	if s.secrets != nil {
+		_ = s.secrets.Delete(ctx, ProxyProfileSecretRef(id, FieldProxyPassword))
 	}
 	return nil
 }

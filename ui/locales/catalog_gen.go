@@ -1476,6 +1476,210 @@ func (msgs Messages) VaultImportFormatSSHConfig() string {
 	return Catalog.Format(msgs.locale, "vaultImportFormatSSHConfig", nil)
 }
 
+// VaultImportFormatNetcattyJSON says "Netcatty JSON"
+// in the language the app shows.
+func VaultImportFormatNetcattyJSON() string { return In(i18n.Locale()).VaultImportFormatNetcattyJSON() }
+
+// VaultImportFormatNetcattyJSON says "Netcatty JSON"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatNetcattyJSON() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatNetcattyJSON", nil)
+}
+
+// VaultImportFormatSnippets says "Netcatty Snippets"
+// in the language the app shows.
+func VaultImportFormatSnippets() string { return In(i18n.Locale()).VaultImportFormatSnippets() }
+
+// VaultImportFormatSnippets says "Netcatty Snippets"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatSnippets() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatSnippets", nil)
+}
+
+// VaultImportFormatKeys says "Netcatty Keys"
+// in the language the app shows.
+func VaultImportFormatKeys() string { return In(i18n.Locale()).VaultImportFormatKeys() }
+
+// VaultImportFormatKeys says "Netcatty Keys"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatKeys() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatKeys", nil)
+}
+
+// VaultImportFormatNotesZIP says "Netcatty Notes (ZIP)"
+// in the language the app shows.
+func VaultImportFormatNotesZIP() string { return In(i18n.Locale()).VaultImportFormatNotesZIP() }
+
+// VaultImportFormatNotesZIP says "Netcatty Notes (ZIP)"
+// in the language of msgs.
+func (msgs Messages) VaultImportFormatNotesZIP() string {
+	return Catalog.Format(msgs.locale, "vaultImportFormatNotesZIP", nil)
+}
+
+// VaultImportFamily says "{count, plural, one {# record outside the Host list will also be restored.} other {# records outside the Host list wi…"
+// in the language the app shows.
+func VaultImportFamily(count int) string { return In(i18n.Locale()).VaultImportFamily(count) }
+
+// VaultImportFamily says "{count, plural, one {# record outside the Host list will also be restored.} other {# records outside the Host list wi…"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamily(count int) string {
+	return Catalog.Format(msgs.locale, "vaultImportFamily", map[string]any{"count": count})
+}
+
+// VaultImportFamilyRows says "Other records"
+// in the language the app shows.
+func VaultImportFamilyRows() string { return In(i18n.Locale()).VaultImportFamilyRows() }
+
+// VaultImportFamilyRows says "Other records"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyRows() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyRows", nil)
+}
+
+// VaultImportFamilySelected says "{count, plural, one {# other record will also be restored.} other {# other records will also be restored.}}"
+// in the language the app shows.
+//
+// How many non-Host records are restored.
+func VaultImportFamilySelected(count int) string {
+	return In(i18n.Locale()).VaultImportFamilySelected(count)
+}
+
+// VaultImportFamilySelected says "{count, plural, one {# other record will also be restored.} other {# other records will also be restored.}}"
+// in the language of msgs.
+//
+// How many non-Host records are restored.
+func (msgs Messages) VaultImportFamilySelected(count int) string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilySelected", map[string]any{"count": count})
+}
+
+// VaultImportFamilyGroup says "Group"
+// in the language the app shows.
+func VaultImportFamilyGroup() string { return In(i18n.Locale()).VaultImportFamilyGroup() }
+
+// VaultImportFamilyGroup says "Group"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyGroup() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyGroup", nil)
+}
+
+// VaultImportFamilySnippetPackage says "Snippet package"
+// in the language the app shows.
+func VaultImportFamilySnippetPackage() string {
+	return In(i18n.Locale()).VaultImportFamilySnippetPackage()
+}
+
+// VaultImportFamilySnippetPackage says "Snippet package"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilySnippetPackage() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilySnippetPackage", nil)
+}
+
+// VaultImportFamilySnippet says "Snippet"
+// in the language the app shows.
+func VaultImportFamilySnippet() string { return In(i18n.Locale()).VaultImportFamilySnippet() }
+
+// VaultImportFamilySnippet says "Snippet"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilySnippet() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilySnippet", nil)
+}
+
+// VaultImportFamilyNoteGroup says "Note group"
+// in the language the app shows.
+func VaultImportFamilyNoteGroup() string { return In(i18n.Locale()).VaultImportFamilyNoteGroup() }
+
+// VaultImportFamilyNoteGroup says "Note group"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyNoteGroup() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyNoteGroup", nil)
+}
+
+// VaultImportFamilyNote says "Note"
+// in the language the app shows.
+func VaultImportFamilyNote() string { return In(i18n.Locale()).VaultImportFamilyNote() }
+
+// VaultImportFamilyNote says "Note"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyNote() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyNote", nil)
+}
+
+// VaultImportFamilyKey says "Key"
+// in the language the app shows.
+func VaultImportFamilyKey() string { return In(i18n.Locale()).VaultImportFamilyKey() }
+
+// VaultImportFamilyKey says "Key"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyKey() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyKey", nil)
+}
+
+// VaultImportFamilyIdentity says "Identity"
+// in the language the app shows.
+func VaultImportFamilyIdentity() string { return In(i18n.Locale()).VaultImportFamilyIdentity() }
+
+// VaultImportFamilyIdentity says "Identity"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyIdentity() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyIdentity", nil)
+}
+
+// VaultImportFamilyProxyProfile says "Proxy profile"
+// in the language the app shows.
+func VaultImportFamilyProxyProfile() string { return In(i18n.Locale()).VaultImportFamilyProxyProfile() }
+
+// VaultImportFamilyProxyProfile says "Proxy profile"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyProxyProfile() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyProxyProfile", nil)
+}
+
+// VaultImportFamilyKnownHost says "Known host"
+// in the language the app shows.
+func VaultImportFamilyKnownHost() string { return In(i18n.Locale()).VaultImportFamilyKnownHost() }
+
+// VaultImportFamilyKnownHost says "Known host"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyKnownHost() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyKnownHost", nil)
+}
+
+// VaultImportIssueInvalidArchive says "The ZIP archive is damaged or invalid."
+// in the language the app shows.
+func VaultImportIssueInvalidArchive() string {
+	return In(i18n.Locale()).VaultImportIssueInvalidArchive()
+}
+
+// VaultImportIssueInvalidArchive says "The ZIP archive is damaged or invalid."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidArchive() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidArchive", nil)
+}
+
+// VaultImportIssueInvalidManifest says "The Notes manifest is invalid; file names are used instead."
+// in the language the app shows.
+func VaultImportIssueInvalidManifest() string {
+	return In(i18n.Locale()).VaultImportIssueInvalidManifest()
+}
+
+// VaultImportIssueInvalidManifest says "The Notes manifest is invalid; file names are used instead."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueInvalidManifest() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueInvalidManifest", nil)
+}
+
+// VaultImportIssueMissingNoteEntry says "A manifest Note has no Markdown file."
+// in the language the app shows.
+func VaultImportIssueMissingNoteEntry() string {
+	return In(i18n.Locale()).VaultImportIssueMissingNoteEntry()
+}
+
+// VaultImportIssueMissingNoteEntry says "A manifest Note has no Markdown file."
+// in the language of msgs.
+func (msgs Messages) VaultImportIssueMissingNoteEntry() string {
+	return Catalog.Format(msgs.locale, "vaultImportIssueMissingNoteEntry", nil)
+}
+
 // VaultImportMasterPassword says "Master password"
 // in the language the app shows.
 func VaultImportMasterPassword() string { return In(i18n.Locale()).VaultImportMasterPassword() }
@@ -1624,6 +1828,20 @@ func VaultImportDone(imported int, overwritten int, skipped int, groups int) str
 // The result of a completed import.
 func (msgs Messages) VaultImportDone(imported int, overwritten int, skipped int, groups int) string {
 	return Catalog.Format(msgs.locale, "vaultImportDone", map[string]any{"imported": imported, "overwritten": overwritten, "skipped": skipped, "groups": groups})
+}
+
+// VaultImportDoneFamily says "{count, plural, one {# other record restored.} other {# other records restored.}}"
+// in the language the app shows.
+//
+// How many non-Host records are restored.
+func VaultImportDoneFamily(count int) string { return In(i18n.Locale()).VaultImportDoneFamily(count) }
+
+// VaultImportDoneFamily says "{count, plural, one {# other record restored.} other {# other records restored.}}"
+// in the language of msgs.
+//
+// How many non-Host records are restored.
+func (msgs Messages) VaultImportDoneFamily(count int) string {
+	return Catalog.Format(msgs.locale, "vaultImportDoneFamily", map[string]any{"count": count})
 }
 
 // VaultImportDismiss says "Dismiss"
@@ -8692,6 +8910,16 @@ func VaultExportUnreadable(count int) string { return In(i18n.Locale()).VaultExp
 // Credentials that could not be decrypted and were left out.
 func (msgs Messages) VaultExportUnreadable(count int) string {
 	return Catalog.Format(msgs.locale, "vaultExportUnreadable", map[string]any{"count": count})
+}
+
+// VaultExportOmitted says "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials wer…"
+// in the language the app shows.
+func VaultExportOmitted(count int) string { return In(i18n.Locale()).VaultExportOmitted(count) }
+
+// VaultExportOmitted says "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials wer…"
+// in the language of msgs.
+func (msgs Messages) VaultExportOmitted(count int) string {
+	return Catalog.Format(msgs.locale, "vaultExportOmitted", map[string]any{"count": count})
 }
 
 // VaultExportDismiss says "Dismiss"

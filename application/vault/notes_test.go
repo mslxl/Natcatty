@@ -280,8 +280,20 @@ func TestNoteExportsRoundTrip(t *testing.T) {
 		}
 		entries[file.Name] = string(data)
 	}
+	// The versioned manifest is the authoritative title/group/id mapping. It
+	// is an extra entry, not a Note file.
+	manifest, found := entries["netcatty.notes.json"]
+	if !found {
+		t.Fatalf("manifest missing from %v", entries)
+	}
+	delete(entries, "netcatty.notes.json")
 	if len(entries) != 2 {
 		t.Fatalf("entries = %v", entries)
+	}
+	for _, want := range []string{`"title": "Restart <database>"`, `"group": "ops/db"`, `"id": "note-1"`, `"id": "note-2"`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest is missing %q: %s", want, manifest)
+		}
 	}
 	if entries["ops/db/Restart -database-.md"] != source {
 		t.Fatalf("archive entry = %q", entries["ops/db/Restart -database-.md"])
