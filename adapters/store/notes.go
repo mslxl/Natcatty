@@ -83,6 +83,7 @@ func (s *Store) SaveNote(ctx context.Context, note domainvault.Note) error {
 	if err != nil {
 		return fmt.Errorf("store: save Vault Note: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -95,6 +96,7 @@ func (s *Store) DeleteNote(ctx context.Context, id string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -148,6 +150,7 @@ func (s *Store) SaveNoteGroup(ctx context.Context, group domainvault.NoteGroup) 
 	if err != nil {
 		return fmt.Errorf("store: save Note Group: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -162,5 +165,6 @@ func (s *Store) DeleteNoteGroup(ctx context.Context, path string) error {
 	if result.Changes == 0 {
 		return appvault.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }

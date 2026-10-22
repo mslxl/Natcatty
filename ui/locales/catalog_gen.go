@@ -9116,6 +9116,388 @@ func (msgs Messages) VaultProblemExportNoHost() string {
 	return Catalog.Format(msgs.locale, "vaultProblemExportNoHost", nil)
 }
 
+// VaultBackupTitle says "Local backups"
+// in the language the app shows.
+func VaultBackupTitle() string { return In(i18n.Locale()).VaultBackupTitle() }
+
+// VaultBackupTitle says "Local backups"
+// in the language of msgs.
+func (msgs Messages) VaultBackupTitle() string {
+	return Catalog.Format(msgs.locale, "vaultBackupTitle", nil)
+}
+
+// VaultBackupOpen says "Backups"
+// in the language the app shows.
+func VaultBackupOpen() string { return In(i18n.Locale()).VaultBackupOpen() }
+
+// VaultBackupOpen says "Backups"
+// in the language of msgs.
+func (msgs Messages) VaultBackupOpen() string {
+	return Catalog.Format(msgs.locale, "vaultBackupOpen", nil)
+}
+
+// VaultBackupBack says "Back to Vault"
+// in the language the app shows.
+func VaultBackupBack() string { return In(i18n.Locale()).VaultBackupBack() }
+
+// VaultBackupBack says "Back to Vault"
+// in the language of msgs.
+func (msgs Messages) VaultBackupBack() string {
+	return Catalog.Format(msgs.locale, "vaultBackupBack", nil)
+}
+
+// VaultBackupIntro says "Encrypted restore points kept on this device. A backup is written after Vault changes and before every restore."
+// in the language the app shows.
+func VaultBackupIntro() string { return In(i18n.Locale()).VaultBackupIntro() }
+
+// VaultBackupIntro says "Encrypted restore points kept on this device. A backup is written after Vault changes and before every restore."
+// in the language of msgs.
+func (msgs Messages) VaultBackupIntro() string {
+	return Catalog.Format(msgs.locale, "vaultBackupIntro", nil)
+}
+
+// VaultBackupRetentionLabel says "Backups to keep"
+// in the language the app shows.
+func VaultBackupRetentionLabel() string { return In(i18n.Locale()).VaultBackupRetentionLabel() }
+
+// VaultBackupRetentionLabel says "Backups to keep"
+// in the language of msgs.
+func (msgs Messages) VaultBackupRetentionLabel() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRetentionLabel", nil)
+}
+
+// VaultBackupRetentionHint says "Keep {min} to {max} backups. Default {fallback}."
+// in the language the app shows.
+//
+// The allowed local-backup retention range and its default.
+func VaultBackupRetentionHint(min int, max int, fallback int) string {
+	return In(i18n.Locale()).VaultBackupRetentionHint(min, max, fallback)
+}
+
+// VaultBackupRetentionHint says "Keep {min} to {max} backups. Default {fallback}."
+// in the language of msgs.
+//
+// The allowed local-backup retention range and its default.
+func (msgs Messages) VaultBackupRetentionHint(min int, max int, fallback int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupRetentionHint", map[string]any{"min": min, "max": max, "fallback": fallback})
+}
+
+// VaultBackupRetentionSave says "Save"
+// in the language the app shows.
+func VaultBackupRetentionSave() string { return In(i18n.Locale()).VaultBackupRetentionSave() }
+
+// VaultBackupRetentionSave says "Save"
+// in the language of msgs.
+func (msgs Messages) VaultBackupRetentionSave() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRetentionSave", nil)
+}
+
+// VaultBackupRetentionInvalid says "Enter a number from {min} to {max}."
+// in the language the app shows.
+//
+// Validation message for the local-backup retention field.
+func VaultBackupRetentionInvalid(min int, max int) string {
+	return In(i18n.Locale()).VaultBackupRetentionInvalid(min, max)
+}
+
+// VaultBackupRetentionInvalid says "Enter a number from {min} to {max}."
+// in the language of msgs.
+//
+// Validation message for the local-backup retention field.
+func (msgs Messages) VaultBackupRetentionInvalid(min int, max int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupRetentionInvalid", map[string]any{"min": min, "max": max})
+}
+
+// VaultBackupListTitle says "{count, plural, one {# stored backup} other {# stored backups}}"
+// in the language the app shows.
+//
+// How many local backups are stored.
+func VaultBackupListTitle(count int) string { return In(i18n.Locale()).VaultBackupListTitle(count) }
+
+// VaultBackupListTitle says "{count, plural, one {# stored backup} other {# stored backups}}"
+// in the language of msgs.
+//
+// How many local backups are stored.
+func (msgs Messages) VaultBackupListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupListTitle", map[string]any{"count": count})
+}
+
+// VaultBackupEmpty says "No local backups yet. Change something in the Vault to create one."
+// in the language the app shows.
+func VaultBackupEmpty() string { return In(i18n.Locale()).VaultBackupEmpty() }
+
+// VaultBackupEmpty says "No local backups yet. Change something in the Vault to create one."
+// in the language of msgs.
+func (msgs Messages) VaultBackupEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultBackupEmpty", nil)
+}
+
+// VaultBackupReasonVaultChange says "Vault change"
+// in the language the app shows.
+func VaultBackupReasonVaultChange() string { return In(i18n.Locale()).VaultBackupReasonVaultChange() }
+
+// VaultBackupReasonVaultChange says "Vault change"
+// in the language of msgs.
+func (msgs Messages) VaultBackupReasonVaultChange() string {
+	return Catalog.Format(msgs.locale, "vaultBackupReasonVaultChange", nil)
+}
+
+// VaultBackupReasonBeforeRestore says "Before restore"
+// in the language the app shows.
+func VaultBackupReasonBeforeRestore() string {
+	return In(i18n.Locale()).VaultBackupReasonBeforeRestore()
+}
+
+// VaultBackupReasonBeforeRestore says "Before restore"
+// in the language of msgs.
+func (msgs Messages) VaultBackupReasonBeforeRestore() string {
+	return Catalog.Format(msgs.locale, "vaultBackupReasonBeforeRestore", nil)
+}
+
+// VaultBackupReasonAppVersionChange says "App update"
+// in the language the app shows.
+func VaultBackupReasonAppVersionChange() string {
+	return In(i18n.Locale()).VaultBackupReasonAppVersionChange()
+}
+
+// VaultBackupReasonAppVersionChange says "App update"
+// in the language of msgs.
+func (msgs Messages) VaultBackupReasonAppVersionChange() string {
+	return Catalog.Format(msgs.locale, "vaultBackupReasonAppVersionChange", nil)
+}
+
+// VaultBackupRecords says "{count, plural, one {# record} other {# records}}"
+// in the language the app shows.
+//
+// How many Vault records one backup contains.
+func VaultBackupRecords(count int) string { return In(i18n.Locale()).VaultBackupRecords(count) }
+
+// VaultBackupRecords says "{count, plural, one {# record} other {# records}}"
+// in the language of msgs.
+//
+// How many Vault records one backup contains.
+func (msgs Messages) VaultBackupRecords(count int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupRecords", map[string]any{"count": count})
+}
+
+// VaultBackupFingerprint says "Fingerprint {fingerprint}"
+// in the language the app shows.
+//
+// The shortened content fingerprint of a backup.
+func VaultBackupFingerprint(fingerprint string) string {
+	return In(i18n.Locale()).VaultBackupFingerprint(fingerprint)
+}
+
+// VaultBackupFingerprint says "Fingerprint {fingerprint}"
+// in the language of msgs.
+//
+// The shortened content fingerprint of a backup.
+func (msgs Messages) VaultBackupFingerprint(fingerprint string) string {
+	return Catalog.Format(msgs.locale, "vaultBackupFingerprint", map[string]any{"fingerprint": fingerprint})
+}
+
+// VaultBackupRestore says "Restore"
+// in the language the app shows.
+func VaultBackupRestore() string { return In(i18n.Locale()).VaultBackupRestore() }
+
+// VaultBackupRestore says "Restore"
+// in the language of msgs.
+func (msgs Messages) VaultBackupRestore() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRestore", nil)
+}
+
+// VaultBackupRestoreConfirm says "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the …"
+// in the language the app shows.
+//
+// Confirmation before restoring one local backup.
+func VaultBackupRestoreConfirm(time_ string) string {
+	return In(i18n.Locale()).VaultBackupRestoreConfirm(time_)
+}
+
+// VaultBackupRestoreConfirm says "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the …"
+// in the language of msgs.
+//
+// Confirmation before restoring one local backup.
+func (msgs Messages) VaultBackupRestoreConfirm(time_ string) string {
+	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirm", map[string]any{"time": time_})
+}
+
+// VaultBackupRestoreConfirmUnknown says "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays…"
+// in the language the app shows.
+func VaultBackupRestoreConfirmUnknown() string {
+	return In(i18n.Locale()).VaultBackupRestoreConfirmUnknown()
+}
+
+// VaultBackupRestoreConfirmUnknown says "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays…"
+// in the language of msgs.
+func (msgs Messages) VaultBackupRestoreConfirmUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirmUnknown", nil)
+}
+
+// VaultBackupClear says "Clear backups"
+// in the language the app shows.
+func VaultBackupClear() string { return In(i18n.Locale()).VaultBackupClear() }
+
+// VaultBackupClear says "Clear backups"
+// in the language of msgs.
+func (msgs Messages) VaultBackupClear() string {
+	return Catalog.Format(msgs.locale, "vaultBackupClear", nil)
+}
+
+// VaultBackupClearConfirm says "{count, plural, one {Delete # local backup? The Vault itself is not changed.} other {Delete all # local backups? The …"
+// in the language the app shows.
+//
+// Confirmation before deleting every local backup.
+func VaultBackupClearConfirm(count int) string {
+	return In(i18n.Locale()).VaultBackupClearConfirm(count)
+}
+
+// VaultBackupClearConfirm says "{count, plural, one {Delete # local backup? The Vault itself is not changed.} other {Delete all # local backups? The …"
+// in the language of msgs.
+//
+// Confirmation before deleting every local backup.
+func (msgs Messages) VaultBackupClearConfirm(count int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupClearConfirm", map[string]any{"count": count})
+}
+
+// VaultBackupPruned says "{count, plural, one {Retention removed # older backup.} other {Retention removed # older backups.}}"
+// in the language the app shows.
+//
+// How many backups retention removed.
+func VaultBackupPruned(count int) string { return In(i18n.Locale()).VaultBackupPruned(count) }
+
+// VaultBackupPruned says "{count, plural, one {Retention removed # older backup.} other {Retention removed # older backups.}}"
+// in the language of msgs.
+//
+// How many backups retention removed.
+func (msgs Messages) VaultBackupPruned(count int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupPruned", map[string]any{"count": count})
+}
+
+// VaultBackupCleared says "{count, plural, one {Deleted # backup.} other {Deleted # backups.}}"
+// in the language the app shows.
+//
+// How many backups the clear action deleted.
+func VaultBackupCleared(count int) string { return In(i18n.Locale()).VaultBackupCleared(count) }
+
+// VaultBackupCleared says "{count, plural, one {Deleted # backup.} other {Deleted # backups.}}"
+// in the language of msgs.
+//
+// How many backups the clear action deleted.
+func (msgs Messages) VaultBackupCleared(count int) string {
+	return Catalog.Format(msgs.locale, "vaultBackupCleared", map[string]any{"count": count})
+}
+
+// VaultBackupSkippedTooLarge says "The Vault is larger than the 25 MiB backup limit, so no backup was written."
+// in the language the app shows.
+func VaultBackupSkippedTooLarge() string { return In(i18n.Locale()).VaultBackupSkippedTooLarge() }
+
+// VaultBackupSkippedTooLarge says "The Vault is larger than the 25 MiB backup limit, so no backup was written."
+// in the language of msgs.
+func (msgs Messages) VaultBackupSkippedTooLarge() string {
+	return Catalog.Format(msgs.locale, "vaultBackupSkippedTooLarge", nil)
+}
+
+// VaultBackupSkippedUnavailable says "The secure keychain is unavailable, so the automatic backup was skipped."
+// in the language the app shows.
+func VaultBackupSkippedUnavailable() string { return In(i18n.Locale()).VaultBackupSkippedUnavailable() }
+
+// VaultBackupSkippedUnavailable says "The secure keychain is unavailable, so the automatic backup was skipped."
+// in the language of msgs.
+func (msgs Messages) VaultBackupSkippedUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultBackupSkippedUnavailable", nil)
+}
+
+// VaultBackupSkippedFailed says "The last backup could not be written. Check free disk space and try again."
+// in the language the app shows.
+func VaultBackupSkippedFailed() string { return In(i18n.Locale()).VaultBackupSkippedFailed() }
+
+// VaultBackupSkippedFailed says "The last backup could not be written. Check free disk space and try again."
+// in the language of msgs.
+func (msgs Messages) VaultBackupSkippedFailed() string {
+	return Catalog.Format(msgs.locale, "vaultBackupSkippedFailed", nil)
+}
+
+// VaultBackupRestored says "Vault restored. The previous state was saved as a backup."
+// in the language the app shows.
+func VaultBackupRestored() string { return In(i18n.Locale()).VaultBackupRestored() }
+
+// VaultBackupRestored says "Vault restored. The previous state was saved as a backup."
+// in the language of msgs.
+func (msgs Messages) VaultBackupRestored() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRestored", nil)
+}
+
+// VaultBackupUnavailable says "Local backups need the OS keychain. No backup can be written or restored on this device."
+// in the language the app shows.
+func VaultBackupUnavailable() string { return In(i18n.Locale()).VaultBackupUnavailable() }
+
+// VaultBackupUnavailable says "Local backups need the OS keychain. No backup can be written or restored on this device."
+// in the language of msgs.
+func (msgs Messages) VaultBackupUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultBackupUnavailable", nil)
+}
+
+// VaultBackupProblemList says "Could not read the backup list."
+// in the language the app shows.
+func VaultBackupProblemList() string { return In(i18n.Locale()).VaultBackupProblemList() }
+
+// VaultBackupProblemList says "Could not read the backup list."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemList() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemList", nil)
+}
+
+// VaultBackupProblemRetention says "Could not save the retention setting."
+// in the language the app shows.
+func VaultBackupProblemRetention() string { return In(i18n.Locale()).VaultBackupProblemRetention() }
+
+// VaultBackupProblemRetention says "Could not save the retention setting."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemRetention() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemRetention", nil)
+}
+
+// VaultBackupProblemRestore says "Could not restore this backup. The Vault was not changed."
+// in the language the app shows.
+func VaultBackupProblemRestore() string { return In(i18n.Locale()).VaultBackupProblemRestore() }
+
+// VaultBackupProblemRestore says "Could not restore this backup. The Vault was not changed."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemRestore() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemRestore", nil)
+}
+
+// VaultBackupProblemProtective says "The protective backup failed, so the restore was aborted. The Vault was not changed."
+// in the language the app shows.
+func VaultBackupProblemProtective() string { return In(i18n.Locale()).VaultBackupProblemProtective() }
+
+// VaultBackupProblemProtective says "The protective backup failed, so the restore was aborted. The Vault was not changed."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemProtective() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemProtective", nil)
+}
+
+// VaultBackupProblemCorrupt says "This backup is damaged or was written by an incompatible version."
+// in the language the app shows.
+func VaultBackupProblemCorrupt() string { return In(i18n.Locale()).VaultBackupProblemCorrupt() }
+
+// VaultBackupProblemCorrupt says "This backup is damaged or was written by an incompatible version."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemCorrupt() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemCorrupt", nil)
+}
+
+// VaultBackupProblemClear says "Could not delete the backups."
+// in the language the app shows.
+func VaultBackupProblemClear() string { return In(i18n.Locale()).VaultBackupProblemClear() }
+
+// VaultBackupProblemClear says "Could not delete the backups."
+// in the language of msgs.
+func (msgs Messages) VaultBackupProblemClear() string {
+	return Catalog.Format(msgs.locale, "vaultBackupProblemClear", nil)
+}
+
 // VaultExportNotesPageTitle says "Vault Notes export"
 // in the language the app shows.
 func VaultExportNotesPageTitle() string { return In(i18n.Locale()).VaultExportNotesPageTitle() }
@@ -9124,4 +9506,16 @@ func VaultExportNotesPageTitle() string { return In(i18n.Locale()).VaultExportNo
 // in the language of msgs.
 func (msgs Messages) VaultExportNotesPageTitle() string {
 	return Catalog.Format(msgs.locale, "vaultExportNotesPageTitle", nil)
+}
+
+// VaultBackupRestoreConfirmAction says "Restore now"
+// in the language the app shows.
+func VaultBackupRestoreConfirmAction() string {
+	return In(i18n.Locale()).VaultBackupRestoreConfirmAction()
+}
+
+// VaultBackupRestoreConfirmAction says "Restore now"
+// in the language of msgs.
+func (msgs Messages) VaultBackupRestoreConfirmAction() string {
+	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirmAction", nil)
 }

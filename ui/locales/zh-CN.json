@@ -1288,5 +1288,132 @@
   "vaultProblemExportFormat": "请选择有效的导出格式。",
   "vaultProblemExportUnconfirmed": "请先确认明文警告。",
   "vaultProblemExportNoHost": "请选择要导出的主机。",
-  "vaultExportNotesPageTitle": "保管库笔记导出"
+  "vaultBackupTitle": "本地备份",
+  "vaultBackupOpen": "备份",
+  "vaultBackupBack": "返回保管库",
+  "vaultBackupIntro": "保存在此设备上的加密还原点。保管库发生更改后以及每次还原前都会创建备份。",
+  "vaultBackupRetentionLabel": "保留备份数",
+  "vaultBackupRetentionHint": "保留 {min} 到 {max} 个备份。默认 {fallback} 个。",
+  "@vaultBackupRetentionHint": {
+    "description": "The allowed local-backup retention range and its default.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      },
+      "fallback": {
+        "type": "int",
+        "example": "20"
+      }
+    }
+  },
+  "vaultBackupRetentionSave": "保存",
+  "vaultBackupRetentionInvalid": "请输入 {min} 到 {max} 之间的数字。",
+  "@vaultBackupRetentionInvalid": {
+    "description": "Validation message for the local-backup retention field.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      }
+    }
+  },
+  "vaultBackupListTitle": "{count, plural, other {已存储 # 个备份}}",
+  "@vaultBackupListTitle": {
+    "description": "How many local backups are stored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultBackupEmpty": "还没有本地备份。在保管库中做一次更改即可创建。",
+  "vaultBackupReasonVaultChange": "保管库更改",
+  "vaultBackupReasonBeforeRestore": "还原前",
+  "vaultBackupReasonAppVersionChange": "应用更新",
+  "vaultBackupRecords": "{count, plural, other {# 条记录}}",
+  "@vaultBackupRecords": {
+    "description": "How many Vault records one backup contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "vaultBackupFingerprint": "指纹 {fingerprint}",
+  "@vaultBackupFingerprint": {
+    "description": "The shortened content fingerprint of a backup.",
+    "placeholders": {
+      "fingerprint": {
+        "type": "String",
+        "example": "4f9c2a7b1e03"
+      }
+    }
+  },
+  "vaultBackupRestore": "还原",
+  "vaultBackupRestoreConfirm": "还原 {time} 的备份？系统会先为当前保管库创建保护性备份。如果还原失败，保管库保持不变。",
+  "@vaultBackupRestoreConfirm": {
+    "description": "Confirmation before restoring one local backup.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "2026-10-23 14:05"
+      }
+    }
+  },
+  "vaultBackupRestoreConfirmUnknown": "还原此备份？系统会先为当前保管库创建保护性备份。如果还原失败，保管库保持不变。",
+  "vaultBackupClear": "清除备份",
+  "vaultBackupClearConfirm": "{count, plural, other {删除全部 # 个本地备份？保管库本身不会改变。}}",
+  "@vaultBackupClearConfirm": {
+    "description": "Confirmation before deleting every local backup.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupPruned": "{count, plural, other {保留策略已删除 # 个较旧的备份。}}",
+  "@vaultBackupPruned": {
+    "description": "How many backups retention removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultBackupCleared": "{count, plural, other {已删除 # 个备份。}}",
+  "@vaultBackupCleared": {
+    "description": "How many backups the clear action deleted.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupSkippedTooLarge": "保管库超过 25 MiB 的备份上限，因此未写入备份。",
+  "vaultBackupSkippedUnavailable": "安全钥匙串不可用，因此跳过了自动备份。",
+  "vaultBackupSkippedFailed": "无法写入上一次备份。请检查可用磁盘空间后重试。",
+  "vaultBackupRestored": "保管库已还原。之前的状态已保存为备份。",
+  "vaultBackupUnavailable": "本地备份需要操作系统钥匙串。此设备无法写入或还原备份。",
+  "vaultBackupProblemList": "无法读取备份列表。",
+  "vaultBackupProblemRetention": "无法保存保留设置。",
+  "vaultBackupProblemRestore": "无法还原此备份。保管库未更改。",
+  "vaultBackupProblemProtective": "保护性备份失败，因此已中止还原。保管库未更改。",
+  "vaultBackupProblemCorrupt": "此备份已损坏或由不兼容的版本写入。",
+  "vaultBackupProblemClear": "无法删除备份。",
+  "vaultExportNotesPageTitle": "保管库笔记导出",
+  "vaultBackupRestoreConfirmAction": "立即还原"
 }

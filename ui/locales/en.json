@@ -2054,5 +2054,132 @@
   "vaultProblemExportFormat": "Choose a valid export format.",
   "vaultProblemExportUnconfirmed": "Confirm the plaintext warning first.",
   "vaultProblemExportNoHost": "Select a Host to export.",
-  "vaultExportNotesPageTitle": "Vault Notes export"
+  "vaultBackupTitle": "Local backups",
+  "vaultBackupOpen": "Backups",
+  "vaultBackupBack": "Back to Vault",
+  "vaultBackupIntro": "Encrypted restore points kept on this device. A backup is written after Vault changes and before every restore.",
+  "vaultBackupRetentionLabel": "Backups to keep",
+  "vaultBackupRetentionHint": "Keep {min} to {max} backups. Default {fallback}.",
+  "@vaultBackupRetentionHint": {
+    "description": "The allowed local-backup retention range and its default.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      },
+      "fallback": {
+        "type": "int",
+        "example": "20"
+      }
+    }
+  },
+  "vaultBackupRetentionSave": "Save",
+  "vaultBackupRetentionInvalid": "Enter a number from {min} to {max}.",
+  "@vaultBackupRetentionInvalid": {
+    "description": "Validation message for the local-backup retention field.",
+    "placeholders": {
+      "min": {
+        "type": "int",
+        "example": "1"
+      },
+      "max": {
+        "type": "int",
+        "example": "100"
+      }
+    }
+  },
+  "vaultBackupListTitle": "{count, plural, one {# stored backup} other {# stored backups}}",
+  "@vaultBackupListTitle": {
+    "description": "How many local backups are stored.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "vaultBackupEmpty": "No local backups yet. Change something in the Vault to create one.",
+  "vaultBackupReasonVaultChange": "Vault change",
+  "vaultBackupReasonBeforeRestore": "Before restore",
+  "vaultBackupReasonAppVersionChange": "App update",
+  "vaultBackupRecords": "{count, plural, one {# record} other {# records}}",
+  "@vaultBackupRecords": {
+    "description": "How many Vault records one backup contains.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "vaultBackupFingerprint": "Fingerprint {fingerprint}",
+  "@vaultBackupFingerprint": {
+    "description": "The shortened content fingerprint of a backup.",
+    "placeholders": {
+      "fingerprint": {
+        "type": "String",
+        "example": "4f9c2a7b1e03"
+      }
+    }
+  },
+  "vaultBackupRestore": "Restore",
+  "vaultBackupRestoreConfirm": "Restore the backup from {time}? A protective backup of the current Vault is written first. If the restore fails, the Vault stays unchanged.",
+  "@vaultBackupRestoreConfirm": {
+    "description": "Confirmation before restoring one local backup.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "2026-10-23 14:05"
+      }
+    }
+  },
+  "vaultBackupRestoreConfirmUnknown": "Restore this backup? A protective backup of the current Vault is written first. If the restore fails, the Vault stays unchanged.",
+  "vaultBackupClear": "Clear backups",
+  "vaultBackupClearConfirm": "{count, plural, one {Delete # local backup? The Vault itself is not changed.} other {Delete all # local backups? The Vault itself is not changed.}}",
+  "@vaultBackupClearConfirm": {
+    "description": "Confirmation before deleting every local backup.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupPruned": "{count, plural, one {Retention removed # older backup.} other {Retention removed # older backups.}}",
+  "@vaultBackupPruned": {
+    "description": "How many backups retention removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultBackupCleared": "{count, plural, one {Deleted # backup.} other {Deleted # backups.}}",
+  "@vaultBackupCleared": {
+    "description": "How many backups the clear action deleted.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "vaultBackupSkippedTooLarge": "The Vault is larger than the 25 MiB backup limit, so no backup was written.",
+  "vaultBackupSkippedUnavailable": "The secure keychain is unavailable, so the automatic backup was skipped.",
+  "vaultBackupSkippedFailed": "The last backup could not be written. Check free disk space and try again.",
+  "vaultBackupRestored": "Vault restored. The previous state was saved as a backup.",
+  "vaultBackupUnavailable": "Local backups need the OS keychain. No backup can be written or restored on this device.",
+  "vaultBackupProblemList": "Could not read the backup list.",
+  "vaultBackupProblemRetention": "Could not save the retention setting.",
+  "vaultBackupProblemRestore": "Could not restore this backup. The Vault was not changed.",
+  "vaultBackupProblemProtective": "The protective backup failed, so the restore was aborted. The Vault was not changed.",
+  "vaultBackupProblemCorrupt": "This backup is damaged or was written by an incompatible version.",
+  "vaultBackupProblemClear": "Could not delete the backups.",
+  "vaultExportNotesPageTitle": "Vault Notes export",
+  "vaultBackupRestoreConfirmAction": "Restore now"
 }

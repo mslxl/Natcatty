@@ -143,3 +143,24 @@ A written document of selected Vault records in one of the portable formats, pro
 deterministically. A destructive Export includes credential plaintext and requires
 confirmation.
 _Avoid_: dump, backup, download
+
+**Local Backup**:
+An encrypted, format-versioned snapshot of every Vault family kept under
+`vault-backups/` on this device so the user can undo a Vault change locally. It is not
+an Export and it is not a Sync Profile copy.
+_Avoid_: export, dump, cloud copy
+
+**Backup Retention**:
+The configured number of Local Backups kept, clamped to 1-100 and defaulting to 20;
+older entries beyond it are pruned immediately.
+_Avoid_: limit, cap, quota
+
+**Protective Backup**:
+The mandatory `before_restore` Local Backup taken immediately before a Restore or a
+bulk apply. If it cannot be written, the destructive operation aborts.
+_Avoid_: safety copy, pre-restore export
+
+**Restore**:
+Replacing every backed-up Vault family with one Local Backup's snapshot in a single
+transaction. A failed Restore leaves the current Vault unchanged.
+_Avoid_: import, sync down, rollback

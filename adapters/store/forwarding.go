@@ -110,6 +110,7 @@ func (s *Store) SaveForwardingRule(ctx context.Context, rule domainforward.Rule)
 	if err != nil {
 		return fmt.Errorf("store: save Port Forwarding Rule: %w", err)
 	}
+	s.vaultChanged()
 	return nil
 }
 
@@ -122,5 +123,6 @@ func (s *Store) DeleteForwardingRule(ctx context.Context, id model.ForwardingRul
 	if result.Changes == 0 {
 		return appforwarding.ErrNotFound
 	}
+	s.vaultChanged()
 	return nil
 }

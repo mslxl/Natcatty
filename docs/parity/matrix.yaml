@@ -2013,6 +2013,32 @@
   status: verified
   notes: "Ten formats are produced deterministically in the original conventions: versioned Netcatty JSON and CSV with the ticket-24 header, marked fields, formula guard, and CRLF; Snippets JSON with Host target IDs stripped; Notes Markdown, HTML, and a byte-identical Markdown ZIP; SSH Keys JSON with authorized_keys lines; Themes JSON; Logs JSON and CSV. Passwords, passphrases, private key material, and proxy passwords are omitted by default; the destructive option writes them in plaintext and the UI requires an explicit confirmation after the warning. Keys are public by default and include material only under that option. CSV and JSON exports re-import through the ticket-24 importer and preserve Hosts, Groups, credentials, and Keys; Snippets, Notes, and Keys have family importers. JSON JumpRefs index the parsed records, not the source document, so skipped invalid Hosts do not shift a jump chain. The export panel scrolls inside a reserved scroll-bar gutter and is tested at 1100x720 and 720x480 in all five catalogs."
 
+- id: vault.local-backups
+  area: vault
+  feature: Automatic encrypted local backups with retention and a protective restore point
+  original_paths:
+    - application/localVaultBackups.ts
+    - application/state/useLocalVaultBackups.ts
+    - components/cloud-sync/CloudSyncLocalBackupsPanel.tsx
+  module: application/vault
+  tickets: [26]
+  acceptance_tests:
+    - application/vaultbackup.TestCreateAndFingerprintDedupeKeepsTheExistingEntry
+    - application/vaultbackup.TestRetentionBoundaries
+    - application/vaultbackup.TestPayloadCapRejectsBeforeWriting
+    - application/vaultbackup.TestProtectiveBackupIsMandatoryBeforeRestore
+    - application/vaultbackup.TestRestoreSucceedsAndKeepsAPreRestorePoint
+    - application/vaultbackup.TestFailedRestoreLeavesTheVaultUnchanged
+    - adapters/vaultbackup.TestSaveEncryptsAndRoundTrips
+    - adapters/vaultbackup.TestAtomicWriteLeavesNoPartialFile
+    - adapters/store.TestRestoreRollsBackWhenAConstraintFails
+    - ui/vault.TestBackupPanelRendersAtBothSizesInEnglishAndChinese
+    - ui/vault/state.TestRestoreConfirmationReloadsTheVault
+    - app.TestTicket26CheckRunsThroughTheKeyboard
+    - app.TestTicket26CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Backups live under vault-backups/ as format-version-1 records whose metadata is cleartext and whose canonical snapshot payload is AES-256-GCM ciphertext under a keychain-held key. Writes go to a synced sibling file and rename into place, a 25 MiB plaintext cap is checked before any write, retention clamps to 1-100 (default 20) and prunes immediately, and a fingerprint match against the newest record keeps that record instead of writing a duplicate. Committed Vault writes notify a coalescing worker through the store hook; imports take a protective backup before their first chunk, and every restore reads and validates the payload, takes a mandatory before_restore backup, and applies all tables in one transaction. A failed apply or verification leaves the Vault byte-for-byte unchanged. The panel lists reason, local time, size, record count, and a shortened fingerprint, requires confirmation for restore and clear, shows skipped-too-large and pruned counts, and fits 1100x720 and 720x480 in all five catalogs with the scroll-bar gutter reserved."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

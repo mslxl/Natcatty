@@ -71,6 +71,12 @@ func BuildMenu(registry *command.Registry, tag string) *mygo.Menu {
 			Label: m.MenuLockApp(),
 			Click: dispatch(command.LockApp),
 		},
+		{
+			ID:          "menu.backups",
+			Label:       m.VaultBackupTitle(),
+			Accelerator: "CmdOrCtrl+Shift+B",
+			Click:       dispatch(command.OpenBackups),
+		},
 	}
 	if runtime.GOOS != "darwin" {
 		// macOS keeps Quit in its standard application menu, whose role

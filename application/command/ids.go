@@ -27,6 +27,9 @@ const (
 	FocusPaneRight ID = "pane.focusRight"
 	FocusPaneUp    ID = "pane.focusUp"
 	FocusPaneDown  ID = "pane.focusDown"
+
+	// OpenBackups shows the Vault's local backup panel.
+	OpenBackups ID = "vault.backups"
 )
 
 // LocaleCommandID returns the ID of the command that shows the language of

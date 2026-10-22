@@ -68,7 +68,7 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 	registry := newRegistry(shellState, func() { quits++ }, func() error {
 		locks++
 		return nil
-	})
+	}, nil, func() {})
 
 	if err := registry.Dispatch(context.Background(), command.NewTab); err != nil {
 		t.Fatalf("NewTab: %v", err)
@@ -107,7 +107,7 @@ func TestCommandsDriveTheShellAndQuit(t *testing.T) {
 
 func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
 	shellState := newWiringState(t)
-	registry := newRegistry(shellState, func() {}, func() error { return nil })
+	registry := newRegistry(shellState, func() {}, func() error { return nil }, nil, func() {})
 
 	ids := []command.ID{
 		command.NewTab,
@@ -126,6 +126,7 @@ func TestRegistryKnowsEveryMenuCommand(t *testing.T) {
 		command.FocusPaneUp,
 		command.FocusPaneDown,
 		command.LockApp,
+		command.OpenBackups,
 		command.Quit,
 	}
 	for _, tag := range locales.Tags() {
