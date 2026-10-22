@@ -1,0 +1,103 @@
+package store
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
+	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+)
+
+func TestKeyBindingsStoreRoundTripsAndToleratesBadFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	store := OpenKeyBindings(path)
+
+	state, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Scheme != "" || len(state.Overrides) != 0 {
+		t.Fatalf("missing file = %+v", state)
+	}
+
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if state, err = store.Load(context.Background()); err != nil || len(state.Overrides) != 0 {
+		t.Fatalf("malformed file = %+v, err = %v", state, err)
+	}
+
+	want := appkeybindings.State{
+		Scheme: domainkeybindings.SchemePC,
+		Overrides: domainkeybindings.Overrides{
+			string(domainkeybindings.SchemePC): {"open-local": "Ctrl + Shift + L"},
+		},
+		SuppressedMenus: []string{"menu.quit"},
+	}
+	if err := store.Save(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Scheme != want.Scheme || got.Overrides[string(domainkeybindings.SchemePC)]["open-local"] != "Ctrl + Shift + L" {
+		t.Fatalf("loaded = %+v, want %+v", got, want)
+	}
+	if len(got.SuppressedMenus) != 1 || got.SuppressedMenus[0] != "menu.quit" {
+		t.Fatalf("suppressed = %v", got.SuppressedMenus)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("temporary files left behind: %v", entries)
+	}
+}
+
+func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	store := OpenPreferences(path)
+
+	settings, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings != domainpreferences.Defaults() {
+		t.Fatalf("missing file = %+v", settings)
+	}
+
+	// An older or hand-edited document must keep the defaults for every
+	// field it does not mention.
+	if err := os.WriteFile(path, []byte(`{"version":1,"layout":{"showSftpTab":false}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Layout.ShowSFTPTab {
+		t.Error("showSftpTab override was not loaded")
+	}
+	if !settings.Layout.ShowHostTreeSidebar || !settings.Layout.RestorePreviousSession {
+		t.Errorf("absent booleans lost their defaults: %+v", settings.Layout)
+	}
+	if settings.Appearance.TerminalFontSize != domainpreferences.DefaultTerminalFontSize {
+		t.Errorf("absent appearance lost its default: %+v", settings.Appearance)
+	}
+
+	if err := store.Save(context.Background(), domainpreferences.Defaults()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != domainpreferences.Defaults() {
+		t.Fatalf("round trip = %+v", loaded)
+	}
+}

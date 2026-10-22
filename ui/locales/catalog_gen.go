@@ -9519,3 +9519,1573 @@ func VaultBackupRestoreConfirmAction() string {
 func (msgs Messages) VaultBackupRestoreConfirmAction() string {
 	return Catalog.Format(msgs.locale, "vaultBackupRestoreConfirmAction", nil)
 }
+
+// SettingsAreaAppearance says "Appearance"
+// in the language the app shows.
+func SettingsAreaAppearance() string { return In(i18n.Locale()).SettingsAreaAppearance() }
+
+// SettingsAreaAppearance says "Appearance"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaAppearance() string {
+	return Catalog.Format(msgs.locale, "settingsAreaAppearance", nil)
+}
+
+// SettingsAreaTerminal says "Terminal"
+// in the language the app shows.
+func SettingsAreaTerminal() string { return In(i18n.Locale()).SettingsAreaTerminal() }
+
+// SettingsAreaTerminal says "Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaTerminal() string {
+	return Catalog.Format(msgs.locale, "settingsAreaTerminal", nil)
+}
+
+// SettingsAreaLayout says "Layout & Tabs"
+// in the language the app shows.
+func SettingsAreaLayout() string { return In(i18n.Locale()).SettingsAreaLayout() }
+
+// SettingsAreaLayout says "Layout & Tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaLayout() string {
+	return Catalog.Format(msgs.locale, "settingsAreaLayout", nil)
+}
+
+// SettingsAreaSFTPEditor says "SFTP & Editor"
+// in the language the app shows.
+func SettingsAreaSFTPEditor() string { return In(i18n.Locale()).SettingsAreaSFTPEditor() }
+
+// SettingsAreaSFTPEditor says "SFTP & Editor"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaSFTPEditor() string {
+	return Catalog.Format(msgs.locale, "settingsAreaSFTPEditor", nil)
+}
+
+// SettingsAreaLogs says "Logs"
+// in the language the app shows.
+func SettingsAreaLogs() string { return In(i18n.Locale()).SettingsAreaLogs() }
+
+// SettingsAreaLogs says "Logs"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaLogs() string {
+	return Catalog.Format(msgs.locale, "settingsAreaLogs", nil)
+}
+
+// SettingsAreaSystem says "System & Desktop"
+// in the language the app shows.
+func SettingsAreaSystem() string { return In(i18n.Locale()).SettingsAreaSystem() }
+
+// SettingsAreaSystem says "System & Desktop"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaSystem() string {
+	return Catalog.Format(msgs.locale, "settingsAreaSystem", nil)
+}
+
+// SettingsAreaSecurity says "Security & App Lock"
+// in the language the app shows.
+func SettingsAreaSecurity() string { return In(i18n.Locale()).SettingsAreaSecurity() }
+
+// SettingsAreaSecurity says "Security & App Lock"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaSecurity() string {
+	return Catalog.Format(msgs.locale, "settingsAreaSecurity", nil)
+}
+
+// SettingsAreaSync says "Sync & Cloud"
+// in the language the app shows.
+func SettingsAreaSync() string { return In(i18n.Locale()).SettingsAreaSync() }
+
+// SettingsAreaSync says "Sync & Cloud"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaSync() string {
+	return Catalog.Format(msgs.locale, "settingsAreaSync", nil)
+}
+
+// SettingsAreaShortcuts says "Shortcuts"
+// in the language the app shows.
+func SettingsAreaShortcuts() string { return In(i18n.Locale()).SettingsAreaShortcuts() }
+
+// SettingsAreaShortcuts says "Shortcuts"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaShortcuts() string {
+	return Catalog.Format(msgs.locale, "settingsAreaShortcuts", nil)
+}
+
+// SettingsSearchPlaceholder says "Search settings…"
+// in the language the app shows.
+func SettingsSearchPlaceholder() string { return In(i18n.Locale()).SettingsSearchPlaceholder() }
+
+// SettingsSearchPlaceholder says "Search settings…"
+// in the language of msgs.
+func (msgs Messages) SettingsSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "settingsSearchPlaceholder", nil)
+}
+
+// SettingsSearchHint says "Type to filter settings. Up and Down move, Enter opens the section."
+// in the language the app shows.
+func SettingsSearchHint() string { return In(i18n.Locale()).SettingsSearchHint() }
+
+// SettingsSearchHint says "Type to filter settings. Up and Down move, Enter opens the section."
+// in the language of msgs.
+func (msgs Messages) SettingsSearchHint() string {
+	return Catalog.Format(msgs.locale, "settingsSearchHint", nil)
+}
+
+// SettingsSearchNoResults says "No matching settings"
+// in the language the app shows.
+func SettingsSearchNoResults() string { return In(i18n.Locale()).SettingsSearchNoResults() }
+
+// SettingsSearchNoResults says "No matching settings"
+// in the language of msgs.
+func (msgs Messages) SettingsSearchNoResults() string {
+	return Catalog.Format(msgs.locale, "settingsSearchNoResults", nil)
+}
+
+// SettingsSearchResults says "{count, plural, =0 {No matching settings} one {# matching setting} other {# matching settings}}"
+// in the language the app shows.
+func SettingsSearchResults(count int) string { return In(i18n.Locale()).SettingsSearchResults(count) }
+
+// SettingsSearchResults says "{count, plural, =0 {No matching settings} one {# matching setting} other {# matching settings}}"
+// in the language of msgs.
+func (msgs Messages) SettingsSearchResults(count int) string {
+	return Catalog.Format(msgs.locale, "settingsSearchResults", map[string]any{"count": count})
+}
+
+// SettingsSearchClear says "Clear search"
+// in the language the app shows.
+func SettingsSearchClear() string { return In(i18n.Locale()).SettingsSearchClear() }
+
+// SettingsSearchClear says "Clear search"
+// in the language of msgs.
+func (msgs Messages) SettingsSearchClear() string {
+	return Catalog.Format(msgs.locale, "settingsSearchClear", nil)
+}
+
+// SettingsResetAll says "Reset all settings"
+// in the language the app shows.
+func SettingsResetAll() string { return In(i18n.Locale()).SettingsResetAll() }
+
+// SettingsResetAll says "Reset all settings"
+// in the language of msgs.
+func (msgs Messages) SettingsResetAll() string {
+	return Catalog.Format(msgs.locale, "settingsResetAll", nil)
+}
+
+// SettingsResetAllTitle says "Reset all settings?"
+// in the language the app shows.
+func SettingsResetAllTitle() string { return In(i18n.Locale()).SettingsResetAllTitle() }
+
+// SettingsResetAllTitle says "Reset all settings?"
+// in the language of msgs.
+func (msgs Messages) SettingsResetAllTitle() string {
+	return Catalog.Format(msgs.locale, "settingsResetAllTitle", nil)
+}
+
+// SettingsResetAllBody says "This restores every preference and keyboard override to its default. It cannot be undone."
+// in the language the app shows.
+func SettingsResetAllBody() string { return In(i18n.Locale()).SettingsResetAllBody() }
+
+// SettingsResetAllBody says "This restores every preference and keyboard override to its default. It cannot be undone."
+// in the language of msgs.
+func (msgs Messages) SettingsResetAllBody() string {
+	return Catalog.Format(msgs.locale, "settingsResetAllBody", nil)
+}
+
+// SettingsResetAllConfirm says "Reset everything"
+// in the language the app shows.
+func SettingsResetAllConfirm() string { return In(i18n.Locale()).SettingsResetAllConfirm() }
+
+// SettingsResetAllConfirm says "Reset everything"
+// in the language of msgs.
+func (msgs Messages) SettingsResetAllConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsResetAllConfirm", nil)
+}
+
+// SettingsCancel says "Cancel"
+// in the language the app shows.
+func SettingsCancel() string { return In(i18n.Locale()).SettingsCancel() }
+
+// SettingsCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SettingsCancel() string {
+	return Catalog.Format(msgs.locale, "settingsCancel", nil)
+}
+
+// SettingsReset says "Reset"
+// in the language the app shows.
+func SettingsReset() string { return In(i18n.Locale()).SettingsReset() }
+
+// SettingsReset says "Reset"
+// in the language of msgs.
+func (msgs Messages) SettingsReset() string {
+	return Catalog.Format(msgs.locale, "settingsReset", nil)
+}
+
+// SettingsResetField says "Reset {field}"
+// in the language the app shows.
+func SettingsResetField(field string) string { return In(i18n.Locale()).SettingsResetField(field) }
+
+// SettingsResetField says "Reset {field}"
+// in the language of msgs.
+func (msgs Messages) SettingsResetField(field string) string {
+	return Catalog.Format(msgs.locale, "settingsResetField", map[string]any{"field": field})
+}
+
+// SettingsResetGroup says "Reset {group}"
+// in the language the app shows.
+func SettingsResetGroup(group string) string { return In(i18n.Locale()).SettingsResetGroup(group) }
+
+// SettingsResetGroup says "Reset {group}"
+// in the language of msgs.
+func (msgs Messages) SettingsResetGroup(group string) string {
+	return Catalog.Format(msgs.locale, "settingsResetGroup", map[string]any{"group": group})
+}
+
+// SettingsSaveFailed says "Could not save this setting."
+// in the language the app shows.
+func SettingsSaveFailed() string { return In(i18n.Locale()).SettingsSaveFailed() }
+
+// SettingsSaveFailed says "Could not save this setting."
+// in the language of msgs.
+func (msgs Messages) SettingsSaveFailed() string {
+	return Catalog.Format(msgs.locale, "settingsSaveFailed", nil)
+}
+
+// SettingsAppearanceTitle says "Appearance"
+// in the language the app shows.
+func SettingsAppearanceTitle() string { return In(i18n.Locale()).SettingsAppearanceTitle() }
+
+// SettingsAppearanceTitle says "Appearance"
+// in the language of msgs.
+func (msgs Messages) SettingsAppearanceTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAppearanceTitle", nil)
+}
+
+// SettingsAppearanceDescription says "Window and terminal appearance."
+// in the language the app shows.
+func SettingsAppearanceDescription() string { return In(i18n.Locale()).SettingsAppearanceDescription() }
+
+// SettingsAppearanceDescription says "Window and terminal appearance."
+// in the language of msgs.
+func (msgs Messages) SettingsAppearanceDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAppearanceDescription", nil)
+}
+
+// SettingsThemeMode says "Theme"
+// in the language the app shows.
+func SettingsThemeMode() string { return In(i18n.Locale()).SettingsThemeMode() }
+
+// SettingsThemeMode says "Theme"
+// in the language of msgs.
+func (msgs Messages) SettingsThemeMode() string {
+	return Catalog.Format(msgs.locale, "settingsThemeMode", nil)
+}
+
+// SettingsThemeSystem says "System"
+// in the language the app shows.
+func SettingsThemeSystem() string { return In(i18n.Locale()).SettingsThemeSystem() }
+
+// SettingsThemeSystem says "System"
+// in the language of msgs.
+func (msgs Messages) SettingsThemeSystem() string {
+	return Catalog.Format(msgs.locale, "settingsThemeSystem", nil)
+}
+
+// SettingsThemeLight says "Light"
+// in the language the app shows.
+func SettingsThemeLight() string { return In(i18n.Locale()).SettingsThemeLight() }
+
+// SettingsThemeLight says "Light"
+// in the language of msgs.
+func (msgs Messages) SettingsThemeLight() string {
+	return Catalog.Format(msgs.locale, "settingsThemeLight", nil)
+}
+
+// SettingsThemeDark says "Dark"
+// in the language the app shows.
+func SettingsThemeDark() string { return In(i18n.Locale()).SettingsThemeDark() }
+
+// SettingsThemeDark says "Dark"
+// in the language of msgs.
+func (msgs Messages) SettingsThemeDark() string {
+	return Catalog.Format(msgs.locale, "settingsThemeDark", nil)
+}
+
+// SettingsAccentMode says "Use a custom accent"
+// in the language the app shows.
+func SettingsAccentMode() string { return In(i18n.Locale()).SettingsAccentMode() }
+
+// SettingsAccentMode says "Use a custom accent"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentMode() string {
+	return Catalog.Format(msgs.locale, "settingsAccentMode", nil)
+}
+
+// SettingsAccentColor says "Accent color"
+// in the language the app shows.
+func SettingsAccentColor() string { return In(i18n.Locale()).SettingsAccentColor() }
+
+// SettingsAccentColor says "Accent color"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentColor() string {
+	return Catalog.Format(msgs.locale, "settingsAccentColor", nil)
+}
+
+// SettingsUIFont says "Interface font"
+// in the language the app shows.
+func SettingsUIFont() string { return In(i18n.Locale()).SettingsUIFont() }
+
+// SettingsUIFont says "Interface font"
+// in the language of msgs.
+func (msgs Messages) SettingsUIFont() string {
+	return Catalog.Format(msgs.locale, "settingsUIFont", nil)
+}
+
+// SettingsWindowOpacity says "Window opacity"
+// in the language the app shows.
+func SettingsWindowOpacity() string { return In(i18n.Locale()).SettingsWindowOpacity() }
+
+// SettingsWindowOpacity says "Window opacity"
+// in the language of msgs.
+func (msgs Messages) SettingsWindowOpacity() string {
+	return Catalog.Format(msgs.locale, "settingsWindowOpacity", nil)
+}
+
+// SettingsTerminalTheme says "Terminal theme"
+// in the language the app shows.
+func SettingsTerminalTheme() string { return In(i18n.Locale()).SettingsTerminalTheme() }
+
+// SettingsTerminalTheme says "Terminal theme"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalTheme() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalTheme", nil)
+}
+
+// SettingsTerminalFontFamily says "Terminal font family"
+// in the language the app shows.
+func SettingsTerminalFontFamily() string { return In(i18n.Locale()).SettingsTerminalFontFamily() }
+
+// SettingsTerminalFontFamily says "Terminal font family"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalFontFamily() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalFontFamily", nil)
+}
+
+// SettingsTerminalFontSize says "Terminal font size"
+// in the language the app shows.
+func SettingsTerminalFontSize() string { return In(i18n.Locale()).SettingsTerminalFontSize() }
+
+// SettingsTerminalFontSize says "Terminal font size"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalFontSize() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalFontSize", nil)
+}
+
+// SettingsThemePending says "The theme catalog arrives with a later ticket; this preference is stored and resets now."
+// in the language the app shows.
+func SettingsThemePending() string { return In(i18n.Locale()).SettingsThemePending() }
+
+// SettingsThemePending says "The theme catalog arrives with a later ticket; this preference is stored and resets now."
+// in the language of msgs.
+func (msgs Messages) SettingsThemePending() string {
+	return Catalog.Format(msgs.locale, "settingsThemePending", nil)
+}
+
+// SettingsLayoutTitle says "Layout & Tabs"
+// in the language the app shows.
+func SettingsLayoutTitle() string { return In(i18n.Locale()).SettingsLayoutTitle() }
+
+// SettingsLayoutTitle says "Layout & Tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsLayoutTitle() string {
+	return Catalog.Format(msgs.locale, "settingsLayoutTitle", nil)
+}
+
+// SettingsLayoutDescription says "Workspace and tab-strip behavior."
+// in the language the app shows.
+func SettingsLayoutDescription() string { return In(i18n.Locale()).SettingsLayoutDescription() }
+
+// SettingsLayoutDescription says "Workspace and tab-strip behavior."
+// in the language of msgs.
+func (msgs Messages) SettingsLayoutDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLayoutDescription", nil)
+}
+
+// SettingsShowHostTreeSidebar says "Show the host list sidebar"
+// in the language the app shows.
+func SettingsShowHostTreeSidebar() string { return In(i18n.Locale()).SettingsShowHostTreeSidebar() }
+
+// SettingsShowHostTreeSidebar says "Show the host list sidebar"
+// in the language of msgs.
+func (msgs Messages) SettingsShowHostTreeSidebar() string {
+	return Catalog.Format(msgs.locale, "settingsShowHostTreeSidebar", nil)
+}
+
+// SettingsShowSFTPTab says "Show the SFTP tab"
+// in the language the app shows.
+func SettingsShowSFTPTab() string { return In(i18n.Locale()).SettingsShowSFTPTab() }
+
+// SettingsShowSFTPTab says "Show the SFTP tab"
+// in the language of msgs.
+func (msgs Messages) SettingsShowSFTPTab() string {
+	return Catalog.Format(msgs.locale, "settingsShowSFTPTab", nil)
+}
+
+// SettingsShowRecentHosts says "Show recently connected hosts"
+// in the language the app shows.
+func SettingsShowRecentHosts() string { return In(i18n.Locale()).SettingsShowRecentHosts() }
+
+// SettingsShowRecentHosts says "Show recently connected hosts"
+// in the language of msgs.
+func (msgs Messages) SettingsShowRecentHosts() string {
+	return Catalog.Format(msgs.locale, "settingsShowRecentHosts", nil)
+}
+
+// SettingsTabBarPosition says "Tab bar position"
+// in the language the app shows.
+func SettingsTabBarPosition() string { return In(i18n.Locale()).SettingsTabBarPosition() }
+
+// SettingsTabBarPosition says "Tab bar position"
+// in the language of msgs.
+func (msgs Messages) SettingsTabBarPosition() string {
+	return Catalog.Format(msgs.locale, "settingsTabBarPosition", nil)
+}
+
+// SettingsTabBarTop says "Top"
+// in the language the app shows.
+func SettingsTabBarTop() string { return In(i18n.Locale()).SettingsTabBarTop() }
+
+// SettingsTabBarTop says "Top"
+// in the language of msgs.
+func (msgs Messages) SettingsTabBarTop() string {
+	return Catalog.Format(msgs.locale, "settingsTabBarTop", nil)
+}
+
+// SettingsTabBarBottom says "Bottom"
+// in the language the app shows.
+func SettingsTabBarBottom() string { return In(i18n.Locale()).SettingsTabBarBottom() }
+
+// SettingsTabBarBottom says "Bottom"
+// in the language of msgs.
+func (msgs Messages) SettingsTabBarBottom() string {
+	return Catalog.Format(msgs.locale, "settingsTabBarBottom", nil)
+}
+
+// SettingsShellOnlyTabNumberShortcuts says "Tab number shortcuts skip pinned tabs"
+// in the language the app shows.
+func SettingsShellOnlyTabNumberShortcuts() string {
+	return In(i18n.Locale()).SettingsShellOnlyTabNumberShortcuts()
+}
+
+// SettingsShellOnlyTabNumberShortcuts says "Tab number shortcuts skip pinned tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsShellOnlyTabNumberShortcuts() string {
+	return Catalog.Format(msgs.locale, "settingsShellOnlyTabNumberShortcuts", nil)
+}
+
+// SettingsShowTabNumberBadges says "Show tab number badges"
+// in the language the app shows.
+func SettingsShowTabNumberBadges() string { return In(i18n.Locale()).SettingsShowTabNumberBadges() }
+
+// SettingsShowTabNumberBadges says "Show tab number badges"
+// in the language of msgs.
+func (msgs Messages) SettingsShowTabNumberBadges() string {
+	return Catalog.Format(msgs.locale, "settingsShowTabNumberBadges", nil)
+}
+
+// SettingsRestorePreviousSession says "Restore the previous session"
+// in the language the app shows.
+func SettingsRestorePreviousSession() string {
+	return In(i18n.Locale()).SettingsRestorePreviousSession()
+}
+
+// SettingsRestorePreviousSession says "Restore the previous session"
+// in the language of msgs.
+func (msgs Messages) SettingsRestorePreviousSession() string {
+	return Catalog.Format(msgs.locale, "settingsRestorePreviousSession", nil)
+}
+
+// SettingsStartupLanding says "Open on launch"
+// in the language the app shows.
+func SettingsStartupLanding() string { return In(i18n.Locale()).SettingsStartupLanding() }
+
+// SettingsStartupLanding says "Open on launch"
+// in the language of msgs.
+func (msgs Messages) SettingsStartupLanding() string {
+	return Catalog.Format(msgs.locale, "settingsStartupLanding", nil)
+}
+
+// SettingsStartupVault says "Vault"
+// in the language the app shows.
+func SettingsStartupVault() string { return In(i18n.Locale()).SettingsStartupVault() }
+
+// SettingsStartupVault says "Vault"
+// in the language of msgs.
+func (msgs Messages) SettingsStartupVault() string {
+	return Catalog.Format(msgs.locale, "settingsStartupVault", nil)
+}
+
+// SettingsStartupLast says "Last session"
+// in the language the app shows.
+func SettingsStartupLast() string { return In(i18n.Locale()).SettingsStartupLast() }
+
+// SettingsStartupLast says "Last session"
+// in the language of msgs.
+func (msgs Messages) SettingsStartupLast() string {
+	return Catalog.Format(msgs.locale, "settingsStartupLast", nil)
+}
+
+// SettingsSidePanelDock says "Side panel position"
+// in the language the app shows.
+func SettingsSidePanelDock() string { return In(i18n.Locale()).SettingsSidePanelDock() }
+
+// SettingsSidePanelDock says "Side panel position"
+// in the language of msgs.
+func (msgs Messages) SettingsSidePanelDock() string {
+	return Catalog.Format(msgs.locale, "settingsSidePanelDock", nil)
+}
+
+// SettingsDockLeft says "Left"
+// in the language the app shows.
+func SettingsDockLeft() string { return In(i18n.Locale()).SettingsDockLeft() }
+
+// SettingsDockLeft says "Left"
+// in the language of msgs.
+func (msgs Messages) SettingsDockLeft() string {
+	return Catalog.Format(msgs.locale, "settingsDockLeft", nil)
+}
+
+// SettingsDockRight says "Right"
+// in the language the app shows.
+func SettingsDockRight() string { return In(i18n.Locale()).SettingsDockRight() }
+
+// SettingsDockRight says "Right"
+// in the language of msgs.
+func (msgs Messages) SettingsDockRight() string {
+	return Catalog.Format(msgs.locale, "settingsDockRight", nil)
+}
+
+// SettingsDockBottom says "Bottom"
+// in the language the app shows.
+func SettingsDockBottom() string { return In(i18n.Locale()).SettingsDockBottom() }
+
+// SettingsDockBottom says "Bottom"
+// in the language of msgs.
+func (msgs Messages) SettingsDockBottom() string {
+	return Catalog.Format(msgs.locale, "settingsDockBottom", nil)
+}
+
+// SettingsSFTPEditorTitle says "SFTP & Editor"
+// in the language the app shows.
+func SettingsSFTPEditorTitle() string { return In(i18n.Locale()).SettingsSFTPEditorTitle() }
+
+// SettingsSFTPEditorTitle says "SFTP & Editor"
+// in the language of msgs.
+func (msgs Messages) SettingsSFTPEditorTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSFTPEditorTitle", nil)
+}
+
+// SettingsSFTPEditorDescription says "File browser and editor defaults. The SFTP surface is not part of this build yet; these values persist for it."
+// in the language the app shows.
+func SettingsSFTPEditorDescription() string { return In(i18n.Locale()).SettingsSFTPEditorDescription() }
+
+// SettingsSFTPEditorDescription says "File browser and editor defaults. The SFTP surface is not part of this build yet; these values persist for it."
+// in the language of msgs.
+func (msgs Messages) SettingsSFTPEditorDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSFTPEditorDescription", nil)
+}
+
+// SettingsDoubleClickBehavior says "Double click a file"
+// in the language the app shows.
+func SettingsDoubleClickBehavior() string { return In(i18n.Locale()).SettingsDoubleClickBehavior() }
+
+// SettingsDoubleClickBehavior says "Double click a file"
+// in the language of msgs.
+func (msgs Messages) SettingsDoubleClickBehavior() string {
+	return Catalog.Format(msgs.locale, "settingsDoubleClickBehavior", nil)
+}
+
+// SettingsDoubleClickOpen says "Open it"
+// in the language the app shows.
+func SettingsDoubleClickOpen() string { return In(i18n.Locale()).SettingsDoubleClickOpen() }
+
+// SettingsDoubleClickOpen says "Open it"
+// in the language of msgs.
+func (msgs Messages) SettingsDoubleClickOpen() string {
+	return Catalog.Format(msgs.locale, "settingsDoubleClickOpen", nil)
+}
+
+// SettingsDoubleClickTransfer says "Transfer it"
+// in the language the app shows.
+func SettingsDoubleClickTransfer() string { return In(i18n.Locale()).SettingsDoubleClickTransfer() }
+
+// SettingsDoubleClickTransfer says "Transfer it"
+// in the language of msgs.
+func (msgs Messages) SettingsDoubleClickTransfer() string {
+	return Catalog.Format(msgs.locale, "settingsDoubleClickTransfer", nil)
+}
+
+// SettingsAutoSync says "Sync directories automatically"
+// in the language the app shows.
+func SettingsAutoSync() string { return In(i18n.Locale()).SettingsAutoSync() }
+
+// SettingsAutoSync says "Sync directories automatically"
+// in the language of msgs.
+func (msgs Messages) SettingsAutoSync() string {
+	return Catalog.Format(msgs.locale, "settingsAutoSync", nil)
+}
+
+// SettingsShowHiddenFiles says "Show hidden files"
+// in the language the app shows.
+func SettingsShowHiddenFiles() string { return In(i18n.Locale()).SettingsShowHiddenFiles() }
+
+// SettingsShowHiddenFiles says "Show hidden files"
+// in the language of msgs.
+func (msgs Messages) SettingsShowHiddenFiles() string {
+	return Catalog.Format(msgs.locale, "settingsShowHiddenFiles", nil)
+}
+
+// SettingsUseCompressedUpload says "Compress uploads"
+// in the language the app shows.
+func SettingsUseCompressedUpload() string { return In(i18n.Locale()).SettingsUseCompressedUpload() }
+
+// SettingsUseCompressedUpload says "Compress uploads"
+// in the language of msgs.
+func (msgs Messages) SettingsUseCompressedUpload() string {
+	return Catalog.Format(msgs.locale, "settingsUseCompressedUpload", nil)
+}
+
+// SettingsAutoOpenSidebar says "Open the side panel automatically"
+// in the language the app shows.
+func SettingsAutoOpenSidebar() string { return In(i18n.Locale()).SettingsAutoOpenSidebar() }
+
+// SettingsAutoOpenSidebar says "Open the side panel automatically"
+// in the language of msgs.
+func (msgs Messages) SettingsAutoOpenSidebar() string {
+	return Catalog.Format(msgs.locale, "settingsAutoOpenSidebar", nil)
+}
+
+// SettingsFollowTerminalCwd says "Follow the terminal directory"
+// in the language the app shows.
+func SettingsFollowTerminalCwd() string { return In(i18n.Locale()).SettingsFollowTerminalCwd() }
+
+// SettingsFollowTerminalCwd says "Follow the terminal directory"
+// in the language of msgs.
+func (msgs Messages) SettingsFollowTerminalCwd() string {
+	return Catalog.Format(msgs.locale, "settingsFollowTerminalCwd", nil)
+}
+
+// SettingsDefaultViewMode says "Default view"
+// in the language the app shows.
+func SettingsDefaultViewMode() string { return In(i18n.Locale()).SettingsDefaultViewMode() }
+
+// SettingsDefaultViewMode says "Default view"
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultViewMode() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultViewMode", nil)
+}
+
+// SettingsViewList says "List"
+// in the language the app shows.
+func SettingsViewList() string { return In(i18n.Locale()).SettingsViewList() }
+
+// SettingsViewList says "List"
+// in the language of msgs.
+func (msgs Messages) SettingsViewList() string {
+	return Catalog.Format(msgs.locale, "settingsViewList", nil)
+}
+
+// SettingsViewTree says "Tree"
+// in the language the app shows.
+func SettingsViewTree() string { return In(i18n.Locale()).SettingsViewTree() }
+
+// SettingsViewTree says "Tree"
+// in the language of msgs.
+func (msgs Messages) SettingsViewTree() string {
+	return Catalog.Format(msgs.locale, "settingsViewTree", nil)
+}
+
+// SettingsEditorWordWrap says "Wrap editor lines"
+// in the language the app shows.
+func SettingsEditorWordWrap() string { return In(i18n.Locale()).SettingsEditorWordWrap() }
+
+// SettingsEditorWordWrap says "Wrap editor lines"
+// in the language of msgs.
+func (msgs Messages) SettingsEditorWordWrap() string {
+	return Catalog.Format(msgs.locale, "settingsEditorWordWrap", nil)
+}
+
+// SettingsEditorFontSize says "Editor font size"
+// in the language the app shows.
+func SettingsEditorFontSize() string { return In(i18n.Locale()).SettingsEditorFontSize() }
+
+// SettingsEditorFontSize says "Editor font size"
+// in the language of msgs.
+func (msgs Messages) SettingsEditorFontSize() string {
+	return Catalog.Format(msgs.locale, "settingsEditorFontSize", nil)
+}
+
+// SettingsSFTPUnavailable says "SFTP is not available in this build."
+// in the language the app shows.
+func SettingsSFTPUnavailable() string { return In(i18n.Locale()).SettingsSFTPUnavailable() }
+
+// SettingsSFTPUnavailable says "SFTP is not available in this build."
+// in the language of msgs.
+func (msgs Messages) SettingsSFTPUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsSFTPUnavailable", nil)
+}
+
+// SettingsLogsTitle says "Logs"
+// in the language the app shows.
+func SettingsLogsTitle() string { return In(i18n.Locale()).SettingsLogsTitle() }
+
+// SettingsLogsTitle says "Logs"
+// in the language of msgs.
+func (msgs Messages) SettingsLogsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsLogsTitle", nil)
+}
+
+// SettingsLogsDescription says "Diagnostic logging controls."
+// in the language the app shows.
+func SettingsLogsDescription() string { return In(i18n.Locale()).SettingsLogsDescription() }
+
+// SettingsLogsDescription says "Diagnostic logging controls."
+// in the language of msgs.
+func (msgs Messages) SettingsLogsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsLogsDescription", nil)
+}
+
+// SettingsSSHDebug says "Enable SSH debug logs"
+// in the language the app shows.
+func SettingsSSHDebug() string { return In(i18n.Locale()).SettingsSSHDebug() }
+
+// SettingsSSHDebug says "Enable SSH debug logs"
+// in the language of msgs.
+func (msgs Messages) SettingsSSHDebug() string {
+	return Catalog.Format(msgs.locale, "settingsSSHDebug", nil)
+}
+
+// SettingsSyncTitle says "Sync & Cloud"
+// in the language the app shows.
+func SettingsSyncTitle() string { return In(i18n.Locale()).SettingsSyncTitle() }
+
+// SettingsSyncTitle says "Sync & Cloud"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncTitle", nil)
+}
+
+// SettingsSyncDescription says "Cloud sync preferences. No provider is available in this build; the values persist for a later one."
+// in the language the app shows.
+func SettingsSyncDescription() string { return In(i18n.Locale()).SettingsSyncDescription() }
+
+// SettingsSyncDescription says "Cloud sync preferences. No provider is available in this build; the values persist for a later one."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSyncDescription", nil)
+}
+
+// SettingsSyncEnabled says "Enable cloud sync"
+// in the language the app shows.
+func SettingsSyncEnabled() string { return In(i18n.Locale()).SettingsSyncEnabled() }
+
+// SettingsSyncEnabled says "Enable cloud sync"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncEnabled() string {
+	return Catalog.Format(msgs.locale, "settingsSyncEnabled", nil)
+}
+
+// SettingsSyncAutoSync says "Sync automatically"
+// in the language the app shows.
+func SettingsSyncAutoSync() string { return In(i18n.Locale()).SettingsSyncAutoSync() }
+
+// SettingsSyncAutoSync says "Sync automatically"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncAutoSync() string {
+	return Catalog.Format(msgs.locale, "settingsSyncAutoSync", nil)
+}
+
+// SettingsSyncConflictStrategy says "Conflict strategy"
+// in the language the app shows.
+func SettingsSyncConflictStrategy() string { return In(i18n.Locale()).SettingsSyncConflictStrategy() }
+
+// SettingsSyncConflictStrategy says "Conflict strategy"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictStrategy() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictStrategy", nil)
+}
+
+// SettingsSyncNewest says "Newest wins"
+// in the language the app shows.
+func SettingsSyncNewest() string { return In(i18n.Locale()).SettingsSyncNewest() }
+
+// SettingsSyncNewest says "Newest wins"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncNewest() string {
+	return Catalog.Format(msgs.locale, "settingsSyncNewest", nil)
+}
+
+// SettingsSyncLocal says "This device wins"
+// in the language the app shows.
+func SettingsSyncLocal() string { return In(i18n.Locale()).SettingsSyncLocal() }
+
+// SettingsSyncLocal says "This device wins"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncLocal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncLocal", nil)
+}
+
+// SettingsSyncRemote says "The remote wins"
+// in the language the app shows.
+func SettingsSyncRemote() string { return In(i18n.Locale()).SettingsSyncRemote() }
+
+// SettingsSyncRemote says "The remote wins"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncRemote() string {
+	return Catalog.Format(msgs.locale, "settingsSyncRemote", nil)
+}
+
+// SettingsSyncProvider says "Provider"
+// in the language the app shows.
+func SettingsSyncProvider() string { return In(i18n.Locale()).SettingsSyncProvider() }
+
+// SettingsSyncProvider says "Provider"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProvider() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProvider", nil)
+}
+
+// SettingsSyncUnavailable says "Cloud sync is not available in this build."
+// in the language the app shows.
+func SettingsSyncUnavailable() string { return In(i18n.Locale()).SettingsSyncUnavailable() }
+
+// SettingsSyncUnavailable says "Cloud sync is not available in this build."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsSyncUnavailable", nil)
+}
+
+// SettingsSecurityTitle says "Security"
+// in the language the app shows.
+func SettingsSecurityTitle() string { return In(i18n.Locale()).SettingsSecurityTitle() }
+
+// SettingsSecurityTitle says "Security"
+// in the language of msgs.
+func (msgs Messages) SettingsSecurityTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSecurityTitle", nil)
+}
+
+// SettingsSecurityDescription says "Close confirmations beside App Lock."
+// in the language the app shows.
+func SettingsSecurityDescription() string { return In(i18n.Locale()).SettingsSecurityDescription() }
+
+// SettingsSecurityDescription says "Close confirmations beside App Lock."
+// in the language of msgs.
+func (msgs Messages) SettingsSecurityDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSecurityDescription", nil)
+}
+
+// SettingsConfirmCloseSessions says "Confirm before closing sessions"
+// in the language the app shows.
+func SettingsConfirmCloseSessions() string { return In(i18n.Locale()).SettingsConfirmCloseSessions() }
+
+// SettingsConfirmCloseSessions says "Confirm before closing sessions"
+// in the language of msgs.
+func (msgs Messages) SettingsConfirmCloseSessions() string {
+	return Catalog.Format(msgs.locale, "settingsConfirmCloseSessions", nil)
+}
+
+// SettingsConfirmDestructive says "Confirm destructive Vault actions"
+// in the language the app shows.
+func SettingsConfirmDestructive() string { return In(i18n.Locale()).SettingsConfirmDestructive() }
+
+// SettingsConfirmDestructive says "Confirm destructive Vault actions"
+// in the language of msgs.
+func (msgs Messages) SettingsConfirmDestructive() string {
+	return Catalog.Format(msgs.locale, "settingsConfirmDestructive", nil)
+}
+
+// SettingsShortcutsTitle says "Shortcuts"
+// in the language the app shows.
+func SettingsShortcutsTitle() string { return In(i18n.Locale()).SettingsShortcutsTitle() }
+
+// SettingsShortcutsTitle says "Shortcuts"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutsTitle", nil)
+}
+
+// SettingsShortcutsDescription says "Choose a scheme, record a binding, and resolve conflicts before they apply."
+// in the language the app shows.
+func SettingsShortcutsDescription() string { return In(i18n.Locale()).SettingsShortcutsDescription() }
+
+// SettingsShortcutsDescription says "Choose a scheme, record a binding, and resolve conflicts before they apply."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutsDescription", nil)
+}
+
+// SettingsShortcutScheme says "Hotkey scheme"
+// in the language the app shows.
+func SettingsShortcutScheme() string { return In(i18n.Locale()).SettingsShortcutScheme() }
+
+// SettingsShortcutScheme says "Hotkey scheme"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutScheme() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutScheme", nil)
+}
+
+// SettingsShortcutSchemeDescription says "Choose which keyboard layout the catalog uses."
+// in the language the app shows.
+func SettingsShortcutSchemeDescription() string {
+	return In(i18n.Locale()).SettingsShortcutSchemeDescription()
+}
+
+// SettingsShortcutSchemeDescription says "Choose which keyboard layout the catalog uses."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutSchemeDescription() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutSchemeDescription", nil)
+}
+
+// SettingsSchemeDisabled says "Disabled"
+// in the language the app shows.
+func SettingsSchemeDisabled() string { return In(i18n.Locale()).SettingsSchemeDisabled() }
+
+// SettingsSchemeDisabled says "Disabled"
+// in the language of msgs.
+func (msgs Messages) SettingsSchemeDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsSchemeDisabled", nil)
+}
+
+// SettingsSchemeMac says "Mac (Command)"
+// in the language the app shows.
+func SettingsSchemeMac() string { return In(i18n.Locale()).SettingsSchemeMac() }
+
+// SettingsSchemeMac says "Mac (Command)"
+// in the language of msgs.
+func (msgs Messages) SettingsSchemeMac() string {
+	return Catalog.Format(msgs.locale, "settingsSchemeMac", nil)
+}
+
+// SettingsSchemePC says "PC (Ctrl)"
+// in the language the app shows.
+func SettingsSchemePC() string { return In(i18n.Locale()).SettingsSchemePC() }
+
+// SettingsSchemePC says "PC (Ctrl)"
+// in the language of msgs.
+func (msgs Messages) SettingsSchemePC() string {
+	return Catalog.Format(msgs.locale, "settingsSchemePC", nil)
+}
+
+// SettingsShortcutCategoryTabs says "Tabs"
+// in the language the app shows.
+func SettingsShortcutCategoryTabs() string { return In(i18n.Locale()).SettingsShortcutCategoryTabs() }
+
+// SettingsShortcutCategoryTabs says "Tabs"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutCategoryTabs() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutCategoryTabs", nil)
+}
+
+// SettingsShortcutCategoryTerminal says "Terminal"
+// in the language the app shows.
+func SettingsShortcutCategoryTerminal() string {
+	return In(i18n.Locale()).SettingsShortcutCategoryTerminal()
+}
+
+// SettingsShortcutCategoryTerminal says "Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutCategoryTerminal() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutCategoryTerminal", nil)
+}
+
+// SettingsShortcutCategoryNavigation says "Navigation"
+// in the language the app shows.
+func SettingsShortcutCategoryNavigation() string {
+	return In(i18n.Locale()).SettingsShortcutCategoryNavigation()
+}
+
+// SettingsShortcutCategoryNavigation says "Navigation"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutCategoryNavigation() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutCategoryNavigation", nil)
+}
+
+// SettingsShortcutCategoryApp says "App"
+// in the language the app shows.
+func SettingsShortcutCategoryApp() string { return In(i18n.Locale()).SettingsShortcutCategoryApp() }
+
+// SettingsShortcutCategoryApp says "App"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutCategoryApp() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutCategoryApp", nil)
+}
+
+// SettingsShortcutCategorySFTP says "SFTP"
+// in the language the app shows.
+func SettingsShortcutCategorySFTP() string { return In(i18n.Locale()).SettingsShortcutCategorySFTP() }
+
+// SettingsShortcutCategorySFTP says "SFTP"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutCategorySFTP() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutCategorySFTP", nil)
+}
+
+// SettingsShortcutResetAll says "Reset all shortcuts"
+// in the language the app shows.
+func SettingsShortcutResetAll() string { return In(i18n.Locale()).SettingsShortcutResetAll() }
+
+// SettingsShortcutResetAll says "Reset all shortcuts"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutResetAll() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutResetAll", nil)
+}
+
+// SettingsShortcutRecording says "Press keys…"
+// in the language the app shows.
+func SettingsShortcutRecording() string { return In(i18n.Locale()).SettingsShortcutRecording() }
+
+// SettingsShortcutRecording says "Press keys…"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutRecording() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutRecording", nil)
+}
+
+// SettingsShortcutNone says "Not set"
+// in the language the app shows.
+func SettingsShortcutNone() string { return In(i18n.Locale()).SettingsShortcutNone() }
+
+// SettingsShortcutNone says "Not set"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutNone() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutNone", nil)
+}
+
+// SettingsShortcutDisabled says "Disabled"
+// in the language the app shows.
+func SettingsShortcutDisabled() string { return In(i18n.Locale()).SettingsShortcutDisabled() }
+
+// SettingsShortcutDisabled says "Disabled"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutDisabled", nil)
+}
+
+// SettingsShortcutReset says "Reset"
+// in the language the app shows.
+func SettingsShortcutReset() string { return In(i18n.Locale()).SettingsShortcutReset() }
+
+// SettingsShortcutReset says "Reset"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutReset() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutReset", nil)
+}
+
+// SettingsShortcutUnavailable says "Not available in this build"
+// in the language the app shows.
+func SettingsShortcutUnavailable() string { return In(i18n.Locale()).SettingsShortcutUnavailable() }
+
+// SettingsShortcutUnavailable says "Not available in this build"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutUnavailable", nil)
+}
+
+// SettingsShortcutConflictTitle says "Shortcut already in use"
+// in the language the app shows.
+func SettingsShortcutConflictTitle() string { return In(i18n.Locale()).SettingsShortcutConflictTitle() }
+
+// SettingsShortcutConflictTitle says "Shortcut already in use"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictTitle() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictTitle", nil)
+}
+
+// SettingsShortcutConflictBody says "{chord} is already used by {names}."
+// in the language the app shows.
+func SettingsShortcutConflictBody(chord string, names string) string {
+	return In(i18n.Locale()).SettingsShortcutConflictBody(chord, names)
+}
+
+// SettingsShortcutConflictBody says "{chord} is already used by {names}."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictBody(chord string, names string) string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictBody", map[string]any{"chord": chord, "names": names})
+}
+
+// SettingsShortcutConflictMenu says "the application menu"
+// in the language the app shows.
+func SettingsShortcutConflictMenu() string { return In(i18n.Locale()).SettingsShortcutConflictMenu() }
+
+// SettingsShortcutConflictMenu says "the application menu"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictMenu() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictMenu", nil)
+}
+
+// SettingsShortcutConflictReplace says "Replace"
+// in the language the app shows.
+func SettingsShortcutConflictReplace() string {
+	return In(i18n.Locale()).SettingsShortcutConflictReplace()
+}
+
+// SettingsShortcutConflictReplace says "Replace"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictReplace() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictReplace", nil)
+}
+
+// SettingsShortcutConflictCancel says "Cancel"
+// in the language the app shows.
+func SettingsShortcutConflictCancel() string {
+	return In(i18n.Locale()).SettingsShortcutConflictCancel()
+}
+
+// SettingsShortcutConflictCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutConflictCancel() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutConflictCancel", nil)
+}
+
+// SettingsShortcutRecordHint says "Click a shortcut to record it; Backspace clears it; Esc cancels."
+// in the language the app shows.
+func SettingsShortcutRecordHint() string { return In(i18n.Locale()).SettingsShortcutRecordHint() }
+
+// SettingsShortcutRecordHint says "Click a shortcut to record it; Backspace clears it; Esc cancels."
+// in the language of msgs.
+func (msgs Messages) SettingsShortcutRecordHint() string {
+	return Catalog.Format(msgs.locale, "settingsShortcutRecordHint", nil)
+}
+
+// SettingsBindingSwitchTab1to9 says "Switch to Tab [1...9]"
+// in the language the app shows.
+func SettingsBindingSwitchTab1to9() string { return In(i18n.Locale()).SettingsBindingSwitchTab1to9() }
+
+// SettingsBindingSwitchTab1to9 says "Switch to Tab [1...9]"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSwitchTab1to9() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSwitchTab1to9", nil)
+}
+
+// SettingsBindingNextTab says "Next Tab"
+// in the language the app shows.
+func SettingsBindingNextTab() string { return In(i18n.Locale()).SettingsBindingNextTab() }
+
+// SettingsBindingNextTab says "Next Tab"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingNextTab() string {
+	return Catalog.Format(msgs.locale, "settingsBindingNextTab", nil)
+}
+
+// SettingsBindingPrevTab says "Previous Tab"
+// in the language the app shows.
+func SettingsBindingPrevTab() string { return In(i18n.Locale()).SettingsBindingPrevTab() }
+
+// SettingsBindingPrevTab says "Previous Tab"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingPrevTab() string {
+	return Catalog.Format(msgs.locale, "settingsBindingPrevTab", nil)
+}
+
+// SettingsBindingCloseTab says "Close Tab"
+// in the language the app shows.
+func SettingsBindingCloseTab() string { return In(i18n.Locale()).SettingsBindingCloseTab() }
+
+// SettingsBindingCloseTab says "Close Tab"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingCloseTab() string {
+	return Catalog.Format(msgs.locale, "settingsBindingCloseTab", nil)
+}
+
+// SettingsBindingCloseSession says "Close Session Pane"
+// in the language the app shows.
+func SettingsBindingCloseSession() string { return In(i18n.Locale()).SettingsBindingCloseSession() }
+
+// SettingsBindingCloseSession says "Close Session Pane"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingCloseSession() string {
+	return Catalog.Format(msgs.locale, "settingsBindingCloseSession", nil)
+}
+
+// SettingsBindingNewTab says "New Local Tab"
+// in the language the app shows.
+func SettingsBindingNewTab() string { return In(i18n.Locale()).SettingsBindingNewTab() }
+
+// SettingsBindingNewTab says "New Local Tab"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingNewTab() string {
+	return Catalog.Format(msgs.locale, "settingsBindingNewTab", nil)
+}
+
+// SettingsBindingCopy says "Copy from Terminal"
+// in the language the app shows.
+func SettingsBindingCopy() string { return In(i18n.Locale()).SettingsBindingCopy() }
+
+// SettingsBindingCopy says "Copy from Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingCopy() string {
+	return Catalog.Format(msgs.locale, "settingsBindingCopy", nil)
+}
+
+// SettingsBindingPaste says "Paste to Terminal"
+// in the language the app shows.
+func SettingsBindingPaste() string { return In(i18n.Locale()).SettingsBindingPaste() }
+
+// SettingsBindingPaste says "Paste to Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingPaste() string {
+	return Catalog.Format(msgs.locale, "settingsBindingPaste", nil)
+}
+
+// SettingsBindingPasteSelection says "Paste Selection to Terminal"
+// in the language the app shows.
+func SettingsBindingPasteSelection() string { return In(i18n.Locale()).SettingsBindingPasteSelection() }
+
+// SettingsBindingPasteSelection says "Paste Selection to Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingPasteSelection() string {
+	return Catalog.Format(msgs.locale, "settingsBindingPasteSelection", nil)
+}
+
+// SettingsBindingSelectAll says "Select All in Terminal"
+// in the language the app shows.
+func SettingsBindingSelectAll() string { return In(i18n.Locale()).SettingsBindingSelectAll() }
+
+// SettingsBindingSelectAll says "Select All in Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSelectAll() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSelectAll", nil)
+}
+
+// SettingsBindingClearBuffer says "Clear Terminal Buffer"
+// in the language the app shows.
+func SettingsBindingClearBuffer() string { return In(i18n.Locale()).SettingsBindingClearBuffer() }
+
+// SettingsBindingClearBuffer says "Clear Terminal Buffer"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingClearBuffer() string {
+	return Catalog.Format(msgs.locale, "settingsBindingClearBuffer", nil)
+}
+
+// SettingsBindingSearchTerminal says "Open Terminal Search"
+// in the language the app shows.
+func SettingsBindingSearchTerminal() string { return In(i18n.Locale()).SettingsBindingSearchTerminal() }
+
+// SettingsBindingSearchTerminal says "Open Terminal Search"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSearchTerminal() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSearchTerminal", nil)
+}
+
+// SettingsBindingIncreaseFont says "Increase Terminal Font Size"
+// in the language the app shows.
+func SettingsBindingIncreaseFont() string { return In(i18n.Locale()).SettingsBindingIncreaseFont() }
+
+// SettingsBindingIncreaseFont says "Increase Terminal Font Size"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingIncreaseFont() string {
+	return Catalog.Format(msgs.locale, "settingsBindingIncreaseFont", nil)
+}
+
+// SettingsBindingDecreaseFont says "Decrease Terminal Font Size"
+// in the language the app shows.
+func SettingsBindingDecreaseFont() string { return In(i18n.Locale()).SettingsBindingDecreaseFont() }
+
+// SettingsBindingDecreaseFont says "Decrease Terminal Font Size"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingDecreaseFont() string {
+	return Catalog.Format(msgs.locale, "settingsBindingDecreaseFont", nil)
+}
+
+// SettingsBindingResetFont says "Reset Terminal Font Size"
+// in the language the app shows.
+func SettingsBindingResetFont() string { return In(i18n.Locale()).SettingsBindingResetFont() }
+
+// SettingsBindingResetFont says "Reset Terminal Font Size"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingResetFont() string {
+	return Catalog.Format(msgs.locale, "settingsBindingResetFont", nil)
+}
+
+// SettingsBindingMoveFocus says "Move focus between Split View panes"
+// in the language the app shows.
+func SettingsBindingMoveFocus() string { return In(i18n.Locale()).SettingsBindingMoveFocus() }
+
+// SettingsBindingMoveFocus says "Move focus between Split View panes"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingMoveFocus() string {
+	return Catalog.Format(msgs.locale, "settingsBindingMoveFocus", nil)
+}
+
+// SettingsBindingSplitHorizontal says "Split Horizontal"
+// in the language the app shows.
+func SettingsBindingSplitHorizontal() string {
+	return In(i18n.Locale()).SettingsBindingSplitHorizontal()
+}
+
+// SettingsBindingSplitHorizontal says "Split Horizontal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSplitHorizontal() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSplitHorizontal", nil)
+}
+
+// SettingsBindingSplitVertical says "Split Vertical"
+// in the language the app shows.
+func SettingsBindingSplitVertical() string { return In(i18n.Locale()).SettingsBindingSplitVertical() }
+
+// SettingsBindingSplitVertical says "Split Vertical"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSplitVertical() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSplitVertical", nil)
+}
+
+// SettingsBindingTogglePaneZoom says "Toggle Pane Zoom"
+// in the language the app shows.
+func SettingsBindingTogglePaneZoom() string { return In(i18n.Locale()).SettingsBindingTogglePaneZoom() }
+
+// SettingsBindingTogglePaneZoom says "Toggle Pane Zoom"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingTogglePaneZoom() string {
+	return Catalog.Format(msgs.locale, "settingsBindingTogglePaneZoom", nil)
+}
+
+// SettingsBindingOpenHosts says "Open Hosts Page"
+// in the language the app shows.
+func SettingsBindingOpenHosts() string { return In(i18n.Locale()).SettingsBindingOpenHosts() }
+
+// SettingsBindingOpenHosts says "Open Hosts Page"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingOpenHosts() string {
+	return Catalog.Format(msgs.locale, "settingsBindingOpenHosts", nil)
+}
+
+// SettingsBindingOpenLocal says "Open Local Terminal"
+// in the language the app shows.
+func SettingsBindingOpenLocal() string { return In(i18n.Locale()).SettingsBindingOpenLocal() }
+
+// SettingsBindingOpenLocal says "Open Local Terminal"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingOpenLocal() string {
+	return Catalog.Format(msgs.locale, "settingsBindingOpenLocal", nil)
+}
+
+// SettingsBindingOpenSFTP says "Open SFTP"
+// in the language the app shows.
+func SettingsBindingOpenSFTP() string { return In(i18n.Locale()).SettingsBindingOpenSFTP() }
+
+// SettingsBindingOpenSFTP says "Open SFTP"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingOpenSFTP() string {
+	return Catalog.Format(msgs.locale, "settingsBindingOpenSFTP", nil)
+}
+
+// SettingsBindingPortForwarding says "Open Port Forwarding"
+// in the language the app shows.
+func SettingsBindingPortForwarding() string { return In(i18n.Locale()).SettingsBindingPortForwarding() }
+
+// SettingsBindingPortForwarding says "Open Port Forwarding"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingPortForwarding() string {
+	return Catalog.Format(msgs.locale, "settingsBindingPortForwarding", nil)
+}
+
+// SettingsBindingCommandPalette says "Open Command Palette"
+// in the language the app shows.
+func SettingsBindingCommandPalette() string { return In(i18n.Locale()).SettingsBindingCommandPalette() }
+
+// SettingsBindingCommandPalette says "Open Command Palette"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingCommandPalette() string {
+	return Catalog.Format(msgs.locale, "settingsBindingCommandPalette", nil)
+}
+
+// SettingsBindingQuickSwitch says "Quick Switch"
+// in the language the app shows.
+func SettingsBindingQuickSwitch() string { return In(i18n.Locale()).SettingsBindingQuickSwitch() }
+
+// SettingsBindingQuickSwitch says "Quick Switch"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingQuickSwitch() string {
+	return Catalog.Format(msgs.locale, "settingsBindingQuickSwitch", nil)
+}
+
+// SettingsBindingNewWorkspace says "New Workspace"
+// in the language the app shows.
+func SettingsBindingNewWorkspace() string { return In(i18n.Locale()).SettingsBindingNewWorkspace() }
+
+// SettingsBindingNewWorkspace says "New Workspace"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingNewWorkspace() string {
+	return Catalog.Format(msgs.locale, "settingsBindingNewWorkspace", nil)
+}
+
+// SettingsBindingSnippets says "Open Snippets"
+// in the language the app shows.
+func SettingsBindingSnippets() string { return In(i18n.Locale()).SettingsBindingSnippets() }
+
+// SettingsBindingSnippets says "Open Snippets"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSnippets() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSnippets", nil)
+}
+
+// SettingsBindingBroadcast says "Switch the Broadcast Mode"
+// in the language the app shows.
+func SettingsBindingBroadcast() string { return In(i18n.Locale()).SettingsBindingBroadcast() }
+
+// SettingsBindingBroadcast says "Switch the Broadcast Mode"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingBroadcast() string {
+	return Catalog.Format(msgs.locale, "settingsBindingBroadcast", nil)
+}
+
+// SettingsBindingToggleSidePanel says "Toggle Side Panel"
+// in the language the app shows.
+func SettingsBindingToggleSidePanel() string {
+	return In(i18n.Locale()).SettingsBindingToggleSidePanel()
+}
+
+// SettingsBindingToggleSidePanel says "Toggle Side Panel"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingToggleSidePanel() string {
+	return Catalog.Format(msgs.locale, "settingsBindingToggleSidePanel", nil)
+}
+
+// SettingsBindingOpenSettings says "Open Settings"
+// in the language the app shows.
+func SettingsBindingOpenSettings() string { return In(i18n.Locale()).SettingsBindingOpenSettings() }
+
+// SettingsBindingOpenSettings says "Open Settings"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingOpenSettings() string {
+	return Catalog.Format(msgs.locale, "settingsBindingOpenSettings", nil)
+}
+
+// SettingsBindingToggleOpacity says "Toggle Window Transparency"
+// in the language the app shows.
+func SettingsBindingToggleOpacity() string { return In(i18n.Locale()).SettingsBindingToggleOpacity() }
+
+// SettingsBindingToggleOpacity says "Toggle Window Transparency"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingToggleOpacity() string {
+	return Catalog.Format(msgs.locale, "settingsBindingToggleOpacity", nil)
+}
+
+// SettingsBindingSFTPCopy says "Copy Files"
+// in the language the app shows.
+func SettingsBindingSFTPCopy() string { return In(i18n.Locale()).SettingsBindingSFTPCopy() }
+
+// SettingsBindingSFTPCopy says "Copy Files"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPCopy() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPCopy", nil)
+}
+
+// SettingsBindingSFTPCut says "Cut Files"
+// in the language the app shows.
+func SettingsBindingSFTPCut() string { return In(i18n.Locale()).SettingsBindingSFTPCut() }
+
+// SettingsBindingSFTPCut says "Cut Files"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPCut() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPCut", nil)
+}
+
+// SettingsBindingSFTPPaste says "Paste Files"
+// in the language the app shows.
+func SettingsBindingSFTPPaste() string { return In(i18n.Locale()).SettingsBindingSFTPPaste() }
+
+// SettingsBindingSFTPPaste says "Paste Files"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPPaste() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPPaste", nil)
+}
+
+// SettingsBindingSFTPSelectAll says "Select All Files"
+// in the language the app shows.
+func SettingsBindingSFTPSelectAll() string { return In(i18n.Locale()).SettingsBindingSFTPSelectAll() }
+
+// SettingsBindingSFTPSelectAll says "Select All Files"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPSelectAll() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPSelectAll", nil)
+}
+
+// SettingsBindingSFTPRename says "Rename File"
+// in the language the app shows.
+func SettingsBindingSFTPRename() string { return In(i18n.Locale()).SettingsBindingSFTPRename() }
+
+// SettingsBindingSFTPRename says "Rename File"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPRename() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPRename", nil)
+}
+
+// SettingsBindingSFTPDelete says "Delete Files"
+// in the language the app shows.
+func SettingsBindingSFTPDelete() string { return In(i18n.Locale()).SettingsBindingSFTPDelete() }
+
+// SettingsBindingSFTPDelete says "Delete Files"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPDelete() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPDelete", nil)
+}
+
+// SettingsBindingSFTPRefresh says "Refresh"
+// in the language the app shows.
+func SettingsBindingSFTPRefresh() string { return In(i18n.Locale()).SettingsBindingSFTPRefresh() }
+
+// SettingsBindingSFTPRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPRefresh() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPRefresh", nil)
+}
+
+// SettingsBindingSFTPNewFolder says "New Folder"
+// in the language the app shows.
+func SettingsBindingSFTPNewFolder() string { return In(i18n.Locale()).SettingsBindingSFTPNewFolder() }
+
+// SettingsBindingSFTPNewFolder says "New Folder"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPNewFolder() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPNewFolder", nil)
+}
+
+// SettingsBindingSFTPOpen says "Open File / Enter Directory"
+// in the language the app shows.
+func SettingsBindingSFTPOpen() string { return In(i18n.Locale()).SettingsBindingSFTPOpen() }
+
+// SettingsBindingSFTPOpen says "Open File / Enter Directory"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPOpen() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPOpen", nil)
+}
+
+// SettingsBindingSFTPGoParent says "Go to Parent Directory"
+// in the language the app shows.
+func SettingsBindingSFTPGoParent() string { return In(i18n.Locale()).SettingsBindingSFTPGoParent() }
+
+// SettingsBindingSFTPGoParent says "Go to Parent Directory"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPGoParent() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPGoParent", nil)
+}
+
+// SettingsBindingSFTPNavigateTo says "Navigate to Selected Directory"
+// in the language the app shows.
+func SettingsBindingSFTPNavigateTo() string { return In(i18n.Locale()).SettingsBindingSFTPNavigateTo() }
+
+// SettingsBindingSFTPNavigateTo says "Navigate to Selected Directory"
+// in the language of msgs.
+func (msgs Messages) SettingsBindingSFTPNavigateTo() string {
+	return Catalog.Format(msgs.locale, "settingsBindingSFTPNavigateTo", nil)
+}
+
+// SettingsSystemAreaDescription says "Desktop integration: tray, global hotkey, startup, deep links, and notifications."
+// in the language the app shows.
+func SettingsSystemAreaDescription() string { return In(i18n.Locale()).SettingsSystemAreaDescription() }
+
+// SettingsSystemAreaDescription says "Desktop integration: tray, global hotkey, startup, deep links, and notifications."
+// in the language of msgs.
+func (msgs Messages) SettingsSystemAreaDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSystemAreaDescription", nil)
+}
