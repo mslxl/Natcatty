@@ -19,6 +19,7 @@ import (
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	"github.com/mslxl/natcatty/adapters/histfile"
 	"github.com/mslxl/natcatty/adapters/localpty"
+	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	"github.com/mslxl/natcatty/adapters/textcodec"
@@ -35,6 +36,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appthemes "github.com/mslxl/natcatty/application/themes"
+	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
@@ -55,6 +57,8 @@ import (
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	transferui "github.com/mslxl/natcatty/ui/transfer"
+	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
@@ -78,6 +82,7 @@ func run(afterReady func(hostWindow)) error {
 	var themesState *settings.ThemesState
 	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
+	var transferState *transferstate.State
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -373,6 +378,24 @@ func run(afterReady func(hostWindow)) error {
 	// preventing the app from starting.
 	routes := vaultRoutes{vault: vaultService}
 
+	// SFTP reuses the Vault's routes and the same connection manager as a
+	// terminal Session. The local pane and the global bookmark file belong to
+	// the same service, so both panes share one copy engine.
+	transferService := apptransfer.NewService(
+		adaptersftp.NewLocal(),
+		sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService},
+		apptransfer.WithHosts(sftpHostSource{vault: vaultService}),
+		apptransfer.WithBookmarks(adaptersftp.NewBookmarks(
+			filepath.Join(userData, "sftp-bookmarks.json"),
+			filepath.Join(userData, "sftp-local-bookmarks.json"),
+		)),
+	)
+	transferState = transferstate.NewState(
+		transferService,
+		transferstate.WithRedrawRequest(invalidate),
+		transferstate.WithKeybindings(keybindingService),
+	)
+
 	// Port Forwarding Rules reuse the same Vault routes and connection pool as
 	// a Session. Runtime state is owned by this manager and never persisted.
 	forwardingManager := appforwarding.NewManager(database, forwardingConnector{
@@ -631,6 +654,7 @@ func run(afterReady func(hostWindow)) error {
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithLogs(logsui.View(logsState)),
+		state.WithSFTP(transferui.View(transferState)),
 		state.WithSearch(overlayState),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
@@ -747,6 +771,7 @@ func run(afterReady func(hostWindow)) error {
 		service:   keybindingService,
 		shell:     shellState,
 		search:    overlayState,
+		transfer:  transferState,
 		focusMain: func() { windows.FocusMain() },
 		toggleOpacity: func() {
 			current := preferenceService.Settings().Appearance.WindowOpacity
@@ -785,6 +810,7 @@ func run(afterReady func(hostWindow)) error {
 		shellState.Persist()
 		closeForwarding(forwardingManager, forwardingState)
 		desktopCtl.Shutdown()
+		transferState.Shutdown()
 		shellState.Shutdown()
 		shellState.CloseAllSessions()
 		sessions.CloseAll()
