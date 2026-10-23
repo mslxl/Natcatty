@@ -20,14 +20,29 @@ import (
 type Remote struct {
 	client  *sftp.Client
 	release func(error) error
+	backing string
 	mu      sync.Mutex
 	closed  bool
+}
+
+// RemoteOption customizes a Remote.
+type RemoteOption func(*Remote)
+
+// WithBacking names the Host connection behind the filesystem. Two remote
+// Tabs over the same Host share it; different Hosts never do, even when
+// their paths are identical.
+func WithBacking(backing string) RemoteOption {
+	return func(r *Remote) {
+		if backing != "" {
+			r.backing = backing
+		}
+	}
 }
 
 // NewRemote wraps an open SFTP subsystem stream. release is called exactly
 // once from Close with the client's close error; the app connector uses it to
 // release or discard the Connection lease.
-func NewRemote(stream io.ReadWriteCloser, release func(error) error) (*Remote, error) {
+func NewRemote(stream io.ReadWriteCloser, release func(error) error, options ...RemoteOption) (*Remote, error) {
 	client, err := sftp.NewClientPipe(stream, stream,
 		sftp.MaxPacket(32*1024),
 		sftp.MaxConcurrentRequestsPerFile(64),
@@ -41,7 +56,11 @@ func NewRemote(stream io.ReadWriteCloser, release func(error) error) (*Remote, e
 		}
 		return nil, err
 	}
-	return &Remote{client: client, release: release}, nil
+	remote := &Remote{client: client, release: release}
+	for _, option := range options {
+		option(remote)
+	}
+	return remote, nil
 }
 
 var _ apptransfer.FileSystem = (*Remote)(nil)
@@ -202,6 +221,19 @@ func (r *Remote) Base(p string) string { return path.Base(p) }
 
 // Style reports POSIX notation.
 func (r *Remote) Style() apptransfer.PathStyle { return apptransfer.StylePOSIX }
+
+// Backing identifies the Host connection behind this filesystem.
+func (r *Remote) Backing() string { return r.backing }
+
+// Canonical cleans a remote path. A remote connection has one POSIX root, so
+// resolved symlinks are the server's concern; the same connection's tabs
+// compare their cleaned absolute paths.
+func (r *Remote) Canonical(p string) string {
+	if p == "" {
+		return ""
+	}
+	return path.Clean(p)
+}
 
 // Close closes the protocol client and then the SSH lease. It is safe to
 // call more than once.

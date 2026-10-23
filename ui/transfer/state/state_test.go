@@ -120,12 +120,22 @@ func (d *fakeDisk) permission(file string) (uint32, bool) {
 }
 
 type fakeFS struct {
-	disk *fakeDisk
-	root string
+	disk    *fakeDisk
+	root    string
+	backing string
 
 	mu     sync.Mutex
 	closed bool
 }
+
+func (f *fakeFS) Backing() string {
+	if f.backing != "" {
+		return f.backing
+	}
+	return "fake"
+}
+
+func (f *fakeFS) Canonical(file string) string { return path.Clean(file) }
 
 func (f *fakeFS) Root(context.Context) (string, error) { return f.root, nil }
 
@@ -344,10 +354,11 @@ func (w *fakeWriter) Close() error {
 // opener hands out handles over one disk and remembers them so a test can
 // assert that closing a Tab closes its transport.
 type opener struct {
-	disk   *fakeDisk
-	root   string
-	remote bool
-	err    error
+	disk    *fakeDisk
+	root    string
+	remote  bool
+	backing string
+	err     error
 
 	mu      sync.Mutex
 	handles []*fakeFS
@@ -357,7 +368,15 @@ func (o *opener) open() (apptransfer.FileSystem, error) {
 	if o.err != nil {
 		return nil, o.err
 	}
-	handle := &fakeFS{disk: o.disk, root: o.root}
+	backing := o.backing
+	if backing == "" {
+		if o.remote {
+			backing = "remote"
+		} else {
+			backing = "local"
+		}
+	}
+	handle := &fakeFS{disk: o.disk, root: o.root, backing: backing}
 	o.mu.Lock()
 	o.handles = append(o.handles, handle)
 	o.mu.Unlock()
@@ -466,8 +485,8 @@ func newFixtureWithBookmarks(t *testing.T, seed, localSeed []domainsftp.Bookmark
 
 	remoteDisk := newFakeDisk()
 
-	localOp := &opener{disk: localDisk, root: "/home/me"}
-	remoteOp := &opener{disk: remoteDisk, root: "/", remote: true}
+	localOp := &opener{disk: localDisk, root: "/home/me", backing: "local"}
+	remoteOp := &opener{disk: remoteDisk, root: "/", remote: true, backing: "remote:h1"}
 	bookmarks := &memoryBookmarks{items: seed, local: localSeed}
 
 	service := apptransfer.NewService(localOp, remoteOp,
@@ -780,6 +799,222 @@ func TestCopyIntoItsOwnSubtreeIsRefused(t *testing.T) {
 	}
 	if f.local.has("/home/me/folder/folder") {
 		t.Fatal("the copy created a folder inside itself")
+	}
+}
+
+func TestCopyBetweenLocalTabsIntoSourceSubtreeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	// The retester's scenario: a second local Tab starts at the same root and
+	// enters the folder that the first Tab is about to copy.
+	f.state.OpenLocal(Right)
+	f.waitLoaded(t, Right)
+	f.state.Navigate(Right, "/home/me/folder")
+	settle(t, f.state, "the second local Tab to enter the folder", func() bool {
+		return f.state.Tab(Right).Path == "/home/me/folder" && !f.state.Tab(Right).Loading
+	})
+
+	selectOne(t, f.state, Left, "folder")
+	f.state.Transfer(Left)
+	f.state.Flush()
+
+	if got := f.state.Notice(); got != "copy-into-self" {
+		t.Fatalf("cross-Tab copy notice = %q, want copy-into-self", got)
+	}
+	if f.state.Busy() {
+		t.Fatal("the refused copy still started an operation")
+	}
+	if f.local.has("/home/me/folder/folder") {
+		t.Fatal("the refused copy created a folder inside its source")
+	}
+	if got, ok := f.local.read("/home/me/folder/inside.txt"); !ok || got != "inside" {
+		t.Fatalf("the refused copy changed the source file: %q, %v", got, ok)
+	}
+}
+
+// hostOpener gives each Host its own tree, so two remote Tabs can sit at the
+// same path on different servers.
+type hostOpener struct {
+	local *fakeDisk
+	hosts map[model.HostID]*fakeDisk
+}
+
+func (o *hostOpener) OpenLocal(context.Context) (apptransfer.FileSystem, error) {
+	return &fakeFS{disk: o.local, root: "/home", backing: "local"}, nil
+}
+
+func (o *hostOpener) OpenRemote(_ context.Context, host model.HostID, _ string) (apptransfer.FileSystem, error) {
+	return &fakeFS{disk: o.hosts[host], root: "/", backing: "remote:" + string(host)}, nil
+}
+
+func TestCopyBetweenDifferentHostsAtTheSamePathIsAllowed(t *testing.T) {
+	local := newFakeDisk()
+	local.mkdirs("/home")
+	source := newFakeDisk()
+	source.mkdirs("/srv")
+	source.put("/srv/inside.txt", "inside", 0o644)
+	dest := newFakeDisk()
+	dest.mkdirs("/srv")
+
+	service := apptransfer.NewService(
+		&hostOpener{local: local, hosts: map[model.HostID]*fakeDisk{"h1": source, "h2": dest}},
+		&hostOpener{local: local, hosts: map[model.HostID]*fakeDisk{"h1": source, "h2": dest}},
+	)
+	state := NewState(service)
+	t.Cleanup(state.Shutdown)
+	state.EnsureStarted()
+	settle(t, state, "the local listing", func() bool {
+		tab := state.Tab(Left)
+		return tab != nil && tab.FS != nil && !tab.Loading
+	})
+	state.OpenRemote(Left, "h1", "One")
+	state.OpenRemote(Right, "h2", "Two")
+	settle(t, state, "both remote listings", func() bool {
+		left, right := state.Tab(Left), state.Tab(Right)
+		return left != nil && right != nil && left.FS != nil && right.FS != nil &&
+			!left.Loading && !right.Loading && left.Path == "/" && right.Path == "/"
+	})
+	state.Navigate(Right, "/srv")
+	settle(t, state, "the destination Host to enter /srv", func() bool {
+		tab := state.Tab(Right)
+		return tab.Path == "/srv" && !tab.Loading
+	})
+
+	selectOne(t, state, Left, "srv")
+	state.Transfer(Left)
+	waitIdle(t, state)
+	if got := state.Notice(); got == "copy-into-self" {
+		t.Fatal("copies between different Hosts were mistaken for a self-copy")
+	}
+	if got, ok := dest.read("/srv/srv/inside.txt"); !ok || got != "inside" {
+		t.Fatalf("cross-Host copy wrote %q, %v", got, ok)
+	}
+}
+
+func TestCopyBetweenTwoTabsOnOneHostIntoItsSubtreeIsRefused(t *testing.T) {
+	local := newFakeDisk()
+	local.mkdirs("/home")
+	source := newFakeDisk()
+	source.mkdirs("/srv", "/srv/folder")
+	source.put("/srv/folder/inside.txt", "inside", 0o644)
+	opener := func() *hostOpener {
+		return &hostOpener{local: local, hosts: map[model.HostID]*fakeDisk{"h1": source}}
+	}
+
+	service := apptransfer.NewService(opener(), opener())
+	state := NewState(service)
+	t.Cleanup(state.Shutdown)
+	state.EnsureStarted()
+	settle(t, state, "the local listing", func() bool {
+		tab := state.Tab(Left)
+		return tab != nil && tab.FS != nil && !tab.Loading
+	})
+	// Two separate connections to one Host address the same tree.
+	state.OpenRemote(Left, "h1", "One")
+	settle(t, state, "the first remote listing", func() bool {
+		tab := state.Tab(Left)
+		return tab != nil && tab.FS != nil && !tab.Loading && tab.Path == "/" && len(tab.Visible()) > 0
+	})
+	state.OpenRemote(Right, "h1", "One again")
+	settle(t, state, "the second remote listing", func() bool {
+		tab := state.Tab(Right)
+		return tab != nil && tab.FS != nil && !tab.Loading && tab.Path == "/" && len(tab.Visible()) > 0
+	})
+	state.Navigate(Right, "/srv/folder")
+	settle(t, state, "the second connection to enter /srv/folder", func() bool {
+		tab := state.Tab(Right)
+		return tab.Path == "/srv/folder" && !tab.Loading
+	})
+
+	selectOne(t, state, Left, "srv")
+	state.Transfer(Left)
+	state.Flush()
+	if got := state.Notice(); got != "copy-into-self" {
+		t.Fatalf("same-Host copy notice = %q, want copy-into-self", got)
+	}
+	if state.Busy() {
+		t.Fatal("the refused copy still started an operation")
+	}
+	if source.has("/srv/folder/srv") {
+		t.Fatal("the refused copy created a folder inside its source")
+	}
+	if got, ok := source.read("/srv/folder/inside.txt"); !ok || got != "inside" {
+		t.Fatalf("the refused copy changed the source file: %q, %v", got, ok)
+	}
+}
+
+func secondLocalAt(t *testing.T, f *fixture, path string) {
+	t.Helper()
+	f.state.OpenLocal(Right)
+	f.waitLoaded(t, Right)
+	f.state.Navigate(Right, path)
+	settle(t, f.state, "the second local Tab to enter "+path, func() bool {
+		tab := f.state.Tab(Right)
+		return tab.Path == path && !tab.Loading
+	})
+}
+
+func TestCrossTabPasteIntoSourceSubtreeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	secondLocalAt(t, f, "/home/me/folder")
+	selectOne(t, f.state, Left, "folder")
+	f.state.CopySelection(Left)
+	f.state.Paste(Right)
+	f.state.Flush()
+
+	if got := f.state.Notice(); got != "copy-into-self" {
+		t.Fatalf("cross-Tab paste notice = %q", got)
+	}
+	if f.local.has("/home/me/folder/folder") {
+		t.Fatal("the refused paste created a folder inside its source")
+	}
+}
+
+func TestCrossTabMoveIntoSourceSubtreeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	secondLocalAt(t, f, "/home/me/folder")
+	selectOne(t, f.state, Left, "folder")
+	f.state.MoveToOther(Left)
+	f.state.Flush()
+
+	if got := f.state.Notice(); got != "copy-into-self" {
+		t.Fatalf("cross-Tab move notice = %q", got)
+	}
+	if !f.local.has("/home/me/folder") || f.local.has("/home/me/folder/folder") {
+		t.Fatal("the refused move changed the source tree")
+	}
+}
+
+func TestCrossTabDragIntoSourceSubtreeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	secondLocalAt(t, f, "/home/me/folder")
+	selectOne(t, f.state, Left, "folder")
+	payload := f.state.BeginDrag(Left)
+	if payload == nil {
+		t.Fatal("the folder did not produce a drag payload")
+	}
+	f.state.DropPane(Right, "/home/me/folder", payload)
+	f.state.Flush()
+
+	if got := f.state.Notice(); got != "copy-into-self" {
+		t.Fatalf("cross-Tab drag notice = %q", got)
+	}
+	if f.local.has("/home/me/folder/folder") {
+		t.Fatal("the refused drag created a folder inside its source")
+	}
+}
+
+func TestDroppedOSFolderIntoItsSubtreeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	secondLocalAt(t, f, "/home/me/folder")
+	f.state.DropFiles(Right, "/home/me/folder", []string{"/home/me/folder"})
+	settle(t, f.state, "the refused OS drop", func() bool {
+		return f.state.Notice() == "copy-into-self"
+	})
+	if f.state.Busy() {
+		t.Fatal("the refused OS drop left an operation running")
+	}
+	if f.local.has("/home/me/folder/folder") {
+		t.Fatal("the refused OS drop created a folder inside its source")
 	}
 }
 

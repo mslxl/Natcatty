@@ -1727,6 +1727,7 @@
   "sftpSelected": "Выбрано: {count}",
   "sftpItemCount": "{count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элементов}}",
   "sftpProgress": "{current} · {percent}%",
+  "sftpProgressDone": "{current} · завершено",
   "sftpErrorExists": "Элемент с таким именем уже существует.",
   "sftpErrorNotFound": "Элемент больше не существует.",
   "sftpErrorPermission": "Доступ запрещён.",

@@ -1727,6 +1727,7 @@
   "sftpSelected": "{count} seleccionados",
   "sftpItemCount": "{count, plural, one {# elemento} many {# elementos} other {# elementos}}",
   "sftpProgress": "{current} · {percent} %",
+  "sftpProgressDone": "{current} · completado",
   "sftpErrorExists": "Ya existe un elemento con ese nombre.",
   "sftpErrorNotFound": "El elemento ya no existe.",
   "sftpErrorPermission": "Permiso denegado.",
