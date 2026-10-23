@@ -26,7 +26,10 @@ type TabSummary struct {
 	Detached bool
 	Number   int
 	Label    string
-	Status   TabStatus
+	// Copy counts duplicate generations, as Tab.Copy does. A summary names the
+	// Tab the way the tab strip does, copy suffix included.
+	Copy   int
+	Status TabStatus
 }
 
 // TabSummaries returns the tray's Tab entries in Workspace order, followed by
@@ -49,6 +52,7 @@ func summaryFor(tab *Tab, index int, detached bool) TabSummary {
 		Detached: detached,
 		Number:   tab.TitleNumber,
 		Label:    tab.Label,
+		Copy:     tab.Copy,
 		Status:   aggregateStatus(tab),
 	}
 }

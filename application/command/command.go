@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -81,4 +82,17 @@ func (r *Registry) Has(id ID) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.handlers[id]
 	return ok
+}
+
+// IDs returns every registered command ID in lexical order. A command surface
+// lists these and renders the ones the application has presentation for.
+func (r *Registry) IDs() []ID {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]ID, 0, len(r.handlers))
+	for id := range r.handlers {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
