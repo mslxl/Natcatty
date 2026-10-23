@@ -9810,6 +9810,478 @@ func (msgs Messages) SettingsThemeDark() string {
 	return Catalog.Format(msgs.locale, "settingsThemeDark", nil)
 }
 
+// SettingsLightTheme says "Light theme"
+// in the language the app shows.
+func SettingsLightTheme() string { return In(i18n.Locale()).SettingsLightTheme() }
+
+// SettingsLightTheme says "Light theme"
+// in the language of msgs.
+func (msgs Messages) SettingsLightTheme() string {
+	return Catalog.Format(msgs.locale, "settingsLightTheme", nil)
+}
+
+// SettingsDarkTheme says "Dark theme"
+// in the language the app shows.
+func SettingsDarkTheme() string { return In(i18n.Locale()).SettingsDarkTheme() }
+
+// SettingsDarkTheme says "Dark theme"
+// in the language of msgs.
+func (msgs Messages) SettingsDarkTheme() string {
+	return Catalog.Format(msgs.locale, "settingsDarkTheme", nil)
+}
+
+// SettingsThemeCount says "{count, plural, one {# theme} other {# themes}}"
+// in the language the app shows.
+func SettingsThemeCount(count int) string { return In(i18n.Locale()).SettingsThemeCount(count) }
+
+// SettingsThemeCount says "{count, plural, one {# theme} other {# themes}}"
+// in the language of msgs.
+func (msgs Messages) SettingsThemeCount(count int) string {
+	return Catalog.Format(msgs.locale, "settingsThemeCount", map[string]any{"count": count})
+}
+
+// SettingsAccentPresets says "Accent presets"
+// in the language the app shows.
+func SettingsAccentPresets() string { return In(i18n.Locale()).SettingsAccentPresets() }
+
+// SettingsAccentPresets says "Accent presets"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentPresets() string {
+	return Catalog.Format(msgs.locale, "settingsAccentPresets", nil)
+}
+
+// SettingsWindowOpacityValue says "{value}%"
+// in the language the app shows.
+func SettingsWindowOpacityValue(value string) string {
+	return In(i18n.Locale()).SettingsWindowOpacityValue(value)
+}
+
+// SettingsWindowOpacityValue says "{value}%"
+// in the language of msgs.
+func (msgs Messages) SettingsWindowOpacityValue(value string) string {
+	return Catalog.Format(msgs.locale, "settingsWindowOpacityValue", map[string]any{"value": value})
+}
+
+// SettingsAppIcon says "App icon"
+// in the language the app shows.
+func SettingsAppIcon() string { return In(i18n.Locale()).SettingsAppIcon() }
+
+// SettingsAppIcon says "App icon"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIcon() string {
+	return Catalog.Format(msgs.locale, "settingsAppIcon", nil)
+}
+
+// SettingsAppIconGroupClassic says "Classic"
+// in the language the app shows.
+func SettingsAppIconGroupClassic() string { return In(i18n.Locale()).SettingsAppIconGroupClassic() }
+
+// SettingsAppIconGroupClassic says "Classic"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconGroupClassic() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconGroupClassic", nil)
+}
+
+// SettingsAppIconGroupWhite says "White on color"
+// in the language the app shows.
+func SettingsAppIconGroupWhite() string { return In(i18n.Locale()).SettingsAppIconGroupWhite() }
+
+// SettingsAppIconGroupWhite says "White on color"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconGroupWhite() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconGroupWhite", nil)
+}
+
+// SettingsAppIconGroupSpecial says "Special"
+// in the language the app shows.
+func SettingsAppIconGroupSpecial() string { return In(i18n.Locale()).SettingsAppIconGroupSpecial() }
+
+// SettingsAppIconGroupSpecial says "Special"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconGroupSpecial() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconGroupSpecial", nil)
+}
+
+// SettingsAppIconOriginal says "Original"
+// in the language the app shows.
+func SettingsAppIconOriginal() string { return In(i18n.Locale()).SettingsAppIconOriginal() }
+
+// SettingsAppIconOriginal says "Original"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconOriginal() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconOriginal", nil)
+}
+
+// SettingsAppIconBright says "Bright"
+// in the language the app shows.
+func SettingsAppIconBright() string { return In(i18n.Locale()).SettingsAppIconBright() }
+
+// SettingsAppIconBright says "Bright"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconBright() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconBright", nil)
+}
+
+// SettingsAppIconDark says "Dark"
+// in the language the app shows.
+func SettingsAppIconDark() string { return In(i18n.Locale()).SettingsAppIconDark() }
+
+// SettingsAppIconDark says "Dark"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconDark() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconDark", nil)
+}
+
+// SettingsAppIconColorful says "Colorful"
+// in the language the app shows.
+func SettingsAppIconColorful() string { return In(i18n.Locale()).SettingsAppIconColorful() }
+
+// SettingsAppIconColorful says "Colorful"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconColorful() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconColorful", nil)
+}
+
+// SettingsAppIconHighContrast says "High contrast"
+// in the language the app shows.
+func SettingsAppIconHighContrast() string { return In(i18n.Locale()).SettingsAppIconHighContrast() }
+
+// SettingsAppIconHighContrast says "High contrast"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconHighContrast() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconHighContrast", nil)
+}
+
+// SettingsAppIconWhiteNavy says "White on navy"
+// in the language the app shows.
+func SettingsAppIconWhiteNavy() string { return In(i18n.Locale()).SettingsAppIconWhiteNavy() }
+
+// SettingsAppIconWhiteNavy says "White on navy"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteNavy() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteNavy", nil)
+}
+
+// SettingsAppIconWhiteSky says "White on sky"
+// in the language the app shows.
+func SettingsAppIconWhiteSky() string { return In(i18n.Locale()).SettingsAppIconWhiteSky() }
+
+// SettingsAppIconWhiteSky says "White on sky"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteSky() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteSky", nil)
+}
+
+// SettingsAppIconWhiteRose says "White on rose"
+// in the language the app shows.
+func SettingsAppIconWhiteRose() string { return In(i18n.Locale()).SettingsAppIconWhiteRose() }
+
+// SettingsAppIconWhiteRose says "White on rose"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteRose() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteRose", nil)
+}
+
+// SettingsAppIconWhiteEmerald says "White on emerald"
+// in the language the app shows.
+func SettingsAppIconWhiteEmerald() string { return In(i18n.Locale()).SettingsAppIconWhiteEmerald() }
+
+// SettingsAppIconWhiteEmerald says "White on emerald"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteEmerald() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteEmerald", nil)
+}
+
+// SettingsAppIconWhiteAmber says "White on amber"
+// in the language the app shows.
+func SettingsAppIconWhiteAmber() string { return In(i18n.Locale()).SettingsAppIconWhiteAmber() }
+
+// SettingsAppIconWhiteAmber says "White on amber"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteAmber() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteAmber", nil)
+}
+
+// SettingsAppIconWhiteViolet says "White on violet"
+// in the language the app shows.
+func SettingsAppIconWhiteViolet() string { return In(i18n.Locale()).SettingsAppIconWhiteViolet() }
+
+// SettingsAppIconWhiteViolet says "White on violet"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconWhiteViolet() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconWhiteViolet", nil)
+}
+
+// SettingsAppIconRainbow says "Rainbow"
+// in the language the app shows.
+func SettingsAppIconRainbow() string { return In(i18n.Locale()).SettingsAppIconRainbow() }
+
+// SettingsAppIconRainbow says "Rainbow"
+// in the language of msgs.
+func (msgs Messages) SettingsAppIconRainbow() string {
+	return Catalog.Format(msgs.locale, "settingsAppIconRainbow", nil)
+}
+
+// SettingsTerminalThemeFilter says "Filter schemes"
+// in the language the app shows.
+func SettingsTerminalThemeFilter() string { return In(i18n.Locale()).SettingsTerminalThemeFilter() }
+
+// SettingsTerminalThemeFilter says "Filter schemes"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeFilter() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeFilter", nil)
+}
+
+// SettingsTerminalThemeImport says "Import iTerm2 scheme…"
+// in the language the app shows.
+func SettingsTerminalThemeImport() string { return In(i18n.Locale()).SettingsTerminalThemeImport() }
+
+// SettingsTerminalThemeImport says "Import iTerm2 scheme…"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeImport() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeImport", nil)
+}
+
+// SettingsTerminalThemeImportFilter says "iTerm2 color schemes"
+// in the language the app shows.
+func SettingsTerminalThemeImportFilter() string {
+	return In(i18n.Locale()).SettingsTerminalThemeImportFilter()
+}
+
+// SettingsTerminalThemeImportFilter says "iTerm2 color schemes"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeImportFilter() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeImportFilter", nil)
+}
+
+// SettingsTerminalThemeImported says "Imported “{name}” and applied it."
+// in the language the app shows.
+func SettingsTerminalThemeImported(name string) string {
+	return In(i18n.Locale()).SettingsTerminalThemeImported(name)
+}
+
+// SettingsTerminalThemeImported says "Imported “{name}” and applied it."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeImported(name string) string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeImported", map[string]any{"name": name})
+}
+
+// SettingsTerminalThemeImportInvalid says "That file is not a valid iTerm2 color scheme."
+// in the language the app shows.
+func SettingsTerminalThemeImportInvalid() string {
+	return In(i18n.Locale()).SettingsTerminalThemeImportInvalid()
+}
+
+// SettingsTerminalThemeImportInvalid says "That file is not a valid iTerm2 color scheme."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeImportInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeImportInvalid", nil)
+}
+
+// SettingsTerminalThemeImportFailed says "The color scheme could not be imported."
+// in the language the app shows.
+func SettingsTerminalThemeImportFailed() string {
+	return In(i18n.Locale()).SettingsTerminalThemeImportFailed()
+}
+
+// SettingsTerminalThemeImportFailed says "The color scheme could not be imported."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeImportFailed() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeImportFailed", nil)
+}
+
+// SettingsTerminalThemeNoResults says "No schemes match “{query}”."
+// in the language the app shows.
+func SettingsTerminalThemeNoResults(query string) string {
+	return In(i18n.Locale()).SettingsTerminalThemeNoResults(query)
+}
+
+// SettingsTerminalThemeNoResults says "No schemes match “{query}”."
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalThemeNoResults(query string) string {
+	return Catalog.Format(msgs.locale, "settingsTerminalThemeNoResults", map[string]any{"query": query})
+}
+
+// SettingsAccentSky says "Sky"
+// in the language the app shows.
+func SettingsAccentSky() string { return In(i18n.Locale()).SettingsAccentSky() }
+
+// SettingsAccentSky says "Sky"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentSky() string {
+	return Catalog.Format(msgs.locale, "settingsAccentSky", nil)
+}
+
+// SettingsAccentBlue says "Blue"
+// in the language the app shows.
+func SettingsAccentBlue() string { return In(i18n.Locale()).SettingsAccentBlue() }
+
+// SettingsAccentBlue says "Blue"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentBlue() string {
+	return Catalog.Format(msgs.locale, "settingsAccentBlue", nil)
+}
+
+// SettingsAccentIndigo says "Indigo"
+// in the language the app shows.
+func SettingsAccentIndigo() string { return In(i18n.Locale()).SettingsAccentIndigo() }
+
+// SettingsAccentIndigo says "Indigo"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentIndigo() string {
+	return Catalog.Format(msgs.locale, "settingsAccentIndigo", nil)
+}
+
+// SettingsAccentViolet says "Violet"
+// in the language the app shows.
+func SettingsAccentViolet() string { return In(i18n.Locale()).SettingsAccentViolet() }
+
+// SettingsAccentViolet says "Violet"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentViolet() string {
+	return Catalog.Format(msgs.locale, "settingsAccentViolet", nil)
+}
+
+// SettingsAccentPurple says "Purple"
+// in the language the app shows.
+func SettingsAccentPurple() string { return In(i18n.Locale()).SettingsAccentPurple() }
+
+// SettingsAccentPurple says "Purple"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentPurple() string {
+	return Catalog.Format(msgs.locale, "settingsAccentPurple", nil)
+}
+
+// SettingsAccentFuchsia says "Fuchsia"
+// in the language the app shows.
+func SettingsAccentFuchsia() string { return In(i18n.Locale()).SettingsAccentFuchsia() }
+
+// SettingsAccentFuchsia says "Fuchsia"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentFuchsia() string {
+	return Catalog.Format(msgs.locale, "settingsAccentFuchsia", nil)
+}
+
+// SettingsAccentPink says "Pink"
+// in the language the app shows.
+func SettingsAccentPink() string { return In(i18n.Locale()).SettingsAccentPink() }
+
+// SettingsAccentPink says "Pink"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentPink() string {
+	return Catalog.Format(msgs.locale, "settingsAccentPink", nil)
+}
+
+// SettingsAccentRose says "Rose"
+// in the language the app shows.
+func SettingsAccentRose() string { return In(i18n.Locale()).SettingsAccentRose() }
+
+// SettingsAccentRose says "Rose"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentRose() string {
+	return Catalog.Format(msgs.locale, "settingsAccentRose", nil)
+}
+
+// SettingsAccentRed says "Red"
+// in the language the app shows.
+func SettingsAccentRed() string { return In(i18n.Locale()).SettingsAccentRed() }
+
+// SettingsAccentRed says "Red"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentRed() string {
+	return Catalog.Format(msgs.locale, "settingsAccentRed", nil)
+}
+
+// SettingsAccentOrange says "Orange"
+// in the language the app shows.
+func SettingsAccentOrange() string { return In(i18n.Locale()).SettingsAccentOrange() }
+
+// SettingsAccentOrange says "Orange"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentOrange() string {
+	return Catalog.Format(msgs.locale, "settingsAccentOrange", nil)
+}
+
+// SettingsAccentAmber says "Amber"
+// in the language the app shows.
+func SettingsAccentAmber() string { return In(i18n.Locale()).SettingsAccentAmber() }
+
+// SettingsAccentAmber says "Amber"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentAmber() string {
+	return Catalog.Format(msgs.locale, "settingsAccentAmber", nil)
+}
+
+// SettingsAccentYellow says "Yellow"
+// in the language the app shows.
+func SettingsAccentYellow() string { return In(i18n.Locale()).SettingsAccentYellow() }
+
+// SettingsAccentYellow says "Yellow"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentYellow() string {
+	return Catalog.Format(msgs.locale, "settingsAccentYellow", nil)
+}
+
+// SettingsAccentLime says "Lime"
+// in the language the app shows.
+func SettingsAccentLime() string { return In(i18n.Locale()).SettingsAccentLime() }
+
+// SettingsAccentLime says "Lime"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentLime() string {
+	return Catalog.Format(msgs.locale, "settingsAccentLime", nil)
+}
+
+// SettingsAccentGreen says "Green"
+// in the language the app shows.
+func SettingsAccentGreen() string { return In(i18n.Locale()).SettingsAccentGreen() }
+
+// SettingsAccentGreen says "Green"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentGreen() string {
+	return Catalog.Format(msgs.locale, "settingsAccentGreen", nil)
+}
+
+// SettingsAccentEmerald says "Emerald"
+// in the language the app shows.
+func SettingsAccentEmerald() string { return In(i18n.Locale()).SettingsAccentEmerald() }
+
+// SettingsAccentEmerald says "Emerald"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentEmerald() string {
+	return Catalog.Format(msgs.locale, "settingsAccentEmerald", nil)
+}
+
+// SettingsAccentTeal says "Teal"
+// in the language the app shows.
+func SettingsAccentTeal() string { return In(i18n.Locale()).SettingsAccentTeal() }
+
+// SettingsAccentTeal says "Teal"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentTeal() string {
+	return Catalog.Format(msgs.locale, "settingsAccentTeal", nil)
+}
+
+// SettingsAccentCyan says "Cyan"
+// in the language the app shows.
+func SettingsAccentCyan() string { return In(i18n.Locale()).SettingsAccentCyan() }
+
+// SettingsAccentCyan says "Cyan"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentCyan() string {
+	return Catalog.Format(msgs.locale, "settingsAccentCyan", nil)
+}
+
+// SettingsAccentSlate says "Slate"
+// in the language the app shows.
+func SettingsAccentSlate() string { return In(i18n.Locale()).SettingsAccentSlate() }
+
+// SettingsAccentSlate says "Slate"
+// in the language of msgs.
+func (msgs Messages) SettingsAccentSlate() string {
+	return Catalog.Format(msgs.locale, "settingsAccentSlate", nil)
+}
+
 // SettingsAccentMode says "Use a custom accent"
 // in the language the app shows.
 func SettingsAccentMode() string { return In(i18n.Locale()).SettingsAccentMode() }
@@ -9878,16 +10350,6 @@ func SettingsTerminalFontSize() string { return In(i18n.Locale()).SettingsTermin
 // in the language of msgs.
 func (msgs Messages) SettingsTerminalFontSize() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalFontSize", nil)
-}
-
-// SettingsThemePending says "The theme catalog arrives with a later ticket; this preference is stored and resets now."
-// in the language the app shows.
-func SettingsThemePending() string { return In(i18n.Locale()).SettingsThemePending() }
-
-// SettingsThemePending says "The theme catalog arrives with a later ticket; this preference is stored and resets now."
-// in the language of msgs.
-func (msgs Messages) SettingsThemePending() string {
-	return Catalog.Format(msgs.locale, "settingsThemePending", nil)
 }
 
 // SettingsLayoutTitle says "Layout & Tabs"

@@ -16,6 +16,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -51,6 +52,13 @@ type SurfaceFactory func(*appsession.Session) (Surface, error)
 // terminal font to open Sessions.
 type TerminalFontSetter interface {
 	SetTerminalFont(family string, size float32)
+}
+
+// TerminalThemeSetter is implemented by a Surface whose terminal can recolor
+// without being recreated. The Settings window uses it to apply a color scheme
+// to open Sessions.
+type TerminalThemeSetter interface {
+	SetTerminalTheme(preset domaintheme.TerminalTheme)
 }
 
 // HostResolver looks a Host up for restore and for reopening a split. It

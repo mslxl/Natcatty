@@ -311,10 +311,15 @@ func (b *selftest14TrayBackend) Create(options mygo.TrayOptions) (traySurface, e
 type selftest14Tray struct {
 	menu    *mygo.Menu
 	tooltip string
+	icon    []byte
 }
 
-func (t *selftest14Tray) SetMenu(menu *mygo.Menu)    { t.menu = menu }
-func (t *selftest14Tray) SetToolTip(tooltip string)  { t.tooltip = tooltip }
+func (t *selftest14Tray) SetMenu(menu *mygo.Menu)   { t.menu = menu }
+func (t *selftest14Tray) SetToolTip(tooltip string) { t.tooltip = tooltip }
+func (t *selftest14Tray) SetIcon(png []byte, template bool) error {
+	t.icon = append([]byte(nil), png...)
+	return nil
+}
 func (t *selftest14Tray) Destroy()                   {}
 func (t *selftest14Tray) OnClick(func()) func()      { return func() {} }
 func (t *selftest14Tray) OnRightClick(func()) func() { return func() {} }

@@ -119,13 +119,18 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	}
 
 	add(AreaAppearance, domain.FieldThemeMode, m.SettingsThemeMode(), "theme mode light dark system")
+	add(AreaAppearance, domain.FieldLightTheme, m.SettingsLightTheme(), "light theme preset palette")
+	add(AreaAppearance, domain.FieldDarkTheme, m.SettingsDarkTheme(), "dark theme preset palette")
 	add(AreaAppearance, domain.FieldAccentMode, m.SettingsAccentMode(), "accent color custom")
 	add(AreaAppearance, domain.FieldAccentColor, m.SettingsAccentColor(), "accent color hsl")
 	add(AreaAppearance, domain.FieldUIFont, m.SettingsUIFont(), "font interface")
 	add(AreaAppearance, domain.FieldWindowOpacity, m.SettingsWindowOpacity(), "opacity transparency")
-	add(AreaAppearance, domain.FieldTerminalTheme, m.SettingsTerminalTheme(), "terminal theme")
+	add(AreaAppearance, domain.FieldAppIcon, m.SettingsAppIcon(), "icon app dock taskbar tray")
+	add(AreaAppearance, domain.FieldTerminalTheme, m.SettingsTerminalTheme(), "terminal theme scheme palette")
 	add(AreaAppearance, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), "terminal font family")
 	add(AreaAppearance, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), "terminal font size")
+	add(AreaAppearance, "", m.SettingsTerminalThemeImport(), "import iterm itermcolors scheme")
+	add(AreaAppearance, "", m.SettingsTerminalThemeFilter(), "filter search scheme")
 
 	add(AreaLayout, domain.FieldShowHostTreeSidebar, m.SettingsShowHostTreeSidebar(), "host sidebar tree")
 	add(AreaLayout, domain.FieldShowSFTPTab, m.SettingsShowSFTPTab(), "sftp tab")

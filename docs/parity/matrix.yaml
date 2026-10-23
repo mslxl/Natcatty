@@ -1291,6 +1291,34 @@
   status: verified
   notes: "The original defaults are preserved: protection is off, the threshold is 2 lines (range 1..1000), CRLF and CR normalize to LF, and one trailing newline is not an extra line. With protection on, every terminal paste path (Ctrl+Shift+V, the native menu, and the Session menu) is consumed by the gate, and a banner shows the line count, character count, and a bounded preview. Send delivers the exact stored text once through the terminal's bracketed paste; Cancel sends no bytes. A newer paste replaces the waiting one, and the old text is never sent. With protection off, the same text is delivered immediately."
 
+- id: terminal.color-schemes
+  area: terminal
+  feature: Built-in terminal color schemes and iTerm2 .itermcolors import apply to live terminals
+  original_paths:
+    - infrastructure/config/terminalThemes.ts
+    - infrastructure/parsers/itermcolorsParser.ts
+    - application/state/customThemeStore.ts
+    - components/terminal/CustomThemeModal.tsx
+    - components/terminal/ThemeSidePanel.tsx
+  module: application/themes
+  tickets: [28]
+  acceptance_tests:
+    - domain/model/theme.TestParseITermcolorsDefaultsAndIntegers
+    - domain/model/theme.TestParseITermcolorsRejectsInvalidFiles
+    - application/themes.TestLoadCombinesCatalogAndSanitizesTheStore
+    - application/themes.TestImportPersistsOnlyAfterParsingAndPublishesOnce
+    - application/themes.TestImportFailureChangesNothing
+    - adapters/store.TestThemesStoreRoundTripsAndToleratesBadFiles
+    - adapters/store.TestImportedThemeSurvivesRestart
+    - ui/theme.TestTerminalMapping
+    - ui/settings.TestThemesStateFiltersAndImports
+    - ui/settings.TestThemesStateImportFailuresDoNotSelect
+    - ui/session.TestTerminalThemeOptionMapsTheSelectedScheme
+    - ui/shell/state.TestTerminalAppearanceReachesOpenSurfaces
+    - app.TestTicket28CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The 184 visible built-in schemes and 14 hidden UI-matched schemes are compiled from the original catalogs; the domain parser also reproduces the original's defaults for missing ANSI colors, cursor, and selection. The preference stores only a scheme ID, so themes.json keeps the imported documents and a restart finds them again. An import is parsed, validated, saved atomically, and only then published; a malformed file, a save failure, or a failing selection leaves both the catalog and the selected scheme unchanged. A successful import is selected immediately and the App applies it to every open terminal and observer without recreating a Session; a new terminal reads the same scheme at construction. Differences from the Electron renderer: the terminal scheme has no bold color, so the file's Bold Color is ignored, and imported schemes are listed in the same picker as the built-ins."
+
 - id: settings.terminal-interaction
   area: settings
   feature: Settings for terminal encoding, multiline paste protection, and dropped-file action
@@ -1363,7 +1391,35 @@
     - ui/settings.TestResetAllAsksBeforeRestoringEverything
     - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
-  notes: "Every typed group is saved atomically in preferences.json before it is published, so the window never shows a value the app is not using. A field reset restores only that field; a group and the all-at-once reset use a localized confirmation. Window opacity, terminal font, close confirmation, and startup landing are applied without a restart. The theme catalog is ticket 28; the typed setting and its live surface exist here."
+  notes: "Every typed group is saved atomically in preferences.json before it is published, so the window never shows a value the app is not using. A field reset restores only that field; a group and the all-at-once reset use a localized confirmation. Window opacity, terminal font, close confirmation, and startup landing are applied without a restart. The theme catalog, accent, icon, and terminal-scheme picker are ticket 28."
+
+- id: settings.appearance-themes
+  area: settings
+  feature: Built-in UI themes, accent, app icon, and opacity apply across every surface and persist
+  original_paths:
+    - components/settings/tabs/SettingsAppearanceTab.tsx
+    - application/state/useThemeRuntime.ts
+    - application/app/useAppThemeStyle.ts
+    - infrastructure/config/uiThemes.ts
+    - infrastructure/config/appIconVariants.ts
+    - domain/appIconVariant.ts
+  module: ui/settings
+  tickets: [28]
+  acceptance_tests:
+    - domain/model/theme.TestCatalogsMatchTheOriginalCounts
+    - domain/model/theme.TestCatalogIDsAreUniqueAndEveryTokenParses
+    - domain/preferences.TestDefaultsMatchTheOriginal
+    - domain/preferences.TestAppearanceThemeFieldsResetIndependently
+    - adapters/store.TestAppearanceSelectionSurvivesRestart
+    - ui/theme.TestUIMapsPresetTokens
+    - ui/theme.TestUICustomAccentAndContrast
+    - ui/settings.TestAppearanceAreaRendersAndDrivesTheCatalog
+    - app.TestResolveUIThemeFollowsModePresetAndAccent
+    - app.TestIconVariantsDecodeAndTrayIconIsSmall
+    - app.TestWindowManagerAppliesThemeAndIconToOpenAndFutureWindows
+    - app.TestTicket28CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
 
 - id: keyboard.catalog-schemes
   area: shell

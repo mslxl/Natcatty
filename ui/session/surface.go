@@ -18,8 +18,10 @@ import (
 
 	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // Options configure a Surface. The app supplies logging defaults from Settings
@@ -61,6 +63,10 @@ type Options struct {
 	// Font reads the live terminal font. The app applies a Settings change to
 	// open terminals through SetTerminalFont; this is what a new terminal uses.
 	Font func() terminal.Font
+	// Theme reads the live terminal color scheme. The app applies a Settings
+	// change to open terminals through SetTerminalTheme; a new terminal reads
+	// it here.
+	Theme func() domaintheme.TerminalTheme
 	// Keybinds reads the active application bindings that act inside the
 	// terminal. MyGo applies them at construction, and an unbound default chord
 	// is cleared so a Settings override is authoritative for new Sessions.
@@ -173,6 +179,12 @@ func WithSessionStats(show func() bool) Option {
 // WithTerminalFont supplies the live terminal font a new terminal uses.
 func WithTerminalFont(fn func() terminal.Font) Option {
 	return func(options *Options) { options.Font = fn }
+}
+
+// WithTerminalTheme supplies the live terminal color scheme a new terminal
+// uses.
+func WithTerminalTheme(fn func() domaintheme.TerminalTheme) Option {
+	return func(options *Options) { options.Theme = fn }
 }
 
 // WithTerminalKeybinds supplies the active bindings that act inside the
@@ -289,6 +301,7 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	options := terminal.Options{
 		Conn:             conn,
 		Font:             s.terminalFont(),
+		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
 		NoClipboardWrite: false,
 		ClipboardRead:    terminal.ClipboardAsk,
@@ -330,6 +343,17 @@ func (s *Surface) terminalFont() terminal.Font {
 	return s.options.Font()
 }
 
+func (s *Surface) terminalTheme() *terminal.Theme {
+	if s.options.Theme == nil {
+		return nil
+	}
+	preset := s.options.Theme()
+	if preset.ID == "" {
+		return nil
+	}
+	return uitheme.Terminal(preset)
+}
+
 func (s *Surface) terminalKeybinds() []terminal.Keybind {
 	if s.options.Keybinds == nil {
 		return nil
@@ -346,6 +370,18 @@ func (s *Surface) SetTerminalFont(family string, size float32) {
 	}
 	if s.observer != nil {
 		s.observer.SetFont(font)
+	}
+}
+
+// SetTerminalTheme recolors a live terminal and its observer without
+// recreating the Session.
+func (s *Surface) SetTerminalTheme(preset domaintheme.TerminalTheme) {
+	theme := uitheme.Terminal(preset)
+	if s.terminal != nil {
+		s.terminal.SetTheme(theme, nil)
+	}
+	if s.observer != nil {
+		s.observer.SetTheme(theme, nil)
 	}
 }
 
@@ -720,6 +756,7 @@ func (s *Surface) OpenObserver() error {
 	term, err := terminal.New(terminal.Options{
 		Conn:             observation,
 		Font:             s.terminalFont(),
+		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
 		NoClipboardWrite: true,
 		ClipboardRead:    terminal.ClipboardDeny,

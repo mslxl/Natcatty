@@ -104,11 +104,16 @@ func (n *testNotifier) Notify(notification appdesktop.Notification) error {
 type fakeTraySurface struct {
 	menu    *mygo.Menu
 	tooltip string
+	icon    []byte
 	alive   bool
 }
 
-func (t *fakeTraySurface) SetMenu(menu *mygo.Menu)    { t.menu = menu }
-func (t *fakeTraySurface) SetToolTip(tooltip string)  { t.tooltip = tooltip }
+func (t *fakeTraySurface) SetMenu(menu *mygo.Menu)   { t.menu = menu }
+func (t *fakeTraySurface) SetToolTip(tooltip string) { t.tooltip = tooltip }
+func (t *fakeTraySurface) SetIcon(png []byte, template bool) error {
+	t.icon = append([]byte(nil), png...)
+	return nil
+}
 func (t *fakeTraySurface) Destroy()                   { t.alive = false }
 func (t *fakeTraySurface) OnClick(func()) func()      { return func() {} }
 func (t *fakeTraySurface) OnRightClick(func()) func() { return func() {} }
@@ -118,7 +123,12 @@ type fakeTrayBackend struct {
 }
 
 func (b *fakeTrayBackend) Create(options mygo.TrayOptions) (traySurface, error) {
-	surface := &fakeTraySurface{alive: true, menu: options.Menu, tooltip: options.ToolTip}
+	surface := &fakeTraySurface{
+		alive:   true,
+		menu:    options.Menu,
+		tooltip: options.ToolTip,
+		icon:    append([]byte(nil), options.Icon...),
+	}
 	b.surfaces = append(b.surfaces, surface)
 	return surface, nil
 }
@@ -154,6 +164,27 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 	controller.MarkReady()
 	t.Cleanup(func() { controller.Shutdown() })
 	return controller, graph, backend, repository, hotkeys, notifier, opener
+}
+
+// TestTrayIconProviderReachesTheLiveTray proves an icon change recolors the
+// notification-area icon without recreating the tray.
+func TestTrayIconProviderReachesTheLiveTray(t *testing.T) {
+	controller, _, backend, _, _, _, _ := newDesktopTestController(t)
+	if len(backend.surfaces) != 1 {
+		t.Fatalf("tray surfaces = %d, want 1", len(backend.surfaces))
+	}
+	tray := backend.surfaces[0]
+	if len(tray.icon) == 0 {
+		t.Fatal("the tray started without an icon")
+	}
+	controller.SetIconProvider(func() []byte { return []byte("rainbow") })
+	if string(tray.icon) != "rainbow" {
+		t.Fatalf("tray icon = %q after the first change", tray.icon)
+	}
+	controller.SetIconProvider(func() []byte { return []byte("white-rose") })
+	if string(tray.icon) != "white-rose" {
+		t.Fatalf("tray icon = %q after the second change", tray.icon)
+	}
 }
 
 func trayMenuLabels(menu *mygo.Menu) []string {

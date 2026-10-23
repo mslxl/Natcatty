@@ -30,6 +30,7 @@ type fakeWindow struct {
 	invalidations int
 	title         string
 	opacity       float64
+	icon          []byte
 }
 
 func (w *fakeWindow) Show() { w.shown = true }
@@ -60,6 +61,10 @@ func (w *fakeWindow) SetTitle(title string) {
 	w.title = title
 }
 func (w *fakeWindow) SetOpacity(value float64) { w.opacity = value }
+func (w *fakeWindow) SetIcon(png []byte) error {
+	w.icon = append([]byte(nil), png...)
+	return nil
+}
 
 type fakeWindowHost struct {
 	windows []*fakeWindow
