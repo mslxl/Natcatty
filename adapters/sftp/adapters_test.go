@@ -39,8 +39,16 @@ func TestLocalCanonicalResolvesSymlinks(t *testing.T) {
 		t.Skipf("symlinks are unavailable: %v", err)
 	}
 	files := newLocalFS(t)
-	if got, want := files.Canonical(filepath.Join(link, ".", "child")), filepath.Join(target, "child"); got != want {
+	want, err := filepath.EvalSymlinks(filepath.Join(target, "child"))
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	got := files.Canonical(filepath.Join(link, ".", "child"))
+	if got != want {
 		t.Fatalf("Canonical(%q) = %q, want %q", link, got, want)
+	}
+	if unresolved := filepath.Join(link, "child"); got == unresolved {
+		t.Fatalf("Canonical(%q) = %q, did not follow the symlink", link, got)
 	}
 	if files.Backing() == "" {
 		t.Fatal("a local filesystem has no backing identity")
