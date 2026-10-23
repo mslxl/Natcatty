@@ -186,7 +186,10 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 }
 
 func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
+	// Wrap, so the title keeps one line and every action stays inside the
+	// content column at the 720x480 minimum: the actions move to the next
+	// line instead of being squeezed or clipped at the right edge.
+	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
 		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.VaultImportTitle()).Clicked() {
@@ -244,7 +247,9 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	importOutcomeBanner(c, s, m, t)
 	exportOutcomeBanner(c, s, m, t)
 
-	ui.Scroll(c).Grow(1).TrackScroll(scroll).Children(func() {
+	// Reserve the overlay scroll bar's gutter so a row's last action does not
+	// run under it, as the Settings viewport does.
+	ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll).Children(func() {
 		hostSections(c, s, m, t)
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)
@@ -256,6 +261,18 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 			uiforwarding.Section(c, forwarding)
 		}
 	})
+}
+
+// scrollbarGutter is the width of the overlay scroll bar's track for theme t:
+// the thumb (t.ScrollbarWidth DIPs, 6 when unset) plus the 6 DIPs it is inset
+// and padded by in MyGo's scrollBars geometry. Reserving it keeps a viewport's
+// rows and fields from running under the bar.
+func scrollbarGutter(t *ui.Theme) float32 {
+	width := t.ScrollbarWidth
+	if width <= 0 {
+		width = 6
+	}
+	return width + 6
 }
 
 // hostGroupSection is one Host Group, or one group path a Host references

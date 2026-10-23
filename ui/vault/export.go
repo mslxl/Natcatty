@@ -89,7 +89,7 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		ui.Text(c, problemText(m, issue)).TextColor(t.Danger)
 	}
 
-	gutter := importScrollbarGutter(t)
+	gutter := scrollbarGutter(t)
 	scrollBox := ui.Scroll(c).Grow(1).FillWidth().PaddingEnd(gutter).TrackScroll(scroll)
 	scrollBox.Children(func() {
 		ui.Text(c, m.VaultExportIntro()).FontSize(12).TextColor(t.TextMuted)
