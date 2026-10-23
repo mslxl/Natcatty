@@ -960,6 +960,23 @@ type ForwardingClient interface {
 // test fake or a vendor client without direct-tcpip support.
 var ErrForwardingUnavailable = errors.New("connection: forwarding unavailable")
 
+// Subsystem is an open SSH subsystem channel. Its bytes are the subsystem's
+// protocol; the caller owns the framing. Closing it closes the channel.
+type Subsystem interface {
+	io.ReadWriteCloser
+}
+
+// SubsystemClient is the named-subsystem capability of an authenticated
+// transport. The SFTP adapter opens "sftp" and hands the stream to its
+// protocol library; the connection layer never parses it.
+type SubsystemClient interface {
+	OpenSubsystem(ctx context.Context, name string) (Subsystem, error)
+}
+
+// ErrSubsystemUnavailable reports a transport that cannot open a named
+// subsystem, such as a test fake or a server with subsystem requests disabled.
+var ErrSubsystemUnavailable = errors.New("connection: subsystem unavailable")
+
 // ErrBindConflict reports a forwarding listener the SSH Host refused to bind.
 // It is permanent: retrying the same address cannot succeed.
 var ErrBindConflict = errors.New("connection: forwarding bind conflict")
@@ -1016,6 +1033,38 @@ func (l *Lease) Forwarding() (ForwardingClient, error) {
 		return nil, unsupportedError(ErrForwardingUnavailable)
 	}
 	return forwarding, nil
+}
+
+// Subsystem opens a named subsystem channel on the leased Connection. A
+// released lease, a closed Connection, and a transport without subsystem
+// support fail closed. The caller closes the returned channel; the lease
+// keeps the underlying transport alive until then.
+func (l *Lease) Subsystem(ctx context.Context, name string) (Subsystem, error) {
+	if l == nil {
+		return nil, ErrClosed
+	}
+	l.mu.Lock()
+	released := l.released
+	l.mu.Unlock()
+	if released || l.conn == nil {
+		return nil, ErrClosed
+	}
+	l.conn.mu.Lock()
+	client := l.conn.client
+	closed := l.conn.closed
+	l.conn.mu.Unlock()
+	if closed || client == nil {
+		return nil, ErrClosed
+	}
+	subsystem, ok := client.(SubsystemClient)
+	if !ok {
+		return nil, unsupportedError(ErrSubsystemUnavailable)
+	}
+	stream, err := subsystem.OpenSubsystem(ctx, name)
+	if err != nil {
+		return nil, classifyDialError(err)
+	}
+	return stream, nil
 }
 
 // OpenTerminal opens an interactive shell channel on the leased Connection.

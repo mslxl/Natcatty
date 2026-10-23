@@ -56,19 +56,12 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Width(sidebarWidth).FillHeight().Padding(shellPadding).Gap(8).Background(t.Surface).Children(func() {
 		ui.Text(c, m.AppName()).FontSize(20).Bold()
 
-		// Vault is the main window's root surface. SFTP joins it in a later
-		// ticket.
-		if ui.PrimaryButton(c.Key("nav-vault"), m.NavVault()).Width(200).Clicked() {
-			s.ShowVault()
-		}
-
-		if ui.Button(c.Key("nav-logs"), m.NavLogs()).Width(200).Clicked() {
-			s.ShowLogs()
-		}
-
-		if ui.Button(c.Key("nav-settings"), m.NavSettings()).Width(200).Clicked() {
-			s.RequestSettings()
-		}
+		// The root surfaces are peers: the active one is drawn as the primary
+		// button, so a user always sees where they are.
+		navButton(c, "nav-vault", m.NavVault(), s.VaultVisible(), s.ShowVault)
+		navButton(c, "nav-sftp", m.NavSftp(), s.SFTPVisible(), s.ShowSFTP)
+		navButton(c, "nav-logs", m.NavLogs(), s.LogsVisible(), s.ShowLogs)
+		navButton(c, "nav-settings", m.NavSettings(), false, s.RequestSettings)
 
 		ui.Column(c).Grow(1)
 
@@ -84,6 +77,22 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			c.Invalidate()
 		}
 	})
+}
+
+// navButton renders one sidebar surface entry. The active surface is the
+// primary button; Settings is a window rather than a surface, so it is never
+// active here.
+func navButton(c *ui.Context, key, label string, active bool, show func()) {
+	var button ui.Element
+	if active {
+		button = ui.PrimaryButton(c, label)
+	} else {
+		button = ui.Button(c, label)
+	}
+	button.Key(key).Width(200)
+	if button.Clicked() {
+		show()
+	}
 }
 
 func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
@@ -123,6 +132,14 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 				return
 			}
 			ui.Text(c, m.NavLogs()).FontSize(24).Bold()
+			return
+		}
+		if s.SFTPVisible() {
+			if view := s.SFTPView(); view != nil {
+				view(c)
+				return
+			}
+			ui.Text(c, m.NavSftp()).FontSize(24).Bold()
 			return
 		}
 		if s.TabCount() > 0 {

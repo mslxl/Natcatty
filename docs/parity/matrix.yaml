@@ -2499,3 +2499,200 @@
   tickets: [59]
   status: excluded
   notes: "Windows arm64 is unsupported because mosh and ET binaries are unavailable for the target."
+
+- id: sftp.dual-panes
+  area: sftp-transfer
+  feature: Local and remote panes browse independently
+  original_paths:
+    - application/state/sftp/sftpDualPaneOpenStore.ts
+    - application/state/sftp/sftpFocusStore.ts
+    - components/SftpView.tsx
+    - components/sftp/SftpPaneFileList.tsx
+  module: ui/transfer
+  tickets: [30]
+  acceptance_tests:
+    - ui/transfer/state.TestPanesBrowseIndependently
+    - ui/transfer.TestDualPanesFitAtBothWindowSizes
+  status: verified
+  notes: "Each pane keeps its own path, listing, selection, sort, hidden-file setting, and history."
+
+- id: sftp.pane-tabs
+  area: sftp-transfer
+  feature: Pane Tabs open, duplicate, switch, and close with their own browsing state
+  original_paths:
+    - application/state/sftp/browseSessionLifecycle.ts
+    - components/sftp/SftpPaneToolbar.tsx
+  module: ui/transfer
+  tickets: [30]
+  acceptance_tests:
+    - ui/transfer/state.TestTabsKeepTheirOwnLocationAndSelection
+    - ui/transfer/state.TestDuplicateOfALoadingRemoteTabOpensItsRoot
+    - ui/transfer.TestTabsBookmarksAndStarControls
+    - ui/transfer/state.TestShortcutsToggleFocus
+  status: verified
+  notes: "Closing a Tab closes its transport; a duplicated Tab opens its own transport at the copied location, or at its root when the source was still loading."
+
+- id: sftp.bookmarks
+  area: sftp-transfer
+  feature: Pane-local and persisted global bookmarks
+  original_paths:
+    - application/state/sftp/bookmarkHelpers.ts
+    - application/state/sftp/globalSftpBookmarks.ts
+    - application/state/sftp/localSftpBookmarks.ts
+  module: adapters/sftp
+  tickets: [30]
+  acceptance_tests:
+    - adapters/sftp.TestBookmarksRoundTrip
+    - adapters/sftp.TestLocalBookmarksRoundTripSeparately
+    - adapters/sftp.TestBookmarksMissingFileIsEmpty
+    - adapters/sftp.TestBookmarksMalformedFileIsReported
+    - ui/transfer/state.TestBookmarksStayPerPaneAndPersistGlobals
+    - ui/transfer/state.TestGlobalBookmarksLoadOnStart
+    - ui/transfer/state.TestLocalBookmarksLoadOnStart
+    - ui/transfer.TestBookmarksMenuListsAndRemoves
+  status: verified
+  notes: "Local-pane and remote bookmark lists persist in separate atomic JSON files; a malformed file is reported instead of discarded."
+
+- id: sftp.listing-order-hidden
+  area: sftp-transfer
+  feature: Sorting, directories-first ordering, and hidden-file control per Tab
+  original_paths:
+    - application/state/sftp/sftpPaneViewModeStore.ts
+    - components/sftp/SftpColumnMenuItems.tsx
+    - components/sftp/SftpFileRow.tsx
+  module: domain/transfer
+  tickets: [30]
+  acceptance_tests:
+    - domain/transfer.TestSortKeepsDirectoriesFirstByDefault
+    - domain/transfer.TestSortCanMixKindsWhenTheOptionIsOff
+    - domain/transfer.TestHiddenRulesKeepParentEntryVisible
+    - ui/transfer/state.TestPanesBrowseIndependently
+    - ui/transfer.TestHiddenAndSortControlsAffectOnlyTheirPane
+  status: verified
+  notes: "Sort fields and hidden-file state are per Tab; the parent entry always stays visible and first."
+
+- id: sftp.upload-download
+  area: sftp-transfer
+  feature: Upload and download with streaming progress and cancellation
+  original_paths:
+    - application/state/sftp/globalSftpTransferControl.ts
+    - application/state/sftp/downloadTransferTask.ts
+    - application/state/sftp/externalUploadRuntime.ts
+    - components/GlobalSftpTransferCenter.tsx
+  module: application/transfer
+  tickets: [30]
+  acceptance_tests:
+    - application/transfer.TestCopyUploadsATreeWithContentAndMode
+    - application/transfer.TestCopyReportsProgressAndFinishesEveryFile
+    - application/transfer.TestCopyCancelledMidFileLeavesNoStagedFile
+    - ui/transfer/state.TestUploadCopiesTheSelectionToTheRemotePane
+    - ui/transfer/state.TestDownloadCopiesFromRemoteToLocal
+    - ui/transfer.TestCopyRunsFromTheToolbarAndReportsProgress
+  status: verified
+  notes: "A 32 KiB staged stream checks cancellation between chunks and never leaves a partial destination name."
+
+- id: sftp.copy-move-paste
+  area: sftp-transfer
+  feature: Copy, cut, paste, move, and same-pane duplicate naming
+  original_paths:
+    - application/state/sftp/sftpClipboardStore.ts
+    - application/state/sftp/samePanePaste.ts
+    - application/state/sftp/sameDirectoryCopy.test.ts
+    - components/SftpClipboardUpload.test.ts
+  module: application/transfer
+  tickets: [30]
+  acceptance_tests:
+    - application/transfer.TestMoveRemovesTheSourceAfterCopying
+    - application/transfer.TestRemoteToRemoteCopiesDirectly
+    - application/transfer.TestCopyDuplicatesWithCopyName
+    - ui/transfer/state.TestCopyAndCutThroughTheClipboard
+    - ui/transfer/state.TestSamePanePasteDuplicatesInsteadOfOverwriting
+    - ui/transfer/state.TestCopyIntoItsOwnSubtreeIsRefused
+    - ui/transfer/state.TestClosingTheSourceTabClearsTheClipboard
+  status: verified
+  notes: "A copy or move into the selected folder's own subtree is refused; closing the source Tab clears the clipboard rather than aiming a paste at a closed transport."
+
+- id: sftp.create-rename-chmod
+  area: sftp-transfer
+  feature: Create folder and file, rename, and edit permission bits
+  original_paths:
+    - application/state/sftp/transferDirectoryOps.ts
+    - components/sftp/SftpPaneDialogs.tsx
+    - components/sftp/SftpPaneToolbar.tsx
+  module: application/transfer
+  tickets: [30]
+  acceptance_tests:
+    - application/transfer.TestMkdirAndCreateFileValidateNames
+    - application/transfer.TestRenameRefusesAnExistingDestination
+    - application/transfer.TestChmodRejectsBitsAboveTheContract
+    - ui/transfer/state.TestDialogsValidateBeforeMutating
+    - ui/transfer.TestNewFolderValidationIsShownWithoutCreating
+  status: verified
+  notes: "Names are validated before any mutation; an invalid name keeps the prompt open with a localized error."
+
+- id: sftp.delete-confirmation
+  area: sftp-transfer
+  feature: Deletion asks before removing files or directory trees
+  original_paths:
+    - application/state/sftp/transferDirectoryOps.ts
+    - components/sftp/SftpConflictDialog.tsx
+  module: ui/transfer
+  tickets: [30]
+  acceptance_tests:
+    - ui/transfer/state.TestDeleteRequiresConfirmation
+    - ui/transfer/state.TestRecursiveDeleteRemovesADirectoryTree
+    - ui/transfer.TestDeleteAsksBeforeRemoving
+  status: verified
+  notes: "Nothing is removed until the destructive prompt's primary button is submitted."
+
+- id: sftp.conflict-overwrite
+  area: sftp-transfer
+  feature: An existing destination stops the transfer and asks before replacement
+  original_paths:
+    - application/state/sftp/transferConflictLifecycle.ts
+    - application/state/sftp/transferConflictOps.ts
+    - components/sftp/SftpConflictDialog.tsx
+  module: ui/transfer
+  tickets: [30]
+  acceptance_tests:
+    - application/transfer.TestCopyStopsOnAnExistingDestination
+    - application/transfer.TestCopyReplacesWhenAsked
+    - application/transfer.TestReplaceKeepsTheOriginalWhenPromotionFails
+    - application/transfer.TestReplaceRemovesTheBackupAfterSuccess
+    - application/transfer.TestStagingNamesFollowTheRestartContract
+    - ui/transfer/state.TestOverwritePromptReplacesOnlyAfterConfirmation
+    - ui/transfer/state.TestDroppedOSFilesPromptBeforeReplacing
+  status: verified
+  notes: "Replacement stages under the ADR-0012 name, moves the old entry to a sibling backup, and restores it if promotion fails; OS drops use the same prompt."
+
+- id: sftp.drag-drop
+  area: sftp-transfer
+  feature: Drag and drop between panes and from the operating system
+  original_paths:
+    - application/state/sftp/localFileDrag.ts
+    - application/state/sftp/externalDragDropRetry.ts
+    - components/sftp/SftpFileRow.tsx
+  module: ui/transfer
+  tickets: [30]
+  acceptance_tests:
+    - ui/transfer/state.TestDragBetweenPanesCopiesAndSamePaneDropMoves
+    - ui/transfer/state.TestDroppedOSFilesUploadToTheRemotePane
+    - ui/transfer/state.TestDroppedOSFilesPromptBeforeReplacing
+  status: verified
+  notes: "A cross-pane drop copies, a same-pane drop moves, and OS file drops upload to the target directory and prompt before replacing."
+
+- id: sftp.remote-subsystem
+  area: sftp-transfer
+  feature: A remote pane opens SFTP over the SSH connection's subsystem
+  original_paths:
+    - application/state/sftp/openTransferSftpSession.dedicated.test.ts
+    - application/state/sftp/ensureRemoteSftpSession.ts
+    - application/state/sftp/transferConnectionPool.ts
+  module: adapters/ssh
+  tickets: [30]
+  acceptance_tests:
+    - adapters/ssh.TestOpenSubsystemServesSFTP
+    - adapters/sftp.TestRemoteBrowsesAndMutates
+    - adapters/sftp.TestRemoteCloseReleasesExactlyOnce
+  status: verified
+  notes: "The subsystem reuses the connection manager's route, host-key, authentication, and lease path; a refused subsystem is classified as unsupported so the healthy transport stays parked."

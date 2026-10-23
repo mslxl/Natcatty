@@ -54,6 +54,9 @@ type Options struct {
 	// AcceptX11 accepts x11-req requests. The default rejects them, matching a
 	// server with X11Forwarding disabled.
 	AcceptX11 bool
+	// Subsystems serves named SSH subsystems. The handler owns the channel and
+	// should close it when the protocol ends; an unlisted name is refused.
+	Subsystems map[string]func(ssh.Channel)
 }
 
 // X11Request is one recorded x11-req session request.
@@ -116,6 +119,8 @@ type Server struct {
 	remoteForwards    []RemoteForward
 	remoteListeners   map[string]net.Listener
 	ignoreCancel      bool
+	subsystems        map[string]func(ssh.Channel)
+	subsystemRequests []string
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -139,6 +144,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		remoteListeners: map[string]net.Listener{},
 		ignoreCancel:    options.IgnoreRemoteForwardCancel,
 		acceptX11:       options.AcceptX11,
+		subsystems:      options.Subsystems,
 	}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
@@ -293,6 +299,13 @@ func (s *Server) Resizes() []Size {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Size(nil), s.resizes...)
+}
+
+// SubsystemRequests returns the subsystem names requested, in order.
+func (s *Server) SubsystemRequests() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.subsystemRequests...)
 }
 
 // ShellOpened reports whether the client requested an interactive shell.
@@ -619,6 +632,20 @@ func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request
 				})
 			}
 			s.mu.Unlock()
+			request.Reply(accepted, nil)
+		case "subsystem":
+			var payload struct{ Name string }
+			accepted := false
+			if err := ssh.Unmarshal(request.Payload, &payload); err == nil {
+				s.mu.Lock()
+				s.subsystemRequests = append(s.subsystemRequests, payload.Name)
+				handler := s.subsystems[payload.Name]
+				s.mu.Unlock()
+				if handler != nil {
+					accepted = true
+					go handler(channel)
+				}
+			}
 			request.Reply(accepted, nil)
 		case "shell":
 			s.mu.Lock()

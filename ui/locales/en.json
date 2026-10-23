@@ -2417,5 +2417,415 @@
   "settingsBindingSFTPOpen": "Open File / Enter Directory",
   "settingsBindingSFTPGoParent": "Go to Parent Directory",
   "settingsBindingSFTPNavigateTo": "Navigate to Selected Directory",
-  "settingsSystemAreaDescription": "Desktop integration: tray, global hotkey, startup, deep links, and notifications."
+  "settingsSystemAreaDescription": "Desktop integration: tray, global hotkey, startup, deep links, and notifications.",
+  "navSftp": "SFTP",
+  "@navSftp": {
+    "description": "The sidebar entry that opens the SFTP surface."
+  },
+  "sftpTitle": "SFTP",
+  "@sftpTitle": {
+    "description": "The SFTP surface's title."
+  },
+  "sftpLocal": "Local",
+  "@sftpLocal": {
+    "description": "A local pane's tab title."
+  },
+  "sftpRemote": "Remote",
+  "@sftpRemote": {
+    "description": "A remote pane's fallback tab title."
+  },
+  "sftpNoTab": "No tab open in this pane.",
+  "@sftpNoTab": {
+    "description": "The empty-pane message when no tab is open."
+  },
+  "sftpOpenLocal": "Local folder",
+  "@sftpOpenLocal": {
+    "description": "The action that opens a local folder in a pane."
+  },
+  "sftpConnect": "Connect…",
+  "@sftpConnect": {
+    "description": "The action that opens the Host picker for a remote pane."
+  },
+  "sftpConnectTitle": "Open a remote pane",
+  "@sftpConnectTitle": {
+    "description": "The Host picker's title."
+  },
+  "sftpConnectEmpty": "No saved Hosts yet. Add one in the Vault first.",
+  "@sftpConnectEmpty": {
+    "description": "The Host picker's message when the Vault has no Hosts."
+  },
+  "sftpConnecting": "Connecting…",
+  "@sftpConnecting": {
+    "description": "The Host picker's loading state."
+  },
+  "sftpNewTab": "New tab",
+  "@sftpNewTab": {
+    "description": "The action that opens another tab."
+  },
+  "sftpDuplicateTab": "Duplicate tab",
+  "@sftpDuplicateTab": {
+    "description": "The action that duplicates the active tab."
+  },
+  "sftpCloseTab": "Close tab",
+  "@sftpCloseTab": {
+    "description": "The action that closes the active tab."
+  },
+  "sftpUp": "Up",
+  "@sftpUp": {
+    "description": "The action that moves to the parent directory."
+  },
+  "sftpRefresh": "Refresh",
+  "@sftpRefresh": {
+    "description": "The action that reloads the directory listing."
+  },
+  "sftpNewFolder": "New folder",
+  "@sftpNewFolder": {
+    "description": "The action that creates a folder."
+  },
+  "sftpNewFile": "New file",
+  "@sftpNewFile": {
+    "description": "The action that creates an empty file."
+  },
+  "sftpRename": "Rename",
+  "@sftpRename": {
+    "description": "The action that renames one item."
+  },
+  "sftpPermissions": "Permissions",
+  "@sftpPermissions": {
+    "description": "The action that edits permission bits."
+  },
+  "sftpDelete": "Delete",
+  "@sftpDelete": {
+    "description": "The destructive action that removes the selection."
+  },
+  "sftpCopyTo": "Copy →",
+  "@sftpCopyTo": {
+    "description": "The action that copies the selection to the other pane."
+  },
+  "sftpMoveTo": "Move →",
+  "@sftpMoveTo": {
+    "description": "The action that moves the selection to the other pane."
+  },
+  "sftpUpload": "Upload →",
+  "@sftpUpload": {
+    "description": "The action that copies from a local pane to a remote one."
+  },
+  "sftpDownload": "← Download",
+  "@sftpDownload": {
+    "description": "The action that copies from a remote pane to a local one."
+  },
+  "sftpSort": "Sort",
+  "@sftpSort": {
+    "description": "The sort menu's label."
+  },
+  "sftpSortName": "Name",
+  "@sftpSortName": {
+    "description": "The sort field for item names."
+  },
+  "sftpSortSize": "Size",
+  "@sftpSortSize": {
+    "description": "The sort field for file sizes."
+  },
+  "sftpSortModified": "Modified",
+  "@sftpSortModified": {
+    "description": "The sort field for modification times."
+  },
+  "sftpSortType": "Type",
+  "@sftpSortType": {
+    "description": "The sort field for item types."
+  },
+  "sftpSortOwner": "Owner",
+  "@sftpSortOwner": {
+    "description": "The sort field for owners."
+  },
+  "sftpSortDescending": "Descending",
+  "@sftpSortDescending": {
+    "description": "The sort option that reverses the field order."
+  },
+  "sftpSortFoldersFirst": "Folders first",
+  "@sftpSortFoldersFirst": {
+    "description": "The sort option that keeps directories before files."
+  },
+  "sftpShowHidden": "Hidden",
+  "@sftpShowHidden": {
+    "description": "The toggle that shows hidden files."
+  },
+  "sftpBookmark": "Add bookmark",
+  "@sftpBookmark": {
+    "description": "The action that bookmarks the current folder."
+  },
+  "sftpBookmarkRemove": "Remove bookmark",
+  "@sftpBookmarkRemove": {
+    "description": "The action that removes the current folder's bookmark."
+  },
+  "sftpBookmarks": "Bookmarks",
+  "@sftpBookmarks": {
+    "description": "The bookmarks menu's label."
+  },
+  "sftpBookmarksEmpty": "No bookmarks yet.",
+  "@sftpBookmarksEmpty": {
+    "description": "The bookmarks menu's empty state."
+  },
+  "sftpBookmarksLocalHint": "Local-pane bookmarks are saved on this device.",
+  "@sftpBookmarksLocalHint": {
+    "description": "Explains where pane-local bookmarks are kept."
+  },
+  "sftpBookmarksRemoveMenu": "Remove",
+  "@sftpBookmarksRemoveMenu": {
+    "description": "The submenu that removes a saved bookmark."
+  },
+  "sftpLoading": "Loading…",
+  "@sftpLoading": {
+    "description": "The pane's loading state."
+  },
+  "sftpEmpty": "This folder is empty.",
+  "@sftpEmpty": {
+    "description": "The message for a folder with no visible entries."
+  },
+  "sftpPathPlaceholder": "Path",
+  "@sftpPathPlaceholder": {
+    "description": "The placeholder of the editable path field."
+  },
+  "sftpSelectOne": "Select one item first.",
+  "@sftpSelectOne": {
+    "description": "The notice shown when an action needs exactly one item."
+  },
+  "sftpNothingSelected": "Select one or more items first.",
+  "@sftpNothingSelected": {
+    "description": "The notice shown when an action needs a selection."
+  },
+  "sftpPaneUnavailable": "This pane is not connected.",
+  "@sftpPaneUnavailable": {
+    "description": "The notice shown when a pane has no connection."
+  },
+  "sftpSameDirectory": "The items are already in that folder.",
+  "@sftpSameDirectory": {
+    "description": "The notice shown when a move targets the source folder."
+  },
+  "sftpBusy": "Another file operation is running.",
+  "@sftpBusy": {
+    "description": "The notice shown when another file operation is running."
+  },
+  "sftpOperationDone": "Operation finished.",
+  "@sftpOperationDone": {
+    "description": "The status shown after a successful file operation."
+  },
+  "sftpOperationFailed": "The operation failed.",
+  "@sftpOperationFailed": {
+    "description": "The status shown after a failed file operation."
+  },
+  "sftpOperationCancelled": "Operation cancelled.",
+  "@sftpOperationCancelled": {
+    "description": "The status shown after cancelling a file operation."
+  },
+  "sftpCancel": "Cancel",
+  "@sftpCancel": {
+    "description": "The button that dismisses a prompt without acting."
+  },
+  "sftpDismiss": "Dismiss",
+  "@sftpDismiss": {
+    "description": "The button that clears a finished operation's result."
+  },
+  "sftpCreate": "Create",
+  "@sftpCreate": {
+    "description": "The confirm button for creating a folder or file."
+  },
+  "sftpApply": "Apply",
+  "@sftpApply": {
+    "description": "The confirm button for renaming or changing permissions."
+  },
+  "sftpDeleteTitle": "Delete these items?",
+  "@sftpDeleteTitle": {
+    "description": "The delete confirmation's title."
+  },
+  "sftpDeleteBody": "{count, plural, one {Permanently delete # item, including folders and their contents?} other {Permanently delete # items, including folders and their contents?}}",
+  "@sftpDeleteBody": {
+    "description": "The delete confirmation's body, with the selected item count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpNewFolderTitle": "New folder",
+  "@sftpNewFolderTitle": {
+    "description": "The new-folder prompt's title."
+  },
+  "sftpNewFolderLabel": "Folder name",
+  "@sftpNewFolderLabel": {
+    "description": "The new-folder prompt's field label."
+  },
+  "sftpNewFileTitle": "New file",
+  "@sftpNewFileTitle": {
+    "description": "The new-file prompt's title."
+  },
+  "sftpNewFileLabel": "File name",
+  "@sftpNewFileLabel": {
+    "description": "The new-file prompt's field label."
+  },
+  "sftpRenameTitle": "Rename",
+  "@sftpRenameTitle": {
+    "description": "The rename prompt's title."
+  },
+  "sftpRenameLabel": "New name",
+  "@sftpRenameLabel": {
+    "description": "The rename prompt's field label."
+  },
+  "sftpPermissionsTitle": "Permissions",
+  "@sftpPermissionsTitle": {
+    "description": "The permissions prompt's title."
+  },
+  "sftpPermissionsLabel": "Mode (for example 0644 or rwxr-xr-x)",
+  "@sftpPermissionsLabel": {
+    "description": "The permissions prompt's field label."
+  },
+  "sftpInvalidName": "Enter a name without slashes or control characters.",
+  "@sftpInvalidName": {
+    "description": "The validation error for a name with a separator or control character."
+  },
+  "sftpInvalidMode": "Enter an octal mode such as 0644, or a symbolic mode such as rwxr-xr-x.",
+  "@sftpInvalidMode": {
+    "description": "The validation error for an unparsable permission mode."
+  },
+  "sftpOverwriteTitle": "Replace existing items?",
+  "@sftpOverwriteTitle": {
+    "description": "The overwrite confirmation's title."
+  },
+  "sftpOverwriteBody": "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {The destination already has # of these items. Replacing deletes the existing versions.}}",
+  "@sftpOverwriteBody": {
+    "description": "The overwrite confirmation's body, with the selection count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpReplace": "Replace",
+  "@sftpReplace": {
+    "description": "The overwrite confirmation's primary button."
+  },
+  "sftpOverwriteRequired": "The destination already exists.",
+  "@sftpOverwriteRequired": {
+    "description": "The status shown when a transfer stopped at an existing destination."
+  },
+  "sftpHostsUnavailable": "Could not load the saved Hosts.",
+  "@sftpHostsUnavailable": {
+    "description": "The notice shown when the saved Host list cannot be read."
+  },
+  "sftpOpenFileUnavailable": "Opening files is not available here. Copy the file to the other pane instead.",
+  "@sftpOpenFileUnavailable": {
+    "description": "The notice shown when a file is opened instead of copied."
+  },
+  "sftpSelected": "{count} selected",
+  "@sftpSelected": {
+    "description": "The pane footer's selected-item count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpItemCount": "{count, plural, one {# item} other {# items}}",
+  "@sftpItemCount": {
+    "description": "The pane footer's visible-item count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpProgress": "{current} · {percent}%",
+  "@sftpProgress": {
+    "description": "The running operation's progress line.",
+    "placeholders": {
+      "current": {
+        "type": "String",
+        "example": "report.txt"
+      },
+      "percent": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpErrorExists": "An item with that name already exists.",
+  "@sftpErrorExists": {
+    "description": "The error shown for an existing destination."
+  },
+  "sftpErrorNotFound": "The item no longer exists.",
+  "@sftpErrorNotFound": {
+    "description": "The error shown for a missing item."
+  },
+  "sftpErrorPermission": "Permission denied.",
+  "@sftpErrorPermission": {
+    "description": "The error shown for a refused operation."
+  },
+  "sftpErrorNotDir": "That path is not a folder.",
+  "@sftpErrorNotDir": {
+    "description": "The error shown when a path component is not a folder."
+  },
+  "sftpErrorIsDir": "That item is a folder.",
+  "@sftpErrorIsDir": {
+    "description": "The error shown when a file action targets a folder."
+  },
+  "sftpErrorNotEmpty": "The folder is not empty.",
+  "@sftpErrorNotEmpty": {
+    "description": "The error shown for a non-empty folder."
+  },
+  "sftpErrorInvalidName": "That name is not allowed.",
+  "@sftpErrorInvalidName": {
+    "description": "The error shown for a rejected name."
+  },
+  "sftpErrorInvalidMode": "That permission mode is not valid.",
+  "@sftpErrorInvalidMode": {
+    "description": "The error shown for a rejected permission mode."
+  },
+  "sftpErrorUnsupported": "That operation is not available.",
+  "@sftpErrorUnsupported": {
+    "description": "The error shown for an unavailable operation."
+  },
+  "sftpErrorCancelled": "The operation was cancelled.",
+  "@sftpErrorCancelled": {
+    "description": "The error shown for a cancelled operation."
+  },
+  "sftpErrorConnection": "The connection failed.",
+  "@sftpErrorConnection": {
+    "description": "The error shown for a failed connection."
+  },
+  "sftpErrorTooLarge": "The selection is too large for one operation.",
+  "@sftpErrorTooLarge": {
+    "description": "The error shown when a selection exceeds the walk bounds."
+  },
+  "sftpErrorInternal": "Something went wrong.",
+  "@sftpErrorInternal": {
+    "description": "The error shown for an unclassified failure."
+  },
+  "sftpErrorGeneric": "The operation failed.",
+  "@sftpErrorGeneric": {
+    "description": "The fallback error text for a file operation."
+  },
+  "sftpNoticeCopied": "Copied to the clipboard.",
+  "@sftpNoticeCopied": {
+    "description": "The status shown after copying the selection."
+  },
+  "sftpNoticeCut": "Cut to the clipboard.",
+  "@sftpNoticeCut": {
+    "description": "The status shown after cutting the selection."
+  },
+  "sftpClipboardEmpty": "The clipboard is empty.",
+  "@sftpClipboardEmpty": {
+    "description": "The notice shown when pasting with nothing copied."
+  },
+  "sftpCopyIntoSelf": "A folder cannot be copied into itself.",
+  "@sftpCopyIntoSelf": {
+    "description": "The notice shown when a copy would land inside its own source folder."
+  },
+  "sftpBookmarksUnreadable": "Saved bookmarks could not be read.",
+  "@sftpBookmarksUnreadable": {
+    "description": "The notice shown when a bookmark file is malformed or unreadable."
+  }
 }

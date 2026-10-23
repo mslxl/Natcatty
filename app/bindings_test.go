@@ -378,12 +378,16 @@ func TestTerminalKeybindsFollowOverridesAndClearOldDefaults(t *testing.T) {
 }
 
 func TestUnavailableCatalogEntriesKeepTheirLabels(t *testing.T) {
-	for _, id := range []string{"open-sftp", "sftp-copy", "search-terminal", "toggle-pane-zoom"} {
+	for _, id := range []string{"search-terminal", "toggle-pane-zoom", "paste-selection"} {
 		if catalogBindingAvailable(id) {
 			t.Errorf("%s is marked available", id)
 		}
 	}
-	for _, id := range []string{"new-tab", "copy", "open-settings", "broadcast"} {
+	for _, id := range []string{
+		"new-tab", "copy", "open-settings", "broadcast",
+		"open-sftp", "sftp-copy", "sftp-cut", "sftp-paste", "sftp-rename",
+		"sftp-delete", "sftp-refresh", "sftp-new-folder", "sftp-open", "sftp-go-parent",
+	} {
 		if !catalogBindingAvailable(id) {
 			t.Errorf("%s is marked unavailable", id)
 		}
