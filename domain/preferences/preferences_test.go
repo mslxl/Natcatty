@@ -5,7 +5,9 @@ import "testing"
 func TestDefaultsMatchTheOriginal(t *testing.T) {
 	got := Defaults()
 	if got.Appearance.ThemeMode != ThemeSystem || got.Appearance.WindowOpacity != 1 ||
-		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != "menlo" {
+		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != "menlo" ||
+		got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
+		got.Appearance.AppIcon != "original" || got.Appearance.AccentMode != AccentTheme {
 		t.Errorf("appearance defaults = %+v", got.Appearance)
 	}
 	if !got.Layout.ShowHostTreeSidebar || !got.Layout.ShowSFTPTab || !got.Layout.ShowRecentHosts ||
@@ -26,7 +28,10 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 	settings := Settings{
 		Appearance: Appearance{
 			ThemeMode:          "neon",
+			LightTheme:         "midnight",
+			DarkTheme:          "snow",
 			AccentMode:         "neon",
+			AppIcon:            "neon",
 			WindowOpacity:      2,
 			TerminalFontSize:   100,
 			TerminalFontFamily: "",
@@ -46,6 +51,10 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 	if got.Appearance.WindowOpacity != 1 || got.Appearance.TerminalFontSize != 32 ||
 		got.Appearance.TerminalFontFamily != "menlo" {
 		t.Errorf("appearance values = %+v", got.Appearance)
+	}
+	if got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
+		got.Appearance.AppIcon != "original" {
+		t.Errorf("appearance theme enums = %+v", got.Appearance)
 	}
 	if got.Layout.TabBarPosition != TabBarTop || got.Layout.StartupLanding != StartupVault ||
 		got.Layout.SidePanelDock != DockRight {
@@ -127,8 +136,41 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 33 {
-		t.Errorf("fields = %d, want 33", len(seen))
+	if len(seen) != 36 {
+		t.Errorf("fields = %d, want 36", len(seen))
+	}
+}
+
+func TestAppearanceThemeFieldsResetIndependently(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LightTheme = "ivory"
+	settings.Appearance.DarkTheme = "obsidian"
+	settings.Appearance.AppIcon = "rainbow"
+
+	reset := ResetField(settings, FieldLightTheme)
+	if reset.Appearance.LightTheme != "snow" {
+		t.Errorf("light theme = %q", reset.Appearance.LightTheme)
+	}
+	if reset.Appearance.DarkTheme != "obsidian" || reset.Appearance.AppIcon != "rainbow" {
+		t.Errorf("another appearance field was reset: %+v", reset.Appearance)
+	}
+	reset = ResetField(settings, FieldDarkTheme)
+	if reset.Appearance.DarkTheme != "midnight" || reset.Appearance.LightTheme != "ivory" {
+		t.Errorf("dark reset = %+v", reset.Appearance)
+	}
+	reset = ResetField(settings, FieldAppIcon)
+	if reset.Appearance.AppIcon != "original" {
+		t.Errorf("icon reset = %q", reset.Appearance.AppIcon)
+	}
+}
+
+func TestNormalizeKeepsValidThemeIDs(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.LightTheme = "ivory"
+	settings.Appearance.DarkTheme = "obsidian"
+	settings.Appearance.AppIcon = "white-rose"
+	if got := Normalize(settings); got != settings {
+		t.Errorf("valid theme fields changed: %+v", got.Appearance)
 	}
 }
 

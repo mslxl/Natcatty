@@ -21,6 +21,7 @@ type Config struct {
 	Lock        *AppLockState
 	Desktop     *DesktopState
 	Terminal    *TerminalState
+	Themes      *ThemesState
 	Preferences *PreferencesState
 	Shortcuts   *ShortcutsState
 	Search      *SearchState
@@ -232,7 +233,7 @@ func sidebar(c *ui.Context, search *SearchState, panes *viewState,
 func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t *ui.Theme) {
 	switch area {
 	case AreaAppearance:
-		appearanceArea(c, config.Preferences, m, t)
+		appearanceArea(c, config.Preferences, config.Themes, m, t)
 	case AreaTerminal:
 		if config.Terminal != nil {
 			terminalSection(c, config.Terminal, m, t)
@@ -257,91 +258,6 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 	case AreaShortcuts:
 		shortcutsArea(c, config.Shortcuts, m, t)
 	}
-}
-
-func appearanceArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
-	sectionBody(c, t, func() {
-		if state == nil {
-			return
-		}
-		settings := state.Settings()
-		themeLabels := []string{m.SettingsThemeSystem(), m.SettingsThemeLight(), m.SettingsThemeDark()}
-		themeModes := []domain.ThemeMode{domain.ThemeSystem, domain.ThemeLight, domain.ThemeDark}
-		themeLabel := themeLabels[indexOfModes(themeModes, settings.Appearance.ThemeMode)]
-		fieldRow(c, state, m, t, domain.FieldThemeMode, m.SettingsThemeMode(), func() {
-			if ui.Select(c, &themeLabel, themeLabels).Width(180).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.ThemeMode = themeModes[indexOf(themeLabels, themeLabel)]
-				})
-				c.Invalidate()
-			}
-		})
-
-		accent := settings.Appearance.AccentMode == domain.AccentCustom
-		fieldRow(c, state, m, t, domain.FieldAccentMode, m.SettingsAccentMode(), func() {
-			if ui.Checkbox(c, &accent, "").Changed() {
-				state.Update(func(s *domain.Settings) {
-					if accent {
-						s.Appearance.AccentMode = domain.AccentCustom
-					} else {
-						s.Appearance.AccentMode = domain.AccentTheme
-					}
-				})
-				c.Invalidate()
-			}
-		})
-		fieldRow(c, state, m, t, domain.FieldAccentColor, m.SettingsAccentColor(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldAccentColor)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.AccentColor = state.FieldValue(domain.FieldAccentColor)
-				})
-				c.Invalidate()
-			}
-		})
-		fieldRow(c, state, m, t, domain.FieldUIFont, m.SettingsUIFont(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldUIFont)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.UIFont = state.FieldValue(domain.FieldUIFont)
-				})
-				c.Invalidate()
-			}
-		})
-		opacity := settings.Appearance.WindowOpacity
-		fieldRow(c, state, m, t, domain.FieldWindowOpacity, m.SettingsWindowOpacity(), func() {
-			if ui.NumberInput(c, &opacity, 0.5, 1, 0.05).Width(110).Changed() {
-				state.Update(func(s *domain.Settings) { s.Appearance.WindowOpacity = opacity })
-				c.Invalidate()
-			}
-		})
-		fieldRow(c, state, m, t, domain.FieldTerminalTheme, m.SettingsTerminalTheme(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldTerminalTheme)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.TerminalTheme = state.FieldValue(domain.FieldTerminalTheme)
-				})
-				c.Invalidate()
-			}
-		})
-		fieldRow(c, state, m, t, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldTerminalFontFamily)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.TerminalFontFamily = state.FieldValue(domain.FieldTerminalFontFamily)
-				})
-				c.Invalidate()
-			}
-		})
-		size := settings.Appearance.TerminalFontSize
-		fieldRow(c, state, m, t, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), func() {
-			if ui.NumberInput(c, &size, domain.MinTerminalFontSize, domain.MaxTerminalFontSize, 1).Width(110).Changed() {
-				state.Update(func(s *domain.Settings) { s.Appearance.TerminalFontSize = size })
-				c.Invalidate()
-			}
-		})
-		ui.Text(c, m.SettingsThemePending()).FontSize(11).TextColor(t.TextMuted)
-		groupReset(c, m, t, m.SettingsAppearanceTitle(), func() bool {
-			return state.ResetGroup(domain.GroupAppearance)
-		}, true)
-		saveProblem(c, state, m, t)
-	})
 }
 
 func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {

@@ -34,12 +34,14 @@ import (
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
+	appthemes "github.com/mslxl/natcatty/application/themes"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	"github.com/mslxl/natcatty/domain/model"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -71,6 +73,9 @@ func run(afterReady func(hostWindow)) error {
 	var desktopService *appdesktop.Service
 	var terminalService *appterminalsettings.Service
 	var preferenceService *apppreferences.Service
+	var themeService *appthemes.Service
+	var themesState *settings.ThemesState
+	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
@@ -180,6 +185,30 @@ func run(afterReady func(hostWindow)) error {
 	}
 	preferencesState = settings.NewPreferencesState(preferenceService,
 		settings.WithPreferencesRedrawRequest(invalidate))
+
+	// Imported terminal color schemes live beside the preferences. The
+	// preference stores only the scheme ID, so an import is a second document
+	// that must load before a Session resolves its colors.
+	themeService = appthemes.NewService(store.OpenThemes(filepath.Join(userData, "themes.json")))
+	_ = themeService.Load(context.Background())
+	themePicker := themeFilePicker{locale: func() string { return mygo.App.Locale() }}
+	themesState = settings.NewThemesState(themeService,
+		settings.WithThemeImportRequest(func() {
+			name, data, err := themePicker.Pick()
+			if name == "" && err == nil {
+				return
+			}
+			themesState.Import(name, data, err)
+			invalidate()
+		}),
+		settings.WithThemeImported(func(theme domaintheme.TerminalTheme) bool {
+			err := preferenceService.Update(func(next *domainpreferences.Settings) {
+				next.Appearance.TerminalTheme = theme.ID
+			})
+			return err == nil
+		}),
+		settings.WithThemesRedrawRequest(invalidate),
+	)
 
 	keybindingService = appkeybindings.NewService(
 		store.OpenKeyBindings(filepath.Join(userData, "keybindings.json")),
@@ -576,6 +605,7 @@ func run(afterReady func(hostWindow)) error {
 						Size:   float32(appearance.TerminalFontSize),
 					}
 				}),
+				sessionui.WithTerminalTheme(currentTerminalTheme),
 				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
 					return terminalKeybinds(keybindingService)
 				}),
@@ -630,6 +660,7 @@ func run(afterReady func(hostWindow)) error {
 				Lock:        settingsState,
 				Desktop:     desktopState,
 				Terminal:    terminalState,
+				Themes:      themesState,
 				Preferences: preferencesState,
 				Shortcuts:   shortcutsState,
 				Search:      searchState,
@@ -651,21 +682,50 @@ func run(afterReady func(hostWindow)) error {
 		return preferenceService.Settings().Security.ConfirmCloseSessions
 	})
 
+	// currentTerminalTheme resolves the stored scheme ID to a catalog entry.
+	// A malformed or removed ID falls back to the original's Netcatty Dark
+	// instead of leaving a terminal with MyGo's default palette.
+	currentTerminalTheme = func() domaintheme.TerminalTheme {
+		return resolveTerminalTheme(preferenceService.Settings().Appearance.TerminalTheme,
+			themeService.Find)
+	}
+
+	// resolveUITheme maps the selected window mode, light/dark preset, accent,
+	// and interface font onto MyGo's widget theme. System mode follows the
+	// desktop's live appearance through MyGo's theme module.
+	windows.SetThemeProvider(func() *ui.Theme {
+		return resolveUITheme(preferenceService.Settings().Appearance, mygo.Theme.IsDark())
+	})
+	desktopCtl.SetIconProvider(func() []byte {
+		return trayIconPNG(preferenceService.Settings().Appearance.AppIcon)
+	})
+
 	// Appearance changes apply without reopening a window or a Session. The
 	// values that only seed a future surface (terminal bindings, tab layout,
 	// SFTP and sync) are read by those surfaces when they are built.
 	applyPreferences := func(current domainpreferences.Settings) {
 		if windows != nil {
 			windows.SetOpacity(current.Appearance.WindowOpacity)
+			windows.SetIconProvider(func() []byte { return appIconPNG(current.Appearance.AppIcon) })
+		}
+		if desktopCtl != nil {
+			desktopCtl.SetIconProvider(func() []byte { return trayIconPNG(current.Appearance.AppIcon) })
+		}
+		if runtime.GOOS == "darwin" {
+			_ = mygo.App.Dock.SetIcon(appIconPNG(current.Appearance.AppIcon))
 		}
 		if shellState != nil {
 			shellState.SetTerminalFont(current.Appearance.TerminalFontFamily,
 				float32(current.Appearance.TerminalFontSize))
+			shellState.SetTerminalTheme(currentTerminalTheme())
 		}
 		invalidate()
 	}
 	preferenceService.SetChangeHook(applyPreferences)
 	applyPreferences(preferenceService.Settings())
+	// System mode follows the desktop: a live appearance change invalidates
+	// every window, whose root resolves IsDark again.
+	mygo.Theme.OnUpdated(invalidate)
 
 	dispatcher := &bindingDispatcher{
 		service: keybindingService,

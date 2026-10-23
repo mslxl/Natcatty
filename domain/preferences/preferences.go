@@ -3,7 +3,11 @@
 // logs, sync, and the security preferences beside App Lock.
 package preferences
 
-import "math"
+import (
+	"math"
+
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+)
 
 // Group names a resettable settings area.
 type Group string
@@ -91,14 +95,20 @@ const (
 
 // Appearance group.
 type Appearance struct {
-	ThemeMode          ThemeMode  `json:"themeMode"`
-	AccentMode         AccentMode `json:"accentMode"`
-	AccentColor        string     `json:"accentColor"`
-	UIFont             string     `json:"uiFont"`
-	WindowOpacity      float64    `json:"windowOpacity"`
-	TerminalTheme      string     `json:"terminalTheme"`
-	TerminalFontFamily string     `json:"terminalFontFamily"`
-	TerminalFontSize   float64    `json:"terminalFontSize"`
+	ThemeMode     ThemeMode  `json:"themeMode"`
+	LightTheme    string     `json:"lightTheme"`
+	DarkTheme     string     `json:"darkTheme"`
+	AccentMode    AccentMode `json:"accentMode"`
+	AccentColor   string     `json:"accentColor"`
+	AppIcon       string     `json:"appIcon"`
+	UIFont        string     `json:"uiFont"`
+	WindowOpacity float64    `json:"windowOpacity"`
+	// TerminalTheme persists a built-in terminal scheme ID or an imported
+	// custom scheme ID. Custom IDs live in themes.json, so this field cannot
+	// be validated against the built-in catalog alone.
+	TerminalTheme      string  `json:"terminalTheme"`
+	TerminalFontFamily string  `json:"terminalFontFamily"`
+	TerminalFontSize   float64 `json:"terminalFontSize"`
 }
 
 // Layout group.
@@ -175,8 +185,11 @@ func Defaults() Settings {
 	return Settings{
 		Appearance: Appearance{
 			ThemeMode:          ThemeSystem,
+			LightTheme:         domaintheme.DefaultLightTheme,
+			DarkTheme:          domaintheme.DefaultDarkTheme,
 			AccentMode:         AccentTheme,
 			AccentColor:        DefaultAccentColor,
+			AppIcon:            domaintheme.DefaultIconVariant,
 			UIFont:             "",
 			WindowOpacity:      1,
 			TerminalTheme:      DefaultTerminalTheme,
@@ -217,6 +230,15 @@ func Normalize(settings Settings) Settings {
 	defaults := Defaults()
 	if !validTheme(settings.Appearance.ThemeMode) {
 		settings.Appearance.ThemeMode = defaults.Appearance.ThemeMode
+	}
+	if _, ok := domaintheme.LookupPreset(false, settings.Appearance.LightTheme); !ok {
+		settings.Appearance.LightTheme = defaults.Appearance.LightTheme
+	}
+	if _, ok := domaintheme.LookupPreset(true, settings.Appearance.DarkTheme); !ok {
+		settings.Appearance.DarkTheme = defaults.Appearance.DarkTheme
+	}
+	if !domaintheme.ValidIconVariant(settings.Appearance.AppIcon) {
+		settings.Appearance.AppIcon = defaults.Appearance.AppIcon
 	}
 	if settings.Appearance.AccentMode != AccentTheme && settings.Appearance.AccentMode != AccentCustom {
 		settings.Appearance.AccentMode = defaults.Appearance.AccentMode
@@ -323,8 +345,11 @@ type Field string
 
 const (
 	FieldThemeMode                   Field = "appearance.themeMode"
+	FieldLightTheme                  Field = "appearance.lightTheme"
+	FieldDarkTheme                   Field = "appearance.darkTheme"
 	FieldAccentMode                  Field = "appearance.accentMode"
 	FieldAccentColor                 Field = "appearance.accentColor"
+	FieldAppIcon                     Field = "appearance.appIcon"
 	FieldUIFont                      Field = "appearance.uiFont"
 	FieldWindowOpacity               Field = "appearance.windowOpacity"
 	FieldTerminalTheme               Field = "appearance.terminalTheme"
@@ -360,7 +385,8 @@ const (
 // Fields returns every resettable field in Settings-window order.
 func Fields() []Field {
 	return []Field{
-		FieldThemeMode, FieldAccentMode, FieldAccentColor, FieldUIFont,
+		FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
+		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
@@ -380,7 +406,8 @@ func Fields() []Field {
 // GroupOf returns the group a field belongs to.
 func GroupOf(field Field) (Group, bool) {
 	switch field {
-	case FieldThemeMode, FieldAccentMode, FieldAccentColor, FieldUIFont,
+	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
+		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize:
 		return GroupAppearance, true
@@ -412,6 +439,12 @@ func ResetField(settings Settings, field Field) Settings {
 	switch field {
 	case FieldThemeMode:
 		settings.Appearance.ThemeMode = defaults.Appearance.ThemeMode
+	case FieldLightTheme:
+		settings.Appearance.LightTheme = defaults.Appearance.LightTheme
+	case FieldDarkTheme:
+		settings.Appearance.DarkTheme = defaults.Appearance.DarkTheme
+	case FieldAppIcon:
+		settings.Appearance.AppIcon = defaults.Appearance.AppIcon
 	case FieldAccentMode:
 		settings.Appearance.AccentMode = defaults.Appearance.AccentMode
 	case FieldAccentColor:

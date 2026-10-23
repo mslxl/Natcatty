@@ -46,6 +46,7 @@ type hostWindow interface {
 	IsFocused() bool
 	SetTitle(string)
 	SetOpacity(float64)
+	SetIcon([]byte) error
 }
 
 // windowHost creates native windows. The real host uses MyGo; tests record
@@ -132,6 +133,10 @@ type windowManager struct {
 	shortcuts []keyShortcut
 	// opacity is the live Appearance setting applied to every window.
 	opacity float64
+	// theme and icon read the live Appearance settings. Both are resolved per
+	// frame so an open window follows a change without being recreated.
+	theme func() *ui.Theme
+	icon  func() []byte
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
@@ -199,10 +204,56 @@ func (m *windowManager) SetOpacity(value float64) {
 	}
 }
 
+// SetThemeProvider installs the live widget theme. Every window calls it at
+// its root, before the App Lock gate builds anything.
+func (m *windowManager) SetThemeProvider(fn func() *ui.Theme) { m.theme = fn }
+
+// SetIconProvider installs the live application icon. Windows created later
+// read it, and SetIcon applies a change to every open window.
+func (m *windowManager) SetIconProvider(fn func() []byte) {
+	m.icon = fn
+	m.applyIconEverywhere()
+}
+
+// SetIcon applies the current icon provider to every open window. A window
+// whose host cannot set an icon is left alone.
+func (m *windowManager) applyIconEverywhere() {
+	data := m.currentIcon()
+	if data == nil {
+		return
+	}
+	apply := func(window hostWindow) {
+		if window != nil && !window.IsDestroyed() {
+			_ = window.SetIcon(data)
+		}
+	}
+	apply(m.main)
+	apply(m.settings)
+	for _, window := range m.detached {
+		apply(window)
+	}
+}
+
+func (m *windowManager) currentIcon() []byte {
+	if m.icon == nil {
+		return nil
+	}
+	return m.icon()
+}
+
 // SetSessionConfirmation installs the live Security preference. When it
 // returns false, closing Sessions skips the dialog.
 func (m *windowManager) SetSessionConfirmation(enabled func() bool) {
 	m.confirmPolicy = enabled
+}
+
+func (m *windowManager) applyIcon(window hostWindow) {
+	if window == nil {
+		return
+	}
+	if data := m.currentIcon(); data != nil {
+		_ = window.SetIcon(data)
+	}
 }
 
 func (m *windowManager) applyOpacity(window hostWindow) {
@@ -210,6 +261,20 @@ func (m *windowManager) applyOpacity(window hostWindow) {
 		return
 	}
 	window.SetOpacity(m.opacity)
+}
+
+// withTheme applies the live widget theme at the window's root context. It
+// runs before the gate and the content, so every surface is painted with the
+// current preset, accent, and interface font.
+func (m *windowManager) withTheme(content func(*ui.Context)) func(*ui.Context) {
+	return func(c *ui.Context) {
+		if m.theme != nil {
+			if theme := m.theme(); theme != nil {
+				c.SetTheme(theme)
+			}
+		}
+		content(c)
+	}
 }
 
 // withAccelerators binds the menu shortcuts at the window's root context,
@@ -241,7 +306,7 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 // behind the same shared App Lock gate as every other window. The selftest
 // reuses it to prove the gate hides detached content.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
-	return m.withAccelerators(m.wrap(shell.DetachedView(m.state, tabID)))
+	return m.withTheme(m.withAccelerators(m.wrap(shell.DetachedView(m.state, tabID))))
 }
 
 func (m *windowManager) messages() locales.Messages {
@@ -269,12 +334,12 @@ func (m *windowManager) OpenMain() hostWindow {
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
-	content := m.withAccelerators(func(c *ui.Context) {
+	content := m.withTheme(m.withAccelerators(func(c *ui.Context) {
 		if m.selftestBind != nil {
 			m.selftestBind(c)
 		}
 		gated(c)
-	})
+	}))
 	m.main = m.host.Create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
@@ -297,6 +362,7 @@ func (m *windowManager) OpenMain() hostWindow {
 		},
 	})
 	m.applyOpacity(m.main)
+	m.applyIcon(m.main)
 	return m.main
 }
 
@@ -331,12 +397,13 @@ func (m *windowManager) OpenSettings() {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
-		Content:   m.wrap(m.settingsContent()),
+		Content:   m.withTheme(m.wrap(m.settingsContent())),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },
 	})
 	m.applyOpacity(m.settings)
+	m.applyIcon(m.settings)
 }
 
 // OpenDetached creates the window that owns one detached Tab. Every window,
@@ -375,6 +442,7 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		},
 	})
 	m.applyOpacity(m.detached[tabID])
+	m.applyIcon(m.detached[tabID])
 }
 
 // ReattachClose closes a detached window after its Tab moved back into the
