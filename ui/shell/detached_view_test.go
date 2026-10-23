@@ -86,8 +86,7 @@ func assertInside(t *testing.T, tester *ui.Tester, width, height int, text strin
 // assertSideBySide fails when two boxes on the same line overlap.
 func assertSideBySide(t *testing.T, left, right ui.Rect) {
 	t.Helper()
-	if left.X < right.X+right.W && right.X < left.X+left.W &&
-		left.Y < right.Y+right.H && right.Y < left.Y+left.H {
+	if overlaps(left, right) {
 		t.Fatalf("boxes overlap: %+v and %+v", left, right)
 	}
 }

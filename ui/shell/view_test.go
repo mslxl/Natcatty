@@ -130,11 +130,13 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		tt.SetLocale("en")
 		tt.Frame()
 
-		// The Vault lists Hosts and offers New Host.
+		// The Vault lists Hosts and offers New Host. At the minimum size the
+		// header actions wrap below the title, so the two only overlap when
+		// their boxes intersect on both axes.
 		tt.Frame()
 		newHost := assertContentInside(t, tt, size[0], size[1], m.VaultHostNew())
 		listTitle := assertContentInside(t, tt, size[0], size[1], m.VaultHostListTitle(0))
-		if listTitle.X+listTitle.W > newHost.X {
+		if overlaps(listTitle, newHost) {
 			t.Fatalf("%dx%d New Host overlaps the host list title: %+v, %+v",
 				size[0], size[1], listTitle, newHost)
 		}
@@ -201,6 +203,14 @@ func TestShellPaneStaysWithinTheWindowWithManyTabs(t *testing.T) {
 				size[0], size[1], edge)
 		}
 	}
+}
+
+// overlaps reports whether a and b intersect on both axes, tolerating the
+// sub-DIP gap that fractional layout can leave between abutting boxes.
+func overlaps(a, b ui.Rect) bool {
+	const epsilon = 0.5
+	return a.X < b.X+b.W-epsilon && b.X < a.X+a.W-epsilon &&
+		a.Y < b.Y+b.H-epsilon && b.Y < a.Y+a.H-epsilon
 }
 
 // assertContentInside finds text and asserts its box is right of the sidebar
