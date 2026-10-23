@@ -11917,3 +11917,1321 @@ func SettingsSystemAreaDescription() string { return In(i18n.Locale()).SettingsS
 func (msgs Messages) SettingsSystemAreaDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSystemAreaDescription", nil)
 }
+
+// NavSftp says "SFTP"
+// in the language the app shows.
+//
+// The sidebar entry that opens the SFTP surface.
+func NavSftp() string { return In(i18n.Locale()).NavSftp() }
+
+// NavSftp says "SFTP"
+// in the language of msgs.
+//
+// The sidebar entry that opens the SFTP surface.
+func (msgs Messages) NavSftp() string {
+	return Catalog.Format(msgs.locale, "navSftp", nil)
+}
+
+// SftpTitle says "SFTP"
+// in the language the app shows.
+//
+// The SFTP surface's title.
+func SftpTitle() string { return In(i18n.Locale()).SftpTitle() }
+
+// SftpTitle says "SFTP"
+// in the language of msgs.
+//
+// The SFTP surface's title.
+func (msgs Messages) SftpTitle() string {
+	return Catalog.Format(msgs.locale, "sftpTitle", nil)
+}
+
+// SftpLocal says "Local"
+// in the language the app shows.
+//
+// A local pane's tab title.
+func SftpLocal() string { return In(i18n.Locale()).SftpLocal() }
+
+// SftpLocal says "Local"
+// in the language of msgs.
+//
+// A local pane's tab title.
+func (msgs Messages) SftpLocal() string {
+	return Catalog.Format(msgs.locale, "sftpLocal", nil)
+}
+
+// SftpRemote says "Remote"
+// in the language the app shows.
+//
+// A remote pane's fallback tab title.
+func SftpRemote() string { return In(i18n.Locale()).SftpRemote() }
+
+// SftpRemote says "Remote"
+// in the language of msgs.
+//
+// A remote pane's fallback tab title.
+func (msgs Messages) SftpRemote() string {
+	return Catalog.Format(msgs.locale, "sftpRemote", nil)
+}
+
+// SftpNoTab says "No tab open in this pane."
+// in the language the app shows.
+//
+// The empty-pane message when no tab is open.
+func SftpNoTab() string { return In(i18n.Locale()).SftpNoTab() }
+
+// SftpNoTab says "No tab open in this pane."
+// in the language of msgs.
+//
+// The empty-pane message when no tab is open.
+func (msgs Messages) SftpNoTab() string {
+	return Catalog.Format(msgs.locale, "sftpNoTab", nil)
+}
+
+// SftpOpenLocal says "Local folder"
+// in the language the app shows.
+//
+// The action that opens a local folder in a pane.
+func SftpOpenLocal() string { return In(i18n.Locale()).SftpOpenLocal() }
+
+// SftpOpenLocal says "Local folder"
+// in the language of msgs.
+//
+// The action that opens a local folder in a pane.
+func (msgs Messages) SftpOpenLocal() string {
+	return Catalog.Format(msgs.locale, "sftpOpenLocal", nil)
+}
+
+// SftpConnect says "Connect…"
+// in the language the app shows.
+//
+// The action that opens the Host picker for a remote pane.
+func SftpConnect() string { return In(i18n.Locale()).SftpConnect() }
+
+// SftpConnect says "Connect…"
+// in the language of msgs.
+//
+// The action that opens the Host picker for a remote pane.
+func (msgs Messages) SftpConnect() string {
+	return Catalog.Format(msgs.locale, "sftpConnect", nil)
+}
+
+// SftpConnectTitle says "Open a remote pane"
+// in the language the app shows.
+//
+// The Host picker's title.
+func SftpConnectTitle() string { return In(i18n.Locale()).SftpConnectTitle() }
+
+// SftpConnectTitle says "Open a remote pane"
+// in the language of msgs.
+//
+// The Host picker's title.
+func (msgs Messages) SftpConnectTitle() string {
+	return Catalog.Format(msgs.locale, "sftpConnectTitle", nil)
+}
+
+// SftpConnectEmpty says "No saved Hosts yet. Add one in the Vault first."
+// in the language the app shows.
+//
+// The Host picker's message when the Vault has no Hosts.
+func SftpConnectEmpty() string { return In(i18n.Locale()).SftpConnectEmpty() }
+
+// SftpConnectEmpty says "No saved Hosts yet. Add one in the Vault first."
+// in the language of msgs.
+//
+// The Host picker's message when the Vault has no Hosts.
+func (msgs Messages) SftpConnectEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpConnectEmpty", nil)
+}
+
+// SftpConnecting says "Connecting…"
+// in the language the app shows.
+//
+// The Host picker's loading state.
+func SftpConnecting() string { return In(i18n.Locale()).SftpConnecting() }
+
+// SftpConnecting says "Connecting…"
+// in the language of msgs.
+//
+// The Host picker's loading state.
+func (msgs Messages) SftpConnecting() string {
+	return Catalog.Format(msgs.locale, "sftpConnecting", nil)
+}
+
+// SftpNewTab says "New tab"
+// in the language the app shows.
+//
+// The action that opens another tab.
+func SftpNewTab() string { return In(i18n.Locale()).SftpNewTab() }
+
+// SftpNewTab says "New tab"
+// in the language of msgs.
+//
+// The action that opens another tab.
+func (msgs Messages) SftpNewTab() string {
+	return Catalog.Format(msgs.locale, "sftpNewTab", nil)
+}
+
+// SftpDuplicateTab says "Duplicate tab"
+// in the language the app shows.
+//
+// The action that duplicates the active tab.
+func SftpDuplicateTab() string { return In(i18n.Locale()).SftpDuplicateTab() }
+
+// SftpDuplicateTab says "Duplicate tab"
+// in the language of msgs.
+//
+// The action that duplicates the active tab.
+func (msgs Messages) SftpDuplicateTab() string {
+	return Catalog.Format(msgs.locale, "sftpDuplicateTab", nil)
+}
+
+// SftpCloseTab says "Close tab"
+// in the language the app shows.
+//
+// The action that closes the active tab.
+func SftpCloseTab() string { return In(i18n.Locale()).SftpCloseTab() }
+
+// SftpCloseTab says "Close tab"
+// in the language of msgs.
+//
+// The action that closes the active tab.
+func (msgs Messages) SftpCloseTab() string {
+	return Catalog.Format(msgs.locale, "sftpCloseTab", nil)
+}
+
+// SftpUp says "Up"
+// in the language the app shows.
+//
+// The action that moves to the parent directory.
+func SftpUp() string { return In(i18n.Locale()).SftpUp() }
+
+// SftpUp says "Up"
+// in the language of msgs.
+//
+// The action that moves to the parent directory.
+func (msgs Messages) SftpUp() string {
+	return Catalog.Format(msgs.locale, "sftpUp", nil)
+}
+
+// SftpRefresh says "Refresh"
+// in the language the app shows.
+//
+// The action that reloads the directory listing.
+func SftpRefresh() string { return In(i18n.Locale()).SftpRefresh() }
+
+// SftpRefresh says "Refresh"
+// in the language of msgs.
+//
+// The action that reloads the directory listing.
+func (msgs Messages) SftpRefresh() string {
+	return Catalog.Format(msgs.locale, "sftpRefresh", nil)
+}
+
+// SftpNewFolder says "New folder"
+// in the language the app shows.
+//
+// The action that creates a folder.
+func SftpNewFolder() string { return In(i18n.Locale()).SftpNewFolder() }
+
+// SftpNewFolder says "New folder"
+// in the language of msgs.
+//
+// The action that creates a folder.
+func (msgs Messages) SftpNewFolder() string {
+	return Catalog.Format(msgs.locale, "sftpNewFolder", nil)
+}
+
+// SftpNewFile says "New file"
+// in the language the app shows.
+//
+// The action that creates an empty file.
+func SftpNewFile() string { return In(i18n.Locale()).SftpNewFile() }
+
+// SftpNewFile says "New file"
+// in the language of msgs.
+//
+// The action that creates an empty file.
+func (msgs Messages) SftpNewFile() string {
+	return Catalog.Format(msgs.locale, "sftpNewFile", nil)
+}
+
+// SftpRename says "Rename"
+// in the language the app shows.
+//
+// The action that renames one item.
+func SftpRename() string { return In(i18n.Locale()).SftpRename() }
+
+// SftpRename says "Rename"
+// in the language of msgs.
+//
+// The action that renames one item.
+func (msgs Messages) SftpRename() string {
+	return Catalog.Format(msgs.locale, "sftpRename", nil)
+}
+
+// SftpPermissions says "Permissions"
+// in the language the app shows.
+//
+// The action that edits permission bits.
+func SftpPermissions() string { return In(i18n.Locale()).SftpPermissions() }
+
+// SftpPermissions says "Permissions"
+// in the language of msgs.
+//
+// The action that edits permission bits.
+func (msgs Messages) SftpPermissions() string {
+	return Catalog.Format(msgs.locale, "sftpPermissions", nil)
+}
+
+// SftpDelete says "Delete"
+// in the language the app shows.
+//
+// The destructive action that removes the selection.
+func SftpDelete() string { return In(i18n.Locale()).SftpDelete() }
+
+// SftpDelete says "Delete"
+// in the language of msgs.
+//
+// The destructive action that removes the selection.
+func (msgs Messages) SftpDelete() string {
+	return Catalog.Format(msgs.locale, "sftpDelete", nil)
+}
+
+// SftpCopyTo says "Copy →"
+// in the language the app shows.
+//
+// The action that copies the selection to the other pane.
+func SftpCopyTo() string { return In(i18n.Locale()).SftpCopyTo() }
+
+// SftpCopyTo says "Copy →"
+// in the language of msgs.
+//
+// The action that copies the selection to the other pane.
+func (msgs Messages) SftpCopyTo() string {
+	return Catalog.Format(msgs.locale, "sftpCopyTo", nil)
+}
+
+// SftpMoveTo says "Move →"
+// in the language the app shows.
+//
+// The action that moves the selection to the other pane.
+func SftpMoveTo() string { return In(i18n.Locale()).SftpMoveTo() }
+
+// SftpMoveTo says "Move →"
+// in the language of msgs.
+//
+// The action that moves the selection to the other pane.
+func (msgs Messages) SftpMoveTo() string {
+	return Catalog.Format(msgs.locale, "sftpMoveTo", nil)
+}
+
+// SftpUpload says "Upload →"
+// in the language the app shows.
+//
+// The action that copies from a local pane to a remote one.
+func SftpUpload() string { return In(i18n.Locale()).SftpUpload() }
+
+// SftpUpload says "Upload →"
+// in the language of msgs.
+//
+// The action that copies from a local pane to a remote one.
+func (msgs Messages) SftpUpload() string {
+	return Catalog.Format(msgs.locale, "sftpUpload", nil)
+}
+
+// SftpDownload says "← Download"
+// in the language the app shows.
+//
+// The action that copies from a remote pane to a local one.
+func SftpDownload() string { return In(i18n.Locale()).SftpDownload() }
+
+// SftpDownload says "← Download"
+// in the language of msgs.
+//
+// The action that copies from a remote pane to a local one.
+func (msgs Messages) SftpDownload() string {
+	return Catalog.Format(msgs.locale, "sftpDownload", nil)
+}
+
+// SftpSort says "Sort"
+// in the language the app shows.
+//
+// The sort menu's label.
+func SftpSort() string { return In(i18n.Locale()).SftpSort() }
+
+// SftpSort says "Sort"
+// in the language of msgs.
+//
+// The sort menu's label.
+func (msgs Messages) SftpSort() string {
+	return Catalog.Format(msgs.locale, "sftpSort", nil)
+}
+
+// SftpSortName says "Name"
+// in the language the app shows.
+//
+// The sort field for item names.
+func SftpSortName() string { return In(i18n.Locale()).SftpSortName() }
+
+// SftpSortName says "Name"
+// in the language of msgs.
+//
+// The sort field for item names.
+func (msgs Messages) SftpSortName() string {
+	return Catalog.Format(msgs.locale, "sftpSortName", nil)
+}
+
+// SftpSortSize says "Size"
+// in the language the app shows.
+//
+// The sort field for file sizes.
+func SftpSortSize() string { return In(i18n.Locale()).SftpSortSize() }
+
+// SftpSortSize says "Size"
+// in the language of msgs.
+//
+// The sort field for file sizes.
+func (msgs Messages) SftpSortSize() string {
+	return Catalog.Format(msgs.locale, "sftpSortSize", nil)
+}
+
+// SftpSortModified says "Modified"
+// in the language the app shows.
+//
+// The sort field for modification times.
+func SftpSortModified() string { return In(i18n.Locale()).SftpSortModified() }
+
+// SftpSortModified says "Modified"
+// in the language of msgs.
+//
+// The sort field for modification times.
+func (msgs Messages) SftpSortModified() string {
+	return Catalog.Format(msgs.locale, "sftpSortModified", nil)
+}
+
+// SftpSortType says "Type"
+// in the language the app shows.
+//
+// The sort field for item types.
+func SftpSortType() string { return In(i18n.Locale()).SftpSortType() }
+
+// SftpSortType says "Type"
+// in the language of msgs.
+//
+// The sort field for item types.
+func (msgs Messages) SftpSortType() string {
+	return Catalog.Format(msgs.locale, "sftpSortType", nil)
+}
+
+// SftpSortOwner says "Owner"
+// in the language the app shows.
+//
+// The sort field for owners.
+func SftpSortOwner() string { return In(i18n.Locale()).SftpSortOwner() }
+
+// SftpSortOwner says "Owner"
+// in the language of msgs.
+//
+// The sort field for owners.
+func (msgs Messages) SftpSortOwner() string {
+	return Catalog.Format(msgs.locale, "sftpSortOwner", nil)
+}
+
+// SftpSortDescending says "Descending"
+// in the language the app shows.
+//
+// The sort option that reverses the field order.
+func SftpSortDescending() string { return In(i18n.Locale()).SftpSortDescending() }
+
+// SftpSortDescending says "Descending"
+// in the language of msgs.
+//
+// The sort option that reverses the field order.
+func (msgs Messages) SftpSortDescending() string {
+	return Catalog.Format(msgs.locale, "sftpSortDescending", nil)
+}
+
+// SftpSortFoldersFirst says "Folders first"
+// in the language the app shows.
+//
+// The sort option that keeps directories before files.
+func SftpSortFoldersFirst() string { return In(i18n.Locale()).SftpSortFoldersFirst() }
+
+// SftpSortFoldersFirst says "Folders first"
+// in the language of msgs.
+//
+// The sort option that keeps directories before files.
+func (msgs Messages) SftpSortFoldersFirst() string {
+	return Catalog.Format(msgs.locale, "sftpSortFoldersFirst", nil)
+}
+
+// SftpShowHidden says "Hidden"
+// in the language the app shows.
+//
+// The toggle that shows hidden files.
+func SftpShowHidden() string { return In(i18n.Locale()).SftpShowHidden() }
+
+// SftpShowHidden says "Hidden"
+// in the language of msgs.
+//
+// The toggle that shows hidden files.
+func (msgs Messages) SftpShowHidden() string {
+	return Catalog.Format(msgs.locale, "sftpShowHidden", nil)
+}
+
+// SftpBookmark says "Add bookmark"
+// in the language the app shows.
+//
+// The action that bookmarks the current folder.
+func SftpBookmark() string { return In(i18n.Locale()).SftpBookmark() }
+
+// SftpBookmark says "Add bookmark"
+// in the language of msgs.
+//
+// The action that bookmarks the current folder.
+func (msgs Messages) SftpBookmark() string {
+	return Catalog.Format(msgs.locale, "sftpBookmark", nil)
+}
+
+// SftpBookmarkRemove says "Remove bookmark"
+// in the language the app shows.
+//
+// The action that removes the current folder's bookmark.
+func SftpBookmarkRemove() string { return In(i18n.Locale()).SftpBookmarkRemove() }
+
+// SftpBookmarkRemove says "Remove bookmark"
+// in the language of msgs.
+//
+// The action that removes the current folder's bookmark.
+func (msgs Messages) SftpBookmarkRemove() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarkRemove", nil)
+}
+
+// SftpBookmarks says "Bookmarks"
+// in the language the app shows.
+//
+// The bookmarks menu's label.
+func SftpBookmarks() string { return In(i18n.Locale()).SftpBookmarks() }
+
+// SftpBookmarks says "Bookmarks"
+// in the language of msgs.
+//
+// The bookmarks menu's label.
+func (msgs Messages) SftpBookmarks() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarks", nil)
+}
+
+// SftpBookmarksEmpty says "No bookmarks yet."
+// in the language the app shows.
+//
+// The bookmarks menu's empty state.
+func SftpBookmarksEmpty() string { return In(i18n.Locale()).SftpBookmarksEmpty() }
+
+// SftpBookmarksEmpty says "No bookmarks yet."
+// in the language of msgs.
+//
+// The bookmarks menu's empty state.
+func (msgs Messages) SftpBookmarksEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarksEmpty", nil)
+}
+
+// SftpBookmarksLocalHint says "Local-pane bookmarks are saved on this device."
+// in the language the app shows.
+//
+// Explains where pane-local bookmarks are kept.
+func SftpBookmarksLocalHint() string { return In(i18n.Locale()).SftpBookmarksLocalHint() }
+
+// SftpBookmarksLocalHint says "Local-pane bookmarks are saved on this device."
+// in the language of msgs.
+//
+// Explains where pane-local bookmarks are kept.
+func (msgs Messages) SftpBookmarksLocalHint() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarksLocalHint", nil)
+}
+
+// SftpBookmarksRemoveMenu says "Remove"
+// in the language the app shows.
+//
+// The submenu that removes a saved bookmark.
+func SftpBookmarksRemoveMenu() string { return In(i18n.Locale()).SftpBookmarksRemoveMenu() }
+
+// SftpBookmarksRemoveMenu says "Remove"
+// in the language of msgs.
+//
+// The submenu that removes a saved bookmark.
+func (msgs Messages) SftpBookmarksRemoveMenu() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarksRemoveMenu", nil)
+}
+
+// SftpLoading says "Loading…"
+// in the language the app shows.
+//
+// The pane's loading state.
+func SftpLoading() string { return In(i18n.Locale()).SftpLoading() }
+
+// SftpLoading says "Loading…"
+// in the language of msgs.
+//
+// The pane's loading state.
+func (msgs Messages) SftpLoading() string {
+	return Catalog.Format(msgs.locale, "sftpLoading", nil)
+}
+
+// SftpEmpty says "This folder is empty."
+// in the language the app shows.
+//
+// The message for a folder with no visible entries.
+func SftpEmpty() string { return In(i18n.Locale()).SftpEmpty() }
+
+// SftpEmpty says "This folder is empty."
+// in the language of msgs.
+//
+// The message for a folder with no visible entries.
+func (msgs Messages) SftpEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpEmpty", nil)
+}
+
+// SftpPathPlaceholder says "Path"
+// in the language the app shows.
+//
+// The placeholder of the editable path field.
+func SftpPathPlaceholder() string { return In(i18n.Locale()).SftpPathPlaceholder() }
+
+// SftpPathPlaceholder says "Path"
+// in the language of msgs.
+//
+// The placeholder of the editable path field.
+func (msgs Messages) SftpPathPlaceholder() string {
+	return Catalog.Format(msgs.locale, "sftpPathPlaceholder", nil)
+}
+
+// SftpSelectOne says "Select one item first."
+// in the language the app shows.
+//
+// The notice shown when an action needs exactly one item.
+func SftpSelectOne() string { return In(i18n.Locale()).SftpSelectOne() }
+
+// SftpSelectOne says "Select one item first."
+// in the language of msgs.
+//
+// The notice shown when an action needs exactly one item.
+func (msgs Messages) SftpSelectOne() string {
+	return Catalog.Format(msgs.locale, "sftpSelectOne", nil)
+}
+
+// SftpNothingSelected says "Select one or more items first."
+// in the language the app shows.
+//
+// The notice shown when an action needs a selection.
+func SftpNothingSelected() string { return In(i18n.Locale()).SftpNothingSelected() }
+
+// SftpNothingSelected says "Select one or more items first."
+// in the language of msgs.
+//
+// The notice shown when an action needs a selection.
+func (msgs Messages) SftpNothingSelected() string {
+	return Catalog.Format(msgs.locale, "sftpNothingSelected", nil)
+}
+
+// SftpPaneUnavailable says "This pane is not connected."
+// in the language the app shows.
+//
+// The notice shown when a pane has no connection.
+func SftpPaneUnavailable() string { return In(i18n.Locale()).SftpPaneUnavailable() }
+
+// SftpPaneUnavailable says "This pane is not connected."
+// in the language of msgs.
+//
+// The notice shown when a pane has no connection.
+func (msgs Messages) SftpPaneUnavailable() string {
+	return Catalog.Format(msgs.locale, "sftpPaneUnavailable", nil)
+}
+
+// SftpSameDirectory says "The items are already in that folder."
+// in the language the app shows.
+//
+// The notice shown when a move targets the source folder.
+func SftpSameDirectory() string { return In(i18n.Locale()).SftpSameDirectory() }
+
+// SftpSameDirectory says "The items are already in that folder."
+// in the language of msgs.
+//
+// The notice shown when a move targets the source folder.
+func (msgs Messages) SftpSameDirectory() string {
+	return Catalog.Format(msgs.locale, "sftpSameDirectory", nil)
+}
+
+// SftpBusy says "Another file operation is running."
+// in the language the app shows.
+//
+// The notice shown when another file operation is running.
+func SftpBusy() string { return In(i18n.Locale()).SftpBusy() }
+
+// SftpBusy says "Another file operation is running."
+// in the language of msgs.
+//
+// The notice shown when another file operation is running.
+func (msgs Messages) SftpBusy() string {
+	return Catalog.Format(msgs.locale, "sftpBusy", nil)
+}
+
+// SftpOperationDone says "Operation finished."
+// in the language the app shows.
+//
+// The status shown after a successful file operation.
+func SftpOperationDone() string { return In(i18n.Locale()).SftpOperationDone() }
+
+// SftpOperationDone says "Operation finished."
+// in the language of msgs.
+//
+// The status shown after a successful file operation.
+func (msgs Messages) SftpOperationDone() string {
+	return Catalog.Format(msgs.locale, "sftpOperationDone", nil)
+}
+
+// SftpOperationFailed says "The operation failed."
+// in the language the app shows.
+//
+// The status shown after a failed file operation.
+func SftpOperationFailed() string { return In(i18n.Locale()).SftpOperationFailed() }
+
+// SftpOperationFailed says "The operation failed."
+// in the language of msgs.
+//
+// The status shown after a failed file operation.
+func (msgs Messages) SftpOperationFailed() string {
+	return Catalog.Format(msgs.locale, "sftpOperationFailed", nil)
+}
+
+// SftpOperationCancelled says "Operation cancelled."
+// in the language the app shows.
+//
+// The status shown after cancelling a file operation.
+func SftpOperationCancelled() string { return In(i18n.Locale()).SftpOperationCancelled() }
+
+// SftpOperationCancelled says "Operation cancelled."
+// in the language of msgs.
+//
+// The status shown after cancelling a file operation.
+func (msgs Messages) SftpOperationCancelled() string {
+	return Catalog.Format(msgs.locale, "sftpOperationCancelled", nil)
+}
+
+// SftpCancel says "Cancel"
+// in the language the app shows.
+//
+// The button that dismisses a prompt without acting.
+func SftpCancel() string { return In(i18n.Locale()).SftpCancel() }
+
+// SftpCancel says "Cancel"
+// in the language of msgs.
+//
+// The button that dismisses a prompt without acting.
+func (msgs Messages) SftpCancel() string {
+	return Catalog.Format(msgs.locale, "sftpCancel", nil)
+}
+
+// SftpDismiss says "Dismiss"
+// in the language the app shows.
+//
+// The button that clears a finished operation's result.
+func SftpDismiss() string { return In(i18n.Locale()).SftpDismiss() }
+
+// SftpDismiss says "Dismiss"
+// in the language of msgs.
+//
+// The button that clears a finished operation's result.
+func (msgs Messages) SftpDismiss() string {
+	return Catalog.Format(msgs.locale, "sftpDismiss", nil)
+}
+
+// SftpCreate says "Create"
+// in the language the app shows.
+//
+// The confirm button for creating a folder or file.
+func SftpCreate() string { return In(i18n.Locale()).SftpCreate() }
+
+// SftpCreate says "Create"
+// in the language of msgs.
+//
+// The confirm button for creating a folder or file.
+func (msgs Messages) SftpCreate() string {
+	return Catalog.Format(msgs.locale, "sftpCreate", nil)
+}
+
+// SftpApply says "Apply"
+// in the language the app shows.
+//
+// The confirm button for renaming or changing permissions.
+func SftpApply() string { return In(i18n.Locale()).SftpApply() }
+
+// SftpApply says "Apply"
+// in the language of msgs.
+//
+// The confirm button for renaming or changing permissions.
+func (msgs Messages) SftpApply() string {
+	return Catalog.Format(msgs.locale, "sftpApply", nil)
+}
+
+// SftpDeleteTitle says "Delete these items?"
+// in the language the app shows.
+//
+// The delete confirmation's title.
+func SftpDeleteTitle() string { return In(i18n.Locale()).SftpDeleteTitle() }
+
+// SftpDeleteTitle says "Delete these items?"
+// in the language of msgs.
+//
+// The delete confirmation's title.
+func (msgs Messages) SftpDeleteTitle() string {
+	return Catalog.Format(msgs.locale, "sftpDeleteTitle", nil)
+}
+
+// SftpDeleteBody says "{count, plural, one {Permanently delete # item, including folders and their contents?} other {Permanently delete # it…"
+// in the language the app shows.
+//
+// The delete confirmation's body, with the selected item count.
+func SftpDeleteBody(count int) string { return In(i18n.Locale()).SftpDeleteBody(count) }
+
+// SftpDeleteBody says "{count, plural, one {Permanently delete # item, including folders and their contents?} other {Permanently delete # it…"
+// in the language of msgs.
+//
+// The delete confirmation's body, with the selected item count.
+func (msgs Messages) SftpDeleteBody(count int) string {
+	return Catalog.Format(msgs.locale, "sftpDeleteBody", map[string]any{"count": count})
+}
+
+// SftpNewFolderTitle says "New folder"
+// in the language the app shows.
+//
+// The new-folder prompt's title.
+func SftpNewFolderTitle() string { return In(i18n.Locale()).SftpNewFolderTitle() }
+
+// SftpNewFolderTitle says "New folder"
+// in the language of msgs.
+//
+// The new-folder prompt's title.
+func (msgs Messages) SftpNewFolderTitle() string {
+	return Catalog.Format(msgs.locale, "sftpNewFolderTitle", nil)
+}
+
+// SftpNewFolderLabel says "Folder name"
+// in the language the app shows.
+//
+// The new-folder prompt's field label.
+func SftpNewFolderLabel() string { return In(i18n.Locale()).SftpNewFolderLabel() }
+
+// SftpNewFolderLabel says "Folder name"
+// in the language of msgs.
+//
+// The new-folder prompt's field label.
+func (msgs Messages) SftpNewFolderLabel() string {
+	return Catalog.Format(msgs.locale, "sftpNewFolderLabel", nil)
+}
+
+// SftpNewFileTitle says "New file"
+// in the language the app shows.
+//
+// The new-file prompt's title.
+func SftpNewFileTitle() string { return In(i18n.Locale()).SftpNewFileTitle() }
+
+// SftpNewFileTitle says "New file"
+// in the language of msgs.
+//
+// The new-file prompt's title.
+func (msgs Messages) SftpNewFileTitle() string {
+	return Catalog.Format(msgs.locale, "sftpNewFileTitle", nil)
+}
+
+// SftpNewFileLabel says "File name"
+// in the language the app shows.
+//
+// The new-file prompt's field label.
+func SftpNewFileLabel() string { return In(i18n.Locale()).SftpNewFileLabel() }
+
+// SftpNewFileLabel says "File name"
+// in the language of msgs.
+//
+// The new-file prompt's field label.
+func (msgs Messages) SftpNewFileLabel() string {
+	return Catalog.Format(msgs.locale, "sftpNewFileLabel", nil)
+}
+
+// SftpRenameTitle says "Rename"
+// in the language the app shows.
+//
+// The rename prompt's title.
+func SftpRenameTitle() string { return In(i18n.Locale()).SftpRenameTitle() }
+
+// SftpRenameTitle says "Rename"
+// in the language of msgs.
+//
+// The rename prompt's title.
+func (msgs Messages) SftpRenameTitle() string {
+	return Catalog.Format(msgs.locale, "sftpRenameTitle", nil)
+}
+
+// SftpRenameLabel says "New name"
+// in the language the app shows.
+//
+// The rename prompt's field label.
+func SftpRenameLabel() string { return In(i18n.Locale()).SftpRenameLabel() }
+
+// SftpRenameLabel says "New name"
+// in the language of msgs.
+//
+// The rename prompt's field label.
+func (msgs Messages) SftpRenameLabel() string {
+	return Catalog.Format(msgs.locale, "sftpRenameLabel", nil)
+}
+
+// SftpPermissionsTitle says "Permissions"
+// in the language the app shows.
+//
+// The permissions prompt's title.
+func SftpPermissionsTitle() string { return In(i18n.Locale()).SftpPermissionsTitle() }
+
+// SftpPermissionsTitle says "Permissions"
+// in the language of msgs.
+//
+// The permissions prompt's title.
+func (msgs Messages) SftpPermissionsTitle() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsTitle", nil)
+}
+
+// SftpPermissionsLabel says "Mode (for example 0644 or rwxr-xr-x)"
+// in the language the app shows.
+//
+// The permissions prompt's field label.
+func SftpPermissionsLabel() string { return In(i18n.Locale()).SftpPermissionsLabel() }
+
+// SftpPermissionsLabel says "Mode (for example 0644 or rwxr-xr-x)"
+// in the language of msgs.
+//
+// The permissions prompt's field label.
+func (msgs Messages) SftpPermissionsLabel() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsLabel", nil)
+}
+
+// SftpInvalidName says "Enter a name without slashes or control characters."
+// in the language the app shows.
+//
+// The validation error for a name with a separator or control character.
+func SftpInvalidName() string { return In(i18n.Locale()).SftpInvalidName() }
+
+// SftpInvalidName says "Enter a name without slashes or control characters."
+// in the language of msgs.
+//
+// The validation error for a name with a separator or control character.
+func (msgs Messages) SftpInvalidName() string {
+	return Catalog.Format(msgs.locale, "sftpInvalidName", nil)
+}
+
+// SftpInvalidMode says "Enter an octal mode such as 0644, or a symbolic mode such as rwxr-xr-x."
+// in the language the app shows.
+//
+// The validation error for an unparsable permission mode.
+func SftpInvalidMode() string { return In(i18n.Locale()).SftpInvalidMode() }
+
+// SftpInvalidMode says "Enter an octal mode such as 0644, or a symbolic mode such as rwxr-xr-x."
+// in the language of msgs.
+//
+// The validation error for an unparsable permission mode.
+func (msgs Messages) SftpInvalidMode() string {
+	return Catalog.Format(msgs.locale, "sftpInvalidMode", nil)
+}
+
+// SftpOverwriteTitle says "Replace existing items?"
+// in the language the app shows.
+//
+// The overwrite confirmation's title.
+func SftpOverwriteTitle() string { return In(i18n.Locale()).SftpOverwriteTitle() }
+
+// SftpOverwriteTitle says "Replace existing items?"
+// in the language of msgs.
+//
+// The overwrite confirmation's title.
+func (msgs Messages) SftpOverwriteTitle() string {
+	return Catalog.Format(msgs.locale, "sftpOverwriteTitle", nil)
+}
+
+// SftpOverwriteBody says "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {Th…"
+// in the language the app shows.
+//
+// The overwrite confirmation's body, with the selection count.
+func SftpOverwriteBody(count int) string { return In(i18n.Locale()).SftpOverwriteBody(count) }
+
+// SftpOverwriteBody says "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {Th…"
+// in the language of msgs.
+//
+// The overwrite confirmation's body, with the selection count.
+func (msgs Messages) SftpOverwriteBody(count int) string {
+	return Catalog.Format(msgs.locale, "sftpOverwriteBody", map[string]any{"count": count})
+}
+
+// SftpReplace says "Replace"
+// in the language the app shows.
+//
+// The overwrite confirmation's primary button.
+func SftpReplace() string { return In(i18n.Locale()).SftpReplace() }
+
+// SftpReplace says "Replace"
+// in the language of msgs.
+//
+// The overwrite confirmation's primary button.
+func (msgs Messages) SftpReplace() string {
+	return Catalog.Format(msgs.locale, "sftpReplace", nil)
+}
+
+// SftpOverwriteRequired says "The destination already exists."
+// in the language the app shows.
+//
+// The status shown when a transfer stopped at an existing destination.
+func SftpOverwriteRequired() string { return In(i18n.Locale()).SftpOverwriteRequired() }
+
+// SftpOverwriteRequired says "The destination already exists."
+// in the language of msgs.
+//
+// The status shown when a transfer stopped at an existing destination.
+func (msgs Messages) SftpOverwriteRequired() string {
+	return Catalog.Format(msgs.locale, "sftpOverwriteRequired", nil)
+}
+
+// SftpHostsUnavailable says "Could not load the saved Hosts."
+// in the language the app shows.
+//
+// The notice shown when the saved Host list cannot be read.
+func SftpHostsUnavailable() string { return In(i18n.Locale()).SftpHostsUnavailable() }
+
+// SftpHostsUnavailable says "Could not load the saved Hosts."
+// in the language of msgs.
+//
+// The notice shown when the saved Host list cannot be read.
+func (msgs Messages) SftpHostsUnavailable() string {
+	return Catalog.Format(msgs.locale, "sftpHostsUnavailable", nil)
+}
+
+// SftpOpenFileUnavailable says "Opening files is not available here. Copy the file to the other pane instead."
+// in the language the app shows.
+//
+// The notice shown when a file is opened instead of copied.
+func SftpOpenFileUnavailable() string { return In(i18n.Locale()).SftpOpenFileUnavailable() }
+
+// SftpOpenFileUnavailable says "Opening files is not available here. Copy the file to the other pane instead."
+// in the language of msgs.
+//
+// The notice shown when a file is opened instead of copied.
+func (msgs Messages) SftpOpenFileUnavailable() string {
+	return Catalog.Format(msgs.locale, "sftpOpenFileUnavailable", nil)
+}
+
+// SftpSelected says "{count} selected"
+// in the language the app shows.
+//
+// The pane footer's selected-item count.
+func SftpSelected(count int) string { return In(i18n.Locale()).SftpSelected(count) }
+
+// SftpSelected says "{count} selected"
+// in the language of msgs.
+//
+// The pane footer's selected-item count.
+func (msgs Messages) SftpSelected(count int) string {
+	return Catalog.Format(msgs.locale, "sftpSelected", map[string]any{"count": count})
+}
+
+// SftpItemCount says "{count, plural, one {# item} other {# items}}"
+// in the language the app shows.
+//
+// The pane footer's visible-item count.
+func SftpItemCount(count int) string { return In(i18n.Locale()).SftpItemCount(count) }
+
+// SftpItemCount says "{count, plural, one {# item} other {# items}}"
+// in the language of msgs.
+//
+// The pane footer's visible-item count.
+func (msgs Messages) SftpItemCount(count int) string {
+	return Catalog.Format(msgs.locale, "sftpItemCount", map[string]any{"count": count})
+}
+
+// SftpProgress says "{current} · {percent}%"
+// in the language the app shows.
+//
+// The running operation's progress line.
+func SftpProgress(current string, percent int) string {
+	return In(i18n.Locale()).SftpProgress(current, percent)
+}
+
+// SftpProgress says "{current} · {percent}%"
+// in the language of msgs.
+//
+// The running operation's progress line.
+func (msgs Messages) SftpProgress(current string, percent int) string {
+	return Catalog.Format(msgs.locale, "sftpProgress", map[string]any{"current": current, "percent": percent})
+}
+
+// SftpErrorExists says "An item with that name already exists."
+// in the language the app shows.
+//
+// The error shown for an existing destination.
+func SftpErrorExists() string { return In(i18n.Locale()).SftpErrorExists() }
+
+// SftpErrorExists says "An item with that name already exists."
+// in the language of msgs.
+//
+// The error shown for an existing destination.
+func (msgs Messages) SftpErrorExists() string {
+	return Catalog.Format(msgs.locale, "sftpErrorExists", nil)
+}
+
+// SftpErrorNotFound says "The item no longer exists."
+// in the language the app shows.
+//
+// The error shown for a missing item.
+func SftpErrorNotFound() string { return In(i18n.Locale()).SftpErrorNotFound() }
+
+// SftpErrorNotFound says "The item no longer exists."
+// in the language of msgs.
+//
+// The error shown for a missing item.
+func (msgs Messages) SftpErrorNotFound() string {
+	return Catalog.Format(msgs.locale, "sftpErrorNotFound", nil)
+}
+
+// SftpErrorPermission says "Permission denied."
+// in the language the app shows.
+//
+// The error shown for a refused operation.
+func SftpErrorPermission() string { return In(i18n.Locale()).SftpErrorPermission() }
+
+// SftpErrorPermission says "Permission denied."
+// in the language of msgs.
+//
+// The error shown for a refused operation.
+func (msgs Messages) SftpErrorPermission() string {
+	return Catalog.Format(msgs.locale, "sftpErrorPermission", nil)
+}
+
+// SftpErrorNotDir says "That path is not a folder."
+// in the language the app shows.
+//
+// The error shown when a path component is not a folder.
+func SftpErrorNotDir() string { return In(i18n.Locale()).SftpErrorNotDir() }
+
+// SftpErrorNotDir says "That path is not a folder."
+// in the language of msgs.
+//
+// The error shown when a path component is not a folder.
+func (msgs Messages) SftpErrorNotDir() string {
+	return Catalog.Format(msgs.locale, "sftpErrorNotDir", nil)
+}
+
+// SftpErrorIsDir says "That item is a folder."
+// in the language the app shows.
+//
+// The error shown when a file action targets a folder.
+func SftpErrorIsDir() string { return In(i18n.Locale()).SftpErrorIsDir() }
+
+// SftpErrorIsDir says "That item is a folder."
+// in the language of msgs.
+//
+// The error shown when a file action targets a folder.
+func (msgs Messages) SftpErrorIsDir() string {
+	return Catalog.Format(msgs.locale, "sftpErrorIsDir", nil)
+}
+
+// SftpErrorNotEmpty says "The folder is not empty."
+// in the language the app shows.
+//
+// The error shown for a non-empty folder.
+func SftpErrorNotEmpty() string { return In(i18n.Locale()).SftpErrorNotEmpty() }
+
+// SftpErrorNotEmpty says "The folder is not empty."
+// in the language of msgs.
+//
+// The error shown for a non-empty folder.
+func (msgs Messages) SftpErrorNotEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpErrorNotEmpty", nil)
+}
+
+// SftpErrorInvalidName says "That name is not allowed."
+// in the language the app shows.
+//
+// The error shown for a rejected name.
+func SftpErrorInvalidName() string { return In(i18n.Locale()).SftpErrorInvalidName() }
+
+// SftpErrorInvalidName says "That name is not allowed."
+// in the language of msgs.
+//
+// The error shown for a rejected name.
+func (msgs Messages) SftpErrorInvalidName() string {
+	return Catalog.Format(msgs.locale, "sftpErrorInvalidName", nil)
+}
+
+// SftpErrorInvalidMode says "That permission mode is not valid."
+// in the language the app shows.
+//
+// The error shown for a rejected permission mode.
+func SftpErrorInvalidMode() string { return In(i18n.Locale()).SftpErrorInvalidMode() }
+
+// SftpErrorInvalidMode says "That permission mode is not valid."
+// in the language of msgs.
+//
+// The error shown for a rejected permission mode.
+func (msgs Messages) SftpErrorInvalidMode() string {
+	return Catalog.Format(msgs.locale, "sftpErrorInvalidMode", nil)
+}
+
+// SftpErrorUnsupported says "That operation is not available."
+// in the language the app shows.
+//
+// The error shown for an unavailable operation.
+func SftpErrorUnsupported() string { return In(i18n.Locale()).SftpErrorUnsupported() }
+
+// SftpErrorUnsupported says "That operation is not available."
+// in the language of msgs.
+//
+// The error shown for an unavailable operation.
+func (msgs Messages) SftpErrorUnsupported() string {
+	return Catalog.Format(msgs.locale, "sftpErrorUnsupported", nil)
+}
+
+// SftpErrorCancelled says "The operation was cancelled."
+// in the language the app shows.
+//
+// The error shown for a cancelled operation.
+func SftpErrorCancelled() string { return In(i18n.Locale()).SftpErrorCancelled() }
+
+// SftpErrorCancelled says "The operation was cancelled."
+// in the language of msgs.
+//
+// The error shown for a cancelled operation.
+func (msgs Messages) SftpErrorCancelled() string {
+	return Catalog.Format(msgs.locale, "sftpErrorCancelled", nil)
+}
+
+// SftpErrorConnection says "The connection failed."
+// in the language the app shows.
+//
+// The error shown for a failed connection.
+func SftpErrorConnection() string { return In(i18n.Locale()).SftpErrorConnection() }
+
+// SftpErrorConnection says "The connection failed."
+// in the language of msgs.
+//
+// The error shown for a failed connection.
+func (msgs Messages) SftpErrorConnection() string {
+	return Catalog.Format(msgs.locale, "sftpErrorConnection", nil)
+}
+
+// SftpErrorTooLarge says "The selection is too large for one operation."
+// in the language the app shows.
+//
+// The error shown when a selection exceeds the walk bounds.
+func SftpErrorTooLarge() string { return In(i18n.Locale()).SftpErrorTooLarge() }
+
+// SftpErrorTooLarge says "The selection is too large for one operation."
+// in the language of msgs.
+//
+// The error shown when a selection exceeds the walk bounds.
+func (msgs Messages) SftpErrorTooLarge() string {
+	return Catalog.Format(msgs.locale, "sftpErrorTooLarge", nil)
+}
+
+// SftpErrorInternal says "Something went wrong."
+// in the language the app shows.
+//
+// The error shown for an unclassified failure.
+func SftpErrorInternal() string { return In(i18n.Locale()).SftpErrorInternal() }
+
+// SftpErrorInternal says "Something went wrong."
+// in the language of msgs.
+//
+// The error shown for an unclassified failure.
+func (msgs Messages) SftpErrorInternal() string {
+	return Catalog.Format(msgs.locale, "sftpErrorInternal", nil)
+}
+
+// SftpErrorGeneric says "The operation failed."
+// in the language the app shows.
+//
+// The fallback error text for a file operation.
+func SftpErrorGeneric() string { return In(i18n.Locale()).SftpErrorGeneric() }
+
+// SftpErrorGeneric says "The operation failed."
+// in the language of msgs.
+//
+// The fallback error text for a file operation.
+func (msgs Messages) SftpErrorGeneric() string {
+	return Catalog.Format(msgs.locale, "sftpErrorGeneric", nil)
+}
+
+// SftpNoticeCopied says "Copied to the clipboard."
+// in the language the app shows.
+//
+// The status shown after copying the selection.
+func SftpNoticeCopied() string { return In(i18n.Locale()).SftpNoticeCopied() }
+
+// SftpNoticeCopied says "Copied to the clipboard."
+// in the language of msgs.
+//
+// The status shown after copying the selection.
+func (msgs Messages) SftpNoticeCopied() string {
+	return Catalog.Format(msgs.locale, "sftpNoticeCopied", nil)
+}
+
+// SftpNoticeCut says "Cut to the clipboard."
+// in the language the app shows.
+//
+// The status shown after cutting the selection.
+func SftpNoticeCut() string { return In(i18n.Locale()).SftpNoticeCut() }
+
+// SftpNoticeCut says "Cut to the clipboard."
+// in the language of msgs.
+//
+// The status shown after cutting the selection.
+func (msgs Messages) SftpNoticeCut() string {
+	return Catalog.Format(msgs.locale, "sftpNoticeCut", nil)
+}
+
+// SftpClipboardEmpty says "The clipboard is empty."
+// in the language the app shows.
+//
+// The notice shown when pasting with nothing copied.
+func SftpClipboardEmpty() string { return In(i18n.Locale()).SftpClipboardEmpty() }
+
+// SftpClipboardEmpty says "The clipboard is empty."
+// in the language of msgs.
+//
+// The notice shown when pasting with nothing copied.
+func (msgs Messages) SftpClipboardEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpClipboardEmpty", nil)
+}
+
+// SftpCopyIntoSelf says "A folder cannot be copied into itself."
+// in the language the app shows.
+//
+// The notice shown when a copy would land inside its own source folder.
+func SftpCopyIntoSelf() string { return In(i18n.Locale()).SftpCopyIntoSelf() }
+
+// SftpCopyIntoSelf says "A folder cannot be copied into itself."
+// in the language of msgs.
+//
+// The notice shown when a copy would land inside its own source folder.
+func (msgs Messages) SftpCopyIntoSelf() string {
+	return Catalog.Format(msgs.locale, "sftpCopyIntoSelf", nil)
+}
+
+// SftpBookmarksUnreadable says "Saved bookmarks could not be read."
+// in the language the app shows.
+//
+// The notice shown when a bookmark file is malformed or unreadable.
+func SftpBookmarksUnreadable() string { return In(i18n.Locale()).SftpBookmarksUnreadable() }
+
+// SftpBookmarksUnreadable says "Saved bookmarks could not be read."
+// in the language of msgs.
+//
+// The notice shown when a bookmark file is malformed or unreadable.
+func (msgs Messages) SftpBookmarksUnreadable() string {
+	return Catalog.Format(msgs.locale, "sftpBookmarksUnreadable", nil)
+}

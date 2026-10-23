@@ -31,6 +31,7 @@ var _ appconnection.Client = (*sshClient)(nil)
 var _ appconnection.KeepaliveClient = (*sshClient)(nil)
 var _ appconnection.VersionedClient = (*sshClient)(nil)
 var _ appconnection.ForwardingClient = (*sshClient)(nil)
+var _ appconnection.SubsystemClient = (*sshClient)(nil)
 
 // DialContext opens a direct-tcpip channel through the SSH Host. It is the
 // transport behind a local or dynamic Port Forwarding Rule.
@@ -80,6 +81,51 @@ func bindForwardFailure(err error) error {
 		}
 	}
 	return &appconnection.Error{Kind: appconnection.KindNetwork, Cause: err}
+}
+
+// OpenSubsystem requests a named SSH subsystem on a new session channel.
+// The SFTP adapter owns the stream's protocol; this method only opens and
+// closes it.
+func (c *sshClient) OpenSubsystem(ctx context.Context, name string) (appconnection.Subsystem, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, &appconnection.Error{Kind: appconnection.KindNetwork, Cause: appconnection.ErrClosed}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	session, err := c.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	if err := session.RequestSubsystem(name); err != nil {
+		_ = session.Close()
+		// The server refused this subsystem, not the transport: a Host may
+		// serve shell sessions without SFTP. Reporting a typed unsupported
+		// failure keeps the healthy Connection parked for other leases instead
+		// of discarding it as a network loss.
+		return nil, &appconnection.Error{
+			Kind:  appconnection.KindUnsupported,
+			Cause: fmt.Errorf("%w: %v", appconnection.ErrSubsystemUnavailable, err),
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	return &subsystemChannel{session: session, stdin: stdin, stdout: stdout}, nil
 }
 
 // Keepalive sends an OpenSSH keepalive global request. A failed request means
@@ -258,4 +304,32 @@ func (t *channelTerminal) Close() error {
 	t.mu.Unlock()
 	_ = t.stdin.Close()
 	return t.session.Close()
+}
+
+// subsystemChannel is one open SSH subsystem. Read is the server's stdout,
+// Write is its stdin, and Close hangs up the session channel.
+type subsystemChannel struct {
+	session *xssh.Session
+	stdin   io.WriteCloser
+	stdout  io.Reader
+	once    sync.Once
+}
+
+var _ appconnection.Subsystem = (*subsystemChannel)(nil)
+
+// Read returns subsystem output.
+func (s *subsystemChannel) Read(p []byte) (int, error) { return s.stdout.Read(p) }
+
+// Write sends subsystem input.
+func (s *subsystemChannel) Write(p []byte) (int, error) { return s.stdin.Write(p) }
+
+// Close closes the input stream and the channel. It is safe to call more
+// than once.
+func (s *subsystemChannel) Close() error {
+	var err error
+	s.once.Do(func() {
+		_ = s.stdin.Close()
+		err = s.session.Close()
+	})
+	return err
 }

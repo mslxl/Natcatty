@@ -115,6 +115,8 @@ type State struct {
 	vaultView       func(*ui.Context)
 	logsVisible     bool
 	logsView        func(*ui.Context)
+	sftpVisible     bool
+	sftpView        func(*ui.Context)
 	requestLocale   func(string)
 	requestSettings func()
 	requestRedraw   func()
@@ -229,6 +231,13 @@ func WithVault(view func(*ui.Context)) Option {
 // tests wire a fake or the real view over a test store.
 func WithLogs(view func(*ui.Context)) Option {
 	return func(s *State) { s.logsView = view }
+}
+
+// WithSFTP gives the shell the SFTP surface. The app wires the real view;
+// tests wire a fake. The SFTP state lives in its own package, so the shell
+// only renders and shows it.
+func WithSFTP(view func(*ui.Context)) Option {
+	return func(s *State) { s.sftpView = view }
 }
 
 // WithSearch gives the shell the Quick Switcher and command palette overlay.
@@ -359,6 +368,7 @@ func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
 func (s *State) ShowVault() {
 	s.vaultVisible = true
 	s.logsVisible = false
+	s.sftpVisible = false
 	s.RequestRedraw()
 }
 
@@ -375,6 +385,22 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 func (s *State) ShowLogs() {
 	s.logsVisible = true
 	s.vaultVisible = false
+	s.sftpVisible = false
+	s.RequestRedraw()
+}
+
+// SFTPVisible reports whether the main window shows the SFTP surface.
+func (s *State) SFTPVisible() bool { return s.sftpVisible }
+
+// SFTPView returns the SFTP surface the app supplied, or nil.
+func (s *State) SFTPView() func(*ui.Context) { return s.sftpView }
+
+// ShowSFTP makes the SFTP surface visible. The terminal work Tab strip stays
+// over it, so a user can return to a Session without leaving SFTP first.
+func (s *State) ShowSFTP() {
+	s.sftpVisible = true
+	s.vaultVisible = false
+	s.logsVisible = false
 	s.RequestRedraw()
 }
 
@@ -403,6 +429,7 @@ func (s *State) NewTab() error {
 	s.active = len(s.tabs) - 1
 	s.vaultVisible = false
 	s.logsVisible = false
+	s.sftpVisible = false
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -513,6 +540,7 @@ func (s *State) Flush() {
 		s.active = len(s.tabs) - 1
 		s.vaultVisible = false
 		s.logsVisible = false
+		s.sftpVisible = false
 		s.problem = ""
 		s.save()
 		if !outcome.startup.Empty() {
