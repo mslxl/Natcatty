@@ -341,6 +341,7 @@ func (s *State) SelectTab(index int) {
 	s.tabs[index].Dirty = false
 	s.vaultVisible = false
 	s.logsVisible = false
+	s.sftpVisible = false
 	s.save()
 }
 

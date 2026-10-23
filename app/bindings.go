@@ -13,6 +13,7 @@ import (
 	"github.com/mslxl/natcatty/domain/workspace"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
 // unavailableBindings are catalog entries whose feature this build does not
@@ -21,25 +22,12 @@ import (
 var unavailableBindings = map[string]bool{
 	"toggle-pane-zoom": true,
 
-	"open-sftp":         true,
 	"port-forwarding":   true,
 	"new-workspace":     true,
 	"snippets":          true,
 	"toggle-side-panel": true,
 	"paste-selection":   true,
 	"search-terminal":   true,
-
-	"sftp-copy":        true,
-	"sftp-cut":         true,
-	"sftp-paste":       true,
-	"sftp-select-all":  true,
-	"sftp-rename":      true,
-	"sftp-delete":      true,
-	"sftp-refresh":     true,
-	"sftp-new-folder":  true,
-	"sftp-open":        true,
-	"sftp-go-parent":   true,
-	"sftp-navigate-to": true,
 }
 
 // catalogBindingAvailable reports whether this build can run a catalog
@@ -197,9 +185,12 @@ func collectMenuShortcuts(items []*mygo.MenuItem, out []domain.MenuShortcut) []d
 // bindingDispatcher turns active catalog bindings into window shortcuts. It
 // deliberately leaves terminal-owned chords and menu-handled bindings alone.
 type bindingDispatcher struct {
-	service       *appkeybindings.Service
-	shell         *state.State
-	search        *uisearch.State
+	service *appkeybindings.Service
+	shell   *state.State
+	search  *uisearch.State
+	// transfer owns the SFTP surface's state. The surface registers its own
+	// scoped shortcuts; only open-sftp is dispatched at window scope.
+	transfer      *transferstate.State
 	focusMain     func()
 	toggleOpacity func()
 }
@@ -330,6 +321,14 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 		}, true
 	case "open-hosts":
 		return func(int) { d.shell.ShowVault() }, true
+	case "open-sftp":
+		if d.transfer == nil {
+			return nil, false
+		}
+		return func(int) {
+			d.shell.ShowSFTP()
+			d.transfer.EnsureStarted()
+		}, true
 	case "open-local":
 		return func(int) { _ = d.shell.NewTab() }, true
 	case "broadcast":
