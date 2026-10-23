@@ -20,6 +20,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
 
@@ -182,6 +183,10 @@ type State struct {
 	// desktopNotice is a non-blocking message for a deep-link or command-line
 	// target the app could not open. It is set and read on the UI thread.
 	desktopNotice DesktopNotice
+
+	// searchState is the Quick Switcher and command palette overlay. A nil
+	// state leaves the chords and the overlay out, which test shells use.
+	searchState *uisearch.State
 }
 
 // Option customizes a State.
@@ -225,6 +230,17 @@ func WithVault(view func(*ui.Context)) Option {
 func WithLogs(view func(*ui.Context)) Option {
 	return func(s *State) { s.logsView = view }
 }
+
+// WithSearch gives the shell the Quick Switcher and command palette overlay.
+// The app owns the state because it also dispatches the chords and the chosen
+// command.
+func WithSearch(search *uisearch.State) Option {
+	return func(s *State) { s.searchState = search }
+}
+
+// SearchState returns the Quick Switcher state, or nil when the shell has no
+// overlay.
+func (s *State) SearchState() *uisearch.State { return s.searchState }
 
 // WithTrustPrompt gives the shell the host-key prompt to render. The same
 // prompt is the SSH connection manager's Prompter.

@@ -7,6 +7,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
@@ -39,6 +40,11 @@ func View(s *state.State) func(*ui.Context) {
 		}
 		if prompt := s.AuthPrompt(); prompt != nil {
 			sessionui.AuthPromptModal(prompt)(c)
+		}
+		// The Quick Switcher sits above every surface, including a prompt, so
+		// its chord works wherever the focus is.
+		if search := s.SearchState(); search != nil {
+			uisearch.Overlay(search)(c)
 		}
 	}
 }

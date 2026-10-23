@@ -9,10 +9,12 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appsearch "github.com/mslxl/natcatty/application/search"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -463,5 +465,52 @@ func TestNoticeTextLocalizesX11Failures(t *testing.T) {
 	}
 	if got := noticeText(m, &appsession.Notice{Code: "unknown"}); got != "" {
 		t.Fatalf("unknown notice = %q, want empty", got)
+	}
+}
+
+// TestShellViewRendersTheSearchOverlayAboveEverySurface proves the Quick
+// Switcher and the command palette are part of the shell surface: the overlay
+// is invisible while closed, appears over the content when its state opens,
+// and closes on Escape.
+func TestShellViewRendersTheSearchOverlayAboveEverySurface(t *testing.T) {
+	search := uisearch.New(uisearch.WithSource(
+		func(uisearch.Mode, string) []appsearch.Record { return nil }))
+	shellState := state.NewState(state.WithSearch(search))
+	tester := ui.NewTester(View(shellState), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	if tester.HasText(m.SearchJumpTo()) {
+		t.Fatalf("the overlay rendered while closed: %v", tester.Texts())
+	}
+	search.Open(uisearch.ModeQuickSwitcher)
+	tester.Frame()
+	if !tester.HasText(m.SearchJumpTo()) || !tester.HasText(m.SearchEmpty()) {
+		t.Fatalf("the Quick Switcher did not render above the shell: %v", tester.Texts())
+	}
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	if search.IsOpen() {
+		t.Fatal("Escape did not close the Quick Switcher")
+	}
+	if tester.HasText(m.SearchJumpTo()) {
+		t.Fatalf("the closed overlay still renders: %v", tester.Texts())
+	}
+}
+
+// TestTabTitleNamesASummaryLikeTheTabStrip proves the Quick Switcher labels a
+// Session exactly as the tab strip does, copy suffix included.
+func TestTabTitleNamesASummaryLikeTheTabStrip(t *testing.T) {
+	m := locales.In("en")
+	if got := TabTitle(m, state.TabSummary{Number: 3}); got != "Local Session 3" {
+		t.Fatalf("unnamed Tab = %q, want %q", got, "Local Session 3")
+	}
+	if got := TabTitle(m, state.TabSummary{Label: "prod-db"}); got != "prod-db" {
+		t.Fatalf("named Tab = %q", got)
+	}
+	if got, want := TabTitle(m, state.TabSummary{Label: "prod-db", Copy: 1}),
+		m.TabCopyTitle("prod-db", 1); got != want {
+		t.Fatalf("copied Tab = %q, want %q", got, want)
 	}
 }

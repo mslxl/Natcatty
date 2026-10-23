@@ -177,16 +177,26 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 }
 
 func tabTitle(m locales.Messages, info state.TabInfo) string {
-	title := info.Label
+	number := info.TitleNumber
+	if number == 0 {
+		number = info.Number
+	}
+	return composeTabTitle(m, info.Label, number, info.Copy)
+}
+
+// TabTitle names a Tab summary the way the tab strip names the Tab. The Quick
+// Switcher reuses it, so a Session is found by the title the user sees.
+func TabTitle(m locales.Messages, info state.TabSummary) string {
+	return composeTabTitle(m, info.Label, info.Number, info.Copy)
+}
+
+func composeTabTitle(m locales.Messages, label string, number, copy int) string {
+	title := label
 	if title == "" {
-		number := info.TitleNumber
-		if number == 0 {
-			number = info.Number
-		}
 		title = m.LocalSessionTab(number)
 	}
-	if info.Copy > 0 {
-		title = m.TabCopyTitle(title, info.Copy)
+	if copy > 0 {
+		title = m.TabCopyTitle(title, copy)
 	}
 	return title
 }

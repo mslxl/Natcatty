@@ -11,6 +11,7 @@ import (
 	domain "github.com/mslxl/natcatty/domain/keybindings"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/domain/workspace"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
 )
 
@@ -22,8 +23,6 @@ var unavailableBindings = map[string]bool{
 
 	"open-sftp":         true,
 	"port-forwarding":   true,
-	"command-palette":   true,
-	"quick-switch":      true,
 	"new-workspace":     true,
 	"snippets":          true,
 	"toggle-side-panel": true,
@@ -200,6 +199,8 @@ func collectMenuShortcuts(items []*mygo.MenuItem, out []domain.MenuShortcut) []d
 type bindingDispatcher struct {
 	service       *appkeybindings.Service
 	shell         *state.State
+	search        *uisearch.State
+	focusMain     func()
 	toggleOpacity func()
 }
 
@@ -333,6 +334,16 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 		return func(int) { _ = d.shell.NewTab() }, true
 	case "broadcast":
 		return func(int) { d.shell.ToggleBroadcastPanel() }, true
+	case "command-palette":
+		if d.search == nil {
+			return nil, false
+		}
+		return func(int) { d.revealSearch(uisearch.ModeCommandPalette) }, true
+	case "quick-switch":
+		if d.search == nil {
+			return nil, false
+		}
+		return func(int) { d.revealSearch(uisearch.ModeQuickSwitcher) }, true
 	case "toggle-opacity":
 		if d.toggleOpacity == nil {
 			return nil, false
@@ -341,6 +352,24 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 	default:
 		return nil, false
 	}
+}
+
+// revealSearch opens the overlay in the main window, which is the only
+// window that renders it, and redraws that window. The Quick Switcher toggles
+// on its chord; the command palette only opens.
+func (d *bindingDispatcher) revealSearch(mode uisearch.Mode) {
+	if d.search == nil {
+		return
+	}
+	if mode == uisearch.ModeQuickSwitcher {
+		d.search.Toggle(mode)
+	} else {
+		d.search.Open(mode)
+	}
+	if d.focusMain != nil {
+		d.focusMain()
+	}
+	d.shell.RequestRedraw()
 }
 
 type chordKey struct {
