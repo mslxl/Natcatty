@@ -51,6 +51,16 @@ type FileSystem interface {
 	Base(path string) string
 	// Style reports the notation Join and Parent use.
 	Style() PathStyle
+	// Backing returns a stable identifier for the store this filesystem
+	// reads and writes. Two filesystems must share a Backing exactly when
+	// they address the same tree: two local panes on one device, or two
+	// connections to one Host. Different Hosts keep different Backings even
+	// when their paths look identical.
+	Backing() string
+	// Canonical returns path in the form used to compare locations within a
+	// Backing. A local filesystem resolves symlinks and returns an absolute
+	// path; a remote one cleans its POSIX path.
+	Canonical(path string) string
 	// Close releases the transport; it is safe to call more than once.
 	Close() error
 }

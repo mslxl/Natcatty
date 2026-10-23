@@ -13,9 +13,10 @@ package app
 //     file, rename, chmod, delete confirmation, and download all run through
 //     the same service the app wires. Deletion and replacement change nothing
 //     until the confirmation is submitted.
-//   - Tabs and bookmarks: duplicating a Tab keeps its location, and both a
+//   - Tabs and bookmarks: duplicating a Tab keeps its location, both a
 //     local-pane and a remote bookmark are written to their persisted JSON
-//     repositories.
+//     repositories, and a cross-Tab copy into the source's own subtree is
+//     refused without touching the filesystem.
 //   - The view: the real surface renders both panes at 720x480 and 1100x720,
 //     in English and Simplified Chinese, with every toolbar action inside the
 //     window; the star, hidden-file toggle, and delete confirmation work
@@ -75,6 +76,7 @@ type selftest30 struct {
 
 	browsePhase int
 	opPhase     int
+	guardPhase  int
 	viewPhase   int
 	// finished marks a completed run. The registry reuses the check value, so
 	// the next F11,3,0 starts from a clean instance and fresh fixtures.
@@ -88,6 +90,7 @@ func (t *selftest30) check() selftest.Check {
 		Steps: []selftest.Step{
 			{Name: "dual-panes-browse-independently", Run: t.browseStep},
 			{Name: "upload-overwrite-create-rename-chmod-delete-download", Run: t.operationStep},
+			{Name: "dual-local-tabs-cannot-copy-into-source", Run: t.guardStep},
 			{Name: "tabs-bookmarks-and-the-view", Run: t.viewStep},
 		},
 	}
@@ -110,7 +113,8 @@ func (o *selftest30Remote) OpenRemote(context.Context, model.HostID, string) (ap
 		return nil, err
 	}
 	go func() { _ = server.Serve() }()
-	remote, err := adaptersftp.NewRemote(clientSide, func(error) error { return nil })
+	remote, err := adaptersftp.NewRemote(clientSide, func(error) error { return nil },
+		adaptersftp.WithBacking("remote:selftest"))
 	if err != nil {
 		_ = server.Close()
 		return nil, err
@@ -546,6 +550,57 @@ func (t *selftest30) operationStep(*ui.Context) selftest.Outcome {
 	return selftest.Passed(
 		"upload, overwrite prompt, mkdir, create, rename, chmod, confirmed delete, and download all ran",
 		"apptransfer.Service + adaptersftp.Local + adaptersftp.Remote")
+}
+
+// guardStep reproduces the acceptance failure: a second local Tab enters a
+// folder, and the first Tab tries to copy that folder into it. The guard must
+// refuse before any filesystem mutation.
+func (t *selftest30) guardStep(*ui.Context) selftest.Outcome {
+	switch t.guardPhase {
+	case 0:
+		t.state.OpenLocal(transferstate.Right)
+		t.guardPhase = 1
+		return selftest.Pending
+	case 1:
+		t.state.Flush()
+		tab := t.state.Tab(transferstate.Right)
+		if tab == nil || tab.FS == nil || tab.Loading {
+			return t.expired("the second local Tab")
+		}
+		t.state.Navigate(transferstate.Right, filepath.Join(t.localRoot, "folder"))
+		t.guardPhase = 2
+		return selftest.Pending
+	case 2:
+		t.state.Flush()
+		tab := t.state.Tab(transferstate.Right)
+		if tab == nil || tab.Loading || tab.Path != filepath.Join(t.localRoot, "folder") {
+			return t.expired("the second local Tab to enter the folder")
+		}
+		if err := t.selectLocal("folder"); err != nil {
+			return selftest.Failed(err)
+		}
+		t.state.Transfer(transferstate.Left)
+		t.guardPhase = 3
+		return selftest.Pending
+	}
+
+	t.state.Flush()
+	if got := t.state.Notice(); got != "copy-into-self" {
+		return selftest.Failed(fmt.Errorf("cross-Tab copy notice = %q, want copy-into-self", got))
+	}
+	if t.state.Busy() {
+		return selftest.Failed(fmt.Errorf("the refused copy still started an operation"))
+	}
+	if _, err := os.Stat(filepath.Join(t.localRoot, "folder", "folder")); err == nil {
+		return selftest.Failed(fmt.Errorf("the refused copy created folder/folder"))
+	}
+	if _, err := os.Stat(filepath.Join(t.localRoot, "folder", "inside.txt")); err != nil {
+		return selftest.Failed(fmt.Errorf("the refused copy changed the source: %v", err))
+	}
+	t.state.CloseTab(transferstate.Right)
+	return selftest.Passed(
+		"two local Tabs over one root are refused when the destination is inside the copied folder, with no writes",
+		"transferstate.State + adaptersftp.Local")
 }
 
 // bookmarkFileHas reports whether a persisted list contains a bookmark with

@@ -2752,6 +2752,16 @@
       }
     }
   },
+  "sftpProgressDone": "{current} · complete",
+  "@sftpProgressDone": {
+    "description": "The completed operation's progress line when it has no byte progress.",
+    "placeholders": {
+      "current": {
+        "type": "String",
+        "example": "New folder"
+      }
+    }
+  },
   "sftpErrorExists": "An item with that name already exists.",
   "@sftpErrorExists": {
     "description": "The error shown for an existing destination."
