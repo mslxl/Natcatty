@@ -21,7 +21,8 @@ import (
 // instead of the adapter package, which the UI layer may not import, while
 // still exercising the listing, selection, and copy paths with real files.
 type osFS struct {
-	root string
+	root    string
+	backing string
 }
 
 func (f osFS) Root(context.Context) (string, error) { return f.root, nil }
@@ -94,6 +95,13 @@ func (f osFS) Join(parts ...string) string  { return filepath.Join(parts...) }
 func (f osFS) Parent(path string) string    { return filepath.Dir(path) }
 func (f osFS) Base(path string) string      { return filepath.Base(path) }
 func (f osFS) Style() apptransfer.PathStyle { return style() }
+func (f osFS) Backing() string {
+	if f.backing != "" {
+		return f.backing
+	}
+	return "local"
+}
+func (f osFS) Canonical(path string) string { return canonicalLocal(path) }
 func (f osFS) Close() error                 { return nil }
 
 func style() apptransfer.PathStyle {
@@ -103,14 +111,30 @@ func style() apptransfer.PathStyle {
 	return apptransfer.StylePOSIX
 }
 
-type osOpener struct{ root string }
+// canonicalLocal mirrors the local adapter's path identity: absolute, with
+// symlinks resolved when the path exists.
+func canonicalLocal(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		absolute = path
+	}
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		absolute = resolved
+	}
+	return filepath.Clean(absolute)
+}
+
+type osOpener struct {
+	root    string
+	backing string
+}
 
 func (o osOpener) OpenLocal(context.Context) (apptransfer.FileSystem, error) {
-	return osFS{root: o.root}, nil
+	return osFS{root: o.root, backing: o.backing}, nil
 }
 
 func (o osOpener) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
-	return osFS{root: o.root}, nil
+	return osFS{root: o.root, backing: o.backing}, nil
 }
 
 type viewHosts struct{}
@@ -131,7 +155,9 @@ func (viewBookmarks) LoadLocalBookmarks(context.Context) ([]domainsftp.Bookmark,
 func (viewBookmarks) SaveLocalBookmarks(context.Context, []domainsftp.Bookmark) error { return nil }
 
 func newViewService(local, remote string) *apptransfer.Service {
-	return apptransfer.NewService(osOpener{root: local}, osOpener{root: remote},
+	return apptransfer.NewService(
+		osOpener{root: local, backing: "local"},
+		osOpener{root: remote, backing: "remote:h1"},
 		apptransfer.WithHosts(viewHosts{}), apptransfer.WithBookmarks(viewBookmarks{}))
 }
 

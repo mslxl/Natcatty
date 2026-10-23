@@ -286,6 +286,8 @@ func (f *fakeFS) Join(parts ...string) string { return path.Join(parts...) }
 func (f *fakeFS) Parent(p string) string      { return path.Dir(p) }
 func (f *fakeFS) Base(p string) string        { return path.Base(p) }
 func (f *fakeFS) Style() PathStyle            { return StylePOSIX }
+func (f *fakeFS) Backing() string             { return "fake:" + f.name }
+func (f *fakeFS) Canonical(p string) string   { return path.Clean(p) }
 
 func (f *fakeFS) Close() error {
 	f.mu.Lock()

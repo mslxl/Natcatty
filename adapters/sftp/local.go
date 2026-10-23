@@ -235,5 +235,25 @@ func (f *localFiles) Style() apptransfer.PathStyle {
 	return apptransfer.StylePOSIX
 }
 
+// Backing is the local device. Every local Tab in this process addresses the
+// same machine, regardless of which adapter instance opened it.
+func (f *localFiles) Backing() string { return "local" }
+
+// Canonical returns an absolute path with symlinks resolved, so two local
+// Tabs cannot reach one directory through different spellings.
+func (f *localFiles) Canonical(path string) string {
+	if path == "" {
+		return ""
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		absolute = path
+	}
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		absolute = resolved
+	}
+	return filepath.Clean(absolute)
+}
+
 // Close releases the local filesystem; it holds no handles.
 func (f *localFiles) Close() error { return nil }

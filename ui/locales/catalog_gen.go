@@ -12970,6 +12970,20 @@ func (msgs Messages) SftpProgress(current string, percent int) string {
 	return Catalog.Format(msgs.locale, "sftpProgress", map[string]any{"current": current, "percent": percent})
 }
 
+// SftpProgressDone says "{current} · complete"
+// in the language the app shows.
+//
+// The completed operation's progress line when it has no byte progress.
+func SftpProgressDone(current string) string { return In(i18n.Locale()).SftpProgressDone(current) }
+
+// SftpProgressDone says "{current} · complete"
+// in the language of msgs.
+//
+// The completed operation's progress line when it has no byte progress.
+func (msgs Messages) SftpProgressDone(current string) string {
+	return Catalog.Format(msgs.locale, "sftpProgressDone", map[string]any{"current": current})
+}
+
 // SftpErrorExists says "An item with that name already exists."
 // in the language the app shows.
 //

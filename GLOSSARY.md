@@ -16,6 +16,12 @@ A user-defined grouping of hosts with shared display and connection defaults.
 In Go, `domain/vault.Group` is a Host Group and `Host.Group` holds its path.
 _Avoid_: folder, category
 
+**Backing**:
+The tree a transfer pane reads and writes. Two panes share a Backing exactly when
+they address the same tree - one local device, or one Host - even when they are
+separate connections or Tabs. Canonical paths are compared within one Backing.
+_Avoid_: filesystem, connection, adapter
+
 **Unsaved Host**:
 A connection target the user typed but did not save as a Host, so it has no
 `HostID`. Records keep the typed label and address and mark it as unsaved; it is

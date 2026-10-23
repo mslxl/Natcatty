@@ -296,11 +296,11 @@ func sortMenu(menu *ui.Menu, s *transferstate.State, side transferstate.Side, ta
 
 func bookmarksMenu(menu *ui.Menu, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages) {
 	items := s.Bookmarks(side)
-	toggle := menu.Item(m.SftpBookmark())
+	label := m.SftpBookmark()
 	if s.Bookmarked(side) {
-		toggle = menu.Item(m.SftpBookmarkRemove())
+		label = m.SftpBookmarkRemove()
 	}
-	if toggle.Chosen() {
+	if menu.Item(label).Chosen() {
 		s.ToggleBookmark(side)
 	}
 	if len(items) == 0 {
@@ -370,8 +370,9 @@ func fileRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 	})
 
 	clicks := row.Clicks()
-	if clicks > 0 {
-		s.Click(side, entry, row.ClickModifiers(), clicks > 1)
+	double := row.DoubleClicked()
+	if clicks > 0 || double {
+		s.Click(side, entry, row.ClickModifiers(), double)
 	}
 	if entry.Name != ".." {
 		if payload := s.DragFor(side, entry); payload != nil {

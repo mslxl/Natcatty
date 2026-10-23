@@ -30,6 +30,8 @@ const (
 	KindInvalidName ErrorKind = "invalid-name"
 	// KindInvalidMode reports an unparsable permission value.
 	KindInvalidMode ErrorKind = "invalid-mode"
+	// KindSelfCopy reports a source that contains its destination.
+	KindSelfCopy ErrorKind = "copy-into-self"
 	// KindUnsupported reports an operation the transport cannot perform.
 	KindUnsupported ErrorKind = "unsupported"
 	// KindCancelled reports a user cancellation.

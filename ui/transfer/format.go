@@ -85,6 +85,8 @@ func errorText(m locales.Messages, err error) string {
 		return m.SftpErrorInvalidName()
 	case apptransfer.KindInvalidMode:
 		return m.SftpErrorInvalidMode()
+	case apptransfer.KindSelfCopy:
+		return m.SftpCopyIntoSelf()
 	case apptransfer.KindUnsupported:
 		return m.SftpErrorUnsupported()
 	case apptransfer.KindCancelled:
@@ -107,6 +109,11 @@ func operationLabel(m locales.Messages, op *transferstate.Operation) string {
 	current := op.Current
 	if current == "" {
 		current = operationKindLabel(m, op.Kind)
+	}
+	if !op.Running && op.Err == nil && op.Metadata() {
+		// A finished metadata operation has a completion state, not a
+		// meaningless 0%.
+		return m.SftpProgressDone(baseName(current))
 	}
 	return m.SftpProgress(baseName(current), op.Percent())
 }
