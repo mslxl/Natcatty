@@ -102,7 +102,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		})
 	}
 
-	gutter := importScrollbarGutter(t)
+	gutter := scrollbarGutter(t)
 	var firstAction ui.Rect
 	scrollBox := ui.Scroll(c).Grow(1).FillWidth().PaddingEnd(gutter).TrackScroll(scroll)
 	scrollBox.Children(func() {
