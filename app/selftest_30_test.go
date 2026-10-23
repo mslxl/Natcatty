@@ -14,7 +14,7 @@ import (
 )
 
 // runTicket30 presses 3 and 0, advances the harness to completion, and
-// asserts a passing three-step result. openMenu presses F11 first.
+// asserts a passing four-step result. openMenu presses F11 first.
 func runTicket30(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result {
 	t.Helper()
 	if openMenu {
@@ -40,8 +40,8 @@ func runTicket30(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 		}
 		t.Fatalf("ticket 30 self-test failed: %v", result.Errors)
 	}
-	if len(result.Steps) != 3 {
-		t.Fatalf("steps = %d, want 3: %+v", len(result.Steps), result.Steps)
+	if len(result.Steps) != 4 {
+		t.Fatalf("steps = %d, want 4: %+v", len(result.Steps), result.Steps)
 	}
 	for _, step := range result.Steps {
 		t.Logf("%s: %s (%s)", step.Name, step.Detail, step.Seam)
@@ -70,6 +70,7 @@ func TestTicket30CheckRunsThroughTheKeyboard(t *testing.T) {
 	for _, want := range []string{
 		"adaptersftp.Local + adaptersftp.Remote + transferstate.State",
 		"apptransfer.Service + adaptersftp.Local + adaptersftp.Remote",
+		"transferstate.State + adaptersftp.Local",
 		"transferui.View + transferstate.State + adaptersftp.Bookmarks",
 	} {
 		if !seams[want] {

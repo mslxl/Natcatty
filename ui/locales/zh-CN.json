@@ -1727,6 +1727,7 @@
   "sftpSelected": "已选择 {count} 项",
   "sftpItemCount": "{count, plural, other {# 项}}",
   "sftpProgress": "{current} · {percent}%",
+  "sftpProgressDone": "{current} · 已完成",
   "sftpErrorExists": "已存在同名项目。",
   "sftpErrorNotFound": "项目已不存在。",
   "sftpErrorPermission": "权限被拒绝。",

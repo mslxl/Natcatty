@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
@@ -24,6 +23,16 @@ type Operation struct {
 	Err error
 
 	cancel context.CancelFunc
+}
+
+// Metadata reports whether the operation changes entries without moving file
+// contents. Such an operation has no byte or file totals to show.
+func (o Operation) Metadata() bool {
+	switch o.Kind {
+	case domainsftp.OpMkdir, domainsftp.OpCreateFile, domainsftp.OpRename, domainsftp.OpChmod:
+		return true
+	}
+	return false
 }
 
 // Percent returns the byte progress in 0..100, or 0 when the size is not yet
@@ -191,12 +200,10 @@ func (s *State) transferTo(from, to Side, move bool) {
 		s.RequestRedraw()
 		return
 	}
-	if source.FS == dest.FS {
-		if problem := copyDestinationProblem(source.FS, paths, destDir, move); problem != "" {
-			s.notice = problem
-			s.RequestRedraw()
-			return
-		}
+	if problem := copyDestinationProblem(source.FS, dest.FS, paths, destDir, move); problem != "" {
+		s.notice = problem
+		s.RequestRedraw()
+		return
 	}
 	kind := transferKind(source, dest)
 	s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictStop, s.refreshAfter(source, dest, move))
@@ -268,54 +275,30 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 }
 
 // sameDirectory reports whether every source already lives in dir.
-func sameDirectory(files apptransfer.FileSystem, dir string, paths []string) bool {
+func sameDirectory(source, dest apptransfer.FileSystem, dir string, paths []string) bool {
 	for _, path := range paths {
-		if !samePath(files, files.Parent(path), dir) {
+		if !apptransfer.SameLocation(source, source.Parent(path), dest, dir) {
 			return false
 		}
 	}
 	return true
 }
 
-// copyDestinationProblem reports why a copy or move within one filesystem
-// cannot target dir. Copying a folder into itself would rediscover the new
-// tree and recurse until the walk bound; the original blocks it too.
-func copyDestinationProblem(files apptransfer.FileSystem, paths []string, dir string, move bool) string {
+// copyDestinationProblem reports why a copy or move cannot target dir.
+// Copying a folder into itself would rediscover the new tree and recurse
+// until the walk bound; the original blocks it too. Backing identity and
+// canonical paths make this hold across two Tabs on one local machine or one
+// Host, while different Hosts keep separate trees.
+func copyDestinationProblem(source, dest apptransfer.FileSystem, paths []string, dir string, move bool) string {
 	for _, path := range paths {
-		if samePath(files, path, dir) || isWithin(files, path, dir) {
-			return "copy-into-self"
+		if apptransfer.PathWithin(source, path, dest, dir) {
+			return string(apptransfer.KindSelfCopy)
 		}
 	}
-	if move && sameDirectory(files, dir, paths) {
+	if move && sameDirectory(source, dest, dir, paths) {
 		return "same-directory"
 	}
 	return ""
-}
-
-// isWithin reports whether candidate is ancestor or below it.
-func isWithin(files apptransfer.FileSystem, ancestor, candidate string) bool {
-	if ancestor == "" || candidate == "" {
-		return false
-	}
-	for current := candidate; ; {
-		if samePath(files, current, ancestor) {
-			return true
-		}
-		parent := files.Parent(current)
-		if parent == current || parent == "" {
-			return false
-		}
-		current = parent
-	}
-}
-
-// samePath compares two paths in the filesystem's notation. Windows paths are
-// case-insensitive.
-func samePath(files apptransfer.FileSystem, a, b string) bool {
-	if files.Style() == apptransfer.StyleWindows {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
 }
 
 // CopySelection remembers the focused pane's selection for a later paste.
@@ -370,23 +353,22 @@ func (s *State) Paste(side Side) {
 	destDir := dest.Destination()
 	kind := domainsftp.OpCopy
 	conflict := apptransfer.ConflictStop
-	if clip.FS == dest.FS {
-		if problem := copyDestinationProblem(clip.FS, clip.Paths, destDir, clip.Cut); problem != "" {
-			s.notice = problem
-			s.RequestRedraw()
-			return
-		}
-		if sameDirectory(clip.FS, destDir, clip.Paths) {
-			// A copy back into the same folder becomes "(copy N)" rather than
-			// overwriting the source. A cut already returned above.
-			conflict = apptransfer.ConflictDuplicate
-		}
+	same := apptransfer.SameBacking(clip.FS, dest.FS)
+	if problem := copyDestinationProblem(clip.FS, dest.FS, clip.Paths, destDir, clip.Cut); problem != "" {
+		s.notice = problem
+		s.RequestRedraw()
+		return
+	}
+	if same && sameDirectory(clip.FS, dest.FS, destDir, clip.Paths) {
+		// A copy back into the same folder becomes "(copy N)" rather than
+		// overwriting the source. A cut already returned above.
+		conflict = apptransfer.ConflictDuplicate
 	}
 	source := &Tab{FS: clip.FS, Kind: KindLocal}
 	if dest.Kind == KindRemote {
 		source.Kind = KindRemote
 	}
-	if clip.FS == dest.FS {
+	if same {
 		source.Kind = dest.Kind
 	}
 	refresh := []*Tab{dest}
@@ -432,6 +414,15 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 	go func() {
 		local, err := s.service.OpenLocal(ctx)
 		if err == nil {
+			if problem := copyDestinationProblem(local, dest.FS, paths, targetDir, false); problem != "" {
+				_ = local.Close()
+				s.post(func() {
+					s.releaseOperation(op)
+					s.notice = problem
+					s.RequestRedraw()
+				})
+				return
+			}
 			_, err = s.service.Copy(ctx, apptransfer.CopyRequest{
 				Source: local, Dest: dest.FS, Sources: paths, DestDir: targetDir,
 				Kind: kind, Conflict: conflict,
@@ -536,15 +527,14 @@ func (s *State) DropPane(side Side, targetDir string, payload *DragPayload) {
 		targetDir = dest.Destination()
 	}
 	move := payload.Side == side
-	if payload.FS == dest.FS {
-		if problem := copyDestinationProblem(payload.FS, payload.Paths, targetDir, move); problem != "" {
-			s.notice = problem
-			s.RequestRedraw()
-			return
-		}
+	same := apptransfer.SameBacking(payload.FS, dest.FS)
+	if problem := copyDestinationProblem(payload.FS, dest.FS, payload.Paths, targetDir, move); problem != "" {
+		s.notice = problem
+		s.RequestRedraw()
+		return
 	}
 	kind := domainsftp.OpCopy
-	if payload.FS != dest.FS {
+	if !same {
 		if dest.Kind == KindRemote {
 			kind = domainsftp.OpUpload
 		} else {
@@ -555,7 +545,7 @@ func (s *State) DropPane(side Side, targetDir string, payload *DragPayload) {
 	if dest.Kind == KindRemote {
 		source.Kind = KindRemote
 	}
-	if payload.FS == dest.FS {
+	if same {
 		source.Kind = dest.Kind
 	}
 	s.startCopy(source, dest, payload.Paths, targetDir, move, kind, apptransfer.ConflictStop, s.refreshAfter(source, dest, move))

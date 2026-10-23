@@ -239,17 +239,34 @@ func TestTabsBookmarksAndStarControls(t *testing.T) {
 func TestBookmarksMenuListsAndRemoves(t *testing.T) {
 	m := locales.In("en")
 	f := newViewFixture(t, 1100, 720, "en")
-	if err := f.tester.Click("★"); err != nil {
-		t.Fatal(err)
-	}
-	f.tester.Frame()
 
 	if err := f.tester.Click(m.SftpBookmarks()); err != nil {
 		t.Fatal(err)
 	}
 	menu := f.tester.Menu()
-	if !containsText(menu, m.SftpBookmarkRemove()) {
-		t.Fatalf("the bookmarks menu is %v", menu)
+	if got := countText(menu, m.SftpBookmark()); got != 1 {
+		t.Fatalf("the unbookmarked menu has %d add actions: %v", got, menu)
+	}
+	if got := countText(menu, m.SftpBookmarkRemove()); got != 0 {
+		t.Fatalf("the unbookmarked menu offers a remove action: %v", menu)
+	}
+	if err := f.tester.ChooseMenuItem(m.SftpBookmark()); err != nil {
+		t.Fatal(err)
+	}
+	f.tester.Frame()
+	if !f.state.Bookmarked(transferstate.Left) {
+		t.Fatal("the add action did not bookmark the folder")
+	}
+
+	if err := f.tester.Click(m.SftpBookmarks()); err != nil {
+		t.Fatal(err)
+	}
+	menu = f.tester.Menu()
+	if got := countText(menu, m.SftpBookmark()); got != 0 {
+		t.Fatalf("the bookmarked menu still offers an add action: %v", menu)
+	}
+	if got := countText(menu, m.SftpBookmarkRemove()); got != 1 {
+		t.Fatalf("the bookmarked menu has %d remove actions: %v", got, menu)
 	}
 	if !containsText(menu, m.SftpBookmarksLocalHint()) {
 		t.Fatalf("a local pane does not explain that its bookmarks are unsaved: %v", menu)
@@ -261,6 +278,16 @@ func TestBookmarksMenuListsAndRemoves(t *testing.T) {
 	if f.state.Bookmarked(transferstate.Left) {
 		t.Fatal("the menu did not remove the bookmark")
 	}
+}
+
+func countText(items []string, want string) int {
+	count := 0
+	for _, item := range items {
+		if item == want {
+			count++
+		}
+	}
+	return count
 }
 
 func containsText(items []string, want string) bool {
@@ -307,6 +334,70 @@ func TestCopyRunsFromTheToolbarAndReportsProgress(t *testing.T) {
 	if !f.tester.HasText(m.SftpOperationDone()) {
 		t.Fatalf("the status does not report the result: %v", f.tester.Texts())
 	}
+}
+
+func TestMetadataOperationShowsCompletionInsteadOfZeroPercent(t *testing.T) {
+	m := locales.In("en")
+	f := newViewFixture(t, 1100, 720, "en")
+
+	if err := f.tester.Click(m.SftpNewFolder()); err != nil {
+		t.Fatal(err)
+	}
+	f.tester.Frame()
+	f.state.SetDialogDraft("created-by-test")
+	if err := f.tester.Click(m.SftpCreate()); err != nil {
+		t.Fatal(err)
+	}
+	frameUntil(t, f.tester, "the folder operation to finish", func() bool {
+		return !f.state.Busy() && f.state.Snapshot() != nil
+	})
+	f.tester.Frame()
+
+	if f.tester.HasText(m.SftpProgress(m.SftpNewFolder(), 0)) {
+		t.Fatalf("a completed metadata operation still shows 0%%: %v", f.tester.Texts())
+	}
+	if !f.tester.HasText(m.SftpProgressDone(m.SftpNewFolder())) {
+		t.Fatalf("the completed operation has no completion label: %v", f.tester.Texts())
+	}
+}
+
+func TestEveryMetadataOperationKindShowsCompletion(t *testing.T) {
+	m := locales.In("en")
+	for _, kind := range []domainsftp.OperationKind{
+		domainsftp.OpMkdir,
+		domainsftp.OpCreateFile,
+		domainsftp.OpRename,
+		domainsftp.OpChmod,
+	} {
+		finished := &transferstate.Operation{Kind: kind, Current: "thing"}
+		if got, want := operationLabel(m, finished), m.SftpProgressDone("thing"); got != want {
+			t.Errorf("%s label = %q, want %q", kind, got, want)
+		}
+		running := &transferstate.Operation{Kind: kind, Current: "thing", Running: true}
+		if got := operationLabel(m, running); got == m.SftpProgressDone("thing") {
+			t.Errorf("a running %s already looks finished: %q", kind, got)
+		}
+	}
+}
+
+func TestDoubleClickOpensAnUnselectedFolder(t *testing.T) {
+	f := newViewFixture(t, 1100, 720, "en")
+	rect, ok := f.tester.Find("folder/")
+	if !ok {
+		t.Fatalf("the folder row is missing: %v", f.tester.Texts())
+	}
+	if f.state.Tab(transferstate.Left).Selection[filepath.Join(f.local, "folder")] {
+		t.Fatal("the folder was selected before the double-click")
+	}
+	// A frame between the clicks is what a real double-click does; the second
+	// click then arrives as a double-click with a single click count.
+	f.tester.ClickAt(rect.X+rect.W/2, rect.Y+rect.H/2)
+	f.tester.Frame()
+	f.tester.ClickAt(rect.X+rect.W/2, rect.Y+rect.H/2)
+	frameUntil(t, f.tester, "the double-click to open the folder", func() bool {
+		tab := f.state.Tab(transferstate.Left)
+		return tab.Path == filepath.Join(f.local, "folder") && !tab.Loading
+	})
 }
 
 func TestDeleteAsksBeforeRemoving(t *testing.T) {

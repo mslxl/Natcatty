@@ -114,6 +114,14 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 	}
 
 	kind := kindOf(request)
+	// The engine refuses a self-copy even when a caller forgot to guard it.
+	// Copying a folder over or into its own tree would discover the new
+	// entries and recurse until the walk bound.
+	for _, source := range request.Sources {
+		if PathWithin(request.Source, source, request.Dest, request.DestDir) {
+			return result, failure(KindSelfCopy, kind, source, nil)
+		}
+	}
 	counter := &walkCounter{}
 	plan := Progress{Kind: kind}
 	for _, source := range request.Sources {

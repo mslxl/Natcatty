@@ -28,6 +28,25 @@ func newLocalFS(t *testing.T) *localFiles {
 	return local
 }
 
+func TestLocalCanonicalResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.MkdirAll(filepath.Join(target, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	files := newLocalFS(t)
+	if got, want := files.Canonical(filepath.Join(link, ".", "child")), filepath.Join(target, "child"); got != want {
+		t.Fatalf("Canonical(%q) = %q, want %q", link, got, want)
+	}
+	if files.Backing() == "" {
+		t.Fatal("a local filesystem has no backing identity")
+	}
+}
+
 func TestLocalListsTypesHiddenAndSymlinks(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
@@ -165,6 +184,17 @@ func newRemoteFS(t *testing.T) (*Remote, string) {
 		_ = server.Close()
 	})
 	return remote, root
+}
+
+func TestRemoteWithoutBackingDoesNotClaimAnotherConnection(t *testing.T) {
+	first, _ := newRemoteFS(t)
+	second, _ := newRemoteFS(t)
+	if first.Backing() != "" || second.Backing() != "" {
+		t.Fatalf("unlabeled backings = %q, %q, want empty", first.Backing(), second.Backing())
+	}
+	if apptransfer.SameBacking(first, second) {
+		t.Fatal("two unlabeled connections were treated as one store")
+	}
 }
 
 func TestRemoteBrowsesAndMutates(t *testing.T) {

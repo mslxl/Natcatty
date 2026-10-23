@@ -75,7 +75,7 @@ func (o sftpRemoteOpener) OpenRemote(ctx context.Context, hostID model.HostID, _
 			return lease.Discard()
 		}
 		return lease.Release()
-	})
+	}, adaptersftp.WithBacking("remote:"+string(hostID)))
 	if err != nil {
 		// NewRemote already closed the stream and released the lease with the
 		// failure, so cleaning up again would release it twice.
