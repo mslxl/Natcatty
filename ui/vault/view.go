@@ -17,6 +17,7 @@ import (
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -25,11 +26,18 @@ type Option func(*options)
 
 type options struct {
 	forwarding *uiforwarding.State
+	search     *uisearch.State
 }
 
 // WithForwarding embeds the Port Forwarding Rule list and editor in the Vault.
 func WithForwarding(s *uiforwarding.State) Option {
 	return func(o *options) { o.forwarding = s }
+}
+
+// withSearch injects the search state. In-package tests use it to type into
+// the field through the state; the app leaves it nil and the Vault owns one.
+func withSearch(s *uisearch.State) Option {
+	return func(o *options) { o.search = s }
 }
 
 // surface names what the Vault is showing: the list or one editor.
@@ -128,6 +136,12 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 		opt(&configured)
 	}
 	var positions scrolls
+	// The Vault's inline search survives frames with the view; its records
+	// read the live Vault state each build.
+	search := configured.search
+	if search == nil {
+		search = newVaultSearch(s)
+	}
 	return func(c *ui.Context) {
 		// Test connection attempts complete off the UI thread.
 		s.FlushTests()
@@ -179,13 +193,14 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 			case surfaceBackups:
 				backupPanel(c, s, m, t, &positions.editor)
 			default:
-				list(c, s, configured.forwarding, m, t, &positions.list)
+				list(c, s, configured.forwarding, search, m, t, &positions.list)
 			}
 		})
 	}
 }
 
-func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State,
+	search *uisearch.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	// Wrap, so the title keeps one line and every action stays inside the
 	// content column at the 720x480 minimum: the actions move to the next
 	// line instead of being squeezed or clipped at the right edge.
@@ -209,6 +224,8 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 			c.Invalidate()
 		}
 	})
+
+	searchBar(c, search, m)
 
 	problem(c, s, t)
 	secretBanner(c, s, m, t)
@@ -250,6 +267,10 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State, m 
 	// Reserve the overlay scroll bar's gutter so a row's last action does not
 	// run under it, as the Settings viewport does.
 	ui.Scroll(c).Grow(1).PaddingEnd(scrollbarGutter(t)).TrackScroll(scroll).Children(func() {
+		if strings.TrimSpace(search.Query()) != "" {
+			vaultSearchResults(c, search, m, t)
+			return
+		}
 		hostSections(c, s, m, t)
 		keySection(c, s, m, t)
 		identitySection(c, s, m, t)

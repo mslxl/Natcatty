@@ -1476,6 +1476,92 @@
   status: verified
   notes: "A duplicate chord in the active scheme, or a collision with a foreign menu accelerator, is reported with the binding and action; nothing is saved until the user chooses Replace or Cancel. Terminal-vs-SFTP default collisions are intentional because those surfaces never coexist; a global binding that takes a terminal chord is a conflict, because the terminal would silently keep the key. Terminal-owned chords, including Ctrl+C SIGINT, are never registered as global or menu shortcuts; terminal copy/paste/font size are applied through MyGo keybinds. The Settings window binds no global shortcut table, so its search field and shortcut recorder receive every chord before any application action. Features this build lacks keep a catalog row marked unavailable and never fire. A binding override on an open terminal applies when the next terminal is created, because MyGo applies keybinds at construction; font changes apply live."
 
+# --- Ticket 29: search, Quick Switcher, and command palette ---
+
+- id: search.vault
+  area: vault
+  feature: Ranked Vault search across Hosts, Groups, Keys, Identities, Snippets, Notes, Proxies, and Knowledge
+  original_paths:
+    - lib/searchMatcher.ts
+    - components/vault/useVaultHostCollections.tsx
+    - components/KeychainManager.tsx
+    - components/SnippetsManager.tsx
+    - components/notes/NotesManager.tsx
+    - components/ProxyProfilesManager.tsx
+  module: application/search
+  tickets: [29]
+  acceptance_tests:
+    - application/search.TestLabelOutranksHostnameAndGroup
+    - application/search.TestLiteralBeatsCompactAcrossEveryRecord
+    - application/search.TestCompactMatchesSeparatedText
+    - application/search.TestEverySegmentMustMatch
+    - application/search.TestIPAddressesMatchOnlyContiguously
+    - application/search.TestEmptyQueryKeepsInputOrder
+    - application/search.TestTiesAreDeterministic
+    - application/search.TestCJKMatchingWorksLiterally
+    - application/search.TestUnicodeDashFoldsToHyphen
+    - application/search.TestRankedResultsAreGroupable
+    - ui/vault.TestVaultSearchCoversEveryEntity
+    - ui/vault.TestVaultSearchRanksLabelsAboveHostnames
+    - ui/vault.TestVaultSearchSeparatesTitleAndBodyMatches
+    - ui/vault.TestVaultSearchEmptyQueryListsTheWholeVault
+    - ui/vault.TestVaultSearchFieldFiltersAndOpensTheMatch
+    - ui/vault.TestVaultSearchNoResultsAndEscapeClear
+    - app.TestTicket29CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "One field searches the whole Vault and groups results by kind in the list's order: Hosts (label, address, group, tags, username, notes), Host Groups, SSH Keys, Identities, Snippets, Snippet Packages, Vault Notes, Note Groups, Proxy Profiles, and Knowledge. Knowledge is a Vault Note whose body matches while its title does not, so each Note appears once. Ranking follows the original matcher: label 500, hostname 380, group 280, tag 220, a literal hit outranks a compact one across every record, every whitespace segment must match, and a dotted IPv4 query only matches contiguously inside one field. Unicode dashes fold to '-', CJK matches literally, and ties break deterministically. Pinyin transliteration is absent because the domain layer may not import golang.org/x/text; a Latin query still finds CJK text through the compact form. Arrow keys move, Enter opens the editor or viewer, Escape clears, and the empty and no-result states are localized in all five catalogs."
+
+- id: search.quick-switcher
+  area: shell
+  feature: Quick Switcher lists Hosts and Sessions and opens the chosen target
+  original_paths:
+    - components/QuickSwitcher.tsx
+    - application/app/hosts/DialogsHost.tsx
+    - application/app/AppHandlers.ts
+  module: ui/search
+  tickets: [29]
+  acceptance_tests:
+    - ui/search.TestEmptyQueryListsSourceOrder
+    - ui/search.TestSectionsKeepSourceOrderAndRankInside
+    - ui/search.TestTypingResetsSelectionAfterTypeAhead
+    - ui/search.TestMoveClampsWithoutWrapping
+    - ui/search.TestActivateOpensAndCloses
+    - ui/search.TestRefusedActivationStaysOpen
+    - ui/search.TestToggleOnlyClosesTheSameMode
+    - ui/search.TestSelectionSurvivesRendering
+    - ui/search.TestRevealIsTakenOnce
+    - ui/search.TestOverlayListsSectionsAndKeyboardOpensTheChosenRow
+    - ui/search.TestOverlayArrowsMoveAndClamp
+    - ui/search.TestOverlayEscapeClosesAndClears
+    - ui/search.TestOverlayEmptyAndNoResultStates
+    - ui/search.TestOverlayFitsBothWindowSizesAndLanguages
+    - ui/shell.TestShellViewRendersTheSearchOverlayAboveEverySurface
+    - ui/shell.TestTabTitleNamesASummaryLikeTheTabStrip
+    - app.TestSwitcherListsHostsWithTheirSearchableFields
+    - app.TestTicket29CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Ctrl+J (Cmd+J on macOS) toggles the Quick Switcher from any surface; the empty query keeps the Vault's Host order and then the open Sessions, and typing ranks inside each section without reordering the sections. Hosts match exactly the original Quick Switcher's fields (label, hostname, group, tags), not the Vault list's extra username and notes. A Host opens a new Session; a Session focuses its existing Tab. Up and Down clamp at both ends and never wrap, Enter opens, Escape or a click outside closes and clears the query, and the highlight scrolls into view only when it moves. The panel is top-anchored at the original's 672 DIP width and is verified at 1100x720 and 720x480 in English and Simplified Chinese."
+
+- id: search.command-palette
+  area: shell
+  feature: Command palette lists the registered commands, navigates by keyboard, and executes the chosen one
+  original_paths:
+    - components/QuickSwitcher.tsx
+    - application/app/AppHandlers.ts
+    - domain/models/keyBindings.ts
+  module: ui/search
+  tickets: [29]
+  acceptance_tests:
+    - ui/search.TestCommandSectionsUseCategories
+    - ui/search.TestCommandPaletteGroupsByCategoryAndExecutes
+    - app.TestPaletteExposesEveryPresentableCommand
+    - app.TestPaletteLocalizesTitlesAndFindsByEnglishKeywords
+    - app.TestPaletteGroupsCommandsByCategory
+    - app.TestPaletteDispatchesTheChosenCommand
+    - app.TestTicket29CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Ctrl+K (Cmd+K on macOS) opens the palette in the same overlay as the Quick Switcher. Every command the app registers with a user-visible presentation appears, grouped into Application, Tabs, Panes, and Vault; the synthetic locale commands stay out, and a newly registered command without a label is hidden rather than shown as its ID. Titles come from the same localized labels the native menu uses, so they follow a language change, while the raw command ID and English keywords keep a command findable in every catalog. The effective chord of a binding is shown beside its command (New Tab, Close Tab, Split, Close Pane, Settings) and follows a user override. Enter dispatches through the same registry the menu and keyboard shortcuts use. The original Electron build had no built-in command registry; this surface is the native equivalent of its plugin command-palette menus applied to the app's own commands."
+
 # --- Ticket 11: X11 forwarding ---
 
 - id: x11.host-setting

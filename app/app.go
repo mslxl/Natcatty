@@ -51,6 +51,7 @@ import (
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
+	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -556,6 +557,20 @@ func run(afterReady func(hostWindow)) error {
 			// row must stop being suggested without a restart.
 			autocompleteService.Load(context.Background())
 		}))
+	// The Quick Switcher and command palette read live Vault and Tab state.
+	// Their closures resolve the shell and registry lazily, as both are
+	// assigned below, and the records rerun on every frame.
+	paletteSource := &palette{
+		vault:    vaultState,
+		shell:    func() *state.State { return shellState },
+		registry: func() *command.Registry { return registry },
+		bindings: keybindingService,
+	}
+	overlayState := uisearch.New(
+		uisearch.WithSource(paletteSource.records),
+		uisearch.WithOpen(paletteSource.open),
+		uisearch.WithSection(searchSection),
+	)
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -616,6 +631,7 @@ func run(afterReady func(hostWindow)) error {
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithLogs(logsui.View(logsState)),
+		state.WithSearch(overlayState),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
 		state.WithWorkspace(workspaceService, func(ctx context.Context, id model.HostID) (domainvault.Host, bool) {
@@ -728,8 +744,10 @@ func run(afterReady func(hostWindow)) error {
 	mygo.Theme.OnUpdated(invalidate)
 
 	dispatcher := &bindingDispatcher{
-		service: keybindingService,
-		shell:   shellState,
+		service:   keybindingService,
+		shell:     shellState,
+		search:    overlayState,
+		focusMain: func() { windows.FocusMain() },
 		toggleOpacity: func() {
 			current := preferenceService.Settings().Appearance.WindowOpacity
 			_ = preferenceService.Update(func(next *domainpreferences.Settings) {

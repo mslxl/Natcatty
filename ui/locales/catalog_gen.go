@@ -9660,6 +9660,318 @@ func (msgs Messages) SettingsSearchClear() string {
 	return Catalog.Format(msgs.locale, "settingsSearchClear", nil)
 }
 
+// SearchQuickSwitcherPlaceholder says "Search hosts or sessions"
+// in the language the app shows.
+func SearchQuickSwitcherPlaceholder() string {
+	return In(i18n.Locale()).SearchQuickSwitcherPlaceholder()
+}
+
+// SearchQuickSwitcherPlaceholder says "Search hosts or sessions"
+// in the language of msgs.
+func (msgs Messages) SearchQuickSwitcherPlaceholder() string {
+	return Catalog.Format(msgs.locale, "searchQuickSwitcherPlaceholder", nil)
+}
+
+// SearchCommandPlaceholder says "Search commands"
+// in the language the app shows.
+func SearchCommandPlaceholder() string { return In(i18n.Locale()).SearchCommandPlaceholder() }
+
+// SearchCommandPlaceholder says "Search commands"
+// in the language of msgs.
+func (msgs Messages) SearchCommandPlaceholder() string {
+	return Catalog.Format(msgs.locale, "searchCommandPlaceholder", nil)
+}
+
+// SearchJumpTo says "Jump To"
+// in the language the app shows.
+func SearchJumpTo() string { return In(i18n.Locale()).SearchJumpTo() }
+
+// SearchJumpTo says "Jump To"
+// in the language of msgs.
+func (msgs Messages) SearchJumpTo() string {
+	return Catalog.Format(msgs.locale, "searchJumpTo", nil)
+}
+
+// SearchHint says "Up and Down move, Enter opens, Escape closes"
+// in the language the app shows.
+func SearchHint() string { return In(i18n.Locale()).SearchHint() }
+
+// SearchHint says "Up and Down move, Enter opens, Escape closes"
+// in the language of msgs.
+func (msgs Messages) SearchHint() string {
+	return Catalog.Format(msgs.locale, "searchHint", nil)
+}
+
+// SearchNoResults says "No matches"
+// in the language the app shows.
+func SearchNoResults() string { return In(i18n.Locale()).SearchNoResults() }
+
+// SearchNoResults says "No matches"
+// in the language of msgs.
+func (msgs Messages) SearchNoResults() string {
+	return Catalog.Format(msgs.locale, "searchNoResults", nil)
+}
+
+// SearchNoResultsBody says "Nothing matches “{query}”."
+// in the language the app shows.
+func SearchNoResultsBody(query string) string { return In(i18n.Locale()).SearchNoResultsBody(query) }
+
+// SearchNoResultsBody says "Nothing matches “{query}”."
+// in the language of msgs.
+func (msgs Messages) SearchNoResultsBody(query string) string {
+	return Catalog.Format(msgs.locale, "searchNoResultsBody", map[string]any{"query": query})
+}
+
+// SearchEmpty says "Nothing to switch to yet"
+// in the language the app shows.
+func SearchEmpty() string { return In(i18n.Locale()).SearchEmpty() }
+
+// SearchEmpty says "Nothing to switch to yet"
+// in the language of msgs.
+func (msgs Messages) SearchEmpty() string {
+	return Catalog.Format(msgs.locale, "searchEmpty", nil)
+}
+
+// SearchEmptyBody says "Add a Host in the Vault, or open a Session, and it shows up here."
+// in the language the app shows.
+func SearchEmptyBody() string { return In(i18n.Locale()).SearchEmptyBody() }
+
+// SearchEmptyBody says "Add a Host in the Vault, or open a Session, and it shows up here."
+// in the language of msgs.
+func (msgs Messages) SearchEmptyBody() string {
+	return Catalog.Format(msgs.locale, "searchEmptyBody", nil)
+}
+
+// SearchEmptyCommands says "No commands available"
+// in the language the app shows.
+func SearchEmptyCommands() string { return In(i18n.Locale()).SearchEmptyCommands() }
+
+// SearchEmptyCommands says "No commands available"
+// in the language of msgs.
+func (msgs Messages) SearchEmptyCommands() string {
+	return Catalog.Format(msgs.locale, "searchEmptyCommands", nil)
+}
+
+// SearchEmptyCommandsBody says "Commands offered by the application appear here."
+// in the language the app shows.
+func SearchEmptyCommandsBody() string { return In(i18n.Locale()).SearchEmptyCommandsBody() }
+
+// SearchEmptyCommandsBody says "Commands offered by the application appear here."
+// in the language of msgs.
+func (msgs Messages) SearchEmptyCommandsBody() string {
+	return Catalog.Format(msgs.locale, "searchEmptyCommandsBody", nil)
+}
+
+// SearchSectionHost says "Hosts"
+// in the language the app shows.
+func SearchSectionHost() string { return In(i18n.Locale()).SearchSectionHost() }
+
+// SearchSectionHost says "Hosts"
+// in the language of msgs.
+func (msgs Messages) SearchSectionHost() string {
+	return Catalog.Format(msgs.locale, "searchSectionHost", nil)
+}
+
+// SearchSectionHostGroup says "Host Groups"
+// in the language the app shows.
+func SearchSectionHostGroup() string { return In(i18n.Locale()).SearchSectionHostGroup() }
+
+// SearchSectionHostGroup says "Host Groups"
+// in the language of msgs.
+func (msgs Messages) SearchSectionHostGroup() string {
+	return Catalog.Format(msgs.locale, "searchSectionHostGroup", nil)
+}
+
+// SearchSectionKey says "SSH Keys"
+// in the language the app shows.
+func SearchSectionKey() string { return In(i18n.Locale()).SearchSectionKey() }
+
+// SearchSectionKey says "SSH Keys"
+// in the language of msgs.
+func (msgs Messages) SearchSectionKey() string {
+	return Catalog.Format(msgs.locale, "searchSectionKey", nil)
+}
+
+// SearchSectionIdentity says "Identities"
+// in the language the app shows.
+func SearchSectionIdentity() string { return In(i18n.Locale()).SearchSectionIdentity() }
+
+// SearchSectionIdentity says "Identities"
+// in the language of msgs.
+func (msgs Messages) SearchSectionIdentity() string {
+	return Catalog.Format(msgs.locale, "searchSectionIdentity", nil)
+}
+
+// SearchSectionSnippet says "Snippets"
+// in the language the app shows.
+func SearchSectionSnippet() string { return In(i18n.Locale()).SearchSectionSnippet() }
+
+// SearchSectionSnippet says "Snippets"
+// in the language of msgs.
+func (msgs Messages) SearchSectionSnippet() string {
+	return Catalog.Format(msgs.locale, "searchSectionSnippet", nil)
+}
+
+// SearchSectionSnippetPackage says "Snippet Packages"
+// in the language the app shows.
+func SearchSectionSnippetPackage() string { return In(i18n.Locale()).SearchSectionSnippetPackage() }
+
+// SearchSectionSnippetPackage says "Snippet Packages"
+// in the language of msgs.
+func (msgs Messages) SearchSectionSnippetPackage() string {
+	return Catalog.Format(msgs.locale, "searchSectionSnippetPackage", nil)
+}
+
+// SearchSectionNote says "Vault Notes"
+// in the language the app shows.
+func SearchSectionNote() string { return In(i18n.Locale()).SearchSectionNote() }
+
+// SearchSectionNote says "Vault Notes"
+// in the language of msgs.
+func (msgs Messages) SearchSectionNote() string {
+	return Catalog.Format(msgs.locale, "searchSectionNote", nil)
+}
+
+// SearchSectionNoteGroup says "Note Groups"
+// in the language the app shows.
+func SearchSectionNoteGroup() string { return In(i18n.Locale()).SearchSectionNoteGroup() }
+
+// SearchSectionNoteGroup says "Note Groups"
+// in the language of msgs.
+func (msgs Messages) SearchSectionNoteGroup() string {
+	return Catalog.Format(msgs.locale, "searchSectionNoteGroup", nil)
+}
+
+// SearchSectionProxyProfile says "Proxy Profiles"
+// in the language the app shows.
+func SearchSectionProxyProfile() string { return In(i18n.Locale()).SearchSectionProxyProfile() }
+
+// SearchSectionProxyProfile says "Proxy Profiles"
+// in the language of msgs.
+func (msgs Messages) SearchSectionProxyProfile() string {
+	return Catalog.Format(msgs.locale, "searchSectionProxyProfile", nil)
+}
+
+// SearchSectionKnowledge says "Knowledge"
+// in the language the app shows.
+func SearchSectionKnowledge() string { return In(i18n.Locale()).SearchSectionKnowledge() }
+
+// SearchSectionKnowledge says "Knowledge"
+// in the language of msgs.
+func (msgs Messages) SearchSectionKnowledge() string {
+	return Catalog.Format(msgs.locale, "searchSectionKnowledge", nil)
+}
+
+// SearchSectionSession says "Sessions"
+// in the language the app shows.
+func SearchSectionSession() string { return In(i18n.Locale()).SearchSectionSession() }
+
+// SearchSectionSession says "Sessions"
+// in the language of msgs.
+func (msgs Messages) SearchSectionSession() string {
+	return Catalog.Format(msgs.locale, "searchSectionSession", nil)
+}
+
+// SearchSectionCommand says "Commands"
+// in the language the app shows.
+func SearchSectionCommand() string { return In(i18n.Locale()).SearchSectionCommand() }
+
+// SearchSectionCommand says "Commands"
+// in the language of msgs.
+func (msgs Messages) SearchSectionCommand() string {
+	return Catalog.Format(msgs.locale, "searchSectionCommand", nil)
+}
+
+// SearchCategoryApp says "Application"
+// in the language the app shows.
+func SearchCategoryApp() string { return In(i18n.Locale()).SearchCategoryApp() }
+
+// SearchCategoryApp says "Application"
+// in the language of msgs.
+func (msgs Messages) SearchCategoryApp() string {
+	return Catalog.Format(msgs.locale, "searchCategoryApp", nil)
+}
+
+// SearchCategoryTab says "Tabs"
+// in the language the app shows.
+func SearchCategoryTab() string { return In(i18n.Locale()).SearchCategoryTab() }
+
+// SearchCategoryTab says "Tabs"
+// in the language of msgs.
+func (msgs Messages) SearchCategoryTab() string {
+	return Catalog.Format(msgs.locale, "searchCategoryTab", nil)
+}
+
+// SearchCategoryPane says "Panes"
+// in the language the app shows.
+func SearchCategoryPane() string { return In(i18n.Locale()).SearchCategoryPane() }
+
+// SearchCategoryPane says "Panes"
+// in the language of msgs.
+func (msgs Messages) SearchCategoryPane() string {
+	return Catalog.Format(msgs.locale, "searchCategoryPane", nil)
+}
+
+// SearchCategoryVault says "Vault"
+// in the language the app shows.
+func SearchCategoryVault() string { return In(i18n.Locale()).SearchCategoryVault() }
+
+// SearchCategoryVault says "Vault"
+// in the language of msgs.
+func (msgs Messages) SearchCategoryVault() string {
+	return Catalog.Format(msgs.locale, "searchCategoryVault", nil)
+}
+
+// VaultSearchPlaceholder says "Search the Vault"
+// in the language the app shows.
+func VaultSearchPlaceholder() string { return In(i18n.Locale()).VaultSearchPlaceholder() }
+
+// VaultSearchPlaceholder says "Search the Vault"
+// in the language of msgs.
+func (msgs Messages) VaultSearchPlaceholder() string {
+	return Catalog.Format(msgs.locale, "vaultSearchPlaceholder", nil)
+}
+
+// VaultSearchClear says "Clear search"
+// in the language the app shows.
+func VaultSearchClear() string { return In(i18n.Locale()).VaultSearchClear() }
+
+// VaultSearchClear says "Clear search"
+// in the language of msgs.
+func (msgs Messages) VaultSearchClear() string {
+	return Catalog.Format(msgs.locale, "vaultSearchClear", nil)
+}
+
+// VaultSearchNoResults says "No matches in the Vault"
+// in the language the app shows.
+func VaultSearchNoResults() string { return In(i18n.Locale()).VaultSearchNoResults() }
+
+// VaultSearchNoResults says "No matches in the Vault"
+// in the language of msgs.
+func (msgs Messages) VaultSearchNoResults() string {
+	return Catalog.Format(msgs.locale, "vaultSearchNoResults", nil)
+}
+
+// VaultSearchNoResultsBody says "Try a different name, Host Group, tag, or address."
+// in the language the app shows.
+func VaultSearchNoResultsBody() string { return In(i18n.Locale()).VaultSearchNoResultsBody() }
+
+// VaultSearchNoResultsBody says "Try a different name, Host Group, tag, or address."
+// in the language of msgs.
+func (msgs Messages) VaultSearchNoResultsBody() string {
+	return Catalog.Format(msgs.locale, "vaultSearchNoResultsBody", nil)
+}
+
+// VaultSearchResults says "{count, plural, =0 {No matches} one {# result} other {# results}}"
+// in the language the app shows.
+func VaultSearchResults(count int) string { return In(i18n.Locale()).VaultSearchResults(count) }
+
+// VaultSearchResults says "{count, plural, =0 {No matches} one {# result} other {# results}}"
+// in the language of msgs.
+func (msgs Messages) VaultSearchResults(count int) string {
+	return Catalog.Format(msgs.locale, "vaultSearchResults", map[string]any{"count": count})
+}
+
 // SettingsResetAll says "Reset all settings"
 // in the language the app shows.
 func SettingsResetAll() string { return In(i18n.Locale()).SettingsResetAll() }
