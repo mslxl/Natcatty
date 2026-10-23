@@ -12,6 +12,7 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -76,7 +77,11 @@ func (f *fakeFactory) Open(_ context.Context, spec appsession.StartSpec) (appses
 
 // fakeSurface stands in for the MyGo terminal the UI owns.
 type fakeSurface struct {
-	closed bool
+	closed     bool
+	fontFamily string
+	fontSize   float32
+	theme      domaintheme.TerminalTheme
+	themed     bool
 }
 
 func (f *fakeSurface) View(c *ui.Context) ui.Element {
@@ -84,6 +89,14 @@ func (f *fakeSurface) View(c *ui.Context) ui.Element {
 }
 
 func (f *fakeSurface) Close() { f.closed = true }
+
+func (f *fakeSurface) SetTerminalFont(family string, size float32) {
+	f.fontFamily, f.fontSize = family, size
+}
+
+func (f *fakeSurface) SetTerminalTheme(preset domaintheme.TerminalTheme) {
+	f.theme, f.themed = preset, true
+}
 
 // testGraph wires a shell State to fake Sessions and surfaces.
 type testGraph struct {
@@ -410,4 +423,31 @@ func waitFor(t *testing.T, what string, ready func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestTerminalAppearanceReachesOpenSurfaces proves a live Appearance change
+// recolors and restyles the terminals of already open Tabs.
+func TestTerminalAppearanceReachesOpenSurfaces(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-1", Label: "prod", Hostname: "example.com", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the SSH tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+
+	graph.state.SetTerminalFont("JetBrains Mono", 15)
+	if graph.surface.fontFamily != "JetBrains Mono" || graph.surface.fontSize != 15 {
+		t.Errorf("font = %q %v", graph.surface.fontFamily, graph.surface.fontSize)
+	}
+	preset, _ := domaintheme.LookupTerminalTheme("netcatty-light")
+	graph.state.SetTerminalTheme(preset)
+	if !graph.surface.themed || graph.surface.theme.ID != preset.ID {
+		t.Errorf("theme = %+v", graph.surface.theme)
+	}
 }

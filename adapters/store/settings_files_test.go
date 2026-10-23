@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
+	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 )
@@ -99,5 +100,43 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	}
 	if loaded != domainpreferences.Defaults() {
 		t.Fatalf("round trip = %+v", loaded)
+	}
+}
+
+// TestAppearanceSelectionSurvivesRestart proves the Appearance document is
+// saved before it is published and reads back as the same selection after a
+// new service over the same file starts.
+func TestAppearanceSelectionSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	ctx := context.Background()
+
+	first := apppreferences.NewService(OpenPreferences(path))
+	if err := first.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Update(func(settings *domainpreferences.Settings) {
+		appearance := &settings.Appearance
+		appearance.ThemeMode = domainpreferences.ThemeDark
+		appearance.LightTheme = "ivory"
+		appearance.DarkTheme = "vscode"
+		appearance.AccentMode = domainpreferences.AccentCustom
+		appearance.AccentColor = "48 96% 53%"
+		appearance.AppIcon = "rainbow"
+		appearance.WindowOpacity = 0.7
+		appearance.TerminalTheme = "custom-imported"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second := apppreferences.NewService(OpenPreferences(path))
+	if err := second.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := second.Settings().Appearance
+	if got.ThemeMode != domainpreferences.ThemeDark || got.LightTheme != "ivory" ||
+		got.DarkTheme != "vscode" || got.AccentMode != domainpreferences.AccentCustom ||
+		got.AccentColor != "48 96% 53%" || got.AppIcon != "rainbow" ||
+		got.WindowOpacity != 0.7 || got.TerminalTheme != "custom-imported" {
+		t.Fatalf("appearance after restart = %+v", got)
 	}
 }
