@@ -27,6 +27,7 @@ import (
 type traySurface interface {
 	SetMenu(*mygo.Menu)
 	SetToolTip(string)
+	SetIcon(png []byte, template bool) error
 	Destroy()
 	OnClick(func()) func()
 	OnRightClick(func()) func()
@@ -92,6 +93,7 @@ type desktopController struct {
 	schedule   func(time.Duration, func())
 
 	tray          traySurface
+	trayIcon      func() []byte
 	trayAttempted bool
 	trayFailed    bool
 	lastMenu      string
@@ -428,8 +430,14 @@ func (c *desktopController) ensureTray() error {
 	}
 	c.trayAttempted = true
 	menu := c.BuildTrayMenu()
+	icon := trayIconGlyphPNG()
+	if c.trayIcon != nil {
+		if data := c.trayIcon(); data != nil {
+			icon = data
+		}
+	}
 	tray, err := c.backends.Create(mygo.TrayOptions{
-		Icon:           trayIconPNG(),
+		Icon:           icon,
 		IconIsTemplate: false,
 		ToolTip:        c.messages().AppName(),
 		Menu:           menu,
@@ -442,6 +450,20 @@ func (c *desktopController) ensureTray() error {
 	c.tray = tray
 	c.lastMenu = menuFingerprint(menu)
 	return nil
+}
+
+// SetIconProvider installs the live tray icon reader. A change applies to the
+// live tray immediately; a tray created later reads it in ensureTray.
+func (c *desktopController) SetIconProvider(fn func() []byte) {
+	c.trayIcon = fn
+	if c.tray == nil || fn == nil {
+		return
+	}
+	data := fn()
+	if data == nil {
+		return
+	}
+	_ = c.tray.SetIcon(data, false)
 }
 
 func (c *desktopController) destroyTray() {
