@@ -89,6 +89,11 @@ func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *m
 			Click:       dispatch(command.NewTab),
 		},
 		{
+			ID:    "menu.serial",
+			Label: m.MenuSerial(),
+			Click: dispatch(command.ConnectSerial),
+		},
+		{
 			ID:          "menu.closeTab",
 			Label:       m.MenuCloseTab(),
 			Accelerator: accelerator("menu.closeTab", "close-tab", "CmdOrCtrl+W"),

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 )
 
 func validDescriptor() SessionDescriptor {
@@ -151,6 +153,41 @@ func TestSanitizePayloadDropsInvalidSessionKinds(t *testing.T) {
 	got := SanitizePayload(payload)
 	if len(got.Tabs) != 1 || got.Tabs[0].Root.PaneID != "ssh" {
 		t.Fatalf("payload = %+v, want the split collapsed to the valid pane", got)
+	}
+}
+
+func TestSerialDescriptorRequiresAValidConfig(t *testing.T) {
+	descriptor := SessionDescriptor{
+		Kind: SessionSerial,
+		Serial: &domainserial.Config{
+			Path: "/dev/ttyUSB0", BaudRate: 57600, DataBits: 7,
+			StopBits: domainserial.StopBitsTwo, Parity: domainserial.ParityEven,
+			FlowControl: domainserial.FlowRTSCTS,
+		},
+	}
+	if !descriptor.Valid() {
+		t.Fatal("a complete serial descriptor is invalid")
+	}
+	data, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded SessionDescriptor
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, descriptor) {
+		t.Fatalf("serial descriptor round trip = %+v, want %+v", decoded, descriptor)
+	}
+
+	for _, invalid := range []SessionDescriptor{
+		{Kind: SessionSerial},
+		{Kind: SessionSerial, Serial: &domainserial.Config{Path: "COM1", BaudRate: 115200, DataBits: 9}},
+		{Kind: SessionSerial, Serial: &domainserial.Config{Path: "", BaudRate: 115200, DataBits: 8}},
+	} {
+		if invalid.Valid() {
+			t.Fatalf("descriptor %+v is valid, want invalid", invalid)
+		}
 	}
 }
 

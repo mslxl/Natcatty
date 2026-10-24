@@ -108,7 +108,7 @@ func TestSSHSessionAcquiresAndReleasesALease(t *testing.T) {
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
 	t.Cleanup(manager.CloseAll)
 	local := &factoryLocal{}
-	factory := newTransportFactory(local, manager, nil)
+	factory := newTransportFactory(local, nil, manager, nil)
 
 	transport, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com",
@@ -159,7 +159,7 @@ func TestX11SessionsPassTheDisplayAndReportNotices(t *testing.T) {
 	dialer := &factoryDialer{client: client}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
 	t.Cleanup(manager.CloseAll)
-	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, nil)
 
 	transport, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
@@ -203,7 +203,7 @@ func TestClosingALiveShellKeepsTheSharedTransportOpen(t *testing.T) {
 		// connection package's tests.
 		appconnection.WithLivenessProbe(0))
 	t.Cleanup(manager.CloseAll)
-	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, nil)
 	spec := appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
 	}
@@ -251,7 +251,7 @@ func TestClosingATransportThatEndedInErrorDiscardsIt(t *testing.T) {
 	dialer := &factoryDialer{client: client}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{value: "s3cret"}}, &factoryKnownHosts{})
 	t.Cleanup(manager.CloseAll)
-	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, nil)
 
 	transport, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
@@ -312,7 +312,7 @@ func TestSSHSessionWithoutASavedPasswordIsAnAuthFailure(t *testing.T) {
 	client := &factoryClient{terminal: &factoryTerminal{}}
 	dialer := &factoryDialer{client: client}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{err: appvault.ErrNotFound}}, &factoryKnownHosts{})
-	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, nil)
 
 	_, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
@@ -337,7 +337,7 @@ func TestSSHSessionWithALockedSecretStoreIsNotAnAuthFailure(t *testing.T) {
 	dialer := &factoryDialer{client: client}
 	locked := &appvault.Error{Kind: appvault.KindPermission, Cause: appvault.ErrSecretsLocked}
 	manager := appconnection.NewManager(dialer, vaultPasswords{vault: factoryPasswords{err: locked}}, &factoryKnownHosts{})
-	factory := newTransportFactory(&factoryLocal{}, manager, nil)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, nil)
 
 	_, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "host-1", Hostname: "example.com", Username: "root",
@@ -359,7 +359,7 @@ func TestSSHSessionWithALockedSecretStoreIsNotAnAuthFailure(t *testing.T) {
 
 func TestLocalSessionStillUsesTheLocalFactory(t *testing.T) {
 	local := &factoryLocal{}
-	factory := newTransportFactory(local, nil, nil)
+	factory := newTransportFactory(local, nil, nil, nil)
 
 	transport, err := factory.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
 	if err != nil {
@@ -392,7 +392,7 @@ func TestSSHSessionUsesTheResolvedChainAndProxy(t *testing.T) {
 		}},
 		Proxy: &appconnection.Proxy{Type: appconnection.ProxySOCKS5, Host: "proxy", Port: 1080},
 	}}
-	factory := newTransportFactory(&factoryLocal{}, manager, routes)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, routes)
 
 	transport, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "target", Hostname: "target.example.com",
@@ -431,7 +431,7 @@ func TestSSHSessionRouteFailurePreventsDialing(t *testing.T) {
 	routes := &factoryRoutes{err: &appconnection.Error{
 		Kind: appconnection.KindInternal, Cause: appvault.ErrNotFound,
 	}}
-	factory := newTransportFactory(&factoryLocal{}, manager, routes)
+	factory := newTransportFactory(&factoryLocal{}, nil, manager, routes)
 
 	_, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, HostID: "target", Hostname: "target.example.com", Username: "root",

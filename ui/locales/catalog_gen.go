@@ -2910,6 +2910,286 @@ func (msgs Messages) ConnectionErrorX11() string {
 	return Catalog.Format(msgs.locale, "connectionErrorX11", nil)
 }
 
+// MenuSerial says "Serial Port…"
+// in the language the app shows.
+func MenuSerial() string { return In(i18n.Locale()).MenuSerial() }
+
+// MenuSerial says "Serial Port…"
+// in the language of msgs.
+func (msgs Messages) MenuSerial() string {
+	return Catalog.Format(msgs.locale, "menuSerial", nil)
+}
+
+// SerialTitle says "Connect to Serial Port"
+// in the language the app shows.
+func SerialTitle() string { return In(i18n.Locale()).SerialTitle() }
+
+// SerialTitle says "Connect to Serial Port"
+// in the language of msgs.
+func (msgs Messages) SerialTitle() string {
+	return Catalog.Format(msgs.locale, "serialTitle", nil)
+}
+
+// SerialDescription says "Configure serial port connection settings"
+// in the language the app shows.
+func SerialDescription() string { return In(i18n.Locale()).SerialDescription() }
+
+// SerialDescription says "Configure serial port connection settings"
+// in the language of msgs.
+func (msgs Messages) SerialDescription() string {
+	return Catalog.Format(msgs.locale, "serialDescription", nil)
+}
+
+// SerialPort says "Serial Port"
+// in the language the app shows.
+func SerialPort() string { return In(i18n.Locale()).SerialPort() }
+
+// SerialPort says "Serial Port"
+// in the language of msgs.
+func (msgs Messages) SerialPort() string {
+	return Catalog.Format(msgs.locale, "serialPort", nil)
+}
+
+// SerialPortPlaceholder says "e.g. /dev/ttys001 or COM1"
+// in the language the app shows.
+func SerialPortPlaceholder() string { return In(i18n.Locale()).SerialPortPlaceholder() }
+
+// SerialPortPlaceholder says "e.g. /dev/ttys001 or COM1"
+// in the language of msgs.
+func (msgs Messages) SerialPortPlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialPortPlaceholder", nil)
+}
+
+// SerialRefresh says "Refresh"
+// in the language the app shows.
+func SerialRefresh() string { return In(i18n.Locale()).SerialRefresh() }
+
+// SerialRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) SerialRefresh() string {
+	return Catalog.Format(msgs.locale, "serialRefresh", nil)
+}
+
+// SerialNoPorts says "No serial ports detected. Connect a device and refresh."
+// in the language the app shows.
+func SerialNoPorts() string { return In(i18n.Locale()).SerialNoPorts() }
+
+// SerialNoPorts says "No serial ports detected. Connect a device and refresh."
+// in the language of msgs.
+func (msgs Messages) SerialNoPorts() string {
+	return Catalog.Format(msgs.locale, "serialNoPorts", nil)
+}
+
+// SerialBaudRate says "Baud Rate"
+// in the language the app shows.
+func SerialBaudRate() string { return In(i18n.Locale()).SerialBaudRate() }
+
+// SerialBaudRate says "Baud Rate"
+// in the language of msgs.
+func (msgs Messages) SerialBaudRate() string {
+	return Catalog.Format(msgs.locale, "serialBaudRate", nil)
+}
+
+// SerialBaudRatePlaceholder says "Select or enter a baud rate…"
+// in the language the app shows.
+func SerialBaudRatePlaceholder() string { return In(i18n.Locale()).SerialBaudRatePlaceholder() }
+
+// SerialBaudRatePlaceholder says "Select or enter a baud rate…"
+// in the language of msgs.
+func (msgs Messages) SerialBaudRatePlaceholder() string {
+	return Catalog.Format(msgs.locale, "serialBaudRatePlaceholder", nil)
+}
+
+// SerialDataBits says "Data Bits"
+// in the language the app shows.
+func SerialDataBits() string { return In(i18n.Locale()).SerialDataBits() }
+
+// SerialDataBits says "Data Bits"
+// in the language of msgs.
+func (msgs Messages) SerialDataBits() string {
+	return Catalog.Format(msgs.locale, "serialDataBits", nil)
+}
+
+// SerialStopBits says "Stop Bits"
+// in the language the app shows.
+func SerialStopBits() string { return In(i18n.Locale()).SerialStopBits() }
+
+// SerialStopBits says "Stop Bits"
+// in the language of msgs.
+func (msgs Messages) SerialStopBits() string {
+	return Catalog.Format(msgs.locale, "serialStopBits", nil)
+}
+
+// SerialStopBitsWarning says "1.5 stop bits may not be supported on all Windows devices"
+// in the language the app shows.
+func SerialStopBitsWarning() string { return In(i18n.Locale()).SerialStopBitsWarning() }
+
+// SerialStopBitsWarning says "1.5 stop bits may not be supported on all Windows devices"
+// in the language of msgs.
+func (msgs Messages) SerialStopBitsWarning() string {
+	return Catalog.Format(msgs.locale, "serialStopBitsWarning", nil)
+}
+
+// SerialParity says "Parity"
+// in the language the app shows.
+func SerialParity() string { return In(i18n.Locale()).SerialParity() }
+
+// SerialParity says "Parity"
+// in the language of msgs.
+func (msgs Messages) SerialParity() string {
+	return Catalog.Format(msgs.locale, "serialParity", nil)
+}
+
+// SerialFlowControl says "Flow Control"
+// in the language the app shows.
+func SerialFlowControl() string { return In(i18n.Locale()).SerialFlowControl() }
+
+// SerialFlowControl says "Flow Control"
+// in the language of msgs.
+func (msgs Messages) SerialFlowControl() string {
+	return Catalog.Format(msgs.locale, "serialFlowControl", nil)
+}
+
+// SerialParityNone says "None"
+// in the language the app shows.
+func SerialParityNone() string { return In(i18n.Locale()).SerialParityNone() }
+
+// SerialParityNone says "None"
+// in the language of msgs.
+func (msgs Messages) SerialParityNone() string {
+	return Catalog.Format(msgs.locale, "serialParityNone", nil)
+}
+
+// SerialParityEven says "Even"
+// in the language the app shows.
+func SerialParityEven() string { return In(i18n.Locale()).SerialParityEven() }
+
+// SerialParityEven says "Even"
+// in the language of msgs.
+func (msgs Messages) SerialParityEven() string {
+	return Catalog.Format(msgs.locale, "serialParityEven", nil)
+}
+
+// SerialParityOdd says "Odd"
+// in the language the app shows.
+func SerialParityOdd() string { return In(i18n.Locale()).SerialParityOdd() }
+
+// SerialParityOdd says "Odd"
+// in the language of msgs.
+func (msgs Messages) SerialParityOdd() string {
+	return Catalog.Format(msgs.locale, "serialParityOdd", nil)
+}
+
+// SerialParityMark says "Mark"
+// in the language the app shows.
+func SerialParityMark() string { return In(i18n.Locale()).SerialParityMark() }
+
+// SerialParityMark says "Mark"
+// in the language of msgs.
+func (msgs Messages) SerialParityMark() string {
+	return Catalog.Format(msgs.locale, "serialParityMark", nil)
+}
+
+// SerialParitySpace says "Space"
+// in the language the app shows.
+func SerialParitySpace() string { return In(i18n.Locale()).SerialParitySpace() }
+
+// SerialParitySpace says "Space"
+// in the language of msgs.
+func (msgs Messages) SerialParitySpace() string {
+	return Catalog.Format(msgs.locale, "serialParitySpace", nil)
+}
+
+// SerialFlowNone says "None"
+// in the language the app shows.
+func SerialFlowNone() string { return In(i18n.Locale()).SerialFlowNone() }
+
+// SerialFlowNone says "None"
+// in the language of msgs.
+func (msgs Messages) SerialFlowNone() string {
+	return Catalog.Format(msgs.locale, "serialFlowNone", nil)
+}
+
+// SerialFlowXONXOFF says "XON/XOFF (Software)"
+// in the language the app shows.
+func SerialFlowXONXOFF() string { return In(i18n.Locale()).SerialFlowXONXOFF() }
+
+// SerialFlowXONXOFF says "XON/XOFF (Software)"
+// in the language of msgs.
+func (msgs Messages) SerialFlowXONXOFF() string {
+	return Catalog.Format(msgs.locale, "serialFlowXONXOFF", nil)
+}
+
+// SerialFlowRTSCTS says "RTS/CTS (Hardware)"
+// in the language the app shows.
+func SerialFlowRTSCTS() string { return In(i18n.Locale()).SerialFlowRTSCTS() }
+
+// SerialFlowRTSCTS says "RTS/CTS (Hardware)"
+// in the language of msgs.
+func (msgs Messages) SerialFlowRTSCTS() string {
+	return Catalog.Format(msgs.locale, "serialFlowRTSCTS", nil)
+}
+
+// SerialConnect says "Connect"
+// in the language the app shows.
+func SerialConnect() string { return In(i18n.Locale()).SerialConnect() }
+
+// SerialConnect says "Connect"
+// in the language of msgs.
+func (msgs Messages) SerialConnect() string {
+	return Catalog.Format(msgs.locale, "serialConnect", nil)
+}
+
+// SerialCancel says "Cancel"
+// in the language the app shows.
+func SerialCancel() string { return In(i18n.Locale()).SerialCancel() }
+
+// SerialCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SerialCancel() string {
+	return Catalog.Format(msgs.locale, "serialCancel", nil)
+}
+
+// SerialInvalidConfiguration says "Check the serial port settings."
+// in the language the app shows.
+func SerialInvalidConfiguration() string { return In(i18n.Locale()).SerialInvalidConfiguration() }
+
+// SerialInvalidConfiguration says "Check the serial port settings."
+// in the language of msgs.
+func (msgs Messages) SerialInvalidConfiguration() string {
+	return Catalog.Format(msgs.locale, "serialInvalidConfiguration", nil)
+}
+
+// SerialUnsupported says "These serial settings are not supported on this platform."
+// in the language the app shows.
+func SerialUnsupported() string { return In(i18n.Locale()).SerialUnsupported() }
+
+// SerialUnsupported says "These serial settings are not supported on this platform."
+// in the language of msgs.
+func (msgs Messages) SerialUnsupported() string {
+	return Catalog.Format(msgs.locale, "serialUnsupported", nil)
+}
+
+// SerialConnectionFailed says "Failed to connect to serial port"
+// in the language the app shows.
+func SerialConnectionFailed() string { return In(i18n.Locale()).SerialConnectionFailed() }
+
+// SerialConnectionFailed says "Failed to connect to serial port"
+// in the language of msgs.
+func (msgs Messages) SerialConnectionFailed() string {
+	return Catalog.Format(msgs.locale, "serialConnectionFailed", nil)
+}
+
+// SerialPortsFailed says "Unable to list serial ports."
+// in the language the app shows.
+func SerialPortsFailed() string { return In(i18n.Locale()).SerialPortsFailed() }
+
+// SerialPortsFailed says "Unable to list serial ports."
+// in the language of msgs.
+func (msgs Messages) SerialPortsFailed() string {
+	return Catalog.Format(msgs.locale, "serialPortsFailed", nil)
+}
+
 // ConnectionX11DisplayUnavailable says "X11 forwarding could not reach the local display at {target}. Start an X server or check the DISPLAY setting."
 // in the language the app shows.
 //
