@@ -58,13 +58,17 @@ func (s *State) TransferConcurrency() int {
 // CenterOpen reports whether the Transfer center is shown.
 func (s *State) CenterOpen() bool { return s.centerOpen }
 
-// OpenCenter shows the global Transfer center.
+// OpenCenter shows the global Transfer center. Reopening it starts from the
+// rows' current state, so it does not repeat a control refusal the user has
+// since navigated away from; a stale notice must not outlive the condition
+// that produced it.
 func (s *State) OpenCenter() {
 	if s.transferQueue == nil {
 		s.notice = "transfer-unavailable"
 		s.RequestRedraw()
 		return
 	}
+	s.centerError = ""
 	s.centerOpen = true
 	s.RequestRedraw()
 }
@@ -111,13 +115,21 @@ func (s *State) reattachHost(host model.HostID, remote apptransfer.FileSystem) {
 	go func() {
 		// A partial bind still changed rows, so redraw either way; a row that
 		// could not bind keeps the reconnect prompt.
-		_, _ = queue.ReattachHost(ctx, apptransfer.HostReattach{
+		bound, _ := queue.ReattachHost(ctx, apptransfer.HostReattach{
 			Host:      string(host),
 			Remote:    remote,
 			Peers:     peers,
 			OpenLocal: openLocal,
 		})
-		s.post(func() { s.RequestRedraw() })
+		s.post(func() {
+			// The reattach removes the condition a refused Resume reported, so
+			// its banner must go with it; a bind that changed nothing keeps
+			// the notice truthful.
+			if bound > 0 {
+				s.centerError = ""
+			}
+			s.RequestRedraw()
+		})
 	}()
 }
 

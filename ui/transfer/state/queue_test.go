@@ -112,12 +112,29 @@ func TestHostReconnectReattachesAnInterruptedTransfer(t *testing.T) {
 		t.Fatalf("Resume before the Host reconnect moved the row to %q", task.Status)
 	}
 
+	// Reopening the centre must not show a refusal that is still on screen
+	// from an earlier click; the row itself is the durable status.
+	state.OpenCenter()
+	if got := state.CenterError(); got != "" {
+		t.Fatalf("reopening the centre kept the stale refusal notice %q", got)
+	}
+	state.CloseCenter()
+	// Arm the notice again so the reconnect check below proves the reattach
+	// clears it rather than the reopen.
+	state.ResumeTransfer("host-restart")
+	if got := state.CenterError(); got != "transfer-reconnect-required" {
+		t.Fatalf("Resume before the Host reconnect reports %q, want transfer-reconnect-required", got)
+	}
+
 	// Reconnecting the Host in the SFTP pane is the production path that
 	// binds the fresh filesystems.
 	f.openRemote(t, Right)
-	settle(t, state, "the reconnected Host to reattach the row", func() bool {
+	// The reattach clears ReconnectRequired on the queue goroutine and then
+	// posts the notice update to the UI thread, so the notice is part of the
+	// condition to await rather than something read after a partial settle.
+	settle(t, state, "the reconnected Host to reattach the row and clear the notice", func() bool {
 		task, ok := queue.Task("host-restart")
-		return ok && !task.ReconnectRequired
+		return ok && !task.ReconnectRequired && state.CenterError() == ""
 	})
 	rebound, _ := queue.Task("host-restart")
 	if rebound.Status != domainsftp.TaskInterrupted {

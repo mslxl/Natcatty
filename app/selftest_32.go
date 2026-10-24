@@ -32,9 +32,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -77,7 +80,9 @@ type selftest32 struct {
 	restartPhase int
 	restartID    domainsftp.TaskID
 	restartGate  *selftest32Gate
+	restartDest  *selftest32DeadStaging
 	restartSpec  apptransfer.TaskSpec
+	foreignStage string
 	finished     bool
 }
 
@@ -177,6 +182,12 @@ type selftest32Gate struct {
 	once    sync.Once
 	mu      sync.Mutex
 	opens   map[string]int
+	// burst, when positive, yields this many bytes before the release gate,
+	// so the destination holds a partially written staging file while the row
+	// is paused. partial closes once that burst was read.
+	burst       int
+	partial     chan struct{}
+	partialOnce sync.Once
 }
 
 func newSelftest32Gate(files apptransfer.FileSystem, path string, hold bool) *selftest32Gate {
@@ -193,12 +204,35 @@ func newSelftest32Gate(files apptransfer.FileSystem, path string, hold bool) *se
 	return gate
 }
 
+// newSelftest32BurstGate leaves a partial staging file behind: the first read
+// of the gate path yields burst bytes and then waits for the release gate.
+func newSelftest32BurstGate(files apptransfer.FileSystem, path string, burst int) *selftest32Gate {
+	gate := newSelftest32Gate(files, path, false)
+	gate.burst = burst
+	gate.partial = make(chan struct{})
+	return gate
+}
+
 func (g *selftest32Gate) Open(ctx context.Context, path string) (io.ReadCloser, error) {
 	g.mu.Lock()
 	g.opens[path]++
 	g.mu.Unlock()
 	if filepath.Clean(path) == filepath.Clean(g.path) {
 		g.once.Do(func() { close(g.entered) })
+		if g.burst > 0 {
+			reader, err := g.FileSystem.Open(ctx, path)
+			if err != nil {
+				return nil, err
+			}
+			return &selftest32BurstReader{
+				inner:       reader,
+				budget:      g.burst,
+				partial:     g.partial,
+				partialOnce: &g.partialOnce,
+				release:     g.release,
+				ctx:         ctx,
+			}, nil
+		}
 		if g.hold != nil {
 			select {
 			case <-g.release:
@@ -236,6 +270,65 @@ func (g *selftest32Gate) opened() bool {
 	}
 }
 
+func (g *selftest32Gate) partialReached() bool {
+	select {
+	case <-g.partial:
+		return true
+	default:
+		return false
+	}
+}
+
+// selftest32BurstReader yields one bounded chunk, then waits for the release
+// gate or the copy's cancellation.
+type selftest32BurstReader struct {
+	inner       io.ReadCloser
+	budget      int
+	partial     chan struct{}
+	partialOnce *sync.Once
+	release     chan struct{}
+	ctx         context.Context
+}
+
+func (r *selftest32BurstReader) Read(p []byte) (int, error) {
+	if r.budget > 0 {
+		if len(p) > r.budget {
+			p = p[:r.budget]
+		}
+		n, err := r.inner.Read(p)
+		r.budget -= n
+		if r.budget <= 0 {
+			r.partialOnce.Do(func() { close(r.partial) })
+		}
+		return n, err
+	}
+	select {
+	case <-r.release:
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	}
+	return r.inner.Read(p)
+}
+
+func (r *selftest32BurstReader) Close() error { return r.inner.Close() }
+
+// selftest32DeadStaging models the killed process's missing cleanup. The pause
+// that simulates the kill asks the copy to remove its staging file; with dead
+// set, that removal is a no-op, so the partial file the dead process would
+// have left is still in the destination when the resumed process starts.
+// Process two writes through the real filesystem, not this wrapper.
+type selftest32DeadStaging struct {
+	apptransfer.FileSystem
+	dead atomic.Bool
+}
+
+func (d *selftest32DeadStaging) Remove(ctx context.Context, path string) error {
+	if d.dead.Load() && apptransfer.IsStagingName(filepath.Base(path)) {
+		return nil
+	}
+	return d.FileSystem.Remove(ctx, path)
+}
+
 func (t *selftest32) setup() error {
 	workdir, err := os.MkdirTemp("", "natcatty-selftest-32-")
 	if err != nil {
@@ -252,8 +345,14 @@ func (t *selftest32) setup() error {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return err
 		}
-		if name == "pause-source" || name == "latch-source" ||
-			name == "latch2-source" || name == "restart-source" {
+		switch name {
+		case "restart-source":
+			// The restart step needs a file large enough to be in flight with a
+			// partially written staging file at the simulated kill.
+			if err := writeSelftest32RestartTree(path); err != nil {
+				return err
+			}
+		case "pause-source", "latch-source", "latch2-source":
 			if err := writeSelftest32Tree(path); err != nil {
 				return err
 			}
@@ -267,8 +366,12 @@ func (t *selftest32) setup() error {
 		return err
 	}
 	t.files = files
-	t.restartGate = newSelftest32Gate(files,
-		filepath.Join(workdir, "restart-source", "c.txt"), false)
+	// The restart step's source bursts one 32 KiB chunk and then holds, so a
+	// staging file is in flight when the process is killed; the destination
+	// wrapper suppresses the dead process's staging cleanup.
+	t.restartGate = newSelftest32BurstGate(files,
+		filepath.Join(workdir, "restart-source", "c.txt"), 32*1024)
+	t.restartDest = &selftest32DeadStaging{FileSystem: files}
 	opener := selftest32Opener{local: local, remote: t.restartGate}
 	t.service = apptransfer.NewService(opener, opener)
 	t.queue = apptransfer.NewQueue(t.service,
@@ -310,6 +413,24 @@ func writeSelftest32Tree(dir string) error {
 	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, name),
 			[]byte("payload-"+name), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeSelftest32RestartTree gives the restart step a third file large enough
+// to still be streaming when the simulated kill happens; its first 32 KiB
+// reach the staging file before the gate holds the read.
+func writeSelftest32RestartTree(dir string) error {
+	files := map[string]string{
+		"a.txt": "payload-a.txt",
+		"b.txt": "payload-b.txt",
+		"c.txt": strings.Repeat("c", 128*1024),
+		"d.txt": "payload-d.txt",
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
 			return err
 		}
 	}
@@ -654,6 +775,7 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 			source, filepath.Join(t.workdir, "out-restart"))
 		t.restartSpec.SourceLabel = "Loopback"
 		t.restartSpec.DestLabel = "local"
+		t.restartSpec.Dest = t.restartDest
 		id, err := t.queue.Enqueue(t.restartSpec)
 		if err != nil {
 			return selftest.Failed(fmt.Errorf("enqueue the restart transfer: %v", err))
@@ -662,9 +784,12 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 		t.restartPhase = 1
 		return selftest.Pending
 	case 1:
-		if !t.restartGate.opened() {
-			return t.expired("the restart copy to reach its third file")
+		if !t.restartGate.partialReached() {
+			return t.expired("the restart copy to leave a partial staging file")
 		}
+		// From here the process cannot clean up its staging file: the wrapper
+		// ignores the removal the pause will request.
+		t.restartDest.dead.Store(true)
 		t.state.PauseTransfer(t.restartID)
 		t.restartPhase = 2
 		return selftest.Pending
@@ -683,6 +808,33 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 			paused.DirectoryResumeCheckpoint.CompletedEntries != 3 {
 			return selftest.Failed(fmt.Errorf("the paused restart row has checkpoint %+v",
 				paused.DirectoryResumeCheckpoint))
+		}
+		// The killed process left its partial staging file: the destination
+		// wrapper ignored the cleanup request the pause issued.
+		destRoot := filepath.Join(t.workdir, "out-restart")
+		orphan := ""
+		err := filepath.WalkDir(destRoot, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && apptransfer.IsStagingName(entry.Name()) &&
+				strings.HasSuffix(entry.Name(), "-c.txt.part") {
+				orphan = path
+			}
+			return nil
+		})
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if orphan == "" {
+			return selftest.Failed(fmt.Errorf(
+				"the killed-process simulation left no partial staging file"))
+		}
+		// Another task's live staging file in the same destination root must
+		// survive the resume.
+		t.foreignStage = filepath.Join(destRoot, ".netcatty-upload-cafebabe-foreign.txt.part")
+		if err := os.WriteFile(t.foreignStage, []byte("live-other"), 0o644); err != nil {
+			return selftest.Failed(fmt.Errorf("seed another task's staging file: %v", err))
 		}
 		// Simulate the process restart: stop the queue without resuming.
 		t.queue.Shutdown()
@@ -778,6 +930,36 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 			if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
 				return selftest.Failed(fmt.Errorf("%s missing after the restart resume: %v", name, err))
 			}
+		}
+		// A resumed Transfer reuses the staging path its durable task identity
+		// names and the promotion removes it. The killed process's partial
+		// staging file must be gone, while another task's staging file in the
+		// same root must survive untouched.
+		foreignIntact := false
+		err := filepath.WalkDir(filepath.Join(t.workdir, "out-restart"),
+			func(path string, entry fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entry.IsDir() || !apptransfer.IsStagingName(entry.Name()) {
+					return nil
+				}
+				if filepath.Clean(path) == filepath.Clean(t.foreignStage) {
+					foreignIntact = true
+					return nil
+				}
+				return fmt.Errorf("an interrupted staging file survived the restart resume: %s", path)
+			})
+		if err != nil {
+			return selftest.Failed(err)
+		}
+		if !foreignIntact {
+			return selftest.Failed(fmt.Errorf(
+				"the resumed Transfer removed another task's staging file: %s", t.foreignStage))
+		}
+		if data, err := os.ReadFile(t.foreignStage); err != nil || string(data) != "live-other" {
+			return selftest.Failed(fmt.Errorf(
+				"another task's staging file changed to %q: %v", data, err))
 		}
 		if task.DirectoryResumeCheckpoint != nil {
 			return selftest.Failed(fmt.Errorf("the completed restart row kept its checkpoint"))

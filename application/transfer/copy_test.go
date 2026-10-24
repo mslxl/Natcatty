@@ -458,9 +458,26 @@ func TestReplaceRemovesTheBackupAfterSuccess(t *testing.T) {
 }
 
 func TestStagingNamesFollowTheRestartContract(t *testing.T) {
-	stage := regexp.MustCompile(`^\.netcatty-upload-[0-9a-f]{8}-report\.txt\.part$`)
-	if name := stageName("report.txt"); !stage.MatchString(name) {
-		t.Fatalf("stage name = %q", name)
+	// A caller with no durable identity keeps the original random suffix.
+	random := regexp.MustCompile(`^\.netcatty-upload-[0-9a-f]{8}-report\.txt\.part$`)
+	if name := stageName("", "report.txt", "/dir/report.txt"); !random.MatchString(name) {
+		t.Fatalf("stage name without a durable key = %q", name)
+	}
+	// A queued Transfer names its staging file from its durable Task ID and
+	// target, so a resume in another process computes the same path.
+	durable := regexp.MustCompile(`^\.netcatty-upload-[0-9a-f]{16}-report\.txt\.part$`)
+	resumed := stageName("task-1", "report.txt", "/dir/report.txt")
+	if !durable.MatchString(resumed) {
+		t.Fatalf("stage name with a durable key = %q", resumed)
+	}
+	if again := stageName("task-1", "report.txt", "/dir/report.txt"); again != resumed {
+		t.Fatalf("the same task and target produced %q then %q", resumed, again)
+	}
+	if otherTask := stageName("task-2", "report.txt", "/dir/report.txt"); otherTask == resumed {
+		t.Fatalf("two tasks share the staging name %q", resumed)
+	}
+	if otherTarget := stageName("task-1", "report.txt", "/elsewhere/report.txt"); otherTarget == resumed {
+		t.Fatalf("two targets share the staging name %q", resumed)
 	}
 	backup := regexp.MustCompile(`^\.netcatty-backup-[0-9a-f]{16}-report\.txt\.bak$`)
 	if name := backupName(newFakeFS("dest"), "/dir/report.txt"); !backup.MatchString(name) {
