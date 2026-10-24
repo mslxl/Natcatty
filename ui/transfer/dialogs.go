@@ -12,6 +12,14 @@ import (
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
+// dialogMargin is the space a dialog keeps from the window's edges. The
+// Transfer center clamps itself to the window the same way.
+const dialogMargin float32 = 16
+
+// dialogPadding is the dialog card's inset. The prompt's field subtracts it
+// from both sides of the dialog's clamped width.
+const dialogPadding float32 = 16
+
 // dialogView renders the open prompt above the panes. Destructive prompts are
 // explicit about what they remove; nothing is deleted until the primary
 // button is pressed.
@@ -25,8 +33,16 @@ func dialogView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 	if dialog.Kind == transferstate.DialogConflict {
 		width = 560
 	}
+	// Clamp to the window exactly as the Transfer center does. The SFTP
+	// surface itself is only 456 DIPs wide at a 720x480 window, so a dialog
+	// that ignored the window's width would run off the edge it is centred
+	// in; the clamp keeps every dialog inside the client area at both
+	// supported sizes.
+	if windowWidth, _ := c.Size(); width > windowWidth-2*dialogMargin {
+		width = windowWidth - 2*dialogMargin
+	}
 	ui.Modal(c, &open, func() {
-		ui.Column(c).Width(width).Padding(16).Gap(10).Background(t.Surface).
+		ui.Column(c).Width(width).Padding(dialogPadding).Gap(10).Background(t.Surface).
 			Radius(t.Radius).Border(1, t.Border).Children(func() {
 			switch dialog.Kind {
 			case transferstate.DialogHostPicker:
@@ -36,7 +52,7 @@ func dialogView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 			case transferstate.DialogConflict:
 				conflictDialog(c, s, dialog, m, t)
 			default:
-				inputDialog(c, s, dialog, m, t)
+				inputDialog(c, s, dialog, m, t, width)
 			}
 		})
 	})
@@ -75,11 +91,13 @@ func dialogLabel(m locales.Messages, dialog *transferstate.Dialog) string {
 	return ""
 }
 
-func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme) {
+func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme, dialogWidth float32) {
 	ui.Text(c, dialogTitle(m, dialog)).FontSize(15).Bold().TextColor(t.Text)
-	ui.Text(c, dialogLabel(m, dialog)).FontSize(11).TextColor(t.TextMuted)
+	ui.Text(c, dialogLabel(m, dialog)).FontSize(11).TextColor(t.TextMuted).MinWidth(0)
 	input := ui.TextInput(c, &dialog.Draft)
-	input.Width(360)
+	// The field never asks for more than the dialog's content box, which is
+	// already clamped to the window.
+	input.Width(min(360, dialogWidth-2*dialogPadding))
 	submitted := input.Submitted()
 	if dialog.Err != "" {
 		message := m.SftpInvalidName()
