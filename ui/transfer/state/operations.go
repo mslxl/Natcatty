@@ -18,6 +18,12 @@ type Operation struct {
 	BytesTotal int64
 	Running    bool
 	Cancelled  bool
+	// Status is the queue row's lifecycle state when the operation is
+	// queue-backed; a direct operation leaves it empty.
+	Status domainsftp.TaskStatus
+	// Speed is the last measured bytes per second for a queue-backed
+	// operation.
+	Speed int64
 	// Err is the failure, or nil. A cancelled operation reports
 	// KindCancelled here as well as Cancelled.
 	Err error
@@ -51,12 +57,39 @@ func (o Operation) Percent() int {
 	return percent
 }
 
+// ETASeconds mirrors the queue's estimate for the operation bar: only a
+// transferring row with a trustworthy speed and a remaining byte count has an
+// honest ETA.
+func (o Operation) ETASeconds() int {
+	if o.Status != domainsftp.TaskTransferring || o.Speed < 1024 {
+		return 0
+	}
+	remaining := o.BytesTotal - o.BytesDone
+	if remaining <= 0 {
+		return 0
+	}
+	seconds := (remaining + o.Speed - 1) / o.Speed
+	if seconds <= 0 || seconds > 48*3600 {
+		return 0
+	}
+	return int(seconds)
+}
+
 // operationState is the mutable operation behind the snapshot.
 type operationState struct {
 	mu     sync.Mutex
 	kind   domainsftp.OperationKind
 	state  Operation
 	cancel context.CancelFunc
+	// taskID links a queue-backed operation to its global Transfer row.
+	taskID domainsftp.TaskID
+	// refresh lists the Tabs to reload when the operation ends.
+	refresh []*Tab
+	// retry restarts the request after an overwrite confirmation.
+	retry func()
+	// cleanup releases a resource the operation opened, such as the local
+	// filesystem behind an OS file drop.
+	cleanup func()
 }
 
 func (o *operationState) snapshot() Operation {
@@ -145,9 +178,60 @@ func (s *State) beginOperation(kind domainsftp.OperationKind) (*operationState, 
 	return op, ctx, true
 }
 
+// enqueueOperation hands the request to the global Transfer queue. The
+// operation bar mirrors the queue row through applyQueueTask, so pause,
+// retry, and cancel stay in the Transfer center while the pane copy behaves
+// as before. retry re-runs the request after the overwrite confirmation;
+// cleanup releases a resource the queue now owns.
+func (s *State) enqueueOperation(op *operationState, spec apptransfer.TaskSpec,
+	refresh []*Tab, retry func(), cleanup func()) bool {
+	taskID, err := s.transferQueue.Enqueue(spec)
+	if err != nil {
+		s.releaseOperation(op)
+		s.notice = "operation-failed"
+		s.RequestRedraw()
+		return false
+	}
+	s.attachQueuedOperation(op, taskID, refresh, retry, cleanup)
+	return true
+}
+
+// attachQueuedOperation links an already-enqueued row to the operation bar.
+// The operation's context is released because the queue owns cancellation
+// now.
+func (s *State) attachQueuedOperation(op *operationState, taskID domainsftp.TaskID,
+	refresh []*Tab, retry func(), cleanup func()) {
+	op.mu.Lock()
+	previous := op.cancel
+	op.taskID = taskID
+	op.refresh = refresh
+	op.retry = retry
+	op.cleanup = cleanup
+	queue := s.transferQueue
+	op.cancel = func() { _ = queue.Cancel(taskID) }
+	op.mu.Unlock()
+	if previous != nil {
+		previous()
+	}
+}
+
 // finishOperation publishes the outcome and refreshes the affected Tabs.
 func (s *State) finishOperation(op *operationState, err error, refresh ...*Tab) {
-	cancelled := err != nil && apptransfer.KindOf(err) == apptransfer.KindCancelled
+	s.finishOperationOutcome(op, err,
+		err != nil && apptransfer.KindOf(err) == apptransfer.KindCancelled, refresh...)
+}
+
+// finishOperationOutcome is finishOperation for a row whose cancellation is
+// carried by its status rather than an error: a queued row cancelled before
+// it ran settles with no error.
+func (s *State) finishOperationOutcome(op *operationState, err error, cancelled bool, refresh ...*Tab) {
+	op.mu.Lock()
+	cleanup := op.cleanup
+	op.cleanup = nil
+	op.mu.Unlock()
+	if cleanup != nil {
+		cleanup()
+	}
 	op.mu.Lock()
 	op.state.Running = false
 	op.state.Err = err
@@ -241,6 +325,22 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 	op, ctx, ok := s.beginOperation(kind)
 	if !ok {
 		return false
+	}
+	if s.transferQueue != nil {
+		retry := func() {
+			s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictReplace, refresh)
+		}
+		return s.enqueueOperation(op, apptransfer.TaskSpec{
+			Kind:        kind,
+			Source:      source.FS,
+			Dest:        dest.FS,
+			Sources:     paths,
+			DestDir:     destDir,
+			Move:        move,
+			Conflict:    conflict,
+			SourceLabel: source.Title(),
+			DestLabel:   dest.Title(),
+		}, refresh, retry, nil)
 	}
 	request := apptransfer.CopyRequest{
 		Source:   source.FS,
@@ -423,6 +523,47 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 				})
 				return
 			}
+			if s.transferQueue != nil {
+				// The queue owns the local filesystem until the row settles;
+				// a conflict prompt releases it before the retry re-opens one.
+				retry := func() {
+					s.dropFiles(side, targetDir, paths, apptransfer.ConflictReplace, false)
+				}
+				taskID, enqueueErr := s.transferQueue.Enqueue(apptransfer.TaskSpec{
+					Kind:        kind,
+					Source:      local,
+					Dest:        dest.FS,
+					Sources:     paths,
+					DestDir:     targetDir,
+					Conflict:    conflict,
+					SourceLabel: "local",
+					DestLabel:   dest.Title(),
+				})
+				s.post(func() {
+					if s.operation != op {
+						if enqueueErr == nil {
+							_ = s.transferQueue.Cancel(taskID)
+						}
+						_ = local.Close()
+						return
+					}
+					if enqueueErr != nil {
+						_ = local.Close()
+						s.releaseOperation(op)
+						s.notice = "operation-failed"
+						return
+					}
+					s.attachQueuedOperation(op, taskID, []*Tab{dest}, retry,
+						func() { _ = local.Close() })
+					// Snapshots posted before the attach found no taskID and
+					// were dropped. Re-read the row so a copy that already
+					// finished still settles the operation bar.
+					if task, ok := s.transferQueue.Task(taskID); ok {
+						s.applyQueueTask(task)
+					}
+				})
+				return
+			}
 			_, err = s.service.Copy(ctx, apptransfer.CopyRequest{
 				Source: local, Dest: dest.FS, Sources: paths, DestDir: targetDir,
 				Kind: kind, Conflict: conflict,
@@ -451,9 +592,14 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 func (s *State) releaseOperation(op *operationState) {
 	op.mu.Lock()
 	cancel := op.cancel
+	cleanup := op.cleanup
+	op.cleanup = nil
 	op.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if cleanup != nil {
+		cleanup()
 	}
 	if s.operation == op {
 		s.operation = nil
