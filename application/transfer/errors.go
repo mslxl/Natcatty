@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
+	"strings"
 
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
@@ -103,9 +106,53 @@ func classify(err error) ErrorKind {
 		return KindExists
 	case errors.Is(err, errCancelled):
 		return KindCancelled
+	case isConnectionError(err):
+		return KindConnection
 	default:
 		return KindInternal
 	}
+}
+
+// connectionTokens are the transport-loss messages a filesystem or adapter
+// surfaces when the peer or the stream went away. They are matched
+// case-insensitively because x/crypto/ssh, os, the Windows socket layer, and
+// the SFTP adapters phrase the same loss differently.
+var connectionTokens = []string{
+	"econnreset", "econnrefused", "econnaborted", "etimedout", "epipe",
+	"broken pipe", "connection reset", "connection refused",
+	"connection aborted", "connection closed", "connection lost",
+	"connection was closed", "forcibly closed",
+	"socket hang up", "network is unreachable", "network is down",
+	"no route to host", "use of closed network connection",
+	"ssh: disconnect", "ssh: connection", "failed to send packet",
+	"server closed", "stream closed", "session closed",
+	"unexpected eof", "i/o timeout",
+}
+
+// isConnectionError reports whether a cause is a lost or failed transport,
+// which is recoverable only by reconnecting rather than by replaying the
+// request over the same dead stream. The standard sentinels come first: a
+// stopped peer often surfaces as a bare EOF or a closed net.Error before any
+// adapter can add wording.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	for _, token := range connectionTokens {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // wrap attaches an operation and path to a cause.

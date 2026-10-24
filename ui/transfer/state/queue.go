@@ -132,7 +132,7 @@ func (s *State) CenterError() string { return s.centerError }
 // updates redraw; a terminal row finishes the operation with the same refresh
 // and conflict handling as a direct copy.
 func (s *State) applyQueueTask(task domainsftp.Task) {
-	op := s.operation
+	op := s.queueOperations[task.ID]
 	if op == nil {
 		return
 	}
@@ -155,6 +155,7 @@ func (s *State) applyQueueTask(task domainsftp.Task) {
 		s.RequestRedraw()
 		return
 	}
+	delete(s.queueOperations, task.ID)
 
 	op.mu.Lock()
 	retry := op.retry

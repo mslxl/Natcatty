@@ -440,7 +440,11 @@ func (q *Queue) Retry(id domainsftp.TaskID) error {
 		q.mu.Unlock()
 		return domainsftp.ErrTaskNotRetryable
 	}
-	if entry.spec == nil {
+	// A row whose transport was lost, or one restored from a previous
+	// process, has no live filesystems to replay against. Retrying it would
+	// send the request down the same dead stream and fail at 0% with no
+	// explanation, so it waits for a reconnect instead.
+	if entry.task.ReconnectRequired || entry.spec == nil {
 		q.mu.Unlock()
 		return domainsftp.ErrTaskUnavailable
 	}
@@ -694,6 +698,7 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 	now := q.now()
 	cancelled := entry.task.CancelRequested ||
 		(!entry.task.PauseRequested && err != nil && KindOf(err) == KindCancelled)
+	entry.task.ReconnectRequired = false
 	switch {
 	case cancelled:
 		entry.task.Status = domainsftp.TaskCancelled
@@ -706,8 +711,13 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		entry.task.Err = nil
 	case err != nil:
 		entry.task.Status = domainsftp.TaskFailed
-		entry.task.Error = string(KindOf(err))
+		kind := KindOf(err)
+		entry.task.Error = string(kind)
 		entry.task.Err = err
+		// A lost transport cannot be replayed over the same dead stream. The
+		// row explains that it needs a reconnect, and Retry refuses until a
+		// fresh transport exists.
+		entry.task.ReconnectRequired = kind == KindConnection
 	default:
 		entry.task.Status = domainsftp.TaskCompleted
 		if entry.task.BytesTotal > 0 {
@@ -836,14 +846,15 @@ func isTransientQueueError(err error) bool {
 	if err == nil || KindOf(err) == KindCancelled {
 		return false
 	}
-	if KindOf(err) == KindConnection {
+	if KindOf(err) == KindConnection || isConnectionError(err) {
 		return true
 	}
+	// A failed-but-unclassified message can still be a momentary network
+	// blip; these tokens are the original's retry hint beyond the explicit
+	// connection vocabulary.
 	message := strings.ToLower(err.Error())
 	for _, token := range []string{
-		"econnreset", "econnrefused", "etimedout", "epipe", "broken pipe",
-		"socket hang up", "connection reset", "network", "temporarily unavailable",
-		"try again",
+		"network", "temporarily unavailable", "try again",
 	} {
 		if strings.Contains(message, token) {
 			return true

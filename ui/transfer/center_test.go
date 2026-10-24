@@ -8,7 +8,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
+	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 	"github.com/mslxl/natcatty/ui/locales"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
@@ -53,7 +55,8 @@ func centerSeed(now time.Time) []domainsftp.Task {
 // newCenterFixture builds the SFTP surface over a live queue whose history is
 // restored from a restart, then opens nothing: the test drives the header
 // button or the state directly.
-func newCenterFixture(t *testing.T, locale string, width, height int, seed []domainsftp.Task) (*transferstate.State, *ui.Tester) {
+func newCenterFixture(t *testing.T, locale string, width, height int, seed []domainsftp.Task,
+	options ...transferstate.Option) (*transferstate.State, *ui.Tester) {
 	t.Helper()
 	local := t.TempDir()
 	writeFile(t, local+"/alpha.txt", "alpha")
@@ -64,7 +67,8 @@ func newCenterFixture(t *testing.T, locale string, width, height int, seed []dom
 	}
 	t.Cleanup(queue.Shutdown)
 
-	state := transferstate.NewState(service, transferstate.WithQueue(queue))
+	stateOptions := append([]transferstate.Option{transferstate.WithQueue(queue)}, options...)
+	state := transferstate.NewState(service, stateOptions...)
 	t.Cleanup(state.Shutdown)
 
 	tester := ui.NewTester(View(state), width, height)
@@ -90,6 +94,122 @@ func insideWindow(t *testing.T, tester *ui.Tester, label string, width, height i
 		t.Fatalf("%q is clipped at %dx%d: %+v", label, width, height, rect)
 	}
 	return rect
+}
+
+// centerBindingStore is the persisted binding document for the center's
+// shortcut tests.
+type centerBindingStore struct{ state appkeybindings.State }
+
+func (s *centerBindingStore) Load(context.Context) (appkeybindings.State, error) {
+	return s.state, nil
+}
+func (s *centerBindingStore) Save(context.Context, appkeybindings.State) error { return nil }
+
+func newCenterBindings(t *testing.T) *appkeybindings.Service {
+	t.Helper()
+	service := appkeybindings.NewService(&centerBindingStore{}, appkeybindings.WithGOOS("windows"))
+	if err := service.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+// TestTransferCenterBackdropClosesAndPanelDoesNot drives real pointer input:
+// a click inside the panel leaves the center open, and a click on the
+// backdrop closes it.
+func TestTransferCenterBackdropClosesAndPanelDoesNot(t *testing.T) {
+	const width, height = 1100, 720
+	state, tester := newCenterFixture(t, "en", width, height, centerSeed(time.Now()))
+	state.OpenCenter()
+	tester.Frame()
+	panel, ok := tester.Find("Transfer center")
+	if !ok {
+		t.Fatalf("the center is not shown: %q", tester.Texts())
+	}
+	tester.ClickAt(panel.X+panel.W/2, panel.Y+panel.H/2)
+	if !state.CenterOpen() {
+		t.Fatal("a click inside the panel closed the center")
+	}
+	// The panel starts at centerTop and is centered, so the top-left corner
+	// is backdrop.
+	tester.ClickAt(12, 12)
+	if state.CenterOpen() {
+		t.Fatal("a click on the backdrop did not close the center")
+	}
+}
+
+// TestTransferCenterConfiguredChordClosesIt proves the effective, rebindable
+// transfer-center chord dismisses an open center even though a Modal overlay
+// suppresses the window shortcut that opened it. Escape and Dismiss still
+// work.
+func TestTransferCenterConfiguredChordClosesIt(t *testing.T) {
+	kb := newCenterBindings(t)
+	state, tester := newCenterFixture(t, "en", 1100, 720, centerSeed(time.Now()),
+		transferstate.WithKeybindings(kb))
+	if chord := state.Shortcut("transferCenter"); chord != "Ctrl + Shift + T" {
+		t.Fatalf("the configured chord = %q, want Ctrl + Shift + T", chord)
+	}
+
+	state.OpenCenter()
+	tester.Frame()
+	tester.Key(ui.Ctrl|ui.Shift, ui.KeyT)
+	if state.CenterOpen() {
+		t.Fatal("the configured chord did not close the center")
+	}
+
+	state.OpenCenter()
+	tester.Frame()
+	tester.Key(0, ui.KeyEscape)
+	if state.CenterOpen() {
+		t.Fatal("Escape did not close the center")
+	}
+
+	state.OpenCenter()
+	tester.Frame()
+	if err := tester.Click("Dismiss"); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+	if state.CenterOpen() {
+		t.Fatal("Dismiss did not close the center")
+	}
+
+	// A rebinding moves the chord; the old default must not keep working.
+	if err := kb.ReplaceBinding("transfer-center", domainkeybindings.SchemePC,
+		"Alt + Shift + T", nil); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	state.OpenCenter()
+	tester.Frame()
+	tester.Key(ui.Ctrl|ui.Shift, ui.KeyT)
+	if !state.CenterOpen() {
+		t.Fatal("the old default chord still closed the center after rebinding")
+	}
+	tester.Key(ui.Alt|ui.Shift, ui.KeyT)
+	if state.CenterOpen() {
+		t.Fatal("the rebound chord did not close the center")
+	}
+}
+
+// TestTransferCenterShowsReconnectOnAFailedRow proves a row whose transport
+// was lost explains how to recover instead of showing only a generic error.
+func TestTransferCenterShowsReconnectOnAFailedRow(t *testing.T) {
+	now := time.Now()
+	seed := []domainsftp.Task{{
+		ID: "conn", Kind: domainsftp.OpUpload, Status: domainsftp.TaskFailed,
+		DisplayName: "alpha.txt", SourceLabel: "local", DestLabel: "Test",
+		Sources: []string{"/alpha.txt"}, DestDir: "/remote",
+		BytesDone: 0, BytesTotal: 2048, FilesTotal: 1,
+		Error: "connection", ReconnectRequired: true,
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	state, tester := newCenterFixture(t, "en", 1100, 720, seed)
+	state.OpenCenter()
+	tester.Frame()
+	for _, want := range []string{"Failed", "Connection failed.", "Reconnect to this Host"} {
+		if !tester.HasText(want) {
+			t.Errorf("the failed row does not show %q; texts %q", want, tester.Texts())
+		}
+	}
 }
 
 func TestTransferCenterShowsProgressAndControls(t *testing.T) {

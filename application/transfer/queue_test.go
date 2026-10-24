@@ -412,6 +412,112 @@ func TestQueueRetriesATransientFailureOnce(t *testing.T) {
 	}
 }
 
+// deadTransportFS loses every file it opens, as a dropped SSH transport does.
+type deadTransportFS struct {
+	*fakeFS
+}
+
+func (deadTransportFS) Open(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("connection reset by peer")
+}
+
+// TestQueueConnectionFailureRequiresReconnect proves a lost transport is
+// classified as connection, marks the row reconnect-required, and refuses a
+// Retry that cannot reach the peer instead of replaying it into a generic
+// failure with no progress.
+func TestQueueConnectionFailureRequiresReconnect(t *testing.T) {
+	base := newFakeFS("source")
+	base.addFile("/", "a.bin", "payload", 0o644)
+	source := deadTransportFS{fakeFS: base}
+	dest := newFakeFS("dest")
+	dest.addDir("/out")
+
+	queue := NewQueue(NewService(nil, nil), WithQueueRetryDelay(0))
+	startTestQueue(t, queue)
+	id, err := queue.Enqueue(TaskSpec{
+		Kind: domainsftp.OpCopy, Source: source, Dest: dest,
+		Sources: []string{"/a.bin"}, DestDir: "/out",
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	task := waitQueueTask(t, queue, id, domainsftp.TaskFailed)
+	if task.Error != string(KindConnection) {
+		t.Errorf("failure code = %q, want %q", task.Error, KindConnection)
+	}
+	if !task.ReconnectRequired {
+		t.Errorf("task is not reconnect-required: %+v", task)
+	}
+	if err := queue.Retry(id); !errors.Is(err, domainsftp.ErrTaskUnavailable) {
+		t.Errorf("Retry without a transport = %v, want ErrTaskUnavailable", err)
+	}
+	again, ok := queue.Task(id)
+	if !ok {
+		t.Fatal("the failed row disappeared")
+	}
+	if again.Status != domainsftp.TaskFailed || again.Epoch != task.Epoch {
+		t.Errorf("Retry replayed the dead transport: %+v, was epoch %d", again, task.Epoch)
+	}
+}
+
+// brokenWriteFS accepts Create but loses the transport on the first write, as
+// a stopped SFTP server does mid-upload.
+type brokenWriteFS struct {
+	*fakeFS
+	err error
+}
+
+func (f brokenWriteFS) Create(context.Context, string) (io.WriteCloser, error) {
+	return brokenWriter{err: f.err}, nil
+}
+
+type brokenWriter struct{ err error }
+
+func (w brokenWriter) Write([]byte) (int, error) { return 0, w.err }
+func (w brokenWriter) Close() error              { return nil }
+
+// TestQueueDestinationTransportFailureRequiresReconnect covers the write
+// half of a real transport loss: the acceptance fixture kills the server
+// mid-upload, where the error surfaces from Write or Rename rather than from
+// Open, and often as a bare EOF or the Windows socket wording.
+func TestQueueDestinationTransportFailureRequiresReconnect(t *testing.T) {
+	for _, cause := range []struct {
+		name string
+		err  error
+	}{
+		{name: "windows forcibly closed", err: errors.New("An existing connection was forcibly closed by the remote host")},
+		{name: "failed to send packet", err: errors.New("failed to send packet: EOF")},
+		{name: "bare eof", err: io.EOF},
+	} {
+		t.Run(cause.name, func(t *testing.T) {
+			source := newFakeFS("source")
+			source.addFile("/", "a.bin", "payload", 0o644)
+			dest := brokenWriteFS{fakeFS: newFakeFS("dest"), err: cause.err}
+			dest.addDir("/out")
+
+			queue := NewQueue(NewService(nil, nil), WithQueueRetryDelay(0))
+			startTestQueue(t, queue)
+			id, err := queue.Enqueue(TaskSpec{
+				Kind: domainsftp.OpCopy, Source: source, Dest: dest,
+				Sources: []string{"/a.bin"}, DestDir: "/out",
+			})
+			if err != nil {
+				t.Fatalf("enqueue: %v", err)
+			}
+			task := waitQueueTask(t, queue, id, domainsftp.TaskFailed)
+			if task.Error != string(KindConnection) {
+				t.Errorf("failure code = %q, want %q", task.Error, KindConnection)
+			}
+			if !task.ReconnectRequired {
+				t.Errorf("task is not reconnect-required: %+v", task)
+			}
+			if err := queue.Retry(id); !errors.Is(err, domainsftp.ErrTaskUnavailable) {
+				t.Errorf("Retry without a transport = %v, want ErrTaskUnavailable", err)
+			}
+		})
+	}
+}
+
 func TestQueueRestartDowngradesUnfinishedTransfers(t *testing.T) {
 	now := time.Now()
 	repo := &fakeQueueRepository{stored: []domainsftp.Task{

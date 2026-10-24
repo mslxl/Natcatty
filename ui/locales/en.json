@@ -2802,7 +2802,7 @@
   "@sftpErrorCancelled": {
     "description": "The error shown for a cancelled operation."
   },
-  "sftpErrorConnection": "The connection failed.",
+  "sftpErrorConnection": "Connection failed.",
   "@sftpErrorConnection": {
     "description": "The error shown for a failed connection."
   },

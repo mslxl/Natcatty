@@ -2619,14 +2619,21 @@
     - application/transfer.TestQueuePauseAndResume
     - application/transfer.TestQueueCancelStopsTheTransfer
     - application/transfer.TestQueueRetriesAFailedTransfer
+    - application/transfer.TestQueueConnectionFailureRequiresReconnect
+    - application/transfer.TestQueueDestinationTransportFailureRequiresReconnect
     - application/transfer.TestQueueRestartDowngradesUnfinishedTransfers
     - adapters/sftp.TestTransferQueueRoundTrips
     - ui/transfer/state.TestQueueBackedTransferCompletesAndAppearsInTheCenter
     - ui/transfer/state.TestQueueTaskControlsReportUnavailableAfterRestart
+    - ui/transfer/state.TestTransferWhileBusyEnqueuesASecondTask
+    - ui/transfer/state.TestTransportFailureRetryRequiresReconnect
     - ui/transfer.TestTransferCenterShowsProgressAndControls
     - ui/transfer.TestTransferCenterRetryReportsAReconnect
+    - ui/transfer.TestTransferCenterBackdropClosesAndPanelDoesNot
+    - ui/transfer.TestTransferCenterConfiguredChordClosesIt
+    - ui/transfer.TestTransferCenterShowsReconnectOnAFailedRow
   status: verified
-  notes: "Each Resource (local, Host, Session) admits up to the queue's per-resource limit (1-16, default 6), and a multi-file row reports its current file and completed-file count. Pause stops at a chunk boundary and Resume replays the request; Restart downgrades unfinished rows to interrupted with reconnect required."
+  notes: "Each Resource (local, Host, Session) admits up to the queue's per-resource limit (1-16, default 6), and a multi-file row reports its current file and completed-file count. Pause stops at a chunk boundary and Resume replays the request; Restart downgrades unfinished rows to interrupted with reconnect required. A second Transfer pressed while one runs is admitted to the queue instead of refused. A lost transport settles as connection with reconnect required, and Retry returns ErrTaskUnavailable rather than replaying the dead stream. The center closes on a backdrop click, Escape, Dismiss, and its effective (rebindable) toggle chord even though the modal suppresses window shortcuts."
 
 - id: sftp.copy-move-paste
   area: sftp-transfer
