@@ -134,6 +134,28 @@ _Avoid_: split, terminal, tab
 A single tracked file or directory operation in the transfer queue.
 _Avoid_: job, task, copy
 
+**Transfer Checkpoint**:
+A bounded, fixed-width record of the completed prefix of a directory Transfer.
+It lets a resumed Transfer skip entries it already copied after validating them
+against a fresh walk. It is not a per-file manifest.
+_Avoid_: resume list, file log, progress cache
+
+**Reattach**:
+Binding live Backings to a Transfer restored after a restart or cut off by a
+lost transport, so the same row can resume from its checkpoint. Reattach keeps
+the row identity; Retry is a separate full replay.
+_Avoid_: reconnect, rebind, resume
+
+**Pause Latch**:
+The sticky request that a running Transfer stop and become paused. It survives
+until Resume or Cancel; a second Pause is a no-op.
+_Avoid_: pause flag, stop request
+
+**Cancel Latch**:
+The sticky, winning request that a Transfer stop for good. It clears the Pause
+Latch, drops the checkpoint, and makes a later Retry start over.
+_Avoid_: abort flag, stop flag
+
 **Sync Profile**:
 A configured cloud-sync target (Gist, Google Drive, OneDrive, WebDAV, S3, or a plugin
 provider) with its own credentials and strategy.

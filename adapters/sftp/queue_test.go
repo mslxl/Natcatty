@@ -21,6 +21,12 @@ func TestTransferQueueRoundTrips(t *testing.T) {
 			DestDir: "/srv", ResourceKeys: []domainsftp.ResourceKey{domainsftp.HostResourceKey("h1")},
 			BytesDone: 10, BytesTotal: 20, FilesDone: 1, FilesTotal: 2,
 			CreatedAt: now, UpdatedAt: now, ReconnectRequired: true,
+			DirectoryResumeCheckpoint: &domainsftp.DirectoryCheckpoint{
+				Version: 2, CoveredEntries: 1, CompletedEntries: 1,
+				ManifestHash: "6a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd19",
+			},
+			CheckpointBytesDone: 10,
+			Targets:             map[string]string{"/tmp": "/srv"},
 		},
 		{
 			ID: "two", Kind: domainsftp.OpDownload, Status: domainsftp.TaskCompleted,
@@ -41,6 +47,11 @@ func TestTransferQueueRoundTrips(t *testing.T) {
 	if loaded[0].ID != "one" || loaded[0].Status != domainsftp.TaskInterrupted ||
 		!loaded[0].ReconnectRequired || loaded[0].BytesTotal != 20 {
 		t.Errorf("first task = %+v", loaded[0])
+	}
+	if loaded[0].DirectoryResumeCheckpoint == nil ||
+		loaded[0].DirectoryResumeCheckpoint.CompletedEntries != 1 ||
+		loaded[0].CheckpointBytesDone != 10 || loaded[0].Targets["/tmp"] != "/srv" {
+		t.Errorf("checkpoint did not round-trip: %+v", loaded[0])
 	}
 	if loaded[1].Status != domainsftp.TaskCompleted || !loaded[1].FinishedAt.Equal(now.Add(2*time.Second)) {
 		t.Errorf("second task = %+v", loaded[1])
