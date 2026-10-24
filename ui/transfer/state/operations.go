@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
@@ -16,8 +18,10 @@ type Operation struct {
 	FilesTotal int
 	BytesDone  int64
 	BytesTotal int64
-	Running    bool
-	Cancelled  bool
+	// Skipped is how many entries a completed Transfer left untouched.
+	Skipped   int
+	Running   bool
+	Cancelled bool
 	// Status is the queue row's lifecycle state when the operation is
 	// queue-backed; a direct operation leaves it empty.
 	Status domainsftp.TaskStatus
@@ -83,10 +87,11 @@ type operationState struct {
 	cancel context.CancelFunc
 	// taskID links a queue-backed operation to its global Transfer row.
 	taskID domainsftp.TaskID
+	// prompted records that this row's conflict was shown, so repeated
+	// attention snapshots do not open the same dialog twice.
+	prompted bool
 	// refresh lists the Tabs to reload when the operation ends.
 	refresh []*Tab
-	// retry restarts the request after an overwrite confirmation.
-	retry func()
 	// cleanup releases a resource the operation opened, such as the local
 	// filesystem behind an OS file drop.
 	cleanup func()
@@ -198,10 +203,9 @@ func (s *State) newOperation(kind domainsftp.OperationKind, allowBusy bool) (*op
 // enqueueOperation hands the request to the global Transfer queue. The
 // operation bar mirrors the queue row through applyQueueTask, so pause,
 // retry, and cancel stay in the Transfer center while the pane copy behaves
-// as before. retry re-runs the request after the overwrite confirmation;
-// cleanup releases a resource the queue now owns.
+// as before. cleanup releases a resource the queue now owns.
 func (s *State) enqueueOperation(op *operationState, spec apptransfer.TaskSpec,
-	refresh []*Tab, retry func(), cleanup func()) bool {
+	refresh []*Tab, cleanup func()) bool {
 	taskID, err := s.transferQueue.Enqueue(spec)
 	if err != nil {
 		s.releaseOperation(op)
@@ -209,7 +213,7 @@ func (s *State) enqueueOperation(op *operationState, spec apptransfer.TaskSpec,
 		s.RequestRedraw()
 		return false
 	}
-	s.attachQueuedOperation(op, taskID, refresh, retry, cleanup)
+	s.attachQueuedOperation(op, taskID, refresh, cleanup)
 	return true
 }
 
@@ -217,12 +221,11 @@ func (s *State) enqueueOperation(op *operationState, spec apptransfer.TaskSpec,
 // The operation's context is released because the queue owns cancellation
 // now.
 func (s *State) attachQueuedOperation(op *operationState, taskID domainsftp.TaskID,
-	refresh []*Tab, retry func(), cleanup func()) {
+	refresh []*Tab, cleanup func()) {
 	op.mu.Lock()
 	previous := op.cancel
 	op.taskID = taskID
 	op.refresh = refresh
-	op.retry = retry
 	op.cleanup = cleanup
 	queue := s.transferQueue
 	op.cancel = func() { _ = queue.Cancel(taskID) }
@@ -308,7 +311,7 @@ func (s *State) transferTo(from, to Side, move bool) {
 		return
 	}
 	kind := transferKind(source, dest)
-	s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictStop, s.refreshAfter(source, dest, move))
+	s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictAsk, s.refreshAfter(source, dest, move))
 }
 
 // tabHost names the saved Host behind a Tab, or "" for a local one.
@@ -340,10 +343,10 @@ func (s *State) refreshAfter(source, dest *Tab, move bool) []*Tab {
 	return []*Tab{dest}
 }
 
-// startCopy runs a copy request and offers replacement when the destination
-// exists. With the global queue behind it, a Transfer is admitted even while
-// another is running: the queue owns scheduling, so a second Upload is work
-// queued behind the per-resource limit rather than a refused action.
+// startCopy runs a copy request and asks how to resolve an existing
+// destination. With the global queue behind it, a Transfer is admitted even
+// while another is running: the queue owns scheduling, so a second Upload is
+// work queued behind the per-resource limit rather than a refused action.
 func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, move bool, kind domainsftp.OperationKind, conflict apptransfer.ConflictPolicy, refresh []*Tab) bool {
 	if s.transferQueue == nil {
 		if s.Busy() {
@@ -352,12 +355,10 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 			return false
 		}
 	}
+	batchID := s.newBatchID()
 	if s.transferQueue != nil {
 		// The queue, not the single-slot operation bar, decides admission.
 		op := s.beginQueueOperation(kind)
-		retry := func() {
-			s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictReplace, refresh)
-		}
 		return s.enqueueOperation(op, apptransfer.TaskSpec{
 			Kind:        kind,
 			Source:      source.FS,
@@ -366,48 +367,99 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 			DestDir:     destDir,
 			Move:        move,
 			Conflict:    conflict,
+			BatchID:     batchID,
 			SourceLabel: source.Title(),
 			DestLabel:   dest.Title(),
 			// The Tab knows which saved Host each endpoint is; the durable row
 			// keeps it so a reconnect can rebuild this request.
 			SourceHost: tabHost(source),
 			DestHost:   tabHost(dest),
-		}, refresh, retry, nil)
+		}, refresh, nil)
 	}
 	op, ctx, ok := s.beginOperation(kind)
 	if !ok {
 		return false
 	}
+	// Answers given with "apply to all" live for this request only, so a later
+	// paste with the same names asks again.
+	policies := map[string]apptransfer.ConflictPolicy{}
 	request := apptransfer.CopyRequest{
-		Source:   source.FS,
-		Dest:     dest.FS,
-		Sources:  append([]string(nil), paths...),
-		DestDir:  destDir,
-		Move:     move,
-		Kind:     kind,
-		Conflict: conflict,
+		Source:        source.FS,
+		Dest:          dest.FS,
+		Sources:       append([]string(nil), paths...),
+		DestDir:       destDir,
+		Move:          move,
+		Kind:          kind,
+		Conflict:      conflict,
+		SkipUnchanged: true,
+		OnConflict:    s.directConflictResolver(ctx, policies),
 		Progress: func(progress apptransfer.Progress) {
 			op.setProgress(progress)
 			s.RequestRedraw()
 		},
 	}
 	go func() {
-		_, err := s.service.Copy(ctx, request)
-		s.post(func() {
-			if err != nil && apptransfer.KindOf(err) == apptransfer.KindExists {
-				// A conflict is a question, not a failure. Release the
-				// operation slot so the confirmation prompt is the only thing
-				// asking the user, and confirming starts a fresh operation.
-				s.releaseOperation(op)
-				s.askOverwrite(s.focused, paths, func() {
-					s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictReplace, refresh)
-				})
-				return
-			}
-			s.finishOperation(op, err, refresh...)
-		})
+		result, err := s.service.Copy(ctx, request)
+		if len(result.Skipped) > 0 {
+			op.mu.Lock()
+			op.state.Skipped += len(result.Skipped)
+			op.mu.Unlock()
+		}
+		if err != nil && ctx.Err() != nil {
+			err = &apptransfer.Error{Kind: apptransfer.KindCancelled, Op: kind, Cause: ctx.Err()}
+		}
+		s.post(func() { s.finishOperation(op, err, refresh...) })
 	}()
 	return true
+}
+
+// newBatchID labels one started paste or transfer. The sequence keeps two
+// batches apart within the surface; the nanosecond prefix keeps a persisted
+// queue from confusing a new batch with rows from an earlier process.
+func (s *State) newBatchID() string {
+	s.batchSeq++
+	return fmt.Sprintf("sftp-%d-%d", time.Now().UnixNano(), s.batchSeq)
+}
+
+// directConflictResolver answers ConflictAsk for a request that is not
+// queue-backed. It shows the same five-action prompt as a queued row, and
+// remembers an apply-to-all choice for the rest of this request.
+func (s *State) directConflictResolver(ctx context.Context,
+	policies map[string]apptransfer.ConflictPolicy) func(domainsftp.Conflict) apptransfer.ConflictResolution {
+	return func(conflict domainsftp.Conflict) apptransfer.ConflictResolution {
+		if action, ok := policies[conflict.TypeKey()]; ok {
+			return apptransfer.ConflictResolution{Action: action}
+		}
+		answer := make(chan apptransfer.ConflictResolution, 1)
+		prompted := conflict
+		s.post(func() {
+			if ctx.Err() != nil {
+				answer <- apptransfer.ConflictResolution{Action: apptransfer.ConflictStop}
+				return
+			}
+			s.showConflictPrompt(prompted, "", func(action apptransfer.ConflictPolicy, applyAll bool) {
+				if applyAll {
+					policies[prompted.TypeKey()] = action
+				}
+				answer <- apptransfer.ConflictResolution{Action: action}
+			})
+		})
+		select {
+		case resolution := <-answer:
+			return resolution
+		case <-ctx.Done():
+			// The user cancelled while the prompt was open; do not leave a
+			// dialog for a request that no longer exists.
+			s.post(func() {
+				dialog := s.dialog
+				if dialog != nil && dialog.Kind == DialogConflict && dialog.TaskID == "" &&
+					dialog.Conflict != nil && dialog.Conflict.TargetPath == prompted.TargetPath {
+					s.CloseDialog()
+				}
+			})
+			return apptransfer.ConflictResolution{Action: apptransfer.ConflictStop}
+		}
+	}
 }
 
 // sameDirectory reports whether every source already lives in dir.
@@ -488,7 +540,7 @@ func (s *State) Paste(side Side) {
 	clip := s.clipboard
 	destDir := dest.Destination()
 	kind := domainsftp.OpCopy
-	conflict := apptransfer.ConflictStop
+	conflict := apptransfer.ConflictAsk
 	same := apptransfer.SameBacking(clip.FS, dest.FS)
 	if problem := copyDestinationProblem(clip.FS, dest.FS, clip.Paths, destDir, clip.Cut); problem != "" {
 		s.notice = problem
@@ -523,13 +575,13 @@ func (s *State) HasClipboard() bool { return s.clipboard != nil }
 // DropFiles copies OS paths into a side's destination directory. This is the
 // OS-to-pane drop; the source is always a fresh local filesystem.
 func (s *State) DropFiles(side Side, targetDir string, paths []string) {
-	s.dropFiles(side, targetDir, paths, apptransfer.ConflictStop, true)
+	s.dropFiles(side, targetDir, paths, apptransfer.ConflictAsk)
 }
 
-// dropFiles runs an OS-to-pane copy with the requested conflict policy. When
-// prompt is set, an existing destination opens the same replacement prompt as
-// a toolbar transfer; confirming retries with ConflictReplace.
-func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict apptransfer.ConflictPolicy, prompt bool) {
+// dropFiles runs an OS-to-pane copy with the requested conflict policy. An
+// existing destination is a question, so nothing is replaced until the user
+// chooses Replace in the conflict prompt.
+func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict apptransfer.ConflictPolicy) {
 	dest := s.Tab(side)
 	if dest == nil || dest.FS == nil || len(paths) == 0 {
 		s.notice = "pane-unavailable"
@@ -543,10 +595,12 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 	if dest.Kind == KindLocal {
 		kind = domainsftp.OpCopy
 	}
+	batchID := s.newBatchID()
 	op, ctx, ok := s.beginOperation(kind)
 	if !ok {
 		return
 	}
+	policies := map[string]apptransfer.ConflictPolicy{}
 	go func() {
 		local, err := s.service.OpenLocal(ctx)
 		if err == nil {
@@ -560,11 +614,7 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 				return
 			}
 			if s.transferQueue != nil {
-				// The queue owns the local filesystem until the row settles;
-				// a conflict prompt releases it before the retry re-opens one.
-				retry := func() {
-					s.dropFiles(side, targetDir, paths, apptransfer.ConflictReplace, false)
-				}
+				// The queue owns the local filesystem until the row settles.
 				taskID, enqueueErr := s.transferQueue.Enqueue(apptransfer.TaskSpec{
 					Kind:        kind,
 					Source:      local,
@@ -572,6 +622,7 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 					Sources:     paths,
 					DestDir:     targetDir,
 					Conflict:    conflict,
+					BatchID:     batchID,
 					SourceLabel: "local",
 					DestLabel:   dest.Title(),
 				})
@@ -589,7 +640,7 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 						s.notice = "operation-failed"
 						return
 					}
-					s.attachQueuedOperation(op, taskID, []*Tab{dest}, retry,
+					s.attachQueuedOperation(op, taskID, []*Tab{dest},
 						func() { _ = local.Close() })
 					// Snapshots posted before the attach found no taskID and
 					// were dropped. Re-read the row so a copy that already
@@ -600,26 +651,27 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 				})
 				return
 			}
-			_, err = s.service.Copy(ctx, apptransfer.CopyRequest{
+			result, copyErr := s.service.Copy(ctx, apptransfer.CopyRequest{
 				Source: local, Dest: dest.FS, Sources: paths, DestDir: targetDir,
-				Kind: kind, Conflict: conflict,
+				Kind: kind, Conflict: conflict, SkipUnchanged: true,
+				OnConflict: s.directConflictResolver(ctx, policies),
 				Progress: func(progress apptransfer.Progress) {
 					op.setProgress(progress)
 					s.RequestRedraw()
 				},
 			})
+			err = copyErr
+			if len(result.Skipped) > 0 {
+				op.mu.Lock()
+				op.state.Skipped += len(result.Skipped)
+				op.mu.Unlock()
+			}
 			_ = local.Close()
 		}
-		s.post(func() {
-			if err != nil && prompt && apptransfer.KindOf(err) == apptransfer.KindExists {
-				s.releaseOperation(op)
-				s.askOverwrite(side, paths, func() {
-					s.dropFiles(side, targetDir, paths, apptransfer.ConflictReplace, false)
-				})
-				return
-			}
-			s.finishOperation(op, err, dest)
-		})
+		if err != nil && ctx.Err() != nil {
+			err = &apptransfer.Error{Kind: apptransfer.KindCancelled, Op: kind, Cause: ctx.Err()}
+		}
+		s.post(func() { s.finishOperation(op, err, dest) })
 	}()
 }
 
@@ -646,19 +698,6 @@ func (s *State) releaseOperation(op *operationState) {
 	if s.operation == op {
 		s.operation = nil
 	}
-}
-
-// askOverwrite opens the replacement confirmation. retry starts the operation
-// again with ConflictReplace when the user confirms.
-func (s *State) askOverwrite(side Side, paths []string, retry func()) {
-	s.dialog = &Dialog{
-		Kind:  DialogOverwrite,
-		Side:  side,
-		Paths: append([]string(nil), paths...),
-		retry: retry,
-	}
-	s.notice = "overwrite-required"
-	s.RequestRedraw()
 }
 
 // DragPayload is what one pane drags onto another.
@@ -736,7 +775,7 @@ func (s *State) DropPane(side Side, targetDir string, payload *DragPayload) {
 	if same {
 		source.Kind = dest.Kind
 	}
-	s.startCopy(source, dest, payload.Paths, targetDir, move, kind, apptransfer.ConflictStop, s.refreshAfter(source, dest, move))
+	s.startCopy(source, dest, payload.Paths, targetDir, move, kind, apptransfer.ConflictAsk, s.refreshAfter(source, dest, move))
 }
 
 // DeleteSelection removes the focused pane's selection. The view calls it

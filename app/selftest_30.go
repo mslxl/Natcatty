@@ -422,13 +422,13 @@ func (t *selftest30) operationStep(*ui.Context) selftest.Outcome {
 			}
 			return selftest.Failed(fmt.Errorf("a second upload did not ask about the existing file"))
 		}
-		if dialog.Kind != transferstate.DialogOverwrite {
-			return selftest.Failed(fmt.Errorf("the prompt is %q, want overwrite", dialog.Kind))
+		if dialog.Kind != transferstate.DialogConflict {
+			return selftest.Failed(fmt.Errorf("the prompt is %q, want conflict", dialog.Kind))
 		}
 		if got, _ := t.memoryContent("alpha.txt"); got != "old-remote" {
-			return selftest.Failed(fmt.Errorf("the destination changed before confirmation: %q", got))
+			return selftest.Failed(fmt.Errorf("the destination changed before a choice: %q", got))
 		}
-		t.state.SubmitDialog()
+		t.state.ResolveDialogConflict(apptransfer.ConflictReplace, false)
 		t.opPhase = 3
 		return selftest.Pending
 	case 3:

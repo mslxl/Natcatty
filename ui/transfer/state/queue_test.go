@@ -67,6 +67,99 @@ func (r *queueSeedRepo) SaveTasks(_ context.Context, tasks []domainsftp.Task) er
 // restored row's reconnect prompt is truthful before the connection, the
 // reconnected Host binds live filesystems, and Resume then finishes the
 // Transfer without touching the completed prefix.
+func TestQueueConflictAppliesOneChoiceToTheWholeBatch(t *testing.T) {
+	f, queue := newQueuedFixture(t)
+	f.remote.put("/alpha.txt", "old-a", 0o644)
+	f.remote.put("/beta.bin", "old-b", 0o644)
+	f.openRemote(t, Right)
+	tab := f.state.Tab(Left)
+	tab.Selection = map[string]bool{"/alpha.txt": true, "/beta.bin": true}
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the queued conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	dialog := f.state.Dialog()
+	if dialog.TaskID == "" {
+		t.Fatal("the queued prompt does not name its Transfer")
+	}
+	if dialog.Conflict == nil || dialog.Conflict.ApplyToAllCount != 2 {
+		t.Fatalf("the batch count = %+v", dialog.Conflict)
+	}
+	id := dialog.TaskID
+	f.state.SetDialogApplyToAll(true)
+	f.state.ResolveDialogConflict(apptransfer.ConflictReplace, true)
+
+	settle(t, f.state, "the batch to finish without a second prompt", func() bool {
+		f.state.Flush()
+		task, ok := queue.Task(id)
+		if !ok || task.Status != domainsftp.TaskCompleted {
+			return false
+		}
+		return f.state.Dialog() == nil && !f.state.Busy()
+	})
+	if got, _ := f.remote.read("/alpha.txt"); got != "alpha" {
+		t.Fatalf("alpha.txt = %q", got)
+	}
+	if got, _ := f.remote.read("/beta.bin"); got != "beta" {
+		t.Fatalf("beta.bin = %q", got)
+	}
+}
+
+func TestQueueMergeSkipsUnchangedFilesBySizeAndSecondMtime(t *testing.T) {
+	f, queue := newQueuedFixture(t)
+	f.local.mkdirs("/tree")
+	f.local.put("/tree/keep.txt", "new!", 0o644)
+	f.remote.mkdirs("/tree")
+	f.remote.put("/tree/keep.txt", "old!", 0o644)
+	stamp := time.Unix(1700000000, 0)
+	setDiskModTime(f.local, "/tree/keep.txt", stamp)
+	setDiskModTime(f.remote, "/tree/keep.txt", stamp)
+	f.openRemote(t, Right)
+	f.state.Refresh(Left)
+	settle(t, f.state, "the source listing to show the merged folder", func() bool {
+		return contains(visibleNames(f.state.Tab(Left)), "tree")
+	})
+	selectOne(t, f.state, Left, "tree")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the folder merge prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	dialog := f.state.Dialog()
+	if dialog.Conflict == nil || !dialog.Conflict.CanMerge() {
+		t.Fatalf("folder conflict = %+v", dialog.Conflict)
+	}
+	id := dialog.TaskID
+	f.state.ResolveDialogConflict(apptransfer.ConflictMerge, false)
+
+	settle(t, f.state, "the merged Transfer to report its skipped file", func() bool {
+		f.state.Flush()
+		task, ok := queue.Task(id)
+		if !ok || task.Status != domainsftp.TaskCompleted || task.Skipped != 1 {
+			return false
+		}
+		// The operation bar mirrors the row through a posted snapshot, so wait
+		// for the surface to report the same count before reading it.
+		snapshot := f.state.Snapshot()
+		return snapshot != nil && snapshot.Skipped == 1
+	})
+	if got, _ := f.remote.read("/tree/keep.txt"); got != "old!" {
+		t.Fatalf("an unchanged destination was rewritten to %q", got)
+	}
+	if snapshot := f.state.Snapshot(); snapshot == nil || snapshot.Skipped != 1 {
+		t.Fatalf("operation skipped count = %+v", snapshot)
+	}
+}
+
+func setDiskModTime(disk *fakeDisk, file string, when time.Time) {
+	disk.mu.Lock()
+	defer disk.mu.Unlock()
+	if node := disk.nodes[file]; node != nil {
+		node.mod = when
+	}
+}
+
 func TestHostReconnectReattachesAnInterruptedTransfer(t *testing.T) {
 	now := time.Now()
 	seed := []domainsftp.Task{{
@@ -346,4 +439,43 @@ func TestQueueTaskControlsReportUnavailableAfterRestart(t *testing.T) {
 	if got := f.state.CenterError(); got != "transfer-control-failed" {
 		t.Errorf("center error = %q, want transfer-control-failed", got)
 	}
+}
+
+func TestQueueConflictPromptWaitsForAnOpenDialogToClose(t *testing.T) {
+	f, queue := newQueuedFixture(t)
+	f.remote.put("/alpha.txt", "old-a", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "alpha.txt")
+
+	// A prompt is already open when the Transfer reaches its conflict, so the
+	// conflict must wait instead of replacing the user's dialog.
+	f.state.RequestNewFolder(Left)
+	f.state.Transfer(Left)
+	settle(t, f.state, "the Transfer to wait for its conflict", func() bool {
+		for _, task := range queue.Tasks() {
+			if task.Status == domainsftp.TaskAttention {
+				return true
+			}
+		}
+		return false
+	})
+	if dialog := f.state.Dialog(); dialog == nil || dialog.Kind != DialogNewFolder {
+		t.Fatalf("the open prompt was replaced by %+v", dialog)
+	}
+
+	// Closing the folder prompt frees the slot, and the queued conflict shows.
+	f.state.CloseDialog()
+	dialog := f.state.Dialog()
+	if dialog == nil || dialog.Kind != DialogConflict || dialog.TaskID == "" {
+		t.Fatalf("the queued conflict did not appear after the prompt closed: %+v", dialog)
+	}
+	f.state.ResolveDialogConflict(apptransfer.ConflictSkip, false)
+	settle(t, f.state, "the skipped Transfer to finish", func() bool {
+		for _, task := range queue.Tasks() {
+			if task.Status == domainsftp.TaskCompleted {
+				return true
+			}
+		}
+		return false
+	})
 }

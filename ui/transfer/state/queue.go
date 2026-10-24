@@ -1,6 +1,8 @@
 package state
 
 import (
+	"errors"
+
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	"github.com/mslxl/natcatty/domain/model"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
@@ -177,8 +179,8 @@ func (s *State) controlTransfer(id domainsftp.TaskID, action func(*apptransfer.Q
 func (s *State) CenterError() string { return s.centerError }
 
 // applyQueueTask mirrors a queue snapshot onto the operation bar. Progress
-// updates redraw; a terminal row finishes the operation with the same refresh
-// and conflict handling as a direct copy.
+// updates redraw; an attention row opens the conflict prompt; a terminal row
+// finishes the operation with the same refresh handling as a direct copy.
 func (s *State) applyQueueTask(task domainsftp.Task) {
 	op := s.queueOperations[task.ID]
 	if op == nil {
@@ -195,10 +197,25 @@ func (s *State) applyQueueTask(task domainsftp.Task) {
 	op.state.BytesTotal = task.BytesTotal
 	op.state.FilesDone = task.FilesDone
 	op.state.FilesTotal = task.FilesTotal
+	op.state.Skipped = task.Skipped
 	op.state.Current = task.Name()
 	op.state.Running = !task.Terminal()
 	op.mu.Unlock()
 
+	if task.Status == domainsftp.TaskAttention && task.PendingConflict != nil {
+		op.mu.Lock()
+		prompted := op.prompted
+		op.prompted = true
+		op.mu.Unlock()
+		if !prompted {
+			s.queueConflictPrompt(task.ID)
+		}
+		s.RequestRedraw()
+		return
+	}
+	op.mu.Lock()
+	op.prompted = false
+	op.mu.Unlock()
 	if !task.Terminal() {
 		s.RequestRedraw()
 		return
@@ -206,14 +223,87 @@ func (s *State) applyQueueTask(task domainsftp.Task) {
 	delete(s.queueOperations, task.ID)
 
 	op.mu.Lock()
-	retry := op.retry
 	refresh := op.refresh
 	op.mu.Unlock()
-	if task.Err != nil && apptransfer.KindOf(task.Err) == apptransfer.KindExists && retry != nil {
-		s.releaseOperation(op)
-		s.askOverwrite(s.focused, task.Sources, retry)
-		return
-	}
 	s.finishOperationOutcome(op, task.Err,
 		task.Status == domainsftp.TaskCancelled, refresh...)
+}
+
+// queueConflictPrompt queues one attention row for the conflict dialog. More
+// than one Transfer can reach a conflict at once, so the prompts are shown one
+// at a time and each keeps its own answer.
+func (s *State) queueConflictPrompt(id domainsftp.TaskID) {
+	if id == "" || id == s.conflictShowing {
+		return
+	}
+	for _, queued := range s.promptQueue {
+		if queued == id {
+			return
+		}
+	}
+	s.promptQueue = append(s.promptQueue, id)
+	s.showNextConflictPrompt()
+}
+
+// showNextConflictPrompt opens the next queued conflict that is still waiting
+// for an answer. A row that was resolved by another answer or cancelled while
+// queued is skipped instead of showing a stale prompt.
+func (s *State) showNextConflictPrompt() {
+	if s.dialog != nil || s.transferQueue == nil {
+		return
+	}
+	for len(s.promptQueue) > 0 {
+		id := s.promptQueue[0]
+		s.promptQueue = s.promptQueue[1:]
+		task, ok := s.transferQueue.Task(id)
+		if !ok || task.Status != domainsftp.TaskAttention || task.PendingConflict == nil {
+			continue
+		}
+		conflict := *task.PendingConflict
+		s.conflictShowing = id
+		s.showConflictPrompt(conflict, id, func(action apptransfer.ConflictPolicy, applyAll bool) {
+			s.resolveQueuedConflict(id, action, applyAll)
+		})
+		return
+	}
+}
+
+// showConflictPrompt opens the shared five-action conflict dialog. A direct
+// request passes an empty TaskID; a queued row passes its durable identity so
+// the answer reaches the row that asked.
+func (s *State) showConflictPrompt(conflict domainsftp.Conflict, taskID domainsftp.TaskID,
+	resolve func(action apptransfer.ConflictPolicy, applyAll bool)) {
+	copied := conflict
+	s.dialog = &Dialog{
+		Kind:     DialogConflict,
+		Side:     s.focused,
+		Conflict: &copied,
+		TaskID:   taskID,
+		resolve:  resolve,
+	}
+	s.notice = "conflict-required"
+	s.RequestRedraw()
+}
+
+// resolveQueuedConflict forwards the chosen action to the queue. An answer
+// that no longer matches a waiting row is reported in the center rather than
+// silently ignored.
+func (s *State) resolveQueuedConflict(id domainsftp.TaskID, action apptransfer.ConflictPolicy, applyAll bool) {
+	if s.transferQueue == nil {
+		return
+	}
+	err := s.transferQueue.ResolveConflict(id, action, applyAll)
+	switch {
+	case err == nil:
+		// Keep an unrelated reconnect notice; only the conflict error is stale.
+		if s.centerError == "transfer-conflict-failed" {
+			s.centerError = ""
+		}
+	case errors.Is(err, apptransfer.ErrConflictNotPending) ||
+		errors.Is(err, apptransfer.ErrConflictActionInvalid):
+		s.centerError = "transfer-conflict-failed"
+	default:
+		s.centerError = "transfer-control-failed"
+	}
+	s.RequestRedraw()
 }

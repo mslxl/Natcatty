@@ -2772,10 +2772,54 @@
     - application/transfer.TestReplaceKeepsTheOriginalWhenPromotionFails
     - application/transfer.TestReplaceRemovesTheBackupAfterSuccess
     - application/transfer.TestStagingNamesFollowTheRestartContract
-    - ui/transfer/state.TestOverwritePromptReplacesOnlyAfterConfirmation
+    - ui/transfer/state.TestConflictPromptReplacesOnlyAfterChoice
     - ui/transfer/state.TestDroppedOSFilesPromptBeforeReplacing
   status: verified
   notes: "Replacement stages under the ADR-0012 name, moves the old entry to a sibling backup, and restores it if promotion fails; OS drops use the same prompt. A queued Transfer's staging suffix is a digest of its durable Task ID and target, so a restart-resume recomputes the same path instead of orphaning the dead process's file; a request with no durable identity keeps the original random suffix."
+
+- id: sftp.conflict-policies
+  area: sftp-transfer
+  feature: Stop, skip, replace, duplicate, and merge conflict policies with apply-to-all, duplicate naming, and path reservations
+  original_paths:
+    - application/state/sftp/transferConflictLifecycle.ts
+    - application/state/sftp/transferConflictOps.ts
+    - application/state/sftp/samePanePaste.ts
+    - components/sftp/SftpConflictDialog.tsx
+  module: ui/transfer
+  tickets: [33]
+  acceptance_tests:
+    - domain/transfer.TestCopyNameUsesTheOriginalCopySuffixScheme
+    - domain/transfer.TestCopyNameFallsBackToATimestampAfterAThousandCopies
+    - domain/transfer.TestConflictTypeAndReplaceRules
+    - domain/transfer.TestExistingKindOfEntry
+    - domain/transfer.TestUnchangedTransferUsesSizeAndWholeSecondMtime
+    - application/transfer.TestQueueApplyToAllReplaceCoversTheRestOfTheBatch
+    - application/transfer.TestQueueApplyToAllSkipLeavesEveryDestination
+    - application/transfer.TestQueueApplyToAllIsKeyedByConflictType
+    - application/transfer.TestQueueAnswersOnlyTheRowThatAskedWithoutApplyToAll
+    - application/transfer.TestQueueApplyToAllCountCoversOnlyTheSameConflictType
+    - application/transfer.TestQueueStopCancelsTheWholeBatch
+    - application/transfer.TestQueueRejectsUnknownAndInvalidConflictAnswers
+    - application/transfer.TestQueueRejectsATransferWhosePathAnotherOneReserves
+    - application/transfer.TestQueueReservesDirectoryPathsAndSubtrees
+    - application/transfer.TestQueueDuplicateTransfersReserveOnlyTheirChosenNames
+    - application/transfer.TestQueuePausedDuplicateKeepsItsChosenNameReserved
+    - application/transfer.TestQueueRetryReclaimsItsDestinationOrReportsTheNewOwner
+    - application/transfer.TestCopyAskReportsHowManySourcesOneAnswerCouldCover
+    - application/transfer.TestCopyMergeDoesNotDeleteADestinationDirectoryThatMeetsAFile
+    - ui/transfer/state.TestConflictPromptReplacesOnlyAfterChoice
+    - ui/transfer/state.TestConflictStopLeavesTheDestination
+    - ui/transfer/state.TestConflictSkipLeavesTheDestinationAndCountsIt
+    - ui/transfer/state.TestConflictDuplicateWritesBesideTheDestination
+    - ui/transfer/state.TestConflictMergeKeepsDestinationOnlyContent
+    - ui/transfer/state.TestConflictRejectsAnActionTheTypeCannotSupport
+    - ui/transfer/state.TestQueueConflictAppliesOneChoiceToTheWholeBatch
+    - ui/transfer/state.TestQueueConflictPromptWaitsForAnOpenDialogToClose
+    - ui/transfer/state.TestQueueMergeSkipsUnchangedFilesBySizeAndSecondMtime
+    - app.TestTicket33CheckRunsThroughTheKeyboard
+    - app.TestTicket33CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Stop cancels the batch, Skip leaves the destination and counts it, Replace writes the source over it through the ADR-0012 staging path, Duplicate writes beside it as \"(copy)\" then \"(copy 2)\", and Merge keeps destination-only folder content. An apply-to-all answer is scoped to one batch and conflict type and covers the remaining conflicts without a second prompt; without it only the row that asked is answered. Duplicate names and top-level destination paths, including whole directory subtrees, are reserved at enqueue or plan time, so two concurrent Transfers cannot stage into one path; a duplicate reserves only the name it chose, and a paused row keeps that name, as does a retried row reclaiming its destination. A merge compares size and whole-second mtime and leaves an unchanged destination untouched, counting it as skipped. A file that meets a destination directory during a merge fails as a type mismatch instead of deleting the directory's subtree."
 
 - id: sftp.drag-drop
   area: sftp-transfer

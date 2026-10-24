@@ -1718,9 +1718,6 @@
   "sftpPermissionsLabel": "Modo (por ejemplo 0644 o rwxr-xr-x)",
   "sftpInvalidName": "Introduce un nombre sin barras ni caracteres de control.",
   "sftpInvalidMode": "Introduce un modo octal como 0644, o uno simbólico como rwxr-xr-x.",
-  "sftpOverwriteTitle": "¿Reemplazar los elementos existentes?",
-  "sftpOverwriteBody": "{count, plural, one {El destino ya tiene # de estos elementos. Reemplazar elimina la versión existente.} many {El destino ya tiene # de estos elementos. Reemplazar elimina las versiones existentes.} other {El destino ya tiene # de estos elementos. Reemplazar elimina las versiones existentes.}}",
-  "sftpReplace": "Reemplazar",
   "sftpOverwriteRequired": "El destino ya existe.",
   "sftpHostsUnavailable": "No se pudieron cargar los Hosts guardados.",
   "sftpOpenFileUnavailable": "Aquí no se pueden abrir archivos. Copia el archivo al otro panel.",
@@ -1778,5 +1775,121 @@
   "sftpTransferReconnectRequired": "Vuelve a conectarte a este host para reanudar la transferencia.",
   "sftpTransferNotRetryable": "Esta transferencia no se puede reintentar.",
   "sftpTransferControlFailed": "No se pudo controlar la transferencia.",
-  "settingsBindingTransferCenter": "Abrir el centro de transferencias"
+  "settingsBindingTransferCenter": "Abrir el centro de transferencias",
+  "sftpConflictTitle": "Conflicto de archivos",
+  "@sftpConflictTitle": {
+    "description": "The conflict prompt title for a file."
+  },
+  "sftpConflictDescription": "Ya existe un archivo con el mismo nombre en el destino",
+  "@sftpConflictDescription": {
+    "description": "The conflict prompt description when a file already exists."
+  },
+  "sftpConflictFolderTitle": "Conflicto de carpetas",
+  "@sftpConflictFolderTitle": {
+    "description": "The conflict prompt title for a folder."
+  },
+  "sftpConflictFolderDescription": "Elige cómo continuar.",
+  "@sftpConflictFolderDescription": {
+    "description": "The conflict prompt description when the destination is a folder."
+  },
+  "sftpConflictFolderFileDescription": "Ya existe un archivo con el mismo nombre en el destino. Una carpeta no se puede combinar con un archivo.",
+  "@sftpConflictFolderFileDescription": {
+    "description": "The conflict prompt description when a folder meets an existing file."
+  },
+  "sftpConflictFolderSymlinkDescription": "Ya existe un enlace simbólico con el mismo nombre en el destino. Una carpeta no se puede combinar con un enlace simbólico.",
+  "@sftpConflictFolderSymlinkDescription": {
+    "description": "The conflict prompt description when a folder meets an existing symbolic link."
+  },
+  "sftpConflictFolderUnknownDescription": "Ya existe un elemento con el mismo nombre en el destino, pero no se pudo confirmar su tipo. Reemplazar no está disponible para proteger los datos del destino.",
+  "@sftpConflictFolderUnknownDescription": {
+    "description": "The conflict prompt description when the existing type cannot be established."
+  },
+  "sftpConflictMergeHint": "Combinar: conserva el contenido que solo existe en el destino.",
+  "@sftpConflictMergeHint": {
+    "description": "The merge hint in the folder conflict prompt."
+  },
+  "sftpConflictReplaceWarning": "Reemplazar: elimina el contenido exclusivo del destino y no se puede deshacer.",
+  "@sftpConflictReplaceWarning": {
+    "description": "The destructive replace warning in the folder conflict prompt."
+  },
+  "sftpConflictAlreadyExists": "ya existe",
+  "@sftpConflictAlreadyExists": {
+    "description": "The suffix after a conflicting name."
+  },
+  "sftpConflictExistingFile": "Archivo existente",
+  "@sftpConflictExistingFile": {
+    "description": "The existing file's summary heading."
+  },
+  "sftpConflictNewFile": "Archivo nuevo",
+  "@sftpConflictNewFile": {
+    "description": "The incoming file's summary heading."
+  },
+  "sftpConflictSize": "Tamaño: ",
+  "@sftpConflictSize": {
+    "description": "The file summary size label."
+  },
+  "sftpConflictModified": "Modificado: ",
+  "@sftpConflictModified": {
+    "description": "The file summary modification label."
+  },
+  "sftpConflictApplyToAll": "Aplicar esta acción a los {count} conflictos restantes",
+  "@sftpConflictApplyToAll": {
+    "description": "The apply-to-all checkbox in a conflict prompt.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sftpConflictStop": "Detener",
+  "@sftpConflictStop": {
+    "description": "Stop the transfer at the conflict."
+  },
+  "sftpConflictSkip": "Omitir",
+  "@sftpConflictSkip": {
+    "description": "Leave the destination and continue."
+  },
+  "sftpConflictDuplicate": "Duplicar",
+  "@sftpConflictDuplicate": {
+    "description": "Write beside the destination with a copy name."
+  },
+  "sftpConflictMerge": "Combinar",
+  "@sftpConflictMerge": {
+    "description": "Merge a folder into the existing folder."
+  },
+  "sftpConflictReplace": "Reemplazar",
+  "@sftpConflictReplace": {
+    "description": "Replace the existing destination."
+  },
+  "sftpConflictRequired": "Elige cómo continuar.",
+  "@sftpConflictRequired": {
+    "description": "The status shown while a destination conflict waits for an answer."
+  },
+  "sftpConflictInvalidAction": "Esa acción no está disponible para este destino.",
+  "@sftpConflictInvalidAction": {
+    "description": "The validation error for an action the destination type cannot support."
+  },
+  "sftpErrorReserved": "Otra transferencia ya está escribiendo en este destino.",
+  "@sftpErrorReserved": {
+    "description": "The error shown when another Transfer reserves the destination path."
+  },
+  "sftpErrorTypeMismatch": "El tipo del destino no permite esa acción.",
+  "@sftpErrorTypeMismatch": {
+    "description": "The error shown when a folder cannot replace or merge with the destination."
+  },
+  "sftpTransferConflictFailed": "No se pudo responder al conflicto.",
+  "@sftpTransferConflictFailed": {
+    "description": "The Transfer center error for a failed conflict answer."
+  },
+  "sftpTransferSkipped": "{count} omitidos",
+  "@sftpTransferSkipped": {
+    "description": "The count of entries a Transfer left untouched.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  }
 }
