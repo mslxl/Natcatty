@@ -16,8 +16,13 @@ package app
 //     one queued waiter and the scheduler never runs more than one at a time.
 //   - Restarting a queue over its saved history downgrades a transferring row
 //     to interrupted, clears its speed, and keeps completed rows.
+//   - A second Transfer pressed while the first is running is enqueued instead
+//     of refused, and the center lists both.
+//   - A lost transport settles as connection + reconnect-required, and Retry
+//     refuses to replay the dead stream.
 //   - The real Transfer center renders at 1100x720 in English and 720x480 in
-//     Simplified Chinese, and the header button opens it.
+//     Simplified Chinese, opens from the header button, closes on a backdrop
+//     click and on the effective toggle chord, and explains a reconnect row.
 //
 // The queue and the surfaces run the same code the app wires. Every wait polls
 // a real task state, the persisted repository, or the rendered view with a
@@ -28,15 +33,19 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
+	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	"github.com/mslxl/natcatty/domain/model"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
@@ -88,6 +97,15 @@ type selftest31 struct {
 	limitPhase    int
 	limitIDs      []domainsftp.TaskID
 	maxActive     int
+	busyPhase     int
+	busyBlockID   domainsftp.TaskID
+	busySecondID  domainsftp.TaskID
+	busyBlock     *selftest31BlockedFS
+	busyRelease   chan struct{}
+	busyNavigated bool
+	failPhase     int
+	failID        domainsftp.TaskID
+	failEpoch     uint64
 	finished      bool
 	observedEpoch uint64
 }
@@ -103,6 +121,8 @@ func (t *selftest31) check() selftest.Check {
 			{Name: "cancel-a-transfer", Run: t.cancelStep},
 			{Name: "enforce-the-per-resource-limit", Run: t.limitStep},
 			{Name: "restart-downgrades-unfinished-rows", Run: t.restartStep},
+			{Name: "transfer-while-busy-enqueues", Run: t.busyStep},
+			{Name: "transport-failure-requires-reconnect", Run: t.failStep},
 			{Name: "transfer-center-renders-and-opens", Run: t.viewStep},
 		},
 	}
@@ -141,6 +161,46 @@ func (selftest31Local) OpenRemote(context.Context, model.HostID, string) (apptra
 	return nil, fmt.Errorf("the ticket 31 self-test has no remote host")
 }
 
+// selftest31Bindings is an empty persisted binding document, so the service
+// exposes the platform defaults: the Transfer center chord is Ctrl + Shift + T.
+type selftest31Bindings struct{}
+
+func (selftest31Bindings) Load(context.Context) (appkeybindings.State, error) {
+	return appkeybindings.State{}, nil
+}
+
+func (selftest31Bindings) Save(context.Context, appkeybindings.State) error { return nil }
+
+// selftest31BlockedFS holds a resource lane by waiting in Open until the test
+// releases it. started reports that a worker actually reached the file, which
+// is the observable condition the busy step waits on.
+type selftest31BlockedFS struct {
+	apptransfer.FileSystem
+	started chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (f *selftest31BlockedFS) Open(ctx context.Context, path string) (io.ReadCloser, error) {
+	f.once.Do(func() { close(f.started) })
+	select {
+	case <-f.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return f.FileSystem.Open(ctx, path)
+}
+
+// selftest31DeadFS is a source whose transport has gone away: every read
+// fails the way a dropped SSH stream does.
+type selftest31DeadFS struct {
+	apptransfer.FileSystem
+}
+
+func (selftest31DeadFS) Open(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("connection reset by peer")
+}
+
 func (t *selftest31) setup() error {
 	workdir, err := os.MkdirTemp("", "natcatty-selftest-31-")
 	if err != nil {
@@ -154,7 +214,7 @@ func (t *selftest31) setup() error {
 			return err
 		}
 	}
-	for index := 1; index <= 9; index++ {
+	for index := 1; index <= 12; index++ {
 		out := filepath.Join(workdir, fmt.Sprintf("out%d", index))
 		if err := os.MkdirAll(out, 0o755); err != nil {
 			return err
@@ -191,7 +251,15 @@ func (t *selftest31) setup() error {
 		_ = files.Close()
 		return err
 	}
-	t.state = transferstate.NewState(t.service, transferstate.WithQueue(t.queue))
+	keybindings := appkeybindings.NewService(selftest31Bindings{}, appkeybindings.WithGOOS(runtime.GOOS))
+	if err := keybindings.Load(context.Background()); err != nil {
+		_ = files.Close()
+		return err
+	}
+	t.state = transferstate.NewState(t.service,
+		transferstate.WithQueue(t.queue),
+		transferstate.WithKeybindings(keybindings),
+	)
 	t.cleanup = func() {
 		t.queue.Shutdown()
 		t.state.Shutdown()
@@ -545,6 +613,172 @@ func (t *selftest31) restartStep(*ui.Context) selftest.Outcome {
 		"apptransfer.Queue + domainsftp.DowngradeInterrupted")
 }
 
+func (t *selftest31) busyStep(*ui.Context) selftest.Outcome {
+	switch t.busyPhase {
+	case 0:
+		t.deadline = time.Now().Add(selftest31Wait)
+		t.state.EnsureStarted()
+		t.state.OpenLocal(transferstate.Right)
+		t.busyRelease = make(chan struct{})
+		t.busyBlock = &selftest31BlockedFS{
+			FileSystem: t.files,
+			started:    make(chan struct{}),
+			release:    t.busyRelease,
+		}
+		id, err := t.queue.Enqueue(apptransfer.TaskSpec{
+			Kind:        domainsftp.OpCopy,
+			Source:      t.busyBlock,
+			Dest:        t.files,
+			Sources:     []string{filepath.Join(t.source, "big.bin")},
+			DestDir:     t.outs[9],
+			DisplayName: "big.bin",
+			SourceLabel: "local",
+			DestLabel:   "local",
+		})
+		if err != nil {
+			return selftest.Failed(fmt.Errorf("enqueue the blocking transfer: %v", err))
+		}
+		t.busyBlockID = id
+		t.busyPhase = 1
+		return selftest.Pending
+	case 1:
+		// No View is rendering this state during the step, so apply the
+		// listings its goroutines posted before reading the Tabs.
+		t.state.Flush()
+		left, right := t.state.Tab(transferstate.Left), t.state.Tab(transferstate.Right)
+		// A local Tab receives its filesystem on the UI thread after the
+		// asynchronous open, so navigate only once both Tabs can list.
+		if !t.busyNavigated && left != nil && right != nil && left.FS != nil && right.FS != nil {
+			t.state.Navigate(transferstate.Left, t.source)
+			t.state.Navigate(transferstate.Right, t.outs[10])
+			t.busyNavigated = true
+			return selftest.Pending
+		}
+		if left == nil || right == nil || left.FS == nil || right.FS == nil ||
+			left.Loading || right.Loading || left.Path != t.source || right.Path != t.outs[10] {
+			return t.expired("both panes to finish loading before a second Transfer")
+		}
+		var entry domainsftp.Entry
+		found := false
+		for _, candidate := range left.Entries {
+			if candidate.Name == "small.txt" {
+				entry, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return t.expired("the local source listing to show small.txt")
+		}
+		select {
+		case <-t.busyBlock.started:
+		default:
+			return t.expired("the first transfer to reach its source file")
+		}
+		t.state.Click(transferstate.Left, entry, 0, false)
+		before := map[domainsftp.TaskID]bool{}
+		for _, task := range t.queue.Tasks() {
+			before[task.ID] = true
+		}
+		t.state.Transfer(transferstate.Left)
+		var added []domainsftp.Task
+		for _, task := range t.queue.Tasks() {
+			if !before[task.ID] {
+				added = append(added, task)
+			}
+		}
+		if len(added) != 1 {
+			return selftest.Failed(fmt.Errorf("a Transfer pressed while busy added %d queue rows, want 1: %+v",
+				len(added), t.queue.Tasks()))
+		}
+		stats := t.queue.Stats()
+		if stats.Active != 1 || stats.Queued < 1 {
+			return selftest.Failed(fmt.Errorf("while busy the queue reported active=%d queued=%d, want one of each",
+				stats.Active, stats.Queued))
+		}
+		t.busySecondID = added[0].ID
+		t.state.OpenCenter()
+		listed := false
+		for _, task := range t.state.QueueTasks() {
+			if task.ID == t.busySecondID {
+				listed = true
+			}
+		}
+		t.state.CloseCenter()
+		if !listed {
+			return selftest.Failed(fmt.Errorf("the queued second Transfer is missing from the center rows"))
+		}
+		close(t.busyRelease)
+		t.busyPhase = 2
+		return selftest.Pending
+	case 2:
+		for _, id := range []domainsftp.TaskID{t.busyBlockID, t.busySecondID} {
+			task, ok := t.task(id)
+			if !ok {
+				return selftest.Failed(fmt.Errorf("a transfer enqueued while busy disappeared"))
+			}
+			if task.Status == domainsftp.TaskFailed || task.Status == domainsftp.TaskCancelled {
+				return selftest.Failed(fmt.Errorf("a transfer enqueued while busy ended %s: %v", task.Status, task.Err))
+			}
+			if task.Status != domainsftp.TaskCompleted {
+				return t.expired(fmt.Sprintf("both transfers enqueued while busy to complete (is %s)", task.Status))
+			}
+		}
+		return selftest.Passed(
+			"a second Transfer pressed while the first held the resource slot was enqueued, appeared in the center, and both copied",
+			"transferstate.State + apptransfer.Queue")
+	}
+	return selftest.Failed(fmt.Errorf("unexpected busy phase %d", t.busyPhase))
+}
+
+func (t *selftest31) failStep(*ui.Context) selftest.Outcome {
+	switch t.failPhase {
+	case 0:
+		t.deadline = time.Now().Add(selftest31Wait)
+		id, err := t.queue.Enqueue(apptransfer.TaskSpec{
+			Kind:        domainsftp.OpCopy,
+			Source:      selftest31DeadFS{FileSystem: t.files},
+			Dest:        t.files,
+			Sources:     []string{filepath.Join(t.source, "small.txt")},
+			DestDir:     t.outs[11],
+			DisplayName: "small.txt",
+			SourceLabel: "local",
+			DestLabel:   "local",
+		})
+		if err != nil {
+			return selftest.Failed(fmt.Errorf("enqueue the dead-transport transfer: %v", err))
+		}
+		t.failID = id
+		t.failPhase = 1
+		return selftest.Pending
+	case 1:
+		task, ok := t.task(t.failID)
+		if !ok {
+			return selftest.Failed(fmt.Errorf("the dead-transport transfer disappeared"))
+		}
+		if task.Status != domainsftp.TaskFailed {
+			return t.expired(fmt.Sprintf("the dead-transport transfer to fail (is %s)", task.Status))
+		}
+		if task.Error != string(apptransfer.KindConnection) {
+			return selftest.Failed(fmt.Errorf("failure code = %q, want %q", task.Error, apptransfer.KindConnection))
+		}
+		if !task.ReconnectRequired {
+			return selftest.Failed(fmt.Errorf("the lost transport did not mark the row reconnect-required"))
+		}
+		t.failEpoch = task.Epoch
+		if err := t.queue.Retry(t.failID); !errors.Is(err, domainsftp.ErrTaskUnavailable) {
+			return selftest.Failed(fmt.Errorf("Retry without a transport = %v, want ErrTaskUnavailable", err))
+		}
+		again, _ := t.task(t.failID)
+		if again.Status != domainsftp.TaskFailed || again.Epoch != t.failEpoch {
+			return selftest.Failed(fmt.Errorf("Retry replayed the dead transport: %+v", again))
+		}
+		return selftest.Passed(
+			"a lost transport settled as connection with reconnect required, and Retry refused to replay the dead stream",
+			"apptransfer.Queue + domainsftp.ErrTaskUnavailable")
+	}
+	return selftest.Failed(fmt.Errorf("unexpected fail phase %d", t.failPhase))
+}
+
 func (t *selftest31) viewStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
 	t.state.CloseCenter()
@@ -558,6 +792,25 @@ func (t *selftest31) viewStep(*ui.Context) selftest.Outcome {
 	if !t.state.CenterOpen() {
 		return selftest.Failed(fmt.Errorf("the header button did not open the Transfer center"))
 	}
+	// The modal suppresses the window shortcut that opened the center, so the
+	// overlay must honor the effective toggle chord itself.
+	chordMods := ui.Ctrl
+	if runtime.GOOS == "darwin" {
+		chordMods = ui.Super
+	}
+	tester.Key(chordMods|ui.Shift, ui.KeyT)
+	if t.state.CenterOpen() {
+		return selftest.Failed(fmt.Errorf("the configured transfer-center chord did not close the center"))
+	}
+	t.state.OpenCenter()
+	tester.Frame()
+	// The panel is centered with a 24 DIP top margin, so (12, 12) is backdrop.
+	tester.ClickAt(12, 12)
+	if t.state.CenterOpen() {
+		return selftest.Failed(fmt.Errorf("a click on the backdrop did not close the center"))
+	}
+	t.state.OpenCenter()
+	tester.Frame()
 	for _, label := range []string{
 		m.SftpTransferCenter(), m.SftpTransferStatusCompleted(),
 		m.SftpTransferStatusFailed(), m.SftpTransferStatusCancelled(),
@@ -570,6 +823,9 @@ func (t *selftest31) viewStep(*ui.Context) selftest.Outcome {
 		if rect.X < 0 || rect.Y < 0 || rect.X+rect.W > 1100 || rect.Y+rect.H > 720 {
 			return selftest.Failed(fmt.Errorf("the 1100x720 center clips %q: %+v", label, rect))
 		}
+	}
+	if !tester.HasText(m.SftpErrorConnection()) || !tester.HasText(m.SftpTransferReconnectRequired()) {
+		return selftest.Failed(fmt.Errorf("the failed-transport row does not explain the reconnect: %v", tester.Texts()))
 	}
 	if !tester.HasText("big.bin") || !tester.HasText("small.txt") {
 		return selftest.Failed(fmt.Errorf("the center does not list the completed transfers: %v", tester.Texts()))
@@ -595,6 +851,6 @@ func (t *selftest31) viewStep(*ui.Context) selftest.Outcome {
 	}
 	t.finished = true
 	return selftest.Passed(
-		"the header opened the real Transfer center; it lists completed, failed, and cancelled rows with their controls and fits 1100x720 en and 720x480 zh-CN without clipping",
+		"the center opened, closed on the configured chord and a backdrop click, listed completed, failed, cancelled, and reconnect rows, and fit 1100x720 en and 720x480 zh-CN without clipping",
 		"transferui.View + transferstate.State + apptransfer.Queue")
 }

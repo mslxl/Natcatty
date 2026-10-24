@@ -39,10 +39,21 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
 			AlignItems(ui.Center).Justify(ui.Start).Modal().
 			Background(ui.RGBA(0, 0, 0, 0.4))
-		// The backdrop closes; the panel swallows its own clicks below, so a
-		// click inside the center never reaches this handler.
-		back.OnClick(func() { closed = true })
+		// The backdrop closes. OnClick runs after this build, so it closes the
+		// state directly instead of leaving a flag this pass can no longer see;
+		// the panel swallows its own clicks below, so a click inside the center
+		// never reaches this handler.
+		back.OnClick(func() {
+			s.CloseCenter()
+			c.Invalidate()
+		})
 		if back.OverlayShortcut(0, ui.KeyEscape) {
+			closed = true
+		}
+		// The Modal backdrop suppresses the window shortcut that opened the
+		// center, so the same effective, rebindable chord has to be offered to
+		// the overlay itself to toggle it closed.
+		if mods, key, ok := centerChord(s); ok && back.OverlayShortcut(mods, key) {
 			closed = true
 		}
 		back.Children(func() {
@@ -97,6 +108,26 @@ func centerHeader(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			s.CloseCenter()
 		}
 	})
+}
+
+// centerChord resolves the effective Transfer-center binding to the key pair
+// MyGo matches. Reading the active catalog keeps the overlay in step with a
+// user rebinding, so only the chord the user chose closes the center.
+func centerChord(s *transferstate.State) (ui.Modifiers, ui.Key, bool) {
+	for _, active := range s.Bindings() {
+		if active.Binding.Action != "transferCenter" {
+			continue
+		}
+		if active.Parsed.Range || active.Parsed.Arrows {
+			continue
+		}
+		key, ok := shortcutKey(active.Parsed.Key)
+		if !ok {
+			continue
+		}
+		return shortcutMods(active.Parsed), key, true
+	}
+	return 0, 0, false
 }
 
 // centerRow is one Transfer: name and status, a progress bar, then the
@@ -226,6 +257,12 @@ func transferDetail(m locales.Messages, task domainsftp.Task) string {
 		parts = append(parts, errorText(m, task.Err))
 	} else if task.Error != "" {
 		parts = append(parts, errorKindText(m, apptransfer.ErrorKind(task.Error)))
+	}
+	// A row whose transport died can only move again after a reconnect. Say
+	// so on the row itself rather than leaving a Retry that would replay the
+	// dead stream.
+	if task.ReconnectRequired {
+		parts = append(parts, m.SftpTransferReconnectRequired())
 	}
 	return strings.Join(parts, " · ")
 }
