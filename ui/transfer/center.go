@@ -256,6 +256,9 @@ func transferDetail(m locales.Messages, task domainsftp.Task) string {
 		// total; the row's name is the file currently being copied.
 		parts = append(parts, m.SftpTransferFiles(task.FilesDone, task.FilesTotal))
 	}
+	if task.Skipped > 0 {
+		parts = append(parts, m.SftpTransferSkipped(task.Skipped))
+	}
 	if eta := etaText(m, task.ETASeconds()); eta != "" {
 		parts = append(parts, eta)
 	} else if task.Status == domainsftp.TaskTransferring && task.Speed > 0 {

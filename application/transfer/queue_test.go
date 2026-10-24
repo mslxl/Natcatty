@@ -311,6 +311,7 @@ func TestQueueCancelStopsTheTransfer(t *testing.T) {
 func TestQueueCancelOfAQueuedTransferIsImmediate(t *testing.T) {
 	source := newFakeFS("source")
 	source.addFile("/", "a.bin", "a", 0o644)
+	source.addFile("/", "b.bin", "b", 0o644)
 	dest := newFakeFS("dest")
 	dest.addDir("/out")
 	release := make(chan struct{})
@@ -327,7 +328,7 @@ func TestQueueCancelOfAQueuedTransferIsImmediate(t *testing.T) {
 	}
 	second, err := queue.Enqueue(TaskSpec{
 		Kind: domainsftp.OpCopy, Source: source, Dest: dest,
-		Sources: []string{"/a.bin"}, DestDir: "/out",
+		Sources: []string{"/b.bin"}, DestDir: "/out",
 	})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)

@@ -1718,9 +1718,6 @@
   "sftpPermissionsLabel": "模式（例如 0644 或 rwxr-xr-x）",
   "sftpInvalidName": "请输入不含斜杠或控制字符的名称。",
   "sftpInvalidMode": "请输入八进制模式（如 0644）或符号模式（如 rwxr-xr-x）。",
-  "sftpOverwriteTitle": "替换现有项目？",
-  "sftpOverwriteBody": "{count, plural, other {目标中已有 # 个同名项目。替换会删除现有版本。}}",
-  "sftpReplace": "替换",
   "sftpOverwriteRequired": "目标已存在。",
   "sftpHostsUnavailable": "无法加载已保存的主机。",
   "sftpOpenFileUnavailable": "此处不支持打开文件。请将文件复制到另一窗格。",
@@ -1778,5 +1775,121 @@
   "sftpTransferReconnectRequired": "请重新连接此主机以继续传输。",
   "sftpTransferNotRetryable": "此传输无法重试。",
   "sftpTransferControlFailed": "无法控制此传输。",
-  "settingsBindingTransferCenter": "打开传输中心"
+  "settingsBindingTransferCenter": "打开传输中心",
+  "sftpConflictTitle": "文件冲突",
+  "@sftpConflictTitle": {
+    "description": "The conflict prompt title for a file."
+  },
+  "sftpConflictDescription": "目标位置已存在同名文件",
+  "@sftpConflictDescription": {
+    "description": "The conflict prompt description when a file already exists."
+  },
+  "sftpConflictFolderTitle": "文件夹冲突",
+  "@sftpConflictFolderTitle": {
+    "description": "The conflict prompt title for a folder."
+  },
+  "sftpConflictFolderDescription": "请选择处理方式。",
+  "@sftpConflictFolderDescription": {
+    "description": "The conflict prompt description when the destination is a folder."
+  },
+  "sftpConflictFolderFileDescription": "目标位置已存在同名文件，文件夹无法与文件合并。",
+  "@sftpConflictFolderFileDescription": {
+    "description": "The conflict prompt description when a folder meets an existing file."
+  },
+  "sftpConflictFolderSymlinkDescription": "目标位置已存在同名符号链接，文件夹无法与符号链接合并。",
+  "@sftpConflictFolderSymlinkDescription": {
+    "description": "The conflict prompt description when a folder meets an existing symbolic link."
+  },
+  "sftpConflictFolderUnknownDescription": "目标位置已存在同名项目，但无法确认其类型。为保护目标数据，替换操作不可用。",
+  "@sftpConflictFolderUnknownDescription": {
+    "description": "The conflict prompt description when the existing type cannot be established."
+  },
+  "sftpConflictMergeHint": "合并：保留目标中独有的内容。",
+  "@sftpConflictMergeHint": {
+    "description": "The merge hint in the folder conflict prompt."
+  },
+  "sftpConflictReplaceWarning": "替换：删除目标中独有的内容，且无法恢复。",
+  "@sftpConflictReplaceWarning": {
+    "description": "The destructive replace warning in the folder conflict prompt."
+  },
+  "sftpConflictAlreadyExists": "已存在",
+  "@sftpConflictAlreadyExists": {
+    "description": "The suffix after a conflicting name."
+  },
+  "sftpConflictExistingFile": "已有文件",
+  "@sftpConflictExistingFile": {
+    "description": "The existing file's summary heading."
+  },
+  "sftpConflictNewFile": "新文件",
+  "@sftpConflictNewFile": {
+    "description": "The incoming file's summary heading."
+  },
+  "sftpConflictSize": "大小：",
+  "@sftpConflictSize": {
+    "description": "The file summary size label."
+  },
+  "sftpConflictModified": "修改时间：",
+  "@sftpConflictModified": {
+    "description": "The file summary modification label."
+  },
+  "sftpConflictApplyToAll": "将此操作应用到剩余的 {count} 个冲突",
+  "@sftpConflictApplyToAll": {
+    "description": "The apply-to-all checkbox in a conflict prompt.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sftpConflictStop": "停止",
+  "@sftpConflictStop": {
+    "description": "Stop the transfer at the conflict."
+  },
+  "sftpConflictSkip": "跳过",
+  "@sftpConflictSkip": {
+    "description": "Leave the destination and continue."
+  },
+  "sftpConflictDuplicate": "创建副本",
+  "@sftpConflictDuplicate": {
+    "description": "Write beside the destination with a copy name."
+  },
+  "sftpConflictMerge": "合并",
+  "@sftpConflictMerge": {
+    "description": "Merge a folder into the existing folder."
+  },
+  "sftpConflictReplace": "替换",
+  "@sftpConflictReplace": {
+    "description": "Replace the existing destination."
+  },
+  "sftpConflictRequired": "请选择处理方式。",
+  "@sftpConflictRequired": {
+    "description": "The status shown while a destination conflict waits for an answer."
+  },
+  "sftpConflictInvalidAction": "该目标不支持此操作。",
+  "@sftpConflictInvalidAction": {
+    "description": "The validation error for an action the destination type cannot support."
+  },
+  "sftpErrorReserved": "另一个传输正在写入此目标位置。",
+  "@sftpErrorReserved": {
+    "description": "The error shown when another Transfer reserves the destination path."
+  },
+  "sftpErrorTypeMismatch": "目标类型不允许此操作。",
+  "@sftpErrorTypeMismatch": {
+    "description": "The error shown when a folder cannot replace or merge with the destination."
+  },
+  "sftpTransferConflictFailed": "无法提交冲突处理方式。",
+  "@sftpTransferConflictFailed": {
+    "description": "The Transfer center error for a failed conflict answer."
+  },
+  "sftpTransferSkipped": "已跳过 {count} 个",
+  "@sftpTransferSkipped": {
+    "description": "The count of entries a Transfer left untouched.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  }
 }

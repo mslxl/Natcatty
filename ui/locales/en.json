@@ -2688,24 +2688,6 @@
   "@sftpInvalidMode": {
     "description": "The validation error for an unparsable permission mode."
   },
-  "sftpOverwriteTitle": "Replace existing items?",
-  "@sftpOverwriteTitle": {
-    "description": "The overwrite confirmation's title."
-  },
-  "sftpOverwriteBody": "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {The destination already has # of these items. Replacing deletes the existing versions.}}",
-  "@sftpOverwriteBody": {
-    "description": "The overwrite confirmation's body, with the selection count.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "12"
-      }
-    }
-  },
-  "sftpReplace": "Replace",
-  "@sftpReplace": {
-    "description": "The overwrite confirmation's primary button."
-  },
   "sftpOverwriteRequired": "The destination already exists.",
   "@sftpOverwriteRequired": {
     "description": "The status shown when a transfer stopped at an existing destination."
@@ -3043,5 +3025,121 @@
   "settingsBindingTransferCenter": "Open the Transfer center",
   "@settingsBindingTransferCenter": {
     "description": "The Settings shortcut label for the local Transfer center binding."
+  },
+  "sftpConflictTitle": "File Conflict",
+  "@sftpConflictTitle": {
+    "description": "The conflict prompt title for a file."
+  },
+  "sftpConflictDescription": "A file with the same name already exists at the destination",
+  "@sftpConflictDescription": {
+    "description": "The conflict prompt description when a file already exists."
+  },
+  "sftpConflictFolderTitle": "Folder Conflict",
+  "@sftpConflictFolderTitle": {
+    "description": "The conflict prompt title for a folder."
+  },
+  "sftpConflictFolderDescription": "Choose how to continue.",
+  "@sftpConflictFolderDescription": {
+    "description": "The conflict prompt description when the destination is a folder."
+  },
+  "sftpConflictFolderFileDescription": "A file with the same name already exists at the destination. A folder cannot be merged with a file.",
+  "@sftpConflictFolderFileDescription": {
+    "description": "The conflict prompt description when a folder meets an existing file."
+  },
+  "sftpConflictFolderSymlinkDescription": "A symbolic link with the same name already exists at the destination. A folder cannot be merged with a symbolic link.",
+  "@sftpConflictFolderSymlinkDescription": {
+    "description": "The conflict prompt description when a folder meets an existing symbolic link."
+  },
+  "sftpConflictFolderUnknownDescription": "An item with the same name exists at the destination, but its type could not be confirmed. Replace is unavailable to protect destination data.",
+  "@sftpConflictFolderUnknownDescription": {
+    "description": "The conflict prompt description when the existing type cannot be established."
+  },
+  "sftpConflictMergeHint": "Merge: keeps destination-only content.",
+  "@sftpConflictMergeHint": {
+    "description": "The merge hint in the folder conflict prompt."
+  },
+  "sftpConflictReplaceWarning": "Replace: deletes destination-only content and cannot be undone.",
+  "@sftpConflictReplaceWarning": {
+    "description": "The destructive replace warning in the folder conflict prompt."
+  },
+  "sftpConflictAlreadyExists": "already exists",
+  "@sftpConflictAlreadyExists": {
+    "description": "The suffix after a conflicting name."
+  },
+  "sftpConflictExistingFile": "Existing file",
+  "@sftpConflictExistingFile": {
+    "description": "The existing file's summary heading."
+  },
+  "sftpConflictNewFile": "New file",
+  "@sftpConflictNewFile": {
+    "description": "The incoming file's summary heading."
+  },
+  "sftpConflictSize": "Size: ",
+  "@sftpConflictSize": {
+    "description": "The file summary size label."
+  },
+  "sftpConflictModified": "Modified: ",
+  "@sftpConflictModified": {
+    "description": "The file summary modification label."
+  },
+  "sftpConflictApplyToAll": "Apply this action to all {count} remaining conflicts",
+  "@sftpConflictApplyToAll": {
+    "description": "The apply-to-all checkbox in a conflict prompt.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sftpConflictStop": "Stop",
+  "@sftpConflictStop": {
+    "description": "Stop the transfer at the conflict."
+  },
+  "sftpConflictSkip": "Skip",
+  "@sftpConflictSkip": {
+    "description": "Leave the destination and continue."
+  },
+  "sftpConflictDuplicate": "Duplicate",
+  "@sftpConflictDuplicate": {
+    "description": "Write beside the destination with a copy name."
+  },
+  "sftpConflictMerge": "Merge",
+  "@sftpConflictMerge": {
+    "description": "Merge a folder into the existing folder."
+  },
+  "sftpConflictReplace": "Replace",
+  "@sftpConflictReplace": {
+    "description": "Replace the existing destination."
+  },
+  "sftpConflictRequired": "Choose how to continue.",
+  "@sftpConflictRequired": {
+    "description": "The status shown while a destination conflict waits for an answer."
+  },
+  "sftpConflictInvalidAction": "That action is not available for this destination.",
+  "@sftpConflictInvalidAction": {
+    "description": "The validation error for an action the destination type cannot support."
+  },
+  "sftpErrorReserved": "Another transfer is already writing to this destination.",
+  "@sftpErrorReserved": {
+    "description": "The error shown when another Transfer reserves the destination path."
+  },
+  "sftpErrorTypeMismatch": "The destination type does not allow that action.",
+  "@sftpErrorTypeMismatch": {
+    "description": "The error shown when a folder cannot replace or merge with the destination."
+  },
+  "sftpTransferConflictFailed": "The conflict could not be answered.",
+  "@sftpTransferConflictFailed": {
+    "description": "The Transfer center error for a failed conflict answer."
+  },
+  "sftpTransferSkipped": "{count} skipped",
+  "@sftpTransferSkipped": {
+    "description": "The count of entries a Transfer left untouched.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
   }
 }

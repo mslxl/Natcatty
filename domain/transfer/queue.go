@@ -177,6 +177,19 @@ type Task struct {
 	Move    bool     `json:"move,omitempty"`
 	// Conflict is the policy the Transfer runs with.
 	Conflict string `json:"conflict,omitempty"`
+	// BatchID groups the rows one user action created. Apply-to-all stores its
+	// answer per batch and conflict type; an empty value is a one-row batch.
+	BatchID string `json:"batchId,omitempty"`
+	// SkipUnchanged enables the rsync-style size + whole-second mtime check
+	// while a directory is merged. It defaults to true for a queued Transfer.
+	SkipUnchanged bool `json:"skipUnchanged,omitempty"`
+	// PendingConflict is a live question for the user. It is cleared as soon as
+	// the question is answered or the row stops waiting, and it never survives
+	// a restart because no worker is waiting after one.
+	PendingConflict *Conflict `json:"pendingConflict,omitempty"`
+	// Skipped is how many entries a completed Transfer left untouched, either
+	// through ConflictSkip or because the destination was already unchanged.
+	Skipped int `json:"skipped,omitempty"`
 	// ResourceKeys are the lanes this Transfer occupies.
 	ResourceKeys []ResourceKey `json:"resourceKeys,omitempty"`
 	SourceLabel  string        `json:"sourceLabel,omitempty"`
@@ -227,6 +240,11 @@ type Task struct {
 	// attempt chose, so a resumed duplicate or replacement continues in the
 	// same tree.
 	Targets map[string]string `json:"targets,omitempty"`
+	// ReplaceTargets and SkipTargets remember per-source conflict answers a
+	// resume must keep. A mixed-type batch may replace one source and skip
+	// another, so the request-wide policy alone cannot express the answers.
+	ReplaceTargets map[string]bool `json:"replaceTargets,omitempty"`
+	SkipTargets    map[string]bool `json:"skipTargets,omitempty"`
 }
 
 // Name returns the row's label, deriving it from the single source when the
@@ -322,6 +340,22 @@ func (t Task) Clone() Task {
 			out.Targets[source] = target
 		}
 	}
+	if t.ReplaceTargets != nil {
+		out.ReplaceTargets = make(map[string]bool, len(t.ReplaceTargets))
+		for source, replace := range t.ReplaceTargets {
+			out.ReplaceTargets[source] = replace
+		}
+	}
+	if t.SkipTargets != nil {
+		out.SkipTargets = make(map[string]bool, len(t.SkipTargets))
+		for source, skip := range t.SkipTargets {
+			out.SkipTargets[source] = skip
+		}
+	}
+	if t.PendingConflict != nil {
+		conflict := *t.PendingConflict
+		out.PendingConflict = &conflict
+	}
 	return out
 }
 
@@ -338,6 +372,9 @@ func DowngradeInterrupted(tasks []Task) []Task {
 			task.Speed = 0
 			task.PauseRequested = false
 			task.CancelRequested = false
+			// No worker survives a restart, so a prompt nobody can answer must
+			// not come back as a live question.
+			task.PendingConflict = nil
 			// The directory checkpoint and pinned targets are durable resume
 			// state; the restart keeps them so a reconnect can continue.
 			// A previous process's epoch must not fence the first progress

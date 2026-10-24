@@ -54,6 +54,8 @@ func noticeText(m locales.Messages, code string) string {
 		return m.SftpOperationCancelled()
 	case "overwrite-required":
 		return m.SftpOverwriteRequired()
+	case "conflict-required":
+		return m.SftpConflictRequired()
 	case "hosts-unavailable":
 		return m.SftpHostsUnavailable()
 	case "open-file":
@@ -66,6 +68,8 @@ func noticeText(m locales.Messages, code string) string {
 		return m.SftpTransferNotRetryable()
 	case "transfer-control-failed":
 		return m.SftpTransferControlFailed()
+	case "transfer-conflict-failed":
+		return m.SftpTransferConflictFailed()
 	}
 	return ""
 }
@@ -109,6 +113,10 @@ func errorKindText(m locales.Messages, kind apptransfer.ErrorKind) string {
 		return m.SftpErrorConnection()
 	case apptransfer.KindTooLarge:
 		return m.SftpErrorTooLarge()
+	case apptransfer.KindReserved:
+		return m.SftpErrorReserved()
+	case apptransfer.KindTypeMismatch:
+		return m.SftpErrorTypeMismatch()
 	case apptransfer.KindInternal:
 		return m.SftpErrorInternal()
 	}
@@ -132,6 +140,9 @@ func operationLabel(m locales.Messages, op *transferstate.Operation) string {
 	label := m.SftpProgress(baseName(current), op.Percent())
 	if eta := etaText(m, op.ETASeconds()); eta != "" {
 		label += " · " + eta
+	}
+	if op.Skipped > 0 {
+		label += " · " + m.SftpTransferSkipped(op.Skipped)
 	}
 	return label
 }
