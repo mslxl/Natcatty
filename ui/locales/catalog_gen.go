@@ -13872,13 +13872,13 @@ func (msgs Messages) SftpConflictModified() string {
 	return Catalog.Format(msgs.locale, "sftpConflictModified", nil)
 }
 
-// SftpConflictApplyToAll says "Apply this action to all {count} remaining conflicts"
+// SftpConflictApplyToAll says "Apply this action to all remaining conflicts ({count})"
 // in the language the app shows.
 //
 // The apply-to-all checkbox in a conflict prompt.
 func SftpConflictApplyToAll(count int) string { return In(i18n.Locale()).SftpConflictApplyToAll(count) }
 
-// SftpConflictApplyToAll says "Apply this action to all {count} remaining conflicts"
+// SftpConflictApplyToAll says "Apply this action to all remaining conflicts ({count})"
 // in the language of msgs.
 //
 // The apply-to-all checkbox in a conflict prompt.

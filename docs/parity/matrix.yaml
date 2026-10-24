@@ -2798,6 +2798,7 @@
     - application/transfer.TestQueueApplyToAllIsKeyedByConflictType
     - application/transfer.TestQueueAnswersOnlyTheRowThatAskedWithoutApplyToAll
     - application/transfer.TestQueueApplyToAllCountCoversOnlyTheSameConflictType
+    - application/transfer.TestQueueApplyToAllCountIgnoresNonConflictingSiblings
     - application/transfer.TestQueueStopCancelsTheWholeBatch
     - application/transfer.TestQueueRejectsUnknownAndInvalidConflictAnswers
     - application/transfer.TestQueueRejectsATransferWhosePathAnotherOneReserves
@@ -2805,7 +2806,11 @@
     - application/transfer.TestQueueDuplicateTransfersReserveOnlyTheirChosenNames
     - application/transfer.TestQueuePausedDuplicateKeepsItsChosenNameReserved
     - application/transfer.TestQueueRetryReclaimsItsDestinationOrReportsTheNewOwner
-    - application/transfer.TestCopyAskReportsHowManySourcesOneAnswerCouldCover
+    - application/transfer.TestCopyAskDoesNotCountANewSiblingAsAConflict
+    - application/transfer.TestCopyAskCountsOnlyTheLaterSameTypeConflicts
+    - application/transfer.TestCopyAskCountsOneOfThreeWhenTheLastSourceIsNew
+    - application/transfer.TestCopyAskDoesNotCountADifferentConflictType
+    - application/transfer.TestCopyAskCountsAWindowsSourceConflict
     - application/transfer.TestCopyMergeDoesNotDeleteADestinationDirectoryThatMeetsAFile
     - ui/transfer/state.TestConflictPromptReplacesOnlyAfterChoice
     - ui/transfer/state.TestConflictStopLeavesTheDestination
@@ -2814,12 +2819,17 @@
     - ui/transfer/state.TestConflictMergeKeepsDestinationOnlyContent
     - ui/transfer/state.TestConflictRejectsAnActionTheTypeCannotSupport
     - ui/transfer/state.TestQueueConflictAppliesOneChoiceToTheWholeBatch
+    - ui/transfer/state.TestQueueConflictDoesNotOfferApplyToAllForANewSibling
     - ui/transfer/state.TestQueueConflictPromptWaitsForAnOpenDialogToClose
     - ui/transfer/state.TestQueueMergeSkipsUnchangedFilesBySizeAndSecondMtime
+    - ui/transfer/state.TestReservedEnqueueKeepsItsSpecificNotice
+    - ui/transfer/state.TestReservedRetryKeepsItsSpecificCenterNotice
+    - ui/transfer.TestReservedFailureNoticeKeepsTheDedicatedString
+    - ui/transfer.TestFailureNoticeKeepsEachTypedMessage
     - app.TestTicket33CheckRunsThroughTheKeyboard
     - app.TestTicket33CheckPassesTwiceInOneProcess
   status: verified
-  notes: "Stop cancels the batch, Skip leaves the destination and counts it, Replace writes the source over it through the ADR-0012 staging path, Duplicate writes beside it as \"(copy)\" then \"(copy 2)\", and Merge keeps destination-only folder content. An apply-to-all answer is scoped to one batch and conflict type and covers the remaining conflicts without a second prompt; without it only the row that asked is answered. Duplicate names and top-level destination paths, including whole directory subtrees, are reserved at enqueue or plan time, so two concurrent Transfers cannot stage into one path; a duplicate reserves only the name it chose, and a paused row keeps that name, as does a retried row reclaiming its destination. A merge compares size and whole-second mtime and leaves an unchanged destination untouched, counting it as skipped. A file that meets a destination directory during a merge fails as a type mismatch instead of deleting the directory's subtree."
+  notes: "Stop cancels the batch, Skip leaves the destination and counts it, Replace writes the source over it through the ADR-0012 staging path, Duplicate writes beside it as \"(copy)\" then \"(copy 2)\", and Merge keeps destination-only folder content. An apply-to-all answer is scoped to one batch and conflict type and covers the remaining conflicts without a second prompt; without it only the row that asked is answered. The prompt's count names only the same-type conflicts that will actually follow, and the choice is offered only when at least one exists, so a new sibling is not counted as a conflict. Duplicate names and top-level destination paths, including whole directory subtrees, are reserved at enqueue or plan time, so two concurrent Transfers cannot stage into one path; a duplicate reserves only the name it chose, and a paused row keeps that name, as does a retried row reclaiming its destination. A Transfer refused because another one owns the destination reports the reserved message rather than the generic operation failure. A merge compares size and whole-second mtime and leaves an unchanged destination untouched, counting it as skipped. A file that meets a destination directory during a merge fails as a type mismatch instead of deleting the directory's subtree."
 
 - id: sftp.drag-drop
   area: sftp-transfer

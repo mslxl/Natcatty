@@ -67,6 +67,77 @@ func (r *queueSeedRepo) SaveTasks(_ context.Context, tasks []domainsftp.Task) er
 // restored row's reconnect prompt is truthful before the connection, the
 // reconnected Host binds live filesystems, and Resume then finishes the
 // Transfer without touching the completed prefix.
+// TestQueueConflictDoesNotOfferApplyToAllForANewSibling proves the prompt only
+// offers to repeat an answer when another real conflict follows. A second
+// selected file with no destination is not a conflict.
+func TestQueueConflictDoesNotOfferApplyToAllForANewSibling(t *testing.T) {
+	f, queue := newQueuedFixture(t)
+	f.remote.put("/alpha.txt", "old-a", 0o644)
+	f.openRemote(t, Right)
+	tab := f.state.Tab(Left)
+	tab.Selection = map[string]bool{"/alpha.txt": true, "/beta.bin": true}
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the one real conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	dialog := f.state.Dialog()
+	if dialog.Conflict == nil || dialog.Conflict.ApplyToAllCount != 0 {
+		t.Fatalf("apply-to-all count = %+v, want 0: beta.bin is new", dialog.Conflict)
+	}
+	id := dialog.TaskID
+	f.state.ResolveDialogConflict(apptransfer.ConflictSkip, false)
+
+	settle(t, f.state, "the batch to finish after skipping the conflict", func() bool {
+		f.state.Flush()
+		task, ok := queue.Task(id)
+		return ok && task.Status == domainsftp.TaskCompleted
+	})
+	if got, _ := f.remote.read("/alpha.txt"); got != "old-a" {
+		t.Fatalf("alpha.txt = %q", got)
+	}
+	if got, _ := f.remote.read("/beta.bin"); got != "beta" {
+		t.Fatalf("beta.bin = %q, want the new file copied", got)
+	}
+}
+
+// TestReservedEnqueueKeepsItsSpecificNotice proves a second Transfer refused
+// because another one already owns the destination reports the reserved
+// message instead of the generic operation failure.
+func TestReservedEnqueueKeepsItsSpecificNotice(t *testing.T) {
+	f, queue := newQueuedFixtureWith(t, apptransfer.WithQueueConcurrency(2))
+	f.openRemote(t, Right)
+	local, ok := f.state.Tab(Left).FS.(*fakeFS)
+	if !ok {
+		t.Fatalf("local tab filesystem = %T, want *fakeFS", f.state.Tab(Left).FS)
+	}
+	release := make(chan struct{})
+	gate := make(chan struct{}, 4)
+	local.block = release
+	local.openGate = gate
+	t.Cleanup(func() { close(release) })
+
+	selectOne(t, f.state, Left, "alpha.txt")
+	f.state.Transfer(Left)
+	waitFor(t, "the first transfer to open its file", func() bool {
+		select {
+		case <-gate:
+			return true
+		default:
+			return false
+		}
+	})
+
+	selectOne(t, f.state, Left, "alpha.txt")
+	f.state.Transfer(Left)
+	if got := f.state.Notice(); got != "error:reserved" {
+		t.Fatalf("notice = %q, want the reserved failure code", got)
+	}
+	if tasks := queue.Tasks(); len(tasks) != 1 {
+		t.Fatalf("the refused Transfer left %d rows, want 1", len(tasks))
+	}
+}
+
 func TestQueueConflictAppliesOneChoiceToTheWholeBatch(t *testing.T) {
 	f, queue := newQueuedFixture(t)
 	f.remote.put("/alpha.txt", "old-a", 0o644)
@@ -83,7 +154,7 @@ func TestQueueConflictAppliesOneChoiceToTheWholeBatch(t *testing.T) {
 	if dialog.TaskID == "" {
 		t.Fatal("the queued prompt does not name its Transfer")
 	}
-	if dialog.Conflict == nil || dialog.Conflict.ApplyToAllCount != 2 {
+	if dialog.Conflict == nil || dialog.Conflict.ApplyToAllCount != 1 {
 		t.Fatalf("the batch count = %+v", dialog.Conflict)
 	}
 	id := dialog.TaskID
@@ -419,6 +490,67 @@ func TestTransportFailureRetryRequiresReconnect(t *testing.T) {
 	if again.Status != domainsftp.TaskFailed || again.Epoch != task.Epoch {
 		t.Errorf("Retry replayed a dead transport: %+v (was epoch %d)", again, task.Epoch)
 	}
+}
+
+// TestReservedRetryKeepsItsSpecificCenterNotice proves a Retry refused because
+// another live Transfer owns the destination reaches the centre as the
+// reserved message, not the generic control failure.
+func TestReservedRetryKeepsItsSpecificCenterNotice(t *testing.T) {
+	f, queue := newQueuedFixtureWith(t, apptransfer.WithQueueConcurrency(2))
+	f.openRemote(t, Right)
+	source := f.state.Tab(Left).FS
+	dest := f.state.Tab(Right).FS
+
+	// The row fails before it writes, because its source is gone, and its
+	// destination name is still alpha.txt. A failed row is retryable.
+	failed, err := queue.Enqueue(apptransfer.TaskSpec{
+		Kind: domainsftp.OpCopy, Source: source, Dest: dest,
+		Sources: []string{"/missing/alpha.txt"}, DestDir: "/",
+	})
+	if err != nil {
+		t.Fatalf("enqueue the failing transfer: %v", err)
+	}
+	settle(t, f.state, "the missing source to fail the row", func() bool {
+		task, ok := queue.Task(failed)
+		return ok && task.Status == domainsftp.TaskFailed
+	})
+
+	// Keep a second Transfer in flight on the same destination, so the failed
+	// row can no longer reclaim it.
+	local, ok := source.(*fakeFS)
+	if !ok {
+		t.Fatalf("local tab filesystem = %T, want *fakeFS", source)
+	}
+	release := make(chan struct{})
+	local.block = release
+	local.openGate = make(chan struct{}, 4)
+	t.Cleanup(func() { close(release) })
+	holder, err := queue.Enqueue(apptransfer.TaskSpec{
+		Kind: domainsftp.OpCopy, Source: source, Dest: dest,
+		Sources: []string{"/alpha.txt"}, DestDir: "/",
+	})
+	if err != nil {
+		t.Fatalf("enqueue the new owner: %v", err)
+	}
+	waitFor(t, "the new owner to open its source", func() bool {
+		select {
+		case <-local.openGate:
+			return true
+		default:
+			return false
+		}
+	})
+
+	f.state.RetryTransfer(failed)
+	if got := f.state.CenterError(); got != "error:reserved" {
+		t.Fatalf("center error = %q, want the reserved failure code", got)
+	}
+
+	_ = queue.Cancel(holder)
+	settle(t, f.state, "the new owner to stop", func() bool {
+		task, ok := queue.Task(holder)
+		return ok && task.Terminal()
+	})
 }
 
 func TestQueueTaskControlsReportUnavailableAfterRestart(t *testing.T) {

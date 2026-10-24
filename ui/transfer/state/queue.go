@@ -170,7 +170,14 @@ func (s *State) controlTransfer(id domainsftp.TaskID, action func(*apptransfer.Q
 	case err == domainsftp.ErrTaskNotRetryable:
 		s.centerError = "transfer-not-retryable"
 	default:
-		s.centerError = "transfer-control-failed"
+		// A classified failure keeps its own message: a retry or resume whose
+		// destination another Transfer already owns must say so, not reduce
+		// the refusal to the generic control failure.
+		if code, ok := FailureNoticeCode(err); ok {
+			s.centerError = code
+		} else {
+			s.centerError = "transfer-control-failed"
+		}
 	}
 	s.RequestRedraw()
 }
