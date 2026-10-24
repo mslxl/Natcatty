@@ -17,10 +17,11 @@ package app
 //     local-pane and a remote bookmark are written to their persisted JSON
 //     repositories, and a cross-Tab copy into the source's own subtree is
 //     refused without touching the filesystem.
-//   - The view: the real surface renders both panes at 720x480 and 1100x720,
-//     in English and Simplified Chinese, with every toolbar action inside the
-//     window; the star, hidden-file toggle, and delete confirmation work
-//     through accessible labels.
+//   - The view: the real surface renders both panes at the 720x480 and
+//     1100x720 content columns (456x448 and 836x688), in English and
+//     Simplified Chinese, with every toolbar action inside the column; the
+//     star, hidden-file toggle, and delete confirmation work through
+//     accessible labels.
 //
 // The remote pane is a pkg/sftp server over net.Pipe with the same adapter
 // the app uses for SSH. A server without the SSH transport is used because a
@@ -671,7 +672,15 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 	if err := t.selectLocal("beta.bin"); err != nil {
 		return selftest.Failed(err)
 	}
-	tester := ui.NewTester(transferui.View(t.state), 1100, 720)
+	// The surface lives in the shell's content column, not the whole window:
+	// at 720x480 the column is 456x448 and at 1100x720 it is 836x688. Measuring
+	// at the window size instead would let a control that overflows the column
+	// still look as if it fits.
+	const (
+		narrowWidth, narrowHeight = 456, 448
+		wideWidth, wideHeight     = 836, 688
+	)
+	tester := ui.NewTester(transferui.View(t.state), wideWidth, wideHeight)
 	tester.SetLocale("en")
 	tester.Frame()
 	for _, label := range []string{
@@ -680,22 +689,32 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 		m.SftpDelete(), m.SftpCopyTo(), m.SftpMoveTo(), m.SftpSort(), m.SftpShowHidden(),
 		m.SftpBookmarks(),
 	} {
-		if rect, ok := tester.Find(label); !ok || rect.W <= 0 || rect.H <= 0 {
-			return selftest.Failed(fmt.Errorf("the 1100x720 surface does not show %q", label))
+		rect, ok := tester.Find(label)
+		if !ok || rect.W <= 0 || rect.H <= 0 || rect.X < 0 || rect.Y < 0 ||
+			rect.X+rect.W > wideWidth || rect.Y+rect.H > wideHeight {
+			return selftest.Failed(fmt.Errorf("the %dx%d surface does not show %q inside the content column: %+v",
+				wideWidth, wideHeight, label, rect))
 		}
 	}
 	if !tester.HasText("beta.bin") {
 		return selftest.Failed(fmt.Errorf("the local listing is missing from the view: %v", tester.Texts()))
 	}
 
-	small := ui.NewTester(transferui.View(t.state), 720, 480)
+	small := ui.NewTester(transferui.View(t.state), narrowWidth, narrowHeight)
 	small.SetLocale("zh-CN")
 	small.Frame()
 	zh := locales.In("zh-CN")
-	for _, label := range []string{zh.SftpTitle(), zh.SftpSort(), zh.SftpShowHidden(), zh.SftpBookmarks(), zh.SftpDelete()} {
+	for _, label := range []string{
+		zh.SftpTitle(), zh.SftpLocal(), zh.SftpUp(), zh.SftpRefresh(),
+		zh.SftpNewFolder(), zh.SftpNewFile(), zh.SftpRename(), zh.SftpPermissions(),
+		zh.SftpDelete(), zh.SftpCopyTo(), zh.SftpMoveTo(), zh.SftpUpload(),
+		zh.SftpSort(), zh.SftpShowHidden(), zh.SftpBookmarks(),
+	} {
 		rect, ok := small.Find(label)
-		if !ok || rect.X < 0 || rect.Y < 0 || rect.X+rect.W > 720 || rect.Y+rect.H > 480 {
-			return selftest.Failed(fmt.Errorf("the 720x480 zh-CN surface clips %q: %+v", label, rect))
+		if !ok || rect.W <= 0 || rect.H <= 0 || rect.X < 0 || rect.Y < 0 ||
+			rect.X+rect.W > narrowWidth || rect.Y+rect.H > narrowHeight {
+			return selftest.Failed(fmt.Errorf("the %dx%d zh-CN surface clips %q: %+v",
+				narrowWidth, narrowHeight, label, rect))
 		}
 	}
 
@@ -740,6 +759,6 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 	}
 	t.finished = true
 	return selftest.Passed(
-		"the real view renders both panes at 720x480 and 1100x720 in en and zh-CN; tabs, bookmark persistence, hidden toggle, and delete confirmation work",
+		"the real view renders both panes in the 456x448 and 836x688 content columns in en and zh-CN; tabs, bookmark persistence, hidden toggle, and delete confirmation work",
 		"transferui.View + transferstate.State + adaptersftp.Bookmarks")
 }

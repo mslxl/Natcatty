@@ -12,6 +12,16 @@ import (
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
+// surfaceGutter is the SFTP surface's own inset from the shell's content
+// column. The shell already pads the column against the window, but the
+// surface is embedded in a 456-DIP column at a 720x480 window, so without its
+// own inset its right-aligned controls (the header's Connect button, the
+// operation bar) and the right pane's column sit flush against the surface's
+// edge: an overlay (a dialog's edge) or the window frame then appears to cut
+// them. The gutter matches the shell's own padding, so every SFTP control keeps
+// the same distance from the window frame at both supported sizes.
+const surfaceGutter float32 = 16
+
 // View renders the main window's SFTP surface.
 func View(s *transferstate.State) func(*ui.Context) {
 	return func(c *ui.Context) {
@@ -23,7 +33,8 @@ func View(s *transferstate.State) func(*ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
-		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Gap(8).Focusable().AutoFocus()
+		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Gap(8).
+			PaddingX(surfaceGutter).Focusable().AutoFocus()
 		root.Children(func() {
 			header(c, s, m, t)
 			toolbar(c, s, m, t)
@@ -40,8 +51,12 @@ func View(s *transferstate.State) func(*ui.Context) {
 }
 
 func header(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SftpTitle()).FontSize(20).Bold().TextColor(t.Text)
+	// The header wraps: the surface is only 456 DIPs wide at the minimum
+	// window, so a longer localized title cannot be allowed to push the two
+	// right-aligned buttons off the surface. They move to a second line
+	// instead.
+	ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, m.SftpTitle()).FontSize(20).Bold().SingleLine().MinWidth(0).TextColor(t.Text)
 		ui.Column(c).Grow(1)
 		if ui.Button(c, m.SftpTransferCenterButton()).Clicked() {
 			s.OpenCenter()
@@ -123,7 +138,8 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, m loca
 		}
 		pathRow(c, s, side, tab, m, t)
 		if tab.Problem != nil {
-			ui.Text(c, errorText(m, tab.Problem)).FontSize(11).TextColor(t.Danger).SingleLine()
+			ui.Text(c, errorText(m, tab.Problem)).FontSize(11).TextColor(t.Danger).
+				SingleLine().MinWidth(0)
 		}
 		viewRow(c, s, side, tab, m, t)
 		fileList(c, s, side, tab, m, t)
@@ -194,7 +210,7 @@ func tabStrip(c *ui.Context, s *transferstate.State, side transferstate.Side, m 
 
 func emptyPane(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, m.SftpNoTab()).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SftpNoTab()).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 		ui.Row(c).Gap(6).Children(func() {
 			local := ui.Button(c, m.SftpOpenLocal())
 			local.Disabled(!s.LocalAvailable())
@@ -241,7 +257,7 @@ func viewRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			sortMenu(menu, s, side, tab, m)
 		})
 		sort.FontSize(11)
-		ui.Text(c, sortSummary(m, tab.Sort)).FontSize(10).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, sortSummary(m, tab.Sort)).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 
 		hidden := ui.Button(c, m.SftpShowHidden())
 		hidden.FontSize(11)
@@ -369,7 +385,7 @@ func fileRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 			name.TextColor(t.TextMuted)
 		}
 		if detail := secondaryText(entry); detail != "" {
-			ui.Text(c, detail).FontSize(10).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, detail).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 		}
 	})
 
@@ -412,7 +428,7 @@ func footer(c *ui.Context, s *transferstate.State, side transferstate.Side, tab 
 	} else {
 		text = m.SftpItemCount(visibleCount(tab))
 	}
-	ui.Text(c, text).FontSize(10).TextColor(t.TextMuted).SingleLine()
+	ui.Text(c, text).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 }
 
 func visibleCount(tab *transferstate.Tab) int {
@@ -430,7 +446,11 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 	if op == nil {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(8).Padding(6, 8).AlignItems(ui.Center).
+	// Wraps like the toolbar: the progress bar and the Cancel button are
+	// fixed-width, so at the minimum surface width a long operation label
+	// must move them to a second line rather than pushing Cancel off the
+	// surface's right edge.
+	ui.Row(c).FillWidth().Wrap().Gap(8).Padding(6, 8).AlignItems(ui.Center).
 		Background(t.SurfaceHover).Radius(t.Radius).Children(func() {
 		text := operationLabel(m, op)
 		if op.Err != nil {
@@ -460,13 +480,14 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 
 func status(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
 	if problem := s.Problem(); problem != nil {
-		ui.Text(c, errorText(m, problem)).FontSize(11).TextColor(t.Danger).SingleLine()
+		ui.Text(c, errorText(m, problem)).FontSize(11).TextColor(t.Danger).
+			SingleLine().MinWidth(0)
 		return
 	}
 	if s.Snapshot() != nil {
 		return
 	}
 	if notice := noticeText(m, s.Notice()); notice != "" {
-		ui.Text(c, notice).FontSize(11).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, notice).FontSize(11).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 	}
 }
