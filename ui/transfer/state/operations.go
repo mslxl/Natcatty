@@ -3,12 +3,50 @@ package state
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
+
+// failureNoticePrefix marks a status notice that carries a classified failure.
+// The view localizes the kind that follows it, so the state layer never holds
+// display text and a specific failure is not reduced to the generic message.
+const failureNoticePrefix = "error:"
+
+// FailureNotice names the status notice for a failed pane action. A classified
+// failure keeps its own message; an unclassified one keeps the generic
+// operation failure.
+func FailureNotice(err error) string {
+	if code, ok := FailureNoticeCode(err); ok {
+		return code
+	}
+	return "operation-failed"
+}
+
+// FailureNoticeCode reports the notice that carries a classified failure, for
+// callers with their own fallback text. Like FailureNotice, it treats an
+// internal failure as unclassified, because that kind has no more to say than
+// the caller's own message.
+func FailureNoticeCode(err error) (string, bool) {
+	if kind := apptransfer.KindOf(err); kind != "" && kind != apptransfer.KindInternal {
+		return failureNoticePrefix + string(kind), true
+	}
+	return "", false
+}
+
+// FailureKind decodes a notice code built by FailureNotice. It reports false
+// for codes without the prefix or with an empty kind; an unknown kind is left
+// to the view's generic failure text.
+func FailureKind(code string) (apptransfer.ErrorKind, bool) {
+	kind, ok := strings.CutPrefix(code, failureNoticePrefix)
+	if !ok || kind == "" {
+		return "", false
+	}
+	return apptransfer.ErrorKind(kind), true
+}
 
 // Operation is a snapshot of the running or last finished file operation.
 type Operation struct {
@@ -209,7 +247,7 @@ func (s *State) enqueueOperation(op *operationState, spec apptransfer.TaskSpec,
 	taskID, err := s.transferQueue.Enqueue(spec)
 	if err != nil {
 		s.releaseOperation(op)
-		s.notice = "operation-failed"
+		s.notice = FailureNotice(err)
 		s.RequestRedraw()
 		return false
 	}
@@ -261,7 +299,7 @@ func (s *State) finishOperationOutcome(op *operationState, err error, cancelled 
 	if cancelled {
 		s.notice = "operation-cancelled"
 	} else if err != nil {
-		s.notice = "operation-failed"
+		s.notice = FailureNotice(err)
 	} else {
 		s.notice = "operation-done"
 	}
@@ -637,7 +675,7 @@ func (s *State) dropFiles(side Side, targetDir string, paths []string, conflict 
 					if enqueueErr != nil {
 						_ = local.Close()
 						s.releaseOperation(op)
-						s.notice = "operation-failed"
+						s.notice = FailureNotice(enqueueErr)
 						return
 					}
 					s.attachQueuedOperation(op, taskID, []*Tab{dest},

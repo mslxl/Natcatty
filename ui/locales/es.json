@@ -1832,7 +1832,7 @@
   "@sftpConflictModified": {
     "description": "The file summary modification label."
   },
-  "sftpConflictApplyToAll": "Aplicar esta acción a los {count} conflictos restantes",
+  "sftpConflictApplyToAll": "Aplicar esta acción a todos los conflictos restantes ({count})",
   "@sftpConflictApplyToAll": {
     "description": "The apply-to-all checkbox in a conflict prompt.",
     "placeholders": {

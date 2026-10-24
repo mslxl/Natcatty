@@ -1832,7 +1832,7 @@
   "@sftpConflictModified": {
     "description": "The file summary modification label."
   },
-  "sftpConflictApplyToAll": "将此操作应用到剩余的 {count} 个冲突",
+  "sftpConflictApplyToAll": "将此操作应用到所有剩余冲突（{count}）",
   "@sftpConflictApplyToAll": {
     "description": "The apply-to-all checkbox in a conflict prompt.",
     "placeholders": {

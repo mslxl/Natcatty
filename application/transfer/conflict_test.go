@@ -3,6 +3,7 @@ package transfer
 import (
 	"context"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -440,16 +441,13 @@ func TestCopyMergeDoesNotDeleteADestinationDirectoryThatMeetsAFile(t *testing.T)
 	}
 }
 
-func TestCopyAskReportsHowManySourcesOneAnswerCouldCover(t *testing.T) {
-	source := newFakeFS("source")
-	source.addFile("/", "a.txt", "new-a", 0o644)
-	source.addFile("/", "b.txt", "new-b", 0o644)
-	dest := newFakeFS("dest")
-	dest.addFile("/", "a.txt", "old-a", 0o644)
-
+// askConflictCounts copies sources into dest with the ask policy, answers
+// Skip, and returns the apply-to-all count of each prompt in order.
+func askConflictCounts(t *testing.T, source, dest FileSystem, sources []string) []int {
+	t.Helper()
 	var counts []int
 	_, err := NewService(nil, nil).Copy(context.Background(), CopyRequest{
-		Source: source, Dest: dest, Sources: []string{"/a.txt", "/b.txt"}, DestDir: "/",
+		Source: source, Dest: dest, Sources: sources, DestDir: "/",
 		Conflict: ConflictAsk,
 		OnConflict: func(conflict domainsftp.Conflict) ConflictResolution {
 			counts = append(counts, conflict.ApplyToAllCount)
@@ -459,7 +457,112 @@ func TestCopyAskReportsHowManySourcesOneAnswerCouldCover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ask copy: %v", err)
 	}
-	if len(counts) != 1 || counts[0] != 2 {
-		t.Fatalf("apply-to-all counts = %v, want [2] so the prompt can offer the batch", counts)
+	return counts
+}
+
+func TestCopyAskDoesNotCountANewSiblingAsAConflict(t *testing.T) {
+	// 1-of-2: only a.txt exists, so an answer covers no later conflict and the
+	// prompt must not claim a second one.
+	source := newFakeFS("source")
+	source.addFile("/", "a.txt", "new-a", 0o644)
+	source.addFile("/", "b.txt", "new-b", 0o644)
+	dest := newFakeFS("dest")
+	dest.addFile("/", "a.txt", "old-a", 0o644)
+
+	if got := askConflictCounts(t, source, dest, []string{"/a.txt", "/b.txt"}); !slices.Equal(got, []int{0}) {
+		t.Fatalf("apply-to-all counts = %v, want [0]: b.txt is new, not a conflict", got)
+	}
+}
+
+func TestCopyAskCountsOnlyTheLaterSameTypeConflicts(t *testing.T) {
+	// 3-of-3: the first answer covers the two conflicts after it, the second
+	// covers one, and the last covers none.
+	source := newFakeFS("source")
+	dest := newFakeFS("dest")
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		source.addFile("/", name, "new-"+name, 0o644)
+		dest.addFile("/", name, "old-"+name, 0o644)
+	}
+
+	if got := askConflictCounts(t, source, dest,
+		[]string{"/a.txt", "/b.txt", "/c.txt"}); !slices.Equal(got, []int{2, 1, 0}) {
+		t.Fatalf("apply-to-all counts = %v, want [2 1 0]", got)
+	}
+}
+
+func TestCopyAskCountsOneOfThreeWhenTheLastSourceIsNew(t *testing.T) {
+	// 2-of-3: a.txt and b.txt conflict; c.txt is new. After the first answer
+	// exactly one conflict remains.
+	source := newFakeFS("source")
+	source.addFile("/", "a.txt", "new-a", 0o644)
+	source.addFile("/", "b.txt", "new-b", 0o644)
+	source.addFile("/", "c.txt", "new-c", 0o644)
+	dest := newFakeFS("dest")
+	dest.addFile("/", "a.txt", "old-a", 0o644)
+	dest.addFile("/", "b.txt", "old-b", 0o644)
+
+	if got := askConflictCounts(t, source, dest,
+		[]string{"/a.txt", "/b.txt", "/c.txt"}); !slices.Equal(got, []int{1, 0}) {
+		t.Fatalf("apply-to-all counts = %v, want [1 0]", got)
+	}
+}
+
+func TestCopyAskDoesNotCountADifferentConflictType(t *testing.T) {
+	// A file:file conflict is not covered by a directory:directory answer, so
+	// only b.txt counts toward a.txt's prompt.
+	source := newFakeFS("source")
+	source.addFile("/", "a.txt", "new-a", 0o644)
+	source.addFile("/", "b.txt", "new-b", 0o644)
+	source.addDir("/folder")
+	source.addFile("/folder", "inside.txt", "inside", 0o644)
+	dest := newFakeFS("dest")
+	dest.addFile("/", "a.txt", "old-a", 0o644)
+	dest.addFile("/", "b.txt", "old-b", 0o644)
+	dest.addDir("/folder")
+
+	if got := askConflictCounts(t, source, dest,
+		[]string{"/a.txt", "/b.txt", "/folder"}); !slices.Equal(got, []int{1, 0, 0}) {
+		t.Fatalf("apply-to-all counts = %v, want [1 0 0]", got)
+	}
+}
+
+// windowsSourceFS is the local pane's view of a fake store on Windows: paths
+// carry drive-letter, backslash notation while the fake's nodes stay keyed by
+// a POSIX path. Only the source side needs it; the destination stays POSIX.
+type windowsSourceFS struct {
+	*fakeFS
+}
+
+func (windowsSourceFS) Style() PathStyle { return StyleWindows }
+
+// Base follows Windows separators on every platform, so this regression does
+// not depend on the host the suite runs on.
+func (windowsSourceFS) Base(p string) string {
+	trimmed := strings.TrimRight(p, `\/`)
+	if index := strings.LastIndexAny(trimmed, `\/`); index >= 0 {
+		return trimmed[index+1:]
+	}
+	return trimmed
+}
+
+func (w windowsSourceFS) Stat(ctx context.Context, p string) (domainsftp.Entry, error) {
+	return w.fakeFS.Stat(ctx, path.Join("/", w.Base(p)))
+}
+
+func TestCopyAskCountsAWindowsSourceConflict(t *testing.T) {
+	// The conflict scan must derive the destination name with the source's own
+	// Base. A POSIX Base over a Windows path keeps the separators, so the
+	// destination stat misses and the count silently drops to zero.
+	source := newFakeFS("local")
+	source.addFile("/", "a.txt", "new-a", 0o644)
+	source.addFile("/", "b.txt", "new-b", 0o644)
+	dest := newFakeFS("remote")
+	dest.addFile("/", "a.txt", "old-a", 0o644)
+	dest.addFile("/", "b.txt", "old-b", 0o644)
+
+	got := askConflictCounts(t, windowsSourceFS{source}, dest,
+		[]string{`C:\dir\a.txt`, `C:\dir\b.txt`})
+	if !slices.Equal(got, []int{1, 0}) {
+		t.Fatalf("apply-to-all counts = %v, want [1 0]", got)
 	}
 }

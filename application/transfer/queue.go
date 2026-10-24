@@ -1159,19 +1159,22 @@ func (q *Queue) waitConflict(ctx context.Context, id domainsftp.TaskID,
 	return answer
 }
 
-// applyToAllCountLocked estimates how many conflicts one answer could cover:
-// the rest of this request plus the other live rows in the same batch that do
-// not already wait on a different destination type. An answer is keyed by the
-// conflict type, so a sibling waiting on another type is not covered.
+// applyToAllCountLocked counts the conflicts one answer would cover, excluding
+// the conflict being decided: the later same-type conflicts in this request
+// plus the sibling rows already waiting on that same type. A sibling that has
+// not met its destination yet is not known to conflict, and a sibling waiting
+// on another type is not covered, so neither is counted.
 func (q *Queue) applyToAllCountLocked(task domainsftp.Task, conflict domainsftp.Conflict) int {
-	count := 1 + conflict.Remaining
+	count := conflict.Remaining
 	batch := taskBatchKey(task)
 	for id, other := range q.tasks {
 		if id == task.ID || other.task.Terminal() || taskBatchKey(other.task) != batch {
 			continue
 		}
-		if other.task.Status == domainsftp.TaskAttention && other.task.PendingConflict != nil &&
-			other.task.PendingConflict.TypeKey() != conflict.TypeKey() {
+		if other.task.Status != domainsftp.TaskAttention || other.task.PendingConflict == nil {
+			continue
+		}
+		if other.task.PendingConflict.TypeKey() != conflict.TypeKey() {
 			continue
 		}
 		count++
