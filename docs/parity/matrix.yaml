@@ -1372,7 +1372,7 @@
     - ui/settings.TestSettingsScreenshotsAndClipping
     - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The whole-tree search filters every area, the typed preference fields, the Terminal controls, and all 42 shortcut rows by localized label, stable identifier, and English keywords. Arrow keys move the highlight, Enter opens the matching area, and Escape clears the query. The window is verified at 1100x720 and 720x480 in English and Simplified Chinese without clipping."
+  notes: "The whole-tree search filters every area, the typed preference fields, the Terminal controls, and all 43 shortcut rows by localized label, stable identifier, and English keywords. Arrow keys move the highlight, Enter opens the matching area, and Escape clears the query. The window is verified at 1100x720 and 720x480 in English and Simplified Chinese without clipping."
 
 - id: settings.live-apply-reset
   area: settings
@@ -1434,7 +1434,7 @@
   module: domain/keybindings
   tickets: [27]
   acceptance_tests:
-    - domain/keybindings.TestCatalogMatchesTheOriginal42
+    - domain/keybindings.TestCatalogMatchesTheOriginal42ThenLocalAdditions
     - domain/keybindings.TestCatalogShipsMacPCDisabledDefaults
     - domain/keybindings.TestParseSchemeAndPlatformDefault
     - domain/keybindings.TestOverridesResolveAndReset
@@ -2598,6 +2598,35 @@
     - ui/transfer.TestCopyRunsFromTheToolbarAndReportsProgress
   status: verified
   notes: "A 32 KiB staged stream checks cancellation between chunks and never leaves a partial destination name."
+
+- id: sftp.transfer-queue
+  area: sftp-transfer
+  feature: Global Transfer queue with per-file progress, ETA, pause, resume, retry, cancel, per-resource limits, and restart recovery
+  original_paths:
+    - application/state/sftp/globalTransferScheduler.ts
+    - application/state/sftp/transferConcurrency.ts
+    - application/state/sftp/transferHistoryRestoreMigration.ts
+    - application/state/sftpTransferCenterStore.ts
+    - domain/sftpTransferCenter.ts
+    - domain/sftpTransferConcurrency.ts
+    - components/GlobalSftpTransferCenter.tsx
+    - components/sftp/SftpTransferQueue.tsx
+  module: application/transfer
+  tickets: [31]
+  acceptance_tests:
+    - application/transfer.TestQueueRunsATransferAndReportsProgress
+    - application/transfer.TestQueueEnforcesThePerResourceLimit
+    - application/transfer.TestQueuePauseAndResume
+    - application/transfer.TestQueueCancelStopsTheTransfer
+    - application/transfer.TestQueueRetriesAFailedTransfer
+    - application/transfer.TestQueueRestartDowngradesUnfinishedTransfers
+    - adapters/sftp.TestTransferQueueRoundTrips
+    - ui/transfer/state.TestQueueBackedTransferCompletesAndAppearsInTheCenter
+    - ui/transfer/state.TestQueueTaskControlsReportUnavailableAfterRestart
+    - ui/transfer.TestTransferCenterShowsProgressAndControls
+    - ui/transfer.TestTransferCenterRetryReportsAReconnect
+  status: verified
+  notes: "Each Resource (local, Host, Session) admits up to the queue's per-resource limit (1-16, default 6), and a multi-file row reports its current file and completed-file count. Pause stops at a chunk boundary and Resume replays the request; Restart downgrades unfinished rows to interrupted with reconnect required."
 
 - id: sftp.copy-move-paste
   area: sftp-transfer

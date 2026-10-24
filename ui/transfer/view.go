@@ -31,9 +31,10 @@ func View(s *transferstate.State) func(*ui.Context) {
 			panes(c, s, m, t)
 			status(c, s, m, t)
 		})
-		if s.Dialog() == nil {
+		if s.Dialog() == nil && !s.CenterOpen() {
 			installShortcuts(root, s)
 		}
+		centerView(c, s, m, t)
 		dialogView(c, s, m, t)
 	}
 }
@@ -42,6 +43,9 @@ func header(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.The
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, m.SftpTitle()).FontSize(20).Bold().TextColor(t.Text)
 		ui.Column(c).Grow(1)
+		if ui.Button(c, m.SftpTransferCenterButton()).Clicked() {
+			s.OpenCenter()
+		}
 		connect := ui.Button(c, m.SftpConnect())
 		connect.Disabled(!s.RemoteAvailable())
 		if connect.Clicked() {
@@ -437,6 +441,11 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			color = t.Danger
 		}
 		ui.Text(c, text).FontSize(12).Grow(1).MinWidth(0).SingleLine().TextColor(color)
+		if op.Status != "" {
+			// A queue-backed operation also shows the bar the Transfer center
+			// uses, so progress is visible without opening the center.
+			ui.Progress(c, float64(op.Percent())/100).Width(140)
+		}
 		if op.Running {
 			if ui.Button(c, m.SftpCancel()).Clicked() {
 				s.CancelOperation()

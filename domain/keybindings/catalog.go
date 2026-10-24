@@ -111,6 +111,10 @@ var catalog = []Binding{
 	{ID: "open-settings", Action: "openSettings", Mac: "⌘ + ,", PC: "Ctrl + ,", Category: CategoryApp},
 	{ID: "toggle-opacity", Action: "toggleOpacity", Mac: "⌘ + U", PC: "Ctrl + Shift + U", Category: CategoryApp},
 
+	// Local additions. This is Natcatty's own binding, placed inside its
+	// category so the Settings list keeps the catalog's grouping.
+	{ID: "transfer-center", Action: "transferCenter", Mac: "⌘ + Shift + T", PC: "Ctrl + Shift + T", Category: CategoryApp},
+
 	// SFTP Operations
 	{ID: "sftp-copy", Action: "sftpCopy", Mac: "⌘ + C", PC: "Ctrl + C", Category: CategorySFTP},
 	{ID: "sftp-cut", Action: "sftpCut", Mac: "⌘ + X", PC: "Ctrl + X", Category: CategorySFTP},
@@ -125,7 +129,8 @@ var catalog = []Binding{
 	{ID: "sftp-navigate-to", Action: "sftpNavigateTo", Mac: "⌘ + Enter", PC: "Ctrl + Enter", Category: CategorySFTP},
 }
 
-// Catalog returns a copy of the original 42-binding catalog, in order.
+// Catalog returns a copy of the catalog in its display order: the original
+// 42 bindings plus the local additions, grouped by category.
 func Catalog() []Binding {
 	out := make([]Binding, len(catalog))
 	copy(out, catalog)

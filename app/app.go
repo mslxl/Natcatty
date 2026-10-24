@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -390,8 +391,23 @@ func run(afterReady func(hostWindow)) error {
 			filepath.Join(userData, "sftp-local-bookmarks.json"),
 		)),
 	)
+	// The global Transfer queue schedules every pane copy, enforces the
+	// per-resource limit, and persists terminal history under the same user
+	// data directory. A malformed history starts empty instead of blocking the
+	// window; the load error is reported and the damaged file is left in place
+	// rather than overwritten with the empty result.
+	transferQueue := apptransfer.NewQueue(
+		transferService,
+		apptransfer.WithQueueRepository(adaptersftp.NewTransferQueue(
+			filepath.Join(userData, "sftp-transfer-queue.json"),
+		)),
+	)
+	if err := transferQueue.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "natcatty: transfer history:", err)
+	}
 	transferState = transferstate.NewState(
 		transferService,
+		transferstate.WithQueue(transferQueue),
 		transferstate.WithRedrawRequest(invalidate),
 		transferstate.WithKeybindings(keybindingService),
 	)
@@ -810,6 +826,9 @@ func run(afterReady func(hostWindow)) error {
 		shellState.Persist()
 		closeForwarding(forwardingManager, forwardingState)
 		desktopCtl.Shutdown()
+		// Stop the queue before the surface closes the Tab filesystems its
+		// rows are still reading and writing.
+		transferQueue.Shutdown()
 		transferState.Shutdown()
 		shellState.Shutdown()
 		shellState.CloseAllSessions()

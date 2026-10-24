@@ -13249,3 +13249,461 @@ func SftpBookmarksUnreadable() string { return In(i18n.Locale()).SftpBookmarksUn
 func (msgs Messages) SftpBookmarksUnreadable() string {
 	return Catalog.Format(msgs.locale, "sftpBookmarksUnreadable", nil)
 }
+
+// SftpTransferCenter says "Transfer center"
+// in the language the app shows.
+//
+// The title of the global Transfer center.
+func SftpTransferCenter() string { return In(i18n.Locale()).SftpTransferCenter() }
+
+// SftpTransferCenter says "Transfer center"
+// in the language of msgs.
+//
+// The title of the global Transfer center.
+func (msgs Messages) SftpTransferCenter() string {
+	return Catalog.Format(msgs.locale, "sftpTransferCenter", nil)
+}
+
+// SftpTransferCenterButton says "Transfers"
+// in the language the app shows.
+//
+// The SFTP header button that opens the Transfer center.
+func SftpTransferCenterButton() string { return In(i18n.Locale()).SftpTransferCenterButton() }
+
+// SftpTransferCenterButton says "Transfers"
+// in the language of msgs.
+//
+// The SFTP header button that opens the Transfer center.
+func (msgs Messages) SftpTransferCenterButton() string {
+	return Catalog.Format(msgs.locale, "sftpTransferCenterButton", nil)
+}
+
+// SftpTransferEmpty says "No transfers yet."
+// in the language the app shows.
+//
+// Shown when the Transfer center has no rows.
+func SftpTransferEmpty() string { return In(i18n.Locale()).SftpTransferEmpty() }
+
+// SftpTransferEmpty says "No transfers yet."
+// in the language of msgs.
+//
+// Shown when the Transfer center has no rows.
+func (msgs Messages) SftpTransferEmpty() string {
+	return Catalog.Format(msgs.locale, "sftpTransferEmpty", nil)
+}
+
+// SftpTransferActive says "{count, plural, one {# active transfer} other {# active transfers}}"
+// in the language the app shows.
+//
+// The number of transfers currently running.
+func SftpTransferActive(count int) string { return In(i18n.Locale()).SftpTransferActive(count) }
+
+// SftpTransferActive says "{count, plural, one {# active transfer} other {# active transfers}}"
+// in the language of msgs.
+//
+// The number of transfers currently running.
+func (msgs Messages) SftpTransferActive(count int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferActive", map[string]any{"count": count})
+}
+
+// SftpTransferQueued says "{count, plural, one {# queued transfer} other {# queued transfers}}"
+// in the language the app shows.
+//
+// The number of transfers waiting for a resource slot.
+func SftpTransferQueued(count int) string { return In(i18n.Locale()).SftpTransferQueued(count) }
+
+// SftpTransferQueued says "{count, plural, one {# queued transfer} other {# queued transfers}}"
+// in the language of msgs.
+//
+// The number of transfers waiting for a resource slot.
+func (msgs Messages) SftpTransferQueued(count int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferQueued", map[string]any{"count": count})
+}
+
+// SftpTransferLimit says "{count, plural, one {# transfer per resource} other {# transfers per resource}}"
+// in the language the app shows.
+//
+// The per-resource concurrency limit.
+func SftpTransferLimit(count int) string { return In(i18n.Locale()).SftpTransferLimit(count) }
+
+// SftpTransferLimit says "{count, plural, one {# transfer per resource} other {# transfers per resource}}"
+// in the language of msgs.
+//
+// The per-resource concurrency limit.
+func (msgs Messages) SftpTransferLimit(count int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferLimit", map[string]any{"count": count})
+}
+
+// SftpTransferShortcut says "{chord} opens the Transfer center"
+// in the language the app shows.
+//
+// The local shortcut hint in the Transfer center.
+func SftpTransferShortcut(chord string) string { return In(i18n.Locale()).SftpTransferShortcut(chord) }
+
+// SftpTransferShortcut says "{chord} opens the Transfer center"
+// in the language of msgs.
+//
+// The local shortcut hint in the Transfer center.
+func (msgs Messages) SftpTransferShortcut(chord string) string {
+	return Catalog.Format(msgs.locale, "sftpTransferShortcut", map[string]any{"chord": chord})
+}
+
+// SftpTransferPause says "Pause"
+// in the language the app shows.
+//
+// The button that pauses a Transfer.
+func SftpTransferPause() string { return In(i18n.Locale()).SftpTransferPause() }
+
+// SftpTransferPause says "Pause"
+// in the language of msgs.
+//
+// The button that pauses a Transfer.
+func (msgs Messages) SftpTransferPause() string {
+	return Catalog.Format(msgs.locale, "sftpTransferPause", nil)
+}
+
+// SftpTransferResume says "Resume"
+// in the language the app shows.
+//
+// The button that resumes a paused Transfer.
+func SftpTransferResume() string { return In(i18n.Locale()).SftpTransferResume() }
+
+// SftpTransferResume says "Resume"
+// in the language of msgs.
+//
+// The button that resumes a paused Transfer.
+func (msgs Messages) SftpTransferResume() string {
+	return Catalog.Format(msgs.locale, "sftpTransferResume", nil)
+}
+
+// SftpTransferRetry says "Retry"
+// in the language the app shows.
+//
+// The button that replays a failed Transfer.
+func SftpTransferRetry() string { return In(i18n.Locale()).SftpTransferRetry() }
+
+// SftpTransferRetry says "Retry"
+// in the language of msgs.
+//
+// The button that replays a failed Transfer.
+func (msgs Messages) SftpTransferRetry() string {
+	return Catalog.Format(msgs.locale, "sftpTransferRetry", nil)
+}
+
+// SftpTransferStatusPending says "Pending"
+// in the language the app shows.
+//
+// A Transfer row's pending status.
+func SftpTransferStatusPending() string { return In(i18n.Locale()).SftpTransferStatusPending() }
+
+// SftpTransferStatusPending says "Pending"
+// in the language of msgs.
+//
+// A Transfer row's pending status.
+func (msgs Messages) SftpTransferStatusPending() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusPending", nil)
+}
+
+// SftpTransferStatusQueued says "Queued"
+// in the language the app shows.
+//
+// A Transfer row's queued status.
+func SftpTransferStatusQueued() string { return In(i18n.Locale()).SftpTransferStatusQueued() }
+
+// SftpTransferStatusQueued says "Queued"
+// in the language of msgs.
+//
+// A Transfer row's queued status.
+func (msgs Messages) SftpTransferStatusQueued() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusQueued", nil)
+}
+
+// SftpTransferStatusTransferring says "Transferring"
+// in the language the app shows.
+//
+// A Transfer row's transferring status.
+func SftpTransferStatusTransferring() string {
+	return In(i18n.Locale()).SftpTransferStatusTransferring()
+}
+
+// SftpTransferStatusTransferring says "Transferring"
+// in the language of msgs.
+//
+// A Transfer row's transferring status.
+func (msgs Messages) SftpTransferStatusTransferring() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusTransferring", nil)
+}
+
+// SftpTransferStatusPausing says "Pausing"
+// in the language the app shows.
+//
+// A Transfer row's pausing status.
+func SftpTransferStatusPausing() string { return In(i18n.Locale()).SftpTransferStatusPausing() }
+
+// SftpTransferStatusPausing says "Pausing"
+// in the language of msgs.
+//
+// A Transfer row's pausing status.
+func (msgs Messages) SftpTransferStatusPausing() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusPausing", nil)
+}
+
+// SftpTransferStatusPaused says "Paused"
+// in the language the app shows.
+//
+// A Transfer row's paused status.
+func SftpTransferStatusPaused() string { return In(i18n.Locale()).SftpTransferStatusPaused() }
+
+// SftpTransferStatusPaused says "Paused"
+// in the language of msgs.
+//
+// A Transfer row's paused status.
+func (msgs Messages) SftpTransferStatusPaused() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusPaused", nil)
+}
+
+// SftpTransferStatusAttention says "Needs attention"
+// in the language the app shows.
+//
+// A Transfer row's attention status.
+func SftpTransferStatusAttention() string { return In(i18n.Locale()).SftpTransferStatusAttention() }
+
+// SftpTransferStatusAttention says "Needs attention"
+// in the language of msgs.
+//
+// A Transfer row's attention status.
+func (msgs Messages) SftpTransferStatusAttention() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusAttention", nil)
+}
+
+// SftpTransferStatusInterrupted says "Interrupted"
+// in the language the app shows.
+//
+// A Transfer row's interrupted status.
+func SftpTransferStatusInterrupted() string { return In(i18n.Locale()).SftpTransferStatusInterrupted() }
+
+// SftpTransferStatusInterrupted says "Interrupted"
+// in the language of msgs.
+//
+// A Transfer row's interrupted status.
+func (msgs Messages) SftpTransferStatusInterrupted() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusInterrupted", nil)
+}
+
+// SftpTransferStatusCompleted says "Completed"
+// in the language the app shows.
+//
+// A Transfer row's completed status.
+func SftpTransferStatusCompleted() string { return In(i18n.Locale()).SftpTransferStatusCompleted() }
+
+// SftpTransferStatusCompleted says "Completed"
+// in the language of msgs.
+//
+// A Transfer row's completed status.
+func (msgs Messages) SftpTransferStatusCompleted() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusCompleted", nil)
+}
+
+// SftpTransferStatusFailed says "Failed"
+// in the language the app shows.
+//
+// A Transfer row's failed status.
+func SftpTransferStatusFailed() string { return In(i18n.Locale()).SftpTransferStatusFailed() }
+
+// SftpTransferStatusFailed says "Failed"
+// in the language of msgs.
+//
+// A Transfer row's failed status.
+func (msgs Messages) SftpTransferStatusFailed() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusFailed", nil)
+}
+
+// SftpTransferStatusCancelled says "Cancelled"
+// in the language the app shows.
+//
+// A Transfer row's cancelled status.
+func SftpTransferStatusCancelled() string { return In(i18n.Locale()).SftpTransferStatusCancelled() }
+
+// SftpTransferStatusCancelled says "Cancelled"
+// in the language of msgs.
+//
+// A Transfer row's cancelled status.
+func (msgs Messages) SftpTransferStatusCancelled() string {
+	return Catalog.Format(msgs.locale, "sftpTransferStatusCancelled", nil)
+}
+
+// SftpTransferEtaSeconds says "{seconds, plural, one {# second left} other {# seconds left}}"
+// in the language the app shows.
+//
+// The remaining time of a Transfer under a minute.
+func SftpTransferEtaSeconds(seconds int) string {
+	return In(i18n.Locale()).SftpTransferEtaSeconds(seconds)
+}
+
+// SftpTransferEtaSeconds says "{seconds, plural, one {# second left} other {# seconds left}}"
+// in the language of msgs.
+//
+// The remaining time of a Transfer under a minute.
+func (msgs Messages) SftpTransferEtaSeconds(seconds int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferEtaSeconds", map[string]any{"seconds": seconds})
+}
+
+// SftpTransferEtaMinutes says "{minutes, plural, one {# minute left} other {# minutes left}}"
+// in the language the app shows.
+//
+// The remaining time of a Transfer under an hour.
+func SftpTransferEtaMinutes(minutes int) string {
+	return In(i18n.Locale()).SftpTransferEtaMinutes(minutes)
+}
+
+// SftpTransferEtaMinutes says "{minutes, plural, one {# minute left} other {# minutes left}}"
+// in the language of msgs.
+//
+// The remaining time of a Transfer under an hour.
+func (msgs Messages) SftpTransferEtaMinutes(minutes int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferEtaMinutes", map[string]any{"minutes": minutes})
+}
+
+// SftpTransferEtaHours says "{hours, plural, one {# hour left} other {# hours left}}"
+// in the language the app shows.
+//
+// The remaining time of a Transfer of an hour or more.
+func SftpTransferEtaHours(hours int) string { return In(i18n.Locale()).SftpTransferEtaHours(hours) }
+
+// SftpTransferEtaHours says "{hours, plural, one {# hour left} other {# hours left}}"
+// in the language of msgs.
+//
+// The remaining time of a Transfer of an hour or more.
+func (msgs Messages) SftpTransferEtaHours(hours int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferEtaHours", map[string]any{"hours": hours})
+}
+
+// SftpTransferSpeed says "{size}/s"
+// in the language the app shows.
+//
+// The measured throughput of a Transfer.
+func SftpTransferSpeed(size string) string { return In(i18n.Locale()).SftpTransferSpeed(size) }
+
+// SftpTransferSpeed says "{size}/s"
+// in the language of msgs.
+//
+// The measured throughput of a Transfer.
+func (msgs Messages) SftpTransferSpeed(size string) string {
+	return Catalog.Format(msgs.locale, "sftpTransferSpeed", map[string]any{"size": size})
+}
+
+// SftpTransferProgress says "{done} / {total} · {percent}%"
+// in the language the app shows.
+//
+// A Transfer row's byte progress.
+func SftpTransferProgress(done string, total string, percent int) string {
+	return In(i18n.Locale()).SftpTransferProgress(done, total, percent)
+}
+
+// SftpTransferProgress says "{done} / {total} · {percent}%"
+// in the language of msgs.
+//
+// A Transfer row's byte progress.
+func (msgs Messages) SftpTransferProgress(done string, total string, percent int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferProgress", map[string]any{"done": done, "total": total, "percent": percent})
+}
+
+// SftpTransferFiles says "{done} of {total, plural, one {# file} other {# files}}"
+// in the language the app shows.
+//
+// A Transfer row's file progress before byte totals are known.
+func SftpTransferFiles(done int, total int) string {
+	return In(i18n.Locale()).SftpTransferFiles(done, total)
+}
+
+// SftpTransferFiles says "{done} of {total, plural, one {# file} other {# files}}"
+// in the language of msgs.
+//
+// A Transfer row's file progress before byte totals are known.
+func (msgs Messages) SftpTransferFiles(done int, total int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferFiles", map[string]any{"done": done, "total": total})
+}
+
+// SftpTransferItems says "{count, plural, one {# item} other {# items}}"
+// in the language the app shows.
+//
+// A Transfer row's label for a multi-file selection.
+func SftpTransferItems(count int) string { return In(i18n.Locale()).SftpTransferItems(count) }
+
+// SftpTransferItems says "{count, plural, one {# item} other {# items}}"
+// in the language of msgs.
+//
+// A Transfer row's label for a multi-file selection.
+func (msgs Messages) SftpTransferItems(count int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferItems", map[string]any{"count": count})
+}
+
+// SftpTransferUnavailable says "Transfers are unavailable."
+// in the language the app shows.
+//
+// The notice shown when no Transfer queue is wired.
+func SftpTransferUnavailable() string { return In(i18n.Locale()).SftpTransferUnavailable() }
+
+// SftpTransferUnavailable says "Transfers are unavailable."
+// in the language of msgs.
+//
+// The notice shown when no Transfer queue is wired.
+func (msgs Messages) SftpTransferUnavailable() string {
+	return Catalog.Format(msgs.locale, "sftpTransferUnavailable", nil)
+}
+
+// SftpTransferReconnectRequired says "Reconnect to this Host to resume this transfer."
+// in the language the app shows.
+//
+// The Transfer center error for a row restored by a restart.
+func SftpTransferReconnectRequired() string { return In(i18n.Locale()).SftpTransferReconnectRequired() }
+
+// SftpTransferReconnectRequired says "Reconnect to this Host to resume this transfer."
+// in the language of msgs.
+//
+// The Transfer center error for a row restored by a restart.
+func (msgs Messages) SftpTransferReconnectRequired() string {
+	return Catalog.Format(msgs.locale, "sftpTransferReconnectRequired", nil)
+}
+
+// SftpTransferNotRetryable says "This transfer cannot be retried."
+// in the language the app shows.
+//
+// The Transfer center error for a terminal row that cannot be retried.
+func SftpTransferNotRetryable() string { return In(i18n.Locale()).SftpTransferNotRetryable() }
+
+// SftpTransferNotRetryable says "This transfer cannot be retried."
+// in the language of msgs.
+//
+// The Transfer center error for a terminal row that cannot be retried.
+func (msgs Messages) SftpTransferNotRetryable() string {
+	return Catalog.Format(msgs.locale, "sftpTransferNotRetryable", nil)
+}
+
+// SftpTransferControlFailed says "The transfer could not be controlled."
+// in the language the app shows.
+//
+// The Transfer center error for a failed control action.
+func SftpTransferControlFailed() string { return In(i18n.Locale()).SftpTransferControlFailed() }
+
+// SftpTransferControlFailed says "The transfer could not be controlled."
+// in the language of msgs.
+//
+// The Transfer center error for a failed control action.
+func (msgs Messages) SftpTransferControlFailed() string {
+	return Catalog.Format(msgs.locale, "sftpTransferControlFailed", nil)
+}
+
+// SettingsBindingTransferCenter says "Open the Transfer center"
+// in the language the app shows.
+//
+// The Settings shortcut label for the local Transfer center binding.
+func SettingsBindingTransferCenter() string { return In(i18n.Locale()).SettingsBindingTransferCenter() }
+
+// SettingsBindingTransferCenter says "Open the Transfer center"
+// in the language of msgs.
+//
+// The Settings shortcut label for the local Transfer center binding.
+func (msgs Messages) SettingsBindingTransferCenter() string {
+	return Catalog.Format(msgs.locale, "settingsBindingTransferCenter", nil)
+}
