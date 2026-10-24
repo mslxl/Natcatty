@@ -10,6 +10,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
@@ -37,17 +38,29 @@ const (
 	ConflictSkip ConflictPolicy = "skip"
 	// ConflictReplace removes the destination first.
 	ConflictReplace ConflictPolicy = "replace"
-	// ConflictDuplicate writes beside the destination with a "(copy N)" name.
+	// ConflictDuplicate writes beside the destination with a "(copy)" name.
 	ConflictDuplicate ConflictPolicy = "duplicate"
+	// ConflictMerge writes into an existing directory, keeping entries that
+	// exist only at the destination.
+	ConflictMerge ConflictPolicy = "merge"
+	// ConflictAsk asks the caller for one of the other policies. A caller with
+	// no resolver treats it as stop.
+	ConflictAsk ConflictPolicy = "ask"
 )
 
 // Valid reports whether the policy is one the service knows.
 func (p ConflictPolicy) Valid() bool {
 	switch p {
-	case ConflictStop, ConflictSkip, ConflictReplace, ConflictDuplicate:
+	case ConflictStop, ConflictSkip, ConflictReplace, ConflictDuplicate,
+		ConflictMerge, ConflictAsk:
 		return true
 	}
 	return false
+}
+
+// ConflictResolution is the answer to one destination conflict.
+type ConflictResolution struct {
+	Action ConflictPolicy
 }
 
 // Progress is one snapshot of a running operation. Byte counts cover the
@@ -98,9 +111,26 @@ type CopyRequest struct {
 	// KnownTargets pins the destination root chosen by an earlier attempt, so
 	// a resumed duplicate or replacement continues in the same tree.
 	KnownTargets map[string]string
+	// ReplaceTargets and SkipTargets carry earlier per-source conflict answers
+	// through a resume. They override the request-wide policy for those
+	// sources.
+	ReplaceTargets map[string]bool
+	SkipTargets    map[string]bool
 	// FollowSymlinkDirs descends into symlinked directories. A download does
 	// this by default, matching the original; uploads and copies do not.
 	FollowSymlinkDirs bool
+	// SkipUnchanged leaves a file alone when its destination already has the
+	// same size and whole-second modification time. It applies while a
+	// directory is merged and never during a replacement.
+	SkipUnchanged bool
+	// OnConflict answers a ConflictAsk policy. A nil resolver means stop. The
+	// queue uses it to park the row as attention until the user chooses.
+	OnConflict func(domainsftp.Conflict) ConflictResolution
+	// ReserveName claims one destination path for this request. It reports
+	// false when another live Transfer already owns the path or a subtree that
+	// contains it. The queue binds it to path reservations; the engine still
+	// checks it so two requests cannot both pick the same duplicate name.
+	ReserveName func(path string, directory bool) bool
 	// OnTarget reports each resolved top-level destination before work starts,
 	// so the queue can persist it for a later resume.
 	OnTarget func(source, target string)
@@ -149,6 +179,8 @@ type plannedEntry struct {
 	Directory  bool
 	Size       int64
 	Mode       uint32
+	Modified   time.Time
+	Symlink    bool
 	Identity   string
 }
 
@@ -158,8 +190,11 @@ type plannedSource struct {
 	Source      string
 	Destination string
 	Skip        bool
-	First       int
-	Count       int
+	// Replace says the source's whole destination tree was moved aside, so no
+	// destination file can be unchanged.
+	Replace bool
+	First   int
+	Count   int
 }
 
 // copyPlan is the whole request's deterministic traversal plus its resume
@@ -258,7 +293,7 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 		// resumed one reuses the backup a pause or lost transport retained.
 		resumedSource := plan.resumedEntries > source.First
 		backup := ""
-		if policy == ConflictReplace {
+		if source.Replace {
 			if resumedSource {
 				backup, err = retainedBackup(ctx, request.Dest, kind, source.Destination)
 			} else {
@@ -278,6 +313,23 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 			result.ResumeReset = true
 			return result, restoreBackup(request.Dest, kind, source.Destination, backup, cause)
 		}
+		markDone := func(entry plannedEntry) error {
+			progress.FilesDone++
+			if accumulator != nil {
+				plan.checkpoint.CoveredEntries++
+				plan.checkpoint.CompletedEntries++
+				if err := accumulator.Append(entry.Identity); err != nil {
+					return failure(KindInternal, kind, entry.SourcePath, err)
+				}
+				plan.checkpoint.ManifestHash = accumulator.Digest()
+				if !entry.Directory {
+					plan.checkpointBytes += entry.Size
+				}
+			}
+			report(request.Source.Base(entry.SourcePath))
+			return nil
+		}
+		canSkipUnchanged := request.SkipUnchanged && !source.Replace
 		for entryIndex := source.First; entryIndex < source.First+source.Count; entryIndex++ {
 			entry := plan.entries[entryIndex]
 			if entryIndex < plan.resumedEntries {
@@ -294,6 +346,8 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 					_ = request.Dest.Chmod(ctx, entry.TargetPath, entry.Mode&domainsftp.MaxMode)
 				}
 				result.Written = append(result.Written, entry.TargetPath)
+			} else if canSkipUnchanged && !entry.Symlink && unchangedAtDestination(ctx, request.Dest, entry) {
+				result.Skipped = append(result.Skipped, entry.TargetPath)
 			} else {
 				info := domainsftp.Entry{
 					Name: request.Source.Base(entry.SourcePath),
@@ -309,19 +363,9 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 				result.Written = append(result.Written, entry.TargetPath)
 				result.Bytes += bytes
 			}
-			progress.FilesDone++
-			if accumulator != nil {
-				plan.checkpoint.CoveredEntries++
-				plan.checkpoint.CompletedEntries++
-				if err := accumulator.Append(entry.Identity); err != nil {
-					return result, failure(KindInternal, kind, entry.SourcePath, err)
-				}
-				plan.checkpoint.ManifestHash = accumulator.Digest()
-				if !entry.Directory {
-					plan.checkpointBytes += entry.Size
-				}
+			if err := markDone(entry); err != nil {
+				return result, err
 			}
-			report(request.Source.Base(entry.SourcePath))
 		}
 		if backup != "" {
 			// The new tree is in place; the old one is no longer needed. A
@@ -372,7 +416,10 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 		budget = domainsftp.NewDirectoryTraversalBudget(0, 0)
 	}
 	followSymlinks := request.FollowSymlinkDirs || kind == domainsftp.OpDownload
-	for _, source := range request.Sources {
+	// Duplicate names chosen earlier in this request are not on disk yet, so
+	// the plan remembers them; the queue's reservation covers other requests.
+	plannedNames := map[string]bool{}
+	for sourceIndex, source := range request.Sources {
 		if err := ctx.Err(); err != nil {
 			return nil, &Error{Kind: KindCancelled, Op: kind, Path: source, Cause: err}
 		}
@@ -382,17 +429,32 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 		}
 		destination := ""
 		skip := false
+		resolved := policy
 		if request.KnownTargets != nil {
 			destination = request.KnownTargets[source]
 		}
+		if destination != "" {
+			// A resumed source keeps the answers it already received: skipping
+			// it again, or continuing a replacement's partial tree.
+			skip = request.SkipTargets[source]
+			if request.ReplaceTargets[source] {
+				resolved = ConflictReplace
+			}
+			// A pinned target was chosen by an earlier attempt. Claim it again
+			// so the paused row's subtree stays reserved across the resume.
+			if !skip && request.ReserveName != nil && !request.ReserveName(destination, info.IsDir()) {
+				return nil, failure(KindReserved, kind, destination, nil)
+			}
+		}
 		if destination == "" {
-			destination, skip, err = resolveDestination(ctx, request, policy, source)
+			destination, skip, resolved, err = resolveDestination(ctx, request, policy, source,
+				info, len(request.Sources)-sourceIndex-1, plannedNames)
 			if err != nil {
 				return nil, err
 			}
 		}
 		planned := plannedSource{Source: source, Destination: destination, Skip: skip,
-			First: len(plan.entries)}
+			Replace: resolved == ConflictReplace, First: len(plan.entries)}
 		if !skip {
 			if request.OnTarget != nil {
 				request.OnTarget(source, destination)
@@ -463,6 +525,8 @@ func plannedFile(files FileSystem, info domainsftp.Entry, destination string) pl
 		TargetPath: destination,
 		Size:       info.Size,
 		Mode:       info.Mode,
+		Modified:   info.ModTime,
+		Symlink:    info.Symlink,
 		Identity: domainsftp.CreateDirectoryEntryIdentity(info.Path, destination,
 			info.Size, info.ModTime.UnixMilli()),
 	}
@@ -575,36 +639,131 @@ func traversalFailure(kind domainsftp.OperationKind, path string, cause error) e
 	return failure(KindTooLarge, kind, path, cause)
 }
 
-// resolveDestination returns the destination path, or skip when the
-// destination exists and the policy says to leave it alone.
+// resolveDestination returns the destination path, whether to skip it, and the
+// policy that actually applies after an ask. A duplicate name is chosen from
+// the names already on disk plus this request's chosen names plus the queue's
+// reservations, so two live Transfers never write the same new name.
 func resolveDestination(ctx context.Context, request CopyRequest,
-	policy ConflictPolicy, source string) (string, bool, error) {
+	policy ConflictPolicy, source string, info domainsftp.Entry, remaining int,
+	plannedNames map[string]bool) (string, bool, ConflictPolicy, error) {
+	kind := kindOf(request)
 	destination := request.Dest.Join(request.DestDir, request.Source.Base(source))
-	if policy == ConflictDuplicate {
+	name := request.Dest.Base(destination)
+	reserve := func(path string, directory bool) error {
+		if request.ReserveName != nil && !request.ReserveName(path, directory) {
+			return failure(KindReserved, kind, path, nil)
+		}
+		return nil
+	}
+	allocateDuplicate := func() (string, error) {
 		taken, err := namesIn(ctx, request.Dest, request.DestDir)
 		if err != nil {
-			return "", false, err
+			return "", err
 		}
-		destination = domainsftp.CopyName(request.Dest.Base(destination), func(name string) bool {
-			return taken[name]
+		chosen := domainsftp.CopyName(name, func(candidate string) bool {
+			if taken[candidate] {
+				return true
+			}
+			full := request.Dest.Join(request.DestDir, candidate)
+			if plannedNames[full] {
+				return true
+			}
+			if request.ReserveName != nil && !request.ReserveName(full, info.IsDir()) {
+				return true
+			}
+			return false
 		})
-		destination = request.Dest.Join(request.DestDir, destination)
-		return destination, false, nil
+		full := request.Dest.Join(request.DestDir, chosen)
+		plannedNames[full] = true
+		return full, nil
 	}
-	if _, err := request.Dest.Stat(ctx, destination); err != nil {
-		if KindOf(err) == KindNotFound {
-			return destination, false, nil
+
+	if policy == ConflictDuplicate {
+		chosen, err := allocateDuplicate()
+		if err != nil {
+			return "", false, policy, err
 		}
-		return "", false, wrap(kindOf(request), destination, err)
+		return chosen, false, policy, nil
 	}
-	switch policy {
-	case ConflictSkip:
-		return destination, true, nil
+
+	existing, err := request.Dest.Stat(ctx, destination)
+	if err != nil {
+		if KindOf(err) != KindNotFound {
+			return "", false, policy, wrap(kind, destination, err)
+		}
+		if err := reserve(destination, info.IsDir()); err != nil {
+			return "", false, policy, err
+		}
+		return destination, false, policy, nil
+	}
+
+	conflict := domainsftp.Conflict{
+		SourcePath:       source,
+		TargetPath:       destination,
+		Name:             name,
+		IsDirectory:      info.IsDir(),
+		ExistingKind:     domainsftp.ExistingKindOf(existing),
+		ExistingSize:     existing.Size,
+		ExistingModified: existing.ModTime,
+		NewSize:          info.Size,
+		NewModified:      info.ModTime,
+		Remaining:        remaining,
+		// One answer could cover this conflict and the rest of this request's
+		// top-level sources. The queue refines the count with the batch's live
+		// rows before it shows the prompt.
+		ApplyToAllCount: 1 + remaining,
+	}
+
+	action := policy
+	if action == ConflictAsk {
+		action = ConflictStop
+		if request.OnConflict != nil {
+			action = request.OnConflict(conflict).Action
+		}
+	}
+	switch action {
 	case ConflictStop:
-		return "", false, failure(KindExists, kindOf(request), destination, nil)
+		return "", false, action, failure(KindExists, kind, destination, nil)
+	case ConflictSkip:
+		return destination, true, action, nil
+	case ConflictDuplicate:
+		chosen, err := allocateDuplicate()
+		if err != nil {
+			return "", false, action, err
+		}
+		return chosen, false, action, nil
+	case ConflictMerge:
+		if !conflict.CanMerge() {
+			return "", false, action, failure(KindTypeMismatch, kind, destination, nil)
+		}
+		if err := reserve(destination, true); err != nil {
+			return "", false, action, err
+		}
+		return destination, false, action, nil
+	case ConflictReplace:
+		if !conflict.CanReplace() {
+			return "", false, action, failure(KindTypeMismatch, kind, destination, nil)
+		}
+		if err := reserve(destination, conflict.IsDirectory); err != nil {
+			return "", false, action, err
+		}
+		return destination, false, action, nil
 	default:
-		return destination, false, nil
+		return "", false, action, failure(KindInternal, kind, destination,
+			errors.New("sftp: unknown conflict action"))
 	}
+}
+
+// unchangedAtDestination reports whether the destination file already matches
+// the source by size and whole-second mtime. A failed stat is "not known to be
+// unchanged": the copy then reports the real problem instead of silently
+// skipping.
+func unchangedAtDestination(ctx context.Context, dest FileSystem, entry plannedEntry) bool {
+	existing, err := dest.Stat(ctx, entry.TargetPath)
+	if err != nil || existing.IsDir() || existing.Symlink {
+		return false
+	}
+	return domainsftp.UnchangedTransfer(entry.Size, entry.Modified, existing.Size, existing.ModTime)
 }
 
 // namesIn lists a directory's entry names for duplicate naming. A missing
@@ -681,10 +840,39 @@ func copyFile(ctx context.Context, source, dest FileSystem, info domainsftp.Entr
 		_ = dest.Chmod(ctx, temporary, info.Mode&domainsftp.MaxMode)
 	}
 	if err := dest.Rename(ctx, temporary, destination); err != nil {
-		_ = dest.Remove(context.WithoutCancel(ctx), temporary)
-		return written, wrap(domainsftp.OpCopy, destination, err)
+		err = renameOverOccupiedFile(ctx, dest, temporary, destination, err)
+		if err != nil {
+			_ = dest.Remove(context.WithoutCancel(ctx), temporary)
+			return written, wrap(domainsftp.OpCopy, destination, err)
+		}
 	}
 	return written, nil
+}
+
+// renameOverOccupiedFile retries a rename that reported the destination as
+// occupied. A merge writes files into an existing tree, and a transport
+// without posix-rename semantics reports the name instead of replacing it, so
+// the old file is removed first.
+//
+// Only a non-directory entry may be removed. An incoming file that meets a
+// destination directory is a type mismatch: deleting the directory would
+// discard its whole subtree, which no conflict policy asked for.
+func renameOverOccupiedFile(ctx context.Context, dest FileSystem, temporary, destination string,
+	cause error) error {
+	if KindOf(cause) != KindExists {
+		return cause
+	}
+	existing, err := dest.Stat(ctx, destination)
+	if err != nil {
+		return cause
+	}
+	if existing.IsDir() && !existing.Symlink {
+		return failure(KindTypeMismatch, domainsftp.OpCopy, destination, nil)
+	}
+	if err := dest.Remove(ctx, destination); err != nil {
+		return cause
+	}
+	return dest.Rename(ctx, temporary, destination)
 }
 
 // stageName is the staging file's name beside the destination. ADR-0012

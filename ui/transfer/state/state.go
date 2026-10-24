@@ -192,6 +192,17 @@ type State struct {
 	notice  string
 	problem error
 
+	// conflictShowing is the queued conflict currently in the dialog, and
+	// promptQueue holds other attention rows waiting for their turn. Several
+	// Transfers can reach a conflict at once; showing them one at a time keeps
+	// every answer tied to the row it names.
+	conflictShowing domainsftp.TaskID
+	promptQueue     []domainsftp.TaskID
+
+	// batchSeq makes each started transfer batch unique within this surface, so
+	// apply-to-all never leaks across two pastes.
+	batchSeq int
+
 	hostTargets []apptransfer.HostTarget
 	hostsLoaded bool
 	hostsLoad   bool

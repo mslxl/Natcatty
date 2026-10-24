@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // OperationKind names one user-visible file operation. The value is a stable
@@ -74,18 +75,34 @@ func ValidateName(name string) error {
 }
 
 // CopyName derives a duplicate-free name in the original's "(copy N)" form:
-// "report.txt" becomes "report (copy 1).txt" and a directory "src" becomes
-// "src (copy 1)". exists reports whether a name is already taken.
+// "report.txt" becomes "report (copy).txt", then "report (copy 2).txt", and a
+// directory "src" becomes "src (copy)" then "src (copy 2)". exists reports
+// whether a name is already taken.
 func CopyName(name string, exists func(string) bool) string {
 	if exists == nil || !exists(name) {
 		return name
 	}
 	stem, extension := splitExtension(name)
-	for number := 1; ; number++ {
-		candidate := fmt.Sprintf("%s (copy %d)%s", stem, number, extension)
+	for number := 1; number < 1000; number++ {
+		suffix := " (copy)"
+		if number > 1 {
+			suffix = fmt.Sprintf(" (copy %d)", number)
+		}
+		candidate := stem + suffix + extension
 		if !exists(candidate) {
 			return candidate
 		}
+	}
+	// A directory with a thousand copies is unusual; the original falls back to
+	// a timestamp rather than scanning forever. Advance it if that exact name
+	// was also taken, so the fallback still cannot collide.
+	stamp := time.Now().UnixMilli()
+	for {
+		candidate := fmt.Sprintf("%s (copy %d)%s", stem, stamp, extension)
+		if !exists(candidate) {
+			return candidate
+		}
+		stamp++
 	}
 }
 

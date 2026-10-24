@@ -144,7 +144,7 @@ func TestCopyDuplicatesWithCopyName(t *testing.T) {
 	local.addFile("/", "report.txt", "new", 0o644)
 	remote := newFakeFS("remote")
 	remote.addFile("/", "report.txt", "old", 0o644)
-	remote.addFile("/", "report (copy 1).txt", "older", 0o644)
+	remote.addFile("/", "report (copy).txt", "older", 0o644)
 
 	service := NewService(nil, nil)
 	if _, err := service.Copy(context.Background(), CopyRequest{

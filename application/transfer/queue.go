@@ -35,6 +35,13 @@ type TaskSpec struct {
 	Move    bool
 	// Conflict is the policy to apply. Empty means ConflictStop.
 	Conflict ConflictPolicy
+	// BatchID groups the rows one user action created. Apply-to-all answers
+	// are scoped to a batch and a conflict type; an empty value is one row.
+	BatchID string
+	// SkipUnchanged enables the size + whole-second mtime check while a merged
+	// directory is traversed. It defaults to true; set a pointer to false to
+	// turn it off.
+	SkipUnchanged *bool
 	// SourceLabel and DestLabel name the endpoints in the Transfer center.
 	SourceLabel string
 	DestLabel   string
@@ -89,6 +96,13 @@ type Queue struct {
 
 	observers []func(domainsftp.Task)
 
+	// names reserves a destination path chosen at plan time (a duplicate
+	// name). claims on each entry reserve top-level paths and directory
+	// subtrees before a worker starts. They prevent two Transfers from staging
+	// and renaming into one path.
+	names            map[string]domainsftp.TaskID
+	conflictDefaults map[string]map[string]ConflictPolicy
+
 	persistMu          sync.Mutex
 	lastCheckpointSave time.Time
 }
@@ -98,7 +112,22 @@ type queueEntry struct {
 	spec    *TaskSpec
 	running bool
 	cancel  context.CancelFunc
+	// claims are the top-level destination paths this row owns. A directory
+	// claim covers its whole subtree.
+	claims []pathClaim
+	// conflict is the live answer channel while the row waits as attention.
+	conflict chan ConflictResolution
 }
+
+// Errors returned by ResolveConflict.
+var (
+	// ErrConflictNotPending reports an answer for a row that is not waiting on
+	// a conflict, for example after a cancel already settled it.
+	ErrConflictNotPending = errors.New("transfer queue: no conflict is waiting")
+	// ErrConflictActionInvalid reports an action this conflict cannot take,
+	// such as merge into a file.
+	ErrConflictActionInvalid = errors.New("transfer queue: conflict action does not apply")
+)
 
 // QueueOption customizes a Queue.
 type QueueOption func(*Queue)
@@ -137,14 +166,16 @@ func WithQueueClock(now func() time.Time) QueueOption {
 func NewQueue(service *Service, options ...QueueOption) *Queue {
 	ctx, cancel := context.WithCancel(context.Background())
 	q := &Queue{
-		service:     service,
-		now:         time.Now,
-		concurrency: domainsftp.DefaultConcurrency,
-		retryDelay:  400 * time.Millisecond,
-		tasks:       map[domainsftp.TaskID]*queueEntry{},
-		active:      map[domainsftp.ResourceKey]int{},
-		ctx:         ctx,
-		cancel:      cancel,
+		service:          service,
+		now:              time.Now,
+		concurrency:      domainsftp.DefaultConcurrency,
+		retryDelay:       400 * time.Millisecond,
+		tasks:            map[domainsftp.TaskID]*queueEntry{},
+		active:           map[domainsftp.ResourceKey]int{},
+		names:            map[string]domainsftp.TaskID{},
+		conflictDefaults: map[string]map[string]ConflictPolicy{},
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 	for _, option := range options {
 		option(q)
@@ -253,26 +284,34 @@ func (q *Queue) Enqueue(spec TaskSpec) (domainsftp.TaskID, error) {
 	kind := kindOfSpec(spec)
 	keys := queueResourceKeys(spec)
 	now := q.now()
+	skipUnchanged := spec.SkipUnchanged == nil || *spec.SkipUnchanged
+	claims := queueClaims(spec)
 	task := domainsftp.Task{
-		ID:           newTaskID(),
-		Kind:         kind,
-		Status:       domainsftp.TaskQueued,
-		DisplayName:  spec.DisplayName,
-		Sources:      append([]string(nil), spec.Sources...),
-		DestDir:      spec.DestDir,
-		Move:         spec.Move,
-		Conflict:     string(spec.Conflict),
-		ResourceKeys: keys,
-		SourceLabel:  spec.SourceLabel,
-		DestLabel:    spec.DestLabel,
-		SourceHost:   queueHostID(spec.SourceHost, spec.SourceKey, spec.Source),
-		DestHost:     queueHostID(spec.DestHost, spec.DestKey, spec.Dest),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:            newTaskID(),
+		Kind:          kind,
+		Status:        domainsftp.TaskQueued,
+		DisplayName:   spec.DisplayName,
+		Sources:       append([]string(nil), spec.Sources...),
+		DestDir:       spec.DestDir,
+		Move:          spec.Move,
+		Conflict:      string(spec.Conflict),
+		BatchID:       spec.BatchID,
+		SkipUnchanged: skipUnchanged,
+		ResourceKeys:  keys,
+		SourceLabel:   spec.SourceLabel,
+		DestLabel:     spec.DestLabel,
+		SourceHost:    queueHostID(spec.SourceHost, spec.SourceKey, spec.Source),
+		DestHost:      queueHostID(spec.DestHost, spec.DestKey, spec.Dest),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	q.mu.Lock()
+	if err := q.reserveClaimsLocked(task.ID, spec.Dest, kind, claims); err != nil {
+		q.mu.Unlock()
+		return "", err
+	}
 	copied := specCopy(spec)
-	q.tasks[task.ID] = &queueEntry{task: task, spec: &copied}
+	q.tasks[task.ID] = &queueEntry{task: task, spec: &copied, claims: claims}
 	q.order = append(q.order, task.ID)
 	q.mu.Unlock()
 
@@ -413,6 +452,17 @@ func (q *Queue) Resume(id domainsftp.TaskID) error {
 		q.mu.Unlock()
 		return domainsftp.ErrTaskUnavailable
 	}
+	// A row restored by Reattach may have lost its claims with the old
+	// process, or another Transfer may have started in the meantime. Reclaim
+	// the paths before admitting the row again. Chosen duplicate names are
+	// pinned in Targets, so they are part of the set.
+	if len(entry.claims) == 0 {
+		entry.claims = resumeClaims(entry)
+	}
+	if err := q.reserveClaimsLocked(id, entry.spec.Dest, kindOfSpec(*entry.spec), entry.claims); err != nil {
+		q.mu.Unlock()
+		return err
+	}
 	entry.task.Status = domainsftp.TaskQueued
 	entry.task.PauseRequested = false
 	entry.task.CancelRequested = false
@@ -473,6 +523,14 @@ func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
 	}
 	copied := specCopy(spec)
 	entry.spec = &copied
+	entry.claims = queueClaims(copied)
+	entry.task.SkipUnchanged = copied.SkipUnchanged == nil || *copied.SkipUnchanged
+	if copied.BatchID != "" {
+		entry.task.BatchID = copied.BatchID
+	}
+	if copied.Conflict != "" {
+		entry.task.Conflict = string(copied.Conflict)
+	}
 	// A row persisted before the endpoints carried their Host keeps the
 	// identity the reconnecting caller supplied, so the next restart can
 	// resolve it without guessing the direction.
@@ -595,11 +653,14 @@ func (q *Queue) ReattachHost(ctx context.Context, attach HostReattach) (int, err
 			DestDir:     task.DestDir,
 			Move:        task.Move,
 			Conflict:    ConflictPolicy(task.Conflict),
+			BatchID:     task.BatchID,
 			SourceLabel: task.SourceLabel,
 			DestLabel:   task.DestLabel,
 			SourceHost:  sourceHost,
 			DestHost:    destHost,
 		}
+		skipUnchanged := task.SkipUnchanged
+		spec.SkipUnchanged = &skipUnchanged
 		if err := q.Reattach(task.ID, spec); err == nil {
 			bound++
 		}
@@ -693,6 +754,15 @@ func (q *Queue) Retry(id domainsftp.TaskID) error {
 		q.mu.Unlock()
 		return domainsftp.ErrTaskUnavailable
 	}
+	// A failed row freed its paths when it settled, so claim them again before
+	// admitting the replay; another Transfer may have taken them meanwhile.
+	// Retry replays from scratch, so it does not keep the previous attempt's
+	// pinned duplicate targets.
+	entry.claims = queueClaims(*entry.spec)
+	if err := q.reserveClaimsLocked(id, entry.spec.Dest, kindOfSpec(*entry.spec), entry.claims); err != nil {
+		q.mu.Unlock()
+		return err
+	}
 	entry.task.Status = domainsftp.TaskQueued
 	entry.task.PauseRequested = false
 	entry.task.CancelRequested = false
@@ -704,6 +774,10 @@ func (q *Queue) Retry(id domainsftp.TaskID) error {
 	entry.task.DirectoryResumeCheckpoint = nil
 	entry.task.CheckpointBytesDone = 0
 	entry.task.Targets = nil
+	entry.task.ReplaceTargets = nil
+	entry.task.SkipTargets = nil
+	entry.task.PendingConflict = nil
+	entry.task.Skipped = 0
 	entry.task.BytesDone = 0
 	entry.task.FilesDone = 0
 	entry.task.CurrentFile = ""
@@ -755,6 +829,11 @@ func (q *Queue) Cancel(id domainsftp.TaskID) error {
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
 		entry.task.Targets = nil
+		entry.task.ReplaceTargets = nil
+		entry.task.SkipTargets = nil
+		entry.task.PendingConflict = nil
+		entry.task.Skipped = 0
+		q.releaseReservationsLocked(id)
 	}
 	snapshot = entry.task.Clone()
 	q.mu.Unlock()
@@ -863,23 +942,34 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 		// after a transient failure continues from the files the previous
 		// attempt completed instead of replaying them.
 		checkpoint, targets, baseBytes := q.resumeState(id)
+		replaceTargets, skipTargets := q.attemptPolicies(id)
+		skipUnchanged := q.skipUnchanged(id)
 		progress := func(update Progress) {
 			q.recordProgress(id, update, baseBytes)
 		}
 		result, copyErr := q.service.Copy(ctx, CopyRequest{
 			// The durable Task ID seeds every staging file name, so a resumed
 			// attempt reuses the staging file an interrupted process left.
-			StageKey:     string(id),
-			Source:       spec.Source,
-			Dest:         spec.Dest,
-			Sources:      spec.Sources,
-			DestDir:      spec.DestDir,
-			Move:         spec.Move,
-			Kind:         spec.Kind,
-			Conflict:     spec.Conflict,
-			Progress:     progress,
-			Checkpoint:   checkpoint,
-			KnownTargets: targets,
+			StageKey:       string(id),
+			Source:         spec.Source,
+			Dest:           spec.Dest,
+			Sources:        spec.Sources,
+			DestDir:        spec.DestDir,
+			Move:           spec.Move,
+			Kind:           spec.Kind,
+			Conflict:       spec.Conflict,
+			Progress:       progress,
+			Checkpoint:     checkpoint,
+			KnownTargets:   targets,
+			ReplaceTargets: replaceTargets,
+			SkipTargets:    skipTargets,
+			SkipUnchanged:  skipUnchanged,
+			OnConflict: func(conflict domainsftp.Conflict) ConflictResolution {
+				return q.waitConflict(ctx, id, conflict)
+			},
+			ReserveName: func(path string, directory bool) bool {
+				return q.reserveName(id, path, directory)
+			},
 			OnTarget: func(source, target string) {
 				q.recordTarget(id, source, target)
 			},
@@ -888,10 +978,19 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 			},
 		})
 		err = copyErr
+		if len(result.Skipped) > 0 {
+			q.recordSkipped(id, len(result.Skipped))
+		}
 		if result.ResumeReset {
 			// The copy put the original destination back, so the checkpoint
 			// no longer describes it; a retry or resume must start over.
 			q.clearResumeState(id)
+		}
+		if err != nil && ctx.Err() != nil && KindOf(err) != KindCancelled {
+			// A shutdown or cancel while the row waited for a conflict answer
+			// surfaces as the stop action's exists error; the context is the
+			// real cause and must settle the row as cancelled, not failed.
+			err = &Error{Kind: KindCancelled, Op: spec.Kind, Path: spec.DestDir, Cause: ctx.Err()}
 		}
 		if err == nil || KindOf(err) == KindCancelled || ctx.Err() != nil {
 			break
@@ -933,6 +1032,487 @@ func (q *Queue) resumeState(id domainsftp.TaskID) (*domainsftp.DirectoryCheckpoi
 		}
 	}
 	return checkpoint, targets, entry.task.CheckpointBytesDone
+}
+
+// attemptPolicies snapshots the per-source conflict answers and the
+// skip-unchanged setting for one copy attempt.
+func (q *Queue) attemptPolicies(id domainsftp.TaskID) (map[string]bool, map[string]bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil {
+		return nil, nil
+	}
+	replace := copyBoolMap(entry.task.ReplaceTargets)
+	skip := copyBoolMap(entry.task.SkipTargets)
+	return replace, skip
+}
+
+// skipUnchanged reports whether the row's merged directories use the
+// size + whole-second mtime check. A row saved before the field existed
+// defaults to enabled, matching the original setting.
+func (q *Queue) skipUnchanged(id domainsftp.TaskID) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil {
+		return true
+	}
+	if entry.spec != nil && entry.spec.SkipUnchanged == nil && !entry.task.SkipUnchanged {
+		// The row was created before the setting was recorded; the queue's
+		// default is enabled.
+		return true
+	}
+	return entry.task.SkipUnchanged
+}
+
+func copyBoolMap(source map[string]bool) map[string]bool {
+	if source == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(source))
+	for key, value := range source {
+		out[key] = value
+	}
+	return out
+}
+
+// recordSkipped adds the entries this attempt left untouched to the row's
+// visible skipped count.
+func (q *Queue) recordSkipped(id domainsftp.TaskID, count int) {
+	if count <= 0 {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil || entry.task.CancelRequested {
+		return
+	}
+	entry.task.Skipped += count
+}
+
+// waitConflict parks the running row as attention and waits for one answer.
+// The engine calls it from the worker goroutine; ResolveConflict answers it.
+// A context cancellation (cancel, pause, shutdown, lost transport) returns
+// stop so the engine unwinds and settle records the real cause.
+func (q *Queue) waitConflict(ctx context.Context, id domainsftp.TaskID,
+	conflict domainsftp.Conflict) ConflictResolution {
+	q.mu.Lock()
+	entry := q.tasks[id]
+	if entry == nil {
+		q.mu.Unlock()
+		return ConflictResolution{Action: ConflictStop}
+	}
+	if action, ok := q.conflictDefaults[taskBatchKey(entry.task)][conflict.TypeKey()]; ok {
+		q.mu.Unlock()
+		return ConflictResolution{Action: action}
+	}
+	conflict.ApplyToAllCount = q.applyToAllCountLocked(entry.task, conflict)
+	entry.task.Status = domainsftp.TaskAttention
+	entry.task.PendingConflict = &conflict
+	entry.task.Speed = 0
+	entry.task.UpdatedAt = q.now()
+	waiter := make(chan ConflictResolution, 1)
+	entry.conflict = waiter
+	snapshot := entry.task.Clone()
+	q.mu.Unlock()
+
+	q.emit(snapshot)
+	q.persist()
+
+	var answer ConflictResolution
+	select {
+	case answer = <-waiter:
+	case <-ctx.Done():
+		answer = ConflictResolution{Action: ConflictStop}
+	}
+
+	q.mu.Lock()
+	if entry.conflict == waiter {
+		entry.conflict = nil
+	}
+	entry.task.PendingConflict = nil
+	if answer.Action == ConflictReplace && conflict.SourcePath != "" {
+		if entry.task.ReplaceTargets == nil {
+			entry.task.ReplaceTargets = map[string]bool{}
+		}
+		entry.task.ReplaceTargets[conflict.SourcePath] = true
+	}
+	if answer.Action == ConflictSkip && conflict.SourcePath != "" {
+		if entry.task.SkipTargets == nil {
+			entry.task.SkipTargets = map[string]bool{}
+		}
+		entry.task.SkipTargets[conflict.SourcePath] = true
+	}
+	if !entry.task.CancelRequested && !entry.task.PauseRequested && ctx.Err() == nil {
+		entry.task.Status = domainsftp.TaskTransferring
+		entry.task.Error = ""
+		entry.task.Err = nil
+	}
+	entry.task.UpdatedAt = q.now()
+	settled := entry.task.Clone()
+	q.mu.Unlock()
+
+	q.emit(settled)
+	q.persist()
+	return answer
+}
+
+// applyToAllCountLocked estimates how many conflicts one answer could cover:
+// the rest of this request plus the other live rows in the same batch that do
+// not already wait on a different destination type. An answer is keyed by the
+// conflict type, so a sibling waiting on another type is not covered.
+func (q *Queue) applyToAllCountLocked(task domainsftp.Task, conflict domainsftp.Conflict) int {
+	count := 1 + conflict.Remaining
+	batch := taskBatchKey(task)
+	for id, other := range q.tasks {
+		if id == task.ID || other.task.Terminal() || taskBatchKey(other.task) != batch {
+			continue
+		}
+		if other.task.Status == domainsftp.TaskAttention && other.task.PendingConflict != nil &&
+			other.task.PendingConflict.TypeKey() != conflict.TypeKey() {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// ResolveConflict answers the destination conflict a row is waiting on. With
+// applyToAll, later conflicts of the same type in the same batch take the same
+// action without asking again, and any sibling already waiting with that type
+// is answered too. Without it, only the row that asked is answered; its
+// siblings keep their own prompts. Stop cancels the whole batch, matching the
+// original.
+func (q *Queue) ResolveConflict(id domainsftp.TaskID, action ConflictPolicy, applyToAll bool) error {
+	if q == nil {
+		return ErrConflictNotPending
+	}
+	if !action.Valid() || action == ConflictAsk {
+		return ErrConflictActionInvalid
+	}
+	now := q.now()
+	var (
+		cancels   []context.CancelFunc
+		snapshots []domainsftp.Task
+	)
+	q.mu.Lock()
+	entry := q.tasks[id]
+	if entry == nil {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskNotFound
+	}
+	conflict := entry.task.PendingConflict
+	if conflict == nil || entry.task.Status != domainsftp.TaskAttention || entry.conflict == nil {
+		q.mu.Unlock()
+		return ErrConflictNotPending
+	}
+	if action == ConflictMerge && !conflict.CanMerge() {
+		q.mu.Unlock()
+		return ErrConflictActionInvalid
+	}
+	if action == ConflictReplace && !conflict.CanReplace() {
+		q.mu.Unlock()
+		return ErrConflictActionInvalid
+	}
+	batch := taskBatchKey(entry.task)
+	if applyToAll {
+		if q.conflictDefaults[batch] == nil {
+			q.conflictDefaults[batch] = map[string]ConflictPolicy{}
+		}
+		q.conflictDefaults[batch][conflict.TypeKey()] = action
+	}
+	answer := ConflictResolution{Action: action}
+	// Answer the row that asked. A buffered send never blocks the control path.
+	if entry.conflict != nil {
+		select {
+		case entry.conflict <- answer:
+		default:
+		}
+	}
+	if applyToAll {
+		// An apply-to-all answer covers the siblings already waiting with the
+		// same conflict type. Without it every sibling keeps its own prompt.
+		for _, other := range q.tasks {
+			if other == entry || other.task.Terminal() || taskBatchKey(other.task) != batch {
+				continue
+			}
+			if other.task.Status == domainsftp.TaskAttention && other.task.PendingConflict != nil &&
+				other.task.PendingConflict.TypeKey() == conflict.TypeKey() && other.conflict != nil {
+				select {
+				case other.conflict <- answer:
+				default:
+				}
+			}
+		}
+	}
+	if action == ConflictStop {
+		// A stop means stop this batch, not only this entry. A running row is
+		// asked to stop; one that has not started is settled at once.
+		for _, other := range q.tasks {
+			if other.task.Terminal() || taskBatchKey(other.task) != batch {
+				continue
+			}
+			if other.running {
+				if other.task.CancelRequested {
+					continue
+				}
+				other.task.CancelRequested = true
+				other.task.PauseRequested = false
+				other.task.Epoch++
+				other.task.UpdatedAt = now
+				if other.cancel != nil {
+					cancels = append(cancels, other.cancel)
+				}
+				continue
+			}
+			other.task.Status = domainsftp.TaskCancelled
+			other.task.CancelRequested = false
+			other.task.PauseRequested = false
+			other.task.Speed = 0
+			other.task.Error = ""
+			other.task.Err = nil
+			other.task.PendingConflict = nil
+			other.task.FinishedAt = now
+			other.task.UpdatedAt = now
+			other.task.DirectoryResumeCheckpoint = nil
+			other.task.CheckpointBytesDone = 0
+			other.task.Targets = nil
+			other.task.ReplaceTargets = nil
+			other.task.SkipTargets = nil
+			other.task.Skipped = 0
+			q.releaseReservationsLocked(other.task.ID)
+			snapshots = append(snapshots, other.task.Clone())
+		}
+	}
+	q.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	for _, snapshot := range snapshots {
+		q.emit(snapshot)
+	}
+	q.persist()
+	q.pump()
+	return nil
+}
+
+// reserveName claims one plan-time destination name for a row. It reports
+// false when another live row owns the exact path or a directory subtree that
+// contains it.
+func (q *Queue) reserveName(id domainsftp.TaskID, path string, directory bool) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil || entry.spec == nil {
+		return false
+	}
+	claim := newPathClaim(entry.spec.Dest, path, directory)
+	if owner, ok := q.names[claim.key]; ok && owner != id && q.reservationLiveLocked(owner) {
+		return false
+	}
+	for otherID, other := range q.tasks {
+		if otherID == id || !reservationActive(other.task.Status) {
+			continue
+		}
+		for _, existing := range other.claims {
+			if claimsOverlap(claim, existing) {
+				return false
+			}
+		}
+	}
+	q.names[claim.key] = id
+	// Keep the plan-time claim with the row as well, so a later Enqueue's
+	// overlap check sees directory subtrees and not only exact names.
+	upgraded := false
+	for index := range entry.claims {
+		if entry.claims[index].key == claim.key {
+			entry.claims[index].directory = entry.claims[index].directory || directory
+			upgraded = true
+			break
+		}
+	}
+	if !upgraded {
+		entry.claims = append(entry.claims, claim)
+	}
+	return true
+}
+
+// reserveClaimsLocked rejects a row whose top-level destination is already
+// owned by a live row. The caller holds q.mu.
+func (q *Queue) reserveClaimsLocked(id domainsftp.TaskID, dest FileSystem,
+	kind domainsftp.OperationKind, claims []pathClaim) error {
+	for _, claim := range claims {
+		if owner, ok := q.names[claim.key]; ok && owner != id && q.reservationLiveLocked(owner) {
+			return failure(KindReserved, kind, claim.path, nil)
+		}
+		for otherID, other := range q.tasks {
+			if otherID == id || !reservationActive(other.task.Status) {
+				continue
+			}
+			for _, existing := range other.claims {
+				if claimsOverlap(claim, existing) {
+					return failure(KindReserved, kind, claim.path, nil)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// reservationLiveLocked reports whether a name's owner still holds its path.
+func (q *Queue) reservationLiveLocked(id domainsftp.TaskID) bool {
+	entry := q.tasks[id]
+	return entry != nil && reservationActive(entry.task.Status)
+}
+
+// releaseReservationsLocked drops one row's claims and plan-time names. The
+// caller holds q.mu.
+func (q *Queue) releaseReservationsLocked(id domainsftp.TaskID) {
+	if entry := q.tasks[id]; entry != nil {
+		entry.claims = nil
+	}
+	for key, owner := range q.names {
+		if owner == id {
+			delete(q.names, key)
+		}
+	}
+}
+
+// reservationActive reports the statuses that still hold or may soon hold a
+// destination. Attention waits before writing but owns the path it asked
+// about, so a second writer would race it. An interrupted row has no worker
+// and is not active; it must re-reserve when resumed.
+func reservationActive(status domainsftp.TaskStatus) bool {
+	switch status {
+	case domainsftp.TaskPending, domainsftp.TaskQueued, domainsftp.TaskTransferring,
+		domainsftp.TaskPausing, domainsftp.TaskPaused, domainsftp.TaskAttention:
+		return true
+	}
+	return false
+}
+
+// pathClaim is one normalized destination reservation. A directory claim
+// covers its whole subtree; a file claim covers only its exact path.
+type pathClaim struct {
+	key       string
+	path      string
+	backing   string
+	directory bool
+	separator string
+}
+
+func newPathClaim(files FileSystem, path string, directory bool) pathClaim {
+	canonical := files.Canonical(path)
+	separator := "/"
+	if files.Style() == StyleWindows {
+		separator = `\`
+		canonical = strings.ToLower(canonical)
+	}
+	canonical = trimClaimPath(canonical, separator)
+	backing := files.Backing()
+	if backing == "" {
+		backing = "local"
+	}
+	return pathClaim{
+		key:       backing + "\x00" + canonical,
+		path:      canonical,
+		backing:   backing,
+		directory: directory,
+		separator: separator,
+	}
+}
+
+// trimClaimPath removes trailing separators except for a filesystem root, so
+// "/a/b/" and "/a/b" name one path.
+func trimClaimPath(path, separator string) string {
+	if path == separator {
+		return path
+	}
+	trimmed := strings.TrimRight(path, separator)
+	if trimmed == "" {
+		return separator
+	}
+	return trimmed
+}
+
+// claimsOverlap reports whether two reservations cannot be held by different
+// writers. Exact paths always collide; a directory collides with anything
+// below it, in either direction.
+func claimsOverlap(a, b pathClaim) bool {
+	if a.backing != b.backing {
+		return false
+	}
+	if a.key == b.key {
+		return true
+	}
+	if a.directory && claimWithin(a.path, a.separator, b.path) {
+		return true
+	}
+	if b.directory && claimWithin(b.path, b.separator, a.path) {
+		return true
+	}
+	return false
+}
+
+// claimWithin reports whether child is a strict descendant of parent.
+func claimWithin(parent, separator, child string) bool {
+	if parent == "" || child == "" || parent == child {
+		return false
+	}
+	if !strings.HasSuffix(parent, separator) {
+		parent += separator
+	}
+	return strings.HasPrefix(child, parent)
+}
+
+// queueClaims resolves the top-level destination each source reserves before
+// its worker starts. It needs only the paths: the plan upgrades a claim to a
+// subtree once it knows the source is a directory, so enqueueing never does a
+// transport round trip on the caller's (UI) thread. A duplicate policy has no
+// fixed name until its plan runs, so it reserves nothing here; the plan claims
+// the chosen name instead.
+func queueClaims(spec TaskSpec) []pathClaim {
+	if spec.Conflict == ConflictDuplicate || spec.Source == nil || spec.Dest == nil {
+		return nil
+	}
+	claims := make([]pathClaim, 0, len(spec.Sources))
+	for _, source := range spec.Sources {
+		target := spec.Dest.Join(spec.DestDir, spec.Source.Base(source))
+		claims = append(claims, newPathClaim(spec.Dest, target, false))
+	}
+	return claims
+}
+
+// resumeClaims rebuilds a row's reservations when it is admitted again after a
+// failure. A duplicate row's chosen names are pinned in Targets, so they are
+// claimed too even though a duplicate has no fixed top-level destination.
+func resumeClaims(entry *queueEntry) []pathClaim {
+	claims := queueClaims(*entry.spec)
+	seen := make(map[string]bool, len(claims))
+	for _, claim := range claims {
+		seen[claim.key] = true
+	}
+	for _, target := range entry.task.Targets {
+		claim := newPathClaim(entry.spec.Dest, target, false)
+		if seen[claim.key] {
+			continue
+		}
+		seen[claim.key] = true
+		claims = append(claims, claim)
+	}
+	return claims
+}
+
+// taskBatchKey groups one user action's rows. A row without an explicit batch
+// is its own batch.
+func taskBatchKey(task domainsftp.Task) string {
+	if task.BatchID != "" {
+		return task.BatchID
+	}
+	return string(task.ID)
 }
 
 // recordTarget persists the destination root resolved for one top-level
@@ -982,6 +1562,8 @@ func (q *Queue) clearResumeState(id domainsftp.TaskID) {
 	entry.task.DirectoryResumeCheckpoint = nil
 	entry.task.CheckpointBytesDone = 0
 	entry.task.Targets = nil
+	entry.task.ReplaceTargets = nil
+	entry.task.SkipTargets = nil
 	entry.task.FilesDone = 0
 	entry.task.BytesDone = 0
 	entry.task.CurrentFile = ""
@@ -1080,6 +1662,9 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 	}
 	q.running--
 	now := q.now()
+	// A worker that settles is no longer waiting on an answer.
+	entry.conflict = nil
+	entry.task.PendingConflict = nil
 	cancelled := entry.task.CancelRequested ||
 		(!entry.task.PauseRequested && err != nil && KindOf(err) == KindCancelled)
 	entry.task.ReconnectRequired = false
@@ -1093,6 +1678,8 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
 		entry.task.Targets = nil
+		entry.task.ReplaceTargets = nil
+		entry.task.SkipTargets = nil
 	case entry.task.PauseRequested:
 		entry.task.Status = domainsftp.TaskPaused
 		entry.task.Error = ""
@@ -1121,9 +1708,33 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		entry.task.DirectoryResumeCheckpoint = nil
 		entry.task.CheckpointBytesDone = 0
 		entry.task.Targets = nil
+		entry.task.ReplaceTargets = nil
+		entry.task.SkipTargets = nil
 	}
 	if entry.task.Terminal() {
 		entry.task.FinishedAt = now
+	}
+	// The worker is gone, but a paused or interrupted row will continue into
+	// the destinations it already claimed, so it keeps them until it is
+	// terminal. Releasing here would let another Transfer take a paused
+	// duplicate's chosen name.
+	if entry.task.Terminal() {
+		q.releaseReservationsLocked(id)
+	}
+	// Apply-to-all answers end with the batch's last live row.
+	batch := taskBatchKey(entry.task)
+	if _, ok := q.conflictDefaults[batch]; ok {
+		live := false
+		for otherID, other := range q.tasks {
+			if otherID == id || other.task.Terminal() || taskBatchKey(other.task) != batch {
+				continue
+			}
+			live = true
+			break
+		}
+		if !live {
+			delete(q.conflictDefaults, batch)
+		}
 	}
 	entry.task.Speed = 0
 	entry.task.UpdatedAt = now
