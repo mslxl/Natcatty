@@ -329,6 +329,21 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 			d.shell.ShowSFTP()
 			d.transfer.EnsureStarted()
 		}, true
+	case "transfer-center":
+		if d.transfer == nil {
+			return nil, false
+		}
+		// The center lives on the SFTP surface, so opening it from a terminal
+		// also reveals that surface; pressing the chord again closes it.
+		return func(int) {
+			if d.transfer.CenterOpen() {
+				d.transfer.CloseCenter()
+				return
+			}
+			d.shell.ShowSFTP()
+			d.transfer.EnsureStarted()
+			d.transfer.OpenCenter()
+		}, true
 	case "open-local":
 		return func(int) { _ = d.shell.NewTab() }, true
 	case "broadcast":

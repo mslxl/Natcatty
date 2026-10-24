@@ -151,7 +151,7 @@ func TestSetBindingRejectsMalformedChords(t *testing.T) {
 func TestActiveFollowsTheScheme(t *testing.T) {
 	service, _ := newService(t)
 	pc := service.Active()
-	if len(pc) != 40 {
+	if len(pc) != 41 {
 		t.Errorf("PC active = %d", len(pc))
 	}
 	if err := service.SetScheme(domain.SchemeDisabled); err != nil {
