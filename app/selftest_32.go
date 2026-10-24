@@ -17,8 +17,9 @@ package app
 //   - The checkpoint limits and the symlink-depth limit are the production
 //     values and the traversal budget rejects a directory or entry overrun.
 //   - After a queue restart the row is interrupted with reconnect required,
-//     keeps its checkpoint, and Reattach plus Resume continues it without
-//     re-copying the completed prefix.
+//     keeps its checkpoint, and reconnecting the Host in the SFTP pane
+//     reattaches it through the production State.OpenRemote path; Resume then
+//     continues it without re-copying the completed prefix.
 //
 // The check drives the same Queue and State controls the app wires. Every
 // wait polls a real task state or the persisted repository with a hard
@@ -89,7 +90,7 @@ func (t *selftest32) check() selftest.Check {
 			{Name: "resume-skips-completed-files", Run: t.resumeStep},
 			{Name: "pause-and-cancel-latches", Run: t.latchStep},
 			{Name: "enforce-checkpoint-limits-and-symlink-depth", Run: t.limitsStep},
-			{Name: "restart-resumes-after-reattach", Run: t.restartStep},
+			{Name: "host-reconnect-resumes-after-restart", Run: t.restartStep},
 		},
 	}
 }
@@ -127,13 +128,32 @@ func (r *selftest32Repo) task(id domainsftp.TaskID) (domainsftp.Task, bool) {
 	return domainsftp.Task{}, false
 }
 
-// selftest32Local is a local-only opener; any remote request says so.
-type selftest32Local struct {
-	*adaptersftp.Local
+// selftest32Remote names the restart fixture's gated filesystem as a saved
+// Host's connection, so the surface's reconnect path treats it as live.
+type selftest32Remote struct {
+	apptransfer.FileSystem
 }
 
-func (selftest32Local) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
-	return nil, fmt.Errorf("the ticket 32 self-test has no remote host")
+func (selftest32Remote) Backing() string { return "remote:loopback" }
+
+// selftest32Opener opens local panes and reconnects the "loopback" Host over
+// the restart fixture's gated filesystem. Every handle wraps the same gate,
+// so the Open counts include the resumed attempt and prove the checkpointed
+// prefix was skipped.
+type selftest32Opener struct {
+	local  *adaptersftp.Local
+	remote apptransfer.FileSystem
+}
+
+func (o selftest32Opener) OpenLocal(ctx context.Context) (apptransfer.FileSystem, error) {
+	return o.local.OpenLocal(ctx)
+}
+
+func (o selftest32Opener) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
+	if o.remote == nil {
+		return nil, fmt.Errorf("the ticket 32 self-test has no remote host")
+	}
+	return selftest32Remote{FileSystem: o.remote}, nil
 }
 
 type selftest32Bindings struct{}
@@ -241,13 +261,16 @@ func (t *selftest32) setup() error {
 	}
 
 	t.repo = &selftest32Repo{}
-	opener := selftest32Local{Local: adaptersftp.NewLocal()}
-	t.service = apptransfer.NewService(opener, opener)
-	files, err := t.service.OpenLocal(context.Background())
+	local := adaptersftp.NewLocal()
+	files, err := local.OpenLocal(context.Background())
 	if err != nil {
 		return err
 	}
 	t.files = files
+	t.restartGate = newSelftest32Gate(files,
+		filepath.Join(workdir, "restart-source", "c.txt"), false)
+	opener := selftest32Opener{local: local, remote: t.restartGate}
+	t.service = apptransfer.NewService(opener, opener)
 	t.queue = apptransfer.NewQueue(t.service,
 		apptransfer.WithQueueConcurrency(1),
 		apptransfer.WithQueueRepository(t.repo),
@@ -627,8 +650,10 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 	case 0:
 		t.deadline = time.Now().Add(selftest32Wait)
 		source := filepath.Join(t.workdir, "restart-source")
-		t.restartGate = newSelftest32Gate(t.files, filepath.Join(source, "c.txt"), false)
-		t.restartSpec = t.directorySpec(t.restartGate, source, filepath.Join(t.workdir, "out-restart"))
+		t.restartSpec = t.directorySpec(selftest32Remote{FileSystem: t.restartGate},
+			source, filepath.Join(t.workdir, "out-restart"))
+		t.restartSpec.SourceLabel = "Loopback"
+		t.restartSpec.DestLabel = "local"
 		id, err := t.queue.Enqueue(t.restartSpec)
 		if err != nil {
 			return selftest.Failed(fmt.Errorf("enqueue the restart transfer: %v", err))
@@ -677,27 +702,60 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 		if restored.Status != domainsftp.TaskInterrupted || !restored.ReconnectRequired {
 			return selftest.Failed(fmt.Errorf("the restored row = %+v, want interrupted and reconnect-required", restored))
 		}
+		if restored.SourceHost != "loopback" {
+			return selftest.Failed(fmt.Errorf("the restored row lost its Host identity: %+v", restored))
+		}
 		if restored.DirectoryResumeCheckpoint == nil ||
 			restored.DirectoryResumeCheckpoint.CompletedEntries != 3 {
 			return selftest.Failed(fmt.Errorf("the restart lost the checkpoint: %+v", restored.DirectoryResumeCheckpoint))
 		}
-		if err := restarted.Resume(t.restartID); !errors.Is(err, domainsftp.ErrTaskUnavailable) {
-			return selftest.Failed(fmt.Errorf("Resume before Reattach = %v, want ErrTaskUnavailable", err))
+		// Relaunch the surface around the restored queue, as the app does at
+		// startup. The reconnect, not a direct Queue.Reattach, must bind the
+		// new filesystems.
+		t.state.Shutdown()
+		t.state = transferstate.NewState(t.service,
+			transferstate.WithQueue(restarted))
+		// The prompt must stay truthful while the Host is not connected.
+		t.state.ResumeTransfer(t.restartID)
+		if code := t.state.CenterError(); code != "transfer-reconnect-required" {
+			return selftest.Failed(fmt.Errorf("Resume before the Host reconnect reports %q, want transfer-reconnect-required", code))
 		}
-		if err := restarted.Reattach(t.restartID, t.restartSpec); err != nil {
-			return selftest.Failed(fmt.Errorf("reattach the restored row: %v", err))
-		}
-		reattached, _ := restarted.Task(t.restartID)
-		if reattached.ReconnectRequired || reattached.Status != domainsftp.TaskInterrupted {
-			return selftest.Failed(fmt.Errorf("the reattached row = %+v", reattached))
-		}
-		close(t.restartGate.release)
-		if err := restarted.Resume(t.restartID); err != nil {
-			return selftest.Failed(fmt.Errorf("resume after reattach: %v", err))
+		if task, _ := restarted.Task(t.restartID); task.Status != domainsftp.TaskInterrupted {
+			return selftest.Failed(fmt.Errorf("Resume before the Host reconnect moved the row to %q", task.Status))
 		}
 		t.restartPhase = 3
 		return selftest.Pending
 	case 3:
+		// Reconnecting the Host in the SFTP pane is the product's reconnect
+		// path; the surface binds the live filesystem to the restored row.
+		t.state.Flush()
+		t.state.OpenRemote(transferstate.Right, "loopback", "Loopback")
+		t.restartPhase = 4
+		return selftest.Pending
+	case 4:
+		t.state.Flush()
+		reattached, ok := t.task(t.restartID)
+		if !ok {
+			return selftest.Failed(fmt.Errorf("the restored restart row disappeared"))
+		}
+		if reattached.ReconnectRequired {
+			if right := t.state.Tab(transferstate.Right); right != nil && right.Problem != nil {
+				return selftest.Failed(fmt.Errorf("the Host reconnect failed: %v", right.Problem))
+			}
+			return t.expired("the Host reconnect to reattach the restored row")
+		}
+		if reattached.Status != domainsftp.TaskInterrupted {
+			return selftest.Failed(fmt.Errorf("the Host reconnect auto-started the row: %+v", reattached))
+		}
+		close(t.restartGate.release)
+		t.state.ResumeTransfer(t.restartID)
+		if code := t.state.CenterError(); code != "" {
+			return selftest.Failed(fmt.Errorf("Resume after the Host reconnect reports %q", code))
+		}
+		t.restartPhase = 5
+		return selftest.Pending
+	case 5:
+		t.state.Flush()
 		task, ok := t.task(t.restartID)
 		if !ok {
 			return selftest.Failed(fmt.Errorf("the resumed restart row disappeared"))
@@ -730,8 +788,8 @@ func (t *selftest32) restartStep(*ui.Context) selftest.Outcome {
 		}
 		t.finished = true
 		return selftest.Passed(
-			"a restarted queue kept the row interrupted with reconnect required and its checkpoint; Reattach plus Resume finished it without reopening the two completed files",
-			"apptransfer.Queue.Reattach + domainsftp.DirectoryResumeCheckpoint")
+			"a restarted queue kept the row interrupted with reconnect required and its checkpoint; reconnecting the Host in the SFTP pane reattached the row, and Resume finished it without reopening the two completed files",
+			"transferstate.State.OpenRemote -> apptransfer.Queue.ReattachHost")
 	}
 	return selftest.Failed(fmt.Errorf("unexpected restart phase %d", t.restartPhase))
 }

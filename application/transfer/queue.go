@@ -44,6 +44,12 @@ type TaskSpec struct {
 	// callers that know a Session identity the filesystem's Backing omits.
 	SourceKey domainsftp.ResourceKey
 	DestKey   domainsftp.ResourceKey
+	// SourceHost and DestHost name the saved Hosts behind the endpoints; an
+	// empty value is the local device. Enqueue derives them from the
+	// filesystem's Backing when a caller leaves them empty, and the queue
+	// persists them so a reconnect can rebuild the request.
+	SourceHost string
+	DestHost   string
 }
 
 // QueueStats is a point-in-time scheduler summary.
@@ -259,6 +265,8 @@ func (q *Queue) Enqueue(spec TaskSpec) (domainsftp.TaskID, error) {
 		ResourceKeys: keys,
 		SourceLabel:  spec.SourceLabel,
 		DestLabel:    spec.DestLabel,
+		SourceHost:   queueHostID(spec.SourceHost, spec.SourceKey, spec.Source),
+		DestHost:     queueHostID(spec.DestHost, spec.DestKey, spec.Dest),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -465,6 +473,15 @@ func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
 	}
 	copied := specCopy(spec)
 	entry.spec = &copied
+	// A row persisted before the endpoints carried their Host keeps the
+	// identity the reconnecting caller supplied, so the next restart can
+	// resolve it without guessing the direction.
+	if entry.task.SourceHost == "" {
+		entry.task.SourceHost = copied.SourceHost
+	}
+	if entry.task.DestHost == "" {
+		entry.task.DestHost = copied.DestHost
+	}
 	entry.task.ReconnectRequired = false
 	entry.task.Error = ""
 	entry.task.Err = nil
@@ -481,6 +498,177 @@ func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
 	q.persist()
 	q.pump()
 	return nil
+}
+
+// HostReattach is the live side of one Host reconnect. Host names the saved
+// Host whose SFTP connection was just established, Remote is that Host's
+// fresh filesystem, and Peers maps any other connected Hosts to their live
+// filesystems. OpenLocal opens a local filesystem for a row whose other
+// endpoint is the local device.
+type HostReattach struct {
+	Host   string
+	Remote FileSystem
+	Peers  map[string]FileSystem
+	// OpenLocal opens the local peer once, shared by every rebound row. A nil
+	// opener leaves rows with a local peer reconnect-required.
+	OpenLocal func(context.Context) (FileSystem, error)
+}
+
+// ReattachHost binds live filesystems to the interrupted rows that used the
+// Host just reconnected, keeping each row's durable request and directory
+// checkpoint so Resume continues rather than replays. It binds every matching
+// row. A row whose other endpoint has no live filesystem is left alone, so
+// the reconnect prompt stays truthful. It returns how many rows it rebound
+// and the first local-open failure that stopped a row.
+func (q *Queue) ReattachHost(ctx context.Context, attach HostReattach) (int, error) {
+	if q == nil || attach.Host == "" || attach.Remote == nil {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var (
+		local      FileSystem
+		localErr   error
+		localTried bool
+		firstErr   error
+	)
+	peer := func(host string) (FileSystem, bool) {
+		if host != "" {
+			// A copy inside one Host has that Host on both endpoints.
+			if host == attach.Host {
+				return attach.Remote, true
+			}
+			files := attach.Peers[host]
+			return files, files != nil
+		}
+		if !localTried {
+			localTried = true
+			if attach.OpenLocal == nil {
+				localErr = domainsftp.ErrTaskUnavailable
+			} else {
+				local, localErr = attach.OpenLocal(ctx)
+			}
+		}
+		if localErr != nil {
+			if firstErr == nil {
+				firstErr = localErr
+			}
+			return nil, false
+		}
+		if local == nil {
+			return nil, false
+		}
+		return local, true
+	}
+
+	bound := 0
+	for _, task := range q.Tasks() {
+		// Only rows a reconnect can continue: a restart downgrades unfinished
+		// work to interrupted, and a lost transport settles it as failed with
+		// the reconnect flag set. An ordinary failure has nothing to continue,
+		// so it must not be revived by an unrelated reconnect.
+		if task.Status != domainsftp.TaskInterrupted && !task.ReconnectRequired {
+			continue
+		}
+		sourceHost, destHost, usesHost := taskHostEndpoints(task, attach.Host)
+		if !usesHost {
+			continue
+		}
+		var source, dest FileSystem
+		var ok bool
+		if sourceHost == attach.Host {
+			source = attach.Remote
+			dest, ok = peer(destHost)
+		} else {
+			dest = attach.Remote
+			source, ok = peer(sourceHost)
+		}
+		if !ok {
+			continue
+		}
+		spec := TaskSpec{
+			Kind:        task.Kind,
+			Source:      source,
+			Dest:        dest,
+			Sources:     append([]string(nil), task.Sources...),
+			DestDir:     task.DestDir,
+			Move:        task.Move,
+			Conflict:    ConflictPolicy(task.Conflict),
+			SourceLabel: task.SourceLabel,
+			DestLabel:   task.DestLabel,
+			SourceHost:  sourceHost,
+			DestHost:    destHost,
+		}
+		if err := q.Reattach(task.ID, spec); err == nil {
+			bound++
+		}
+	}
+	return bound, firstErr
+}
+
+// taskHostEndpoints resolves which endpoint of a durable row is the Host that
+// reconnected. Rows persisted before the endpoints recorded their Host fall
+// back to the request's queue lanes.
+func taskHostEndpoints(task domainsftp.Task, host string) (sourceHost, destHost string, ok bool) {
+	sourceHost, destHost = task.SourceHost, task.DestHost
+	if sourceHost == "" && destHost == "" {
+		if sourceHost, destHost, ok = legacyHostEndpoints(task); !ok {
+			return "", "", false
+		}
+	}
+	if sourceHost != host && destHost != host {
+		return "", "", false
+	}
+	return sourceHost, destHost, true
+}
+
+// legacyHostEndpoints infers the endpoints of a row persisted before
+// SourceHost/DestHost existed. ResourceKeys are stored in request order
+// (source, destination) and skip a duplicate lane, so two lanes map directly.
+// One lane means both endpoints share that Backing, and the Transfer's
+// direction says which side the Host is on: an upload moves a local source to
+// a Host, a download the reverse. A session lane names no saved Host, so it is
+// never guessed to be local.
+func legacyHostEndpoints(task domainsftp.Task) (sourceHost, destHost string, ok bool) {
+	switch len(task.ResourceKeys) {
+	case 0:
+		return "", "", false
+	case 1:
+		lane, known := legacyLaneHost(task.ResourceKeys[0])
+		if !known || lane == "" {
+			return "", "", false
+		}
+		switch task.Kind {
+		case domainsftp.OpUpload:
+			return "", lane, true
+		case domainsftp.OpDownload:
+			return lane, "", true
+		case domainsftp.OpCopy, domainsftp.OpMove:
+			return lane, lane, true
+		default:
+			return "", "", false
+		}
+	default:
+		sourceHost, sourceOK := legacyLaneHost(task.ResourceKeys[0])
+		destHost, destOK := legacyLaneHost(task.ResourceKeys[1])
+		if !sourceOK || !destOK {
+			return "", "", false
+		}
+		return sourceHost, destHost, true
+	}
+}
+
+// legacyLaneHost maps one queue lane onto its saved Host, or "" for the local
+// device. ok is false for a lane that names neither, such as a Session.
+func legacyLaneHost(key domainsftp.ResourceKey) (host string, ok bool) {
+	if key == domainsftp.LocalResourceKey() {
+		return "", true
+	}
+	if strings.HasPrefix(string(key), "host:") {
+		return strings.TrimPrefix(string(key), "host:"), true
+	}
+	return "", false
 }
 
 // Retry replays a failed, cancelled, interrupted, or attention Transfer from
@@ -1003,6 +1191,24 @@ func queueResourceKeys(spec TaskSpec) []domainsftp.ResourceKey {
 		keys = append(keys, domainsftp.LocalResourceKey())
 	}
 	return keys
+}
+
+// queueHostID resolves the saved Host behind one endpoint. An explicit value
+// wins; otherwise the endpoint's queue lane supplies it, matching the lane the
+// request uses. Only a Host lane names a saved Host: a local or session lane
+// has none, so a later reconnect cannot mistake it for the local device.
+func queueHostID(explicit string, lane domainsftp.ResourceKey, files FileSystem) string {
+	if explicit != "" {
+		return explicit
+	}
+	key := lane
+	if key == "" {
+		key = resourceKeyFor(files)
+	}
+	if strings.HasPrefix(string(key), "host:") {
+		return strings.TrimPrefix(string(key), "host:")
+	}
+	return ""
 }
 
 // resourceKeyFor maps a filesystem's Backing onto a queue lane. The remote
