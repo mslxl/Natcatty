@@ -1491,7 +1491,13 @@
   module: application/search
   tickets: [29]
   acceptance_tests:
-    - application/search.TestLabelOutranksHostnameAndGroup
+    - application/search.TestFieldWeightsBreakEqualQualityTies
+    - application/search.TestVaultSearchProdRanking
+    - application/search.TestMatchQualityOrderIsExactPrefixWordStartSubstring
+    - application/search.TestMatchQualityOrderIsUnicodeInsensitive
+    - application/search.TestMatchQualityLeadsFieldWeight
+    - application/search.TestBodyOnlyMatchRanksLastWithinSection
+    - application/search.TestEqualScoresUseStableIdentityTieBreaks
     - application/search.TestLiteralBeatsCompactAcrossEveryRecord
     - application/search.TestCompactMatchesSeparatedText
     - application/search.TestEverySegmentMustMatch
@@ -1509,7 +1515,7 @@
     - ui/vault.TestVaultSearchNoResultsAndEscapeClear
     - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
-  notes: "One field searches the whole Vault and groups results by kind in the list's order: Hosts (label, address, group, tags, username, notes), Host Groups, SSH Keys, Identities, Snippets, Snippet Packages, Vault Notes, Note Groups, Proxy Profiles, and Knowledge. Knowledge is a Vault Note whose body matches while its title does not, so each Note appears once. Ranking follows the original matcher: label 500, hostname 380, group 280, tag 220, a literal hit outranks a compact one across every record, every whitespace segment must match, and a dotted IPv4 query only matches contiguously inside one field. Unicode dashes fold to '-', CJK matches literally, and ties break deterministically. Pinyin transliteration is absent because the domain layer may not import golang.org/x/text; a Latin query still finds CJK text through the compact form. Arrow keys move, Enter opens the editor or viewer, Escape clears, and the empty and no-result states are localized in all five catalogs."
+  notes: "One field searches the whole Vault and groups results by kind in the list's order: Hosts (label, address, group, tags, username, notes), Host Groups, SSH Keys, Identities, Snippets, Snippet Packages, Vault Notes, Note Groups, Proxy Profiles, and Knowledge. Knowledge is a Vault Note whose body matches while its title does not, so each Note appears once. Ranking keeps the original field weights as its last tie-break (label 500, hostname 380, group 280, tag 220) and orders by four levels first: an identity-field hit outranks a prose-only hit in the same section, a literal hit outranks a compact one across every record, match quality (exact > prefix > word-start > substring) outranks field weight, and equal scores break on lowercased title, kind, and ID. Every whitespace segment must match, and a dotted IPv4 query only matches contiguously inside one field. Unicode dashes fold to '-', and CJK matches literally. Pinyin transliteration is absent because the domain layer may not import golang.org/x/text; a Latin query still finds CJK text through the compact form. Arrow keys move, Enter opens the editor or viewer, Escape clears, and the empty and no-result states are localized in all five catalogs."
 
 - id: search.quick-switcher
   area: shell
@@ -1538,6 +1544,7 @@
     - ui/shell.TestShellViewRendersTheSearchOverlayAboveEverySurface
     - ui/shell.TestTabTitleNamesASummaryLikeTheTabStrip
     - app.TestSwitcherListsHostsWithTheirSearchableFields
+    - app.TestSwitcherRanksExactHostLabelFirst
     - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
   notes: "Ctrl+J (Cmd+J on macOS) toggles the Quick Switcher from any surface; the empty query keeps the Vault's Host order and then the open Sessions, and typing ranks inside each section without reordering the sections. Hosts match exactly the original Quick Switcher's fields (label, hostname, group, tags), not the Vault list's extra username and notes. A Host opens a new Session; a Session focuses its existing Tab. Up and Down clamp at both ends and never wrap, Enter opens, Escape or a click outside closes and clears the query, and the highlight scrolls into view only when it moves. The panel is top-anchored at the original's 672 DIP width and is verified at 1100x720 and 720x480 in English and Simplified Chinese."
@@ -1558,6 +1565,7 @@
     - app.TestPaletteLocalizesTitlesAndFindsByEnglishKeywords
     - app.TestPaletteGroupsCommandsByCategory
     - app.TestPaletteDispatchesTheChosenCommand
+    - app.TestPaletteOrderingStaysDeterministic
     - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
   notes: "Ctrl+K (Cmd+K on macOS) opens the palette in the same overlay as the Quick Switcher. Every command the app registers with a user-visible presentation appears, grouped into Application, Tabs, Panes, and Vault; the synthetic locale commands stay out, and a newly registered command without a label is hidden rather than shown as its ID. Titles come from the same localized labels the native menu uses, so they follow a language change, while the raw command ID and English keywords keep a command findable in every catalog. The effective chord of a binding is shown beside its command (New Tab, Close Tab, Split, Close Pane, Settings) and follows a user override. Enter dispatches through the same registry the menu and keyboard shortcuts use. The original Electron build had no built-in command registry; this surface is the native equivalent of its plugin command-palette menus applied to the app's own commands."
