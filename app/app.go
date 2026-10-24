@@ -96,6 +96,7 @@ func run(afterReady func(hostWindow)) error {
 	var historyService *apphistory.Service
 	var logsState *logsui.State
 	var sessions *appsession.Service
+	var externalMCPServer *externalMCP
 	var desktopCtl *desktopController
 	var ready bool
 	var focusRequested bool
@@ -589,6 +590,19 @@ func run(afterReady func(hostWindow)) error {
 			})
 		}),
 	)
+	// The external MCP listener publishes an authenticated loopback pointer so
+	// the natcatty-mcp stdio process can reach the same application services.
+	// It is read-only in this build; a bind or discovery failure is reported
+	// without blocking startup.
+	externalMCPServer, err = startExternalMCP(context.Background(), newMCPReadBridge(
+		vaultService, forwardingManager, sessions, transferService,
+	), externalMCPDiscoveryPath(userData), func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
+	}
+	runningExternalMCP = externalMCPServer
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
@@ -847,6 +861,9 @@ func run(afterReady func(hostWindow)) error {
 	// any goroutine and asks for the frame that shows the new status.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		shellState.Persist()
+		// Stop accepting external MCP calls before the services they read are
+		// torn down, then remove the discovery pointer if it is still ours.
+		externalMCPServer.Close()
 		closeForwarding(forwardingManager, forwardingState)
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
