@@ -2,6 +2,7 @@ package state
 
 import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
+	"github.com/mslxl/natcatty/domain/model"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
 
@@ -83,6 +84,41 @@ func (s *State) ToggleCenter() {
 		return
 	}
 	s.OpenCenter()
+}
+
+// reattachHost binds a just-connected Host's filesystem to every interrupted
+// row that used it, so the Transfer center's Resume continues from the
+// checkpoint instead of asking for a reconnect that already happened. It runs
+// on the UI thread: the peer snapshot must see the panes the user does. The
+// queue work runs off the UI thread, and a failure leaves the rows
+// reconnect-required rather than pretending they can continue.
+func (s *State) reattachHost(host model.HostID, remote apptransfer.FileSystem) {
+	if s.transferQueue == nil || s.service == nil || remote == nil || host == "" {
+		return
+	}
+	peers := map[string]apptransfer.FileSystem{}
+	for _, side := range Sides() {
+		for _, tab := range s.panes[side].Tabs {
+			if tab == nil || tab.closed || tab.Kind != KindRemote || tab.FS == nil {
+				continue
+			}
+			peers[string(tab.HostID)] = tab.FS
+		}
+	}
+	queue := s.transferQueue
+	openLocal := s.service.OpenLocal
+	ctx := s.ctx
+	go func() {
+		// A partial bind still changed rows, so redraw either way; a row that
+		// could not bind keeps the reconnect prompt.
+		_, _ = queue.ReattachHost(ctx, apptransfer.HostReattach{
+			Host:      string(host),
+			Remote:    remote,
+			Peers:     peers,
+			OpenLocal: openLocal,
+		})
+		s.post(func() { s.RequestRedraw() })
+	}()
 }
 
 // PauseTransfer pauses one queue row.

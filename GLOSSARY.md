@@ -142,8 +142,10 @@ _Avoid_: resume list, file log, progress cache
 
 **Reattach**:
 Binding live Backings to a Transfer restored after a restart or cut off by a
-lost transport, so the same row can resume from its checkpoint. Reattach keeps
-the row identity; Retry is a separate full replay.
+lost transport, so the same row can resume from its checkpoint. The surface
+reattaches a Host's rows when that Host's SFTP pane reconnects, using the
+durable `sourceHost`/`destHost` identity of each row. Reattach keeps the row
+identity; Retry is a separate full replay.
 _Avoid_: reconnect, rebind, resume
 
 **Pause Latch**:

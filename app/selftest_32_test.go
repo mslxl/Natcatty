@@ -72,7 +72,7 @@ func TestTicket32CheckRunsThroughTheKeyboard(t *testing.T) {
 		"transferstate.State + apptransfer.Queue",
 		"transferstate.State + domainsftp.TaskPauseRequested",
 		"domainsftp.DirectoryTraversalBudget + domainsftp.MaxFollowedSymlinkDepth",
-		"apptransfer.Queue.Reattach + domainsftp.DirectoryResumeCheckpoint",
+		"transferstate.State.OpenRemote -> apptransfer.Queue.ReattachHost",
 	} {
 		if !seams[want] {
 			t.Fatalf("seams = %v, missing %q", seams, want)
