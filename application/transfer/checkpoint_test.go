@@ -453,10 +453,10 @@ func TestCopyRecordsTheResolvedTargetRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Copy: %v", err)
 	}
-	if len(targets) != 1 || targets[0] != "/src=/dest/src (copy 1)" {
+	if len(targets) != 1 || targets[0] != "/src=/dest/src (copy)" {
 		t.Fatalf("recorded targets = %v", targets)
 	}
-	if !dest.has("/dest/src (copy 1)/a.txt") {
+	if !dest.has("/dest/src (copy)/a.txt") {
 		t.Fatal("the duplicate destination was not written")
 	}
 }

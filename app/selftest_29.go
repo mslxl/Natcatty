@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -515,7 +516,10 @@ func (f *selftest29Factory) Open(context.Context, appsession.StartSpec) (appsess
 
 type selftest29Transport struct {
 	closed chan struct{}
-	once   bool
+	// mu guards once: the Session's read loop and the check can both close the
+	// transport, and a double close panics.
+	mu   sync.Mutex
+	once bool
 }
 
 func newSelftest29Transport() *selftest29Transport {
@@ -530,6 +534,8 @@ func (f *selftest29Transport) Write(p []byte) (int, error) { return len(p), nil 
 func (f *selftest29Transport) Resize(int, int) error       { return nil }
 func (f *selftest29Transport) Wait() (int, error)          { return 0, nil }
 func (f *selftest29Transport) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if !f.once {
 		f.once = true
 		close(f.closed)

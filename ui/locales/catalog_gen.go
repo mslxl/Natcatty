@@ -12842,48 +12842,6 @@ func (msgs Messages) SftpInvalidMode() string {
 	return Catalog.Format(msgs.locale, "sftpInvalidMode", nil)
 }
 
-// SftpOverwriteTitle says "Replace existing items?"
-// in the language the app shows.
-//
-// The overwrite confirmation's title.
-func SftpOverwriteTitle() string { return In(i18n.Locale()).SftpOverwriteTitle() }
-
-// SftpOverwriteTitle says "Replace existing items?"
-// in the language of msgs.
-//
-// The overwrite confirmation's title.
-func (msgs Messages) SftpOverwriteTitle() string {
-	return Catalog.Format(msgs.locale, "sftpOverwriteTitle", nil)
-}
-
-// SftpOverwriteBody says "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {Th…"
-// in the language the app shows.
-//
-// The overwrite confirmation's body, with the selection count.
-func SftpOverwriteBody(count int) string { return In(i18n.Locale()).SftpOverwriteBody(count) }
-
-// SftpOverwriteBody says "{count, plural, one {The destination already has # of these items. Replacing deletes the existing version.} other {Th…"
-// in the language of msgs.
-//
-// The overwrite confirmation's body, with the selection count.
-func (msgs Messages) SftpOverwriteBody(count int) string {
-	return Catalog.Format(msgs.locale, "sftpOverwriteBody", map[string]any{"count": count})
-}
-
-// SftpReplace says "Replace"
-// in the language the app shows.
-//
-// The overwrite confirmation's primary button.
-func SftpReplace() string { return In(i18n.Locale()).SftpReplace() }
-
-// SftpReplace says "Replace"
-// in the language of msgs.
-//
-// The overwrite confirmation's primary button.
-func (msgs Messages) SftpReplace() string {
-	return Catalog.Format(msgs.locale, "sftpReplace", nil)
-}
-
 // SftpOverwriteRequired says "The destination already exists."
 // in the language the app shows.
 //
@@ -13706,4 +13664,380 @@ func SettingsBindingTransferCenter() string { return In(i18n.Locale()).SettingsB
 // The Settings shortcut label for the local Transfer center binding.
 func (msgs Messages) SettingsBindingTransferCenter() string {
 	return Catalog.Format(msgs.locale, "settingsBindingTransferCenter", nil)
+}
+
+// SftpConflictTitle says "File Conflict"
+// in the language the app shows.
+//
+// The conflict prompt title for a file.
+func SftpConflictTitle() string { return In(i18n.Locale()).SftpConflictTitle() }
+
+// SftpConflictTitle says "File Conflict"
+// in the language of msgs.
+//
+// The conflict prompt title for a file.
+func (msgs Messages) SftpConflictTitle() string {
+	return Catalog.Format(msgs.locale, "sftpConflictTitle", nil)
+}
+
+// SftpConflictDescription says "A file with the same name already exists at the destination"
+// in the language the app shows.
+//
+// The conflict prompt description when a file already exists.
+func SftpConflictDescription() string { return In(i18n.Locale()).SftpConflictDescription() }
+
+// SftpConflictDescription says "A file with the same name already exists at the destination"
+// in the language of msgs.
+//
+// The conflict prompt description when a file already exists.
+func (msgs Messages) SftpConflictDescription() string {
+	return Catalog.Format(msgs.locale, "sftpConflictDescription", nil)
+}
+
+// SftpConflictFolderTitle says "Folder Conflict"
+// in the language the app shows.
+//
+// The conflict prompt title for a folder.
+func SftpConflictFolderTitle() string { return In(i18n.Locale()).SftpConflictFolderTitle() }
+
+// SftpConflictFolderTitle says "Folder Conflict"
+// in the language of msgs.
+//
+// The conflict prompt title for a folder.
+func (msgs Messages) SftpConflictFolderTitle() string {
+	return Catalog.Format(msgs.locale, "sftpConflictFolderTitle", nil)
+}
+
+// SftpConflictFolderDescription says "Choose how to continue."
+// in the language the app shows.
+//
+// The conflict prompt description when the destination is a folder.
+func SftpConflictFolderDescription() string { return In(i18n.Locale()).SftpConflictFolderDescription() }
+
+// SftpConflictFolderDescription says "Choose how to continue."
+// in the language of msgs.
+//
+// The conflict prompt description when the destination is a folder.
+func (msgs Messages) SftpConflictFolderDescription() string {
+	return Catalog.Format(msgs.locale, "sftpConflictFolderDescription", nil)
+}
+
+// SftpConflictFolderFileDescription says "A file with the same name already exists at the destination. A folder cannot be merged with a file."
+// in the language the app shows.
+//
+// The conflict prompt description when a folder meets an existing file.
+func SftpConflictFolderFileDescription() string {
+	return In(i18n.Locale()).SftpConflictFolderFileDescription()
+}
+
+// SftpConflictFolderFileDescription says "A file with the same name already exists at the destination. A folder cannot be merged with a file."
+// in the language of msgs.
+//
+// The conflict prompt description when a folder meets an existing file.
+func (msgs Messages) SftpConflictFolderFileDescription() string {
+	return Catalog.Format(msgs.locale, "sftpConflictFolderFileDescription", nil)
+}
+
+// SftpConflictFolderSymlinkDescription says "A symbolic link with the same name already exists at the destination. A folder cannot be merged with a symbolic link."
+// in the language the app shows.
+//
+// The conflict prompt description when a folder meets an existing symbolic
+// link.
+func SftpConflictFolderSymlinkDescription() string {
+	return In(i18n.Locale()).SftpConflictFolderSymlinkDescription()
+}
+
+// SftpConflictFolderSymlinkDescription says "A symbolic link with the same name already exists at the destination. A folder cannot be merged with a symbolic link."
+// in the language of msgs.
+//
+// The conflict prompt description when a folder meets an existing symbolic
+// link.
+func (msgs Messages) SftpConflictFolderSymlinkDescription() string {
+	return Catalog.Format(msgs.locale, "sftpConflictFolderSymlinkDescription", nil)
+}
+
+// SftpConflictFolderUnknownDescription says "An item with the same name exists at the destination, but its type could not be confirmed. Replace is unavailable to …"
+// in the language the app shows.
+//
+// The conflict prompt description when the existing type cannot be
+// established.
+func SftpConflictFolderUnknownDescription() string {
+	return In(i18n.Locale()).SftpConflictFolderUnknownDescription()
+}
+
+// SftpConflictFolderUnknownDescription says "An item with the same name exists at the destination, but its type could not be confirmed. Replace is unavailable to …"
+// in the language of msgs.
+//
+// The conflict prompt description when the existing type cannot be
+// established.
+func (msgs Messages) SftpConflictFolderUnknownDescription() string {
+	return Catalog.Format(msgs.locale, "sftpConflictFolderUnknownDescription", nil)
+}
+
+// SftpConflictMergeHint says "Merge: keeps destination-only content."
+// in the language the app shows.
+//
+// The merge hint in the folder conflict prompt.
+func SftpConflictMergeHint() string { return In(i18n.Locale()).SftpConflictMergeHint() }
+
+// SftpConflictMergeHint says "Merge: keeps destination-only content."
+// in the language of msgs.
+//
+// The merge hint in the folder conflict prompt.
+func (msgs Messages) SftpConflictMergeHint() string {
+	return Catalog.Format(msgs.locale, "sftpConflictMergeHint", nil)
+}
+
+// SftpConflictReplaceWarning says "Replace: deletes destination-only content and cannot be undone."
+// in the language the app shows.
+//
+// The destructive replace warning in the folder conflict prompt.
+func SftpConflictReplaceWarning() string { return In(i18n.Locale()).SftpConflictReplaceWarning() }
+
+// SftpConflictReplaceWarning says "Replace: deletes destination-only content and cannot be undone."
+// in the language of msgs.
+//
+// The destructive replace warning in the folder conflict prompt.
+func (msgs Messages) SftpConflictReplaceWarning() string {
+	return Catalog.Format(msgs.locale, "sftpConflictReplaceWarning", nil)
+}
+
+// SftpConflictAlreadyExists says "already exists"
+// in the language the app shows.
+//
+// The suffix after a conflicting name.
+func SftpConflictAlreadyExists() string { return In(i18n.Locale()).SftpConflictAlreadyExists() }
+
+// SftpConflictAlreadyExists says "already exists"
+// in the language of msgs.
+//
+// The suffix after a conflicting name.
+func (msgs Messages) SftpConflictAlreadyExists() string {
+	return Catalog.Format(msgs.locale, "sftpConflictAlreadyExists", nil)
+}
+
+// SftpConflictExistingFile says "Existing file"
+// in the language the app shows.
+//
+// The existing file's summary heading.
+func SftpConflictExistingFile() string { return In(i18n.Locale()).SftpConflictExistingFile() }
+
+// SftpConflictExistingFile says "Existing file"
+// in the language of msgs.
+//
+// The existing file's summary heading.
+func (msgs Messages) SftpConflictExistingFile() string {
+	return Catalog.Format(msgs.locale, "sftpConflictExistingFile", nil)
+}
+
+// SftpConflictNewFile says "New file"
+// in the language the app shows.
+//
+// The incoming file's summary heading.
+func SftpConflictNewFile() string { return In(i18n.Locale()).SftpConflictNewFile() }
+
+// SftpConflictNewFile says "New file"
+// in the language of msgs.
+//
+// The incoming file's summary heading.
+func (msgs Messages) SftpConflictNewFile() string {
+	return Catalog.Format(msgs.locale, "sftpConflictNewFile", nil)
+}
+
+// SftpConflictSize says "Size: "
+// in the language the app shows.
+//
+// The file summary size label.
+func SftpConflictSize() string { return In(i18n.Locale()).SftpConflictSize() }
+
+// SftpConflictSize says "Size: "
+// in the language of msgs.
+//
+// The file summary size label.
+func (msgs Messages) SftpConflictSize() string {
+	return Catalog.Format(msgs.locale, "sftpConflictSize", nil)
+}
+
+// SftpConflictModified says "Modified: "
+// in the language the app shows.
+//
+// The file summary modification label.
+func SftpConflictModified() string { return In(i18n.Locale()).SftpConflictModified() }
+
+// SftpConflictModified says "Modified: "
+// in the language of msgs.
+//
+// The file summary modification label.
+func (msgs Messages) SftpConflictModified() string {
+	return Catalog.Format(msgs.locale, "sftpConflictModified", nil)
+}
+
+// SftpConflictApplyToAll says "Apply this action to all {count} remaining conflicts"
+// in the language the app shows.
+//
+// The apply-to-all checkbox in a conflict prompt.
+func SftpConflictApplyToAll(count int) string { return In(i18n.Locale()).SftpConflictApplyToAll(count) }
+
+// SftpConflictApplyToAll says "Apply this action to all {count} remaining conflicts"
+// in the language of msgs.
+//
+// The apply-to-all checkbox in a conflict prompt.
+func (msgs Messages) SftpConflictApplyToAll(count int) string {
+	return Catalog.Format(msgs.locale, "sftpConflictApplyToAll", map[string]any{"count": count})
+}
+
+// SftpConflictStop says "Stop"
+// in the language the app shows.
+//
+// Stop the transfer at the conflict.
+func SftpConflictStop() string { return In(i18n.Locale()).SftpConflictStop() }
+
+// SftpConflictStop says "Stop"
+// in the language of msgs.
+//
+// Stop the transfer at the conflict.
+func (msgs Messages) SftpConflictStop() string {
+	return Catalog.Format(msgs.locale, "sftpConflictStop", nil)
+}
+
+// SftpConflictSkip says "Skip"
+// in the language the app shows.
+//
+// Leave the destination and continue.
+func SftpConflictSkip() string { return In(i18n.Locale()).SftpConflictSkip() }
+
+// SftpConflictSkip says "Skip"
+// in the language of msgs.
+//
+// Leave the destination and continue.
+func (msgs Messages) SftpConflictSkip() string {
+	return Catalog.Format(msgs.locale, "sftpConflictSkip", nil)
+}
+
+// SftpConflictDuplicate says "Duplicate"
+// in the language the app shows.
+//
+// Write beside the destination with a copy name.
+func SftpConflictDuplicate() string { return In(i18n.Locale()).SftpConflictDuplicate() }
+
+// SftpConflictDuplicate says "Duplicate"
+// in the language of msgs.
+//
+// Write beside the destination with a copy name.
+func (msgs Messages) SftpConflictDuplicate() string {
+	return Catalog.Format(msgs.locale, "sftpConflictDuplicate", nil)
+}
+
+// SftpConflictMerge says "Merge"
+// in the language the app shows.
+//
+// Merge a folder into the existing folder.
+func SftpConflictMerge() string { return In(i18n.Locale()).SftpConflictMerge() }
+
+// SftpConflictMerge says "Merge"
+// in the language of msgs.
+//
+// Merge a folder into the existing folder.
+func (msgs Messages) SftpConflictMerge() string {
+	return Catalog.Format(msgs.locale, "sftpConflictMerge", nil)
+}
+
+// SftpConflictReplace says "Replace"
+// in the language the app shows.
+//
+// Replace the existing destination.
+func SftpConflictReplace() string { return In(i18n.Locale()).SftpConflictReplace() }
+
+// SftpConflictReplace says "Replace"
+// in the language of msgs.
+//
+// Replace the existing destination.
+func (msgs Messages) SftpConflictReplace() string {
+	return Catalog.Format(msgs.locale, "sftpConflictReplace", nil)
+}
+
+// SftpConflictRequired says "Choose how to continue."
+// in the language the app shows.
+//
+// The status shown while a destination conflict waits for an answer.
+func SftpConflictRequired() string { return In(i18n.Locale()).SftpConflictRequired() }
+
+// SftpConflictRequired says "Choose how to continue."
+// in the language of msgs.
+//
+// The status shown while a destination conflict waits for an answer.
+func (msgs Messages) SftpConflictRequired() string {
+	return Catalog.Format(msgs.locale, "sftpConflictRequired", nil)
+}
+
+// SftpConflictInvalidAction says "That action is not available for this destination."
+// in the language the app shows.
+//
+// The validation error for an action the destination type cannot support.
+func SftpConflictInvalidAction() string { return In(i18n.Locale()).SftpConflictInvalidAction() }
+
+// SftpConflictInvalidAction says "That action is not available for this destination."
+// in the language of msgs.
+//
+// The validation error for an action the destination type cannot support.
+func (msgs Messages) SftpConflictInvalidAction() string {
+	return Catalog.Format(msgs.locale, "sftpConflictInvalidAction", nil)
+}
+
+// SftpErrorReserved says "Another transfer is already writing to this destination."
+// in the language the app shows.
+//
+// The error shown when another Transfer reserves the destination path.
+func SftpErrorReserved() string { return In(i18n.Locale()).SftpErrorReserved() }
+
+// SftpErrorReserved says "Another transfer is already writing to this destination."
+// in the language of msgs.
+//
+// The error shown when another Transfer reserves the destination path.
+func (msgs Messages) SftpErrorReserved() string {
+	return Catalog.Format(msgs.locale, "sftpErrorReserved", nil)
+}
+
+// SftpErrorTypeMismatch says "The destination type does not allow that action."
+// in the language the app shows.
+//
+// The error shown when a folder cannot replace or merge with the
+// destination.
+func SftpErrorTypeMismatch() string { return In(i18n.Locale()).SftpErrorTypeMismatch() }
+
+// SftpErrorTypeMismatch says "The destination type does not allow that action."
+// in the language of msgs.
+//
+// The error shown when a folder cannot replace or merge with the
+// destination.
+func (msgs Messages) SftpErrorTypeMismatch() string {
+	return Catalog.Format(msgs.locale, "sftpErrorTypeMismatch", nil)
+}
+
+// SftpTransferConflictFailed says "The conflict could not be answered."
+// in the language the app shows.
+//
+// The Transfer center error for a failed conflict answer.
+func SftpTransferConflictFailed() string { return In(i18n.Locale()).SftpTransferConflictFailed() }
+
+// SftpTransferConflictFailed says "The conflict could not be answered."
+// in the language of msgs.
+//
+// The Transfer center error for a failed conflict answer.
+func (msgs Messages) SftpTransferConflictFailed() string {
+	return Catalog.Format(msgs.locale, "sftpTransferConflictFailed", nil)
+}
+
+// SftpTransferSkipped says "{count} skipped"
+// in the language the app shows.
+//
+// The count of entries a Transfer left untouched.
+func SftpTransferSkipped(count int) string { return In(i18n.Locale()).SftpTransferSkipped(count) }
+
+// SftpTransferSkipped says "{count} skipped"
+// in the language of msgs.
+//
+// The count of entries a Transfer left untouched.
+func (msgs Messages) SftpTransferSkipped(count int) string {
+	return Catalog.Format(msgs.locale, "sftpTransferSkipped", map[string]any{"count": count})
 }

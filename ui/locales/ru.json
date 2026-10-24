@@ -1718,9 +1718,6 @@
   "sftpPermissionsLabel": "Режим (например 0644 или rwxr-xr-x)",
   "sftpInvalidName": "Введите имя без косых черт и управляющих символов.",
   "sftpInvalidMode": "Введите восьмеричный режим, например 0644, или символьный, например rwxr-xr-x.",
-  "sftpOverwriteTitle": "Заменить существующие элементы?",
-  "sftpOverwriteBody": "{count, plural, one {В назначении уже есть # из этих элементов. Замена удалит существующую версию.} few {В назначении уже есть # из этих элементов. Замена удалит существующие версии.} many {В назначении уже есть # из этих элементов. Замена удалит существующие версии.} other {В назначении уже есть # из этих элементов. Замена удалит существующие версии.}}",
-  "sftpReplace": "Заменить",
   "sftpOverwriteRequired": "Назначение уже существует.",
   "sftpHostsUnavailable": "Не удалось загрузить сохранённые Hosts.",
   "sftpOpenFileUnavailable": "Открывать файлы здесь нельзя. Скопируйте файл в другую панель.",
@@ -1778,5 +1775,121 @@
   "sftpTransferReconnectRequired": "Переподключитесь к этому хосту, чтобы возобновить передачу.",
   "sftpTransferNotRetryable": "Эту передачу нельзя повторить.",
   "sftpTransferControlFailed": "Не удалось управлять передачей.",
-  "settingsBindingTransferCenter": "Открыть центр передач"
+  "settingsBindingTransferCenter": "Открыть центр передач",
+  "sftpConflictTitle": "Конфликт файлов",
+  "@sftpConflictTitle": {
+    "description": "The conflict prompt title for a file."
+  },
+  "sftpConflictDescription": "В месте назначения уже существует файл с таким именем",
+  "@sftpConflictDescription": {
+    "description": "The conflict prompt description when a file already exists."
+  },
+  "sftpConflictFolderTitle": "Конфликт папок",
+  "@sftpConflictFolderTitle": {
+    "description": "The conflict prompt title for a folder."
+  },
+  "sftpConflictFolderDescription": "Выберите действие.",
+  "@sftpConflictFolderDescription": {
+    "description": "The conflict prompt description when the destination is a folder."
+  },
+  "sftpConflictFolderFileDescription": "В месте назначения уже существует файл с таким именем. Папку нельзя объединить с файлом.",
+  "@sftpConflictFolderFileDescription": {
+    "description": "The conflict prompt description when a folder meets an existing file."
+  },
+  "sftpConflictFolderSymlinkDescription": "В месте назначения уже существует символическая ссылка с таким именем. Папку нельзя объединить с символической ссылкой.",
+  "@sftpConflictFolderSymlinkDescription": {
+    "description": "The conflict prompt description when a folder meets an existing symbolic link."
+  },
+  "sftpConflictFolderUnknownDescription": "В месте назначения уже существует элемент с таким именем, но его тип не удалось определить. Замена недоступна для защиты данных в месте назначения.",
+  "@sftpConflictFolderUnknownDescription": {
+    "description": "The conflict prompt description when the existing type cannot be established."
+  },
+  "sftpConflictMergeHint": "Объединить: сохранить содержимое, которое есть только в папке назначения.",
+  "@sftpConflictMergeHint": {
+    "description": "The merge hint in the folder conflict prompt."
+  },
+  "sftpConflictReplaceWarning": "Заменить: удалить содержимое, которое есть только в папке назначения. Это нельзя отменить.",
+  "@sftpConflictReplaceWarning": {
+    "description": "The destructive replace warning in the folder conflict prompt."
+  },
+  "sftpConflictAlreadyExists": "уже существует",
+  "@sftpConflictAlreadyExists": {
+    "description": "The suffix after a conflicting name."
+  },
+  "sftpConflictExistingFile": "Существующий файл",
+  "@sftpConflictExistingFile": {
+    "description": "The existing file's summary heading."
+  },
+  "sftpConflictNewFile": "Новый файл",
+  "@sftpConflictNewFile": {
+    "description": "The incoming file's summary heading."
+  },
+  "sftpConflictSize": "Размер: ",
+  "@sftpConflictSize": {
+    "description": "The file summary size label."
+  },
+  "sftpConflictModified": "Изменён: ",
+  "@sftpConflictModified": {
+    "description": "The file summary modification label."
+  },
+  "sftpConflictApplyToAll": "Применить это действие ко всем оставшимся конфликтам ({count})",
+  "@sftpConflictApplyToAll": {
+    "description": "The apply-to-all checkbox in a conflict prompt.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sftpConflictStop": "Остановить",
+  "@sftpConflictStop": {
+    "description": "Stop the transfer at the conflict."
+  },
+  "sftpConflictSkip": "Пропустить",
+  "@sftpConflictSkip": {
+    "description": "Leave the destination and continue."
+  },
+  "sftpConflictDuplicate": "Дублировать",
+  "@sftpConflictDuplicate": {
+    "description": "Write beside the destination with a copy name."
+  },
+  "sftpConflictMerge": "Объединить",
+  "@sftpConflictMerge": {
+    "description": "Merge a folder into the existing folder."
+  },
+  "sftpConflictReplace": "Заменить",
+  "@sftpConflictReplace": {
+    "description": "Replace the existing destination."
+  },
+  "sftpConflictRequired": "Выберите действие.",
+  "@sftpConflictRequired": {
+    "description": "The status shown while a destination conflict waits for an answer."
+  },
+  "sftpConflictInvalidAction": "Это действие недоступно для данного места назначения.",
+  "@sftpConflictInvalidAction": {
+    "description": "The validation error for an action the destination type cannot support."
+  },
+  "sftpErrorReserved": "Другая передача уже записывает в это место назначения.",
+  "@sftpErrorReserved": {
+    "description": "The error shown when another Transfer reserves the destination path."
+  },
+  "sftpErrorTypeMismatch": "Тип места назначения не допускает это действие.",
+  "@sftpErrorTypeMismatch": {
+    "description": "The error shown when a folder cannot replace or merge with the destination."
+  },
+  "sftpTransferConflictFailed": "Не удалось ответить на конфликт.",
+  "@sftpTransferConflictFailed": {
+    "description": "The Transfer center error for a failed conflict answer."
+  },
+  "sftpTransferSkipped": "{count} пропущено",
+  "@sftpTransferSkipped": {
+    "description": "The count of entries a Transfer left untouched.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  }
 }

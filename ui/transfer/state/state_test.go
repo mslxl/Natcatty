@@ -729,40 +729,145 @@ func TestDownloadCopiesFromRemoteToLocal(t *testing.T) {
 	}
 }
 
-func TestOverwritePromptReplacesOnlyAfterConfirmation(t *testing.T) {
+func TestConflictPromptReplacesOnlyAfterChoice(t *testing.T) {
 	f := newFixture(t)
 	f.remote.put("/alpha.txt", "old", 0o644)
 	f.openRemote(t, Right)
 	selectOne(t, f.state, Left, "alpha.txt")
 
 	f.state.Transfer(Left)
-	settle(t, f.state, "the overwrite prompt", func() bool {
-		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogOverwrite
+	settle(t, f.state, "the conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
 	})
 	if got, _ := f.remote.read("/alpha.txt"); got != "old" {
-		t.Fatalf("the destination changed before confirmation: %q", got)
+		t.Fatalf("the destination changed before a choice: %q", got)
 	}
-	if f.state.Busy() {
-		t.Fatal("the operation still reports busy while waiting for the prompt")
+	dialog := f.state.Dialog()
+	if dialog.Conflict == nil || dialog.Conflict.Name != "alpha.txt" ||
+		dialog.Conflict.TargetPath != "/alpha.txt" ||
+		dialog.Conflict.ExistingKind != domainsftp.ExistingFile {
+		t.Fatalf("the prompt carries %+v", dialog.Conflict)
 	}
-	if snapshot := f.state.Snapshot(); snapshot != nil {
-		t.Fatalf("the prompt left a failed operation in the bar: %+v", snapshot)
-	}
-	if f.state.Notice() != "overwrite-required" {
+	if f.state.Notice() != "conflict-required" {
 		t.Fatalf("notice is %q", f.state.Notice())
 	}
-	if dialog := f.state.Dialog(); len(dialog.Paths) != 1 || dialog.Paths[0] != "/home/me/alpha.txt" {
-		t.Fatalf("the prompt carries %v", dialog.Paths)
-	}
 
-	f.state.SubmitDialog()
+	f.state.ResolveDialogConflict(apptransfer.ConflictReplace, false)
 	if f.state.Dialog() != nil {
-		t.Fatal("confirming the replacement left the prompt open")
+		t.Fatal("choosing Replace left the prompt open")
 	}
 	waitIdle(t, f.state)
 	if got, _ := f.remote.read("/alpha.txt"); got != "alpha" {
 		t.Fatalf("the destination was not replaced: %q", got)
 	}
+}
+
+func TestConflictStopLeavesTheDestination(t *testing.T) {
+	f := newFixture(t)
+	f.remote.put("/alpha.txt", "old", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "alpha.txt")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	f.state.ResolveDialogConflict(apptransfer.ConflictStop, false)
+	waitIdle(t, f.state)
+	if got, _ := f.remote.read("/alpha.txt"); got != "old" {
+		t.Fatalf("stop changed the destination to %q", got)
+	}
+	snapshot := f.state.Snapshot()
+	if snapshot == nil || apptransfer.KindOf(snapshot.Err) != apptransfer.KindExists {
+		t.Fatalf("stop result = %+v", snapshot)
+	}
+}
+
+func TestConflictSkipLeavesTheDestinationAndCountsIt(t *testing.T) {
+	f := newFixture(t)
+	f.remote.put("/alpha.txt", "old", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "alpha.txt")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	f.state.ResolveDialogConflict(apptransfer.ConflictSkip, false)
+	waitIdle(t, f.state)
+	if got, _ := f.remote.read("/alpha.txt"); got != "old" {
+		t.Fatalf("skip changed the destination to %q", got)
+	}
+	if snapshot := f.state.Snapshot(); snapshot == nil || snapshot.Err != nil || snapshot.Skipped != 1 {
+		t.Fatalf("skip result = %+v", snapshot)
+	}
+}
+
+func TestConflictDuplicateWritesBesideTheDestination(t *testing.T) {
+	f := newFixture(t)
+	f.remote.put("/alpha.txt", "old", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "alpha.txt")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	f.state.ResolveDialogConflict(apptransfer.ConflictDuplicate, false)
+	waitIdle(t, f.state)
+	if got, ok := f.remote.read("/alpha (copy).txt"); !ok || got != "alpha" {
+		t.Fatalf("duplicate wrote %q, exists = %v", got, ok)
+	}
+	if got, _ := f.remote.read("/alpha.txt"); got != "old" {
+		t.Fatalf("duplicate changed the original to %q", got)
+	}
+}
+
+func TestConflictMergeKeepsDestinationOnlyContent(t *testing.T) {
+	f := newFixture(t)
+	f.remote.mkdirs("/folder")
+	f.remote.put("/folder/keep.txt", "keep", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "folder")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the folder conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	dialog := f.state.Dialog()
+	if dialog.Conflict == nil || !dialog.Conflict.CanMerge() {
+		t.Fatalf("folder conflict = %+v", dialog.Conflict)
+	}
+	f.state.ResolveDialogConflict(apptransfer.ConflictMerge, false)
+	waitIdle(t, f.state)
+	if got, ok := f.remote.read("/folder/inside.txt"); !ok || got != "inside" {
+		t.Fatalf("merge wrote %q, exists = %v", got, ok)
+	}
+	if got, ok := f.remote.read("/folder/keep.txt"); !ok || got != "keep" {
+		t.Fatalf("merge removed destination-only content: %q, exists = %v", got, ok)
+	}
+}
+
+func TestConflictRejectsAnActionTheTypeCannotSupport(t *testing.T) {
+	f := newFixture(t)
+	f.remote.put("/folder", "not-a-folder", 0o644)
+	f.openRemote(t, Right)
+	selectOne(t, f.state, Left, "folder")
+
+	f.state.Transfer(Left)
+	settle(t, f.state, "the type-mismatch prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
+	})
+	f.state.ResolveDialogConflict(apptransfer.ConflictMerge, false)
+	dialog := f.state.Dialog()
+	if dialog == nil || dialog.Err != "invalid-conflict-action" {
+		t.Fatalf("a folder-over-file merge was accepted: %+v", dialog)
+	}
+	if got, _ := f.remote.read("/folder"); got != "not-a-folder" {
+		t.Fatalf("the refused merge changed the destination to %q", got)
+	}
+	f.state.ResolveDialogConflict(apptransfer.ConflictSkip, false)
+	waitIdle(t, f.state)
 }
 
 func TestCopyAndCutThroughTheClipboard(t *testing.T) {
@@ -788,10 +893,10 @@ func TestCopyAndCutThroughTheClipboard(t *testing.T) {
 	f.state.CutSelection(Left)
 	f.state.Focus(Right)
 	f.state.Paste(Right)
-	settle(t, f.state, "the cut overwrite prompt", func() bool {
-		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogOverwrite
+	settle(t, f.state, "the cut conflict prompt", func() bool {
+		return f.state.Dialog() != nil && f.state.Dialog().Kind == DialogConflict
 	})
-	f.state.SubmitDialog()
+	f.state.ResolveDialogConflict(apptransfer.ConflictReplace, false)
 	waitIdle(t, f.state)
 	if _, ok := f.local.read("/home/me/alpha.txt"); ok {
 		t.Fatal("a cut paste left the source behind")
@@ -1084,7 +1189,7 @@ func TestSamePanePasteDuplicatesInsteadOfOverwriting(t *testing.T) {
 	f.state.CopySelection(Left)
 	f.state.Paste(Left)
 	waitIdle(t, f.state)
-	if got, ok := f.local.read("/home/me/alpha (copy 1).txt"); !ok || got != "alpha" {
+	if got, ok := f.local.read("/home/me/alpha (copy).txt"); !ok || got != "alpha" {
 		t.Fatalf("same-pane paste did not duplicate: %q %v", got, ok)
 	}
 	if got, _ := f.local.read("/home/me/alpha.txt"); got != "alpha" {
@@ -1323,17 +1428,14 @@ func TestDroppedOSFilesPromptBeforeReplacing(t *testing.T) {
 	f.remote.put("/beta.bin", "old", 0o644)
 	f.openRemote(t, Right)
 	f.state.DropFiles(Right, "", []string{"/home/me/beta.bin"})
-	settle(t, f.state, "the OS drop overwrite prompt", func() bool {
+	settle(t, f.state, "the OS drop conflict prompt", func() bool {
 		dialog := f.state.Dialog()
-		return dialog != nil && dialog.Kind == DialogOverwrite
+		return dialog != nil && dialog.Kind == DialogConflict
 	})
-	if f.state.Snapshot() != nil {
-		t.Fatalf("the prompt left an operation in the bar: %+v", f.state.Snapshot())
-	}
 	if got, _ := f.remote.read("/beta.bin"); string(got) != "old" {
-		t.Fatalf("the drop replaced the file before confirmation: %q", got)
+		t.Fatalf("the drop replaced the file before a choice: %q", got)
 	}
-	f.state.SubmitDialog()
+	f.state.ResolveDialogConflict(apptransfer.ConflictReplace, false)
 	waitIdle(t, f.state)
 	if got, ok := f.remote.read("/beta.bin"); !ok || len(got) != 100 {
 		t.Fatalf("the confirmed drop wrote %d bytes, %v", len(got), ok)

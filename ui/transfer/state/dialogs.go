@@ -32,8 +32,9 @@ const (
 	DialogChmod DialogKind = "chmod"
 	// DialogDelete confirms removing the selection.
 	DialogDelete DialogKind = "delete"
-	// DialogOverwrite asks whether to replace an existing destination.
-	DialogOverwrite DialogKind = "overwrite"
+	// DialogConflict asks how to resolve an existing destination: stop, skip,
+	// replace, duplicate, or merge.
+	DialogConflict DialogKind = "conflict"
 	// DialogHostPicker chooses a Host for a remote pane.
 	DialogHostPicker DialogKind = "host-picker"
 )
@@ -50,8 +51,17 @@ type Dialog struct {
 	// Err reports a validation failure without closing the prompt.
 	Err string
 
-	// retry resumes a transfer with a replacement conflict policy.
-	retry func()
+	// Conflict carries the destination details for DialogConflict.
+	Conflict *domainsftp.Conflict
+	// TaskID links a queued conflict to its durable row. A direct conflict
+	// leaves it empty.
+	TaskID domainsftp.TaskID
+	// ApplyToAll is the conflict prompt's checkbox state.
+	ApplyToAll bool
+
+	// resolve answers a conflict prompt. It is called once, after the dialog
+	// closes, with the action the user chose and whether it covers the batch.
+	resolve func(action apptransfer.ConflictPolicy, applyAll bool)
 }
 
 // RequestNewFolder opens the new-folder prompt.
@@ -176,6 +186,7 @@ func (s *State) HostsLoading() bool { return s.hostsLoad }
 func (s *State) ChooseHost(side Side, hostID model.HostID, label string) {
 	s.dialog = nil
 	s.OpenRemote(side, hostID, label)
+	s.showNextConflictPrompt()
 	s.RequestRedraw()
 }
 
@@ -187,9 +198,63 @@ func (s *State) SetDialogDraft(text string) {
 	}
 }
 
-// CloseDialog dismisses the prompt without acting.
-func (s *State) CloseDialog() {
+// SetDialogApplyToAll sets the conflict prompt's apply-to-all checkbox.
+func (s *State) SetDialogApplyToAll(value bool) {
+	if s.dialog != nil && s.dialog.Kind == DialogConflict {
+		s.dialog.ApplyToAll = value
+	}
+}
+
+// ResolveDialogConflict answers the open conflict prompt. An action the
+// destination type cannot support keeps the prompt open with an error; a
+// valid action closes it and forwards the answer to the waiting transfer.
+func (s *State) ResolveDialogConflict(action apptransfer.ConflictPolicy, applyAll bool) {
+	dialog := s.dialog
+	if dialog == nil || dialog.Kind != DialogConflict {
+		return
+	}
+	conflict := dialog.Conflict
+	if !action.Valid() || conflict == nil {
+		dialog.Err = "invalid-conflict-action"
+		s.RequestRedraw()
+		return
+	}
+	if action == apptransfer.ConflictMerge && !conflict.CanMerge() {
+		dialog.Err = "invalid-conflict-action"
+		s.RequestRedraw()
+		return
+	}
+	if action == apptransfer.ConflictReplace && !conflict.CanReplace() {
+		dialog.Err = "invalid-conflict-action"
+		s.RequestRedraw()
+		return
+	}
+	resolve := dialog.resolve
 	s.dialog = nil
+	s.conflictShowing = ""
+	if resolve != nil {
+		resolve(action, applyAll)
+	}
+	s.showNextConflictPrompt()
+	s.RequestRedraw()
+}
+
+// CloseDialog dismisses the prompt without acting. Dismissing a conflict is
+// the original implementation's Skip: the conflicting item is left untouched
+// and the rest of the batch continues.
+func (s *State) CloseDialog() {
+	dialog := s.dialog
+	if dialog == nil {
+		return
+	}
+	if dialog.Kind == DialogConflict {
+		s.ResolveDialogConflict(apptransfer.ConflictSkip, dialog.ApplyToAll)
+		return
+	}
+	s.dialog = nil
+	// A transfer may have reached its conflict while another prompt was open.
+	// Closing that prompt is what frees the dialog slot for it.
+	s.showNextConflictPrompt()
 	s.RequestRedraw()
 }
 
@@ -254,15 +319,13 @@ func (s *State) SubmitDialog() {
 		side := dialog.Side
 		s.dialog = nil
 		s.DeleteSelection(side)
-	case DialogOverwrite:
-		retry := dialog.retry
-		s.dialog = nil
-		if retry != nil {
-			retry()
-		}
+	case DialogConflict:
+		// The conflict prompt answers through its action buttons; Enter is not
+		// one of the five choices, so it must not guess.
 	case DialogHostPicker:
 		// Host choice arrives through ChooseHost.
 	}
+	s.showNextConflictPrompt()
 	s.RequestRedraw()
 }
 

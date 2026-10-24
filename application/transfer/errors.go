@@ -43,6 +43,12 @@ const (
 	KindConnection ErrorKind = "connection"
 	// KindTooLarge reports a walk that exceeded its safety bound.
 	KindTooLarge ErrorKind = "too-large"
+	// KindReserved reports a destination another Transfer already owns. Two
+	// writers must never stage and rename into one path concurrently.
+	KindReserved ErrorKind = "reserved"
+	// KindTypeMismatch reports a replace or merge the destination's type cannot
+	// support, such as a folder over a file. It fails closed.
+	KindTypeMismatch ErrorKind = "type-mismatch"
 	// KindInternal reports anything unclassified.
 	KindInternal ErrorKind = "internal"
 )

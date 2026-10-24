@@ -195,12 +195,12 @@ func TestValidateNameRefusesSeparatorsAndReservedNames(t *testing.T) {
 }
 
 func TestCopyNameAddsCopySuffixBeforeTheExtension(t *testing.T) {
-	taken := map[string]bool{"report.txt": true, "report (copy 1).txt": true}
+	taken := map[string]bool{"report.txt": true, "report (copy).txt": true}
 	got := CopyName("report.txt", func(name string) bool { return taken[name] })
 	if got != "report (copy 2).txt" {
 		t.Fatalf("CopyName = %q", got)
 	}
-	if got := CopyName(".bashrc", func(name string) bool { return name == ".bashrc" }); got != ".bashrc (copy 1)" {
+	if got := CopyName(".bashrc", func(name string) bool { return name == ".bashrc" }); got != ".bashrc (copy)" {
 		t.Fatalf("dotfile CopyName = %q", got)
 	}
 	if got := CopyName("free.txt", func(string) bool { return false }); got != "free.txt" {
