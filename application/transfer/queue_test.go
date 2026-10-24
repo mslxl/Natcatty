@@ -42,6 +42,12 @@ func (r *fakeQueueRepository) SaveTasks(_ context.Context, tasks []domainsftp.Ta
 	for index, task := range tasks {
 		r.saved[index] = task.Clone()
 	}
+	// Model a durable repository: a later queue over the same repository
+	// loads the newest saved history.
+	r.stored = make([]domainsftp.Task, len(tasks))
+	for index, task := range tasks {
+		r.stored[index] = task.Clone()
+	}
 	return nil
 }
 
