@@ -139,8 +139,16 @@ func (s *sftpRemoteSession) OpenSFTP(ctx context.Context) (apptransfer.FileSyste
 	if err != nil {
 		return nil, err
 	}
-	remote, err := adaptersftp.NewRemote(stream, s.release,
-		adaptersftp.WithBacking(s.backing))
+	options := []adaptersftp.RemoteOption{adaptersftp.WithBacking(s.backing)}
+	// Compressed folder upload runs tar on a second channel of the same
+	// Connection. A single-channel Host cannot open one, so the capability is
+	// left off and the engine copies file by file without a failed attempt.
+	if !s.lease.SingleChannel() {
+		if executor, err := s.lease.Executor(); err == nil {
+			options = append(options, adaptersftp.WithExecutor(executor))
+		}
+	}
+	remote, err := adaptersftp.NewRemote(stream, s.release, options...)
 	if err != nil {
 		// NewRemote already closed the stream and called release with the
 		// failure, so there is nothing more to clean up here.

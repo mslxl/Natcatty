@@ -84,6 +84,7 @@ func run(afterReady func(hostWindow)) error {
 	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
 	var transferState *transferstate.State
+	var shellState *state.State
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
@@ -410,6 +411,15 @@ func run(afterReady func(hostWindow)) error {
 		transferstate.WithQueue(transferQueue),
 		transferstate.WithRedrawRequest(invalidate),
 		transferstate.WithKeybindings(keybindingService),
+		// The SFTP surface reads the live settings, so a toggled auto-sync,
+		// follow-cwd, or compressed upload applies without reopening the pane.
+		transferstate.WithPreferences(func() domainpreferences.SFTPEditor {
+			return preferenceService.Settings().SFTPEditor
+		}),
+		transferstate.WithFocusedSession(func() model.SessionID {
+			focused, _ := shellState.FocusedSessionID()
+			return focused
+		}),
 	)
 
 	// Port Forwarding Rules reuse the same Vault routes and connection pool as
@@ -425,7 +435,6 @@ func run(afterReady func(hostWindow)) error {
 		uiforwarding.WithRedrawRequest(invalidate),
 	)
 
-	var shellState *state.State
 	vaultState = vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
@@ -881,6 +890,11 @@ func run(afterReady func(hostWindow)) error {
 			shellState.NoteSessionActivity(snapshot.ID)
 			windows.InvalidateAll()
 			desktopCtl.NoteSession(snapshot)
+			// OSC 7 is the only source of a shell's working directory. The
+			// surface decides whether follow-cwd is on and whether this
+			// Session's Host has a pane; reporting here costs nothing when it
+			// is off.
+			forwardTerminalCwd(sessions, transferState, snapshot)
 		})
 
 		// Tabs, splits, and working directories come back; their Sessions open

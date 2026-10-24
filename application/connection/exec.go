@@ -33,6 +33,15 @@ type ExecStream interface {
 	ExitCode() (int, error)
 }
 
+// HalfCloser is an optional ExecStream capability that closes the command's
+// stdin while stdout stays readable. A streaming consumer such as tar needs
+// end-of-file on its input to finish and report an exit status before the
+// whole channel is closed. A stream without this capability is closed instead,
+// which aborts the command.
+type HalfCloser interface {
+	CloseWrite() error
+}
+
 // Executor is the non-interactive command capability of an authenticated
 // transport. The SCP backend runs shell commands and its own scp -t/-f
 // protocol over it; the connection layer never parses either.

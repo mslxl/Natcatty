@@ -98,6 +98,13 @@ type CopyRequest struct {
 	Kind     domainsftp.OperationKind
 	Conflict ConflictPolicy
 	Progress func(Progress)
+	// Compressed asks for a folder upload to travel as one gzip tar stream
+	// when the destination exposes ArchiveExtractor. It applies only to a
+	// request the engine can satisfy safely: directories only, no symlinks or
+	// special files, no live destination conflict, no move, and no resume
+	// state. Any other shape, and any extraction failure, falls back to the
+	// ordinary per-file copy without losing data.
+	Compressed bool
 	// StageKey names the durable owner of this request (the queue passes its
 	// Task ID). A non-empty key makes every staging file name deterministic
 	// from the key and the target, so a resumed request reuses the staging
@@ -242,6 +249,16 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 	for _, source := range request.Sources {
 		if PathWithin(request.Source, source, request.Dest, request.DestDir) {
 			return result, failure(KindSelfCopy, kind, source, nil)
+		}
+	}
+
+	// A compressed folder upload is an optimization, never a requirement: it
+	// engages only when the whole request has a shape the remote extractor can
+	// reproduce, and an extraction failure falls back to the per-file plan
+	// before the caller sees anything.
+	if request.Compressed {
+		if compressed, handled, compressedErr := s.copyCompressed(ctx, request); handled {
+			return compressed, compressedErr
 		}
 	}
 

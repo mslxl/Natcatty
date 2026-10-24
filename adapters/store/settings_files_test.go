@@ -103,6 +103,43 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	}
 }
 
+// TestSFTPTransferSettingsSurviveRestart proves the three transfer settings,
+// including compressed upload's default-on state, are saved and read back by a
+// new service over the same preferences file after a restart.
+func TestSFTPTransferSettingsSurviveRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	ctx := context.Background()
+
+	first := apppreferences.NewService(OpenPreferences(path))
+	if err := first.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defaults := first.Settings().SFTPEditor
+	if !defaults.UseCompressedUpload {
+		t.Errorf("compressed upload is not on by default: %+v", defaults)
+	}
+	if defaults.AutoSync || defaults.FollowTerminalCwd {
+		t.Errorf("auto-sync and follow-cwd are not off by default: %+v", defaults)
+	}
+
+	if err := first.Update(func(settings *domainpreferences.Settings) {
+		settings.SFTPEditor.UseCompressedUpload = false
+		settings.SFTPEditor.AutoSync = true
+		settings.SFTPEditor.FollowTerminalCwd = true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second := apppreferences.NewService(OpenPreferences(path))
+	if err := second.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := second.Settings().SFTPEditor
+	if got.UseCompressedUpload || !got.AutoSync || !got.FollowTerminalCwd {
+		t.Fatalf("SFTP transfer settings after restart = %+v", got)
+	}
+}
+
 // TestAppearanceSelectionSurvivesRestart proves the Appearance document is
 // saved before it is published and reads back as the same selection after a
 // new service over the same file starts.

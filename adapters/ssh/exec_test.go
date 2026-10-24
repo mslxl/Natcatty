@@ -104,6 +104,49 @@ func TestOpenExecCarriesTheRawStream(t *testing.T) {
 	}
 }
 
+// TestOpenExecHalfClosesStdinAndKeepsTheExitStatus proves the streaming channel
+// can end its input while stdout and the remote status stay available, which is
+// what a remote tar needs after the archive is sent.
+func TestOpenExecHalfClosesStdinAndKeepsTheExitStatus(t *testing.T) {
+	client := dialExecFixture(t, func(command string, channel xssh.Channel) int {
+		input, err := io.ReadAll(channel)
+		if err != nil {
+			return 1
+		}
+		_, _ = io.WriteString(channel, "got:"+string(input))
+		return 0
+	})
+
+	stream, err := client.OpenExec(context.Background(), "tar -xzf - -C '/tmp'")
+	if err != nil {
+		t.Fatalf("OpenExec: %v", err)
+	}
+	defer stream.Close()
+	half, ok := stream.(appconnection.HalfCloser)
+	if !ok {
+		t.Fatalf("stream %T has no half-close", stream)
+	}
+	if _, err := stream.Write([]byte("archive")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := half.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite: %v", err)
+	}
+	if err := half.CloseWrite(); err != nil {
+		t.Fatalf("a repeated CloseWrite: %v", err)
+	}
+	got := make([]byte, len("got:archive"))
+	if _, err := io.ReadFull(stream, got); err != nil {
+		t.Fatalf("read after CloseWrite: %v", err)
+	}
+	if string(got) != "got:archive" {
+		t.Fatalf("output = %q", got)
+	}
+	if code, err := stream.ExitCode(); err != nil || code != 0 {
+		t.Fatalf("ExitCode = %d, %v", code, err)
+	}
+}
+
 // TestExecCancellationBoundsTheCommand proves a hung command cannot outlive
 // its context.
 func TestExecCancellationBoundsTheCommand(t *testing.T) {

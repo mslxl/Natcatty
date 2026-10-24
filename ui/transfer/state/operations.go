@@ -394,6 +394,7 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 		}
 	}
 	batchID := s.newBatchID()
+	compressed := s.compressedUpload(kind)
 	if s.transferQueue != nil {
 		// The queue, not the single-slot operation bar, decides admission.
 		op := s.beginQueueOperation(kind)
@@ -406,6 +407,7 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 			Move:        move,
 			Conflict:    conflict,
 			BatchID:     batchID,
+			Compressed:  compressed,
 			SourceLabel: source.Title(),
 			DestLabel:   dest.Title(),
 			// The Tab knows which saved Host each endpoint is; the durable row
@@ -430,6 +432,7 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 		Kind:          kind,
 		Conflict:      conflict,
 		SkipUnchanged: true,
+		Compressed:    compressed,
 		OnConflict:    s.directConflictResolver(ctx, policies),
 		Progress: func(progress apptransfer.Progress) {
 			op.setProgress(progress)
@@ -449,6 +452,16 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 		s.post(func() { s.finishOperation(op, err, refresh...) })
 	}()
 	return true
+}
+
+// compressedUpload reports whether this request may try the archive path. Only
+// an upload is compressed, and only when the setting is on; the engine still
+// falls back for any tree it cannot reproduce safely.
+func (s *State) compressedUpload(kind domainsftp.OperationKind) bool {
+	if kind != domainsftp.OpUpload {
+		return false
+	}
+	return s.sftpSettings().UseCompressedUpload
 }
 
 // newBatchID labels one started paste or transfer. The sequence keeps two
