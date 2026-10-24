@@ -367,7 +367,9 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	kind := req.LeaseKind.orShell()
 	reuse, wait, lead := m.pool.begin(endpoint, kind)
 	if reuse != nil {
-		return m.readyLease(reuse), nil
+		lease := m.readyLease(reuse)
+		lease.reused = true
+		return lease, nil
 	}
 	if wait != nil {
 		select {
@@ -383,7 +385,9 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 			if lease == nil {
 				return nil, internalError(ErrClosed)
 			}
-			return m.readyLease(lease), nil
+			lease = m.readyLease(lease)
+			lease.reused = true
+			return lease, nil
 		case <-ctx.Done():
 			return nil, classifyDialError(ctx.Err())
 		}
@@ -990,8 +994,13 @@ type Lease struct {
 	// on one needs the 350 ms liveness probe.
 	fromIdle      bool
 	probeDuration time.Duration
-	mu            sync.Mutex
-	released      bool
+	// reused records that the transport already existed when this lease was
+	// taken, so a protocol that must not add a channel to a live peer (SFTP
+	// over a single-channel bastion) can refuse.
+	reused bool
+	mu     sync.Mutex
+	// released reports that Release or Discard already ran.
+	released bool
 }
 
 // ReusedFromIdle reports whether this lease woke a parked Connection.

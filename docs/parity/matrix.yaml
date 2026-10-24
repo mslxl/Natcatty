@@ -2892,3 +2892,75 @@
     - adapters/sftp.TestRemoteCloseReleasesExactlyOnce
   status: verified
   notes: "The subsystem reuses the connection manager's route, host-key, authentication, and lease path; a refused subsystem is classified as unsupported so the healthy transport stays parked."
+
+- id: sftp.scp-backend
+  area: sftp-transfer
+  feature: SCP browsing and file transfer for servers without an SFTP subsystem
+  original_paths:
+    - electron/bridges/sftpBridge/scpBackend.cjs
+    - electron/bridges/sftpBridge/scpProtocol.cjs
+    - electron/bridges/sftpBridge/scpShell.cjs
+    - electron/bridges/sftpBridge/scpSessionOps.test.cjs
+    - application/state/sftp/useSftpTransfers.ts
+  module: adapters/sftp
+  tickets: [35]
+  acceptance_tests:
+    - adapters/sftp.TestSCPProbeAndBrowseAgainstAnSCPOnlyServer
+    - adapters/sftp.TestSCPTransfersFilesBothWays
+    - adapters/sftp.TestSCPManagesDirectoriesAndModes
+    - adapters/sftp.TestSCPProbeRefusesAServerWithoutSCP
+    - adapters/sftp.TestSCPCloseReleasesOnce
+    - app.TestTicket35CheckRunsThroughTheKeyboard
+    - app.TestTicket35CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Listing runs a structured shell loop and falls back to ls -la, and every path is shell-quoted before it reaches a command. Downloads speak scp -f and uploads speak scp -t; an upload streams through CreateSized because the SCP control line declares the byte count before the data, and it waits for the remote process after the final ACK so the fixture's write completes before Close returns. The probe checks both a working shell (HOME) and the scp binary, with a missing scp typed as ErrSCPMissing. The in-process SCP-only fixture exercises the real command builders and wire protocol without an sshd."
+
+- id: sftp.sudo-elevation
+  area: sftp-transfer
+  feature: Sudo SFTP edits root-owned files through the password-on-stdin handshake
+  original_paths:
+    - electron/bridges/sftpBridge/openConnection.cjs
+    - electron/bridges/sftpBridge/openConnection.sudo.test.cjs
+    - application/state/sftp/useSftpHostCredentials.ts
+    - components/HostDetailsConnectionSections.tsx
+  module: adapters/sftp
+  tickets: [35]
+  acceptance_tests:
+    - adapters/sftp.TestProbeSudoServerFindsTheFirstExecutablePath
+    - adapters/sftp.TestSudoSFTPUsesThePasswordOnStandardInputHandshake
+    - adapters/sftp.TestSudoSFTPReportsADeniedPasswordWithoutFallback
+    - adapters/sftp.TestSudoSFTPFallsBackToTheDefaultServerAndReportsAMissingBinary
+    - adapters/sftp.TestSudoSFTPBoundsTheHandshake
+  status: verified
+  notes: "The probe checks the original's six sftp-server paths with test -x, then falls back to /usr/lib/openssh/sftp-server when none answers, as the original did, and runs sudo -S -p 'SUDOPASSWORD:' sh -c 'printf SFTPREADY; exec <path> -e'. The password and newline go to stdin only after the stderr prompt; the SFTP client starts after the SFTPREADY marker. A denied password (exit 1) and a missing server (exit 127) stay typed errors, and a silent handshake returns at its 20-second bound instead of hanging a pane. Sudo never falls back to the login account."
+
+- id: sftp.protocol-selection
+  area: sftp-transfer
+  feature: Per-Host automatic, SFTP-only, or SCP-only protocol selection with safe fallback
+  original_paths:
+    - electron/bridges/sftpBridge.cjs
+    - electron/bridges/sftpBridge/openConnection.cjs
+    - application/state/sftp/useSftpConnections.ts
+    - application/state/sftp/sharedRemoteHostCache.ts
+    - domain/host.ts
+    - components/HostDetailsConnectionSections.tsx
+  module: application/transfer
+  tickets: [35]
+  acceptance_tests:
+    - application/transfer.TestExplicitSCPUsesOnlySCPAndBoundsTheProbe
+    - application/transfer.TestExplicitSFTPDoesNotFallBack
+    - application/transfer.TestAutoFallsBackToSCPWhenSFTPIsUnavailable
+    - application/transfer.TestAutoRefusesSCPFallbackOnASingleChannelHost
+    - application/transfer.TestReusedSingleChannelTransportIsRefusedBeforeAnyChannel
+    - application/transfer.TestFreshSingleChannelHostMayUseSCPDirectlyAndSFTP
+    - application/transfer.TestSudoNeverFallsBackToUnprivilegedProtocols
+    - application/transfer.TestSudoWithSCPIsRejectedBeforeConnecting
+    - application/transfer.TestAutoUsesSFTPWhenItWorks
+    - application/transfer.TestSCPProbeFailureIsReported
+    - application/transfer.TestNormalizeFileProtocol
+    - domain/vault.TestNormalizeDraftDefaultsAndValidatesTheFileProtocol
+    - ui/vault/state.TestHostFormSubmitsAndRestoresTheFileProtocol
+    - app.TestTicket35CheckRunsThroughTheKeyboard
+    - app.TestTicket35CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Explicit SCP probes and never tries SFTP; explicit SFTP reports its failure and never falls back; auto tries SFTP once and may probe SCP after a failure. A reused single-channel transport is refused before any channel opens, and auto does not fall back on a fresh single-channel host because the fallback would need a second channel. Sudo is never downgraded: it opens only the elevated SFTP, and a contradictory sudo+SCP Host is rejected before connecting. Empty or unknown persisted values normalize to auto; the Vault editor offers Auto, SFTP only, and SCP mode and rejects SCP with sudo."

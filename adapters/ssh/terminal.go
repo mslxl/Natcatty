@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ var _ appconnection.KeepaliveClient = (*sshClient)(nil)
 var _ appconnection.VersionedClient = (*sshClient)(nil)
 var _ appconnection.ForwardingClient = (*sshClient)(nil)
 var _ appconnection.SubsystemClient = (*sshClient)(nil)
+var _ appconnection.Executor = (*sshClient)(nil)
 
 // DialContext opens a direct-tcpip channel through the SSH Host. It is the
 // transport behind a local or dynamic Port Forwarding Rule.
@@ -126,6 +128,96 @@ func (c *sshClient) OpenSubsystem(ctx context.Context, name string) (appconnecti
 		return nil, err
 	}
 	return &subsystemChannel{session: session, stdin: stdin, stdout: stdout}, nil
+}
+
+// Exec runs one non-interactive command to completion. The context bounds the
+// command: cancellation closes the channel, and the caller sees the context
+// error rather than a remote exit status.
+func (c *sshClient) Exec(ctx context.Context, command string) (appconnection.ExecResult, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return appconnection.ExecResult{}, &appconnection.Error{Kind: appconnection.KindNetwork, Cause: appconnection.ErrClosed}
+	}
+	if err := ctx.Err(); err != nil {
+		return appconnection.ExecResult{}, err
+	}
+	session, err := c.client.NewSession()
+	if err != nil {
+		return appconnection.ExecResult{}, err
+	}
+	defer session.Close()
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	if err := session.Start(command); err != nil {
+		return appconnection.ExecResult{}, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- session.Wait() }()
+
+	select {
+	case <-ctx.Done():
+		_ = session.Close()
+		<-done
+		return appconnection.ExecResult{}, ctx.Err()
+	case err := <-done:
+		result := appconnection.ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
+		var exit *xssh.ExitError
+		switch {
+		case err == nil:
+			result.ExitCode, result.HasExitCode = 0, true
+		case errors.As(err, &exit):
+			result.ExitCode, result.HasExitCode = exit.ExitStatus(), true
+		default:
+			// The command may have flushed output before the transport
+			// dropped. Return what arrived together with the failure so the
+			// caller can tell an empty channel from a real answer.
+			return result, err
+		}
+		return result, nil
+	}
+}
+
+// OpenExec starts one non-interactive command and returns its raw stream. The
+// context bounds opening only; the caller owns the stream and closes it when
+// its protocol ends.
+func (c *sshClient) OpenExec(ctx context.Context, command string) (appconnection.ExecStream, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, &appconnection.Error{Kind: appconnection.KindNetwork, Cause: appconnection.ErrClosed}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	session, err := c.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	if err := session.Start(command); err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	return &execChannel{session: session, stdin: stdin, stdout: stdout, stderr: stderr}, nil
 }
 
 // Keepalive sends an OpenSSH keepalive global request. A failed request means
@@ -304,6 +396,54 @@ func (t *channelTerminal) Close() error {
 	t.mu.Unlock()
 	_ = t.stdin.Close()
 	return t.session.Close()
+}
+
+// execChannel is one open exec channel. Read and Write are the remote stdout
+// and stdin; Stderr exposes diagnostics for a password handshake.
+type execChannel struct {
+	session *xssh.Session
+	stdin   io.WriteCloser
+	stdout  io.Reader
+	stderr  io.Reader
+	once    sync.Once
+}
+
+var _ appconnection.ExecStream = (*execChannel)(nil)
+
+// Read returns the command's stdout.
+func (e *execChannel) Read(p []byte) (int, error) { return e.stdout.Read(p) }
+
+// Write sends the command's stdin.
+func (e *execChannel) Write(p []byte) (int, error) { return e.stdin.Write(p) }
+
+// Stderr returns the command's stderr stream.
+func (e *execChannel) Stderr() io.Reader { return e.stderr }
+
+// ExitCode waits for the remote command and reports its status. A command
+// terminated by a signal, or one whose status never arrived, reports an
+// error.
+func (e *execChannel) ExitCode() (int, error) {
+	err := e.session.Wait()
+	if err == nil {
+		return 0, nil
+	}
+	var exit *xssh.ExitError
+	if errors.As(err, &exit) {
+		if signal := exit.Signal(); signal != "" {
+			return 0, err
+		}
+		return exit.ExitStatus(), nil
+	}
+	return 0, err
+}
+
+// Close closes stdin first so the peer sees end-of-file, then the channel.
+func (e *execChannel) Close() (err error) {
+	e.once.Do(func() {
+		_ = e.stdin.Close()
+		err = e.session.Close()
+	})
+	return err
 }
 
 // subsystemChannel is one open SSH subsystem. Read is the server's stdout,

@@ -57,6 +57,9 @@ type Options struct {
 	// Subsystems serves named SSH subsystems. The handler owns the channel and
 	// should close it when the protocol ends; an unlisted name is refused.
 	Subsystems map[string]func(ssh.Channel)
+	// Exec serves a non-interactive exec request and returns the remote exit
+	// status. Without it, exec requests are refused like a shell-only server.
+	Exec func(command string, channel ssh.Channel) int
 }
 
 // X11Request is one recorded x11-req session request.
@@ -121,6 +124,8 @@ type Server struct {
 	ignoreCancel      bool
 	subsystems        map[string]func(ssh.Channel)
 	subsystemRequests []string
+	execHandler       func(string, ssh.Channel) int
+	execRequests      []string
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -145,6 +150,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		ignoreCancel:    options.IgnoreRemoteForwardCancel,
 		acceptX11:       options.AcceptX11,
 		subsystems:      options.Subsystems,
+		execHandler:     options.Exec,
 	}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
@@ -306,6 +312,13 @@ func (s *Server) SubsystemRequests() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.subsystemRequests...)
+}
+
+// ExecRequests returns every accepted exec command, in order.
+func (s *Server) ExecRequests() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.execRequests...)
 }
 
 // ShellOpened reports whether the client requested an interactive shell.
@@ -653,6 +666,27 @@ func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request
 			s.mu.Unlock()
 			request.Reply(true, nil)
 			go echo(channel)
+		case "exec":
+			var payload struct{ Command string }
+			if err := ssh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			s.mu.Lock()
+			handler := s.execHandler
+			if handler != nil {
+				s.execRequests = append(s.execRequests, payload.Command)
+			}
+			s.mu.Unlock()
+			if handler == nil {
+				request.Reply(false, nil)
+				continue
+			}
+			request.Reply(true, nil)
+			status := uint32(handler(payload.Command, channel))
+			_, _ = channel.SendRequest("exit-status", false,
+				ssh.Marshal(struct{ Status uint32 }{status}))
+			_ = channel.Close()
 		default:
 			request.Reply(false, nil)
 		}

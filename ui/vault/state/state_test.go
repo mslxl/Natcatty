@@ -775,3 +775,55 @@ func TestCreatingAHostDoesNotInheritAPreviousEditsRoute(t *testing.T) {
 		t.Fatalf("new Host inherited an algorithm policy: %+v", repo.created[0])
 	}
 }
+
+func TestHostFormSubmitsAndRestoresTheFileProtocol(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	if form := state.Form(); form.FileProtocol != string(domainvault.FileProtocolAuto) {
+		t.Fatalf("new Host protocol = %q, want auto", form.FileProtocol)
+	}
+	form := state.Form()
+	form.Label = "web"
+	form.Hostname = "example.com"
+	form.FileProtocol = string(domainvault.FileProtocolSCP)
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 || repo.created[0].SFTPFileProtocol != domainvault.FileProtocolSCP {
+		t.Fatalf("created = %+v", repo.created)
+	}
+
+	repo.items = []domainvault.Host{{
+		ID: "host-9", Label: "root-box", Hostname: "example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, SFTPFileProtocol: domainvault.FileProtocolSFTP,
+		SFTPSudo: true,
+	}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-9") {
+		t.Fatal("BeginEdit did not open the editor")
+	}
+	restored := state.Form()
+	if restored.FileProtocol != string(domainvault.FileProtocolSFTP) || !restored.SFTPSudo {
+		t.Fatalf("restored form = %+v", restored)
+	}
+
+	// A Host saved before the preference existed has no value; the editor must
+	// show automatic rather than a blank select.
+	repo.items = append(repo.items, domainvault.Host{
+		ID: "host-legacy", Label: "legacy", Hostname: "legacy.example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH,
+	})
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload legacy: %v", err)
+	}
+	if !state.BeginEdit("host-legacy") {
+		t.Fatal("BeginEdit did not open the legacy editor")
+	}
+	if got := state.Form().FileProtocol; got != string(domainvault.FileProtocolAuto) {
+		t.Fatalf("legacy protocol = %q, want auto", got)
+	}
+}

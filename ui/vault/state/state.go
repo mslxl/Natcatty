@@ -129,6 +129,8 @@ const (
 	ProblemBackupCorrupt            Problem = "backup_corrupt"
 	ProblemBackupUnavailable        Problem = "backup_unavailable"
 	ProblemBackupClear              Problem = "backup_clear"
+	ProblemFileProtocol             Problem = "file_protocol"
+	ProblemSudoUnsupported          Problem = "sftp_sudo_unsupported"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -165,6 +167,10 @@ type Form struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manually configured
 	// Proxy still wins; an empty reference means no profile is selected.
 	ProxyProfileID string
+	// FileProtocol is the remote-pane transfer protocol: automatic, SFTP, or
+	// SCP. SFTPSudo elevates the SFTP subsystem through sudo.
+	FileProtocol string
+	SFTPSudo     bool
 }
 
 // State is the Vault surface's state.
@@ -582,8 +588,9 @@ func (s *State) BeginCreate() {
 	s.closeEntityEditors()
 	s.editing = true
 	s.form = Form{
-		Protocol:   string(domainvault.ProtocolSSH),
-		AuthMethod: string(domainvault.HostAuthAuto),
+		Protocol:     string(domainvault.ProtocolSSH),
+		AuthMethod:   string(domainvault.HostAuthAuto),
+		FileProtocol: string(domainvault.FileProtocolAuto),
 	}
 	s.problem = ProblemNone
 	s.pendingDelete = ""
@@ -629,6 +636,8 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		ProxyProfileID:         host.ProxyProfileID,
 		X11Forwarding:          host.X11Forwarding,
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
+		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
+		SFTPSudo:               host.SFTPSudo,
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -903,6 +912,8 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		LegacyAlgorithms:       host.LegacyAlgorithms,
 		SkipEcdsaHostKey:       host.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
+		SFTPFileProtocol:       domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
+		SFTPSudo:               host.SFTPSudo,
 	}
 }
 
@@ -951,6 +962,8 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		LegacyAlgorithms: s.legacyAlgorithms,
 		SkipEcdsaHostKey: s.skipEcdsaHostKey,
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
+		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
+		SFTPSudo:         s.form.SFTPSudo,
 	}, ProblemNone
 }
 
@@ -1037,6 +1050,10 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 			return ProblemX11Acknowledged
 		}
 		return ProblemX11
+	case domainvault.FieldFileProtocol:
+		return ProblemFileProtocol
+	case domainvault.FieldSFTPSudo:
+		return ProblemSudoUnsupported
 	case domainvault.FieldSnippet, domainvault.FieldSnippetCommand:
 		return ProblemSnippet
 	case domainvault.FieldSnippetPackage:

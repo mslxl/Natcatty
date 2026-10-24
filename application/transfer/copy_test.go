@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"regexp"
 	"strings"
@@ -526,4 +527,51 @@ func (f *fakeBookmarks) LoadLocalBookmarks(context.Context) ([]domainsftp.Bookma
 func (f *fakeBookmarks) SaveLocalBookmarks(_ context.Context, items []domainsftp.Bookmark) error {
 	f.local = append([]domainsftp.Bookmark(nil), items...)
 	return nil
+}
+
+// sizedFakeFS is a destination that declares the source size before writing,
+// the way the SCP sink protocol does.
+type sizedFakeFS struct {
+	*fakeFS
+	mu       sync.Mutex
+	declared []int64
+}
+
+func (f *sizedFakeFS) CreateSized(ctx context.Context, p string, size int64) (io.WriteCloser, error) {
+	f.mu.Lock()
+	f.declared = append(f.declared, size)
+	f.mu.Unlock()
+	return f.fakeFS.Create(ctx, p)
+}
+
+func (f *sizedFakeFS) sizes() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.declared...)
+}
+
+// TestCopyDeclaresTheSourceSizeToASizedDestination proves a protocol that
+// needs the byte count up front receives it instead of a buffered stream.
+func TestCopyDeclaresTheSourceSizeToASizedDestination(t *testing.T) {
+	local := newFakeFS("local")
+	local.addFile("/", "a.txt", "alpha", 0o644)
+	local.addFile("/", "b.txt", "beta-beta", 0o644)
+	remote := &sizedFakeFS{fakeFS: newFakeFS("remote")}
+
+	service := NewService(nil, nil)
+	if _, err := service.Copy(context.Background(), CopyRequest{
+		Source: local, Dest: remote,
+		Sources: []string{"/a.txt", "/b.txt"},
+		DestDir: "/",
+		Kind:    domainsftp.OpUpload,
+	}); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	sizes := remote.sizes()
+	if len(sizes) != 2 || sizes[0] != int64(len("alpha")) || sizes[1] != int64(len("beta-beta")) {
+		t.Fatalf("declared sizes = %v", sizes)
+	}
+	if got, ok := remote.file("/a.txt"); !ok || string(got) != "alpha" {
+		t.Fatalf("a.txt = %q, exists = %v", got, ok)
+	}
 }

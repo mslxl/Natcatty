@@ -384,7 +384,7 @@ func run(afterReady func(hostWindow)) error {
 	// the same service, so both panes share one copy engine.
 	transferService := apptransfer.NewService(
 		adaptersftp.NewLocal(),
-		sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService},
+		&sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService},
 		apptransfer.WithHosts(sftpHostSource{vault: vaultService}),
 		apptransfer.WithBookmarks(adaptersftp.NewBookmarks(
 			filepath.Join(userData, "sftp-bookmarks.json"),

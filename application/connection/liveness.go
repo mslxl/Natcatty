@@ -46,6 +46,59 @@ func normalizeRemoteVersion(remoteVersion string) string {
 	return version
 }
 
+// singleChannelSoftwareTokens are SSH software tokens that allow one session
+// channel per TCP connection. Only the software token is matched, never a
+// product name; OpenSSH, Dropbear, and JumpServer KoKo all multiplex. A
+// second channel on one of these peers tears down the first interactive
+// session, so SCP fallback (a second exec channel) would disconnect the user.
+var singleChannelSoftwareTokens = []string{
+	"BHostSSH",
+	"TERM-SSHD",
+	"CLOUDBILITY",
+	"CLOUDLINKER",
+}
+
+// RemoteRequiresSingleChannel reports whether the peer's SSH identification
+// line names software that accepts only one session channel per TCP
+// connection. The token must stand alone: a token inside another word, or a
+// product name such as OpenSSH, does not match.
+func RemoteRequiresSingleChannel(remoteVersion string) bool {
+	software := normalizeRemoteVersion(remoteVersion)
+	if software == "" {
+		return false
+	}
+	for _, token := range singleChannelSoftwareTokens {
+		if containsSoftwareToken(software, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSoftwareToken(software, token string) bool {
+	lower := strings.ToLower(software)
+	token = strings.ToLower(token)
+	for start := 0; start+len(token) <= len(lower); {
+		index := strings.Index(lower[start:], token)
+		if index < 0 {
+			return false
+		}
+		index += start
+		end := index + len(token)
+		beforeOK := index == 0 || !isTokenByte(lower[index-1])
+		afterOK := end == len(lower) || !isTokenByte(lower[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		start = index + 1
+	}
+	return false
+}
+
+func isTokenByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
+}
+
 func resolveLivenessProbe(duration time.Duration) time.Duration {
 	if duration < 0 {
 		return DefaultLivenessProbe
