@@ -61,6 +61,13 @@ var _ apptransfer.FileSystem = (*SCP)(nil)
 // binary, so SCP mode cannot work even though the shell does.
 var ErrSCPMissing = errors.New("sftp: scp is not installed on the remote host")
 
+// errSCPHalfClose reports an exec transport that cannot signal end-of-transfer
+// while the channel stays readable for the final acknowledgement. OpenSSH's
+// scp -t finishes only when the sender closes its side of the channel, so a
+// transport without that capability would either hang in ExitCode or report a
+// success the peer never confirmed.
+var errSCPHalfClose = errors.New("sftp: the exec transport cannot half-close an SCP upload")
+
 // scpProbeCommand verifies a working shell and the scp binary in one round
 // trip. A missing shell leaves stdout empty; a missing scp exits 127.
 const scpProbeCommand = `printf "%s
@@ -234,8 +241,13 @@ func (s *SCP) Open(ctx context.Context, remotePath string) (io.ReadCloser, error
 	}
 	pipeReader, pipeWriter := io.Pipe()
 	readerCtx, cancel := context.WithCancel(ctx)
+	// A download now waits for the source's exit after the final
+	// acknowledgement, so cancellation must be able to close a channel whose
+	// peer never finishes; waiting for the caller to call Close is not enough.
+	stopWatch := watchStreamClose(ctx, stream)
 	go func() {
 		cause := readScpSource(readerCtx, stream, pipeWriter)
+		stopWatch()
 		_ = pipeWriter.CloseWithError(cause)
 		_ = stream.Close()
 		cancel()
@@ -289,7 +301,22 @@ func readScpSource(ctx context.Context, stream appconnection.ExecStream, out *io
 			if trailing != 0 {
 				return scpFailure("SCP_PROTOCOL_ERROR", "expected a trailing NUL after SCP file data")
 			}
-			return writeAck(stream)
+			if err := writeAck(stream); err != nil {
+				return err
+			}
+			// The final acknowledgement is the last protocol event for a
+			// single-file source: OpenSSH's source() then exits, and its
+			// status is the only way to learn that the transaction finished
+			// rather than the channel merely dropping after the body.
+			code, err := stream.ExitCode()
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return scpFailure("SCP_PROTOCOL_ERROR",
+					fmt.Sprintf("remote scp -f exited %d", code))
+			}
+			return nil
 		}
 	}
 }
@@ -322,6 +349,11 @@ func (s *SCP) CreateSized(ctx context.Context, remotePath string, size int64) (i
 	if err != nil {
 		return nil, scpOperationError(domainsftp.OpUpload, remotePath, err)
 	}
+	half, ok := stream.(appconnection.HalfCloser)
+	if !ok {
+		_ = stream.Close()
+		return nil, scpOperationError(domainsftp.OpUpload, remotePath, errSCPHalfClose)
+	}
 	reader := bufio.NewReader(stream)
 	if err := readAck(reader); err != nil {
 		_ = stream.Close()
@@ -341,13 +373,13 @@ func (s *SCP) CreateSized(ctx context.Context, remotePath string, size int64) (i
 		return nil, scpOperationError(domainsftp.OpUpload, remotePath, err)
 	}
 	writer := &scpWriter{
-		stream: stream,
-		reader: reader,
-		path:   remotePath,
-		size:   size,
-		done:   make(chan struct{}),
+		stream:     stream,
+		halfCloser: half,
+		reader:     reader,
+		path:       remotePath,
+		size:       size,
+		stopWatch:  watchStreamClose(ctx, stream),
 	}
-	go writer.watch(ctx)
 	return writer, nil
 }
 
@@ -506,6 +538,22 @@ func scpOperationError(op domainsftp.OperationKind, remotePath string, err error
 	}
 }
 
+// watchStreamClose closes stream when ctx ends, so a protocol wait cannot
+// outlive its caller. The returned stop function ends the watch; it is safe to
+// call more than once and must be called when the protocol finishes.
+func watchStreamClose(ctx context.Context, stream io.Closer) func() {
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = stream.Close()
+		case <-finished:
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(finished) }) }
+}
+
 // writeAck sends the SCP ready/ok byte.
 func writeAck(w io.Writer) error {
 	_, err := w.Write([]byte{0})
@@ -562,25 +610,16 @@ func (r *scpReader) Close() error {
 
 // scpWriter is a streaming upload against one scp -t channel.
 type scpWriter struct {
-	stream appconnection.ExecStream
-	reader *bufio.Reader
-	path   string
-	size   int64
+	stream     appconnection.ExecStream
+	halfCloser appconnection.HalfCloser
+	reader     *bufio.Reader
+	path       string
+	size       int64
+	stopWatch  func()
 
 	mu      sync.Mutex
 	written int64
 	closed  bool
-	done    chan struct{}
-	once    sync.Once
-}
-
-// watch aborts the channel when the caller's context ends.
-func (w *scpWriter) watch(ctx context.Context) {
-	select {
-	case <-ctx.Done():
-		_ = w.stream.Close()
-	case <-w.done:
-	}
 }
 
 func (w *scpWriter) Write(p []byte) (int, error) {
@@ -608,7 +647,7 @@ func (w *scpWriter) Close() error {
 	w.mu.Unlock()
 	// Keep the context watcher armed through the final ACK and remote exit:
 	// a wedged peer must still let cancellation close the stream.
-	defer w.once.Do(func() { close(w.done) })
+	defer w.stopWatch()
 
 	if written != w.size {
 		_ = w.stream.Close()
@@ -625,12 +664,25 @@ func (w *scpWriter) Close() error {
 		_ = w.stream.Close()
 		return scpOperationError(domainsftp.OpUpload, w.path, err)
 	}
+	// OpenSSH's scp -t acknowledges the file body and then loops for another
+	// control record; it finishes only after end-of-transfer. For a single
+	// file that signal is end-of-input on the channel, so close the write side
+	// before waiting. A bare NUL is not an end marker to OpenSSH: it is read
+	// as the first byte of the next filename, which the sink rejects as a
+	// protocol error. Keeping the read side open through ExitCode lets the
+	// final status arrive and still lets cancellation close a wedged stream.
+	if err := w.halfCloser.CloseWrite(); err != nil {
+		_ = w.stream.Close()
+		return scpOperationError(domainsftp.OpUpload, w.path, err)
+	}
 	// Wait for the remote scp process to exit so a caller that checks the
-	// destination immediately after Close observes the completed file.
+	// destination immediately after Close observes the completed file. A
+	// non-zero status is a protocol failure, classified the same way as the
+	// download path's post-acknowledgement check.
 	if code, err := w.stream.ExitCode(); err != nil || code != 0 {
 		_ = w.stream.Close()
 		if err == nil {
-			err = fmt.Errorf("remote scp exited %d", code)
+			err = scpFailure("SCP_PROTOCOL_ERROR", fmt.Sprintf("remote scp exited %d", code))
 		}
 		return scpOperationError(domainsftp.OpUpload, w.path, err)
 	}
