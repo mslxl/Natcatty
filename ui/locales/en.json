@@ -3082,7 +3082,7 @@
   "@sftpConflictModified": {
     "description": "The file summary modification label."
   },
-  "sftpConflictApplyToAll": "Apply this action to all {count} remaining conflicts",
+  "sftpConflictApplyToAll": "Apply this action to all remaining conflicts ({count})",
   "@sftpConflictApplyToAll": {
     "description": "The apply-to-all checkbox in a conflict prompt.",
     "placeholders": {

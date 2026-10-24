@@ -22,9 +22,13 @@ func paneTitle(m locales.Messages, tab *transferstate.Tab) string {
 	return tab.Title()
 }
 
-// noticeText localizes the surface's non-fatal status code. Unknown codes
+// noticeText localizes the surface's non-fatal status code. A code carrying a
+// classified failure keeps that failure's specific message; unknown codes
 // render nothing, so no untranslated token reaches the window.
 func noticeText(m locales.Messages, code string) string {
+	if kind, ok := transferstate.FailureKind(code); ok {
+		return errorKindText(m, kind)
+	}
 	switch code {
 	case "copied":
 		return m.SftpNoticeCopied()
