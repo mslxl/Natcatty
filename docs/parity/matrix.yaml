@@ -2633,7 +2633,69 @@
     - ui/transfer.TestTransferCenterConfiguredChordClosesIt
     - ui/transfer.TestTransferCenterShowsReconnectOnAFailedRow
   status: verified
-  notes: "Each Resource (local, Host, Session) admits up to the queue's per-resource limit (1-16, default 6), and a multi-file row reports its current file and completed-file count. Pause stops at a chunk boundary and Resume replays the request; Restart downgrades unfinished rows to interrupted with reconnect required. A second Transfer pressed while one runs is admitted to the queue instead of refused. A lost transport settles as connection with reconnect required, and Retry returns ErrTaskUnavailable rather than replaying the dead stream. The center closes on a backdrop click, Escape, Dismiss, and its effective (rebindable) toggle chord even though the modal suppresses window shortcuts."
+  notes: "Each Resource (local, Host, Session) admits up to the queue's per-resource limit (1-16, default 6), and a multi-file row reports its current file and completed-file count. Pause stops at a chunk boundary; a directory Resume continues from its checkpoint while a single file replays, and Restart downgrades unfinished rows to interrupted with reconnect required. A second Transfer pressed while one runs is admitted to the queue instead of refused. A lost transport settles as connection with reconnect required, and Retry returns ErrTaskUnavailable rather than replaying the dead stream. The center closes on a backdrop click, Escape, Dismiss, and its effective (rebindable) toggle chord even though the modal suppresses window shortcuts."
+
+- id: sftp.directory-checkpoint
+  area: sftp-transfer
+  feature: Bounded directory checkpoints that record completed work and resume without re-copying it
+  original_paths:
+    - domain/sftpDirectoryCheckpoint.ts
+    - application/state/sftp/dedicatedTransferResume.ts
+    - application/state/sftp/transferDirectoryOps.ts
+  module: domain/transfer
+  tickets: [32]
+  acceptance_tests:
+    - domain/transfer.TestDirectoryManifestDetectsChangedAndReorderedEntries
+    - domain/transfer.TestLegacyChainedManifestsRemainValidAndAppendCompatible
+    - domain/transfer.TestDirectoryCheckpointValidationRefusesUnsafeValues
+    - domain/transfer.TestDirectoryEntryIdentityCoversPathSizeAndModification
+    - application/transfer.TestCopyRecordsDirectoryCheckpointAndResumeSkipsCompletedFiles
+    - application/transfer.TestCopyRestartsWhenACoveredEntryChanged
+    - application/transfer.TestCopyRecordsTheResolvedTargetRoot
+    - application/transfer.TestCopyPauseDuringReplaceResumesIntoSameTree
+    - application/transfer.TestQueueDirectoryCheckpointResumeSkipsCompletedFiles
+    - application/transfer.TestQueueRestartResumesADirectoryCheckpointAfterReattach
+    - application/transfer.TestQueueTransportLossRetainsTheCheckpointForReattach
+    - adapters/sftp.TestTransferQueueRoundTrips
+  status: verified
+  notes: "The v2 checkpoint is a fixed-width SHA-256 chain over source path, target path, size, and whole-millisecond mtime; legacy v1 digests remain valid and migrate. A deterministic dirs-first sorted plan yields totals, identities, and copy order. A resumed Transfer re-walks the tree, requires completed == covered, and skips the verified prefix. Paused and failed rows freeze progress to the checkpoint prefix, the chosen destination roots are pinned in Targets, and a restart keeps both across DowngradeInterrupted. Queue.Reattach binds live filesystems to a restored row before Resume continues it; Retry remains a full replay."
+
+- id: sftp.resume-latches
+  area: sftp-transfer
+  feature: Consistent pause and cancel latches while resuming and cancelling directory Transfers
+  original_paths:
+    - application/state/sftp/pauseTransferOutcome.ts
+    - application/state/sftp/transferCancelOutcome.ts
+  module: application/transfer
+  tickets: [32]
+  acceptance_tests:
+    - application/transfer.TestQueuePauseAndCancelLatchesStayConsistent
+    - application/transfer.TestQueueCancelClearsTheCheckpointAndRetryStartsOver
+    - application/transfer.TestCopyCancelDuringReplaceRestoresTheOriginal
+    - application/transfer.TestQueueOrdinaryFailureRestoresTheOriginalAndDropsTheCheckpoint
+    - application/transfer.TestQueuePauseAndResume
+    - ui/transfer/state.TestQueueTaskControlsReportUnavailableAfterRestart
+  status: verified
+  notes: "A second Pause is a no-op, Resume while pausing is refused with ErrTaskNotRetryable, Cancel clears the pause latch and wins over a pending pause, and cancelling a paused row clears its checkpoint. Retry after Cancel replays from the start."
+
+- id: sftp.checkpoint-limits-symlink-depth
+  area: sftp-transfer
+  feature: Directory checkpoint limits, deterministic traversal, and symlink depth
+  original_paths:
+    - domain/sftpDirectoryCheckpoint.ts
+    - application/state/sftp/transferDirectoryOps.ts
+  module: application/transfer
+  tickets: [32]
+  acceptance_tests:
+    - domain/transfer.TestDirectoryTraversalBudgetEnforcesLimitsAndCycles
+    - domain/transfer.TestDirectorySymlinkDepthMatchesTheOriginalLimit
+    - application/transfer.TestCopyWritesChildDirectoriesBeforeFilesInNameOrder
+    - application/transfer.TestCopyEnforcesTraversalLimits
+    - application/transfer.TestCopyFollowsSymlinkDirectoriesToTheDepthLimit
+    - application/transfer.TestCopyDoesNotFollowSymlinksWithoutThePolicy
+    - application/transfer.TestCopySkipsASymlinkDirectoryCycle
+  status: verified
+  notes: "Traversal stops at 50,000 directories or 200,000 entries, child directories sort before files at each level, and an ancestor-canonical cycle is skipped instead of followed. Symlinked directories are followed only with the policy, at most 32 levels deep; without it a symlink is copied as a leaf/refused rather than entered."
 
 - id: sftp.copy-move-paste
   area: sftp-transfer
