@@ -150,6 +150,102 @@ func TestPaletteDispatchesTheChosenCommand(t *testing.T) {
 	}
 }
 
+func rankedIDs(results []appsearch.Result) []string {
+	out := make([]string, len(results))
+	for index, result := range results {
+		out[index] = result.Record.ID
+	}
+	return out
+}
+
+func sameIDs(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestSwitcherRanksExactHostLabelFirst keeps the shared quality ranking
+// sensible for navigation: typing a full Host label selects that Host before
+// a Host whose label merely starts with it or contains it.
+func TestSwitcherRanksExactHostLabelFirst(t *testing.T) {
+	state := vaultstate.NewState(&paletteHosts{items: []domainvault.Host{
+		{ID: "h3", Label: "my-prod-box", Hostname: "10.0.0.3"},
+		{ID: "h1", Label: "prod", Hostname: "10.0.0.1"},
+		{ID: "h2", Label: "prod-db", Hostname: "10.0.0.2"},
+	}})
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	source := &palette{vault: state}
+	records := source.records(uisearch.ModeQuickSwitcher, "en")
+	want := []string{"h1", "h2", "h3"}
+	for run := 0; run < 50; run++ {
+		got := rankedIDs(appsearch.Rank("prod", records))
+		if !sameIDs(got, want) {
+			t.Fatalf("run %d = %v, want %v", run, got, want)
+		}
+	}
+}
+
+// categoryOrder returns the palette's fixed section index for a category.
+func categoryOrder(category string) int {
+	for index, candidate := range commandCategories {
+		if candidate == category {
+			return index
+		}
+	}
+	return len(commandCategories)
+}
+
+// TestPaletteOrderingStaysDeterministic ranks real command records and keeps
+// their category order stable across frames. The shared matcher now leads with
+// match quality, so the palette's own grouping and tie-breaking must not drift.
+func TestPaletteOrderingStaysDeterministic(t *testing.T) {
+	registry := paletteRegistry(t,
+		command.Quit, command.OpenSettings, command.NewTab, command.CloseTab,
+		command.SplitPaneRight, command.OpenBackups)
+	source := &palette{registry: func() *command.Registry { return registry }}
+	records := source.records(uisearch.ModeCommandPalette, "en")
+
+	for _, query := range []string{"tab", "settings", "split", "backups", "p"} {
+		first := rankedIDs(appsearch.Rank(query, records))
+		if len(first) == 0 {
+			t.Fatalf("%q matched no palette command", query)
+		}
+		for run := 0; run < 50; run++ {
+			if got := rankedIDs(appsearch.Rank(query, records)); !sameIDs(got, first) {
+				t.Fatalf("%q run %d = %v, want %v", query, run, got, first)
+			}
+		}
+	}
+
+	state := uisearch.New(
+		uisearch.WithSource(source.records),
+		uisearch.WithSection(searchSection),
+	)
+	state.Open(uisearch.ModeCommandPalette)
+	*state.QueryPtr() = "p"
+	state.Sync()
+	sections := state.Sections()
+	if len(sections) == 0 {
+		t.Fatal("the palette rendered no sections for p")
+	}
+	previous := -1
+	for _, section := range sections {
+		current := categoryOrder(section.Key)
+		if current <= previous {
+			t.Fatalf("section order = %v, want the palette's category order", section.Key)
+		}
+		previous = current
+	}
+}
+
 // TestSwitcherListsHostsWithTheirSearchableFields keeps the Quick Switcher's
 // Host records ranked by label, address, group, and tag.
 func TestSwitcherListsHostsWithTheirSearchableFields(t *testing.T) {
