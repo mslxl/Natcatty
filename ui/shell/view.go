@@ -41,6 +41,9 @@ func View(s *state.State) func(*ui.Context) {
 		if prompt := s.AuthPrompt(); prompt != nil {
 			sessionui.AuthPromptModal(prompt)(c)
 		}
+		if serial := s.SerialView(); serial != nil {
+			serial(c)
+		}
 		// The Quick Switcher sits above every surface, including a prompt, so
 		// its chord works wherever the focus is.
 		if search := s.SearchState(); search != nil {

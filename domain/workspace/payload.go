@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/serial"
 )
 
 // PayloadVersion is the restore payload version this app writes. Older or
@@ -19,6 +20,8 @@ const (
 	SessionLocal SessionKind = "local"
 	// SessionSSH is a shell on a saved Host.
 	SessionSSH SessionKind = "ssh"
+	// SessionSerial is a device on a serial port.
+	SessionSerial SessionKind = "serial"
 )
 
 // SessionDescriptor is the non-secret description of a Pane's Session. It is
@@ -38,6 +41,9 @@ type SessionDescriptor struct {
 	Dir string `json:"dir,omitempty"`
 	// X11Forwarding records the Host preference captured when the pane opened.
 	X11Forwarding bool `json:"x11Forwarding,omitempty"`
+	// Serial is the port and framing a serial Pane reopens with. It carries no
+	// credential material.
+	Serial *serial.Config `json:"serial,omitempty"`
 }
 
 // Valid reports whether a descriptor can be restored.
@@ -47,6 +53,8 @@ func (d SessionDescriptor) Valid() bool {
 		return true
 	case SessionSSH:
 		return d.HostID != "" && d.Hostname != ""
+	case SessionSerial:
+		return d.Serial != nil && d.Serial.Normalized().Validate() == nil
 	default:
 		return false
 	}

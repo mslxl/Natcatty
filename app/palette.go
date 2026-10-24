@@ -183,6 +183,9 @@ func commandPresentation(m locales.Messages, id command.ID) (commandSpec, bool) 
 	case command.NewTab:
 		return commandSpec{title: m.MenuNewTab(), category: uisearch.CategoryTab,
 			binding: "new-tab", keywords: []string{"new", "tab", "terminal", "local"}}, true
+	case command.ConnectSerial:
+		return commandSpec{title: m.MenuSerial(), category: uisearch.CategoryTab,
+			keywords: []string{"serial", "port", "device", "connect"}}, true
 	case command.CloseTab:
 		return commandSpec{title: m.MenuCloseTab(), category: uisearch.CategoryTab,
 			binding: "close-tab", keywords: []string{"close", "tab"}}, true

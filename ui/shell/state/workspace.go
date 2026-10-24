@@ -1422,6 +1422,14 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Dir = ""
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}
+	case domainworkspace.SessionSerial:
+		if descriptor.Serial == nil {
+			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
+		}
+		spec.Kind = appsession.KindSerial
+		serialConfig := descriptor.Serial.Normalized()
+		spec.Serial = &serialConfig
+		spec.Label = descriptor.Label
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
 	}

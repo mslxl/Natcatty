@@ -21,22 +21,31 @@ type routeSource interface {
 	Route(ctx context.Context, id model.HostID) (appconnection.Route, error)
 }
 
-// transportFactory routes a Session to the local PTY adapter or to an SSH
-// Connection. The SSH path acquires a lease for the Session's lifetime and
-// releases it when the transport closes, which is the seam ticket 09's pool
-// extends.
+// transportFactory routes a Session to the local PTY adapter, the serial
+// adapter, or an SSH Connection. The SSH path acquires a lease for the
+// Session's lifetime and releases it when the transport closes, which is the
+// seam ticket 09's pool extends.
 type transportFactory struct {
 	local   appsession.Factory
+	serial  appsession.Factory
 	manager *appconnection.Manager
 	routes  routeSource
 }
 
-func newTransportFactory(local appsession.Factory, manager *appconnection.Manager, routes routeSource) appsession.Factory {
-	return &transportFactory{local: local, manager: manager, routes: routes}
+func newTransportFactory(local, serial appsession.Factory, manager *appconnection.Manager, routes routeSource) appsession.Factory {
+	return &transportFactory{local: local, serial: serial, manager: manager, routes: routes}
 }
 
 func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	if spec.Kind != appsession.KindSSH {
+	switch spec.Kind {
+	case appsession.KindSSH:
+		// Handled below: an SSH transport owns a Connection lease.
+	case appsession.KindSerial:
+		if f.serial == nil {
+			return nil, errors.New("app: no serial transport")
+		}
+		return f.serial.Open(ctx, spec)
+	default:
 		return f.local.Open(ctx, spec)
 	}
 	if f.manager == nil {
