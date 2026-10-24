@@ -11,6 +11,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -72,12 +73,22 @@ func WithSudoServerPath(serverPath string) Option {
 	return func(s *Server) { s.sudoServerPath = serverPath }
 }
 
+// WithSourceExitCode makes a finished scp -f report code after it has sent its
+// file and read the receiver's final acknowledgement. OpenSSH returns zero for
+// a completed single-file source; a non-zero code lets a test prove the client
+// checks the source's exit instead of treating the last acknowledgement as the
+// end of the protocol.
+func WithSourceExitCode(code int) Option {
+	return func(s *Server) { s.sourceExitCode = code }
+}
+
 // Server is one in-process remote. It is safe for concurrent use.
 type Server struct {
 	home           string
 	scpAvailable   bool
 	sudoPassword   string
 	sudoServerPath string
+	sourceExitCode int
 
 	mu       sync.Mutex
 	nodes    map[string]*Node
@@ -150,6 +161,19 @@ func (s *Server) Has(remotePath string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.nodes[path.Clean(remotePath)]
 	return ok
+}
+
+// Names returns the base names directly under dir in name order, so a test can
+// observe entries the server created without knowing their generated names.
+func (s *Server) Names(dir string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	children := s.childrenLocked(path.Clean(dir))
+	names := make([]string, len(children))
+	for i, full := range children {
+		names[i] = path.Base(full)
+	}
+	return names
 }
 
 // Commands returns every command the fixture has executed.
@@ -588,7 +612,14 @@ func (s *Server) serveTar(r *bufio.Reader, dir string, stderr io.Writer) int {
 	}
 }
 
-// serveSink implements one scp -t session.
+// serveSink implements one scp -t session the way OpenSSH does: it announces
+// readiness, then loops over control records. After the last file's data has
+// been acknowledged the sink keeps waiting for the next record; the sender
+// ends the transaction by closing its side of the channel, which the sink sees
+// as end-of-input at the start of a record and treats as a clean completion.
+// A bare NUL is not an end marker in OpenSSH: it is read as the first byte of
+// the next filename and rejected, so a sender that writes one instead of
+// closing the channel gets a protocol error rather than a silent success.
 func (s *Server) serveSink(r *bufio.Reader, w io.Writer, dir string) int {
 	dir = path.Clean(dir)
 	if !s.Has(dir) {
@@ -598,21 +629,103 @@ func (s *Server) serveSink(r *bufio.Reader, w io.Writer, dir string) int {
 	if _, err := w.Write([]byte{0}); err != nil {
 		return 1
 	}
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return 1
+	for {
+		line, err := readSinkRecord(r)
+		if err != nil {
+			// End-of-input at the start of a record is how a real sink
+			// finishes; a truncated record or a NUL reports a protocol error
+			// back to the sender, as OpenSSH's run_err does.
+			if errors.Is(err, io.EOF) {
+				return 0
+			}
+			_, _ = io.WriteString(w, "\x01scp: "+err.Error()+"\n")
+			return 1
+		}
+		switch line[0] {
+		case 'E':
+			// The end-of-directory command; a sender that uses it expects an
+			// acknowledgement before the sink exits.
+			if _, err := w.Write([]byte{0}); err != nil {
+				return 1
+			}
+			return 0
+		case 'C':
+			if code := s.receiveSinkFile(r, w, dir, line); code != 0 {
+				return code
+			}
+		default:
+			_, _ = io.WriteString(w, "\x01scp: protocol error\n")
+			return 1
+		}
 	}
+}
+
+// readSinkRecord reads one control record including its newline. A NUL is a
+// filename byte to OpenSSH and is rejected before the rest of the record is
+// consumed, exactly as sink() does.
+func readSinkRecord(r *bufio.Reader) (string, error) {
+	first, err := r.ReadByte()
+	if err != nil {
+		return "", err
+	}
+	if first == '\n' {
+		return "", fmt.Errorf("unexpected newline")
+	}
+	record := []byte{first}
+	for first != '\n' {
+		ch, err := r.ReadByte()
+		if err != nil {
+			return "", fmt.Errorf("lost connection")
+		}
+		if ch == 0 {
+			return "", fmt.Errorf("nul byte in filename")
+		}
+		record = append(record, ch)
+		first = ch
+	}
+	return string(record), nil
+}
+
+// receiveSinkFile consumes one C record. The destination is created before the
+// control record is acknowledged and data is written as it arrives, so a
+// cancelled transfer leaves a partial file behind, as real scp does.
+func (s *Server) receiveSinkFile(r *bufio.Reader, w io.Writer, dir, line string) int {
 	control, err := parseControl(line)
 	if err != nil || control.kind != "file" {
 		_, _ = io.WriteString(w, "\x01scp: protocol error\n")
 		return 1
 	}
+	target := path.Join(dir, control.name)
+	node := &Node{
+		Type: File, Mode: control.mode, Owner: "tester",
+		Mod: time.Unix(1700000000, 0).UTC(),
+	}
+	s.mu.Lock()
+	s.ensureParentsLocked(target)
+	s.nodes[target] = node
+	s.mu.Unlock()
 	if _, err := w.Write([]byte{0}); err != nil {
 		return 1
 	}
-	data := make([]byte, control.size)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return 1
+	buffer := make([]byte, 32*1024)
+	remaining := control.size
+	for remaining > 0 {
+		chunk := buffer
+		if remaining < len(chunk) {
+			chunk = chunk[:remaining]
+		}
+		n, err := r.Read(chunk)
+		if n > 0 {
+			s.mu.Lock()
+			node.Data = append(node.Data, chunk[:n]...)
+			s.mu.Unlock()
+			remaining -= n
+		}
+		if err != nil {
+			// The sender dropped mid-file; the partial file stays, matching a
+			// real scp -t that never receives the body terminator.
+			return 1
+		}
 	}
 	trailing, err := r.ReadByte()
 	if err != nil || trailing != 0 {
@@ -621,16 +734,13 @@ func (s *Server) serveSink(r *bufio.Reader, w io.Writer, dir string) int {
 	if _, err := w.Write([]byte{0}); err != nil {
 		return 1
 	}
-	s.mu.Lock()
-	s.nodes[path.Join(dir, control.name)] = &Node{
-		Type: File, Data: data, Mode: control.mode, Owner: "tester",
-		Mod: time.Unix(1700000000, 0).UTC(),
-	}
-	s.mu.Unlock()
 	return 0
 }
 
-// serveSource implements one scp -f session for a regular file.
+// serveSource implements one scp -f session for a regular file. As in
+// OpenSSH's source(), the final acknowledgement is the last protocol event for
+// a single file: the source then exits, and its status is how the receiver
+// learns whether the transaction really finished.
 func (s *Server) serveSource(r *bufio.Reader, w io.Writer, remotePath string) int {
 	remotePath = path.Clean(remotePath)
 	if _, err := r.ReadByte(); err != nil {
@@ -656,7 +766,7 @@ func (s *Server) serveSource(r *bufio.Reader, w io.Writer, remotePath string) in
 	if _, err := readAck(r); err != nil {
 		return 1
 	}
-	return 0
+	return s.sourceExitCode
 }
 
 // serveSudo implements the marker handshake: prompt on stderr, password on
@@ -734,21 +844,54 @@ func readAck(r *bufio.Reader) (byte, error) {
 	return code, nil
 }
 
+// lsMode renders a node's permission bits as ls does, including group and
+// other write, execute, and the setuid/setgid/sticky markers. Building every
+// bit from the mode (rather than clearing a fixed literal) keeps a mode the
+// backend wrote readable back through Stat.
 func lsMode(node *Node) string {
-	text := "-rw-r--r--"
+	kind := byte('-')
 	switch node.Type {
 	case Directory:
-		text = "drwxr-xr-x"
+		kind = 'd'
 	case Symlink:
-		text = "lrwxrwxrwx"
+		kind = 'l'
 	}
-	bits := []byte(text)
-	for i, mask := range []uint32{0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001} {
-		if node.Mode&mask == 0 {
-			bits[i+1] = '-'
+	bits := []byte{kind}
+	for shift := uint(6); ; shift -= 3 {
+		read, write, exec := byte('-'), byte('-'), byte('-')
+		if node.Mode&(0o4<<shift) != 0 {
+			read = 'r'
+		}
+		if node.Mode&(0o2<<shift) != 0 {
+			write = 'w'
+		}
+		if node.Mode&(0o1<<shift) != 0 {
+			exec = 'x'
+		}
+		bits = append(bits, read, write, exec)
+		if shift == 0 {
+			break
 		}
 	}
+	if node.Mode&0o4000 != 0 {
+		bits[3] = specialExecMarker(bits[3] == 'x', 's', 'S')
+	}
+	if node.Mode&0o2000 != 0 {
+		bits[6] = specialExecMarker(bits[6] == 'x', 's', 'S')
+	}
+	if node.Mode&0o1000 != 0 {
+		bits[9] = specialExecMarker(bits[9] == 'x', 't', 'T')
+	}
 	return string(bits)
+}
+
+// specialExecMarker chooses the lowercase marker when the execute bit is set
+// and the uppercase one otherwise, matching ls.
+func specialExecMarker(execute bool, lower, upper byte) byte {
+	if execute {
+		return lower
+	}
+	return upper
 }
 
 func groupOr(node *Node) string {

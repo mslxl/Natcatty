@@ -1,17 +1,58 @@
 package sftp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mslxl/natcatty/adapters/scptest/scpfixture"
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
+
+// protocolWait bounds a protocol completion that a real OpenSSH peer performs
+// immediately. It is a hard deadline for a wedged channel, never a delay: a
+// passing test returns as soon as the operation completes.
+const protocolWait = 10 * time.Second
+
+// closeWithin runs one protocol Close and fails the test if it has not
+// returned by the deadline. The upload writer is unblocked by the test's
+// context cleanup, so a failure does not leak its goroutine into later tests.
+func closeWithin(t *testing.T, what string, closeFn func() error) error {
+	t.Helper()
+	result := make(chan error, 1)
+	go func() { result <- closeFn() }()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(protocolWait):
+		t.Fatalf("%s did not return within %s: the scp -t sink is still waiting for end-of-transfer",
+			what, protocolWait)
+		return nil
+	}
+}
+
+// waitFor polls one observable condition with a hard deadline. The interval is
+// only a cadence; success returns on the first satisfied check.
+func waitFor(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(protocolWait)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %s waiting for %s", protocolWait, what)
+}
 
 // newSCPFixture builds an SCP-only remote with a home directory and a few
 // entries, and returns the adapter plus a release counter.
@@ -171,6 +212,254 @@ func TestSCPTransfersFilesBothWays(t *testing.T) {
 		t.Fatalf("missing download error = %v (kind %s)", readErr, apptransfer.KindOf(readErr))
 	}
 }
+
+// TestSCPUploadCompletesAgainstARealSink is the regression for
+// 35-SCP-UPLOAD-HANG. OpenSSH's scp -t acknowledges the file body and then
+// waits for end-of-transfer before it exits, so a writer that calls ExitCode
+// without first closing its side of the channel wedges with the whole body
+// already staged. The fixture now models that sink; this test fails at the
+// pre-rework revision and returns as soon as the protocol is ended correctly.
+func TestSCPUploadCompletesAgainstARealSink(t *testing.T) {
+	files, server, _ := newSCPFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	payload := bytes.Repeat([]byte("x"), 1<<20)
+	writer, err := files.CreateSized(ctx, "/home/tester/pushed.bin", int64(len(payload)))
+	if err != nil {
+		t.Fatalf("CreateSized: %v", err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatalf("write upload: %v", err)
+	}
+	if err := closeWithin(t, "upload Close", writer.Close); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	assertRemoteBytes(t, server, "/home/tester/pushed.bin", payload)
+}
+
+// TestSCPDownloadReportsASourceThatFailsAfterTheFile proves the download path
+// checks the source's exit after the final acknowledgement. The body arrives
+// completely, so only the exit status can reveal that the transaction failed.
+func TestSCPDownloadReportsASourceThatFailsAfterTheFile(t *testing.T) {
+	server := scpfixture.New(scpfixture.WithSourceExitCode(1))
+	server.WriteFile("/home/tester/notes.txt", "hello scp", 0o640)
+	files, err := NewSCP(server, nil)
+	if err != nil {
+		t.Fatalf("NewSCP: %v", err)
+	}
+	t.Cleanup(func() { _ = files.Close() })
+
+	reader, err := files.Open(context.Background(), "/home/tester/notes.txt")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	data, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if string(data) != "hello scp" {
+		t.Fatalf("downloaded %q; the body should arrive before the exit is known", data)
+	}
+	if readErr == nil {
+		t.Fatal("a source that exited 1 after the final ack was treated as a complete download")
+	}
+	if !strings.Contains(readErr.Error(), "exited 1") {
+		t.Fatalf("download error = %v, want a remote exit failure", readErr)
+	}
+}
+
+// TestSCPCopyEngineUploadsDownloadsAndCancelsCleanly runs the real copy engine
+// over the SCP adapter against the OpenSSH-shaped sink. It covers staging,
+// verification and promotion for an upload, the symmetric download, and a
+// cancellation mid-file that must remove the staging file.
+func TestSCPCopyEngineUploadsDownloadsAndCancelsCleanly(t *testing.T) {
+	ctx := context.Background()
+	files, server, _ := newSCPFixture(t)
+	local, err := NewLocal().OpenLocal(ctx)
+	if err != nil {
+		t.Fatalf("OpenLocal: %v", err)
+	}
+	service := apptransfer.NewService(nil, nil)
+	payload := bytes.Repeat([]byte("netcatty-scp"), 8192)
+
+	t.Run("upload promotes the staged file", func(t *testing.T) {
+		sourceDir := t.TempDir()
+		sourcePath := filepath.Join(sourceDir, "report.bin")
+		if err := os.WriteFile(sourcePath, payload, 0o640); err != nil {
+			t.Fatalf("write source: %v", err)
+		}
+		result, err := service.Copy(ctx, apptransfer.CopyRequest{
+			Source: local, Dest: files, Sources: []string{sourcePath},
+			DestDir: "/home/tester", Kind: domainsftp.OpUpload,
+			Conflict: apptransfer.ConflictReplace,
+		})
+		if err != nil {
+			t.Fatalf("Copy upload: %v", err)
+		}
+		assertRemoteBytes(t, server, "/home/tester/report.bin", payload)
+		if len(result.Written) != 1 || result.Bytes != int64(len(payload)) {
+			t.Fatalf("result = %+v", result)
+		}
+		assertNoStagingFiles(t, server, "/home/tester")
+	})
+
+	t.Run("download copies the real body", func(t *testing.T) {
+		downloadDir := t.TempDir()
+		result, err := service.Copy(ctx, apptransfer.CopyRequest{
+			Source: files, Dest: local, Sources: []string{"/home/tester/notes.txt"},
+			DestDir: downloadDir, Kind: domainsftp.OpDownload,
+			Conflict: apptransfer.ConflictReplace,
+		})
+		if err != nil {
+			t.Fatalf("Copy download: %v", err)
+		}
+		got, err := os.ReadFile(filepath.Join(downloadDir, "notes.txt"))
+		if err != nil || string(got) != "hello scp" {
+			t.Fatalf("downloaded %q (%v)", got, err)
+		}
+		if len(result.Written) != 1 {
+			t.Fatalf("result = %+v", result)
+		}
+	})
+
+	t.Run("cancel removes the staging file", func(t *testing.T) {
+		sourceDir := t.TempDir()
+		sourcePath := filepath.Join(sourceDir, "cancel.bin")
+		if err := os.WriteFile(sourcePath, payload, 0o644); err != nil {
+			t.Fatalf("write source: %v", err)
+		}
+		cancelCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stalled := &stalledSource{FileSystem: local, path: sourcePath}
+		done := make(chan error, 1)
+		go func() {
+			_, copyErr := service.Copy(cancelCtx, apptransfer.CopyRequest{
+				Source: stalled, Dest: files, Sources: []string{sourcePath},
+				DestDir: "/home/tester", Kind: domainsftp.OpUpload,
+				Conflict: apptransfer.ConflictReplace, StageKey: "selftest-cancel",
+			})
+			done <- copyErr
+		}()
+
+		// The sink creates the staging file when it accepts the C record, so
+		// its appearance proves the upload channel is live before cancelling.
+		waitFor(t, "the SCP sink to create a staging file", func() bool {
+			for _, name := range server.Names("/home/tester") {
+				if apptransfer.IsStagingName(name) {
+					return true
+				}
+			}
+			return false
+		})
+		cancel()
+		select {
+		case copyErr := <-done:
+			if apptransfer.KindOf(copyErr) != apptransfer.KindCancelled {
+				t.Fatalf("cancelled copy error = %v (kind %q)", copyErr, apptransfer.KindOf(copyErr))
+			}
+		case <-time.After(protocolWait):
+			t.Fatalf("the cancelled copy did not return within %s", protocolWait)
+		}
+		if server.Has("/home/tester/cancel.bin") {
+			t.Fatal("a cancelled upload promoted its destination")
+		}
+		assertNoStagingFiles(t, server, "/home/tester")
+	})
+}
+
+// assertNoStagingFiles fails when a destination directory still holds one of
+// the copy engine's temporary names.
+func assertNoStagingFiles(t *testing.T, server *scpfixture.Server, dir string) {
+	t.Helper()
+	for _, name := range server.Names(dir) {
+		if apptransfer.IsStagingName(name) {
+			t.Fatalf("staging file survived: %s", name)
+		}
+	}
+}
+
+// assertRemoteBytes compares one remote fixture file with the expected body.
+func assertRemoteBytes(t *testing.T, server *scpfixture.Server, path string, want []byte) {
+	t.Helper()
+	got, ok := server.ReadFile(path)
+	if !ok || !bytes.Equal([]byte(got), want) {
+		t.Fatalf("%s exists=%v with %d bytes, want %d", path, ok, len(got), len(want))
+	}
+}
+
+// plainExecutor serves one exec stream that lacks the optional half-close
+// capability, modelling a transport SCP cannot safely finish an upload on.
+type plainExecutor struct {
+	stream appconnection.ExecStream
+}
+
+func (e *plainExecutor) Exec(context.Context, string) (appconnection.ExecResult, error) {
+	return appconnection.ExecResult{}, nil
+}
+
+func (e *plainExecutor) OpenExec(context.Context, string) (appconnection.ExecStream, error) {
+	return e.stream, nil
+}
+
+// plainStream implements ExecStream but deliberately not HalfCloser.
+type plainStream struct{}
+
+var _ appconnection.ExecStream = (*plainStream)(nil)
+
+func (*plainStream) Read([]byte) (int, error)  { return 0, io.EOF }
+func (*plainStream) Write([]byte) (int, error) { return 0, io.EOF }
+func (*plainStream) Close() error              { return nil }
+func (*plainStream) Stderr() io.Reader         { return nil }
+func (*plainStream) ExitCode() (int, error)    { return 0, nil }
+
+// TestSCPUploadRefusesATransportWithoutHalfClose proves an upload fails before
+// writing when the channel cannot signal end-of-transfer while the sink's
+// status stays readable.
+func TestSCPUploadRefusesATransportWithoutHalfClose(t *testing.T) {
+	files, err := NewSCP(&plainExecutor{stream: &plainStream{}}, nil)
+	if err != nil {
+		t.Fatalf("NewSCP: %v", err)
+	}
+	_, err = files.CreateSized(context.Background(), "/home/tester/x.bin", 1)
+	if !errors.Is(err, errSCPHalfClose) {
+		t.Fatalf("CreateSized error = %v, want errSCPHalfClose", err)
+	}
+}
+
+// stalledSource is a local filesystem whose reader delivers one small chunk
+// and then blocks until the copy is cancelled. It makes a mid-file
+// cancellation deterministic without timers.
+type stalledSource struct {
+	apptransfer.FileSystem
+	path string
+}
+
+func (s *stalledSource) Open(ctx context.Context, p string) (io.ReadCloser, error) {
+	reader, err := s.FileSystem.Open(ctx, p)
+	if err != nil || p != s.path {
+		return reader, err
+	}
+	return &stalledReader{inner: reader, ctx: ctx}, nil
+}
+
+type stalledReader struct {
+	inner   io.ReadCloser
+	ctx     context.Context
+	started bool
+}
+
+func (r *stalledReader) Read(p []byte) (int, error) {
+	if r.started {
+		<-r.ctx.Done()
+		return 0, r.ctx.Err()
+	}
+	r.started = true
+	if len(p) > 1024 {
+		p = p[:1024]
+	}
+	return r.inner.Read(p)
+}
+
+func (r *stalledReader) Close() error { return r.inner.Close() }
 
 func TestSCPManagesDirectoriesAndModes(t *testing.T) {
 	files, server, _ := newSCPFixture(t)
