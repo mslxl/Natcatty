@@ -1266,6 +1266,26 @@ func (msgs Messages) VaultProblemX11Acknowledged() string {
 	return Catalog.Format(msgs.locale, "vaultProblemX11Acknowledged", nil)
 }
 
+// VaultProblemFileProtocol says "Choose automatic, SFTP, or SCP file transfer."
+// in the language the app shows.
+func VaultProblemFileProtocol() string { return In(i18n.Locale()).VaultProblemFileProtocol() }
+
+// VaultProblemFileProtocol says "Choose automatic, SFTP, or SCP file transfer."
+// in the language of msgs.
+func (msgs Messages) VaultProblemFileProtocol() string {
+	return Catalog.Format(msgs.locale, "vaultProblemFileProtocol", nil)
+}
+
+// VaultProblemSudoUnsupported says "Sudo mode requires SFTP or automatic file transfer on an SSH Host."
+// in the language the app shows.
+func VaultProblemSudoUnsupported() string { return In(i18n.Locale()).VaultProblemSudoUnsupported() }
+
+// VaultProblemSudoUnsupported says "Sudo mode requires SFTP or automatic file transfer on an SSH Host."
+// in the language of msgs.
+func (msgs Messages) VaultProblemSudoUnsupported() string {
+	return Catalog.Format(msgs.locale, "vaultProblemSudoUnsupported", nil)
+}
+
 // VaultProblemUsername says "The username is invalid."
 // in the language the app shows.
 func VaultProblemUsername() string { return In(i18n.Locale()).VaultProblemUsername() }
@@ -3636,6 +3656,46 @@ func VaultHostX11Acknowledge() string { return In(i18n.Locale()).VaultHostX11Ack
 // in the language of msgs.
 func (msgs Messages) VaultHostX11Acknowledge() string {
 	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
+}
+
+// VaultHostFileProtocol says "File protocol"
+// in the language the app shows.
+func VaultHostFileProtocol() string { return In(i18n.Locale()).VaultHostFileProtocol() }
+
+// VaultHostFileProtocol says "File protocol"
+// in the language of msgs.
+func (msgs Messages) VaultHostFileProtocol() string {
+	return Catalog.Format(msgs.locale, "vaultHostFileProtocol", nil)
+}
+
+// VaultHostFileProtocolHint says "Automatic tries SFTP, then falls back to SCP only when the server has no SFTP subsystem."
+// in the language the app shows.
+func VaultHostFileProtocolHint() string { return In(i18n.Locale()).VaultHostFileProtocolHint() }
+
+// VaultHostFileProtocolHint says "Automatic tries SFTP, then falls back to SCP only when the server has no SFTP subsystem."
+// in the language of msgs.
+func (msgs Messages) VaultHostFileProtocolHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostFileProtocolHint", nil)
+}
+
+// VaultHostSFTPSudo says "Use sudo for SFTP"
+// in the language the app shows.
+func VaultHostSFTPSudo() string { return In(i18n.Locale()).VaultHostSFTPSudo() }
+
+// VaultHostSFTPSudo says "Use sudo for SFTP"
+// in the language of msgs.
+func (msgs Messages) VaultHostSFTPSudo() string {
+	return Catalog.Format(msgs.locale, "vaultHostSFTPSudo", nil)
+}
+
+// VaultHostSFTPSudoHint says "Runs sftp-server as root. The Host password is sent to sudo on standard input."
+// in the language the app shows.
+func VaultHostSFTPSudoHint() string { return In(i18n.Locale()).VaultHostSFTPSudoHint() }
+
+// VaultHostSFTPSudoHint says "Runs sftp-server as root. The Host password is sent to sudo on standard input."
+// in the language of msgs.
+func (msgs Messages) VaultHostSFTPSudoHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostSFTPSudoHint", nil)
 }
 
 // VaultProblemKeyRequired says "Select an SSH Key."

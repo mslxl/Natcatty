@@ -51,6 +51,44 @@ const (
 	maxAlgorithmNameLength = 128
 )
 
+// FileProtocol is a Host's file-transfer protocol preference for remote
+// panes. It is independent of the connection Protocol: only SSH Hosts can use
+// SFTP or SCP.
+type FileProtocol string
+
+const (
+	// FileProtocolAuto tries SFTP and may fall back to SCP when the server has
+	// no SFTP subsystem. A single-channel Host never falls back.
+	FileProtocolAuto FileProtocol = "auto"
+	// FileProtocolSFTP uses SFTP only and reports a failure instead of
+	// silently changing protocol.
+	FileProtocolSFTP FileProtocol = "sftp"
+	// FileProtocolSCP uses scp and SSH exec channels, for servers without
+	// SFTP.
+	FileProtocolSCP FileProtocol = "scp"
+)
+
+// Valid reports whether p is one of the selectable file protocols.
+func (p FileProtocol) Valid() bool {
+	switch p {
+	case FileProtocolAuto, FileProtocolSFTP, FileProtocolSCP:
+		return true
+	}
+	return false
+}
+
+// NormalizeFileProtocol maps an empty or unknown value to automatic. It is the
+// single normalization for records written before the preference existed and
+// for form values that have not been validated yet.
+func NormalizeFileProtocol(value FileProtocol) FileProtocol {
+	switch value {
+	case FileProtocolSFTP, FileProtocolSCP:
+		return value
+	default:
+		return FileProtocolAuto
+	}
+}
+
 // ProxyType is a transport used to reach the first endpoint of a route.
 type ProxyType string
 
@@ -171,6 +209,12 @@ type Host struct {
 	SkipEcdsaHostKey bool `json:"skipEcdsaHostKey,omitempty"`
 	// Algorithms replaces individual algorithm categories when set.
 	Algorithms *AlgorithmOverrides `json:"algorithms,omitempty"`
+	// SFTPFileProtocol selects the remote file-transfer protocol. Empty means
+	// automatic: try SFTP, then fall back to SCP when allowed.
+	SFTPFileProtocol FileProtocol `json:"sftpFileProtocol,omitempty"`
+	// SFTPSudo elevates the SFTP subsystem through sudo so root-owned files
+	// can be edited. It requires SFTP or automatic protocol selection.
+	SFTPSudo bool `json:"sftpSudo,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -213,6 +257,9 @@ type Draft struct {
 	LegacyAlgorithms bool
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
+	// SFTPFileProtocol and SFTPSudo are the remote-pane protocol preference.
+	SFTPFileProtocol FileProtocol
+	SFTPSudo         bool
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -243,6 +290,10 @@ const (
 	FieldProxy       Field = "proxy"
 	FieldAlgorithms  Field = "algorithms"
 	FieldX11         Field = "x11"
+	// FieldFileProtocol and FieldSFTPSudo name the remote-pane protocol
+	// preference.
+	FieldFileProtocol Field = "file_protocol"
+	FieldSFTPSudo     Field = "sftp_sudo"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -292,6 +343,10 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.AuthMethod = HostAuthMethod(strings.ToLower(strings.TrimSpace(string(draft.AuthMethod))))
 	if draft.AuthMethod == "" {
 		draft.AuthMethod = HostAuthAuto
+	}
+	draft.SFTPFileProtocol = FileProtocol(strings.ToLower(strings.TrimSpace(string(draft.SFTPFileProtocol))))
+	if draft.SFTPFileProtocol == "" {
+		draft.SFTPFileProtocol = FileProtocolAuto
 	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
@@ -377,6 +432,8 @@ func (h Host) Validate() error {
 		Proxy:                  h.Proxy,
 		ProxyProfileID:         h.ProxyProfileID,
 		Algorithms:             h.Algorithms,
+		SFTPFileProtocol:       h.SFTPFileProtocol,
+		SFTPSudo:               h.SFTPSudo,
 	})
 }
 
@@ -398,6 +455,27 @@ func validateFields(draft Draft) error {
 	case "", HostAuthAuto, HostAuthPassword, HostAuthKey, HostAuthCertificate:
 	default:
 		return validation(FieldAuthMethod, RuleUnsupported)
+	}
+
+	// An empty value is the automatic default for records written before the
+	// protocol preference existed.
+	fileProtocol := draft.SFTPFileProtocol
+	if fileProtocol == "" {
+		fileProtocol = FileProtocolAuto
+	}
+	if !fileProtocol.Valid() {
+		return validation(FieldFileProtocol, RuleInvalid)
+	}
+	if draft.Protocol != ProtocolSSH {
+		if fileProtocol != FileProtocolAuto {
+			return validation(FieldFileProtocol, RuleUnsupported)
+		}
+		if draft.SFTPSudo {
+			return validation(FieldSFTPSudo, RuleUnsupported)
+		}
+	}
+	if draft.SFTPSudo && fileProtocol == FileProtocolSCP {
+		return validation(FieldSFTPSudo, RuleUnsupported)
 	}
 
 	if draft.X11Forwarding {
