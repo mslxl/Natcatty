@@ -6,7 +6,9 @@
 package scpfixture
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -170,7 +172,7 @@ func (s *Server) Exec(ctx context.Context, command string) (appconnection.ExecRe
 }
 
 // OpenExec starts a streaming command: the scp protocol, the sudo handshake,
-// or an unsupported command.
+// a gzip-tar extraction, or an unsupported command.
 func (s *Server) OpenExec(ctx context.Context, command string) (appconnection.ExecStream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -192,6 +194,13 @@ func (s *Server) OpenExec(ctx context.Context, command string) (appconnection.Ex
 			handler = errorHandler("fixture: malformed scp source command")
 		} else {
 			handler = func(r *bufio.Reader, out, _ io.Writer) int { return s.serveSource(r, out, remotePath) }
+		}
+	case strings.HasPrefix(command, "tar -xzf - -C "):
+		dir, ok := firstQuotedAfter(command, "tar -xzf - -C ")
+		if !ok {
+			handler = errorHandler("fixture: malformed tar extraction command")
+		} else {
+			handler = func(r *bufio.Reader, _, stderr io.Writer) int { return s.serveTar(r, dir, stderr) }
 		}
 	case strings.Contains(command, "sudo -S -p") && strings.Contains(command, "SFTPREADY"):
 		if s.sudoServerPath == "" || !strings.Contains(command, s.sudoServerPath) {
@@ -527,6 +536,56 @@ func (s *Server) ensureParentsLocked(remotePath string) {
 		}
 	}
 	s.nodes["/"] = &Node{Type: Directory, Mode: 0o755, Owner: "root"}
+}
+
+// serveTar unpacks one gzip tar into dir with the fixture's in-memory tree,
+// mirroring the remote tar a compressed upload runs. It rejects absolute and
+// parent-traversing names and reports a non-zero status like tar does.
+func (s *Server) serveTar(r *bufio.Reader, dir string, stderr io.Writer) int {
+	compressed, err := gzip.NewReader(r)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "tar: %v\n", err)
+		return 2
+	}
+	defer compressed.Close()
+	archive := tar.NewReader(compressed)
+	base := path.Clean(dir)
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			return 0
+		}
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "tar: %v\n", err)
+			return 2
+		}
+		name := strings.TrimSuffix(header.Name, "/")
+		unsafe := name == "" || strings.HasPrefix(name, "/")
+		for _, part := range strings.Split(name, "/") {
+			if part == "" || part == "." || part == ".." {
+				unsafe = true
+			}
+		}
+		if unsafe {
+			_, _ = fmt.Fprintf(stderr, "tar: unsafe path %q\n", header.Name)
+			return 2
+		}
+		target := path.Join(base, name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			s.MkdirAll(target)
+		case tar.TypeReg:
+			data, err := io.ReadAll(io.LimitReader(archive, header.Size))
+			if err != nil || int64(len(data)) != header.Size {
+				_, _ = fmt.Fprintf(stderr, "tar: %s is truncated\n", header.Name)
+				return 2
+			}
+			s.WriteFile(target, string(data), uint32(header.Mode))
+		default:
+			_, _ = fmt.Fprintf(stderr, "tar: %s is not a file or directory\n", header.Name)
+			return 2
+		}
+	}
 }
 
 // serveSink implements one scp -t session.

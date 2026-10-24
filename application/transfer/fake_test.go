@@ -1,7 +1,9 @@
 package transfer
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -40,6 +42,19 @@ type fakeFS struct {
 	openGate chan struct{}
 	// failCreate reports a permission error for paths containing "denied".
 	failCreate bool
+
+	// extractCalls counts ExtractTar invocations.
+	extractCalls int
+	// extractFail makes ExtractTar write a partial file and then fail, so a
+	// fallback has something to clean up.
+	extractFail bool
+	// extractErr is the failure ExtractTar returns when extractFail is set.
+	extractErr error
+	// extractShort writes every extracted file one byte shorter than its
+	// archive header claims, so the read-back before promotion must refuse it.
+	extractShort bool
+	// createCalls counts Create and CreateSized invocations.
+	createCalls int
 }
 
 func newFakeFS(name string) *fakeFS {
@@ -208,6 +223,7 @@ func (f *fakeFS) Create(_ context.Context, p string) (io.WriteCloser, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.createCalls++
 	p = path.Clean(p)
 	if _, ok := f.nodes[path.Dir(p)]; !ok {
 		return nil, &fs.PathError{Op: "create", Path: p, Err: fs.ErrNotExist}
@@ -294,6 +310,91 @@ func (f *fakeFS) Close() error {
 	defer f.mu.Unlock()
 	f.closed++
 	return nil
+}
+
+// ExtractTar is the fake's ArchiveExtractor capability. It unpacks a gzip tar
+// into dir, and can fail after writing one partial entry so the engine's
+// cleanup and fallback are observable.
+func (f *fakeFS) ExtractTar(ctx context.Context, dir string, archive io.Reader) error {
+	f.mu.Lock()
+	f.extractCalls++
+	fail := f.extractFail
+	cause := f.extractErr
+	short := f.extractShort
+	f.mu.Unlock()
+	if fail {
+		f.add(path.Join(dir, "partial.tmp"), &fakeNode{data: []byte("partial"), mode: 0o644})
+		if cause == nil {
+			cause = errors.New("fake extractor failed")
+		}
+		return cause
+	}
+	reader, err := gzip.NewReader(archive)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	entries := tar.NewReader(reader)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		header, err := entries.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimSuffix(header.Name, "/")
+		if name == "" || strings.HasPrefix(name, "/") {
+			return errors.New("fake extractor: unsafe archive name " + header.Name)
+		}
+		for _, part := range strings.Split(name, "/") {
+			if part == "" || part == "." || part == ".." {
+				return errors.New("fake extractor: unsafe archive name " + header.Name)
+			}
+		}
+		target := path.Join(dir, name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			f.add(target, &fakeNode{dir: true, mode: uint32(header.Mode), modTime: header.ModTime})
+		case tar.TypeReg:
+			data, err := io.ReadAll(io.LimitReader(entries, header.Size))
+			if err != nil {
+				return err
+			}
+			if int64(len(data)) != header.Size {
+				return io.ErrUnexpectedEOF
+			}
+			if short && header.Size > 0 {
+				data = data[:len(data)-1]
+			}
+			f.add(target, &fakeNode{data: data, mode: uint32(header.Mode), modTime: header.ModTime})
+		default:
+			return errors.New("fake extractor: unsupported entry type")
+		}
+	}
+}
+
+// archiveCalls reports how many times ExtractTar ran.
+func (f *fakeFS) archiveCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.extractCalls
+}
+
+// created reports how many per-file writes the fake accepted.
+func (f *fakeFS) created() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.createCalls
+}
+
+// noArchiveFS hides a filesystem's optional ArchiveExtractor capability while
+// delegating every required FileSystem method.
+type noArchiveFS struct {
+	FileSystem
 }
 
 // fakeReader is a file reader that honours the request context and an

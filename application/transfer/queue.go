@@ -57,6 +57,11 @@ type TaskSpec struct {
 	// persists them so a reconnect can rebuild the request.
 	SourceHost string
 	DestHost   string
+	// Compressed lets a folder upload travel as one archive stream when the
+	// destination supports it. The engine falls back per attempt, so a resumed
+	// row (which carries checkpoint or target state) simply copies file by
+	// file. The flag is not persisted: TaskSpec is process state.
+	Compressed bool
 }
 
 // QueueStats is a point-in-time scheduler summary.
@@ -964,6 +969,7 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 			ReplaceTargets: replaceTargets,
 			SkipTargets:    skipTargets,
 			SkipUnchanged:  skipUnchanged,
+			Compressed:     spec.Compressed,
 			OnConflict: func(conflict domainsftp.Conflict) ConflictResolution {
 				return q.waitConflict(ctx, id, conflict)
 			},

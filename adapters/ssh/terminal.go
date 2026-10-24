@@ -406,9 +406,13 @@ type execChannel struct {
 	stdout  io.Reader
 	stderr  io.Reader
 	once    sync.Once
+
+	writeOnce sync.Once
+	writeErr  error
 }
 
 var _ appconnection.ExecStream = (*execChannel)(nil)
+var _ appconnection.HalfCloser = (*execChannel)(nil)
 
 // Read returns the command's stdout.
 func (e *execChannel) Read(p []byte) (int, error) { return e.stdout.Read(p) }
@@ -437,10 +441,18 @@ func (e *execChannel) ExitCode() (int, error) {
 	return 0, err
 }
 
+// CloseWrite closes only stdin. A streaming command such as tar then sees
+// end-of-file and can exit while its stdout reader is still open, which is how
+// a caller distinguishes a completed command from an aborted one.
+func (e *execChannel) CloseWrite() error {
+	e.writeOnce.Do(func() { e.writeErr = e.stdin.Close() })
+	return e.writeErr
+}
+
 // Close closes stdin first so the peer sees end-of-file, then the channel.
 func (e *execChannel) Close() (err error) {
 	e.once.Do(func() {
-		_ = e.stdin.Close()
+		_ = e.CloseWrite()
 		err = e.session.Close()
 	})
 	return err

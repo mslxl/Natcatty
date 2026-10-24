@@ -14,6 +14,7 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
 
@@ -77,6 +78,14 @@ type Tab struct {
 	// loadSeq discards a listing that a newer navigation superseded.
 	loadSeq int
 	closed  bool
+
+	// followPath is the last working directory this Tab followed from OSC 7.
+	// While the Tab is elsewhere, the same report is treated as the user
+	// having navigated away and is not re-applied. followMiss is a path that
+	// was reported but is not a directory here, so it is not retried on every
+	// shell prompt.
+	followPath string
+	followMiss string
 }
 
 // Title returns the Tab's display label: its Host's label, or its Host id.
@@ -179,6 +188,13 @@ func (p *Pane) Tab() *Tab {
 type State struct {
 	service     *apptransfer.Service
 	keybindings *appkeybindings.Service
+	// settings reads the live SFTP preferences. The app supplies it so a
+	// Settings change applies to the open surface without a restart.
+	settings func() domainpreferences.SFTPEditor
+	// focusedSession names the Terminal Session the user is looking at, so a
+	// background Session's prompt does not steer an SFTP pane. It is read on
+	// the UI thread.
+	focusedSession func() model.SessionID
 
 	panes   [2]*Pane
 	focused Side
@@ -246,6 +262,29 @@ func WithRedrawRequest(fn func()) Option {
 // handlers follow the user's scheme and overrides.
 func WithKeybindings(service *appkeybindings.Service) Option {
 	return func(s *State) { s.keybindings = service }
+}
+
+// WithPreferences supplies the live SFTP settings: auto-sync, follow-terminal
+// cwd, and compressed upload. A surface without a provider runs with all three
+// off; the app always supplies one, and the domain defaults enable compressed
+// uploads.
+func WithPreferences(settings func() domainpreferences.SFTPEditor) Option {
+	return func(s *State) { s.settings = settings }
+}
+
+// WithFocusedSession supplies the Terminal Session the user is looking at.
+// Follow-cwd ignores reports from other Sessions. Without it, a report steers
+// the pane for its Host regardless of focus.
+func WithFocusedSession(fn func() model.SessionID) Option {
+	return func(s *State) { s.focusedSession = fn }
+}
+
+// sftpSettings returns the current SFTP settings snapshot.
+func (s *State) sftpSettings() domainpreferences.SFTPEditor {
+	if s.settings == nil {
+		return domainpreferences.SFTPEditor{}
+	}
+	return s.settings()
 }
 
 // NewState builds the surface state. Each side starts with one Tab: the left
@@ -631,7 +670,7 @@ func (s *State) Navigate(side Side, path string) {
 	if tab == nil {
 		return
 	}
-	s.loadAt(tab, path, true)
+	s.loadAtUser(tab, path, true)
 }
 
 // Refresh reloads the active Tab's directory.
@@ -649,7 +688,7 @@ func (s *State) GoParent(side Side) {
 	if tab == nil || tab.FS == nil {
 		return
 	}
-	s.loadAt(tab, tab.FS.Parent(tab.Path), true)
+	s.loadAtUser(tab, tab.FS.Parent(tab.Path), true)
 }
 
 // Back navigates to the previous directory.
@@ -661,7 +700,7 @@ func (s *State) Back(side Side) {
 	path := tab.back[len(tab.back)-1]
 	tab.back = tab.back[:len(tab.back)-1]
 	tab.forward = append(tab.forward, tab.Path)
-	s.loadAt(tab, path, false)
+	s.loadAtUser(tab, path, false)
 }
 
 // Forward navigates to the next directory in history.
@@ -673,15 +712,28 @@ func (s *State) Forward(side Side) {
 	path := tab.forward[len(tab.forward)-1]
 	tab.forward = tab.forward[:len(tab.forward)-1]
 	tab.back = append(tab.back, tab.Path)
-	s.loadAt(tab, path, false)
+	s.loadAtUser(tab, path, false)
 }
 
 // loadAt lists dir on the Tab, applying the result only when no newer
 // navigation superseded it. A failure keeps the previous listing.
 func (s *State) loadAt(tab *Tab, dir string, remember bool) {
+	s.loadAtNavigation(tab, dir, remember, false)
+}
+
+// loadAtUser lists dir for a navigation the user asked for. When auto-sync is
+// on and the panes are aligned, the other pane follows the same step once this
+// listing succeeds; a failed navigation never drags the other pane along.
+func (s *State) loadAtUser(tab *Tab, dir string, remember bool) {
+	s.loadAtNavigation(tab, dir, remember, true)
+}
+
+// loadAtNavigation is the one listing pump. mirror marks a user navigation.
+func (s *State) loadAtNavigation(tab *Tab, dir string, remember, mirror bool) {
 	if tab == nil || tab.FS == nil || dir == "" {
 		return
 	}
+	previous := tab.Path
 	if remember && dir != tab.Path {
 		tab.back = append(tab.back, tab.Path)
 		tab.forward = nil
@@ -708,8 +760,166 @@ func (s *State) loadAt(tab *Tab, dir string, remember bool) {
 			tab.Entries = entries
 			tab.Selection = map[string]bool{}
 			tab.Anchor = ""
+			if mirror {
+				s.mirrorNavigation(tab, previous, dir)
+			}
 		})
 	}()
+}
+
+// mirrorNavigation follows a completed user navigation in the other pane when
+// auto-sync applies. It uses loadAt, not loadAtUser, so a mirror can never
+// mirror back and loop.
+func (s *State) mirrorNavigation(source *Tab, previous, dir string) {
+	side, target, ok := s.autoSyncTarget(source, previous, dir)
+	if !ok {
+		return
+	}
+	other := s.Tab(side)
+	if other == nil {
+		return
+	}
+	s.loadAt(other, target, true)
+}
+
+// autoSyncTarget decides where the other pane should go after source moved
+// from previous to dir. Two panes on one Backing can follow any path directly.
+// Panes on different trees follow only a one-step child or parent move while
+// both name the same directory level, which is what keeps a local tree and a
+// remote tree in step without guessing an unrelated absolute path.
+func (s *State) autoSyncTarget(source *Tab, previous, dir string) (Side, string, bool) {
+	if !s.sftpSettings().AutoSync || source == nil || source.FS == nil ||
+		dir == "" || dir == previous {
+		return Left, "", false
+	}
+	sourceSide, ok := s.sideOf(source)
+	if !ok {
+		return Left, "", false
+	}
+	otherSide := sourceSide.Other()
+	other := s.Tab(otherSide)
+	if other == nil || other.FS == nil || other.closed || other.Loading || other.Path == "" {
+		return Left, "", false
+	}
+	if other.FS.Backing() == source.FS.Backing() {
+		if other.Path == dir {
+			return Left, "", false
+		}
+		return otherSide, dir, true
+	}
+	if previous == "" || source.FS.Base(previous) != other.FS.Base(other.Path) {
+		return Left, "", false
+	}
+	if source.FS.Parent(dir) == previous {
+		name := source.FS.Base(dir)
+		if name == "" || name == "." || name == ".." {
+			return Left, "", false
+		}
+		for _, entry := range other.Entries {
+			if entry.Name != name || !entry.IsDir() {
+				continue
+			}
+			target := other.FS.Join(other.Path, name)
+			if target == other.Path {
+				return Left, "", false
+			}
+			return otherSide, target, true
+		}
+		return Left, "", false
+	}
+	if source.FS.Parent(previous) == dir {
+		target := other.FS.Parent(other.Path)
+		if target == other.Path {
+			return Left, "", false
+		}
+		return otherSide, target, true
+	}
+	return Left, "", false
+}
+
+// sideOf locates a Tab's pane.
+func (s *State) sideOf(tab *Tab) (Side, bool) {
+	for _, side := range Sides() {
+		for _, candidate := range s.panes[side].Tabs {
+			if candidate == tab {
+				return side, true
+			}
+		}
+	}
+	return Left, false
+}
+
+// NoteTerminalCwd applies a working directory a Session reported with OSC 7.
+// With follow-terminal-cwd on, the pane browsing that Session's Host follows;
+// a local Session steers a local pane. A Tab that the user has navigated away
+// from the last followed directory is not pulled back by a repeated report,
+// and a path that is not a directory is not retried on every prompt.
+func (s *State) NoteTerminalCwd(sessionID model.SessionID, hostID model.HostID, local bool, cwd string) {
+	// Checking here rather than only inside the posted closure keeps a shell
+	// prompt from queueing work when follow-cwd is off. Settings() is safe off
+	// the UI thread, and the closure checks again because it may change before
+	// the frame that drains the queue.
+	if cwd == "" || !s.sftpSettings().FollowTerminalCwd {
+		return
+	}
+	s.post(func() {
+		if s.ctx.Err() != nil || !s.sftpSettings().FollowTerminalCwd {
+			return
+		}
+		if s.focusedSession != nil {
+			if focused := s.focusedSession(); focused != "" && focused != sessionID {
+				return
+			}
+		}
+		tab := s.followTab(hostID, local)
+		if tab == nil || tab.FS == nil || tab.closed {
+			return
+		}
+		path := tab.FS.Canonical(cwd)
+		if path == "" || path == tab.Path || path == tab.followPath || path == tab.followMiss {
+			return
+		}
+		// Claim the report now so a burst of prompt redraws starts one check.
+		tab.followPath = path
+		tab.followMiss = ""
+		files := tab.FS
+		seq := tab.loadSeq
+		go func() {
+			info, err := files.Stat(s.ctx, path)
+			s.post(func() {
+				if tab.closed || tab.FS != files {
+					return
+				}
+				if err != nil || !info.IsDir() {
+					tab.followMiss = path
+					return
+				}
+				if seq != tab.loadSeq || path == tab.Path {
+					return
+				}
+				s.loadAt(tab, path, true)
+			})
+		}()
+	})
+}
+
+// followTab picks the pane that represents a Session's Host. The focused
+// pane wins when both panes show it; otherwise the other pane is used.
+func (s *State) followTab(hostID model.HostID, local bool) *Tab {
+	candidates := []Side{s.focused, s.focused.Other()}
+	for _, side := range candidates {
+		tab := s.Tab(side)
+		if tab == nil {
+			continue
+		}
+		if local && tab.Kind == KindLocal {
+			return tab
+		}
+		if !local && tab.Kind == KindRemote && hostID != "" && tab.HostID == hostID {
+			return tab
+		}
+	}
+	return nil
 }
 
 // NavigateDraft navigates the active Tab to its edited path field.
@@ -718,7 +928,7 @@ func (s *State) NavigateDraft(side Side) {
 	if tab == nil || tab.Draft == "" || tab.Draft == tab.Path {
 		return
 	}
-	s.loadAt(tab, tab.Draft, true)
+	s.loadAtUser(tab, tab.Draft, true)
 }
 
 // SetDraft records a Tab's edited path text.
@@ -738,7 +948,7 @@ func (s *State) Click(side Side, entry domainsftp.Entry, mods ui.Modifiers, doub
 	s.focused = side
 	if entry.Name == ".." {
 		if double {
-			s.loadAt(tab, entry.Path, true)
+			s.loadAtUser(tab, entry.Path, true)
 		}
 		s.RequestRedraw()
 		return
@@ -795,7 +1005,7 @@ func (s *State) Open(side Side, entry domainsftp.Entry) {
 		return
 	}
 	if entry.IsDir() || entry.Name == ".." {
-		s.loadAt(tab, entry.Path, true)
+		s.loadAtUser(tab, entry.Path, true)
 		return
 	}
 	s.notice = "open-file"

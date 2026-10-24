@@ -2964,3 +2964,87 @@
     - app.TestTicket35CheckPassesTwiceInOneProcess
   status: verified
   notes: "Explicit SCP probes and never tries SFTP; explicit SFTP reports its failure and never falls back; auto tries SFTP once and may probe SCP after a failure. A reused single-channel transport is refused before any channel opens, and auto does not fall back on a fresh single-channel host because the fallback would need a second channel. Sudo is never downgraded: it opens only the elevated SFTP, and a contradictory sudo+SCP Host is rejected before connecting. Empty or unknown persisted values normalize to auto; the Vault editor offers Auto, SFTP only, and SCP mode and rejects SCP with sudo."
+
+- id: sftp.compressed-upload
+  area: sftp-transfer
+  feature: Compressed folder upload streams one archive with a safe per-file fallback
+  original_paths:
+    - application/state/sftp/compressedUploadControl.ts
+    - application/state/sftp/compressedUploadSession.ts
+    - application/state/sftp/transferDirectoryOps.ts
+    - application/state/sftp/useSftpExternalOperations.ts
+    - electron/bridges/compressUploadBridge.cjs
+    - electron/bridges/sftpBridge/archiveExtract.cjs
+  module: application/transfer
+  tickets: [36]
+  acceptance_tests:
+    - application/transfer.TestCompressedCopyUploadsOneArchive
+    - application/transfer.TestCompressedCopyFallsBackWhenExtractionFails
+    - application/transfer.TestCompressedCopyFallsBackWhenTheExtractionIsShort
+    - application/transfer.TestPackArchiveRefusesAFileThatGrew
+    - application/transfer.TestCompressedCopyFallsBackWithoutExtractor
+    - application/transfer.TestCompressedCopyFallsBackOnExistingTarget
+    - application/transfer.TestCompressedCopyFallsBackForSymlinkTree
+    - application/transfer.TestCompressedCopyFallsBackForMixedSelection
+    - application/transfer.TestCompressedCopyFallsBackForMove
+    - application/transfer.TestCompressedCopyFallsBackWithResumeState
+    - application/transfer.TestCompressedCopyCancelLeavesNoTarget
+    - application/transfer.TestCompressedCopyRejectsUnsafeNames
+    - application/transfer.TestQueueCompressedUploadUsesTheArchivePath
+    - adapters/sftp.TestExtractTarStreamsOneArchiveToTheRemoteCommand
+    - adapters/sftp.TestExtractTarReportsTheRemoteStatusAndDiagnostics
+    - adapters/sftp.TestExtractTarRefusesAStreamWithoutHalfClose
+    - adapters/sftp.TestExtractTarWithoutAnExecutorIsUnsupported
+    - adapters/sftp.TestExtractTarQuotesTheStagingDirectory
+    - adapters/sftp.TestSCPExtractTarUsesItsExecutor
+    - adapters/sftp.TestSCPExtractTarOverTheFixture
+    - adapters/ssh.TestOpenExecHalfClosesStdinAndKeepsTheExitStatus
+    - ui/transfer/state.TestCompressedUploadSettingReachesTheCopyEngine
+    - ui/transfer/state.TestCompressedUploadOffCopiesFileByFile
+    - app.TestTicket36CheckRunsThroughTheKeyboard
+    - app.TestTicket36CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Default-on and only for an upload of plain directories and regular files with free targets. The original wrote a local temp archive, uploaded it, then ran a staged extract with backup and rollback; this stream packs tar.gz into the remote tar over the same connection's exec channel, extracts into a sibling .netcatty-extract-* directory, and promotes each target by rename. Every extracted entry is read back before promotion: a directory must be a directory and a file's size must equal the plan (ADR-0012). Any preflight refusal, unsafe name, symlink, special file, move, conflict, resume row, extraction failure, short extraction, or cancellation never publishes partial data; a failed extraction is removed and the ordinary per-file copy runs instead. The packer reads one byte past each planned size so a source that grew is refused instead of publishing a prefix. An exec transport that cannot half-close is refused before any byte is written rather than risking a killed tar."
+
+- id: sftp.auto-sync-panes
+  area: sftp-transfer
+  feature: Auto-sync keeps the two panes at the same directory level
+  original_paths:
+    - application/state/sftp/useSftpPaneActions.ts
+    - components/sftp/SftpPaneView.tsx
+    - components/sftp/hooks/useSftpViewPaneCallbacks.ts
+  module: ui/transfer
+  tickets: [36]
+  acceptance_tests:
+    - ui/transfer/state.TestAutoSyncMirrorsANavigationOnOneBacking
+    - ui/transfer/state.TestAutoSyncFollowsOneStepBetweenDifferentTrees
+    - ui/transfer/state.TestAutoSyncOffLeavesTheOtherPaneAlone
+    - ui/transfer/state.TestAutoSyncDoesNotMirrorAnUnalignedPane
+    - app.TestTicket36CheckRunsThroughTheKeyboard
+    - app.TestTicket36CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Off by default. Two panes on one Backing mirror the destination path; panes over different trees move one child or parent step together only while both name the same directory level, so a local tree and a remote tree stay aligned without guessing an unrelated absolute path. Only a successful user navigation mirrors, and the mirror is a non-user load, so it cannot loop or drag a pane along after a failed listing. Bookmarks, the path field, and a deferred navigation count as user navigations; a refresh and a follow-cwd load do not. The original's settings.sftp.autoSync uploaded external-editor saves; this rewrite uses the same setting for pane alignment as issue 36 and the spec require, and the settings label reads 'Sync directories automatically'."
+
+- id: sftp.follow-terminal-cwd
+  area: sftp-transfer
+  feature: SFTP follows the shell's OSC 7 working directory
+  original_paths:
+    - application/state/sftp/useSftpFollowTerminalCwd.ts
+    - domain/sftpFollowTerminalCwd.ts
+    - components/terminalLayer/commandCwdProbe.ts
+    - components/SftpSidePanel.tsx
+    - components/sftp/SftpPaneToolbar.tsx
+  module: ui/transfer
+  tickets: [36]
+  acceptance_tests:
+    - application/session.TestTapOSC7TracksCWDAcrossChunks
+    - application/session.TestSessionTracksOSC7AndOSC133
+    - ui/transfer/state.TestFollowCwdNavigatesTheLocalPane
+    - ui/transfer/state.TestFollowCwdOffLeavesThePaneAlone
+    - ui/transfer/state.TestFollowCwdMatchesTheHostAndTheFocusedSession
+    - ui/transfer/state.TestFollowCwdIgnoresAMissingDirectory
+    - ui/transfer/state.TestFollowCwdOffDoesNotQueueAReport
+    - app.TestTicket36CheckRunsThroughTheKeyboard
+    - app.TestTicket36CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Off by default. The real Session tap parses OSC 7 and the app forwards each reported directory to the surface, which steers the focused pane for that Session's Host or a local pane. A report that repeats the directory the user has already left is ignored, a missing directory is not retried on every prompt, and a background Session does not steer a pane while another Session is focused. With the setting off the report returns before queueing any UI work. Deliberate divergences from the original: one global setting instead of a per-Host toggle, and a pane opened after the shell's last OSC 7 waits for the next report instead of running an initial sync."
