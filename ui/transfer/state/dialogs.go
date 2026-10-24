@@ -427,7 +427,7 @@ func (s *State) GoBookmark(side Side, bookmark domainsftp.Bookmark) {
 	tab := s.Tab(side)
 	if bookmark.HostID == "" {
 		if tab != nil {
-			s.loadAt(tab, bookmark.Path, true)
+			s.loadAtUser(tab, bookmark.Path, true)
 			return
 		}
 		s.OpenLocal(side)
@@ -436,7 +436,7 @@ func (s *State) GoBookmark(side Side, bookmark domainsftp.Bookmark) {
 		return
 	}
 	if tab != nil && tab.Kind == KindRemote && tab.HostID == bookmark.HostID {
-		s.loadAt(tab, bookmark.Path, true)
+		s.loadAtUser(tab, bookmark.Path, true)
 		return
 	}
 	s.OpenRemote(side, bookmark.HostID, bookmark.HostLabel)
@@ -476,7 +476,7 @@ func (s *State) applyPendingNavigation() {
 			continue
 		}
 		if nav.path != "" && tab.Path != nav.path {
-			s.loadAt(tab, nav.path, false)
+			s.loadAtUser(tab, nav.path, false)
 		}
 	}
 	s.pending = remaining

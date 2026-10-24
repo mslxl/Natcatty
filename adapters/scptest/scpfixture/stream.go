@@ -66,6 +66,10 @@ func (s *fixtureStream) Read(p []byte) (int, error)  { return s.clientReader.Rea
 func (s *fixtureStream) Write(p []byte) (int, error) { return s.clientWriter.Write(p) }
 func (s *fixtureStream) Stderr() io.Reader           { return s.stderrReader }
 
+// CloseWrite sends end-of-input to the handler while its output stays open, as
+// the SSH exec channel does for a streaming command like tar.
+func (s *fixtureStream) CloseWrite() error { return s.clientWriter.Close() }
+
 // ExitCode waits for the handler to finish, like an SSH session's Wait.
 func (s *fixtureStream) ExitCode() (int, error) {
 	<-s.done

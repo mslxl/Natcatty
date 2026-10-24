@@ -73,6 +73,16 @@ type SizedCreator interface {
 	CreateSized(ctx context.Context, path string, size int64) (io.WriteCloser, error)
 }
 
+// ArchiveExtractor is an optional FileSystem capability for a destination that
+// can unpack a gzip-compressed tar stream into a directory with its own tooling
+// (the remote adapters run tar over an SSH exec channel). It lets a folder
+// upload travel as one stream instead of one round trip per file. The engine
+// only uses it when the whole request can be extracted safely; otherwise it
+// falls back to the per-file copy.
+type ArchiveExtractor interface {
+	ExtractTar(ctx context.Context, dir string, archive io.Reader) error
+}
+
 // PathStyle is the notation a FileSystem uses.
 type PathStyle string
 

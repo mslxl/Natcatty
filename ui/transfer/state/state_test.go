@@ -135,6 +135,8 @@ type fakeFS struct {
 
 	mu     sync.Mutex
 	closed bool
+	// extractCalls counts compressed-upload attempts against this handle.
+	extractCalls int
 }
 
 func (f *fakeFS) Backing() string {
@@ -345,6 +347,23 @@ func (f *fakeFS) Style() apptransfer.PathStyle {
 	return apptransfer.StylePOSIX
 }
 
+// ExtractTar makes the fixture a destination with the archive capability. It
+// consumes the stream and refuses, so the copy engine exercises the compressed
+// attempt and then its safe fallback without a remote tar binary.
+func (f *fakeFS) ExtractTar(_ context.Context, _ string, archive io.Reader) error {
+	f.mu.Lock()
+	f.extractCalls++
+	f.mu.Unlock()
+	_, _ = io.Copy(io.Discard, archive)
+	return errors.New("fixture has no tar")
+}
+
+func (f *fakeFS) archiveCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.extractCalls
+}
+
 func (f *fakeFS) Close() error {
 	f.mu.Lock()
 	f.closed = true
@@ -498,6 +517,13 @@ func newFixtureSeed(t *testing.T, seed []domainsftp.Bookmark) *fixture {
 
 func newFixtureWithBookmarks(t *testing.T, seed, localSeed []domainsftp.Bookmark) *fixture {
 	t.Helper()
+	return newFixtureOptions(t, seed, localSeed)
+}
+
+// newFixtureOptions builds the surface with extra State options, which ticket
+// 36 uses to inject SFTP settings and a focused-session oracle.
+func newFixtureOptions(t *testing.T, seed, localSeed []domainsftp.Bookmark, options ...Option) *fixture {
+	t.Helper()
 	localDisk := newFakeDisk()
 	localDisk.mkdirs("/home", "/home/me", "/home/me/folder")
 	localDisk.put("/home/me/alpha.txt", "alpha", 0o644)
@@ -515,7 +541,7 @@ func newFixtureWithBookmarks(t *testing.T, seed, localSeed []domainsftp.Bookmark
 		apptransfer.WithHosts(fixedHosts{{ID: "h1", Label: "Test", Hostname: "test.example", Username: "me", Port: 22}}),
 		apptransfer.WithBookmarks(bookmarks),
 	)
-	state := NewState(service)
+	state := NewState(service, options...)
 	t.Cleanup(state.Shutdown)
 	state.EnsureStarted()
 

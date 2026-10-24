@@ -10,6 +10,7 @@ import (
 
 	"github.com/pkg/sftp"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
@@ -21,8 +22,12 @@ type Remote struct {
 	client  *sftp.Client
 	release func(error) error
 	backing string
-	mu      sync.Mutex
-	closed  bool
+	// exec is the SSH exec capability behind the same lease. It is absent for
+	// a single-channel Host, for sudo SFTP, and for a fake that supplies only
+	// the subsystem stream.
+	exec   appconnection.Executor
+	mu     sync.Mutex
+	closed bool
 }
 
 // RemoteOption customizes a Remote.
@@ -37,6 +42,13 @@ func WithBacking(backing string) RemoteOption {
 			r.backing = backing
 		}
 	}
+}
+
+// WithExecutor gives the SFTP filesystem the SSH exec capability behind the
+// same lease, which a compressed folder upload uses to run tar on the host.
+// Passing nil leaves the capability off.
+func WithExecutor(exec appconnection.Executor) RemoteOption {
+	return func(r *Remote) { r.exec = exec }
 }
 
 // NewRemote wraps an open SFTP subsystem stream. release is called exactly
@@ -64,6 +76,23 @@ func NewRemote(stream io.ReadWriteCloser, release func(error) error, options ...
 }
 
 var _ apptransfer.FileSystem = (*Remote)(nil)
+var _ apptransfer.ArchiveExtractor = (*Remote)(nil)
+
+// ExtractTar streams a gzip tar into dir using tar on the SSH host. Without an
+// exec capability it reports unsupported, which makes the copy engine fall
+// back to one file per request.
+func (r *Remote) ExtractTar(ctx context.Context, dir string, archive io.Reader) error {
+	if r == nil {
+		return os.ErrClosed
+	}
+	r.mu.Lock()
+	closed, exec := r.closed, r.exec
+	r.mu.Unlock()
+	if closed {
+		return os.ErrClosed
+	}
+	return extractTar(ctx, exec, dir, archive)
+}
 
 // Root returns the session's working directory.
 func (r *Remote) Root(ctx context.Context) (string, error) {

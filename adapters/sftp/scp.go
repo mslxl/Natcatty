@@ -354,6 +354,24 @@ func (s *SCP) CreateSized(ctx context.Context, remotePath string, size int64) (i
 // SCP streams uploads when the copy engine can hand it the source size.
 var _ apptransfer.SizedCreator = (*SCP)(nil)
 
+// SCP runs commands for a remote that has no SFTP subsystem, so a compressed
+// upload can use the same tar extraction path as SFTP mode.
+var _ apptransfer.ArchiveExtractor = (*SCP)(nil)
+
+// ExtractTar streams a gzip tar into dir over the SCP mode shell.
+func (s *SCP) ExtractTar(ctx context.Context, dir string, archive io.Reader) error {
+	if s == nil {
+		return os.ErrClosed
+	}
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return os.ErrClosed
+	}
+	return extractTar(ctx, s.exec, dir, archive)
+}
+
 // Remove removes a file or an empty directory.
 func (s *SCP) Remove(ctx context.Context, remotePath string) error {
 	return s.run(ctx, domainsftp.OpDelete, remotePath, func() (string, error) {
