@@ -4,14 +4,14 @@
 # internal/tools/paritygen validates this file and regenerates matrix.md.
 # See docs/parity/limitations.md for every row with status: excluded.
 #
-# Schema: rewrite spec §17. Supported YAML is deliberately narrow: a top-level
+# Schema: rewrite spec Â§17. Supported YAML is deliberately narrow: a top-level
 # sequence of rows, scalar fields, block string sequences, and bracketed
 # inline string sequences. Comments must occupy a whole line.
 #
 # Row seeding follows delivery: tickets seed their own rows as they land, so
 # the full ~300-row inventory arrives with ticket 60. Module names use the
 # repository's actual package paths (root-level layers), which internal/archtest
-# enforces; rewrite spec §2's internal/ prefix describes the same layers.
+# enforces; rewrite spec Â§2's internal/ prefix describes the same layers.
 
 # --- Ticket 01: native shell, i18n, menu, command registry ---
 
@@ -136,7 +136,7 @@
     - internal/tools/paritygen.TestLintRejectsBrokenRows
     - internal/tools/paritygen.TestRenderSortsByAreaThenIDAndIsDeterministic
   status: verified
-  notes: "The original has no parity-matrix implementation; this guard is specified by rewrite spec §17 and ADR-0008. AGENTS.md is the original repository-policy artifact."
+  notes: "The original has no parity-matrix implementation; this guard is specified by rewrite spec Â§17 and ADR-0008. AGENTS.md is the original repository-policy artifact."
 
 # --- Ticket 02: local shell Session ---
 
@@ -997,7 +997,7 @@
     - application/desktop.TestDefaultsPreserveOriginalValues
     - app.TestGlobalHotkeyRegistrationDrivesTheToggle
   status: verified
-  notes: "The default stays the original Ctrl + ` (⌃ + ` on macOS); MyGo's Windows backend maps the backtick to VK_OEM_3, so it registers. A failed change keeps the previous shortcut registered, and Settings explains the failure."
+  notes: "The default stays the original Ctrl + ` (âŒƒ + ` on macOS); MyGo's Windows backend maps the backtick to VK_OEM_3, so it registers. A failed change keeps the previous shortcut registered, and Settings explains the failure."
 
 - id: desktop.autostart
   area: desktop
@@ -1421,7 +1421,7 @@
     - ui/shell.TestVaultHeaderActionsAreClickableAtMinimumSize
     - app.TestTicket28CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. At the 720x480 minimum the Vault's host-list header wraps its actions, so the localized title keeps one line and Import Hosts, Export Vault, Backups, and New Host stay inside the content column in all five catalogs; the list viewport also reserves the overlay scroll bar's gutter. On Windows the Settings caption is set with SetWindowTextW: GetWindowTextW returns 设置 (U+8BBE U+7F6E), while an ANSI GetWindowTextA read returns \"??\" because the CJK characters are not in the ANSI code page, so a \"??\" caption reports an ANSI-reading probe rather than an app or MyGo v0.5.5 encoding defect. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
+  notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. At the 720x480 minimum the Vault's host-list header wraps its actions, so the localized title keeps one line and Import Hosts, Export Vault, Backups, and New Host stay inside the content column in all five catalogs; the list viewport also reserves the overlay scroll bar's gutter. On Windows the Settings caption is set with SetWindowTextW: GetWindowTextW returns è®¾ç½® (U+8BBE U+7F6E), while an ANSI GetWindowTextA read returns \"??\" because the CJK characters are not in the ANSI code page, so a \"??\" caption reports an ANSI-reading probe rather than an app or MyGo v0.5.5 encoding defect. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
 
 - id: keyboard.catalog-schemes
   area: shell
@@ -3048,3 +3048,92 @@
     - app.TestTicket36CheckPassesTwiceInOneProcess
   status: verified
   notes: "Off by default. The real Session tap parses OSC 7 and the app forwards each reported directory to the surface, which steers the focused pane for that Session's Host or a local pane. A report that repeats the directory the user has already left is ignored, a missing directory is not retried on every prompt, and a background Session does not steer a pane while another Session is focused. With the setting off the report returns before queueing any UI work. Deliberate divergences from the original: one global setting instead of a per-Host toggle, and a pane opened after the shell's last OSC 7 waits for the next report instead of running an initial sync."
+
+# --- Ticket 39: serial transport ---
+
+- id: serial.port-enumeration
+  area: terminal
+  feature: Serial ports are enumerated and offered in the connection dialog
+  original_paths:
+    - components/SerialConnectModal.tsx
+    - application/state/useTerminalBackend.ts
+    - electron/bridges/terminalBridge.cjs
+  module: adapters/serial
+  tickets: [39]
+  acceptance_tests:
+    - adapters/serial.TestFactoryListsThePortsThePlatformEnumerates
+    - adapters/serial.TestFactoryRejectsAnUnsupportedPlatformAndEnumerationAsTypedErrors
+    - ui/serial.TestShowEnumeratesPortsAndSelectsTheFirst
+    - ui/serial.TestViewShowsTheFormAndDetectedPorts
+    - app.TestTicket39CheckRunsThroughTheKeyboard
+    - app.TestTicket39CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Windows reads HARDWARE\\DEVICEMAP\\SERIALCOMM; Linux scans /sys/class/tty and falls back to the common ttyUSB/ttyACM/ttyAMA/ttyS paths; macOS lists /dev/cu.* and /dev/tty.*. Paths are deduplicated and sorted, and sysfs USB metadata supplies manufacturer and IDs where available. Enumeration needs no device: the platform call is allowed to return an empty list, and the dialog also accepts a typed path for a device the OS has not surfaced. A platform without a backend returns a typed unsupported error instead of an empty list."
+
+- id: serial.parameters
+  area: terminal
+  feature: Data bits, stop bits, parity, and flow control are configurable
+  original_paths:
+    - components/SerialConnectModal.tsx
+    - components/SerialHostDetailsPanel.tsx
+    - domain/host.ts
+  module: domain/model/serial
+  tickets: [39]
+  acceptance_tests:
+    - domain/model/serial.TestNormalizeAppliesTheOriginalDefaults
+    - domain/model/serial.TestValidateAcceptsTheFullOriginalParameterSet
+    - domain/model/serial.TestValidateRejectsBadInputAsATypedError
+    - domain/model/serial.TestParsersKeepTheOriginalTokens
+    - domain/model/serial.TestCapabilitiesForEachBackend
+    - adapters/serial.TestEveryFramingAndFlowCombinationReachesThePort
+    - ui/serial.TestConfigCoversEveryFramingAndFlowCombination
+    - ui/serial.TestViewSelectsFlowControlAndParity
+    - ui/serial.TestViewSelectsStopBitsAndWarnsAboutOneAndAHalf
+    - app.TestTicket39CheckRunsThroughTheKeyboard
+    - app.TestTicket39CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Defaults match the original: 115200 baud, 8 data bits, 1 stop bit, no parity, no flow control. Data bits 5-8, stop bits 1/1.5/2, parity none/even/odd/mark/space, and flow none/XON-XOFF/RTS-CTS are persisted as the original tokens; the parser also accepts hyphen forms. The POSIX backend sets raw mode with VMIN=1 and VTIME=0, maps data bits to CS5-CS8, stop bits to CSTOPB, mark/space parity to CMSPAR, and flow to CRTSCTS or IXON|IXOFF|IXANY. Windows sets the same fields in the DCB. Per-platform differences are explicit: 1.5 stop bits and mark/space parity are unavailable on Linux and macOS, custom rates are arbitrary only on Windows, and macOS caps the catalog at 230400. The dialog offers the original warning below the stop-bit selector when 1.5 is chosen."
+
+- id: serial.session
+  area: terminal
+  feature: A serial terminal Session opens, reads, writes, and closes
+  original_paths:
+    - components/SerialConnectModal.tsx
+    - electron/bridges/terminalBridge.cjs
+    - components/terminal/runtime/createTerminalSessionStarters.serial.test.ts
+  module: adapters/serial
+  tickets: [39]
+  acceptance_tests:
+    - adapters/serial.TestOpenReadWriteCloseOverAFakePort
+    - adapters/serial.TestPortFailureEndsTheSessionAsAnErrorAndClosePreservesIt
+    - adapters/serial.TestCanceledContextDoesNotOpenThePort
+    - application/session.TestOpenSerialCarriesThePortConfigAndLabel
+    - application/session.TestSerialSessionReadsWritesAndCloses
+    - domain/workspace.TestSerialDescriptorRequiresAValidConfig
+    - ui/serial.TestConnectPassesTheNormalizedConfigAndCloses
+    - ui/serial.TestViewConnectOpensTheSessionAndCloses
+    - app.TestTicket39CheckRunsThroughTheKeyboard
+    - app.TestTicket39CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Opening goes through the same Session service as local and SSH: the shell validates the form, opens off the UI thread, and creates an ordered Tab with a Serial: <port> label. A restored Pane carries the non-secret port and framing descriptor and reopens it; no output, scrollback, credentials, or local echo/line-mode state is stored. Close ends as exit 0 with reason closed, matching the original; a device read failure ends as exit 1 with reason error and Close preserves that first classification. Tests use an in-process fake port with channels/bytes, never physical hardware. The dialog was chosen over persisting serial Hosts in the Vault because this ticket only requires selecting a port and parameters and opening a Session; saving serial configurations remains a later Vault ticket."
+
+- id: serial.unsupported
+  area: terminal
+  feature: Unsupported platform settings return a typed error
+  original_paths:
+    - components/SerialConnectModal.tsx
+    - electron/bridges/terminalBridge.cjs
+    - domain/host.ts
+  module: adapters/serial
+  tickets: [39]
+  acceptance_tests:
+    - domain/model/serial.TestCheckSupportReturnsATypedUnsupportedError
+    - domain/model/serial.TestCapabilitiesForEachBackend
+    - adapters/serial.TestFactoryRejectsUnsupportedSettingsAsATypedError
+    - adapters/serial.TestFactoryRejectsAnUnsupportedPlatformAndEnumerationAsTypedErrors
+    - ui/serial.TestConnectFailureKeepsTheDialogAndTheTypedError
+    - ui/serial.TestProblemTextLocalizesEachErrorKind
+    - app.TestTicket39CheckRunsThroughTheKeyboard
+    - app.TestTicket39CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "A capability table per GOOS is checked before the platform opener, so an unsupported setting never reaches a device and returns serial.UnsupportedError (errors.Is serial.ErrUnsupported) naming the platform, setting, and value. An unknown GOOS is unsupported for both opening and enumeration, and the no-backend build file returns the same typed error rather than panicking. Invalid form values are serial.ValidationError (errors.Is serial.ErrInvalidConfig) with the field and value. The dialog localizes both classes and keeps the raw typed error for its detail line."

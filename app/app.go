@@ -20,6 +20,7 @@ import (
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	"github.com/mslxl/natcatty/adapters/histfile"
 	"github.com/mslxl/natcatty/adapters/localpty"
+	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
@@ -44,6 +45,7 @@ import (
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
 	"github.com/mslxl/natcatty/domain/model"
+	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -55,6 +57,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
 	uisearch "github.com/mslxl/natcatty/ui/search"
+	serialui "github.com/mslxl/natcatty/ui/serial"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -484,7 +487,7 @@ func run(afterReady func(hostWindow)) error {
 	}
 
 	sessions = appsession.NewService(newTransportFactory(
-		localpty.Factory{}, connections, routes,
+		localpty.Factory{}, adapterserial.Factory{}, connections, routes,
 	),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
@@ -619,6 +622,16 @@ func run(afterReady func(hostWindow)) error {
 		uisearch.WithOpen(paletteSource.open),
 		uisearch.WithSection(searchSection),
 	)
+	// The serial dialog enumerates with the same adapter that opens the port, so
+	// the names it offers are the names the transport accepts. The opener
+	// closure resolves the shell lazily, as the dialog is built just before it.
+	serialDialog := serialui.NewState(
+		adapterserial.Factory{}.ListPorts,
+		func(cfg domainserial.Config) error {
+			return shellState.OpenSerial(cfg)
+		},
+		serialui.WithRedraw(invalidate),
+	)
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -681,6 +694,7 @@ func run(afterReady func(hostWindow)) error {
 		state.WithLogs(logsui.View(logsState)),
 		state.WithSFTP(transferui.View(transferState)),
 		state.WithSearch(overlayState),
+		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
 		state.WithWorkspace(workspaceService, func(ctx context.Context, id model.HostID) (domainvault.Host, bool) {
@@ -954,6 +968,10 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 
 	register(command.NewTab, func(context.Context) error {
 		return shellState.NewTab()
+	})
+	register(command.ConnectSerial, func(context.Context) error {
+		shellState.RequestSerial()
+		return nil
 	})
 	register(command.CloseTab, func(context.Context) error {
 		shellState.CloseActiveTab()

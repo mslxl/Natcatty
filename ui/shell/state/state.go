@@ -16,6 +16,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
+	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -108,15 +109,19 @@ type paneOutcome struct {
 // except the lock-protected queues that dial and Session goroutines append to
 // and the host-key prompt, which synchronizes itself.
 type State struct {
-	tabs            []*Tab
-	active          int
-	nextTabNumber   int
-	vaultVisible    bool
-	vaultView       func(*ui.Context)
-	logsVisible     bool
-	logsView        func(*ui.Context)
-	sftpVisible     bool
-	sftpView        func(*ui.Context)
+	tabs          []*Tab
+	active        int
+	nextTabNumber int
+	vaultVisible  bool
+	vaultView     func(*ui.Context)
+	logsVisible   bool
+	logsView      func(*ui.Context)
+	sftpVisible   bool
+	sftpView      func(*ui.Context)
+	// serialView renders the serial connection dialog above every surface.
+	// serialRequest opens it from a menu or command.
+	serialView      func(*ui.Context)
+	serialRequest   func()
 	requestLocale   func(string)
 	requestSettings func()
 	requestRedraw   func()
@@ -239,6 +244,27 @@ func WithLogs(view func(*ui.Context)) Option {
 func WithSFTP(view func(*ui.Context)) Option {
 	return func(s *State) { s.sftpView = view }
 }
+
+// WithSerialDialog gives the shell the serial connection dialog. The dialog
+// state lives in ui/serial; the shell only renders it and opens it from the
+// serial command.
+func WithSerialDialog(view func(*ui.Context), request func()) Option {
+	return func(s *State) {
+		s.serialView = view
+		s.serialRequest = request
+	}
+}
+
+// RequestSerial opens the serial connection dialog. A shell without a serial
+// dialog ignores the request.
+func (s *State) RequestSerial() {
+	if s.serialRequest != nil {
+		s.serialRequest()
+	}
+}
+
+// SerialView returns the serial dialog the app supplied, or nil.
+func (s *State) SerialView() func(*ui.Context) { return s.serialView }
 
 // WithSearch gives the shell the Quick Switcher and command palette overlay.
 // The app owns the state because it also dispatches the chords and the chosen
@@ -489,6 +515,48 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 			},
 			startup: startup,
 			err:     err,
+		})
+		s.mu.Unlock()
+		s.RequestRedraw()
+	}()
+	return nil
+}
+
+// OpenSerial opens a serial Session without blocking the UI thread. The
+// configuration is validated before the background open, so a malformed port
+// or an unsupported setting returns the typed error to the dialog that asked.
+// Serial Sessions have no reconnect policy: the original required a manual
+// reconnect, and a device that vanished should not be reopened automatically.
+func (s *State) OpenSerial(cfg domainserial.Config) error {
+	if s.sessions == nil || s.surfaces == nil {
+		return ErrNoSessions
+	}
+	normalized := cfg.Normalized()
+	if err := normalized.Validate(); err != nil {
+		return err
+	}
+	label := appsession.SerialLabel(normalized)
+	s.problem = ""
+	s.pending = append(s.pending, label)
+
+	ctx := s.ctx
+	go func() {
+		serialConfig := normalized
+		session, err := s.sessions.Open(ctx, appsession.StartSpec{
+			Kind:   appsession.KindSerial,
+			Label:  label,
+			Serial: &serialConfig,
+		})
+		s.mu.Lock()
+		s.outcomes = append(s.outcomes, openOutcome{
+			session: session,
+			label:   label,
+			descriptor: domainworkspace.SessionDescriptor{
+				Kind:   domainworkspace.SessionSerial,
+				Label:  label,
+				Serial: &serialConfig,
+			},
+			err: err,
 		})
 		s.mu.Unlock()
 		s.RequestRedraw()

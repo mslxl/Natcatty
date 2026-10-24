@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/serial"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -51,9 +52,8 @@ const highlightIdleFlush = 30 * time.Millisecond
 // maxHighlightCarry bounds the partial line held for highlighting.
 const maxHighlightCarry = 64 << 10
 
-// Kind is the protocol of a Session. Local shells and password-authenticated
-// SSH exist in this slice; later tickets add keys, serial, Telnet, mosh, and
-// EternalTerminal.
+// Kind is the protocol of a Session. Local shells, SSH, and serial exist in
+// this slice; later tickets add Telnet, mosh, and EternalTerminal.
 type Kind string
 
 const (
@@ -61,6 +61,8 @@ const (
 	KindLocal Kind = "local"
 	// KindSSH is an interactive shell on a remote Host.
 	KindSSH Kind = "ssh"
+	// KindSerial is a device on a serial port.
+	KindSerial Kind = "serial"
 )
 
 // Status is a Session's lifecycle state.
@@ -281,6 +283,9 @@ type StartSpec struct {
 	// X11Display overrides the local display target. Empty uses DISPLAY or the
 	// platform default.
 	X11Display string
+	// Serial carries a serial Session's port and framing. It is required when
+	// Kind is KindSerial and ignored by every other transport.
+	Serial *serial.Config
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy
@@ -702,8 +707,19 @@ func specLabel(spec StartSpec) string {
 		}
 	case KindLocal:
 		return "Local Terminal"
+	case KindSerial:
+		if spec.Serial != nil {
+			return SerialLabel(*spec.Serial)
+		}
+		return "Serial"
 	}
 	return "session"
+}
+
+// SerialLabel is the Tab label for a serial configuration, matching the
+// original's "Serial: <port>" title.
+func SerialLabel(cfg serial.Config) string {
+	return "Serial: " + serial.PortName(cfg.Path)
 }
 
 // reportConnection delivers one attempt outcome to the app's hook. It is safe
@@ -716,8 +732,8 @@ func (s *Service) reportConnection(event ConnectionEvent) {
 		event.Kind = KindLocal
 	}
 	// A Host attempt without a saved identity is a typed (unsaved) Host. A
-	// local shell is the only kind that legitimately has no Host identity.
-	event.UnsavedHost = event.HostID == "" && event.Kind != KindLocal
+	// local shell and a serial device legitimately have no Host identity.
+	event.UnsavedHost = event.HostID == "" && event.Kind != KindLocal && event.Kind != KindSerial
 	s.onConnection(event)
 }
 
