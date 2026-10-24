@@ -292,12 +292,13 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 		// source that has not been touched yet gets the replacement backup; a
 		// resumed one reuses the backup a pause or lost transport retained.
 		resumedSource := plan.resumedEntries > source.First
-		backup := ""
+		replacingDirectory := plan.entries[source.First].Directory
+		backup := replacementBackup{}
 		if source.Replace {
 			if resumedSource {
 				backup, err = retainedBackup(ctx, request.Dest, kind, source.Destination)
 			} else {
-				backup, err = makeBackup(ctx, request.Dest, kind, source.Destination)
+				backup, err = takeBackup(ctx, request.Dest, kind, source.Destination, replacingDirectory)
 			}
 			if err != nil {
 				return result, err
@@ -307,11 +308,11 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 		// A hard cancel or ordinary failure puts the original back and tells
 		// the queue to drop its checkpoint.
 		abort := func(cause error) (CopyResult, error) {
-			if backup == "" || (request.KeepReplacement != nil && request.KeepReplacement(cause)) {
+			if backup.path == "" || (request.KeepReplacement != nil && request.KeepReplacement(cause)) {
 				return result, cause
 			}
 			result.ResumeReset = true
-			return result, restoreBackup(request.Dest, kind, source.Destination, backup, cause)
+			return result, restoreBackup(request.Dest, kind, source.Destination, backup.path, cause)
 		}
 		markDone := func(entry plannedEntry) error {
 			progress.FilesDone++
@@ -355,8 +356,30 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 					Size: entry.Size,
 					Mode: entry.Mode,
 				}
-				bytes, copyErr := copyFile(ctx, request.Source, request.Dest, info,
-					entry.TargetPath, request.StageKey, &progress, report)
+				// A replaced file keeps the destination's own mode, the way
+				// the original's stage/verify/promote transaction does. A file
+				// inside a replaced tree keeps its source mode, and can be
+				// checked only where the destination actually carries POSIX
+				// modes (Windows local files expose just the read-only bit).
+				// The staged copy is checked against both values before it may
+				// take the destination name.
+				verify := stagedVerification{Size: entry.Size}
+				if source.Replace && !entry.Directory {
+					switch {
+					case entryIndex == source.First && backup.modeKnown:
+						verify.Mode = backup.mode
+						verify.ModeKnown = true
+					case entry.Mode != 0 && request.Dest.Style() == StylePOSIX:
+						verify.Mode = entry.Mode
+						verify.ModeKnown = true
+					}
+				}
+				bytes, copyErr := copyFile(ctx, request.Source, request.Dest, fileCopy{
+					info:        info,
+					destination: entry.TargetPath,
+					stageKey:    request.StageKey,
+					verify:      verify,
+				}, &progress, report)
 				if copyErr != nil {
 					return abort(copyErr)
 				}
@@ -367,10 +390,14 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 				return result, err
 			}
 		}
-		if backup != "" {
-			// The new tree is in place; the old one is no longer needed. A
-			// stale backup is harmless and removed by the next replacement.
-			_ = request.Dest.RemoveAll(context.WithoutCancel(ctx), backup)
+		if backup.path != "" {
+			// The new tree is in place and verified; the old one is no longer
+			// needed. A cleanup failure is reported instead of hidden: the
+			// promoted destination stays and the backup stays recoverable,
+			// which is how the original reports a stuck post-commit cleanup.
+			if err := removeBackup(ctx, request.Dest, kind, backup.path); err != nil {
+				return result, err
+			}
 		}
 		if request.Move {
 			info, err := request.Source.Stat(ctx, source.Source)
@@ -861,19 +888,38 @@ func namesIn(ctx context.Context, files FileSystem, dir string) (map[string]bool
 	return taken, nil
 }
 
-// copyFile streams one file into a temporary sibling and renames it into
-// place. A cancelled or failed copy removes the temporary file, so a
+// stagedVerification is what a staged file must prove before it may take the
+// destination name. Size is the source size the plan observed; ModeKnown asks
+// the transaction to preserve and verify the original destination's mode.
+type stagedVerification struct {
+	Size      int64
+	Mode      uint32
+	ModeKnown bool
+}
+
+// fileCopy names one file's staged write: the source entry, the destination it
+// must take, the durable stage owner, and what the stage must prove.
+type fileCopy struct {
+	info        domainsftp.Entry
+	destination string
+	stageKey    string
+	verify      stagedVerification
+}
+
+// copyFile streams one file into a temporary sibling, verifies the staged
+// size (and the preserved mode for a replacement), and renames it into place.
+// A cancelled, failed, or unverified copy removes the temporary file, so a
 // half-written file never carries the destination name.
-func copyFile(ctx context.Context, source, dest FileSystem, info domainsftp.Entry,
-	destination, stageKey string, plan *Progress, report func(string)) (int64, error) {
-	reader, err := source.Open(ctx, info.Path)
+func copyFile(ctx context.Context, source, dest FileSystem, item fileCopy,
+	plan *Progress, report func(string)) (int64, error) {
+	reader, err := source.Open(ctx, item.info.Path)
 	if err != nil {
-		return 0, wrap(domainsftp.OpCopy, info.Path, err)
+		return 0, wrap(domainsftp.OpCopy, item.info.Path, err)
 	}
 	defer reader.Close()
 
-	temporary := dest.Join(dest.Parent(destination),
-		stageName(stageKey, dest.Base(destination), destination))
+	temporary := dest.Join(dest.Parent(item.destination),
+		stageName(item.stageKey, dest.Base(item.destination), item.destination))
 	writer, err := dest.Create(ctx, temporary)
 	if err != nil {
 		return 0, wrap(domainsftp.OpCopy, temporary, err)
@@ -888,42 +934,81 @@ func copyFile(ctx context.Context, source, dest FileSystem, info domainsftp.Entr
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return fail(&Error{Kind: KindCancelled, Op: domainsftp.OpCopy, Path: info.Path, Cause: err})
+			return fail(&Error{Kind: KindCancelled, Op: domainsftp.OpCopy, Path: item.info.Path, Cause: err})
 		}
 		n, readErr := reader.Read(buffer)
 		if n > 0 {
 			if _, err := writer.Write(buffer[:n]); err != nil {
-				return fail(wrap(domainsftp.OpCopy, destination, err))
+				return fail(wrap(domainsftp.OpCopy, item.destination, err))
 			}
 			written += int64(n)
 			plan.BytesDone += int64(n)
 			sinceProgress += int64(n)
 			if sinceProgress >= progressStep {
 				sinceProgress = 0
-				report(info.Name)
+				report(item.info.Name)
 			}
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return fail(wrap(domainsftp.OpCopy, info.Path, readErr))
+			return fail(wrap(domainsftp.OpCopy, item.info.Path, readErr))
 		}
 	}
 	if err := writer.Close(); err != nil {
 		return fail(wrap(domainsftp.OpCopy, temporary, err))
 	}
-	if info.Mode != 0 {
-		_ = dest.Chmod(ctx, temporary, info.Mode&domainsftp.MaxMode)
+	// A replacement publishes the mode the destination already had, so an
+	// executable final is not silently demoted to the umask default. A refused
+	// chmod fails the promotion instead of publishing the wrong permissions.
+	if item.verify.ModeKnown {
+		if err := dest.Chmod(ctx, temporary, item.verify.Mode&domainsftp.MaxMode); err != nil {
+			return fail(wrap(domainsftp.OpCopy, temporary, err))
+		}
+	} else if item.info.Mode != 0 {
+		_ = dest.Chmod(ctx, temporary, item.info.Mode&domainsftp.MaxMode)
 	}
-	if err := dest.Rename(ctx, temporary, destination); err != nil {
-		err = renameOverOccupiedFile(ctx, dest, temporary, destination, err)
+	if err := verifyStaged(ctx, dest, temporary, item.destination, item.verify); err != nil {
+		return fail(err)
+	}
+	if err := dest.Rename(ctx, temporary, item.destination); err != nil {
+		err = renameOverOccupiedFile(ctx, dest, temporary, item.destination, err)
 		if err != nil {
 			_ = dest.Remove(context.WithoutCancel(ctx), temporary)
-			return written, wrap(domainsftp.OpCopy, destination, err)
+			return written, wrap(domainsftp.OpCopy, item.destination, err)
 		}
 	}
 	return written, nil
+}
+
+// verifyStaged checks the staged file against the size the plan observed and,
+// for a replacement, the mode the transaction preserved. A transport that
+// reported a successful close but dropped bytes, or a server that ignored the
+// mode change, must not be able to publish the result.
+func verifyStaged(ctx context.Context, dest FileSystem, temporary, destination string,
+	verify stagedVerification) error {
+	staged, err := dest.Stat(ctx, temporary)
+	if err != nil {
+		return wrap(domainsftp.OpCopy, temporary, err)
+	}
+	if staged.IsDir() {
+		return failure(KindTypeMismatch, domainsftp.OpCopy, destination, nil)
+	}
+	if staged.Size != verify.Size {
+		return failure(KindInternal, domainsftp.OpCopy, destination,
+			fmt.Errorf("sftp: staged %s has %d bytes, expected %d",
+				dest.Base(temporary), staged.Size, verify.Size))
+	}
+	if verify.ModeKnown {
+		want := verify.Mode & domainsftp.MaxMode
+		if staged.Mode&domainsftp.MaxMode != want {
+			return failure(KindInternal, domainsftp.OpCopy, destination,
+				fmt.Errorf("sftp: staged %s has mode %04o, expected %04o",
+					dest.Base(temporary), staged.Mode, want))
+		}
+	}
+	return nil
 }
 
 // renameOverOccupiedFile retries a rename that reported the destination as
@@ -997,40 +1082,114 @@ func backupName(dest FileSystem, destination string) string {
 	return fmt.Sprintf(".netcatty-backup-%016x-%s.bak", hash.Sum64(), dest.Base(destination))
 }
 
-// makeBackup moves an existing destination aside before a replacement. A
-// missing destination needs no backup. The move is a rename in the same
-// directory, so it does not copy the tree.
-func makeBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationKind,
-	destination string) (string, error) {
-	if _, err := dest.Stat(ctx, destination); err != nil {
-		if KindOf(err) == KindNotFound {
-			return "", nil
+// replacementBackup is the original destination moved aside for a
+// replacement. Mode is the mode the promoted file must keep, and it is known
+// only when this attempt moved a live destination (a resumed replacement
+// continues a tree whose mode the earlier attempt already applied).
+type replacementBackup struct {
+	path      string
+	mode      uint32
+	modeKnown bool
+}
+
+// backupPath is the sibling that holds the old destination during a
+// replacement.
+func backupPath(dest FileSystem, destination string) string {
+	return dest.Join(dest.Parent(destination), backupName(dest, destination))
+}
+
+// takeBackup moves an existing destination aside before a replacement and
+// reports the mode the promoted entry must keep. A missing destination needs
+// no backup; the move is a rename in the same directory, so it does not copy
+// the tree.
+//
+// A backup left by an interrupted earlier attempt is reconciled first. For a
+// file, a live destination means the backup is stale and is removed, while a
+// missing destination means the backup is the only known-good copy and is
+// restored before this transaction creates its own. A directory replacement
+// cannot make that call: an attempt that died before its durable checkpoint
+// created the new root but wrote none of the original into it, so a live root
+// beside a backup may be a partial tree. The backup is always the known-good
+// copy there, so it is restored over whatever root is present.
+func takeBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationKind,
+	destination string, directory bool) (replacementBackup, error) {
+	backup := backupPath(dest, destination)
+	backupInfo, backupErr := dest.Stat(ctx, backup)
+	hasBackup := backupErr == nil
+	if backupErr != nil && KindOf(backupErr) != KindNotFound {
+		return replacementBackup{}, wrap(kind, backup, backupErr)
+	}
+	targetInfo, targetErr := dest.Stat(ctx, destination)
+	hasTarget := targetErr == nil
+	if targetErr != nil && KindOf(targetErr) != KindNotFound {
+		return replacementBackup{}, wrap(kind, destination, targetErr)
+	}
+	if hasBackup {
+		if hasTarget && directory {
+			if err := dest.RemoveAll(context.WithoutCancel(ctx), destination); err != nil {
+				return replacementBackup{}, wrap(kind, destination, err)
+			}
+			hasTarget = false
 		}
-		return "", wrap(kind, destination, err)
+		if hasTarget {
+			// The destination is live, so this backup belongs to an earlier
+			// committed replacement and is stale.
+			if err := dest.RemoveAll(context.WithoutCancel(ctx), backup); err != nil {
+				return replacementBackup{}, wrap(kind, backup, err)
+			}
+		} else {
+			// An interrupted promotion left the backup as the only known-good
+			// copy; put it back before moving anything else.
+			if err := dest.Rename(context.WithoutCancel(ctx), backup, destination); err != nil {
+				return replacementBackup{}, wrap(kind, destination, err)
+			}
+			targetInfo = backupInfo
+			hasTarget = true
+		}
 	}
-	backup := dest.Join(dest.Parent(destination), backupName(dest, destination))
-	// A backup left by an interrupted earlier replacement is stale; this
-	// replacement owns the name now.
-	_ = dest.RemoveAll(context.WithoutCancel(ctx), backup)
+	if !hasTarget {
+		return replacementBackup{}, nil
+	}
 	if err := dest.Rename(ctx, destination, backup); err != nil {
-		return "", wrap(kind, destination, err)
+		return replacementBackup{}, wrap(kind, destination, err)
 	}
-	return backup, nil
+	// A transport that reports no mode cannot prove one, so the promotion
+	// verifies only what the plan observed.
+	return replacementBackup{path: backup, mode: targetInfo.Mode, modeKnown: targetInfo.Mode != 0}, nil
 }
 
 // retainedBackup names the backup a paused or interrupted replacement kept.
 // A resumed source continues in the partial new tree, then removes this
-// backup once the replacement completes.
+// backup once the replacement completes. Its mode was already applied by the
+// attempt that wrote the partial tree, so this attempt does not re-apply it.
 func retainedBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationKind,
-	destination string) (string, error) {
-	backup := dest.Join(dest.Parent(destination), backupName(dest, destination))
+	destination string) (replacementBackup, error) {
+	backup := backupPath(dest, destination)
 	if _, err := dest.Stat(ctx, backup); err != nil {
 		if KindOf(err) == KindNotFound {
-			return "", nil
+			return replacementBackup{}, nil
 		}
-		return "", wrap(kind, backup, err)
+		return replacementBackup{}, wrap(kind, backup, err)
 	}
-	return backup, nil
+	return replacementBackup{path: backup}, nil
+}
+
+// removeBackup deletes the backup after a committed replacement. A failure is
+// reported rather than ignored: the promoted destination stays, the backup
+// stays recoverable, and the caller knows the transaction did not finish its
+// cleanup. A late cancel cannot skip it, because publication already happened.
+func removeBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationKind,
+	backup string) error {
+	if err := dest.RemoveAll(context.WithoutCancel(ctx), backup); err != nil {
+		return &Error{
+			Kind: KindInternal,
+			Op:   kind,
+			Path: backup,
+			Cause: fmt.Errorf("sftp: remove backup %s: %w",
+				dest.Base(backup), err),
+		}
+	}
+	return nil
 }
 
 // restoreBackup puts the old destination back after a failed replacement and

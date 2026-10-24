@@ -2777,6 +2777,36 @@
   status: verified
   notes: "Replacement stages under the ADR-0012 name, moves the old entry to a sibling backup, and restores it if promotion fails; OS drops use the same prompt. A queued Transfer's staging suffix is a digest of its durable Task ID and target, so a restart-resume recomputes the same path instead of orphaning the dead process's file; a request with no durable identity keeps the original random suffix."
 
+- id: sftp.transactional-overwrite
+  area: sftp-transfer
+  feature: Replacement stages, verifies size and mode, backs up the original, promotes atomically, and cleans up
+  original_paths:
+    - electron/bridges/sftpBridge.cjs
+    - application/state/sftp/directoryReplacePromotion.ts
+    - application/state/sftp/dedicatedTransferResume.ts
+  module: application/transfer
+  tickets: [34]
+  acceptance_tests:
+    - application/transfer.TestReplaceVerifiesTheStagedSizeBeforePromotion
+    - application/transfer.TestReplaceVerifiesTheStagedModeBeforePromotion
+    - application/transfer.TestReplaceFailsWhenTheStageModeCannotBeApplied
+    - application/transfer.TestReplaceRejectsAStageThatLostThePreservedMode
+    - application/transfer.TestReplaceBacksUpTheOriginalBeforePromotion
+    - application/transfer.TestFailedDirectoryReplaceRestoresTheOriginalTree
+    - application/transfer.TestFailedDirectoryReplaceRestoresAKilledAttemptsBackup
+    - application/transfer.TestReplaceReconcilesAStaleBackupFromAKilledProcess
+    - application/transfer.TestFailedReplaceRestoresAStaleBackupTheKilledProcessLeft
+    - application/transfer.TestQueueReplaceVerificationFailureLeavesTheOriginal
+    - application/transfer.TestReplaceReportsAnUnremovableBackup
+    - application/transfer.TestReplaceKeepsTheOriginalWhenPromotionFails
+    - application/transfer.TestReplaceRemovesTheBackupAfterSuccess
+    - application/transfer.TestCopyCancelDuringReplaceRestoresTheOriginal
+    - application/transfer.TestQueueOrdinaryFailureRestoresTheOriginalAndDropsTheCheckpoint
+    - app.TestTicket34CheckRunsThroughTheKeyboard
+    - app.TestTicket34CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "A Replace copies each file into the ADR-0012 staging sibling, reads the staged entry back, and requires the source size the plan observed; a single-file replacement also applies the destination's original mode to the stage, fails if chmod is refused, and requires that mode back before promotion, and a file inside a replaced tree is mode-checked against its source where the destination is POSIX. Only then does rename take the destination name. The original is renamed to its stable sibling backup before the first staged file is promoted, so an ordinary failure removes the partial tree and renames the backup back; a pause or a lost transport keeps the partial tree and backup for the resume instead, matching the ticket-32 contract. A backup left beside a live file destination is stale and removed, while a backup beside a missing destination is the only known-good copy and is restored before the new transaction starts; a backup beside an existing directory root is always restored over it, because an attempt that died before its checkpoint may have created an empty root. A committed replacement removes both artifacts; if the backup cannot be removed, the destination stays promoted, the backup stays recoverable, and the operation reports the cleanup failure. Unlike the original's whole-directory staged tree, this build keeps the accepted ticket-32 in-place tree replacement per file, so a folder replacement is transactionally covered by its backup and rollback rather than one directory rename."
+
 - id: sftp.conflict-policies
   area: sftp-transfer
   feature: Stop, skip, replace, duplicate, and merge conflict policies with apply-to-all, duplicate naming, and path reservations
