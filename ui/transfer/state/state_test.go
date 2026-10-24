@@ -124,6 +124,15 @@ type fakeFS struct {
 	root    string
 	backing string
 
+	// block, when non-nil, holds every file Open until it is closed or the
+	// operation is cancelled, so a test can keep a transfer in flight.
+	block chan struct{}
+	// openGate, when non-nil, receives one value per file Open, so a test can
+	// wait for a transfer to be in flight on a real condition.
+	openGate chan struct{}
+	// transportErr, when non-nil, fails every file Open as a lost transport.
+	transportErr error
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -225,7 +234,20 @@ func (f *fakeFS) MkdirAll(_ context.Context, dir string) error {
 	return nil
 }
 
-func (f *fakeFS) Open(_ context.Context, file string) (io.ReadCloser, error) {
+func (f *fakeFS) Open(ctx context.Context, file string) (io.ReadCloser, error) {
+	if f.transportErr != nil {
+		return nil, f.transportErr
+	}
+	if f.openGate != nil {
+		f.openGate <- struct{}{}
+	}
+	if f.block != nil {
+		select {
+		case <-f.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	file = path.Clean(file)
 	f.disk.mu.Lock()
 	defer f.disk.mu.Unlock()

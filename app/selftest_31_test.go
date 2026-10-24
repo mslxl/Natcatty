@@ -14,7 +14,7 @@ import (
 )
 
 // runTicket31 presses 3 and 1, advances the harness to completion, and
-// asserts a passing seven-step result. openMenu presses F11 first.
+// asserts a passing nine-step result. openMenu presses F11 first.
 func runTicket31(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result {
 	t.Helper()
 	if openMenu {
@@ -40,8 +40,8 @@ func runTicket31(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 		}
 		t.Fatalf("ticket 31 self-test failed: %v", result.Errors)
 	}
-	if len(result.Steps) != 7 {
-		t.Fatalf("steps = %d, want 7: %+v", len(result.Steps), result.Steps)
+	if len(result.Steps) != 9 {
+		t.Fatalf("steps = %d, want 9: %+v", len(result.Steps), result.Steps)
 	}
 	for _, step := range result.Steps {
 		t.Logf("%s: %s (%s)", step.Name, step.Detail, step.Seam)
@@ -73,6 +73,8 @@ func TestTicket31CheckRunsThroughTheKeyboard(t *testing.T) {
 		"apptransfer.Queue + domainsftp.TaskStatus.CanRetry",
 		"apptransfer.Queue.Stats + domainsftp.LocalResourceKey",
 		"apptransfer.Queue + domainsftp.DowngradeInterrupted",
+		"transferstate.State + apptransfer.Queue",
+		"apptransfer.Queue + domainsftp.ErrTaskUnavailable",
 		"transferui.View + transferstate.State + apptransfer.Queue",
 	} {
 		if !seams[want] {

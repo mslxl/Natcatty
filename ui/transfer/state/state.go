@@ -197,6 +197,11 @@ type State struct {
 	hostsLoad   bool
 
 	operation *operationState
+	// queueOperations tracks every queue-backed row the surface is watching,
+	// so a second Transfer enqueued while the first is still running still
+	// finishes its own notice, refresh, and conflict prompt. operation is the
+	// one the operation bar currently shows.
+	queueOperations map[domainsftp.TaskID]*operationState
 
 	// transferQueue is the global Transfer queue behind pane copies, when the
 	// app wired one. centerOpen shows its Transfer center.
@@ -242,9 +247,10 @@ func NewState(service *apptransfer.Service, options ...Option) *State {
 			Left:  {Tabs: nil, Active: -1},
 			Right: {Tabs: nil, Active: -1},
 		},
-		focused: Left,
-		ctx:     ctx,
-		cancel:  cancel,
+		focused:         Left,
+		queueOperations: map[domainsftp.TaskID]*operationState{},
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 	for _, option := range options {
 		option(s)

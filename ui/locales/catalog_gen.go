@@ -13124,13 +13124,13 @@ func (msgs Messages) SftpErrorCancelled() string {
 	return Catalog.Format(msgs.locale, "sftpErrorCancelled", nil)
 }
 
-// SftpErrorConnection says "The connection failed."
+// SftpErrorConnection says "Connection failed."
 // in the language the app shows.
 //
 // The error shown for a failed connection.
 func SftpErrorConnection() string { return In(i18n.Locale()).SftpErrorConnection() }
 
-// SftpErrorConnection says "The connection failed."
+// SftpErrorConnection says "Connection failed."
 // in the language of msgs.
 //
 // The error shown for a failed connection.

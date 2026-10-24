@@ -119,9 +119,14 @@ func (s *State) Snapshot() *Operation {
 	return &snapshot
 }
 
-// Busy reports whether a file operation is running. Another operation is
-// refused while one is in flight.
+// Busy reports whether a file operation is running. Another direct
+// operation is refused while one is in flight; with the global queue behind
+// the surface, any active worker counts, whichever row the bar currently
+// shows.
 func (s *State) Busy() bool {
+	if s.transferQueue != nil {
+		return s.transferQueue.Stats().Active > 0
+	}
 	if s.operation == nil {
 		return false
 	}
@@ -158,7 +163,23 @@ func (s *State) CancelOperation() {
 
 // beginOperation reserves the single operation slot.
 func (s *State) beginOperation(kind domainsftp.OperationKind) (*operationState, context.Context, bool) {
-	if s.Busy() {
+	return s.newOperation(kind, false)
+}
+
+// beginQueueOperation reserves the operation bar for a queued Transfer
+// without the single-slot Busy guard: the queue admits every request and
+// runs only what its per-resource limit allows. A second Transfer replaces
+// the bar's current row while the earlier row keeps its attachment in
+// queueOperations and still finishes on its own.
+func (s *State) beginQueueOperation(kind domainsftp.OperationKind) *operationState {
+	op, _, _ := s.newOperation(kind, true)
+	return op
+}
+
+// newOperation builds and shows an operation. allowBusy lets the queue path
+// bypass the single-slot guard, because the queue owns admission there.
+func (s *State) newOperation(kind domainsftp.OperationKind, allowBusy bool) (*operationState, context.Context, bool) {
+	if !allowBusy && s.Busy() {
 		s.notice = "busy"
 		s.RequestRedraw()
 		return nil, nil, false
@@ -167,12 +188,8 @@ func (s *State) beginOperation(kind domainsftp.OperationKind) (*operationState, 
 	op := &operationState{
 		kind:   kind,
 		cancel: cancel,
-		state: Operation{
-			Kind:    kind,
-			Running: true,
-		},
+		state:  Operation{Kind: kind, Running: true},
 	}
-	op.cancel = cancel
 	s.operation = op
 	s.RequestRedraw()
 	return op, ctx, true
@@ -210,6 +227,7 @@ func (s *State) attachQueuedOperation(op *operationState, taskID domainsftp.Task
 	queue := s.transferQueue
 	op.cancel = func() { _ = queue.Cancel(taskID) }
 	op.mu.Unlock()
+	s.queueOperations[taskID] = op
 	if previous != nil {
 		previous()
 	}
@@ -315,18 +333,20 @@ func (s *State) refreshAfter(source, dest *Tab, move bool) []*Tab {
 }
 
 // startCopy runs a copy request and offers replacement when the destination
-// exists.
+// exists. With the global queue behind it, a Transfer is admitted even while
+// another is running: the queue owns scheduling, so a second Upload is work
+// queued behind the per-resource limit rather than a refused action.
 func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, move bool, kind domainsftp.OperationKind, conflict apptransfer.ConflictPolicy, refresh []*Tab) bool {
-	if s.Busy() {
-		s.notice = "busy"
-		s.RequestRedraw()
-		return false
-	}
-	op, ctx, ok := s.beginOperation(kind)
-	if !ok {
-		return false
+	if s.transferQueue == nil {
+		if s.Busy() {
+			s.notice = "busy"
+			s.RequestRedraw()
+			return false
+		}
 	}
 	if s.transferQueue != nil {
+		// The queue, not the single-slot operation bar, decides admission.
+		op := s.beginQueueOperation(kind)
 		retry := func() {
 			s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictReplace, refresh)
 		}
@@ -341,6 +361,10 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 			SourceLabel: source.Title(),
 			DestLabel:   dest.Title(),
 		}, refresh, retry, nil)
+	}
+	op, ctx, ok := s.beginOperation(kind)
+	if !ok {
+		return false
 	}
 	request := apptransfer.CopyRequest{
 		Source:   source.FS,
@@ -600,6 +624,12 @@ func (s *State) releaseOperation(op *operationState) {
 	}
 	if cleanup != nil {
 		cleanup()
+	}
+	op.mu.Lock()
+	taskID := op.taskID
+	op.mu.Unlock()
+	if taskID != "" {
+		delete(s.queueOperations, taskID)
 	}
 	if s.operation == op {
 		s.operation = nil
