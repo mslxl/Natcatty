@@ -78,7 +78,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 			{Text: host.Label, Weight: appsearch.WeightLabel},
 			{Text: host.Hostname, Weight: appsearch.WeightHostname},
 			{Text: host.Username, Weight: appsearch.WeightUsername},
-			{Text: host.Notes, Weight: appsearch.WeightNote},
+			{Text: host.Notes, Weight: appsearch.WeightNote, Body: true},
 		}
 		if host.Group != "" {
 			fields = append(fields, appsearch.Field{Text: host.Group, Weight: appsearch.WeightGroup})
@@ -102,7 +102,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 			Title: group.Path,
 			Fields: []appsearch.Field{
 				{Text: group.Path, Weight: appsearch.WeightLabel},
-				{Text: group.Notes, Weight: appsearch.WeightNote},
+				{Text: group.Notes, Weight: appsearch.WeightNote, Body: true},
 			},
 		})
 	}
@@ -115,7 +115,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 			Fields: []appsearch.Field{
 				{Text: key.Label, Weight: appsearch.WeightLabel},
 				{Text: string(key.Type), Weight: appsearch.WeightKeyword},
-				{Text: key.PublicKey, Weight: appsearch.WeightNote},
+				{Text: key.PublicKey, Weight: appsearch.WeightNote, Body: true},
 			},
 		})
 	}
@@ -135,7 +135,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 	for _, snippet := range snapshot.snippets {
 		fields := []appsearch.Field{
 			{Text: snippet.Label, Weight: appsearch.WeightLabel},
-			{Text: snippet.Command, Weight: appsearch.WeightContent},
+			{Text: snippet.Command, Weight: appsearch.WeightContent, Body: true},
 		}
 		if snippet.Package != "" {
 			fields = append(fields, appsearch.Field{Text: snippet.Package, Weight: appsearch.WeightGroup})
@@ -185,7 +185,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 			ID:    note.ID,
 			Title: note.Title,
 			Fields: []appsearch.Field{
-				{Text: note.Content, Weight: appsearch.WeightContent},
+				{Text: note.Content, Weight: appsearch.WeightContent, Body: true},
 			},
 		}
 		if _, ok := appsearch.Match(prepared, bodyRecord); ok {
@@ -215,7 +215,7 @@ func snapshotRecords(snapshot vaultSnapshot, query string) []appsearch.Record {
 				{Text: proxy.Label, Weight: appsearch.WeightLabel},
 				{Text: string(proxy.Config.Type), Weight: appsearch.WeightKeyword},
 				{Text: proxy.Config.Host, Weight: appsearch.WeightHostname},
-				{Text: proxy.Config.Command, Weight: appsearch.WeightContent},
+				{Text: proxy.Config.Command, Weight: appsearch.WeightContent, Body: true},
 			},
 		})
 	}
