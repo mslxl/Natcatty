@@ -867,6 +867,9 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 			q.recordProgress(id, update, baseBytes)
 		}
 		result, copyErr := q.service.Copy(ctx, CopyRequest{
+			// The durable Task ID seeds every staging file name, so a resumed
+			// attempt reuses the staging file an interrupted process left.
+			StageKey:     string(id),
 			Source:       spec.Source,
 			Dest:         spec.Dest,
 			Sources:      spec.Sources,

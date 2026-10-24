@@ -85,6 +85,12 @@ type CopyRequest struct {
 	Kind     domainsftp.OperationKind
 	Conflict ConflictPolicy
 	Progress func(Progress)
+	// StageKey names the durable owner of this request (the queue passes its
+	// Task ID). A non-empty key makes every staging file name deterministic
+	// from the key and the target, so a resumed request reuses the staging
+	// file an interrupted process left instead of orphaning it. An empty key
+	// keeps the original random suffix for callers with no durable identity.
+	StageKey string
 	// Checkpoint resumes a directory request from the completed prefix it
 	// names. The engine validates it against a fresh traversal before
 	// skipping anything.
@@ -296,7 +302,7 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 					Mode: entry.Mode,
 				}
 				bytes, copyErr := copyFile(ctx, request.Source, request.Dest, info,
-					entry.TargetPath, &progress, report)
+					entry.TargetPath, request.StageKey, &progress, report)
 				if copyErr != nil {
 					return abort(copyErr)
 				}
@@ -623,14 +629,15 @@ func namesIn(ctx context.Context, files FileSystem, dir string) (map[string]bool
 // place. A cancelled or failed copy removes the temporary file, so a
 // half-written file never carries the destination name.
 func copyFile(ctx context.Context, source, dest FileSystem, info domainsftp.Entry,
-	destination string, plan *Progress, report func(string)) (int64, error) {
+	destination, stageKey string, plan *Progress, report func(string)) (int64, error) {
 	reader, err := source.Open(ctx, info.Path)
 	if err != nil {
 		return 0, wrap(domainsftp.OpCopy, info.Path, err)
 	}
 	defer reader.Close()
 
-	temporary := dest.Join(dest.Parent(destination), stageName(dest.Base(destination)))
+	temporary := dest.Join(dest.Parent(destination),
+		stageName(stageKey, dest.Base(destination), destination))
 	writer, err := dest.Create(ctx, temporary)
 	if err != nil {
 		return 0, wrap(domainsftp.OpCopy, temporary, err)
@@ -682,8 +689,38 @@ func copyFile(ctx context.Context, source, dest FileSystem, info domainsftp.Entr
 
 // stageName is the staging file's name beside the destination. ADR-0012
 // fixes the prefix and suffix; cleanup and resume depend on them.
-func stageName(name string) string {
-	return fmt.Sprintf(".netcatty-upload-%s-%s.part", randomSuffix(), name)
+//
+// A request with a durable StageKey hashes that key together with the target,
+// so the same top-level Transfer writes the same staging path in every
+// process. A resume reuses (and truncates) the interrupted process's staging
+// file and the successful rename removes it, rather than leaving an orphan.
+// The hash includes the task identity, so two concurrent Transfers that name
+// the same destination still use different staging files and neither can
+// delete the other's. A request without a durable owner keeps the original
+// random eight-hex suffix.
+func stageName(stageKey, name, target string) string {
+	suffix := randomSuffix()
+	if stageKey != "" {
+		hash := fnv.New64a()
+		_, _ = hash.Write([]byte(stageKey))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(target))
+		suffix = fmt.Sprintf("%016x", hash.Sum64())
+	}
+	return stagingPrefix + suffix + "-" + name + stagingSuffix
+}
+
+// The staging prefix and suffix are the ADR-0012 contract. Cleanup and resume
+// depend on them, so one predicate answers the question for every caller.
+const (
+	stagingPrefix = ".netcatty-upload-"
+	stagingSuffix = ".part"
+)
+
+// IsStagingName reports whether a base name is one of this package's staging
+// files. Callers use it to identify the contract without re-implementing it.
+func IsStagingName(name string) bool {
+	return strings.HasPrefix(name, stagingPrefix) && strings.HasSuffix(name, stagingSuffix)
 }
 
 // backupName is the sibling that holds the old destination during a
