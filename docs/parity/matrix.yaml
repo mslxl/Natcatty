@@ -4,14 +4,14 @@
 # internal/tools/paritygen validates this file and regenerates matrix.md.
 # See docs/parity/limitations.md for every row with status: excluded.
 #
-# Schema: rewrite spec Â§17. Supported YAML is deliberately narrow: a top-level
+# Schema: rewrite spec §17. Supported YAML is deliberately narrow: a top-level
 # sequence of rows, scalar fields, block string sequences, and bracketed
 # inline string sequences. Comments must occupy a whole line.
 #
 # Row seeding follows delivery: tickets seed their own rows as they land, so
 # the full ~300-row inventory arrives with ticket 60. Module names use the
 # repository's actual package paths (root-level layers), which internal/archtest
-# enforces; rewrite spec Â§2's internal/ prefix describes the same layers.
+# enforces; rewrite spec §2's internal/ prefix describes the same layers.
 
 # --- Ticket 01: native shell, i18n, menu, command registry ---
 
@@ -136,7 +136,7 @@
     - internal/tools/paritygen.TestLintRejectsBrokenRows
     - internal/tools/paritygen.TestRenderSortsByAreaThenIDAndIsDeterministic
   status: verified
-  notes: "The original has no parity-matrix implementation; this guard is specified by rewrite spec Â§17 and ADR-0008. AGENTS.md is the original repository-policy artifact."
+  notes: "The original has no parity-matrix implementation; this guard is specified by rewrite spec §17 and ADR-0008. AGENTS.md is the original repository-policy artifact."
 
 # --- Ticket 02: local shell Session ---
 
@@ -997,7 +997,7 @@
     - application/desktop.TestDefaultsPreserveOriginalValues
     - app.TestGlobalHotkeyRegistrationDrivesTheToggle
   status: verified
-  notes: "The default stays the original Ctrl + ` (âŒƒ + ` on macOS); MyGo's Windows backend maps the backtick to VK_OEM_3, so it registers. A failed change keeps the previous shortcut registered, and Settings explains the failure."
+  notes: "The default stays the original Ctrl + ` (⌃ + ` on macOS); MyGo's Windows backend maps the backtick to VK_OEM_3, so it registers. A failed change keeps the previous shortcut registered, and Settings explains the failure."
 
 - id: desktop.autostart
   area: desktop
@@ -1421,7 +1421,7 @@
     - ui/shell.TestVaultHeaderActionsAreClickableAtMinimumSize
     - app.TestTicket28CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. At the 720x480 minimum the Vault's host-list header wraps its actions, so the localized title keeps one line and Import Hosts, Export Vault, Backups, and New Host stay inside the content column in all five catalogs; the list viewport also reserves the overlay scroll bar's gutter. On Windows the Settings caption is set with SetWindowTextW: GetWindowTextW returns è®¾ç½® (U+8BBE U+7F6E), while an ANSI GetWindowTextA read returns \"??\" because the CJK characters are not in the ANSI code page, so a \"??\" caption reports an ANSI-reading probe rather than an app or MyGo v0.5.5 encoding defect. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
+  notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. At the 720x480 minimum the Vault's host-list header wraps its actions, so the localized title keeps one line and Import Hosts, Export Vault, Backups, and New Host stay inside the content column in all five catalogs; the list viewport also reserves the overlay scroll bar's gutter. On Windows the Settings caption is set with SetWindowTextW: GetWindowTextW returns 设置 (U+8BBE U+7F6E), while an ANSI GetWindowTextA read returns \"??\" because the CJK characters are not in the ANSI code page, so a \"??\" caption reports an ANSI-reading probe rather than an app or MyGo v0.5.5 encoding defect. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
 
 - id: keyboard.catalog-schemes
   area: shell
@@ -2475,6 +2475,82 @@
   tickets: [60]
   status: excluded
   notes: "The external MCP server is the required programmatic surface."
+
+# --- Ticket 56: MCP stdio server and read tools ---
+
+- id: mcp.stdio-bridge
+  area: mcp
+  feature: External MCP client connects through the stdio process
+  original_paths:
+    - electron/mcp/netcatty-mcp-server.cjs
+    - electron/mcp/netcattyMcpInstructions.cjs
+    - electron/bridges/mcpServerBridge.cjs
+  module: cmd/natcatty-mcp
+  tickets: [56]
+  acceptance_tests:
+    - cmd/natcatty-mcp.TestRunAuthenticatesThenServesMCPOverStdio
+    - cmd/natcatty-mcp.TestRunUsesTheExplicitPortAndTokenOverrides
+    - cmd/natcatty-mcp.TestRunRejectsAWrongToken
+    - cmd/natcatty-mcp.TestRunExplainsAMissingDiscoveryFile
+    - cmd/natcatty-mcp.TestBridgeCallerDecodesAppResults
+    - app.TestExternalMCPAuthenticatesAndAnswersReadTools
+    - app.TestTicket56CheckRunsThroughTheKeyboard
+    - app.TestTicket56CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "cmd/natcatty-mcp speaks newline-delimited JSON-RPC 2.0 on stdio and reaches the app only through the authenticated loopback transport. It resolves the discovery file from NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE or <userData>/external-mcp/discovery.json (mode 0600, host 127.0.0.1, ephemeral port, 32-byte token), verifies the token as its first message, and reuses the original netcatty-remote-hosts identity and instructions. The app starts the listener before it writes discovery, so a client that reads the file can always connect; the discovery file is removed on quit only when it still names this listener."
+
+- id: mcp.progressive-catalog
+  area: mcp
+  feature: Progressive catalog discovery and toolset loading
+  original_paths:
+    - electron/mcp/progressiveMcpTools.cjs
+    - electron/mcp/catalogToolMetadata.cjs
+  module: internal/mcp/catalog
+  tickets: [56]
+  acceptance_tests:
+    - internal/mcp/catalog.TestCatalogMatchesTheExtractedOriginalSnapshot
+    - internal/mcp/catalog.TestCatalogPolicyMatchesTheOriginalSecuritySplit
+    - internal/mcp/catalog.TestProgressiveSplitMatchesTheOriginal
+    - internal/mcp/catalog.TestProgressiveInitialVisibilityIsCorePlusLoader
+    - internal/mcp/catalog.TestProgressiveLoadingAToolsetAndReloading
+    - internal/mcp/catalog.TestProgressiveLoadingAllExposesSeventy
+    - internal/mcp.TestToolsListStartsWithFourteenCoreToolsAndTheLoader
+    - internal/mcp.TestLoaderExposesAToolsetAndNotifiesListChanged
+    - internal/mcp.TestLoaderAllExposesSeventyTools
+    - internal/mcp.TestLoaderRejectsAnUnknownToolset
+    - internal/mcp.TestHiddenToolCannotBeCalledBeforeLoading
+    - app.TestTicket56CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The catalog is a literal port of the extracted original snapshot: 69 capability tools across the original seven toolsets, plus load_netcatty_tools. A session starts with the 14 core tools and the loader visible (15); loading sftp_advanced exposes 21; loading all exposes all 70. Each load emits notifications/tools/list_changed before the loader response, repeated loads report alreadyLoaded, hidden tools are rejected until loaded, and an unknown toolset is a JSON-RPC invalid-params error. The selftest drives these counts through the real stdio binary."
+
+- id: mcp.read-tools
+  area: mcp
+  feature: Read-only tools return bounded results
+  original_paths:
+    - electron/bridges/mcpServerBridge.cjs
+    - electron/bridges/mcpServerBridge/sftpHandlers.cjs
+    - infrastructure/ai/vaultAgentBridgeClient.ts
+    - domain/terminalContextRead.ts
+    - domain/vaultNoteRead.ts
+    - electron/capabilities/services/portforwardService.cjs
+  module: app
+  tickets: [56]
+  acceptance_tests:
+    - app.TestMCPVaultReadToolsProjectTheOriginalShapes
+    - app.TestMCPTerminalContextIsBounded
+    - app.TestMCPSFTFReadsAreBounded
+    - app.TestMCPWriteToolsAndUnavailableSubsystemsAreExplicit
+    - app.TestMCPEnvironmentAndForwardingShapes
+    - internal/mcp.TestReadToolCallMapsTheRPCAndBoundsTheText
+    - internal/mcp.TestOversizedResultsAreBounded
+    - internal/mcp.TestCallerResultsWithOKFalseBecomeToolErrors
+    - application/vault.TestReadNoteExcerptUsesUTF16Offsets
+    - application/vault.TestReadNoteExcerptLiteralSearchKeepsMatchOffsets
+    - application/vault.TestReadNoteExcerptCapsTheExcerptAndTruncatesTheTitle
+    - application/session.TestResolveTerminalLineWindowMatchesTheOriginal
+    - app.TestTicket56CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Read tools project the original result shapes from application services without UI coupling: environment and terminal context, Vault hosts/notes/identities/proxy profiles/groups/snippets, SFTP list/read/stat/home, and Port Forwarding rules/tunnels. Bounds match the original where it has them: note excerpts use UTF-16 offsets capped at 6000 units with a 120-code-point title and a 200-character query, terminal context defaults to 80 lines and caps at 300, and in-memory SFTP reads follow the original 10 MB ceiling, refusing larger files with the original guidance instead of truncating them. SFTP listings stop at 5000 entries with a truncated marker, and the stdio layer caps one tool result at 16 MiB, above the 10 MB read ceiling to leave room for JSON escaping. An unmatched note query reports matchOffset null, as the original does. The environment description is shorter than the original's generated tool guidance; the host, count, and tunnel fields are projected from live sessions. Write tools and subsystems the native build does not have return explicit bounded errors; they are never silently executed."
 
 - id: release.signing-update
   area: packaging
