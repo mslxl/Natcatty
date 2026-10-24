@@ -311,6 +311,14 @@ func (s *State) transferTo(from, to Side, move bool) {
 	s.startCopy(source, dest, paths, destDir, move, kind, apptransfer.ConflictStop, s.refreshAfter(source, dest, move))
 }
 
+// tabHost names the saved Host behind a Tab, or "" for a local one.
+func tabHost(tab *Tab) string {
+	if tab != nil && tab.Kind == KindRemote {
+		return string(tab.HostID)
+	}
+	return ""
+}
+
 // transferKind labels a transfer by the panes it connects.
 func transferKind(source, dest *Tab) domainsftp.OperationKind {
 	switch {
@@ -360,6 +368,10 @@ func (s *State) startCopy(source, dest *Tab, paths []string, destDir string, mov
 			Conflict:    conflict,
 			SourceLabel: source.Title(),
 			DestLabel:   dest.Title(),
+			// The Tab knows which saved Host each endpoint is; the durable row
+			// keeps it so a reconnect can rebuild this request.
+			SourceHost: tabHost(source),
+			DestHost:   tabHost(dest),
 		}, refresh, retry, nil)
 	}
 	op, ctx, ok := s.beginOperation(kind)

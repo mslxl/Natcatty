@@ -148,6 +148,14 @@ func centerRow(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.
 				TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine()
 			transferButtons(c, s, m, task)
 		})
+		// The recovery sentence gets a line of its own rather than a tail on
+		// the detail line: beside the panes, progress, and file count it ran
+		// out of room in English at both supported window sizes. It wraps
+		// instead of ending in an ellipsis, so the whole instruction is read.
+		if task.ReconnectRequired {
+			ui.Text(c, m.SftpTransferReconnectRequired()).FontSize(10).
+				TextColor(t.Warning).FillWidth().MinWidth(0)
+		}
 	})
 }
 
@@ -257,12 +265,6 @@ func transferDetail(m locales.Messages, task domainsftp.Task) string {
 		parts = append(parts, errorText(m, task.Err))
 	} else if task.Error != "" {
 		parts = append(parts, errorKindText(m, apptransfer.ErrorKind(task.Error)))
-	}
-	// A row whose transport died can only move again after a reconnect. Say
-	// so on the row itself rather than leaving a Retry that would replay the
-	// dead stream.
-	if task.ReconnectRequired {
-		parts = append(parts, m.SftpTransferReconnectRequired())
 	}
 	return strings.Join(parts, " · ")
 }
