@@ -83,7 +83,8 @@ type Queue struct {
 
 	observers []func(domainsftp.Task)
 
-	persistMu sync.Mutex
+	persistMu          sync.Mutex
+	lastCheckpointSave time.Time
 }
 
 type queueEntry struct {
@@ -410,12 +411,68 @@ func (q *Queue) Resume(id domainsftp.TaskID) error {
 	entry.task.ReconnectRequired = false
 	entry.task.Epoch++
 	entry.task.Speed = 0
+	// Speed measures the resumed attempt, not time spent paused.
+	entry.task.StartedAt = time.Time{}
+	// A directory resume starts from its checkpoint prefix, so progress and
+	// the honest byte count continue rather than dropping to zero. A single
+	// file has no directory checkpoint and replays from the beginning.
 	entry.task.BytesDone = 0
 	entry.task.FilesDone = 0
+	if checkpoint := entry.task.DirectoryResumeCheckpoint; checkpoint != nil && checkpoint.Valid() {
+		entry.task.FilesDone = checkpoint.CompletedEntries
+		entry.task.BytesDone = entry.task.CheckpointBytesDone
+	}
 	entry.task.CurrentFile = ""
 	entry.task.Error = ""
 	entry.task.Err = nil
 	entry.task.FinishedAt = time.Time{}
+	entry.task.UpdatedAt = q.now()
+	snapshot := entry.task.Clone()
+	q.mu.Unlock()
+
+	q.emit(snapshot)
+	q.persist()
+	q.pump()
+	return nil
+}
+
+// Reattach binds live filesystems to a Transfer restored after a restart or
+// cut off by a lost transport. It keeps the directory checkpoint and pinned
+// targets, clears the reconnect requirement, and moves a failed row back to
+// interrupted so Resume can continue it. Retry keeps its replay-from-start
+// meaning.
+func (q *Queue) Reattach(id domainsftp.TaskID, spec TaskSpec) error {
+	if q == nil {
+		return domainsftp.ErrTaskNotFound
+	}
+	if spec.Source == nil || spec.Dest == nil || len(spec.Sources) == 0 || spec.DestDir == "" {
+		return domainsftp.ErrTaskUnavailable
+	}
+	q.mu.Lock()
+	entry := q.tasks[id]
+	if entry == nil {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskNotFound
+	}
+	if entry.running || entry.task.Status == domainsftp.TaskCompleted ||
+		entry.task.Status == domainsftp.TaskCancelled {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskReattachNotNeeded
+	}
+	if entry.spec != nil && !entry.task.ReconnectRequired {
+		q.mu.Unlock()
+		return domainsftp.ErrTaskReattachNotNeeded
+	}
+	copied := specCopy(spec)
+	entry.spec = &copied
+	entry.task.ReconnectRequired = false
+	entry.task.Error = ""
+	entry.task.Err = nil
+	entry.task.Speed = 0
+	if entry.task.Status == domainsftp.TaskFailed || entry.task.Status == domainsftp.TaskInterrupted {
+		entry.task.Status = domainsftp.TaskInterrupted
+	}
+	entry.task.Epoch++
 	entry.task.UpdatedAt = q.now()
 	snapshot := entry.task.Clone()
 	q.mu.Unlock()
@@ -454,6 +511,11 @@ func (q *Queue) Retry(id domainsftp.TaskID) error {
 	entry.task.ReconnectRequired = false
 	entry.task.Epoch++
 	entry.task.Speed = 0
+	// Retry is a full replay: the original's Retry does not inherit a paused
+	// directory's checkpoint.
+	entry.task.DirectoryResumeCheckpoint = nil
+	entry.task.CheckpointBytesDone = 0
+	entry.task.Targets = nil
 	entry.task.BytesDone = 0
 	entry.task.FilesDone = 0
 	entry.task.CurrentFile = ""
@@ -499,6 +561,12 @@ func (q *Queue) Cancel(id domainsftp.TaskID) error {
 		entry.task.Err = nil
 		entry.task.Error = ""
 		entry.task.FinishedAt = entry.task.UpdatedAt
+		// Cancel is a hard stop. Clearing the resume state here matches a
+		// running row that settles as cancelled, so Retry always replays from
+		// the beginning.
+		entry.task.DirectoryResumeCheckpoint = nil
+		entry.task.CheckpointBytesDone = 0
+		entry.task.Targets = nil
 	}
 	snapshot = entry.task.Clone()
 	q.mu.Unlock()
@@ -601,21 +669,39 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 	spec := specCopy(*entry.spec)
 	q.mu.Unlock()
 
-	progress := func(update Progress) {
-		q.recordProgress(id, update)
-	}
 	var err error
 	for attempt := 0; attempt <= 1; attempt++ {
-		_, err = q.service.Copy(ctx, CopyRequest{
-			Source:   spec.Source,
-			Dest:     spec.Dest,
-			Sources:  spec.Sources,
-			DestDir:  spec.DestDir,
-			Move:     spec.Move,
-			Kind:     spec.Kind,
-			Conflict: spec.Conflict,
-			Progress: progress,
+		// Re-read the durable resume state per attempt: an automatic retry
+		// after a transient failure continues from the files the previous
+		// attempt completed instead of replaying them.
+		checkpoint, targets, baseBytes := q.resumeState(id)
+		progress := func(update Progress) {
+			q.recordProgress(id, update, baseBytes)
+		}
+		result, copyErr := q.service.Copy(ctx, CopyRequest{
+			Source:       spec.Source,
+			Dest:         spec.Dest,
+			Sources:      spec.Sources,
+			DestDir:      spec.DestDir,
+			Move:         spec.Move,
+			Kind:         spec.Kind,
+			Conflict:     spec.Conflict,
+			Progress:     progress,
+			Checkpoint:   checkpoint,
+			KnownTargets: targets,
+			OnTarget: func(source, target string) {
+				q.recordTarget(id, source, target)
+			},
+			KeepReplacement: func(copyErr error) bool {
+				return q.keepReplacement(id, copyErr)
+			},
 		})
+		err = copyErr
+		if result.ResumeReset {
+			// The copy put the original destination back, so the checkpoint
+			// no longer describes it; a retry or resume must start over.
+			q.clearResumeState(id)
+		}
 		if err == nil || KindOf(err) == KindCancelled || ctx.Err() != nil {
 			break
 		}
@@ -634,10 +720,86 @@ func (q *Queue) run(ctx context.Context, id domainsftp.TaskID) {
 	q.settle(id, err)
 }
 
+// resumeState snapshots the checkpoint and pinned targets for one attempt.
+func (q *Queue) resumeState(id domainsftp.TaskID) (*domainsftp.DirectoryCheckpoint,
+	map[string]string, int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil {
+		return nil, nil, 0
+	}
+	var checkpoint *domainsftp.DirectoryCheckpoint
+	if entry.task.DirectoryResumeCheckpoint != nil {
+		copied := entry.task.DirectoryResumeCheckpoint.Clone()
+		checkpoint = &copied
+	}
+	var targets map[string]string
+	if entry.task.Targets != nil {
+		targets = make(map[string]string, len(entry.task.Targets))
+		for source, target := range entry.task.Targets {
+			targets[source] = target
+		}
+	}
+	return checkpoint, targets, entry.task.CheckpointBytesDone
+}
+
+// recordTarget persists the destination root resolved for one top-level
+// source, so a resume continues in the same tree. A pause may arrive while the
+// plan is resolving, so the target is recorded even then; a cancel clears it
+// at settle.
+func (q *Queue) recordTarget(id domainsftp.TaskID, source, target string) {
+	q.mu.Lock()
+	entry := q.tasks[id]
+	if entry == nil || entry.task.CancelRequested {
+		q.mu.Unlock()
+		return
+	}
+	if entry.task.Targets == nil {
+		entry.task.Targets = map[string]string{}
+	}
+	changed := entry.task.Targets[source] != target
+	entry.task.Targets[source] = target
+	q.mu.Unlock()
+	if changed {
+		q.persist()
+	}
+}
+
+// keepReplacement decides whether a failed replacement keeps its partial tree
+// and backup. A pause and a lost transport can resume that tree; a cancel or
+// ordinary failure restores the original.
+func (q *Queue) keepReplacement(id domainsftp.TaskID, err error) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil {
+		return false
+	}
+	return entry.task.PauseRequested || KindOf(err) == KindConnection
+}
+
+// clearResumeState drops a checkpoint and its pinned targets after the copy
+// rolled the destination back to the original.
+func (q *Queue) clearResumeState(id domainsftp.TaskID) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.tasks[id]
+	if entry == nil {
+		return
+	}
+	entry.task.DirectoryResumeCheckpoint = nil
+	entry.task.CheckpointBytesDone = 0
+	entry.task.Targets = nil
+	entry.task.FilesDone = 0
+	entry.task.BytesDone = 0
+	entry.task.CurrentFile = ""
+}
+
 // recordProgress updates the row and its average speed. It ignores late
 // events after a pause or cancel latch, so a stopping stream cannot advance
 // the visible bytes.
-func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress) {
+func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress, baseBytes int64) {
 	q.mu.Lock()
 	entry := q.tasks[id]
 	if entry == nil || entry.task.PauseRequested || entry.task.CancelRequested {
@@ -645,21 +807,49 @@ func (q *Queue) recordProgress(id domainsftp.TaskID, update Progress) {
 		return
 	}
 	now := q.now()
+	changedCheckpoint := false
+	if update.Checkpoint != nil && update.Checkpoint.Valid() {
+		copied := update.Checkpoint.Clone()
+		entry.task.DirectoryResumeCheckpoint = &copied
+		entry.task.CheckpointBytesDone = update.CheckpointBytes
+		changedCheckpoint = true
+	} else if entry.task.DirectoryResumeCheckpoint != nil {
+		// A request that is no longer a directory cannot use the old prefix;
+		// keeping it would let freezeAtCheckpoint report work that was never
+		// written.
+		entry.task.DirectoryResumeCheckpoint = nil
+		entry.task.CheckpointBytesDone = 0
+		changedCheckpoint = true
+	}
 	entry.task.BytesDone = update.BytesDone
 	entry.task.BytesTotal = update.BytesTotal
 	entry.task.FilesDone = update.FilesDone
 	entry.task.FilesTotal = update.FilesTotal
 	entry.task.CurrentFile = update.Current
-	if !entry.task.StartedAt.IsZero() && update.BytesDone > 0 {
-		elapsed := now.Sub(entry.task.StartedAt).Seconds()
-		if elapsed >= 0.001 {
-			entry.task.Speed = int64(float64(update.BytesDone) / elapsed)
+	if !entry.task.StartedAt.IsZero() {
+		// Speed measures this attempt only: a resumed prefix must not read as
+		// work done in the current second.
+		moved := update.BytesDone - baseBytes
+		if moved > 0 {
+			elapsed := now.Sub(entry.task.StartedAt).Seconds()
+			if elapsed >= 0.001 {
+				entry.task.Speed = int64(float64(moved) / elapsed)
+			}
 		}
 	}
 	entry.task.UpdatedAt = now
 	snapshot := entry.task.Clone()
+	persist := changedCheckpoint && now.Sub(q.lastCheckpointSave) >= time.Second
+	if persist {
+		q.lastCheckpointSave = now
+	}
 	q.mu.Unlock()
 	q.emit(snapshot)
+	if persist {
+		// Keep a long directory Transfer resumable across a crash without
+		// rewriting the whole history on every 256 KiB.
+		q.persist()
+	}
 }
 
 // resetForRetry clears the per-attempt counters before the automatic retry.
@@ -668,8 +858,11 @@ func (q *Queue) resetForRetry(id domainsftp.TaskID) {
 	entry := q.tasks[id]
 	if entry != nil {
 		entry.task.Attempts++
-		entry.task.BytesDone = 0
+		entry.task.BytesDone = entry.task.CheckpointBytesDone
 		entry.task.FilesDone = 0
+		if checkpoint := entry.task.DirectoryResumeCheckpoint; checkpoint != nil {
+			entry.task.FilesDone = checkpoint.CompletedEntries
+		}
 		entry.task.CurrentFile = ""
 		entry.task.Speed = 0
 		entry.task.UpdatedAt = q.now()
@@ -705,10 +898,15 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		entry.task.Error = ""
 		entry.task.Err = nil
 		entry.task.PauseRequested = false
+		// Cancel is a hard stop: a later Retry replays from the beginning.
+		entry.task.DirectoryResumeCheckpoint = nil
+		entry.task.CheckpointBytesDone = 0
+		entry.task.Targets = nil
 	case entry.task.PauseRequested:
 		entry.task.Status = domainsftp.TaskPaused
 		entry.task.Error = ""
 		entry.task.Err = nil
+		freezeAtCheckpoint(&entry.task)
 	case err != nil:
 		entry.task.Status = domainsftp.TaskFailed
 		kind := KindOf(err)
@@ -718,6 +916,7 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		// row explains that it needs a reconnect, and Retry refuses until a
 		// fresh transport exists.
 		entry.task.ReconnectRequired = kind == KindConnection
+		freezeAtCheckpoint(&entry.task)
 	default:
 		entry.task.Status = domainsftp.TaskCompleted
 		if entry.task.BytesTotal > 0 {
@@ -728,6 +927,9 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 		}
 		entry.task.Error = ""
 		entry.task.Err = nil
+		entry.task.DirectoryResumeCheckpoint = nil
+		entry.task.CheckpointBytesDone = 0
+		entry.task.Targets = nil
 	}
 	if entry.task.Terminal() {
 		entry.task.FinishedAt = now
@@ -740,6 +942,17 @@ func (q *Queue) settle(id domainsftp.TaskID, err error) {
 	q.emit(snapshot)
 	q.persist()
 	q.pump()
+}
+
+// freezeAtCheckpoint drops the partial file's bytes from a stopped row. The
+// checkpoint covers whole entries only, so the visible progress matches what
+// a resume will actually skip.
+func freezeAtCheckpoint(task *domainsftp.Task) {
+	if task.DirectoryResumeCheckpoint == nil || !task.DirectoryResumeCheckpoint.Valid() {
+		return
+	}
+	task.FilesDone = task.DirectoryResumeCheckpoint.CompletedEntries
+	task.BytesDone = task.CheckpointBytesDone
 }
 
 // emit publishes one snapshot to every observer, outside the queue lock.

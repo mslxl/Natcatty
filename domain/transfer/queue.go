@@ -210,6 +210,18 @@ type Task struct {
 	CancelRequested   bool `json:"cancelRequested,omitempty"`
 	ReconnectRequired bool `json:"reconnectRequired,omitempty"`
 	Attempts          int  `json:"attempts,omitempty"`
+
+	// DirectoryResumeCheckpoint is the bounded resume record of a directory
+	// Transfer: a fixed-width manifest over the completed traversal prefix.
+	// A resumed row skips that prefix after validating it against a fresh walk.
+	DirectoryResumeCheckpoint *DirectoryCheckpoint `json:"directoryResumeCheckpoint,omitempty"`
+	// CheckpointBytesDone is the honest byte count of the checkpointed prefix,
+	// excluding a partially written current file.
+	CheckpointBytesDone int64 `json:"checkpointBytesDone,omitempty"`
+	// Targets pins each top-level source to the destination root an earlier
+	// attempt chose, so a resumed duplicate or replacement continues in the
+	// same tree.
+	Targets map[string]string `json:"targets,omitempty"`
 }
 
 // Name returns the row's label, deriving it from the single source when the
@@ -295,6 +307,16 @@ func (t Task) Clone() Task {
 	if t.ResourceKeys != nil {
 		out.ResourceKeys = append([]ResourceKey(nil), t.ResourceKeys...)
 	}
+	if t.DirectoryResumeCheckpoint != nil {
+		checkpoint := t.DirectoryResumeCheckpoint.Clone()
+		out.DirectoryResumeCheckpoint = &checkpoint
+	}
+	if t.Targets != nil {
+		out.Targets = make(map[string]string, len(t.Targets))
+		for source, target := range t.Targets {
+			out.Targets[source] = target
+		}
+	}
 	return out
 }
 
@@ -311,6 +333,8 @@ func DowngradeInterrupted(tasks []Task) []Task {
 			task.Speed = 0
 			task.PauseRequested = false
 			task.CancelRequested = false
+			// The directory checkpoint and pinned targets are durable resume
+			// state; the restart keeps them so a reconnect can continue.
 			// A previous process's epoch must not fence the first progress
 			// after a dedicated reconnect.
 			task.Epoch = 0
@@ -388,3 +412,7 @@ var ErrTaskUnavailable = errors.New("transfer queue: task needs its panes reconn
 
 // ErrTaskNotRetryable reports Retry on a row that cannot be replayed.
 var ErrTaskNotRetryable = errors.New("transfer queue: task cannot be retried")
+
+// ErrTaskReattachNotNeeded reports Reattach on a row that still owns live
+// filesystems or has already settled terminally.
+var ErrTaskReattachNotNeeded = errors.New("transfer queue: task does not need reattaching")

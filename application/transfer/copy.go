@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"sort"
+	"strings"
 
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
@@ -17,8 +19,6 @@ import (
 const (
 	// MaxWalkDepth is how many directory levels a copy descends.
 	MaxWalkDepth = 32
-	// MaxWalkEntries is how many entries one operation may visit.
-	MaxWalkEntries = 200_000
 	// copyBufferSize is the streaming chunk size; it matches the original's
 	// request size.
 	copyBufferSize = 32 * 1024
@@ -59,6 +59,11 @@ type Progress struct {
 	FilesTotal int
 	BytesDone  int64
 	BytesTotal int64
+	// Checkpoint is the durable directory resume record. It is nil for a
+	// request with no directories. CheckpointBytes is the honest prefix the
+	// checkpoint covers, which excludes a partially written current file.
+	Checkpoint      *domainsftp.DirectoryCheckpoint
+	CheckpointBytes int64
 }
 
 // Done reports whether every planned file has been written.
@@ -80,6 +85,27 @@ type CopyRequest struct {
 	Kind     domainsftp.OperationKind
 	Conflict ConflictPolicy
 	Progress func(Progress)
+	// Checkpoint resumes a directory request from the completed prefix it
+	// names. The engine validates it against a fresh traversal before
+	// skipping anything.
+	Checkpoint *domainsftp.DirectoryCheckpoint
+	// KnownTargets pins the destination root chosen by an earlier attempt, so
+	// a resumed duplicate or replacement continues in the same tree.
+	KnownTargets map[string]string
+	// FollowSymlinkDirs descends into symlinked directories. A download does
+	// this by default, matching the original; uploads and copies do not.
+	FollowSymlinkDirs bool
+	// OnTarget reports each resolved top-level destination before work starts,
+	// so the queue can persist it for a later resume.
+	OnTarget func(source, target string)
+	// KeepReplacement reports whether a failed replacement should keep the
+	// partially written destination and its backup for a later resume. A pause
+	// and a lost transport return true; a cancel or ordinary failure return
+	// false, which restores the original before Copy returns.
+	KeepReplacement func(err error) bool
+	// budget bounds the traversal. Tests pass a small budget; production uses
+	// the original limits.
+	budget *domainsftp.DirectoryTraversalBudget
 }
 
 // CopyResult reports what one request did.
@@ -91,12 +117,67 @@ type CopyResult struct {
 	Skipped []string
 	// Bytes is the number of file bytes copied.
 	Bytes int64
+	// ResumeReset reports that an interrupted replacement was rolled back to
+	// its original, so any checkpoint for this request no longer describes the
+	// destination and must not be used to skip work.
+	ResumeReset bool
+}
+
+// kindOf resolves an empty request kind the same way the queue does.
+func kindOf(request CopyRequest) domainsftp.OperationKind {
+	if request.Kind.Valid() {
+		return request.Kind
+	}
+	if request.Move {
+		return domainsftp.OpMove
+	}
+	return domainsftp.OpCopy
+}
+
+// plannedEntry is one deterministic traversal step. Its identity hashes the
+// source and target paths, size, and modification time so a changed source
+// invalidates a checkpoint prefix instead of skipping a stale file.
+type plannedEntry struct {
+	SourcePath string
+	TargetPath string
+	Directory  bool
+	Size       int64
+	Mode       uint32
+	Identity   string
+}
+
+// plannedSource is one top-level source and the half-open range of plan
+// entries it produced.
+type plannedSource struct {
+	Source      string
+	Destination string
+	Skip        bool
+	First       int
+	Count       int
+}
+
+// copyPlan is the whole request's deterministic traversal plus its resume
+// seed. Building it once replaces the old counting walk, so totals, order,
+// and checkpoint identities cannot disagree.
+type copyPlan struct {
+	sources         []plannedSource
+	entries         []plannedEntry
+	filesTotal      int
+	bytesTotal      int64
+	hasDirs         bool
+	resumedEntries  int
+	checkpoint      *domainsftp.DirectoryCheckpoint
+	checkpointBytes int64
 }
 
 // Copy runs a copy or move request. It checks ctx between every chunk and
 // directory entry, removes a partially written file when the operation is
 // cancelled, and never leaves a half-written file under the destination name:
 // data is staged in a temporary sibling and renamed into place.
+//
+// A directory request also records a bounded checkpoint after each completed
+// entry. A later call with that checkpoint skips the completed prefix after
+// verifying the source still matches.
 func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, error) {
 	var result CopyResult
 	if request.Source == nil || request.Dest == nil {
@@ -122,94 +203,370 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 			return result, failure(KindSelfCopy, kind, source, nil)
 		}
 	}
-	counter := &walkCounter{}
-	plan := Progress{Kind: kind}
-	for _, source := range request.Sources {
-		info, err := request.Source.Stat(ctx, source)
-		if err != nil {
-			return result, wrap(kind, source, err)
-		}
-		if info.IsDir() {
-			bytes, entries, err := countTree(ctx, request.Source, source, counter)
-			if err != nil {
-				return result, err
-			}
-			plan.FilesTotal += entries
-			plan.BytesTotal += bytes
-		} else {
-			plan.FilesTotal++
-			plan.BytesTotal += info.Size
-		}
+
+	plan, err := buildCopyPlan(ctx, request, policy)
+	if err != nil {
+		return result, err
 	}
+	progress := newPlanProgress(kind, plan)
 	report := func(current string) {
-		if request.Progress != nil {
-			// Keep the last name in the plan too: the final snapshot after the
-			// request must still say which file finished, not drop to a bare
-			// operation kind.
-			plan.Current = current
-			request.Progress(plan)
+		if request.Progress == nil {
+			return
 		}
+		progress.Current = current
+		snapshot := progress
+		if plan.checkpoint != nil {
+			checkpoint := *plan.checkpoint
+			snapshot.Checkpoint = &checkpoint
+			snapshot.CheckpointBytes = plan.checkpointBytes
+		}
+		request.Progress(snapshot)
 	}
 	report("")
 
-	for _, source := range request.Sources {
-		if err := ctx.Err(); err != nil {
-			return result, &Error{Kind: KindCancelled, Op: kind, Path: source, Cause: err}
-		}
-		destination, skip, err := resolveDestination(ctx, request, policy, source)
+	var accumulator *domainsftp.DirectoryManifestAccumulator
+	if plan.hasDirs && plan.checkpoint != nil {
+		accumulator, err = domainsftp.NewDirectoryManifestAccumulator(*plan.checkpoint)
 		if err != nil {
-			return result, err
+			// The checkpoint was validated before the plan, so this cannot
+			// happen; starting over is safer than failing the request.
+			empty := domainsftp.CreateEmptyDirectoryCheckpoint()
+			plan.checkpoint = &empty
+			plan.resumedEntries = 0
+			plan.checkpointBytes = 0
+			progress = newPlanProgress(kind, plan)
+			accumulator, _ = domainsftp.NewDirectoryManifestAccumulator(empty)
 		}
-		if skip {
-			result.Skipped = append(result.Skipped, destination)
+	}
+
+	for _, source := range plan.sources {
+		if source.Skip {
+			result.Skipped = append(result.Skipped, source.Destination)
 			continue
 		}
-		info, err := request.Source.Stat(ctx, source)
-		if err != nil {
-			return result, wrap(kind, source, err)
+		if err := ctx.Err(); err != nil {
+			return result, &Error{Kind: KindCancelled, Op: kind, Path: source.Source, Cause: err}
 		}
+		// A resumed source continues inside the tree it already wrote. Only a
+		// source that has not been touched yet gets the replacement backup; a
+		// resumed one reuses the backup a pause or lost transport retained.
+		resumedSource := plan.resumedEntries > source.First
 		backup := ""
 		if policy == ConflictReplace {
-			backup, err = makeBackup(ctx, request.Dest, kind, destination)
+			if resumedSource {
+				backup, err = retainedBackup(ctx, request.Dest, kind, source.Destination)
+			} else {
+				backup, err = makeBackup(ctx, request.Dest, kind, source.Destination)
+			}
 			if err != nil {
 				return result, err
 			}
 		}
-		written, bytes, err := copyEntry(ctx, request, kind, counter, info, destination, &plan, report)
-		if err != nil {
-			if backup != "" {
-				return result, restoreBackup(request.Dest, kind, destination, backup, err)
+		// abort keeps a paused or interrupted replacement for a later resume.
+		// A hard cancel or ordinary failure puts the original back and tells
+		// the queue to drop its checkpoint.
+		abort := func(cause error) (CopyResult, error) {
+			if backup == "" || (request.KeepReplacement != nil && request.KeepReplacement(cause)) {
+				return result, cause
 			}
-			return result, err
+			result.ResumeReset = true
+			return result, restoreBackup(request.Dest, kind, source.Destination, backup, cause)
+		}
+		for entryIndex := source.First; entryIndex < source.First+source.Count; entryIndex++ {
+			entry := plan.entries[entryIndex]
+			if entryIndex < plan.resumedEntries {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return abort(&Error{Kind: KindCancelled, Op: kind, Path: entry.SourcePath, Cause: err})
+			}
+			if entry.Directory {
+				if err := request.Dest.MkdirAll(ctx, entry.TargetPath); err != nil {
+					return abort(wrap(kind, entry.TargetPath, err))
+				}
+				if entry.Mode != 0 {
+					_ = request.Dest.Chmod(ctx, entry.TargetPath, entry.Mode&domainsftp.MaxMode)
+				}
+				result.Written = append(result.Written, entry.TargetPath)
+			} else {
+				info := domainsftp.Entry{
+					Name: request.Source.Base(entry.SourcePath),
+					Path: entry.SourcePath,
+					Size: entry.Size,
+					Mode: entry.Mode,
+				}
+				bytes, copyErr := copyFile(ctx, request.Source, request.Dest, info,
+					entry.TargetPath, &progress, report)
+				if copyErr != nil {
+					return abort(copyErr)
+				}
+				result.Written = append(result.Written, entry.TargetPath)
+				result.Bytes += bytes
+			}
+			progress.FilesDone++
+			if accumulator != nil {
+				plan.checkpoint.CoveredEntries++
+				plan.checkpoint.CompletedEntries++
+				if err := accumulator.Append(entry.Identity); err != nil {
+					return result, failure(KindInternal, kind, entry.SourcePath, err)
+				}
+				plan.checkpoint.ManifestHash = accumulator.Digest()
+				if !entry.Directory {
+					plan.checkpointBytes += entry.Size
+				}
+			}
+			report(request.Source.Base(entry.SourcePath))
 		}
 		if backup != "" {
 			// The new tree is in place; the old one is no longer needed. A
 			// stale backup is harmless and removed by the next replacement.
 			_ = request.Dest.RemoveAll(context.WithoutCancel(ctx), backup)
 		}
-		result.Written = append(result.Written, written...)
-		result.Bytes += bytes
-		report(request.Source.Base(source))
 		if request.Move {
-			if err := removeSource(ctx, request.Source, source, info); err != nil {
-				return result, wrap(kind, source, err)
+			info, err := request.Source.Stat(ctx, source.Source)
+			if err != nil {
+				return result, wrap(kind, source.Source, err)
+			}
+			if err := removeSource(ctx, request.Source, source.Source, info); err != nil {
+				return result, wrap(kind, source.Source, err)
 			}
 		}
-	}
-	if request.Progress != nil {
-		request.Progress(plan)
 	}
 	return result, nil
 }
 
-func kindOf(request CopyRequest) domainsftp.OperationKind {
-	if request.Kind.Valid() {
-		return request.Kind
+// newPlanProgress seeds a snapshot from the plan's resumed prefix.
+func newPlanProgress(kind domainsftp.OperationKind, plan *copyPlan) Progress {
+	progress := Progress{
+		Kind:       kind,
+		FilesTotal: plan.filesTotal,
+		BytesTotal: plan.bytesTotal,
+		FilesDone:  plan.resumedEntries,
 	}
-	if request.Move {
-		return domainsftp.OpMove
+	for index := 0; index < plan.resumedEntries && index < len(plan.entries); index++ {
+		if !plan.entries[index].Directory {
+			progress.BytesDone += plan.entries[index].Size
+		}
 	}
-	return domainsftp.OpCopy
+	if plan.checkpoint != nil {
+		checkpoint := *plan.checkpoint
+		progress.Checkpoint = &checkpoint
+		progress.CheckpointBytes = plan.checkpointBytes
+	}
+	return progress
+}
+
+// buildCopyPlan resolves every source destination and walks each directory
+// once, in the deterministic order a checkpoint depends on.
+func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPolicy) (*copyPlan, error) {
+	kind := kindOf(request)
+	plan := &copyPlan{}
+	budget := request.budget
+	if budget == nil {
+		budget = domainsftp.NewDirectoryTraversalBudget(0, 0)
+	}
+	followSymlinks := request.FollowSymlinkDirs || kind == domainsftp.OpDownload
+	for _, source := range request.Sources {
+		if err := ctx.Err(); err != nil {
+			return nil, &Error{Kind: KindCancelled, Op: kind, Path: source, Cause: err}
+		}
+		info, err := request.Source.Stat(ctx, source)
+		if err != nil {
+			return nil, wrap(kind, source, err)
+		}
+		destination := ""
+		skip := false
+		if request.KnownTargets != nil {
+			destination = request.KnownTargets[source]
+		}
+		if destination == "" {
+			destination, skip, err = resolveDestination(ctx, request, policy, source)
+			if err != nil {
+				return nil, err
+			}
+		}
+		planned := plannedSource{Source: source, Destination: destination, Skip: skip,
+			First: len(plan.entries)}
+		if !skip {
+			if request.OnTarget != nil {
+				request.OnTarget(source, destination)
+			}
+			if info.IsDir() {
+				plan.hasDirs = true
+				if err := planDirectory(ctx, request.Source, request.Dest, kind, budget, info, destination,
+					0, 0, map[string]struct{}{}, followSymlinks, plan); err != nil {
+					return nil, err
+				}
+			} else {
+				plan.entries = append(plan.entries, plannedFile(request.Source, info, destination))
+				plan.filesTotal++
+				plan.bytesTotal += info.Size
+			}
+		}
+		planned.Count = len(plan.entries) - planned.First
+		plan.sources = append(plan.sources, planned)
+	}
+	plan.resumedEntries = seedCheckpoint(plan, request.Checkpoint)
+	return plan, nil
+}
+
+// seedCheckpoint validates a saved checkpoint against the plan and returns the
+// number of already-completed entries to skip. A checkpoint that does not
+// match the freshly traversed prefix is discarded, so a changed source is
+// copied again rather than skipped.
+func seedCheckpoint(plan *copyPlan, saved *domainsftp.DirectoryCheckpoint) int {
+	if !plan.hasDirs {
+		plan.checkpoint = nil
+		return 0
+	}
+	empty := domainsftp.CreateEmptyDirectoryCheckpoint()
+	plan.checkpoint = &empty
+	if saved == nil {
+		return 0
+	}
+	identities := make([]string, len(plan.entries))
+	for index, entry := range plan.entries {
+		identities[index] = entry.Identity
+	}
+	checkpoint := *saved
+	if checkpoint.Version == 1 {
+		migrated, ok := domainsftp.MigrateDirectoryCheckpoint(checkpoint, identities)
+		if !ok {
+			return 0
+		}
+		checkpoint = migrated
+	}
+	if !checkpoint.Valid() || checkpoint.CompletedEntries != checkpoint.CoveredEntries ||
+		!domainsftp.VerifyDirectoryCheckpoint(checkpoint, identities) {
+		return 0
+	}
+	plan.checkpoint = &checkpoint
+	plan.checkpointBytes = 0
+	for index := 0; index < checkpoint.CompletedEntries; index++ {
+		if !plan.entries[index].Directory {
+			plan.checkpointBytes += plan.entries[index].Size
+		}
+	}
+	return checkpoint.CompletedEntries
+}
+
+// plannedFile builds a regular-file plan entry.
+func plannedFile(files FileSystem, info domainsftp.Entry, destination string) plannedEntry {
+	return plannedEntry{
+		SourcePath: info.Path,
+		TargetPath: destination,
+		Size:       info.Size,
+		Mode:       info.Mode,
+		Identity: domainsftp.CreateDirectoryEntryIdentity(info.Path, destination,
+			info.Size, info.ModTime.UnixMilli()),
+	}
+}
+
+// planDirectory appends one directory and everything below it in traversal
+// order: child directories first, then files, each by name.
+func planDirectory(ctx context.Context, files, dest FileSystem, kind domainsftp.OperationKind,
+	budget *domainsftp.DirectoryTraversalBudget, info domainsftp.Entry,
+	destination string, depth, symlinkDepth int,
+	ancestors map[string]struct{}, followSymlinks bool, plan *copyPlan) error {
+	if err := ctx.Err(); err != nil {
+		return &Error{Kind: KindCancelled, Op: kind, Path: info.Path, Cause: err}
+	}
+	if depth > MaxWalkDepth {
+		return failure(KindTooLarge, kind, info.Path, nil)
+	}
+	claimed, err := budget.Visit(directoryCanonical(files, info), ancestors)
+	if err != nil {
+		return traversalFailure(kind, info.Path, err)
+	}
+	if claimed == "" {
+		// A symlink ancestor cycle. Skipping it is safer than copying a tree
+		// onto itself.
+		return nil
+	}
+	defer budget.Release(claimed, ancestors)
+
+	plan.entries = append(plan.entries, plannedEntry{
+		SourcePath: info.Path,
+		TargetPath: destination,
+		Directory:  true,
+		Mode:       info.Mode,
+		Identity: domainsftp.CreateDirectoryEntryIdentity(info.Path, destination,
+			0, info.ModTime.UnixMilli()),
+	})
+	plan.filesTotal++
+
+	entries, err := files.List(ctx, info.Path)
+	if err != nil {
+		return wrap(kind, info.Path, err)
+	}
+	children := make([]domainsftp.Entry, 0, len(entries))
+	for _, child := range entries {
+		if child.Name == ".." {
+			continue
+		}
+		children = append(children, child)
+	}
+	sort.SliceStable(children, func(left, right int) bool {
+		if children[left].IsDir() != children[right].IsDir() {
+			return children[left].IsDir()
+		}
+		return children[left].Name < children[right].Name
+	})
+	if err := budget.Account(len(children)); err != nil {
+		return traversalFailure(kind, info.Path, err)
+	}
+	for _, child := range children {
+		if err := ctx.Err(); err != nil {
+			return &Error{Kind: KindCancelled, Op: kind, Path: child.Path, Cause: err}
+		}
+		childDestination := dest.Join(destination, child.Name)
+		if !child.IsDir() {
+			plan.entries = append(plan.entries, plannedFile(files, child, childDestination))
+			plan.filesTotal++
+			plan.bytesTotal += child.Size
+			continue
+		}
+		nextDepth := depth + 1
+		nextSymlinkDepth := symlinkDepth
+		if child.Symlink {
+			if !followSymlinks || !domainsftp.ShouldFollowSymlinkDirectory(symlinkDepth) {
+				continue
+			}
+			nextSymlinkDepth++
+		}
+		if err := planDirectory(ctx, files, dest, kind, budget, child, childDestination,
+			nextDepth, nextSymlinkDepth, ancestors, followSymlinks, plan); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// directoryCanonical resolves a directory's real identity for cycle
+// detection. A symlink is resolved through its link target so an alias back to
+// an ancestor is refused.
+func directoryCanonical(files FileSystem, info domainsftp.Entry) string {
+	if info.Symlink && info.LinkTarget != "" {
+		target := info.LinkTarget
+		if !isAbsoluteTarget(files.Style(), target) {
+			target = files.Join(files.Parent(info.Path), target)
+		}
+		return files.Canonical(target)
+	}
+	return files.Canonical(info.Path)
+}
+
+func isAbsoluteTarget(style PathStyle, target string) bool {
+	if style == StyleWindows {
+		return strings.HasPrefix(target, `\\`) || (len(target) >= 3 && target[1] == ':' &&
+			(target[2] == '\\' || target[2] == '/'))
+	}
+	return strings.HasPrefix(target, "/")
+}
+
+// traversalFailure maps a budget error onto the operation's too-large kind.
+func traversalFailure(kind domainsftp.OperationKind, path string, cause error) error {
+	return failure(KindTooLarge, kind, path, cause)
 }
 
 // resolveDestination returns the destination path, or skip when the
@@ -260,72 +617,6 @@ func namesIn(ctx context.Context, files FileSystem, dir string) (map[string]bool
 		taken[entry.Name] = true
 	}
 	return taken, nil
-}
-
-// copyEntry copies one entry, returning every destination path written.
-func copyEntry(ctx context.Context, request CopyRequest, kind domainsftp.OperationKind,
-	counter *walkCounter, info domainsftp.Entry, destination string,
-	plan *Progress, report func(string)) ([]string, int64, error) {
-	return copyEntryDepth(ctx, request, kind, counter, info, destination, 0, plan, report)
-}
-
-func copyEntryDepth(ctx context.Context, request CopyRequest, kind domainsftp.OperationKind,
-	counter *walkCounter, info domainsftp.Entry, destination string, depth int,
-	plan *Progress, report func(string)) ([]string, int64, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, 0, &Error{Kind: KindCancelled, Op: kind, Path: destination, Cause: err}
-	}
-	if depth > MaxWalkDepth {
-		return nil, 0, failure(KindTooLarge, kind, destination, nil)
-	}
-	if info.IsDir() {
-		if info.Symlink {
-			// Following a symlinked directory while copying can loop or
-			// duplicate a tree; the original browser does not descend either.
-			return nil, 0, nil
-		}
-		if err := request.Dest.MkdirAll(ctx, destination); err != nil {
-			return nil, 0, wrap(kind, destination, err)
-		}
-		plan.FilesDone++
-		if info.Mode != 0 {
-			_ = request.Dest.Chmod(ctx, destination, info.Mode&domainsftp.MaxMode)
-		}
-		entries, err := request.Source.List(ctx, info.Path)
-		if err != nil {
-			return nil, 0, wrap(kind, info.Path, err)
-		}
-		var written []string
-		var bytes int64
-		written = append(written, destination)
-		for _, child := range entries {
-			if child.Name == ".." {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return written, bytes, &Error{Kind: KindCancelled, Op: kind, Path: child.Path, Cause: err}
-			}
-			counter.entries++
-			if counter.entries > MaxWalkEntries {
-				return written, bytes, failure(KindTooLarge, kind, child.Path, nil)
-			}
-			childDestination := request.Dest.Join(destination, child.Name)
-			childWritten, childBytes, err := copyEntryDepth(ctx, request, kind, counter,
-				child, childDestination, depth+1, plan, report)
-			if err != nil {
-				return written, bytes, err
-			}
-			written = append(written, childWritten...)
-			bytes += childBytes
-		}
-		return written, bytes, nil
-	}
-	bytes, err := copyFile(ctx, request.Source, request.Dest, info, destination, plan, report)
-	if err != nil {
-		return nil, 0, err
-	}
-	plan.FilesDone++
-	return []string{destination}, bytes, nil
 }
 
 // copyFile streams one file into a temporary sibling and renames it into
@@ -425,6 +716,21 @@ func makeBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationK
 	return backup, nil
 }
 
+// retainedBackup names the backup a paused or interrupted replacement kept.
+// A resumed source continues in the partial new tree, then removes this
+// backup once the replacement completes.
+func retainedBackup(ctx context.Context, dest FileSystem, kind domainsftp.OperationKind,
+	destination string) (string, error) {
+	backup := dest.Join(dest.Parent(destination), backupName(dest, destination))
+	if _, err := dest.Stat(ctx, backup); err != nil {
+		if KindOf(err) == KindNotFound {
+			return "", nil
+		}
+		return "", wrap(kind, backup, err)
+	}
+	return backup, nil
+}
+
 // restoreBackup puts the old destination back after a failed replacement and
 // removes the partially copied tree. It uses a background context: a
 // cancelled operation must still restore what it was replacing.
@@ -451,55 +757,6 @@ func removeSource(ctx context.Context, files FileSystem, path string, info domai
 	}
 	return files.Remove(ctx, path)
 }
-
-// countTree counts the files and bytes below dir for progress totals. It
-// obeys the same bounds as the copy itself.
-func countTree(ctx context.Context, files FileSystem, dir string, counter *walkCounter) (int64, int, error) {
-	return countTreeDepth(ctx, files, dir, 0, counter)
-}
-
-func countTreeDepth(ctx context.Context, files FileSystem, dir string, depth int,
-	counter *walkCounter) (int64, int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, 0, &Error{Kind: KindCancelled, Op: domainsftp.OpCopy, Path: dir, Cause: err}
-	}
-	if depth > MaxWalkDepth {
-		return 0, 0, failure(KindTooLarge, domainsftp.OpCopy, dir, nil)
-	}
-	entries, err := files.List(ctx, dir)
-	if err != nil {
-		return 0, 0, wrap(domainsftp.OpCopy, dir, err)
-	}
-	var bytes int64
-	filesCount := 1
-	for _, entry := range entries {
-		if entry.Name == ".." {
-			continue
-		}
-		counter.entries++
-		if counter.entries > MaxWalkEntries {
-			return 0, 0, failure(KindTooLarge, domainsftp.OpCopy, entry.Path, nil)
-		}
-		if entry.IsDir() {
-			if entry.Symlink {
-				continue
-			}
-			childBytes, childFiles, err := countTreeDepth(ctx, files, entry.Path, depth+1, counter)
-			if err != nil {
-				return 0, 0, err
-			}
-			bytes += childBytes
-			filesCount += childFiles
-			continue
-		}
-		bytes += entry.Size
-		filesCount++
-	}
-	return bytes, filesCount, nil
-}
-
-// walkCounter bounds one request's visits across its sources.
-type walkCounter struct{ entries int }
 
 // randomSuffix returns eight hexadecimal characters for a staging name.
 func randomSuffix() string {
