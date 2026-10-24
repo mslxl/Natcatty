@@ -7,12 +7,20 @@
 // and a match found literally in a field outranks a match found only after
 // punctuation and spaces are removed. A query that matches every segment
 // literally outranks one that needs the compact form at all.
+//
+// Rankings follow this precedence, highest first: a record that matched a
+// non-body (identity) field outranks a body-only record; a strict match
+// outranks a loose one; match quality is exact, then prefix, then word start,
+// then plain substring; field weight breaks a per-segment quality tie, so the
+// original label > hostname > group order survives. Body-only records still
+// rank among themselves by the same strictness and quality rules.
 package search
 
 import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Kind identifies the family a record belongs to. The UI groups results by
@@ -34,15 +42,39 @@ const (
 	KindCommand        Kind = "command"
 )
 
-// Score bonuses and weights are the original matcher's. A strict phase means
-// every segment matched literally, so it must always outrank a loose match,
-// however many fields the loose match touched.
+// Score bonuses extend the original matcher. The constant spacing encodes the
+// ranking precedence: an identity match leads a body-only match
+// (nonBodyBonus, 10M), a strict literal match leads a loose compact one
+// (strictBonus vs looseBonus, 1M vs 100k), match quality leads field weight
+// for each matched segment (qualityUnit, 1k, is wider than the largest field
+// weight, 500), and field weight breaks a per-segment quality tie. Keep each
+// gap wider than everything it must outrank when changing a constant or a
+// field weight.
 const (
 	strictBonus = 1_000_000
 	looseBonus  = 100_000
 
-	methodLiteral = 50
-	methodCompact = 25
+	// nonBodyBonus is an order of magnitude above strictBonus, so a record
+	// matching an identity, address, group, or tag field always outranks a
+	// body-only record in its section, even when the identity match is loose
+	// and the body match is strict. A body-only record does not earn it.
+	nonBodyBonus = 10_000_000
+
+	// qualityUnit is wider than the largest field weight (500), so within a
+	// matched segment a better match quality always outranks a heavier field.
+	qualityUnit = 1_000
+)
+
+// matchQuality ranks where one query segment occurs inside one field. A
+// larger value is a better match. qualityNone means the field did not match.
+type matchQuality int
+
+const (
+	qualityNone matchQuality = iota
+	qualitySubstring
+	qualityWordStart
+	qualityPrefix
+	qualityExact
 )
 
 // Default field weights for a record that does not name its own.
@@ -59,10 +91,14 @@ const (
 	WeightNote     = 160
 )
 
-// Field is one weighted piece of searchable text.
+// Field is one weighted piece of searchable text. Body marks prose that is
+// not the record's identity, such as a Note body or a Host's notes; a record
+// found only through body fields ranks behind every identity match in its
+// section.
 type Field struct {
 	Text   string
 	Weight int
+	Body   bool
 }
 
 // Record is one searchable item. The surface that owns navigation decides
@@ -212,75 +248,167 @@ func Match(q Query, r Record) (int, bool) {
 
 	total := 0
 	strict := true
+	nonBody := false
 	for _, token := range q.tokens {
-		best := -1
-		bestStrict := false
-		compactToken := compact(token)
-		for _, field := range fields {
-			text := Normalize(field.Text)
-			if text == "" {
-				continue
-			}
-			if strings.Contains(text, token) {
-				if score := field.Weight + methodLiteral; score > best {
-					best = score
-					bestStrict = true
-				}
-				continue
-			}
-			if compactToken == "" {
-				continue
-			}
-			if strings.Contains(compact(text), compactToken) {
-				if score := field.Weight + methodCompact; score > best {
-					best = score
-					bestStrict = false
-				}
-			}
-		}
-		if best < 0 {
+		best, tokenNonBody, ok := matchToken(fields, token)
+		if !ok {
 			return 0, false
 		}
-		total += best
-		if !bestStrict {
+		total += best.score()
+		if !best.literal {
 			strict = false
 		}
+		nonBody = nonBody || tokenNonBody
 	}
 	if strict {
 		total += strictBonus
 	} else {
 		total += looseBonus
 	}
+	if nonBody {
+		total += nonBodyBonus
+	}
 	return total, true
 }
 
-func matchContiguous(query string, fields []Field) (int, bool) {
-	best := -1
-	strict := false
+// fieldMatch is the best single-field match for one query segment.
+type fieldMatch struct {
+	literal bool
+	quality matchQuality
+	weight  int
+}
+
+// better reports whether candidate should replace current as the segment's
+// best match. A literal match leads a compact one, then match quality, then
+// field weight. A full tie keeps the earlier field, which keeps the order
+// stable because a record's fields are fixed.
+func (candidate fieldMatch) better(current fieldMatch) bool {
+	if candidate.literal != current.literal {
+		return candidate.literal
+	}
+	if candidate.quality != current.quality {
+		return candidate.quality > current.quality
+	}
+	return candidate.weight > current.weight
+}
+
+func (m fieldMatch) score() int {
+	return int(m.quality)*qualityUnit + m.weight
+}
+
+// matchToken finds the best field for one segment. nonBody reports whether any
+// matching field is identity text, which decides whether the record is a
+// body-only match even when its best field is prose.
+func matchToken(fields []Field, token string) (best fieldMatch, nonBody bool, ok bool) {
+	compactToken := compact(token)
 	for _, field := range fields {
 		text := Normalize(field.Text)
-		if strings.Contains(text, query) {
-			if score := field.Weight + methodLiteral; score > best {
-				best = score
-				strict = true
-			}
+		if text == "" {
 			continue
 		}
-		if compactQuery := compact(query); compactQuery != "" &&
-			strings.Contains(compact(text), compactQuery) {
-			if score := field.Weight + methodCompact; score > best {
-				best = score
-				strict = false
+		literal := true
+		quality := qualityOf(text, token)
+		if quality == qualityNone {
+			if compactToken == "" {
+				continue
+			}
+			literal = false
+			quality = qualityOf(compact(text), compactToken)
+			if quality == qualityNone {
+				continue
 			}
 		}
+		if !field.Body {
+			nonBody = true
+		}
+		candidate := fieldMatch{literal: literal, quality: quality, weight: field.Weight}
+		if !ok || candidate.better(best) {
+			best = candidate
+			ok = true
+		}
 	}
-	if best < 0 {
+	return best, nonBody, ok
+}
+
+// qualityOf reports where token occurs in normalized text. The four classes
+// are exact, prefix, word start (preceded by a separator), and plain substring.
+func qualityOf(text, token string) matchQuality {
+	if token == "" || text == "" {
+		return qualityNone
+	}
+	if text == token {
+		return qualityExact
+	}
+	if strings.HasPrefix(text, token) {
+		return qualityPrefix
+	}
+	at := strings.Index(text, token)
+	if at < 0 {
+		return qualityNone
+	}
+	for at >= 0 {
+		if at > 0 {
+			if previous, _ := utf8.DecodeLastRuneInString(text[:at]); isSeparator(previous) {
+				return qualityWordStart
+			}
+		}
+		next := at + len(token)
+		if next >= len(text) {
+			break
+		}
+		offset := strings.Index(text[next:], token)
+		if offset < 0 {
+			break
+		}
+		at = next + offset
+	}
+	return qualitySubstring
+}
+
+func matchContiguous(query string, fields []Field) (int, bool) {
+	compactQuery := compact(query)
+	var best fieldMatch
+	ok := false
+	nonBody := false
+	for _, field := range fields {
+		text := Normalize(field.Text)
+		if text == "" {
+			continue
+		}
+		literal := true
+		quality := qualityOf(text, query)
+		if quality == qualityNone {
+			if compactQuery == "" {
+				continue
+			}
+			literal = false
+			quality = qualityOf(compact(text), compactQuery)
+			if quality == qualityNone {
+				continue
+			}
+		}
+		if !field.Body {
+			nonBody = true
+		}
+		candidate := fieldMatch{literal: literal, quality: quality, weight: field.Weight}
+		if !ok || candidate.better(best) {
+			best = candidate
+			ok = true
+		}
+	}
+	if !ok {
 		return 0, false
 	}
-	if strict {
-		return best + strictBonus, true
+	total := best.score()
+	if best.literal {
+		total += strictBonus
+	} else {
+		total += looseBonus
 	}
-	return best + looseBonus, true
+	if nonBody {
+		total += nonBodyBonus
+	}
+	return total, true
 }
 
 // Rank returns every record matched by query, best first. An empty query
