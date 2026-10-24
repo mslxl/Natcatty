@@ -198,6 +198,12 @@ type State struct {
 
 	operation *operationState
 
+	// transferQueue is the global Transfer queue behind pane copies, when the
+	// app wired one. centerOpen shows its Transfer center.
+	transferQueue *apptransfer.Queue
+	centerOpen    bool
+	centerError   string
+
 	pending []pendingNav
 
 	queueMu sync.Mutex
@@ -300,6 +306,18 @@ func (s *State) Bindings() []domainkeybindings.Active {
 		return nil
 	}
 	return s.keybindings.Active()
+}
+
+// Shortcut returns the active chord for a catalog action, in the user's
+// scheme, or "" when there is no binding service or the action is disabled.
+// The Transfer center uses it to name the local shortcut it documents.
+func (s *State) Shortcut(action string) string {
+	for _, active := range s.Bindings() {
+		if active.Binding.Action == action {
+			return active.Chord
+		}
+	}
+	return ""
 }
 
 // LocalAvailable reports whether this build can open a local pane.

@@ -2837,5 +2837,211 @@
   "sftpBookmarksUnreadable": "Saved bookmarks could not be read.",
   "@sftpBookmarksUnreadable": {
     "description": "The notice shown when a bookmark file is malformed or unreadable."
+  },
+  "sftpTransferCenter": "Transfer center",
+  "@sftpTransferCenter": {
+    "description": "The title of the global Transfer center."
+  },
+  "sftpTransferCenterButton": "Transfers",
+  "@sftpTransferCenterButton": {
+    "description": "The SFTP header button that opens the Transfer center."
+  },
+  "sftpTransferEmpty": "No transfers yet.",
+  "@sftpTransferEmpty": {
+    "description": "Shown when the Transfer center has no rows."
+  },
+  "sftpTransferActive": "{count, plural, one {# active transfer} other {# active transfers}}",
+  "@sftpTransferActive": {
+    "description": "The number of transfers currently running.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferQueued": "{count, plural, one {# queued transfer} other {# queued transfers}}",
+  "@sftpTransferQueued": {
+    "description": "The number of transfers waiting for a resource slot.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferLimit": "{count, plural, one {# transfer per resource} other {# transfers per resource}}",
+  "@sftpTransferLimit": {
+    "description": "The per-resource concurrency limit.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferShortcut": "{chord} opens the Transfer center",
+  "@sftpTransferShortcut": {
+    "description": "The local shortcut hint in the Transfer center.",
+    "placeholders": {
+      "chord": {
+        "type": "String",
+        "example": "Ctrl"
+      }
+    }
+  },
+  "sftpTransferPause": "Pause",
+  "@sftpTransferPause": {
+    "description": "The button that pauses a Transfer."
+  },
+  "sftpTransferResume": "Resume",
+  "@sftpTransferResume": {
+    "description": "The button that resumes a paused Transfer."
+  },
+  "sftpTransferRetry": "Retry",
+  "@sftpTransferRetry": {
+    "description": "The button that replays a failed Transfer."
+  },
+  "sftpTransferStatusPending": "Pending",
+  "@sftpTransferStatusPending": {
+    "description": "A Transfer row's pending status."
+  },
+  "sftpTransferStatusQueued": "Queued",
+  "@sftpTransferStatusQueued": {
+    "description": "A Transfer row's queued status."
+  },
+  "sftpTransferStatusTransferring": "Transferring",
+  "@sftpTransferStatusTransferring": {
+    "description": "A Transfer row's transferring status."
+  },
+  "sftpTransferStatusPausing": "Pausing",
+  "@sftpTransferStatusPausing": {
+    "description": "A Transfer row's pausing status."
+  },
+  "sftpTransferStatusPaused": "Paused",
+  "@sftpTransferStatusPaused": {
+    "description": "A Transfer row's paused status."
+  },
+  "sftpTransferStatusAttention": "Needs attention",
+  "@sftpTransferStatusAttention": {
+    "description": "A Transfer row's attention status."
+  },
+  "sftpTransferStatusInterrupted": "Interrupted",
+  "@sftpTransferStatusInterrupted": {
+    "description": "A Transfer row's interrupted status."
+  },
+  "sftpTransferStatusCompleted": "Completed",
+  "@sftpTransferStatusCompleted": {
+    "description": "A Transfer row's completed status."
+  },
+  "sftpTransferStatusFailed": "Failed",
+  "@sftpTransferStatusFailed": {
+    "description": "A Transfer row's failed status."
+  },
+  "sftpTransferStatusCancelled": "Cancelled",
+  "@sftpTransferStatusCancelled": {
+    "description": "A Transfer row's cancelled status."
+  },
+  "sftpTransferEtaSeconds": "{seconds, plural, one {# second left} other {# seconds left}}",
+  "@sftpTransferEtaSeconds": {
+    "description": "The remaining time of a Transfer under a minute.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferEtaMinutes": "{minutes, plural, one {# minute left} other {# minutes left}}",
+  "@sftpTransferEtaMinutes": {
+    "description": "The remaining time of a Transfer under an hour.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferEtaHours": "{hours, plural, one {# hour left} other {# hours left}}",
+  "@sftpTransferEtaHours": {
+    "description": "The remaining time of a Transfer of an hour or more.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferSpeed": "{size}/s",
+  "@sftpTransferSpeed": {
+    "description": "The measured throughput of a Transfer.",
+    "placeholders": {
+      "size": {
+        "type": "String",
+        "example": "Ctrl"
+      }
+    }
+  },
+  "sftpTransferProgress": "{done} / {total} · {percent}%",
+  "@sftpTransferProgress": {
+    "description": "A Transfer row's byte progress.",
+    "placeholders": {
+      "done": {
+        "type": "String",
+        "example": "Ctrl"
+      },
+      "total": {
+        "type": "String",
+        "example": "Ctrl"
+      },
+      "percent": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferFiles": "{done} of {total, plural, one {# file} other {# files}}",
+  "sftpTransferItems": "{count, plural, one {# item} other {# items}}",
+  "@sftpTransferItems": {
+    "description": "A Transfer row's label for a multi-file selection.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "@sftpTransferFiles": {
+    "description": "A Transfer row's file progress before byte totals are known.",
+    "placeholders": {
+      "done": {
+        "type": "int",
+        "example": "12"
+      },
+      "total": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sftpTransferUnavailable": "Transfers are unavailable.",
+  "@sftpTransferUnavailable": {
+    "description": "The notice shown when no Transfer queue is wired."
+  },
+  "sftpTransferReconnectRequired": "Reconnect to this Host to resume this transfer.",
+  "@sftpTransferReconnectRequired": {
+    "description": "The Transfer center error for a row restored by a restart."
+  },
+  "sftpTransferNotRetryable": "This transfer cannot be retried.",
+  "@sftpTransferNotRetryable": {
+    "description": "The Transfer center error for a terminal row that cannot be retried."
+  },
+  "sftpTransferControlFailed": "The transfer could not be controlled.",
+  "@sftpTransferControlFailed": {
+    "description": "The Transfer center error for a failed control action."
+  },
+  "settingsBindingTransferCenter": "Open the Transfer center",
+  "@settingsBindingTransferCenter": {
+    "description": "The Settings shortcut label for the local Transfer center binding."
   }
 }

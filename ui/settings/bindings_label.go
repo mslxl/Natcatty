@@ -96,6 +96,8 @@ func bindingLabel(m locales.Messages, binding domain.Binding) string {
 		return m.SettingsBindingSFTPGoParent()
 	case "sftp-navigate-to":
 		return m.SettingsBindingSFTPNavigateTo()
+	case "transfer-center":
+		return m.SettingsBindingTransferCenter()
 	default:
 		return ""
 	}

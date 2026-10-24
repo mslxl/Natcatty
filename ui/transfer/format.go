@@ -58,6 +58,14 @@ func noticeText(m locales.Messages, code string) string {
 		return m.SftpHostsUnavailable()
 	case "open-file":
 		return m.SftpOpenFileUnavailable()
+	case "transfer-unavailable":
+		return m.SftpTransferUnavailable()
+	case "transfer-reconnect-required":
+		return m.SftpTransferReconnectRequired()
+	case "transfer-not-retryable":
+		return m.SftpTransferNotRetryable()
+	case "transfer-control-failed":
+		return m.SftpTransferControlFailed()
 	}
 	return ""
 }
@@ -68,7 +76,13 @@ func errorText(m locales.Messages, err error) string {
 	if err == nil {
 		return ""
 	}
-	switch apptransfer.KindOf(err) {
+	return errorKindText(m, apptransfer.KindOf(err))
+}
+
+// errorKindText localizes a persisted failure classification. It takes the
+// stable kind token so a row restored after a restart never shows it raw.
+func errorKindText(m locales.Messages, kind apptransfer.ErrorKind) string {
+	switch kind {
 	case apptransfer.KindExists:
 		return m.SftpErrorExists()
 	case apptransfer.KindNotFound:
@@ -115,7 +129,11 @@ func operationLabel(m locales.Messages, op *transferstate.Operation) string {
 		// meaningless 0%.
 		return m.SftpProgressDone(baseName(current))
 	}
-	return m.SftpProgress(baseName(current), op.Percent())
+	label := m.SftpProgress(baseName(current), op.Percent())
+	if eta := etaText(m, op.ETASeconds()); eta != "" {
+		label += " · " + eta
+	}
+	return label
 }
 
 // operationKindLabel names an operation before its first file is known. The
