@@ -419,13 +419,25 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 	// Duplicate names chosen earlier in this request are not on disk yet, so
 	// the plan remembers them; the queue's reservation covers other requests.
 	plannedNames := map[string]bool{}
+	// How many later sources conflict with the same destination type, so an
+	// apply-to-all prompt states a true count instead of every source left.
+	// The same scan hands back the source stats it read.
+	scanned := scanRequestConflicts(ctx, request, policy)
 	for sourceIndex, source := range request.Sources {
 		if err := ctx.Err(); err != nil {
 			return nil, &Error{Kind: KindCancelled, Op: kind, Path: source, Cause: err}
 		}
-		info, err := request.Source.Stat(ctx, source)
-		if err != nil {
-			return nil, wrap(kind, source, err)
+		var observation scannedSource
+		if sourceIndex < len(scanned) {
+			observation = scanned[sourceIndex]
+		}
+		info := observation.info
+		var err error
+		if !observation.read {
+			info, err = request.Source.Stat(ctx, source)
+			if err != nil {
+				return nil, wrap(kind, source, err)
+			}
 		}
 		destination := ""
 		skip := false
@@ -448,7 +460,7 @@ func buildCopyPlan(ctx context.Context, request CopyRequest, policy ConflictPoli
 		}
 		if destination == "" {
 			destination, skip, resolved, err = resolveDestination(ctx, request, policy, source,
-				info, len(request.Sources)-sourceIndex-1, plannedNames)
+				info, observation.remaining, plannedNames)
 			if err != nil {
 				return nil, err
 			}
@@ -639,6 +651,72 @@ func traversalFailure(kind domainsftp.OperationKind, path string, cause error) e
 	return failure(KindTooLarge, kind, path, cause)
 }
 
+// scannedSource is what the conflict scan learned about one top-level source:
+// its stat, so the ordered plan does not read it again, the destination
+// conflict type it meets (empty when it meets none), and how many later
+// sources meet that same type.
+type scannedSource struct {
+	info      domainsftp.Entry
+	read      bool
+	typeKey   string
+	remaining int
+}
+
+// scanRequestConflicts pre-reads the top-level sources and records, for each
+// one, how many later sources in the same request meet the same destination
+// conflict type. The apply-to-all prompt is built from that count, so its
+// number names real conflicts instead of every source left. A destination is
+// still stat'ed by the plan itself, keeping the write path's own fresh view.
+// A source or destination that cannot be inspected is left out, because the
+// ordered plan reports that failure in its turn and counting it ahead of time
+// would change which error the user sees first.
+func scanRequestConflicts(ctx context.Context, request CopyRequest,
+	policy ConflictPolicy) []scannedSource {
+	if policy != ConflictAsk || request.OnConflict == nil || len(request.Sources) < 2 {
+		return nil
+	}
+	scanned := make([]scannedSource, len(request.Sources))
+	for index, source := range request.Sources {
+		if request.KnownTargets[source] != "" {
+			// A resumed source keeps the answer it already received, so it
+			// will not prompt again.
+			continue
+		}
+		info, err := request.Source.Stat(ctx, source)
+		if err != nil {
+			continue
+		}
+		scanned[index].info = info
+		scanned[index].read = true
+		destination := destinationFor(request, source)
+		existing, err := request.Dest.Stat(ctx, destination)
+		if err != nil {
+			continue
+		}
+		scanned[index].typeKey = domainsftp.ConflictTypeKey(info.IsDir(), domainsftp.ExistingKindOf(existing))
+	}
+	// Walk backwards so each source sees only the conflicts after it: an
+	// answer covers the later same-type conflicts, not the earlier ones.
+	seen := map[string]int{}
+	for index := len(scanned) - 1; index >= 0; index-- {
+		key := scanned[index].typeKey
+		if key == "" {
+			continue
+		}
+		scanned[index].remaining = seen[key]
+		seen[key]++
+	}
+	return scanned
+}
+
+// destinationFor names where one top-level source lands in this request. The
+// name comes from the source's own Base: a Windows source and a POSIX
+// destination do not agree on separators. The plan and the conflict scan must
+// derive the same path, so both call this.
+func destinationFor(request CopyRequest, source string) string {
+	return request.Dest.Join(request.DestDir, request.Source.Base(source))
+}
+
 // resolveDestination returns the destination path, whether to skip it, and the
 // policy that actually applies after an ask. A duplicate name is chosen from
 // the names already on disk plus this request's chosen names plus the queue's
@@ -647,7 +725,7 @@ func resolveDestination(ctx context.Context, request CopyRequest,
 	policy ConflictPolicy, source string, info domainsftp.Entry, remaining int,
 	plannedNames map[string]bool) (string, bool, ConflictPolicy, error) {
 	kind := kindOf(request)
-	destination := request.Dest.Join(request.DestDir, request.Source.Base(source))
+	destination := destinationFor(request, source)
 	name := request.Dest.Base(destination)
 	reserve := func(path string, directory bool) error {
 		if request.ReserveName != nil && !request.ReserveName(path, directory) {
@@ -708,10 +786,9 @@ func resolveDestination(ctx context.Context, request CopyRequest,
 		NewSize:          info.Size,
 		NewModified:      info.ModTime,
 		Remaining:        remaining,
-		// One answer could cover this conflict and the rest of this request's
-		// top-level sources. The queue refines the count with the batch's live
-		// rows before it shows the prompt.
-		ApplyToAllCount: 1 + remaining,
+		// One answer covers the later conflicts of this type. Sources with a
+		// free destination are not conflicts and are not counted.
+		ApplyToAllCount: remaining,
 	}
 
 	action := policy

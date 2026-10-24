@@ -168,7 +168,7 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 	}
 
 	count := conflict.ApplyToAllCount
-	if count > 1 {
+	if count > 0 {
 		ui.Checkbox(c, &dialog.ApplyToAll, m.SftpConflictApplyToAll(count)).FontSize(11)
 	}
 	if dialog.Err != "" {

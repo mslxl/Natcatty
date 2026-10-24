@@ -38,11 +38,13 @@ type Conflict struct {
 	ExistingModified time.Time `json:"existingModified,omitempty"`
 	NewSize          int64     `json:"newSize"`
 	NewModified      time.Time `json:"newModified,omitempty"`
-	// Remaining is how many top-level sources in this request still need a
-	// conflict decision after this one. Apply-to-all uses it for its count.
+	// Remaining is how many later top-level sources in this request meet the
+	// same conflict type, so one apply-to-all answer covers them too. Sources
+	// without a destination are not conflicts and are not counted.
 	Remaining int `json:"remaining,omitempty"`
-	// ApplyToAllCount is the number of conflicts one answer would cover,
-	// including this one. The queue fills it from the live batch.
+	// ApplyToAllCount is how many later conflicts one answer would cover,
+	// excluding the conflict being decided. A positive value offers the
+	// apply-to-all choice.
 	ApplyToAllCount int `json:"applyToAllCount,omitempty"`
 }
 

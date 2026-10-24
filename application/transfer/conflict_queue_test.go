@@ -418,8 +418,8 @@ func TestQueueApplyToAllCountCoversOnlyTheSameConflictType(t *testing.T) {
 		t.Fatalf("enqueue folder: %v", err)
 	}
 	folderTask := waitQueueTask(t, queue, folder, domainsftp.TaskAttention)
-	if folderTask.PendingConflict == nil || folderTask.PendingConflict.ApplyToAllCount != 1 {
-		t.Fatalf("folder count = %+v, want 1", folderTask.PendingConflict)
+	if folderTask.PendingConflict == nil || folderTask.PendingConflict.ApplyToAllCount != 0 {
+		t.Fatalf("folder count = %+v, want 0: no later conflict of this type", folderTask.PendingConflict)
 	}
 
 	file, err := queue.Enqueue(TaskSpec{
@@ -432,8 +432,8 @@ func TestQueueApplyToAllCountCoversOnlyTheSameConflictType(t *testing.T) {
 	fileTask := waitQueueTask(t, queue, file, domainsftp.TaskAttention)
 	// The folder is waiting on a directory:directory conflict, which a
 	// file:file answer cannot cover, so it is not part of the count.
-	if fileTask.PendingConflict == nil || fileTask.PendingConflict.ApplyToAllCount != 1 {
-		t.Fatalf("file count = %+v, want 1: a different conflict type is not covered",
+	if fileTask.PendingConflict == nil || fileTask.PendingConflict.ApplyToAllCount != 0 {
+		t.Fatalf("file count = %+v, want 0: a different conflict type is not covered",
 			fileTask.PendingConflict)
 	}
 	if err := queue.ResolveConflict(folder, ConflictMerge, false); err != nil {
@@ -444,6 +444,44 @@ func TestQueueApplyToAllCountCoversOnlyTheSameConflictType(t *testing.T) {
 	}
 	waitQueueTask(t, queue, folder, domainsftp.TaskCompleted)
 	waitQueueTask(t, queue, file, domainsftp.TaskCompleted)
+}
+
+func TestQueueApplyToAllCountIgnoresNonConflictingSiblings(t *testing.T) {
+	conflictSource := newFakeFS("conflict-source")
+	conflictSource.addFile("/", "taken.txt", "new-taken", 0o644)
+	// The sibling stays live at the same time but meets no destination, so it
+	// is not a conflict the answer could cover.
+	cleanSource := blockedSource("clean-source", "clean.txt", "clean")
+	dest := newFakeFS("dest")
+	dest.addFile("/", "taken.txt", "old-taken", 0o644)
+
+	queue := NewQueue(NewService(nil, nil), WithQueueConcurrency(2))
+	startTestQueue(t, queue)
+	conflict, err := queue.Enqueue(TaskSpec{
+		Kind: domainsftp.OpCopy, Source: conflictSource, Dest: dest,
+		Sources: []string{"/taken.txt"}, DestDir: "/", Conflict: ConflictAsk, BatchID: "mixed",
+	})
+	if err != nil {
+		t.Fatalf("enqueue conflict: %v", err)
+	}
+	clean, err := queue.Enqueue(TaskSpec{
+		Kind: domainsftp.OpCopy, Source: cleanSource, Dest: dest,
+		Sources: []string{"/clean.txt"}, DestDir: "/", Conflict: ConflictAsk, BatchID: "mixed",
+	})
+	if err != nil {
+		t.Fatalf("enqueue clean: %v", err)
+	}
+	waitQueueTask(t, queue, clean, domainsftp.TaskTransferring)
+	task := waitQueueTask(t, queue, conflict, domainsftp.TaskAttention)
+	if task.PendingConflict == nil || task.PendingConflict.ApplyToAllCount != 0 {
+		t.Fatalf("apply-to-all count = %+v, want 0: the sibling is not a conflict",
+			task.PendingConflict)
+	}
+	if err := queue.ResolveConflict(conflict, ConflictSkip, false); err != nil {
+		t.Fatalf("resolve conflict: %v", err)
+	}
+	_ = queue.Cancel(clean)
+	waitQueueTask(t, queue, conflict, domainsftp.TaskCompleted)
 }
 
 func TestQueuePausedDuplicateKeepsItsChosenNameReserved(t *testing.T) {
