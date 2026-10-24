@@ -516,3 +516,79 @@ func TestHostValidationAcceptsANormalizedHost(t *testing.T) {
 		t.Fatalf("Validate error = %v, want an algorithms validation error", err)
 	}
 }
+
+func TestNormalizeDraftDefaultsAndValidatesTheFileProtocol(t *testing.T) {
+	base := Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH}
+
+	normalized, err := NormalizeDraft(base)
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.SFTPFileProtocol != FileProtocolAuto {
+		t.Fatalf("default protocol = %q, want auto", normalized.SFTPFileProtocol)
+	}
+
+	base.SFTPFileProtocol = "  SFTP "
+	normalized, err = NormalizeDraft(base)
+	if err != nil {
+		t.Fatalf("NormalizeDraft SFTP: %v", err)
+	}
+	if normalized.SFTPFileProtocol != FileProtocolSFTP {
+		t.Fatalf("normalized protocol = %q", normalized.SFTPFileProtocol)
+	}
+
+	base.SFTPFileProtocol = FileProtocolSCP
+	if _, err := NormalizeDraft(base); err != nil {
+		t.Fatalf("SCP without sudo: %v", err)
+	}
+	base.SFTPSudo = true
+	assertNormalizeValidation(t, base, FieldSFTPSudo, RuleUnsupported)
+
+	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH, SFTPSudo: true}
+	if _, err := NormalizeDraft(base); err != nil {
+		t.Fatalf("sudo with automatic protocol: %v", err)
+	}
+	base.SFTPFileProtocol = FileProtocolSFTP
+	if _, err := NormalizeDraft(base); err != nil {
+		t.Fatalf("sudo with SFTP: %v", err)
+	}
+
+	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet,
+		SFTPFileProtocol: FileProtocolSFTP}
+	assertNormalizeValidation(t, base, FieldFileProtocol, RuleUnsupported)
+	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolTelnet, SFTPSudo: true}
+	assertNormalizeValidation(t, base, FieldSFTPSudo, RuleUnsupported)
+
+	base = Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
+		SFTPFileProtocol: "ftp"}
+	assertNormalizeValidation(t, base, FieldFileProtocol, RuleInvalid)
+}
+
+func TestValidateFieldsTreatsAnEmptyFileProtocolAsAutomatic(t *testing.T) {
+	draft := Draft{Label: "web", Hostname: "example.com", Protocol: ProtocolSSH}
+	if err := validateFields(draft); err != nil {
+		t.Fatalf("SSH with an empty protocol: %v", err)
+	}
+	draft.Protocol = ProtocolTelnet
+	if err := validateFields(draft); err != nil {
+		t.Fatalf("Telnet with an empty protocol: %v", err)
+	}
+	draft.SFTPFileProtocol = FileProtocolSFTP
+	var validation *ValidationError
+	if err := validateFields(draft); !errors.As(err, &validation) ||
+		validation.Field != FieldFileProtocol || validation.Rule != RuleUnsupported {
+		t.Fatalf("Telnet with SFTP error = %v", err)
+	}
+}
+
+func assertNormalizeValidation(t *testing.T, draft Draft, field Field, rule Rule) {
+	t.Helper()
+	_, err := NormalizeDraft(draft)
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %v, want a validation error", err)
+	}
+	if validation.Field != field || validation.Rule != rule {
+		t.Fatalf("validation = %+v, want %s/%s", validation, field, rule)
+	}
+}

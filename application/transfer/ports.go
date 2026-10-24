@@ -65,6 +65,14 @@ type FileSystem interface {
 	Close() error
 }
 
+// SizedCreator is an optional FileSystem capability for a destination that
+// must learn the byte count before it starts writing. The SCP protocol puts
+// the size in the file control line, so the copy engine streams straight to
+// it when the source size is known instead of buffering the whole file.
+type SizedCreator interface {
+	CreateSized(ctx context.Context, path string, size int64) (io.WriteCloser, error)
+}
+
 // PathStyle is the notation a FileSystem uses.
 type PathStyle string
 

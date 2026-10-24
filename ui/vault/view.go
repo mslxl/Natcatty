@@ -1366,6 +1366,10 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}).Width(140).Changed()
 					if changed && form.Protocol != string(domainvault.ProtocolSSH) {
 						s.SetX11Forwarding(false)
+						// The file-transfer controls are hidden outside SSH;
+						// clear them so Save cannot fail on an invisible field.
+						form.FileProtocol = string(domainvault.FileProtocolAuto)
+						form.SFTPSudo = false
 						c.Invalidate()
 					}
 				})
@@ -1425,6 +1429,22 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				})
 			}).Description(m.VaultHostProxyProfileHint())
 			if form.Protocol == string(domainvault.ProtocolSSH) {
+				ui.Field(c, m.VaultHostFileProtocol(), func() {
+					changed := ui.Select(c, &form.FileProtocol, []string{
+						string(domainvault.FileProtocolAuto),
+						string(domainvault.FileProtocolSFTP),
+						string(domainvault.FileProtocolSCP),
+					}).Width(160).Changed()
+					if changed && form.FileProtocol == string(domainvault.FileProtocolSCP) {
+						// SCP cannot elevate, so a contradictory sudo flag
+						// must not survive the protocol change.
+						form.SFTPSudo = false
+						c.Invalidate()
+					}
+				}).Description(m.VaultHostFileProtocolHint())
+				ui.Checkbox(c, &form.SFTPSudo, m.VaultHostSFTPSudo()).
+					Disabled(form.FileProtocol == string(domainvault.FileProtocolSCP))
+				ui.Text(c, m.VaultHostSFTPSudoHint()).FontSize(12).TextColor(t.TextMuted)
 				if ui.Checkbox(c, &form.X11Forwarding, m.VaultHostX11Forwarding()).Changed() {
 					// Turning X11 off clears the acknowledgement, so re-enabling it
 					// always asks the user to accept the warning again.
@@ -1764,6 +1784,10 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemX11()
 	case vaultstate.ProblemX11Acknowledged:
 		return m.VaultProblemX11Acknowledged()
+	case vaultstate.ProblemFileProtocol:
+		return m.VaultProblemFileProtocol()
+	case vaultstate.ProblemSudoUnsupported:
+		return m.VaultProblemSudoUnsupported()
 	case vaultstate.ProblemSnippet:
 		return m.VaultSnippetProblem()
 	case vaultstate.ProblemSnippetPackage:

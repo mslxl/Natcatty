@@ -22,6 +22,14 @@ they address the same tree - one local device, or one Host - even when they are
 separate connections or Tabs. Canonical paths are compared within one Backing.
 _Avoid_: filesystem, connection, adapter
 
+**File protocol**:
+A Host's preferred way to browse and transfer files: automatic, SFTP only, or SCP
+mode. Automatic tries SFTP first and may fall back to SCP. SCP mode uses shell exec
+and `scp -t/-f` for servers without an SFTP subsystem. Sudo SFTP elevates the
+subsystem through a password-on-stdin handshake. A single-channel Host permits one
+SSH channel, so it refuses a second one and any SCP fallback that would need it.
+_Avoid_: transfer mode, legacy SCP
+
 **Unsaved Host**:
 A connection target the user typed but did not save as a Host, so it has no
 `HostID`. Records keep the typed label and address and mark it as unsaved; it is

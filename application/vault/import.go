@@ -1001,6 +1001,8 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		LegacyAlgorithms:       draft.LegacyAlgorithms,
 		SkipEcdsaHostKey:       draft.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(draft.Algorithms),
+		SFTPFileProtocol:       draft.SFTPFileProtocol,
+		SFTPSudo:               draft.SFTPSudo,
 	}
 }
 

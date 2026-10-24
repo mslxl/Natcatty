@@ -920,7 +920,12 @@ func copyFile(ctx context.Context, source, dest FileSystem, item fileCopy,
 
 	temporary := dest.Join(dest.Parent(item.destination),
 		stageName(item.stageKey, dest.Base(item.destination), item.destination))
-	writer, err := dest.Create(ctx, temporary)
+	var writer io.WriteCloser
+	if sized, ok := dest.(SizedCreator); ok {
+		writer, err = sized.CreateSized(ctx, temporary, item.info.Size)
+	} else {
+		writer, err = dest.Create(ctx, temporary)
+	}
 	if err != nil {
 		return 0, wrap(domainsftp.OpCopy, temporary, err)
 	}
