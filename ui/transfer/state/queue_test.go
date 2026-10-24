@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
@@ -43,6 +44,97 @@ func newQueuedFixtureWith(t *testing.T, options ...apptransfer.QueueOption) (*fi
 	f := &fixture{state: state, local: localDisk, remote: remoteDisk, localOp: localOp, remoteOp: remoteOp}
 	f.waitLoaded(t, Left)
 	return f, queue
+}
+
+// queueSeedRepo restores a fixed history, as the app does after a restart.
+type queueSeedRepo struct {
+	tasks []domainsftp.Task
+}
+
+func (r *queueSeedRepo) LoadTasks(context.Context) ([]domainsftp.Task, error) {
+	out := make([]domainsftp.Task, len(r.tasks))
+	copy(out, r.tasks)
+	return out, nil
+}
+
+func (r *queueSeedRepo) SaveTasks(_ context.Context, tasks []domainsftp.Task) error {
+	r.tasks = append([]domainsftp.Task(nil), tasks...)
+	return nil
+}
+
+// TestHostReconnectReattachesAnInterruptedTransfer proves the product reaches
+// Queue.ReattachHost when the user reconnects a Host in the SFTP pane: the
+// restored row's reconnect prompt is truthful before the connection, the
+// reconnected Host binds live filesystems, and Resume then finishes the
+// Transfer without touching the completed prefix.
+func TestHostReconnectReattachesAnInterruptedTransfer(t *testing.T) {
+	now := time.Now()
+	seed := []domainsftp.Task{{
+		ID: "host-restart", Kind: domainsftp.OpUpload, Status: domainsftp.TaskInterrupted,
+		DisplayName: "alpha.txt", SourceHost: "h1", SourceLabel: "Test", DestLabel: "local",
+		Sources: []string{"/alpha.txt"}, DestDir: "/dest",
+		BytesTotal: 5, FilesTotal: 1, ReconnectRequired: true,
+		CreatedAt: now, UpdatedAt: now,
+	}}
+
+	localDisk := newFakeDisk()
+	localDisk.mkdirs("/dest")
+	remoteDisk := newFakeDisk()
+	remoteDisk.put("/alpha.txt", "alpha", 0o644)
+
+	localOp := &opener{disk: localDisk, root: "/", backing: "local"}
+	remoteOp := &opener{disk: remoteDisk, root: "/", remote: true, backing: "remote:h1"}
+	service := apptransfer.NewService(localOp, remoteOp)
+	queue := apptransfer.NewQueue(service, apptransfer.WithQueueRepository(&queueSeedRepo{tasks: seed}))
+	if err := queue.Start(context.Background()); err != nil {
+		t.Fatalf("start queue: %v", err)
+	}
+	state := NewState(service, WithQueue(queue))
+	t.Cleanup(func() {
+		state.Shutdown()
+		queue.Shutdown()
+	})
+	state.EnsureStarted()
+	f := &fixture{state: state, local: localDisk, remote: remoteDisk, localOp: localOp, remoteOp: remoteOp}
+	f.waitLoaded(t, Left)
+
+	restored, _ := queue.Task("host-restart")
+	if restored.Status != domainsftp.TaskInterrupted || !restored.ReconnectRequired {
+		t.Fatalf("the restored row = %+v", restored)
+	}
+
+	// Before the Host is connected the prompt must stay truthful.
+	state.ResumeTransfer("host-restart")
+	if got := state.CenterError(); got != "transfer-reconnect-required" {
+		t.Fatalf("Resume before the Host reconnect reports %q, want transfer-reconnect-required", got)
+	}
+	if task, _ := queue.Task("host-restart"); task.Status != domainsftp.TaskInterrupted {
+		t.Fatalf("Resume before the Host reconnect moved the row to %q", task.Status)
+	}
+
+	// Reconnecting the Host in the SFTP pane is the production path that
+	// binds the fresh filesystems.
+	f.openRemote(t, Right)
+	settle(t, state, "the reconnected Host to reattach the row", func() bool {
+		task, ok := queue.Task("host-restart")
+		return ok && !task.ReconnectRequired
+	})
+	rebound, _ := queue.Task("host-restart")
+	if rebound.Status != domainsftp.TaskInterrupted {
+		t.Fatalf("the reconnect auto-started the row: %+v", rebound)
+	}
+
+	state.ResumeTransfer("host-restart")
+	if got := state.CenterError(); got != "" {
+		t.Fatalf("Resume after the Host reconnect reports %q", got)
+	}
+	settle(t, state, "the reconnected transfer to finish", func() bool {
+		task, ok := queue.Task("host-restart")
+		return ok && task.Status == domainsftp.TaskCompleted
+	})
+	if got, ok := localDisk.read("/dest/alpha.txt"); !ok || got != "alpha" {
+		t.Fatalf("the resumed upload left /dest/alpha.txt = %q, exists=%v", got, ok)
+	}
 }
 
 func TestQueueBackedTransferCompletesAndAppearsInTheCenter(t *testing.T) {

@@ -181,6 +181,11 @@ type Task struct {
 	ResourceKeys []ResourceKey `json:"resourceKeys,omitempty"`
 	SourceLabel  string        `json:"sourceLabel,omitempty"`
 	DestLabel    string        `json:"destLabel,omitempty"`
+	// SourceHost and DestHost name the saved Host behind each endpoint; an
+	// empty value is the local device. They are the durable identity a
+	// reconnect uses to rebuild the request for a row restored from disk.
+	SourceHost string `json:"sourceHost,omitempty"`
+	DestHost   string `json:"destHost,omitempty"`
 
 	BytesDone  int64 `json:"bytesDone"`
 	BytesTotal int64 `json:"bytesTotal"`

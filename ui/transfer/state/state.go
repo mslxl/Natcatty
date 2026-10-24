@@ -472,6 +472,9 @@ func (s *State) Duplicate(side Side) {
 				}
 				tab.FS = files
 				s.loadAt(tab, path, false)
+				// The Host's SFTP connection is live again, so an interrupted
+				// Transfer that used it can continue from its checkpoint.
+				s.reattachHost(tab.HostID, files)
 			})
 		}()
 		return
@@ -559,6 +562,10 @@ func (s *State) openRemote(tab *Tab) {
 			}
 			tab.FS = files
 			s.loadAt(tab, root, false)
+			// Reconnecting a Host in the SFTP pane is the product's reconnect
+			// path: bind this live filesystem to its interrupted Transfers so
+			// the center's Resume continues instead of refusing.
+			s.reattachHost(tab.HostID, files)
 		})
 	}()
 }

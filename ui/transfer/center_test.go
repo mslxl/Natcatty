@@ -212,6 +212,65 @@ func TestTransferCenterShowsReconnectOnAFailedRow(t *testing.T) {
 	}
 }
 
+// intrinsicTextSize measures one line of text at an unconstrained width, so a
+// test can prove a hint was neither ellipsized nor cut off.
+func intrinsicTextSize(t *testing.T, text string, fontSize float32) (float32, float32) {
+	t.Helper()
+	var width, height float32
+	tester := ui.NewTester(func(c *ui.Context) {
+		width, height = c.MeasureText(0, ui.Span{Text: text, Size: fontSize})
+	}, 200, 100)
+	tester.Frame()
+	if width <= 0 || height <= 0 {
+		t.Fatalf("the reference text %q measured %vx%v", text, width, height)
+	}
+	return width, height
+}
+
+// TestTransferCenterShowsTheFullReconnectHintAtEverySize proves the English
+// reconnect hint is not ellipsized at either window size. The hint needs its
+// own line: the detail line also carries the panes, progress, and file count,
+// which left too little room for the sentence in both English widths.
+func TestTransferCenterShowsTheFullReconnectHintAtEverySize(t *testing.T) {
+	now := time.Now()
+	for _, tag := range []string{"en", "zh-CN"} {
+		m := locales.In(tag)
+		hint := m.SftpTransferReconnectRequired()
+		refWidth, _ := intrinsicTextSize(t, hint, 10)
+		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
+			seed := []domainsftp.Task{{
+				ID: "conn", Kind: domainsftp.OpUpload, Status: domainsftp.TaskInterrupted,
+				DisplayName: "alpha.txt", SourceLabel: "local", DestLabel: "Test",
+				Sources: []string{"/alpha.txt"}, DestDir: "/remote",
+				BytesDone: 512, BytesTotal: 2048, FilesDone: 1, FilesTotal: 2,
+				ReconnectRequired: true, CreatedAt: now, UpdatedAt: now,
+			}}
+			state, tester := newCenterFixture(t, tag, size[0], size[1], seed)
+			state.OpenCenter()
+			tester.Frame()
+
+			rect, ok := tester.Find(hint)
+			if !ok {
+				t.Fatalf("%s at %dx%d: the full hint %q is not one text; texts %q",
+					tag, size[0], size[1], hint, tester.Texts())
+			}
+			if rect.X < 0 || rect.Y < 0 ||
+				rect.X+rect.W > float32(size[0])+0.5 || rect.Y+rect.H > float32(size[1])+0.5 {
+				t.Fatalf("%s at %dx%d: the hint is outside the window: %+v", tag, size[0], size[1], rect)
+			}
+			if rect.H <= 0 {
+				t.Fatalf("%s at %dx%d: the hint has no height: %+v", tag, size[0], size[1], rect)
+			}
+			// A box at least as wide as the sentence's own line renders all of
+			// it; anything narrower would end in an ellipsis.
+			if rect.W+0.5 < refWidth {
+				t.Fatalf("%s at %dx%d: %q needs %.1fpx on one line but its box is only %.1fpx wide, so it is truncated",
+					tag, size[0], size[1], hint, refWidth, rect.W)
+			}
+		}
+	}
+}
+
 func TestTransferCenterShowsProgressAndControls(t *testing.T) {
 	const width, height = 1100, 720
 	state, tester := newCenterFixture(t, "en", width, height, centerSeed(time.Now()))
