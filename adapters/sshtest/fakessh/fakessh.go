@@ -60,6 +60,13 @@ type Options struct {
 	// Exec serves a non-interactive exec request and returns the remote exit
 	// status. Without it, exec requests are refused like a shell-only server.
 	Exec func(command string, channel ssh.Channel) int
+	// Shell serves the interactive shell after a shell request is accepted.
+	// Without it, the fixture echoes input, which is enough to prove a channel
+	// is usable but not to model a vendor CLI.
+	Shell func(channel ssh.Channel)
+	// ServerVersion overrides the SSH identification line, so a test can model
+	// a device whose software token requires single-channel operation.
+	ServerVersion string
 }
 
 // X11Request is one recorded x11-req session request.
@@ -118,6 +125,8 @@ type Server struct {
 	pty               *Size
 	resizes           []Size
 	shellOpened       bool
+	shellHandler      func(ssh.Channel)
+	sessionChannels   int
 	forwards          []Forward
 	remoteForwards    []RemoteForward
 	remoteListeners   map[string]net.Listener
@@ -151,6 +160,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 		acceptX11:       options.AcceptX11,
 		subsystems:      options.Subsystems,
 		execHandler:     options.Exec,
+		shellHandler:    options.Shell,
 	}
 
 	var keyboardInteractive func(ssh.ConnMetadata, ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error)
@@ -229,6 +239,9 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 	}
 
 	server.config.AddHostKey(signer)
+	if options.ServerVersion != "" {
+		server.config.ServerVersion = options.ServerVersion
+	}
 	server.config.Ciphers = options.Ciphers
 	server.config.KeyExchanges = options.KeyExchanges
 	server.config.MACs = options.MACs
@@ -328,6 +341,15 @@ func (s *Server) ShellOpened() bool {
 	return s.shellOpened
 }
 
+// SessionChannels reports how many session channels the client opened. A
+// network device that advertises a single-channel software token must open
+// exactly one, because a second channel would be refused.
+func (s *Server) SessionChannels() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionChannels
+}
+
 // Forwards reports every direct-tcpip request the server accepted or
 // rejected, in order.
 func (s *Server) Forwards() []Forward {
@@ -425,6 +447,9 @@ func (s *Server) serve() {
 			if err != nil {
 				continue
 			}
+			s.mu.Lock()
+			s.sessionChannels++
+			s.mu.Unlock()
 			go s.handleSession(channel, channelRequests)
 		case "direct-tcpip":
 			s.handleDirectTCPIP(incoming)
@@ -663,9 +688,14 @@ func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request
 		case "shell":
 			s.mu.Lock()
 			s.shellOpened = true
+			handler := s.shellHandler
 			s.mu.Unlock()
 			request.Reply(true, nil)
-			go echo(channel)
+			if handler != nil {
+				go handler(channel)
+			} else {
+				go echo(channel)
+			}
 		case "exec":
 			var payload struct{ Command string }
 			if err := ssh.Unmarshal(request.Payload, &payload); err != nil {

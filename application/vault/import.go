@@ -847,6 +847,7 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		ProxyProfileID:   record.ProxyProfileID,
 		LegacyAlgorithms: record.LegacyAlgorithms,
 		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
+		DeviceType:       domainvault.NormalizeDeviceType(domainvault.DeviceType(record.DeviceType)),
 	}
 	if record.Protocol == "" {
 		draft.Protocol = domainvault.ProtocolSSH
@@ -1003,6 +1004,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		Algorithms:             domainvault.CloneAlgorithms(draft.Algorithms),
 		SFTPFileProtocol:       draft.SFTPFileProtocol,
 		SFTPSudo:               draft.SFTPSudo,
+		DeviceType:             draft.DeviceType,
 	}
 }
 

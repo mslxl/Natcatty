@@ -110,7 +110,7 @@ func newFamilySource(t *testing.T) *familySource {
 		Tags: []string{"web"}, Pinned: true, HasPassword: true,
 		IdentityID: "ident-1", KeyID: "key-1", AuthMethod: domainvault.HostAuthKey,
 		RequiresMFA: true, ProxyProfileID: "proxy-1", LegacyAlgorithms: true,
-		SkipEcdsaHostKey: true, OrderKey: 1000,
+		SkipEcdsaHostKey: true, DeviceType: domainvault.DeviceTypeNetwork, OrderKey: 1000,
 	}}
 	source.known.items = []domainconn.KnownHost{{
 		ID: "known-1", Hostname: "web1.example.test", Port: 2222,
@@ -251,6 +251,9 @@ func TestVaultJSONRoundTripRestoresEveryFamilyAndLink(t *testing.T) {
 	if host.AuthMethod != domainvault.HostAuthKey || !host.RequiresMFA ||
 		!host.LegacyAlgorithms || !host.SkipEcdsaHostKey {
 		t.Fatalf("Host auth/options = %+v", host)
+	}
+	if !host.IsNetworkDevice() {
+		t.Fatalf("Host network device mode was not restored: %+v", host)
 	}
 
 	if len(destination.keys.keys) != 1 {

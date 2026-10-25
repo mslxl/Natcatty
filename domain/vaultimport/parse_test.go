@@ -622,3 +622,20 @@ func TestJSONJumpRefsSkipInvalidHostsWithoutShifting(t *testing.T) {
 		t.Fatalf("JumpRefs = %v, want [0]", client.JumpRefs)
 	}
 }
+
+func TestJSONHostCarriesTheNetworkDeviceMode(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"sw","hostname":"switch.example.test","port":22,"deviceType":"network"},
+		{"id":"plain","hostname":"plain.example.test","port":22}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Records) != 2 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	if got := result.Records[0].DeviceType; got != "network" {
+		t.Fatalf("DeviceType = %q, want network", got)
+	}
+	if got := result.Records[1].DeviceType; got != "" {
+		t.Fatalf("DeviceType = %q, want empty for an ordinary Host", got)
+	}
+}

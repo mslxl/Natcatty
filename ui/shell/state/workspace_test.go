@@ -871,3 +871,39 @@ func TestSplittingAnSSHPaneReplaysTheWorkingDirectory(t *testing.T) {
 		return string(transport.input) == "cd -- '/srv/app'\n"
 	})
 }
+
+func TestRestoreReopensANetworkDevicePaneFromTheHostRecord(t *testing.T) {
+	// The restore descriptor carries no device mode; it is read from the Host
+	// record, so editing the Host takes effect on the next restore.
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-switch", Number: 1, Root: domainworkspace.NewPaneNode("pane-switch"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-switch",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionSSH, HostID: "host-switch",
+				Hostname: "switch.example.com", Port: 22, Username: "admin", Label: "switch",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-switch"] = domainvault.Host{
+		ID: "host-switch", Hostname: "switch.example.com", Port: 22,
+		Username: "admin", Protocol: domainvault.ProtocolSSH,
+		DeviceType: domainvault.DeviceTypeNetwork,
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored network device Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-switch")
+		return ok && !info.Pending
+	})
+
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindSSH || !spec.NetworkDevice {
+		t.Fatalf("restored spec = %+v, want raw network-device execution", spec)
+	}
+}

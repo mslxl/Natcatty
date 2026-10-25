@@ -489,3 +489,39 @@ func TestTerminalAppearanceReachesOpenSurfaces(t *testing.T) {
 		t.Errorf("theme = %+v", graph.surface.theme)
 	}
 }
+
+func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-switch", Label: "switch", Hostname: "switch.example.com", Port: 22,
+		Username: "admin", Protocol: domainvault.ProtocolSSH,
+		DeviceType: domainvault.DeviceTypeNetwork,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the network device tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+	if !graph.factory.spec.NetworkDevice {
+		t.Fatal("the network device mode did not reach the Session")
+	}
+
+	// A hand-edited record that pairs the mode with another protocol must not
+	// put the Session into raw execution.
+	other := newTestGraph(t)
+	host.ID = "host-telnet"
+	host.Protocol = domainvault.ProtocolTelnet
+	host.Port = 23
+	if err := other.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost telnet: %v", err)
+	}
+	waitFor(t, "the Telnet tab", func() bool {
+		other.state.Flush()
+		return other.state.TabCount() == 1
+	})
+	if other.factory.spec.NetworkDevice {
+		t.Fatal("the network device mode reached a Telnet Session")
+	}
+}

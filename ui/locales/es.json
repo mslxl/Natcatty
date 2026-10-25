@@ -545,6 +545,8 @@
   "vaultHostX11Forwarding": "Habilitar reenvío X11",
   "vaultHostX11Warning": "El reenvío X11 permite que los programas del Host remoto accedan a tu servidor X local. Habilítalo solo para Hosts de confianza.",
   "vaultHostX11Acknowledge": "Entiendo el riesgo de seguridad y quiero habilitar el reenvío X11.",
+  "vaultHostNetworkDevice": "Modo de dispositivo de red",
+  "vaultHostNetworkDeviceHint": "Para switches, routers y firewalls conectados por SSH. La automatización envía los comandos tal cual, sin envoltura de shell, y no hay código de salida. Habilítalo solo para dispositivos que no ejecutan un shell estándar.",
   "vaultHostFileProtocol": "Protocolo de archivos",
   "vaultHostFileProtocolHint": "Automático intenta SFTP y recurre a SCP solo cuando el servidor no tiene SFTP.",
   "vaultHostSFTPSudo": "Usar sudo para SFTP",

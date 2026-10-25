@@ -60,6 +60,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		LegacyAlgorithms:       normalized.LegacyAlgorithms,
 		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
+		DeviceType:             normalized.DeviceType,
 		OrderKey:               int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
@@ -100,6 +101,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.LegacyAlgorithms = normalized.LegacyAlgorithms
 		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
+		host.DeviceType = normalized.DeviceType
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil
@@ -825,5 +827,69 @@ func TestHostFormSubmitsAndRestoresTheFileProtocol(t *testing.T) {
 	}
 	if got := state.Form().FileProtocol; got != string(domainvault.FileProtocolAuto) {
 		t.Fatalf("legacy protocol = %q, want auto", got)
+	}
+}
+
+func TestNetworkDeviceModeIsSavedOnlyForSSH(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "switch"
+	form.Hostname = "switch.example.com"
+	form.Protocol = string(domainvault.ProtocolSSH)
+	form.NetworkDevice = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 || repo.created[0].DeviceType != domainvault.DeviceTypeNetwork {
+		t.Fatalf("created = %+v, want the network device mode", repo.created)
+	}
+	if !repo.items[0].IsNetworkDevice() {
+		t.Fatalf("saved Host is not a network device: %+v", repo.items[0])
+	}
+
+	// The editor offers the mode only for SSH, so a hidden checkbox must never
+	// save raw execution onto a Host whose transport cannot run it.
+	state.BeginCreate()
+	form = state.Form()
+	form.Label = "local"
+	form.Protocol = string(domainvault.ProtocolLocal)
+	form.NetworkDevice = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save local: %v", err)
+	}
+	if last := repo.created[len(repo.created)-1]; last.DeviceType != domainvault.DeviceTypeDefault {
+		t.Fatalf("local Host device type = %q, want the default", last.DeviceType)
+	}
+}
+
+func TestBeginEditRestoresTheNetworkDeviceMode(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-switch", Label: "switch", Hostname: "switch.example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, DeviceType: domainvault.DeviceTypeNetwork,
+	}}}
+	state, _ := newTestState(t, repo)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit("host-switch") {
+		t.Fatal("BeginEdit did not open the editor")
+	}
+	if !state.Form().NetworkDevice {
+		t.Fatal("the editor did not restore the network device mode")
+	}
+
+	// Switching away from SSH drops the mode, which NormalizeDraft also
+	// enforces for records written by hand.
+	form := state.Form()
+	form.Protocol = string(domainvault.ProtocolTelnet)
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	last := repo.updated[len(repo.updated)-1]
+	if last.DeviceType != domainvault.DeviceTypeDefault {
+		t.Fatalf("switched Host device type = %q, want the default", last.DeviceType)
 	}
 }

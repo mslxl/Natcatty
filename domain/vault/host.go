@@ -89,6 +89,30 @@ func NormalizeFileProtocol(value FileProtocol) FileProtocol {
 	}
 }
 
+// DeviceType marks a Host whose SSH peer runs a vendor CLI instead of a POSIX
+// shell. Network-device mode sends commands as-is, without a shell wrapper or
+// completion markers, and has no exit code to report.
+type DeviceType string
+
+const (
+	// DeviceTypeDefault is an ordinary SSH Host.
+	DeviceTypeDefault DeviceType = ""
+	// DeviceTypeNetwork is network equipment (a switch, router, or firewall)
+	// reached over SSH in raw execution mode.
+	DeviceTypeNetwork DeviceType = "network"
+)
+
+// NormalizeDeviceType maps an empty or unknown value to the default. Network
+// mode is meaningful only for SSH, so a Host of another protocol never keeps
+// it.
+func NormalizeDeviceType(value DeviceType) DeviceType {
+	normalized := DeviceType(strings.ToLower(strings.TrimSpace(string(value))))
+	if normalized == DeviceTypeNetwork {
+		return DeviceTypeNetwork
+	}
+	return DeviceTypeDefault
+}
+
 // ProxyType is a transport used to reach the first endpoint of a route.
 type ProxyType string
 
@@ -215,6 +239,10 @@ type Host struct {
 	// SFTPSudo elevates the SFTP subsystem through sudo so root-owned files
 	// can be edited. It requires SFTP or automatic protocol selection.
 	SFTPSudo bool `json:"sftpSudo,omitempty"`
+	// DeviceType selects raw network-device execution for an SSH Host. It is
+	// the original's Host Details "Network Device Mode" setting and uses the
+	// same persisted JSON name.
+	DeviceType DeviceType `json:"deviceType,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -260,6 +288,9 @@ type Draft struct {
 	// SFTPFileProtocol and SFTPSudo are the remote-pane protocol preference.
 	SFTPFileProtocol FileProtocol
 	SFTPSudo         bool
+	// DeviceType selects raw network-device execution. It is kept only for
+	// SSH Hosts.
+	DeviceType DeviceType
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -348,6 +379,12 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	if draft.SFTPFileProtocol == "" {
 		draft.SFTPFileProtocol = FileProtocolAuto
 	}
+	draft.DeviceType = NormalizeDeviceType(draft.DeviceType)
+	if draft.Protocol != ProtocolSSH {
+		// Raw network-device execution needs an SSH PTY; a Host that switched
+		// to another protocol must not keep a mode its transport cannot run.
+		draft.DeviceType = DeviceTypeDefault
+	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
 	draft.Username = strings.TrimSpace(draft.Username)
@@ -434,6 +471,7 @@ func (h Host) Validate() error {
 		Algorithms:             h.Algorithms,
 		SFTPFileProtocol:       h.SFTPFileProtocol,
 		SFTPSudo:               h.SFTPSudo,
+		DeviceType:             h.DeviceType,
 	})
 }
 
@@ -442,6 +480,13 @@ func (h Host) Validate() error {
 // created before the warning existed never enables forwarding silently.
 func (h Host) X11Enabled() bool {
 	return h.X11Forwarding && h.X11WarningAcknowledged
+}
+
+// IsNetworkDevice reports whether the Host runs a vendor CLI over SSH and
+// therefore needs raw execution. A value written without SSH (an old or
+// hand-edited record) is not enough on its own.
+func (h Host) IsNetworkDevice() bool {
+	return h.Protocol == ProtocolSSH && h.DeviceType == DeviceTypeNetwork
 }
 
 func validateFields(draft Draft) error {
