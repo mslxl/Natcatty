@@ -47,6 +47,8 @@ type Dialer struct {
 	macs         []string
 	hostKeyAlgos []string
 	x11Local     X11LocalFactory
+	skAgent      appconnection.SecurityKeyAgent
+	skDeadline   time.Duration
 }
 
 // Option customizes a Dialer.
@@ -68,6 +70,27 @@ func WithAgentDial(fn AgentDialFunc) Option {
 	return func(d *Dialer) {
 		if fn != nil {
 			d.agentDial = fn
+		}
+	}
+}
+
+// WithSecurityKeyAgent replaces the hardware security key provider. Production
+// uses the same agent transport as WithAgentDial; tests and the self-test
+// inject an in-process fake agent.
+func WithSecurityKeyAgent(agent appconnection.SecurityKeyAgent) Option {
+	return func(d *Dialer) {
+		if agent != nil {
+			d.skAgent = agent
+		}
+	}
+}
+
+// WithSecurityKeyDeadline replaces the device deadline. Zero keeps the
+// application default of 30 seconds; tests inject a short deadline.
+func WithSecurityKeyDeadline(deadline time.Duration) Option {
+	return func(d *Dialer) {
+		if deadline > 0 {
+			d.skDeadline = deadline
 		}
 	}
 }
@@ -145,6 +168,17 @@ func NewDialer(opts ...Option) *Dialer {
 }
 
 var _ appconnection.Dialer = (*Dialer)(nil)
+
+// securityKeyService returns the application policy for hardware keys. When no
+// provider was injected, an agent-backed provider reuses the dialer's agent
+// transport, so an in-process agent in a test is enough for the whole path.
+func (d *Dialer) securityKeyService() appconnection.SecurityKeyService {
+	agent := d.skAgent
+	if agent == nil {
+		agent = NewSecurityKeyAgent(WithSecurityKeyAgentDial(d.agentDial))
+	}
+	return appconnection.SecurityKeyService{Agent: agent, Deadline: d.skDeadline}
+}
 
 // endpoint is one chain member: a jump, or the target when it is the last
 // element. Each endpoint carries its own trust callback and auth plan.
@@ -346,7 +380,7 @@ func (d *Dialer) handshake(ctx context.Context, raw net.Conn, ep endpoint) (*xss
 			Password: plan.Password,
 		})
 	}
-	machine := newAuthMachine(authCtx, plan, ep.prompter, ep.hostname, d.agentDial)
+	machine := newAuthMachine(authCtx, plan, ep.prompter, ep.hostname, d.agentDial, d.securityKeyService())
 	if err := machine.Prepare(); err != nil {
 		return nil, "", err
 	}
