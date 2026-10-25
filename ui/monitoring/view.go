@@ -16,48 +16,53 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
-// View returns the monitoring surface.
+// View returns the monitoring surface. The surface is one flex column that
+// takes the height its parent leaves, so the table, charts, and editors can
+// scroll instead of running past the window at the 720x480 minimum.
 func View(s *State) func(*ui.Context) {
 	return func(c *ui.Context) {
 		s.Flush()
 		s.SyncColumnWidths()
 		m := locales.In(c.Locale())
 		t := c.Theme()
-		if s.Editing() {
-			editor(c, s, m, t)
-			return
-		}
-		header(c, s, m, t)
-		if s.ColumnsOpen() {
-			columnsEditor(c, s, m, t)
-		}
-		if problem := problemText(m, s.Problem()); problem != "" {
-			ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
-		}
-		panel, ok := s.ActivePanel()
-		if !ok {
-			emptyPanels(c, s, m, t)
-			return
-		}
-		if panel.View == domainpreferences.MonitorViewCharts {
-			charts(c, s, panel, m, t)
-			return
-		}
-		hostTable(c, s, panel, m, t)
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Gap(6).Children(func() {
+			if s.Editing() {
+				editor(c, s, m, t)
+				return
+			}
+			header(c, s, m, t)
+			if s.ColumnsOpen() {
+				columnsEditor(c, s, m, t)
+				return
+			}
+			if problem := problemText(m, s.Problem()); problem != "" {
+				ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
+			}
+			panel, ok := s.ActivePanel()
+			if !ok {
+				emptyPanels(c, s, m, t)
+				return
+			}
+			if panel.View == domainpreferences.MonitorViewCharts {
+				charts(c, s, panel, m, t)
+				return
+			}
+			hostTable(c, s, panel, m, t)
+		})
 	}
 }
 
 func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().PaddingX(4).Gap(8).Children(func() {
-		ui.Text(c, m.MonitoringTitle()).FontSize(20).Bold()
+	ui.Row(c).FillWidth().Wrap().PaddingX(4).Gap(8).Children(func() {
+		ui.Text(c, m.MonitoringTitle()).FontSize(20).Bold().NoWrap()
 		ui.Column(c).Grow(1)
 		if text := summaryText(s, m); text != "" {
-			ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).NoWrap()
 		}
 	})
 
-	ui.Row(c).FillWidth().PaddingX(4).Gap(8).Children(func() {
-		ui.SearchField(c, &s.search).Placeholder(m.MonitoringSearch()).Grow(1).MinWidth(120)
+	ui.Row(c).FillWidth().Wrap().PaddingX(4).Gap(8).Children(func() {
+		ui.SearchField(c, &s.search).Placeholder(m.MonitoringSearch()).Grow(1).MinWidth(140)
 		view := 0
 		if panel, ok := s.ActivePanel(); ok && panel.View == domainpreferences.MonitorViewCharts {
 			view = 1
@@ -79,7 +84,10 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	if len(s.Panels()) == 0 {
 		return
 	}
-	ui.Row(c).FillWidth().PaddingX(4).Gap(8).Children(func() {
+	// Wrap the row rather than sizing it from the window: the surface is
+	// about 432 DIPs wide inside the shell at the 720x480 minimum, so the
+	// last controls move to a second line instead of being clipped.
+	ui.Row(c).FillWidth().Wrap().PaddingX(4).Gap(8).Children(func() {
 		names := make([]string, 0, len(s.Panels()))
 		ids := make(map[string]string, len(s.Panels()))
 		selectedName := ""
@@ -91,7 +99,7 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			}
 		}
 		chosen := selectedName
-		ui.Select(c, &chosen, names).Grow(1).MinWidth(100)
+		ui.Select(c, &chosen, names).Grow(1).MinWidth(120)
 		if chosen != selectedName {
 			if id, ok := ids[chosen]; ok {
 				s.SetPanel(id)
@@ -136,11 +144,9 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			s.BeginEditPanel()
 			c.Invalidate()
 		}
-		columnsLabel := m.MonitoringColumns()
-		if s.ColumnsOpen() {
-			columnsLabel = m.MonitoringColumnsDone()
-		}
-		if ui.Button(c, columnsLabel).Clicked() {
+		// The header keeps its Columns label while the editor is open; the
+		// editor's pinned Done is the primary way out, and either closes it.
+		if ui.Button(c, m.MonitoringColumns()).Clicked() {
 			s.ToggleColumns()
 			c.Invalidate()
 		}
@@ -213,37 +219,54 @@ func hostTable(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, m 
 func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 	host domainvault.Host, state domainmonitor.HostState,
 	panel domainpreferences.MonitorPanel, started, now time.Time) {
+	ready := sampleReady(state)
 	sample := state.Sample
 	switch key {
 	case "host":
 		ui.Column(c).Gap(1).Children(func() {
-			ui.Text(c, s.HostLabel(host)).Bold().SingleLine()
+			// The typed state sits beside the label so it never scrolls out
+			// of view with the optional Status column, and the reason gets
+			// a line of its own: a refused or unsupported Host must not look
+			// like an idle one.
+			ui.Row(c).FillWidth().Gap(6).Children(func() {
+				ui.Text(c, s.HostLabel(host)).Bold().SingleLine().Grow(1).MinWidth(0)
+				text, color := statusText(m, state, panel, now, t)
+				ui.Text(c, text).FontSize(10).TextColor(color).NoWrap()
+			})
 			details := host.Hostname
 			if details == "" {
 				details = string(host.ID)
 			}
-			if domainmonitor.Valid(sample.GPU) {
-				details += " · " + m.MonitoringGpu() + " " + percentText(sample.GPU)
+			// A Host without a sample still names the GPU slot with a dash;
+			// a sampled Host without a GPU (an invalid value) omits it as
+			// before.
+			if !ready || domainmonitor.Valid(sample.GPU) {
+				details += " · " + m.MonitoringGpu() + " " + percentText(unknownUnless(ready, sample.GPU))
 			}
 			ui.Text(c, details).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			if reason := reasonText(m, state.Reason); reason != "" {
+				ui.Text(c, reason).FontSize(10).TextColor(t.TextMuted).SingleLine()
+			}
 		})
 	case "latency":
-		ui.Text(c, latencyText(sample.Latency)).FontSize(12).
-			TextColor(toneColor(t, domainmonitor.ToneForLatency(sample.Latency)))
+		latency := unknownUnless(ready, sample.Latency)
+		ui.Text(c, latencyText(latency)).FontSize(12).
+			TextColor(toneColor(t, domainmonitor.ToneForLatency(latency)))
 	case "tags":
 		ui.Text(c, strings.Join(host.Tags, ", ")).FontSize(12).TextColor(t.TextMuted).SingleLine()
 	case "notes":
 		ui.Text(c, host.Notes).FontSize(12).TextColor(t.TextMuted).SingleLine()
 	case "cpu":
-		percentCell(c, m.MonitoringCpu(), sample.CPU, t)
+		percentCell(c, m.MonitoringCpu(), unknownUnless(ready, sample.CPU), t)
 	case "memory":
-		percentCell(c, m.MonitoringMemory(), sample.Memory, t)
+		percentCell(c, m.MonitoringMemory(), unknownUnless(ready, sample.Memory), t)
 	case "disks":
-		percentCell(c, m.MonitoringDisk(), sample.Disk, t)
+		percentCell(c, m.MonitoringDisk(), unknownUnless(ready, sample.Disk), t)
 	case "network":
+		rx, tx := unknownUnless(ready, sample.Rx), unknownUnless(ready, sample.Tx)
 		ui.Column(c).Gap(0).Children(func() {
-			ui.Text(c, "↓ "+rateText(sample.Rx)).FontSize(11).TextColor(t.Text).SingleLine()
-			ui.Text(c, "↑ "+rateText(sample.Tx)).FontSize(11).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, "↓ "+rateText(rx)).FontSize(11).TextColor(t.Text).SingleLine()
+			ui.Text(c, "↑ "+rateText(tx)).FontSize(11).TextColor(t.TextMuted).SingleLine()
 		})
 	case "updated":
 		ui.Text(c, ageText(m, state, now)).FontSize(11).TextColor(t.TextMuted)
@@ -261,6 +284,20 @@ func cell(c *ui.Context, s *State, m locales.Messages, t *ui.Theme, key string,
 			c.Invalidate()
 		}
 	}
+}
+
+// sampleReady reports whether the Host has completed a measurement. A zero
+// Sample is what the surface sees for a queued, refused, unsupported, capped,
+// or not-yet-sampled Host; its zero metrics are absence, not healthy values.
+func sampleReady(state domainmonitor.HostState) bool { return !state.Sample.At.IsZero() }
+
+// unknownUnless hides the fake zero of an absent Sample behind NaN, which
+// every metric formatter paints as a dash.
+func unknownUnless(ready bool, value float64) float64 {
+	if !ready {
+		return math.NaN()
+	}
+	return value
 }
 
 func percentCell(c *ui.Context, label string, value float64, t *ui.Theme) {
@@ -311,37 +348,54 @@ func columnTitle(m locales.Messages, key string) string {
 	}
 }
 
+// columnsEditor takes the surface height the header leaves. Its rows scroll
+// and its Done row stays pinned inside the card, so at 720x480 the editor can
+// always be closed and the lower rows (Network, Updated, Status, Terminal)
+// are reachable.
 func columnsEditor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Padding(10).Gap(6).Background(t.Surface).Radius(t.Radius).Children(func() {
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, m.MonitoringColumns()).FontSize(14).Bold()
-			ui.Column(c).Grow(1)
-			ui.Text(c, m.MonitoringColumnsHint()).FontSize(11).TextColor(t.TextMuted)
+	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(10).Gap(6).
+		Background(t.Surface).Radius(t.Radius).Children(func() {
+		ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+			ui.Text(c, m.MonitoringColumns()).FontSize(14).Bold().NoWrap()
+			ui.Column(c).Grow(1).MinWidth(0)
+			ui.Text(c, m.MonitoringColumnsHint()).FontSize(11).TextColor(t.TextMuted).Wrap()
 		})
-		for _, key := range domainpreferences.MonitorColumnKeys {
-			if key == "host" || key == "terminal" {
-				ui.Text(c, columnTitle(m, key)+" · "+m.MonitoringAlwaysVisible()).
-					FontSize(11).TextColor(t.TextMuted)
-				continue
-			}
-			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				visible := !s.Hidden(key)
-				if ui.Checkbox(c, &visible, columnTitle(m, key)).Changed() {
-					s.ToggleColumn(key)
-					c.Invalidate()
-				}
-				ui.Column(c).Grow(1)
-				ui.Text(c, strconv.Itoa(s.Width(key))).FontSize(11).TextColor(t.TextMuted)
-				if ui.Button(c, "−").Key("monitor-narrow-" + key).Width(28).Clicked() {
-					s.AdjustColumnWidth(key, -20)
-					c.Invalidate()
-				}
-				if ui.Button(c, "+").Key("monitor-widen-" + key).Width(28).Clicked() {
-					s.AdjustColumnWidth(key, 20)
-					c.Invalidate()
+		ui.Scroll(c).Grow(1).FillWidth().MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
+				for _, key := range domainpreferences.MonitorColumnKeys {
+					if key == "host" || key == "terminal" {
+						ui.Text(c, columnTitle(m, key)+" · "+m.MonitoringAlwaysVisible()).
+							FontSize(11).TextColor(t.TextMuted).NoWrap()
+						continue
+					}
+					ui.Row(c).FillWidth().Gap(8).Children(func() {
+						visible := !s.Hidden(key)
+						if ui.Checkbox(c, &visible, columnTitle(m, key)).Changed() {
+							s.ToggleColumn(key)
+							c.Invalidate()
+						}
+						ui.Column(c).Grow(1).MinWidth(0)
+						ui.Text(c, strconv.Itoa(s.Width(key))).FontSize(11).
+							TextColor(t.TextMuted).NoWrap()
+						if ui.Button(c, "−").Key("monitor-narrow-" + key).Width(28).Clicked() {
+							s.AdjustColumnWidth(key, -20)
+							c.Invalidate()
+						}
+						if ui.Button(c, "+").Key("monitor-widen-" + key).Width(28).Clicked() {
+							s.AdjustColumnWidth(key, 20)
+							c.Invalidate()
+						}
+					})
 				}
 			})
-		}
+		})
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			ui.Column(c).Grow(1)
+			if ui.PrimaryButton(c, m.MonitoringColumnsDone()).Clicked() {
+				s.ToggleColumns()
+				c.Invalidate()
+			}
+		})
 	})
 }
 
@@ -357,7 +411,11 @@ func charts(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, m loc
 	}
 	now := s.now()
 	started := s.StartedAt()
-	ui.GridView(c, &s.grid, len(hosts), 210, 280, func(index int) {
+	// A wider minimum keeps one card per row in the shell's 432-DIP content
+	// column at 720x480, so a title is not truncated and the bottom metric
+	// row and its Open action stay on one line. Two cards share a row from
+	// about 840 DIPs up, as at 1100x720.
+	ui.GridView(c, &s.grid, len(hosts), 300, 300, func(index int) {
 		if index < 0 || index >= len(hosts) {
 			return
 		}
@@ -369,26 +427,36 @@ func charts(c *ui.Context, s *State, panel domainpreferences.MonitorPanel, m loc
 func chartCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 	host domainvault.Host, panel domainpreferences.MonitorPanel, started, now time.Time) {
 	state := s.HostState(string(host.ID))
+	ready := sampleReady(state)
 	sample := state.Sample
+	cpu := unknownUnless(ready, sample.CPU)
+	memory := unknownUnless(ready, sample.Memory)
+	disk := unknownUnless(ready, sample.Disk)
+	rx, tx := unknownUnless(ready, sample.Rx), unknownUnless(ready, sample.Tx)
+	latency := unknownUnless(ready, sample.Latency)
+	gpu := unknownUnless(ready, sample.GPU)
 	points := chartPoints(state.Points, started, panel.Range, now)
 	ui.Column(c).Fill().Padding(10).Gap(4).Background(t.Surface).Radius(t.Radius).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).Children(func() {
-			ui.Column(c).Grow(1).Gap(0).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(0).Children(func() {
 				ui.Text(c, s.HostLabel(host)).Bold().SingleLine()
 				ui.Text(c, host.Hostname).FontSize(11).TextColor(t.TextMuted).SingleLine()
 			})
 			text, color := statusText(m, state, panel, now, t)
 			ui.Text(c, text).FontSize(11).TextColor(color).NoWrap()
 		})
-		metricTrend(c, m.MonitoringCpu(), percentText(sample.CPU),
+		if reason := reasonText(m, state.Reason); reason != "" {
+			ui.Text(c, reason).FontSize(10).TextColor(t.TextMuted).SingleLine()
+		}
+		metricTrend(c, m.MonitoringCpu(), percentText(cpu),
 			points, func(p domainmonitor.Point) float64 { return p.CPU }, 100,
-			t.Accent, toneColor(t, domainmonitor.ToneForPercent(sample.CPU)))
-		metricTrend(c, m.MonitoringMemory(), percentText(sample.Memory),
+			t.Accent, toneColor(t, domainmonitor.ToneForPercent(cpu)))
+		metricTrend(c, m.MonitoringMemory(), percentText(memory),
 			points, func(p domainmonitor.Point) float64 { return p.Memory }, 100,
-			t.Success, toneColor(t, domainmonitor.ToneForPercent(sample.Memory)))
-		metricTrend(c, m.MonitoringDisk(), percentText(sample.Disk),
+			t.Success, toneColor(t, domainmonitor.ToneForPercent(memory)))
+		metricTrend(c, m.MonitoringDisk(), percentText(disk),
 			points, func(p domainmonitor.Point) float64 { return p.Disk }, 100,
-			t.Accent, toneColor(t, domainmonitor.ToneForPercent(sample.Disk)))
+			t.Accent, toneColor(t, domainmonitor.ToneForPercent(disk)))
 		maxRate := 1024.0
 		for _, p := range points {
 			if domainmonitor.Valid(p.Rx) && p.Rx > maxRate {
@@ -398,19 +466,28 @@ func chartCard(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 				maxRate = p.Tx
 			}
 		}
-		networkValue := "↓ " + rateText(sample.Rx) + "  ↑ " + rateText(sample.Tx)
+		networkValue := "↓ " + rateText(rx) + "  ↑ " + rateText(tx)
 		metricTrend(c, m.MonitoringNetwork(), networkValue, points,
 			func(p domainmonitor.Point) float64 { return p.Rx }, maxRate, t.Warning, t.Text)
-		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.Text(c, m.MonitoringDisk()+" "+percentText(sample.Disk)).
-				FontSize(11).TextColor(toneColor(t, domainmonitor.ToneForPercent(sample.Disk)))
-			ui.Text(c, m.MonitoringLatency()+" "+latencyText(sample.Latency)).
-				FontSize(11).TextColor(toneColor(t, domainmonitor.ToneForLatency(sample.Latency)))
-			if domainmonitor.Valid(sample.GPU) {
-				ui.Text(c, m.MonitoringGpu()+" "+percentText(sample.GPU)).
-					FontSize(11).TextColor(toneColor(t, domainmonitor.ToneForPercent(sample.GPU)))
+		// Each metric is one unwrapping text, and the row wraps between them
+		// as whole units. The wider card keeps the English row on one line;
+		// a narrower one moves the whole group rather than splitting a label
+		// from its value.
+		ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.MonitoringDisk()+" "+percentText(disk)).
+				FontSize(11).NoWrap().
+				TextColor(toneColor(t, domainmonitor.ToneForPercent(disk)))
+			ui.Text(c, m.MonitoringLatency()+" "+latencyText(latency)).
+				FontSize(11).NoWrap().
+				TextColor(toneColor(t, domainmonitor.ToneForLatency(latency)))
+			// Keep the GPU slot visible with a dash until the first sample;
+			// a sampled Host without a GPU omits the slot as before.
+			if !ready || domainmonitor.Valid(gpu) {
+				ui.Text(c, m.MonitoringGpu()+" "+percentText(gpu)).
+					FontSize(11).NoWrap().
+					TextColor(toneColor(t, domainmonitor.ToneForPercent(gpu)))
 			}
-			ui.Column(c).Grow(1)
+			ui.Column(c).Grow(1).MinWidth(0)
 			if ui.Button(c, m.MonitoringOpen()).Key("monitor-chart-open-" + string(host.ID)).Clicked() {
 				s.OpenHost(string(host.ID))
 				c.Invalidate()
@@ -432,11 +509,14 @@ func metricTrend(c *ui.Context, label, value string,
 
 func sparkline(c *ui.Context, points []domainmonitor.Point, pick func(domainmonitor.Point) float64,
 	scale float64, color ui.Color) {
+	// A card with no sample has nothing to plot. Reserving an empty plot strip
+	// for each metric pushed the card's action below the 720x480 fold, so
+	// absent or single-point trends take no vertical space at all.
+	if len(points) < 2 || scale <= 0 {
+		return
+	}
 	chart.Plot(c, chart.Axes{}, func(area ui.Element) {
 		area.Draw(func(p *ui.Painter, r ui.Rect) {
-			if len(points) < 2 || scale <= 0 {
-				return
-			}
 			xs := make([]float32, len(points))
 			ys := make([]float32, len(points))
 			start := points[0].At
@@ -464,7 +544,7 @@ func sparkline(c *ui.Context, points []domainmonitor.Point, pick func(domainmoni
 			p.FillPath(chart.Area(r, xs, nil, ys, chart.CurveLinear), color.Alpha(0.12))
 			p.StrokePath(chart.Line(r, xs, ys, chart.CurveLinear), 1.5, color)
 		})
-	}).Height(24).FillWidth()
+	}).Height(18).FillWidth()
 }
 
 func chartPoints(points []domainmonitor.Point, started time.Time, minutes int, now time.Time) []domainmonitor.Point {
@@ -480,86 +560,92 @@ func chartPoints(points []domainmonitor.Point, started time.Time, minutes int, n
 	return points[first:]
 }
 
+// editor is a bounded surface: its fields, Host list, and problem text scroll
+// in the space left above the pinned action rows. At 720x480 Save, Cancel, and
+// Delete therefore stay inside the window even though the form as a whole is
+// taller than the content column.
 func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	form := s.Form()
 	title := m.MonitoringPanelFormCreate()
 	if _, ok := s.findPanel(form.ID); ok {
 		title = m.MonitoringPanelFormEdit()
 	}
-	ui.Text(c, title).FontSize(20).Bold()
+	ui.Text(c, title).FontSize(20).Bold().NoWrap()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.MonitoringName(), func() {
-			ui.TextInput(c, &form.Name).Width(320)
-		})
-		ui.Field(c, m.MonitoringDescription(), func() {
-			ui.TextInput(c, &form.Description).Width(420)
-		})
-		ui.Field(c, m.MonitoringPanelFormView(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.View, domainpreferences.MonitorViewList, m.MonitoringViewList())
-				ui.Radio(c, &form.View, domainpreferences.MonitorViewCharts, m.MonitoringViewCharts())
-			})
-		})
-		ui.Field(c, m.MonitoringPanelFormInterval(), func() {
-			intervals := make([]string, 0, len(domainpreferences.MonitorIntervalChoices))
-			for _, choice := range domainpreferences.MonitorIntervalChoices {
-				intervals = append(intervals, strconv.Itoa(choice))
+	ui.Scroll(c).Grow(1).FillWidth().MinHeight(0).Children(func() {
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Form(c, func() {
+				ui.Field(c, m.MonitoringName(), func() {
+					ui.TextInput(c, &form.Name).FillWidth()
+				})
+				ui.Field(c, m.MonitoringDescription(), func() {
+					ui.TextInput(c, &form.Description).FillWidth()
+				})
+				ui.Field(c, m.MonitoringPanelFormView(), func() {
+					ui.RadioGroup(c, func() {
+						ui.Radio(c, &form.View, domainpreferences.MonitorViewList, m.MonitoringViewList())
+						ui.Radio(c, &form.View, domainpreferences.MonitorViewCharts, m.MonitoringViewCharts())
+					})
+				})
+				ui.Field(c, m.MonitoringPanelFormInterval(), func() {
+					intervals := make([]string, 0, len(domainpreferences.MonitorIntervalChoices))
+					for _, choice := range domainpreferences.MonitorIntervalChoices {
+						intervals = append(intervals, strconv.Itoa(choice))
+					}
+					ui.Select(c, &form.Interval, intervals).Width(80)
+				})
+				ui.Field(c, m.MonitoringPanelFormRange(), func() {
+					ranges := make([]string, 0, len(domainpreferences.MonitorRangeChoices))
+					for _, choice := range domainpreferences.MonitorRangeChoices {
+						ranges = append(ranges, strconv.Itoa(choice))
+					}
+					ui.Select(c, &form.Range, ranges).Width(80)
+				})
+				ui.Field(c, m.MonitoringPanelFormSort(), func() {
+					ui.RadioGroup(c, func() {
+						ui.Radio(c, &form.Sort, domainpreferences.MonitorSortManual, m.MonitoringSortManual())
+						ui.Radio(c, &form.Sort, domainpreferences.MonitorSortName, m.MonitoringSortName())
+					})
+				})
+				ui.Field(c, m.MonitoringPanelHosts(), func() {
+					ui.Text(c, m.MonitoringSelectedCount(len(form.HostIDs))).FontSize(11).TextColor(t.TextMuted)
+				})
+			}).FillWidth()
+
+			ui.Text(c, m.MonitoringPanelFormHostsHint()).FontSize(11).TextColor(t.TextMuted).Wrap()
+			hosts := s.Hosts()
+			if len(hosts) == 0 {
+				ui.Text(c, m.MonitoringNoHostsAvailable()).FontSize(12).TextColor(t.TextMuted)
+			} else {
+				for _, host := range hosts {
+					id := string(host.ID)
+					selected := s.FormHostSelected(id)
+					ui.Row(c).FillWidth().Gap(6).Children(func() {
+						if ui.Checkbox(c, &selected, s.HostLabel(host)+"  "+host.Hostname).Changed() {
+							s.ToggleFormHost(id)
+							c.Invalidate()
+						}
+						ui.Column(c).Grow(1).MinWidth(0)
+						if ui.Button(c, "↑").Key("monitor-up-" + id).Width(28).Clicked() {
+							s.MoveFormHost(id, -1)
+							c.Invalidate()
+						}
+						if ui.Button(c, "↓").Key("monitor-down-" + id).Width(28).Clicked() {
+							s.MoveFormHost(id, 1)
+							c.Invalidate()
+						}
+					})
+				}
 			}
-			ui.Select(c, &form.Interval, intervals).Width(80)
-		})
-		ui.Field(c, m.MonitoringPanelFormRange(), func() {
-			ranges := make([]string, 0, len(domainpreferences.MonitorRangeChoices))
-			for _, choice := range domainpreferences.MonitorRangeChoices {
-				ranges = append(ranges, strconv.Itoa(choice))
+			if problem := problemText(m, s.Problem()); problem != "" {
+				ui.Text(c, problem).FontSize(12).TextColor(t.Danger).Wrap()
 			}
-			ui.Select(c, &form.Range, ranges).Width(80)
-		})
-		ui.Field(c, m.MonitoringPanelFormSort(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.Sort, domainpreferences.MonitorSortManual, m.MonitoringSortManual())
-				ui.Radio(c, &form.Sort, domainpreferences.MonitorSortName, m.MonitoringSortName())
-			})
-		})
-		ui.Field(c, m.MonitoringPanelHosts(), func() {
-			ui.Text(c, m.MonitoringSelectedCount(len(form.HostIDs))).FontSize(11).TextColor(t.TextMuted)
 		})
 	})
 
-	ui.Text(c, m.MonitoringPanelFormHostsHint()).FontSize(11).TextColor(t.TextMuted)
-	hosts := s.Hosts()
-	if len(hosts) == 0 {
-		ui.Text(c, m.MonitoringNoHostsAvailable()).FontSize(12).TextColor(t.TextMuted)
-	} else {
-		ui.Scroll(c).Grow(1).MinHeight(120).Children(func() {
-			for _, host := range hosts {
-				id := string(host.ID)
-				selected := s.FormHostSelected(id)
-				ui.Row(c).FillWidth().Gap(6).Children(func() {
-					if ui.Checkbox(c, &selected, s.HostLabel(host)+"  "+host.Hostname).Changed() {
-						s.ToggleFormHost(id)
-						c.Invalidate()
-					}
-					ui.Column(c).Grow(1)
-					if ui.Button(c, "↑").Key("monitor-up-" + id).Width(28).Clicked() {
-						s.MoveFormHost(id, -1)
-						c.Invalidate()
-					}
-					if ui.Button(c, "↓").Key("monitor-down-" + id).Width(28).Clicked() {
-						s.MoveFormHost(id, 1)
-						c.Invalidate()
-					}
-				})
-			}
-		})
-	}
-
-	if problem := problemText(m, s.Problem()); problem != "" {
-		ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
-	}
 	if s.pendingDelete {
-		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.Text(c, m.MonitoringDeleteConfirm(form.Name)).Grow(1).TextColor(t.Danger)
+		ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+			ui.Text(c, m.MonitoringDeleteConfirm(form.Name)).Grow(1).MinWidth(120).TextColor(t.Danger).Wrap()
 			if ui.Button(c, m.MonitoringCancel()).Clicked() {
 				s.CancelDeletePanel()
 				c.Invalidate()
@@ -570,7 +656,7 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			}
 		})
 	}
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
+	ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
 		if ui.PrimaryButton(c, m.MonitoringSave()).Clicked() {
 			s.SavePanel()
 			c.Invalidate()
