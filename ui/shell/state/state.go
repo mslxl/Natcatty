@@ -125,6 +125,12 @@ type State struct {
 	monitorView       func(*ui.Context)
 	monitorActivate   func()
 	monitorDeactivate func()
+	// sysManagerVisible shows the System manager surface. activate starts the
+	// selected tab and deactivate stops sampling when another surface shows.
+	sysManagerVisible    bool
+	sysManagerView       func(*ui.Context)
+	sysManagerActivate   func()
+	sysManagerDeactivate func()
 	// editorView renders the internal editor and its conflict, unsaved, and
 	// upload-failure prompts above every surface.
 	editorView func(*ui.Context)
@@ -267,6 +273,17 @@ func WithMonitor(view func(*ui.Context), activate, deactivate func()) Option {
 		s.monitorView = view
 		s.monitorActivate = activate
 		s.monitorDeactivate = deactivate
+	}
+}
+
+// WithSystemManager gives the shell the System manager surface. activate
+// starts the selected tab; deactivate stops it when the surface is left, so
+// hiding the manager never leaves ps, ss, or systemctl running.
+func WithSystemManager(view func(*ui.Context), activate, deactivate func()) Option {
+	return func(s *State) {
+		s.sysManagerView = view
+		s.sysManagerActivate = activate
+		s.sysManagerDeactivate = deactivate
 	}
 }
 
@@ -443,6 +460,7 @@ func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
 	s.leaveMonitor()
+	s.leaveSystemManager()
 	s.vaultVisible = true
 	s.logsVisible = false
 	s.sftpVisible = false
@@ -461,6 +479,7 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 // first.
 func (s *State) ShowLogs() {
 	s.leaveMonitor()
+	s.leaveSystemManager()
 	s.logsVisible = true
 	s.vaultVisible = false
 	s.sftpVisible = false
@@ -477,6 +496,7 @@ func (s *State) SFTPView() func(*ui.Context) { return s.sftpView }
 // over it, so a user can return to a Session without leaving SFTP first.
 func (s *State) ShowSFTP() {
 	s.leaveMonitor()
+	s.leaveSystemManager()
 	s.sftpVisible = true
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -492,6 +512,7 @@ func (s *State) MonitorView() func(*ui.Context) { return s.monitorView }
 // ShowMonitor makes the Host monitoring surface visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowMonitor() {
+	s.leaveSystemManager()
 	s.monitorVisible = true
 	s.vaultVisible = false
 	s.logsVisible = false
@@ -511,6 +532,38 @@ func (s *State) leaveMonitor() {
 	s.monitorVisible = false
 	if s.monitorDeactivate != nil {
 		s.monitorDeactivate()
+	}
+}
+
+// SysManagerVisible reports whether the main window shows System manager.
+func (s *State) SysManagerVisible() bool { return s.sysManagerVisible }
+
+// SysManagerView returns the System manager surface the app supplied, or nil.
+func (s *State) SysManagerView() func(*ui.Context) { return s.sysManagerView }
+
+// ShowSystemManager makes the System manager visible and asks it to start
+// sampling. The work Tab strip stays over it like Logs and SFTP.
+func (s *State) ShowSystemManager() {
+	s.leaveMonitor()
+	s.sysManagerVisible = true
+	s.vaultVisible = false
+	s.logsVisible = false
+	s.sftpVisible = false
+	if s.sysManagerActivate != nil {
+		s.sysManagerActivate()
+	}
+	s.RequestRedraw()
+}
+
+// leaveSystemManager hides System manager and stops its samplers. It is a
+// no-op when the surface is already hidden.
+func (s *State) leaveSystemManager() {
+	if !s.sysManagerVisible {
+		return
+	}
+	s.sysManagerVisible = false
+	if s.sysManagerDeactivate != nil {
+		s.sysManagerDeactivate()
 	}
 }
 

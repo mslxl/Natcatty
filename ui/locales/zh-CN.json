@@ -2137,5 +2137,347 @@
   "monitoringPanelFormInterval": "刷新间隔（秒）",
   "monitoringPanelFormRange": "历史范围（分钟）",
   "monitoringPanelFormSort": "主机顺序",
-  "monitoringPanelFormHostsHint": "选择要监控的主机。手动排序时使用此顺序。"
+  "monitoringPanelFormHostsHint": "选择要监控的主机。手动排序时使用此顺序。",
+  "navSysManager": "系统",
+  "sysManagerTitle": "系统管理器",
+  "sysManagerHost": "主机",
+  "sysManagerRefresh": "刷新间隔",
+  "sysManagerRefreshNow": "立即刷新",
+  "sysManagerSeconds": "{seconds} 秒",
+  "@sysManagerSeconds": {
+    "description": "The refresh interval in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerTabOverview": "概览",
+  "sysManagerTabProcesses": "进程",
+  "sysManagerTabPorts": "端口",
+  "sysManagerTabServices": "服务",
+  "sysManagerStatusIdle": "未加载",
+  "sysManagerStatusConnecting": "连接中…",
+  "sysManagerStatusLive": "已连接",
+  "sysManagerStatusLogin": "登录",
+  "sysManagerStatusError": "错误",
+  "sysManagerStatusUnsupported": "不支持",
+  "sysManagerStatusUnavailable": "不可用",
+  "sysManagerReasonHostKey": "主机密钥未信任",
+  "sysManagerReasonAuth": "认证失败",
+  "sysManagerReasonNetwork": "网络不可用",
+  "sysManagerReasonTimeout": "已超时",
+  "sysManagerReasonOS": "不支持此操作系统",
+  "sysManagerReasonCancelled": "已取消",
+  "sysManagerReasonInternal": "系统管理器错误",
+  "sysManagerReasonUnsupported": "不支持此连接",
+  "sysManagerReasonPermission": "权限被拒绝",
+  "sysManagerReasonMissingProcesses": "此主机上没有 ps 和 top。",
+  "sysManagerReasonMissingPorts": "此主机上没有 ss、netstat 和 lsof。",
+  "sysManagerReasonMissingSystemctl": "此主机上没有 systemctl。",
+  "sysManagerNoHosts": "保管库中没有主机。",
+  "sysManagerNoHostSelected": "请选择要查看的主机。",
+  "sysManagerProblemLoadHosts": "无法读取主机列表。",
+  "sysManagerProblemSave": "无法保存刷新间隔。",
+  "sysManagerProblemStart": "无法开始采样。",
+  "sysManagerProblemNoHost": "请先选择主机。",
+  "sysManagerProblemInternal": "系统管理器失败。",
+  "sysManagerProblemActionData": "所选行已不存在。",
+  "sysManagerSearchProcesses": "搜索进程…",
+  "sysManagerSearchPorts": "搜索端口…",
+  "sysManagerSearchServices": "搜索服务…",
+  "sysManagerProcessesCount": "{count} 个进程",
+  "@sysManagerProcessesCount": {
+    "description": "The number of processes matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "sysManagerPortsCount": "{count} 个监听",
+  "@sysManagerPortsCount": {
+    "description": "The number of listening sockets matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerServicesCount": "{count} 个单元",
+  "@sysManagerServicesCount": {
+    "description": "The number of systemd units matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerUpdatedSeconds": "{seconds} 秒前更新",
+  "@sysManagerUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerNoProcesses": "未报告进程。",
+  "sysManagerNoPorts": "未报告监听端口。",
+  "sysManagerNoServices": "未找到 systemd 服务。",
+  "sysManagerNoMatches": "没有匹配项。",
+  "sysManagerProcessHint": "选择一个进程以发送信号。",
+  "sysManagerPortHint": "选择一个监听端口以向其进程发送信号。",
+  "sysManagerServiceHint": "选择一个单元以启动、停止或重启。",
+  "sysManagerPid": "PID",
+  "sysManagerUser": "用户",
+  "sysManagerCPU": "CPU",
+  "sysManagerMemory": "内存",
+  "sysManagerCommand": "命令",
+  "sysManagerState": "状态",
+  "sysManagerPort": "端口",
+  "sysManagerProtocol": "协议",
+  "sysManagerAddress": "地址",
+  "sysManagerProcess": "进程",
+  "sysManagerUnit": "单元",
+  "sysManagerScope": "范围",
+  "sysManagerActive": "活动",
+  "sysManagerDescription": "描述",
+  "sysManagerSelectedProcess": "进程 {pid} · {command}",
+  "@sysManagerSelectedProcess": {
+    "description": "The process chosen in the table.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "nginx: worker"
+      }
+    }
+  },
+  "sysManagerSelectedPort": "{protocol} {address}:{port} · PID {pid}",
+  "@sysManagerSelectedPort": {
+    "description": "The listening socket chosen in the table.",
+    "placeholders": {
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "pid": {
+        "type": "int",
+        "example": "123"
+      }
+    }
+  },
+  "sysManagerSelectedService": "{name} · {scope}",
+  "@sysManagerSelectedService": {
+    "description": "The systemd unit chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "scope": {
+        "type": "String",
+        "example": "system"
+      }
+    }
+  },
+  "sysManagerScopeSystem": "系统",
+  "sysManagerScopeUser": "用户",
+  "sysManagerStop": "停止",
+  "sysManagerContinue": "继续",
+  "sysManagerTerminate": "终止",
+  "sysManagerKill": "强制结束",
+  "sysManagerStart": "启动",
+  "sysManagerRestart": "重启",
+  "sysManagerCancel": "取消",
+  "sysManagerConfirmSignal": "发送 SIG{signal} 至进程 {pid}？\n\n命令：{command}",
+  "@sysManagerConfirmSignal": {
+    "description": "Asks before signalling a process, naming the target and the exact command.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "KILL"
+      },
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerConfirmPort": "向进程 {pid}（占用 {address}:{port}/{protocol}）发送 SIGTERM？\n\n命令：{command}",
+  "@sysManagerConfirmPort": {
+    "description": "Asks before signalling the process that owns a listening socket.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -15 1234"
+      }
+    }
+  },
+  "sysManagerConfirmService": "{action} {name}？\n\n命令：{command}",
+  "@sysManagerConfirmService": {
+    "description": "Asks before starting, stopping, or restarting a systemd unit.",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Restart"
+      },
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "command": {
+        "type": "String",
+        "example": "systemctl restart 'nginx.service'"
+      }
+    }
+  },
+  "sysManagerActionRunning": "正在执行 {command}…",
+  "@sysManagerActionRunning": {
+    "description": "A confirmed command that is still running.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionSucceeded": "已完成：{command}",
+  "@sysManagerActionSucceeded": {
+    "description": "A confirmed command that finished.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionFailed": "操作失败。",
+  "sysManagerActionCancelled": "操作已取消。",
+  "sysManagerActionPermission": "权限被拒绝。",
+  "sysManagerLatency": "延迟",
+  "sysManagerLatencyValue": "{milliseconds} 毫秒",
+  "@sysManagerLatencyValue": {
+    "description": "The last sample's round-trip latency.",
+    "placeholders": {
+      "milliseconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerOverviewSystem": "系统",
+  "sysManagerOverviewHostname": "主机名",
+  "sysManagerOverviewOS": "系统",
+  "sysManagerOverviewKernel": "内核",
+  "sysManagerOverviewUptime": "运行时间",
+  "sysManagerOverviewLoad": "负载",
+  "sysManagerOverviewCores": "{count} 个核心",
+  "@sysManagerOverviewCores": {
+    "description": "The Host's CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerOverviewCPU": "CPU",
+  "sysManagerOverviewMemory": "内存",
+  "sysManagerOverviewSwap": "交换",
+  "sysManagerOverviewDisk": "磁盘",
+  "sysManagerOverviewEmpty": "尚无系统概览数据。",
+  "sysManagerOverviewUsedOf": "{used} / {total}",
+  "@sysManagerOverviewUsedOf": {
+    "description": "A used amount beside its total.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "2.0 GB"
+      },
+      "total": {
+        "type": "String",
+        "example": "8.0 GB"
+      }
+    }
+  },
+  "sysManagerDurationDays": "{days}天 {hours}小时",
+  "@sysManagerDurationDays": {
+    "description": "An uptime of days and hours.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "3"
+      },
+      "hours": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerDurationHours": "{hours}小时 {minutes}分",
+  "@sysManagerDurationHours": {
+    "description": "An uptime of hours and minutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "4"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerDurationMinutes": "{minutes}分",
+  "@sysManagerDurationMinutes": {
+    "description": "An uptime of minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerUnknown": "—",
+  "sysManagerOverviewResources": "资源",
+  "sysManagerPortOwnerUnknown": "未知进程",
+  "sysManagerOverviewCoresLabel": "核心"
 }
