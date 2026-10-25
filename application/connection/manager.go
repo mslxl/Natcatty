@@ -58,6 +58,11 @@ type Request struct {
 	// SingleChannel marks a bastion that accepts one session channel. Such a
 	// transport is never reused and never serves another lease.
 	SingleChannel bool
+	// Dedicated asks for a fresh transport that the pool never lends to
+	// another lease and never parks for reuse. The host-routed browser uses it
+	// so closing a browser cannot disturb a Session and two browsers on one
+	// Host never share network state.
+	Dedicated bool
 	// X11Forwarding requests X11 forwarding on the connection's shell. X11
 	// transports never enter the general reuse pool.
 	X11Forwarding bool
