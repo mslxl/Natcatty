@@ -57,18 +57,20 @@ type Monitor struct {
 	ColumnWidths  map[string]int `json:"columnWidths,omitempty"`
 }
 
-// MonitorColumnKeys lists every table column in the original's order.
+// MonitorColumnKeys lists every table column. Status follows the Host so the
+// typed state is visible in the default layout of the shell's ~820-DIP
+// content column at 1100x720, before the optional detail columns.
 var MonitorColumnKeys = []string{
-	"host", "latency", "tags", "notes", "cpu", "memory", "disks",
-	"network", "updated", "status", "terminal",
+	"host", "status", "latency", "cpu", "memory", "disks", "network",
+	"updated", "tags", "notes", "terminal",
 }
 
-// MonitorColumnDefaults are the original's initial widths in device-
-// independent pixels.
+// MonitorColumnDefaults are the initial widths in device-independent pixels.
+// Status is wide enough for a reason such as "Operating system unsupported".
 var MonitorColumnDefaults = map[string]int{
-	"host": 220, "latency": 90, "tags": 150, "notes": 180, "cpu": 120,
+	"host": 220, "status": 150, "latency": 90, "cpu": 120,
 	"memory": 120, "disks": 240, "network": 150, "updated": 110,
-	"status": 100, "terminal": 56,
+	"tags": 150, "notes": 180, "terminal": 56,
 }
 
 // monitorOptionalColumns are the only columns a user may hide. Host and
