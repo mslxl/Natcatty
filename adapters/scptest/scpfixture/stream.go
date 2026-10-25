@@ -78,8 +78,18 @@ func (s *fixtureStream) ExitCode() (int, error) {
 
 // Close tears down both directions and both stderr ends. It is safe to call
 // more than once and from a context watcher.
+//
+// After the handler has finished, the SSH server has already closed the
+// channel. x/crypto's Session.Close then sends CHANNEL_CLOSE on a channel the
+// peer closed, and writePacket reports io.EOF because sentClose is set. A real
+// exec stream (see adapters/ssh.execChannel) returns that EOF from Close, so
+// the fixture returns it too: without this, an SCP upload that succeeds at the
+// protocol level but fails on teardown looks green in-process and fails
+// against a real sshd.
 func (s *fixtureStream) Close() error {
+	first := false
 	s.closeOnce.Do(func() {
+		first = true
 		_ = s.clientWriter.Close()
 		_ = s.serverReader.Close()
 		_ = s.serverWriter.CloseWithError(io.ErrClosedPipe)
@@ -87,5 +97,16 @@ func (s *fixtureStream) Close() error {
 		_ = s.stderrWriter.CloseWithError(io.ErrClosedPipe)
 		_ = s.stderrReader.Close()
 	})
+	// Only the call that actually tears the channel down observes the peer
+	// close; a repeated Close returns nil, as the once-guarded exec channel
+	// does. The done check stays inside this branch so a close that aborts a
+	// running handler cannot be mistaken for a clean peer close.
+	if first {
+		select {
+		case <-s.done:
+			return io.EOF
+		default:
+		}
+	}
 	return nil
 }
