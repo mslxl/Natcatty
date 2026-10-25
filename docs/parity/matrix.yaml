@@ -2655,6 +2655,92 @@
   status: verified
   notes: "Sort fields and hidden-file state are per Tab; the parent entry always stays visible and first."
 
+- id: sftp.file-associations
+  area: sftp-transfer
+  feature: File associations can be created, edited, and removed per extension
+  original_paths:
+    - application/state/useSftpFileAssociations.ts
+    - components/settings/tabs/SettingsFileAssociationsTab.tsx
+  module: ui/settings
+  tickets: [37]
+  acceptance_tests:
+    - domain/preferences.TestSetAssociationAddsReplacesAndDoesNotAlias
+    - domain/preferences.TestSetAssociationRefusesIncompleteExternalApplications
+    - domain/preferences.TestRemoveAssociationIgnoresUnknownExtensions
+    - domain/preferences.TestNormalizeRepairsOpenersAndAssociations
+    - ui/settings.TestAssociationsAreAddedEditedAndRemoved
+    - ui/settings.TestAssociationFormValidatesAndReportsSaveFailures
+    - ui/settings.TestAssociationsViewAddsEditsAndRemovesThroughTheControls
+    - ui/settings.TestAssociationsViewShowsValidationProblems
+    - app.TestTicket37CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Extensions normalize to lowercase without a leading dot, and saving a renamed extension replaces the old entry. The ticket 37 self-test drives the real Settings controls through the application picker seam and the real preferences file."
+
+- id: sftp.default-file-opener
+  area: sftp-transfer
+  feature: The default opener selects the internal editor, the system editor, or an external application
+  original_paths:
+    - application/state/useSftpFileAssociations.ts
+    - components/FileOpenerDialog.tsx
+    - components/settings/tabs/SettingsFileAssociationsTab.tsx
+  module: domain/preferences
+  tickets: [37]
+  acceptance_tests:
+    - domain/preferences.TestOpenerResolutionPrefersTheAssociationThenTheDefault
+    - domain/preferences.TestZeroValueSFTPEditorResolvesToTheSystemOpener
+    - domain/preferences.TestDefaultOpenerIsAResettableField
+    - ui/settings.TestSelectingTheDefaultOpenerPersistsEachKind
+    - ui/settings.TestSelectingExternalWithoutAnApplicationLeavesTheDefaultAlone
+    - ui/settings.TestAssociationsViewChoosesAnExternalApplicationAndResetsTheDefault
+    - app.TestTicket37CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The original also offered an always-ask choice; the ticket's three kinds make the shipped default the system editor, and selecting the external kind requires an application. Opening with the internal editor reports editor-unavailable until ticket 38 provides the editor surface."
+
+- id: sftp.open-by-association
+  area: sftp-transfer
+  feature: Opening a file uses the configured association
+  original_paths:
+    - components/sftp/hooks/useSftpViewFileOps.ts
+    - application/state/useSftpFileAssociations.ts
+  module: ui/transfer
+  tickets: [37]
+  acceptance_tests:
+    - application/fileopen.TestAssociationSelectsTheOpener
+    - application/fileopen.TestExternalAssociationRunsTheChosenApplication
+    - application/fileopen.TestRemoteFileIsMaterializedBeforeOpening
+    - application/fileopen.TestRemoteFileNameCannotEscapeTheTempDirectory
+    - application/fileopen.TestFailedLaunchOfAMaterializedFileRemovesTheTempDirectory
+    - application/fileopen.TestCancellationAfterMaterializingRemovesTheTempDirectory
+    - application/fileopen.TestEditorFailureIsClassifiedSeparatelyFromALaunchFailure
+    - application/fileopen.TestRemoteSourceAndLaunchFailuresAreClassified
+    - adapters/launch.TestOpenSystemUsesThePlatformHandler
+    - adapters/launch.TestOpenApplicationUsesTheApplicationCommand
+    - ui/transfer/state.TestOpenFileUsesTheConfiguredAssociationForLocalFiles
+    - ui/transfer/state.TestOpenFileHandsRemoteFilesToTheOpenerAsASource
+    - ui/transfer/state.TestOpenFailureKindMapping
+    - app.TestTicket37CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A remote file is streamed into a fresh temp directory under a sanitized name before the association's application starts; launch, download, and source failures produce distinct status-line notices."
+
+- id: sftp.open-default-fallback
+  area: sftp-transfer
+  feature: Files without a matching association, including unknown and missing extensions, use the default opener
+  original_paths:
+    - application/state/sftp/utils.ts
+    - application/state/useSftpFileAssociations.ts
+  module: ui/transfer
+  tickets: [37]
+  acceptance_tests:
+    - domain/preferences.TestFileExtensionReadsTheLastSuffix
+    - domain/preferences.TestOpenerResolutionPrefersTheAssociationThenTheDefault
+    - application/fileopen.TestUnknownExtensionUsesTheDefaultOpener
+    - application/fileopen.TestInternalOpenerWithoutAnEditorIsReportedBeforeDownloading
+    - ui/transfer/state.TestOpenFailureReachesTheStatusLine
+    - app.TestTicket37CheckRunsThroughTheKeyboard
+    - app.TestTicket37CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "A name with no dot, a leading-dot name, or a trailing dot has no extension and takes the default opener; the ticket 37 self-test opens an unlisted extension and an extensionless file, then reads both settings back through a fresh preferences service."
+
 - id: sftp.upload-download
   area: sftp-transfer
   feature: Upload and download with streaming progress and cancellation

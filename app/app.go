@@ -19,6 +19,7 @@ import (
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	"github.com/mslxl/natcatty/adapters/histfile"
+	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
 	"github.com/mslxl/natcatty/adapters/localpty"
 	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
@@ -31,6 +32,7 @@ import (
 	"github.com/mslxl/natcatty/application/command"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appdesktop "github.com/mslxl/natcatty/application/desktop"
+	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
@@ -87,6 +89,8 @@ func run(afterReady func(hostWindow)) error {
 	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
 	var transferState *transferstate.State
+	var fileOpenService *appfileopen.Service
+	var associationsState *settings.AssociationsState
 	var shellState *state.State
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
@@ -197,6 +201,16 @@ func run(afterReady func(hostWindow)) error {
 	}
 	preferencesState = settings.NewPreferencesState(preferenceService,
 		settings.WithPreferencesRedrawRequest(invalidate))
+
+	// File associations and the default opener live in the same preferences
+	// document. The launch adapter is the only platform-aware piece; the
+	// internal editor is deliberately absent until ticket 38 supplies it, so
+	// choosing that opener reports it as unavailable instead of silently
+	// doing nothing.
+	fileOpenService = appfileopen.New(preferenceService, adapterslaunch.New())
+	associationsState = settings.NewAssociationsState(preferenceService,
+		settings.WithApplicationPicker(chooseOpenApplication),
+		settings.WithAssociationsRedrawRequest(invalidate))
 
 	// Imported terminal color schemes live beside the preferences. The
 	// preference stores only the scheme ID, so an import is a second document
@@ -424,6 +438,9 @@ func run(afterReady func(hostWindow)) error {
 			focused, _ := shellState.FocusedSessionID()
 			return focused
 		}),
+		// Opening a file resolves its association at call time, so a Settings
+		// change applies without reopening the pane.
+		transferstate.WithFileOpener(fileOpenService.Open),
 	)
 
 	// Port Forwarding Rules reuse the same Vault routes and connection pool as
@@ -750,13 +767,14 @@ func run(afterReady func(hostWindow)) error {
 		shellState,
 		func() func(*ui.Context) {
 			return settings.ViewWithSettings(settings.Config{
-				Lock:        settingsState,
-				Desktop:     desktopState,
-				Terminal:    terminalState,
-				Themes:      themesState,
-				Preferences: preferencesState,
-				Shortcuts:   shortcutsState,
-				Search:      searchState,
+				Lock:         settingsState,
+				Desktop:      desktopState,
+				Terminal:     terminalState,
+				Themes:       themesState,
+				Preferences:  preferencesState,
+				Associations: associationsState,
+				Shortcuts:    shortcutsState,
+				Search:       searchState,
 			})
 		},
 		func() string { return mygo.App.Locale() },

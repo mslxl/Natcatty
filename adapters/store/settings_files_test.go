@@ -68,7 +68,7 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings != domainpreferences.Defaults() {
+	if !domainpreferences.Equal(settings, domainpreferences.Defaults()) {
 		t.Fatalf("missing file = %+v", settings)
 	}
 
@@ -98,7 +98,7 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != domainpreferences.Defaults() {
+	if !domainpreferences.Equal(loaded, domainpreferences.Defaults()) {
 		t.Fatalf("round trip = %+v", loaded)
 	}
 }

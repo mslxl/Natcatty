@@ -6,10 +6,13 @@ package state
 
 import (
 	"context"
+	"errors"
+	"io"
 	"sync"
 
 	"github.com/egoist/mygo/ui"
 
+	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
@@ -195,6 +198,10 @@ type State struct {
 	// background Session's prompt does not steer an SFTP pane. It is read on
 	// the UI thread.
 	focusedSession func() model.SessionID
+	// openFile opens a file through the configured association. The app wires
+	// the application service; a surface without one reports that opening is
+	// unavailable.
+	openFile func(context.Context, appfileopen.Request) (appfileopen.Result, error)
 
 	panes   [2]*Pane
 	focused Side
@@ -277,6 +284,12 @@ func WithPreferences(settings func() domainpreferences.SFTPEditor) Option {
 // the pane for its Host regardless of focus.
 func WithFocusedSession(fn func() model.SessionID) Option {
 	return func(s *State) { s.focusedSession = fn }
+}
+
+// WithFileOpener supplies the association-aware open service. Without it,
+// opening a file only explains that opening is unavailable.
+func WithFileOpener(open func(context.Context, appfileopen.Request) (appfileopen.Result, error)) Option {
+	return func(s *State) { s.openFile = open }
 }
 
 // sftpSettings returns the current SFTP settings snapshot.
@@ -997,8 +1010,11 @@ func (s *State) Click(side Side, entry domainsftp.Entry, mods ui.Modifiers, doub
 	s.RequestRedraw()
 }
 
-// Open activates a row: a directory navigates, a file starts a transfer to
-// the other pane when it can, otherwise it is reported as unavailable.
+// Open activates a row: a directory navigates and a file opens through the
+// association the user configured for its extension. A remote file is handed
+// to the service as a source, so the service can materialize it before a local
+// application reads it. Without an opener, the surface explains that opening
+// is unavailable instead of doing nothing.
 func (s *State) Open(side Side, entry domainsftp.Entry) {
 	tab := s.Tab(side)
 	if tab == nil {
@@ -1008,8 +1024,74 @@ func (s *State) Open(side Side, entry domainsftp.Entry) {
 		s.loadAtUser(tab, entry.Path, true)
 		return
 	}
-	s.notice = "open-file"
+	if s.openFile == nil {
+		s.notice = "open-file"
+		s.RequestRedraw()
+		return
+	}
+	request := appfileopen.Request{Name: entry.Name, Size: entry.Size}
+	if tab.Kind == KindLocal {
+		request.LocalPath = entry.Path
+	} else {
+		request.Remote = true
+		fs := tab.FS
+		request.Source = func(ctx context.Context) (io.ReadCloser, error) {
+			if fs == nil {
+				return nil, errors.New("the remote pane has no connection")
+			}
+			return fs.Open(ctx, entry.Path)
+		}
+	}
+	open := s.openFile
+	s.notice = ""
+	go func() {
+		result, err := open(s.ctx, request)
+		s.post(func() { s.finishOpen(result, err) })
+	}()
+}
+
+// finishOpen records the open outcome. A remote download can take longer than
+// a frame, so the result always arrives through the queue.
+func (s *State) finishOpen(result appfileopen.Result, err error) {
+	if s.ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		kind, _ := appfileopen.KindOf(err)
+		s.notice = openFailureNotice(kind)
+		s.RequestRedraw()
+		return
+	}
+	switch result.Kind {
+	case domainpreferences.OpenerInternal:
+		s.notice = "opened-internal"
+	case domainpreferences.OpenerExternal:
+		s.notice = "opened-external"
+	default:
+		s.notice = "opened-system"
+	}
 	s.RequestRedraw()
+}
+
+// openFailureNotice maps the service's failure classification to a localized
+// status code.
+func openFailureNotice(kind appfileopen.ErrorKind) string {
+	switch kind {
+	case appfileopen.ErrorEditorUnavailable:
+		return "open-editor-unavailable"
+	case appfileopen.ErrorEditorFailed:
+		return "open-editor-failed"
+	case appfileopen.ErrorDownload:
+		return "open-download-failed"
+	case appfileopen.ErrorSource:
+		return "open-source-failed"
+	case appfileopen.ErrorLaunch:
+		return "open-application-missing"
+	case appfileopen.ErrorCancelled:
+		return "open-cancelled"
+	default:
+		return "open-failed"
+	}
 }
 
 // SelectAll selects every visible entry except the parent entry.

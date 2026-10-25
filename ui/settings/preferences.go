@@ -132,7 +132,7 @@ func (s *PreferencesState) ResetAll() bool {
 // IsDefault reports whether field currently holds its default value. It is
 // what decides whether the row needs a reset control.
 func (s *PreferencesState) IsDefault(field domain.Field) bool {
-	return domain.ResetField(s.Settings(), field) == s.Settings()
+	return domain.Equal(domain.ResetField(s.Settings(), field), s.Settings())
 }
 
 func (s *PreferencesState) redraw() {

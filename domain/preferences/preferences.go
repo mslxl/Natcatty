@@ -135,6 +135,10 @@ type SFTPEditor struct {
 	DefaultViewMode     ViewMode            `json:"defaultViewMode"`
 	EditorWordWrap      bool                `json:"editorWordWrap"`
 	EditorFontSize      float64             `json:"editorFontSize"`
+	// DefaultOpener opens a file whose extension has no association.
+	DefaultOpener Opener `json:"defaultOpener"`
+	// FileAssociations override the default opener per extension.
+	FileAssociations []FileAssociation `json:"fileAssociations,omitempty"`
 }
 
 // Logs group holds the diagnostics settings that are not per-Session logging.
@@ -217,6 +221,10 @@ func Defaults() Settings {
 			DefaultViewMode:     ViewList,
 			EditorWordWrap:      false,
 			EditorFontSize:      DefaultEditorFontSize,
+			// The original asked on every open by default. This build must
+			// choose one of the three openers, and the system association is
+			// the least surprising fallback.
+			DefaultOpener: Opener{Kind: OpenerSystem},
 		},
 		Logs:     Logs{SSHDebug: false},
 		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
@@ -278,6 +286,9 @@ func Normalize(settings Settings) Settings {
 	}
 	settings.SFTPEditor.EditorFontSize = clampFont(settings.SFTPEditor.EditorFontSize,
 		DefaultEditorFontSize, MinEditorFontSize, MaxEditorFontSize)
+	settings.SFTPEditor.DefaultOpener = NormalizeOpener(settings.SFTPEditor.DefaultOpener)
+	settings.SFTPEditor.FileAssociations =
+		NormalizeFileAssociations(settings.SFTPEditor.FileAssociations)
 
 	switch settings.Sync.ConflictStrategy {
 	case SyncNewest, SyncLocal, SyncRemote:
@@ -373,6 +384,7 @@ const (
 	FieldDefaultViewMode             Field = "sftpEditor.defaultViewMode"
 	FieldEditorWordWrap              Field = "sftpEditor.editorWordWrap"
 	FieldEditorFontSize              Field = "sftpEditor.editorFontSize"
+	FieldDefaultOpener               Field = "sftpEditor.defaultOpener"
 	FieldSSHDebug                    Field = "logs.sshDebug"
 	FieldSyncEnabled                 Field = "sync.enabled"
 	FieldSyncAutoSync                Field = "sync.autoSync"
@@ -396,6 +408,7 @@ func Fields() []Field {
 		FieldDoubleClickBehavior, FieldAutoSync, FieldShowHiddenFiles,
 		FieldUseCompressedUpload, FieldAutoOpenSidebar, FieldFollowTerminalCwd,
 		FieldDefaultViewMode, FieldEditorWordWrap, FieldEditorFontSize,
+		FieldDefaultOpener,
 		FieldSSHDebug,
 		FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider,
@@ -418,7 +431,8 @@ func GroupOf(field Field) (Group, bool) {
 		return GroupLayout, true
 	case FieldDoubleClickBehavior, FieldAutoSync, FieldShowHiddenFiles,
 		FieldUseCompressedUpload, FieldAutoOpenSidebar, FieldFollowTerminalCwd,
-		FieldDefaultViewMode, FieldEditorWordWrap, FieldEditorFontSize:
+		FieldDefaultViewMode, FieldEditorWordWrap, FieldEditorFontSize,
+		FieldDefaultOpener:
 		return GroupSFTPEditor, true
 	case FieldSSHDebug:
 		return GroupLogs, true
@@ -495,6 +509,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.SFTPEditor.EditorWordWrap = defaults.SFTPEditor.EditorWordWrap
 	case FieldEditorFontSize:
 		settings.SFTPEditor.EditorFontSize = defaults.SFTPEditor.EditorFontSize
+	case FieldDefaultOpener:
+		settings.SFTPEditor.DefaultOpener = defaults.SFTPEditor.DefaultOpener
 	case FieldSSHDebug:
 		settings.Logs.SSHDebug = defaults.Logs.SSHDebug
 	case FieldSyncEnabled:
