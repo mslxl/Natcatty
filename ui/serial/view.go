@@ -9,6 +9,20 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
+// The dialog keeps its action row inside the card at the 720x480 minimum
+// window: the fields scroll when the card reaches the height budget, while the
+// warning, error, and action rows stay pinned below the scroll area.
+const (
+	dialogWidth           float32 = 520
+	dialogField           float32 = 220
+	dialogGap             float32 = 10
+	dialogScrollMinHeight float32 = 120
+	// dialogFixedHeight covers the rows that do not scroll: title,
+	// description, a warning and an error line, the action row, and the gaps
+	// between them.
+	dialogFixedHeight float32 = 160
+)
+
 // View renders the serial connection dialog. It is a no-op while the dialog is
 // hidden, so the shell can call it unconditionally above the other surfaces.
 func View(s *State) func(*ui.Context) {
@@ -21,32 +35,28 @@ func View(s *State) func(*ui.Context) {
 
 		open := true
 		ui.Modal(c, &open, func() {
-			ui.Column(c).Width(520).Padding(20).Gap(10).Children(func() {
+			ui.Column(c).Width(dialogWidth).Padding(20).Gap(dialogGap).Children(func() {
 				ui.Text(c, m.SerialTitle()).FontSize(18).Bold()
 				ui.Text(c, m.SerialDescription()).FontSize(12).TextColor(t.TextMuted)
 
-				portField(c, s, m, t)
-				baudField(c, s, m, t)
+				ui.Scroll(c).FillWidth().MaxHeight(formViewport(c, t)).Children(func() {
+					ui.Column(c).FillWidth().Gap(dialogGap).Children(func() {
+						portField(c, s, m, t)
+						baudField(c, s, m, t)
 
-				ui.Row(c).Gap(12).Children(func() {
-					dataBitsField(c, s, m)
-					stopBitsField(c, s, m)
+						ui.Row(c).FillWidth().Gap(12).Children(func() {
+							dataBitsField(c, s, m)
+							stopBitsField(c, s, m)
+						})
+
+						ui.Row(c).FillWidth().Gap(12).Children(func() {
+							parityField(c, s, m)
+							flowField(c, s, m)
+						})
+					})
 				})
-				if s.StopBitsNeedWarning() {
-					ui.Text(c, m.SerialStopBitsWarning()).FontSize(11).TextColor(t.TextMuted)
-				}
 
-				ui.Row(c).Gap(12).Children(func() {
-					parityField(c, s, m)
-					flowField(c, s, m)
-				})
-
-				if s.PortsError() != nil {
-					ui.Text(c, m.SerialPortsFailed()).FontSize(12).TextColor(t.Danger)
-				}
-				if err := s.Problem(); err != nil {
-					ui.Text(c, ProblemText(m, err)).TextColor(t.Danger)
-				}
+				statusView(c, s, m, t)
 
 				ui.Row(c).Gap(8).Children(func() {
 					if ui.PrimaryButton(c, m.SerialConnect()).Key("serial-connect").Clicked() {
@@ -66,6 +76,38 @@ func View(s *State) func(*ui.Context) {
 			s.Hide()
 		}
 	}
+}
+
+// formViewport is the height the scrolling fields may take. Modal caps the
+// card at height-Space(10) and pads the panel and this column by Space(5) on
+// each side, so the field viewport is what remains after those paddings and
+// the fixed rows.
+func formViewport(c *ui.Context, t *ui.Theme) float32 {
+	_, height := c.Size()
+	return max(dialogScrollMinHeight, height-t.Space(30)-dialogFixedHeight)
+}
+
+// statusView shows the stop-bits warning and any enumeration or connection
+// failure below the scrolling fields, so they stay visible when the fields
+// themselves scroll at the minimum window size.
+func statusView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	warning := s.StopBitsNeedWarning()
+	portsFailed := s.PortsError() != nil
+	problem := s.Problem()
+	if !warning && !portsFailed && problem == nil {
+		return
+	}
+	ui.Column(c).FillWidth().Gap(4).Children(func() {
+		if warning {
+			ui.Text(c, m.SerialStopBitsWarning()).FontSize(11).TextColor(t.TextMuted)
+		}
+		if portsFailed {
+			ui.Text(c, m.SerialPortsFailed()).FontSize(12).TextColor(t.Danger)
+		}
+		if problem != nil {
+			ui.Text(c, ProblemText(m, problem)).FontSize(12).TextColor(t.Danger)
+		}
+	})
 }
 
 // portField shows the detected ports as quick choices above the editable path.
@@ -120,18 +162,30 @@ func portsView(c *ui.Context, s *State, ports []domainserial.PortInfo) {
 
 // baudField is editable so a device outside the catalog's usual rates can
 // still be reached; validation and the platform capability check run on
-// Connect. The base combobox updates the bound text while typing, unlike the
-// styled Combobox, which only commits a listed choice.
+// Connect. It is built on the base combobox, unlike the styled Combobox, which
+// only commits a listed choice, but it takes the styled look and the down
+// chevron so it reads as a drop-down with the other fields.
 func baudField(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	options := make([]string, 0, len(domainserial.BaudRates))
 	for _, rate := range domainserial.BaudRates {
 		options = append(options, strconv.Itoa(rate))
 	}
 	baud := s.BaudRate()
-	box := ui.ComboboxBase(c.Key("serial-baud"), &baud)
-	box.Input.Label(m.SerialBaudRate()).
-		Placeholder(m.SerialBaudRatePlaceholder()).
-		Width(240)
+	var box ui.ComboboxParts
+	ui.Field(c, m.SerialBaudRate(), func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(t.Space(1.5)).
+			Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).
+			Background(t.Surface).Border(1, t.Border).Children(func() {
+			box = ui.ComboboxBase(c.Key("serial-baud"), &baud)
+			box.Input.Grow(1).MinWidth(0).Placeholder(m.SerialBaudRatePlaceholder())
+			arrow := ui.Text(c, "▾").FontSize(10).TextColor(t.TextMuted)
+			arrow.OnClick(func() {
+				box.SetOpen(!box.Open())
+				box.Input.Focus()
+			})
+		})
+	}).Width(dialogField)
+
 	box.Popup(func(panel ui.Element) {
 		panel.Padding(4).Background(t.Background).Border(1, t.Border).Radius(t.Radius)
 		for _, rate := range options {
@@ -159,7 +213,9 @@ func dataBitsField(c *ui.Context, s *State, m locales.Messages) {
 	if !contains(labels, chosen) {
 		chosen = "8"
 	}
-	ui.Select(c.Key("serial-data-bits"), &chosen, labels).Label(m.SerialDataBits()).Width(220)
+	ui.Field(c, m.SerialDataBits(), func() {
+		ui.Select(c.Key("serial-data-bits"), &chosen, labels).FillWidth()
+	}).Width(dialogField)
 	if chosen != s.DataBits() {
 		s.SetDataBits(chosen)
 	}
@@ -178,7 +234,9 @@ func stopBitsField(c *ui.Context, s *State, m locales.Messages) {
 	if !contains(labels, chosen) {
 		chosen = labels[0]
 	}
-	ui.Select(c.Key("serial-stop-bits"), &chosen, labels).Label(m.SerialStopBits()).Width(220)
+	ui.Field(c, m.SerialStopBits(), func() {
+		ui.Select(c.Key("serial-stop-bits"), &chosen, labels).FillWidth()
+	}).Width(dialogField)
 	if chosen != s.StopBits() {
 		s.SetStopBits(chosen)
 	}
@@ -232,7 +290,9 @@ func choice(c *ui.Context, label, key, current string,
 	if index >= 0 {
 		selected = labels[index]
 	}
-	ui.Select(c.Key(key), &selected, labels).Label(label).Width(220)
+	ui.Field(c, label, func() {
+		ui.Select(c.Key(key), &selected, labels).FillWidth()
+	}).Width(dialogField)
 	if index < 0 || selected == labels[index] {
 		return
 	}
