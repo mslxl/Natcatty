@@ -61,7 +61,7 @@ func TestResetGroupAndResetAll(t *testing.T) {
 	if err := service.ResetAll(); err != nil {
 		t.Fatal(err)
 	}
-	if got := service.Settings(); got != domain.Defaults() {
+	if got := service.Settings(); !domain.Equal(got, domain.Defaults()) {
 		t.Errorf("reset all = %+v", got)
 	}
 }

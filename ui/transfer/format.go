@@ -64,6 +64,26 @@ func noticeText(m locales.Messages, code string) string {
 		return m.SftpHostsUnavailable()
 	case "open-file":
 		return m.SftpOpenFileUnavailable()
+	case "opened-internal":
+		return m.SftpOpenedInternal()
+	case "opened-system":
+		return m.SftpOpenedSystem()
+	case "opened-external":
+		return m.SftpOpenedExternal()
+	case "open-editor-unavailable":
+		return m.SftpOpenEditorUnavailable()
+	case "open-editor-failed":
+		return m.SftpOpenEditorFailed()
+	case "open-application-missing":
+		return m.SftpOpenApplicationMissing()
+	case "open-source-failed":
+		return m.SftpOpenSourceFailed()
+	case "open-download-failed":
+		return m.SftpOpenDownloadFailed()
+	case "open-failed":
+		return m.SftpOpenFailed()
+	case "open-cancelled":
+		return m.SftpOpenCancelled()
 	case "transfer-unavailable":
 		return m.SftpTransferUnavailable()
 	case "transfer-reconnect-required":

@@ -180,6 +180,10 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaSFTPEditor, domain.FieldDefaultViewMode, m.SettingsDefaultViewMode(), "view list tree")
 	add(AreaSFTPEditor, domain.FieldEditorWordWrap, m.SettingsEditorWordWrap(), "editor wrap")
 	add(AreaSFTPEditor, domain.FieldEditorFontSize, m.SettingsEditorFontSize(), "editor font size")
+	add(AreaSFTPEditor, domain.FieldDefaultOpener, m.SettingsDefaultOpener(),
+		"default opener open internal editor system external application")
+	add(AreaSFTPEditor, "", m.SettingsFileAssociations(),
+		"file associations extension opener application")
 
 	add(AreaLogs, domain.FieldSSHDebug, m.SettingsSSHDebug(), "ssh debug logs")
 

@@ -136,8 +136,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 36 {
-		t.Errorf("fields = %d, want 36", len(seen))
+	if len(seen) != 37 {
+		t.Errorf("fields = %d, want 37", len(seen))
 	}
 }
 
@@ -169,7 +169,7 @@ func TestNormalizeKeepsValidThemeIDs(t *testing.T) {
 	settings.Appearance.LightTheme = "ivory"
 	settings.Appearance.DarkTheme = "obsidian"
 	settings.Appearance.AppIcon = "white-rose"
-	if got := Normalize(settings); got != settings {
+	if got := Normalize(settings); !Equal(got, settings) {
 		t.Errorf("valid theme fields changed: %+v", got.Appearance)
 	}
 }
@@ -177,7 +177,7 @@ func TestNormalizeKeepsValidThemeIDs(t *testing.T) {
 func TestResetFieldIgnoresAnUnknownField(t *testing.T) {
 	settings := Defaults()
 	settings.Appearance.WindowOpacity = 0.75
-	if got := ResetField(settings, Field("missing")); got != settings {
+	if got := ResetField(settings, Field("missing")); !Equal(got, settings) {
 		t.Errorf("ResetField(unknown) = %+v", got)
 	}
 }

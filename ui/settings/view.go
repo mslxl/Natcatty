@@ -23,8 +23,11 @@ type Config struct {
 	Terminal    *TerminalState
 	Themes      *ThemesState
 	Preferences *PreferencesState
-	Shortcuts   *ShortcutsState
-	Search      *SearchState
+	// Associations owns the default opener and the per-extension list. It is
+	// separate from Preferences because it has its own add/edit form.
+	Associations *AssociationsState
+	Shortcuts    *ShortcutsState
+	Search       *SearchState
 }
 
 // viewState owns the Settings window's scroll positions for as long as the
@@ -244,7 +247,7 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 	case AreaLayout:
 		layoutArea(c, config.Preferences, m, t)
 	case AreaSFTPEditor:
-		sftpEditorArea(c, config.Preferences, m, t)
+		sftpEditorArea(c, config, m, t)
 	case AreaLogs:
 		logsArea(c, config.Preferences, m, t)
 	case AreaSystem:
@@ -341,7 +344,8 @@ func layoutCheckbox(c *ui.Context, state *PreferencesState, m locales.Messages, 
 	})
 }
 
-func sftpEditorArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
+func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
+	state := config.Preferences
 	sectionBody(c, t, func() {
 		if state == nil {
 			return
@@ -389,6 +393,7 @@ func sftpEditorArea(c *ui.Context, state *PreferencesState, m locales.Messages, 
 				c.Invalidate()
 			}
 		})
+		associationsSection(c, state, config.Associations, m, t)
 		groupReset(c, m, t, m.SettingsSFTPEditorTitle(), func() bool {
 			return state.ResetGroup(domain.GroupSFTPEditor)
 		}, true)

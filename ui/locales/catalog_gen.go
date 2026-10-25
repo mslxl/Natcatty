@@ -11338,6 +11338,204 @@ func (msgs Messages) SettingsEditorFontSize() string {
 	return Catalog.Format(msgs.locale, "settingsEditorFontSize", nil)
 }
 
+// SettingsDefaultOpener says "Default opener"
+// in the language the app shows.
+func SettingsDefaultOpener() string { return In(i18n.Locale()).SettingsDefaultOpener() }
+
+// SettingsDefaultOpener says "Default opener"
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultOpener() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultOpener", nil)
+}
+
+// SettingsDefaultOpenerDescription says "Used for files whose extension has no association."
+// in the language the app shows.
+func SettingsDefaultOpenerDescription() string {
+	return In(i18n.Locale()).SettingsDefaultOpenerDescription()
+}
+
+// SettingsDefaultOpenerDescription says "Used for files whose extension has no association."
+// in the language of msgs.
+func (msgs Messages) SettingsDefaultOpenerDescription() string {
+	return Catalog.Format(msgs.locale, "settingsDefaultOpenerDescription", nil)
+}
+
+// SettingsOpenerInternal says "Internal editor"
+// in the language the app shows.
+func SettingsOpenerInternal() string { return In(i18n.Locale()).SettingsOpenerInternal() }
+
+// SettingsOpenerInternal says "Internal editor"
+// in the language of msgs.
+func (msgs Messages) SettingsOpenerInternal() string {
+	return Catalog.Format(msgs.locale, "settingsOpenerInternal", nil)
+}
+
+// SettingsOpenerSystem says "System editor"
+// in the language the app shows.
+func SettingsOpenerSystem() string { return In(i18n.Locale()).SettingsOpenerSystem() }
+
+// SettingsOpenerSystem says "System editor"
+// in the language of msgs.
+func (msgs Messages) SettingsOpenerSystem() string {
+	return Catalog.Format(msgs.locale, "settingsOpenerSystem", nil)
+}
+
+// SettingsOpenerExternal says "External application"
+// in the language the app shows.
+func SettingsOpenerExternal() string { return In(i18n.Locale()).SettingsOpenerExternal() }
+
+// SettingsOpenerExternal says "External application"
+// in the language of msgs.
+func (msgs Messages) SettingsOpenerExternal() string {
+	return Catalog.Format(msgs.locale, "settingsOpenerExternal", nil)
+}
+
+// SettingsChooseApplication says "Choose application…"
+// in the language the app shows.
+func SettingsChooseApplication() string { return In(i18n.Locale()).SettingsChooseApplication() }
+
+// SettingsChooseApplication says "Choose application…"
+// in the language of msgs.
+func (msgs Messages) SettingsChooseApplication() string {
+	return Catalog.Format(msgs.locale, "settingsChooseApplication", nil)
+}
+
+// SettingsFileAssociations says "File associations"
+// in the language the app shows.
+func SettingsFileAssociations() string { return In(i18n.Locale()).SettingsFileAssociations() }
+
+// SettingsFileAssociations says "File associations"
+// in the language of msgs.
+func (msgs Messages) SettingsFileAssociations() string {
+	return Catalog.Format(msgs.locale, "settingsFileAssociations", nil)
+}
+
+// SettingsFileAssociationsDescription says "Choose a different opener for specific file extensions."
+// in the language the app shows.
+func SettingsFileAssociationsDescription() string {
+	return In(i18n.Locale()).SettingsFileAssociationsDescription()
+}
+
+// SettingsFileAssociationsDescription says "Choose a different opener for specific file extensions."
+// in the language of msgs.
+func (msgs Messages) SettingsFileAssociationsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsFileAssociationsDescription", nil)
+}
+
+// SettingsAssociationExtension says "Extension"
+// in the language the app shows.
+func SettingsAssociationExtension() string { return In(i18n.Locale()).SettingsAssociationExtension() }
+
+// SettingsAssociationExtension says "Extension"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationExtension() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationExtension", nil)
+}
+
+// SettingsAssociationExtensionPlaceholder says "e.g. txt"
+// in the language the app shows.
+func SettingsAssociationExtensionPlaceholder() string {
+	return In(i18n.Locale()).SettingsAssociationExtensionPlaceholder()
+}
+
+// SettingsAssociationExtensionPlaceholder says "e.g. txt"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationExtensionPlaceholder() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationExtensionPlaceholder", nil)
+}
+
+// SettingsAssociationOpener says "Opener"
+// in the language the app shows.
+func SettingsAssociationOpener() string { return In(i18n.Locale()).SettingsAssociationOpener() }
+
+// SettingsAssociationOpener says "Opener"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationOpener() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationOpener", nil)
+}
+
+// SettingsAssociationAdd says "Add association"
+// in the language the app shows.
+func SettingsAssociationAdd() string { return In(i18n.Locale()).SettingsAssociationAdd() }
+
+// SettingsAssociationAdd says "Add association"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationAdd() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationAdd", nil)
+}
+
+// SettingsAssociationSave says "Save association"
+// in the language the app shows.
+func SettingsAssociationSave() string { return In(i18n.Locale()).SettingsAssociationSave() }
+
+// SettingsAssociationSave says "Save association"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationSave() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationSave", nil)
+}
+
+// SettingsAssociationEdit says "Edit"
+// in the language the app shows.
+func SettingsAssociationEdit() string { return In(i18n.Locale()).SettingsAssociationEdit() }
+
+// SettingsAssociationEdit says "Edit"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationEdit() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationEdit", nil)
+}
+
+// SettingsAssociationRemove says "Remove"
+// in the language the app shows.
+func SettingsAssociationRemove() string { return In(i18n.Locale()).SettingsAssociationRemove() }
+
+// SettingsAssociationRemove says "Remove"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationRemove() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationRemove", nil)
+}
+
+// SettingsAssociationEditing says "Editing .{extension}"
+// in the language the app shows.
+func SettingsAssociationEditing(extension string) string {
+	return In(i18n.Locale()).SettingsAssociationEditing(extension)
+}
+
+// SettingsAssociationEditing says "Editing .{extension}"
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationEditing(extension string) string {
+	return Catalog.Format(msgs.locale, "settingsAssociationEditing", map[string]any{"extension": extension})
+}
+
+// SettingsAssociationEmpty says "No file associations yet."
+// in the language the app shows.
+func SettingsAssociationEmpty() string { return In(i18n.Locale()).SettingsAssociationEmpty() }
+
+// SettingsAssociationEmpty says "No file associations yet."
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationEmpty", nil)
+}
+
+// SettingsAssociationInvalid says "Enter a file extension such as txt."
+// in the language the app shows.
+func SettingsAssociationInvalid() string { return In(i18n.Locale()).SettingsAssociationInvalid() }
+
+// SettingsAssociationInvalid says "Enter a file extension such as txt."
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationInvalid", nil)
+}
+
+// SettingsAssociationNeedApp says "Choose an application for this association."
+// in the language the app shows.
+func SettingsAssociationNeedApp() string { return In(i18n.Locale()).SettingsAssociationNeedApp() }
+
+// SettingsAssociationNeedApp says "Choose an application for this association."
+// in the language of msgs.
+func (msgs Messages) SettingsAssociationNeedApp() string {
+	return Catalog.Format(msgs.locale, "settingsAssociationNeedApp", nil)
+}
+
 // SettingsLogsTitle says "Logs"
 // in the language the app shows.
 func SettingsLogsTitle() string { return In(i18n.Locale()).SettingsLogsTitle() }
@@ -13212,6 +13410,106 @@ func SftpOpenFileUnavailable() string { return In(i18n.Locale()).SftpOpenFileUna
 // The notice shown when a file is opened instead of copied.
 func (msgs Messages) SftpOpenFileUnavailable() string {
 	return Catalog.Format(msgs.locale, "sftpOpenFileUnavailable", nil)
+}
+
+// SftpOpenedInternal says "Opened in the internal editor."
+// in the language the app shows.
+func SftpOpenedInternal() string { return In(i18n.Locale()).SftpOpenedInternal() }
+
+// SftpOpenedInternal says "Opened in the internal editor."
+// in the language of msgs.
+func (msgs Messages) SftpOpenedInternal() string {
+	return Catalog.Format(msgs.locale, "sftpOpenedInternal", nil)
+}
+
+// SftpOpenedSystem says "Opened with the system application."
+// in the language the app shows.
+func SftpOpenedSystem() string { return In(i18n.Locale()).SftpOpenedSystem() }
+
+// SftpOpenedSystem says "Opened with the system application."
+// in the language of msgs.
+func (msgs Messages) SftpOpenedSystem() string {
+	return Catalog.Format(msgs.locale, "sftpOpenedSystem", nil)
+}
+
+// SftpOpenedExternal says "Opened with the external application."
+// in the language the app shows.
+func SftpOpenedExternal() string { return In(i18n.Locale()).SftpOpenedExternal() }
+
+// SftpOpenedExternal says "Opened with the external application."
+// in the language of msgs.
+func (msgs Messages) SftpOpenedExternal() string {
+	return Catalog.Format(msgs.locale, "sftpOpenedExternal", nil)
+}
+
+// SftpOpenEditorUnavailable says "The internal editor is not available. Choose another opener in Settings."
+// in the language the app shows.
+func SftpOpenEditorUnavailable() string { return In(i18n.Locale()).SftpOpenEditorUnavailable() }
+
+// SftpOpenEditorUnavailable says "The internal editor is not available. Choose another opener in Settings."
+// in the language of msgs.
+func (msgs Messages) SftpOpenEditorUnavailable() string {
+	return Catalog.Format(msgs.locale, "sftpOpenEditorUnavailable", nil)
+}
+
+// SftpOpenEditorFailed says "The internal editor could not open the file."
+// in the language the app shows.
+func SftpOpenEditorFailed() string { return In(i18n.Locale()).SftpOpenEditorFailed() }
+
+// SftpOpenEditorFailed says "The internal editor could not open the file."
+// in the language of msgs.
+func (msgs Messages) SftpOpenEditorFailed() string {
+	return Catalog.Format(msgs.locale, "sftpOpenEditorFailed", nil)
+}
+
+// SftpOpenApplicationMissing says "The chosen application could not be started."
+// in the language the app shows.
+func SftpOpenApplicationMissing() string { return In(i18n.Locale()).SftpOpenApplicationMissing() }
+
+// SftpOpenApplicationMissing says "The chosen application could not be started."
+// in the language of msgs.
+func (msgs Messages) SftpOpenApplicationMissing() string {
+	return Catalog.Format(msgs.locale, "sftpOpenApplicationMissing", nil)
+}
+
+// SftpOpenSourceFailed says "The file could not be read."
+// in the language the app shows.
+func SftpOpenSourceFailed() string { return In(i18n.Locale()).SftpOpenSourceFailed() }
+
+// SftpOpenSourceFailed says "The file could not be read."
+// in the language of msgs.
+func (msgs Messages) SftpOpenSourceFailed() string {
+	return Catalog.Format(msgs.locale, "sftpOpenSourceFailed", nil)
+}
+
+// SftpOpenDownloadFailed says "The remote file could not be downloaded to open it."
+// in the language the app shows.
+func SftpOpenDownloadFailed() string { return In(i18n.Locale()).SftpOpenDownloadFailed() }
+
+// SftpOpenDownloadFailed says "The remote file could not be downloaded to open it."
+// in the language of msgs.
+func (msgs Messages) SftpOpenDownloadFailed() string {
+	return Catalog.Format(msgs.locale, "sftpOpenDownloadFailed", nil)
+}
+
+// SftpOpenFailed says "The file could not be opened."
+// in the language the app shows.
+func SftpOpenFailed() string { return In(i18n.Locale()).SftpOpenFailed() }
+
+// SftpOpenFailed says "The file could not be opened."
+// in the language of msgs.
+func (msgs Messages) SftpOpenFailed() string {
+	return Catalog.Format(msgs.locale, "sftpOpenFailed", nil)
+}
+
+// SftpOpenCancelled says "Opening the file was cancelled."
+// in the language the app shows.
+func SftpOpenCancelled() string { return In(i18n.Locale()).SftpOpenCancelled() }
+
+// SftpOpenCancelled says "Opening the file was cancelled."
+// in the language of msgs.
+func (msgs Messages) SftpOpenCancelled() string {
+	return Catalog.Format(msgs.locale, "sftpOpenCancelled", nil)
 }
 
 // SftpSelected says "{count} selected"
