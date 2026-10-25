@@ -3903,3 +3903,141 @@
     - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "The app's monitoring connector acquires a channel lease from the shared Connection Manager with the Host's routes, jump chain, proxy, algorithms, and config fingerprint. Acquire runs the same known-hosts lookup and trust prompt as a Session, so the first metric command can only run after the key is trusted; a rejected key maps to the monitor surface's typed login/host-key state with no Exec at all. Authentication, timeout, unsupported algorithm, network, and cancellation failures keep distinct typed reasons, and repeated recoverable failures become Unavailable rather than an error dialog or a spinner. The stub connector in the application tests proves the ordering structurally: one Open, zero metric commands on refusal. The self-test repeats that assertion with an in-process refused Host and checks that the healthy Hosts keep sampling. Deactivation cancels the sampler and releases each lease. Deliberate divergence: a Host left in login/host-key after its trust decision changes has no in-surface retry dialog; leaving and re-entering the monitoring surface restarts the panel and re-acquires the Host through the same prompt."
+
+# --- Ticket 45: system manager core ---
+
+- id: sysmanager.overview
+  area: sysmanager
+  feature: The Overview tab shows Host identity, uptime, load, and resource use
+  original_paths:
+    - components/systemManager/SystemOverviewTab.tsx
+    - components/systemManager/ResourceBar.tsx
+    - application/state/useSystemManager.ts
+    - electron/bridges/systemManagerBridge.cjs
+  module: ui/sysmanager
+  tickets: [45]
+  acceptance_tests:
+    - application/sysmanager.TestParseOverviewReadsLinuxAndDarwinFields
+    - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
+    - ui/sysmanager.TestActivateSelectsTheFirstHostAndStartsTheDefaultCadence
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The surface selects a Host from the Host list and shows its hostname, OS, kernel, uptime, one/five/fifteen-minute load, logical cores, CPU, memory, swap, and root-disk use. Linux reads /proc and df and derives CPU from the /proc/stat busy/total delta, so the first sample has no CPU value rather than a fabricated zero; macOS reads sysctl, ps, vm_stat, and df and uses the direct CPU sum the original displayed. Sizes are decimal MB/GB, and a missing field renders a dash. The overview refreshes every three seconds by default and can be refreshed immediately; samples never run on the UI thread."
+
+- id: sysmanager.processes
+  area: sysmanager
+  feature: The Processes tab lists processes with sortable identity, CPU, and memory columns
+  original_paths:
+    - components/systemManager/ProcessManagerTab.tsx
+    - components/systemManager/listStable.ts
+    - domain/systemManagerPanelState.ts
+    - electron/bridges/systemManagerBridge.cjs
+  module: application/sysmanager
+  tickets: [45]
+  acceptance_tests:
+    - application/sysmanager.TestParseProcessesReadsGNUAndBusyBoxShapes
+    - application/sysmanager.TestParseBusyBoxTopSizeSuffix
+    - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
+    - ui/sysmanager.TestTabSwitchStartsThatTabsCadenceAndSearchFilters
+    - ui/sysmanager.TestConfirmationGatesEveryDestructiveAction
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The list uses the original's GNU ps field order and its top, ps ww, then ps fallbacks, and also accepts the BusyBox top and ps shapes including m/g/t size suffixes. PID, PPID, user, state, CPU percent, memory percent, RSS, VSZ, elapsed time, and command are preserved; the table exposes PID, user, CPU, memory, and command columns with stable ascending and descending sort, plus search over PID, user, and command. Signals are TERM, KILL, STOP, CONT, HUP, INT, USR1, and USR2, with the original's numeric aliases normalized to names; Stop, Continue, Terminate, and Kill are offered for a selected process and each is confirmed before any command runs. The default cadence is three seconds."
+
+- id: sysmanager.ports
+  area: sysmanager
+  feature: The Ports tab lists listening sockets with their owning process
+  original_paths:
+    - components/systemManager/PortsManagerTab.tsx
+    - electron/bridges/systemManager/portOps.cjs
+    - domain/systemManager/pollListStable.ts
+  module: application/sysmanager
+  tickets: [45]
+  acceptance_tests:
+    - application/sysmanager.TestParsePortsMergesSsNetstatAndLsof
+    - application/sysmanager.TestParsePortsHandlesIPv6AndBSDNetstat
+    - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
+    - ui/sysmanager.TestConfirmationGatesEveryDestructiveAction
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Every available collector runs and their rows merge by protocol, address, and port, as the original did because macOS netstat often lacks usable PID columns: ss -tulnp, the Linux and BSD netstat variants, and lsof TCP listeners plus lsof idle UDP sockets. IPv4, IPv6, wildcard addresses, localhost, and BSD dot-separated addresses parse; a row without an owner keeps its socket and shows an unknown process. The table exposes protocol, address, port, PID, process, and user with search and stable sort, and a selected owned port offers Terminate, which sends the original's SIGTERM after confirmation. The default cadence is three seconds."
+
+- id: sysmanager.services
+  area: sysmanager
+  feature: The Services tab lists systemd units and starts, stops, or restarts one
+  original_paths:
+    - components/systemManager/ServicesManagerTab.tsx
+    - electron/bridges/systemManager/serviceOps.cjs
+    - components/systemManager/SystemPanelConfirmDialog.tsx
+  module: application/sysmanager
+  tickets: [45]
+  acceptance_tests:
+    - application/sysmanager.TestParseServicesMergesScopesAndSortsFailedFirst
+    - application/sysmanager.TestSignalAndServiceCommandsValidateTheirTargets
+    - application/sysmanager.TestServiceActionReportsPermissionAndRetriesWithSudo
+    - application/sysmanager.TestServiceActionRejectsInvalidInputsBeforeOpening
+    - ui/sysmanager.TestConfirmedServiceActionRunsOffTheUIThread
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The command lists system and user units with --plain and falls back to the column format on older systemd, merges both scopes, and sorts failed units first. The table exposes unit, load, active, sub, and description with search and stable sort; start, stop, and restart are offered for the selected unit and each confirmation names the unit and the exact systemctl command. Unit names accept the original's systemd character set and arguments are shell-quoted; an unknown action or invalid name is rejected before a transport opens. A system-scope permission denial retries once with non-interactive sudo -n. The default cadence is five seconds. Deliberate divergence: the original could feed the Session's sudo password to sudo -S; this build has no session password prompt and reports the permission failure when sudo -n is unavailable."
+
+- id: sysmanager.destructive-confirmations
+  area: sysmanager
+  feature: Signals and service actions require confirmation and can be cancelled
+  original_paths:
+    - components/systemManager/SystemPanelConfirmDialog.tsx
+    - components/systemManager/SystemPanelUi.tsx
+    - components/systemManager/ProcessManagerTab.tsx
+    - components/systemManager/ServicesManagerTab.tsx
+  module: ui/sysmanager
+  tickets: [45]
+  acceptance_tests:
+    - ui/sysmanager.TestConfirmationGatesEveryDestructiveAction
+    - ui/sysmanager.TestConfirmedServiceActionRunsOffTheUIThread
+    - ui/sysmanager.TestCancelStopsARunningAction
+    - application/sysmanager.TestSignalRunsOnlyTheConfirmedCommand
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Requesting a signal, a port terminate, or a service start/stop/restart only stores a pending action; it runs no service call. The modal copies the target and the exact kill or systemctl command, and only acceptance starts one goroutine off the UI thread. Cancel or Escape discards a pending action without a command, and cancelling a running action cancels its context and records the cancellation. A successful action requests a fresh sample so the table shows the new state. The in-process self-test asserts the zero-command state before accepting a confirmation and that cancelling a port action still leaves the command count unchanged."
+
+- id: sysmanager.refresh-intervals
+  area: sysmanager
+  feature: Each tab keeps its own refresh interval in the preferences store
+  original_paths:
+    - application/state/useSystemManager.ts
+    - components/systemManager/SystemManagerSidePanel.tsx
+    - components/settings/tabs/SettingsTerminalTab.tsx
+    - domain/models/terminal.ts
+  module: application/preferences
+  tickets: [45]
+  acceptance_tests:
+    - domain/preferences.TestSysManagerIntervalsDefaultAndNormalize
+    - domain/preferences.TestSysManagerIntervalReadsAndWritesOnlyItsTab
+    - application/preferences.TestSysManagerIntervalsPersistThroughTheStore
+    - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
+    - application/sysmanager.TestServiceRefreshRequestsAnImmediateSample
+    - ui/sysmanager.TestSetIntervalPersistsPerTabAndRestartsSampling
+    - ui/sysmanager.TestSetIntervalSaveFailureIsReportedAndDoesNotApply
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Overview, Processes, and Ports start at the original's three seconds and Services at five; every tab offers 1, 2, 3, 5, 10, 30, and 60 seconds and the choice applies to that tab only. A change is saved through the existing preferences service before it retargets the running sampler; a failed save leaves the old cadence and reports a localized problem. Values outside the offered choices fall back to the tab default on load and on write, and Reset restores the defaults. The preference group travels with the settings document rather than a separate file. Deliberate divergence: the original reused one process interval for Processes, Ports, and Services and the server-stats interval for Overview; ticket 45 requires a per-tab interval, so this build persists four independent cadences."
+
+- id: sysmanager.degradation-and-trust
+  area: sysmanager
+  feature: Missing remote commands degrade in their tab and no command runs before Host key trust
+  original_paths:
+    - electron/bridges/systemManagerBridge.cjs
+    - electron/bridges/systemManager/execOnSession.cjs
+    - components/systemManager/SystemPanelUi.tsx
+    - components/systemManager/SystemManagerSidePanel.tsx
+  module: app
+  tickets: [45]
+  acceptance_tests:
+    - application/sysmanager.TestParseCapabilitiesReadsOnlyLineAnchoredMarkers
+    - application/sysmanager.TestCommandsCoverCapabilitiesAndUnavailableMarkers
+    - application/sysmanager.TestServiceDegradesWhenRemoteCommandsAreMissing
+    - application/sysmanager.TestServiceDoesNotExecBeforeTheHostKeyIsTrusted
+    - application/sysmanager.TestServiceCloseCancelsSampling
+    - app.TestTicket45CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A capability probe runs once per Host and caches the OS and the presence of ps/top, ss, netstat, lsof, and systemctl; only line-anchored markers count, so a noisy shell echoing the probe cannot fake a command. A missing ps/top, port collector, or systemctl turns that tab into a typed unavailable state naming the missing command, while the other tabs continue sampling the same Host. The app connector acquires every sample and action through the shared Connection Manager's channel lease, which runs the same known-hosts and trust path as a Session; a rejected Host key becomes login/host_key with zero Exec calls, and auth, timeout, unsupported, network, and cancellation failures keep distinct typed reasons. Close cancels sampling and releases every lease, and an action opens a fresh short-lived lease so it cannot race a poll on the same channel. Deliberate divergence: the surface uses a root sidebar entry with an in-surface Host selector instead of the original terminal side panel, because the native shell's Logs and SFTP roots already share that navigation shape."

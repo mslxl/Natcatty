@@ -10,8 +10,10 @@ const (
 	OpenSettings ID = "app.settings"
 	// OpenMonitor shows the Host monitoring surface.
 	OpenMonitor ID = "monitor.open"
-	NewTab      ID = "tab.new"
-	CloseTab    ID = "tab.close"
+	// OpenSystemManager shows the System manager surface.
+	OpenSystemManager ID = "sysmanager.open"
+	NewTab            ID = "tab.new"
+	CloseTab          ID = "tab.close"
 	// ConnectSerial opens the serial connection dialog.
 	ConnectSerial ID = "serial.connect"
 

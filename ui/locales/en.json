@@ -3387,5 +3387,347 @@
   "monitoringPanelFormInterval": "Refresh interval (seconds)",
   "monitoringPanelFormRange": "History range (minutes)",
   "monitoringPanelFormSort": "Host order",
-  "monitoringPanelFormHostsHint": "Choose the Hosts to monitor. This order applies in Manual sort."
+  "monitoringPanelFormHostsHint": "Choose the Hosts to monitor. This order applies in Manual sort.",
+  "navSysManager": "System",
+  "sysManagerTitle": "System manager",
+  "sysManagerHost": "Host",
+  "sysManagerRefresh": "Refresh",
+  "sysManagerRefreshNow": "Refresh now",
+  "sysManagerSeconds": "{seconds}s",
+  "@sysManagerSeconds": {
+    "description": "The refresh interval in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerTabOverview": "Overview",
+  "sysManagerTabProcesses": "Processes",
+  "sysManagerTabPorts": "Ports",
+  "sysManagerTabServices": "Services",
+  "sysManagerStatusIdle": "Not loaded",
+  "sysManagerStatusConnecting": "Connecting…",
+  "sysManagerStatusLive": "Live",
+  "sysManagerStatusLogin": "Sign in",
+  "sysManagerStatusError": "Error",
+  "sysManagerStatusUnsupported": "Unsupported",
+  "sysManagerStatusUnavailable": "Unavailable",
+  "sysManagerReasonHostKey": "Host key not trusted",
+  "sysManagerReasonAuth": "Authentication failed",
+  "sysManagerReasonNetwork": "Network unavailable",
+  "sysManagerReasonTimeout": "Timed out",
+  "sysManagerReasonOS": "Operating system unsupported",
+  "sysManagerReasonCancelled": "Cancelled",
+  "sysManagerReasonInternal": "System manager error",
+  "sysManagerReasonUnsupported": "Connection unsupported",
+  "sysManagerReasonPermission": "Permission denied",
+  "sysManagerReasonMissingProcesses": "ps and top are not available on this Host.",
+  "sysManagerReasonMissingPorts": "ss, netstat, and lsof are not available on this Host.",
+  "sysManagerReasonMissingSystemctl": "systemctl is not available on this Host.",
+  "sysManagerNoHosts": "No Hosts in the Vault.",
+  "sysManagerNoHostSelected": "Choose a Host to inspect.",
+  "sysManagerProblemLoadHosts": "Could not read the Host list.",
+  "sysManagerProblemSave": "Could not save the refresh interval.",
+  "sysManagerProblemStart": "Could not start sampling.",
+  "sysManagerProblemNoHost": "Choose a Host first.",
+  "sysManagerProblemInternal": "The System manager failed.",
+  "sysManagerProblemActionData": "The selected row is no longer available.",
+  "sysManagerSearchProcesses": "Search processes…",
+  "sysManagerSearchPorts": "Search ports…",
+  "sysManagerSearchServices": "Search services…",
+  "sysManagerProcessesCount": "{count} processes",
+  "@sysManagerProcessesCount": {
+    "description": "The number of processes matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "sysManagerPortsCount": "{count} listeners",
+  "@sysManagerPortsCount": {
+    "description": "The number of listening sockets matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerServicesCount": "{count} units",
+  "@sysManagerServicesCount": {
+    "description": "The number of systemd units matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerUpdatedSeconds": "Updated {seconds}s ago",
+  "@sysManagerUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerNoProcesses": "No processes reported.",
+  "sysManagerNoPorts": "No listening ports reported.",
+  "sysManagerNoServices": "No systemd services found.",
+  "sysManagerNoMatches": "No matches.",
+  "sysManagerProcessHint": "Select a process to signal it.",
+  "sysManagerPortHint": "Select a listening port to signal its owner.",
+  "sysManagerServiceHint": "Select a unit to start, stop, or restart it.",
+  "sysManagerPid": "PID",
+  "sysManagerUser": "User",
+  "sysManagerCPU": "CPU",
+  "sysManagerMemory": "MEM",
+  "sysManagerCommand": "Command",
+  "sysManagerState": "State",
+  "sysManagerPort": "Port",
+  "sysManagerProtocol": "Protocol",
+  "sysManagerAddress": "Address",
+  "sysManagerProcess": "Process",
+  "sysManagerUnit": "Unit",
+  "sysManagerScope": "Scope",
+  "sysManagerActive": "Active",
+  "sysManagerDescription": "Description",
+  "sysManagerSelectedProcess": "Process {pid} · {command}",
+  "@sysManagerSelectedProcess": {
+    "description": "The process chosen in the table.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "nginx: worker"
+      }
+    }
+  },
+  "sysManagerSelectedPort": "{protocol} {address}:{port} · PID {pid}",
+  "@sysManagerSelectedPort": {
+    "description": "The listening socket chosen in the table.",
+    "placeholders": {
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "pid": {
+        "type": "int",
+        "example": "123"
+      }
+    }
+  },
+  "sysManagerSelectedService": "{name} · {scope}",
+  "@sysManagerSelectedService": {
+    "description": "The systemd unit chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "scope": {
+        "type": "String",
+        "example": "system"
+      }
+    }
+  },
+  "sysManagerScopeSystem": "system",
+  "sysManagerScopeUser": "user",
+  "sysManagerStop": "Stop",
+  "sysManagerContinue": "Continue",
+  "sysManagerTerminate": "Terminate",
+  "sysManagerKill": "Kill",
+  "sysManagerStart": "Start",
+  "sysManagerRestart": "Restart",
+  "sysManagerCancel": "Cancel",
+  "sysManagerConfirmSignal": "Send SIG{signal} to process {pid}?\n\nCommand: {command}",
+  "@sysManagerConfirmSignal": {
+    "description": "Asks before signalling a process, naming the target and the exact command.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "KILL"
+      },
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerConfirmPort": "Send SIGTERM to process {pid}, which owns {address}:{port}/{protocol}?\n\nCommand: {command}",
+  "@sysManagerConfirmPort": {
+    "description": "Asks before signalling the process that owns a listening socket.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -15 1234"
+      }
+    }
+  },
+  "sysManagerConfirmService": "{action} {name}?\n\nCommand: {command}",
+  "@sysManagerConfirmService": {
+    "description": "Asks before starting, stopping, or restarting a systemd unit.",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Restart"
+      },
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "command": {
+        "type": "String",
+        "example": "systemctl restart 'nginx.service'"
+      }
+    }
+  },
+  "sysManagerActionRunning": "Running {command}…",
+  "@sysManagerActionRunning": {
+    "description": "A confirmed command that is still running.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionSucceeded": "Finished: {command}",
+  "@sysManagerActionSucceeded": {
+    "description": "A confirmed command that finished.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionFailed": "The action failed.",
+  "sysManagerActionCancelled": "The action was cancelled.",
+  "sysManagerActionPermission": "Permission denied.",
+  "sysManagerLatency": "Latency",
+  "sysManagerLatencyValue": "{milliseconds} ms",
+  "@sysManagerLatencyValue": {
+    "description": "The last sample's round-trip latency.",
+    "placeholders": {
+      "milliseconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerOverviewSystem": "System",
+  "sysManagerOverviewHostname": "Hostname",
+  "sysManagerOverviewOS": "System",
+  "sysManagerOverviewKernel": "Kernel",
+  "sysManagerOverviewUptime": "Uptime",
+  "sysManagerOverviewLoad": "Load",
+  "sysManagerOverviewCores": "{count} cores",
+  "@sysManagerOverviewCores": {
+    "description": "The Host's CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerOverviewCPU": "CPU",
+  "sysManagerOverviewMemory": "Memory",
+  "sysManagerOverviewSwap": "Swap",
+  "sysManagerOverviewDisk": "Disk",
+  "sysManagerOverviewEmpty": "No system overview data yet.",
+  "sysManagerOverviewUsedOf": "{used} / {total}",
+  "@sysManagerOverviewUsedOf": {
+    "description": "A used amount beside its total.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "2.0 GB"
+      },
+      "total": {
+        "type": "String",
+        "example": "8.0 GB"
+      }
+    }
+  },
+  "sysManagerDurationDays": "{days}d {hours}h",
+  "@sysManagerDurationDays": {
+    "description": "An uptime of days and hours.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "3"
+      },
+      "hours": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerDurationHours": "{hours}h {minutes}m",
+  "@sysManagerDurationHours": {
+    "description": "An uptime of hours and minutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "4"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerDurationMinutes": "{minutes}m",
+  "@sysManagerDurationMinutes": {
+    "description": "An uptime of minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerUnknown": "—",
+  "sysManagerOverviewResources": "Resources",
+  "sysManagerPortOwnerUnknown": "Unknown process",
+  "sysManagerOverviewCoresLabel": "Cores"
 }

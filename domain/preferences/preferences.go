@@ -20,6 +20,7 @@ const (
 	GroupSync       Group = "sync"
 	GroupSecurity   Group = "security"
 	GroupMonitor    Group = "monitor"
+	GroupSysManager Group = "sysManager"
 )
 
 // Groups returns every group in Settings-window order. GroupMonitor owns
@@ -173,6 +174,7 @@ type Settings struct {
 	Sync       Sync       `json:"sync"`
 	Security   Security   `json:"security"`
 	Monitor    Monitor    `json:"monitor"`
+	SysManager SysManager `json:"sysManager"`
 }
 
 const (
@@ -230,10 +232,11 @@ func Defaults() Settings {
 			// the least surprising fallback.
 			DefaultOpener: Opener{Kind: OpenerSystem},
 		},
-		Logs:     Logs{SSHDebug: false},
-		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
-		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
-		Monitor:  DefaultMonitor(),
+		Logs:       Logs{SSHDebug: false},
+		Sync:       Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
+		Security:   Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
+		Monitor:    DefaultMonitor(),
+		SysManager: DefaultSysManager(),
 	}
 }
 
@@ -301,6 +304,7 @@ func Normalize(settings Settings) Settings {
 		settings.Sync.ConflictStrategy = defaults.Sync.ConflictStrategy
 	}
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
+	settings.SysManager = NormalizeSysManager(settings.SysManager)
 	return settings
 }
 
@@ -354,6 +358,8 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Security = defaults.Security
 	case GroupMonitor:
 		settings.Monitor = defaults.Monitor
+	case GroupSysManager:
+		settings.SysManager = defaults.SysManager
 	}
 	return settings
 }

@@ -16089,3 +16089,1189 @@ func MonitoringPanelFormHostsHint() string { return In(i18n.Locale()).Monitoring
 func (msgs Messages) MonitoringPanelFormHostsHint() string {
 	return Catalog.Format(msgs.locale, "monitoringPanelFormHostsHint", nil)
 }
+
+// NavSysManager says "System"
+// in the language the app shows.
+func NavSysManager() string { return In(i18n.Locale()).NavSysManager() }
+
+// NavSysManager says "System"
+// in the language of msgs.
+func (msgs Messages) NavSysManager() string {
+	return Catalog.Format(msgs.locale, "navSysManager", nil)
+}
+
+// SysManagerTitle says "System manager"
+// in the language the app shows.
+func SysManagerTitle() string { return In(i18n.Locale()).SysManagerTitle() }
+
+// SysManagerTitle says "System manager"
+// in the language of msgs.
+func (msgs Messages) SysManagerTitle() string {
+	return Catalog.Format(msgs.locale, "sysManagerTitle", nil)
+}
+
+// SysManagerHost says "Host"
+// in the language the app shows.
+func SysManagerHost() string { return In(i18n.Locale()).SysManagerHost() }
+
+// SysManagerHost says "Host"
+// in the language of msgs.
+func (msgs Messages) SysManagerHost() string {
+	return Catalog.Format(msgs.locale, "sysManagerHost", nil)
+}
+
+// SysManagerRefresh says "Refresh"
+// in the language the app shows.
+func SysManagerRefresh() string { return In(i18n.Locale()).SysManagerRefresh() }
+
+// SysManagerRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) SysManagerRefresh() string {
+	return Catalog.Format(msgs.locale, "sysManagerRefresh", nil)
+}
+
+// SysManagerRefreshNow says "Refresh now"
+// in the language the app shows.
+func SysManagerRefreshNow() string { return In(i18n.Locale()).SysManagerRefreshNow() }
+
+// SysManagerRefreshNow says "Refresh now"
+// in the language of msgs.
+func (msgs Messages) SysManagerRefreshNow() string {
+	return Catalog.Format(msgs.locale, "sysManagerRefreshNow", nil)
+}
+
+// SysManagerSeconds says "{seconds}s"
+// in the language the app shows.
+//
+// The refresh interval in seconds.
+func SysManagerSeconds(seconds int) string { return In(i18n.Locale()).SysManagerSeconds(seconds) }
+
+// SysManagerSeconds says "{seconds}s"
+// in the language of msgs.
+//
+// The refresh interval in seconds.
+func (msgs Messages) SysManagerSeconds(seconds int) string {
+	return Catalog.Format(msgs.locale, "sysManagerSeconds", map[string]any{"seconds": seconds})
+}
+
+// SysManagerTabOverview says "Overview"
+// in the language the app shows.
+func SysManagerTabOverview() string { return In(i18n.Locale()).SysManagerTabOverview() }
+
+// SysManagerTabOverview says "Overview"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabOverview() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabOverview", nil)
+}
+
+// SysManagerTabProcesses says "Processes"
+// in the language the app shows.
+func SysManagerTabProcesses() string { return In(i18n.Locale()).SysManagerTabProcesses() }
+
+// SysManagerTabProcesses says "Processes"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabProcesses() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabProcesses", nil)
+}
+
+// SysManagerTabPorts says "Ports"
+// in the language the app shows.
+func SysManagerTabPorts() string { return In(i18n.Locale()).SysManagerTabPorts() }
+
+// SysManagerTabPorts says "Ports"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabPorts() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabPorts", nil)
+}
+
+// SysManagerTabServices says "Services"
+// in the language the app shows.
+func SysManagerTabServices() string { return In(i18n.Locale()).SysManagerTabServices() }
+
+// SysManagerTabServices says "Services"
+// in the language of msgs.
+func (msgs Messages) SysManagerTabServices() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabServices", nil)
+}
+
+// SysManagerStatusIdle says "Not loaded"
+// in the language the app shows.
+func SysManagerStatusIdle() string { return In(i18n.Locale()).SysManagerStatusIdle() }
+
+// SysManagerStatusIdle says "Not loaded"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusIdle() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusIdle", nil)
+}
+
+// SysManagerStatusConnecting says "Connecting…"
+// in the language the app shows.
+func SysManagerStatusConnecting() string { return In(i18n.Locale()).SysManagerStatusConnecting() }
+
+// SysManagerStatusConnecting says "Connecting…"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusConnecting() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusConnecting", nil)
+}
+
+// SysManagerStatusLive says "Live"
+// in the language the app shows.
+func SysManagerStatusLive() string { return In(i18n.Locale()).SysManagerStatusLive() }
+
+// SysManagerStatusLive says "Live"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusLive() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusLive", nil)
+}
+
+// SysManagerStatusLogin says "Sign in"
+// in the language the app shows.
+func SysManagerStatusLogin() string { return In(i18n.Locale()).SysManagerStatusLogin() }
+
+// SysManagerStatusLogin says "Sign in"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusLogin() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusLogin", nil)
+}
+
+// SysManagerStatusError says "Error"
+// in the language the app shows.
+func SysManagerStatusError() string { return In(i18n.Locale()).SysManagerStatusError() }
+
+// SysManagerStatusError says "Error"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusError() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusError", nil)
+}
+
+// SysManagerStatusUnsupported says "Unsupported"
+// in the language the app shows.
+func SysManagerStatusUnsupported() string { return In(i18n.Locale()).SysManagerStatusUnsupported() }
+
+// SysManagerStatusUnsupported says "Unsupported"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusUnsupported() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusUnsupported", nil)
+}
+
+// SysManagerStatusUnavailable says "Unavailable"
+// in the language the app shows.
+func SysManagerStatusUnavailable() string { return In(i18n.Locale()).SysManagerStatusUnavailable() }
+
+// SysManagerStatusUnavailable says "Unavailable"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatusUnavailable() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatusUnavailable", nil)
+}
+
+// SysManagerReasonHostKey says "Host key not trusted"
+// in the language the app shows.
+func SysManagerReasonHostKey() string { return In(i18n.Locale()).SysManagerReasonHostKey() }
+
+// SysManagerReasonHostKey says "Host key not trusted"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonHostKey() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonHostKey", nil)
+}
+
+// SysManagerReasonAuth says "Authentication failed"
+// in the language the app shows.
+func SysManagerReasonAuth() string { return In(i18n.Locale()).SysManagerReasonAuth() }
+
+// SysManagerReasonAuth says "Authentication failed"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonAuth() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonAuth", nil)
+}
+
+// SysManagerReasonNetwork says "Network unavailable"
+// in the language the app shows.
+func SysManagerReasonNetwork() string { return In(i18n.Locale()).SysManagerReasonNetwork() }
+
+// SysManagerReasonNetwork says "Network unavailable"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonNetwork() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonNetwork", nil)
+}
+
+// SysManagerReasonTimeout says "Timed out"
+// in the language the app shows.
+func SysManagerReasonTimeout() string { return In(i18n.Locale()).SysManagerReasonTimeout() }
+
+// SysManagerReasonTimeout says "Timed out"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonTimeout() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonTimeout", nil)
+}
+
+// SysManagerReasonOS says "Operating system unsupported"
+// in the language the app shows.
+func SysManagerReasonOS() string { return In(i18n.Locale()).SysManagerReasonOS() }
+
+// SysManagerReasonOS says "Operating system unsupported"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonOS() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonOS", nil)
+}
+
+// SysManagerReasonCancelled says "Cancelled"
+// in the language the app shows.
+func SysManagerReasonCancelled() string { return In(i18n.Locale()).SysManagerReasonCancelled() }
+
+// SysManagerReasonCancelled says "Cancelled"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonCancelled() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonCancelled", nil)
+}
+
+// SysManagerReasonInternal says "System manager error"
+// in the language the app shows.
+func SysManagerReasonInternal() string { return In(i18n.Locale()).SysManagerReasonInternal() }
+
+// SysManagerReasonInternal says "System manager error"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonInternal() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonInternal", nil)
+}
+
+// SysManagerReasonUnsupported says "Connection unsupported"
+// in the language the app shows.
+func SysManagerReasonUnsupported() string { return In(i18n.Locale()).SysManagerReasonUnsupported() }
+
+// SysManagerReasonUnsupported says "Connection unsupported"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonUnsupported() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonUnsupported", nil)
+}
+
+// SysManagerReasonPermission says "Permission denied"
+// in the language the app shows.
+func SysManagerReasonPermission() string { return In(i18n.Locale()).SysManagerReasonPermission() }
+
+// SysManagerReasonPermission says "Permission denied"
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonPermission() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonPermission", nil)
+}
+
+// SysManagerReasonMissingProcesses says "ps and top are not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingProcesses() string {
+	return In(i18n.Locale()).SysManagerReasonMissingProcesses()
+}
+
+// SysManagerReasonMissingProcesses says "ps and top are not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingProcesses() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingProcesses", nil)
+}
+
+// SysManagerReasonMissingPorts says "ss, netstat, and lsof are not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingPorts() string { return In(i18n.Locale()).SysManagerReasonMissingPorts() }
+
+// SysManagerReasonMissingPorts says "ss, netstat, and lsof are not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingPorts() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingPorts", nil)
+}
+
+// SysManagerReasonMissingSystemctl says "systemctl is not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingSystemctl() string {
+	return In(i18n.Locale()).SysManagerReasonMissingSystemctl()
+}
+
+// SysManagerReasonMissingSystemctl says "systemctl is not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingSystemctl() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingSystemctl", nil)
+}
+
+// SysManagerNoHosts says "No Hosts in the Vault."
+// in the language the app shows.
+func SysManagerNoHosts() string { return In(i18n.Locale()).SysManagerNoHosts() }
+
+// SysManagerNoHosts says "No Hosts in the Vault."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoHosts() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoHosts", nil)
+}
+
+// SysManagerNoHostSelected says "Choose a Host to inspect."
+// in the language the app shows.
+func SysManagerNoHostSelected() string { return In(i18n.Locale()).SysManagerNoHostSelected() }
+
+// SysManagerNoHostSelected says "Choose a Host to inspect."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoHostSelected() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoHostSelected", nil)
+}
+
+// SysManagerProblemLoadHosts says "Could not read the Host list."
+// in the language the app shows.
+func SysManagerProblemLoadHosts() string { return In(i18n.Locale()).SysManagerProblemLoadHosts() }
+
+// SysManagerProblemLoadHosts says "Could not read the Host list."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemLoadHosts() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemLoadHosts", nil)
+}
+
+// SysManagerProblemSave says "Could not save the refresh interval."
+// in the language the app shows.
+func SysManagerProblemSave() string { return In(i18n.Locale()).SysManagerProblemSave() }
+
+// SysManagerProblemSave says "Could not save the refresh interval."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemSave() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemSave", nil)
+}
+
+// SysManagerProblemStart says "Could not start sampling."
+// in the language the app shows.
+func SysManagerProblemStart() string { return In(i18n.Locale()).SysManagerProblemStart() }
+
+// SysManagerProblemStart says "Could not start sampling."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemStart() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemStart", nil)
+}
+
+// SysManagerProblemNoHost says "Choose a Host first."
+// in the language the app shows.
+func SysManagerProblemNoHost() string { return In(i18n.Locale()).SysManagerProblemNoHost() }
+
+// SysManagerProblemNoHost says "Choose a Host first."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemNoHost() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemNoHost", nil)
+}
+
+// SysManagerProblemInternal says "The System manager failed."
+// in the language the app shows.
+func SysManagerProblemInternal() string { return In(i18n.Locale()).SysManagerProblemInternal() }
+
+// SysManagerProblemInternal says "The System manager failed."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemInternal() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemInternal", nil)
+}
+
+// SysManagerProblemActionData says "The selected row is no longer available."
+// in the language the app shows.
+func SysManagerProblemActionData() string { return In(i18n.Locale()).SysManagerProblemActionData() }
+
+// SysManagerProblemActionData says "The selected row is no longer available."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemActionData() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemActionData", nil)
+}
+
+// SysManagerSearchProcesses says "Search processes…"
+// in the language the app shows.
+func SysManagerSearchProcesses() string { return In(i18n.Locale()).SysManagerSearchProcesses() }
+
+// SysManagerSearchProcesses says "Search processes…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchProcesses() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchProcesses", nil)
+}
+
+// SysManagerSearchPorts says "Search ports…"
+// in the language the app shows.
+func SysManagerSearchPorts() string { return In(i18n.Locale()).SysManagerSearchPorts() }
+
+// SysManagerSearchPorts says "Search ports…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchPorts() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchPorts", nil)
+}
+
+// SysManagerSearchServices says "Search services…"
+// in the language the app shows.
+func SysManagerSearchServices() string { return In(i18n.Locale()).SysManagerSearchServices() }
+
+// SysManagerSearchServices says "Search services…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchServices() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchServices", nil)
+}
+
+// SysManagerProcessesCount says "{count} processes"
+// in the language the app shows.
+//
+// The number of processes matching the search.
+func SysManagerProcessesCount(count int) string {
+	return In(i18n.Locale()).SysManagerProcessesCount(count)
+}
+
+// SysManagerProcessesCount says "{count} processes"
+// in the language of msgs.
+//
+// The number of processes matching the search.
+func (msgs Messages) SysManagerProcessesCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerProcessesCount", map[string]any{"count": count})
+}
+
+// SysManagerPortsCount says "{count} listeners"
+// in the language the app shows.
+//
+// The number of listening sockets matching the search.
+func SysManagerPortsCount(count int) string { return In(i18n.Locale()).SysManagerPortsCount(count) }
+
+// SysManagerPortsCount says "{count} listeners"
+// in the language of msgs.
+//
+// The number of listening sockets matching the search.
+func (msgs Messages) SysManagerPortsCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerPortsCount", map[string]any{"count": count})
+}
+
+// SysManagerServicesCount says "{count} units"
+// in the language the app shows.
+//
+// The number of systemd units matching the search.
+func SysManagerServicesCount(count int) string {
+	return In(i18n.Locale()).SysManagerServicesCount(count)
+}
+
+// SysManagerServicesCount says "{count} units"
+// in the language of msgs.
+//
+// The number of systemd units matching the search.
+func (msgs Messages) SysManagerServicesCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerServicesCount", map[string]any{"count": count})
+}
+
+// SysManagerUpdatedSeconds says "Updated {seconds}s ago"
+// in the language the app shows.
+//
+// How long ago the latest sample arrived.
+func SysManagerUpdatedSeconds(seconds int) string {
+	return In(i18n.Locale()).SysManagerUpdatedSeconds(seconds)
+}
+
+// SysManagerUpdatedSeconds says "Updated {seconds}s ago"
+// in the language of msgs.
+//
+// How long ago the latest sample arrived.
+func (msgs Messages) SysManagerUpdatedSeconds(seconds int) string {
+	return Catalog.Format(msgs.locale, "sysManagerUpdatedSeconds", map[string]any{"seconds": seconds})
+}
+
+// SysManagerNoProcesses says "No processes reported."
+// in the language the app shows.
+func SysManagerNoProcesses() string { return In(i18n.Locale()).SysManagerNoProcesses() }
+
+// SysManagerNoProcesses says "No processes reported."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoProcesses() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoProcesses", nil)
+}
+
+// SysManagerNoPorts says "No listening ports reported."
+// in the language the app shows.
+func SysManagerNoPorts() string { return In(i18n.Locale()).SysManagerNoPorts() }
+
+// SysManagerNoPorts says "No listening ports reported."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoPorts() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoPorts", nil)
+}
+
+// SysManagerNoServices says "No systemd services found."
+// in the language the app shows.
+func SysManagerNoServices() string { return In(i18n.Locale()).SysManagerNoServices() }
+
+// SysManagerNoServices says "No systemd services found."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoServices() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoServices", nil)
+}
+
+// SysManagerNoMatches says "No matches."
+// in the language the app shows.
+func SysManagerNoMatches() string { return In(i18n.Locale()).SysManagerNoMatches() }
+
+// SysManagerNoMatches says "No matches."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoMatches() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoMatches", nil)
+}
+
+// SysManagerProcessHint says "Select a process to signal it."
+// in the language the app shows.
+func SysManagerProcessHint() string { return In(i18n.Locale()).SysManagerProcessHint() }
+
+// SysManagerProcessHint says "Select a process to signal it."
+// in the language of msgs.
+func (msgs Messages) SysManagerProcessHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerProcessHint", nil)
+}
+
+// SysManagerPortHint says "Select a listening port to signal its owner."
+// in the language the app shows.
+func SysManagerPortHint() string { return In(i18n.Locale()).SysManagerPortHint() }
+
+// SysManagerPortHint says "Select a listening port to signal its owner."
+// in the language of msgs.
+func (msgs Messages) SysManagerPortHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerPortHint", nil)
+}
+
+// SysManagerServiceHint says "Select a unit to start, stop, or restart it."
+// in the language the app shows.
+func SysManagerServiceHint() string { return In(i18n.Locale()).SysManagerServiceHint() }
+
+// SysManagerServiceHint says "Select a unit to start, stop, or restart it."
+// in the language of msgs.
+func (msgs Messages) SysManagerServiceHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerServiceHint", nil)
+}
+
+// SysManagerPid says "PID"
+// in the language the app shows.
+func SysManagerPid() string { return In(i18n.Locale()).SysManagerPid() }
+
+// SysManagerPid says "PID"
+// in the language of msgs.
+func (msgs Messages) SysManagerPid() string {
+	return Catalog.Format(msgs.locale, "sysManagerPid", nil)
+}
+
+// SysManagerUser says "User"
+// in the language the app shows.
+func SysManagerUser() string { return In(i18n.Locale()).SysManagerUser() }
+
+// SysManagerUser says "User"
+// in the language of msgs.
+func (msgs Messages) SysManagerUser() string {
+	return Catalog.Format(msgs.locale, "sysManagerUser", nil)
+}
+
+// SysManagerCPU says "CPU"
+// in the language the app shows.
+func SysManagerCPU() string { return In(i18n.Locale()).SysManagerCPU() }
+
+// SysManagerCPU says "CPU"
+// in the language of msgs.
+func (msgs Messages) SysManagerCPU() string {
+	return Catalog.Format(msgs.locale, "sysManagerCPU", nil)
+}
+
+// SysManagerMemory says "MEM"
+// in the language the app shows.
+func SysManagerMemory() string { return In(i18n.Locale()).SysManagerMemory() }
+
+// SysManagerMemory says "MEM"
+// in the language of msgs.
+func (msgs Messages) SysManagerMemory() string {
+	return Catalog.Format(msgs.locale, "sysManagerMemory", nil)
+}
+
+// SysManagerCommand says "Command"
+// in the language the app shows.
+func SysManagerCommand() string { return In(i18n.Locale()).SysManagerCommand() }
+
+// SysManagerCommand says "Command"
+// in the language of msgs.
+func (msgs Messages) SysManagerCommand() string {
+	return Catalog.Format(msgs.locale, "sysManagerCommand", nil)
+}
+
+// SysManagerState says "State"
+// in the language the app shows.
+func SysManagerState() string { return In(i18n.Locale()).SysManagerState() }
+
+// SysManagerState says "State"
+// in the language of msgs.
+func (msgs Messages) SysManagerState() string {
+	return Catalog.Format(msgs.locale, "sysManagerState", nil)
+}
+
+// SysManagerPort says "Port"
+// in the language the app shows.
+func SysManagerPort() string { return In(i18n.Locale()).SysManagerPort() }
+
+// SysManagerPort says "Port"
+// in the language of msgs.
+func (msgs Messages) SysManagerPort() string {
+	return Catalog.Format(msgs.locale, "sysManagerPort", nil)
+}
+
+// SysManagerProtocol says "Protocol"
+// in the language the app shows.
+func SysManagerProtocol() string { return In(i18n.Locale()).SysManagerProtocol() }
+
+// SysManagerProtocol says "Protocol"
+// in the language of msgs.
+func (msgs Messages) SysManagerProtocol() string {
+	return Catalog.Format(msgs.locale, "sysManagerProtocol", nil)
+}
+
+// SysManagerAddress says "Address"
+// in the language the app shows.
+func SysManagerAddress() string { return In(i18n.Locale()).SysManagerAddress() }
+
+// SysManagerAddress says "Address"
+// in the language of msgs.
+func (msgs Messages) SysManagerAddress() string {
+	return Catalog.Format(msgs.locale, "sysManagerAddress", nil)
+}
+
+// SysManagerProcess says "Process"
+// in the language the app shows.
+func SysManagerProcess() string { return In(i18n.Locale()).SysManagerProcess() }
+
+// SysManagerProcess says "Process"
+// in the language of msgs.
+func (msgs Messages) SysManagerProcess() string {
+	return Catalog.Format(msgs.locale, "sysManagerProcess", nil)
+}
+
+// SysManagerUnit says "Unit"
+// in the language the app shows.
+func SysManagerUnit() string { return In(i18n.Locale()).SysManagerUnit() }
+
+// SysManagerUnit says "Unit"
+// in the language of msgs.
+func (msgs Messages) SysManagerUnit() string {
+	return Catalog.Format(msgs.locale, "sysManagerUnit", nil)
+}
+
+// SysManagerScope says "Scope"
+// in the language the app shows.
+func SysManagerScope() string { return In(i18n.Locale()).SysManagerScope() }
+
+// SysManagerScope says "Scope"
+// in the language of msgs.
+func (msgs Messages) SysManagerScope() string {
+	return Catalog.Format(msgs.locale, "sysManagerScope", nil)
+}
+
+// SysManagerActive says "Active"
+// in the language the app shows.
+func SysManagerActive() string { return In(i18n.Locale()).SysManagerActive() }
+
+// SysManagerActive says "Active"
+// in the language of msgs.
+func (msgs Messages) SysManagerActive() string {
+	return Catalog.Format(msgs.locale, "sysManagerActive", nil)
+}
+
+// SysManagerDescription says "Description"
+// in the language the app shows.
+func SysManagerDescription() string { return In(i18n.Locale()).SysManagerDescription() }
+
+// SysManagerDescription says "Description"
+// in the language of msgs.
+func (msgs Messages) SysManagerDescription() string {
+	return Catalog.Format(msgs.locale, "sysManagerDescription", nil)
+}
+
+// SysManagerSelectedProcess says "Process {pid} · {command}"
+// in the language the app shows.
+//
+// The process chosen in the table.
+func SysManagerSelectedProcess(pid int, command string) string {
+	return In(i18n.Locale()).SysManagerSelectedProcess(pid, command)
+}
+
+// SysManagerSelectedProcess says "Process {pid} · {command}"
+// in the language of msgs.
+//
+// The process chosen in the table.
+func (msgs Messages) SysManagerSelectedProcess(pid int, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedProcess", map[string]any{"pid": pid, "command": command})
+}
+
+// SysManagerSelectedPort says "{protocol} {address}:{port} · PID {pid}"
+// in the language the app shows.
+//
+// The listening socket chosen in the table.
+func SysManagerSelectedPort(protocol string, address string, port int, pid int) string {
+	return In(i18n.Locale()).SysManagerSelectedPort(protocol, address, port, pid)
+}
+
+// SysManagerSelectedPort says "{protocol} {address}:{port} · PID {pid}"
+// in the language of msgs.
+//
+// The listening socket chosen in the table.
+func (msgs Messages) SysManagerSelectedPort(protocol string, address string, port int, pid int) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedPort", map[string]any{"protocol": protocol, "address": address, "port": port, "pid": pid})
+}
+
+// SysManagerSelectedService says "{name} · {scope}"
+// in the language the app shows.
+//
+// The systemd unit chosen in the table.
+func SysManagerSelectedService(name string, scope string) string {
+	return In(i18n.Locale()).SysManagerSelectedService(name, scope)
+}
+
+// SysManagerSelectedService says "{name} · {scope}"
+// in the language of msgs.
+//
+// The systemd unit chosen in the table.
+func (msgs Messages) SysManagerSelectedService(name string, scope string) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedService", map[string]any{"name": name, "scope": scope})
+}
+
+// SysManagerScopeSystem says "system"
+// in the language the app shows.
+func SysManagerScopeSystem() string { return In(i18n.Locale()).SysManagerScopeSystem() }
+
+// SysManagerScopeSystem says "system"
+// in the language of msgs.
+func (msgs Messages) SysManagerScopeSystem() string {
+	return Catalog.Format(msgs.locale, "sysManagerScopeSystem", nil)
+}
+
+// SysManagerScopeUser says "user"
+// in the language the app shows.
+func SysManagerScopeUser() string { return In(i18n.Locale()).SysManagerScopeUser() }
+
+// SysManagerScopeUser says "user"
+// in the language of msgs.
+func (msgs Messages) SysManagerScopeUser() string {
+	return Catalog.Format(msgs.locale, "sysManagerScopeUser", nil)
+}
+
+// SysManagerStop says "Stop"
+// in the language the app shows.
+func SysManagerStop() string { return In(i18n.Locale()).SysManagerStop() }
+
+// SysManagerStop says "Stop"
+// in the language of msgs.
+func (msgs Messages) SysManagerStop() string {
+	return Catalog.Format(msgs.locale, "sysManagerStop", nil)
+}
+
+// SysManagerContinue says "Continue"
+// in the language the app shows.
+func SysManagerContinue() string { return In(i18n.Locale()).SysManagerContinue() }
+
+// SysManagerContinue says "Continue"
+// in the language of msgs.
+func (msgs Messages) SysManagerContinue() string {
+	return Catalog.Format(msgs.locale, "sysManagerContinue", nil)
+}
+
+// SysManagerTerminate says "Terminate"
+// in the language the app shows.
+func SysManagerTerminate() string { return In(i18n.Locale()).SysManagerTerminate() }
+
+// SysManagerTerminate says "Terminate"
+// in the language of msgs.
+func (msgs Messages) SysManagerTerminate() string {
+	return Catalog.Format(msgs.locale, "sysManagerTerminate", nil)
+}
+
+// SysManagerKill says "Kill"
+// in the language the app shows.
+func SysManagerKill() string { return In(i18n.Locale()).SysManagerKill() }
+
+// SysManagerKill says "Kill"
+// in the language of msgs.
+func (msgs Messages) SysManagerKill() string {
+	return Catalog.Format(msgs.locale, "sysManagerKill", nil)
+}
+
+// SysManagerStart says "Start"
+// in the language the app shows.
+func SysManagerStart() string { return In(i18n.Locale()).SysManagerStart() }
+
+// SysManagerStart says "Start"
+// in the language of msgs.
+func (msgs Messages) SysManagerStart() string {
+	return Catalog.Format(msgs.locale, "sysManagerStart", nil)
+}
+
+// SysManagerRestart says "Restart"
+// in the language the app shows.
+func SysManagerRestart() string { return In(i18n.Locale()).SysManagerRestart() }
+
+// SysManagerRestart says "Restart"
+// in the language of msgs.
+func (msgs Messages) SysManagerRestart() string {
+	return Catalog.Format(msgs.locale, "sysManagerRestart", nil)
+}
+
+// SysManagerCancel says "Cancel"
+// in the language the app shows.
+func SysManagerCancel() string { return In(i18n.Locale()).SysManagerCancel() }
+
+// SysManagerCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SysManagerCancel() string {
+	return Catalog.Format(msgs.locale, "sysManagerCancel", nil)
+}
+
+// SysManagerConfirmSignal says "Send SIG{signal} to process {pid}?\n\nCommand: {command}"
+// in the language the app shows.
+//
+// Asks before signalling a process, naming the target and the exact
+// command.
+func SysManagerConfirmSignal(signal string, pid int, command string) string {
+	return In(i18n.Locale()).SysManagerConfirmSignal(signal, pid, command)
+}
+
+// SysManagerConfirmSignal says "Send SIG{signal} to process {pid}?\n\nCommand: {command}"
+// in the language of msgs.
+//
+// Asks before signalling a process, naming the target and the exact
+// command.
+func (msgs Messages) SysManagerConfirmSignal(signal string, pid int, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmSignal", map[string]any{"signal": signal, "pid": pid, "command": command})
+}
+
+// SysManagerConfirmPort says "Send SIGTERM to process {pid}, which owns {address}:{port}/{protocol}?\n\nCommand: {command}"
+// in the language the app shows.
+//
+// Asks before signalling the process that owns a listening socket.
+func SysManagerConfirmPort(pid int, address string, port int, protocol string, command string) string {
+	return In(i18n.Locale()).SysManagerConfirmPort(pid, address, port, protocol, command)
+}
+
+// SysManagerConfirmPort says "Send SIGTERM to process {pid}, which owns {address}:{port}/{protocol}?\n\nCommand: {command}"
+// in the language of msgs.
+//
+// Asks before signalling the process that owns a listening socket.
+func (msgs Messages) SysManagerConfirmPort(pid int, address string, port int, protocol string, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmPort", map[string]any{"pid": pid, "address": address, "port": port, "protocol": protocol, "command": command})
+}
+
+// SysManagerConfirmService says "{action} {name}?\n\nCommand: {command}"
+// in the language the app shows.
+//
+// Asks before starting, stopping, or restarting a systemd unit.
+func SysManagerConfirmService(action string, name string, command string) string {
+	return In(i18n.Locale()).SysManagerConfirmService(action, name, command)
+}
+
+// SysManagerConfirmService says "{action} {name}?\n\nCommand: {command}"
+// in the language of msgs.
+//
+// Asks before starting, stopping, or restarting a systemd unit.
+func (msgs Messages) SysManagerConfirmService(action string, name string, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmService", map[string]any{"action": action, "name": name, "command": command})
+}
+
+// SysManagerActionRunning says "Running {command}…"
+// in the language the app shows.
+//
+// A confirmed command that is still running.
+func SysManagerActionRunning(command string) string {
+	return In(i18n.Locale()).SysManagerActionRunning(command)
+}
+
+// SysManagerActionRunning says "Running {command}…"
+// in the language of msgs.
+//
+// A confirmed command that is still running.
+func (msgs Messages) SysManagerActionRunning(command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerActionRunning", map[string]any{"command": command})
+}
+
+// SysManagerActionSucceeded says "Finished: {command}"
+// in the language the app shows.
+//
+// A confirmed command that finished.
+func SysManagerActionSucceeded(command string) string {
+	return In(i18n.Locale()).SysManagerActionSucceeded(command)
+}
+
+// SysManagerActionSucceeded says "Finished: {command}"
+// in the language of msgs.
+//
+// A confirmed command that finished.
+func (msgs Messages) SysManagerActionSucceeded(command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerActionSucceeded", map[string]any{"command": command})
+}
+
+// SysManagerActionFailed says "The action failed."
+// in the language the app shows.
+func SysManagerActionFailed() string { return In(i18n.Locale()).SysManagerActionFailed() }
+
+// SysManagerActionFailed says "The action failed."
+// in the language of msgs.
+func (msgs Messages) SysManagerActionFailed() string {
+	return Catalog.Format(msgs.locale, "sysManagerActionFailed", nil)
+}
+
+// SysManagerActionCancelled says "The action was cancelled."
+// in the language the app shows.
+func SysManagerActionCancelled() string { return In(i18n.Locale()).SysManagerActionCancelled() }
+
+// SysManagerActionCancelled says "The action was cancelled."
+// in the language of msgs.
+func (msgs Messages) SysManagerActionCancelled() string {
+	return Catalog.Format(msgs.locale, "sysManagerActionCancelled", nil)
+}
+
+// SysManagerActionPermission says "Permission denied."
+// in the language the app shows.
+func SysManagerActionPermission() string { return In(i18n.Locale()).SysManagerActionPermission() }
+
+// SysManagerActionPermission says "Permission denied."
+// in the language of msgs.
+func (msgs Messages) SysManagerActionPermission() string {
+	return Catalog.Format(msgs.locale, "sysManagerActionPermission", nil)
+}
+
+// SysManagerLatency says "Latency"
+// in the language the app shows.
+func SysManagerLatency() string { return In(i18n.Locale()).SysManagerLatency() }
+
+// SysManagerLatency says "Latency"
+// in the language of msgs.
+func (msgs Messages) SysManagerLatency() string {
+	return Catalog.Format(msgs.locale, "sysManagerLatency", nil)
+}
+
+// SysManagerLatencyValue says "{milliseconds} ms"
+// in the language the app shows.
+//
+// The last sample's round-trip latency.
+func SysManagerLatencyValue(milliseconds int) string {
+	return In(i18n.Locale()).SysManagerLatencyValue(milliseconds)
+}
+
+// SysManagerLatencyValue says "{milliseconds} ms"
+// in the language of msgs.
+//
+// The last sample's round-trip latency.
+func (msgs Messages) SysManagerLatencyValue(milliseconds int) string {
+	return Catalog.Format(msgs.locale, "sysManagerLatencyValue", map[string]any{"milliseconds": milliseconds})
+}
+
+// SysManagerOverviewSystem says "System"
+// in the language the app shows.
+func SysManagerOverviewSystem() string { return In(i18n.Locale()).SysManagerOverviewSystem() }
+
+// SysManagerOverviewSystem says "System"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewSystem() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewSystem", nil)
+}
+
+// SysManagerOverviewHostname says "Hostname"
+// in the language the app shows.
+func SysManagerOverviewHostname() string { return In(i18n.Locale()).SysManagerOverviewHostname() }
+
+// SysManagerOverviewHostname says "Hostname"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewHostname() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewHostname", nil)
+}
+
+// SysManagerOverviewOS says "System"
+// in the language the app shows.
+func SysManagerOverviewOS() string { return In(i18n.Locale()).SysManagerOverviewOS() }
+
+// SysManagerOverviewOS says "System"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewOS() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewOS", nil)
+}
+
+// SysManagerOverviewKernel says "Kernel"
+// in the language the app shows.
+func SysManagerOverviewKernel() string { return In(i18n.Locale()).SysManagerOverviewKernel() }
+
+// SysManagerOverviewKernel says "Kernel"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewKernel() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewKernel", nil)
+}
+
+// SysManagerOverviewUptime says "Uptime"
+// in the language the app shows.
+func SysManagerOverviewUptime() string { return In(i18n.Locale()).SysManagerOverviewUptime() }
+
+// SysManagerOverviewUptime says "Uptime"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewUptime() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewUptime", nil)
+}
+
+// SysManagerOverviewLoad says "Load"
+// in the language the app shows.
+func SysManagerOverviewLoad() string { return In(i18n.Locale()).SysManagerOverviewLoad() }
+
+// SysManagerOverviewLoad says "Load"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewLoad() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewLoad", nil)
+}
+
+// SysManagerOverviewCores says "{count} cores"
+// in the language the app shows.
+//
+// The Host's CPU core count.
+func SysManagerOverviewCores(count int) string {
+	return In(i18n.Locale()).SysManagerOverviewCores(count)
+}
+
+// SysManagerOverviewCores says "{count} cores"
+// in the language of msgs.
+//
+// The Host's CPU core count.
+func (msgs Messages) SysManagerOverviewCores(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewCores", map[string]any{"count": count})
+}
+
+// SysManagerOverviewCPU says "CPU"
+// in the language the app shows.
+func SysManagerOverviewCPU() string { return In(i18n.Locale()).SysManagerOverviewCPU() }
+
+// SysManagerOverviewCPU says "CPU"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewCPU() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewCPU", nil)
+}
+
+// SysManagerOverviewMemory says "Memory"
+// in the language the app shows.
+func SysManagerOverviewMemory() string { return In(i18n.Locale()).SysManagerOverviewMemory() }
+
+// SysManagerOverviewMemory says "Memory"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewMemory() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewMemory", nil)
+}
+
+// SysManagerOverviewSwap says "Swap"
+// in the language the app shows.
+func SysManagerOverviewSwap() string { return In(i18n.Locale()).SysManagerOverviewSwap() }
+
+// SysManagerOverviewSwap says "Swap"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewSwap() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewSwap", nil)
+}
+
+// SysManagerOverviewDisk says "Disk"
+// in the language the app shows.
+func SysManagerOverviewDisk() string { return In(i18n.Locale()).SysManagerOverviewDisk() }
+
+// SysManagerOverviewDisk says "Disk"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewDisk() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewDisk", nil)
+}
+
+// SysManagerOverviewEmpty says "No system overview data yet."
+// in the language the app shows.
+func SysManagerOverviewEmpty() string { return In(i18n.Locale()).SysManagerOverviewEmpty() }
+
+// SysManagerOverviewEmpty says "No system overview data yet."
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewEmpty() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewEmpty", nil)
+}
+
+// SysManagerOverviewUsedOf says "{used} / {total}"
+// in the language the app shows.
+//
+// A used amount beside its total.
+func SysManagerOverviewUsedOf(used string, total string) string {
+	return In(i18n.Locale()).SysManagerOverviewUsedOf(used, total)
+}
+
+// SysManagerOverviewUsedOf says "{used} / {total}"
+// in the language of msgs.
+//
+// A used amount beside its total.
+func (msgs Messages) SysManagerOverviewUsedOf(used string, total string) string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewUsedOf", map[string]any{"used": used, "total": total})
+}
+
+// SysManagerDurationDays says "{days}d {hours}h"
+// in the language the app shows.
+//
+// An uptime of days and hours.
+func SysManagerDurationDays(days int, hours int) string {
+	return In(i18n.Locale()).SysManagerDurationDays(days, hours)
+}
+
+// SysManagerDurationDays says "{days}d {hours}h"
+// in the language of msgs.
+//
+// An uptime of days and hours.
+func (msgs Messages) SysManagerDurationDays(days int, hours int) string {
+	return Catalog.Format(msgs.locale, "sysManagerDurationDays", map[string]any{"days": days, "hours": hours})
+}
+
+// SysManagerDurationHours says "{hours}h {minutes}m"
+// in the language the app shows.
+//
+// An uptime of hours and minutes.
+func SysManagerDurationHours(hours int, minutes int) string {
+	return In(i18n.Locale()).SysManagerDurationHours(hours, minutes)
+}
+
+// SysManagerDurationHours says "{hours}h {minutes}m"
+// in the language of msgs.
+//
+// An uptime of hours and minutes.
+func (msgs Messages) SysManagerDurationHours(hours int, minutes int) string {
+	return Catalog.Format(msgs.locale, "sysManagerDurationHours", map[string]any{"hours": hours, "minutes": minutes})
+}
+
+// SysManagerDurationMinutes says "{minutes}m"
+// in the language the app shows.
+//
+// An uptime of minutes.
+func SysManagerDurationMinutes(minutes int) string {
+	return In(i18n.Locale()).SysManagerDurationMinutes(minutes)
+}
+
+// SysManagerDurationMinutes says "{minutes}m"
+// in the language of msgs.
+//
+// An uptime of minutes.
+func (msgs Messages) SysManagerDurationMinutes(minutes int) string {
+	return Catalog.Format(msgs.locale, "sysManagerDurationMinutes", map[string]any{"minutes": minutes})
+}
+
+// SysManagerUnknown says "—"
+// in the language the app shows.
+func SysManagerUnknown() string { return In(i18n.Locale()).SysManagerUnknown() }
+
+// SysManagerUnknown says "—"
+// in the language of msgs.
+func (msgs Messages) SysManagerUnknown() string {
+	return Catalog.Format(msgs.locale, "sysManagerUnknown", nil)
+}
+
+// SysManagerOverviewResources says "Resources"
+// in the language the app shows.
+func SysManagerOverviewResources() string { return In(i18n.Locale()).SysManagerOverviewResources() }
+
+// SysManagerOverviewResources says "Resources"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewResources() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewResources", nil)
+}
+
+// SysManagerPortOwnerUnknown says "Unknown process"
+// in the language the app shows.
+func SysManagerPortOwnerUnknown() string { return In(i18n.Locale()).SysManagerPortOwnerUnknown() }
+
+// SysManagerPortOwnerUnknown says "Unknown process"
+// in the language of msgs.
+func (msgs Messages) SysManagerPortOwnerUnknown() string {
+	return Catalog.Format(msgs.locale, "sysManagerPortOwnerUnknown", nil)
+}
+
+// SysManagerOverviewCoresLabel says "Cores"
+// in the language the app shows.
+func SysManagerOverviewCoresLabel() string { return In(i18n.Locale()).SysManagerOverviewCoresLabel() }
+
+// SysManagerOverviewCoresLabel says "Cores"
+// in the language of msgs.
+func (msgs Messages) SysManagerOverviewCoresLabel() string {
+	return Catalog.Format(msgs.locale, "sysManagerOverviewCoresLabel", nil)
+}
