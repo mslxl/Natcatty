@@ -60,6 +60,7 @@ func init() {
 		"application/keybindings", "application/preferences", "application/themes",
 		"adapters/store", "adapters/ssh", "adapters/sftp", "adapters/scp",
 		"adapters/serial", "adapters/telnet", "adapters/mosh", "adapters/et",
+		"adapters/bundle",
 		"adapters/secrets", "adapters/sync", "adapters/applock", "adapters/localpty",
 		"adapters/mcprpc", "adapters/histfile",
 		"ui/shell", "ui/shell/state", "ui/vault", "ui/vault/state", "ui/settings",

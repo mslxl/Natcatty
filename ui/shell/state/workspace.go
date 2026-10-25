@@ -12,6 +12,8 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
+	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -1428,6 +1430,45 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.X11Forwarding = host.X11Enabled()
 			spec.NetworkDevice = host.IsNetworkDevice()
 			spec.Dir = ""
+		}
+		spec.Reconnect = &appsession.ReconnectPolicy{}
+	case domainworkspace.SessionMosh, domainworkspace.SessionET:
+		spec.Kind = appsession.KindMosh
+		if descriptor.Kind == domainworkspace.SessionET {
+			spec.Kind = appsession.KindET
+		}
+		spec.HostID = descriptor.HostID
+		spec.Hostname = descriptor.Hostname
+		spec.Port = descriptor.Port
+		spec.Username = descriptor.Username
+		spec.X11Forwarding = false
+		if s.resolveHost != nil {
+			host, ok := s.resolveHost(ctx, descriptor.HostID)
+			if !ok {
+				return nil, ErrHostUnavailable
+			}
+			plan := hostSessionTransport(host)
+			spec.HostID = host.ID
+			spec.Hostname = host.Hostname
+			spec.Port = host.Port
+			spec.Username = host.Username
+			spec.Mosh = plan.mosh
+			spec.ET = plan.et
+			spec.Dir = ""
+		} else if spec.Kind == appsession.KindMosh {
+			cfg := moshmodel.Config{
+				Hostname: descriptor.Hostname,
+				Port:     descriptor.Port,
+				Username: descriptor.Username,
+			}.Normalized()
+			spec.Mosh = &cfg
+		} else {
+			cfg := etmodel.Config{
+				Hostname: descriptor.Hostname,
+				Port:     descriptor.Port,
+				Username: descriptor.Username,
+			}.Normalized()
+			spec.ET = &cfg
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}
 	case domainworkspace.SessionTelnet:

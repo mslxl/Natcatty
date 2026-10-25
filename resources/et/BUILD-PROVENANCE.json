@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "repository": "binaricat/Netcatty-et-bin",
+    "tag": "et-bin-6.2.10-1",
+    "url": "https://github.com/binaricat/Netcatty-et-bin/releases/tag/et-bin-6.2.10-1",
+    "publishedAt": "2026-06-04T10:50:39Z"
+  },
+  "upstream": {
+    "repository": "MisterTea/EternalTerminal",
+    "ref": "et-v6.2.10",
+    "commit": "f9a584ac06b2f1730b5bdf0a27150f28478368fb",
+    "url": "https://github.com/MisterTea/EternalTerminal/tree/et-v6.2.10"
+  },
+  "netcatty": {
+    "repository": "binaricat/Netcatty",
+    "pullRequest": "https://github.com/binaricat/Netcatty/pull/1212",
+    "headCommit": "9d0f6a9ceab6ff446033211bed338616bc268ac7",
+    "checkoutRef": "pull/1212/merge",
+    "checkoutCommit": "c39793d592db59da68a1b4d6eaaf001620ad9464",
+    "workflow": "build-et-binaries",
+    "workflowRun": "https://github.com/binaricat/Netcatty/actions/runs/26945446872",
+    "workflowEvent": "pull_request"
+  },
+  "artifacts": [
+    {
+      "name": "et-linux-x64.tar.gz",
+      "sha256": "25149ca428107822dc374fe186e1dd49098ab8863b899a49f03048ef9dc94935",
+      "binary": "et",
+      "binarySha256": "2f1b3a4fdda433246783b46669d8099707808a27b74f661acf80af24ec4d7d6d",
+      "size": 9741112
+    },
+    {
+      "name": "et-linux-arm64.tar.gz",
+      "sha256": "c0f0fbe18bdd95c409bba11180a98f36876aa03f063ef1fa27048d86471b58ea",
+      "binary": "et",
+      "binarySha256": "408fe4831b80a0ed89a7cbdcabffccb874c7d1d95b3b16ead09717255e035ea4",
+      "size": 9014632
+    },
+    {
+      "name": "et-darwin-universal.tar.gz",
+      "sha256": "d26855cc2272fe3f214d84f482850febe94461703111838c405e968f3eaa0128",
+      "binary": "et",
+      "binarySha256": "64c46d7f4f84724eb7fa0bfae7321e20896568fb771de418698e61bf9749d983",
+      "size": 13764928
+    },
+    {
+      "name": "et-win32-x64.tar.gz",
+      "sha256": "d8fb0056a08fee0551d8526d4b2cb5674b4f757540147de20f00ecc944064cab",
+      "binary": "et.exe",
+      "binarySha256": "6212e2c089cd55aa9455dc2a9de22ac83d0bc6c8af76ce9ad096668931ee5a25",
+      "size": 13654528
+    },
+    {
+      "name": "SHA256SUMS",
+      "sha256": "9bc6a2cb44abe6c3059c7a973164ae1d7ae52e9eb62a48bd6bc6a8e20c309ae6"
+    }
+  ],
+  "buildNotes": [
+    "Linux binaries were built in manylinux2014 containers.",
+    "macOS artifact is a universal binary.",
+    "Windows artifact is x64.",
+    "ET telemetry/Sentry dependency is disabled by the Netcatty build scripts."
+  ]
+}

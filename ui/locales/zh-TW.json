@@ -2718,5 +2718,21 @@
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "資源",
   "sysManagerPortOwnerUnknown": "未知程序",
-  "sysManagerOverviewCoresLabel": "核心"
+  "sysManagerOverviewCoresLabel": "核心",
+  "vaultHostMoshServerPath": "mosh-server 路徑",
+  "vaultHostMoshServerPathHint": "遠端 mosh-server 執行檔。留空則使用主機的 PATH。",
+  "vaultHostMoshRestrictionHint": "Mosh 工作階段不支援跳板主機或 Proxy。",
+  "vaultHostETPort": "ET 連接埠",
+  "vaultHostETPortHint": "EternalTerminal 伺服器連接埠。留空則使用 2022。",
+  "vaultHostETRestrictionHint": "EternalTerminal 工作階段最多支援一個跳板主機，且不支援 Proxy。",
+  "vaultProblemETPort": "請輸入 1 到 65535 之間的連接埠。",
+  "connectionErrorMoshUnavailable": "目前平台沒有可用的內建 Mosh 用戶端。",
+  "connectionErrorMoshChecksum": "內建 Mosh 用戶端校驗失敗，請重新安裝應用程式。",
+  "connectionErrorMoshJump": "Mosh 工作階段不能使用跳板主機。",
+  "connectionErrorMoshProxy": "Mosh 工作階段不能使用 Proxy。",
+  "connectionErrorMoshHandshake": "mosh-server 未能啟動。請確認主機上已安裝 mosh-server。",
+  "connectionErrorETUnavailable": "目前平台沒有可用的內建 EternalTerminal 用戶端。",
+  "connectionErrorETChecksum": "內建 EternalTerminal 用戶端校驗失敗，請重新安裝應用程式。",
+  "connectionErrorETJump": "EternalTerminal 工作階段最多支援一個跳板主機。",
+  "connectionErrorETProxy": "EternalTerminal 工作階段不能使用 Proxy。"
 }

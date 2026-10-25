@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -75,6 +77,34 @@ func TestSecurityKeyMessagesExistInEveryLocale(t *testing.T) {
 		} {
 			if text == "" {
 				t.Fatalf("%s: %s message is empty", locale, name)
+			}
+		}
+	}
+}
+
+func TestProblemTextForNamesMoshAndETFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want func(locales.Messages) string
+	}{
+		{"mosh-checksum", moshmodel.ErrChecksumMismatch, func(m locales.Messages) string { return m.ConnectionErrorMoshChecksum() }},
+		{"mosh-unavailable", moshmodel.ErrBundleUnavailable, func(m locales.Messages) string { return m.ConnectionErrorMoshUnavailable() }},
+		{"mosh-platform", moshmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshUnavailable() }},
+		{"mosh-jump", moshmodel.ErrJumpUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshJump() }},
+		{"mosh-proxy", moshmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshProxy() }},
+		{"mosh-handshake", moshmodel.ErrHandshake, func(m locales.Messages) string { return m.ConnectionErrorMoshHandshake() }},
+		{"et-checksum", etmodel.ErrChecksumMismatch, func(m locales.Messages) string { return m.ConnectionErrorETChecksum() }},
+		{"et-unavailable", etmodel.ErrBundleUnavailable, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
+		{"et-platform", etmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
+		{"et-jump", etmodel.ErrMultipleJumpHosts, func(m locales.Messages) string { return m.ConnectionErrorETJump() }},
+		{"et-proxy", etmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETProxy() }},
+	}
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		for _, tc := range cases {
+			if got, want := ProblemTextFor(m, tc.err), tc.want(m); got == "" || got != want {
+				t.Fatalf("%s/%s = %q, want %q", locale, tc.name, got, want)
 			}
 		}
 	}

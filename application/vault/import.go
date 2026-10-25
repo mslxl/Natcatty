@@ -1005,6 +1005,8 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		SFTPFileProtocol:       draft.SFTPFileProtocol,
 		SFTPSudo:               draft.SFTPSudo,
 		DeviceType:             draft.DeviceType,
+		MoshServerPath:         draft.MoshServerPath,
+		ETPort:                 draft.ETPort,
 	}
 }
 

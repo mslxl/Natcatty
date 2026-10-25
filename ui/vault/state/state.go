@@ -131,6 +131,7 @@ const (
 	ProblemBackupClear              Problem = "backup_clear"
 	ProblemFileProtocol             Problem = "file_protocol"
 	ProblemSudoUnsupported          Problem = "sftp_sudo_unsupported"
+	ProblemETPort                   Problem = "et_port"
 )
 
 // Form is the editable text of one Host. Port stays a string so a malformed
@@ -173,6 +174,11 @@ type Form struct {
 	SFTPSudo     bool
 	// NetworkDevice selects raw execution for a vendor CLI over SSH.
 	NetworkDevice bool
+	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
+	MoshServerPath string
+	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
+	// string so a malformed value can be rejected.
+	ETPort string
 }
 
 // State is the Vault surface's state.
@@ -696,6 +702,8 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
 		SFTPSudo:               host.SFTPSudo,
 		NetworkDevice:          host.IsNetworkDevice(),
+		MoshServerPath:         host.MoshServerPath,
+		ETPort:                 etPortText(host),
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -944,6 +952,15 @@ func hostPortText(host domainvault.Host) string {
 	return strconv.Itoa(host.Port)
 }
 
+// etPortText returns the editor's ET port text. Zero means the 2022 default,
+// so it stays blank rather than showing a value the Host does not store.
+func etPortText(host domainvault.Host) string {
+	if host.ETPort == 0 {
+		return ""
+	}
+	return strconv.Itoa(host.ETPort)
+}
+
 // draftFromHost turns a Host into the draft an edit would submit, optionally
 // changing its Pinned preference.
 func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
@@ -973,6 +990,8 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		SFTPFileProtocol:       domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
 		SFTPSudo:               host.SFTPSudo,
 		DeviceType:             host.DeviceType,
+		MoshServerPath:         host.MoshServerPath,
+		ETPort:                 host.ETPort,
 	}
 }
 
@@ -986,6 +1005,15 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 			return domainvault.Draft{}, ProblemPortInvalid
 		}
 		port = parsed
+	}
+
+	etPort := 0
+	if trimmed := strings.TrimSpace(s.form.ETPort); trimmed != "" {
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return domainvault.Draft{}, ProblemETPort
+		}
+		etPort = parsed
 	}
 
 	var tags []string
@@ -1024,6 +1052,8 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:         s.form.SFTPSudo,
 		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
+		MoshServerPath:   s.form.MoshServerPath,
+		ETPort:           etPort,
 	}, ProblemNone
 }
 
@@ -1122,6 +1152,8 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemX11
 	case domainvault.FieldFileProtocol:
 		return ProblemFileProtocol
+	case domainvault.FieldETPort:
+		return ProblemETPort
 	case domainvault.FieldSFTPSudo:
 		return ProblemSudoUnsupported
 	case domainvault.FieldSnippet, domainvault.FieldSnippetCommand:
