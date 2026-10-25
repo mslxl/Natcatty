@@ -7,6 +7,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListSnippets returns every Snippet in display order.
@@ -56,35 +57,45 @@ func (s *Store) GetSnippet(ctx context.Context, id string) (domainvault.Snippet,
 
 // SaveSnippet inserts or replaces one Snippet.
 func (s *Store) SaveSnippet(ctx context.Context, snippet domainvault.Snippet) error {
-	if snippet.ID == "" {
-		return fmt.Errorf("store: Snippet has no id")
-	}
-	data, err := json.Marshal(snippet)
+	statement, err := snippetSaveStatement(snippet)
 	if err != nil {
-		return fmt.Errorf("store: encode Snippet: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO snippets (
-			id, label, package_path, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			label = excluded.label,
-			package_path = excluded.package_path,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		snippet.ID,
-		snippet.Label,
-		snippet.Package,
-		snippet.OrderKey,
-		snippet.CreatedAt.UnixMilli(),
-		snippet.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Snippet: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func snippetSaveStatement(snippet domainvault.Snippet) (platformsqlite.Statement, error) {
+	if snippet.ID == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: Snippet has no id")
+	}
+	data, err := json.Marshal(snippet)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Snippet: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO snippets (
+				id, label, package_path, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				label = excluded.label,
+				package_path = excluded.package_path,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			snippet.ID,
+			snippet.Label,
+			snippet.Package,
+			snippet.OrderKey,
+			snippet.CreatedAt.UnixMilli(),
+			snippet.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteSnippet removes one Snippet.
@@ -147,31 +158,41 @@ func (s *Store) GetSnippetPackage(ctx context.Context, path string) (domainvault
 
 // SaveSnippetPackage inserts or replaces one package.
 func (s *Store) SaveSnippetPackage(ctx context.Context, pkg domainvault.SnippetPackage) error {
-	if pkg.Path == "" {
-		return fmt.Errorf("store: Snippet package has no path")
-	}
-	data, err := json.Marshal(pkg)
+	statement, err := snippetPackageSaveStatement(pkg)
 	if err != nil {
-		return fmt.Errorf("store: encode Snippet package: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO snippet_packages (
-			path, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(path) DO UPDATE SET
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		pkg.Path,
-		pkg.OrderKey,
-		pkg.CreatedAt.UnixMilli(),
-		pkg.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Snippet package: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func snippetPackageSaveStatement(pkg domainvault.SnippetPackage) (platformsqlite.Statement, error) {
+	if pkg.Path == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: Snippet package has no path")
+	}
+	data, err := json.Marshal(pkg)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Snippet package: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO snippet_packages (
+				path, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(path) DO UPDATE SET
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			pkg.Path,
+			pkg.OrderKey,
+			pkg.CreatedAt.UnixMilli(),
+			pkg.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteSnippetPackage removes one package. Snippet references are cleared by

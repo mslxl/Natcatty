@@ -7,6 +7,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListNotes returns every Vault Note in display order.
@@ -56,35 +57,45 @@ func (s *Store) GetNote(ctx context.Context, id string) (domainvault.Note, error
 
 // SaveNote inserts or replaces one Vault Note.
 func (s *Store) SaveNote(ctx context.Context, note domainvault.Note) error {
-	if note.ID == "" {
-		return fmt.Errorf("store: Vault Note has no id")
-	}
-	data, err := json.Marshal(note)
+	statement, err := noteSaveStatement(note)
 	if err != nil {
-		return fmt.Errorf("store: encode Vault Note: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO vault_notes (
-			id, title, group_path, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			title = excluded.title,
-			group_path = excluded.group_path,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		note.ID,
-		note.Title,
-		note.Group,
-		note.OrderKey,
-		note.CreatedAt.UnixMilli(),
-		note.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Vault Note: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func noteSaveStatement(note domainvault.Note) (platformsqlite.Statement, error) {
+	if note.ID == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: Vault Note has no id")
+	}
+	data, err := json.Marshal(note)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Vault Note: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO vault_notes (
+				id, title, group_path, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				title = excluded.title,
+				group_path = excluded.group_path,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			note.ID,
+			note.Title,
+			note.Group,
+			note.OrderKey,
+			note.CreatedAt.UnixMilli(),
+			note.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteNote removes one Vault Note.
@@ -127,31 +138,41 @@ func (s *Store) ListNoteGroups(ctx context.Context) ([]domainvault.NoteGroup, er
 
 // SaveNoteGroup inserts or replaces one Note Group.
 func (s *Store) SaveNoteGroup(ctx context.Context, group domainvault.NoteGroup) error {
-	if group.Path == "" {
-		return fmt.Errorf("store: Note Group has no path")
-	}
-	data, err := json.Marshal(group)
+	statement, err := noteGroupSaveStatement(group)
 	if err != nil {
-		return fmt.Errorf("store: encode Note Group: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO note_groups (
-			path, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(path) DO UPDATE SET
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		group.Path,
-		group.OrderKey,
-		group.CreatedAt.UnixMilli(),
-		group.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Note Group: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func noteGroupSaveStatement(group domainvault.NoteGroup) (platformsqlite.Statement, error) {
+	if group.Path == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: Note Group has no path")
+	}
+	data, err := json.Marshal(group)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Note Group: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO note_groups (
+				path, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(path) DO UPDATE SET
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			group.Path,
+			group.OrderKey,
+			group.CreatedAt.UnixMilli(),
+			group.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteNoteGroup removes one Note Group. Notes that reference it are left

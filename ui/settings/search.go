@@ -199,10 +199,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaSecurity, "", m.SettingsAppLockTitle(), "app lock password")
 	add(AreaSecurity, "", m.SettingsAppLockTimeout(), "timeout inactivity")
 
-	add(AreaSync, domain.FieldSyncEnabled, m.SettingsSyncEnabled(), "cloud sync enabled")
 	add(AreaSync, domain.FieldSyncAutoSync, m.SettingsSyncAutoSync(), "auto sync")
 	add(AreaSync, domain.FieldSyncConflictStrategy, m.SettingsSyncConflictStrategy(), "conflict strategy")
-	add(AreaSync, domain.FieldSyncProvider, m.SettingsSyncProvider(), "provider")
 
 	add(AreaShortcuts, "", m.SettingsShortcutScheme(), "scheme mac pc disabled")
 	add(AreaShortcuts, "", m.SettingsShortcutResetAll(), "reset all shortcuts")

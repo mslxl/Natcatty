@@ -230,8 +230,8 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 		}},
 		{AreaSync, func(m locales.Messages) []string {
 			return []string{
-				m.SettingsSyncEnabled(), m.SettingsSyncAutoSync(),
-				m.SettingsSyncConflictStrategy(), m.SettingsSyncProvider(),
+				m.SettingsSyncMasterPassword(), m.SettingsSyncAutoSync(),
+				m.SettingsSyncConflictStrategy(),
 			}
 		}},
 		{AreaSecurity, func(m locales.Messages) []string {
@@ -253,6 +253,8 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 						config.Desktop = NewDesktopState(newFakeDesktop())
 					case AreaSecurity:
 						config.Lock = NewAppLockState(&fakeAppLock{})
+					case AreaSync:
+						config.Sync = NewSyncState(newFakeSyncService())
 					}
 					tester := ui.NewTester(viewAt(test.area, config), w, h)
 					tester.SetLocale(locale)

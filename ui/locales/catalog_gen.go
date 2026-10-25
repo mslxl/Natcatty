@@ -11576,24 +11576,24 @@ func (msgs Messages) SettingsSyncTitle() string {
 	return Catalog.Format(msgs.locale, "settingsSyncTitle", nil)
 }
 
-// SettingsSyncDescription says "Cloud sync preferences. No provider is available in this build; the values persist for a later one."
+// SettingsSyncDescription says "Sync the encrypted Vault through a private GitHub Gist. The master password never leaves this device."
 // in the language the app shows.
 func SettingsSyncDescription() string { return In(i18n.Locale()).SettingsSyncDescription() }
 
-// SettingsSyncDescription says "Cloud sync preferences. No provider is available in this build; the values persist for a later one."
+// SettingsSyncDescription says "Sync the encrypted Vault through a private GitHub Gist. The master password never leaves this device."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSyncDescription", nil)
 }
 
-// SettingsSyncEnabled says "Enable cloud sync"
+// SettingsSyncSecurityNote says "Vault metadata such as device name, app version, and timestamps is visible to GitHub. Vault records and credentials s…"
 // in the language the app shows.
-func SettingsSyncEnabled() string { return In(i18n.Locale()).SettingsSyncEnabled() }
+func SettingsSyncSecurityNote() string { return In(i18n.Locale()).SettingsSyncSecurityNote() }
 
-// SettingsSyncEnabled says "Enable cloud sync"
+// SettingsSyncSecurityNote says "Vault metadata such as device name, app version, and timestamps is visible to GitHub. Vault records and credentials s…"
 // in the language of msgs.
-func (msgs Messages) SettingsSyncEnabled() string {
-	return Catalog.Format(msgs.locale, "settingsSyncEnabled", nil)
+func (msgs Messages) SettingsSyncSecurityNote() string {
+	return Catalog.Format(msgs.locale, "settingsSyncSecurityNote", nil)
 }
 
 // SettingsSyncAutoSync says "Sync automatically"
@@ -11646,24 +11646,360 @@ func (msgs Messages) SettingsSyncRemote() string {
 	return Catalog.Format(msgs.locale, "settingsSyncRemote", nil)
 }
 
-// SettingsSyncProvider says "Provider"
+// SettingsSyncConnectedAs says "Connected as {login}"
 // in the language the app shows.
-func SettingsSyncProvider() string { return In(i18n.Locale()).SettingsSyncProvider() }
-
-// SettingsSyncProvider says "Provider"
-// in the language of msgs.
-func (msgs Messages) SettingsSyncProvider() string {
-	return Catalog.Format(msgs.locale, "settingsSyncProvider", nil)
+func SettingsSyncConnectedAs(login string) string {
+	return In(i18n.Locale()).SettingsSyncConnectedAs(login)
 }
 
-// SettingsSyncUnavailable says "Cloud sync is not available in this build."
-// in the language the app shows.
-func SettingsSyncUnavailable() string { return In(i18n.Locale()).SettingsSyncUnavailable() }
-
-// SettingsSyncUnavailable says "Cloud sync is not available in this build."
+// SettingsSyncConnectedAs says "Connected as {login}"
 // in the language of msgs.
-func (msgs Messages) SettingsSyncUnavailable() string {
-	return Catalog.Format(msgs.locale, "settingsSyncUnavailable", nil)
+func (msgs Messages) SettingsSyncConnectedAs(login string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConnectedAs", map[string]any{"login": login})
+}
+
+// SettingsSyncNotConnected says "Not connected. Enter the master password and connect GitHub."
+// in the language the app shows.
+func SettingsSyncNotConnected() string { return In(i18n.Locale()).SettingsSyncNotConnected() }
+
+// SettingsSyncNotConnected says "Not connected. Enter the master password and connect GitHub."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncNotConnected() string {
+	return Catalog.Format(msgs.locale, "settingsSyncNotConnected", nil)
+}
+
+// SettingsSyncMasterPassword says "Master password"
+// in the language the app shows.
+func SettingsSyncMasterPassword() string { return In(i18n.Locale()).SettingsSyncMasterPassword() }
+
+// SettingsSyncMasterPassword says "Master password"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncMasterPassword() string {
+	return Catalog.Format(msgs.locale, "settingsSyncMasterPassword", nil)
+}
+
+// SettingsSyncMasterPasswordHint says "The password encrypts the cloud copy. It is never uploaded or saved to disk."
+// in the language the app shows.
+func SettingsSyncMasterPasswordHint() string {
+	return In(i18n.Locale()).SettingsSyncMasterPasswordHint()
+}
+
+// SettingsSyncMasterPasswordHint says "The password encrypts the cloud copy. It is never uploaded or saved to disk."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncMasterPasswordHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncMasterPasswordHint", nil)
+}
+
+// SettingsSyncConnect says "Connect GitHub"
+// in the language the app shows.
+func SettingsSyncConnect() string { return In(i18n.Locale()).SettingsSyncConnect() }
+
+// SettingsSyncConnect says "Connect GitHub"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConnect() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConnect", nil)
+}
+
+// SettingsSyncDisconnect says "Disconnect"
+// in the language the app shows.
+func SettingsSyncDisconnect() string { return In(i18n.Locale()).SettingsSyncDisconnect() }
+
+// SettingsSyncDisconnect says "Disconnect"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDisconnect() string {
+	return Catalog.Format(msgs.locale, "settingsSyncDisconnect", nil)
+}
+
+// SettingsSyncDisconnectConfirm says "Disconnect GitHub? Automatic sync stops. The Gist and the local Vault stay unchanged."
+// in the language the app shows.
+func SettingsSyncDisconnectConfirm() string { return In(i18n.Locale()).SettingsSyncDisconnectConfirm() }
+
+// SettingsSyncDisconnectConfirm says "Disconnect GitHub? Automatic sync stops. The Gist and the local Vault stay unchanged."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDisconnectConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsSyncDisconnectConfirm", nil)
+}
+
+// SettingsSyncSyncNow says "Sync now"
+// in the language the app shows.
+func SettingsSyncSyncNow() string { return In(i18n.Locale()).SettingsSyncSyncNow() }
+
+// SettingsSyncSyncNow says "Sync now"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncSyncNow() string {
+	return Catalog.Format(msgs.locale, "settingsSyncSyncNow", nil)
+}
+
+// SettingsSyncDeviceCode says "Enter this code on GitHub"
+// in the language the app shows.
+func SettingsSyncDeviceCode() string { return In(i18n.Locale()).SettingsSyncDeviceCode() }
+
+// SettingsSyncDeviceCode says "Enter this code on GitHub"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDeviceCode() string {
+	return Catalog.Format(msgs.locale, "settingsSyncDeviceCode", nil)
+}
+
+// SettingsSyncDeviceCodeHint says "Open {url} and enter the code shown above."
+// in the language the app shows.
+func SettingsSyncDeviceCodeHint(url string) string {
+	return In(i18n.Locale()).SettingsSyncDeviceCodeHint(url)
+}
+
+// SettingsSyncDeviceCodeHint says "Open {url} and enter the code shown above."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDeviceCodeHint(url string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncDeviceCodeHint", map[string]any{"url": url})
+}
+
+// SettingsSyncLastSynced says "Last synced {time}"
+// in the language the app shows.
+func SettingsSyncLastSynced(time_ string) string {
+	return In(i18n.Locale()).SettingsSyncLastSynced(time_)
+}
+
+// SettingsSyncLastSynced says "Last synced {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncLastSynced(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncLastSynced", map[string]any{"time": time_})
+}
+
+// SettingsSyncNeverSynced says "Never synced"
+// in the language the app shows.
+func SettingsSyncNeverSynced() string { return In(i18n.Locale()).SettingsSyncNeverSynced() }
+
+// SettingsSyncNeverSynced says "Never synced"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncNeverSynced() string {
+	return Catalog.Format(msgs.locale, "settingsSyncNeverSynced", nil)
+}
+
+// SettingsSyncReady says "Unlocked for this session"
+// in the language the app shows.
+func SettingsSyncReady() string { return In(i18n.Locale()).SettingsSyncReady() }
+
+// SettingsSyncReady says "Unlocked for this session"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncReady() string {
+	return Catalog.Format(msgs.locale, "settingsSyncReady", nil)
+}
+
+// SettingsSyncNeedsPassword says "Enter the master password to resume sync."
+// in the language the app shows.
+func SettingsSyncNeedsPassword() string { return In(i18n.Locale()).SettingsSyncNeedsPassword() }
+
+// SettingsSyncNeedsPassword says "Enter the master password to resume sync."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncNeedsPassword() string {
+	return Catalog.Format(msgs.locale, "settingsSyncNeedsPassword", nil)
+}
+
+// SettingsSyncOperationFailed says "The sync operation failed. Try again."
+// in the language the app shows.
+func SettingsSyncOperationFailed() string { return In(i18n.Locale()).SettingsSyncOperationFailed() }
+
+// SettingsSyncOperationFailed says "The sync operation failed. Try again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncOperationFailed() string {
+	return Catalog.Format(msgs.locale, "settingsSyncOperationFailed", nil)
+}
+
+// SettingsSyncStatusAuthorizing says "Waiting for GitHub authorization..."
+// in the language the app shows.
+func SettingsSyncStatusAuthorizing() string { return In(i18n.Locale()).SettingsSyncStatusAuthorizing() }
+
+// SettingsSyncStatusAuthorizing says "Waiting for GitHub authorization..."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusAuthorizing() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusAuthorizing", nil)
+}
+
+// SettingsSyncStatusSyncing says "Syncing..."
+// in the language the app shows.
+func SettingsSyncStatusSyncing() string { return In(i18n.Locale()).SettingsSyncStatusSyncing() }
+
+// SettingsSyncStatusSyncing says "Syncing..."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusSyncing() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusSyncing", nil)
+}
+
+// SettingsSyncStatusSynced says "Synced"
+// in the language the app shows.
+func SettingsSyncStatusSynced() string { return In(i18n.Locale()).SettingsSyncStatusSynced() }
+
+// SettingsSyncStatusSynced says "Synced"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusSynced() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusSynced", nil)
+}
+
+// SettingsSyncStatusFailed says "Sync failed"
+// in the language the app shows.
+func SettingsSyncStatusFailed() string { return In(i18n.Locale()).SettingsSyncStatusFailed() }
+
+// SettingsSyncStatusFailed says "Sync failed"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusFailed() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusFailed", nil)
+}
+
+// SettingsSyncStatusNeedsPassword says "Master password required"
+// in the language the app shows.
+func SettingsSyncStatusNeedsPassword() string {
+	return In(i18n.Locale()).SettingsSyncStatusNeedsPassword()
+}
+
+// SettingsSyncStatusNeedsPassword says "Master password required"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusNeedsPassword() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusNeedsPassword", nil)
+}
+
+// SettingsSyncProblemEmptyVault says "The Vault is empty. Sync will not overwrite the cloud copy."
+// in the language the app shows.
+func SettingsSyncProblemEmptyVault() string { return In(i18n.Locale()).SettingsSyncProblemEmptyVault() }
+
+// SettingsSyncProblemEmptyVault says "The Vault is empty. Sync will not overwrite the cloud copy."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemEmptyVault() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemEmptyVault", nil)
+}
+
+// SettingsSyncProblemConflict says "The cloud copy changed while uploading. Review it and sync again."
+// in the language the app shows.
+func SettingsSyncProblemConflict() string { return In(i18n.Locale()).SettingsSyncProblemConflict() }
+
+// SettingsSyncProblemConflict says "The cloud copy changed while uploading. Review it and sync again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConflict() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConflict", nil)
+}
+
+// SettingsSyncProblemWrongPassword says "The master password does not match the cloud copy."
+// in the language the app shows.
+func SettingsSyncProblemWrongPassword() string {
+	return In(i18n.Locale()).SettingsSyncProblemWrongPassword()
+}
+
+// SettingsSyncProblemWrongPassword says "The master password does not match the cloud copy."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemWrongPassword() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemWrongPassword", nil)
+}
+
+// SettingsSyncProblemCorrupt says "The cloud copy is not a valid Netcatty vault."
+// in the language the app shows.
+func SettingsSyncProblemCorrupt() string { return In(i18n.Locale()).SettingsSyncProblemCorrupt() }
+
+// SettingsSyncProblemCorrupt says "The cloud copy is not a valid Netcatty vault."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemCorrupt() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemCorrupt", nil)
+}
+
+// SettingsSyncProblemUnauthorized says "GitHub rejected the saved token. Connect GitHub again."
+// in the language the app shows.
+func SettingsSyncProblemUnauthorized() string {
+	return In(i18n.Locale()).SettingsSyncProblemUnauthorized()
+}
+
+// SettingsSyncProblemUnauthorized says "GitHub rejected the saved token. Connect GitHub again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemUnauthorized() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemUnauthorized", nil)
+}
+
+// SettingsSyncProblemRateLimited says "GitHub is rate limiting requests. Try again later."
+// in the language the app shows.
+func SettingsSyncProblemRateLimited() string {
+	return In(i18n.Locale()).SettingsSyncProblemRateLimited()
+}
+
+// SettingsSyncProblemRateLimited says "GitHub is rate limiting requests. Try again later."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemRateLimited() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemRateLimited", nil)
+}
+
+// SettingsSyncProblemNetwork says "The network request failed. Check the connection and try again."
+// in the language the app shows.
+func SettingsSyncProblemNetwork() string { return In(i18n.Locale()).SettingsSyncProblemNetwork() }
+
+// SettingsSyncProblemNetwork says "The network request failed. Check the connection and try again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemNetwork() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemNetwork", nil)
+}
+
+// SettingsSyncProblemAuthorization says "GitHub authorization did not complete. Try again."
+// in the language the app shows.
+func SettingsSyncProblemAuthorization() string {
+	return In(i18n.Locale()).SettingsSyncProblemAuthorization()
+}
+
+// SettingsSyncProblemAuthorization says "GitHub authorization did not complete. Try again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemAuthorization() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemAuthorization", nil)
+}
+
+// SettingsSyncProblemNotConfigured says "GitHub is not connected."
+// in the language the app shows.
+func SettingsSyncProblemNotConfigured() string {
+	return In(i18n.Locale()).SettingsSyncProblemNotConfigured()
+}
+
+// SettingsSyncProblemNotConfigured says "GitHub is not connected."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemNotConfigured() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemNotConfigured", nil)
+}
+
+// SettingsSyncProblemPasswordRequired says "Enter the master password first."
+// in the language the app shows.
+func SettingsSyncProblemPasswordRequired() string {
+	return In(i18n.Locale()).SettingsSyncProblemPasswordRequired()
+}
+
+// SettingsSyncProblemPasswordRequired says "Enter the master password first."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemPasswordRequired() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemPasswordRequired", nil)
+}
+
+// SettingsSyncProblemAlreadyInProgress says "A sync is already running."
+// in the language the app shows.
+func SettingsSyncProblemAlreadyInProgress() string {
+	return In(i18n.Locale()).SettingsSyncProblemAlreadyInProgress()
+}
+
+// SettingsSyncProblemAlreadyInProgress says "A sync is already running."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemAlreadyInProgress() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemAlreadyInProgress", nil)
+}
+
+// SettingsSyncProblemLocal says "The local Vault could not be read or written."
+// in the language the app shows.
+func SettingsSyncProblemLocal() string { return In(i18n.Locale()).SettingsSyncProblemLocal() }
+
+// SettingsSyncProblemLocal says "The local Vault could not be read or written."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemLocal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemLocal", nil)
+}
+
+// SettingsSyncProblemUnsupported says "The cloud copy was written by a newer Netcatty sync schema. Update the app before syncing."
+// in the language the app shows.
+func SettingsSyncProblemUnsupported() string {
+	return In(i18n.Locale()).SettingsSyncProblemUnsupported()
+}
+
+// SettingsSyncProblemUnsupported says "The cloud copy was written by a newer Netcatty sync schema. Update the app before syncing."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemUnsupported() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemUnsupported", nil)
 }
 
 // SettingsSecurityTitle says "Security"
