@@ -16,14 +16,13 @@ import (
 	"github.com/mslxl/natcatty/ui/selftest"
 )
 
-// TestTicket45CheckRunsThroughTheKeyboard drives F11,4,5 from the production
-// window wiring. Every Host is in-process; no network or hardware is needed.
-func TestTicket45CheckRunsThroughTheKeyboard(t *testing.T) {
-	tester, dir := newTicket16Tester(t)
-	tester.Key(0, ui.KeyF11)
-	tester.Frame()
-	if !tester.HasText("Self-test") {
-		t.Fatalf("F11 did not open the overlay: %v", tester.Texts())
+// runTicket45 presses 4 and 5, advances the harness to completion, and
+// asserts a passing six-step result. openMenu presses F11 first.
+func runTicket45(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result {
+	t.Helper()
+	if openMenu {
+		tester.Key(0, ui.KeyF11)
+		tester.Frame()
 	}
 	tester.Key(0, ui.Key4)
 	tester.Frame()
@@ -47,6 +46,19 @@ func TestTicket45CheckRunsThroughTheKeyboard(t *testing.T) {
 	if len(result.Steps) != 6 {
 		t.Fatalf("steps = %d, want 6: %+v", len(result.Steps), result.Steps)
 	}
+	return result
+}
+
+// TestTicket45CheckRunsThroughTheKeyboard drives F11,4,5 from the production
+// window wiring. Every Host is in-process; no network or hardware is needed.
+func TestTicket45CheckRunsThroughTheKeyboard(t *testing.T) {
+	tester, dir := newTicket16Tester(t)
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	if !tester.HasText("Self-test") {
+		t.Fatalf("F11 did not open the overlay: %v", tester.Texts())
+	}
+	result := runTicket45(t, tester, false)
 	for _, step := range result.Steps {
 		t.Logf("%s: %s (%s)", step.Name, step.Detail, step.Seam)
 		if step.Detail == "" {
@@ -98,5 +110,44 @@ func TestTicket45CheckRunsThroughTheKeyboard(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestTicket45CheckPassesTwiceInOneProcess is the repeat-run regression: the
+// harness registers one set of steps, so the second F11,4,5 run must reset the
+// checker's service, surface, stages, and deadlines. Acceptance at a2d30004
+// saw run 1 PASS and run 2 FAIL with "confirmation-gate: timed out ... waiting
+// for the confirmed restart to finish" because actionStage survived at 3
+// against the closed service.
+func TestTicket45CheckPassesTwiceInOneProcess(t *testing.T) {
+	tester, _ := newTicket16Tester(t)
+	first := runTicket45(t, tester, true)
+	if !first.Pass {
+		t.Fatalf("first run failed: %+v", first)
+	}
+
+	// Match the real shortcut: F11 closes the finished overlay, F11 opens the
+	// menu again, then 4 and 5 run the check a second time.
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	second := runTicket45(t, tester, false)
+	if !second.Pass || len(second.Errors) != 0 {
+		t.Fatalf("second run failed: pass=%v errors=%v steps=%+v",
+			second.Pass, second.Errors, second.Steps)
+	}
+	seen := map[string]bool{}
+	for _, step := range second.Steps {
+		seen[step.Name] = step.Pass
+	}
+	for _, name := range []string{"sample-tabs", "confirmation-gate", "degradation",
+		"host-key-gate", "render-and-capture", "stop-and-release"} {
+		if !seen[name] {
+			t.Fatalf("second run did not pass %q: %+v", name, second.Steps)
+		}
+	}
+	if !tester.HasText("PASS  45") {
+		t.Fatalf("the overlay does not show PASS 45 after the second run: %v", tester.Texts())
 	}
 }

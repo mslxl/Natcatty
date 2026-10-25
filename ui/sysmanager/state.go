@@ -126,11 +126,19 @@ type State struct {
 	hostByID  map[string]domainvault.Host
 	hostID    string
 	tab       appsysmanager.Tab
-	settings  domainpreferences.SysManager
-	search    string
-	problem   Problem
-	loadErr   error
-	active    bool
+	// revealTab asks the tab strip to scroll the active tab into view on the
+	// next frame: the seven tabs need more than the content column at the
+	// minimum window, so the chosen one must not stay cut at an edge.
+	revealTab bool
+	// stripWidth is the window content width of the last frame. A narrower
+	// window scrolls the strip again so the active tab stays whole after a
+	// resize, not only after the user picks another tab.
+	stripWidth float32
+	settings   domainpreferences.SysManager
+	search     string
+	problem    Problem
+	loadErr    error
+	active     bool
 
 	pending      *PendingAction
 	actionCancel context.CancelFunc
@@ -258,6 +266,7 @@ func (s *State) Close() {
 // The shell calls it when the surface becomes visible.
 func (s *State) Activate() {
 	s.active = true
+	s.revealTab = true
 	s.clearFinishedAction()
 	s.reload()
 	s.startActive()
@@ -501,6 +510,7 @@ func (s *State) SetTab(tab appsysmanager.Tab) {
 	if !known {
 		return
 	}
+	s.revealTab = true
 	s.tab = tab
 	s.selected = -1
 	s.search = ""
@@ -524,6 +534,7 @@ func (s *State) SetTabVisible(tab appsysmanager.Tab, visible bool) error {
 		return errors.New("sysmanager: could not save the tab layout")
 	}
 	s.settings = next
+	s.revealTab = true
 	if !s.ensureActiveVisible() {
 		s.startActive()
 	}
@@ -558,6 +569,7 @@ func (s *State) MoveTab(delta int) bool {
 		return false
 	}
 	s.settings = next
+	s.revealTab = true
 	s.requestRedraw()
 	return true
 }
