@@ -512,6 +512,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 			Port:          host.Port,
 			Username:      host.Username,
 			X11Forwarding: x11,
+			NetworkDevice: plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
 			Telnet:        plan.telnet,
 			Reconnect:     plan.reconnect,
 		})

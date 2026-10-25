@@ -209,6 +209,9 @@ type Record struct {
 	LegacyAlgorithms       bool
 	SkipEcdsaHostKey       bool
 	Algorithms             *Algorithms
+	// DeviceType is the original Host Details "Network Device Mode" value.
+	// Empty is an ordinary SSH Host.
+	DeviceType string
 }
 
 // Algorithms is a Host's advanced SSH algorithm selection. A non-empty

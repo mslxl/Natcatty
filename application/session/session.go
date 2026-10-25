@@ -286,6 +286,10 @@ type StartSpec struct {
 	// X11Display overrides the local display target. Empty uses DISPLAY or the
 	// platform default.
 	X11Display string
+	// NetworkDevice marks an SSH Host whose peer runs a vendor CLI. Programmatic
+	// commands then use RawExec: they are written to the existing PTY as-is,
+	// without a shell wrapper or completion markers, and report no exit code.
+	NetworkDevice bool
 	// Serial carries a serial Session's port and framing. It is required when
 	// Kind is KindSerial and ignored by every other transport.
 	Serial *serial.Config
@@ -361,6 +365,13 @@ type Session struct {
 	clipboardAccess domainterminal.ClipboardAccess
 	codec           Codec
 	highlighter     *domainterminal.Highlighter
+
+	// rawExecMu serializes programmatic commands on the one interactive PTY.
+	// rawMu guards the single raw-output subscriber that a running command
+	// reads; it is nil when no raw command is running.
+	rawExecMu sync.Mutex
+	rawMu     sync.Mutex
+	rawFeed   *rawOutputFeed
 
 	// outputMu orders rendered output against hibernate/resume. replay holds
 	// the bounded screen snapshot, feeds holds the observers, and the live
@@ -1210,6 +1221,10 @@ func (s *Session) readLoop(generation int, transport Transport) {
 		if n > 0 {
 			now := time.Now()
 			decoded := s.decodeOutput(buffer[:n])
+			// A running raw command sees the transport output before the tap:
+			// its completion detection must not depend on prompt tracking or
+			// history effects.
+			s.publishRawOutput(decoded)
 			output, effects := s.tap.observe(decoded, now)
 			if len(output) > 0 {
 				s.writeLog(logOutput(output))

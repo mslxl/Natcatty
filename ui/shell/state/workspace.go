@@ -1420,6 +1420,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Port = host.Port
 			spec.Username = host.Username
 			spec.X11Forwarding = host.X11Enabled()
+			spec.NetworkDevice = host.IsNetworkDevice()
 			spec.Dir = ""
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}

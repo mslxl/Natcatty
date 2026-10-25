@@ -751,6 +751,8 @@
   "vaultHostX11Forwarding": "Enable X11 forwarding",
   "vaultHostX11Warning": "X11 forwarding lets programs on the remote Host access your local X server. Only enable it for Hosts you trust.",
   "vaultHostX11Acknowledge": "I understand the security risk and want to enable X11 forwarding.",
+  "vaultHostNetworkDevice": "Network device mode",
+  "vaultHostNetworkDeviceHint": "For switches, routers, and firewalls reached over SSH. Automation sends commands as-is without a shell wrapper, and exit codes are unavailable. Only enable this for devices that do not run a standard shell.",
   "vaultHostFileProtocol": "File protocol",
   "vaultHostFileProtocolHint": "Automatic tries SFTP, then falls back to SCP only when the server has no SFTP subsystem.",
   "vaultHostSFTPSudo": "Use sudo for SFTP",

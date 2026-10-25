@@ -1366,10 +1366,12 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}).Width(140).Changed()
 					if changed && form.Protocol != string(domainvault.ProtocolSSH) {
 						s.SetX11Forwarding(false)
-						// The file-transfer controls are hidden outside SSH;
-						// clear them so Save cannot fail on an invisible field.
+						// The file-transfer and network-device controls are
+						// hidden outside SSH; clear them so Save cannot keep a
+						// mode an invisible field selected.
 						form.FileProtocol = string(domainvault.FileProtocolAuto)
 						form.SFTPSudo = false
+						form.NetworkDevice = false
 						c.Invalidate()
 					}
 				})
@@ -1455,6 +1457,8 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(t.Danger)
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
+				ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice())
+				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(12).TextColor(t.TextMuted)
 			}
 			ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 		})

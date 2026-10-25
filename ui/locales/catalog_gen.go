@@ -3938,6 +3938,26 @@ func (msgs Messages) VaultHostX11Acknowledge() string {
 	return Catalog.Format(msgs.locale, "vaultHostX11Acknowledge", nil)
 }
 
+// VaultHostNetworkDevice says "Network device mode"
+// in the language the app shows.
+func VaultHostNetworkDevice() string { return In(i18n.Locale()).VaultHostNetworkDevice() }
+
+// VaultHostNetworkDevice says "Network device mode"
+// in the language of msgs.
+func (msgs Messages) VaultHostNetworkDevice() string {
+	return Catalog.Format(msgs.locale, "vaultHostNetworkDevice", nil)
+}
+
+// VaultHostNetworkDeviceHint says "For switches, routers, and firewalls reached over SSH. Automation sends commands as-is without a shell wrapper, and e…"
+// in the language the app shows.
+func VaultHostNetworkDeviceHint() string { return In(i18n.Locale()).VaultHostNetworkDeviceHint() }
+
+// VaultHostNetworkDeviceHint says "For switches, routers, and firewalls reached over SSH. Automation sends commands as-is without a shell wrapper, and e…"
+// in the language of msgs.
+func (msgs Messages) VaultHostNetworkDeviceHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostNetworkDeviceHint", nil)
+}
+
 // VaultHostFileProtocol says "File protocol"
 // in the language the app shows.
 func VaultHostFileProtocol() string { return In(i18n.Locale()).VaultHostFileProtocol() }

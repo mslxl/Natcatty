@@ -545,6 +545,8 @@
   "vaultHostX11Forwarding": "啟用 X11 轉發",
   "vaultHostX11Warning": "X11 轉發允許遠端 Host 上的程式存取你的本機 X 伺服器。僅對信任的 Host 啟用。",
   "vaultHostX11Acknowledge": "我了解安全風險，並希望啟用 X11 轉發。",
+  "vaultHostNetworkDevice": "網路裝置模式",
+  "vaultHostNetworkDeviceHint": "適用於透過 SSH 連線的交換機、路由器和防火牆。自動化指令將原樣傳送，不進行 Shell 包裝，且無法取得結束代碼。僅對不執行標準 Shell 的裝置啟用。",
   "vaultHostFileProtocol": "檔案協定",
   "vaultHostFileProtocolHint": "自動模式先嘗試 SFTP，僅在伺服器不支援 SFTP 時回退到 SCP。",
   "vaultHostSFTPSudo": "使用 sudo 執行 SFTP",

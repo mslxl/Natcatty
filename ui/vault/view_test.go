@@ -216,3 +216,38 @@ func TestVaultViewLocalizesValidationProblems(t *testing.T) {
 		t.Fatalf("Vault does not show the Russian problem, texts %q", tt.Texts())
 	}
 }
+
+func TestVaultViewOffersNetworkDeviceModeOnlyForSSH(t *testing.T) {
+	m := locales.In("en")
+	state := vaultstate.NewState(&fakeHosts{})
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := ui.NewTester(View(state), 900, 1800)
+	state.BeginCreate()
+	tt.Frame()
+
+	if !tt.HasText(m.VaultHostNetworkDevice()) {
+		t.Fatal("the SSH Host editor does not offer network device mode")
+	}
+	if !tt.HasText(m.VaultHostNetworkDeviceHint()) {
+		t.Fatal("network device mode has no explanation")
+	}
+	if state.Form().NetworkDevice {
+		t.Fatal("network device mode was enabled by default")
+	}
+
+	if err := tt.Click(m.VaultHostNetworkDevice()); err != nil {
+		t.Fatalf("click network device mode: %v", err)
+	}
+	tt.Frame()
+	if !state.Form().NetworkDevice {
+		t.Fatal("the click did not enable network device mode")
+	}
+
+	state.Form().Protocol = string(domainvault.ProtocolLocal)
+	tt.Frame()
+	if tt.HasText(m.VaultHostNetworkDevice()) || tt.HasText(m.VaultHostNetworkDeviceHint()) {
+		t.Fatal("network device mode was shown for a non-SSH Host")
+	}
+}
