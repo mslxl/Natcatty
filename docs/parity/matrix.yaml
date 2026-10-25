@@ -3510,3 +3510,99 @@
     - app.TestTicket39CheckPassesTwiceInOneProcess
   status: verified
   notes: "A capability table per GOOS is checked before the platform opener, so an unsupported setting never reaches a device and returns serial.UnsupportedError (errors.Is serial.ErrUnsupported) naming the platform, setting, and value. An unknown GOOS is unsupported for both opening and enumeration, and the no-backend build file returns the same typed error rather than panicking. Invalid form values are serial.ValidationError (errors.Is serial.ErrInvalidConfig) with the field and value. The dialog localizes both classes and never prints a raw driver error."
+
+# --- Ticket 40: Telnet transport ---
+
+- id: telnet.negotiation
+  area: terminal
+  feature: Telnet IAC negotiation activates lazily and answers the standard options
+  original_paths:
+    - electron/bridges/telnetProtocol.cjs
+    - electron/bridges/terminalBridge/telnetSession.cjs
+  module: domain/model/telnet
+  tickets: [40]
+  acceptance_tests:
+    - domain/model/telnet.TestParserEmitsCleanData
+    - domain/model/telnet.TestParserSplitsDataAroundAnOptionCommand
+    - domain/model/telnet.TestParserUnescapesIACAndIgnoresStandaloneVerbs
+    - domain/model/telnet.TestParserParsesCompleteSubnegotiation
+    - domain/model/telnet.TestParserPreservesPartialCommandsAcrossFeeds
+    - domain/model/telnet.TestParserPreservesHalfAnOptionCommand
+    - domain/model/telnet.TestParserNeverLeaksAnUnterminatedSubnegotiation
+    - domain/model/telnet.TestNegotiatorStartDrivesTheCanonicalHandshake
+    - domain/model/telnet.TestNegotiatorSwallowsAcknowledgementsAndAnswersIndependentRequests
+    - domain/model/telnet.TestNegotiatorHandlesNAWS
+    - domain/model/telnet.TestNegotiatorWindowSizeIsSilentUntilEnabled
+    - domain/model/telnet.TestNegotiatorAnswersTerminalTypeSend
+    - domain/model/telnet.TestNegotiatorRefusesUnknownOptions
+    - domain/model/telnet.TestNegotiatorTracksEchoBothDirections
+    - adapters/telnet.TestNegotiationActivatesLazilyAndLeavesRawDataAlone
+    - adapters/telnet.TestTransportAnswersNawsTerminalTypeEchoAndRefusals
+    - adapters/telnet.TestTransportReassemblesCommandsSplitAcrossReads
+    - app.TestTicket40CheckRunsThroughTheKeyboard
+    - app.TestTicket40CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Until the peer sends the first IAC byte the stream is raw passthrough, so a legacy TCP service on port 23 is not corrupted; the first IAC activates the canonical handshake DO SUPPRESS-GO-AHEAD, WILL TERMINAL-TYPE, WILL NAWS. WILL/WONT/DO/DONT are answered direction-aware, unknown options are refused with WONT/DONT, NAWS is sent only after DO NAWS, and TERMINAL-TYPE SEND is answered with IS XTERM-256COLOR. The parser preserves a lone IAC, half an option command, and an unterminated subnegotiation across TCP reads, unescapes IAC IAC in data and subnegotiation payloads, and never leaks buffered subnegotiation bytes into terminal output. Commands and data arriving in one read are handled in order. Echo state is tracked in both directions and exposed on the transport, but this ticket does not add the original's renderer-side local-echo widget."
+
+- id: telnet.nvt-framing
+  area: terminal
+  feature: Telnet input uses NVT newlines and escapes the IAC byte
+  original_paths:
+    - electron/bridges/telnetProtocol.cjs
+    - electron/bridges/terminalBridge/telnetSession.cjs
+  module: domain/model/telnet
+  tickets: [40]
+  acceptance_tests:
+    - domain/model/telnet.TestNormalizeNewlinesUsesNVTForm
+    - domain/model/telnet.TestEscapeIACDoublesLiteralsAndKeepsCleanData
+    - adapters/telnet.TestTransportNormalizesNewlinesAndEscapesIAC
+    - app.TestTicket40CheckRunsThroughTheKeyboard
+    - app.TestTicket40CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Enter (a lone CR) and a lone LF both become CR LF, matching the original terminal-input normalization; an existing CR LF or CR NUL pair is preserved rather than expanded twice. After negotiation activates, every literal 0xFF typed by the user is doubled on the wire; before activation input passes through untouched. Incoming IAC IAC becomes a single 0xFF of terminal output."
+
+- id: telnet.session
+  area: terminal
+  feature: A Telnet Host opens a Session that reads, writes, resizes, and closes
+  original_paths:
+    - electron/bridges/terminalBridge/telnetSession.cjs
+    - components/terminal/runtime/createTerminalSessionStarters.telnet.test.ts
+    - domain/host.ts
+  module: adapters/telnet
+  tickets: [40]
+  acceptance_tests:
+    - adapters/telnet.TestFactoryDialsTheConfiguredEndpoint
+    - adapters/telnet.TestFactoryRejectsBadConfiguration
+    - adapters/telnet.TestTransportSendsNawsOnlyAfterThePeerEnablesIt
+    - adapters/telnet.TestCleanCloseReportsClosedAndZero
+    - adapters/telnet.TestTransportFailureEndsAsAnErrorAndClosePreservesIt
+    - adapters/telnet.TestCloseWhileConnectedIsACleanEnd
+    - application/session.TestOpenTelnetCarriesTheEndpointAndLabel
+    - application/session.TestTelnetSessionReadsWritesAndCloses
+    - domain/workspace.TestTelnetDescriptorRequiresTheSavedHostAndAddress
+    - app.TestTelnetSessionUsesTheTelnetTransport
+    - ui/shell/state.TestOpenHostOpensATelnetHostWithTheTelnetTransport
+    - ui/shell/state.TestOpenHostPersistsATelnetRestoreDescriptor
+    - ui/shell/state.TestRestoreReopensATelnetPane
+    - app.TestTicket40CheckRunsThroughTheKeyboard
+    - app.TestTicket40CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The Vault Host protocol selector already offered Telnet and defaults its port to 23; a saved Telnet Host now reaches the Telnet transport instead of the SSH path, with no X11 preference and the Host's terminal encoding scope. Read is terminal output, Write is input, and Resize updates the window size; a clean peer close ends as reason closed with exit 0, a socket failure ends as reason error with exit 1, and Close preserves the first classification. A restored Pane carries the non-secret Host address and reopens the Telnet endpoint. Opening is manual reconnect only; the original's Telnet auto-login automation (telnetAutoLogin.cjs) and renderer local-echo widget are out of scope for this ticket."
+
+- id: telnet.timeout-reconnect
+  area: terminal
+  feature: Telnet connect timeouts are typed and reconnect is manual
+  original_paths:
+    - electron/bridges/terminalBridge/telnetSession.cjs
+    - components/terminal/runtime/createTerminalSessionStarters.telnet.test.ts
+  module: adapters/telnet
+  tickets: [40]
+  acceptance_tests:
+    - adapters/telnet.TestFactoryClassifiesTimeoutNetworkAndCancellation
+    - application/session.TestTelnetManualReconnectDialsTheSameEndpoint
+    - application/session.TestTelnetDropDoesNotReconnectAutomatically
+    - ui/shell/state.TestOpenHostOpensATelnetHostWithTheTelnetTransport
+    - app.TestTicket40CheckRunsThroughTheKeyboard
+    - app.TestTicket40CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The dial uses the original ten-second connect timeout and classifies a deadline as connection.KindTimeout wrapping ErrDialTimeout, a refused or unreachable endpoint as KindNetwork, and a cancelled caller as KindCancelled, so the shell localizes the failure instead of printing a socket error. A dropped Telnet transport does not reconnect automatically; the Session carries a policy whose retry predicate is always false, which still enables the Session menu's Reconnect action, and a manual reconnect dials the same Hostname and port again."

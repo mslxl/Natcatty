@@ -12,6 +12,7 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
+	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 )
@@ -1422,6 +1423,28 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Dir = ""
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}
+	case domainworkspace.SessionTelnet:
+		spec.Kind = appsession.KindTelnet
+		spec.HostID = descriptor.HostID
+		spec.Hostname = descriptor.Hostname
+		spec.Port = descriptor.Port
+		spec.Username = descriptor.Username
+		spec.X11Forwarding = false
+		if s.resolveHost != nil {
+			host, ok := s.resolveHost(ctx, descriptor.HostID)
+			if !ok {
+				return nil, ErrHostUnavailable
+			}
+			spec.HostID = host.ID
+			spec.Hostname = host.Hostname
+			spec.Port = host.Port
+			spec.Username = host.Username
+		}
+		telnetConfig := domaintelnet.Config{Hostname: spec.Hostname, Port: spec.Port}.Normalized()
+		spec.Telnet = &telnetConfig
+		// Telnet keeps the manual Reconnect action but does not retry a
+		// dropped socket automatically.
+		spec.Reconnect = telnetReconnectPolicy()
 	case domainworkspace.SessionSerial:
 		if descriptor.Serial == nil {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)

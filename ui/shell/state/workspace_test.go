@@ -620,6 +620,69 @@ func TestOpenHostPersistsItsRestoreDescriptor(t *testing.T) {
 	}
 }
 
+func TestOpenHostPersistsATelnetRestoreDescriptor(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	host := domainvault.Host{
+		ID: "host-telnet", Label: "console", Hostname: "console.local",
+		Port: 23, Username: "admin", Protocol: domainvault.ProtocolTelnet,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatal(err)
+	}
+	graph.flushUntil(t, "the Telnet Tab", func() bool { return graph.state.TabCount() == 1 })
+
+	payload := graph.state.WorkspacePayload()
+	if len(payload.Panes) != 1 {
+		t.Fatalf("payload panes = %d, want 1", len(payload.Panes))
+	}
+	descriptor := payload.Panes[0].Session
+	if descriptor.Kind != domainworkspace.SessionTelnet || descriptor.HostID != "host-telnet" ||
+		descriptor.Hostname != "console.local" || descriptor.Port != 23 ||
+		descriptor.Username != "admin" || descriptor.Label != "console" {
+		t.Fatalf("descriptor = %+v, want the Telnet Host's restore data", descriptor)
+	}
+	if descriptor.X11Forwarding {
+		t.Fatal("the Telnet descriptor carries an SSH-only X11 preference")
+	}
+}
+
+func TestRestoreReopensATelnetPane(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-telnet", Number: 1, Root: domainworkspace.NewPaneNode("pane-telnet"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-telnet",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
+				Hostname: "console.local", Port: 23, Username: "admin", Label: "console",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-telnet"] = domainvault.Host{
+		ID: "host-telnet", Hostname: "console.local", Port: 23,
+		Username: "admin", Protocol: domainvault.ProtocolTelnet,
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored Telnet Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-telnet")
+		return ok && !info.Pending
+	})
+
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindTelnet || spec.Telnet == nil ||
+		spec.Telnet.Hostname != "console.local" || spec.Telnet.Port != 23 {
+		t.Fatalf("restored spec = %+v, want the Telnet endpoint", spec)
+	}
+	if spec.Reconnect == nil {
+		t.Fatal("a restored Telnet Pane has no manual reconnect policy")
+	}
+}
+
 type directorySurface struct {
 	fakeSurface
 	dir string

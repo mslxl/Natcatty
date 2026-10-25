@@ -191,6 +191,36 @@ func TestSerialDescriptorRequiresAValidConfig(t *testing.T) {
 	}
 }
 
+func TestTelnetDescriptorRequiresTheSavedHostAndAddress(t *testing.T) {
+	descriptor := SessionDescriptor{
+		Kind: SessionTelnet, HostID: "host-telnet", Hostname: "console.local", Port: 23,
+		Label: "console", Username: "admin",
+	}
+	if !descriptor.Valid() {
+		t.Fatal("a complete Telnet descriptor is invalid")
+	}
+	data, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded SessionDescriptor
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, descriptor) {
+		t.Fatalf("Telnet descriptor round trip = %+v, want %+v", decoded, descriptor)
+	}
+	for _, invalid := range []SessionDescriptor{
+		{Kind: SessionTelnet},
+		{Kind: SessionTelnet, Hostname: "console.local"},
+		{Kind: SessionTelnet, HostID: "host-telnet"},
+	} {
+		if invalid.Valid() {
+			t.Fatalf("descriptor %+v is valid, want invalid", invalid)
+		}
+	}
+}
+
 func TestPayloadJSONRoundTrips(t *testing.T) {
 	payload := Payload{
 		Version:   PayloadVersion,

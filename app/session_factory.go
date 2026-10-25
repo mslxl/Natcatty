@@ -22,18 +22,19 @@ type routeSource interface {
 }
 
 // transportFactory routes a Session to the local PTY adapter, the serial
-// adapter, or an SSH Connection. The SSH path acquires a lease for the
-// Session's lifetime and releases it when the transport closes, which is the
-// seam ticket 09's pool extends.
+// adapter, the Telnet adapter, or an SSH Connection. The SSH path acquires a
+// lease for the Session's lifetime and releases it when the transport closes,
+// which is the seam ticket 09's pool extends.
 type transportFactory struct {
 	local   appsession.Factory
 	serial  appsession.Factory
+	telnet  appsession.Factory
 	manager *appconnection.Manager
 	routes  routeSource
 }
 
-func newTransportFactory(local, serial appsession.Factory, manager *appconnection.Manager, routes routeSource) appsession.Factory {
-	return &transportFactory{local: local, serial: serial, manager: manager, routes: routes}
+func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) appsession.Factory {
+	return &transportFactory{local: local, serial: serial, telnet: telnet, manager: manager, routes: routes}
 }
 
 func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
@@ -45,6 +46,11 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 			return nil, errors.New("app: no serial transport")
 		}
 		return f.serial.Open(ctx, spec)
+	case appsession.KindTelnet:
+		if f.telnet == nil {
+			return nil, errors.New("app: no telnet transport")
+		}
+		return f.telnet.Open(ctx, spec)
 	default:
 		return f.local.Open(ctx, spec)
 	}

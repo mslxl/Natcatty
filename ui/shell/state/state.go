@@ -17,6 +17,7 @@ import (
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
+	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
@@ -497,34 +498,35 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 	s.problem = ""
 	s.pending = append(s.pending, label)
 
+	plan := hostSessionTransport(host)
+	// X11 forwarding requires both the Host preference and an explicit
+	// security acknowledgement, and exists only on SSH.
+	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
 	ctx := s.ctx
 	go func() {
 		session, err := s.sessions.Open(ctx, appsession.StartSpec{
-			Kind:     appsession.KindSSH,
-			Label:    label,
-			HostID:   host.ID,
-			Hostname: host.Hostname,
-			Port:     host.Port,
-			Username: host.Username,
-			// X11 forwarding requires both the Host preference and an explicit
-			// security acknowledgement.
-			X11Forwarding: host.X11Enabled(),
-			// A dropped SSH transport retries every five seconds under the
-			// original reason predicate. Local shells have no policy.
-			Reconnect: &appsession.ReconnectPolicy{},
+			Kind:          plan.kind,
+			Label:         label,
+			HostID:        host.ID,
+			Hostname:      host.Hostname,
+			Port:          host.Port,
+			Username:      host.Username,
+			X11Forwarding: x11,
+			Telnet:        plan.telnet,
+			Reconnect:     plan.reconnect,
 		})
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,
 			label:   label,
 			descriptor: domainworkspace.SessionDescriptor{
-				Kind:          domainworkspace.SessionSSH,
+				Kind:          plan.descriptor,
 				Label:         label,
 				HostID:        host.ID,
 				Hostname:      host.Hostname,
 				Port:          host.Port,
 				Username:      host.Username,
-				X11Forwarding: host.X11Enabled(),
+				X11Forwarding: x11,
 			},
 			startup: startup,
 			err:     err,
@@ -533,6 +535,47 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 		s.RequestRedraw()
 	}()
 	return nil
+}
+
+// hostTransportPlan is the transport, restore descriptor kind, endpoint, and
+// reconnect policy one saved Host maps onto.
+type hostTransportPlan struct {
+	kind       appsession.Kind
+	descriptor domainworkspace.SessionKind
+	telnet     *domaintelnet.Config
+	reconnect  *appsession.ReconnectPolicy
+}
+
+// hostSessionTransport maps a saved Host's protocol onto the Session
+// transport, its restore descriptor, and its reconnect policy. A Telnet Host
+// gets the Telnet endpoint and a policy that permits the manual Reconnect
+// action without automatically retrying a dropped socket, matching the
+// original's SSH-only auto-reconnect.
+func hostSessionTransport(host domainvault.Host) hostTransportPlan {
+	if host.Protocol == domainvault.ProtocolTelnet {
+		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
+		return hostTransportPlan{
+			kind:       appsession.KindTelnet,
+			descriptor: domainworkspace.SessionTelnet,
+			telnet:     &cfg,
+			reconnect:  telnetReconnectPolicy(),
+		}
+	}
+	// A dropped SSH transport retries every five seconds under the original
+	// reason predicate. Local shells have no policy.
+	return hostTransportPlan{
+		kind:       appsession.KindSSH,
+		descriptor: domainworkspace.SessionSSH,
+		reconnect:  &appsession.ReconnectPolicy{},
+	}
+}
+
+// telnetReconnectPolicy allows the Session menu's manual Reconnect action but
+// never retries a dropped Telnet socket automatically.
+func telnetReconnectPolicy() *appsession.ReconnectPolicy {
+	return &appsession.ReconnectPolicy{
+		ShouldRetry: func(appsession.End) bool { return false },
+	}
 }
 
 // OpenSerial opens a serial Session without blocking the UI thread. The
