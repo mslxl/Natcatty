@@ -61,15 +61,16 @@ func TestTicket44CheckRunsThroughTheKeyboard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("screenshot directory: %v", err)
 	}
-	if len(entries) != 4 {
-		t.Fatalf("screenshots = %d, want 4", len(entries))
+	if len(entries) != 16 {
+		t.Fatalf("screenshots = %d, want 16", len(entries))
 	}
-	for _, name := range []string{
-		"monitor-1100x720-en.png",
-		"monitor-1100x720-zh-CN.png",
-		"monitor-720x480-en.png",
-		"monitor-720x480-zh-CN.png",
-	} {
+	var names []string
+	for _, variant := range []string{"1100x720-en", "1100x720-zh-CN", "720x480-en", "720x480-zh-CN"} {
+		for _, kind := range []string{"list", "editor", "columns", "charts"} {
+			names = append(names, "monitor-"+variant+"-"+kind+".png")
+		}
+	}
+	for _, name := range names {
 		file, err := os.Open(filepath.Join(shots, name))
 		if err != nil {
 			t.Fatalf("open %s: %v", name, err)

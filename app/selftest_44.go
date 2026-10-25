@@ -45,6 +45,8 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	uimonitoring "github.com/mslxl/natcatty/ui/monitoring"
 	"github.com/mslxl/natcatty/ui/selftest"
+	uishell "github.com/mslxl/natcatty/ui/shell"
+	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 )
 
 const (
@@ -184,84 +186,161 @@ func (t *selftest44) metrics(deadline time.Time) selftest.Outcome {
 		"application/monitor.Service fake SSH command runner")
 }
 
+// renderStep renders the surface inside the real shell, with the 232-DIP
+// sidebar taking space, at both supported sizes and in both languages. A
+// standalone monitoring view at 720 DIPs has about 300 DIPs more width and
+// cannot see the clipping the fixed layout had at 720x480.
 func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 	if !t.state.Running() {
 		return selftest.Failed(errors.New("the panel stopped before the surface could be rendered"))
 	}
-	t.state.UpdatePanelView(domainpreferences.MonitorViewList)
 	directory := filepath.Join(selftestResultDir, "natcatty-selftest-44-shots")
+	// The directory is shared across runs and capture names have changed
+	// before; clear it so an old frame cannot masquerade as this run's.
+	if err := os.RemoveAll(directory); err != nil {
+		return selftest.Failed(fmt.Errorf("clear the screenshot directory: %w", err))
+	}
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return selftest.Failed(fmt.Errorf("create the screenshot directory: %w", err))
 	}
-	en := locales.In("en")
-	zh := locales.In("zh-CN")
-
-	wide := ui.NewTester(uimonitoring.View(t.state), 1100, 720)
-	wide.SetLocale("en")
-	wide.Frame()
-	if !inside(wide, en.MonitoringTitle(), 1100, 720) {
-		return selftest.Failed(fmt.Errorf("the 1100x720 en title is clipped: %v", wide.Texts()))
+	variants := []struct {
+		width, height int
+		locale        string
+	}{
+		{1100, 720, "en"},
+		{1100, 720, "zh-CN"},
+		{720, 480, "en"},
+		{720, 480, "zh-CN"},
 	}
-	for _, text := range []string{"Alpha", "beta.selftest", "80%", en.MonitoringStatusLive()} {
-		if !wide.HasText(text) {
-			return selftest.Failed(fmt.Errorf("the 1100x720 en list does not show %q: %v",
-				text, wide.Texts()))
+	captured := 0
+	for _, variant := range variants {
+		tester, shellState := t.shellTester(variant.width, variant.height, variant.locale)
+		m := locales.In(variant.locale)
+		prefix := fmt.Sprintf("monitor-%dx%d-%s", variant.width, variant.height, variant.locale)
+
+		// List: every header control is reachable inside the content column,
+		// and the typed live state is visible.
+		t.state.UpdatePanelView(domainpreferences.MonitorViewList)
+		tester.Frame()
+		for _, text := range []string{
+			m.MonitoringTitle(), m.MonitoringNewPanel(), m.MonitoringEditPanel(),
+			m.MonitoringColumns(), "Alpha", m.MonitoringStatusLive(),
+		} {
+			if !insideShell(tester, text, variant.width, variant.height) {
+				shellState.Shutdown()
+				return selftest.Failed(fmt.Errorf("%s list: %q is missing or clipped: %v",
+					prefix, text, tester.Texts()))
+			}
 		}
-	}
-	if err := capture(wide, filepath.Join(directory, "monitor-1100x720-en.png")); err != nil {
-		return selftest.Failed(err)
-	}
-
-	wide.SetLocale("zh-CN")
-	wide.Frame()
-	if !inside(wide, zh.MonitoringTitle(), 1100, 720) {
-		return selftest.Failed(fmt.Errorf("the 1100x720 zh-CN title is clipped: %v", wide.Texts()))
-	}
-	for _, text := range []string{zh.MonitoringMemory(), zh.MonitoringOpen(), "Alpha"} {
-		if !wide.HasText(text) {
-			return selftest.Failed(fmt.Errorf("the 1100x720 zh-CN list does not show %q: %v",
-				text, wide.Texts()))
+		if err := capture(tester, filepath.Join(directory, prefix+"-list.png")); err != nil {
+			shellState.Shutdown()
+			return selftest.Failed(err)
 		}
-	}
-	if err := capture(wide, filepath.Join(directory, "monitor-1100x720-zh-CN.png")); err != nil {
-		return selftest.Failed(err)
-	}
+		captured++
 
-	t.state.UpdatePanelView(domainpreferences.MonitorViewCharts)
-	narrow := ui.NewTester(uimonitoring.View(t.state), 720, 480)
-	narrow.SetLocale("en")
-	narrow.Frame()
-	if !inside(narrow, en.MonitoringTitle(), 720, 480) {
-		return selftest.Failed(fmt.Errorf("the 720x480 en title is clipped: %v", narrow.Texts()))
-	}
-	for _, text := range []string{"Alpha", "Beta", en.MonitoringCpu()} {
-		if !narrow.HasText(text) {
-			return selftest.Failed(fmt.Errorf("the 720x480 en charts do not show %q: %v",
-				text, narrow.Texts()))
+		// Panel editor: Save, Cancel, and Delete stay pinned inside the
+		// window while the fields and Host list scroll.
+		t.state.BeginEditPanel()
+		tester.Frame()
+		for _, text := range []string{
+			m.MonitoringPanelFormEdit(), m.MonitoringName(), m.MonitoringDescription(),
+			m.MonitoringSave(), m.MonitoringCancel(), m.MonitoringDeletePanel(),
+		} {
+			if !insideShell(tester, text, variant.width, variant.height) {
+				t.state.CancelEdit()
+				shellState.Shutdown()
+				return selftest.Failed(fmt.Errorf("%s editor: %q is missing or clipped: %v",
+					prefix, text, tester.Texts()))
+			}
 		}
-	}
-	if err := capture(narrow, filepath.Join(directory, "monitor-720x480-en.png")); err != nil {
-		return selftest.Failed(err)
-	}
-
-	narrow.SetLocale("zh-CN")
-	narrow.Frame()
-	if !inside(narrow, zh.MonitoringTitle(), 720, 480) {
-		return selftest.Failed(fmt.Errorf("the 720x480 zh-CN title is clipped: %v", narrow.Texts()))
-	}
-	for _, text := range []string{zh.MonitoringNetwork(), zh.MonitoringLatency(), "Alpha"} {
-		if !narrow.HasText(text) {
-			return selftest.Failed(fmt.Errorf("the 720x480 zh-CN charts do not show %q: %v",
-				text, narrow.Texts()))
+		if !tester.HasText("Alpha") {
+			t.state.CancelEdit()
+			shellState.Shutdown()
+			return selftest.Failed(fmt.Errorf("%s editor: the Host list is missing: %v",
+				prefix, tester.Texts()))
 		}
-	}
-	if err := capture(narrow, filepath.Join(directory, "monitor-720x480-zh-CN.png")); err != nil {
-		return selftest.Failed(err)
-	}
+		if err := capture(tester, filepath.Join(directory, prefix+"-editor.png")); err != nil {
+			t.state.CancelEdit()
+			shellState.Shutdown()
+			return selftest.Failed(err)
+		}
+		captured++
+		t.state.CancelEdit()
+		tester.Frame()
 
-	return selftest.Passed(
-		"list and chart views rendered without clipping at 1100x720 en/zh-CN and 720x480 en/zh-CN; four frames captured",
-		"uimonitoring.View + ui.Tester")
+		// Columns editor: Done is inside the window. At 720x480 the lower
+		// rows are reached by scrolling the editor body, not the window.
+		t.state.ToggleColumns()
+		tester.Frame()
+		if !insideShell(tester, m.MonitoringColumnsDone(), variant.width, variant.height) {
+			t.state.ToggleColumns()
+			shellState.Shutdown()
+			return selftest.Failed(fmt.Errorf("%s columns: Done is missing or clipped: %v",
+				prefix, tester.Texts()))
+		}
+		if err := capture(tester, filepath.Join(directory, prefix+"-columns.png")); err != nil {
+			t.state.ToggleColumns()
+			shellState.Shutdown()
+			return selftest.Failed(err)
+		}
+		captured++
+		if variant.height < 600 {
+			// Scroll the editor body, below its title and above Done.
+			tester.Scroll(float32(variant.width)/2, float32(variant.height)*0.65, 0, 600)
+			tester.Frame()
+			if !insideShell(tester, m.MonitoringTerminal()+" · "+m.MonitoringAlwaysVisible(),
+				variant.width, variant.height) {
+				t.state.ToggleColumns()
+				shellState.Shutdown()
+				return selftest.Failed(fmt.Errorf(
+					"%s columns: the lower rows are unreachable: %v", prefix, tester.Texts()))
+			}
+			if !insideShell(tester, m.MonitoringColumnsDone(), variant.width, variant.height) {
+				t.state.ToggleColumns()
+				shellState.Shutdown()
+				return selftest.Failed(fmt.Errorf(
+					"%s columns: Done scrolled out of the card", prefix))
+			}
+		}
+		t.state.ToggleColumns()
+		tester.Frame()
+
+		// Charts: each card keeps its metric row and Open action inside the
+		// card; at 720x480 the first card fits without a clipped action.
+		t.state.UpdatePanelView(domainpreferences.MonitorViewCharts)
+		tester.Frame()
+		for _, text := range []string{m.MonitoringCpu(), m.MonitoringOpen()} {
+			if !insideShell(tester, text, variant.width, variant.height) {
+				shellState.Shutdown()
+				return selftest.Failed(fmt.Errorf("%s charts: %q is missing or clipped: %v",
+					prefix, text, tester.Texts()))
+			}
+		}
+		if err := capture(tester, filepath.Join(directory, prefix+"-charts.png")); err != nil {
+			shellState.Shutdown()
+			return selftest.Failed(err)
+		}
+		captured++
+		shellState.Shutdown()
+	}
+	t.state.UpdatePanelView(domainpreferences.MonitorViewList)
+	return selftest.Passed(fmt.Sprintf(
+		"list, panel editor, columns editor, and charts rendered inside the real shell with no clipped control at 720x480 and 1100x720 in en and zh-CN; %d frames captured",
+		captured),
+		"ui/shell.View + uimonitoring.View + ui.Tester")
+}
+
+// shellTester renders the monitoring surface in the production shell. The
+// monitor's activate hook is nil: sampling already runs from the configure
+// step, and this step only inspects the layout.
+func (t *selftest44) shellTester(width, height int, locale string) (*ui.Tester, *shellstate.State) {
+	shellState := shellstate.NewState(shellstate.WithMonitor(
+		uimonitoring.View(t.state), nil, nil))
+	shellState.ShowMonitor()
+	tester := ui.NewTester(uishell.View(shellState), width, height)
+	tester.SetLocale(locale)
+	tester.Frame()
+	return tester, shellState
 }
 
 func (t *selftest44) trustStep(*ui.Context) selftest.Outcome {
@@ -323,6 +402,18 @@ func inside(tester *ui.Tester, text string, width, height int) bool {
 		return false
 	}
 	return rect.X >= 0 && rect.Y >= 0 &&
+		rect.X+rect.W <= float32(width) && rect.Y+rect.H <= float32(height)
+}
+
+// insideShell is inside plus the shell's 232-DIP sidebar: a control must sit
+// in the content column, not over the navigation.
+func insideShell(tester *ui.Tester, text string, width, height int) bool {
+	rect, ok := tester.Find(text)
+	if !ok || rect.W <= 0 || rect.H <= 0 {
+		return false
+	}
+	const sidebar = 232
+	return rect.X >= sidebar && rect.Y >= 0 &&
 		rect.X+rect.W <= float32(width) && rect.Y+rect.H <= float32(height)
 }
 
