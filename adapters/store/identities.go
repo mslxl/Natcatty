@@ -8,6 +8,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListIdentities returns every Identity in display order.
@@ -58,40 +59,52 @@ func (s *Store) GetIdentity(ctx context.Context, id model.IdentityID) (domainvau
 // SaveIdentity inserts or replaces one Identity aggregate. Password ciphertext
 // is stored separately and is never part of this record.
 func (s *Store) SaveIdentity(ctx context.Context, identity domainvault.Identity) error {
-	if identity.ID == "" || identity.Label == "" {
-		return fmt.Errorf("store: save Identity: missing identity")
-	}
-	data, err := json.Marshal(identity)
+	statement, err := identitySaveStatement(identity)
 	if err != nil {
-		return fmt.Errorf("store: encode Identity: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO identities (
-			id, label, username, auth_method, key_id, order_key,
-			created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			label = excluded.label,
-			username = excluded.username,
-			auth_method = excluded.auth_method,
-			key_id = excluded.key_id,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		string(identity.ID),
-		identity.Label,
-		identity.Username,
-		string(identity.AuthMethod),
-		string(identity.KeyID),
-		identity.OrderKey,
-		identity.CreatedAt.UnixMilli(),
-		identity.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Identity: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+// identitySaveStatement builds the insert-or-replace statement for one
+// Identity.
+func identitySaveStatement(identity domainvault.Identity) (platformsqlite.Statement, error) {
+	if identity.ID == "" || identity.Label == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: save Identity: missing identity")
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Identity: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO identities (
+				id, label, username, auth_method, key_id, order_key,
+				created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				label = excluded.label,
+				username = excluded.username,
+				auth_method = excluded.auth_method,
+				key_id = excluded.key_id,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			string(identity.ID),
+			identity.Label,
+			identity.Username,
+			string(identity.AuthMethod),
+			string(identity.KeyID),
+			identity.OrderKey,
+			identity.CreatedAt.UnixMilli(),
+			identity.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteIdentity removes one Identity and nothing else.

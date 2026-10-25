@@ -7,6 +7,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListProxyProfiles returns every Proxy Profile in display order.
@@ -57,40 +58,49 @@ func (s *Store) GetProxyProfile(ctx context.Context, id string) (domainvault.Pro
 
 // SaveProxyProfile inserts or replaces one Proxy Profile.
 func (s *Store) SaveProxyProfile(ctx context.Context, profile domainvault.ProxyProfile) error {
-	if profile.ID == "" {
-		return fmt.Errorf("store: Proxy Profile has no id")
-	}
-	data, err := json.Marshal(profile)
+	statement, err := proxyProfileSaveStatement(profile)
 	if err != nil {
-		return fmt.Errorf("store: encode Proxy Profile: %w", err)
+		return err
 	}
-
-	_, err = s.db.Execute(ctx, `INSERT INTO proxy_profiles (
-			id, label, type, host, port, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			label = excluded.label,
-			type = excluded.type,
-			host = excluded.host,
-			port = excluded.port,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		profile.ID,
-		profile.Label,
-		string(profile.Config.Type),
-		profile.Config.Host,
-		profile.Config.Port,
-		profile.OrderKey,
-		profile.CreatedAt.UnixMilli(),
-		profile.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Proxy Profile: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func proxyProfileSaveStatement(profile domainvault.ProxyProfile) (platformsqlite.Statement, error) {
+	if profile.ID == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: Proxy Profile has no id")
+	}
+	data, err := json.Marshal(profile)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Proxy Profile: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO proxy_profiles (
+				id, label, type, host, port, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				label = excluded.label,
+				type = excluded.type,
+				host = excluded.host,
+				port = excluded.port,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			profile.ID,
+			profile.Label,
+			string(profile.Config.Type),
+			profile.Config.Host,
+			profile.Config.Port,
+			profile.OrderKey,
+			profile.CreatedAt.UnixMilli(),
+			profile.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteProxyProfile removes one Proxy Profile. Host and Host Group references

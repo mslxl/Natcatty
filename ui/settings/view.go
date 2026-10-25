@@ -28,6 +28,7 @@ type Config struct {
 	Associations *AssociationsState
 	Shortcuts    *ShortcutsState
 	Search       *SearchState
+	Sync         *SyncState
 }
 
 // viewState owns the Settings window's scroll positions for as long as the
@@ -257,7 +258,7 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 	case AreaSecurity:
 		securityArea(c, config, m, t)
 	case AreaSync:
-		syncArea(c, config.Preferences, m, t)
+		syncArea(c, config, m, t)
 	case AreaShortcuts:
 		shortcutsArea(c, config.Shortcuts, m, t)
 	}
@@ -431,50 +432,11 @@ func logsArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.
 	})
 }
 
-func syncArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
+func syncArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
 	sectionBody(c, t, func() {
-		if state == nil {
-			return
+		if config.Sync != nil {
+			syncSection(c, config.Sync, m, t)
 		}
-		ui.Text(c, m.SettingsSyncUnavailable()).FontSize(11).TextColor(t.Warning)
-		settings := state.Settings()
-		enabled := settings.Sync.Enabled
-		fieldRow(c, state, m, t, domain.FieldSyncEnabled, m.SettingsSyncEnabled(), func() {
-			if ui.Checkbox(c, &enabled, "").Changed() {
-				state.Update(func(s *domain.Settings) { s.Sync.Enabled = enabled })
-				c.Invalidate()
-			}
-		})
-		auto := settings.Sync.AutoSync
-		fieldRow(c, state, m, t, domain.FieldSyncAutoSync, m.SettingsSyncAutoSync(), func() {
-			if ui.Checkbox(c, &auto, "").Changed() {
-				state.Update(func(s *domain.Settings) { s.Sync.AutoSync = auto })
-				c.Invalidate()
-			}
-		})
-		strategies := []string{m.SettingsSyncNewest(), m.SettingsSyncLocal(), m.SettingsSyncRemote()}
-		values := []domain.SyncConflictStrategy{domain.SyncNewest, domain.SyncLocal, domain.SyncRemote}
-		strategy := strategies[indexOfStrategies(values, settings.Sync.ConflictStrategy)]
-		fieldRow(c, state, m, t, domain.FieldSyncConflictStrategy, m.SettingsSyncConflictStrategy(), func() {
-			if ui.Select(c, &strategy, strategies).Width(190).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Sync.ConflictStrategy = values[indexOf(strategies, strategy)]
-				})
-				c.Invalidate()
-			}
-		})
-		fieldRow(c, state, m, t, domain.FieldSyncProvider, m.SettingsSyncProvider(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldSyncProvider)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Sync.Provider = state.FieldValue(domain.FieldSyncProvider)
-				})
-				c.Invalidate()
-			}
-		})
-		groupReset(c, m, t, m.SettingsSyncTitle(), func() bool {
-			return state.ResetGroup(domain.GroupSync)
-		}, true)
-		saveProblem(c, state, m, t)
 	})
 }
 
@@ -783,15 +745,6 @@ func indexOfBehaviors(values []domain.DoubleClickBehavior, value domain.DoubleCl
 }
 
 func indexOfViews(values []domain.ViewMode, value domain.ViewMode) int {
-	for index, candidate := range values {
-		if candidate == value {
-			return index
-		}
-	}
-	return 0
-}
-
-func indexOfStrategies(values []domain.SyncConflictStrategy, value domain.SyncConflictStrategy) int {
 	for index, candidate := range values {
 		if candidate == value {
 			return index

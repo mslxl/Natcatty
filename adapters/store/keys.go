@@ -8,6 +8,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 // ListKeys returns every SSH Key in display order.
@@ -58,37 +59,49 @@ func (s *Store) GetKey(ctx context.Context, id model.KeyID) (domainvault.Key, er
 // SaveKey inserts or replaces one SSH Key aggregate. Credential ciphertext is
 // stored separately and is never part of this record.
 func (s *Store) SaveKey(ctx context.Context, key domainvault.Key) error {
-	if key.ID == "" || key.Label == "" {
-		return fmt.Errorf("store: save SSH Key: missing identity")
-	}
-	data, err := json.Marshal(key)
+	statement, err := keySaveStatement(key)
 	if err != nil {
-		return fmt.Errorf("store: encode SSH Key: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO ssh_keys (
-			id, label, type, source, order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			label = excluded.label,
-			type = excluded.type,
-			source = excluded.source,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		string(key.ID),
-		key.Label,
-		string(key.Type),
-		string(key.Source),
-		key.OrderKey,
-		key.CreatedAt.UnixMilli(),
-		key.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save SSH Key: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+// keySaveStatement builds the insert-or-replace statement for one SSH Key. The
+// cloud-sync apply uses it to replace the table in one transaction.
+func keySaveStatement(key domainvault.Key) (platformsqlite.Statement, error) {
+	if key.ID == "" || key.Label == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: save SSH Key: missing identity")
+	}
+	data, err := json.Marshal(key)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode SSH Key: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO ssh_keys (
+				id, label, type, source, order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				label = excluded.label,
+				type = excluded.type,
+				source = excluded.source,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			string(key.ID),
+			key.Label,
+			string(key.Type),
+			string(key.Source),
+			key.OrderKey,
+			key.CreatedAt.UnixMilli(),
+			key.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteKey removes one SSH Key and nothing else.
