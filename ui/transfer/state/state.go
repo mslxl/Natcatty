@@ -89,6 +89,12 @@ type Tab struct {
 	// shell prompt.
 	followPath string
 	followMiss string
+
+	// fileSessions are the editing sessions this Tab opened for external
+	// applications. Closing the Tab closes them, which stops their watchers and
+	// removes their materialized copies. Internal-editor sessions are owned by
+	// the editor, which outlives the Tab.
+	fileSessions []appfileopen.EditID
 }
 
 // Title returns the Tab's display label: its Host's label, or its Host id.
@@ -202,6 +208,10 @@ type State struct {
 	// the application service; a surface without one reports that opening is
 	// unavailable.
 	openFile func(context.Context, appfileopen.Request) (appfileopen.Result, error)
+	// closeFileSession releases an external application's editing session when
+	// its Tab closes. Without it, the session outlives the Tab until the file
+	// service shuts down.
+	closeFileSession func(appfileopen.EditID)
 
 	panes   [2]*Pane
 	focused Side
@@ -292,6 +302,13 @@ func WithFileOpener(open func(context.Context, appfileopen.Request) (appfileopen
 	return func(s *State) { s.openFile = open }
 }
 
+// WithFileSessionCloser supplies the service that releases an external
+// application's editing session when its pane Tab closes. The app wires the
+// file service; without it the session is left to the service's shutdown.
+func WithFileSessionCloser(close func(appfileopen.EditID)) Option {
+	return func(s *State) { s.closeFileSession = close }
+}
+
 // sftpSettings returns the current SFTP settings snapshot.
 func (s *State) sftpSettings() domainpreferences.SFTPEditor {
 	if s.settings == nil {
@@ -328,6 +345,7 @@ func (s *State) Shutdown() {
 	for _, side := range Sides() {
 		for _, tab := range s.panes[side].Tabs {
 			tab.closed = true
+			s.closeTabFileSessions(tab)
 			if tab.FS != nil {
 				_ = tab.FS.Close()
 			}
@@ -557,6 +575,7 @@ func (s *State) CloseTab(side Side) {
 		return
 	}
 	tab.closed = true
+	s.closeTabFileSessions(tab)
 	if tab.FS != nil {
 		_ = tab.FS.Close()
 	}
@@ -1041,18 +1060,45 @@ func (s *State) Open(side Side, entry domainsftp.Entry) {
 			}
 			return fs.Open(ctx, entry.Path)
 		}
+		if fs != nil {
+			// The same pane owns the write-back channel: saves return through
+			// this Tab's transport with the shared staging/rename transaction.
+			request.Target = &paneRemoteTarget{
+				service: s.service,
+				tab:     tab,
+				path:    entry.Path,
+			}
+		}
 	}
 	open := s.openFile
 	s.notice = ""
 	go func() {
 		result, err := open(s.ctx, request)
-		s.post(func() { s.finishOpen(result, err) })
+		s.post(func() { s.finishOpen(tab, result, err) })
 	}()
+}
+
+// closeTabFileSessions releases the external editing sessions a Tab opened,
+// which stops their watchers and removes their materialized copies. An
+// internal document is not tracked here: the editor owns that session until
+// the document closes.
+func (s *State) closeTabFileSessions(tab *Tab) {
+	if tab == nil || len(tab.fileSessions) == 0 {
+		return
+	}
+	sessions := tab.fileSessions
+	tab.fileSessions = nil
+	if s.closeFileSession == nil {
+		return
+	}
+	for _, id := range sessions {
+		s.closeFileSession(id)
+	}
 }
 
 // finishOpen records the open outcome. A remote download can take longer than
 // a frame, so the result always arrives through the queue.
-func (s *State) finishOpen(result appfileopen.Result, err error) {
+func (s *State) finishOpen(tab *Tab, result appfileopen.Result, err error) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -1061,6 +1107,19 @@ func (s *State) finishOpen(result appfileopen.Result, err error) {
 		s.notice = openFailureNotice(kind)
 		s.RequestRedraw()
 		return
+	}
+	// An external application's session lives as long as its Tab: the Tab's
+	// transport is the write-back channel and the watcher polls that file. An
+	// open that outlived its Tab is released immediately so no watcher keeps a
+	// closed transport.
+	if result.Session != "" && result.Kind != domainpreferences.OpenerInternal {
+		if tab == nil || tab.closed {
+			if s.closeFileSession != nil {
+				s.closeFileSession(result.Session)
+			}
+		} else {
+			tab.fileSessions = append(tab.fileSessions, result.Session)
+		}
 	}
 	switch result.Kind {
 	case domainpreferences.OpenerInternal:
@@ -1089,6 +1148,8 @@ func openFailureNotice(kind appfileopen.ErrorKind) string {
 		return "open-application-missing"
 	case appfileopen.ErrorCancelled:
 		return "open-cancelled"
+	case appfileopen.ErrorTooLarge:
+		return "open-too-large"
 	default:
 		return "open-failed"
 	}

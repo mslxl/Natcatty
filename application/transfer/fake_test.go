@@ -55,6 +55,12 @@ type fakeFS struct {
 	extractShort bool
 	// createCalls counts Create and CreateSized invocations.
 	createCalls int
+	// truncateWrites makes every Write store its bytes one short while still
+	// reporting the full count, as a transport that dropped a byte would.
+	truncateWrites int
+	// failStageRename refuses the promotion of a staging file, leaving the
+	// destination renameable, as a transport that cannot publish would.
+	failStageRename bool
 }
 
 func newFakeFS(name string) *fakeFS {
@@ -268,6 +274,9 @@ func (f *fakeFS) Rename(_ context.Context, oldPath, newPath string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	oldPath, newPath = path.Clean(oldPath), path.Clean(newPath)
+	if f.failStageRename && IsStagingName(path.Base(oldPath)) {
+		return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrPermission}
+	}
 	node, ok := f.nodes[oldPath]
 	if !ok {
 		return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrNotExist}
@@ -439,7 +448,11 @@ func (w *fakeWriter) Write(p []byte) (int, error) {
 	}
 	w.fs.mu.Lock()
 	w.buffer.Write(p)
-	w.node.data = append([]byte(nil), w.buffer.Bytes()...)
+	stored := w.buffer.Bytes()
+	if drop := w.fs.truncateWrites; drop > 0 && len(stored) > drop {
+		stored = stored[:len(stored)-drop]
+	}
+	w.node.data = append([]byte(nil), stored...)
 	w.fs.mu.Unlock()
 	return len(p), nil
 }
