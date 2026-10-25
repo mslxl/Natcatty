@@ -592,3 +592,37 @@ func assertNormalizeValidation(t *testing.T, draft Draft, field Field, rule Rule
 		t.Fatalf("validation = %+v, want %s/%s", validation, field, rule)
 	}
 }
+
+func TestNetworkDeviceModeIsKeptOnlyForSSH(t *testing.T) {
+	normalized, err := NormalizeDraft(Draft{
+		Label: "switch", Hostname: "switch.example.com", Protocol: ProtocolSSH,
+		DeviceType: " Network ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if normalized.DeviceType != DeviceTypeNetwork {
+		t.Fatalf("DeviceType = %q, want network", normalized.DeviceType)
+	}
+	host := Host{Protocol: ProtocolSSH, DeviceType: normalized.DeviceType}
+	if !host.IsNetworkDevice() {
+		t.Fatal("an SSH Host with network device mode is not recognized")
+	}
+
+	// Another transport cannot run raw execution, so neither the draft nor the
+	// read-side check may keep the mode.
+	other, err := NormalizeDraft(Draft{
+		Label: "console", Hostname: "console.local", Protocol: ProtocolTelnet,
+		DeviceType: DeviceTypeNetwork,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft telnet: %v", err)
+	}
+	if other.DeviceType != DeviceTypeDefault {
+		t.Fatalf("Telnet DeviceType = %q, want the default", other.DeviceType)
+	}
+	stray := Host{Protocol: ProtocolTelnet, DeviceType: DeviceTypeNetwork}
+	if stray.IsNetworkDevice() {
+		t.Fatal("a non-SSH Host was treated as a network device")
+	}
+}

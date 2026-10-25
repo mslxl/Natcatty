@@ -3606,3 +3606,84 @@
     - app.TestTicket40CheckPassesTwiceInOneProcess
   status: verified
   notes: "The dial uses the original ten-second connect timeout and classifies a deadline as connection.KindTimeout wrapping ErrDialTimeout, a refused or unreachable endpoint as KindNetwork, and a cancelled caller as KindCancelled, so the shell localizes the failure instead of printing a socket error. A dropped Telnet transport does not reconnect automatically; the Session carries a policy whose retry predicate is always false, which still enables the Session menu's Reconnect action, and a manual reconnect dials the same Hostname and port again."
+
+# --- Ticket 41: network-device mode ---
+
+- id: netdev.raw-exec
+  area: terminal
+  feature: Network-device Hosts send commands through the interactive SSH channel
+  original_paths:
+    - electron/bridges/ai/ptyExec.cjs
+    - electron/bridges/mcpServerBridge/execHandlers.cjs
+    - domain/host.ts
+  module: application/session
+  tickets: [41]
+  acceptance_tests:
+    - application/session.TestRawExecWritesTheBareCommandAndReportsNoExitCode
+    - application/session.TestRawExecStripsOscAndCarriageReturns
+    - application/session.TestRawExecRejectsAConcurrentCommand
+    - application/session.TestRawExecRejectsAnEmptyCommand
+    - application/session.TestRawExecIsUnavailableOnAShellSession
+    - application/session.TestSerialSessionSupportsRawExec
+    - app.TestTicket41CheckRunsThroughTheKeyboard
+    - app.TestTicket41CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The command is written to the Session's existing interactive PTY as the bare text followed by CR, matching portable vendor CLIs; there is no shell wrapper, no completion marker, and no second channel, so single-channel devices work. Programmatic input bypasses the tap, so it never enters command history, autocomplete, or command tracking. Device CLIs expose no exit status, so HasExitCode is always false and callers must judge success from the output; the original's null exitCode is preserved. Output strips OSC and CSI sequences, removes carriage returns, drops an echoed first line, and trims, as the original's stripAnsi and post-processing did. Raw execution is available only to an SSH Host marked as a network device and to serial Sessions; a POSIX shell Session refuses it with a typed error. The original's English no-response hint string became the NoResponse flag, because the application layer holds no user-visible text."
+
+- id: netdev.timeouts-and-cap
+  area: terminal
+  feature: Network-device commands finish on silence or fail on idle and overall limits
+  original_paths:
+    - electron/bridges/ai/ptyExec.cjs
+    - electron/bridges/mcpServerBridge/execHandlers.cjs
+  module: application/session
+  tickets: [41]
+  acceptance_tests:
+    - application/session.TestRawExecFinishesAfterTheIdleWindow
+    - application/session.TestRawExecReportsNoResponseInsteadOfHanging
+    - application/session.TestRawExecOverallTimeoutInterruptsTheCommand
+    - application/session.TestRawExecCancellationInterruptsTheCommand
+    - application/session.TestRawExecCapsTheOutputAndMarksItTruncated
+    - app.TestTicket41CheckRunsThroughTheKeyboard
+    - app.TestTicket41CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Completion is inferred, not marked: the command finishes after three seconds of silence by default, with the first two chunks getting a doubled idle window so a paging command is not cut short after its echo. A device that answers nothing resolves after min(idle*4, timeout/4) with NoResponse set rather than waiting for silence that never starts, matching the original fallback. An overall timeout sends Ctrl+C and fails with a typed timeout, and cancellation does the same; partial output is returned with either. Output is capped at 512 KiB by default; after the cap is reached the idle timer is armed once and never reset, so a noisy device cannot hold the command open until the overall limit. This differs from the original only in truncating exactly at the cap instead of letting the last chunk overshoot, and in reporting Truncated/NoResponse flags instead of English hint text."
+
+- id: netdev.single-channel
+  area: terminal
+  feature: A single-channel device banner is driven through one SSH session channel
+  original_paths:
+    - electron/bridges/ai/ptyExec.cjs
+    - electron/bridges/mcpServerBridge/execHandlers.cjs
+  module: adapters/ssh
+  tickets: [41]
+  acceptance_tests:
+    - adapters/ssh.TestNetworkDeviceBannerUsesTheOneSessionChannel
+    - application/connection.TestRemoteRequiresSingleChannelMatchesOnlySoftwareTokens
+    - application/connection.TestLeaseReportsSingleChannelAndReuse
+    - app.TestTicket41CheckRunsThroughTheKeyboard
+    - app.TestTicket41CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The SSH version recorder already captures the server identification line, and RemoteRequiresSingleChannel recognizes the BHostSSH, TERM-SSHD, CLOUDBILITY, and CLOUDLINKER software tokens; a lease for such a peer is marked single-channel and is never parked for reuse. Network-device raw mode needs no extra channel at all: the command is typed into the same PTY that was opened for the shell, so exactly one session channel is created and no exec or subsystem request is sent. The fixture extends fakessh with a scripted shell, a configurable server version, and a session-channel counter so the adapter test and self-test assert the wire behavior."
+
+- id: netdev.host-mode
+  area: vault
+  feature: A Host can be marked as a network device and keeps that mode
+  original_paths:
+    - domain/host.ts
+    - components/HostDetailsAdvancedSections.tsx
+    - components/HostDetailsPanel.tsx
+  module: ui/vault
+  tickets: [41]
+  acceptance_tests:
+    - domain/vault.TestNetworkDeviceModeIsKeptOnlyForSSH
+    - domain/vaultimport.TestJSONHostCarriesTheNetworkDeviceMode
+    - ui/vault/state.TestNetworkDeviceModeIsSavedOnlyForSSH
+    - ui/vault/state.TestBeginEditRestoresTheNetworkDeviceMode
+    - ui/vault.TestVaultViewOffersNetworkDeviceModeOnlyForSSH
+    - ui/shell/state.TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH
+    - ui/shell/state.TestRestoreReopensANetworkDevicePaneFromTheHostRecord
+    - app.TestTicket41CheckRunsThroughTheKeyboard
+    - app.TestTicket41CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Host Details gains a Network device mode checkbox with an explanation, shown only for SSH, and all five locales carry the label and hint. The value persists in the Host JSON as deviceType, so no storage migration was needed; Vault JSON export and import round-trip it, and a restored Pane reads the current Host record. NormalizeDraft drops the mode for any other protocol, and IsNetworkDevice additionally requires SSH, so a hand-edited or stale record cannot put another transport into raw execution. The checkbox label is localized; the mode is an advanced Host option, not a new window. Deliberate divergence: group-level deviceType defaults are not inherited, so only the Host's own setting selects raw execution, and the original's separate warning panel is folded into the hint below the checkbox."

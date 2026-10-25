@@ -56,6 +56,7 @@ type jsonHost struct {
 	LegacyAlgorithms       bool            `json:"legacyAlgorithms"`
 	SkipEcdsaHostKey       bool            `json:"skipEcdsaHostKey"`
 	Algorithms             *jsonAlgorithms `json:"algorithms"`
+	DeviceType             string          `json:"deviceType"`
 	HostChain              *struct {
 		HostIDs []string `json:"hostIds"`
 	} `json:"hostChain"`
@@ -212,6 +213,7 @@ func parseJSON(text string) Result {
 			ProxyProfileID:         strings.TrimSpace(source.ProxyProfileID),
 			LegacyAlgorithms:       source.LegacyAlgorithms,
 			SkipEcdsaHostKey:       source.SkipEcdsaHostKey,
+			DeviceType:             strings.TrimSpace(source.DeviceType),
 		}
 		if source.Algorithms != nil {
 			record.Algorithms = &Algorithms{

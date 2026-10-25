@@ -171,6 +171,8 @@ type Form struct {
 	// SCP. SFTPSudo elevates the SFTP subsystem through sudo.
 	FileProtocol string
 	SFTPSudo     bool
+	// NetworkDevice selects raw execution for a vendor CLI over SSH.
+	NetworkDevice bool
 }
 
 // State is the Vault surface's state.
@@ -638,6 +640,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
 		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
 		SFTPSudo:               host.SFTPSudo,
+		NetworkDevice:          host.IsNetworkDevice(),
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -914,6 +917,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
 		SFTPFileProtocol:       domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
 		SFTPSudo:               host.SFTPSudo,
+		DeviceType:             host.DeviceType,
 	}
 }
 
@@ -964,7 +968,18 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
 		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:         s.form.SFTPSudo,
+		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
 	}, ProblemNone
+}
+
+// formDeviceType maps the editor's checkbox onto the Host record. The mode is
+// offered only for SSH, so a hidden checkbox can never save it for another
+// protocol.
+func formDeviceType(enabled bool, protocol string) domainvault.DeviceType {
+	if enabled && domainvault.Protocol(protocol) == domainvault.ProtocolSSH {
+		return domainvault.DeviceTypeNetwork
+	}
+	return domainvault.DeviceTypeDefault
 }
 
 // problemFor maps a typed application error to the view's problem id.
