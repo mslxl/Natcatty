@@ -2718,5 +2718,21 @@
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "Ресурсы",
   "sysManagerPortOwnerUnknown": "Процесс неизвестен",
-  "sysManagerOverviewCoresLabel": "Ядра"
+  "sysManagerOverviewCoresLabel": "Ядра",
+  "vaultHostMoshServerPath": "Путь к mosh-server",
+  "vaultHostMoshServerPathHint": "Удалённый двоичный файл mosh-server. Оставьте пустым, чтобы использовать PATH хоста.",
+  "vaultHostMoshRestrictionHint": "Сеансы Mosh не поддерживают промежуточные хосты и прокси.",
+  "vaultHostETPort": "Порт ET",
+  "vaultHostETPortHint": "Порт сервера EternalTerminal. Оставьте пустым для 2022.",
+  "vaultHostETRestrictionHint": "Сеансы EternalTerminal поддерживают один промежуточный хост и не поддерживают прокси.",
+  "vaultProblemETPort": "Введите порт от 1 до 65535.",
+  "connectionErrorMoshUnavailable": "Встроенный клиент Mosh недоступен для этой платформы.",
+  "connectionErrorMoshChecksum": "Встроенный клиент Mosh не прошёл проверку контрольной суммы. Переустановите приложение.",
+  "connectionErrorMoshJump": "Сеансы Mosh не поддерживают промежуточные хосты.",
+  "connectionErrorMoshProxy": "Сеансы Mosh не поддерживают прокси.",
+  "connectionErrorMoshHandshake": "mosh-server не запустился. Проверьте, установлен ли mosh-server на хосте.",
+  "connectionErrorETUnavailable": "Встроенный клиент EternalTerminal недоступен для этой платформы.",
+  "connectionErrorETChecksum": "Встроенный клиент EternalTerminal не прошёл проверку контрольной суммы. Переустановите приложение.",
+  "connectionErrorETJump": "Сеансы EternalTerminal поддерживают не более одного промежуточного хоста.",
+  "connectionErrorETProxy": "Сеансы EternalTerminal не поддерживают прокси."
 }

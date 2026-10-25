@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
+	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	"github.com/mslxl/natcatty/domain/model/serial"
 	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
@@ -53,8 +55,8 @@ const highlightIdleFlush = 30 * time.Millisecond
 // maxHighlightCarry bounds the partial line held for highlighting.
 const maxHighlightCarry = 64 << 10
 
-// Kind is the protocol of a Session. Local shells, SSH, serial, and Telnet
-// exist in this slice; later tickets add mosh and EternalTerminal.
+// Kind is the protocol of a Session. Local shells, SSH, serial, Telnet, Mosh,
+// and EternalTerminal exist in this slice.
 type Kind string
 
 const (
@@ -66,6 +68,10 @@ const (
 	KindSerial Kind = "serial"
 	// KindTelnet is an interactive terminal on a Telnet Host.
 	KindTelnet Kind = "telnet"
+	// KindMosh is a UDP Mosh Session bootstrapped over SSH.
+	KindMosh Kind = "mosh"
+	// KindET is an EternalTerminal Session using the bundled et client.
+	KindET Kind = "et"
 )
 
 // Status is a Session's lifecycle state.
@@ -297,6 +303,12 @@ type StartSpec struct {
 	// is required when Kind is KindTelnet and ignored by every other
 	// transport.
 	Telnet *telnetmodel.Config
+	// Mosh carries a Mosh Session's bootstrap settings. It is required when
+	// Kind is KindMosh and ignored by every other transport.
+	Mosh *moshmodel.Config
+	// ET carries an EternalTerminal Session's endpoint and credentials. It is
+	// required when Kind is KindET and ignored by every other transport.
+	ET *etmodel.Config
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy

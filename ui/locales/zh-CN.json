@@ -2718,5 +2718,21 @@
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "资源",
   "sysManagerPortOwnerUnknown": "未知进程",
-  "sysManagerOverviewCoresLabel": "核心"
+  "sysManagerOverviewCoresLabel": "核心",
+  "vaultHostMoshServerPath": "mosh-server 路径",
+  "vaultHostMoshServerPathHint": "远程 mosh-server 可执行文件。留空则使用主机的 PATH。",
+  "vaultHostMoshRestrictionHint": "Mosh 会话不支持跳板主机或代理。",
+  "vaultHostETPort": "ET 端口",
+  "vaultHostETPortHint": "EternalTerminal 服务端端口。留空则使用 2022。",
+  "vaultHostETRestrictionHint": "EternalTerminal 会话最多支持一个跳板主机，且不支持代理。",
+  "vaultProblemETPort": "请输入 1 到 65535 之间的端口。",
+  "connectionErrorMoshUnavailable": "当前平台没有可用的内置 Mosh 客户端。",
+  "connectionErrorMoshChecksum": "内置 Mosh 客户端校验失败，请重新安装应用。",
+  "connectionErrorMoshJump": "Mosh 会话不能使用跳板主机。",
+  "connectionErrorMoshProxy": "Mosh 会话不能使用代理。",
+  "connectionErrorMoshHandshake": "mosh-server 未能启动。请确认主机上已安装 mosh-server。",
+  "connectionErrorETUnavailable": "当前平台没有可用的内置 EternalTerminal 客户端。",
+  "connectionErrorETChecksum": "内置 EternalTerminal 客户端校验失败，请重新安装应用。",
+  "connectionErrorETJump": "EternalTerminal 会话最多支持一个跳板主机。",
+  "connectionErrorETProxy": "EternalTerminal 会话不能使用代理。"
 }

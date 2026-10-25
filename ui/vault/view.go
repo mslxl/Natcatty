@@ -1200,7 +1200,9 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 			// size a long label can no longer squeeze Delete to zero width, and
 			// at the default size all five still share one line.
 			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-				if host.Protocol == domainvault.ProtocolSSH {
+				if host.Protocol == domainvault.ProtocolSSH ||
+					host.Protocol == domainvault.ProtocolMosh ||
+					host.Protocol == domainvault.ProtocolET {
 					testLabel := m.VaultHostTest()
 					if s.Testing(host.ID) {
 						testLabel = m.VaultHostTesting()
@@ -1385,17 +1387,29 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				ui.Field(c, m.VaultHostProtocol(), func() {
 					changed := ui.Select(c, &form.Protocol, []string{
 						string(domainvault.ProtocolSSH),
+						string(domainvault.ProtocolMosh),
+						string(domainvault.ProtocolET),
 						string(domainvault.ProtocolTelnet),
 						string(domainvault.ProtocolLocal),
 					}).Width(140).Changed()
-					if changed && form.Protocol != string(domainvault.ProtocolSSH) {
-						s.SetX11Forwarding(false)
-						// The file-transfer and network-device controls are
-						// hidden outside SSH; clear them so Save cannot keep a
-						// mode an invisible field selected.
-						form.FileProtocol = string(domainvault.FileProtocolAuto)
-						form.SFTPSudo = false
-						form.NetworkDevice = false
+					if changed {
+						if form.Protocol != string(domainvault.ProtocolSSH) {
+							s.SetX11Forwarding(false)
+							// The file-transfer and network-device controls are
+							// hidden outside SSH; clear them so Save cannot keep a
+							// mode an invisible field selected.
+							form.FileProtocol = string(domainvault.FileProtocolAuto)
+							form.SFTPSudo = false
+							form.NetworkDevice = false
+						}
+						// Protocol-only settings must not survive a switch that
+						// hides their field.
+						if form.Protocol != string(domainvault.ProtocolMosh) {
+							form.MoshServerPath = ""
+						}
+						if form.Protocol != string(domainvault.ProtocolET) {
+							form.ETPort = ""
+						}
 						c.Invalidate()
 					}
 				})
@@ -1486,6 +1500,18 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}
 				ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice())
 				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(12).TextColor(t.TextMuted)
+			}
+			if form.Protocol == string(domainvault.ProtocolMosh) {
+				ui.Field(c, m.VaultHostMoshServerPath(), func() {
+					ui.TextInput(c, &form.MoshServerPath).Placeholder("mosh-server")
+				}).Description(m.VaultHostMoshServerPathHint())
+				ui.Text(c, m.VaultHostMoshRestrictionHint()).FontSize(12).TextColor(t.TextMuted)
+			}
+			if form.Protocol == string(domainvault.ProtocolET) {
+				ui.Field(c, m.VaultHostETPort(), func() {
+					ui.TextInput(c, &form.ETPort).Placeholder("2022").Width(120)
+				}).Description(m.VaultHostETPortHint())
+				ui.Text(c, m.VaultHostETRestrictionHint()).FontSize(12).TextColor(t.TextMuted)
 			}
 			ui.Checkbox(c, &form.Pinned, m.VaultHostPinned())
 		})
@@ -1822,6 +1848,8 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemFileProtocol()
 	case vaultstate.ProblemSudoUnsupported:
 		return m.VaultProblemSudoUnsupported()
+	case vaultstate.ProblemETPort:
+		return m.VaultProblemETPort()
 	case vaultstate.ProblemSnippet:
 		return m.VaultSnippetProblem()
 	case vaultstate.ProblemSnippetPackage:

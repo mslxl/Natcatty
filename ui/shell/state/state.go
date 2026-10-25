@@ -16,6 +16,8 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
+	domainetmodel "github.com/mslxl/natcatty/domain/model/et"
+	domoshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -638,6 +640,8 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 			X11Forwarding: x11,
 			NetworkDevice: plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
 			Telnet:        plan.telnet,
+			Mosh:          plan.mosh,
+			ET:            plan.et,
 			Reconnect:     plan.reconnect,
 		})
 		s.mu.Lock()
@@ -668,6 +672,8 @@ type hostTransportPlan struct {
 	kind       appsession.Kind
 	descriptor domainworkspace.SessionKind
 	telnet     *domaintelnet.Config
+	mosh       *domoshmodel.Config
+	et         *domainetmodel.Config
 	reconnect  *appsession.ReconnectPolicy
 }
 
@@ -677,13 +683,28 @@ type hostTransportPlan struct {
 // action without automatically retrying a dropped socket, matching the
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
-	if host.Protocol == domainvault.ProtocolTelnet {
+	switch host.Protocol {
+	case domainvault.ProtocolTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
 			kind:       appsession.KindTelnet,
 			descriptor: domainworkspace.SessionTelnet,
 			telnet:     &cfg,
 			reconnect:  telnetReconnectPolicy(),
+		}
+	case domainvault.ProtocolMosh:
+		return hostTransportPlan{
+			kind:       appsession.KindMosh,
+			descriptor: domainworkspace.SessionMosh,
+			mosh:       moshConfig(host),
+			reconnect:  &appsession.ReconnectPolicy{},
+		}
+	case domainvault.ProtocolET:
+		return hostTransportPlan{
+			kind:       appsession.KindET,
+			descriptor: domainworkspace.SessionET,
+			et:         etConfig(host),
+			reconnect:  &appsession.ReconnectPolicy{},
 		}
 	}
 	// A dropped SSH transport retries every five seconds under the original
@@ -693,6 +714,31 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 		descriptor: domainworkspace.SessionSSH,
 		reconnect:  &appsession.ReconnectPolicy{},
 	}
+}
+
+// moshConfig is the non-secret bootstrap half of a Mosh Session. Credentials,
+// jump trust, and MFA stay with the SSH Connection Manager.
+func moshConfig(host domainvault.Host) *domoshmodel.Config {
+	cfg := domoshmodel.Config{
+		Hostname:   host.Hostname,
+		Port:       host.Port,
+		Username:   host.Username,
+		ServerPath: host.MoshServerPath,
+	}.Normalized()
+	return &cfg
+}
+
+// etConfig is the non-secret half of an EternalTerminal Session. The app adds
+// credentials, host-key snapshots, and the single jump Host after resolving the
+// route.
+func etConfig(host domainvault.Host) *domainetmodel.Config {
+	cfg := domainetmodel.Config{
+		Hostname: host.Hostname,
+		Port:     host.Port,
+		Username: host.Username,
+		ETPort:   host.ETPort,
+	}.Normalized()
+	return &cfg
 }
 
 // telnetReconnectPolicy allows the Session menu's manual Reconnect action but

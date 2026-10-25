@@ -20,6 +20,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
+	adapteret "github.com/mslxl/natcatty/adapters/et"
 	adaptergithub "github.com/mslxl/natcatty/adapters/github"
 	"github.com/mslxl/natcatty/adapters/histfile"
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
@@ -82,7 +83,15 @@ import (
 )
 
 // Run starts Natcatty and blocks until the application quits.
-func Run() error { return run(nil) }
+func Run() error {
+	// The bundled EternalTerminal client invokes this same executable through
+	// SSH_ASKPASS. That mode must run before MyGo takes the main thread or
+	// opens a window; it reads the prompt map from the private SSH home.
+	if adapteret.IsAskpassInvocation(os.Args) {
+		os.Exit(adapteret.RunAskpass(os.Args, os.Stdout))
+	}
+	return run(nil)
+}
 
 // run is the composition root proper. afterReady, when non-nil, runs on the UI
 // thread after the main window exists; the launch smoke build uses it to quit.
@@ -627,8 +636,12 @@ func run(afterReady func(hostWindow)) error {
 		}
 	}
 
+	transportRoots := transportBundleRoots()
 	sessions = appsession.NewService(newTransportFactory(
 		localpty.Factory{}, adapterserial.Factory{}, adapterstnet.Factory{}, connections, routes,
+	).withClients(
+		newMoshFactory(connections, routes, transportRoots),
+		newETFactory(vaultService, routes, transportRoots),
 	),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.

@@ -251,3 +251,37 @@ func TestVaultViewOffersNetworkDeviceModeOnlyForSSH(t *testing.T) {
 		t.Fatal("network device mode was shown for a non-SSH Host")
 	}
 }
+
+func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
+	m := locales.In("en")
+	state := vaultstate.NewState(&fakeHosts{})
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := ui.NewTester(View(state), 900, 1800)
+	state.BeginCreate()
+	state.Form().Protocol = string(domainvault.ProtocolMosh)
+	tt.Frame()
+
+	if !tt.HasText(m.VaultHostMoshServerPath()) || !tt.HasText(m.VaultHostMoshServerPathHint()) {
+		t.Fatal("the Mosh Host editor does not offer the server path")
+	}
+	if !tt.HasText(m.VaultHostMoshRestrictionHint()) {
+		t.Fatal("the Mosh Host editor does not explain the route restriction")
+	}
+	if tt.HasText(m.VaultHostETPort()) || tt.HasText(m.VaultHostETRestrictionHint()) {
+		t.Fatal("the ET port was shown for a Mosh Host")
+	}
+
+	state.Form().Protocol = string(domainvault.ProtocolET)
+	tt.Frame()
+	if !tt.HasText(m.VaultHostETPort()) || !tt.HasText(m.VaultHostETPortHint()) {
+		t.Fatal("the ET Host editor does not offer the ET port")
+	}
+	if !tt.HasText(m.VaultHostETRestrictionHint()) {
+		t.Fatal("the ET Host editor does not explain the route restriction")
+	}
+	if tt.HasText(m.VaultHostMoshServerPath()) || tt.HasText(m.VaultHostMoshRestrictionHint()) {
+		t.Fatal("the mosh-server path was shown for an ET Host")
+	}
+}
