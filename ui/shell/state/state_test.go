@@ -370,6 +370,44 @@ func TestOpenHostAddsAnSSHTabOnTheNextFlush(t *testing.T) {
 	}
 }
 
+func TestOpenHostOpensATelnetHostWithTheTelnetTransport(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-telnet", Label: "console", Hostname: "console.local",
+		Port: 23, Username: "admin", Protocol: domainvault.ProtocolTelnet,
+		// A stray SSH-only preference must not reach a Telnet transport.
+		X11Forwarding: true, X11WarningAcknowledged: true,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the Telnet tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+
+	spec := graph.factory.spec
+	if spec.Kind != appsession.KindTelnet {
+		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindTelnet)
+	}
+	if spec.Telnet == nil || spec.Telnet.Hostname != "console.local" || spec.Telnet.Port != 23 {
+		t.Fatalf("Telnet config = %+v, want console.local:23", spec.Telnet)
+	}
+	if spec.X11Forwarding {
+		t.Fatal("X11 forwarding reached a Telnet transport")
+	}
+	if spec.Reconnect == nil {
+		t.Fatal("a Telnet Session has no manual reconnect policy")
+	}
+	if spec.Reconnect.ShouldRetry != nil && spec.Reconnect.ShouldRetry(appsession.End{Reason: appsession.EndReasonError}) {
+		t.Fatal("a dropped Telnet transport would reconnect automatically")
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindTelnet || snapshot.Status != appsession.StatusRunning {
+		t.Fatalf("snapshot = %+v, %v; want a running Telnet Session", snapshot, ok)
+	}
+}
+
 func TestOpenHostCarriesTheAcknowledgedX11Preference(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{

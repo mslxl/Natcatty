@@ -30,6 +30,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncstore "github.com/mslxl/natcatty/adapters/syncstore"
 	adaptersyncvault "github.com/mslxl/natcatty/adapters/syncvault"
+	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	appapplock "github.com/mslxl/natcatty/application/applock"
@@ -568,7 +569,7 @@ func run(afterReady func(hostWindow)) error {
 	}
 
 	sessions = appsession.NewService(newTransportFactory(
-		localpty.Factory{}, adapterserial.Factory{}, connections, routes,
+		localpty.Factory{}, adapterserial.Factory{}, adapterstnet.Factory{}, connections, routes,
 	),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.

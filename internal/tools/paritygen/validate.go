@@ -49,7 +49,7 @@ func init() {
 		"domain/workspace", "domain/transfer", "domain/forwarding", "domain/settings",
 		"domain/sync", "domain/search", "domain/applock", "domain/history",
 		"domain/keybindings", "domain/preferences", "domain/model/theme",
-		"domain/model/serial",
+		"domain/model/serial", "domain/model/telnet",
 		"application/model", "application/vault", "application/connection",
 		"application/session", "application/workspace", "application/transfer",
 		"application/forwarding", "application/settings", "application/sync",
