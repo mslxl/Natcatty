@@ -6,6 +6,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
+	adaptergithub "github.com/mslxl/natcatty/adapters/github"
 	"github.com/mslxl/natcatty/adapters/histfile"
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
 	"github.com/mslxl/natcatty/adapters/localpty"
@@ -25,6 +28,8 @@ import (
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
+	adaptersyncstore "github.com/mslxl/natcatty/adapters/syncstore"
+	adaptersyncvault "github.com/mslxl/natcatty/adapters/syncvault"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	appapplock "github.com/mslxl/natcatty/application/applock"
@@ -38,6 +43,7 @@ import (
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appsync "github.com/mslxl/natcatty/application/sync"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appthemes "github.com/mslxl/natcatty/application/themes"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
@@ -97,6 +103,8 @@ func run(afterReady func(hostWindow)) error {
 	var preferencesState *settings.PreferencesState
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
+	var syncService *appsync.Service
+	var syncState *settings.SyncState
 	var registry *command.Registry
 	var currentMenu *mygo.Menu
 	var historyService *apphistory.Service
@@ -337,7 +345,14 @@ func run(afterReady func(hostWindow)) error {
 		appbackup.WithRetentionStore(backupStore))
 	backupService.Start()
 	defer backupService.Stop()
-	database.SetChangeHook(backupService.NotifyVaultChanged)
+	// One committed Vault write feeds both the local backup queue and the
+	// cloud automatic sync debounce. Neither hook may block the write.
+	database.SetChangeHook(func() {
+		backupService.NotifyVaultChanged()
+		if syncService != nil {
+			syncService.NotifyLocalChange()
+		}
+	})
 
 	vaultService := appvault.NewService(
 		database,
@@ -358,6 +373,41 @@ func run(afterReady func(hostWindow)) error {
 		}),
 		appvault.WithHistoryReader(historyService),
 	)
+
+	// Cloud sync: the Vault adapter reads the SQLite records and decrypts field
+	// credentials for the encrypted payload; applying a payload re-encrypts them
+	// under this device's key. Both GitHub base URLs are injectable so GUI
+	// acceptance can point the whole device flow and Gist surface at a local
+	// fake server without touching the real network.
+	syncConfigStore := adaptersyncstore.OpenConfig(filepath.Join(userData, "cloud-sync.json"))
+	syncProfile, _ := syncConfigStore.Load(context.Background())
+	deviceID := syncProfile.DeviceID
+	if deviceID == "" {
+		deviceID = newSyncDeviceID()
+	}
+	deviceName, _ := os.Hostname()
+	version := mygo.App.Version()
+	if version == "" {
+		version = "dev"
+	}
+	githubClient := adaptergithub.New(adaptergithub.Options{
+		APIBase:  os.Getenv("NATCATTY_GITHUB_API_BASE"),
+		AuthBase: syncGitHubAuthBase(),
+		ClientID: os.Getenv("NATCATTY_GITHUB_CLIENT_ID"),
+	})
+	syncService = appsync.NewService(
+		githubClient,
+		adaptersyncvault.New(database, secretStore),
+		syncConfigStore,
+		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
+		appsync.WithDevice(deviceID, deviceName, version),
+		appsync.WithRedrawRequest(invalidate),
+	)
+	if err := syncService.Load(context.Background()); err != nil {
+		return err
+	}
+	defer syncService.Stop()
+	syncState = settings.NewSyncState(syncService, settings.WithSyncRedrawRequest(invalidate))
 
 	// App Lock is a UI gate backed by its own versioned verifier file.
 	appLock := appapplock.NewService(
@@ -789,6 +839,7 @@ func run(afterReady func(hostWindow)) error {
 				Associations: associationsState,
 				Shortcuts:    shortcutsState,
 				Search:       searchState,
+				Sync:         syncState,
 			})
 		},
 		func() string { return mygo.App.Locale() },
@@ -906,6 +957,9 @@ func run(afterReady func(hostWindow)) error {
 		// Close every editing session before the surface's connections go
 		// away, then remove any materialized copy still on disk.
 		fileOpenService.Shutdown()
+		syncState.Shutdown()
+		syncService.Stop()
+		syncService.ClearPassword()
 		shellState.Shutdown()
 		shellState.CloseAllSessions()
 		sessions.CloseAll()
@@ -1223,4 +1277,24 @@ type terminalActionsFunc func(model.SessionID, model.HostID) error
 // OpenTerminal opens or focuses the terminal related to a log or history row.
 func (fn terminalActionsFunc) OpenTerminal(sessionID model.SessionID, hostID model.HostID) error {
 	return fn(sessionID, hostID)
+}
+
+// newSyncDeviceID names this device in the encrypted envelope. It is generated
+// once and then persisted in cloud-sync.json; it is not a hardware identifier.
+func newSyncDeviceID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("device-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(bytes[:])
+}
+
+// syncGitHubAuthBase resolves the OAuth base. NATCATTY_GITHUB_API_BASE alone
+// also moves the auth endpoints, so one override is enough for a local fake
+// server; NATCATTY_GITHUB_AUTH_BASE takes precedence when both are set.
+func syncGitHubAuthBase() string {
+	if auth := os.Getenv("NATCATTY_GITHUB_AUTH_BASE"); auth != "" {
+		return auth
+	}
+	return os.Getenv("NATCATTY_GITHUB_API_BASE")
 }

@@ -8,6 +8,7 @@ import (
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	"github.com/mslxl/natcatty/domain/model"
+	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
 )
 
 var _ appforwarding.RuleRepository = (*Store)(nil)
@@ -72,46 +73,55 @@ func (s *Store) GetForwardingRule(ctx context.Context, id model.ForwardingRuleID
 
 // SaveForwardingRule inserts or replaces one rule aggregate.
 func (s *Store) SaveForwardingRule(ctx context.Context, rule domainforward.Rule) error {
-	if rule.ID == "" {
-		return fmt.Errorf("store: save Port Forwarding Rule: empty id")
-	}
-	if err := rule.Validate(); err != nil {
-		return fmt.Errorf("store: save Port Forwarding Rule: %w", err)
-	}
-	data, err := json.Marshal(rule)
+	statement, err := forwardingRuleSaveStatement(rule)
 	if err != nil {
-		return fmt.Errorf("store: encode Port Forwarding Rule: %w", err)
+		return err
 	}
-
-	_, err = s.db.Execute(ctx, `INSERT INTO forwarding_rules (
-			id, label, type, host_id, bind_address, local_port,
-			order_key, created_at, updated_at, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			label = excluded.label,
-			type = excluded.type,
-			host_id = excluded.host_id,
-			bind_address = excluded.bind_address,
-			local_port = excluded.local_port,
-			order_key = excluded.order_key,
-			updated_at = excluded.updated_at,
-			data = excluded.data`,
-		string(rule.ID),
-		rule.Label,
-		string(rule.Type),
-		string(rule.HostID),
-		rule.BindAddress,
-		rule.LocalPort,
-		rule.OrderKey,
-		rule.CreatedAt.UnixMilli(),
-		rule.UpdatedAt.UnixMilli(),
-		string(data),
-	)
-	if err != nil {
+	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
 		return fmt.Errorf("store: save Port Forwarding Rule: %w", err)
 	}
 	s.vaultChanged()
 	return nil
+}
+
+func forwardingRuleSaveStatement(rule domainforward.Rule) (platformsqlite.Statement, error) {
+	if rule.ID == "" {
+		return platformsqlite.Statement{}, fmt.Errorf("store: save Port Forwarding Rule: empty id")
+	}
+	if err := rule.Validate(); err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: save Port Forwarding Rule: %w", err)
+	}
+	data, err := json.Marshal(rule)
+	if err != nil {
+		return platformsqlite.Statement{}, fmt.Errorf("store: encode Port Forwarding Rule: %w", err)
+	}
+	return platformsqlite.Statement{
+		SQL: `INSERT INTO forwarding_rules (
+				id, label, type, host_id, bind_address, local_port,
+				order_key, created_at, updated_at, data
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				label = excluded.label,
+				type = excluded.type,
+				host_id = excluded.host_id,
+				bind_address = excluded.bind_address,
+				local_port = excluded.local_port,
+				order_key = excluded.order_key,
+				updated_at = excluded.updated_at,
+				data = excluded.data`,
+		Args: []any{
+			string(rule.ID),
+			rule.Label,
+			string(rule.Type),
+			string(rule.HostID),
+			rule.BindAddress,
+			rule.LocalPort,
+			rule.OrderKey,
+			rule.CreatedAt.UnixMilli(),
+			rule.UpdatedAt.UnixMilli(),
+			string(data),
+		},
+	}, nil
 }
 
 // DeleteForwardingRule removes one rule and nothing else.

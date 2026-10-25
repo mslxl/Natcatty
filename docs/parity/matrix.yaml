@@ -2288,6 +2288,132 @@
   status: verified
   notes: "Backups live under vault-backups/ as format-version-1 records whose metadata is cleartext and whose canonical snapshot payload is AES-256-GCM ciphertext under a keychain-held key. Writes go to a synced sibling file and rename into place, a 25 MiB plaintext cap is checked before any write, retention clamps to 1-100 (default 20) and prunes immediately, and a fingerprint match against the newest record keeps that record instead of writing a duplicate. Committed Vault writes notify a coalescing worker through the store hook; imports take a protective backup before their first chunk, and every restore reads and validates the payload, takes a mandatory before_restore backup, and applies all tables in one transaction. A failed apply or verification leaves the Vault byte-for-byte unchanged. The panel lists reason, local time, size, record count, and a shortened fingerprint, requires confirmation for restore and clear, shows skipped-too-large and pruned counts, and fits 1100x720 and 720x480 in all five catalogs with the scroll-bar gutter reserved. The clear banner reports the deleted count once, keeping retention pruning in a separate status field, and the restore confirmation and success banner say the current Vault is protected by a backup that may be new or already identical."
 
+# --- Ticket 49: sync core and GitHub Gist ---
+
+- id: sync.encrypted-vault-envelope
+  area: sync
+  feature: Byte-compatible encrypted netcatty-vault.json envelope
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/EncryptionService.ts
+  module: domain/sync
+  tickets: [49]
+  acceptance_tests:
+    - domain/sync.TestEnvelopeMatchesTheOriginalElectronVector
+    - domain/sync.TestEnvelopeFieldOrderMatchesTheOriginal
+    - domain/sync.TestMarshalJSONMatchesJSONStringify
+    - domain/sync.TestMasterKeyConfigMatchesTheOriginalVerifierVector
+    - domain/sync.TestEncryptPayloadRoundTripsAndUsesFreshMaterial
+    - domain/sync.TestDecryptRejectsWrongPasswordAndTampering
+    - application/sync.TestNewerSyncSchemaFailsClosed
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+    - app.TestTicket49CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The fixture was produced with the original Electron/WebCrypto primitives and constants (PBKDF2-HMAC-SHA-256, 600000 iterations, 32-byte salt, AES-256-GCM, 12-byte IV, 16-byte tag, standard base64), fixed salt/IV/metadata, and the original writer's top-level payload order for the families this build implements. The Go implementation decrypts it, re-encrypts the same plaintext with the same material, and requires byte-identical output: compact JSON.stringify encoding, no HTML escaping, raw U+2028/U+2029, and the original meta order. The ticket-49 self-test repeats this check in the running app. A cloud file whose meta carries syncSchemaVersion 2 (the CRDT payload owned by ticket 54) is refused before decryption, so this v1 build cannot overwrite a copy it does not understand."
+
+- id: sync.github-device-flow
+  area: sync
+  feature: GitHub device-flow authorization and token storage
+  original_paths:
+    - domain/sync.ts
+    - electron/bridges/githubAuthBridge.cjs
+  module: application/sync
+  tickets: [49]
+  acceptance_tests:
+    - adapters/github.TestRequestDeviceCodeSendsTheOriginalForm
+    - adapters/github.TestPollDeviceTokenMapsEveryGrantState
+    - adapters/github.TestUserMapsUnauthorizedAndRateLimits
+    - adapters/github.TestRefreshExchangesARefreshToken
+    - adapters/github.TestNetworkFailureIsTyped
+    - application/sync.TestConnectRunsTheDeviceFlow
+    - application/sync.TestConnectReportsDeniedAndExpired
+    - adapters/syncstore.TestTokenStoreRoundTrip
+    - adapters/syncstore.TestCorruptTokenIsTreatedAsMissing
+    - ui/settings.TestSyncSectionShowsTheDeviceCodeBeforeConnecting
+    - ui/settings.TestSyncSectionLocalizesWorkerErrors
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The device grant posts client_id and scope gist read:user, polls the token endpoint, and maps authorization_pending, slow_down, access_denied, and expired_token to typed application errors. The token lives in the OS credential store, never in cloud-sync.json. Both base URLs are injectable: NATCATTY_GITHUB_API_BASE and NATCATTY_GITHUB_AUTH_BASE (the auth base falls back to the API base) plus NATCATTY_GITHUB_CLIENT_ID let acceptance run against a local fake; defaults remain https://api.github.com and https://github.com. Tests use httptest and require no real network."
+
+- id: sync.github-gist
+  area: sync
+  feature: Manual upload and download through a private GitHub Gist
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/adapters/GitHubAdapter.ts
+    - application/syncPayload.ts
+  module: application/sync
+  tickets: [49]
+  acceptance_tests:
+    - adapters/github.TestReadFindsTheGistAndCachesTheETag
+    - adapters/github.TestReadReturnsNoFileWhenTheAccountHasNoSyncGist
+    - adapters/github.TestReadFetchesTruncatedContentFromTheRawURL
+    - adapters/github.TestWriteCreatesAndConditionallyUpdates
+    - adapters/github.TestWriteMapsPreconditionFailureToConflict
+    - adapters/syncstore.TestConfigRoundTrip
+    - adapters/syncstore.TestMalformedConfigIsTheUnconfiguredState
+    - adapters/store.TestApplySyncReplacesSyncedFamiliesAndPreservesLocalOnes
+    - adapters/store.TestApplySyncRejectsAnInvalidPayloadBeforeDeleting
+    - adapters/syncvault.TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp
+    - adapters/syncvault.TestApplyStoresIncomingSecretsAndClearsStaleOnes
+    - application/sync.TestManualSyncUploadsTheFirstCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - application/sync.TestAfterDownloadTheNextSyncIsANoOp
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The cloud file keeps the original description and netcatty-vault.json name under a private Gist. Reads prefer the Gist ETag (304 reuses the cached bytes) and fetch truncated content from raw_url. Writes create or conditionally PATCH with If-Match. The plaintext payload keeps the original top-level family names and adds a secrets array inside the ciphertext, because this build stores field credentials outside entity records; Known Hosts stay local as in the original. Applying a payload replaces only the synced families in one transaction, re-encrypts secrets under the receiving device's field key, and clears credentials the payload no longer advertises. Non-secret settings live in cloud-sync.json; the token and master password never do."
+
+- id: sync.automatic
+  area: sync
+  feature: Debounced automatic sync after Vault changes
+  original_paths:
+    - application/state/useAutoSync.ts
+  module: application/sync
+  tickets: [49]
+  acceptance_tests:
+    - application/sync.TestAutomaticSyncIsDebounced
+    - application/sync.TestAutoSyncDoesNothingWhenDisabled
+    - application/sync.TestAutomaticSyncCoalescesEditsIntoOneTimer
+    - application/sync.TestAutomaticSyncRunsAPendingPassAfterAnInFlightSync
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+    - ui/settings.TestSyncStatePersistsAutoSyncAndStrategy
+  status: verified
+  notes: "The Vault store change hook calls NotifyLocalChange after a committed write. Automatic sync coalesces edits behind one timer, never blocks the writer, and runs a pending pass after an in-flight sync finishes. The interval defaults to three seconds; tests and the ticket self-test shorten it. Turning automatic sync on schedules a pass so an edit made while it was off is not lost."
+
+- id: sync.conflict-last-write-wins
+  area: sync
+  feature: Conditional-write conflict resolution with last-write-wins
+  original_paths:
+    - domain/sync.ts
+    - domain/syncStrategy.ts
+    - application/state/useAutoSync.ts
+  module: domain/sync
+  tickets: [49]
+  acceptance_tests:
+    - domain/sync.TestDecideCoversEveryChangeCombination
+    - domain/sync.TestNormalizeStrategy
+    - application/sync.TestConditionalWriteConflictRedecidesWithNewestWins
+    - application/sync.TestAfterConflictDownloadTheNextSyncIsANoOp
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "A lost conditional write (HTTP 412) makes the service re-read the cloud copy once and decide again rather than force the local bytes. The newest strategy compares the local payload timestamp with the envelope updatedAt and gives ties to the remote so both devices converge; local and remote pin one side. A downloaded copy records the applied snapshot's signature, so the next sync is a no-op instead of echoing the download back. Full three-way merge beyond these strategies remains ticket 54."
+
+- id: sync.empty-vault-guard
+  area: sync
+  feature: An empty local Vault never overwrites the cloud copy
+  original_paths:
+    - application/state/useAutoSync.ts
+    - application/syncPayload.ts
+  module: application/sync
+  tickets: [49]
+  acceptance_tests:
+    - application/sync.TestEmptyVaultNeverOverwritesTheCloudCopy
+    - application/sync.TestConflictWithAnEmptyCloudCopyForcesUpload
+    - adapters/syncvault.TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp
+    - app.TestTicket49CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The guard runs before any remote read or write and applies to both manual and automatic triggers. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful, matching the original's hasMeaningfulCloudSyncData. Conversely, an empty cloud payload is forced to upload rather than erase a populated local Vault."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 
