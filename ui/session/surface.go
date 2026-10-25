@@ -6,6 +6,7 @@
 package sessionui
 
 import (
+	"errors"
 	"io"
 	"runtime"
 	"strings"
@@ -75,6 +76,20 @@ type Options struct {
 	// ResumedView that replays the hibernated screen; nil claims the
 	// Session's one live view with AttachView.
 	View io.ReadWriteCloser
+	// Browser opens this Session's host-routed browser panel. Nil leaves the
+	// Session menu's Open Browser item disabled, as for a local Session with
+	// no saved Host route.
+	Browser func(onClose func()) (BrowserPanel, error)
+}
+
+// BrowserPanel is the browser surface a Session shows in place of its chrome
+// and terminal. It owns its own dedicated Host tunnel; hiding the terminal
+// does not touch the Session's transport. The panel is closed with the
+// Session surface, and its Close control calls the onClose callback the
+// Session supplied.
+type BrowserPanel interface {
+	View(*ui.Context) ui.Element
+	Close()
 }
 
 // ScreenWriter saves text and reports the path it wrote, or an error.
@@ -200,6 +215,13 @@ func WithView(conn io.ReadWriteCloser) Option {
 	return func(options *Options) { options.View = conn }
 }
 
+// WithBrowser supplies the opener for this Session's browser panel. A Session
+// without a saved Host (or with a transport that cannot forward) omits it, so
+// the menu item stays disabled instead of failing after a click.
+func WithBrowser(open func(onClose func()) (BrowserPanel, error)) Option {
+	return func(options *Options) { options.Browser = open }
+}
+
 // Surface is one Tab's terminal view.
 type Surface struct {
 	session   *appsession.Session
@@ -220,6 +242,10 @@ type Surface struct {
 	renaming     bool
 	renameValue  string
 	paneActions  PaneActions
+	// browser replaces the Session chrome and terminal while open. The
+	// Session and its transport keep running underneath.
+	browser    BrowserPanel
+	browserErr error
 
 	// Hibernate replaces the live terminal with a resumable screen while the
 	// application Session and its transport stay alive. The observer is a
@@ -402,6 +428,12 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 	if !s.observing && s.observation != nil {
 		s.releaseObserver()
 	}
+	// The browser owns the whole surface while open: its native page must not
+	// sit under trusted chrome, and the terminal keeps running behind it. The
+	// Session menu's Close control is the browser panel's own close button.
+	if s.browser != nil {
+		return s.browser.View(c)
+	}
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
@@ -515,19 +547,31 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 			s.screenNotice = ScreenNoticeNone
 			s.redraw()
 		},
-		SplitRight: s.paneActions.SplitRight,
-		SplitDown:  s.paneActions.SplitDown,
-		Detach:     s.paneActions.Detach,
-		ClosePane:  s.paneActions.Close,
-		Hibernate:  func() { s.Hibernate() },
-		Resume:     func() { _ = s.Resume() },
-		Observe:    func() { _ = s.OpenObserver() },
+		SplitRight:  s.paneActions.SplitRight,
+		SplitDown:   s.paneActions.SplitDown,
+		Detach:      s.paneActions.Detach,
+		ClosePane:   s.paneActions.Close,
+		Hibernate:   func() { s.Hibernate() },
+		Resume:      func() { _ = s.Resume() },
+		Observe:     func() { _ = s.OpenObserver() },
+		OpenBrowser: s.openBrowserAction(),
 		AcceptSuggestion: func(index int) {
 			s.acceptSuggestion(index)
 		},
 	}
 
 	return ui.Column(c).Fill().Children(func() {
+		if s.browserErr != nil {
+			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
+				Background(t.Surface).Children(func() {
+				ui.Text(c, m.BrowserOpenFailed()).FontSize(11).Grow(1).
+					MinWidth(0).SingleLine().TextColor(t.Danger)
+				if ui.Button(c, m.SessionDismiss()).Clicked() {
+					s.browserErr = nil
+					s.redraw()
+				}
+			})
+		}
 		renderChrome(c, model, m, t, actions)
 		switch {
 		case s.observing && s.observer != nil:
@@ -662,6 +706,50 @@ func (s *Surface) setEncoding(encoding domainterminal.Encoding) {
 // calls it while rendering the Pane; a detached Pane clears them with the zero
 // value.
 func (s *Surface) SetPaneActions(actions PaneActions) { s.paneActions = actions }
+
+// openBrowserAction enables the Session menu item. A Session without a Host
+// route omits the opener at construction, so the item is disabled rather than
+// failing after a click.
+func (s *Surface) openBrowserAction() func() {
+	if s.options.Browser == nil || s.browser != nil {
+		return nil
+	}
+	return func() { _ = s.OpenBrowser() }
+}
+
+// OpenBrowser opens the Session's browser panel. It is idempotent, and the
+// terminal keeps running behind the panel. The app supplies the opener, which
+// claims a fresh dedicated Host tunnel and creates the window's pages.
+func (s *Surface) OpenBrowser() error {
+	if s.browser != nil {
+		return nil
+	}
+	if s.options.Browser == nil {
+		return errors.New("sessionui: this Session has no browser route")
+	}
+	panel, err := s.options.Browser(s.closeBrowser)
+	if err != nil {
+		s.browserErr = err
+		s.redraw()
+		return err
+	}
+	s.browserErr = nil
+	s.browser = panel
+	s.redraw()
+	return nil
+}
+
+// closeBrowser is the panel's Close control. It clears the panel first so a
+// callback from inside it cannot re-enter an open panel.
+func (s *Surface) closeBrowser() {
+	if s.browser == nil {
+		return
+	}
+	panel := s.browser
+	s.browser = nil
+	panel.Close()
+	s.redraw()
+}
 
 // beginRename opens the title dialog with the Pane's current title.
 func (s *Surface) beginRename() {
@@ -940,6 +1028,10 @@ func (s *Surface) Close() {
 			request.Deny()
 		}
 		s.releaseObserver()
+		if s.browser != nil {
+			s.browser.Close()
+			s.browser = nil
+		}
 		s.gate.Cancel()
 		s.drops.Dismiss()
 		if s.terminal != nil {

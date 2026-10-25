@@ -341,16 +341,19 @@ func TestReuseRulesFollowExactAndAsymmetricAgentForwarding(t *testing.T) {
 	}
 }
 
-func TestSingleChannelAndX11AreNeverReused(t *testing.T) {
+func TestSingleChannelX11AndDedicatedAreNeverReused(t *testing.T) {
 	single := sshRequest()
 	single.SingleChannel = true
 	x11 := sshRequest()
 	x11.X11Forwarding = true
+	dedicated := sshRequest()
+	dedicated.Dedicated = true
 	plain := endpointFor(sshRequest())
 
 	for name, endpoint := range map[string]endpointConfig{
 		"single-channel": endpointFor(single),
 		"x11":            endpointFor(x11),
+		"dedicated":      endpointFor(dedicated),
 	} {
 		if endpoint.allowsReuse(endpoint, LeaseShell) {
 			t.Errorf("%s endpoint reused another transport", name)

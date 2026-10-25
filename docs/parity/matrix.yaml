@@ -823,7 +823,7 @@
     - application/connection.TestPoolBeginJoinsAnInFlightCompatibleDial
     - application/connection.TestLeaseReleaseKeepsTheTransportForOtherLeases
     - application/connection.TestReuseRulesFollowExactAndAsymmetricAgentForwarding
-    - application/connection.TestSingleChannelAndX11AreNeverReused
+    - application/connection.TestSingleChannelX11AndDedicatedAreNeverReused
     - application/connection.TestEndpointKeyIncludesEffectiveConfiguration
   status: verified
   notes: "The pool key is the endpoint fingerprint plus the effective non-secret configuration, including the Host id, route, algorithms, keepalive, and credential digest. Shell reuse requires an exact agent-forwarding match; channel consumers may reuse an agent-forwarding transport but not the reverse. Single-channel and X11 transports never enter the pool."
@@ -1347,7 +1347,7 @@
     - ui/shell.TestSessionMenuStaysReachableInRealWindowLayouts
     - app.TestTicket17CheckRunsThroughTheKeyboard
   status: implemented
-  notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The Session menu in the status bar is the functional equivalent and follows the original order: Copy, Paste, Paste Selection, Select All, Open Browser, Reconnect, Send/Receive with YMODEM, Split Horizontal, Split Vertical, Save current screen, Clear Buffer, Encoding, Logging, Rename, Detach from workspace, Close terminal. Paste is enabled only while the clipboard holds text and goes through the multiline gate. Reconnect immediately opens a replacement transport and is available only while the Session is running with a reconnect policy. Save current screen writes the terminal text to Downloads (or the temporary directory) and reports a dismissible result; Rename edits the Tab title; both splits, Detach, and Close use the shell's real Pane commands. Copy, Paste Selection, and Select All stay visible but disabled because MyGo exposes no selection or select-all API and its native menu already provides all three with correct selection state. Open Browser stays disabled because this app has no host file-browser to open, and the YMODEM items are disabled seams until a transfer engine exists. Plugin menus, Upload clipboard image, and Add to Conversation remain out of scope as the ticket permits. The menu control itself is the only fixed-width status item and the layout test proves it sits inside its Pane and is clickable in single, left/right, and stacked Panes at 720x480 and 1100x720, including a 240-DIP split Pane. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
+  notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The Session menu in the status bar is the functional equivalent and follows the original order: Copy, Paste, Paste Selection, Select All, Open Browser, Reconnect, Send/Receive with YMODEM, Split Horizontal, Split Vertical, Save current screen, Clear Buffer, Encoding, Logging, Rename, Detach from workspace, Close terminal. Paste is enabled only while the clipboard holds text and goes through the multiline gate. Reconnect immediately opens a replacement transport and is available only while the Session is running with a reconnect policy. Save current screen writes the terminal text to Downloads (or the temporary directory) and reports a dismissible result; Rename edits the Tab title; both splits, Detach, and Close use the shell's real Pane commands. Copy, Paste Selection, and Select All stay visible but disabled because MyGo exposes no selection or select-all API and its native menu already provides all three with correct selection state. Open Browser opens the host-routed browser panel for an SSH Session with a saved Host (ticket 47) and stays disabled for a Session with no such route, including a local Session. The YMODEM items are disabled seams until a transfer engine exists. Plugin menus, Upload clipboard image, and Add to Conversation remain out of scope as the ticket permits. The menu control itself is the only fixed-width status item and the layout test proves it sits inside its Pane and is clickable in single, left/right, and stacked Panes at 720x480 and 1100x720, including a 240-DIP split Pane. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
 
 - id: terminal.file-drop
   area: terminal
@@ -2640,6 +2640,62 @@
   tickets: [06]
   status: excluded
   notes: "hmac-md5 and DH group 15/17/18 remain unsupported. Ticket 08 adds a per-Host legacy mode covering aes128-cbc, 3des-cbc, DH group14/1-sha1, group-exchange-sha1, ssh-rsa, and ssh-dss; see connections.per-hop-algorithms."
+
+- id: browser.address-routing
+  area: browser
+  feature: Address normalization with HTTP for localhost and HTTPS for other hosts
+  original_paths:
+    - domain/hostBrowser.ts
+    - application/hostBrowser.ts
+  module: domain/browser
+  tickets: [47]
+  acceptance_tests:
+    - domain/browser.TestNormalizeURLDefaultsLocalAddressesToHTTPAndOthersToHTTPS
+    - domain/browser.TestNormalizeURLRefusesInputsTheOriginalRefused
+    - ui/browser.TestPanelNavigationUsesHTTPForLocalAndHTTPSForPublicHosts
+    - ui/browser.TestPanelRefusesAnAddressOutsideHTTPAndHTTPS
+  status: implemented
+  notes: "Explicit http and https schemes are preserved. Only localhost, 127.x, and bracket IPv6 literals default to HTTP; other hosts default to HTTPS. Addresses longer than 2048 characters, non-HTTP(S) schemes, embedded credentials, and malformed addresses are refused."
+
+- id: browser.host-tunnel
+  area: browser
+  feature: Dedicated per-Host browser tunnel with no direct fallback
+  original_paths:
+    - application/hostBrowser.ts
+    - electron/hostBrowser/hostBrowserManager.cjs
+    - infrastructure/services/hostBrowserService.ts
+  module: application/browser
+  tickets: [47]
+  acceptance_tests:
+    - application/connection.TestSingleChannelX11AndDedicatedAreNeverReused
+    - application/browser.TestGatewayRoutesPageTrafficThroughTheTunnelAndRewritesThePage
+    - application/browser.TestGatewayMapsHeadersAndFollowsRedirectsInsideTheRoute
+    - application/browser.TestGatewayLocksDownNonPageDocuments
+    - application/browser.TestGatewayErrorResponsesCarryNoProductCopyAndCannotRunScript
+    - adapters/ssh.TestBrowserPanelRoutesPagesThroughADedicatedRealSSHTransport
+  status: implemented
+  notes: "The original used a loopback SOCKS5 proxy. MyGo v0.5.5 has no per-webview proxy, so this app uses a per-origin loopback HTTP gateway whose only dialer is the panel's dedicated SSH channel; page navigation, same-origin subresources, redirects, CSS, and script fetches stay on the route. Cross-origin subresources are refused by CSP rather than sent directly, so third-party CDNs and APIs do not load. CSP keeps default/connect/frame/form on the page's own gateway origin, blocks eval and data/blob scripts, and locks non-HTML documents (SVG/XML) to script-src 'none'; inline page scripts remain allowed because Host consoles rely on them. Ports, listeners, and the transport close with the panel. A 5s x 3 keepalive surfaces a dead Host tunnel in about fifteen seconds. Two panels on one Host open two physical SSH transports."
+
+- id: browser.panel
+  area: browser
+  feature: Host browser panel with address bar, navigation controls, tabs, and disconnect/retry
+  original_paths:
+    - components/HostBrowserSidePanel.tsx
+    - components/host-browser/BrowserBookmarkEditor.tsx
+    - components/terminalLayer/browserPanelLifecycle.test.ts
+  module: ui/browser
+  tickets: [47]
+  acceptance_tests:
+    - ui/session.TestSessionMenuOpensTheBrowserAndItsCloseReturnsTheTerminal
+    - ui/browser.TestPanelOpensFromASessionOnItsDedicatedTunnel
+    - ui/browser.TestPanelControlsDriveThePage
+    - ui/browser.TestPanelTabsActivateAndCloseTheirOwnPage
+    - ui/browser.TestPanelDisconnectIsVisibleAndRetryOpensANewTunnelAndPage
+    - ui/browser.TestPanelLayoutKeepsEveryControlReachable
+    - ui/browser.TestPanelTabStripRendersTheActiveTabOnce
+    - app.TestTicket47CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "Opened from the Session menu of an SSH Session. Back, forward, reload, stop, address bar, new/close/activate tab, and a full-panel disconnect state with Retry. Stop clears the loading state itself because WebView2 reports a stopped load as an aborted navigation with no finish event. The panel replaces the Session's chrome and terminal while open because the terminal transport keeps running and a native WebView must not sit under trusted chrome; closing returns the terminal. Ctrl+L focuses and selects the address while Natcatty's chrome has keyboard focus; a focused native page owns the OS keyboard (WebView2 forwards only Tab out), so users click the address bar after typing in a page. Bookmarks, downloads, page-created popups, and side-panel resizing stay out of this ticket."
 
 - id: browser.cookie-partitioning
   area: browser

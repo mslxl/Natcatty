@@ -813,7 +813,7 @@ func run(afterReady func(hostWindow)) error {
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
-			return sessionui.New(s,
+			options := []sessionui.Option{
 				sessionui.WithLogDefaults(func() appsession.LogOptions {
 					return terminalLogDefaults(s.Label())
 				}),
@@ -855,7 +855,21 @@ func run(afterReady func(hostWindow)) error {
 				// Reconnect is the original's manual retry: it abandons the
 				// current transport and dials again without the policy delay.
 				sessionui.WithReconnect(func() { s.ReconnectNow() }, s.CanReconnect),
-			)
+			}
+			// Only an SSH Session with a saved Host has a route a browser can
+			// use. Local, serial, Telnet, Mosh, and ET Sessions leave the menu
+			// item disabled instead of offering a route that cannot exist.
+			if s.Snapshot().Kind == appsession.KindSSH && s.HostID() != "" {
+				options = append(options, sessionui.WithBrowser(
+					func(onClose func()) (sessionui.BrowserPanel, error) {
+						return openSessionBrowser(s, windows, browserConnector{
+							vault:       vaultService,
+							routes:      routes,
+							connections: connections,
+						}, invalidate, onClose)
+					}))
+			}
+			return sessionui.New(s, options...)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithMonitor(uimonitoring.View(monitorState),
