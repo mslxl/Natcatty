@@ -434,9 +434,11 @@ func run(afterReady func(hostWindow)) error {
 	var vaultState *vaultstate.State
 
 	// One SSH Connection per Session. The lease seam is what tickets 08 and 09
-	// extend into jump chains and a shared pool.
+	// extend into jump chains and a shared pool. Hardware security keys go
+	// through the same system OpenSSH agent as ordinary agent identities.
+	securityKeys := sshadapter.NewSecurityKeyAgent()
 	connections := appconnection.NewManager(
-		sshadapter.NewDialer(),
+		sshadapter.NewDialer(sshadapter.WithSecurityKeyAgent(securityKeys)),
 		vaultPasswords{vault: vaultService},
 		database,
 		appconnection.WithPrompter(trustPrompt),
@@ -551,6 +553,14 @@ func run(afterReady func(hostWindow)) error {
 		}),
 		vaultstate.WithConnectionTest(func(ctx context.Context, host domainvault.Host) error {
 			return testConnection(ctx, connections, routes, host)
+		}),
+		vaultstate.WithSecurityKeyProbe(func(ctx context.Context) appconnection.SecurityKeySummary {
+			// Listing identities is not a device operation; three seconds is
+			// enough for a healthy agent, and a stuck agent must not pin the
+			// probe goroutine forever.
+			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			return appconnection.SecurityKeyService{Agent: securityKeys}.Summary(probeCtx)
 		}),
 	)
 	_ = vaultState.Reload()

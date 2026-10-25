@@ -97,6 +97,7 @@ func installSelftest(windows *windowManager, shellState *state.State,
 	registry.Register((&selftest39{}).check())
 	registry.Register((&selftest40{}).check())
 	registry.Register((&selftest41{}).check())
+	registry.Register((&selftest42{}).check())
 	registry.Register((&selftest49{}).check())
 	registry.Register((&selftest56{}).check())
 	activeSelftest = selftest.NewHarness(registry,

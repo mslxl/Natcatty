@@ -2890,6 +2890,30 @@ func (msgs Messages) ConnectionErrorCancelled() string {
 	return Catalog.Format(msgs.locale, "connectionErrorCancelled", nil)
 }
 
+// ConnectionErrorSecurityKeyUnavailable says "The system OpenSSH agent was not found. Install OpenSSH and start ssh-agent to use agent keys or a security key."
+// in the language the app shows.
+func ConnectionErrorSecurityKeyUnavailable() string {
+	return In(i18n.Locale()).ConnectionErrorSecurityKeyUnavailable()
+}
+
+// ConnectionErrorSecurityKeyUnavailable says "The system OpenSSH agent was not found. Install OpenSSH and start ssh-agent to use agent keys or a security key."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorSecurityKeyUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionErrorSecurityKeyUnavailable", nil)
+}
+
+// ConnectionErrorSecurityKeyTimeout says "The security key did not respond within 30 seconds. Touch the key when the system asks and try again."
+// in the language the app shows.
+func ConnectionErrorSecurityKeyTimeout() string {
+	return In(i18n.Locale()).ConnectionErrorSecurityKeyTimeout()
+}
+
+// ConnectionErrorSecurityKeyTimeout says "The security key did not respond within 30 seconds. Touch the key when the system asks and try again."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorSecurityKeyTimeout() string {
+	return Catalog.Format(msgs.locale, "connectionErrorSecurityKeyTimeout", nil)
+}
+
 // ConnectionErrorInternal says "The connection could not be opened."
 // in the language the app shows.
 func ConnectionErrorInternal() string { return In(i18n.Locale()).ConnectionErrorInternal() }
@@ -3896,6 +3920,40 @@ func VaultHostUseAgent() string { return In(i18n.Locale()).VaultHostUseAgent() }
 // in the language of msgs.
 func (msgs Messages) VaultHostUseAgent() string {
 	return Catalog.Format(msgs.locale, "vaultHostUseAgent", nil)
+}
+
+// VaultHostSecurityKeyReady says "{count, plural, one {# security key is available in the OpenSSH agent.} other {# security keys are available in the O…"
+// in the language the app shows.
+func VaultHostSecurityKeyReady(count int) string {
+	return In(i18n.Locale()).VaultHostSecurityKeyReady(count)
+}
+
+// VaultHostSecurityKeyReady says "{count, plural, one {# security key is available in the OpenSSH agent.} other {# security keys are available in the O…"
+// in the language of msgs.
+func (msgs Messages) VaultHostSecurityKeyReady(count int) string {
+	return Catalog.Format(msgs.locale, "vaultHostSecurityKeyReady", map[string]any{"count": count})
+}
+
+// VaultHostSecurityKeyEmpty says "The OpenSSH agent is running but holds no security keys. Add one with ssh-add."
+// in the language the app shows.
+func VaultHostSecurityKeyEmpty() string { return In(i18n.Locale()).VaultHostSecurityKeyEmpty() }
+
+// VaultHostSecurityKeyEmpty says "The OpenSSH agent is running but holds no security keys. Add one with ssh-add."
+// in the language of msgs.
+func (msgs Messages) VaultHostSecurityKeyEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultHostSecurityKeyEmpty", nil)
+}
+
+// VaultHostSecurityKeyUnavailable says "The OpenSSH agent was not found. Install OpenSSH and start ssh-agent to use a security key."
+// in the language the app shows.
+func VaultHostSecurityKeyUnavailable() string {
+	return In(i18n.Locale()).VaultHostSecurityKeyUnavailable()
+}
+
+// VaultHostSecurityKeyUnavailable says "The OpenSSH agent was not found. Install OpenSSH and start ssh-agent to use a security key."
+// in the language of msgs.
+func (msgs Messages) VaultHostSecurityKeyUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultHostSecurityKeyUnavailable", nil)
 }
 
 // VaultHostRequiresMFA says "Keyboard-interactive first (MFA)"

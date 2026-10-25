@@ -117,7 +117,7 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		if notice := desktopNoticeText(m, s.DesktopNotice()); notice != "" {
 			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
 		}
-		if problem := uiconnection.ProblemText(m, s.Problem()); problem != "" {
+		if problem := uiconnection.ProblemTextFor(m, s.ProblemError()); problem != "" {
 			ui.Text(c, problem).TextColor(t.Danger)
 		}
 		// The ordered work Tabs stay visible over the Vault so a user who

@@ -145,6 +145,8 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 	return func(c *ui.Context) {
 		// Test connection attempts complete off the UI thread.
 		s.FlushTests()
+		// The OpenSSH agent probe completes off the UI thread.
+		s.FlushSecurityKeys()
 		// A host-key trust decision persists off the UI thread and marks the
 		// Known Host list stale; apply it here, on the UI thread.
 		s.FlushKnownHosts()
@@ -1231,7 +1233,11 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 			})
 
 			summaryRow(c, s, host, m, t)
-			if problem := s.TestProblem(host.ID); problem != "" {
+			if err := s.TestProblemError(host.ID); err != nil {
+				if text := uiconnection.ProblemTextFor(m, err); text != "" {
+					ui.Text(c, text).FontSize(12).TextColor(t.Danger)
+				}
+			} else if problem := s.TestProblem(host.ID); problem != "" {
 				if text := uiconnection.ProblemText(m, problem); text != "" {
 					ui.Text(c, text).FontSize(12).TextColor(t.Danger)
 				}
@@ -1240,6 +1246,24 @@ func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locale
 			}
 		})
 	})
+}
+
+// securityKeyStatus reports the system OpenSSH agent's hardware identity state
+// while the agent option is enabled, so the user learns about a missing
+// installation or an empty agent before saving the Host.
+func securityKeyStatus(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	summary, ok := s.SecurityKeyStatus()
+	if !ok {
+		return
+	}
+	switch {
+	case !summary.Available:
+		ui.Text(c, m.VaultHostSecurityKeyUnavailable()).FontSize(12).TextColor(t.Danger)
+	case summary.Count == 0:
+		ui.Text(c, m.VaultHostSecurityKeyEmpty()).FontSize(12).TextColor(t.TextMuted)
+	default:
+		ui.Text(c, m.VaultHostSecurityKeyReady(summary.Count)).FontSize(12).TextColor(t.TextMuted)
+	}
 }
 
 // summaryRow lays the Host's summary out as separate wrapped tokens. No token
@@ -1421,6 +1445,9 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				})
 			})
 			ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+			if form.UseSSHAgent {
+				securityKeyStatus(c, s, m, t)
+			}
 			ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 			ui.Field(c, m.VaultHostProxyProfile(), func() {
 				ui.RadioGroup(c, func() {
@@ -1652,6 +1679,9 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 				})
 			})
 			ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
+			if form.UseSSHAgent {
+				securityKeyStatus(c, s, m, t)
+			}
 			ui.Checkbox(c, &form.RequiresMFA, m.VaultHostRequiresMFA())
 		})
 

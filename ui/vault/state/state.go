@@ -219,11 +219,20 @@ type State struct {
 
 	// Test results are keyed by Host. The maps are mutated only on the UI
 	// thread; completed attempts arrive through the lock-protected queue.
-	testing      map[model.HostID]bool
-	testProblems map[model.HostID]appconnection.Kind
-	testPassed   map[model.HostID]bool
-	testMu       sync.Mutex
-	testOutcomes []testOutcome
+	testing         map[model.HostID]bool
+	testProblems    map[model.HostID]appconnection.Kind
+	testProblemErrs map[model.HostID]error
+	testPassed      map[model.HostID]bool
+	testMu          sync.Mutex
+	testOutcomes    []testOutcome
+
+	// securityKeyProbe reports the system OpenSSH agent's hardware identities.
+	// The probe runs once, off the UI thread; FlushSecurityKeys publishes it.
+	securityKeyProbe   func(context.Context) appconnection.SecurityKeySummary
+	securityKeyStarted bool
+	securityKeyMu      sync.Mutex
+	securityKeySummary appconnection.SecurityKeySummary
+	securityKeyReady   bool
 
 	// knownMu guards knownStale, which a trust decision made on the dial
 	// goroutine sets. The list itself is still loaded only on the UI thread.
@@ -341,6 +350,13 @@ func WithConnectionTest(fn ConnectionTester) Option {
 	return func(s *State) { s.tester = fn }
 }
 
+// WithSecurityKeyProbe gives the Host editor a way to report the system
+// OpenSSH agent's hardware security key state. The app wires the application's
+// SecurityKeyService; the probe must not block the UI thread.
+func WithSecurityKeyProbe(probe func(context.Context) appconnection.SecurityKeySummary) Option {
+	return func(s *State) { s.securityKeyProbe = probe }
+}
+
 // testOutcome is the result of a Test connection attempt started off the UI
 // thread. FlushTests applies it.
 type testOutcome struct {
@@ -420,10 +436,12 @@ func (s *State) Test(id model.HostID) bool {
 	if s.testing == nil {
 		s.testing = make(map[model.HostID]bool)
 		s.testProblems = make(map[model.HostID]appconnection.Kind)
+		s.testProblemErrs = make(map[model.HostID]error)
 		s.testPassed = make(map[model.HostID]bool)
 	}
 	s.testing[id] = true
 	delete(s.testProblems, id)
+	delete(s.testProblemErrs, id)
 	delete(s.testPassed, id)
 	s.problem = ProblemNone
 	s.redraw()
@@ -451,10 +469,42 @@ func (s *State) FlushTests() {
 		delete(s.testing, outcome.id)
 		if outcome.err != nil {
 			s.testProblems[outcome.id] = uiconnection.Kind(outcome.err)
+			if s.testProblemErrs == nil {
+				s.testProblemErrs = make(map[model.HostID]error)
+			}
+			s.testProblemErrs[outcome.id] = outcome.err
 			continue
 		}
+		delete(s.testProblemErrs, outcome.id)
 		s.testPassed[outcome.id] = true
 	}
+}
+
+// FlushSecurityKeys starts the one-time OpenSSH agent probe and publishes its
+// result. It runs on the UI thread; the probe runs off it and requests a
+// redraw when it completes.
+func (s *State) FlushSecurityKeys() {
+	if s.securityKeyProbe != nil && !s.securityKeyStarted {
+		s.securityKeyStarted = true
+		probe := s.securityKeyProbe
+		go func() {
+			summary := probe(context.Background())
+			s.securityKeyMu.Lock()
+			s.securityKeySummary = summary
+			s.securityKeyReady = true
+			s.securityKeyMu.Unlock()
+			s.redraw()
+		}()
+	}
+}
+
+// SecurityKeyStatus reports the OpenSSH agent's hardware identity state. ok is
+// false until the first probe completes, so the editor does not flash a
+// failure before the agent has answered.
+func (s *State) SecurityKeyStatus() (appconnection.SecurityKeySummary, bool) {
+	s.securityKeyMu.Lock()
+	defer s.securityKeyMu.Unlock()
+	return s.securityKeySummary, s.securityKeyReady
 }
 
 // Testing reports whether a Test connection attempt is running for a Host.
@@ -468,6 +518,11 @@ func (s *State) TestSucceeded(id model.HostID) bool { return s.testPassed[id] }
 // or "" when it succeeded or none has run.
 func (s *State) TestProblem(id model.HostID) appconnection.Kind {
 	return s.testProblems[id]
+}
+
+// TestProblemError returns the last Test connection failure's cause, or nil.
+func (s *State) TestProblemError(id model.HostID) error {
+	return s.testProblemErrs[id]
 }
 
 // Select marks one listed Host as selected. An unknown id clears the
