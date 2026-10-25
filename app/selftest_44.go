@@ -68,12 +68,6 @@ type selftest44 struct {
 	trustStarted    bool
 	trustDeadline   time.Time
 	cleanupDeadline time.Time
-
-	// prepared says this run has built its fake Hosts, transport, service, and
-	// surface. The harness keeps one registered set of steps, so it is cleared
-	// when a run finishes and the next F11,4,4 rebuilds them from
-	// resetRunState.
-	prepared bool
 }
 
 func (t *selftest44) check() selftest.Check {
@@ -93,11 +87,10 @@ func (t *selftest44) check() selftest.Check {
 // resetRunState rebuilds the fake Hosts, transport, service, and surface and
 // clears every per-run flag and deadline so pressing F11,4,4 again in the same
 // process starts from the same conditions as the first run. The harness
-// registers one set of steps, so without it the second run reuses
+// registers one set of steps, so without it a second run reuses
 // configured=true, the first run's deadlines, and the service that its cleanup
-// step closed. It follows the ticket 15 and ticket 45 convention; the fresh
-// connector also resets the fake sample counters and the service starts with
-// no trend history.
+// step closed. The fresh connector also resets the fake sample counters and the
+// service starts with no trend history.
 func (t *selftest44) resetRunState() {
 	if t.state != nil {
 		t.state.Close()
@@ -138,10 +131,11 @@ func (t *selftest44) resetRunState() {
 }
 
 func (t *selftest44) configureStep(*ui.Context) selftest.Outcome {
-	if !t.prepared {
-		t.resetRunState()
-		t.prepared = true
-	}
+	// Reset on every run entry, not only after a completed one: the harness
+	// stops at the first failed step, so an earlier run that failed before
+	// stop-and-release leaves its configured flag, deadlines, and closed
+	// service behind.
+	t.resetRunState()
 	if !t.configured {
 		t.state.Activate()
 		if len(t.state.Panels()) != 0 {
@@ -424,8 +418,6 @@ func (t *selftest44) cleanupStep(*ui.Context) selftest.Outcome {
 	if t.state.Running() {
 		return selftest.Failed(errors.New("the panel is still running after close"))
 	}
-	// The run is complete; the next F11,4,4 rebuilds its service and surface.
-	t.prepared = false
 	return selftest.Passed(
 		"deactivation stopped sampling and every in-process Host transport closed",
 		"application/monitor.Service.Close")
