@@ -157,6 +157,11 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 // active tab in the strip. Every change is saved by the preferences group, so
 // it survives a restart.
 func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
+	// Key the button before it is built. Element.Key on a menu button rereads
+	// its identity after the menu's build was already registered for the
+	// positional one, so the menu would never be built: the button showed its
+	// label, yet clicking it opened nothing.
+	c.Key("sysmanager-tabs-layout")
 	ui.MenuButton(c, m.SysManagerTabsLayout(), func(menu *ui.Menu) {
 		for _, tab := range s.AllTabs() {
 			if menu.Item(tabLabel(m, tab)).
@@ -175,7 +180,7 @@ func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
 			Disabled(index >= len(s.Tabs())-1).Chosen() {
 			s.MoveTab(1)
 		}
-	}).Key("sysmanager-tabs-layout")
+	})
 }
 
 func hostOptions(s *State) ([]string, map[string]string) {
