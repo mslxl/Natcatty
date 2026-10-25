@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -126,11 +127,26 @@ func sysManagerLayoutUnit(index, rows int) (name, scope, active string) {
 	return name, scope, active
 }
 
+// sysManagerLayoutNow is the clock both the fixture and the surface read, so
+// the updated-at and latency status texts are deterministic: one hour old and
+// 12 ms, long enough to exercise the header's right edge.
+var sysManagerLayoutNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+// sysManagerLayoutPort is the port of row index of total: a plain run from
+// 8000, and 8080 for the bottom row, the four-digit port independent
+// acceptance measured as "8,080" in the selection bar.
+func sysManagerLayoutPort(index, total int) int {
+	if index == total-1 {
+		return 8080
+	}
+	return 8000 + index
+}
+
 // sysManagerLayoutFixture builds a snapshot with rows processes, listeners,
 // and units. The process list sorts by CPU descending, so the bottom row of
 // every tab is the one the tests expect.
 func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
-	now := time.Now()
+	now := sysManagerLayoutNow
 	processes := make([]appsysmanager.Process, 0, rows)
 	ports := make([]appsysmanager.Port, 0, rows)
 	services := make([]appsysmanager.Unit, 0, rows)
@@ -140,7 +156,7 @@ func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 			Command: fmt.Sprintf("worker-%d", i),
 		})
 		ports = append(ports, appsysmanager.Port{
-			Protocol: "tcp", Address: "0.0.0.0", Port: 8000 + i,
+			Protocol: "tcp", Address: "0.0.0.0", Port: sysManagerLayoutPort(i, rows),
 			PID: 200 + i, ProcessName: fmt.Sprintf("svc-%d", i),
 		})
 		name, scope, active := sysManagerLayoutUnit(i, rows)
@@ -152,7 +168,8 @@ func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 		HostID: "h1", Active: appsysmanager.TabOverview,
 		Tabs: map[appsysmanager.Tab]appsysmanager.TabState{
 			appsysmanager.TabOverview: {
-				Tab: appsysmanager.TabOverview, Status: appsysmanager.StatusLive, At: now,
+				Tab: appsysmanager.TabOverview, Status: appsysmanager.StatusLive,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond,
 				Overview: appsysmanager.Overview{
 					Hostname: "host-1", OSName: "Debian 12", KernelRelease: "6.1.0",
 					UptimeSeconds: 90061, LoadAverage: []float64{0.5, 0.4, 0.3},
@@ -163,15 +180,15 @@ func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 			},
 			appsysmanager.TabProcesses: {
 				Tab: appsysmanager.TabProcesses, Status: appsysmanager.StatusLive,
-				At: now, Processes: processes,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond, Processes: processes,
 			},
 			appsysmanager.TabPorts: {
 				Tab: appsysmanager.TabPorts, Status: appsysmanager.StatusLive,
-				At: now, Ports: ports,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond, Ports: ports,
 			},
 			appsysmanager.TabServices: {
 				Tab: appsysmanager.TabServices, Status: appsysmanager.StatusLive,
-				At: now, Services: services,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond, Services: services,
 			},
 		},
 	}
@@ -185,7 +202,8 @@ func newSysManagerLayoutTester(t *testing.T, width, height int, locale string,
 	}
 	service := &sysManagerLayoutService{snapshot: sysManagerLayoutFixture(rows)}
 	prefs := &sysManagerLayoutPrefs{settings: domainpreferences.Defaults()}
-	manager := uisysmanager.NewState(service, sysManagerLayoutHosts{items: hosts}, prefs)
+	manager := uisysmanager.NewState(service, sysManagerLayoutHosts{items: hosts}, prefs,
+		uisysmanager.WithClock(func() time.Time { return sysManagerLayoutNow }))
 	shellState := state.NewState(state.WithSystemManager(
 		uisysmanager.View(manager), manager.Activate, manager.Deactivate))
 	shellState.ShowSystemManager()
@@ -329,7 +347,7 @@ func lastRowLabel(tab appsysmanager.Tab, total int) string {
 	case appsysmanager.TabProcesses:
 		return fmt.Sprintf("PID %d worker-0", 100)
 	case appsysmanager.TabPorts:
-		return fmt.Sprintf("tcp 0.0.0.0:%d", 8000+total-1)
+		return fmt.Sprintf("tcp 0.0.0.0:%d", sysManagerLayoutPort(total-1, total))
 	case appsysmanager.TabServices:
 		name, _, _ := sysManagerLayoutUnit(total-1, total)
 		return name
@@ -352,7 +370,7 @@ func listRows(t *testing.T, tester *ui.Tester, tab appsysmanager.Tab,
 		}
 	case appsysmanager.TabPorts:
 		for i := 0; i < total; i++ {
-			labels = append(labels, fmt.Sprintf("tcp 0.0.0.0:%d", 8000+i))
+			labels = append(labels, fmt.Sprintf("tcp 0.0.0.0:%d", sysManagerLayoutPort(i, total)))
 		}
 	case appsysmanager.TabServices:
 		for i := 0; i < total; i++ {
@@ -416,7 +434,8 @@ func selectedBarLabel(t *testing.T, m locales.Messages, manager *uisysmanager.St
 		}
 	case appsysmanager.TabPorts:
 		if port, ok := manager.SelectedPort(); ok {
-			return m.SysManagerSelectedPort(port.Protocol, port.Address, port.Port, port.PID)
+			return m.SysManagerSelectedPort(port.Protocol, port.Address,
+				strconv.Itoa(port.Port), strconv.Itoa(port.PID))
 		}
 	case appsysmanager.TabServices:
 		if unit, ok := manager.SelectedService(); ok {
@@ -429,6 +448,263 @@ func selectedBarLabel(t *testing.T, m locales.Messages, manager *uisysmanager.St
 	}
 	t.Fatalf("%s: nothing is selected", tab)
 	return ""
+}
+
+// sysManagerContentBounds returns the content column's left and right edges in
+// tester coordinates at width: the sidebar and the content column's 16-DIP
+// padding insets. In the real 720x480 window the same edges are 276..716 on
+// screen; the window's own origin is 28 DIPs in.
+func sysManagerContentBounds(width int) (left, right float32) {
+	return sidebarWidth + shellPadding, float32(width) - shellPadding
+}
+
+// sysManagerTabLabels names every visible tab in a locale.
+func sysManagerTabLabels(m locales.Messages) map[appsysmanager.Tab]string {
+	return map[appsysmanager.Tab]string{
+		appsysmanager.TabOverview:  m.SysManagerTabOverview(),
+		appsysmanager.TabProcesses: m.SysManagerTabProcesses(),
+		appsysmanager.TabPorts:     m.SysManagerTabPorts(),
+		appsysmanager.TabServices:  m.SysManagerTabServices(),
+		appsysmanager.TabTmux:      m.SysManagerTabTmux(),
+		appsysmanager.TabDocker:    m.SysManagerTabDocker(),
+		appsysmanager.TabGPU:       m.SysManagerTabGPU(),
+	}
+}
+
+// TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow renders
+// the real shell at the minimum window's 704x421 client with all seven tabs.
+// The strip overflows the 440-DIP content column, so it must scroll to the
+// chosen tab: every tab, including the last one (GPU), has to be whole and
+// inside the column while it is active, and no tab label may cross the
+// column's right edge.
+//
+// Independent acceptance at a2d30004 measured the English GPU tab at
+// 718,190 51x34, a right edge of 769: 53 DIPs past the content column and 37
+// past the client. The plain Tab row had no scroll container.
+func TestSysManagerTabStripKeepsEveryTabInsideTheContentAtMinimumWindow(t *testing.T) {
+	left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+	for _, locale := range []string{"en", "zh-CN"} {
+		m := locales.In(locale)
+		tester, manager := newSysManagerLayoutTester(t, sysManagerMinimumWidth,
+			sysManagerMinimumHeight, locale, appsysmanager.TabOverview, 4)
+		labels := sysManagerTabLabels(m)
+		tabs := manager.Tabs()
+		if len(tabs) < 7 {
+			t.Fatalf("%s: visible tabs = %d, want the seven-tab strip: %v", locale, len(tabs), tabs)
+		}
+
+		// Natural label widths, measured where the strip is wide enough not
+		// to scroll; a narrower frame that cuts a label is caught below.
+		tester.SetSize(1100, sysManagerMinimumHeight)
+		tester.Frame()
+		natural := make(map[appsysmanager.Tab]float32, len(tabs))
+		for _, tab := range tabs {
+			manager.SetTab(tab)
+			tester.Frame()
+			rect, ok := tester.Find(labels[tab])
+			if !ok || rect.W <= 0 {
+				t.Fatalf("%s: label %q of %s is not rendered: %v",
+					locale, labels[tab], tab, tester.Texts())
+			}
+			natural[tab] = rect.W
+		}
+
+		tester.SetSize(sysManagerMinimumWidth, sysManagerMinimumHeight)
+		tester.Frame()
+		for _, tab := range tabs {
+			manager.SetTab(tab)
+			tester.Frame()
+			name := fmt.Sprintf("%s %s", locale, tab)
+			rect, ok := tester.Find(labels[tab])
+			if !ok || rect.W <= 0 {
+				t.Fatalf("%s: the active tab's label %q is not rendered: %v",
+					name, labels[tab], tester.Texts())
+			}
+			if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
+				t.Fatalf("%s: the active tab's label %q is outside the content column %.0f..%.0f: %+v",
+					name, labels[tab], left, right, rect)
+			}
+			if rect.W < natural[tab]-0.5 {
+				t.Fatalf("%s: the active tab's label %q is clipped to %.1f of %.1f DIPs: %+v",
+					name, labels[tab], rect.W, natural[tab], rect)
+			}
+			t.Logf("%s: active tab %q at %.0f,%.0f %.0fx%.0f (natural width %.1f, content %.0f..%.0f)",
+				name, labels[tab], rect.X, rect.Y, rect.W, rect.H, natural[tab], left, right)
+			// A neighbour that is partly scrolled out must stop at the
+			// viewport edge rather than run past the content column.
+			for _, other := range tabs {
+				neighbour, ok := tester.Find(labels[other])
+				if !ok || neighbour.W <= 0 {
+					continue
+				}
+				if neighbour.X < left-0.5 || neighbour.X+neighbour.W > right+0.5 {
+					t.Fatalf("%s: while %s is active, %q crosses the content column %.0f..%.0f: %+v",
+						name, tab, labels[other], left, right, neighbour)
+				}
+			}
+		}
+	}
+}
+
+// TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows proves the
+// strip re-reveals its active tab when the window shrinks, not only when the
+// user picks a tab. A tab chosen while the window is wide must stay whole when
+// the window is restored to the minimum size, so the width change alone has to
+// scroll it back into view.
+func TestSysManagerTabStripRevealsTheActiveTabAfterTheWindowNarrows(t *testing.T) {
+	left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+	for _, locale := range []string{"en", "zh-CN"} {
+		m := locales.In(locale)
+		labels := sysManagerTabLabels(m)
+		tester, manager := newSysManagerLayoutTester(t, 1100, sysManagerMinimumHeight,
+			locale, appsysmanager.TabOverview, 4)
+		manager.SetTab(appsysmanager.TabGPU)
+		tester.Frame()
+		natural, ok := tester.Find(labels[appsysmanager.TabGPU])
+		if !ok || natural.W <= 0 {
+			t.Fatalf("%s: the GPU label is not rendered at 1100: %v", locale, tester.Texts())
+		}
+
+		tester.SetSize(sysManagerMinimumWidth, sysManagerMinimumHeight)
+		tester.Frame()
+		if manager.Tab() != appsysmanager.TabGPU {
+			t.Fatalf("%s: the narrow window changed the active tab to %s",
+				locale, manager.Tab())
+		}
+		rect, ok := tester.Find(labels[appsysmanager.TabGPU])
+		if !ok || rect.W <= 0 {
+			t.Fatalf("%s: the active GPU label is not rendered after narrowing: %v",
+				locale, tester.Texts())
+		}
+		if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
+			t.Fatalf("%s: after the window narrowed the active GPU label is outside the content column %.0f..%.0f: %+v",
+				locale, left, right, rect)
+		}
+		if rect.W < natural.W-0.5 {
+			t.Fatalf("%s: after the window narrowed the active GPU label is clipped to %.1f of %.1f DIPs: %+v",
+				locale, rect.W, natural.W, rect)
+		}
+		t.Logf("%s: after 1100 -> 704 the active GPU label is %.0f,%.0f %.0fx%.0f (natural %.1f, content %.0f..%.0f)",
+			locale, rect.X, rect.Y, rect.W, rect.H, natural.W, left, right)
+	}
+}
+
+// TestSysManagerTabClickSelectsTheTabAtMinimumWindow proves a tab's hit target
+// still works inside the scrolling strip: clicking a visible label chooses it.
+// The strip keeps its choice in the surface state, not in a frame-local
+// variable, because the click is applied after the frame that built the tabs.
+func TestSysManagerTabClickSelectsTheTabAtMinimumWindow(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		m := locales.In(locale)
+		labels := sysManagerTabLabels(m)
+		tester, manager := newSysManagerLayoutTester(t, sysManagerMinimumWidth,
+			sysManagerMinimumHeight, locale, appsysmanager.TabOverview, 4)
+		if err := tester.Click(labels[appsysmanager.TabProcesses]); err != nil {
+			t.Fatalf("%s: click the Processes tab: %v", locale, err)
+		}
+		tester.Frame()
+		if manager.Tab() != appsysmanager.TabProcesses {
+			t.Fatalf("%s: clicking the Processes tab chose %s: %v",
+				locale, manager.Tab(), tester.Texts())
+		}
+		// A tab at the far end is reachable after its neighbour scrolls the
+		// strip, and clicking it selects it.
+		if err := tester.Click(labels[appsysmanager.TabPorts]); err != nil {
+			t.Fatalf("%s: click the Ports tab: %v", locale, err)
+		}
+		tester.Frame()
+		if manager.Tab() != appsysmanager.TabPorts {
+			t.Fatalf("%s: clicking the Ports tab chose %s: %v",
+				locale, manager.Tab(), tester.Texts())
+		}
+	}
+}
+
+// TestSysManagerHeaderAndStatusFitTheContentAtMinimumWindow measures every
+// header and status element at the minimum window's client: the title, the
+// live badge, the updated-at age, the latency, the refresh interval control
+// and its button, the tab-layout menu, and each list's count. Independent
+// acceptance at a2d30004 measured the English Latency text at 712,163 62x14,
+// right edge 774 (42 DIPs past the client) and the zh-CN one 5 DIPs past.
+func TestSysManagerHeaderAndStatusFitTheContentAtMinimumWindow(t *testing.T) {
+	left, right := sysManagerContentBounds(sysManagerMinimumWidth)
+	for _, locale := range []string{"en", "zh-CN"} {
+		m := locales.In(locale)
+		cases := []struct {
+			tab     appsysmanager.Tab
+			summary string
+		}{
+			{appsysmanager.TabOverview, ""},
+			{appsysmanager.TabProcesses, m.SysManagerProcessesCount(4)},
+			{appsysmanager.TabPorts, m.SysManagerPortsCount(4)},
+			{appsysmanager.TabServices, m.SysManagerServicesCount(4)},
+		}
+		for _, test := range cases {
+			tester, _ := newSysManagerLayoutTester(t, sysManagerMinimumWidth,
+				sysManagerMinimumHeight, locale, test.tab, 4)
+			name := fmt.Sprintf("%s %s", locale, test.tab)
+			nodes := []struct {
+				what string
+				text string
+			}{
+				{"title", m.SysManagerTitle()},
+				{"live status", m.SysManagerStatusLive()},
+				{"updated-at", m.SysManagerUpdatedSeconds(3600)},
+				{"latency", m.SysManagerLatency() + " " + m.SysManagerLatencyValue(12)},
+				{"refresh interval", m.SysManagerRefresh()},
+				{"refresh now", m.SysManagerRefreshNow()},
+				{"tab layout menu", m.SysManagerTabsLayout()},
+			}
+			if test.summary != "" {
+				nodes = append(nodes, struct {
+					what string
+					text string
+				}{"count", test.summary})
+			}
+			for _, node := range nodes {
+				rect, ok := tester.Find(node.text)
+				if !ok || rect.W <= 0 {
+					t.Fatalf("%s: the %s %q is not rendered: %v",
+						name, node.what, node.text, tester.Texts())
+				}
+				if rect.X < left-0.5 || rect.X+rect.W > right+0.5 {
+					t.Fatalf("%s: the %s %q crosses the content column %.0f..%.0f: %+v",
+						name, node.what, node.text, left, right, rect)
+				}
+				t.Logf("%s: %s %q at %.0f,%.0f %.0fx%.0f (content %.0f..%.0f)",
+					name, node.what, node.text, rect.X, rect.Y, rect.W, rect.H, left, right)
+			}
+		}
+	}
+}
+
+// TestSysManagerPortSelectionLabelHasNoDigitGrouping proves a port is a label,
+// not a quantity: the selection bar must name port 8080 as 8080, never 8,080.
+// Acceptance saw "tcp *:8,080 · PID 904" because the catalog's int placeholder
+// grouped the digits; the surface now formats both values itself.
+func TestSysManagerPortSelectionLabelHasNoDigitGrouping(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		tester, manager := newSysManagerLayoutTester(t, sysManagerMinimumWidth,
+			sysManagerMinimumHeight, locale, appsysmanager.TabPorts, 4)
+		name := fmt.Sprintf("%s ports", locale)
+		row := fmt.Sprintf("tcp 0.0.0.0:%d", 8080)
+		if err := tester.Click(row); err != nil {
+			t.Fatalf("%s: select the last port row %q: %v", name, row, err)
+		}
+		tester.Frame()
+		port, ok := manager.SelectedPort()
+		if !ok || port.Port != 8080 {
+			t.Fatalf("%s: the last port row is not selected: %+v", name, port)
+		}
+		want := fmt.Sprintf("%s %s:%d · PID %d", port.Protocol, port.Address, port.Port, port.PID)
+		if !tester.HasText(want) {
+			t.Fatalf("%s: the selection bar does not read %q: %v", name, want, tester.Texts())
+		}
+		if tester.HasText("8,080") {
+			t.Fatalf("%s: the port rendered with a thousands separator: %v", name, tester.Texts())
+		}
+		t.Logf("%s: selection bar reads %q", name, want)
+	}
 }
 
 // selectedRowLabel returns the chosen row's label as the table names it, or

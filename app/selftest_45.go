@@ -84,9 +84,44 @@ type selftest45 struct {
 	captured       int
 
 	cleanupDeadline time.Time
+
+	// prepared says this run has initialized its service and surface. The
+	// harness keeps one registered set of steps, so it is cleared when a run
+	// finishes and the next F11,4,5 rebuilds them from resetRunState.
+	prepared bool
 }
 
 func (t *selftest45) check() selftest.Check {
+	return selftest.Check{
+		Ticket: selftest45Ticket,
+		Name:   "System manager tabs, confirmations, and typed degradation",
+		Steps: []selftest.Step{
+			{Name: "sample-tabs", Run: t.setupStep},
+			{Name: "confirmation-gate", Run: t.actionStep},
+			{Name: "degradation", Run: t.degradeStep},
+			{Name: "host-key-gate", Run: t.trustStep},
+			{Name: "render-and-capture", Run: t.renderStep},
+			{Name: "stop-and-release", Run: t.cleanupStep},
+		},
+	}
+}
+
+// resetRunState rebuilds the service, surface, and per-run stages so pressing
+// F11,4,5 again in the same process starts from the same conditions as the
+// first run. The harness registers one set of steps, so without it the second
+// run reuses the first run's stages and deadlines against a closed service and
+// its confirmation-gate step times out. It follows the ticket 15 convention.
+func (t *selftest45) resetRunState() {
+	if t.state != nil {
+		t.state.Close()
+	}
+	if t.service != nil {
+		t.service.Close()
+	}
+	if t.directory != "" {
+		_ = os.RemoveAll(t.directory)
+		t.directory = ""
+	}
 	t.prefs = &selftest45Prefs{settings: domainpreferences.Defaults()}
 	t.hosts = &selftest45Hosts{items: []domainvault.Host{
 		{ID: model.HostID(selftest45Rich), Label: "Alpha", Hostname: "alpha.selftest",
@@ -105,21 +140,30 @@ func (t *selftest45) check() selftest.Check {
 	}
 	t.service = appsysmanager.NewService(t.connector)
 	t.state = uisysmanager.NewState(t.service, t.hosts, t.prefs)
-	return selftest.Check{
-		Ticket: selftest45Ticket,
-		Name:   "System manager tabs, confirmations, and typed degradation",
-		Steps: []selftest.Step{
-			{Name: "sample-tabs", Run: t.setupStep},
-			{Name: "confirmation-gate", Run: t.actionStep},
-			{Name: "degradation", Run: t.degradeStep},
-			{Name: "host-key-gate", Run: t.trustStep},
-			{Name: "render-and-capture", Run: t.renderStep},
-			{Name: "stop-and-release", Run: t.cleanupStep},
-		},
-	}
+
+	t.activated = false
+	t.setupStage = 0
+	t.setupDeadline = time.Time{}
+	t.actionStage = 0
+	t.actionDeadline = time.Time{}
+	t.actionPID = 0
+	t.actionUnit = ""
+	t.killBefore = 0
+	t.systemBefore = 0
+	t.degradeStage = 0
+	t.degradeDeadline = time.Time{}
+	t.trustDeadline = time.Time{}
+	t.renderTab = 0
+	t.renderDeadline = time.Time{}
+	t.captured = 0
+	t.cleanupDeadline = time.Time{}
 }
 
 func (t *selftest45) setupStep(*ui.Context) selftest.Outcome {
+	if !t.prepared {
+		t.resetRunState()
+		t.prepared = true
+	}
 	if !t.activated {
 		t.activated = true
 		t.state.Activate()
@@ -468,6 +512,8 @@ func (t *selftest45) cleanupStep(*ui.Context) selftest.Outcome {
 	if !t.connector.allClosed() {
 		return pending(t.cleanupDeadline, "every leased transport to close")
 	}
+	// The run is complete; the next F11,4,5 rebuilds its service and surface.
+	t.prepared = false
 	return selftest.Passed(fmt.Sprintf(
 		"deactivation and close released every sampler and action lease (%d leases); %d screenshots captured",
 		t.connector.openCount(selftest45Rich), t.captured),

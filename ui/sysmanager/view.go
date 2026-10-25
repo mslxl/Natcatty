@@ -100,6 +100,24 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				c.Invalidate()
 			}
 		}
+		// The age and latency share the Host row instead of trailing a
+		// flexible spacer in the control row, where the refresh interval, its
+		// button, and the tab-layout menu left them no room at the 704-DIP
+		// client: acceptance at a2d30004 measured the English Latency text 42
+		// DIPs past the client. They may shrink with an ellipsis rather than
+		// push either edge out.
+		if state.Status == appsysmanager.StatusLive && !state.At.IsZero() {
+			age := s.now().Sub(state.At)
+			if age < 2*time.Second {
+				age = 0
+			}
+			ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
+				FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+			if state.Latency > 0 {
+				ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
+					FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).MinWidth(0)
+			}
+		}
 	})
 
 	ui.Row(c).FillWidth().Gap(8).Children(func() {
@@ -125,18 +143,6 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 		tabsMenu(c, s, m)
 		ui.Column(c).Grow(1)
-		if state.Status == appsysmanager.StatusLive && !state.At.IsZero() {
-			age := s.now().Sub(state.At)
-			if age < 2*time.Second {
-				age = 0
-			}
-			ui.Text(c, m.SysManagerUpdatedSeconds(int(age/time.Second))).
-				FontSize(11).TextColor(t.TextMuted).NoWrap()
-			if state.Latency > 0 {
-				ui.Text(c, m.SysManagerLatency()+" "+m.SysManagerLatencyValue(int(state.Latency/time.Millisecond))).
-					FontSize(11).TextColor(t.TextMuted).NoWrap()
-			}
-		}
 	})
 
 	if problem := problemText(m, s.Problem()); problem != "" {
@@ -191,6 +197,16 @@ func hostOptions(s *State) ([]string, map[string]string) {
 	return labels, byLabel
 }
 
+// tabStripHeight is the height of the scrolling tab strip: a tab's line plus
+// the tab padding.
+const tabStripHeight float32 = 32
+
+// tabs renders the tab strip. Seven tabs need more width than the 440-DIP
+// content column at the minimum window, so the strip scrolls sideways like the
+// shell's work-Tab strip and the browser panel's tab strip. The active tab is
+// scrolled fully into view when it changes or the window narrows, so its label
+// and hit target are never cut at either edge; inactive tabs clip at the
+// viewport edge as in the shell's strip.
 func tabs(c *ui.Context, s *State, m locales.Messages) {
 	visible := s.Tabs()
 	labels := make([]string, 0, len(visible))
@@ -199,7 +215,49 @@ func tabs(c *ui.Context, s *State, m locales.Messages) {
 	}
 	index := s.TabIndex()
 	chosen := index
-	ui.Tabs(c, &chosen, labels...).FillWidth()
+	// A resize changes the room the strip has for its tabs. Reveal the active
+	// tab again so one chosen at a wide window does not stay half cut after
+	// the user narrows the window.
+	if width, _ := c.Size(); width > 0 {
+		if s.stripWidth > 0 && width != s.stripWidth {
+			s.revealTab = true
+		}
+		s.stripWidth = width
+	}
+	reveal := s.revealTab
+	s.revealTab = false
+
+	ui.ScrollHorizontal(c).FillWidth().Height(tabStripHeight).Shrink(0).Children(func() {
+		t := c.Theme()
+		parts := ui.TabsBase(c, &chosen, len(labels))
+		parts.List.Gap(t.Space(1)).Children(func() {
+			for i, label := range labels {
+				on := i == chosen
+				tab := parts.Tab(i).Padding(t.Space(2), t.Space(3)).FocusRing(false)
+				tab.TextColor(t.TextMuted)
+				if on {
+					tab.TextColor(t.Text).FontWeight(600)
+					if reveal {
+						tab = tab.ScrollIntoView()
+					}
+				} else if tab.Hovered() {
+					tab.TextColor(t.Text)
+				}
+				tab.DrawOver(func(p *ui.Painter, r ui.Rect) {
+					if on {
+						in, height := t.Space(1.5), t.Space(0.5)
+						p.Fill(ui.Rect{X: r.X + in, Y: r.Y + r.H - height, W: r.W - 2*in, H: height},
+							t.Accent, height/2)
+					}
+					if tab.FocusVisible() {
+						p.FocusRing(r, [4]float32{t.Radius, t.Radius, t.Radius, t.Radius})
+					}
+				})
+				tab.Children(func() { ui.Text(c, label).SingleLine() })
+			}
+		})
+	})
+
 	if chosen != index && chosen >= 0 && chosen < len(visible) {
 		s.SetTab(visible[chosen])
 		c.Invalidate()
@@ -920,7 +978,8 @@ func portActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		return
 	}
 	actionBar(c, func() {
-		ui.Text(c, m.SysManagerSelectedPort(port.Protocol, port.Address, port.Port, port.PID)).
+		ui.Text(c, m.SysManagerSelectedPort(port.Protocol, port.Address,
+			strconv.Itoa(port.Port), strconv.Itoa(port.PID))).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if port.PID > 0 {
 			if ui.Button(c, m.SysManagerTerminate()).Key("sysmanager-port-terminate").Clicked() {

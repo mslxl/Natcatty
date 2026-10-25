@@ -2275,11 +2275,11 @@
         "example": "0.0.0.0"
       },
       "port": {
-        "type": "int",
+        "type": "String",
         "example": "22"
       },
       "pid": {
-        "type": "int",
+        "type": "String",
         "example": "123"
       }
     }
@@ -2506,8 +2506,8 @@
     "description": "The GPU tab.",
     "placeholders": {}
   },
-  "sysManagerReasonMissingTmux": "此 Host 上沒有 tmux。",
-  "sysManagerReasonMissingDocker": "此 Host 上沒有 Docker。",
+  "sysManagerReasonMissingTmux": "此主機上沒有 tmux。",
+  "sysManagerReasonMissingDocker": "此主機上沒有 Docker。",
   "sysManagerReasonDockerDaemon": "無法連線 Docker 守護程序。",
   "sysManagerProblemAttach": "無法開啟 tmux 工作階段。",
   "sysManagerSearchSessions": "搜尋工作階段…",
@@ -2683,7 +2683,7 @@
       }
     }
   },
-  "sysManagerGPUEmpty": "此 Host 上未偵測到 NVIDIA GPU。",
+  "sysManagerGPUEmpty": "此主機上未偵測到 NVIDIA GPU。",
   "sysManagerGPUDriver": "驅動程式",
   "sysManagerGPUDevice": "GPU {index} · {name}",
   "@sysManagerGPUDevice": {

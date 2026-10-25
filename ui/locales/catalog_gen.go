@@ -16790,7 +16790,7 @@ func (msgs Messages) SysManagerSelectedProcess(pid int, command string) string {
 // in the language the app shows.
 //
 // The listening socket chosen in the table.
-func SysManagerSelectedPort(protocol string, address string, port int, pid int) string {
+func SysManagerSelectedPort(protocol string, address string, port string, pid string) string {
 	return In(i18n.Locale()).SysManagerSelectedPort(protocol, address, port, pid)
 }
 
@@ -16798,7 +16798,7 @@ func SysManagerSelectedPort(protocol string, address string, port int, pid int) 
 // in the language of msgs.
 //
 // The listening socket chosen in the table.
-func (msgs Messages) SysManagerSelectedPort(protocol string, address string, port int, pid int) string {
+func (msgs Messages) SysManagerSelectedPort(protocol string, address string, port string, pid string) string {
 	return Catalog.Format(msgs.locale, "sysManagerSelectedPort", map[string]any{"protocol": protocol, "address": address, "port": port, "pid": pid})
 }
 

@@ -3525,11 +3525,11 @@
         "example": "0.0.0.0"
       },
       "port": {
-        "type": "int",
+        "type": "String",
         "example": "22"
       },
       "pid": {
-        "type": "int",
+        "type": "String",
         "example": "123"
       }
     }
