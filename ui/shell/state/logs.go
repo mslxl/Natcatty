@@ -156,6 +156,7 @@ func (s *State) focusPane(index int, tab *Tab, paneID model.PaneID) {
 	s.active = index
 	tab.setFocus(paneID)
 	tab.Dirty = false
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.save()

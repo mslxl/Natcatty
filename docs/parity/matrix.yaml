@@ -3788,3 +3788,118 @@
     - app.TestTicket41CheckPassesTwiceInOneProcess
   status: verified
   notes: "Host Details gains a Network device mode checkbox with an explanation, shown only for SSH, and all five locales carry the label and hint. The value persists in the Host JSON as deviceType, so no storage migration was needed; Vault JSON export and import round-trip it, and a restored Pane reads the current Host record. NormalizeDraft drops the mode for any other protocol, and IsNetworkDevice additionally requires SSH, so a hand-edited or stale record cannot put another transport into raw execution. The checkbox label is localized; the mode is an advanced Host option, not a new window. Deliberate divergence: group-level deviceType defaults are not inherited, so only the Host's own setting selects raw execution, and the original's separate warning panel is folded into the hint below the checkbox."
+
+# --- Ticket 44: Host monitoring ---
+
+- id: monitor.metrics
+  area: monitoring
+  feature: Host cards show CPU, memory, disk, network, latency, and GPU metrics
+  original_paths:
+    - electron/bridges/monitorBridge.cjs
+    - electron/bridges/sshBridge/monitorGpuStats.cjs
+    - electron/bridges/sshBridge/sessionOps.serverStats.test.cjs
+    - application/state/useServerStats.ts
+    - components/terminal/hooks/useServerStats.ts
+    - domain/monitorRuntime.ts
+  module: application/monitor
+  tickets: [44]
+  acceptance_tests:
+    - application/monitor.TestParseStatsReadsEveryMetricLabel
+    - application/monitor.TestParseStatsSecondSampleUsesCounters
+    - application/monitor.TestParseStatsMacOSDirectCPU
+    - application/monitor.TestParseStatsReportsTypedFailures
+    - application/monitor.TestServiceSamplesWithoutBlockingAndPublishesHistory
+    - application/monitor.TestStatsCommandCoversLinuxMacOSAndUnsupported
+    - domain/monitor.TestPercentThresholdsMirrorResourceBar
+    - domain/monitor.TestLatencyThresholdsMirrorSignalBars
+    - domain/monitor.TestMemoryPercentUsesUsedOverTotal
+    - domain/monitor.TestAggregateDisksCountsPhysicalCapacityOnceAndSkipsNetwork
+    - domain/monitor.TestAggregateDisksSkipsFuseSourcesEvenWhenTypeIsMissing
+    - ui/monitoring.TestViewRendersListChartsEditorAndNarrowWindow
+    - app.TestTicket44CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The original Linux stats command reads /proc/stat, /proc/meminfo, /proc/net/dev, /proc/uptime, /proc/loadavg, hostname, and /etc/os-release, and the native implementation keeps the same labels and delta math: overall and per-core CPU are derived from the first and second raw counters, memory is total minus free, buffers, and cached, and network rates come from byte counters. Linux disks are a separate exec because a large combined request is rejected by Dropbear; the awk parser excludes network and FUSE capacity and counts a shared APFS capacity once. macOS keeps its sysctl/vm_stat/ps/netstat command and direct CPU percentage. GPU is best-effort through nvidia-smi and is absent rather than an error when the command is unavailable. Deliberate divergence: the GPU query runs inside the same metric exec on every sample, where the original cached a separate probe for 10-30 seconds; the two-second nvidia-smi timeout bounds the cost and every metric shares one round trip. An unknown OS is a typed unsupported state. A metric the reply does not carry is NaN (a dash), while a reply with no recognizable metric is a typed unsupported failure. Sampling runs in service goroutines through the connection layer's channel lease, never a terminal Session."
+
+- id: monitor.panels
+  area: monitoring
+  feature: Panels, columns, refresh interval, and history range persist
+  original_paths:
+    - application/state/monitorPanelsStorage.ts
+    - application/state/useMonitorTableColumns.ts
+    - domain/monitorPanels.ts
+    - domain/monitorTableLayout.ts
+    - components/vault/MonitorPanels.tsx
+  module: domain/preferences
+  tickets: [44]
+  acceptance_tests:
+    - domain/preferences.TestDefaultsCarryEveryMonitorColumnWidth
+    - domain/preferences.TestNormalizeMonitorRepairsPanelsAndLayout
+    - domain/preferences.TestNormalizeMonitorKeepsValidPanelsAndIntervals
+    - domain/preferences.TestResetGroupMonitorRestoresTheLayout
+    - application/preferences.TestMonitorConfigurationPersistsThroughTheStore
+    - ui/monitoring.TestStateLoadsPanelsSearchSortAndPersistsColumns
+    - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
+    - app.TestTicket44CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Panels keep the original's fields (id, name, description, hostIds, list/charts view, interval, range, manual/name sort) and choices (1/2/3/5/10/30/60 seconds, 5/15/30 minutes). Columns keep the original's order, defaults, and 56-640 DIP bounds, with host and terminal always visible. Configuration rides in the existing preferences document under a monitor group, versioned and normalized on load; unlike the original's localStorage entity it also travels with the settings store. Duplicate panel names are suffixed by id so a merged file cannot make two panels indistinguishable, a hand-edited interval falls back to five seconds, and the minimum widths are enforced both on load and when the user drags or nudges a column. Refresh and view changes persist immediately and retarget the running panel. Deliberate divergences: the interval selector offers the original's 1- and 2-second choices that its toolbar filtered to at least three seconds; a new panel starts in list view over 30 minutes and may be saved with no Hosts, where the original draft opened charts over 15 minutes and required a Host; and manual ordering is arranged with the editor's move controls rather than drag-and-drop in the list."
+
+- id: monitor.surface
+  area: monitoring
+  feature: Search, sort, list and chart views, and open-terminal actions
+  original_paths:
+    - components/vault/MonitorPanels.tsx
+    - components/vault/MonitorHostCollection.tsx
+    - components/vault/MonitorNavButton.tsx
+    - domain/monitorChart.ts
+    - application/state/monitorRuntimeStore.ts
+  module: ui/monitoring
+  tickets: [44]
+  acceptance_tests:
+    - ui/monitoring.TestStateLoadsPanelsSearchSortAndPersistsColumns
+    - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
+    - ui/monitoring.TestStateReportsTooManyHostsAndStopsOnDeactivate
+    - ui/monitoring.TestViewRendersListChartsEditorAndNarrowWindow
+    - app.TestTicket44CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Search matches Host label, hostname, group, notes, and tags; sort is the saved manual order or Host label, both with stable ordering. The list is a resizable table and the chart view is a card grid with CPU, memory, disk, and network sparklines over the selected history range, plus disk, latency, and GPU footer values. Open terminal calls the shell's OpenHost, so it uses the same Tab, trust, and transport path as the Vault. A Host without metrics shows a dash and an unknown tone instead of zero, a live sample older than max(5s, 2.5 intervals) is Stale, and thresholds are the original's above-60 warning and above-85 danger for percentages and 100/300 ms for latency. Every label, problem, status, and reason is localized in en, es, ru, zh-CN, and zh-TW. Deliberate divergence: the native monitoring surface is a root sidebar surface rather than a Vault subview, because the shell's existing Logs and SFTP roots share that navigation shape; it still starts from the Vault Host list and opens Host Sessions."
+
+- id: monitor.history-limit
+  area: monitoring
+  feature: A panel keeps bounded trend history and samples at most 256 Hosts
+  original_paths:
+    - domain/monitorRuntime.ts
+    - domain/monitorChart.ts
+    - application/state/monitorRuntimeStore.ts
+  module: domain/monitor
+  tickets: [44]
+  acceptance_tests:
+    - domain/monitor.TestAppendPointKeepsTheRetentionWindowAndCap
+    - domain/monitor.TestIsStaleUsesTheOriginalFreshnessWindow
+    - application/monitor.TestServiceSamplesWithoutBlockingAndPublishesHistory
+    - application/monitor.TestServiceRejectsMoreThan256HostsAndDoesNotOpen
+    - application/monitor.TestServiceCapIsSharedAcrossPanels
+    - ui/monitoring.TestStateReportsTooManyHostsAndStopsOnDeactivate
+    - app.TestTicket44CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "History keeps 30 minutes and at most 1800 points per Host, dropping old entries before appending the new one, so a fast interval cannot grow memory without bound. A panel that would push the union of all demanded Hosts past 256 is rejected before any transport opens or sampler mutates state; two panels sharing Hosts count them once. The surface turns that typed error into a localized problem and leaves the previous panel running state consistent. History is per Host and per run: the chart only draws points from the current panel run and the chosen range, matching the original's runtime store."
+
+- id: monitor.host-key-trust
+  area: monitoring
+  feature: A Host key must be trusted before any metric command runs
+  original_paths:
+    - application/state/useMonitorHostKeyVerification.ts
+    - components/vault/MonitorHostKeyDialog.tsx
+    - electron/bridges/sshBridge.monitorOwners.test.cjs
+    - electron/bridges/sshBridge/moshStatsConnection.cjs
+  module: app
+  tickets: [44]
+  acceptance_tests:
+    - application/monitor.TestServiceTrustRejectionRunsNoMetricCommand
+    - application/monitor.TestServiceDegradesToUnavailableOnRepeatedNetworkFailure
+    - application/monitor.TestServiceCancellationStopsTheSamplerPromptly
+    - app.TestMonitorFailureMapsConnectionFailures
+    - app.TestMonitorFailureKeepsAnAlreadyTypedError
+    - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
+    - app.TestTicket44CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The app's monitoring connector acquires a channel lease from the shared Connection Manager with the Host's routes, jump chain, proxy, algorithms, and config fingerprint. Acquire runs the same known-hosts lookup and trust prompt as a Session, so the first metric command can only run after the key is trusted; a rejected key maps to the monitor surface's typed login/host-key state with no Exec at all. Authentication, timeout, unsupported algorithm, network, and cancellation failures keep distinct typed reasons, and repeated recoverable failures become Unavailable rather than an error dialog or a spinner. The stub connector in the application tests proves the ordering structurally: one Open, zero metric commands on refusal. The self-test repeats that assertion with an in-process refused Host and checks that the healthy Hosts keep sampling. Deactivation cancels the sampler and releases each lease. Deliberate divergence: a Host left in login/host-key after its trust decision changes has no in-surface retry dialog; leaving and re-entering the monitoring surface restarts the panel and re-acquires the Host through the same prompt."

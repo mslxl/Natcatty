@@ -31,6 +31,7 @@
   "@@locale": "en",
   "appName": "Natcatty",
   "navVault": "Vault",
+  "navMonitor": "Monitoring",
   "navSettings": "Settings",
   "navLanguage": "Language",
   "vaultPlaceholder": "Your Hosts, keys, and notes will appear here.",
@@ -3259,5 +3260,132 @@
         "example": "3"
       }
     }
-  }
+  },
+  "monitoringTitle": "Host monitoring",
+  "monitoringSummary": "{live} of {total} live",
+  "@monitoringSummary": {
+    "description": "The share of sampled Hosts that are live.",
+    "placeholders": {
+      "live": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringNoPanelsTitle": "No monitoring panels yet",
+  "monitoringNoPanelsBody": "Create a panel to choose which Hosts to monitor and how often.",
+  "monitoringNewPanel": "New panel",
+  "monitoringEditPanel": "Edit panel",
+  "monitoringColumns": "Columns",
+  "monitoringColumnsHint": "Drag a column edge to resize; widths save automatically.",
+  "monitoringColumnsDone": "Done",
+  "monitoringAlwaysVisible": "Always visible",
+  "monitoringRefresh": "Refresh",
+  "monitoringSort": "Sort",
+  "monitoringSortManual": "Manual",
+  "monitoringSortName": "Name",
+  "monitoringViewList": "List",
+  "monitoringViewCharts": "Charts",
+  "monitoringEmptyPanel": "This panel has no Hosts. Edit the panel to add some.",
+  "monitoringSearch": "Search Hosts",
+  "monitoringNoMatches": "No Hosts match the search.",
+  "monitoringOpen": "Open",
+  "monitoringHost": "Host",
+  "monitoringLatency": "Latency",
+  "monitoringTags": "Tags",
+  "monitoringNotes": "Notes",
+  "monitoringCpu": "CPU",
+  "monitoringMemory": "Memory",
+  "monitoringDisk": "Disk",
+  "monitoringNetwork": "Network",
+  "monitoringGpu": "GPU",
+  "monitoringUpdated": "Updated",
+  "monitoringStatus": "Status",
+  "monitoringTerminal": "Terminal",
+  "monitoringStatusQueued": "Queued",
+  "monitoringStatusConnecting": "Connecting",
+  "monitoringStatusLive": "Live",
+  "monitoringStatusLogin": "Sign in",
+  "monitoringStatusError": "Error",
+  "monitoringStatusUnsupported": "Unsupported",
+  "monitoringStatusDisconnected": "Disconnected",
+  "monitoringStatusUnavailable": "Unavailable",
+  "monitoringStatusLimit": "Limit reached",
+  "monitoringStale": "Stale",
+  "monitoringReasonHostKey": "Host key not trusted",
+  "monitoringReasonAuth": "Authentication failed",
+  "monitoringReasonNetwork": "Network unavailable",
+  "monitoringReasonTimeout": "Timed out",
+  "monitoringReasonUnsupported": "Metrics unsupported",
+  "monitoringReasonCancelled": "Cancelled",
+  "monitoringReasonInternal": "Monitoring error",
+  "monitoringReasonOS": "Operating system unsupported",
+  "monitoringUnknown": "—",
+  "monitoringUpdatedNow": "just now",
+  "monitoringUpdatedSeconds": "{seconds}s ago",
+  "@monitoringUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived, in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringUpdatedMinutes": "{minutes}m ago",
+  "@monitoringUpdatedMinutes": {
+    "description": "How long ago the latest sample arrived, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "monitoringName": "Name",
+  "monitoringDescription": "Description",
+  "monitoringPanelHosts": "Hosts",
+  "monitoringSelectedCount": "{count} selected",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringNoHostsAvailable": "No Hosts in the Vault.",
+  "monitoringSave": "Save",
+  "monitoringCancel": "Cancel",
+  "monitoringDeletePanel": "Delete panel",
+  "monitoringDeleteConfirm": "Delete “{name}”?",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringProblemNameRequired": "Give the panel a name.",
+  "monitoringProblemDuplicateName": "Another panel already has that name.",
+  "monitoringProblemSave": "Could not save the monitoring configuration.",
+  "monitoringProblemLoad": "Could not read the Host list.",
+  "monitoringProblemTooManyHosts": "A panel can sample at most 256 Hosts.",
+  "monitoringProblemNoPanel": "No panel is selected.",
+  "monitoringProblemOpenTerminal": "Could not open the Host Session.",
+  "monitoringProblemInternal": "Monitoring failed.",
+  "monitoringPanelFormCreate": "New monitoring panel",
+  "monitoringPanelFormEdit": "Edit monitoring panel",
+  "monitoringPanelFormView": "View",
+  "monitoringPanelFormInterval": "Refresh interval (seconds)",
+  "monitoringPanelFormRange": "History range (minutes)",
+  "monitoringPanelFormSort": "Host order",
+  "monitoringPanelFormHostsHint": "Choose the Hosts to monitor. This order applies in Manual sort."
 }

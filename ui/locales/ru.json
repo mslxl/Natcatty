@@ -31,6 +31,7 @@
   "@@locale": "ru",
   "appName": "Natcatty",
   "navVault": "Хранилище",
+  "navMonitor": "Мониторинг",
   "navSettings": "Настройки",
   "navLanguage": "Язык",
   "vaultPlaceholder": "Здесь появятся ваши хосты, ключи и заметки.",
@@ -2009,5 +2010,132 @@
         "example": "3"
       }
     }
-  }
+  },
+  "monitoringTitle": "Мониторинг хостов",
+  "monitoringSummary": "{live} из {total} активны",
+  "@monitoringSummary": {
+    "description": "The share of sampled Hosts that are live.",
+    "placeholders": {
+      "live": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringNoPanelsTitle": "Панелей мониторинга пока нет",
+  "monitoringNoPanelsBody": "Создайте панель, чтобы выбрать хосты для мониторинга и частоту обновления.",
+  "monitoringNewPanel": "Новая панель",
+  "monitoringEditPanel": "Изменить панель",
+  "monitoringColumns": "Столбцы",
+  "monitoringColumnsHint": "Перетащите край столбца, чтобы изменить ширину; ширины сохраняются автоматически.",
+  "monitoringColumnsDone": "Готово",
+  "monitoringAlwaysVisible": "Всегда виден",
+  "monitoringRefresh": "Обновление",
+  "monitoringSort": "Сортировка",
+  "monitoringSortManual": "Вручную",
+  "monitoringSortName": "Имя",
+  "monitoringViewList": "Список",
+  "monitoringViewCharts": "Графики",
+  "monitoringEmptyPanel": "В этой панели нет хостов. Измените панель, чтобы добавить их.",
+  "monitoringSearch": "Поиск хостов",
+  "monitoringNoMatches": "Нет хостов, подходящих под поиск.",
+  "monitoringOpen": "Открыть",
+  "monitoringHost": "Хост",
+  "monitoringLatency": "Задержка",
+  "monitoringTags": "Метки",
+  "monitoringNotes": "Заметки",
+  "monitoringCpu": "ЦП",
+  "monitoringMemory": "Память",
+  "monitoringDisk": "Диск",
+  "monitoringNetwork": "Сеть",
+  "monitoringGpu": "ГП",
+  "monitoringUpdated": "Обновлено",
+  "monitoringStatus": "Состояние",
+  "monitoringTerminal": "Терминал",
+  "monitoringStatusQueued": "В очереди",
+  "monitoringStatusConnecting": "Подключение",
+  "monitoringStatusLive": "Активен",
+  "monitoringStatusLogin": "Войти",
+  "monitoringStatusError": "Ошибка",
+  "monitoringStatusUnsupported": "Не поддерживается",
+  "monitoringStatusDisconnected": "Отключён",
+  "monitoringStatusUnavailable": "Недоступен",
+  "monitoringStatusLimit": "Достигнут предел",
+  "monitoringStale": "Устарело",
+  "monitoringReasonHostKey": "Ключ хоста не доверен",
+  "monitoringReasonAuth": "Ошибка аутентификации",
+  "monitoringReasonNetwork": "Сеть недоступна",
+  "monitoringReasonTimeout": "Тайм-аут",
+  "monitoringReasonUnsupported": "Метрики не поддерживаются",
+  "monitoringReasonCancelled": "Отменено",
+  "monitoringReasonInternal": "Ошибка мониторинга",
+  "monitoringReasonOS": "ОС не поддерживается",
+  "monitoringUnknown": "—",
+  "monitoringUpdatedNow": "только что",
+  "monitoringUpdatedSeconds": "{seconds} с назад",
+  "@monitoringUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived, in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringUpdatedMinutes": "{minutes} мин назад",
+  "@monitoringUpdatedMinutes": {
+    "description": "How long ago the latest sample arrived, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "monitoringName": "Имя",
+  "monitoringDescription": "Описание",
+  "monitoringPanelHosts": "Хосты",
+  "monitoringSelectedCount": "Выбрано: {count}",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringNoHostsAvailable": "В хранилище нет хостов.",
+  "monitoringSave": "Сохранить",
+  "monitoringCancel": "Отмена",
+  "monitoringDeletePanel": "Удалить панель",
+  "monitoringDeleteConfirm": "Удалить «{name}»?",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringProblemNameRequired": "Укажите имя панели.",
+  "monitoringProblemDuplicateName": "Другая панель уже использует это имя.",
+  "monitoringProblemSave": "Не удалось сохранить настройки мониторинга.",
+  "monitoringProblemLoad": "Не удалось прочитать список хостов.",
+  "monitoringProblemTooManyHosts": "Панель может опрашивать не более 256 хостов.",
+  "monitoringProblemNoPanel": "Панель не выбрана.",
+  "monitoringProblemOpenTerminal": "Не удалось открыть сеанс хоста.",
+  "monitoringProblemInternal": "Сбой мониторинга.",
+  "monitoringPanelFormCreate": "Новая панель мониторинга",
+  "monitoringPanelFormEdit": "Изменение панели мониторинга",
+  "monitoringPanelFormView": "Вид",
+  "monitoringPanelFormInterval": "Интервал обновления (секунды)",
+  "monitoringPanelFormRange": "Диапазон истории (минуты)",
+  "monitoringPanelFormSort": "Порядок хостов",
+  "monitoringPanelFormHostsHint": "Выберите хосты для мониторинга. Этот порядок действует при ручной сортировке."
 }

@@ -340,6 +340,7 @@ func (s *State) SelectTab(index int) {
 	}
 	s.active = index
 	s.tabs[index].Dirty = false
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
@@ -457,6 +458,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 	}
 	s.tabs = []*Tab{keep}
 	s.active = 0
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.refreshBroadcastState()
@@ -507,6 +509,7 @@ func (s *State) DuplicateTab(index int) error {
 	copy(s.tabs[index+2:], s.tabs[index+1:])
 	s.tabs[index+1] = copyTab
 	s.active = index + 1
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 
@@ -720,6 +723,7 @@ func (s *State) ReattachDetachedTab(id model.TabID) bool {
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
+		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
 		// A reattached Session is again part of the main target list. It is
@@ -1133,6 +1137,7 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		source.FocusPath = domainworkspace.FocusPath(sourceRoot, "")
 		s.active = targetIndex
 	}
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.save()
@@ -1297,6 +1302,7 @@ func (s *State) Restore(ctx context.Context) {
 	if s.active < 0 || s.active >= len(s.tabs) {
 		s.active = 0
 	}
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	for _, tab := range s.tabs {
@@ -1501,6 +1507,7 @@ func (s *State) removeTabAt(index int) {
 	s.tabs = append(s.tabs[:index], s.tabs[index+1:]...)
 	if len(s.tabs) == 0 {
 		s.active = -1
+		s.leaveMonitor()
 		s.vaultVisible = true
 		s.refreshBroadcastState()
 		return
@@ -1512,6 +1519,7 @@ func (s *State) removeTabAt(index int) {
 	} else if index < s.active {
 		s.active--
 	}
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.refreshBroadcastState()

@@ -199,6 +199,12 @@ func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *m
 			},
 			mygo.Separator(),
 			{
+				ID:    "menu.monitor",
+				Label: m.NavMonitor(),
+				Click: dispatch(command.OpenMonitor),
+			},
+			mygo.Separator(),
+			{
 				ID:          "menu.focusLeft",
 				Label:       m.PaneFocusLeft(),
 				Accelerator: focusAccelerator("Left", "CmdOrCtrl+Alt+Left"),
