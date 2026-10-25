@@ -45,7 +45,7 @@ func init() {
 	// may be listed before its package exists; internal/archtest enforces the
 	// actual dependency direction once it does.
 	for _, module := range []string{
-		"domain/model", "domain/vault", "domain/connection", "domain/session",
+		"domain/model", "domain/vault", "domain/connection", "domain/session", "domain/browser",
 		"domain/workspace", "domain/transfer", "domain/forwarding", "domain/settings",
 		"domain/sync", "domain/search", "domain/applock", "domain/history",
 		"domain/keybindings", "domain/preferences", "domain/model/theme",

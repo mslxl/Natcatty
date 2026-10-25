@@ -18147,3 +18147,253 @@ func ConnectionErrorETProxy() string { return In(i18n.Locale()).ConnectionErrorE
 func (msgs Messages) ConnectionErrorETProxy() string {
 	return Catalog.Format(msgs.locale, "connectionErrorETProxy", nil)
 }
+
+// BrowserAddress says "Address"
+// in the language the app shows.
+func BrowserAddress() string { return In(i18n.Locale()).BrowserAddress() }
+
+// BrowserAddress says "Address"
+// in the language of msgs.
+func (msgs Messages) BrowserAddress() string {
+	return Catalog.Format(msgs.locale, "browserAddress", nil)
+}
+
+// BrowserBack says "Back"
+// in the language the app shows.
+func BrowserBack() string { return In(i18n.Locale()).BrowserBack() }
+
+// BrowserBack says "Back"
+// in the language of msgs.
+func (msgs Messages) BrowserBack() string {
+	return Catalog.Format(msgs.locale, "browserBack", nil)
+}
+
+// BrowserForward says "Forward"
+// in the language the app shows.
+func BrowserForward() string { return In(i18n.Locale()).BrowserForward() }
+
+// BrowserForward says "Forward"
+// in the language of msgs.
+func (msgs Messages) BrowserForward() string {
+	return Catalog.Format(msgs.locale, "browserForward", nil)
+}
+
+// BrowserReload says "Reload"
+// in the language the app shows.
+func BrowserReload() string { return In(i18n.Locale()).BrowserReload() }
+
+// BrowserReload says "Reload"
+// in the language of msgs.
+func (msgs Messages) BrowserReload() string {
+	return Catalog.Format(msgs.locale, "browserReload", nil)
+}
+
+// BrowserStop says "Stop"
+// in the language the app shows.
+func BrowserStop() string { return In(i18n.Locale()).BrowserStop() }
+
+// BrowserStop says "Stop"
+// in the language of msgs.
+func (msgs Messages) BrowserStop() string {
+	return Catalog.Format(msgs.locale, "browserStop", nil)
+}
+
+// BrowserNewTab says "New tab"
+// in the language the app shows.
+func BrowserNewTab() string { return In(i18n.Locale()).BrowserNewTab() }
+
+// BrowserNewTab says "New tab"
+// in the language of msgs.
+func (msgs Messages) BrowserNewTab() string {
+	return Catalog.Format(msgs.locale, "browserNewTab", nil)
+}
+
+// BrowserBlankTab says "New tab"
+// in the language the app shows.
+func BrowserBlankTab() string { return In(i18n.Locale()).BrowserBlankTab() }
+
+// BrowserBlankTab says "New tab"
+// in the language of msgs.
+func (msgs Messages) BrowserBlankTab() string {
+	return Catalog.Format(msgs.locale, "browserBlankTab", nil)
+}
+
+// BrowserCloseTab says "Close tab"
+// in the language the app shows.
+func BrowserCloseTab() string { return In(i18n.Locale()).BrowserCloseTab() }
+
+// BrowserCloseTab says "Close tab"
+// in the language of msgs.
+func (msgs Messages) BrowserCloseTab() string {
+	return Catalog.Format(msgs.locale, "browserCloseTab", nil)
+}
+
+// BrowserClose says "Close browser"
+// in the language the app shows.
+func BrowserClose() string { return In(i18n.Locale()).BrowserClose() }
+
+// BrowserClose says "Close browser"
+// in the language of msgs.
+func (msgs Messages) BrowserClose() string {
+	return Catalog.Format(msgs.locale, "browserClose", nil)
+}
+
+// BrowserConnecting says "Connecting through this Host…"
+// in the language the app shows.
+func BrowserConnecting() string { return In(i18n.Locale()).BrowserConnecting() }
+
+// BrowserConnecting says "Connecting through this Host…"
+// in the language of msgs.
+func (msgs Messages) BrowserConnecting() string {
+	return Catalog.Format(msgs.locale, "browserConnecting", nil)
+}
+
+// BrowserConnectingBody says "The browser uses a dedicated connection to this Host."
+// in the language the app shows.
+func BrowserConnectingBody() string { return In(i18n.Locale()).BrowserConnectingBody() }
+
+// BrowserConnectingBody says "The browser uses a dedicated connection to this Host."
+// in the language of msgs.
+func (msgs Messages) BrowserConnectingBody() string {
+	return Catalog.Format(msgs.locale, "browserConnectingBody", nil)
+}
+
+// BrowserDisconnected says "Browser connection lost"
+// in the language the app shows.
+func BrowserDisconnected() string { return In(i18n.Locale()).BrowserDisconnected() }
+
+// BrowserDisconnected says "Browser connection lost"
+// in the language of msgs.
+func (msgs Messages) BrowserDisconnected() string {
+	return Catalog.Format(msgs.locale, "browserDisconnected", nil)
+}
+
+// BrowserDisconnectedBody says "The dedicated tunnel is closed. Browsing stopped; Retry opens a new tunnel."
+// in the language the app shows.
+func BrowserDisconnectedBody() string { return In(i18n.Locale()).BrowserDisconnectedBody() }
+
+// BrowserDisconnectedBody says "The dedicated tunnel is closed. Browsing stopped; Retry opens a new tunnel."
+// in the language of msgs.
+func (msgs Messages) BrowserDisconnectedBody() string {
+	return Catalog.Format(msgs.locale, "browserDisconnectedBody", nil)
+}
+
+// BrowserConnectFailed says "Could not connect through this Host"
+// in the language the app shows.
+func BrowserConnectFailed() string { return In(i18n.Locale()).BrowserConnectFailed() }
+
+// BrowserConnectFailed says "Could not connect through this Host"
+// in the language of msgs.
+func (msgs Messages) BrowserConnectFailed() string {
+	return Catalog.Format(msgs.locale, "browserConnectFailed", nil)
+}
+
+// BrowserConnectFailedBody says "The dedicated browser tunnel did not open. Check the Host and try again."
+// in the language the app shows.
+func BrowserConnectFailedBody() string { return In(i18n.Locale()).BrowserConnectFailedBody() }
+
+// BrowserConnectFailedBody says "The dedicated browser tunnel did not open. Check the Host and try again."
+// in the language of msgs.
+func (msgs Messages) BrowserConnectFailedBody() string {
+	return Catalog.Format(msgs.locale, "browserConnectFailedBody", nil)
+}
+
+// BrowserRetry says "Retry"
+// in the language the app shows.
+func BrowserRetry() string { return In(i18n.Locale()).BrowserRetry() }
+
+// BrowserRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) BrowserRetry() string {
+	return Catalog.Format(msgs.locale, "browserRetry", nil)
+}
+
+// BrowserEmptyTitle says "Browse through this Host"
+// in the language the app shows.
+func BrowserEmptyTitle() string { return In(i18n.Locale()).BrowserEmptyTitle() }
+
+// BrowserEmptyTitle says "Browse through this Host"
+// in the language of msgs.
+func (msgs Messages) BrowserEmptyTitle() string {
+	return Catalog.Format(msgs.locale, "browserEmptyTitle", nil)
+}
+
+// BrowserEmptyBody says "Type an address above. localhost, 127.0.0.1, and [::1] use HTTP; other hosts use HTTPS."
+// in the language the app shows.
+func BrowserEmptyBody() string { return In(i18n.Locale()).BrowserEmptyBody() }
+
+// BrowserEmptyBody says "Type an address above. localhost, 127.0.0.1, and [::1] use HTTP; other hosts use HTTPS."
+// in the language of msgs.
+func (msgs Messages) BrowserEmptyBody() string {
+	return Catalog.Format(msgs.locale, "browserEmptyBody", nil)
+}
+
+// BrowserInvalidAddress says "Enter a valid web address."
+// in the language the app shows.
+func BrowserInvalidAddress() string { return In(i18n.Locale()).BrowserInvalidAddress() }
+
+// BrowserInvalidAddress says "Enter a valid web address."
+// in the language of msgs.
+func (msgs Messages) BrowserInvalidAddress() string {
+	return Catalog.Format(msgs.locale, "browserInvalidAddress", nil)
+}
+
+// BrowserInvalidScheme says "Only HTTP and HTTPS pages can open here."
+// in the language the app shows.
+func BrowserInvalidScheme() string { return In(i18n.Locale()).BrowserInvalidScheme() }
+
+// BrowserInvalidScheme says "Only HTTP and HTTPS pages can open here."
+// in the language of msgs.
+func (msgs Messages) BrowserInvalidScheme() string {
+	return Catalog.Format(msgs.locale, "browserInvalidScheme", nil)
+}
+
+// BrowserCredentials says "Enter an address without a username or password."
+// in the language the app shows.
+func BrowserCredentials() string { return In(i18n.Locale()).BrowserCredentials() }
+
+// BrowserCredentials says "Enter an address without a username or password."
+// in the language of msgs.
+func (msgs Messages) BrowserCredentials() string {
+	return Catalog.Format(msgs.locale, "browserCredentials", nil)
+}
+
+// BrowserNotConnected says "Reconnect to this Host before opening a page."
+// in the language the app shows.
+func BrowserNotConnected() string { return In(i18n.Locale()).BrowserNotConnected() }
+
+// BrowserNotConnected says "Reconnect to this Host before opening a page."
+// in the language of msgs.
+func (msgs Messages) BrowserNotConnected() string {
+	return Catalog.Format(msgs.locale, "browserNotConnected", nil)
+}
+
+// BrowserTabLimit says "Close a tab before opening another."
+// in the language the app shows.
+func BrowserTabLimit() string { return In(i18n.Locale()).BrowserTabLimit() }
+
+// BrowserTabLimit says "Close a tab before opening another."
+// in the language of msgs.
+func (msgs Messages) BrowserTabLimit() string {
+	return Catalog.Format(msgs.locale, "browserTabLimit", nil)
+}
+
+// BrowserPageFailed says "The page could not load."
+// in the language the app shows.
+func BrowserPageFailed() string { return In(i18n.Locale()).BrowserPageFailed() }
+
+// BrowserPageFailed says "The page could not load."
+// in the language of msgs.
+func (msgs Messages) BrowserPageFailed() string {
+	return Catalog.Format(msgs.locale, "browserPageFailed", nil)
+}
+
+// BrowserOpenFailed says "The browser could not start."
+// in the language the app shows.
+func BrowserOpenFailed() string { return In(i18n.Locale()).BrowserOpenFailed() }
+
+// BrowserOpenFailed says "The browser could not start."
+// in the language of msgs.
+func (msgs Messages) BrowserOpenFailed() string {
+	return Catalog.Format(msgs.locale, "browserOpenFailed", nil)
+}

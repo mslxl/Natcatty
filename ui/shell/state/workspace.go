@@ -677,6 +677,20 @@ func (s *State) DetachedTabExists(id model.TabID) bool {
 	return s.detachedTabByID(id) != nil
 }
 
+// DetachedTabForSession returns the detached Tab that holds sessionID. The
+// browser opens its native page in the window that owns the Session, so a
+// detached Pane must find its own window rather than the main one.
+func (s *State) DetachedTabForSession(id model.SessionID) (model.TabID, bool) {
+	for _, tab := range s.detached {
+		for _, pane := range tab.panes {
+			if pane.session != nil && pane.session.ID() == id {
+				return tab.ID, true
+			}
+		}
+	}
+	return "", false
+}
+
 // FocusDetachedPaneID moves focus inside a detached Tab.
 func (s *State) FocusDetachedPaneID(tabID model.TabID, paneID model.PaneID) bool {
 	tab := s.detachedTabByID(tabID)

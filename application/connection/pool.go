@@ -184,7 +184,7 @@ func endpointFor(req Request) endpointConfig {
 		agentForwarding:   req.AgentForwarding,
 		forwardingAgent:   req.ForwardingAgentFingerprint,
 		singleChannel:     req.SingleChannel,
-		noReuse:           req.SingleChannel || req.X11Forwarding,
+		noReuse:           req.SingleChannel || req.X11Forwarding || req.Dedicated,
 		keepalive:         resolved,
 		configFingerprint: req.ConfigFingerprint,
 	}
