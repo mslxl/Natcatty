@@ -90,6 +90,7 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			s.Refresh()
 			c.Invalidate()
 		}
+		tabsMenu(c, s, m)
 		ui.Column(c).Grow(1)
 		if state.Status == appsysmanager.StatusLive && !state.At.IsZero() {
 			age := s.now().Sub(state.At)
@@ -113,6 +114,31 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	}
 }
 
+// tabsMenu exposes the persisted tab layout: show or hide a tab, and move the
+// active tab in the strip. Every change is saved by the preferences group, so
+// it survives a restart.
+func tabsMenu(c *ui.Context, s *State, m locales.Messages) {
+	ui.MenuButton(c, m.SysManagerTabsLayout(), func(menu *ui.Menu) {
+		for _, tab := range s.AllTabs() {
+			if menu.Item(tabLabel(m, tab)).
+				Checked(s.TabVisible(tab)).
+				Disabled(tab == appsysmanager.TabOverview).
+				Chosen() {
+				_ = s.SetTabVisible(tab, !s.TabVisible(tab))
+			}
+		}
+		menu.Separator()
+		index := s.TabIndex()
+		if menu.Item(m.SysManagerMoveTabLeft()).Disabled(index <= 0).Chosen() {
+			s.MoveTab(-1)
+		}
+		if menu.Item(m.SysManagerMoveTabRight()).
+			Disabled(index >= len(s.Tabs())-1).Chosen() {
+			s.MoveTab(1)
+		}
+	}).Key("sysmanager-tabs-layout")
+}
+
 func hostOptions(s *State) ([]string, map[string]string) {
 	labels := make([]string, 0, len(s.Hosts()))
 	byLabel := make(map[string]string, len(s.Hosts()))
@@ -133,17 +159,36 @@ func hostOptions(s *State) ([]string, map[string]string) {
 }
 
 func tabs(c *ui.Context, s *State, m locales.Messages) {
+	visible := s.Tabs()
+	labels := make([]string, 0, len(visible))
+	for _, tab := range visible {
+		labels = append(labels, tabLabel(m, tab))
+	}
 	index := s.TabIndex()
 	chosen := index
-	ui.Tabs(c, &chosen,
-		m.SysManagerTabOverview(),
-		m.SysManagerTabProcesses(),
-		m.SysManagerTabPorts(),
-		m.SysManagerTabServices(),
-	).FillWidth()
-	if chosen != index && chosen >= 0 && chosen < len(appsysmanager.Tabs) {
-		s.SetTab(appsysmanager.Tabs[chosen])
+	ui.Tabs(c, &chosen, labels...).FillWidth()
+	if chosen != index && chosen >= 0 && chosen < len(visible) {
+		s.SetTab(visible[chosen])
 		c.Invalidate()
+	}
+}
+
+func tabLabel(m locales.Messages, tab appsysmanager.Tab) string {
+	switch tab {
+	case appsysmanager.TabProcesses:
+		return m.SysManagerTabProcesses()
+	case appsysmanager.TabPorts:
+		return m.SysManagerTabPorts()
+	case appsysmanager.TabServices:
+		return m.SysManagerTabServices()
+	case appsysmanager.TabTmux:
+		return m.SysManagerTabTmux()
+	case appsysmanager.TabDocker:
+		return m.SysManagerTabDocker()
+	case appsysmanager.TabGPU:
+		return m.SysManagerTabGPU()
+	default:
+		return m.SysManagerTabOverview()
 	}
 }
 
@@ -198,7 +243,440 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 		serviceTable(c, s, rows, m, t)
 		serviceActions(c, s, m, t)
+	case appsysmanager.TabTmux:
+		if state.Status != appsysmanager.StatusLive {
+			statusPanel(c, s, state, m, t)
+			return
+		}
+		tmuxContent(c, s, state, m, t)
+	case appsysmanager.TabDocker:
+		if state.Status != appsysmanager.StatusLive {
+			statusPanel(c, s, state, m, t)
+			return
+		}
+		dockerContent(c, s, state, m, t)
+	case appsysmanager.TabGPU:
+		gpuContent(c, s, state, m, t)
 	}
+}
+
+func tmuxContent(c *ui.Context, s *State, state appsysmanager.TabState, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Children(func() {
+		name := s.TmuxName()
+		ui.TextInput(c, &name).Placeholder(m.SysManagerNewSession()).
+			Grow(1).MinWidth(120).Label(m.SysManagerNewSession())
+		if name != s.TmuxName() {
+			s.SetTmuxName(name)
+		}
+		create := ui.Button(c, m.SysManagerCreate()).Key("sysmanager-tmux-create").
+			Disabled(s.ActionBusy() || strings.TrimSpace(name) == "")
+		if create.Clicked() {
+			_ = s.CreateSession()
+			c.Invalidate()
+		}
+	})
+	toolbar(c, s, m, t, m.SysManagerSearchSessions(),
+		m.SysManagerSessionsCount(len(s.DisplaySessions())))
+	rows := s.DisplaySessions()
+	if len(rows) == 0 {
+		emptyState(c, emptyText(len(state.Sessions), m.SysManagerNoSessions(),
+			m.SysManagerNoMatches()), t)
+		return
+	}
+	sessionTable(c, s, rows, m, t)
+	sessionActions(c, s, m, t)
+}
+
+func sessionTable(c *ui.Context, s *State, rows []appsysmanager.TmuxSession,
+	m locales.Messages, t *ui.Theme) {
+	columns := []ui.TableColumn{
+		{Title: m.SysManagerSession(), ID: "session", MinWidth: 120},
+		{Title: m.SysManagerWindows(), ID: "windows", Width: 100, MinWidth: 88, Align: ui.End},
+		{Title: m.SysManagerAttached(), ID: "attached", Width: 96, MinWidth: 80},
+		{Title: m.SysManagerCreated(), ID: "created", MinWidth: 130},
+	}
+	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		if row < 0 || row >= len(rows) {
+			return
+		}
+		session := rows[row]
+		switch col {
+		case 0:
+			ui.Text(c, session.Name).FontSize(12).SingleLine()
+		case 1:
+			ui.Text(c, strconv.Itoa(session.Windows)).FontSize(12)
+		case 2:
+			attached := m.SysManagerUnknown()
+			if session.Attached {
+				attached = m.SysManagerYes()
+			}
+			text := ui.Text(c, attached).FontSize(12)
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		case 3:
+			text := ui.Text(c, sessionCreatedText(session.Created)).
+				FontSize(12).SingleLine()
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		}
+	}).Grow(1).FillWidth()
+}
+
+func sessionCreatedText(created int64) string {
+	if created <= 0 {
+		return "—"
+	}
+	return time.Unix(created, 0).UTC().Format("2006-01-02 15:04")
+}
+
+func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	session, ok := s.SelectedSession()
+	if !ok {
+		ui.Text(c, m.SysManagerSessionHint()).FontSize(11).TextColor(t.TextMuted)
+		return
+	}
+	ui.Row(c).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, m.SysManagerSelectedSession(session.Name, session.Windows)).
+			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+		if ui.Button(c, m.SysManagerAttach()).Key("sysmanager-tmux-attach").Clicked() {
+			_ = s.AttachSession(session.Name)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SysManagerKill()).Key("sysmanager-tmux-kill").Clicked() {
+			request(s, s.RequestTmuxKill(session.Name))
+			c.Invalidate()
+		}
+	})
+}
+
+func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	view := s.DockerView()
+	chosen := view
+	ui.Row(c).FillWidth().Children(func() {
+		ui.Segmented(c, &chosen, m.SysManagerContainers(), m.SysManagerImages()).
+			Label(m.SysManagerDockerView())
+	})
+	if chosen != view {
+		s.SetDockerView(chosen)
+		c.Invalidate()
+		view = chosen
+	}
+	if view == 1 {
+		dockerImages(c, s, state, m, t)
+		return
+	}
+	dockerContainers(c, s, state, m, t)
+}
+
+func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	toolbar(c, s, m, t, m.SysManagerSearchContainers(),
+		m.SysManagerContainersCount(len(s.DisplayContainers())))
+	rows := s.DisplayContainers()
+	if len(rows) == 0 {
+		emptyState(c, emptyText(len(state.Containers), m.SysManagerNoContainers(),
+			m.SysManagerNoMatches()), t)
+		return
+	}
+	columns := []ui.TableColumn{
+		{Title: m.SysManagerContainer(), ID: "container", MinWidth: 90},
+		{Title: m.SysManagerImage(), ID: "image", MinWidth: 90},
+		{Title: m.SysManagerState(), ID: "state", Width: 68, MinWidth: 58},
+		{Title: m.SysManagerStatus(), ID: "status", MinWidth: 100},
+		{Title: m.SysManagerPorts(), ID: "ports", MinWidth: 70},
+	}
+	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		if row < 0 || row >= len(rows) {
+			return
+		}
+		container := rows[row]
+		switch col {
+		case 0:
+			ui.Text(c, containerDisplayName(container)).FontSize(12).SingleLine()
+		case 1:
+			ui.Text(c, container.Image).FontSize(12).SingleLine()
+		case 2:
+			text := ui.Text(c, container.State).FontSize(12).SingleLine()
+			if s.selected != row {
+				switch strings.ToLower(container.State) {
+				case "running":
+					color := t.Text
+					text.TextColor(color)
+				case "exited", "dead":
+					text.TextColor(t.TextMuted)
+				}
+			}
+		case 3:
+			text := ui.Text(c, container.Status).FontSize(12).SingleLine()
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		case 4:
+			ui.Text(c, blank(container.Ports, m)).FontSize(12).SingleLine()
+		}
+	}).Grow(1).FillWidth()
+	dockerContainerActions(c, s, m, t)
+}
+
+func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	container, ok := s.SelectedContainer()
+	if !ok {
+		ui.Text(c, m.SysManagerContainerHint()).FontSize(11).TextColor(t.TextMuted)
+		return
+	}
+	running := strings.EqualFold(container.State, "running")
+	ui.Row(c).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, m.SysManagerSelectedContainer(containerDisplayName(container),
+			container.Image)).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+		if ui.Button(c, m.SysManagerStart()).Key("sysmanager-docker-start").
+			Disabled(s.ActionBusy() || running).Clicked() {
+			request(s, s.RequestDockerAction(container, appsysmanager.DockerStart))
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SysManagerStop()).Key("sysmanager-docker-stop").
+			Disabled(s.ActionBusy() || !running).Clicked() {
+			request(s, s.RequestDockerAction(container, appsysmanager.DockerStop))
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SysManagerRemove()).Key("sysmanager-docker-remove").
+			Disabled(s.ActionBusy()).Clicked() {
+			request(s, s.RequestDockerAction(container, appsysmanager.DockerRemove))
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SysManagerInspect()).Key("sysmanager-docker-inspect").
+			Clicked() {
+			request(s, s.InspectContainer(container))
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SysManagerLogs()).Key("sysmanager-docker-logs").
+			Clicked() {
+			request(s, s.ContainerLogs(container))
+			c.Invalidate()
+		}
+	})
+	documentPanel(c, s, m, t)
+}
+
+func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	toolbar(c, s, m, t, m.SysManagerSearchImages(),
+		m.SysManagerImagesCount(len(s.DisplayImages())))
+	rows := s.DisplayImages()
+	if len(rows) == 0 {
+		emptyState(c, emptyText(len(state.Images), m.SysManagerNoImages(),
+			m.SysManagerNoMatches()), t)
+		return
+	}
+	columns := []ui.TableColumn{
+		{Title: m.SysManagerImage(), ID: "image", MinWidth: 120},
+		{Title: m.SysManagerSize(), ID: "size", Width: 80, MinWidth: 64, Align: ui.End},
+		{Title: m.SysManagerCreated(), ID: "created", MinWidth: 120},
+		{Title: m.SysManagerID(), ID: "id", MinWidth: 80},
+	}
+	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		if row < 0 || row >= len(rows) {
+			return
+		}
+		image := rows[row]
+		switch col {
+		case 0:
+			ui.Text(c, image.Name()).FontSize(12).SingleLine()
+		case 1:
+			ui.Text(c, blank(image.Size, m)).FontSize(12)
+		case 2:
+			text := ui.Text(c, imageCreatedText(image.CreatedAt, m)).
+				FontSize(12).SingleLine()
+			if s.selected != row {
+				text.TextColor(t.TextMuted)
+			}
+		case 3:
+			ui.Text(c, shortID(image.ID)).FontSize(12).SingleLine()
+		}
+	}).Grow(1).FillWidth()
+	if image, ok := s.SelectedImage(); ok {
+		ui.Text(c, m.SysManagerSelectedImage(image.Name(), blank(image.Size, m))).
+			FontSize(11).TextColor(t.TextMuted).SingleLine()
+	} else {
+		ui.Text(c, m.SysManagerImageHint()).FontSize(11).TextColor(t.TextMuted)
+	}
+}
+
+// imageCreatedText trims Docker's Go-style zone suffix ("+0000 UTC") from an
+// image creation stamp: the table holds the wall clock the daemon reports,
+// and the zone it prints is always the daemon's own.
+func imageCreatedText(created string, m locales.Messages) string {
+	trimmed := strings.TrimSpace(created)
+	if trimmed == "" {
+		return m.SysManagerUnknown()
+	}
+	for _, suffix := range []string{" +0000 UTC", " +0000", " UTC"} {
+		if shortened, ok := strings.CutSuffix(trimmed, suffix); ok {
+			trimmed = shortened
+			break
+		}
+	}
+	return trimmed
+}
+
+func shortID(id string) string {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(id), "sha256:")
+	if len(trimmed) > 12 {
+		return trimmed[:12]
+	}
+	return trimmed
+}
+
+func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	document, open := s.Document()
+	if !open {
+		return
+	}
+	title := m.SysManagerDocumentInspect(shortID(document.ContainerID))
+	if document.Kind == appsysmanager.DocumentLogs {
+		title = m.SysManagerDocumentLogs(shortID(document.ContainerID))
+	}
+	ui.Column(c).FillWidth().Height(150).Padding(8).Gap(4).
+		Background(t.Surface).Radius(t.Radius).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).Children(func() {
+			ui.Text(c, title).FontSize(12).Bold().SingleLine()
+			ui.Column(c).Grow(1)
+			if ui.Button(c, m.SysManagerClose()).Key("sysmanager-document-close").Clicked() {
+				s.CloseDocument()
+				c.Invalidate()
+			}
+		})
+		switch {
+		case s.DocumentBusy():
+			ui.Text(c, m.SysManagerDocumentLoading()).FontSize(11).TextColor(t.TextMuted)
+		case s.DocumentError() != nil:
+			ui.Text(c, m.SysManagerDocumentFailed()).FontSize(11).TextColor(t.Danger)
+			ui.Text(c, s.DocumentError().Error()).FontSize(11).TextColor(t.TextMuted).SingleLine()
+		default:
+			if document.Truncated {
+				ui.Text(c, m.SysManagerDocumentTruncated()).
+					FontSize(10).TextColor(t.TextMuted)
+			}
+			ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+				text := document.Text
+				if strings.TrimSpace(text) == "" {
+					text = m.SysManagerUnknown()
+				}
+				ui.Text(c, text).FontSize(11).Selectable()
+			})
+		}
+	})
+}
+
+func gpuContent(c *ui.Context, s *State, state appsysmanager.TabState,
+	m locales.Messages, t *ui.Theme) {
+	if state.Status != appsysmanager.StatusLive {
+		statusPanel(c, s, state, m, t)
+		return
+	}
+	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		if len(state.GPU.Devices) == 0 {
+			emptyState(c, m.SysManagerGPUEmpty(), t)
+			return
+		}
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			ui.Text(c, m.SysManagerGPUCount(len(state.GPU.Devices))).
+				FontSize(12).TextColor(t.TextMuted)
+			if state.GPU.DriverVersion != "" {
+				ui.Text(c, m.SysManagerGPUDriver()+" "+state.GPU.DriverVersion).
+					FontSize(12).TextColor(t.TextMuted).NoWrap()
+			}
+			ui.Column(c).Grow(1)
+		})
+		for _, device := range state.GPU.Devices {
+			gpuCard(c, device, m, t)
+		}
+	})
+}
+
+func gpuCard(c *ui.Context, device appsysmanager.GPUDevice, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Padding(10).Gap(4).
+		Background(t.Surface).Radius(t.Radius).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			ui.Text(c, m.SysManagerGPUDevice(device.Index, device.Name)).
+				FontSize(13).Bold().Grow(1).SingleLine()
+			ui.Text(c, device.Vendor).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		})
+		ui.Row(c).FillWidth().Gap(12).Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Row(c).FillWidth().Children(func() {
+					ui.Text(c, m.SysManagerGPUUtilization()).
+						FontSize(11).TextColor(t.TextMuted)
+					ui.Column(c).Grow(1)
+					ui.Text(c, percentText(device.UtilizationPercent)).FontSize(11)
+				})
+				if ratio := ratio(device.UtilizationPercent, 100); ratio >= 0 {
+					ui.Progress(c, ratio).Grow(1)
+				}
+			})
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Row(c).FillWidth().Children(func() {
+					ui.Text(c, m.SysManagerGPUMemory()).
+						FontSize(11).TextColor(t.TextMuted)
+					ui.Column(c).Grow(1)
+					ui.Text(c, gpuMemoryText(device, m)).FontSize(11).NoWrap()
+				})
+				if ratio := ratio(device.MemoryUsedMB, device.MemoryTotalMB); ratio >= 0 {
+					ui.Progress(c, ratio).Grow(1)
+				}
+			})
+		})
+		ui.Row(c).FillWidth().Gap(14).Children(func() {
+			gpuValue(c, m.SysManagerGPUTemperature(), temperatureText(device.TemperatureC), t)
+			gpuValue(c, m.SysManagerGPUPower(), gpuPowerText(device), t)
+			gpuValue(c, m.SysManagerGPUFan(), gpuFanText(device), t)
+			if device.DriverVersion != "" {
+				gpuValue(c, m.SysManagerGPUDriver(), device.DriverVersion, t)
+			}
+		})
+	})
+}
+
+func gpuValue(c *ui.Context, label, value string, t *ui.Theme) {
+	ui.Row(c).Gap(4).Children(func() {
+		ui.Text(c, label).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		ui.Text(c, value).FontSize(11).NoWrap()
+	})
+}
+
+func gpuMemoryText(device appsysmanager.GPUDevice, m locales.Messages) string {
+	if math.IsNaN(device.MemoryUsedMB) || math.IsNaN(device.MemoryTotalMB) ||
+		device.MemoryTotalMB <= 0 {
+		return m.SysManagerUnknown()
+	}
+	return usedText(device.MemoryUsedMB, device.MemoryTotalMB, 1024, m)
+}
+
+func temperatureText(value float64) string {
+	if math.IsNaN(value) {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f °C", value)
+}
+
+func gpuPowerText(device appsysmanager.GPUDevice) string {
+	switch {
+	case math.IsNaN(device.PowerDrawW):
+		return "—"
+	case math.IsNaN(device.PowerLimitW) || device.PowerLimitW <= 0:
+		return fmt.Sprintf("%.0f W", device.PowerDrawW)
+	default:
+		return fmt.Sprintf("%.0f / %.0f W", device.PowerDrawW, device.PowerLimitW)
+	}
+}
+
+func gpuFanText(device appsysmanager.GPUDevice) string {
+	if math.IsNaN(device.FanPercent) {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", device.FanPercent)
 }
 
 func toolbar(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
@@ -211,6 +689,9 @@ func toolbar(c *ui.Context, s *State, m locales.Messages, t *ui.Theme,
 			c.Invalidate()
 		}
 		ui.Text(c, summary).FontSize(11).TextColor(t.TextMuted).NoWrap()
+		// The content's right edge sits under the window edge in a narrow
+		// window; the reserve keeps the last summary character whole.
+		ui.Column(c).Width(12)
 	})
 }
 
@@ -505,9 +986,18 @@ func confirmation(c *ui.Context, s *State, m locales.Messages) {
 }
 
 func confirmationText(pending PendingAction, m locales.Messages) (string, string, string) {
-	if pending.Kind == appsysmanager.ActionServiceAction {
+	switch pending.Kind {
+	case appsysmanager.ActionServiceAction:
 		action := serviceActionText(pending.Action, m)
 		return action, m.SysManagerConfirmService(action, pending.Unit, pending.Command), action
+	case appsysmanager.ActionTmuxKill:
+		return m.SysManagerKill(),
+			m.SysManagerConfirmTmuxKill(pending.Session, pending.Command), m.SysManagerKill()
+	case appsysmanager.ActionDockerStart, appsysmanager.ActionDockerStop,
+		appsysmanager.ActionDockerRemove:
+		action := dockerActionText(pending.DockerAction, m)
+		return action, m.SysManagerConfirmDocker(action, pending.ContainerName,
+			pending.Command), action
 	}
 	signal := pending.Signal
 	title := m.SysManagerTerminate()
@@ -524,6 +1014,19 @@ func confirmationText(pending PendingAction, m locales.Messages) (string, string
 			pending.Protocol, pending.Command), title
 	}
 	return title, m.SysManagerConfirmSignal(signal, pending.PID, pending.Command), title
+}
+
+func dockerActionText(action appsysmanager.DockerAction, m locales.Messages) string {
+	switch action {
+	case appsysmanager.DockerStart:
+		return m.SysManagerStart()
+	case appsysmanager.DockerStop:
+		return m.SysManagerStop()
+	case appsysmanager.DockerRemove:
+		return m.SysManagerRemove()
+	default:
+		return string(action)
+	}
 }
 
 func serviceActionText(action appsysmanager.ServiceAction, m locales.Messages) string {
@@ -584,6 +1087,12 @@ func reasonText(m locales.Messages, reason appsysmanager.Reason) string {
 		return m.SysManagerReasonMissingPorts()
 	case appsysmanager.ReasonMissingSystemctl:
 		return m.SysManagerReasonMissingSystemctl()
+	case appsysmanager.ReasonMissingTmux:
+		return m.SysManagerReasonMissingTmux()
+	case appsysmanager.ReasonMissingDocker:
+		return m.SysManagerReasonMissingDocker()
+	case appsysmanager.ReasonDockerDaemon:
+		return m.SysManagerReasonDockerDaemon()
 	default:
 		return ""
 	}
@@ -603,6 +1112,10 @@ func problemText(m locales.Messages, problem Problem) string {
 		return m.SysManagerProblemActionData()
 	case ProblemInternal:
 		return m.SysManagerProblemInternal()
+	case ProblemAttach:
+		return m.SysManagerProblemAttach()
+	case ProblemDocument:
+		return m.SysManagerDocumentFailed()
 	default:
 		return ""
 	}

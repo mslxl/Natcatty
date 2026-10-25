@@ -28,15 +28,26 @@ const (
 	TabProcesses Tab = "processes"
 	TabPorts     Tab = "ports"
 	TabServices  Tab = "services"
+	TabTmux      Tab = "tmux"
+	TabDocker    Tab = "docker"
+	TabGPU       Tab = "gpu"
 )
 
-// Tabs lists the core tabs in display order.
+// Tabs lists ticket 45's core tabs in display order. Ticket 46 extends the
+// surface with ExtendedTabs; keeping the core list stable lets the core
+// self-test and its callers enumerate exactly what they cover.
 var Tabs = []Tab{TabOverview, TabProcesses, TabPorts, TabServices}
 
+// ExtendedTabs lists every tab in the original's default display order.
+var ExtendedTabs = []Tab{
+	TabOverview, TabProcesses, TabPorts, TabServices, TabTmux, TabDocker, TabGPU,
+}
+
 // DefaultInterval returns the original's refresh cadence for tab: three
-// seconds for overview, processes, and ports, and five for services.
+// seconds for overview, processes, ports, tmux, and GPU, and five for
+// services and the Docker list.
 func DefaultInterval(tab Tab) time.Duration {
-	if tab == TabServices {
+	if tab == TabServices || tab == TabDocker {
 		return 5 * time.Second
 	}
 	return 3 * time.Second
@@ -82,6 +93,9 @@ const (
 	ReasonMissingProcesses Reason = "missing_processes"
 	ReasonMissingPorts     Reason = "missing_ports"
 	ReasonMissingSystemctl Reason = "missing_systemctl"
+	ReasonMissingTmux      Reason = "missing_tmux"
+	ReasonMissingDocker    Reason = "missing_docker"
+	ReasonDockerDaemon     Reason = "docker_daemon"
 )
 
 // Error is a typed application failure. The surface maps Reason to a
@@ -137,6 +151,10 @@ type Capabilities struct {
 	HasNetstat   bool
 	HasLsof      bool
 	HasSystemctl bool
+	HasTmux      bool
+	HasDocker    bool
+	HasNvidiaSmi bool
+	HasNpuSmi    bool
 }
 
 // Available reports whether tab can run for these capabilities, and the
@@ -163,6 +181,24 @@ func (c Capabilities) Available(tab Tab) (bool, Reason) {
 			return true, ReasonNone
 		}
 		return false, ReasonMissingSystemctl
+	case TabTmux:
+		if c.HasTmux {
+			return true, ReasonNone
+		}
+		return false, ReasonMissingTmux
+	case TabDocker:
+		if c.HasDocker {
+			return true, ReasonNone
+		}
+		return false, ReasonMissingDocker
+	case TabGPU:
+		// A Host without a GPU is a normal, live empty state rather than an
+		// unavailable tab; only an operating system this probe cannot read
+		// makes the tab unsupported.
+		if c.OS == "linux" || c.OS == "darwin" {
+			return true, ReasonNone
+		}
+		return false, ReasonOS
 	}
 	return false, ReasonInternal
 }
@@ -220,18 +256,105 @@ type Unit struct {
 	Scope       string
 }
 
+// TmuxSession is one tmux session.
+type TmuxSession struct {
+	Name     string
+	Windows  int
+	Attached bool
+	// Created is the Unix creation timestamp; zero when the reply used the
+	// plain list format, which does not include it.
+	Created int64
+}
+
+// Container is one Docker container from `docker ps -a`.
+type Container struct {
+	ID        string
+	Name      string
+	Image     string
+	State     string
+	Status    string
+	Ports     string
+	CreatedAt string
+}
+
+// Image is one Docker image from `docker images`.
+type Image struct {
+	ID         string
+	Repository string
+	Tag        string
+	Size       string
+	CreatedAt  string
+	Digest     string
+}
+
+// Name is the repository and tag as one display value. A dangling image has
+// no repository, so its id identifies it instead of Docker's "<none>" text.
+func (i Image) Name() string {
+	if i.Repository != "" && i.Repository != "<none>" {
+		if i.Tag != "" && i.Tag != "<none>" {
+			return i.Repository + ":" + i.Tag
+		}
+		return i.Repository
+	}
+	return i.ID
+}
+
+// GPUDevice is one NVIDIA device from nvidia-smi. A metric the driver does
+// not report is NaN, so the surface can render a dash instead of a zero.
+type GPUDevice struct {
+	Vendor             string
+	Index              int
+	UUID               string
+	Name               string
+	UtilizationPercent float64
+	MemoryUsedMB       float64
+	MemoryTotalMB      float64
+	TemperatureC       float64
+	PowerDrawW         float64
+	PowerLimitW        float64
+	FanPercent         float64
+	DriverVersion      string
+}
+
+// GPUInfo is one Host's accelerator inventory. An empty Devices slice is the
+// normal state on a Host without a GPU.
+type GPUInfo struct {
+	Devices       []GPUDevice
+	DriverVersion string
+}
+
+// DocumentKind names a read-only Docker output view.
+type DocumentKind string
+
+const (
+	DocumentInspect DocumentKind = "inspect"
+	DocumentLogs    DocumentKind = "logs"
+)
+
+// DockerDocument is a bounded inspect or log reply for the surface.
+type DockerDocument struct {
+	Kind        DocumentKind
+	ContainerID string
+	Text        string
+	Truncated   bool
+}
+
 // TabState is one tab's latest sample and status.
 type TabState struct {
-	Tab       Tab
-	Status    Status
-	Reason    Reason
-	Detail    string
-	At        time.Time
-	Latency   time.Duration
-	Overview  Overview
-	Processes []Process
-	Ports     []Port
-	Services  []Unit
+	Tab        Tab
+	Status     Status
+	Reason     Reason
+	Detail     string
+	At         time.Time
+	Latency    time.Duration
+	Overview   Overview
+	Processes  []Process
+	Ports      []Port
+	Services   []Unit
+	Sessions   []TmuxSession
+	Containers []Container
+	Images     []Image
+	GPU        GPUInfo
 }
 
 // Snapshot is the service's publication to the surface. Slices and maps are
@@ -266,6 +389,13 @@ type ActionKind string
 const (
 	ActionSignal        ActionKind = "signal"
 	ActionServiceAction ActionKind = "service"
+	ActionTmuxCreate    ActionKind = "tmux_create"
+	ActionTmuxKill      ActionKind = "tmux_kill"
+	ActionDockerStart   ActionKind = "docker_start"
+	ActionDockerStop    ActionKind = "docker_stop"
+	ActionDockerRemove  ActionKind = "docker_remove"
+	ActionDockerInspect ActionKind = "docker_inspect"
+	ActionDockerLogs    ActionKind = "docker_logs"
 )
 
 // ActionResult reports the command that ran and its reply.
@@ -469,6 +599,10 @@ func (s *Service) Snapshot() Snapshot {
 		state.Processes = append([]Process(nil), state.Processes...)
 		state.Ports = append([]Port(nil), state.Ports...)
 		state.Services = append([]Unit(nil), state.Services...)
+		state.Sessions = append([]TmuxSession(nil), state.Sessions...)
+		state.Containers = append([]Container(nil), state.Containers...)
+		state.Images = append([]Image(nil), state.Images...)
+		state.GPU.Devices = append([]GPUDevice(nil), state.GPU.Devices...)
 		state.Overview.LoadAverage = append([]float64(nil), state.Overview.LoadAverage...)
 		snapshot.Tabs[tab] = state
 	}
@@ -623,6 +757,46 @@ func (s *Service) sampleOnce(ctx context.Context, host domainvault.Host, tab Tab
 			state.Latency = latency
 			state.Services = services
 		})
+	case TabTmux:
+		sessions, parseErr := parseTmuxSessions(result.Stdout)
+		if parseErr != nil {
+			return s.fail(string(host.ID), tab, gen, parseErr)
+		}
+		s.update(string(host.ID), tab, gen, func(state *TabState) {
+			state.Status = StatusLive
+			state.Reason = ReasonNone
+			state.Detail = ""
+			state.At = s.now()
+			state.Latency = latency
+			state.Sessions = sessions
+		})
+	case TabDocker:
+		containers, images, parseErr := parseDockerList(result.Stdout)
+		if parseErr != nil {
+			return s.fail(string(host.ID), tab, gen, parseErr)
+		}
+		s.update(string(host.ID), tab, gen, func(state *TabState) {
+			state.Status = StatusLive
+			state.Reason = ReasonNone
+			state.Detail = ""
+			state.At = s.now()
+			state.Latency = latency
+			state.Containers = containers
+			state.Images = images
+		})
+	case TabGPU:
+		info, parseErr := parseGPU(result.Stdout)
+		if parseErr != nil {
+			return s.fail(string(host.ID), tab, gen, parseErr)
+		}
+		s.update(string(host.ID), tab, gen, func(state *TabState) {
+			state.Status = StatusLive
+			state.Reason = ReasonNone
+			state.Detail = ""
+			state.At = s.now()
+			state.Latency = latency
+			state.GPU = info
+		})
 	}
 	return false, nil
 }
@@ -638,7 +812,8 @@ func (s *Service) fail(hostID string, tab Tab, gen uint64, err error) (bool, err
 	case ReasonHostKey, ReasonAuth:
 		status = StatusLogin
 		stop = true
-	case ReasonOS, ReasonMissingProcesses, ReasonMissingPorts, ReasonMissingSystemctl:
+	case ReasonOS, ReasonMissingProcesses, ReasonMissingPorts, ReasonMissingSystemctl,
+		ReasonMissingTmux, ReasonMissingDocker, ReasonDockerDaemon, ReasonPermission:
 		status = StatusUnavailable
 		if reason == ReasonOS {
 			status = StatusUnsupported
@@ -740,6 +915,18 @@ func commandFailure(result ExecResult, fallback string) error {
 		strings.Contains(lower, "operation not permitted"),
 		strings.Contains(lower, "not authorized"):
 		reason = ReasonPermission
+	case strings.Contains(lower, "cannot connect to the docker daemon"),
+		strings.Contains(lower, "is the docker daemon running"),
+		strings.Contains(lower, "error during connect"):
+		reason = ReasonDockerDaemon
+	case strings.Contains(lower, "command not found"),
+		strings.Contains(lower, "no such file or directory"):
+		switch {
+		case strings.Contains(lower, "docker"):
+			reason = ReasonMissingDocker
+		case strings.Contains(lower, "tmux"):
+			reason = ReasonMissingTmux
+		}
 	}
 	return &Error{Reason: reason, Cause: errors.New(detail)}
 }

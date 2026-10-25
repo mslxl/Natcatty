@@ -560,6 +560,15 @@ func run(afterReady func(hostWindow)) error {
 		vaultService,
 		preferenceService,
 		uisysmanager.WithRedrawRequest(invalidate),
+		// tmux attach opens a terminal Tab against the same Host and sends
+		// the attach command once the Session is connected.
+		uisysmanager.WithTerminalOpener(func(host domainvault.Host, command string) error {
+			if shellState == nil {
+				return errors.New("sysmanager: the shell is not ready")
+			}
+			preview := appsession.TransformCompose(command, appsession.ComposeOptions{})
+			return shellState.OpenHostWithStartup(host, state.StartupInput{Chunks: preview.Chunks})
+		}),
 	)
 
 	vaultState = vaultstate.NewState(

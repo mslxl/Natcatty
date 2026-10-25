@@ -33,6 +33,25 @@ type Service interface {
 		action appsysmanager.ServiceAction, scope appsysmanager.Scope) (appsysmanager.ActionResult, error)
 }
 
+// ExtendedService is the ticket-46 action seam. It is separate from Service so
+// the core surface's fakes and self-test stay valid; application/sysmanager's
+// Service implements both.
+type ExtendedService interface {
+	TmuxCreate(ctx context.Context, host domainvault.Host, name string) (appsysmanager.ActionResult, error)
+	TmuxKill(ctx context.Context, host domainvault.Host, name string) (appsysmanager.ActionResult, error)
+	DockerContainerAction(ctx context.Context, host domainvault.Host,
+		id string, action appsysmanager.DockerAction) (appsysmanager.ActionResult, error)
+	DockerInspect(ctx context.Context, host domainvault.Host,
+		id string) (appsysmanager.DockerDocument, error)
+	DockerLogs(ctx context.Context, host domainvault.Host,
+		id string, tail int) (appsysmanager.DockerDocument, error)
+}
+
+// TerminalOpener opens a Session Tab against host and delivers command to it.
+// The app wires it to the shell; opening runs on the UI thread, so it must not
+// block on the network.
+type TerminalOpener func(host domainvault.Host, command string) error
+
 // Hosts is the Vault Host list the surface draws from.
 type Hosts interface {
 	List(context.Context) ([]domainvault.Host, error)
@@ -56,6 +75,8 @@ const (
 	ProblemNoHost     Problem = "no_host"
 	ProblemActionData Problem = "action_data"
 	ProblemInternal   Problem = "internal"
+	ProblemAttach     Problem = "attach"
+	ProblemDocument   Problem = "document"
 )
 
 // Origin identifies where a confirmed signal came from, so the confirmation
@@ -82,16 +103,24 @@ type PendingAction struct {
 	Address  string
 	Port     int
 	Protocol string
+	// Session is the tmux session a create or kill targets.
+	Session string
+	// ContainerID is the Docker target; ContainerName is its display name.
+	ContainerID   string
+	ContainerName string
+	DockerAction  appsysmanager.DockerAction
 }
 
 // State is the System manager surface's window-scoped state. It is mutated on
 // the UI thread; sampler snapshots and action outcomes cross threads under mu.
 type State struct {
-	service Service
-	hosts   Hosts
-	prefs   Preferences
-	redraw  func()
-	now     func() time.Time
+	service  Service
+	extended ExtendedService
+	terminal TerminalOpener
+	hosts    Hosts
+	prefs    Preferences
+	redraw   func()
+	now      func() time.Time
 
 	hostItems []domainvault.Host
 	hostByID  map[string]domainvault.Host
@@ -116,12 +145,25 @@ type State struct {
 	selected int
 	// rows cache the current tab's filtered and sorted view for one frame.
 	// rowKey runs once per row, so it must not rebuild the whole list.
-	processRows []appsysmanager.Process
-	portRows    []appsysmanager.Port
-	serviceRows []appsysmanager.Unit
+	processRows   []appsysmanager.Process
+	portRows      []appsysmanager.Port
+	serviceRows   []appsysmanager.Unit
+	sessionRows   []appsysmanager.TmuxSession
+	containerRows []appsysmanager.Container
+	imageRows     []appsysmanager.Image
+
+	tmuxName     string
+	dockerView   int
+	document     appsysmanager.DockerDocument
+	documentOn   bool
+	documentBusy bool
+	documentErr  error
+	documentGen  uint64
+	docCancel    context.CancelFunc
 
 	mu          sync.Mutex
 	outcomes    []actionOutcome
+	docOutcomes []documentOutcome
 	unsubscribe func()
 	closed      bool
 }
@@ -129,6 +171,12 @@ type State struct {
 type actionOutcome struct {
 	result appsysmanager.ActionResult
 	err    error
+}
+
+type documentOutcome struct {
+	gen      uint64
+	document appsysmanager.DockerDocument
+	err      error
 }
 
 // Option customizes a State.
@@ -143,6 +191,11 @@ func WithClock(now func() time.Time) Option {
 			s.now = now
 		}
 	}
+}
+
+// WithTerminalOpener wires tmux attach to the shell's Session opener.
+func WithTerminalOpener(open TerminalOpener) Option {
+	return func(s *State) { s.terminal = open }
 }
 
 // Option customizes a State.
@@ -171,6 +224,9 @@ func NewState(service Service, hosts Hosts, prefs Preferences, opts ...Option) *
 	s.table.Label = s.rowLabel
 	if service != nil {
 		s.unsubscribe = service.Subscribe(func() { s.requestRedraw() })
+		if extended, ok := service.(ExtendedService); ok {
+			s.extended = extended
+		}
 	}
 	return s
 }
@@ -191,6 +247,7 @@ func (s *State) Close() {
 		unsubscribe()
 	}
 	s.CancelPending()
+	s.CloseDocument()
 	if s.service != nil {
 		s.service.Stop()
 	}
@@ -212,6 +269,7 @@ func (s *State) Activate() {
 func (s *State) Deactivate() {
 	s.active = false
 	s.CancelPending()
+	s.CloseDocument()
 	if s.service != nil {
 		s.service.Stop()
 	}
@@ -271,7 +329,21 @@ func (s *State) Flush() {
 	s.mu.Lock()
 	outcomes := s.outcomes
 	s.outcomes = nil
+	docOutcomes := s.docOutcomes
+	s.docOutcomes = nil
 	s.mu.Unlock()
+	for _, outcome := range docOutcomes {
+		if outcome.gen != s.documentGen || !s.documentOn {
+			// A document closed or replaced while its reply was in flight
+			// must not reappear under the next container.
+			continue
+		}
+		s.documentBusy = false
+		s.documentErr = outcome.err
+		if outcome.err == nil {
+			s.document = outcome.document
+		}
+	}
 	for _, outcome := range outcomes {
 		s.actionBusy = false
 		s.actionCancel = nil
@@ -294,6 +366,9 @@ func (s *State) Prepare() {
 	s.processRows = s.prepareProcesses(query)
 	s.portRows = s.preparePorts(query)
 	s.serviceRows = s.prepareServices(query)
+	s.sessionRows = s.prepareSessions(query)
+	s.containerRows = s.prepareContainers(query)
+	s.imageRows = s.prepareImages(query)
 	switch s.tab {
 	case appsysmanager.TabProcesses:
 		if s.selected >= len(s.processRows) {
@@ -305,6 +380,18 @@ func (s *State) Prepare() {
 		}
 	case appsysmanager.TabServices:
 		if s.selected >= len(s.serviceRows) {
+			s.selected = -1
+		}
+	case appsysmanager.TabTmux:
+		if s.selected >= len(s.sessionRows) {
+			s.selected = -1
+		}
+	case appsysmanager.TabDocker:
+		limit := len(s.containerRows)
+		if s.dockerView == 1 {
+			limit = len(s.imageRows)
+		}
+		if s.selected >= limit {
 			s.selected = -1
 		}
 	}
@@ -357,6 +444,7 @@ func (s *State) SetHost(id string) {
 	s.hostID = id
 	s.selected = -1
 	s.problem = ProblemNone
+	s.closeDocument()
 	s.clearFinishedAction()
 	s.startActive()
 	s.requestRedraw()
@@ -365,33 +453,163 @@ func (s *State) SetHost(id string) {
 // Tab returns the active tab.
 func (s *State) Tab() appsysmanager.Tab { return s.tab }
 
-// TabIndex returns the active tab's position in the tab strip.
+// AllTabs returns every known tab in the original display order.
+func (s *State) AllTabs() []appsysmanager.Tab {
+	return append([]appsysmanager.Tab(nil), appsysmanager.ExtendedTabs...)
+}
+
+// Tabs returns the visible tabs in the persisted order.
+func (s *State) Tabs() []appsysmanager.Tab {
+	visible := s.settings.VisibleTabs()
+	tabs := make([]appsysmanager.Tab, 0, len(visible))
+	for _, tab := range visible {
+		tabs = append(tabs, appsysmanager.Tab(tab))
+	}
+	if len(tabs) == 0 {
+		return []appsysmanager.Tab{appsysmanager.TabOverview}
+	}
+	return tabs
+}
+
+// TabVisible reports whether tab is shown in the strip. The overview is
+// always visible.
+func (s *State) TabVisible(tab appsysmanager.Tab) bool {
+	return s.settings.Visible(domainpreferences.SysManagerTab(tab))
+}
+
+// TabIndex returns the active tab's position in the visible strip.
 func (s *State) TabIndex() int {
-	for index, tab := range appsysmanager.Tabs {
-		if tab == s.tab {
+	for index, candidate := range s.Tabs() {
+		if candidate == s.tab {
 			return index
 		}
 	}
 	return 0
 }
 
-// SetTab displays another tab and starts its sampling.
+// SetTab displays another visible tab and starts its sampling.
 func (s *State) SetTab(tab appsysmanager.Tab) {
+	if !s.TabVisible(tab) || tab == s.tab {
+		return
+	}
 	known := false
-	for _, candidate := range appsysmanager.Tabs {
+	for _, candidate := range appsysmanager.ExtendedTabs {
 		if candidate == tab {
 			known = true
 		}
 	}
-	if !known || tab == s.tab {
+	if !known {
 		return
 	}
 	s.tab = tab
 	s.selected = -1
 	s.search = ""
+	s.closeDocument()
+	if s.problem == ProblemAttach || s.problem == ProblemDocument {
+		s.problem = ProblemNone
+	}
 	s.clearFinishedAction()
 	s.startActive()
 	s.requestRedraw()
+}
+
+// SetTabVisible shows or hides a tab and persists the layout. Hiding the
+// active tab moves to the nearest visible one; the overview cannot be hidden.
+func (s *State) SetTabVisible(tab appsysmanager.Tab, visible bool) error {
+	if s.TabVisible(tab) == visible {
+		return nil
+	}
+	next := s.settings.WithTabHidden(domainpreferences.SysManagerTab(tab), !visible)
+	if !s.saveLayout(next) {
+		return errors.New("sysmanager: could not save the tab layout")
+	}
+	s.settings = next
+	if !s.ensureActiveVisible() {
+		s.startActive()
+	}
+	s.requestRedraw()
+	return nil
+}
+
+// MoveTab moves the active tab one place earlier (delta < 0) or later in the
+// persisted order. A move past either edge changes nothing.
+func (s *State) MoveTab(delta int) bool {
+	if delta == 0 {
+		return false
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+	next := s.settings
+	changed := false
+	for range absInt(delta) {
+		moved := next.MoveTab(domainpreferences.SysManagerTab(s.tab), step)
+		if sameTabOrder(moved.Order(), next.Order()) {
+			break
+		}
+		next = moved
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	if !s.saveLayout(next) {
+		return false
+	}
+	s.settings = next
+	s.requestRedraw()
+	return true
+}
+
+func (s *State) saveLayout(next domainpreferences.SysManager) bool {
+	if s.prefs == nil {
+		return true
+	}
+	if err := s.prefs.Update(func(settings *domainpreferences.Settings) {
+		settings.SysManager = next
+	}); err != nil {
+		s.problem = ProblemSave
+		s.requestRedraw()
+		return false
+	}
+	if s.problem == ProblemSave {
+		s.problem = ProblemNone
+	}
+	return true
+}
+
+// ensureActiveVisible moves the active tab to the first visible tab when it
+// was hidden and reports whether it moved.
+func (s *State) ensureActiveVisible() bool {
+	if s.TabVisible(s.tab) {
+		return false
+	}
+	tabs := s.Tabs()
+	s.tab = tabs[0]
+	s.selected = -1
+	s.search = ""
+	s.closeDocument()
+	return true
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func sameTabOrder(left, right []domainpreferences.SysManagerTab) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // clearFinishedAction drops a completed notice when the user changes tab or
@@ -569,6 +787,266 @@ func (s *State) RequestServiceAction(unit string, action appsysmanager.ServiceAc
 	return nil
 }
 
+// TmuxName returns the new-session name being edited.
+func (s *State) TmuxName() string { return s.tmuxName }
+
+// SetTmuxName replaces the new-session name.
+func (s *State) SetTmuxName(value string) { s.tmuxName = value }
+
+// CreateSession validates the typed name and creates a detached tmux
+// session. Creating is not destructive, so it runs without a confirmation.
+func (s *State) CreateSession() error {
+	if s.actionBusy {
+		return errors.New("sysmanager: an action is already running")
+	}
+	name := strings.TrimSpace(s.tmuxName)
+	command, err := appsysmanager.TmuxCreateCommand(name)
+	if err != nil {
+		s.problem = ProblemActionData
+		s.requestRedraw()
+		return err
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	if s.extended == nil {
+		s.problem = ProblemInternal
+		s.requestRedraw()
+		return errNoExtendedService
+	}
+	s.tmuxName = ""
+	s.startAction(PendingAction{
+		Kind:    appsysmanager.ActionTmuxCreate,
+		Host:    host,
+		Session: name,
+		Command: command,
+	})
+	return nil
+}
+
+// RequestTmuxKill prepares killing a session. Nothing runs until
+// ConfirmPending.
+func (s *State) RequestTmuxKill(session string) error {
+	if s.actionBusy {
+		return errors.New("sysmanager: an action is already running")
+	}
+	command, err := appsysmanager.TmuxKillCommand(session)
+	if err != nil {
+		return err
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	s.pending = &PendingAction{
+		Kind:    appsysmanager.ActionTmuxKill,
+		Host:    host,
+		Session: session,
+		Command: command,
+	}
+	s.actionDone = false
+	s.requestRedraw()
+	return nil
+}
+
+// AttachSession opens a terminal Tab attached to session. The command is
+// validated first; the opener runs on the UI thread and must not block.
+func (s *State) AttachSession(session string) error {
+	command, err := appsysmanager.TmuxAttachCommand(session)
+	if err != nil {
+		return err
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	if s.terminal == nil {
+		s.problem = ProblemAttach
+		s.requestRedraw()
+		return errors.New("sysmanager: no terminal opener")
+	}
+	if err := s.terminal(host, command); err != nil {
+		s.problem = ProblemAttach
+		s.requestRedraw()
+		return err
+	}
+	if s.problem == ProblemAttach {
+		s.problem = ProblemNone
+	}
+	s.requestRedraw()
+	return nil
+}
+
+// RequestDockerAction prepares a container start, stop, or force-remove.
+func (s *State) RequestDockerAction(container appsysmanager.Container,
+	action appsysmanager.DockerAction) error {
+	if s.actionBusy {
+		return errors.New("sysmanager: an action is already running")
+	}
+	command, err := appsysmanager.DockerActionCommand(container.ID, action)
+	if err != nil {
+		return err
+	}
+	kind, ok := dockerActionKind(action)
+	if !ok {
+		return errors.New("sysmanager: unknown container action")
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	s.pending = &PendingAction{
+		Kind:          kind,
+		Host:          host,
+		ContainerID:   container.ID,
+		ContainerName: containerDisplayName(container),
+		DockerAction:  action,
+		Command:       command,
+	}
+	s.actionDone = false
+	s.requestRedraw()
+	return nil
+}
+
+func dockerActionKind(action appsysmanager.DockerAction) (appsysmanager.ActionKind, bool) {
+	switch action {
+	case appsysmanager.DockerStart:
+		return appsysmanager.ActionDockerStart, true
+	case appsysmanager.DockerStop:
+		return appsysmanager.ActionDockerStop, true
+	case appsysmanager.DockerRemove:
+		return appsysmanager.ActionDockerRemove, true
+	default:
+		return "", false
+	}
+}
+
+func containerDisplayName(container appsysmanager.Container) string {
+	if name := strings.TrimSpace(container.Name); name != "" {
+		return name
+	}
+	return container.ID
+}
+
+// DockerView returns 0 for containers and 1 for images.
+func (s *State) DockerView() int { return s.dockerView }
+
+// SetDockerView switches the Docker tab's list. The selection and any open
+// document belong to the previous list, so both are cleared.
+func (s *State) SetDockerView(view int) {
+	if view != 0 && view != 1 {
+		view = 0
+	}
+	if view == s.dockerView {
+		return
+	}
+	s.dockerView = view
+	s.selected = -1
+	s.search = ""
+	s.closeDocument()
+	s.requestRedraw()
+}
+
+// InspectContainer loads a container's inspect output into the document
+// panel. The read runs off the UI thread and is cancelled when the panel
+// closes or the surface deactivates.
+func (s *State) InspectContainer(container appsysmanager.Container) error {
+	return s.loadDockerDocument(appsysmanager.DocumentInspect, container)
+}
+
+// ContainerLogs loads a bounded log tail into the document panel.
+func (s *State) ContainerLogs(container appsysmanager.Container) error {
+	return s.loadDockerDocument(appsysmanager.DocumentLogs, container)
+}
+
+func (s *State) loadDockerDocument(kind appsysmanager.DocumentKind,
+	container appsysmanager.Container) error {
+	if s.extended == nil {
+		s.problem = ProblemInternal
+		s.requestRedraw()
+		return errNoExtendedService
+	}
+	var err error
+	switch kind {
+	case appsysmanager.DocumentInspect:
+		_, err = appsysmanager.DockerInspectCommand(container.ID)
+	default:
+		_, err = appsysmanager.DockerLogsCommand(container.ID, appsysmanager.DefaultDockerLogTail)
+	}
+	if err != nil {
+		return err
+	}
+	host, err := s.actionHost()
+	if err != nil {
+		return err
+	}
+	s.closeDocument()
+	s.documentGen++
+	gen := s.documentGen
+	s.document = appsysmanager.DockerDocument{Kind: kind, ContainerID: container.ID}
+	s.documentOn = true
+	s.documentBusy = true
+	s.documentErr = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	s.docCancel = cancel
+	extended := s.extended
+	id := container.ID
+	go func() {
+		var document appsysmanager.DockerDocument
+		var loadErr error
+		if kind == appsysmanager.DocumentInspect {
+			document, loadErr = extended.DockerInspect(ctx, host, id)
+		} else {
+			document, loadErr = extended.DockerLogs(ctx, host, id,
+				appsysmanager.DefaultDockerLogTail)
+		}
+		cancel()
+		s.mu.Lock()
+		if !s.closed {
+			s.docOutcomes = append(s.docOutcomes, documentOutcome{
+				gen: gen, document: document, err: loadErr,
+			})
+		}
+		s.mu.Unlock()
+		s.requestRedraw()
+	}()
+	s.requestRedraw()
+	return nil
+}
+
+// CloseDocument cancels a read and hides the document panel.
+func (s *State) CloseDocument() {
+	if !s.documentOn && s.docCancel == nil {
+		return
+	}
+	s.closeDocument()
+	s.requestRedraw()
+}
+
+func (s *State) closeDocument() {
+	s.documentGen++
+	if s.docCancel != nil {
+		s.docCancel()
+		s.docCancel = nil
+	}
+	s.documentOn = false
+	s.documentBusy = false
+	s.documentErr = nil
+	s.document = appsysmanager.DockerDocument{}
+}
+
+// Document returns the open document and whether the panel is shown.
+func (s *State) Document() (appsysmanager.DockerDocument, bool) {
+	return s.document, s.documentOn
+}
+
+// DocumentBusy reports whether a document read is in flight.
+func (s *State) DocumentBusy() bool { return s.documentOn && s.documentBusy }
+
+// DocumentError returns a document read's failure.
+func (s *State) DocumentError() error { return s.documentErr }
+
 func (s *State) actionHost() (domainvault.Host, error) {
 	host, ok := s.CurrentHost()
 	if !ok {
@@ -582,6 +1060,11 @@ func (s *State) actionHost() (domainvault.Host, error) {
 	return host, nil
 }
 
+var (
+	errNoExtendedService = errors.New("sysmanager: extended actions are unavailable")
+	errUnknownAction     = errors.New("sysmanager: unknown action")
+)
+
 // ConfirmPending runs the pending command off the UI thread. It is the only
 // path from a confirmation to the remote command.
 func (s *State) ConfirmPending() {
@@ -590,6 +1073,12 @@ func (s *State) ConfirmPending() {
 		return
 	}
 	s.pending = nil
+	s.startAction(*pending)
+}
+
+// startAction runs one validated action off the UI thread and publishes its
+// outcome to Flush. Nothing here touches the UI.
+func (s *State) startAction(pending PendingAction) {
 	s.actionBusy = true
 	s.actionDone = false
 	s.actionErr = nil
@@ -597,19 +1086,44 @@ func (s *State) ConfirmPending() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.actionCancel = cancel
 	service := s.service
+	extended := s.extended
 	go func() {
 		var result appsysmanager.ActionResult
 		var err error
 		switch {
-		case service == nil:
-			err = errors.New("sysmanager: no service")
 		case pending.Kind == appsysmanager.ActionSignal:
-			result, err = service.Signal(ctx, pending.Host, pending.PID, pending.Signal)
+			if service == nil {
+				err = errors.New("sysmanager: no service")
+			} else {
+				result, err = service.Signal(ctx, pending.Host, pending.PID, pending.Signal)
+			}
 		case pending.Kind == appsysmanager.ActionServiceAction:
-			result, err = service.ServiceAction(ctx, pending.Host, pending.Unit,
-				pending.Action, pending.Scope)
+			if service == nil {
+				err = errors.New("sysmanager: no service")
+			} else {
+				result, err = service.ServiceAction(ctx, pending.Host, pending.Unit,
+					pending.Action, pending.Scope)
+			}
+		case pending.Kind == appsysmanager.ActionTmuxCreate,
+			pending.Kind == appsysmanager.ActionTmuxKill,
+			pending.Kind == appsysmanager.ActionDockerStart,
+			pending.Kind == appsysmanager.ActionDockerStop,
+			pending.Kind == appsysmanager.ActionDockerRemove:
+			if extended == nil {
+				err = errNoExtendedService
+				break
+			}
+			switch pending.Kind {
+			case appsysmanager.ActionTmuxCreate:
+				result, err = extended.TmuxCreate(ctx, pending.Host, pending.Session)
+			case appsysmanager.ActionTmuxKill:
+				result, err = extended.TmuxKill(ctx, pending.Host, pending.Session)
+			default:
+				result, err = extended.DockerContainerAction(ctx, pending.Host,
+					pending.ContainerID, pending.DockerAction)
+			}
 		default:
-			err = errors.New("sysmanager: unknown action")
+			err = errUnknownAction
 		}
 		cancel()
 		s.mu.Lock()
@@ -819,6 +1333,107 @@ func (s *State) SelectedService() (appsysmanager.Unit, bool) {
 	return s.serviceRows[s.selected], true
 }
 
+// DisplaySessions returns the active Host's tmux sessions after search.
+func (s *State) DisplaySessions() []appsysmanager.TmuxSession { return s.sessionRows }
+
+func (s *State) prepareSessions(query string) []appsysmanager.TmuxSession {
+	state := s.TabState(appsysmanager.TabTmux)
+	rows := make([]appsysmanager.TmuxSession, 0, len(state.Sessions))
+	for _, session := range state.Sessions {
+		if query != "" && !strings.Contains(strings.ToLower(session.Name), query) {
+			continue
+		}
+		rows = append(rows, session)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+	})
+	return rows
+}
+
+// DisplayContainers returns the Docker containers after search.
+func (s *State) DisplayContainers() []appsysmanager.Container { return s.containerRows }
+
+func (s *State) prepareContainers(query string) []appsysmanager.Container {
+	state := s.TabState(appsysmanager.TabDocker)
+	rows := make([]appsysmanager.Container, 0, len(state.Containers))
+	for _, container := range state.Containers {
+		if query != "" {
+			fields := []string{container.ID, container.Name, container.Image,
+				container.State, container.Status, container.Ports}
+			matched := false
+			for _, field := range fields {
+				if strings.Contains(strings.ToLower(field), query) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		rows = append(rows, container)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return strings.ToLower(containerDisplayName(rows[i])) <
+			strings.ToLower(containerDisplayName(rows[j]))
+	})
+	return rows
+}
+
+// DisplayImages returns the Docker images after search.
+func (s *State) DisplayImages() []appsysmanager.Image { return s.imageRows }
+
+func (s *State) prepareImages(query string) []appsysmanager.Image {
+	state := s.TabState(appsysmanager.TabDocker)
+	rows := make([]appsysmanager.Image, 0, len(state.Images))
+	for _, image := range state.Images {
+		if query != "" {
+			fields := []string{image.ID, image.Repository, image.Tag,
+				image.Name(), image.Size}
+			matched := false
+			for _, field := range fields {
+				if strings.Contains(strings.ToLower(field), query) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		rows = append(rows, image)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return strings.ToLower(rows[i].Name()) < strings.ToLower(rows[j].Name())
+	})
+	return rows
+}
+
+// SelectedSession returns the tmux session the table has chosen.
+func (s *State) SelectedSession() (appsysmanager.TmuxSession, bool) {
+	if s.selected < 0 || s.selected >= len(s.sessionRows) {
+		return appsysmanager.TmuxSession{}, false
+	}
+	return s.sessionRows[s.selected], true
+}
+
+// SelectedContainer returns the container the table has chosen.
+func (s *State) SelectedContainer() (appsysmanager.Container, bool) {
+	if s.dockerView != 0 || s.selected < 0 || s.selected >= len(s.containerRows) {
+		return appsysmanager.Container{}, false
+	}
+	return s.containerRows[s.selected], true
+}
+
+// SelectedImage returns the image the table has chosen.
+func (s *State) SelectedImage() (appsysmanager.Image, bool) {
+	if s.dockerView != 1 || s.selected < 0 || s.selected >= len(s.imageRows) {
+		return appsysmanager.Image{}, false
+	}
+	return s.imageRows[s.selected], true
+}
+
 func (s *State) rowKey(row int) any {
 	switch s.tab {
 	case appsysmanager.TabProcesses:
@@ -834,6 +1449,18 @@ func (s *State) rowKey(row int) any {
 	case appsysmanager.TabServices:
 		if row >= 0 && row < len(s.serviceRows) {
 			return "u:" + s.serviceRows[row].Scope + ":" + s.serviceRows[row].Name
+		}
+	case appsysmanager.TabTmux:
+		if row >= 0 && row < len(s.sessionRows) {
+			return "t:" + s.sessionRows[row].Name
+		}
+	case appsysmanager.TabDocker:
+		if s.dockerView == 1 {
+			if row >= 0 && row < len(s.imageRows) {
+				return "i:" + s.imageRows[row].ID
+			}
+		} else if row >= 0 && row < len(s.containerRows) {
+			return "c:" + s.containerRows[row].ID
 		}
 	}
 	return row
@@ -853,6 +1480,18 @@ func (s *State) rowLabel(row int) string {
 	case appsysmanager.TabServices:
 		if row >= 0 && row < len(s.serviceRows) {
 			return s.serviceRows[row].Name
+		}
+	case appsysmanager.TabTmux:
+		if row >= 0 && row < len(s.sessionRows) {
+			return s.sessionRows[row].Name
+		}
+	case appsysmanager.TabDocker:
+		if s.dockerView == 1 {
+			if row >= 0 && row < len(s.imageRows) {
+				return s.imageRows[row].Name()
+			}
+		} else if row >= 0 && row < len(s.containerRows) {
+			return containerDisplayName(s.containerRows[row])
 		}
 	}
 	return ""
