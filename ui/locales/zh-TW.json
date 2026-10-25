@@ -2476,6 +2476,245 @@
       }
     }
   },
+  "sysManagerTabsLayout": "分頁",
+  "@sysManagerTabsLayout": {
+    "description": "The button opening the tab layout menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLeft": "向左移動分頁",
+  "@sysManagerMoveTabLeft": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabRight": "向右移動分頁",
+  "@sysManagerMoveTabRight": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerTabTmux": "tmux",
+  "@sysManagerTabTmux": {
+    "description": "The tmux sessions tab.",
+    "placeholders": {}
+  },
+  "sysManagerTabDocker": "Docker",
+  "@sysManagerTabDocker": {
+    "description": "The Docker tab.",
+    "placeholders": {}
+  },
+  "sysManagerTabGPU": "GPU",
+  "@sysManagerTabGPU": {
+    "description": "The GPU tab.",
+    "placeholders": {}
+  },
+  "sysManagerReasonMissingTmux": "此 Host 上沒有 tmux。",
+  "sysManagerReasonMissingDocker": "此 Host 上沒有 Docker。",
+  "sysManagerReasonDockerDaemon": "無法連線 Docker 守護程序。",
+  "sysManagerProblemAttach": "無法開啟 tmux 工作階段。",
+  "sysManagerSearchSessions": "搜尋工作階段…",
+  "sysManagerSessionsCount": "{count} 個工作階段",
+  "@sysManagerSessionsCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "sysManagerNoSessions": "沒有 tmux 工作階段。",
+  "sysManagerSession": "工作階段",
+  "sysManagerWindows": "視窗",
+  "sysManagerAttached": "已連線",
+  "sysManagerCreated": "建立時間",
+  "sysManagerSessionHint": "選取工作階段以連線或結束它。",
+  "@sysManagerSessionHint": {
+    "description": "Asks the user to select a tmux session.",
+    "placeholders": {}
+  },
+  "sysManagerSelectedSession": "{name} · {windows, plural, other {# 個視窗}}",
+  "@sysManagerSelectedSession": {
+    "description": "The tmux session chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "work"
+      },
+      "windows": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerAttach": "連線",
+  "sysManagerNewSession": "新工作階段名稱",
+  "@sysManagerNewSession": {
+    "description": "The label of the new tmux session name field.",
+    "placeholders": {}
+  },
+  "sysManagerCreate": "建立",
+  "sysManagerYes": "是",
+  "sysManagerConfirmTmuxKill": "結束 tmux 工作階段 {name}？\n\n命令：{command}",
+  "@sysManagerConfirmTmuxKill": {
+    "description": "",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "work"
+      },
+      "command": {
+        "type": "String",
+        "example": "tmux kill-session -t work"
+      }
+    }
+  },
+  "sysManagerContainers": "容器",
+  "sysManagerImages": "映像",
+  "sysManagerDockerView": "檢視",
+  "sysManagerSearchContainers": "搜尋容器…",
+  "sysManagerSearchImages": "搜尋映像…",
+  "sysManagerContainersCount": "{count} 個容器",
+  "@sysManagerContainersCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerImagesCount": "{count} 個映像",
+  "@sysManagerImagesCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "sysManagerNoContainers": "沒有容器。",
+  "sysManagerNoImages": "沒有映像。",
+  "sysManagerContainer": "容器",
+  "sysManagerImage": "映像",
+  "sysManagerStatus": "執行狀態",
+  "sysManagerPorts": "連接埠",
+  "sysManagerID": "ID",
+  "sysManagerSize": "大小",
+  "sysManagerSelectedContainer": "{name} · {image}",
+  "@sysManagerSelectedContainer": {
+    "description": "The Docker container chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "web"
+      },
+      "image": {
+        "type": "String",
+        "example": "nginx:1.27"
+      }
+    }
+  },
+  "sysManagerSelectedImage": "{name} · {size}",
+  "@sysManagerSelectedImage": {
+    "description": "The Docker image chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx:1.27"
+      },
+      "size": {
+        "type": "String",
+        "example": "192MB"
+      }
+    }
+  },
+  "sysManagerContainerHint": "選取容器以檢視詳細資料、記錄或變更狀態。",
+  "@sysManagerContainerHint": {
+    "description": "Asks the user to select a Docker container.",
+    "placeholders": {}
+  },
+  "sysManagerImageHint": "選取映像以檢視資訊。",
+  "@sysManagerImageHint": {
+    "description": "Asks the user to select a Docker image.",
+    "placeholders": {}
+  },
+  "sysManagerRemove": "移除",
+  "sysManagerInspect": "檢視",
+  "sysManagerLogs": "記錄",
+  "sysManagerClose": "關閉",
+  "sysManagerDocumentInspect": "檢視：{name}",
+  "@sysManagerDocumentInspect": {
+    "description": "The title of the inspect output panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "3f2a1b"
+      }
+    }
+  },
+  "sysManagerDocumentLogs": "記錄：{name}",
+  "@sysManagerDocumentLogs": {
+    "description": "The title of the logs output panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "3f2a1b"
+      }
+    }
+  },
+  "sysManagerDocumentLoading": "正在載入…",
+  "sysManagerDocumentFailed": "無法讀取 Docker 輸出。",
+  "sysManagerDocumentTruncated": "輸出已截斷。",
+  "sysManagerConfirmDocker": "{action}容器 {name}？\n\n命令：{command}",
+  "@sysManagerConfirmDocker": {
+    "description": "",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Stop"
+      },
+      "name": {
+        "type": "String",
+        "example": "web"
+      },
+      "command": {
+        "type": "String",
+        "example": "docker stop 3f2a1b"
+      }
+    }
+  },
+  "sysManagerGPUEmpty": "此 Host 上未偵測到 NVIDIA GPU。",
+  "sysManagerGPUDriver": "驅動程式",
+  "sysManagerGPUDevice": "GPU {index} · {name}",
+  "@sysManagerGPUDevice": {
+    "description": "",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "0"
+      },
+      "name": {
+        "type": "String",
+        "example": "NVIDIA A100"
+      }
+    }
+  },
+  "sysManagerGPUUtilization": "使用率",
+  "sysManagerGPUMemory": "記憶體",
+  "sysManagerGPUTemperature": "溫度",
+  "sysManagerGPUPower": "功耗",
+  "sysManagerGPUFan": "風扇",
+  "sysManagerGPUVendor": "廠商",
+  "sysManagerGPUCount": "{count} 張 GPU",
+  "@sysManagerGPUCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "資源",
   "sysManagerPortOwnerUnknown": "未知程序",

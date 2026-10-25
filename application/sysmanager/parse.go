@@ -1,6 +1,7 @@
 package sysmanager
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -30,6 +31,10 @@ func parseCapabilities(stdout string) Capabilities {
 		HasNetstat:   hasFlag("netstat"),
 		HasLsof:      hasFlag("lsof"),
 		HasSystemctl: hasFlag("systemctl"),
+		HasTmux:      hasFlag("tmux"),
+		HasDocker:    hasFlag("docker"),
+		HasNvidiaSmi: hasFlag("nvidia-smi"),
+		HasNpuSmi:    hasFlag("npu-smi"),
 	}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
@@ -812,5 +817,278 @@ func normalizeLoadState(raw string) string {
 		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return "unknown"
+	}
+}
+
+// --- tmux sessions ---------------------------------------------------------
+
+var (
+	tmuxPlainPattern = regexp.MustCompile(`^([^:]+):\s*(\d+)\s+windows?\b`)
+	tmuxAttachedText = regexp.MustCompile(`(?i)\battached\b`)
+	// tmux diagnostics must never become session rows: a stale socket prints
+	// "error connecting to /tmp/tmux-0/default", and a stopped server prints
+	// "no server running on /tmp/tmux-0/default".
+	tmuxDiagnosticPattern = regexp.MustCompile(
+		`(?i)^(error connecting to|no server running|no current client|can't find|` +
+			`lost server|server exited|failed to connect|protocol version mismatch|` +
+			`open terminal failed|invalid option|usage:|unknown command)`)
+)
+
+// parseTmuxSessions reads the tab-separated -F reply and the plain list
+// fallback. A stopped tmux server is an empty list, not a failure.
+func parseTmuxSessions(stdout string) ([]TmuxSession, error) {
+	if hasUnavailable(stdout, "tmux") {
+		return nil, &Error{Reason: ReasonMissingTmux,
+			Cause: errors.New("tmux: the command is unavailable")}
+	}
+	sessions := make([]TmuxSession, 0, 8)
+	for _, line := range strings.Split(stdout, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if trimmed == "" || strings.HasPrefix(trimmed, "__NC_") ||
+			tmuxDiagnosticPattern.MatchString(trimmed) {
+			continue
+		}
+		fields := strings.Split(trimmed, "\t")
+		if len(fields) < 4 {
+			// A tmux that did not expand the format's tabs prints them
+			// literally; the original did the same on some builds.
+			fields = strings.Split(trimmed, `\t`)
+		}
+		if len(fields) >= 4 && !strings.Contains(fields[0], ":") {
+			name := strings.TrimSpace(fields[0])
+			if name == "" {
+				continue
+			}
+			created, _ := strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64)
+			sessions = append(sessions, TmuxSession{
+				Name:     name,
+				Windows:  parseInt(fields[1]),
+				Attached: strings.TrimSpace(fields[2]) == "1",
+				Created:  created,
+			})
+			continue
+		}
+		if match := tmuxPlainPattern.FindStringSubmatch(trimmed); match != nil {
+			sessions = append(sessions, TmuxSession{
+				Name:     strings.TrimSpace(match[1]),
+				Windows:  parseInt(match[2]),
+				Attached: tmuxAttachedText.MatchString(trimmed),
+			})
+		}
+	}
+	return sessions, nil
+}
+
+// --- Docker containers and images ------------------------------------------
+
+type dockerContainerJSON struct {
+	ID        string `json:"ID"`
+	IDLower   string `json:"Id"`
+	Names     string `json:"Names"`
+	Name      string `json:"Name"`
+	Image     string `json:"Image"`
+	Status    string `json:"Status"`
+	State     string `json:"State"`
+	Ports     string `json:"Ports"`
+	CreatedAt string `json:"CreatedAt"`
+	Created   string `json:"Created"`
+}
+
+type dockerImageJSON struct {
+	ID           string `json:"ID"`
+	IDLower      string `json:"Id"`
+	Repository   string `json:"Repository"`
+	Tag          string `json:"Tag"`
+	Size         string `json:"Size"`
+	CreatedAt    string `json:"CreatedAt"`
+	CreatedSince string `json:"CreatedSince"`
+	Digest       string `json:"Digest"`
+}
+
+// parseDockerList reads the container and image JSON-line sections. The
+// command captures each docker failure into a marker section, so a missing
+// daemon or socket permission produces a typed reason rather than an empty
+// list.
+func parseDockerList(stdout string) ([]Container, []Image, error) {
+	if hasUnavailable(stdout, "docker") {
+		return nil, nil, &Error{Reason: ReasonMissingDocker,
+			Cause: errors.New("docker: the command is unavailable")}
+	}
+	if detail := dockerErrorText(stdout); detail != "" {
+		return nil, nil, dockerFailure(detail)
+	}
+	containerText := extractBetween(stdout, "__NC_DOCKER_CONTAINERS__",
+		"__NC_DOCKER_IMAGES__", "__NC_DOCKER_END__")
+	imageText := extractBetween(stdout, "__NC_DOCKER_IMAGES__", "__NC_DOCKER_END__")
+
+	containers := make([]Container, 0, 16)
+	for _, line := range strings.Split(containerText, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if trimmed == "" || !strings.HasPrefix(trimmed, "{") {
+			continue
+		}
+		var row dockerContainerJSON
+		if err := json.Unmarshal([]byte(trimmed), &row); err != nil {
+			continue
+		}
+		id := row.ID
+		if id == "" {
+			id = row.IDLower
+		}
+		name := row.Names
+		if name == "" {
+			name = row.Name
+		}
+		name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+		created := row.CreatedAt
+		if created == "" {
+			created = row.Created
+		}
+		containers = append(containers, Container{
+			ID:        id,
+			Name:      name,
+			Image:     row.Image,
+			State:     row.State,
+			Status:    row.Status,
+			Ports:     row.Ports,
+			CreatedAt: created,
+		})
+	}
+
+	images := make([]Image, 0, 16)
+	for _, line := range strings.Split(imageText, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if trimmed == "" || !strings.HasPrefix(trimmed, "{") {
+			continue
+		}
+		var row dockerImageJSON
+		if err := json.Unmarshal([]byte(trimmed), &row); err != nil {
+			continue
+		}
+		id := row.ID
+		if id == "" {
+			id = row.IDLower
+		}
+		created := row.CreatedAt
+		if created == "" {
+			created = row.CreatedSince
+		}
+		images = append(images, Image{
+			ID:         id,
+			Repository: row.Repository,
+			Tag:        row.Tag,
+			Size:       row.Size,
+			CreatedAt:  created,
+			Digest:     row.Digest,
+		})
+	}
+	return containers, images, nil
+}
+
+// dockerErrorText joins every captured docker failure section.
+func dockerErrorText(stdout string) string {
+	var (
+		builder strings.Builder
+		inside  bool
+	)
+	for _, line := range strings.Split(stdout, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		switch trimmed {
+		case "__NC_DOCKER_ERROR_BEGIN__":
+			inside = true
+			continue
+		case "__NC_DOCKER_ERROR_END__":
+			inside = false
+			continue
+		}
+		if inside && trimmed != "" {
+			builder.WriteString(trimmed)
+			builder.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// dockerFailure maps Docker's stderr text onto the surface's typed reasons.
+func dockerFailure(detail string) error {
+	lower := strings.ToLower(detail)
+	reason := ReasonInternal
+	switch {
+	case strings.Contains(lower, "permission denied"),
+		strings.Contains(lower, "operation not permitted"):
+		reason = ReasonPermission
+	case strings.Contains(lower, "cannot connect to the docker daemon"),
+		strings.Contains(lower, "is the docker daemon running"),
+		strings.Contains(lower, "error during connect"):
+		reason = ReasonDockerDaemon
+	case strings.Contains(lower, "command not found"),
+		strings.Contains(lower, "no such file or directory"):
+		reason = ReasonMissingDocker
+	}
+	return &Error{Reason: reason, Cause: errors.New(detail)}
+}
+
+// --- Accelerators ----------------------------------------------------------
+
+// parseGPU reads the nvidia-smi CSV section. An absent tool or driver leaves
+// the section empty and becomes the normal empty GPU state, never an error.
+func parseGPU(stdout string) (GPUInfo, error) {
+	info := GPUInfo{Devices: make([]GPUDevice, 0, 4)}
+	section := extractBetween(stdout, "__NC_NVIDIA__", "__NC_GPU_END__")
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if trimmed == "" || strings.HasPrefix(trimmed, "__NC_") {
+			continue
+		}
+		fields := strings.Split(trimmed, ",")
+		if len(fields) < 3 {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil || index < 0 {
+			continue
+		}
+		device := GPUDevice{
+			Vendor:             "nvidia",
+			Index:              index,
+			UUID:               csvField(fields, 1),
+			Name:               csvField(fields, 2),
+			UtilizationPercent: parseFloat(csvField(fields, 3)),
+			MemoryUsedMB:       parseFloat(csvField(fields, 4)),
+			MemoryTotalMB:      parseFloat(csvField(fields, 5)),
+			TemperatureC:       parseFloat(csvField(fields, 6)),
+			PowerDrawW:         parseFloat(csvField(fields, 7)),
+			PowerLimitW:        parseFloat(csvField(fields, 8)),
+			FanPercent:         parseFloat(csvField(fields, 9)),
+			DriverVersion:      csvField(fields, 10),
+		}
+		if !metricReported(device.DriverVersion) {
+			device.DriverVersion = ""
+		} else if info.DriverVersion == "" {
+			info.DriverVersion = device.DriverVersion
+		}
+		info.Devices = append(info.Devices, device)
+	}
+	sort.SliceStable(info.Devices, func(i, j int) bool {
+		return info.Devices[i].Index < info.Devices[j].Index
+	})
+	return info, nil
+}
+
+func csvField(fields []string, index int) string {
+	if index < 0 || index >= len(fields) {
+		return ""
+	}
+	return strings.TrimSpace(fields[index])
+}
+
+// metricReported reports whether a driver text field carries a value rather
+// than nvidia-smi's placeholders.
+func metricReported(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "-", "n/a", "[n/a]", "not supported", "unknown":
+		return false
+	default:
+		return true
 	}
 }

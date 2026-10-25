@@ -17236,6 +17236,716 @@ func (msgs Messages) SysManagerDurationMinutes(minutes int) string {
 	return Catalog.Format(msgs.locale, "sysManagerDurationMinutes", map[string]any{"minutes": minutes})
 }
 
+// SysManagerTabsLayout says "Tabs"
+// in the language the app shows.
+//
+// The button opening the tab layout menu.
+func SysManagerTabsLayout() string { return In(i18n.Locale()).SysManagerTabsLayout() }
+
+// SysManagerTabsLayout says "Tabs"
+// in the language of msgs.
+//
+// The button opening the tab layout menu.
+func (msgs Messages) SysManagerTabsLayout() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabsLayout", nil)
+}
+
+// SysManagerMoveTabLeft says "Move tab left"
+// in the language the app shows.
+//
+// Moves the active tab one place toward the front.
+func SysManagerMoveTabLeft() string { return In(i18n.Locale()).SysManagerMoveTabLeft() }
+
+// SysManagerMoveTabLeft says "Move tab left"
+// in the language of msgs.
+//
+// Moves the active tab one place toward the front.
+func (msgs Messages) SysManagerMoveTabLeft() string {
+	return Catalog.Format(msgs.locale, "sysManagerMoveTabLeft", nil)
+}
+
+// SysManagerMoveTabRight says "Move tab right"
+// in the language the app shows.
+//
+// Moves the active tab one place toward the end.
+func SysManagerMoveTabRight() string { return In(i18n.Locale()).SysManagerMoveTabRight() }
+
+// SysManagerMoveTabRight says "Move tab right"
+// in the language of msgs.
+//
+// Moves the active tab one place toward the end.
+func (msgs Messages) SysManagerMoveTabRight() string {
+	return Catalog.Format(msgs.locale, "sysManagerMoveTabRight", nil)
+}
+
+// SysManagerTabTmux says "tmux"
+// in the language the app shows.
+//
+// The tmux sessions tab.
+func SysManagerTabTmux() string { return In(i18n.Locale()).SysManagerTabTmux() }
+
+// SysManagerTabTmux says "tmux"
+// in the language of msgs.
+//
+// The tmux sessions tab.
+func (msgs Messages) SysManagerTabTmux() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabTmux", nil)
+}
+
+// SysManagerTabDocker says "Docker"
+// in the language the app shows.
+//
+// The Docker tab.
+func SysManagerTabDocker() string { return In(i18n.Locale()).SysManagerTabDocker() }
+
+// SysManagerTabDocker says "Docker"
+// in the language of msgs.
+//
+// The Docker tab.
+func (msgs Messages) SysManagerTabDocker() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabDocker", nil)
+}
+
+// SysManagerTabGPU says "GPU"
+// in the language the app shows.
+//
+// The GPU tab.
+func SysManagerTabGPU() string { return In(i18n.Locale()).SysManagerTabGPU() }
+
+// SysManagerTabGPU says "GPU"
+// in the language of msgs.
+//
+// The GPU tab.
+func (msgs Messages) SysManagerTabGPU() string {
+	return Catalog.Format(msgs.locale, "sysManagerTabGPU", nil)
+}
+
+// SysManagerReasonMissingTmux says "tmux is not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingTmux() string { return In(i18n.Locale()).SysManagerReasonMissingTmux() }
+
+// SysManagerReasonMissingTmux says "tmux is not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingTmux() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingTmux", nil)
+}
+
+// SysManagerReasonMissingDocker says "Docker is not available on this Host."
+// in the language the app shows.
+func SysManagerReasonMissingDocker() string { return In(i18n.Locale()).SysManagerReasonMissingDocker() }
+
+// SysManagerReasonMissingDocker says "Docker is not available on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonMissingDocker() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonMissingDocker", nil)
+}
+
+// SysManagerReasonDockerDaemon says "The Docker daemon is not reachable."
+// in the language the app shows.
+func SysManagerReasonDockerDaemon() string { return In(i18n.Locale()).SysManagerReasonDockerDaemon() }
+
+// SysManagerReasonDockerDaemon says "The Docker daemon is not reachable."
+// in the language of msgs.
+func (msgs Messages) SysManagerReasonDockerDaemon() string {
+	return Catalog.Format(msgs.locale, "sysManagerReasonDockerDaemon", nil)
+}
+
+// SysManagerProblemAttach says "Could not open the tmux session."
+// in the language the app shows.
+func SysManagerProblemAttach() string { return In(i18n.Locale()).SysManagerProblemAttach() }
+
+// SysManagerProblemAttach says "Could not open the tmux session."
+// in the language of msgs.
+func (msgs Messages) SysManagerProblemAttach() string {
+	return Catalog.Format(msgs.locale, "sysManagerProblemAttach", nil)
+}
+
+// SysManagerSearchSessions says "Search sessions…"
+// in the language the app shows.
+func SysManagerSearchSessions() string { return In(i18n.Locale()).SysManagerSearchSessions() }
+
+// SysManagerSearchSessions says "Search sessions…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchSessions() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchSessions", nil)
+}
+
+// SysManagerSessionsCount says "{count} sessions"
+// in the language the app shows.
+func SysManagerSessionsCount(count int) string {
+	return In(i18n.Locale()).SysManagerSessionsCount(count)
+}
+
+// SysManagerSessionsCount says "{count} sessions"
+// in the language of msgs.
+func (msgs Messages) SysManagerSessionsCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerSessionsCount", map[string]any{"count": count})
+}
+
+// SysManagerNoSessions says "No tmux sessions."
+// in the language the app shows.
+func SysManagerNoSessions() string { return In(i18n.Locale()).SysManagerNoSessions() }
+
+// SysManagerNoSessions says "No tmux sessions."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoSessions() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoSessions", nil)
+}
+
+// SysManagerSession says "Session"
+// in the language the app shows.
+func SysManagerSession() string { return In(i18n.Locale()).SysManagerSession() }
+
+// SysManagerSession says "Session"
+// in the language of msgs.
+func (msgs Messages) SysManagerSession() string {
+	return Catalog.Format(msgs.locale, "sysManagerSession", nil)
+}
+
+// SysManagerWindows says "Windows"
+// in the language the app shows.
+func SysManagerWindows() string { return In(i18n.Locale()).SysManagerWindows() }
+
+// SysManagerWindows says "Windows"
+// in the language of msgs.
+func (msgs Messages) SysManagerWindows() string {
+	return Catalog.Format(msgs.locale, "sysManagerWindows", nil)
+}
+
+// SysManagerAttached says "Attached"
+// in the language the app shows.
+func SysManagerAttached() string { return In(i18n.Locale()).SysManagerAttached() }
+
+// SysManagerAttached says "Attached"
+// in the language of msgs.
+func (msgs Messages) SysManagerAttached() string {
+	return Catalog.Format(msgs.locale, "sysManagerAttached", nil)
+}
+
+// SysManagerCreated says "Created"
+// in the language the app shows.
+func SysManagerCreated() string { return In(i18n.Locale()).SysManagerCreated() }
+
+// SysManagerCreated says "Created"
+// in the language of msgs.
+func (msgs Messages) SysManagerCreated() string {
+	return Catalog.Format(msgs.locale, "sysManagerCreated", nil)
+}
+
+// SysManagerSessionHint says "Select a session to attach to it or kill it."
+// in the language the app shows.
+//
+// Asks the user to select a tmux session.
+func SysManagerSessionHint() string { return In(i18n.Locale()).SysManagerSessionHint() }
+
+// SysManagerSessionHint says "Select a session to attach to it or kill it."
+// in the language of msgs.
+//
+// Asks the user to select a tmux session.
+func (msgs Messages) SysManagerSessionHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerSessionHint", nil)
+}
+
+// SysManagerSelectedSession says "{name} · {windows, plural, one {# window} other {# windows}}"
+// in the language the app shows.
+//
+// The tmux session chosen in the table.
+func SysManagerSelectedSession(name string, windows int) string {
+	return In(i18n.Locale()).SysManagerSelectedSession(name, windows)
+}
+
+// SysManagerSelectedSession says "{name} · {windows, plural, one {# window} other {# windows}}"
+// in the language of msgs.
+//
+// The tmux session chosen in the table.
+func (msgs Messages) SysManagerSelectedSession(name string, windows int) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedSession", map[string]any{"name": name, "windows": windows})
+}
+
+// SysManagerAttach says "Attach"
+// in the language the app shows.
+func SysManagerAttach() string { return In(i18n.Locale()).SysManagerAttach() }
+
+// SysManagerAttach says "Attach"
+// in the language of msgs.
+func (msgs Messages) SysManagerAttach() string {
+	return Catalog.Format(msgs.locale, "sysManagerAttach", nil)
+}
+
+// SysManagerNewSession says "New session name"
+// in the language the app shows.
+//
+// The label of the new tmux session name field.
+func SysManagerNewSession() string { return In(i18n.Locale()).SysManagerNewSession() }
+
+// SysManagerNewSession says "New session name"
+// in the language of msgs.
+//
+// The label of the new tmux session name field.
+func (msgs Messages) SysManagerNewSession() string {
+	return Catalog.Format(msgs.locale, "sysManagerNewSession", nil)
+}
+
+// SysManagerCreate says "Create"
+// in the language the app shows.
+func SysManagerCreate() string { return In(i18n.Locale()).SysManagerCreate() }
+
+// SysManagerCreate says "Create"
+// in the language of msgs.
+func (msgs Messages) SysManagerCreate() string {
+	return Catalog.Format(msgs.locale, "sysManagerCreate", nil)
+}
+
+// SysManagerYes says "yes"
+// in the language the app shows.
+func SysManagerYes() string { return In(i18n.Locale()).SysManagerYes() }
+
+// SysManagerYes says "yes"
+// in the language of msgs.
+func (msgs Messages) SysManagerYes() string {
+	return Catalog.Format(msgs.locale, "sysManagerYes", nil)
+}
+
+// SysManagerConfirmTmuxKill says "Kill tmux session {name}?\n\nCommand: {command}"
+// in the language the app shows.
+func SysManagerConfirmTmuxKill(name string, command string) string {
+	return In(i18n.Locale()).SysManagerConfirmTmuxKill(name, command)
+}
+
+// SysManagerConfirmTmuxKill says "Kill tmux session {name}?\n\nCommand: {command}"
+// in the language of msgs.
+func (msgs Messages) SysManagerConfirmTmuxKill(name string, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmTmuxKill", map[string]any{"name": name, "command": command})
+}
+
+// SysManagerContainers says "Containers"
+// in the language the app shows.
+func SysManagerContainers() string { return In(i18n.Locale()).SysManagerContainers() }
+
+// SysManagerContainers says "Containers"
+// in the language of msgs.
+func (msgs Messages) SysManagerContainers() string {
+	return Catalog.Format(msgs.locale, "sysManagerContainers", nil)
+}
+
+// SysManagerImages says "Images"
+// in the language the app shows.
+func SysManagerImages() string { return In(i18n.Locale()).SysManagerImages() }
+
+// SysManagerImages says "Images"
+// in the language of msgs.
+func (msgs Messages) SysManagerImages() string {
+	return Catalog.Format(msgs.locale, "sysManagerImages", nil)
+}
+
+// SysManagerDockerView says "View"
+// in the language the app shows.
+func SysManagerDockerView() string { return In(i18n.Locale()).SysManagerDockerView() }
+
+// SysManagerDockerView says "View"
+// in the language of msgs.
+func (msgs Messages) SysManagerDockerView() string {
+	return Catalog.Format(msgs.locale, "sysManagerDockerView", nil)
+}
+
+// SysManagerSearchContainers says "Search containers…"
+// in the language the app shows.
+func SysManagerSearchContainers() string { return In(i18n.Locale()).SysManagerSearchContainers() }
+
+// SysManagerSearchContainers says "Search containers…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchContainers() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchContainers", nil)
+}
+
+// SysManagerSearchImages says "Search images…"
+// in the language the app shows.
+func SysManagerSearchImages() string { return In(i18n.Locale()).SysManagerSearchImages() }
+
+// SysManagerSearchImages says "Search images…"
+// in the language of msgs.
+func (msgs Messages) SysManagerSearchImages() string {
+	return Catalog.Format(msgs.locale, "sysManagerSearchImages", nil)
+}
+
+// SysManagerContainersCount says "{count} containers"
+// in the language the app shows.
+func SysManagerContainersCount(count int) string {
+	return In(i18n.Locale()).SysManagerContainersCount(count)
+}
+
+// SysManagerContainersCount says "{count} containers"
+// in the language of msgs.
+func (msgs Messages) SysManagerContainersCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerContainersCount", map[string]any{"count": count})
+}
+
+// SysManagerImagesCount says "{count} images"
+// in the language the app shows.
+func SysManagerImagesCount(count int) string { return In(i18n.Locale()).SysManagerImagesCount(count) }
+
+// SysManagerImagesCount says "{count} images"
+// in the language of msgs.
+func (msgs Messages) SysManagerImagesCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerImagesCount", map[string]any{"count": count})
+}
+
+// SysManagerNoContainers says "No containers."
+// in the language the app shows.
+func SysManagerNoContainers() string { return In(i18n.Locale()).SysManagerNoContainers() }
+
+// SysManagerNoContainers says "No containers."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoContainers() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoContainers", nil)
+}
+
+// SysManagerNoImages says "No images."
+// in the language the app shows.
+func SysManagerNoImages() string { return In(i18n.Locale()).SysManagerNoImages() }
+
+// SysManagerNoImages says "No images."
+// in the language of msgs.
+func (msgs Messages) SysManagerNoImages() string {
+	return Catalog.Format(msgs.locale, "sysManagerNoImages", nil)
+}
+
+// SysManagerContainer says "Container"
+// in the language the app shows.
+func SysManagerContainer() string { return In(i18n.Locale()).SysManagerContainer() }
+
+// SysManagerContainer says "Container"
+// in the language of msgs.
+func (msgs Messages) SysManagerContainer() string {
+	return Catalog.Format(msgs.locale, "sysManagerContainer", nil)
+}
+
+// SysManagerImage says "Image"
+// in the language the app shows.
+func SysManagerImage() string { return In(i18n.Locale()).SysManagerImage() }
+
+// SysManagerImage says "Image"
+// in the language of msgs.
+func (msgs Messages) SysManagerImage() string {
+	return Catalog.Format(msgs.locale, "sysManagerImage", nil)
+}
+
+// SysManagerStatus says "Status"
+// in the language the app shows.
+func SysManagerStatus() string { return In(i18n.Locale()).SysManagerStatus() }
+
+// SysManagerStatus says "Status"
+// in the language of msgs.
+func (msgs Messages) SysManagerStatus() string {
+	return Catalog.Format(msgs.locale, "sysManagerStatus", nil)
+}
+
+// SysManagerPorts says "Ports"
+// in the language the app shows.
+func SysManagerPorts() string { return In(i18n.Locale()).SysManagerPorts() }
+
+// SysManagerPorts says "Ports"
+// in the language of msgs.
+func (msgs Messages) SysManagerPorts() string {
+	return Catalog.Format(msgs.locale, "sysManagerPorts", nil)
+}
+
+// SysManagerID says "ID"
+// in the language the app shows.
+func SysManagerID() string { return In(i18n.Locale()).SysManagerID() }
+
+// SysManagerID says "ID"
+// in the language of msgs.
+func (msgs Messages) SysManagerID() string {
+	return Catalog.Format(msgs.locale, "sysManagerID", nil)
+}
+
+// SysManagerSize says "Size"
+// in the language the app shows.
+func SysManagerSize() string { return In(i18n.Locale()).SysManagerSize() }
+
+// SysManagerSize says "Size"
+// in the language of msgs.
+func (msgs Messages) SysManagerSize() string {
+	return Catalog.Format(msgs.locale, "sysManagerSize", nil)
+}
+
+// SysManagerSelectedContainer says "{name} · {image}"
+// in the language the app shows.
+//
+// The Docker container chosen in the table.
+func SysManagerSelectedContainer(name string, image string) string {
+	return In(i18n.Locale()).SysManagerSelectedContainer(name, image)
+}
+
+// SysManagerSelectedContainer says "{name} · {image}"
+// in the language of msgs.
+//
+// The Docker container chosen in the table.
+func (msgs Messages) SysManagerSelectedContainer(name string, image string) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedContainer", map[string]any{"name": name, "image": image})
+}
+
+// SysManagerSelectedImage says "{name} · {size}"
+// in the language the app shows.
+//
+// The Docker image chosen in the table.
+func SysManagerSelectedImage(name string, size string) string {
+	return In(i18n.Locale()).SysManagerSelectedImage(name, size)
+}
+
+// SysManagerSelectedImage says "{name} · {size}"
+// in the language of msgs.
+//
+// The Docker image chosen in the table.
+func (msgs Messages) SysManagerSelectedImage(name string, size string) string {
+	return Catalog.Format(msgs.locale, "sysManagerSelectedImage", map[string]any{"name": name, "size": size})
+}
+
+// SysManagerContainerHint says "Select a container to inspect it, read its logs, or change its state."
+// in the language the app shows.
+//
+// Asks the user to select a Docker container.
+func SysManagerContainerHint() string { return In(i18n.Locale()).SysManagerContainerHint() }
+
+// SysManagerContainerHint says "Select a container to inspect it, read its logs, or change its state."
+// in the language of msgs.
+//
+// Asks the user to select a Docker container.
+func (msgs Messages) SysManagerContainerHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerContainerHint", nil)
+}
+
+// SysManagerImageHint says "Select an image to see its details."
+// in the language the app shows.
+//
+// Asks the user to select a Docker image.
+func SysManagerImageHint() string { return In(i18n.Locale()).SysManagerImageHint() }
+
+// SysManagerImageHint says "Select an image to see its details."
+// in the language of msgs.
+//
+// Asks the user to select a Docker image.
+func (msgs Messages) SysManagerImageHint() string {
+	return Catalog.Format(msgs.locale, "sysManagerImageHint", nil)
+}
+
+// SysManagerRemove says "Remove"
+// in the language the app shows.
+func SysManagerRemove() string { return In(i18n.Locale()).SysManagerRemove() }
+
+// SysManagerRemove says "Remove"
+// in the language of msgs.
+func (msgs Messages) SysManagerRemove() string {
+	return Catalog.Format(msgs.locale, "sysManagerRemove", nil)
+}
+
+// SysManagerInspect says "Inspect"
+// in the language the app shows.
+func SysManagerInspect() string { return In(i18n.Locale()).SysManagerInspect() }
+
+// SysManagerInspect says "Inspect"
+// in the language of msgs.
+func (msgs Messages) SysManagerInspect() string {
+	return Catalog.Format(msgs.locale, "sysManagerInspect", nil)
+}
+
+// SysManagerLogs says "Logs"
+// in the language the app shows.
+func SysManagerLogs() string { return In(i18n.Locale()).SysManagerLogs() }
+
+// SysManagerLogs says "Logs"
+// in the language of msgs.
+func (msgs Messages) SysManagerLogs() string {
+	return Catalog.Format(msgs.locale, "sysManagerLogs", nil)
+}
+
+// SysManagerClose says "Close"
+// in the language the app shows.
+func SysManagerClose() string { return In(i18n.Locale()).SysManagerClose() }
+
+// SysManagerClose says "Close"
+// in the language of msgs.
+func (msgs Messages) SysManagerClose() string {
+	return Catalog.Format(msgs.locale, "sysManagerClose", nil)
+}
+
+// SysManagerDocumentInspect says "Inspect: {name}"
+// in the language the app shows.
+//
+// The title of the inspect output panel.
+func SysManagerDocumentInspect(name string) string {
+	return In(i18n.Locale()).SysManagerDocumentInspect(name)
+}
+
+// SysManagerDocumentInspect says "Inspect: {name}"
+// in the language of msgs.
+//
+// The title of the inspect output panel.
+func (msgs Messages) SysManagerDocumentInspect(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerDocumentInspect", map[string]any{"name": name})
+}
+
+// SysManagerDocumentLogs says "Logs: {name}"
+// in the language the app shows.
+//
+// The title of the logs output panel.
+func SysManagerDocumentLogs(name string) string {
+	return In(i18n.Locale()).SysManagerDocumentLogs(name)
+}
+
+// SysManagerDocumentLogs says "Logs: {name}"
+// in the language of msgs.
+//
+// The title of the logs output panel.
+func (msgs Messages) SysManagerDocumentLogs(name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerDocumentLogs", map[string]any{"name": name})
+}
+
+// SysManagerDocumentLoading says "Loading…"
+// in the language the app shows.
+func SysManagerDocumentLoading() string { return In(i18n.Locale()).SysManagerDocumentLoading() }
+
+// SysManagerDocumentLoading says "Loading…"
+// in the language of msgs.
+func (msgs Messages) SysManagerDocumentLoading() string {
+	return Catalog.Format(msgs.locale, "sysManagerDocumentLoading", nil)
+}
+
+// SysManagerDocumentFailed says "Could not read the Docker output."
+// in the language the app shows.
+func SysManagerDocumentFailed() string { return In(i18n.Locale()).SysManagerDocumentFailed() }
+
+// SysManagerDocumentFailed says "Could not read the Docker output."
+// in the language of msgs.
+func (msgs Messages) SysManagerDocumentFailed() string {
+	return Catalog.Format(msgs.locale, "sysManagerDocumentFailed", nil)
+}
+
+// SysManagerDocumentTruncated says "Output was truncated."
+// in the language the app shows.
+func SysManagerDocumentTruncated() string { return In(i18n.Locale()).SysManagerDocumentTruncated() }
+
+// SysManagerDocumentTruncated says "Output was truncated."
+// in the language of msgs.
+func (msgs Messages) SysManagerDocumentTruncated() string {
+	return Catalog.Format(msgs.locale, "sysManagerDocumentTruncated", nil)
+}
+
+// SysManagerConfirmDocker says "{action} container {name}?\n\nCommand: {command}"
+// in the language the app shows.
+func SysManagerConfirmDocker(action string, name string, command string) string {
+	return In(i18n.Locale()).SysManagerConfirmDocker(action, name, command)
+}
+
+// SysManagerConfirmDocker says "{action} container {name}?\n\nCommand: {command}"
+// in the language of msgs.
+func (msgs Messages) SysManagerConfirmDocker(action string, name string, command string) string {
+	return Catalog.Format(msgs.locale, "sysManagerConfirmDocker", map[string]any{"action": action, "name": name, "command": command})
+}
+
+// SysManagerGPUEmpty says "No NVIDIA GPU detected on this Host."
+// in the language the app shows.
+func SysManagerGPUEmpty() string { return In(i18n.Locale()).SysManagerGPUEmpty() }
+
+// SysManagerGPUEmpty says "No NVIDIA GPU detected on this Host."
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUEmpty() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUEmpty", nil)
+}
+
+// SysManagerGPUDriver says "Driver"
+// in the language the app shows.
+func SysManagerGPUDriver() string { return In(i18n.Locale()).SysManagerGPUDriver() }
+
+// SysManagerGPUDriver says "Driver"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUDriver() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUDriver", nil)
+}
+
+// SysManagerGPUDevice says "GPU {index} · {name}"
+// in the language the app shows.
+func SysManagerGPUDevice(index int, name string) string {
+	return In(i18n.Locale()).SysManagerGPUDevice(index, name)
+}
+
+// SysManagerGPUDevice says "GPU {index} · {name}"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUDevice(index int, name string) string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUDevice", map[string]any{"index": index, "name": name})
+}
+
+// SysManagerGPUUtilization says "Utilization"
+// in the language the app shows.
+func SysManagerGPUUtilization() string { return In(i18n.Locale()).SysManagerGPUUtilization() }
+
+// SysManagerGPUUtilization says "Utilization"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUUtilization() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUUtilization", nil)
+}
+
+// SysManagerGPUMemory says "Memory"
+// in the language the app shows.
+func SysManagerGPUMemory() string { return In(i18n.Locale()).SysManagerGPUMemory() }
+
+// SysManagerGPUMemory says "Memory"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUMemory() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUMemory", nil)
+}
+
+// SysManagerGPUTemperature says "Temperature"
+// in the language the app shows.
+func SysManagerGPUTemperature() string { return In(i18n.Locale()).SysManagerGPUTemperature() }
+
+// SysManagerGPUTemperature says "Temperature"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUTemperature() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUTemperature", nil)
+}
+
+// SysManagerGPUPower says "Power"
+// in the language the app shows.
+func SysManagerGPUPower() string { return In(i18n.Locale()).SysManagerGPUPower() }
+
+// SysManagerGPUPower says "Power"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUPower() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUPower", nil)
+}
+
+// SysManagerGPUFan says "Fan"
+// in the language the app shows.
+func SysManagerGPUFan() string { return In(i18n.Locale()).SysManagerGPUFan() }
+
+// SysManagerGPUFan says "Fan"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUFan() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUFan", nil)
+}
+
+// SysManagerGPUVendor says "Vendor"
+// in the language the app shows.
+func SysManagerGPUVendor() string { return In(i18n.Locale()).SysManagerGPUVendor() }
+
+// SysManagerGPUVendor says "Vendor"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUVendor() string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUVendor", nil)
+}
+
+// SysManagerGPUCount says "{count} GPUs"
+// in the language the app shows.
+func SysManagerGPUCount(count int) string { return In(i18n.Locale()).SysManagerGPUCount(count) }
+
+// SysManagerGPUCount says "{count} GPUs"
+// in the language of msgs.
+func (msgs Messages) SysManagerGPUCount(count int) string {
+	return Catalog.Format(msgs.locale, "sysManagerGPUCount", map[string]any{"count": count})
+}
+
 // SysManagerUnknown says "—"
 // in the language the app shows.
 func SysManagerUnknown() string { return In(i18n.Locale()).SysManagerUnknown() }
