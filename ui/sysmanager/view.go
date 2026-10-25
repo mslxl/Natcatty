@@ -16,26 +16,59 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
-// View returns the System manager surface.
+// surfaceGap is the vertical space between the surface's rows. It is tighter
+// than the shell's 12 DIPs so the four-tab surface keeps a full list row at
+// the enforced 720x480 minimum, whose client is 704x421 once the sidebar and
+// the window chrome take their space.
+const surfaceGap float32 = 4
+
+// View returns the System manager surface. It is one flex column that takes
+// the height its parent leaves, so the list of every tab can scroll above its
+// pinned action bar instead of running past the window at the minimum size.
 func View(s *State) func(*ui.Context) {
 	return func(c *ui.Context) {
 		s.Flush()
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
-		header(c, s, m, t)
-		if len(s.Hosts()) == 0 {
-			emptyState(c, m.SysManagerNoHosts(), t)
-			return
-		}
-		if _, ok := s.CurrentHost(); !ok {
-			emptyState(c, m.SysManagerNoHostSelected(), t)
-			return
-		}
-		tabs(c, s, m)
-		tabContent(c, s, m, t)
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Gap(surfaceGap).Children(func() {
+			header(c, s, m, t)
+			if len(s.Hosts()) == 0 {
+				emptyState(c, m.SysManagerNoHosts(), t)
+				return
+			}
+			if _, ok := s.CurrentHost(); !ok {
+				emptyState(c, m.SysManagerNoHostSelected(), t)
+				return
+			}
+			tabs(c, s, m)
+			tabContent(c, s, m, t)
+		})
 		confirmation(c, s, m)
 	}
+}
+
+// listTab is the scrolling body of a tab with rows: the table takes the
+// height left above the pinned action bar, so the bar's height and the gap
+// below the list are reserved. A row can never scroll under the bar, and the
+// last row of a longer list scrolls fully clear so its center stays
+// clickable. Without the reservation the Services table showed three of four
+// units at the 704x421 client of the minimum window.
+func listTab(c *ui.Context, body func()) {
+	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Gap(surfaceGap).Children(body)
+}
+
+// actionBarHeight is the height of a tab's pinned action row: the tallest of
+// its states, the button row. A hint-only bar keeps the same height, so
+// choosing a row does not shrink the list above the bar or move the bar's top
+// edge up into the last row.
+const actionBarHeight float32 = 32
+
+// actionBar pins the tab's action row below the list. The list's viewport is
+// sized above it, so no row can scroll under the bar.
+func actionBar(c *ui.Context, body func()) {
+	ui.Row(c).FillWidth().Height(actionBarHeight).AlignItems(ui.Center).Gap(6).
+		Children(body)
 }
 
 func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
@@ -206,43 +239,52 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			statusPanel(c, s, state, m, t)
 			return
 		}
-		toolbar(c, s, m, t, m.SysManagerSearchProcesses(),
-			m.SysManagerProcessesCount(len(s.DisplayProcesses())))
-		rows := s.DisplayProcesses()
-		if len(rows) == 0 {
-			emptyState(c, emptyText(len(state.Processes), m.SysManagerNoProcesses(), m.SysManagerNoMatches()), t)
-			return
-		}
-		processTable(c, s, rows, m)
-		processActions(c, s, m, t)
+		listTab(c, func() {
+			toolbar(c, s, m, t, m.SysManagerSearchProcesses(),
+				m.SysManagerProcessesCount(len(s.DisplayProcesses())))
+			rows := s.DisplayProcesses()
+			if len(rows) == 0 {
+				emptyState(c, emptyText(len(state.Processes), m.SysManagerNoProcesses(),
+					m.SysManagerNoMatches()), t)
+				return
+			}
+			processTable(c, s, rows, m)
+			processActions(c, s, m, t)
+		})
 	case appsysmanager.TabPorts:
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
 			return
 		}
-		toolbar(c, s, m, t, m.SysManagerSearchPorts(),
-			m.SysManagerPortsCount(len(s.DisplayPorts())))
-		rows := s.DisplayPorts()
-		if len(rows) == 0 {
-			emptyState(c, emptyText(len(state.Ports), m.SysManagerNoPorts(), m.SysManagerNoMatches()), t)
-			return
-		}
-		portTable(c, s, rows, m)
-		portActions(c, s, m, t)
+		listTab(c, func() {
+			toolbar(c, s, m, t, m.SysManagerSearchPorts(),
+				m.SysManagerPortsCount(len(s.DisplayPorts())))
+			rows := s.DisplayPorts()
+			if len(rows) == 0 {
+				emptyState(c, emptyText(len(state.Ports), m.SysManagerNoPorts(),
+					m.SysManagerNoMatches()), t)
+				return
+			}
+			portTable(c, s, rows, m)
+			portActions(c, s, m, t)
+		})
 	case appsysmanager.TabServices:
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
 			return
 		}
-		toolbar(c, s, m, t, m.SysManagerSearchServices(),
-			m.SysManagerServicesCount(len(s.DisplayServices())))
-		rows := s.DisplayServices()
-		if len(rows) == 0 {
-			emptyState(c, emptyText(len(state.Services), m.SysManagerNoServices(), m.SysManagerNoMatches()), t)
-			return
-		}
-		serviceTable(c, s, rows, m, t)
-		serviceActions(c, s, m, t)
+		listTab(c, func() {
+			toolbar(c, s, m, t, m.SysManagerSearchServices(),
+				m.SysManagerServicesCount(len(s.DisplayServices())))
+			rows := s.DisplayServices()
+			if len(rows) == 0 {
+				emptyState(c, emptyText(len(state.Services), m.SysManagerNoServices(),
+					m.SysManagerNoMatches()), t)
+				return
+			}
+			serviceTable(c, s, rows, m, t)
+			serviceActions(c, s, m, t)
+		})
 	case appsysmanager.TabTmux:
 		if state.Status != appsysmanager.StatusLive {
 			statusPanel(c, s, state, m, t)
@@ -261,30 +303,32 @@ func tabContent(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 }
 
 func tmuxContent(c *ui.Context, s *State, state appsysmanager.TabState, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		name := s.TmuxName()
-		ui.TextInput(c, &name).Placeholder(m.SysManagerNewSession()).
-			Grow(1).MinWidth(120).Label(m.SysManagerNewSession())
-		if name != s.TmuxName() {
-			s.SetTmuxName(name)
+	listTab(c, func() {
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			name := s.TmuxName()
+			ui.TextInput(c, &name).Placeholder(m.SysManagerNewSession()).
+				Grow(1).MinWidth(120).Label(m.SysManagerNewSession())
+			if name != s.TmuxName() {
+				s.SetTmuxName(name)
+			}
+			create := ui.Button(c, m.SysManagerCreate()).Key("sysmanager-tmux-create").
+				Disabled(s.ActionBusy() || strings.TrimSpace(name) == "")
+			if create.Clicked() {
+				_ = s.CreateSession()
+				c.Invalidate()
+			}
+		})
+		toolbar(c, s, m, t, m.SysManagerSearchSessions(),
+			m.SysManagerSessionsCount(len(s.DisplaySessions())))
+		rows := s.DisplaySessions()
+		if len(rows) == 0 {
+			emptyState(c, emptyText(len(state.Sessions), m.SysManagerNoSessions(),
+				m.SysManagerNoMatches()), t)
+			return
 		}
-		create := ui.Button(c, m.SysManagerCreate()).Key("sysmanager-tmux-create").
-			Disabled(s.ActionBusy() || strings.TrimSpace(name) == "")
-		if create.Clicked() {
-			_ = s.CreateSession()
-			c.Invalidate()
-		}
+		sessionTable(c, s, rows, m, t)
+		sessionActions(c, s, m, t)
 	})
-	toolbar(c, s, m, t, m.SysManagerSearchSessions(),
-		m.SysManagerSessionsCount(len(s.DisplaySessions())))
-	rows := s.DisplaySessions()
-	if len(rows) == 0 {
-		emptyState(c, emptyText(len(state.Sessions), m.SysManagerNoSessions(),
-			m.SysManagerNoMatches()), t)
-		return
-	}
-	sessionTable(c, s, rows, m, t)
-	sessionActions(c, s, m, t)
 }
 
 func sessionTable(c *ui.Context, s *State, rows []appsysmanager.TmuxSession,
@@ -321,7 +365,7 @@ func sessionTable(c *ui.Context, s *State, rows []appsysmanager.TmuxSession,
 				text.TextColor(t.TextMuted)
 			}
 		}
-	}).Grow(1).FillWidth()
+	}).Grow(1).MinHeight(0).FillWidth()
 }
 
 func sessionCreatedText(created int64) string {
@@ -334,10 +378,12 @@ func sessionCreatedText(created int64) string {
 func sessionActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	session, ok := s.SelectedSession()
 	if !ok {
-		ui.Text(c, m.SysManagerSessionHint()).FontSize(11).TextColor(t.TextMuted)
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerSessionHint()).FontSize(11).TextColor(t.TextMuted)
+		})
 		return
 	}
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
+	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedSession(session.Name, session.Windows)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if ui.Button(c, m.SysManagerAttach()).Key("sysmanager-tmux-attach").Clicked() {
@@ -373,62 +419,67 @@ func dockerContent(c *ui.Context, s *State, state appsysmanager.TabState,
 
 func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
 	m locales.Messages, t *ui.Theme) {
-	toolbar(c, s, m, t, m.SysManagerSearchContainers(),
-		m.SysManagerContainersCount(len(s.DisplayContainers())))
-	rows := s.DisplayContainers()
-	if len(rows) == 0 {
-		emptyState(c, emptyText(len(state.Containers), m.SysManagerNoContainers(),
-			m.SysManagerNoMatches()), t)
-		return
-	}
-	columns := []ui.TableColumn{
-		{Title: m.SysManagerContainer(), ID: "container", MinWidth: 90},
-		{Title: m.SysManagerImage(), ID: "image", MinWidth: 90},
-		{Title: m.SysManagerState(), ID: "state", Width: 68, MinWidth: 58},
-		{Title: m.SysManagerStatus(), ID: "status", MinWidth: 100},
-		{Title: m.SysManagerPorts(), ID: "ports", MinWidth: 70},
-	}
-	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
-		if row < 0 || row >= len(rows) {
+	listTab(c, func() {
+		toolbar(c, s, m, t, m.SysManagerSearchContainers(),
+			m.SysManagerContainersCount(len(s.DisplayContainers())))
+		rows := s.DisplayContainers()
+		if len(rows) == 0 {
+			emptyState(c, emptyText(len(state.Containers), m.SysManagerNoContainers(),
+				m.SysManagerNoMatches()), t)
 			return
 		}
-		container := rows[row]
-		switch col {
-		case 0:
-			ui.Text(c, containerDisplayName(container)).FontSize(12).SingleLine()
-		case 1:
-			ui.Text(c, container.Image).FontSize(12).SingleLine()
-		case 2:
-			text := ui.Text(c, container.State).FontSize(12).SingleLine()
-			if s.selected != row {
-				switch strings.ToLower(container.State) {
-				case "running":
-					color := t.Text
-					text.TextColor(color)
-				case "exited", "dead":
+		columns := []ui.TableColumn{
+			{Title: m.SysManagerContainer(), ID: "container", MinWidth: 90},
+			{Title: m.SysManagerImage(), ID: "image", MinWidth: 90},
+			{Title: m.SysManagerState(), ID: "state", Width: 68, MinWidth: 58},
+			{Title: m.SysManagerStatus(), ID: "status", MinWidth: 100},
+			{Title: m.SysManagerPorts(), ID: "ports", MinWidth: 70},
+		}
+		ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+			if row < 0 || row >= len(rows) {
+				return
+			}
+			container := rows[row]
+			switch col {
+			case 0:
+				ui.Text(c, containerDisplayName(container)).FontSize(12).SingleLine()
+			case 1:
+				ui.Text(c, container.Image).FontSize(12).SingleLine()
+			case 2:
+				text := ui.Text(c, container.State).FontSize(12).SingleLine()
+				if s.selected != row {
+					switch strings.ToLower(container.State) {
+					case "running":
+						color := t.Text
+						text.TextColor(color)
+					case "exited", "dead":
+						text.TextColor(t.TextMuted)
+					}
+				}
+			case 3:
+				text := ui.Text(c, container.Status).FontSize(12).SingleLine()
+				if s.selected != row {
 					text.TextColor(t.TextMuted)
 				}
+			case 4:
+				ui.Text(c, blank(container.Ports, m)).FontSize(12).SingleLine()
 			}
-		case 3:
-			text := ui.Text(c, container.Status).FontSize(12).SingleLine()
-			if s.selected != row {
-				text.TextColor(t.TextMuted)
-			}
-		case 4:
-			ui.Text(c, blank(container.Ports, m)).FontSize(12).SingleLine()
-		}
-	}).Grow(1).FillWidth()
-	dockerContainerActions(c, s, m, t)
+		}).Grow(1).MinHeight(0).FillWidth()
+		dockerContainerActions(c, s, m, t)
+	})
 }
 
 func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	container, ok := s.SelectedContainer()
 	if !ok {
-		ui.Text(c, m.SysManagerContainerHint()).FontSize(11).TextColor(t.TextMuted)
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerContainerHint()).FontSize(11).TextColor(t.TextMuted)
+		})
+		documentPanel(c, s, m, t)
 		return
 	}
 	running := strings.EqualFold(container.State, "running")
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
+	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedContainer(containerDisplayName(container),
 			container.Image)).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if ui.Button(c, m.SysManagerStart()).Key("sysmanager-docker-start").
@@ -462,46 +513,50 @@ func dockerContainerActions(c *ui.Context, s *State, m locales.Messages, t *ui.T
 
 func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
 	m locales.Messages, t *ui.Theme) {
-	toolbar(c, s, m, t, m.SysManagerSearchImages(),
-		m.SysManagerImagesCount(len(s.DisplayImages())))
-	rows := s.DisplayImages()
-	if len(rows) == 0 {
-		emptyState(c, emptyText(len(state.Images), m.SysManagerNoImages(),
-			m.SysManagerNoMatches()), t)
-		return
-	}
-	columns := []ui.TableColumn{
-		{Title: m.SysManagerImage(), ID: "image", MinWidth: 120},
-		{Title: m.SysManagerSize(), ID: "size", Width: 80, MinWidth: 64, Align: ui.End},
-		{Title: m.SysManagerCreated(), ID: "created", MinWidth: 120},
-		{Title: m.SysManagerID(), ID: "id", MinWidth: 80},
-	}
-	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
-		if row < 0 || row >= len(rows) {
+	listTab(c, func() {
+		toolbar(c, s, m, t, m.SysManagerSearchImages(),
+			m.SysManagerImagesCount(len(s.DisplayImages())))
+		rows := s.DisplayImages()
+		if len(rows) == 0 {
+			emptyState(c, emptyText(len(state.Images), m.SysManagerNoImages(),
+				m.SysManagerNoMatches()), t)
 			return
 		}
-		image := rows[row]
-		switch col {
-		case 0:
-			ui.Text(c, image.Name()).FontSize(12).SingleLine()
-		case 1:
-			ui.Text(c, blank(image.Size, m)).FontSize(12)
-		case 2:
-			text := ui.Text(c, imageCreatedText(image.CreatedAt, m)).
-				FontSize(12).SingleLine()
-			if s.selected != row {
-				text.TextColor(t.TextMuted)
-			}
-		case 3:
-			ui.Text(c, shortID(image.ID)).FontSize(12).SingleLine()
+		columns := []ui.TableColumn{
+			{Title: m.SysManagerImage(), ID: "image", MinWidth: 120},
+			{Title: m.SysManagerSize(), ID: "size", Width: 80, MinWidth: 64, Align: ui.End},
+			{Title: m.SysManagerCreated(), ID: "created", MinWidth: 120},
+			{Title: m.SysManagerID(), ID: "id", MinWidth: 80},
 		}
-	}).Grow(1).FillWidth()
-	if image, ok := s.SelectedImage(); ok {
-		ui.Text(c, m.SysManagerSelectedImage(image.Name(), blank(image.Size, m))).
-			FontSize(11).TextColor(t.TextMuted).SingleLine()
-	} else {
-		ui.Text(c, m.SysManagerImageHint()).FontSize(11).TextColor(t.TextMuted)
-	}
+		ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+			if row < 0 || row >= len(rows) {
+				return
+			}
+			image := rows[row]
+			switch col {
+			case 0:
+				ui.Text(c, image.Name()).FontSize(12).SingleLine()
+			case 1:
+				ui.Text(c, blank(image.Size, m)).FontSize(12)
+			case 2:
+				text := ui.Text(c, imageCreatedText(image.CreatedAt, m)).
+					FontSize(12).SingleLine()
+				if s.selected != row {
+					text.TextColor(t.TextMuted)
+				}
+			case 3:
+				ui.Text(c, shortID(image.ID)).FontSize(12).SingleLine()
+			}
+		}).Grow(1).MinHeight(0).FillWidth()
+		actionBar(c, func() {
+			if image, ok := s.SelectedImage(); ok {
+				ui.Text(c, m.SysManagerSelectedImage(image.Name(), blank(image.Size, m))).
+					FontSize(11).TextColor(t.TextMuted).SingleLine()
+				return
+			}
+			ui.Text(c, m.SysManagerImageHint()).FontSize(11).TextColor(t.TextMuted)
+		})
+	})
 }
 
 // imageCreatedText trims Docker's Go-style zone suffix ("+0000 UTC") from an
@@ -559,7 +614,7 @@ func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				ui.Text(c, m.SysManagerDocumentTruncated()).
 					FontSize(10).TextColor(t.TextMuted)
 			}
-			ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+			ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
 				text := document.Text
 				if strings.TrimSpace(text) == "" {
 					text = m.SysManagerUnknown()
@@ -576,7 +631,7 @@ func gpuContent(c *ui.Context, s *State, state appsysmanager.TabState,
 		statusPanel(c, s, state, m, t)
 		return
 	}
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
 		if len(state.GPU.Devices) == 0 {
 			emptyState(c, m.SysManagerGPUEmpty(), t)
 			return
@@ -703,14 +758,14 @@ func emptyText(total int, none, noMatches string) string {
 }
 
 func emptyState(c *ui.Context, message string, t *ui.Theme) {
-	ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 		ui.Text(c, message).FontSize(12).TextColor(t.TextMuted)
 	})
 }
 
 func statusPanel(c *ui.Context, s *State, state appsysmanager.TabState, m locales.Messages, t *ui.Theme) {
 	text, color := statusText(m, state, t)
-	ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(6).Children(func() {
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(6).Children(func() {
 		ui.Text(c, text).FontSize(14).Bold().TextColor(color)
 		if reason := reasonText(m, state.Reason); reason != "" {
 			ui.Text(c, reason).FontSize(12).TextColor(t.TextMuted)
@@ -751,7 +806,7 @@ func processTable(c *ui.Context, s *State, rows []appsysmanager.Process, m local
 		case 4:
 			ui.Text(c, process.Command).FontSize(12).SingleLine()
 		}
-	}).Grow(1).FillWidth()
+	}).Grow(1).MinHeight(0).FillWidth()
 }
 
 func portTable(c *ui.Context, s *State, rows []appsysmanager.Port, m locales.Messages) {
@@ -779,7 +834,7 @@ func portTable(c *ui.Context, s *State, rows []appsysmanager.Port, m locales.Mes
 		case 4:
 			ui.Text(c, port.ProcessName).FontSize(12).SingleLine()
 		}
-	}).Grow(1).FillWidth()
+	}).Grow(1).MinHeight(0).FillWidth()
 }
 
 func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.Messages, t *ui.Theme) {
@@ -819,16 +874,18 @@ func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.
 				text.TextColor(t.TextMuted)
 			}
 		}
-	}).Grow(1).FillWidth()
+	}).Grow(1).MinHeight(0).FillWidth()
 }
 
 func processActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	process, ok := s.SelectedProcess()
 	if !ok {
-		ui.Text(c, m.SysManagerProcessHint()).FontSize(11).TextColor(t.TextMuted)
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerProcessHint()).FontSize(11).TextColor(t.TextMuted)
+		})
 		return
 	}
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
+	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedProcess(process.PID, process.Command)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		stopped := strings.Contains(strings.ToUpper(process.Stat), "T")
@@ -857,10 +914,12 @@ func processActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 func portActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	port, ok := s.SelectedPort()
 	if !ok {
-		ui.Text(c, m.SysManagerPortHint()).FontSize(11).TextColor(t.TextMuted)
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerPortHint()).FontSize(11).TextColor(t.TextMuted)
+		})
 		return
 	}
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
+	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedPort(port.Protocol, port.Address, port.Port, port.PID)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if port.PID > 0 {
@@ -877,11 +936,13 @@ func portActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 func serviceActions(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	unit, ok := s.SelectedService()
 	if !ok {
-		ui.Text(c, m.SysManagerServiceHint()).FontSize(11).TextColor(t.TextMuted)
+		actionBar(c, func() {
+			ui.Text(c, m.SysManagerServiceHint()).FontSize(11).TextColor(t.TextMuted)
+		})
 		return
 	}
 	scope := scopeText(m, unit.Scope)
-	ui.Row(c).FillWidth().Gap(6).Children(func() {
+	actionBar(c, func() {
 		ui.Text(c, m.SysManagerSelectedService(unit.Name, scope)).
 			FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
 		if ui.Button(c, m.SysManagerStart()).Key("sysmanager-service-start").Clicked() {
@@ -909,7 +970,7 @@ func request(s *State, err error) {
 }
 
 func overview(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
-	ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+	ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
 			systemCard(c, data, m, t)
 			resourceCard(c, data, m, t)
