@@ -525,3 +525,67 @@ func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 		t.Fatal("the network device mode reached a Telnet Session")
 	}
 }
+
+func TestOpenHostOpensAMoshHostWithTheMoshTransport(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-mosh", Label: "roaming", Hostname: "mosh.example.com",
+		Port: 2222, Username: "alice", Protocol: domainvault.ProtocolMosh,
+		MoshServerPath: " /usr/local/bin/mosh-server ",
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the Mosh tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+
+	spec := graph.factory.spec
+	if spec.Kind != appsession.KindMosh {
+		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindMosh)
+	}
+	if spec.Mosh == nil || spec.Mosh.Hostname != "mosh.example.com" ||
+		spec.Mosh.Port != 2222 || spec.Mosh.Username != "alice" ||
+		spec.Mosh.ServerPath != "/usr/local/bin/mosh-server" {
+		t.Fatalf("Mosh config = %+v", spec.Mosh)
+	}
+	if spec.Reconnect == nil {
+		t.Fatal("a Mosh Session has no reconnect policy")
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindMosh || snapshot.Status != appsession.StatusRunning {
+		t.Fatalf("snapshot = %+v, %v; want a running Mosh Session", snapshot, ok)
+	}
+}
+
+func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
+	graph := newTestGraph(t)
+	host := domainvault.Host{
+		ID: "host-et", Label: "et", Hostname: "et.example.com",
+		Port: 2022, Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the ET tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+
+	spec := graph.factory.spec
+	if spec.Kind != appsession.KindET {
+		t.Fatalf("factory kind = %q, want %q", spec.Kind, appsession.KindET)
+	}
+	if spec.ET == nil || spec.ET.Hostname != "et.example.com" ||
+		spec.ET.Port != 2022 || spec.ET.Username != "bob" || spec.ET.ETPort != 8737 {
+		t.Fatalf("ET config = %+v", spec.ET)
+	}
+	if spec.Reconnect == nil {
+		t.Fatal("an ET Session has no reconnect policy")
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindET || snapshot.Status != appsession.StatusRunning {
+		t.Fatalf("snapshot = %+v, %v; want a running ET Session", snapshot, ok)
+	}
+}

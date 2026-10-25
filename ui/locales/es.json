@@ -2718,5 +2718,21 @@
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "Recursos",
   "sysManagerPortOwnerUnknown": "Proceso desconocido",
-  "sysManagerOverviewCoresLabel": "Núcleos"
+  "sysManagerOverviewCoresLabel": "Núcleos",
+  "vaultHostMoshServerPath": "Ruta de mosh-server",
+  "vaultHostMoshServerPathHint": "Binario remoto de mosh-server. Déjalo vacío para usar el PATH del Host.",
+  "vaultHostMoshRestrictionHint": "Las sesiones Mosh no pueden usar Hosts de salto ni proxies.",
+  "vaultHostETPort": "Puerto ET",
+  "vaultHostETPortHint": "Puerto del servidor EternalTerminal. Déjalo vacío para 2022.",
+  "vaultHostETRestrictionHint": "Las sesiones EternalTerminal admiten un Host de salto y ningún proxy.",
+  "vaultProblemETPort": "Introduce un puerto entre 1 y 65535.",
+  "connectionErrorMoshUnavailable": "El cliente Mosh incluido no está disponible para esta plataforma.",
+  "connectionErrorMoshChecksum": "El cliente Mosh incluido no superó la verificación de suma de comprobación. Reinstala la aplicación.",
+  "connectionErrorMoshJump": "Las sesiones Mosh no pueden usar Hosts de salto.",
+  "connectionErrorMoshProxy": "Las sesiones Mosh no pueden usar proxies.",
+  "connectionErrorMoshHandshake": "mosh-server no se inició. Comprueba que mosh-server esté instalado en el Host.",
+  "connectionErrorETUnavailable": "El cliente EternalTerminal incluido no está disponible para esta plataforma.",
+  "connectionErrorETChecksum": "El cliente EternalTerminal incluido no superó la verificación de suma de comprobación. Reinstala la aplicación.",
+  "connectionErrorETJump": "Las sesiones EternalTerminal admiten como máximo un Host de salto.",
+  "connectionErrorETProxy": "Las sesiones EternalTerminal no pueden usar proxies."
 }

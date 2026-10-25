@@ -31,9 +31,21 @@ type transportFactory struct {
 	telnet  appsession.Factory
 	manager *appconnection.Manager
 	routes  routeSource
+	// mosh and et are the bundled-client transports. They are optional so a
+	// test can build the factory without a binary bundle; a missing one fails
+	// closed instead of falling back to a system executable.
+	mosh appsession.Factory
+	et   appsession.Factory
 }
 
-func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) appsession.Factory {
+// withClients attaches the bundled Mosh and EternalTerminal factories.
+func (f *transportFactory) withClients(mosh, et appsession.Factory) *transportFactory {
+	f.mosh = mosh
+	f.et = et
+	return f
+}
+
+func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
 	return &transportFactory{local: local, serial: serial, telnet: telnet, manager: manager, routes: routes}
 }
 
@@ -51,6 +63,16 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 			return nil, errors.New("app: no telnet transport")
 		}
 		return f.telnet.Open(ctx, spec)
+	case appsession.KindMosh:
+		if f.mosh == nil {
+			return nil, errors.New("app: no Mosh transport")
+		}
+		return f.mosh.Open(ctx, spec)
+	case appsession.KindET:
+		if f.et == nil {
+			return nil, errors.New("app: no EternalTerminal transport")
+		}
+		return f.et.Open(ctx, spec)
 	default:
 		return f.local.Open(ctx, spec)
 	}

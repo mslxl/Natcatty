@@ -907,3 +907,70 @@ func TestRestoreReopensANetworkDevicePaneFromTheHostRecord(t *testing.T) {
 		t.Fatalf("restored spec = %+v, want raw network-device execution", spec)
 	}
 }
+
+func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-transports", Number: 1, Root: domainworkspace.NewPaneNode("pane-mosh"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-mosh",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionMosh, HostID: "host-mosh",
+				Hostname: "stale.example", Port: 22, Username: "stale", Label: "roaming",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-mosh"] = domainvault.Host{
+		ID: "host-mosh", Hostname: "mosh.example.com", Port: 2222,
+		Username: "alice", Protocol: domainvault.ProtocolMosh,
+		MoshServerPath: "/usr/local/bin/mosh-server",
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored Mosh Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-mosh")
+		return ok && !info.Pending
+	})
+	spec := graph.factory.lastSpec()
+	if spec.Kind != appsession.KindMosh || spec.Mosh == nil ||
+		spec.Mosh.Hostname != "mosh.example.com" || spec.Mosh.Port != 2222 ||
+		spec.Mosh.Username != "alice" || spec.Mosh.ServerPath != "/usr/local/bin/mosh-server" {
+		t.Fatalf("restored Mosh spec = %+v", spec)
+	}
+
+	payload = domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-transports", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-et",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionET, HostID: "host-et",
+				Hostname: "stale.example", Port: 22, Username: "stale", Label: "et",
+			},
+		}},
+	}
+	graph = newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored ET Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-et")
+		return ok && !info.Pending
+	})
+	spec = graph.factory.lastSpec()
+	if spec.Kind != appsession.KindET || spec.ET == nil ||
+		spec.ET.Hostname != "et.example.com" || spec.ET.Port != 2022 ||
+		spec.ET.Username != "bob" || spec.ET.ETPort != 8737 {
+		t.Fatalf("restored ET spec = %+v", spec)
+	}
+}

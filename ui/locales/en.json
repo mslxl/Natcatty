@@ -3968,5 +3968,21 @@
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "Resources",
   "sysManagerPortOwnerUnknown": "Unknown process",
-  "sysManagerOverviewCoresLabel": "Cores"
+  "sysManagerOverviewCoresLabel": "Cores",
+  "vaultHostMoshServerPath": "mosh-server path",
+  "vaultHostMoshServerPathHint": "Remote mosh-server binary. Leave blank to use the Host's PATH.",
+  "vaultHostMoshRestrictionHint": "Mosh Sessions cannot use jump Hosts or proxies.",
+  "vaultHostETPort": "ET port",
+  "vaultHostETPortHint": "EternalTerminal server port. Leave blank for 2022.",
+  "vaultHostETRestrictionHint": "EternalTerminal Sessions support one jump Host and no proxies.",
+  "vaultProblemETPort": "Enter a port between 1 and 65535.",
+  "connectionErrorMoshUnavailable": "The bundled Mosh client is not available for this platform.",
+  "connectionErrorMoshChecksum": "The bundled Mosh client failed checksum verification. Reinstall the application.",
+  "connectionErrorMoshJump": "Mosh Sessions cannot use jump Hosts.",
+  "connectionErrorMoshProxy": "Mosh Sessions cannot use proxies.",
+  "connectionErrorMoshHandshake": "mosh-server did not start. Check that mosh-server is installed on the Host.",
+  "connectionErrorETUnavailable": "The bundled EternalTerminal client is not available for this platform.",
+  "connectionErrorETChecksum": "The bundled EternalTerminal client failed checksum verification. Reinstall the application.",
+  "connectionErrorETJump": "EternalTerminal Sessions support at most one jump Host.",
+  "connectionErrorETProxy": "EternalTerminal Sessions cannot use proxies."
 }

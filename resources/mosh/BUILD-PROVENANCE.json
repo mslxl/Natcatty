@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "component": "mosh-client",
+  "release": {
+    "repository": "binaricat/MoshCatty",
+    "tag": "moshcatty-0.1.8",
+    "url": "https://github.com/binaricat/MoshCatty/releases/tag/moshcatty-0.1.8"
+  },
+  "license": "GPL-3.0-or-later",
+  "licenseFile": "LICENSE-MoshCatty-GPL-3.0.txt",
+  "upstream": {
+    "repository": "mobile-shell/mosh",
+    "url": "https://github.com/mobile-shell/mosh"
+  },
+  "artifacts": [
+    {
+      "name": "mosh-client-win32-x64.tar.gz",
+      "sha256": "ee437592c351361e47c600fafe04ce97a2551aa61fbef1fb3d6dda565835311e",
+      "binary": "mosh-client.exe",
+      "binarySha256": "e44616a22038f1742f765c7de553796ba4d1698f2c1f7a7cfb0dafd33ecdc78a",
+      "size": 545280
+    },
+    {
+      "name": "mosh-client-linux-x64.tar.gz",
+      "sha256": "c911d70eac729cb368667766ed817f7aa0a8dd8e2f8a006c38777900d6ef3575",
+      "binary": "mosh-client",
+      "binarySha256": "215e2527961058a625e13afb5f7e4bc372cec11314260258dcfa2347961f48b8",
+      "size": 653960
+    },
+    {
+      "name": "mosh-client-linux-arm64.tar.gz",
+      "sha256": "ebeb217e11f4bec34269fd06373d067d587fa931808cfa7d5d58d870fc3a846a",
+      "binary": "mosh-client",
+      "binarySha256": "2553988bea5af73d6d15ecad918855e375ddbf46393ce9379a8ad25c69ceb069",
+      "size": 582464
+    },
+    {
+      "name": "mosh-client-darwin-universal.tar.gz",
+      "sha256": "daa2da20d2f135190fdbebf952a692d80eed0e21d48cee252a28e901bccc2402",
+      "binary": "mosh-client",
+      "binarySha256": "460662ccb768e8ffcc7f0c07f58bb5dd1c32202c3b7e4062207a91a722eb83ed",
+      "size": 1159056
+    }
+  ],
+  "buildNotes": [
+    "MoshCatty publishes prebuilt mosh-client binaries from upstream mosh.",
+    "Windows arm64 is not built.",
+    "The release archives and extracted binaries above were verified on 2026-10-25."
+  ]
+}

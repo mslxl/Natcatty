@@ -7,6 +7,8 @@ import (
 	"errors"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
+	etmodel "github.com/mslxl/natcatty/domain/model/et"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -33,6 +35,29 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return m.ConnectionErrorSecurityKeyUnavailable()
 	case errors.Is(err, appconnection.ErrSecurityKeyDeviceTimeout):
 		return m.ConnectionErrorSecurityKeyTimeout()
+	// A Mosh or EternalTerminal failure is more specific than the generic
+	// internal text: the user can act on a missing bundle, a checksum failure,
+	// an unsupported route, or a server that never announced itself.
+	case errors.Is(err, moshmodel.ErrChecksumMismatch):
+		return m.ConnectionErrorMoshChecksum()
+	case errors.Is(err, moshmodel.ErrBundleUnavailable),
+		errors.Is(err, moshmodel.ErrPlatformUnsupported):
+		return m.ConnectionErrorMoshUnavailable()
+	case errors.Is(err, moshmodel.ErrJumpUnsupported):
+		return m.ConnectionErrorMoshJump()
+	case errors.Is(err, moshmodel.ErrProxyUnsupported):
+		return m.ConnectionErrorMoshProxy()
+	case errors.Is(err, moshmodel.ErrHandshake):
+		return m.ConnectionErrorMoshHandshake()
+	case errors.Is(err, etmodel.ErrChecksumMismatch):
+		return m.ConnectionErrorETChecksum()
+	case errors.Is(err, etmodel.ErrBundleUnavailable),
+		errors.Is(err, etmodel.ErrPlatformUnsupported):
+		return m.ConnectionErrorETUnavailable()
+	case errors.Is(err, etmodel.ErrMultipleJumpHosts):
+		return m.ConnectionErrorETJump()
+	case errors.Is(err, etmodel.ErrProxyUnsupported):
+		return m.ConnectionErrorETProxy()
 	}
 	return ProblemText(m, Kind(err))
 }

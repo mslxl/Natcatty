@@ -61,6 +61,8 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		SkipEcdsaHostKey:       normalized.SkipEcdsaHostKey,
 		Algorithms:             domainvault.CloneAlgorithms(normalized.Algorithms),
 		DeviceType:             normalized.DeviceType,
+		MoshServerPath:         normalized.MoshServerPath,
+		ETPort:                 normalized.ETPort,
 		OrderKey:               int64(f.nextID) * 1000,
 	}
 	f.created = append(f.created, draft)
@@ -102,6 +104,8 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
 		host.DeviceType = normalized.DeviceType
+		host.MoshServerPath = normalized.MoshServerPath
+		host.ETPort = normalized.ETPort
 		f.items[i] = host
 		f.updated = append(f.updated, draft)
 		return host, nil
@@ -891,5 +895,75 @@ func TestBeginEditRestoresTheNetworkDeviceMode(t *testing.T) {
 	last := repo.updated[len(repo.updated)-1]
 	if last.DeviceType != domainvault.DeviceTypeDefault {
 		t.Fatalf("switched Host device type = %q, want the default", last.DeviceType)
+	}
+}
+
+func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "build-box"
+	form.Hostname = "build.example.com"
+	form.Protocol = string(domainvault.ProtocolMosh)
+	form.MoshServerPath = "/usr/local/bin/mosh-server"
+	// A hidden ET field must not leak into a Mosh Host.
+	form.ETPort = "8737"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 {
+		t.Fatalf("created = %d, want 1", len(repo.created))
+	}
+	if repo.created[0].MoshServerPath != "/usr/local/bin/mosh-server" {
+		t.Fatalf("Mosh draft = %+v", repo.created[0])
+	}
+	if saved := repo.items[0]; saved.MoshServerPath != "/usr/local/bin/mosh-server" || saved.ETPort != 0 {
+		t.Fatalf("Mosh Host = %+v", saved)
+	}
+
+	state.BeginCreate()
+	form = state.Form()
+	form.Label = "et-box"
+	form.Hostname = "et.example.com"
+	form.Protocol = string(domainvault.ProtocolET)
+	form.ETPort = "8737"
+	form.MoshServerPath = "/opt/mosh-server"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save ET: %v", err)
+	}
+	etHost := repo.items[len(repo.items)-1]
+	if etHost.ETPort != 8737 || etHost.MoshServerPath != "" {
+		t.Fatalf("ET Host = %+v", etHost)
+	}
+	if !state.BeginEdit(etHost.ID) {
+		t.Fatal("BeginEdit did not open the ET editor")
+	}
+	restored := state.Form()
+	if restored.ETPort != "8737" || restored.MoshServerPath != "" {
+		t.Fatalf("restored ET form = %+v", restored)
+	}
+	// A saved Host with the default port keeps the field blank; the editor's
+	// placeholder shows 2022 and the domain default fills it in on save.
+	repo.items[len(repo.items)-1].ETPort = 0
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !state.BeginEdit(etHost.ID) || state.Form().ETPort != "" {
+		t.Fatalf("default ET port = %q, want a blank field", state.Form().ETPort)
+	}
+
+	state.BeginCreate()
+	form = state.Form()
+	form.Label = "bad-port"
+	form.Hostname = "bad.example.com"
+	form.Protocol = string(domainvault.ProtocolET)
+	form.ETPort = "not-a-port"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if state.Problem() != ProblemETPort {
+		t.Fatalf("problem = %v, want %v", state.Problem(), ProblemETPort)
 	}
 }

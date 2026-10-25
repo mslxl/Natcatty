@@ -3789,6 +3789,208 @@
   status: verified
   notes: "Host Details gains a Network device mode checkbox with an explanation, shown only for SSH, and all five locales carry the label and hint. The value persists in the Host JSON as deviceType, so no storage migration was needed; Vault JSON export and import round-trip it, and a restored Pane reads the current Host record. NormalizeDraft drops the mode for any other protocol, and IsNetworkDevice additionally requires SSH, so a hand-edited or stale record cannot put another transport into raw execution. The checkbox label is localized; the mode is an advanced Host option, not a new window. Deliberate divergence: group-level deviceType defaults are not inherited, so only the Host's own setting selects raw execution, and the original's separate warning panel is folded into the hint below the checkbox."
 
+# --- Ticket 43: mosh and EternalTerminal transports ---
+
+- id: mosh.bundle
+  area: terminal
+  feature: The bundled mosh-client is verified before every launch and is never resolved through PATH
+  original_paths:
+    - scripts/fetch-mosh-binaries.cjs
+    - scripts/resolve-mosh-bin-release.cjs
+    - scripts/mosh-extra-resources.cjs
+    - resources/mosh/README.md
+    - docs/designs/native-mosh-client.md
+    - electron/bridges/terminalBridge.cjs
+  module: adapters/bundle
+  tickets: [43]
+  acceptance_tests:
+    - adapters/bundle.TestResolveVerifiesGoodBinary
+    - adapters/bundle.TestResolveRejectsBadChecksum
+    - adapters/bundle.TestResolveRejectsWrongSize
+    - adapters/bundle.TestResolveRevalidatesEveryCall
+    - adapters/bundle.TestResolveAbsentReportsSearchedPaths
+    - adapters/bundle.TestResolveUnsupportedTargets
+    - adapters/bundle.TestManifestsComplete
+    - adapters/bundle.TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries
+    - adapters/mosh.TestMissingBundleIsTypedAndNeverFallsBackToPath
+    - adapters/mosh.TestCorruptBundleIsTyped
+    - adapters/mosh.TestUnsupportedPlatformIsTyped
+    - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
+    - internal/tools/fetchtransportbins.TestExtractBinary
+    - internal/tools/fetchtransportbins.TestExtractBinaryRejectsTraversal
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The MoshCatty moshcatty-0.1.8 release is pinned in adapters/bundle with archive and extracted-binary SHA-256 plus byte size for win32-x64, linux-x64, linux-arm64, and darwin-universal. The fetch tool verifies the archive digest before extraction, refuses traversal entries, and re-verifies the extracted binary. The app re-hashes the binary before every launch, so a replaced file is never executed; a missing, malformed, or unsupported bundle returns a typed error instead of looking for a system mosh-client, and the self-test proves a planted mosh-client.exe on PATH is found by exec.LookPath while the transport still refuses. The win32-x64 binary in resources is committed and verified (sha256 e44616a22038f1742f765c7de553796ba4d1698f2c1f7a7cfb0dafd33ecdc78a, 545280 bytes); the other targets are fetched into the same layout by internal/tools/fetchtransportbins. Windows arm64 has no upstream asset and returns the typed unsupported-platform error, matching the original's Windows arm64 exclusion."
+
+- id: mosh.handshake
+  area: terminal
+  feature: The mosh bootstrap announces MOSH CONNECT and the terminal swaps to the bundled client
+  original_paths:
+    - electron/bridges/moshHandshake.cjs
+    - electron/bridges/terminalBridge/moshSession.cjs
+    - electron/bridges/terminalBridge.bundledMosh.test.cjs
+    - electron/bridges/fixtures/mosh-conpty-fake-ssh.cs
+    - electron/bridges/fixtures/mosh-conpty-fake-client.cs
+  module: adapters/mosh
+  tickets: [43]
+  acceptance_tests:
+    - domain/model/mosh.TestParseConnectLine
+    - domain/model/mosh.TestParseIPLine
+    - domain/model/mosh.TestSnifferChunkBoundaries
+    - domain/model/mosh.TestSnifferWaitsForPadding
+    - domain/model/mosh.TestSnifferFlushUnterminated
+    - domain/model/mosh.TestSnifferPassesOrdinaryOutput
+    - domain/model/mosh.TestSnifferPassesThroughAfterConnect
+    - domain/model/mosh.TestRemoteCommand
+    - domain/model/mosh.TestRemoteCommandDefaultsAndQuoting
+    - domain/model/mosh.TestClientEnv
+    - domain/model/mosh.TestClientArgs
+    - domain/model/mosh.TestConfigValidation
+    - adapters/mosh.TestHandshakeSwapsToBundledClient
+    - adapters/mosh.TestHandshakeParsesUnterminatedAnnouncement
+    - adapters/mosh.TestHandshakeFailureIsTypedAndReaped
+    - adapters/mosh.TestHandshakeTimeout
+    - adapters/mosh.TestOpenCancellation
+    - adapters/mosh.TestBootstrapAndSpawnFailures
+    - adapters/mosh.TestUDPFixtureRoundTrip
+    - adapters/mosh.TestLocaleFromEnvironment
+    - adapters/mosh.TestCheckRoute
+    - app.TestMoshRejectsAJumpChainBeforeOpeningAnything
+    - app.TestMoshRejectsAProxyBeforeOpeningAnything
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The bootstrap runs `sh -c` with a quoted mosh-server new -s -c 256 command (plus -l for an explicit address), tolerates ANSI and OSC noise, a split announcement, and a missing trailing newline, and hides the MOSH CONNECT line from terminal output. The adapter then clears the handshake screen with an ESC[2J ESC[H reset, starts the verified mosh-client on a PTY with MOSH_KEY, TERM=xterm-256color, MOSH_NO_TERM_INIT=1, the original port/key arguments, and the Session's initial size, and forwards input and resizes. The in-process fixture pairs a fake SSH bootstrap with a UDP server and a fake client PTY, asserts the key never reaches the terminal, the datagram arrives, input and resize reach the child, and the child is reaped by Close; a failed handshake, timeout, and canceled open are typed and leave no process. Deliberate divergence: the bootstrap exec goes through the app's Connection Manager instead of the original's system ssh, so saved passwords, Keys, MFA, and known-host trust are reused. Mosh cannot carry a jump chain or proxy, so both fail with typed errors before any channel opens."
+
+- id: transports.host-settings
+  area: vault
+  feature: Mosh and EternalTerminal Hosts keep their protocol-specific settings and reopen
+  original_paths:
+    - domain/host.ts
+    - components/HostDetailsConnectionSections.tsx
+    - components/HostDetailsAdvancedSections.tsx
+    - components/VaultView.tsx
+    - electron/bridges/terminalBridge.bundledEt.test.cjs
+  module: ui/vault
+  tickets: [43]
+  acceptance_tests:
+    - domain/vault.TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol
+    - domain/vault.TestNormalizeDraftRejectsAnOutOfRangeETPort
+    - domain/vault.TestEffectivePortUsesSSHDefaultsForMoshAndET
+    - ui/vault/state.TestMoshAndETSettingsAreSavedOnlyForTheirProtocol
+    - ui/vault.TestVaultViewOffersMoshAndETFieldsForTheirProtocols
+    - ui/shell/state.TestOpenHostOpensAMoshHostWithTheMoshTransport
+    - ui/shell/state.TestOpenHostOpensAnETHostWithTheETTransport
+    - ui/shell/state.TestRestoreReopensMoshAndETPanesFromTheSavedHost
+    - ui/connection.TestProblemTextForNamesMoshAndETFailures
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The Vault protocol selector now offers mosh and et alongside ssh, telnet, and local. A Mosh Host stores an optional remote mosh-server path; an ET Host stores a server port that defaults to 2022. NormalizeDraft keeps each value only for its protocol, clears it on any other protocol, and rejects a non-numeric or out-of-range ET port as a typed field error, which the editor localizes in all five catalogs. Connect and Test actions appear for both protocols. A restored Pane reopens the current Host record rather than the stale descriptor address, so edits to the Host take effect; no credentials are stored in the descriptor. Mosh and ET route restrictions (no proxy, no Mosh jump, at most one ET jump) are typed and localized. The ET port field uses the original 2022 placeholder while an unset Host keeps the field blank and the domain default."
+
+- id: et.bundle
+  area: terminal
+  feature: The bundled EternalTerminal client is verified and a missing bundle never falls back to PATH
+  original_paths:
+    - scripts/fetch-et-binaries.cjs
+    - scripts/resolve-et-bin-release.cjs
+    - .github/workflows/build-et-binaries.yml
+    - ET_INTEGRATION_CHECKLIST.md
+    - resources/et/README.md
+    - electron/bridges/terminalBridge.bundledEt.test.cjs
+  module: adapters/et
+  tickets: [43]
+  acceptance_tests:
+    - adapters/bundle.TestResolveVerifiesGoodBinary
+    - adapters/bundle.TestResolveRejectsBadChecksum
+    - adapters/bundle.TestResolveAbsentReportsSearchedPaths
+    - adapters/bundle.TestResolveUnsupportedTargets
+    - adapters/bundle.TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries
+    - adapters/et.TestBundleFailuresAreTypedAndNoPathFallback
+    - adapters/et.TestSpawnFailureCleansArtifacts
+    - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "et-bin-6.2.10-1 (upstream MisterTea/EternalTerminal at et-v6.2.10, commit f9a584ac06b2f1730b5bdf0a27150f28478368fb, telemetry disabled) is pinned for win32-x64, linux-x64, linux-arm64, and darwin-universal with archive and binary SHA-256 plus size. The committed win32-x64 et.exe verifies (sha256 6212e2c089cd55aa9455dc2a9de22ac83d0bc6c8af76ce9ad096668931ee5a25, 13654528 bytes); other targets are fetched by internal/tools/fetchtransportbins into the same layout. A missing or tampered bundle returns the typed adapter error and the self-test plants et.exe on PATH to prove it is never selected. A spawn failure removes the temporary HOME and askpass artifacts."
+
+- id: et.environment
+  area: terminal
+  feature: The bundled et runs as a PTY with an SSH_ASKPASS environment built from saved credentials
+  original_paths:
+    - electron/bridges/terminalBridge/etSession.cjs
+    - electron/bridges/terminalBridge.cjs
+    - electron/bridges/terminalBridge.bundledEt.test.cjs
+    - ET_INTEGRATION_CHECKLIST.md
+  module: adapters/et
+  tickets: [43]
+  acceptance_tests:
+    - domain/model/et.TestConfigNormalizeAndValidate
+    - domain/model/et.TestPreferredAuthentications
+    - domain/model/et.TestArgs
+    - domain/model/et.TestLegacyAlgorithmLines
+    - domain/model/et.TestPasswordPromptMatchers
+    - domain/model/et.TestPassphrasePromptMatchers
+    - domain/model/et.TestAskpassEntries
+    - domain/model/et.TestPickAskpassPassword
+    - domain/model/et.TestPickAskpassSingleFallbackAndLongestMatch
+    - domain/model/et.TestPickAskpassKnownLoginPromptWins
+    - adapters/et.TestPreparePasswordAuth
+    - adapters/et.TestPrepareKeyPassphraseCertificateAndAlgorithms
+    - adapters/et.TestPrepareJump
+    - adapters/et.TestPrepareKnownHostsPolicies
+    - adapters/et.TestPrepareIncludesRealConfig
+    - adapters/et.TestOpenProcessLifecycle
+    - adapters/et.TestOpenCloseReapsAndCleans
+    - adapters/et.TestAskpassUnreadableMapAndMissingSecret
+    - adapters/et.TestIsAskpassInvocation
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Each ET Session gets a private temporary HOME with .ssh/config, key and certificate files, a private known_hosts snapshot, a password/passphrase map, and an SSH_ASKPASS wrapper that re-invokes the app with --natcatty-et-askpass; SSH_ASKPASS_REQUIRE=force and DISPLAY=netcatty:0 make OpenSSH use it. The wrapper answers the first matching password, passphrase, or jump password prompt and fails on a missing or unreadable map rather than hanging. Saved legacy-algorithm and certificate preferences are preserved; TERM and ET_NO_TELEMETRY=1 are set. The documented system user and system ssh_config are included under Match all, while UserKnownHostsFile and GlobalKnownHostsFile point only at the Vault snapshot and StrictHostKeyChecking=accept-new applies. The PTY is resized and reaped on Close, and the temporary HOME is removed. ET still uses the system OpenSSH internally for its own bootstrap, which is the upstream design; no system et binary is ever used."
+
+- id: et.session
+  area: terminal
+  feature: An EternalTerminal Session resolves Vault credentials and one jump Host before the process starts
+  original_paths:
+    - electron/bridges/terminalBridge/etSession.cjs
+    - electron/bridges/terminalBridge.cjs
+    - domain/host.ts
+  module: app
+  tickets: [43]
+  acceptance_tests:
+    - app.TestETAuthUsesTheResolvedIdentityAndFailsClosedOnAMissingKey
+    - app.TestETRejectsAnUnsupportedRouteBeforeStartingAProcess
+    - app.TestETEnrichesTheConfigFromTheVaultAndOneJump
+    - app.TestKnownHostsContentRendersVaultPins
+    - adapters/et.TestOpenProcessLifecycle
+    - adapters/et.TestOpenCloseReapsAndCleans
+    - ui/shell/state.TestOpenHostOpensAnETHostWithTheETTransport
+    - ui/shell/state.TestRestoreReopensMoshAndETPanesFromTheSavedHost
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The app resolves the Host's auth selection, password, Key, certificate, passphrase, agent, and MFA exactly as the SSH path does, and a dangling Key reference fails closed with a typed auth error instead of silently using a password. The saved Host owns the ET server port even for an older restored descriptor. The Vault's known hosts become one authoritative snapshot for both the target and the jump, and a hostname with only a fingerprint is omitted rather than emitting an unusable line. One jump Host contributes its own ET port, resolved username, credentials, and legacy-algorithm preference; a proxy or a second jump is rejected before any process starts. The jump chain is passed as --jumphost/--jport, matching the original's single-hop support. No password, key material, or known-hosts content is written to the restore payload."
+
+- id: transports.licenses
+  area: packaging
+  feature: Bundled transport clients ship with their licenses, provenance, and checksums
+  original_paths:
+    - resources/mosh/README.md
+    - resources/et/README.md
+    - .github/workflows/build-et-binaries.yml
+  module: adapters/bundle
+  tickets: [43]
+  acceptance_tests:
+    - adapters/bundle.TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries
+    - adapters/bundle.TestManifestsComplete
+    - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
+    - app.TestTicket43CheckRunsThroughTheKeyboard
+    - app.TestTicket43CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "resources/THIRD-PARTY-NOTICES.md names both components, their upstream repositories, and their licenses. resources/mosh carries the full GPL-3.0 text plus BUILD-PROVENANCE.json and README.md with the MoshCatty source link and per-target checksums; resources/et carries the Apache-2.0 text plus BUILD-PROVENANCE.json (upstream ref, commit, Netcatty build workflow run, archive and binary digests) and README.md. The test reads the committed notices and provenance and verifies the committed Windows binaries against the compiled-in manifest. MyGo packages the resources tree next to the executable, so the same verification applies to a packaged build; a platform without a bundle shows the localized unavailable error instead of running a system copy."
+
 # --- Ticket 44: Host monitoring ---
 
 - id: monitor.metrics

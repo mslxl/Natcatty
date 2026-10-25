@@ -626,3 +626,51 @@ func TestNetworkDeviceModeIsKeptOnlyForSSH(t *testing.T) {
 		t.Fatal("a non-SSH Host was treated as a network device")
 	}
 }
+
+func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol(t *testing.T) {
+	mosh, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolMosh,
+		MoshServerPath: "  /usr/local/bin/mosh-server  ", ETPort: 2022,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft mosh: %v", err)
+	}
+	if mosh.MoshServerPath != "/usr/local/bin/mosh-server" {
+		t.Fatalf("MoshServerPath = %q", mosh.MoshServerPath)
+	}
+	if mosh.ETPort != 0 {
+		t.Fatalf("mosh kept ETPort = %d", mosh.ETPort)
+	}
+
+	et, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolET,
+		MoshServerPath: "/usr/bin/mosh-server", ETPort: 8737,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft et: %v", err)
+	}
+	if et.ETPort != 8737 {
+		t.Fatalf("ETPort = %d", et.ETPort)
+	}
+	if et.MoshServerPath != "" {
+		t.Fatalf("et kept MoshServerPath = %q", et.MoshServerPath)
+	}
+}
+
+func TestNormalizeDraftRejectsAnOutOfRangeETPort(t *testing.T) {
+	_, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolET, ETPort: 70000,
+	})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) || invalid.Field != FieldETPort || invalid.Rule != RuleOutOfRange {
+		t.Fatalf("error = %v, want an out-of-range ET port", err)
+	}
+}
+
+func TestEffectivePortUsesSSHDefaultsForMoshAndET(t *testing.T) {
+	for _, protocol := range []Protocol{ProtocolMosh, ProtocolET} {
+		if got := EffectivePort(protocol, 0); got != 22 {
+			t.Errorf("%s: EffectivePort = %d, want 22", protocol, got)
+		}
+	}
+}

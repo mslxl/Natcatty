@@ -3,3 +3,13 @@
 
 # Build output
 build/
+
+# Transport client binaries are fetched per packaging target. The host target's
+# Windows x64 bundle is committed for reproducible local acceptance; other
+# targets are downloaded by internal/tools/fetchtransportbins.
+/resources/mosh/linux-x64/
+/resources/mosh/linux-arm64/
+/resources/mosh/darwin-universal/
+/resources/et/linux-x64/
+/resources/et/linux-arm64/
+/resources/et/darwin-universal/

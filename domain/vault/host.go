@@ -13,9 +13,8 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 )
 
-// Protocol is the connection protocol a Host uses. Only the protocols this
-// slice can manage are listed; later tickets add mosh, EternalTerminal,
-// serial, and network-device behavior.
+// Protocol is the connection protocol a Host uses. Serial and network-device
+// behavior are settings on an SSH Host, not protocols of their own.
 type Protocol string
 
 const (
@@ -25,6 +24,11 @@ const (
 	ProtocolTelnet Protocol = "telnet"
 	// ProtocolLocal is a shell that runs on this machine.
 	ProtocolLocal Protocol = "local"
+	// ProtocolMosh is an SSH Host that swaps to Mosh after the bootstrap.
+	ProtocolMosh Protocol = "mosh"
+	// ProtocolET is an SSH Host reached through the bundled EternalTerminal
+	// client.
+	ProtocolET Protocol = "et"
 )
 
 // Limits keep a malformed Host from entering the Vault. They are generous
@@ -45,6 +49,8 @@ const (
 	maxHostChainLength = 10
 	// maxProxyCommandLength bounds a ProxyCommand before it reaches a shell.
 	maxProxyCommandLength = 8 << 10
+	// maxMoshServerPathLength bounds the remote mosh-server override.
+	maxMoshServerPathLength = 4 << 10
 	// maxAlgorithmCount and maxAlgorithmNameLength bound an advanced algorithm
 	// selection so a pasted list cannot balloon the Host record.
 	maxAlgorithmCount      = 64
@@ -243,6 +249,12 @@ type Host struct {
 	// the original's Host Details "Network Device Mode" setting and uses the
 	// same persisted JSON name.
 	DeviceType DeviceType `json:"deviceType,omitempty"`
+	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
+	// Empty uses the remote PATH. It is kept only for ProtocolMosh.
+	MoshServerPath string `json:"moshServerPath,omitempty"`
+	// ETPort is the EternalTerminal server port for an ET Host. Zero means the
+	// 2022 default. It is kept only for ProtocolET.
+	ETPort int `json:"etPort,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -291,6 +303,12 @@ type Draft struct {
 	// DeviceType selects raw network-device execution. It is kept only for
 	// SSH Hosts.
 	DeviceType DeviceType
+	// MoshServerPath overrides the remote mosh-server binary. It is kept only
+	// for ProtocolMosh.
+	MoshServerPath string
+	// ETPort is the EternalTerminal server port. Zero means the default and is
+	// kept only for ProtocolET.
+	ETPort int
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -325,6 +343,10 @@ const (
 	// preference.
 	FieldFileProtocol Field = "file_protocol"
 	FieldSFTPSudo     Field = "sftp_sudo"
+	// FieldMoshServerPath and FieldETPort name the Mosh and EternalTerminal
+	// settings a validation error concerns.
+	FieldMoshServerPath Field = "mosh_server_path"
+	FieldETPort         Field = "et_port"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -384,6 +406,15 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		// Raw network-device execution needs an SSH PTY; a Host that switched
 		// to another protocol must not keep a mode its transport cannot run.
 		draft.DeviceType = DeviceTypeDefault
+	}
+	draft.MoshServerPath = strings.TrimSpace(draft.MoshServerPath)
+	if draft.Protocol != ProtocolMosh {
+		// A server path and an ET port belong to one protocol. Keeping them on
+		// another Host would surface a setting its transport never reads.
+		draft.MoshServerPath = ""
+	}
+	if draft.Protocol != ProtocolET {
+		draft.ETPort = 0
 	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
@@ -472,6 +503,8 @@ func (h Host) Validate() error {
 		SFTPFileProtocol:       h.SFTPFileProtocol,
 		SFTPSudo:               h.SFTPSudo,
 		DeviceType:             h.DeviceType,
+		MoshServerPath:         h.MoshServerPath,
+		ETPort:                 h.ETPort,
 	})
 }
 
@@ -491,7 +524,7 @@ func (h Host) IsNetworkDevice() bool {
 
 func validateFields(draft Draft) error {
 	switch draft.Protocol {
-	case ProtocolSSH, ProtocolTelnet, ProtocolLocal:
+	case ProtocolSSH, ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET:
 	default:
 		return validation(FieldProtocol, RuleUnsupported)
 	}
@@ -564,6 +597,15 @@ func validateFields(draft Draft) error {
 
 	if err := validateText(FieldUsername, draft.Username, maxUsernameLength, false); err != nil {
 		return err
+	}
+
+	if draft.Protocol == ProtocolMosh {
+		if err := validateText(FieldMoshServerPath, draft.MoshServerPath, maxMoshServerPathLength, false); err != nil {
+			return err
+		}
+	}
+	if draft.Protocol == ProtocolET && draft.ETPort != 0 && (draft.ETPort < 1 || draft.ETPort > 65535) {
+		return validation(FieldETPort, RuleOutOfRange)
 	}
 
 	if len(draft.Group) > maxGroupLength {

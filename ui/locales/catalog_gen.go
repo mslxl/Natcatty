@@ -17985,3 +17985,165 @@ func SysManagerOverviewCoresLabel() string { return In(i18n.Locale()).SysManager
 func (msgs Messages) SysManagerOverviewCoresLabel() string {
 	return Catalog.Format(msgs.locale, "sysManagerOverviewCoresLabel", nil)
 }
+
+// VaultHostMoshServerPath says "mosh-server path"
+// in the language the app shows.
+func VaultHostMoshServerPath() string { return In(i18n.Locale()).VaultHostMoshServerPath() }
+
+// VaultHostMoshServerPath says "mosh-server path"
+// in the language of msgs.
+func (msgs Messages) VaultHostMoshServerPath() string {
+	return Catalog.Format(msgs.locale, "vaultHostMoshServerPath", nil)
+}
+
+// VaultHostMoshServerPathHint says "Remote mosh-server binary. Leave blank to use the Host's PATH."
+// in the language the app shows.
+func VaultHostMoshServerPathHint() string { return In(i18n.Locale()).VaultHostMoshServerPathHint() }
+
+// VaultHostMoshServerPathHint says "Remote mosh-server binary. Leave blank to use the Host's PATH."
+// in the language of msgs.
+func (msgs Messages) VaultHostMoshServerPathHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostMoshServerPathHint", nil)
+}
+
+// VaultHostMoshRestrictionHint says "Mosh Sessions cannot use jump Hosts or proxies."
+// in the language the app shows.
+func VaultHostMoshRestrictionHint() string { return In(i18n.Locale()).VaultHostMoshRestrictionHint() }
+
+// VaultHostMoshRestrictionHint says "Mosh Sessions cannot use jump Hosts or proxies."
+// in the language of msgs.
+func (msgs Messages) VaultHostMoshRestrictionHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostMoshRestrictionHint", nil)
+}
+
+// VaultHostETPort says "ET port"
+// in the language the app shows.
+func VaultHostETPort() string { return In(i18n.Locale()).VaultHostETPort() }
+
+// VaultHostETPort says "ET port"
+// in the language of msgs.
+func (msgs Messages) VaultHostETPort() string {
+	return Catalog.Format(msgs.locale, "vaultHostETPort", nil)
+}
+
+// VaultHostETPortHint says "EternalTerminal server port. Leave blank for 2022."
+// in the language the app shows.
+func VaultHostETPortHint() string { return In(i18n.Locale()).VaultHostETPortHint() }
+
+// VaultHostETPortHint says "EternalTerminal server port. Leave blank for 2022."
+// in the language of msgs.
+func (msgs Messages) VaultHostETPortHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostETPortHint", nil)
+}
+
+// VaultHostETRestrictionHint says "EternalTerminal Sessions support one jump Host and no proxies."
+// in the language the app shows.
+func VaultHostETRestrictionHint() string { return In(i18n.Locale()).VaultHostETRestrictionHint() }
+
+// VaultHostETRestrictionHint says "EternalTerminal Sessions support one jump Host and no proxies."
+// in the language of msgs.
+func (msgs Messages) VaultHostETRestrictionHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostETRestrictionHint", nil)
+}
+
+// VaultProblemETPort says "Enter a port between 1 and 65535."
+// in the language the app shows.
+func VaultProblemETPort() string { return In(i18n.Locale()).VaultProblemETPort() }
+
+// VaultProblemETPort says "Enter a port between 1 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultProblemETPort() string {
+	return Catalog.Format(msgs.locale, "vaultProblemETPort", nil)
+}
+
+// ConnectionErrorMoshUnavailable says "The bundled Mosh client is not available for this platform."
+// in the language the app shows.
+func ConnectionErrorMoshUnavailable() string {
+	return In(i18n.Locale()).ConnectionErrorMoshUnavailable()
+}
+
+// ConnectionErrorMoshUnavailable says "The bundled Mosh client is not available for this platform."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshUnavailable", nil)
+}
+
+// ConnectionErrorMoshChecksum says "The bundled Mosh client failed checksum verification. Reinstall the application."
+// in the language the app shows.
+func ConnectionErrorMoshChecksum() string { return In(i18n.Locale()).ConnectionErrorMoshChecksum() }
+
+// ConnectionErrorMoshChecksum says "The bundled Mosh client failed checksum verification. Reinstall the application."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshChecksum() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshChecksum", nil)
+}
+
+// ConnectionErrorMoshJump says "Mosh Sessions cannot use jump Hosts."
+// in the language the app shows.
+func ConnectionErrorMoshJump() string { return In(i18n.Locale()).ConnectionErrorMoshJump() }
+
+// ConnectionErrorMoshJump says "Mosh Sessions cannot use jump Hosts."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshJump() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshJump", nil)
+}
+
+// ConnectionErrorMoshProxy says "Mosh Sessions cannot use proxies."
+// in the language the app shows.
+func ConnectionErrorMoshProxy() string { return In(i18n.Locale()).ConnectionErrorMoshProxy() }
+
+// ConnectionErrorMoshProxy says "Mosh Sessions cannot use proxies."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshProxy() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshProxy", nil)
+}
+
+// ConnectionErrorMoshHandshake says "mosh-server did not start. Check that mosh-server is installed on the Host."
+// in the language the app shows.
+func ConnectionErrorMoshHandshake() string { return In(i18n.Locale()).ConnectionErrorMoshHandshake() }
+
+// ConnectionErrorMoshHandshake says "mosh-server did not start. Check that mosh-server is installed on the Host."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshHandshake() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshHandshake", nil)
+}
+
+// ConnectionErrorETUnavailable says "The bundled EternalTerminal client is not available for this platform."
+// in the language the app shows.
+func ConnectionErrorETUnavailable() string { return In(i18n.Locale()).ConnectionErrorETUnavailable() }
+
+// ConnectionErrorETUnavailable says "The bundled EternalTerminal client is not available for this platform."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorETUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionErrorETUnavailable", nil)
+}
+
+// ConnectionErrorETChecksum says "The bundled EternalTerminal client failed checksum verification. Reinstall the application."
+// in the language the app shows.
+func ConnectionErrorETChecksum() string { return In(i18n.Locale()).ConnectionErrorETChecksum() }
+
+// ConnectionErrorETChecksum says "The bundled EternalTerminal client failed checksum verification. Reinstall the application."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorETChecksum() string {
+	return Catalog.Format(msgs.locale, "connectionErrorETChecksum", nil)
+}
+
+// ConnectionErrorETJump says "EternalTerminal Sessions support at most one jump Host."
+// in the language the app shows.
+func ConnectionErrorETJump() string { return In(i18n.Locale()).ConnectionErrorETJump() }
+
+// ConnectionErrorETJump says "EternalTerminal Sessions support at most one jump Host."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorETJump() string {
+	return Catalog.Format(msgs.locale, "connectionErrorETJump", nil)
+}
+
+// ConnectionErrorETProxy says "EternalTerminal Sessions cannot use proxies."
+// in the language the app shows.
+func ConnectionErrorETProxy() string { return In(i18n.Locale()).ConnectionErrorETProxy() }
+
+// ConnectionErrorETProxy says "EternalTerminal Sessions cannot use proxies."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorETProxy() string {
+	return Catalog.Format(msgs.locale, "connectionErrorETProxy", nil)
+}
