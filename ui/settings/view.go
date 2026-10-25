@@ -346,7 +346,6 @@ func sftpEditorArea(c *ui.Context, state *PreferencesState, m locales.Messages, 
 		if state == nil {
 			return
 		}
-		ui.Text(c, m.SettingsSFTPUnavailable()).FontSize(11).TextColor(t.Warning)
 		settings := state.Settings()
 		behaviors := []string{m.SettingsDoubleClickOpen(), m.SettingsDoubleClickTransfer()}
 		values := []domain.DoubleClickBehavior{domain.DoubleClickOpen, domain.DoubleClickTransfer}
