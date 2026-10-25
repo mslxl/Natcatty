@@ -14,6 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 )
@@ -32,12 +35,16 @@ type Launcher interface {
 }
 
 // File is what the internal editor is asked to open. A remote file has
-// already been materialized, so Path is always local.
+// already been materialized, so Path is always local. Session and Save let
+// the editor write its buffer back and close the session when it goes away.
 type File struct {
-	Name   string
-	Path   string
-	Remote bool
-	Size   int64
+	Session EditID
+	Name    string
+	Path    string
+	Remote  bool
+	Size    int64
+	// Save writes the editor buffer back to the file this session opened.
+	Save SaveFunc
 }
 
 // Editor is the internal-editor port. Ticket 38 builds the editor surface and
@@ -56,14 +63,21 @@ type Request struct {
 	Size      int64
 	Remote    bool
 	Source    func(context.Context) (io.ReadCloser, error)
+	// Target is the write-back channel for a remote file. Without it a remote
+	// file still opens, but the internal editor cannot save it back and an
+	// external application's changes are not watched.
+	Target RemoteTarget
 }
 
-// Result describes the opener that ran and where it read the file.
+// Result describes the opener that ran and where it read the file. Session
+// names the editing session the open created, if any; closing it sweeps the
+// temporary copy.
 type Result struct {
 	Name      string
 	Kind      domainpreferences.OpenerKind
 	Remote    bool
 	LocalPath string
+	Session   EditID
 }
 
 // ErrorKind classifies an open failure so the surface can localize it
@@ -84,12 +98,21 @@ const (
 	ErrorLaunch ErrorKind = "open-launch"
 	// ErrorCancelled means the surface or window went away first.
 	ErrorCancelled ErrorKind = "open-cancelled"
+	// ErrorTooLarge means the internal editor refuses a file above its bound.
+	ErrorTooLarge ErrorKind = "open-too-large"
+	// ErrorConflict means the remote file changed while it was being edited;
+	// nothing was written.
+	ErrorConflict ErrorKind = "edit-conflict"
+	// ErrorSave means an editor buffer could not be written back.
+	ErrorSave ErrorKind = "edit-save"
 )
 
-// Error carries a classified open failure and its cause.
+// Error carries a classified open or save failure and its cause.
 type Error struct {
 	Kind ErrorKind
 	Err  error
+	// Conflict describes the remote version a save refused to replace.
+	Conflict *Conflict
 }
 
 func (e *Error) Error() string {
@@ -117,8 +140,18 @@ func failure(kind ErrorKind, err error) error { return &Error{Kind: kind, Err: e
 type Service struct {
 	prefs    Preferences
 	launcher Launcher
+	editorMu sync.RWMutex
 	editor   Editor
 	tempRoot string
+
+	// Sessions and their state. The lock also guards the observer and the
+	// watch intervals because a watcher goroutine reads them.
+	mu            sync.Mutex
+	sessions      map[EditID]*session
+	nextSession   atomic.Uint64
+	observer      Observer
+	watchInterval time.Duration
+	watchDebounce time.Duration
 }
 
 // Option customizes a Service.
@@ -131,14 +164,53 @@ func WithEditor(editor Editor) Option {
 }
 
 // WithTempRoot places materialized remote files under root. The default is
-// the operating system's temp directory. Ticket 38 owns sweeping leftovers.
+// the operating system's temp directory.
 func WithTempRoot(root string) Option {
 	return func(s *Service) { s.tempRoot = root }
 }
 
+// WithWatchObserver receives external-edit results. The observer runs on a
+// watcher goroutine, so a UI observer must post its work to the UI thread.
+func WithWatchObserver(observer Observer) Option {
+	return func(s *Service) { s.observer = observer }
+}
+
+// WithWatchInterval sets how often an external edit's local copy is polled.
+// The default is one second, matching the original.
+func WithWatchInterval(interval time.Duration) Option {
+	return func(s *Service) { s.watchInterval = interval }
+}
+
+// WithWatchDebounce sets how long an external edit must settle before it is
+// uploaded. The default is 500 ms, matching the original.
+func WithWatchDebounce(debounce time.Duration) Option {
+	return func(s *Service) { s.watchDebounce = debounce }
+}
+
+// SetEditor supplies the internal editor after construction. The composition
+// root uses it when the editor needs the service back; a service built with
+// WithEditor needs no call.
+func (s *Service) SetEditor(editor Editor) {
+	s.editorMu.Lock()
+	s.editor = editor
+	s.editorMu.Unlock()
+}
+
+// SetObserver supplies the external-edit observer after construction.
+func (s *Service) SetObserver(observer Observer) {
+	s.mu.Lock()
+	s.observer = observer
+	s.mu.Unlock()
+}
+
 // New builds the service.
 func New(prefs Preferences, launcher Launcher, options ...Option) *Service {
-	service := &Service{prefs: prefs, launcher: launcher, tempRoot: os.TempDir()}
+	service := &Service{
+		prefs: prefs, launcher: launcher, tempRoot: os.TempDir(),
+		sessions:      make(map[EditID]*session),
+		watchInterval: time.Second,
+		watchDebounce: 500 * time.Millisecond,
+	}
 	for _, option := range options {
 		option(service)
 	}
@@ -161,26 +233,39 @@ func (s *Service) Open(ctx context.Context, req Request) (Result, error) {
 
 	settings := s.prefs.Settings().SFTPEditor
 	opener := settings.OpenerFor(name)
-	if opener.Kind == domainpreferences.OpenerInternal && s.editor == nil {
+	s.editorMu.RLock()
+	editor := s.editor
+	s.editorMu.RUnlock()
+	if opener.Kind == domainpreferences.OpenerInternal && editor == nil {
 		// Check before downloading: a remote file is not worth fetching when
 		// nothing can display it.
 		return Result{}, failure(ErrorEditorUnavailable, errors.New("no internal editor is wired"))
 	}
+	if opener.Kind == domainpreferences.OpenerInternal && req.Size > MaxEditorBytes {
+		// The listing already knows the size, so an oversized file is refused
+		// before its bytes cross the connection.
+		return Result{}, failure(ErrorTooLarge, errors.New("the file is too large for the internal editor"))
+	}
 
 	localPath := req.LocalPath
-	var tempDir string
+	var tempDir, contentDigest string
+	contentSize := req.Size
 	if req.Remote {
-		dir, materialized, err := s.materialize(ctx, req, name)
+		dir, materialized, size, digest, err := s.materialize(ctx, req, name)
 		if err != nil {
 			return Result{}, err
 		}
-		tempDir, localPath = dir, materialized
+		tempDir, localPath, contentSize, contentDigest = dir, materialized, size, digest
+		if opener.Kind == domainpreferences.OpenerInternal && contentSize > MaxEditorBytes {
+			_ = os.RemoveAll(tempDir)
+			return Result{}, failure(ErrorTooLarge, errors.New("the file is too large for the internal editor"))
+		}
 	} else if strings.TrimSpace(localPath) == "" {
 		return Result{}, failure(ErrorSource, errors.New("local file has no path"))
 	}
 	// Nothing will read a materialized file after a failure, so the directory
-	// this call created is removed. A successful open keeps it: the launched
-	// application may still be reading, and ticket 38 sweeps leftovers.
+	// this call created is removed. A successful open keeps it for the
+	// launched application or the editor, and Close or Shutdown removes it.
 	discard := func() {
 		if tempDir != "" {
 			_ = os.RemoveAll(tempDir)
@@ -192,23 +277,56 @@ func (s *Service) Open(ctx context.Context, req Request) (Result, error) {
 		return Result{}, failure(ErrorCancelled, err)
 	}
 	result := Result{Name: name, Kind: opener.Kind, Remote: req.Remote, LocalPath: localPath}
+
+	// A remote file's baseline is the version the editor or application is
+	// about to read. The digest comes from the bytes just downloaded, so a
+	// later save can compare content even when the server reports the same
+	// modification time.
+	var baseline RemoteStat
+	if req.Remote && req.Target != nil {
+		info, err := req.Target.Stat(ctx)
+		if err != nil {
+			discard()
+			return Result{}, failure(ErrorDownload, err)
+		}
+		baseline = RemoteStat{Size: contentSize, Modified: info.Modified, Digest: contentDigest}
+	}
+	if !req.Remote && opener.Kind == domainpreferences.OpenerInternal {
+		if info, err := os.Stat(localPath); err == nil {
+			contentSize = info.Size()
+		}
+	}
+
 	switch opener.Kind {
 	case domainpreferences.OpenerInternal:
-		file := File{Name: name, Path: localPath, Remote: req.Remote, Size: req.Size}
-		if err := s.editor.OpenFile(ctx, file); err != nil {
-			discard()
+		id := s.newSession(name, localPath, tempDir, req.Remote, req.Target, baseline)
+		file := File{
+			Session: id,
+			Name:    name,
+			Path:    localPath,
+			Remote:  req.Remote,
+			Size:    contentSize,
+			Save: func(ctx context.Context, content []byte, overwrite bool) error {
+				return s.Save(ctx, id, content, overwrite)
+			},
+		}
+		if err := editor.OpenFile(ctx, file); err != nil {
+			s.Close(id)
 			return Result{}, failure(ErrorEditorFailed, err)
 		}
+		result.Session = id
 	case domainpreferences.OpenerSystem:
 		if err := s.launcher.OpenSystem(ctx, localPath); err != nil {
 			discard()
 			return Result{}, failure(ErrorLaunch, err)
 		}
+		result.Session = s.trackExternal(name, localPath, tempDir, req, baseline)
 	case domainpreferences.OpenerExternal:
 		if err := s.launcher.OpenApplication(ctx, opener.Application.Path, localPath); err != nil {
 			discard()
 			return Result{}, failure(ErrorLaunch, err)
 		}
+		result.Session = s.trackExternal(name, localPath, tempDir, req, baseline)
 	default:
 		discard()
 		return Result{}, failure(ErrorSource, fmt.Errorf("unknown opener %q", opener.Kind))
@@ -216,41 +334,66 @@ func (s *Service) Open(ctx context.Context, req Request) (Result, error) {
 	return result, nil
 }
 
+// trackExternal remembers a remote copy opened by an external application and
+// starts polling it for saves. A local file needs no session: it is the file
+// the application edits.
+func (s *Service) trackExternal(name, localPath, tempDir string, req Request,
+	baseline RemoteStat) EditID {
+	if !req.Remote || req.Target == nil {
+		return ""
+	}
+	id := s.newSession(name, localPath, tempDir, true, req.Target, baseline)
+	sess, _ := s.session(id)
+	s.startWatch(sess)
+	return id
+}
+
 // materialize downloads a remote file into its own temp directory and returns
-// the directory and local path. The directory is intentionally left in place
-// after a successful open: the launched application may still be reading it. A
-// failed download removes it; the caller removes it for a later failure.
-func (s *Service) materialize(ctx context.Context, req Request, name string) (string, string, error) {
+// the directory, local path, byte count, and content digest. The directory is
+// intentionally left in place after a successful open: the launched
+// application or editor still reads it. A failed download removes it; the
+// caller removes it for a later failure.
+func (s *Service) materialize(ctx context.Context, req Request, name string) (string, string, int64, string, error) {
 	if req.Source == nil {
-		return "", "", failure(ErrorSource, errors.New("remote file has no source"))
+		return "", "", 0, "", failure(ErrorSource, errors.New("remote file has no source"))
 	}
 	source, err := req.Source(ctx)
 	if err != nil {
-		return "", "", failure(ErrorDownload, err)
+		return "", "", 0, "", failure(ErrorDownload, err)
 	}
 	defer source.Close()
 
-	dir, err := os.MkdirTemp(s.tempRoot, "natcatty-open-*")
+	dir, err := os.MkdirTemp(s.tempRoot, materializePrefix+"*")
 	if err != nil {
-		return "", "", failure(ErrorDownload, err)
+		return "", "", 0, "", failure(ErrorDownload, err)
 	}
 	path := filepath.Join(dir, safeName(name))
 	target, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return "", "", failure(ErrorDownload, err)
+		return "", "", 0, "", failure(ErrorDownload, err)
 	}
-	_, copyErr := io.Copy(target, source)
+	copied, copyErr := io.Copy(target, source)
 	closeErr := target.Close()
 	if copyErr == nil {
 		copyErr = closeErr
 	}
 	if copyErr != nil {
 		_ = os.RemoveAll(dir)
-		return "", "", failure(ErrorDownload, copyErr)
+		return "", "", 0, "", failure(ErrorDownload, copyErr)
 	}
-	return dir, path, nil
+	content, err := os.ReadFile(path)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", "", 0, "", failure(ErrorDownload, err)
+	}
+	return dir, path, copied, digestBytes(content), nil
 }
+
+// materializePrefix marks the temporary directory a remote copy lives in. It
+// is also the sweep predicate: a directory with this prefix that no live
+// session owns is an orphan from a previous process.
+const materializePrefix = "natcatty-open-"
 
 func baseName(path string) string {
 	trimmed := strings.TrimRight(path, `/\`)

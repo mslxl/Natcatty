@@ -2684,7 +2684,7 @@
     - components/FileOpenerDialog.tsx
     - components/settings/tabs/SettingsFileAssociationsTab.tsx
   module: domain/preferences
-  tickets: [37]
+  tickets: [37, 38]
   acceptance_tests:
     - domain/preferences.TestOpenerResolutionPrefersTheAssociationThenTheDefault
     - domain/preferences.TestZeroValueSFTPEditorResolvesToTheSystemOpener
@@ -2694,7 +2694,7 @@
     - ui/settings.TestAssociationsViewChoosesAnExternalApplicationAndResetsTheDefault
     - app.TestTicket37CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The original also offered an always-ask choice; the ticket's three kinds make the shipped default the system editor, and selecting the external kind requires an application. Opening with the internal editor reports editor-unavailable until ticket 38 provides the editor surface."
+  notes: "The original also offered an always-ask choice; the ticket's three kinds make the shipped default the system editor, and selecting the external kind requires an application. Ticket 38 supplies the internal editor surface, so all three kinds now open a file."
 
 - id: sftp.open-by-association
   area: sftp-transfer
@@ -2740,6 +2740,91 @@
     - app.TestTicket37CheckPassesTwiceInOneProcess
   status: verified
   notes: "A name with no dot, a leading-dot name, or a trailing dot has no extension and takes the default opener; the ticket 37 self-test opens an unlisted extension and an extensionless file, then reads both settings back through a fresh preferences service."
+
+- id: sftp.internal-editor-save-back
+  area: sftp-transfer
+  feature: The internal editor opens a remote file and saves the buffer back to it
+  original_paths:
+    - components/sftp/hooks/useSftpViewFileOps.ts
+    - components/sftp/SftpOverlays.tsx
+    - components/sftp/sftpEditorFileLimits.ts
+  module: ui/transfer
+  tickets: [38]
+  acceptance_tests:
+    - application/fileopen.TestInternalRemoteSaveWritesBackAndRefreshesTheBaseline
+    - application/fileopen.TestInternalRemoteSaveRefusesToReplaceAChangedFile
+    - application/fileopen.TestLocalInternalSaveWritesTheLocalFile
+    - application/fileopen.TestOversizedInternalFileIsRefusedBeforeDownloading
+    - application/transfer.TestWriteFileStagesAndReplacesTheFile
+    - application/transfer.TestWriteFileCreatesAMissingDestination
+    - application/transfer.TestWriteFileRefusesADirectoryAndLeavesItAlone
+    - application/transfer.TestWriteFileFailureRemovesTheStagingFile
+    - application/transfer.TestWriteFileVerifiesTheStagedSize
+    - application/transfer.TestWriteFileRestoresTheBackupWhenThePromotionFails
+    - application/transfer.TestWriteFileRecoversADestinationThatOnlyExistsAsABackup
+    - ui/transfer/state.TestOpenFileAttachesTheRemoteWriteTarget
+    - ui/transfer/state.TestOpenFileDoesNotAttachATargetToLocalFiles
+    - ui/transfer/state.TestTheRemoteTargetFollowsAReplacedTransport
+    - ui/transfer/state.TestAClosedTabsRemoteTargetRefusesToWrite
+    - ui/editor.TestOpenLoadsTheDocumentAndSavesBack
+    - ui/editor.TestSecondOpenIsRefusedWhileADocumentIsActive
+    - ui/editor.TestOversizedFileIsRefused
+    - app.TestTicket38CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The editor refuses files above 10 MB before downloading them. A save writes through the pane's own transport using the ADR-0012 replacement transaction: the old destination is backed up, the buffer is staged and verified, promoted by rename, and the backup is removed; any earlier failure restores the backup. The destination keeps its mode, and a save through a closed or replaced pane uses the live transport or fails without writing."
+
+- id: sftp.external-edit-watch
+  area: sftp-transfer
+  feature: An external application's save is watched and uploaded after a debounce
+  original_paths:
+    - electron/bridges/fileWatcherBridge.cjs
+    - application/state/sftp/useSftpExternalOperations.ts
+  module: ui/transfer
+  tickets: [38]
+  acceptance_tests:
+    - application/fileopen.TestExternalEditUploadsAfterTheDebounce
+    - application/fileopen.TestExternalLostConnectionKeepsTheLocalCopyForRetry
+    - ui/editor.TestExternalFailureRetries
+    - app.TestTicket38CheckRunsThroughTheKeyboard
+    - app.TestTicket38CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The watcher polls the materialized copy once a second and waits 500 ms for the save to settle, matching the original; two rapid saves upload once. A failed upload keeps the local copy so Retry loses no edits."
+
+- id: sftp.remote-change-conflict
+  area: sftp-transfer
+  feature: A remote file changed while it is being edited prompts before it is overwritten
+  original_paths:
+    - components/sftp/hooks/useSftpViewFileOps.ts
+    - application/state/sftp/useSftpExternalOperations.ts
+  module: ui/transfer
+  tickets: [38]
+  acceptance_tests:
+    - application/fileopen.TestInternalRemoteSaveRefusesToReplaceAChangedFile
+    - application/fileopen.TestExternalConflictDoesNotOverwriteUntilApproved
+    - ui/editor.TestConflictPromptsAndOverwriteRetries
+    - ui/editor.TestExternalConflictEventOpensThePrompt
+    - app.TestTicket38CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Both an internal save and an external upload compare the remote size, modification time, and SHA-256 content digest with the version the session read; a same-size edit is still a change. Nothing is written until the user chooses Overwrite, and a pending conflict blocks further silent uploads."
+
+- id: sftp.editor-temp-lifecycle
+  area: sftp-transfer
+  feature: Remote editing temp copies are swept at startup and removed when the document closes
+  original_paths:
+    - application/state/sftp/externalEditTempRetention.ts
+    - electron/bridges/fileWatcherBridge.cjs
+  module: ui/transfer
+  tickets: [38]
+  acceptance_tests:
+    - application/fileopen.TestSweepTempRemovesOnlyOrphans
+    - application/fileopen.TestInternalRemoteSaveWritesBackAndRefreshesTheBaseline
+    - application/fileopen.TestExternalEditUploadsAfterTheDebounce
+    - ui/transfer/state.TestClosingATabReleasesItsExternalEditSessions
+    - ui/transfer/state.TestAnInternalEditSessionOutlivesItsTab
+    - ui/transfer/state.TestAnOpenThatOutlivesItsTabReleasesItsSession
+    - app.TestTicket38CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Sessions own their natcatty-open-* directory; startup and shutdown sweep only directories no live session owns, Close removes its own immediately, closing a pane Tab releases the external sessions that Tab opened, and a crash leaves the next start to remove the orphan. An internal document's session is owned by the editor overlay, which outlives the Tab."
 
 - id: sftp.upload-download
   area: sftp-transfer

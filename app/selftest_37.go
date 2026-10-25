@@ -467,11 +467,24 @@ func (t *selftest37) defaultFallbackStep(*ui.Context) selftest.Outcome {
 		return t.expired("the default opener for both unknown files")
 	}
 	want := filepath.Join(t.workdir, "other.exe")
-	for index, name := range []string{"mystery.unknown", "LICENSE"} {
-		if calls[index].system || calls[index].application != want ||
-			calls[index].path != filepath.Join(t.workdir, name) {
+	// The two opens run concurrently, so their completion order is not the
+	// order they were requested in. Match each recorded call by the file it
+	// launched instead of by index.
+	for _, name := range []string{"mystery.unknown", "LICENSE"} {
+		path := filepath.Join(t.workdir, name)
+		var call *selftest37Call
+		for index := range calls {
+			if calls[index].path == path {
+				call = &calls[index]
+				break
+			}
+		}
+		if call == nil {
+			return selftest.Failed(fmt.Errorf("%s was not opened: %+v", name, calls))
+		}
+		if call.system || call.application != want || call.path != path {
 			return selftest.Failed(fmt.Errorf("%s launched %+v, want the default application %q",
-				name, calls[index], want))
+				name, *call, want))
 		}
 	}
 

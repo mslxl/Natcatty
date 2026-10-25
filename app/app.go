@@ -55,6 +55,7 @@ import (
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
+	editorui "github.com/mslxl/natcatty/ui/editor"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
@@ -90,6 +91,7 @@ func run(afterReady func(hostWindow)) error {
 	var keybindingService *appkeybindings.Service
 	var transferState *transferstate.State
 	var fileOpenService *appfileopen.Service
+	var editorState *editorui.State
 	var associationsState *settings.AssociationsState
 	var shellState *state.State
 	var preferencesState *settings.PreferencesState
@@ -203,11 +205,19 @@ func run(afterReady func(hostWindow)) error {
 		settings.WithPreferencesRedrawRequest(invalidate))
 
 	// File associations and the default opener live in the same preferences
-	// document. The launch adapter is the only platform-aware piece; the
-	// internal editor is deliberately absent until ticket 38 supplies it, so
-	// choosing that opener reports it as unavailable instead of silently
-	// doing nothing.
+	// document. The launch adapter is the only platform-aware piece. The
+	// internal editor and the external-edit observer are wired after the
+	// service is built because the editor writes through it.
 	fileOpenService = appfileopen.New(preferenceService, adapterslaunch.New())
+	editorState = editorui.NewState(fileOpenService,
+		editorui.WithRedrawRequest(invalidate))
+	fileOpenService.SetEditor(editorState)
+	fileOpenService.SetObserver(editorState.Notify)
+	// A previous process may have left a materialized remote copy behind. Sweep
+	// before the first open so it cannot accumulate across restarts.
+	if _, err := fileOpenService.SweepTemp(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "natcatty: editor temp sweep:", err)
+	}
 	associationsState = settings.NewAssociationsState(preferenceService,
 		settings.WithApplicationPicker(chooseOpenApplication),
 		settings.WithAssociationsRedrawRequest(invalidate))
@@ -441,6 +451,9 @@ func run(afterReady func(hostWindow)) error {
 		// Opening a file resolves its association at call time, so a Settings
 		// change applies without reopening the pane.
 		transferstate.WithFileOpener(fileOpenService.Open),
+		// An external application's edit is watched through its pane's Tab, so
+		// closing the Tab releases the session and its materialized copy.
+		transferstate.WithFileSessionCloser(fileOpenService.Close),
 	)
 
 	// Port Forwarding Rules reuse the same Vault routes and connection pool as
@@ -724,6 +737,7 @@ func run(afterReady func(hostWindow)) error {
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithLogs(logsui.View(logsState)),
 		state.WithSFTP(transferui.View(transferState)),
+		state.WithEditor(editorui.View(editorState)),
 		state.WithSearch(overlayState),
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
 		state.WithTrustPrompt(trustPrompt),
@@ -888,6 +902,10 @@ func run(afterReady func(hostWindow)) error {
 		// rows are still reading and writing.
 		transferQueue.Shutdown()
 		transferState.Shutdown()
+		editorState.Shutdown()
+		// Close every editing session before the surface's connections go
+		// away, then remove any materialized copy still on disk.
+		fileOpenService.Shutdown()
 		shellState.Shutdown()
 		shellState.CloseAllSessions()
 		sessions.CloseAll()

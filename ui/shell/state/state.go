@@ -118,6 +118,9 @@ type State struct {
 	logsView      func(*ui.Context)
 	sftpVisible   bool
 	sftpView      func(*ui.Context)
+	// editorView renders the internal editor and its conflict, unsaved, and
+	// upload-failure prompts above every surface.
+	editorView func(*ui.Context)
 	// serialView renders the serial connection dialog above every surface.
 	// serialRequest opens it from a menu or command.
 	serialView      func(*ui.Context)
@@ -244,6 +247,16 @@ func WithLogs(view func(*ui.Context)) Option {
 func WithSFTP(view func(*ui.Context)) Option {
 	return func(s *State) { s.sftpView = view }
 }
+
+// WithEditor gives the shell the internal editor overlay. Opening a file still
+// goes through the SFTP surface's association; the overlay is mounted here so
+// its prompts remain visible above every surface.
+func WithEditor(view func(*ui.Context)) Option {
+	return func(s *State) { s.editorView = view }
+}
+
+// EditorView returns the internal editor overlay, or nil.
+func (s *State) EditorView() func(*ui.Context) { return s.editorView }
 
 // WithSerialDialog gives the shell the serial connection dialog. The dialog
 // state lives in ui/serial; the shell only renders it and opens it from the

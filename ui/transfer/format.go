@@ -84,6 +84,8 @@ func noticeText(m locales.Messages, code string) string {
 		return m.SftpOpenFailed()
 	case "open-cancelled":
 		return m.SftpOpenCancelled()
+	case "open-too-large":
+		return m.SftpOpenTooLarge()
 	case "transfer-unavailable":
 		return m.SftpTransferUnavailable()
 	case "transfer-reconnect-required":
