@@ -67,6 +67,7 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		// The root surfaces are peers: the active one is drawn as the primary
 		// button, so a user always sees where they are.
 		navButton(c, "nav-vault", m.NavVault(), s.VaultVisible(), s.ShowVault)
+		navButton(c, "nav-monitor", m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
 		navButton(c, "nav-sftp", m.NavSftp(), s.SFTPVisible(), s.ShowSFTP)
 		navButton(c, "nav-logs", m.NavLogs(), s.LogsVisible(), s.ShowLogs)
 		navButton(c, "nav-settings", m.NavSettings(), false, s.RequestSettings)
@@ -140,6 +141,14 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 				return
 			}
 			ui.Text(c, m.NavLogs()).FontSize(24).Bold()
+			return
+		}
+		if s.MonitorVisible() {
+			if view := s.MonitorView(); view != nil {
+				view(c)
+				return
+			}
+			ui.Text(c, m.NavMonitor()).FontSize(24).Bold()
 			return
 		}
 		if s.SFTPVisible() {

@@ -180,6 +180,9 @@ func commandPresentation(m locales.Messages, id command.ID) (commandSpec, bool) 
 	case command.OpenSettings:
 		return commandSpec{title: m.NavSettings(), category: uisearch.CategoryApp,
 			binding: "open-settings", keywords: []string{"settings", "preferences"}}, true
+	case command.OpenMonitor:
+		return commandSpec{title: m.NavMonitor(), category: uisearch.CategoryApp,
+			keywords: []string{"monitoring", "monitor", "metrics", "cpu", "memory", "disk"}}, true
 	case command.NewTab:
 		return commandSpec{title: m.MenuNewTab(), category: uisearch.CategoryTab,
 			binding: "new-tab", keywords: []string{"new", "tab", "terminal", "local"}}, true

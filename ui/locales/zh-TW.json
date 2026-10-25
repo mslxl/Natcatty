@@ -31,6 +31,7 @@
   "@@locale": "zh-TW",
   "appName": "Natcatty",
   "navVault": "Vault",
+  "navMonitor": "監控",
   "navSettings": "設定",
   "navLanguage": "語言",
   "vaultPlaceholder": "你的主機、金鑰和筆記將顯示在這裡。",
@@ -2009,5 +2010,132 @@
         "example": "3"
       }
     }
-  }
+  },
+  "monitoringTitle": "主機監控",
+  "monitoringSummary": "{live} / {total} 台上線",
+  "@monitoringSummary": {
+    "description": "The share of sampled Hosts that are live.",
+    "placeholders": {
+      "live": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringNoPanelsTitle": "尚無監控面板",
+  "monitoringNoPanelsBody": "建立面板以選擇要監控的主機與重新整理頻率。",
+  "monitoringNewPanel": "新增面板",
+  "monitoringEditPanel": "編輯面板",
+  "monitoringColumns": "欄位",
+  "monitoringColumnsHint": "拖曳欄位邊緣可調整寬度；寬度會自動儲存。",
+  "monitoringColumnsDone": "完成",
+  "monitoringAlwaysVisible": "永遠顯示",
+  "monitoringRefresh": "重新整理",
+  "monitoringSort": "排序",
+  "monitoringSortManual": "手動",
+  "monitoringSortName": "名稱",
+  "monitoringViewList": "清單",
+  "monitoringViewCharts": "圖表",
+  "monitoringEmptyPanel": "此面板沒有主機。編輯面板以新增主機。",
+  "monitoringSearch": "搜尋主機",
+  "monitoringNoMatches": "沒有符合搜尋的主機。",
+  "monitoringOpen": "開啟",
+  "monitoringHost": "主機",
+  "monitoringLatency": "延遲",
+  "monitoringTags": "標籤",
+  "monitoringNotes": "備註",
+  "monitoringCpu": "CPU",
+  "monitoringMemory": "記憶體",
+  "monitoringDisk": "磁碟",
+  "monitoringNetwork": "網路",
+  "monitoringGpu": "GPU",
+  "monitoringUpdated": "更新時間",
+  "monitoringStatus": "狀態",
+  "monitoringTerminal": "終端機",
+  "monitoringStatusQueued": "排隊中",
+  "monitoringStatusConnecting": "連線中",
+  "monitoringStatusLive": "上線",
+  "monitoringStatusLogin": "請登入",
+  "monitoringStatusError": "錯誤",
+  "monitoringStatusUnsupported": "不支援",
+  "monitoringStatusDisconnected": "已中斷",
+  "monitoringStatusUnavailable": "無法使用",
+  "monitoringStatusLimit": "已達上限",
+  "monitoringStale": "資料過期",
+  "monitoringReasonHostKey": "主機金鑰未受信任",
+  "monitoringReasonAuth": "驗證失敗",
+  "monitoringReasonNetwork": "網路無法使用",
+  "monitoringReasonTimeout": "逾時",
+  "monitoringReasonUnsupported": "不支援指標收集",
+  "monitoringReasonCancelled": "已取消",
+  "monitoringReasonInternal": "監控錯誤",
+  "monitoringReasonOS": "不支援的作業系統",
+  "monitoringUnknown": "—",
+  "monitoringUpdatedNow": "剛剛",
+  "monitoringUpdatedSeconds": "{seconds} 秒前",
+  "@monitoringUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived, in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringUpdatedMinutes": "{minutes} 分鐘前",
+  "@monitoringUpdatedMinutes": {
+    "description": "How long ago the latest sample arrived, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "monitoringName": "名稱",
+  "monitoringDescription": "描述",
+  "monitoringPanelHosts": "主機",
+  "monitoringSelectedCount": "已選擇 {count} 台",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringNoHostsAvailable": "儲存庫中沒有主機。",
+  "monitoringSave": "儲存",
+  "monitoringCancel": "取消",
+  "monitoringDeletePanel": "刪除面板",
+  "monitoringDeleteConfirm": "刪除「{name}」？",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringProblemNameRequired": "請為面板填寫名稱。",
+  "monitoringProblemDuplicateName": "已有其他面板使用此名稱。",
+  "monitoringProblemSave": "無法儲存監控設定。",
+  "monitoringProblemLoad": "無法讀取主機清單。",
+  "monitoringProblemTooManyHosts": "每個面板最多監控 256 台主機。",
+  "monitoringProblemNoPanel": "未選擇面板。",
+  "monitoringProblemOpenTerminal": "無法開啟主機會話。",
+  "monitoringProblemInternal": "監控失敗。",
+  "monitoringPanelFormCreate": "新增監控面板",
+  "monitoringPanelFormEdit": "編輯監控面板",
+  "monitoringPanelFormView": "檢視",
+  "monitoringPanelFormInterval": "重新整理間隔（秒）",
+  "monitoringPanelFormRange": "歷史範圍（分鐘）",
+  "monitoringPanelFormSort": "主機順序",
+  "monitoringPanelFormHostsHint": "選擇要監控的主機。手動排序時使用此順序。"
 }

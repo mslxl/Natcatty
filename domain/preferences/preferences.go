@@ -19,11 +19,14 @@ const (
 	GroupLogs       Group = "logs"
 	GroupSync       Group = "sync"
 	GroupSecurity   Group = "security"
+	GroupMonitor    Group = "monitor"
 )
 
-// Groups returns every group in Settings-window order.
+// Groups returns every group in Settings-window order. GroupMonitor owns
+// surface configuration rather than a Settings form, so it is not listed.
 func Groups() []Group {
-	return []Group{GroupAppearance, GroupLayout, GroupSFTPEditor, GroupLogs, GroupSync, GroupSecurity}
+	return []Group{GroupAppearance, GroupLayout, GroupSFTPEditor, GroupLogs,
+		GroupSync, GroupSecurity}
 }
 
 // ThemeMode is the original's light/dark/system appearance choice.
@@ -169,6 +172,7 @@ type Settings struct {
 	Logs       Logs       `json:"logs"`
 	Sync       Sync       `json:"sync"`
 	Security   Security   `json:"security"`
+	Monitor    Monitor    `json:"monitor"`
 }
 
 const (
@@ -229,6 +233,7 @@ func Defaults() Settings {
 		Logs:     Logs{SSHDebug: false},
 		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
 		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
+		Monitor:  DefaultMonitor(),
 	}
 }
 
@@ -295,6 +300,7 @@ func Normalize(settings Settings) Settings {
 	default:
 		settings.Sync.ConflictStrategy = defaults.Sync.ConflictStrategy
 	}
+	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	return settings
 }
 
@@ -346,6 +352,8 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Sync = defaults.Sync
 	case GroupSecurity:
 		settings.Security = defaults.Security
+	case GroupMonitor:
+		settings.Monitor = defaults.Monitor
 	}
 	return settings
 }

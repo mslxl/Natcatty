@@ -42,6 +42,7 @@ import (
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
+	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appsync "github.com/mslxl/natcatty/application/sync"
@@ -66,6 +67,7 @@ import (
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
 	logsui "github.com/mslxl/natcatty/ui/logs"
+	uimonitoring "github.com/mslxl/natcatty/ui/monitoring"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	serialui "github.com/mslxl/natcatty/ui/serial"
 	sessionui "github.com/mslxl/natcatty/ui/session"
@@ -522,6 +524,27 @@ func run(afterReady func(hostWindow)) error {
 		uiforwarding.WithRedrawRequest(invalidate),
 	)
 
+	// Monitoring samples Hosts through the same Connection Manager and route
+	// source as a Session, so a Host's key must be trusted before its first
+	// metric command. The surface starts and stops sampling as it becomes
+	// visible; the service owns every sampler goroutine.
+	monitorService := appmonitor.NewService(monitorConnector{
+		routes:      routes,
+		connections: connections,
+	})
+	monitorState := uimonitoring.NewState(
+		monitorService,
+		vaultService,
+		preferenceService,
+		func(host domainvault.Host) error {
+			if shellState == nil {
+				return errors.New("monitoring: the shell is not ready")
+			}
+			return shellState.OpenHost(host)
+		},
+		uimonitoring.WithRedrawRequest(invalidate),
+	)
+
 	vaultState = vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
@@ -796,6 +819,8 @@ func run(afterReady func(hostWindow)) error {
 			)
 		}),
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
+		state.WithMonitor(uimonitoring.View(monitorState),
+			monitorState.Activate, monitorState.Deactivate),
 		state.WithLogs(logsui.View(logsState)),
 		state.WithSFTP(transferui.View(transferState)),
 		state.WithEditor(editorui.View(editorState)),
@@ -959,6 +984,9 @@ func run(afterReady func(hostWindow)) error {
 		// torn down, then remove the discovery pointer if it is still ours.
 		externalMCPServer.Close()
 		closeForwarding(forwardingManager, forwardingState)
+		// Monitoring leases are connection channels; release them before the
+		// manager closes every remaining transport.
+		closeMonitoring(monitorState, monitorService)
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
 		// rows are still reading and writing.
@@ -1147,6 +1175,10 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 	})
 	register(command.OpenSettings, func(context.Context) error {
 		shellState.RequestSettings()
+		return nil
+	})
+	register(command.OpenMonitor, func(context.Context) error {
+		shellState.ShowMonitor()
 		return nil
 	})
 	register(command.OpenBackups, func(context.Context) error {
