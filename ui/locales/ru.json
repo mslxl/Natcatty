@@ -2137,5 +2137,347 @@
   "monitoringPanelFormInterval": "Интервал обновления (секунды)",
   "monitoringPanelFormRange": "Диапазон истории (минуты)",
   "monitoringPanelFormSort": "Порядок хостов",
-  "monitoringPanelFormHostsHint": "Выберите хосты для мониторинга. Этот порядок действует при ручной сортировке."
+  "monitoringPanelFormHostsHint": "Выберите хосты для мониторинга. Этот порядок действует при ручной сортировке.",
+  "navSysManager": "Система",
+  "sysManagerTitle": "Системный менеджер",
+  "sysManagerHost": "Хост",
+  "sysManagerRefresh": "Обновить",
+  "sysManagerRefreshNow": "Обновить сейчас",
+  "sysManagerSeconds": "{seconds} с",
+  "@sysManagerSeconds": {
+    "description": "The refresh interval in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerTabOverview": "Обзор",
+  "sysManagerTabProcesses": "Процессы",
+  "sysManagerTabPorts": "Порты",
+  "sysManagerTabServices": "Службы",
+  "sysManagerStatusIdle": "Не загружено",
+  "sysManagerStatusConnecting": "Подключение…",
+  "sysManagerStatusLive": "В сети",
+  "sysManagerStatusLogin": "Войти",
+  "sysManagerStatusError": "Ошибка",
+  "sysManagerStatusUnsupported": "Не поддерживается",
+  "sysManagerStatusUnavailable": "Недоступно",
+  "sysManagerReasonHostKey": "Ключ хоста не доверен",
+  "sysManagerReasonAuth": "Ошибка аутентификации",
+  "sysManagerReasonNetwork": "Сеть недоступна",
+  "sysManagerReasonTimeout": "Время ожидания истекло",
+  "sysManagerReasonOS": "Операционная система не поддерживается",
+  "sysManagerReasonCancelled": "Отменено",
+  "sysManagerReasonInternal": "Ошибка системного менеджера",
+  "sysManagerReasonUnsupported": "Подключение не поддерживается",
+  "sysManagerReasonPermission": "Доступ запрещён",
+  "sysManagerReasonMissingProcesses": "ps и top недоступны на этом хосте.",
+  "sysManagerReasonMissingPorts": "ss, netstat и lsof недоступны на этом хосте.",
+  "sysManagerReasonMissingSystemctl": "systemctl недоступен на этом хосте.",
+  "sysManagerNoHosts": "В хранилище нет хостов.",
+  "sysManagerNoHostSelected": "Выберите хост для просмотра.",
+  "sysManagerProblemLoadHosts": "Не удалось прочитать список хостов.",
+  "sysManagerProblemSave": "Не удалось сохранить интервал обновления.",
+  "sysManagerProblemStart": "Не удалось запустить опрос.",
+  "sysManagerProblemNoHost": "Сначала выберите хост.",
+  "sysManagerProblemInternal": "Системный менеджер завершился с ошибкой.",
+  "sysManagerProblemActionData": "Выбранная строка больше недоступна.",
+  "sysManagerSearchProcesses": "Поиск процессов…",
+  "sysManagerSearchPorts": "Поиск портов…",
+  "sysManagerSearchServices": "Поиск служб…",
+  "sysManagerProcessesCount": "Процессы: {count}",
+  "@sysManagerProcessesCount": {
+    "description": "The number of processes matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "sysManagerPortsCount": "Прослушивания: {count}",
+  "@sysManagerPortsCount": {
+    "description": "The number of listening sockets matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerServicesCount": "Модули: {count}",
+  "@sysManagerServicesCount": {
+    "description": "The number of systemd units matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerUpdatedSeconds": "Обновлено {seconds} с назад",
+  "@sysManagerUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerNoProcesses": "Процессы не обнаружены.",
+  "sysManagerNoPorts": "Прослушиваемые порты не обнаружены.",
+  "sysManagerNoServices": "Службы systemd не найдены.",
+  "sysManagerNoMatches": "Нет совпадений.",
+  "sysManagerProcessHint": "Выберите процесс, чтобы отправить сигнал.",
+  "sysManagerPortHint": "Выберите порт, чтобы отправить сигнал его процессу.",
+  "sysManagerServiceHint": "Выберите модуль, чтобы запустить, остановить или перезапустить его.",
+  "sysManagerPid": "PID",
+  "sysManagerUser": "Пользователь",
+  "sysManagerCPU": "ЦП",
+  "sysManagerMemory": "Память",
+  "sysManagerCommand": "Команда",
+  "sysManagerState": "Состояние",
+  "sysManagerPort": "Порт",
+  "sysManagerProtocol": "Протокол",
+  "sysManagerAddress": "Адрес",
+  "sysManagerProcess": "Процесс",
+  "sysManagerUnit": "Модуль",
+  "sysManagerScope": "Область",
+  "sysManagerActive": "Активен",
+  "sysManagerDescription": "Описание",
+  "sysManagerSelectedProcess": "Процесс {pid} · {command}",
+  "@sysManagerSelectedProcess": {
+    "description": "The process chosen in the table.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "nginx: worker"
+      }
+    }
+  },
+  "sysManagerSelectedPort": "{protocol} {address}:{port} · PID {pid}",
+  "@sysManagerSelectedPort": {
+    "description": "The listening socket chosen in the table.",
+    "placeholders": {
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "pid": {
+        "type": "int",
+        "example": "123"
+      }
+    }
+  },
+  "sysManagerSelectedService": "{name} · {scope}",
+  "@sysManagerSelectedService": {
+    "description": "The systemd unit chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "scope": {
+        "type": "String",
+        "example": "system"
+      }
+    }
+  },
+  "sysManagerScopeSystem": "система",
+  "sysManagerScopeUser": "пользователь",
+  "sysManagerStop": "Остановить",
+  "sysManagerContinue": "Продолжить",
+  "sysManagerTerminate": "Завершить",
+  "sysManagerKill": "Убить",
+  "sysManagerStart": "Запустить",
+  "sysManagerRestart": "Перезапустить",
+  "sysManagerCancel": "Отмена",
+  "sysManagerConfirmSignal": "Отправить SIG{signal} процессу {pid}?\n\nКоманда: {command}",
+  "@sysManagerConfirmSignal": {
+    "description": "Asks before signalling a process, naming the target and the exact command.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "KILL"
+      },
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerConfirmPort": "Отправить SIGTERM процессу {pid}, владеющему {address}:{port}/{protocol}?\n\nКоманда: {command}",
+  "@sysManagerConfirmPort": {
+    "description": "Asks before signalling the process that owns a listening socket.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -15 1234"
+      }
+    }
+  },
+  "sysManagerConfirmService": "{action} {name}?\n\nКоманда: {command}",
+  "@sysManagerConfirmService": {
+    "description": "Asks before starting, stopping, or restarting a systemd unit.",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Restart"
+      },
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "command": {
+        "type": "String",
+        "example": "systemctl restart 'nginx.service'"
+      }
+    }
+  },
+  "sysManagerActionRunning": "Выполняется {command}…",
+  "@sysManagerActionRunning": {
+    "description": "A confirmed command that is still running.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionSucceeded": "Готово: {command}",
+  "@sysManagerActionSucceeded": {
+    "description": "A confirmed command that finished.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionFailed": "Действие не удалось.",
+  "sysManagerActionCancelled": "Действие отменено.",
+  "sysManagerActionPermission": "Доступ запрещён.",
+  "sysManagerLatency": "Задержка",
+  "sysManagerLatencyValue": "{milliseconds} мс",
+  "@sysManagerLatencyValue": {
+    "description": "The last sample's round-trip latency.",
+    "placeholders": {
+      "milliseconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerOverviewSystem": "Система",
+  "sysManagerOverviewHostname": "Имя хоста",
+  "sysManagerOverviewOS": "Система",
+  "sysManagerOverviewKernel": "Ядро",
+  "sysManagerOverviewUptime": "Время работы",
+  "sysManagerOverviewLoad": "Нагрузка",
+  "sysManagerOverviewCores": "Ядра: {count}",
+  "@sysManagerOverviewCores": {
+    "description": "The Host's CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerOverviewCPU": "ЦП",
+  "sysManagerOverviewMemory": "Память",
+  "sysManagerOverviewSwap": "Подкачка",
+  "sysManagerOverviewDisk": "Диск",
+  "sysManagerOverviewEmpty": "Данных обзора системы пока нет.",
+  "sysManagerOverviewUsedOf": "{used} / {total}",
+  "@sysManagerOverviewUsedOf": {
+    "description": "A used amount beside its total.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "2.0 GB"
+      },
+      "total": {
+        "type": "String",
+        "example": "8.0 GB"
+      }
+    }
+  },
+  "sysManagerDurationDays": "{days}д {hours}ч",
+  "@sysManagerDurationDays": {
+    "description": "An uptime of days and hours.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "3"
+      },
+      "hours": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerDurationHours": "{hours}ч {minutes}м",
+  "@sysManagerDurationHours": {
+    "description": "An uptime of hours and minutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "4"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerDurationMinutes": "{minutes}м",
+  "@sysManagerDurationMinutes": {
+    "description": "An uptime of minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerUnknown": "—",
+  "sysManagerOverviewResources": "Ресурсы",
+  "sysManagerPortOwnerUnknown": "Процесс неизвестен",
+  "sysManagerOverviewCoresLabel": "Ядра"
 }

@@ -2137,5 +2137,347 @@
   "monitoringPanelFormInterval": "重新整理間隔（秒）",
   "monitoringPanelFormRange": "歷史範圍（分鐘）",
   "monitoringPanelFormSort": "主機順序",
-  "monitoringPanelFormHostsHint": "選擇要監控的主機。手動排序時使用此順序。"
+  "monitoringPanelFormHostsHint": "選擇要監控的主機。手動排序時使用此順序。",
+  "navSysManager": "系統",
+  "sysManagerTitle": "系統管理員",
+  "sysManagerHost": "主機",
+  "sysManagerRefresh": "重新整理間隔",
+  "sysManagerRefreshNow": "立即重新整理",
+  "sysManagerSeconds": "{seconds} 秒",
+  "@sysManagerSeconds": {
+    "description": "The refresh interval in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerTabOverview": "概覽",
+  "sysManagerTabProcesses": "程序",
+  "sysManagerTabPorts": "連接埠",
+  "sysManagerTabServices": "服務",
+  "sysManagerStatusIdle": "未載入",
+  "sysManagerStatusConnecting": "連線中…",
+  "sysManagerStatusLive": "已連線",
+  "sysManagerStatusLogin": "登入",
+  "sysManagerStatusError": "錯誤",
+  "sysManagerStatusUnsupported": "不支援",
+  "sysManagerStatusUnavailable": "無法使用",
+  "sysManagerReasonHostKey": "主機金鑰未受信任",
+  "sysManagerReasonAuth": "驗證失敗",
+  "sysManagerReasonNetwork": "網路無法使用",
+  "sysManagerReasonTimeout": "已逾時",
+  "sysManagerReasonOS": "不支援此作業系統",
+  "sysManagerReasonCancelled": "已取消",
+  "sysManagerReasonInternal": "系統管理員錯誤",
+  "sysManagerReasonUnsupported": "不支援此連線",
+  "sysManagerReasonPermission": "權限遭到拒絕",
+  "sysManagerReasonMissingProcesses": "此主機上沒有 ps 和 top。",
+  "sysManagerReasonMissingPorts": "此主機上沒有 ss、netstat 和 lsof。",
+  "sysManagerReasonMissingSystemctl": "此主機上沒有 systemctl。",
+  "sysManagerNoHosts": "保存庫中沒有主機。",
+  "sysManagerNoHostSelected": "請選擇要檢視的主機。",
+  "sysManagerProblemLoadHosts": "無法讀取主機清單。",
+  "sysManagerProblemSave": "無法儲存重新整理間隔。",
+  "sysManagerProblemStart": "無法開始取樣。",
+  "sysManagerProblemNoHost": "請先選擇主機。",
+  "sysManagerProblemInternal": "系統管理員失敗。",
+  "sysManagerProblemActionData": "所選列已不存在。",
+  "sysManagerSearchProcesses": "搜尋程序…",
+  "sysManagerSearchPorts": "搜尋連接埠…",
+  "sysManagerSearchServices": "搜尋服務…",
+  "sysManagerProcessesCount": "{count} 個程序",
+  "@sysManagerProcessesCount": {
+    "description": "The number of processes matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "sysManagerPortsCount": "{count} 個監聽",
+  "@sysManagerPortsCount": {
+    "description": "The number of listening sockets matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerServicesCount": "{count} 個單元",
+  "@sysManagerServicesCount": {
+    "description": "The number of systemd units matching the search.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerUpdatedSeconds": "{seconds} 秒前更新",
+  "@sysManagerUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerNoProcesses": "未回報程序。",
+  "sysManagerNoPorts": "未回報監聽連接埠。",
+  "sysManagerNoServices": "找不到 systemd 服務。",
+  "sysManagerNoMatches": "沒有相符項目。",
+  "sysManagerProcessHint": "選擇一個程序以傳送訊號。",
+  "sysManagerPortHint": "選擇一個監聽連接埠以向其程序傳送訊號。",
+  "sysManagerServiceHint": "選擇一個單元以啟動、停止或重新啟動。",
+  "sysManagerPid": "PID",
+  "sysManagerUser": "使用者",
+  "sysManagerCPU": "CPU",
+  "sysManagerMemory": "記憶體",
+  "sysManagerCommand": "命令",
+  "sysManagerState": "狀態",
+  "sysManagerPort": "端口",
+  "sysManagerProtocol": "通訊協定",
+  "sysManagerAddress": "位址",
+  "sysManagerProcess": "程序",
+  "sysManagerUnit": "单元",
+  "sysManagerScope": "範圍",
+  "sysManagerActive": "作用中",
+  "sysManagerDescription": "描述",
+  "sysManagerSelectedProcess": "进程 {pid} · {command}",
+  "@sysManagerSelectedProcess": {
+    "description": "The process chosen in the table.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "nginx: worker"
+      }
+    }
+  },
+  "sysManagerSelectedPort": "{protocol} {address}:{port} · PID {pid}",
+  "@sysManagerSelectedPort": {
+    "description": "The listening socket chosen in the table.",
+    "placeholders": {
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "pid": {
+        "type": "int",
+        "example": "123"
+      }
+    }
+  },
+  "sysManagerSelectedService": "{name} · {scope}",
+  "@sysManagerSelectedService": {
+    "description": "The systemd unit chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "scope": {
+        "type": "String",
+        "example": "system"
+      }
+    }
+  },
+  "sysManagerScopeSystem": "系統",
+  "sysManagerScopeUser": "使用者",
+  "sysManagerStop": "停止",
+  "sysManagerContinue": "繼續",
+  "sysManagerTerminate": "終止",
+  "sysManagerKill": "強制結束",
+  "sysManagerStart": "啟動",
+  "sysManagerRestart": "重新啟動",
+  "sysManagerCancel": "取消",
+  "sysManagerConfirmSignal": "傳送 SIG{signal} 至程序 {pid}？\n\n命令：{command}",
+  "@sysManagerConfirmSignal": {
+    "description": "Asks before signalling a process, naming the target and the exact command.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "KILL"
+      },
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerConfirmPort": "向程序 {pid}（佔用 {address}:{port}/{protocol}）傳送 SIGTERM？\n\n命令：{command}",
+  "@sysManagerConfirmPort": {
+    "description": "Asks before signalling the process that owns a listening socket.",
+    "placeholders": {
+      "pid": {
+        "type": "int",
+        "example": "1234"
+      },
+      "address": {
+        "type": "String",
+        "example": "0.0.0.0"
+      },
+      "port": {
+        "type": "int",
+        "example": "22"
+      },
+      "protocol": {
+        "type": "String",
+        "example": "tcp"
+      },
+      "command": {
+        "type": "String",
+        "example": "kill -15 1234"
+      }
+    }
+  },
+  "sysManagerConfirmService": "{action} {name}？\n\n命令：{command}",
+  "@sysManagerConfirmService": {
+    "description": "Asks before starting, stopping, or restarting a systemd unit.",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Restart"
+      },
+      "name": {
+        "type": "String",
+        "example": "nginx.service"
+      },
+      "command": {
+        "type": "String",
+        "example": "systemctl restart 'nginx.service'"
+      }
+    }
+  },
+  "sysManagerActionRunning": "正在執行 {command}…",
+  "@sysManagerActionRunning": {
+    "description": "A confirmed command that is still running.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionSucceeded": "已完成：{command}",
+  "@sysManagerActionSucceeded": {
+    "description": "A confirmed command that finished.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "kill -9 1234"
+      }
+    }
+  },
+  "sysManagerActionFailed": "操作失敗。",
+  "sysManagerActionCancelled": "操作已取消。",
+  "sysManagerActionPermission": "權限遭到拒絕。",
+  "sysManagerLatency": "延遲",
+  "sysManagerLatencyValue": "{milliseconds} 毫秒",
+  "@sysManagerLatencyValue": {
+    "description": "The last sample's round-trip latency.",
+    "placeholders": {
+      "milliseconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerOverviewSystem": "系統",
+  "sysManagerOverviewHostname": "主機名稱",
+  "sysManagerOverviewOS": "系統",
+  "sysManagerOverviewKernel": "核心",
+  "sysManagerOverviewUptime": "運作時間",
+  "sysManagerOverviewLoad": "負載",
+  "sysManagerOverviewCores": "{count} 個核心",
+  "@sysManagerOverviewCores": {
+    "description": "The Host's CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "sysManagerOverviewCPU": "CPU",
+  "sysManagerOverviewMemory": "記憶體",
+  "sysManagerOverviewSwap": "置換空間",
+  "sysManagerOverviewDisk": "磁碟",
+  "sysManagerOverviewEmpty": "尚無系統概覽資料。",
+  "sysManagerOverviewUsedOf": "{used} / {total}",
+  "@sysManagerOverviewUsedOf": {
+    "description": "A used amount beside its total.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "2.0 GB"
+      },
+      "total": {
+        "type": "String",
+        "example": "8.0 GB"
+      }
+    }
+  },
+  "sysManagerDurationDays": "{days}天 {hours}小時",
+  "@sysManagerDurationDays": {
+    "description": "An uptime of days and hours.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "3"
+      },
+      "hours": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerDurationHours": "{hours}小時 {minutes}分",
+  "@sysManagerDurationHours": {
+    "description": "An uptime of hours and minutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "4"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "sysManagerDurationMinutes": "{minutes}分",
+  "@sysManagerDurationMinutes": {
+    "description": "An uptime of minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "sysManagerUnknown": "—",
+  "sysManagerOverviewResources": "資源",
+  "sysManagerPortOwnerUnknown": "未知程序",
+  "sysManagerOverviewCoresLabel": "核心"
 }

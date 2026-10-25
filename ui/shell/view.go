@@ -68,6 +68,7 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 		// button, so a user always sees where they are.
 		navButton(c, "nav-vault", m.NavVault(), s.VaultVisible(), s.ShowVault)
 		navButton(c, "nav-monitor", m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
+		navButton(c, "nav-sysmanager", m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
 		navButton(c, "nav-sftp", m.NavSftp(), s.SFTPVisible(), s.ShowSFTP)
 		navButton(c, "nav-logs", m.NavLogs(), s.LogsVisible(), s.ShowLogs)
 		navButton(c, "nav-settings", m.NavSettings(), false, s.RequestSettings)
@@ -149,6 +150,14 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 				return
 			}
 			ui.Text(c, m.NavMonitor()).FontSize(24).Bold()
+			return
+		}
+		if s.SysManagerVisible() {
+			if view := s.SysManagerView(); view != nil {
+				view(c)
+				return
+			}
+			ui.Text(c, m.NavSysManager()).FontSize(24).Bold()
 			return
 		}
 		if s.SFTPVisible() {

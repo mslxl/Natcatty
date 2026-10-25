@@ -46,6 +46,7 @@ import (
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appsync "github.com/mslxl/natcatty/application/sync"
+	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	appterminalsettings "github.com/mslxl/natcatty/application/terminalsettings"
 	appthemes "github.com/mslxl/natcatty/application/themes"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
@@ -73,6 +74,7 @@ import (
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/settings"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uisysmanager "github.com/mslxl/natcatty/ui/sysmanager"
 	transferui "github.com/mslxl/natcatty/ui/transfer"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
@@ -545,6 +547,21 @@ func run(afterReady func(hostWindow)) error {
 		uimonitoring.WithRedrawRequest(invalidate),
 	)
 
+	// The System manager samples and acts through the same Connection Manager
+	// and route source as a Session. Every exec and every confirmed kill or
+	// systemctl call opens a trusted channel lease, so a Host's key must be
+	// accepted before any system command runs.
+	sysManagerService := appsysmanager.NewService(sysmanagerConnector{
+		routes:      routes,
+		connections: connections,
+	})
+	sysManagerState := uisysmanager.NewState(
+		sysManagerService,
+		vaultService,
+		preferenceService,
+		uisysmanager.WithRedrawRequest(invalidate),
+	)
+
 	vaultState = vaultstate.NewState(
 		vaultService,
 		vaultstate.WithSecrets(vaultService),
@@ -821,6 +838,8 @@ func run(afterReady func(hostWindow)) error {
 		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
 		state.WithMonitor(uimonitoring.View(monitorState),
 			monitorState.Activate, monitorState.Deactivate),
+		state.WithSystemManager(uisysmanager.View(sysManagerState),
+			sysManagerState.Activate, sysManagerState.Deactivate),
 		state.WithLogs(logsui.View(logsState)),
 		state.WithSFTP(transferui.View(transferState)),
 		state.WithEditor(editorui.View(editorState)),
@@ -987,6 +1006,9 @@ func run(afterReady func(hostWindow)) error {
 		// Monitoring leases are connection channels; release them before the
 		// manager closes every remaining transport.
 		closeMonitoring(monitorState, monitorService)
+		// System manager leases are channel leases too; release confirmed
+		// actions and samplers before the manager closes every transport.
+		closeSystemManager(sysManagerState, sysManagerService)
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
 		// rows are still reading and writing.
@@ -1179,6 +1201,10 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 	})
 	register(command.OpenMonitor, func(context.Context) error {
 		shellState.ShowMonitor()
+		return nil
+	})
+	register(command.OpenSystemManager, func(context.Context) error {
+		shellState.ShowSystemManager()
 		return nil
 	})
 	register(command.OpenBackups, func(context.Context) error {

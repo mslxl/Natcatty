@@ -203,6 +203,11 @@ func buildMenu(registry *command.Registry, tag string, bindings MenuBindings) *m
 				Label: m.NavMonitor(),
 				Click: dispatch(command.OpenMonitor),
 			},
+			{
+				ID:    "menu.sysmanager",
+				Label: m.NavSysManager(),
+				Click: dispatch(command.OpenSystemManager),
+			},
 			mygo.Separator(),
 			{
 				ID:          "menu.focusLeft",
