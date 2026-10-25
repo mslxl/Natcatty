@@ -1,6 +1,53 @@
 package scpfixture
 
-import "testing"
+import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
+	"testing"
+)
+
+// TestStreamCloseModelsPeerCloseTeardown locks the fixture behaviour that let
+// ticket 35 miss 35-SCP-UPLOAD-CLOSE-EOF: once the command has finished, the
+// SSH server has closed the channel and x/crypto's Session.Close reports
+// io.EOF. A fixture that returned nil made a failing SCP teardown look green.
+// Only the first Close observes the peer close, as the once-guarded exec
+// channel does.
+func TestStreamCloseModelsPeerCloseTeardown(t *testing.T) {
+	stream := newFixtureStream()
+	stream.run(context.Background(), func(*bufio.Reader, io.Writer, io.Writer) int { return 0 })
+	if code, err := stream.ExitCode(); err != nil || code != 0 {
+		t.Fatalf("ExitCode = %d, %v", code, err)
+	}
+	if err := stream.Close(); !errors.Is(err, io.EOF) {
+		t.Fatalf("first Close after the peer finished = %v, want io.EOF", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("second Close = %v, want nil", err)
+	}
+}
+
+// TestStreamCloseDoesNotReportPeerCloseWhileTheHandlerRuns proves a Close that
+// aborts a live handler is not mistaken for a clean peer close.
+func TestStreamCloseDoesNotReportPeerCloseWhileTheHandlerRuns(t *testing.T) {
+	stream := newFixtureStream()
+	release := make(chan struct{})
+	stream.run(context.Background(), func(*bufio.Reader, io.Writer, io.Writer) int {
+		<-release
+		return 0
+	})
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close while the handler runs = %v, want nil", err)
+	}
+	close(release)
+	if code, err := stream.ExitCode(); err != nil || code != 0 {
+		t.Fatalf("ExitCode = %d, %v", code, err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("repeated Close = %v, want nil", err)
+	}
+}
 
 // TestLsModeRendersEveryPermissionBit covers the bit positions the upload
 // transaction verifies: group and other write (a Windows source reports 0666)

@@ -686,7 +686,16 @@ func (w *scpWriter) Close() error {
 		}
 		return scpOperationError(domainsftp.OpUpload, w.path, err)
 	}
-	return w.stream.Close()
+	// The sink exited successfully, so the server already closed the channel.
+	// Closing our side then answers the peer close, and x/crypto's
+	// Session.Close reports io.EOF because the channel is already marked
+	// closed. The transaction is complete, so EOF is the normal teardown and
+	// not a transfer failure; every other teardown error still fails the
+	// upload. This is only reachable after the nil, zero status check above.
+	if err := w.stream.Close(); err != nil && !errors.Is(err, io.EOF) {
+		return scpOperationError(domainsftp.OpUpload, w.path, err)
+	}
+	return nil
 }
 
 // scpBufferedWriter buffers an upload of unknown size in a local temporary

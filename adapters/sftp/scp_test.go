@@ -238,6 +238,104 @@ func TestSCPUploadCompletesAgainstARealSink(t *testing.T) {
 	assertRemoteBytes(t, server, "/home/tester/pushed.bin", payload)
 }
 
+// TestSCPUploadCompletesWhenCloseReportsAPeerClosedChannel is the regression
+// for 35-SCP-UPLOAD-CLOSE-EOF. A real scp -t sink exits after end-of-transfer
+// and the SSH server closes the channel; x/crypto's Session.Close then answers
+// the peer close and reports io.EOF. The upload has already succeeded, so Close
+// must report success instead of failing the transfer.
+func TestSCPUploadCompletesWhenCloseReportsAPeerClosedChannel(t *testing.T) {
+	payload := []byte("peer-closed upload")
+	stream := newPeerCloseStream()
+	stream.closeErr = io.EOF
+	writer := newPeerCloseUpload(t, stream, "/home/tester/peer-closed.bin", payload)
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close after a successful scp -t transaction = %v, want success", err)
+	}
+	want := append(append([]byte(nil), payload...), 0)
+	if !bytes.HasSuffix(stream.body.Bytes(), want) {
+		t.Fatalf("upload bytes = %q, want the payload followed by the body terminator", stream.body.Bytes())
+	}
+}
+
+// TestSCPUploadRejectsAPeerCloseUnlessTheSinkSucceeded proves the peer-close
+// EOF is never a blanket success: a transport failure on Close, a non-zero
+// sink status, and an unavailable status all still fail the upload.
+func TestSCPUploadRejectsAPeerCloseUnlessTheSinkSucceeded(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*peerCloseStream)
+	}{
+		{"a genuine transport failure", func(stream *peerCloseStream) {
+			stream.closeErr = errors.New("connection reset")
+		}},
+		{"a non-zero sink status", func(stream *peerCloseStream) {
+			stream.closeErr = io.EOF
+			stream.code = 1
+		}},
+		{"an unavailable sink status", func(stream *peerCloseStream) {
+			stream.closeErr = io.EOF
+			stream.codeErr = errors.New("wait: connection lost")
+		}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stream := newPeerCloseStream()
+			testCase.setup(stream)
+			writer := newPeerCloseUpload(t, stream, "/home/tester/torn.bin", []byte("body"))
+			if err := writer.Close(); err == nil {
+				t.Fatal("a failed teardown was reported as a successful upload")
+			}
+		})
+	}
+}
+
+// peerCloseStream answers the SCP sink handshake from ready bytes and records
+// what the uploader writes. Close reports the teardown error a real exec
+// channel produces: io.EOF once the peer closed the channel, or a transport
+// failure when the protocol did not complete.
+type peerCloseStream struct {
+	acks     *bytes.Reader
+	body     bytes.Buffer
+	code     int
+	codeErr  error
+	closeErr error
+}
+
+func newPeerCloseStream() *peerCloseStream {
+	// The sink sends ready, then acknowledges the file control record, then
+	// acknowledges the body terminator.
+	return &peerCloseStream{acks: bytes.NewReader([]byte{0, 0, 0})}
+}
+
+var _ appconnection.ExecStream = (*peerCloseStream)(nil)
+var _ appconnection.HalfCloser = (*peerCloseStream)(nil)
+
+func (s *peerCloseStream) Read(p []byte) (int, error)  { return s.acks.Read(p) }
+func (s *peerCloseStream) Write(p []byte) (int, error) { return s.body.Write(p) }
+func (s *peerCloseStream) Stderr() io.Reader           { return strings.NewReader("") }
+func (s *peerCloseStream) CloseWrite() error           { return nil }
+func (s *peerCloseStream) ExitCode() (int, error)      { return s.code, s.codeErr }
+func (s *peerCloseStream) Close() error                { return s.closeErr }
+
+// newPeerCloseUpload starts one sized upload over stream and writes payload.
+func newPeerCloseUpload(t *testing.T, stream *peerCloseStream, remotePath string, payload []byte) io.WriteCloser {
+	t.Helper()
+	files, err := NewSCP(&singleStreamExecutor{stream: stream}, nil)
+	if err != nil {
+		t.Fatalf("NewSCP: %v", err)
+	}
+	t.Cleanup(func() { _ = files.Close() })
+	writer, err := files.CreateSized(context.Background(), remotePath, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("CreateSized: %v", err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatalf("write upload: %v", err)
+	}
+	return writer
+}
+
 // TestSCPDownloadReportsASourceThatFailsAfterTheFile proves the download path
 // checks the source's exit after the final acknowledgement. The body arrives
 // completely, so only the exit status can reveal that the transaction failed.
@@ -270,7 +368,10 @@ func TestSCPDownloadReportsASourceThatFailsAfterTheFile(t *testing.T) {
 // TestSCPCopyEngineUploadsDownloadsAndCancelsCleanly runs the real copy engine
 // over the SCP adapter against the OpenSSH-shaped sink. It covers staging,
 // verification and promotion for an upload, the symmetric download, and a
-// cancellation mid-file that must remove the staging file.
+// cancellation mid-file that must remove the staging file. The fixture's
+// stream reports the peer-close io.EOF on teardown, so the upload subtest is
+// also the promotion proof for 35-SCP-UPLOAD-CLOSE-EOF: the failure that
+// deleted staging and withheld the destination must not come back.
 func TestSCPCopyEngineUploadsDownloadsAndCancelsCleanly(t *testing.T) {
 	ctx := context.Background()
 	files, server, _ := newSCPFixture(t)
@@ -386,17 +487,18 @@ func assertRemoteBytes(t *testing.T, server *scpfixture.Server, path string, wan
 	}
 }
 
-// plainExecutor serves one exec stream that lacks the optional half-close
-// capability, modelling a transport SCP cannot safely finish an upload on.
-type plainExecutor struct {
+// singleStreamExecutor serves one fixed exec stream for a test that exercises
+// the stream's own capabilities, and deliberately answers shell commands with
+// an empty success so upload setup can run.
+type singleStreamExecutor struct {
 	stream appconnection.ExecStream
 }
 
-func (e *plainExecutor) Exec(context.Context, string) (appconnection.ExecResult, error) {
+func (e *singleStreamExecutor) Exec(context.Context, string) (appconnection.ExecResult, error) {
 	return appconnection.ExecResult{}, nil
 }
 
-func (e *plainExecutor) OpenExec(context.Context, string) (appconnection.ExecStream, error) {
+func (e *singleStreamExecutor) OpenExec(context.Context, string) (appconnection.ExecStream, error) {
 	return e.stream, nil
 }
 
@@ -415,7 +517,7 @@ func (*plainStream) ExitCode() (int, error)    { return 0, nil }
 // writing when the channel cannot signal end-of-transfer while the sink's
 // status stays readable.
 func TestSCPUploadRefusesATransportWithoutHalfClose(t *testing.T) {
-	files, err := NewSCP(&plainExecutor{stream: &plainStream{}}, nil)
+	files, err := NewSCP(&singleStreamExecutor{stream: &plainStream{}}, nil)
 	if err != nil {
 		t.Fatalf("NewSCP: %v", err)
 	}
