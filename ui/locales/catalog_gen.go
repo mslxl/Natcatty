@@ -354,6 +354,16 @@ func (msgs Messages) NavVault() string {
 	return Catalog.Format(msgs.locale, "navVault", nil)
 }
 
+// NavMonitor says "Monitoring"
+// in the language the app shows.
+func NavMonitor() string { return In(i18n.Locale()).NavMonitor() }
+
+// NavMonitor says "Monitoring"
+// in the language of msgs.
+func (msgs Messages) NavMonitor() string {
+	return Catalog.Format(msgs.locale, "navMonitor", nil)
+}
+
 // NavSettings says "Settings"
 // in the language the app shows.
 func NavSettings() string { return In(i18n.Locale()).NavSettings() }
@@ -15266,4 +15276,816 @@ func SftpTransferSkipped(count int) string { return In(i18n.Locale()).SftpTransf
 // The count of entries a Transfer left untouched.
 func (msgs Messages) SftpTransferSkipped(count int) string {
 	return Catalog.Format(msgs.locale, "sftpTransferSkipped", map[string]any{"count": count})
+}
+
+// MonitoringTitle says "Host monitoring"
+// in the language the app shows.
+func MonitoringTitle() string { return In(i18n.Locale()).MonitoringTitle() }
+
+// MonitoringTitle says "Host monitoring"
+// in the language of msgs.
+func (msgs Messages) MonitoringTitle() string {
+	return Catalog.Format(msgs.locale, "monitoringTitle", nil)
+}
+
+// MonitoringSummary says "{live} of {total} live"
+// in the language the app shows.
+//
+// The share of sampled Hosts that are live.
+func MonitoringSummary(live int, total int) string {
+	return In(i18n.Locale()).MonitoringSummary(live, total)
+}
+
+// MonitoringSummary says "{live} of {total} live"
+// in the language of msgs.
+//
+// The share of sampled Hosts that are live.
+func (msgs Messages) MonitoringSummary(live int, total int) string {
+	return Catalog.Format(msgs.locale, "monitoringSummary", map[string]any{"live": live, "total": total})
+}
+
+// MonitoringNoPanelsTitle says "No monitoring panels yet"
+// in the language the app shows.
+func MonitoringNoPanelsTitle() string { return In(i18n.Locale()).MonitoringNoPanelsTitle() }
+
+// MonitoringNoPanelsTitle says "No monitoring panels yet"
+// in the language of msgs.
+func (msgs Messages) MonitoringNoPanelsTitle() string {
+	return Catalog.Format(msgs.locale, "monitoringNoPanelsTitle", nil)
+}
+
+// MonitoringNoPanelsBody says "Create a panel to choose which Hosts to monitor and how often."
+// in the language the app shows.
+func MonitoringNoPanelsBody() string { return In(i18n.Locale()).MonitoringNoPanelsBody() }
+
+// MonitoringNoPanelsBody says "Create a panel to choose which Hosts to monitor and how often."
+// in the language of msgs.
+func (msgs Messages) MonitoringNoPanelsBody() string {
+	return Catalog.Format(msgs.locale, "monitoringNoPanelsBody", nil)
+}
+
+// MonitoringNewPanel says "New panel"
+// in the language the app shows.
+func MonitoringNewPanel() string { return In(i18n.Locale()).MonitoringNewPanel() }
+
+// MonitoringNewPanel says "New panel"
+// in the language of msgs.
+func (msgs Messages) MonitoringNewPanel() string {
+	return Catalog.Format(msgs.locale, "monitoringNewPanel", nil)
+}
+
+// MonitoringEditPanel says "Edit panel"
+// in the language the app shows.
+func MonitoringEditPanel() string { return In(i18n.Locale()).MonitoringEditPanel() }
+
+// MonitoringEditPanel says "Edit panel"
+// in the language of msgs.
+func (msgs Messages) MonitoringEditPanel() string {
+	return Catalog.Format(msgs.locale, "monitoringEditPanel", nil)
+}
+
+// MonitoringColumns says "Columns"
+// in the language the app shows.
+func MonitoringColumns() string { return In(i18n.Locale()).MonitoringColumns() }
+
+// MonitoringColumns says "Columns"
+// in the language of msgs.
+func (msgs Messages) MonitoringColumns() string {
+	return Catalog.Format(msgs.locale, "monitoringColumns", nil)
+}
+
+// MonitoringColumnsHint says "Drag a column edge to resize; widths save automatically."
+// in the language the app shows.
+func MonitoringColumnsHint() string { return In(i18n.Locale()).MonitoringColumnsHint() }
+
+// MonitoringColumnsHint says "Drag a column edge to resize; widths save automatically."
+// in the language of msgs.
+func (msgs Messages) MonitoringColumnsHint() string {
+	return Catalog.Format(msgs.locale, "monitoringColumnsHint", nil)
+}
+
+// MonitoringColumnsDone says "Done"
+// in the language the app shows.
+func MonitoringColumnsDone() string { return In(i18n.Locale()).MonitoringColumnsDone() }
+
+// MonitoringColumnsDone says "Done"
+// in the language of msgs.
+func (msgs Messages) MonitoringColumnsDone() string {
+	return Catalog.Format(msgs.locale, "monitoringColumnsDone", nil)
+}
+
+// MonitoringAlwaysVisible says "Always visible"
+// in the language the app shows.
+func MonitoringAlwaysVisible() string { return In(i18n.Locale()).MonitoringAlwaysVisible() }
+
+// MonitoringAlwaysVisible says "Always visible"
+// in the language of msgs.
+func (msgs Messages) MonitoringAlwaysVisible() string {
+	return Catalog.Format(msgs.locale, "monitoringAlwaysVisible", nil)
+}
+
+// MonitoringRefresh says "Refresh"
+// in the language the app shows.
+func MonitoringRefresh() string { return In(i18n.Locale()).MonitoringRefresh() }
+
+// MonitoringRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) MonitoringRefresh() string {
+	return Catalog.Format(msgs.locale, "monitoringRefresh", nil)
+}
+
+// MonitoringSort says "Sort"
+// in the language the app shows.
+func MonitoringSort() string { return In(i18n.Locale()).MonitoringSort() }
+
+// MonitoringSort says "Sort"
+// in the language of msgs.
+func (msgs Messages) MonitoringSort() string {
+	return Catalog.Format(msgs.locale, "monitoringSort", nil)
+}
+
+// MonitoringSortManual says "Manual"
+// in the language the app shows.
+func MonitoringSortManual() string { return In(i18n.Locale()).MonitoringSortManual() }
+
+// MonitoringSortManual says "Manual"
+// in the language of msgs.
+func (msgs Messages) MonitoringSortManual() string {
+	return Catalog.Format(msgs.locale, "monitoringSortManual", nil)
+}
+
+// MonitoringSortName says "Name"
+// in the language the app shows.
+func MonitoringSortName() string { return In(i18n.Locale()).MonitoringSortName() }
+
+// MonitoringSortName says "Name"
+// in the language of msgs.
+func (msgs Messages) MonitoringSortName() string {
+	return Catalog.Format(msgs.locale, "monitoringSortName", nil)
+}
+
+// MonitoringViewList says "List"
+// in the language the app shows.
+func MonitoringViewList() string { return In(i18n.Locale()).MonitoringViewList() }
+
+// MonitoringViewList says "List"
+// in the language of msgs.
+func (msgs Messages) MonitoringViewList() string {
+	return Catalog.Format(msgs.locale, "monitoringViewList", nil)
+}
+
+// MonitoringViewCharts says "Charts"
+// in the language the app shows.
+func MonitoringViewCharts() string { return In(i18n.Locale()).MonitoringViewCharts() }
+
+// MonitoringViewCharts says "Charts"
+// in the language of msgs.
+func (msgs Messages) MonitoringViewCharts() string {
+	return Catalog.Format(msgs.locale, "monitoringViewCharts", nil)
+}
+
+// MonitoringEmptyPanel says "This panel has no Hosts. Edit the panel to add some."
+// in the language the app shows.
+func MonitoringEmptyPanel() string { return In(i18n.Locale()).MonitoringEmptyPanel() }
+
+// MonitoringEmptyPanel says "This panel has no Hosts. Edit the panel to add some."
+// in the language of msgs.
+func (msgs Messages) MonitoringEmptyPanel() string {
+	return Catalog.Format(msgs.locale, "monitoringEmptyPanel", nil)
+}
+
+// MonitoringSearch says "Search Hosts"
+// in the language the app shows.
+func MonitoringSearch() string { return In(i18n.Locale()).MonitoringSearch() }
+
+// MonitoringSearch says "Search Hosts"
+// in the language of msgs.
+func (msgs Messages) MonitoringSearch() string {
+	return Catalog.Format(msgs.locale, "monitoringSearch", nil)
+}
+
+// MonitoringNoMatches says "No Hosts match the search."
+// in the language the app shows.
+func MonitoringNoMatches() string { return In(i18n.Locale()).MonitoringNoMatches() }
+
+// MonitoringNoMatches says "No Hosts match the search."
+// in the language of msgs.
+func (msgs Messages) MonitoringNoMatches() string {
+	return Catalog.Format(msgs.locale, "monitoringNoMatches", nil)
+}
+
+// MonitoringOpen says "Open"
+// in the language the app shows.
+func MonitoringOpen() string { return In(i18n.Locale()).MonitoringOpen() }
+
+// MonitoringOpen says "Open"
+// in the language of msgs.
+func (msgs Messages) MonitoringOpen() string {
+	return Catalog.Format(msgs.locale, "monitoringOpen", nil)
+}
+
+// MonitoringHost says "Host"
+// in the language the app shows.
+func MonitoringHost() string { return In(i18n.Locale()).MonitoringHost() }
+
+// MonitoringHost says "Host"
+// in the language of msgs.
+func (msgs Messages) MonitoringHost() string {
+	return Catalog.Format(msgs.locale, "monitoringHost", nil)
+}
+
+// MonitoringLatency says "Latency"
+// in the language the app shows.
+func MonitoringLatency() string { return In(i18n.Locale()).MonitoringLatency() }
+
+// MonitoringLatency says "Latency"
+// in the language of msgs.
+func (msgs Messages) MonitoringLatency() string {
+	return Catalog.Format(msgs.locale, "monitoringLatency", nil)
+}
+
+// MonitoringTags says "Tags"
+// in the language the app shows.
+func MonitoringTags() string { return In(i18n.Locale()).MonitoringTags() }
+
+// MonitoringTags says "Tags"
+// in the language of msgs.
+func (msgs Messages) MonitoringTags() string {
+	return Catalog.Format(msgs.locale, "monitoringTags", nil)
+}
+
+// MonitoringNotes says "Notes"
+// in the language the app shows.
+func MonitoringNotes() string { return In(i18n.Locale()).MonitoringNotes() }
+
+// MonitoringNotes says "Notes"
+// in the language of msgs.
+func (msgs Messages) MonitoringNotes() string {
+	return Catalog.Format(msgs.locale, "monitoringNotes", nil)
+}
+
+// MonitoringCpu says "CPU"
+// in the language the app shows.
+func MonitoringCpu() string { return In(i18n.Locale()).MonitoringCpu() }
+
+// MonitoringCpu says "CPU"
+// in the language of msgs.
+func (msgs Messages) MonitoringCpu() string {
+	return Catalog.Format(msgs.locale, "monitoringCpu", nil)
+}
+
+// MonitoringMemory says "Memory"
+// in the language the app shows.
+func MonitoringMemory() string { return In(i18n.Locale()).MonitoringMemory() }
+
+// MonitoringMemory says "Memory"
+// in the language of msgs.
+func (msgs Messages) MonitoringMemory() string {
+	return Catalog.Format(msgs.locale, "monitoringMemory", nil)
+}
+
+// MonitoringDisk says "Disk"
+// in the language the app shows.
+func MonitoringDisk() string { return In(i18n.Locale()).MonitoringDisk() }
+
+// MonitoringDisk says "Disk"
+// in the language of msgs.
+func (msgs Messages) MonitoringDisk() string {
+	return Catalog.Format(msgs.locale, "monitoringDisk", nil)
+}
+
+// MonitoringNetwork says "Network"
+// in the language the app shows.
+func MonitoringNetwork() string { return In(i18n.Locale()).MonitoringNetwork() }
+
+// MonitoringNetwork says "Network"
+// in the language of msgs.
+func (msgs Messages) MonitoringNetwork() string {
+	return Catalog.Format(msgs.locale, "monitoringNetwork", nil)
+}
+
+// MonitoringGpu says "GPU"
+// in the language the app shows.
+func MonitoringGpu() string { return In(i18n.Locale()).MonitoringGpu() }
+
+// MonitoringGpu says "GPU"
+// in the language of msgs.
+func (msgs Messages) MonitoringGpu() string {
+	return Catalog.Format(msgs.locale, "monitoringGpu", nil)
+}
+
+// MonitoringUpdated says "Updated"
+// in the language the app shows.
+func MonitoringUpdated() string { return In(i18n.Locale()).MonitoringUpdated() }
+
+// MonitoringUpdated says "Updated"
+// in the language of msgs.
+func (msgs Messages) MonitoringUpdated() string {
+	return Catalog.Format(msgs.locale, "monitoringUpdated", nil)
+}
+
+// MonitoringStatus says "Status"
+// in the language the app shows.
+func MonitoringStatus() string { return In(i18n.Locale()).MonitoringStatus() }
+
+// MonitoringStatus says "Status"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatus() string {
+	return Catalog.Format(msgs.locale, "monitoringStatus", nil)
+}
+
+// MonitoringTerminal says "Terminal"
+// in the language the app shows.
+func MonitoringTerminal() string { return In(i18n.Locale()).MonitoringTerminal() }
+
+// MonitoringTerminal says "Terminal"
+// in the language of msgs.
+func (msgs Messages) MonitoringTerminal() string {
+	return Catalog.Format(msgs.locale, "monitoringTerminal", nil)
+}
+
+// MonitoringStatusQueued says "Queued"
+// in the language the app shows.
+func MonitoringStatusQueued() string { return In(i18n.Locale()).MonitoringStatusQueued() }
+
+// MonitoringStatusQueued says "Queued"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusQueued() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusQueued", nil)
+}
+
+// MonitoringStatusConnecting says "Connecting"
+// in the language the app shows.
+func MonitoringStatusConnecting() string { return In(i18n.Locale()).MonitoringStatusConnecting() }
+
+// MonitoringStatusConnecting says "Connecting"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusConnecting() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusConnecting", nil)
+}
+
+// MonitoringStatusLive says "Live"
+// in the language the app shows.
+func MonitoringStatusLive() string { return In(i18n.Locale()).MonitoringStatusLive() }
+
+// MonitoringStatusLive says "Live"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusLive() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusLive", nil)
+}
+
+// MonitoringStatusLogin says "Sign in"
+// in the language the app shows.
+func MonitoringStatusLogin() string { return In(i18n.Locale()).MonitoringStatusLogin() }
+
+// MonitoringStatusLogin says "Sign in"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusLogin() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusLogin", nil)
+}
+
+// MonitoringStatusError says "Error"
+// in the language the app shows.
+func MonitoringStatusError() string { return In(i18n.Locale()).MonitoringStatusError() }
+
+// MonitoringStatusError says "Error"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusError() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusError", nil)
+}
+
+// MonitoringStatusUnsupported says "Unsupported"
+// in the language the app shows.
+func MonitoringStatusUnsupported() string { return In(i18n.Locale()).MonitoringStatusUnsupported() }
+
+// MonitoringStatusUnsupported says "Unsupported"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusUnsupported() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusUnsupported", nil)
+}
+
+// MonitoringStatusDisconnected says "Disconnected"
+// in the language the app shows.
+func MonitoringStatusDisconnected() string { return In(i18n.Locale()).MonitoringStatusDisconnected() }
+
+// MonitoringStatusDisconnected says "Disconnected"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusDisconnected() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusDisconnected", nil)
+}
+
+// MonitoringStatusUnavailable says "Unavailable"
+// in the language the app shows.
+func MonitoringStatusUnavailable() string { return In(i18n.Locale()).MonitoringStatusUnavailable() }
+
+// MonitoringStatusUnavailable says "Unavailable"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusUnavailable() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusUnavailable", nil)
+}
+
+// MonitoringStatusLimit says "Limit reached"
+// in the language the app shows.
+func MonitoringStatusLimit() string { return In(i18n.Locale()).MonitoringStatusLimit() }
+
+// MonitoringStatusLimit says "Limit reached"
+// in the language of msgs.
+func (msgs Messages) MonitoringStatusLimit() string {
+	return Catalog.Format(msgs.locale, "monitoringStatusLimit", nil)
+}
+
+// MonitoringStale says "Stale"
+// in the language the app shows.
+func MonitoringStale() string { return In(i18n.Locale()).MonitoringStale() }
+
+// MonitoringStale says "Stale"
+// in the language of msgs.
+func (msgs Messages) MonitoringStale() string {
+	return Catalog.Format(msgs.locale, "monitoringStale", nil)
+}
+
+// MonitoringReasonHostKey says "Host key not trusted"
+// in the language the app shows.
+func MonitoringReasonHostKey() string { return In(i18n.Locale()).MonitoringReasonHostKey() }
+
+// MonitoringReasonHostKey says "Host key not trusted"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonHostKey() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonHostKey", nil)
+}
+
+// MonitoringReasonAuth says "Authentication failed"
+// in the language the app shows.
+func MonitoringReasonAuth() string { return In(i18n.Locale()).MonitoringReasonAuth() }
+
+// MonitoringReasonAuth says "Authentication failed"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonAuth() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonAuth", nil)
+}
+
+// MonitoringReasonNetwork says "Network unavailable"
+// in the language the app shows.
+func MonitoringReasonNetwork() string { return In(i18n.Locale()).MonitoringReasonNetwork() }
+
+// MonitoringReasonNetwork says "Network unavailable"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonNetwork() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonNetwork", nil)
+}
+
+// MonitoringReasonTimeout says "Timed out"
+// in the language the app shows.
+func MonitoringReasonTimeout() string { return In(i18n.Locale()).MonitoringReasonTimeout() }
+
+// MonitoringReasonTimeout says "Timed out"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonTimeout() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonTimeout", nil)
+}
+
+// MonitoringReasonUnsupported says "Metrics unsupported"
+// in the language the app shows.
+func MonitoringReasonUnsupported() string { return In(i18n.Locale()).MonitoringReasonUnsupported() }
+
+// MonitoringReasonUnsupported says "Metrics unsupported"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonUnsupported() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonUnsupported", nil)
+}
+
+// MonitoringReasonCancelled says "Cancelled"
+// in the language the app shows.
+func MonitoringReasonCancelled() string { return In(i18n.Locale()).MonitoringReasonCancelled() }
+
+// MonitoringReasonCancelled says "Cancelled"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonCancelled() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonCancelled", nil)
+}
+
+// MonitoringReasonInternal says "Monitoring error"
+// in the language the app shows.
+func MonitoringReasonInternal() string { return In(i18n.Locale()).MonitoringReasonInternal() }
+
+// MonitoringReasonInternal says "Monitoring error"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonInternal() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonInternal", nil)
+}
+
+// MonitoringReasonOS says "Operating system unsupported"
+// in the language the app shows.
+func MonitoringReasonOS() string { return In(i18n.Locale()).MonitoringReasonOS() }
+
+// MonitoringReasonOS says "Operating system unsupported"
+// in the language of msgs.
+func (msgs Messages) MonitoringReasonOS() string {
+	return Catalog.Format(msgs.locale, "monitoringReasonOS", nil)
+}
+
+// MonitoringUnknown says "—"
+// in the language the app shows.
+func MonitoringUnknown() string { return In(i18n.Locale()).MonitoringUnknown() }
+
+// MonitoringUnknown says "—"
+// in the language of msgs.
+func (msgs Messages) MonitoringUnknown() string {
+	return Catalog.Format(msgs.locale, "monitoringUnknown", nil)
+}
+
+// MonitoringUpdatedNow says "just now"
+// in the language the app shows.
+func MonitoringUpdatedNow() string { return In(i18n.Locale()).MonitoringUpdatedNow() }
+
+// MonitoringUpdatedNow says "just now"
+// in the language of msgs.
+func (msgs Messages) MonitoringUpdatedNow() string {
+	return Catalog.Format(msgs.locale, "monitoringUpdatedNow", nil)
+}
+
+// MonitoringUpdatedSeconds says "{seconds}s ago"
+// in the language the app shows.
+//
+// How long ago the latest sample arrived, in seconds.
+func MonitoringUpdatedSeconds(seconds int) string {
+	return In(i18n.Locale()).MonitoringUpdatedSeconds(seconds)
+}
+
+// MonitoringUpdatedSeconds says "{seconds}s ago"
+// in the language of msgs.
+//
+// How long ago the latest sample arrived, in seconds.
+func (msgs Messages) MonitoringUpdatedSeconds(seconds int) string {
+	return Catalog.Format(msgs.locale, "monitoringUpdatedSeconds", map[string]any{"seconds": seconds})
+}
+
+// MonitoringUpdatedMinutes says "{minutes}m ago"
+// in the language the app shows.
+//
+// How long ago the latest sample arrived, in minutes.
+func MonitoringUpdatedMinutes(minutes int) string {
+	return In(i18n.Locale()).MonitoringUpdatedMinutes(minutes)
+}
+
+// MonitoringUpdatedMinutes says "{minutes}m ago"
+// in the language of msgs.
+//
+// How long ago the latest sample arrived, in minutes.
+func (msgs Messages) MonitoringUpdatedMinutes(minutes int) string {
+	return Catalog.Format(msgs.locale, "monitoringUpdatedMinutes", map[string]any{"minutes": minutes})
+}
+
+// MonitoringName says "Name"
+// in the language the app shows.
+func MonitoringName() string { return In(i18n.Locale()).MonitoringName() }
+
+// MonitoringName says "Name"
+// in the language of msgs.
+func (msgs Messages) MonitoringName() string {
+	return Catalog.Format(msgs.locale, "monitoringName", nil)
+}
+
+// MonitoringDescription says "Description"
+// in the language the app shows.
+func MonitoringDescription() string { return In(i18n.Locale()).MonitoringDescription() }
+
+// MonitoringDescription says "Description"
+// in the language of msgs.
+func (msgs Messages) MonitoringDescription() string {
+	return Catalog.Format(msgs.locale, "monitoringDescription", nil)
+}
+
+// MonitoringPanelHosts says "Hosts"
+// in the language the app shows.
+func MonitoringPanelHosts() string { return In(i18n.Locale()).MonitoringPanelHosts() }
+
+// MonitoringPanelHosts says "Hosts"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelHosts() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelHosts", nil)
+}
+
+// MonitoringSelectedCount says "{count} selected"
+// in the language the app shows.
+//
+// The number of Hosts selected in the panel editor.
+func MonitoringSelectedCount(count int) string {
+	return In(i18n.Locale()).MonitoringSelectedCount(count)
+}
+
+// MonitoringSelectedCount says "{count} selected"
+// in the language of msgs.
+//
+// The number of Hosts selected in the panel editor.
+func (msgs Messages) MonitoringSelectedCount(count int) string {
+	return Catalog.Format(msgs.locale, "monitoringSelectedCount", map[string]any{"count": count})
+}
+
+// MonitoringNoHostsAvailable says "No Hosts in the Vault."
+// in the language the app shows.
+func MonitoringNoHostsAvailable() string { return In(i18n.Locale()).MonitoringNoHostsAvailable() }
+
+// MonitoringNoHostsAvailable says "No Hosts in the Vault."
+// in the language of msgs.
+func (msgs Messages) MonitoringNoHostsAvailable() string {
+	return Catalog.Format(msgs.locale, "monitoringNoHostsAvailable", nil)
+}
+
+// MonitoringSave says "Save"
+// in the language the app shows.
+func MonitoringSave() string { return In(i18n.Locale()).MonitoringSave() }
+
+// MonitoringSave says "Save"
+// in the language of msgs.
+func (msgs Messages) MonitoringSave() string {
+	return Catalog.Format(msgs.locale, "monitoringSave", nil)
+}
+
+// MonitoringCancel says "Cancel"
+// in the language the app shows.
+func MonitoringCancel() string { return In(i18n.Locale()).MonitoringCancel() }
+
+// MonitoringCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) MonitoringCancel() string {
+	return Catalog.Format(msgs.locale, "monitoringCancel", nil)
+}
+
+// MonitoringDeletePanel says "Delete panel"
+// in the language the app shows.
+func MonitoringDeletePanel() string { return In(i18n.Locale()).MonitoringDeletePanel() }
+
+// MonitoringDeletePanel says "Delete panel"
+// in the language of msgs.
+func (msgs Messages) MonitoringDeletePanel() string {
+	return Catalog.Format(msgs.locale, "monitoringDeletePanel", nil)
+}
+
+// MonitoringDeleteConfirm says "Delete “{name}”?"
+// in the language the app shows.
+//
+// Asks before deleting a monitoring panel.
+func MonitoringDeleteConfirm(name string) string {
+	return In(i18n.Locale()).MonitoringDeleteConfirm(name)
+}
+
+// MonitoringDeleteConfirm says "Delete “{name}”?"
+// in the language of msgs.
+//
+// Asks before deleting a monitoring panel.
+func (msgs Messages) MonitoringDeleteConfirm(name string) string {
+	return Catalog.Format(msgs.locale, "monitoringDeleteConfirm", map[string]any{"name": name})
+}
+
+// MonitoringProblemNameRequired says "Give the panel a name."
+// in the language the app shows.
+func MonitoringProblemNameRequired() string { return In(i18n.Locale()).MonitoringProblemNameRequired() }
+
+// MonitoringProblemNameRequired says "Give the panel a name."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemNameRequired() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemNameRequired", nil)
+}
+
+// MonitoringProblemDuplicateName says "Another panel already has that name."
+// in the language the app shows.
+func MonitoringProblemDuplicateName() string {
+	return In(i18n.Locale()).MonitoringProblemDuplicateName()
+}
+
+// MonitoringProblemDuplicateName says "Another panel already has that name."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemDuplicateName() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemDuplicateName", nil)
+}
+
+// MonitoringProblemSave says "Could not save the monitoring configuration."
+// in the language the app shows.
+func MonitoringProblemSave() string { return In(i18n.Locale()).MonitoringProblemSave() }
+
+// MonitoringProblemSave says "Could not save the monitoring configuration."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemSave() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemSave", nil)
+}
+
+// MonitoringProblemLoad says "Could not read the Host list."
+// in the language the app shows.
+func MonitoringProblemLoad() string { return In(i18n.Locale()).MonitoringProblemLoad() }
+
+// MonitoringProblemLoad says "Could not read the Host list."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemLoad() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemLoad", nil)
+}
+
+// MonitoringProblemTooManyHosts says "A panel can sample at most 256 Hosts."
+// in the language the app shows.
+func MonitoringProblemTooManyHosts() string { return In(i18n.Locale()).MonitoringProblemTooManyHosts() }
+
+// MonitoringProblemTooManyHosts says "A panel can sample at most 256 Hosts."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemTooManyHosts() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemTooManyHosts", nil)
+}
+
+// MonitoringProblemNoPanel says "No panel is selected."
+// in the language the app shows.
+func MonitoringProblemNoPanel() string { return In(i18n.Locale()).MonitoringProblemNoPanel() }
+
+// MonitoringProblemNoPanel says "No panel is selected."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemNoPanel() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemNoPanel", nil)
+}
+
+// MonitoringProblemOpenTerminal says "Could not open the Host Session."
+// in the language the app shows.
+func MonitoringProblemOpenTerminal() string { return In(i18n.Locale()).MonitoringProblemOpenTerminal() }
+
+// MonitoringProblemOpenTerminal says "Could not open the Host Session."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemOpenTerminal() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemOpenTerminal", nil)
+}
+
+// MonitoringProblemInternal says "Monitoring failed."
+// in the language the app shows.
+func MonitoringProblemInternal() string { return In(i18n.Locale()).MonitoringProblemInternal() }
+
+// MonitoringProblemInternal says "Monitoring failed."
+// in the language of msgs.
+func (msgs Messages) MonitoringProblemInternal() string {
+	return Catalog.Format(msgs.locale, "monitoringProblemInternal", nil)
+}
+
+// MonitoringPanelFormCreate says "New monitoring panel"
+// in the language the app shows.
+func MonitoringPanelFormCreate() string { return In(i18n.Locale()).MonitoringPanelFormCreate() }
+
+// MonitoringPanelFormCreate says "New monitoring panel"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormCreate() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormCreate", nil)
+}
+
+// MonitoringPanelFormEdit says "Edit monitoring panel"
+// in the language the app shows.
+func MonitoringPanelFormEdit() string { return In(i18n.Locale()).MonitoringPanelFormEdit() }
+
+// MonitoringPanelFormEdit says "Edit monitoring panel"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormEdit() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormEdit", nil)
+}
+
+// MonitoringPanelFormView says "View"
+// in the language the app shows.
+func MonitoringPanelFormView() string { return In(i18n.Locale()).MonitoringPanelFormView() }
+
+// MonitoringPanelFormView says "View"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormView() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormView", nil)
+}
+
+// MonitoringPanelFormInterval says "Refresh interval (seconds)"
+// in the language the app shows.
+func MonitoringPanelFormInterval() string { return In(i18n.Locale()).MonitoringPanelFormInterval() }
+
+// MonitoringPanelFormInterval says "Refresh interval (seconds)"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormInterval() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormInterval", nil)
+}
+
+// MonitoringPanelFormRange says "History range (minutes)"
+// in the language the app shows.
+func MonitoringPanelFormRange() string { return In(i18n.Locale()).MonitoringPanelFormRange() }
+
+// MonitoringPanelFormRange says "History range (minutes)"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormRange() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormRange", nil)
+}
+
+// MonitoringPanelFormSort says "Host order"
+// in the language the app shows.
+func MonitoringPanelFormSort() string { return In(i18n.Locale()).MonitoringPanelFormSort() }
+
+// MonitoringPanelFormSort says "Host order"
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormSort() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormSort", nil)
+}
+
+// MonitoringPanelFormHostsHint says "Choose the Hosts to monitor. This order applies in Manual sort."
+// in the language the app shows.
+func MonitoringPanelFormHostsHint() string { return In(i18n.Locale()).MonitoringPanelFormHostsHint() }
+
+// MonitoringPanelFormHostsHint says "Choose the Hosts to monitor. This order applies in Manual sort."
+// in the language of msgs.
+func (msgs Messages) MonitoringPanelFormHostsHint() string {
+	return Catalog.Format(msgs.locale, "monitoringPanelFormHostsHint", nil)
 }

@@ -31,6 +31,7 @@
   "@@locale": "es",
   "appName": "Natcatty",
   "navVault": "Vault",
+  "navMonitor": "Monitoreo",
   "navSettings": "Configuración",
   "navLanguage": "Idioma",
   "vaultPlaceholder": "Tus hosts, claves y notas aparecerán aquí.",
@@ -2009,5 +2010,132 @@
         "example": "3"
       }
     }
-  }
+  },
+  "monitoringTitle": "Supervisión de Hosts",
+  "monitoringSummary": "{live} de {total} activos",
+  "@monitoringSummary": {
+    "description": "The share of sampled Hosts that are live.",
+    "placeholders": {
+      "live": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringNoPanelsTitle": "Aún no hay paneles de supervisión",
+  "monitoringNoPanelsBody": "Crea un panel para elegir qué Hosts supervisar y con qué frecuencia.",
+  "monitoringNewPanel": "Nuevo panel",
+  "monitoringEditPanel": "Editar panel",
+  "monitoringColumns": "Columnas",
+  "monitoringColumnsHint": "Arrastra el borde de una columna para cambiar su ancho; los anchos se guardan automáticamente.",
+  "monitoringColumnsDone": "Listo",
+  "monitoringAlwaysVisible": "Siempre visible",
+  "monitoringRefresh": "Actualizar",
+  "monitoringSort": "Ordenar",
+  "monitoringSortManual": "Manual",
+  "monitoringSortName": "Nombre",
+  "monitoringViewList": "Lista",
+  "monitoringViewCharts": "Gráficas",
+  "monitoringEmptyPanel": "Este panel no tiene Hosts. Edita el panel para añadir algunos.",
+  "monitoringSearch": "Buscar hosts",
+  "monitoringNoMatches": "Ningún Host coincide con la búsqueda.",
+  "monitoringOpen": "Abrir",
+  "monitoringHost": "Host",
+  "monitoringLatency": "Latencia",
+  "monitoringTags": "Etiquetas",
+  "monitoringNotes": "Notas",
+  "monitoringCpu": "CPU",
+  "monitoringMemory": "Memoria",
+  "monitoringDisk": "Disco",
+  "monitoringNetwork": "Red",
+  "monitoringGpu": "GPU",
+  "monitoringUpdated": "Actualizado",
+  "monitoringStatus": "Estado",
+  "monitoringTerminal": "Terminal",
+  "monitoringStatusQueued": "En cola",
+  "monitoringStatusConnecting": "Conectando",
+  "monitoringStatusLive": "Activo",
+  "monitoringStatusLogin": "Iniciar sesión",
+  "monitoringStatusError": "Error",
+  "monitoringStatusUnsupported": "No compatible",
+  "monitoringStatusDisconnected": "Desconectado",
+  "monitoringStatusUnavailable": "No disponible",
+  "monitoringStatusLimit": "Límite alcanzado",
+  "monitoringStale": "Obsoleto",
+  "monitoringReasonHostKey": "Clave del Host no confiable",
+  "monitoringReasonAuth": "Fallo de autenticación",
+  "monitoringReasonNetwork": "Red no disponible",
+  "monitoringReasonTimeout": "Tiempo agotado",
+  "monitoringReasonUnsupported": "Métricas no compatibles",
+  "monitoringReasonCancelled": "Cancelado",
+  "monitoringReasonInternal": "Error de supervisión",
+  "monitoringReasonOS": "Sistema operativo no compatible",
+  "monitoringUnknown": "—",
+  "monitoringUpdatedNow": "ahora mismo",
+  "monitoringUpdatedSeconds": "hace {seconds} s",
+  "@monitoringUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived, in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringUpdatedMinutes": "hace {minutes} min",
+  "@monitoringUpdatedMinutes": {
+    "description": "How long ago the latest sample arrived, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "monitoringName": "Nombre",
+  "monitoringDescription": "Descripción",
+  "monitoringPanelHosts": "Hosts",
+  "monitoringSelectedCount": "{count} seleccionados",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringNoHostsAvailable": "No hay Hosts en la Bóveda.",
+  "monitoringSave": "Guardar",
+  "monitoringCancel": "Cancelar",
+  "monitoringDeletePanel": "Eliminar panel",
+  "monitoringDeleteConfirm": "¿Eliminar «{name}»?",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringProblemNameRequired": "Ponle un nombre al panel.",
+  "monitoringProblemDuplicateName": "Otro panel ya tiene ese nombre.",
+  "monitoringProblemSave": "No se pudo guardar la configuración de supervisión.",
+  "monitoringProblemLoad": "No se pudo leer la lista de Hosts.",
+  "monitoringProblemTooManyHosts": "Un panel puede muestrear como máximo 256 Hosts.",
+  "monitoringProblemNoPanel": "No hay ningún panel seleccionado.",
+  "monitoringProblemOpenTerminal": "No se pudo abrir la sesión del Host.",
+  "monitoringProblemInternal": "La supervisión falló.",
+  "monitoringPanelFormCreate": "Nuevo panel de supervisión",
+  "monitoringPanelFormEdit": "Editar panel de supervisión",
+  "monitoringPanelFormView": "Vista",
+  "monitoringPanelFormInterval": "Intervalo de actualización (segundos)",
+  "monitoringPanelFormRange": "Rango del historial (minutos)",
+  "monitoringPanelFormSort": "Orden de los Hosts",
+  "monitoringPanelFormHostsHint": "Elige los Hosts que supervisar. Este orden se usa con el orden Manual."
 }

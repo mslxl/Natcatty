@@ -31,6 +31,7 @@
   "@@locale": "zh-CN",
   "appName": "Natcatty",
   "navVault": "Vault",
+  "navMonitor": "监控",
   "navSettings": "设置",
   "navLanguage": "语言",
   "vaultPlaceholder": "你的主机、密钥和笔记将显示在这里。",
@@ -2009,5 +2010,132 @@
         "example": "3"
       }
     }
-  }
+  },
+  "monitoringTitle": "主机监控",
+  "monitoringSummary": "{live} / {total} 台在线",
+  "@monitoringSummary": {
+    "description": "The share of sampled Hosts that are live.",
+    "placeholders": {
+      "live": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringNoPanelsTitle": "还没有监控面板",
+  "monitoringNoPanelsBody": "创建面板以选择要监控的主机和刷新频率。",
+  "monitoringNewPanel": "新建面板",
+  "monitoringEditPanel": "编辑面板",
+  "monitoringColumns": "列",
+  "monitoringColumnsHint": "拖动列边缘可调整宽度；宽度会自动保存。",
+  "monitoringColumnsDone": "完成",
+  "monitoringAlwaysVisible": "始终显示",
+  "monitoringRefresh": "刷新",
+  "monitoringSort": "排序",
+  "monitoringSortManual": "手动",
+  "monitoringSortName": "名称",
+  "monitoringViewList": "列表",
+  "monitoringViewCharts": "图表",
+  "monitoringEmptyPanel": "此面板没有主机。编辑面板以添加主机。",
+  "monitoringSearch": "搜索主机",
+  "monitoringNoMatches": "没有匹配搜索的主机。",
+  "monitoringOpen": "打开",
+  "monitoringHost": "主机",
+  "monitoringLatency": "延迟",
+  "monitoringTags": "标签",
+  "monitoringNotes": "备注",
+  "monitoringCpu": "CPU",
+  "monitoringMemory": "内存",
+  "monitoringDisk": "磁盘",
+  "monitoringNetwork": "网络",
+  "monitoringGpu": "GPU",
+  "monitoringUpdated": "更新时间",
+  "monitoringStatus": "状态",
+  "monitoringTerminal": "终端",
+  "monitoringStatusQueued": "排队中",
+  "monitoringStatusConnecting": "连接中",
+  "monitoringStatusLive": "在线",
+  "monitoringStatusLogin": "请登录",
+  "monitoringStatusError": "错误",
+  "monitoringStatusUnsupported": "不支持",
+  "monitoringStatusDisconnected": "已断开",
+  "monitoringStatusUnavailable": "不可用",
+  "monitoringStatusLimit": "已达上限",
+  "monitoringStale": "数据过期",
+  "monitoringReasonHostKey": "主机密钥未信任",
+  "monitoringReasonAuth": "认证失败",
+  "monitoringReasonNetwork": "网络不可用",
+  "monitoringReasonTimeout": "超时",
+  "monitoringReasonUnsupported": "不支持指标采集",
+  "monitoringReasonCancelled": "已取消",
+  "monitoringReasonInternal": "监控错误",
+  "monitoringReasonOS": "不支持的操作系统",
+  "monitoringUnknown": "—",
+  "monitoringUpdatedNow": "刚刚",
+  "monitoringUpdatedSeconds": "{seconds} 秒前",
+  "@monitoringUpdatedSeconds": {
+    "description": "How long ago the latest sample arrived, in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringUpdatedMinutes": "{minutes} 分钟前",
+  "@monitoringUpdatedMinutes": {
+    "description": "How long ago the latest sample arrived, in minutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "monitoringName": "名称",
+  "monitoringDescription": "描述",
+  "monitoringPanelHosts": "主机",
+  "monitoringSelectedCount": "已选择 {count} 台",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringNoHostsAvailable": "存储库中没有主机。",
+  "monitoringSave": "保存",
+  "monitoringCancel": "取消",
+  "monitoringDeletePanel": "删除面板",
+  "monitoringDeleteConfirm": "删除“{name}”？",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringProblemNameRequired": "请为面板填写名称。",
+  "monitoringProblemDuplicateName": "已有其他面板使用该名称。",
+  "monitoringProblemSave": "无法保存监控配置。",
+  "monitoringProblemLoad": "无法读取主机列表。",
+  "monitoringProblemTooManyHosts": "每个面板最多监控 256 台主机。",
+  "monitoringProblemNoPanel": "未选择面板。",
+  "monitoringProblemOpenTerminal": "无法打开主机会话。",
+  "monitoringProblemInternal": "监控失败。",
+  "monitoringPanelFormCreate": "新建监控面板",
+  "monitoringPanelFormEdit": "编辑监控面板",
+  "monitoringPanelFormView": "视图",
+  "monitoringPanelFormInterval": "刷新间隔（秒）",
+  "monitoringPanelFormRange": "历史范围（分钟）",
+  "monitoringPanelFormSort": "主机顺序",
+  "monitoringPanelFormHostsHint": "选择要监控的主机。手动排序时使用此顺序。"
 }

@@ -8,8 +8,10 @@ const (
 	LockApp ID = "app.lock"
 	// OpenSettings shows the one Settings window.
 	OpenSettings ID = "app.settings"
-	NewTab       ID = "tab.new"
-	CloseTab     ID = "tab.close"
+	// OpenMonitor shows the Host monitoring surface.
+	OpenMonitor ID = "monitor.open"
+	NewTab      ID = "tab.new"
+	CloseTab    ID = "tab.close"
 	// ConnectSerial opens the serial connection dialog.
 	ConnectSerial ID = "serial.connect"
 

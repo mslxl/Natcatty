@@ -119,6 +119,12 @@ type State struct {
 	logsView      func(*ui.Context)
 	sftpVisible   bool
 	sftpView      func(*ui.Context)
+	// monitorVisible shows the Host monitoring surface. activate starts the
+	// active panel and deactivate stops sampling when another surface shows.
+	monitorVisible    bool
+	monitorView       func(*ui.Context)
+	monitorActivate   func()
+	monitorDeactivate func()
 	// editorView renders the internal editor and its conflict, unsaved, and
 	// upload-failure prompts above every surface.
 	editorView func(*ui.Context)
@@ -251,6 +257,17 @@ func WithLogs(view func(*ui.Context)) Option {
 // only renders and shows it.
 func WithSFTP(view func(*ui.Context)) Option {
 	return func(s *State) { s.sftpView = view }
+}
+
+// WithMonitor gives the shell the Host monitoring surface. activate starts
+// the active panel's sampling; deactivate stops it when the surface is left,
+// so hiding monitoring never leaves metric commands running.
+func WithMonitor(view func(*ui.Context), activate, deactivate func()) Option {
+	return func(s *State) {
+		s.monitorView = view
+		s.monitorActivate = activate
+		s.monitorDeactivate = deactivate
+	}
 }
 
 // WithEditor gives the shell the internal editor overlay. Opening a file still
@@ -425,6 +442,7 @@ func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
 
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
+	s.leaveMonitor()
 	s.vaultVisible = true
 	s.logsVisible = false
 	s.sftpVisible = false
@@ -442,6 +460,7 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 // stays over it, so a user can return to a Session without leaving Logs
 // first.
 func (s *State) ShowLogs() {
+	s.leaveMonitor()
 	s.logsVisible = true
 	s.vaultVisible = false
 	s.sftpVisible = false
@@ -457,10 +476,42 @@ func (s *State) SFTPView() func(*ui.Context) { return s.sftpView }
 // ShowSFTP makes the SFTP surface visible. The terminal work Tab strip stays
 // over it, so a user can return to a Session without leaving SFTP first.
 func (s *State) ShowSFTP() {
+	s.leaveMonitor()
 	s.sftpVisible = true
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.RequestRedraw()
+}
+
+// MonitorVisible reports whether the main window shows Host monitoring.
+func (s *State) MonitorVisible() bool { return s.monitorVisible }
+
+// MonitorView returns the monitoring surface the app supplied, or nil.
+func (s *State) MonitorView() func(*ui.Context) { return s.monitorView }
+
+// ShowMonitor makes the Host monitoring surface visible and asks it to start
+// sampling. The work Tab strip stays over it like Logs and SFTP.
+func (s *State) ShowMonitor() {
+	s.monitorVisible = true
+	s.vaultVisible = false
+	s.logsVisible = false
+	s.sftpVisible = false
+	if s.monitorActivate != nil {
+		s.monitorActivate()
+	}
+	s.RequestRedraw()
+}
+
+// leaveMonitor hides monitoring and stops its samplers. It is a no-op when
+// monitoring is already hidden.
+func (s *State) leaveMonitor() {
+	if !s.monitorVisible {
+		return
+	}
+	s.monitorVisible = false
+	if s.monitorDeactivate != nil {
+		s.monitorDeactivate()
+	}
 }
 
 // NewTab opens a local shell Session, builds its terminal surface, appends it
@@ -486,6 +537,7 @@ func (s *State) NewTab() error {
 	tab.attachOnlySession(session, surface)
 	s.tabs = append(s.tabs, tab)
 	s.active = len(s.tabs) - 1
+	s.leaveMonitor()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
@@ -682,6 +734,7 @@ func (s *State) Flush() {
 		tab.attachOnlySession(outcome.session, surface)
 		s.tabs = append(s.tabs, tab)
 		s.active = len(s.tabs) - 1
+		s.leaveMonitor()
 		s.vaultVisible = false
 		s.logsVisible = false
 		s.sftpVisible = false
