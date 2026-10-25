@@ -2476,6 +2476,245 @@
       }
     }
   },
+  "sysManagerTabsLayout": "Вкладки",
+  "@sysManagerTabsLayout": {
+    "description": "The button opening the tab layout menu.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabLeft": "Переместить вкладку влево",
+  "@sysManagerMoveTabLeft": {
+    "description": "Moves the active tab one place toward the front.",
+    "placeholders": {}
+  },
+  "sysManagerMoveTabRight": "Переместить вкладку вправо",
+  "@sysManagerMoveTabRight": {
+    "description": "Moves the active tab one place toward the end.",
+    "placeholders": {}
+  },
+  "sysManagerTabTmux": "tmux",
+  "@sysManagerTabTmux": {
+    "description": "The tmux sessions tab.",
+    "placeholders": {}
+  },
+  "sysManagerTabDocker": "Docker",
+  "@sysManagerTabDocker": {
+    "description": "The Docker tab.",
+    "placeholders": {}
+  },
+  "sysManagerTabGPU": "GPU",
+  "@sysManagerTabGPU": {
+    "description": "The GPU tab.",
+    "placeholders": {}
+  },
+  "sysManagerReasonMissingTmux": "tmux недоступен на этом хосте.",
+  "sysManagerReasonMissingDocker": "Docker недоступен на этом хосте.",
+  "sysManagerReasonDockerDaemon": "Демон Docker недоступен.",
+  "sysManagerProblemAttach": "Не удалось открыть сеанс tmux.",
+  "sysManagerSearchSessions": "Поиск сеансов…",
+  "sysManagerSessionsCount": "{count} сеансов",
+  "@sysManagerSessionsCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "sysManagerNoSessions": "Нет сеансов tmux.",
+  "sysManagerSession": "Сеанс",
+  "sysManagerWindows": "Окна",
+  "sysManagerAttached": "Подключён",
+  "sysManagerCreated": "Создан",
+  "sysManagerSessionHint": "Выберите сеанс, чтобы подключиться или завершить его.",
+  "@sysManagerSessionHint": {
+    "description": "Asks the user to select a tmux session.",
+    "placeholders": {}
+  },
+  "sysManagerSelectedSession": "{name} · {windows, plural, one {# окно} few {# окна} many {# окон} other {# окна}}",
+  "@sysManagerSelectedSession": {
+    "description": "The tmux session chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "work"
+      },
+      "windows": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sysManagerAttach": "Подключиться",
+  "sysManagerNewSession": "Имя нового сеанса",
+  "@sysManagerNewSession": {
+    "description": "The label of the new tmux session name field.",
+    "placeholders": {}
+  },
+  "sysManagerCreate": "Создать",
+  "sysManagerYes": "да",
+  "sysManagerConfirmTmuxKill": "Завершить сеанс tmux {name}?\n\nКоманда: {command}",
+  "@sysManagerConfirmTmuxKill": {
+    "description": "",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "work"
+      },
+      "command": {
+        "type": "String",
+        "example": "tmux kill-session -t work"
+      }
+    }
+  },
+  "sysManagerContainers": "Контейнеры",
+  "sysManagerImages": "Образы",
+  "sysManagerDockerView": "Вид",
+  "sysManagerSearchContainers": "Поиск контейнеров…",
+  "sysManagerSearchImages": "Поиск образов…",
+  "sysManagerContainersCount": "{count} контейнеров",
+  "@sysManagerContainersCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "sysManagerImagesCount": "{count} образов",
+  "@sysManagerImagesCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "sysManagerNoContainers": "Нет контейнеров.",
+  "sysManagerNoImages": "Нет образов.",
+  "sysManagerContainer": "Контейнер",
+  "sysManagerImage": "Образ",
+  "sysManagerStatus": "Статус",
+  "sysManagerPorts": "Порты",
+  "sysManagerID": "ID",
+  "sysManagerSize": "Размер",
+  "sysManagerSelectedContainer": "{name} · {image}",
+  "@sysManagerSelectedContainer": {
+    "description": "The Docker container chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "web"
+      },
+      "image": {
+        "type": "String",
+        "example": "nginx:1.27"
+      }
+    }
+  },
+  "sysManagerSelectedImage": "{name} · {size}",
+  "@sysManagerSelectedImage": {
+    "description": "The Docker image chosen in the table.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx:1.27"
+      },
+      "size": {
+        "type": "String",
+        "example": "192MB"
+      }
+    }
+  },
+  "sysManagerContainerHint": "Выберите контейнер, чтобы просмотреть сведения, журнал или изменить состояние.",
+  "@sysManagerContainerHint": {
+    "description": "Asks the user to select a Docker container.",
+    "placeholders": {}
+  },
+  "sysManagerImageHint": "Выберите образ, чтобы увидеть его данные.",
+  "@sysManagerImageHint": {
+    "description": "Asks the user to select a Docker image.",
+    "placeholders": {}
+  },
+  "sysManagerRemove": "Удалить",
+  "sysManagerInspect": "Сведения",
+  "sysManagerLogs": "Журнал",
+  "sysManagerClose": "Закрыть",
+  "sysManagerDocumentInspect": "Сведения: {name}",
+  "@sysManagerDocumentInspect": {
+    "description": "The title of the inspect output panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "3f2a1b"
+      }
+    }
+  },
+  "sysManagerDocumentLogs": "Журнал: {name}",
+  "@sysManagerDocumentLogs": {
+    "description": "The title of the logs output panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "3f2a1b"
+      }
+    }
+  },
+  "sysManagerDocumentLoading": "Загрузка…",
+  "sysManagerDocumentFailed": "Не удалось прочитать вывод Docker.",
+  "sysManagerDocumentTruncated": "Вывод усечён.",
+  "sysManagerConfirmDocker": "{action} контейнер {name}?\n\nКоманда: {command}",
+  "@sysManagerConfirmDocker": {
+    "description": "",
+    "placeholders": {
+      "action": {
+        "type": "String",
+        "example": "Stop"
+      },
+      "name": {
+        "type": "String",
+        "example": "web"
+      },
+      "command": {
+        "type": "String",
+        "example": "docker stop 3f2a1b"
+      }
+    }
+  },
+  "sysManagerGPUEmpty": "На этом хосте не обнаружен NVIDIA GPU.",
+  "sysManagerGPUDriver": "Драйвер",
+  "sysManagerGPUDevice": "GPU {index} · {name}",
+  "@sysManagerGPUDevice": {
+    "description": "",
+    "placeholders": {
+      "index": {
+        "type": "int",
+        "example": "0"
+      },
+      "name": {
+        "type": "String",
+        "example": "NVIDIA A100"
+      }
+    }
+  },
+  "sysManagerGPUUtilization": "Загрузка",
+  "sysManagerGPUMemory": "Память",
+  "sysManagerGPUTemperature": "Температура",
+  "sysManagerGPUPower": "Мощность",
+  "sysManagerGPUFan": "Вентилятор",
+  "sysManagerGPUVendor": "Производитель",
+  "sysManagerGPUCount": "{count} GPU",
+  "@sysManagerGPUCount": {
+    "description": "",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
   "sysManagerUnknown": "—",
   "sysManagerOverviewResources": "Ресурсы",
   "sysManagerPortOwnerUnknown": "Процесс неизвестен",
