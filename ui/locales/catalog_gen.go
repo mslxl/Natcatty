@@ -13512,6 +13512,190 @@ func (msgs Messages) SftpOpenCancelled() string {
 	return Catalog.Format(msgs.locale, "sftpOpenCancelled", nil)
 }
 
+// SftpOpenTooLarge says "This file is too large for the internal editor (10 MB limit)."
+// in the language the app shows.
+func SftpOpenTooLarge() string { return In(i18n.Locale()).SftpOpenTooLarge() }
+
+// SftpOpenTooLarge says "This file is too large for the internal editor (10 MB limit)."
+// in the language of msgs.
+func (msgs Messages) SftpOpenTooLarge() string {
+	return Catalog.Format(msgs.locale, "sftpOpenTooLarge", nil)
+}
+
+// SftpEditorTitle says "Edit {name}"
+// in the language the app shows.
+func SftpEditorTitle(name string) string { return In(i18n.Locale()).SftpEditorTitle(name) }
+
+// SftpEditorTitle says "Edit {name}"
+// in the language of msgs.
+func (msgs Messages) SftpEditorTitle(name string) string {
+	return Catalog.Format(msgs.locale, "sftpEditorTitle", map[string]any{"name": name})
+}
+
+// SftpEditorSave says "Save"
+// in the language the app shows.
+func SftpEditorSave() string { return In(i18n.Locale()).SftpEditorSave() }
+
+// SftpEditorSave says "Save"
+// in the language of msgs.
+func (msgs Messages) SftpEditorSave() string {
+	return Catalog.Format(msgs.locale, "sftpEditorSave", nil)
+}
+
+// SftpEditorClose says "Close"
+// in the language the app shows.
+func SftpEditorClose() string { return In(i18n.Locale()).SftpEditorClose() }
+
+// SftpEditorClose says "Close"
+// in the language of msgs.
+func (msgs Messages) SftpEditorClose() string {
+	return Catalog.Format(msgs.locale, "sftpEditorClose", nil)
+}
+
+// SftpEditorSaving says "Saving…"
+// in the language the app shows.
+func SftpEditorSaving() string { return In(i18n.Locale()).SftpEditorSaving() }
+
+// SftpEditorSaving says "Saving…"
+// in the language of msgs.
+func (msgs Messages) SftpEditorSaving() string {
+	return Catalog.Format(msgs.locale, "sftpEditorSaving", nil)
+}
+
+// SftpEditorSaved says "Saved to the remote file."
+// in the language the app shows.
+func SftpEditorSaved() string { return In(i18n.Locale()).SftpEditorSaved() }
+
+// SftpEditorSaved says "Saved to the remote file."
+// in the language of msgs.
+func (msgs Messages) SftpEditorSaved() string {
+	return Catalog.Format(msgs.locale, "sftpEditorSaved", nil)
+}
+
+// SftpEditorSaveFailed says "The file could not be saved. Your changes are still here."
+// in the language the app shows.
+func SftpEditorSaveFailed() string { return In(i18n.Locale()).SftpEditorSaveFailed() }
+
+// SftpEditorSaveFailed says "The file could not be saved. Your changes are still here."
+// in the language of msgs.
+func (msgs Messages) SftpEditorSaveFailed() string {
+	return Catalog.Format(msgs.locale, "sftpEditorSaveFailed", nil)
+}
+
+// SftpEditorConflictTitle says "Remote file changed"
+// in the language the app shows.
+func SftpEditorConflictTitle() string { return In(i18n.Locale()).SftpEditorConflictTitle() }
+
+// SftpEditorConflictTitle says "Remote file changed"
+// in the language of msgs.
+func (msgs Messages) SftpEditorConflictTitle() string {
+	return Catalog.Format(msgs.locale, "sftpEditorConflictTitle", nil)
+}
+
+// SftpEditorConflictBody says "{name} changed on the remote while you were editing it. Overwrite the remote version?"
+// in the language the app shows.
+func SftpEditorConflictBody(name string) string {
+	return In(i18n.Locale()).SftpEditorConflictBody(name)
+}
+
+// SftpEditorConflictBody says "{name} changed on the remote while you were editing it. Overwrite the remote version?"
+// in the language of msgs.
+func (msgs Messages) SftpEditorConflictBody(name string) string {
+	return Catalog.Format(msgs.locale, "sftpEditorConflictBody", map[string]any{"name": name})
+}
+
+// SftpEditorOverwrite says "Overwrite"
+// in the language the app shows.
+func SftpEditorOverwrite() string { return In(i18n.Locale()).SftpEditorOverwrite() }
+
+// SftpEditorOverwrite says "Overwrite"
+// in the language of msgs.
+func (msgs Messages) SftpEditorOverwrite() string {
+	return Catalog.Format(msgs.locale, "sftpEditorOverwrite", nil)
+}
+
+// SftpEditorCancel says "Cancel"
+// in the language the app shows.
+func SftpEditorCancel() string { return In(i18n.Locale()).SftpEditorCancel() }
+
+// SftpEditorCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) SftpEditorCancel() string {
+	return Catalog.Format(msgs.locale, "sftpEditorCancel", nil)
+}
+
+// SftpEditorUnsavedTitle says "Unsaved changes"
+// in the language the app shows.
+func SftpEditorUnsavedTitle() string { return In(i18n.Locale()).SftpEditorUnsavedTitle() }
+
+// SftpEditorUnsavedTitle says "Unsaved changes"
+// in the language of msgs.
+func (msgs Messages) SftpEditorUnsavedTitle() string {
+	return Catalog.Format(msgs.locale, "sftpEditorUnsavedTitle", nil)
+}
+
+// SftpEditorUnsavedBody says "Close {name} without saving your changes?"
+// in the language the app shows.
+func SftpEditorUnsavedBody(name string) string { return In(i18n.Locale()).SftpEditorUnsavedBody(name) }
+
+// SftpEditorUnsavedBody says "Close {name} without saving your changes?"
+// in the language of msgs.
+func (msgs Messages) SftpEditorUnsavedBody(name string) string {
+	return Catalog.Format(msgs.locale, "sftpEditorUnsavedBody", map[string]any{"name": name})
+}
+
+// SftpEditorDiscard says "Discard"
+// in the language the app shows.
+func SftpEditorDiscard() string { return In(i18n.Locale()).SftpEditorDiscard() }
+
+// SftpEditorDiscard says "Discard"
+// in the language of msgs.
+func (msgs Messages) SftpEditorDiscard() string {
+	return Catalog.Format(msgs.locale, "sftpEditorDiscard", nil)
+}
+
+// SftpEditorSyncFailedTitle says "Could not save to the remote"
+// in the language the app shows.
+func SftpEditorSyncFailedTitle() string { return In(i18n.Locale()).SftpEditorSyncFailedTitle() }
+
+// SftpEditorSyncFailedTitle says "Could not save to the remote"
+// in the language of msgs.
+func (msgs Messages) SftpEditorSyncFailedTitle() string {
+	return Catalog.Format(msgs.locale, "sftpEditorSyncFailedTitle", nil)
+}
+
+// SftpEditorSyncFailedBody says "Changes to {name} are waiting locally. The remote file was not changed."
+// in the language the app shows.
+func SftpEditorSyncFailedBody(name string) string {
+	return In(i18n.Locale()).SftpEditorSyncFailedBody(name)
+}
+
+// SftpEditorSyncFailedBody says "Changes to {name} are waiting locally. The remote file was not changed."
+// in the language of msgs.
+func (msgs Messages) SftpEditorSyncFailedBody(name string) string {
+	return Catalog.Format(msgs.locale, "sftpEditorSyncFailedBody", map[string]any{"name": name})
+}
+
+// SftpEditorRetry says "Retry"
+// in the language the app shows.
+func SftpEditorRetry() string { return In(i18n.Locale()).SftpEditorRetry() }
+
+// SftpEditorRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) SftpEditorRetry() string {
+	return Catalog.Format(msgs.locale, "sftpEditorRetry", nil)
+}
+
+// SftpEditorDismiss says "Dismiss"
+// in the language the app shows.
+func SftpEditorDismiss() string { return In(i18n.Locale()).SftpEditorDismiss() }
+
+// SftpEditorDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) SftpEditorDismiss() string {
+	return Catalog.Format(msgs.locale, "sftpEditorDismiss", nil)
+}
+
 // SftpSelected says "{count} selected"
 // in the language the app shows.
 //

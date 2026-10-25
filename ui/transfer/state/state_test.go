@@ -1628,6 +1628,235 @@ func TestOpenFileHandsRemoteFilesToTheOpenerAsASource(t *testing.T) {
 	})
 }
 
+func TestOpenFileAttachesTheRemoteWriteTarget(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
+		}))
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+
+	request := nextOpenRequest(t, requests)
+	if request.Target == nil {
+		t.Fatal("a remote open request has no write target")
+	}
+	if got := request.Target.Path(); got != "/remote.txt" {
+		t.Fatalf("target path = %q", got)
+	}
+	ctx := context.Background()
+	stat, err := request.Target.Stat(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Size != 6 {
+		t.Errorf("target size = %d, want 6", stat.Size)
+	}
+	reader, err := request.Target.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil || string(content) != "remote" {
+		t.Fatalf("target content = %q, %v", content, err)
+	}
+	if err := request.Target.Write(ctx, []byte("saved back")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := f.remote.read("/remote.txt"); !ok || got != "saved back" {
+		t.Fatalf("remote content after the target write = %q, %v", got, ok)
+	}
+	if mode, ok := f.remote.permission("/remote.txt"); !ok || mode&0o777 != 0o640 {
+		t.Errorf("mode after the target write = %04o, want the destination's 0640", mode)
+	}
+	settle(t, f.state, "the open outcome", func() bool {
+		return f.state.Notice() == "opened-internal"
+	})
+}
+
+// A local file is already the file the editor edits, so it needs no remote
+// write-back target.
+func TestOpenFileDoesNotAttachATargetToLocalFiles(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
+		}))
+	tab := f.state.Tab(Left)
+	f.state.Open(Left, entryNamed(t, tab, "alpha.txt"))
+	request := nextOpenRequest(t, requests)
+	if request.Target != nil {
+		t.Fatalf("a local open request has a remote write target: %+v", request.Target)
+	}
+}
+
+// The write target belongs to the Tab, not to the connection that existed when
+// the file was opened: a reconnected pane's live transport is the one a save
+// must use.
+func TestTheRemoteTargetFollowsAReplacedTransport(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
+		}))
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	request := nextOpenRequest(t, requests)
+	if request.Target == nil {
+		t.Fatal("a remote open request has no write target")
+	}
+
+	reconnected := newFakeDisk()
+	reconnected.put("/remote.txt", "reconnected", 0o600)
+	other := &opener{disk: reconnected, root: "/", remote: true, backing: "remote:h1"}
+	files, err := other.OpenRemote(context.Background(), "h1", "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.state.Tab(Right).FS = files
+
+	ctx := context.Background()
+	if stat, err := request.Target.Stat(ctx); err != nil || stat.Size != int64(len("reconnected")) {
+		t.Fatalf("target stat = %+v, %v; want the reconnected transport", stat, err)
+	}
+	if err := request.Target.Write(ctx, []byte("saved again")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reconnected.read("/remote.txt"); !ok || got != "saved again" {
+		t.Fatalf("reconnected content = %q, %v", got, ok)
+	}
+	if got, ok := f.remote.read("/remote.txt"); !ok || got != "remote" {
+		t.Fatalf("the stale transport was written: %q, %v", got, ok)
+	}
+}
+
+// A save through a closed Tab fails instead of writing through a dead
+// connection, so the editor keeps the buffer and can report the failure.
+func TestAClosedTabsRemoteTargetRefusesToWrite(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
+		}))
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	request := nextOpenRequest(t, requests)
+	f.state.CloseTab(Right)
+	if err := request.Target.Write(context.Background(), []byte("late")); err == nil {
+		t.Fatal("a save through a closed Tab reported success")
+	}
+	if got, ok := f.remote.read("/remote.txt"); !ok || got != "remote" {
+		t.Fatalf("a closed Tab's save changed the remote file: %q, %v", got, ok)
+	}
+}
+
+// An external application's session is released when its Tab closes, so the
+// watcher stops and the materialized copy is swept.
+func TestClosingATabReleasesItsExternalEditSessions(t *testing.T) {
+	released := make(chan appfileopen.EditID, 2)
+	f := newFixtureOptions(t, nil, nil,
+		WithFileOpener(func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			return appfileopen.Result{
+				Name: request.Name, Kind: domainpreferences.OpenerExternal,
+				Remote: request.Remote, Session: appfileopen.EditID("external-1"),
+			}, nil
+		}),
+		WithFileSessionCloser(func(id appfileopen.EditID) { released <- id }),
+	)
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	settle(t, f.state, "the external open outcome", func() bool {
+		return f.state.Notice() == "opened-external"
+	})
+	select {
+	case id := <-released:
+		t.Fatalf("the session was released before its Tab closed: %s", id)
+	default:
+	}
+	f.state.CloseTab(Right)
+	select {
+	case id := <-released:
+		if id != "external-1" {
+			t.Fatalf("released session = %q, want external-1", id)
+		}
+	default:
+		t.Fatal("closing the Tab left its external edit session running")
+	}
+}
+
+// The internal editor outlives the Tab it was opened from: its document is an
+// overlay the user may still save or close there.
+func TestAnInternalEditSessionOutlivesItsTab(t *testing.T) {
+	released := make(chan appfileopen.EditID, 1)
+	f := newFixtureOptions(t, nil, nil,
+		WithFileOpener(func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			return appfileopen.Result{
+				Name: request.Name, Kind: domainpreferences.OpenerInternal,
+				Remote: request.Remote, Session: appfileopen.EditID("internal-1"),
+			}, nil
+		}),
+		WithFileSessionCloser(func(id appfileopen.EditID) { released <- id }),
+	)
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	settle(t, f.state, "the internal open outcome", func() bool {
+		return f.state.Notice() == "opened-internal"
+	})
+	f.state.CloseTab(Right)
+	select {
+	case id := <-released:
+		t.Fatalf("closing the Tab released the editor's session: %s", id)
+	default:
+	}
+}
+
+// An open that finishes after its Tab closed releases its session immediately
+// instead of watcher-polling a transport that is gone.
+func TestAnOpenThatOutlivesItsTabReleasesItsSession(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	released := make(chan appfileopen.EditID, 1)
+	f := newFixtureOptions(t, nil, nil,
+		WithFileOpener(func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			close(started)
+			<-release
+			return appfileopen.Result{
+				Name: request.Name, Kind: domainpreferences.OpenerExternal,
+				Remote: request.Remote, Session: appfileopen.EditID("late-1"),
+			}, nil
+		}),
+		WithFileSessionCloser(func(id appfileopen.EditID) { released <- id }),
+	)
+	f.remote.put("/remote.txt", "remote", 0o640)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	select {
+	case <-started:
+	case <-time.After(waitTimeout):
+		t.Fatal("the opener was not called")
+	}
+	f.state.CloseTab(Right)
+	close(release)
+	settle(t, f.state, "the late open to release its session", func() bool {
+		select {
+		case id := <-released:
+			return id == "late-1"
+		default:
+			return false
+		}
+	})
+}
+
 func TestOpenFailureReachesTheStatusLine(t *testing.T) {
 	f := newFixtureOptions(t, nil, nil, WithFileOpener(
 		func(context.Context, appfileopen.Request) (appfileopen.Result, error) {

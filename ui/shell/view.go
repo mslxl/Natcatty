@@ -44,6 +44,11 @@ func View(s *state.State) func(*ui.Context) {
 		if serial := s.SerialView(); serial != nil {
 			serial(c)
 		}
+		// The editor sits above the work surfaces so a remote-change conflict
+		// from an external edit is visible wherever the user is.
+		if editor := s.EditorView(); editor != nil {
+			editor(c)
+		}
 		// The Quick Switcher sits above every surface, including a prompt, so
 		// its chord works wherever the focus is.
 		if search := s.SearchState(); search != nil {

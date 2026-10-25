@@ -102,6 +102,13 @@ A user-visible terminal instance (local, SSH, serial, telnet, mosh, or EternalTe
 with its own lifecycle, transport, and terminal surface.
 _Avoid_: terminal, tab, shell
 
+**Editing Session**:
+The service's record of one file handed to an opener: the materialized local copy,
+its remote write-back target, and the version it read. An internal editor or an
+external application owns the document; the editing session is released when that
+document or its pane Tab closes. It is not a terminal Session.
+_Avoid_: edit, file session
+
 **Command History**:
 The persisted record of commands executed in Sessions and local shells, one row per
 execution with Session, Host, command, source, and timestamp. Autocomplete aggregates
