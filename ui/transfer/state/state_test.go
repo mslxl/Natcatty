@@ -14,8 +14,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	"github.com/mslxl/natcatty/domain/model"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 )
 
@@ -1566,5 +1568,107 @@ func TestOpenFileOnTheSamePaneIsExplained(t *testing.T) {
 	f.state.Run("sftpOpen")
 	if f.state.Notice() != "open-file" {
 		t.Fatalf("activating a file reported %q", f.state.Notice())
+	}
+}
+
+func TestOpenFileUsesTheConfiguredAssociationForLocalFiles(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{
+				Name: request.Name, Kind: domainpreferences.OpenerExternal,
+				LocalPath: request.LocalPath,
+			}, nil
+		}))
+	tab := f.state.Tab(Left)
+	f.state.Open(Left, entryNamed(t, tab, "alpha.txt"))
+
+	request := nextOpenRequest(t, requests)
+	if request.Name != "alpha.txt" || request.Remote || request.Source != nil {
+		t.Fatalf("local open request = %+v", request)
+	}
+	if request.LocalPath != "/home/me/alpha.txt" {
+		t.Errorf("local path = %q", request.LocalPath)
+	}
+	settle(t, f.state, "the open outcome", func() bool {
+		return f.state.Notice() == "opened-external"
+	})
+}
+
+func TestOpenFileHandsRemoteFilesToTheOpenerAsASource(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerSystem}, nil
+		}))
+	f.remote.put("/remote.txt", "remote", 0o644)
+	f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+
+	request := nextOpenRequest(t, requests)
+	if !request.Remote || request.LocalPath != "" || request.Source == nil {
+		t.Fatalf("remote open request = %+v", request)
+	}
+	source, err := request.Source(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(source)
+	_ = source.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "remote" {
+		t.Errorf("remote source content = %q", data)
+	}
+	settle(t, f.state, "the open outcome", func() bool {
+		return f.state.Notice() == "opened-system"
+	})
+}
+
+func TestOpenFailureReachesTheStatusLine(t *testing.T) {
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(context.Context, appfileopen.Request) (appfileopen.Result, error) {
+			return appfileopen.Result{}, &appfileopen.Error{
+				Kind: appfileopen.ErrorDownload, Err: errors.New("connection reset"),
+			}
+		}))
+	selectOne(t, f.state, Left, "alpha.txt")
+	f.state.Run("sftpOpen")
+	settle(t, f.state, "the open failure", func() bool {
+		return f.state.Notice() == "open-download-failed"
+	})
+}
+
+func TestOpenFailureKindMapping(t *testing.T) {
+	tests := []struct {
+		kind appfileopen.ErrorKind
+		want string
+	}{
+		{appfileopen.ErrorEditorUnavailable, "open-editor-unavailable"},
+		{appfileopen.ErrorEditorFailed, "open-editor-failed"},
+		{appfileopen.ErrorDownload, "open-download-failed"},
+		{appfileopen.ErrorSource, "open-source-failed"},
+		{appfileopen.ErrorLaunch, "open-application-missing"},
+		{appfileopen.ErrorCancelled, "open-cancelled"},
+		{"unknown", "open-failed"},
+	}
+	for _, test := range tests {
+		if got := openFailureNotice(test.kind); got != test.want {
+			t.Errorf("openFailureNotice(%q) = %q, want %q", test.kind, got, test.want)
+		}
+	}
+}
+
+func nextOpenRequest(t *testing.T, requests <-chan appfileopen.Request) appfileopen.Request {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(waitTimeout):
+		t.Fatalf("no open request arrived within %s", waitTimeout)
+		return appfileopen.Request{}
 	}
 }
