@@ -490,6 +490,52 @@ func TestShortcutResetAllUsesShortcutWording(t *testing.T) {
 	}
 }
 
+// TestSFTPEditorAreaDescribesLiveControls pins the SFTP & Editor copy to the
+// controls this build actually ships. The area configures the live SFTP
+// browser and editor, so a banner or description that calls it unavailable is
+// a lie. The description literal is the required replacement and the stale
+// literals are the retired strings, so this test compiles against the old tree
+// and shows both the copy it rejects and the copy it requires.
+func TestSFTPEditorAreaDescribesLiveControls(t *testing.T) {
+	tests := map[string]struct {
+		description string
+		stale       []string
+	}{
+		"en": {
+			description: "File browser and editor defaults, including compressed uploads, automatic directory sync, and following the terminal directory.",
+			stale: []string{
+				"SFTP is not available in this build.",
+				"The SFTP surface is not part of this build yet; these values persist for it.",
+			},
+		},
+		"zh-CN": {
+			description: "文件浏览器与编辑器默认值，包括压缩上传、自动同步目录以及跟随终端目录。",
+			stale: []string{
+				"此构建不提供 SFTP。",
+				"此构建尚未包含 SFTP 界面；这些值会为其保留。",
+			},
+		},
+	}
+	for locale, want := range tests {
+		t.Run(locale, func(t *testing.T) {
+			tester := ui.NewTester(viewAt(AreaSFTPEditor,
+				Config{Preferences: NewPreferencesState(newFakePreferences())}), 1100, 720)
+			tester.SetLocale(locale)
+			tester.Frame()
+
+			for _, stale := range want.stale {
+				if tester.HasText(stale) {
+					t.Errorf("the SFTP & Editor pane still says %q: %q", stale, tester.Texts())
+				}
+			}
+			if !tester.HasText(want.description) {
+				t.Errorf("the SFTP & Editor pane does not describe the live surface: want %q, texts %q",
+					want.description, tester.Texts())
+			}
+		})
+	}
+}
+
 // TestEmptySearchPrintsNoResultsOnce guards the duplicate empty-state line.
 func TestEmptySearchPrintsNoResultsOnce(t *testing.T) {
 	m := locales.In("en")

@@ -11198,11 +11198,11 @@ func (msgs Messages) SettingsSFTPEditorTitle() string {
 	return Catalog.Format(msgs.locale, "settingsSFTPEditorTitle", nil)
 }
 
-// SettingsSFTPEditorDescription says "File browser and editor defaults. The SFTP surface is not part of this build yet; these values persist for it."
+// SettingsSFTPEditorDescription says "File browser and editor defaults, including compressed uploads, automatic directory sync, and following the terminal …"
 // in the language the app shows.
 func SettingsSFTPEditorDescription() string { return In(i18n.Locale()).SettingsSFTPEditorDescription() }
 
-// SettingsSFTPEditorDescription says "File browser and editor defaults. The SFTP surface is not part of this build yet; these values persist for it."
+// SettingsSFTPEditorDescription says "File browser and editor defaults, including compressed uploads, automatic directory sync, and following the terminal …"
 // in the language of msgs.
 func (msgs Messages) SettingsSFTPEditorDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSFTPEditorDescription", nil)
@@ -11336,16 +11336,6 @@ func SettingsEditorFontSize() string { return In(i18n.Locale()).SettingsEditorFo
 // in the language of msgs.
 func (msgs Messages) SettingsEditorFontSize() string {
 	return Catalog.Format(msgs.locale, "settingsEditorFontSize", nil)
-}
-
-// SettingsSFTPUnavailable says "SFTP is not available in this build."
-// in the language the app shows.
-func SettingsSFTPUnavailable() string { return In(i18n.Locale()).SettingsSFTPUnavailable() }
-
-// SettingsSFTPUnavailable says "SFTP is not available in this build."
-// in the language of msgs.
-func (msgs Messages) SettingsSFTPUnavailable() string {
-	return Catalog.Format(msgs.locale, "settingsSFTPUnavailable", nil)
 }
 
 // SettingsLogsTitle says "Logs"
