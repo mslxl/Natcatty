@@ -26,6 +26,7 @@ import (
 
 	"github.com/mslxl/natcatty/domain/model"
 	"github.com/mslxl/natcatty/domain/model/serial"
+	telnetmodel "github.com/mslxl/natcatty/domain/model/telnet"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -52,8 +53,8 @@ const highlightIdleFlush = 30 * time.Millisecond
 // maxHighlightCarry bounds the partial line held for highlighting.
 const maxHighlightCarry = 64 << 10
 
-// Kind is the protocol of a Session. Local shells, SSH, and serial exist in
-// this slice; later tickets add Telnet, mosh, and EternalTerminal.
+// Kind is the protocol of a Session. Local shells, SSH, serial, and Telnet
+// exist in this slice; later tickets add mosh and EternalTerminal.
 type Kind string
 
 const (
@@ -63,6 +64,8 @@ const (
 	KindSSH Kind = "ssh"
 	// KindSerial is a device on a serial port.
 	KindSerial Kind = "serial"
+	// KindTelnet is an interactive terminal on a Telnet Host.
+	KindTelnet Kind = "telnet"
 )
 
 // Status is a Session's lifecycle state.
@@ -286,6 +289,10 @@ type StartSpec struct {
 	// Serial carries a serial Session's port and framing. It is required when
 	// Kind is KindSerial and ignored by every other transport.
 	Serial *serial.Config
+	// Telnet carries a Telnet Session's endpoint and negotiation settings. It
+	// is required when Kind is KindTelnet and ignored by every other
+	// transport.
+	Telnet *telnetmodel.Config
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy
@@ -556,7 +563,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		spec.Rows = 24
 	}
 	if spec.EncodingScope == "" {
-		if spec.Kind == KindSSH && spec.HostID != "" {
+		if (spec.Kind == KindSSH || spec.Kind == KindTelnet) && spec.HostID != "" {
 			spec.EncodingScope = domainterminal.EncodingScopeHost(string(spec.HostID))
 		} else {
 			spec.EncodingScope = domainterminal.EncodingScopeLocal
@@ -701,9 +708,12 @@ func specLabel(spec StartSpec) string {
 		return spec.Label
 	}
 	switch spec.Kind {
-	case KindSSH:
+	case KindSSH, KindTelnet:
 		if spec.Hostname != "" {
 			return spec.Hostname
+		}
+		if spec.Telnet != nil && spec.Telnet.Hostname != "" {
+			return spec.Telnet.Hostname
 		}
 	case KindLocal:
 		return "Local Terminal"

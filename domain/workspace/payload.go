@@ -22,6 +22,8 @@ const (
 	SessionSSH SessionKind = "ssh"
 	// SessionSerial is a device on a serial port.
 	SessionSerial SessionKind = "serial"
+	// SessionTelnet is a terminal on a saved Telnet Host.
+	SessionTelnet SessionKind = "telnet"
 )
 
 // SessionDescriptor is the non-secret description of a Pane's Session. It is
@@ -51,7 +53,7 @@ func (d SessionDescriptor) Valid() bool {
 	switch d.Kind {
 	case SessionLocal:
 		return true
-	case SessionSSH:
+	case SessionSSH, SessionTelnet:
 		return d.HostID != "" && d.Hostname != ""
 	case SessionSerial:
 		return d.Serial != nil && d.Serial.Normalized().Validate() == nil
