@@ -592,6 +592,107 @@
   status: verified
   notes: "The agent is offered only when the Host enables UseSSHAgent. On Windows it dials the OpenSSH named pipe; the deadline behavior of the pipe wrapper is covered only by compilation in this environment."
 
+- id: connections.fido-sk-auth
+  area: connections
+  feature: Authenticate with a FIDO/U2F security key through the system OpenSSH agent, preserving SK signature framing and enforcing a 30-second device deadline
+  original_paths:
+    - domain/fidoSsh.ts
+    - electron/bridges/fidoAgentManager.cjs
+    - electron/bridges/fidoSignFlow.cjs
+    - electron/bridges/fidoSkHelper.cjs
+    - electron/bridges/fidoNativeAgent.cjs
+  module: adapters/ssh
+  tickets: [42]
+  acceptance_tests:
+    - application/connection.TestSecurityKeyDeviceDeadlineIsThirtySeconds
+    - application/connection.TestSelectSecurityKeysKeepsOnlySKAlgorithmsInAgentOrder
+    - application/connection.TestSecurityKeyServiceSignEnforcesTheDeviceDeadline
+    - application/connection.TestSecurityKeyServiceSignPreservesTheAgentSignatureBytes
+    - adapters/ssh.TestSecurityKeyAgentListsIdentityBlobsUnchanged
+    - adapters/ssh.TestSecurityKeyAgentPreservesFramingVectors
+    - adapters/ssh.TestParseSecurityKeySignatureRejectsBrokenFraming
+    - adapters/ssh.TestDialAuthenticatesWithTheSecurityKeyAgent
+    - adapters/ssh.TestDialSecurityKeyDeviceDeadlineIsTypedTimeout
+    - app.TestTicket42CheckRunsThroughTheKeyboard
+    - app.TestTicket42CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The agent path is verified end-to-end against an in-process fake agent that speaks SSH_AGENTC_REQUEST_IDENTITIES, SSH_AGENTC_SIGN_REQUEST, and the OpenSSH PROTOCOL.u2f signature framing; x/crypto's own SK verifier accepts the signatures, which proves the application string, user-presence flag, and counter are intact. No physical FIDO device is available on this machine, so real-hardware touch and PIN behavior remains unverified; see connections.fido-sk-hardware-validation. SK keys never leave the OpenSSH agent and are never software-signed. The 30-second deadline is the production default and is exercised for real by the ticket self-test."
+
+- id: connections.fido-sk-missing-openssh
+  area: connections
+  feature: Report a missing system OpenSSH agent as a typed unsupported failure with localized guidance instead of a raw transport or exec error
+  original_paths:
+    - domain/fidoSsh.ts
+    - electron/bridges/fidoAgentManager.cjs
+    - electron/bridges/fidoAskpass.cjs
+  module: application/connection
+  tickets: [42]
+  acceptance_tests:
+    - application/connection.TestSecurityKeyServiceMissingAgentIsTypedUnsupported
+    - adapters/ssh.TestSecurityKeyAgentMissingOpenSSHIsTypedUnsupported
+    - adapters/ssh.TestDialWithoutOpenSSHReturnsTypedUnsupported
+    - ui/connection.TestProblemTextForNamesSecurityKeyFailures
+    - ui/connection.TestSecurityKeyMessagesExistInEveryLocale
+    - ui/vault/state.TestTestConnectionKeepsTheSecurityKeyCause
+  status: verified
+  notes: "The unsupported reason wins only when no ordinary credential was attempted, so a rejected password is not reported as a missing OpenSSH installation. A missed device deadline is reported as a typed timeout even if another method is then tried. English, Spanish, Russian, Simplified Chinese, and Traditional Chinese catalogs carry the new text."
+
+- id: vault.security-key-agent-state
+  area: vault
+  feature: The Host editor reports whether the OpenSSH agent is reachable and how many security keys it holds when the agent option is enabled
+  original_paths:
+    - components/HostDetailsPanel.tsx
+    - components/FidoPromptModal.tsx
+    - electron/bridges/fidoAgentManager.cjs
+  module: ui/vault
+  tickets: [42]
+  acceptance_tests:
+    - ui/vault/state.TestSecurityKeyProbeRunsOnceAndPublishesItsSummary
+    - ui/vault/state.TestSecurityKeyProbeReportsAnUnreachableAgent
+    - ui/vault.TestVaultViewShowsTheSecurityKeyAgentReadyState
+    - ui/vault.TestVaultViewShowsTheEmptyAgentState
+    - ui/vault.TestVaultViewShowsTheMissingAgentState
+  status: verified
+  notes: "The probe runs once, off the UI thread, and publishes on the next frame. The hint appears only while Use the SSH agent is checked; its absence before the first probe completes prevents a false 'agent missing' flash."
+
+- id: connections.fido-sk-hardware-validation
+  area: connections
+  feature: Validate FIDO/SK authentication against physical hardware, including touch prompts and PIN entry
+  original_paths:
+    - docs/fido2-validation.md
+    - electron/bridges/fidoAskpass.cjs
+    - components/FidoPromptModal.tsx
+  module: adapters/ssh
+  tickets: [42]
+  status: excluded
+  notes: "No FIDO2/U2F device is available in this environment. The agent wire contract and framing are verified with an in-process fake agent; real device touch, PIN, and vendor middleware behavior remain unverified."
+
+- id: connections.fido-sk-prompts-and-keygen
+  area: connections
+  feature: Show an in-app touch/PIN prompt, retry/cancel/fallback loop, and generate security keys with ssh-keygen
+  original_paths:
+    - electron/bridges/fidoAskpass.cjs
+    - electron/bridges/fidoSignFlow.cjs
+    - electron/bridges/fidoSshKeygen.cjs
+    - components/FidoPromptModal.tsx
+  module: adapters/ssh
+  tickets: [42]
+  status: excluded
+  notes: "Delegating to the system OpenSSH agent means OpenSSH owns the touch and PIN prompts (through its own askpass), so the app cannot show an in-app prompt, cannot exclude PIN-entry time from the 30-second device deadline, and does not generate SK keys. The original owned its agent child and askpass, which is what enabled those behaviors."
+
+- id: connections.fido-sk-openssh-dependency
+  area: connections
+  feature: Authenticate with a security key when no system OpenSSH installation exists
+  original_paths:
+    - electron/bridges/fidoAgentManager.cjs
+    - docs/fido2-validation.md
+  module: adapters/ssh
+  tickets: [42]
+  status: excluded
+  notes: "The accepted ADR-0004 design requires the system OpenSSH agent and does not bundle OpenSSH or implement a pure-Go CTAP2/HID stack. Without OpenSSH, security key authentication is unavailable and is reported as a typed unsupported failure with localized guidance."
+
+
+
 - id: connections.ssh-keyboard-interactive
   area: connections
   feature: Ordered keyboard-interactive rounds with retry, auto-fill, cancellation, and partial-success MFA

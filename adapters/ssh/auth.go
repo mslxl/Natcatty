@@ -28,6 +28,7 @@ type authMachine struct {
 	prompter appconnection.AuthPrompter
 	hostname string
 	agent    AgentDialFunc
+	keys     appconnection.SecurityKeyService
 
 	agentConn   interface{ Close() error }
 	agentClient agent.ExtendedAgent
@@ -42,12 +43,19 @@ type authMachine struct {
 	kiSuccess    int
 	passwordOK   bool
 	kiAutofilled bool
+
+	// skFailure is the typed reason a security key could not be used (the agent
+	// is absent, or the device missed its deadline). It is returned only when no
+	// other credential was attempted, so a rejected password is not reported as
+	// a missing OpenSSH installation.
+	skFailure      error
+	otherAttempted bool
 }
 
 // maxKeyboardInteractiveFactors matches the original's two-factor bound.
 const maxKeyboardInteractiveFactors = 2
 
-func newAuthMachine(ctx context.Context, plan appconnection.AuthPlan, prompter appconnection.AuthPrompter, hostname string, dial AgentDialFunc) *authMachine {
+func newAuthMachine(ctx context.Context, plan appconnection.AuthPlan, prompter appconnection.AuthPrompter, hostname string, dial AgentDialFunc, keys appconnection.SecurityKeyService) *authMachine {
 	if dial == nil {
 		dial = defaultAgentDial
 	}
@@ -57,6 +65,7 @@ func newAuthMachine(ctx context.Context, plan appconnection.AuthPlan, prompter a
 		prompter:  prompter,
 		hostname:  hostname,
 		agent:     dial,
+		keys:      keys,
 		signers:   make(map[string]xssh.Signer),
 		attempted: make(map[string]bool),
 		failed:    make(map[string]bool),
@@ -152,7 +161,25 @@ func (m *authMachine) Next(state *xssh.ClientAuthContext) (xssh.AuthMethod, erro
 			return m.chooseCandidate(candidate, xssh.KeyboardInteractive(m.challenge))
 		}
 	}
-	return nil, authFailure(fmt.Errorf("%w: all configured methods exhausted", appconnection.ErrAuthentication))
+	return nil, m.finalFailure()
+}
+
+// finalFailure returns the reason to report when every candidate is exhausted.
+// A missed device deadline is always the actionable answer: the user was asked
+// to touch the key and no credential completed. A missing OpenSSH agent wins
+// only when no ordinary credential was tried, so a rejected password is not
+// reported as a missing installation.
+func (m *authMachine) finalFailure() error {
+	if m.skFailure != nil {
+		var typed *appconnection.Error
+		if errors.As(m.skFailure, &typed) && typed.Kind == appconnection.KindTimeout {
+			return m.skFailure
+		}
+		if !m.otherAttempted {
+			return m.skFailure
+		}
+	}
+	return authFailure(fmt.Errorf("%w: all configured methods exhausted", appconnection.ErrAuthentication))
 }
 
 // updatePhase folds the server's response to the previous candidate into the
@@ -207,6 +234,9 @@ func (m *authMachine) choose(candidate *appconnection.AuthCandidate) (xssh.AuthM
 func (m *authMachine) chooseCandidate(candidate *appconnection.AuthCandidate, method xssh.AuthMethod) (xssh.AuthMethod, error) {
 	m.attempted[candidate.ID] = true
 	m.last = candidate
+	if candidate.Kind != appconnection.AuthKindAgent {
+		m.otherAttempted = true
+	}
 	return method, nil
 }
 
@@ -309,11 +339,18 @@ func (m *authMachine) signerFor(candidate *appconnection.AuthCandidate) (xssh.Si
 	}
 }
 
-// agentMethod opens the local agent and offers all of its identities.
+// agentMethod opens the local agent and offers its identities. Hardware-backed
+// (SK) identities are replaced by wrappers that preserve the OpenSSH signature
+// framing and enforce the device deadline; ordinary identities keep using
+// x/crypto's agent signer.
 func (m *authMachine) agentMethod() (xssh.AuthMethod, error) {
 	if m.agentClient == nil {
 		conn, err := m.agent(m.ctx)
 		if err != nil {
+			// A missing OpenSSH agent is an unsupported capability, not a
+			// credential rejection. It is recorded and reported only after the
+			// rest of the plan has had its turn.
+			m.recordActionableSecurityKeyFailure(appconnection.SecurityKeyUnsupported(err))
 			return nil, err
 		}
 		m.agentConn = conn
@@ -326,7 +363,66 @@ func (m *authMachine) agentMethod() (xssh.AuthMethod, error) {
 	if len(signers) == 0 {
 		return nil, ErrAgentUnavailable
 	}
-	return xssh.PublicKeys(signers...), nil
+
+	hasSecurityKey := false
+	for _, signer := range signers {
+		if appconnection.IsSecurityKeyAlgorithm(signer.PublicKey().Type()) {
+			hasSecurityKey = true
+			break
+		}
+	}
+	byBlob := make(map[string]appconnection.SecurityKey)
+	if hasSecurityKey {
+		keys, keyErr := m.keys.Identities(m.ctx)
+		if keyErr != nil {
+			m.recordActionableSecurityKeyFailure(keyErr)
+		}
+		for _, key := range keys {
+			byBlob[string(key.Blob)] = key
+		}
+	}
+
+	offered := make([]xssh.Signer, 0, len(signers))
+	for _, signer := range signers {
+		public := signer.PublicKey()
+		if !appconnection.IsSecurityKeyAlgorithm(public.Type()) {
+			offered = append(offered, signer)
+			continue
+		}
+		key, ok := byBlob[string(public.Marshal())]
+		if !ok {
+			// The SK listing did not vouch for this identity, so it is not
+			// offered through the unguarded x/crypto agent signer.
+			continue
+		}
+		wrapper, err := newSecurityKeySigner(m.ctx, m.keys, key, m.recordActionableSecurityKeyFailure)
+		if err != nil {
+			m.recordActionableSecurityKeyFailure(err)
+			continue
+		}
+		offered = append(offered, wrapper)
+	}
+	if len(offered) == 0 {
+		return nil, ErrAgentUnavailable
+	}
+	return xssh.PublicKeys(offered...), nil
+}
+
+// recordActionableSecurityKeyFailure keeps only the reasons a user can act
+// on (missing OpenSSH or a missed device deadline). Other agent or framing
+// failures stay diagnostics and do not replace the ordinary authentication
+// verdict.
+func (m *authMachine) recordActionableSecurityKeyFailure(err error) {
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) {
+		return
+	}
+	if typed.Kind != appconnection.KindUnsupported && typed.Kind != appconnection.KindTimeout {
+		return
+	}
+	if m.skFailure == nil {
+		m.skFailure = err
+	}
 }
 
 // challenge runs one keyboard-interactive round. A single password-looking

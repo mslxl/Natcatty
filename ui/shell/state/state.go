@@ -168,6 +168,10 @@ type State struct {
 	// Flush transfers them to the activity markers on the UI thread.
 	activity []model.SessionID
 	problem  appconnection.Kind
+	// problemErr keeps the last failure's cause so the view can distinguish a
+	// missing OpenSSH agent from a missed security key deadline, which share
+	// their protocol-level Kind with other failures.
+	problemErr error
 
 	// Broadcast and compose input state. The Session input hook runs off the
 	// UI thread and touches only the fields under inputMu; Tabs and surfaces
@@ -356,6 +360,21 @@ func (s *State) AuthPrompt() *sessionui.AuthPrompt { return s.authPrompt }
 // succeeded or none has run.
 func (s *State) Problem() appconnection.Kind { return s.problem }
 
+// ProblemError returns the last connection failure's cause, or nil after a
+// successful attempt.
+func (s *State) ProblemError() error { return s.problemErr }
+
+// setProblem records a failure and its cause, or clears both.
+func (s *State) setProblem(err error) {
+	if err == nil {
+		s.problem = ""
+		s.problemErr = nil
+		return
+	}
+	s.problem = uiconnection.Kind(err)
+	s.problemErr = err
+}
+
 // DesktopNotice identifies a deep-link or command-line target failure the
 // shell shows as a non-blocking banner. It holds a code, not user-visible
 // text: the view localizes it.
@@ -450,7 +469,7 @@ func (s *State) NewTab() error {
 	if s.sessions == nil || s.surfaces == nil {
 		return ErrNoSessions
 	}
-	s.problem = ""
+	s.setProblem(nil)
 	session, err := s.sessions.OpenLocal(context.Background())
 	if err != nil {
 		return err
@@ -495,7 +514,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 	if label == "" {
 		label = host.Hostname
 	}
-	s.problem = ""
+	s.setProblem(nil)
 	s.pending = append(s.pending, label)
 
 	plan := hostSessionTransport(host)
@@ -593,7 +612,7 @@ func (s *State) OpenSerial(cfg domainserial.Config) error {
 		return err
 	}
 	label := appsession.SerialLabel(normalized)
-	s.problem = ""
+	s.setProblem(nil)
 	s.pending = append(s.pending, label)
 
 	ctx := s.ctx
@@ -647,13 +666,13 @@ func (s *State) Flush() {
 	for _, outcome := range outcomes {
 		s.clearPending(outcome.label)
 		if outcome.err != nil {
-			s.problem = uiconnection.Kind(outcome.err)
+			s.setProblem(outcome.err)
 			continue
 		}
 		surface, err := s.surfaces(outcome.session)
 		if err != nil {
 			_ = outcome.session.Close()
-			s.problem = appconnection.KindInternal
+			s.setProblem(err)
 			continue
 		}
 		number := s.nextTabNumber
@@ -666,7 +685,7 @@ func (s *State) Flush() {
 		s.vaultVisible = false
 		s.logsVisible = false
 		s.sftpVisible = false
-		s.problem = ""
+		s.setProblem(nil)
 		s.save()
 		if !outcome.startup.Empty() {
 			// Line-by-line delivery waits between chunks, so it cannot run on
@@ -679,6 +698,7 @@ func (s *State) Flush() {
 	// so one failed delivery stays visible even when another Tab attached.
 	if startupFailures > 0 {
 		s.problem = appconnection.KindInternal
+		s.problemErr = nil
 	}
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.

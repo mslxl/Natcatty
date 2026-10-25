@@ -200,3 +200,41 @@ supported release target.
 Decision: accepted by ADR-0005 and the rewrite spec "Long-tail protocols";
 Ticket: 59
 ticket 59.
+
+### `connections.fido-sk-hardware-validation`
+
+No FIDO2/U2F hardware key is available on the build machine, so physical device
+touch, PIN entry, and vendor middleware cannot be exercised. Ticket 42 verifies
+the agent wire contract, the OpenSSH PROTOCOL.u2f signature framing, and the
+30-second device deadline against an in-process fake agent, and its self-test
+records the same evidence. Real-hardware behavior remains unverified and is not
+claimed as parity.
+
+Decision: accepted by ADR-0004 (security keys are signed by the system OpenSSH
+agent, never software-signed); ticket 42.
+Ticket: 42
+
+### `connections.fido-sk-prompts-and-keygen`
+
+The system OpenSSH agent owns the touch and PIN prompts, so the app neither
+shows its own prompt nor controls PIN timing. The original owned its agent child
+and askpass bridge, which let it implement retry/cancel/fallback and exclude PIN
+entry time from the 30-second deadline; here the whole agent round-trip shares
+one 30-second deadline. Security-key generation with `ssh-keygen` (resident and
+verify-required flags) is likewise not implemented; users generate keys with
+their OpenSSH installation.
+
+Decision: accepted by ADR-0004, which delegates prompting to the system agent;
+ticket 42.
+Ticket: 42
+
+### `connections.fido-sk-openssh-dependency`
+
+Security-key authentication requires a system OpenSSH installation with an
+agent. ADR-0004 deliberately avoids bundling OpenSSH and defers a pure-Go
+CTAP2/HID stack, so a machine without the agent cannot use a hardware key. The
+app reports this as a typed unsupported failure with localized guidance rather
+than a raw transport error.
+
+Decision: accepted by ADR-0004; ticket 42.
+Ticket: 42

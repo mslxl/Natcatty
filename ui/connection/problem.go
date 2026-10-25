@@ -20,6 +20,23 @@ func Kind(err error) appconnection.Kind {
 	return appconnection.KindInternal
 }
 
+// ProblemTextFor localizes a connection failure, preferring the specific
+// security-key reason when the cause carries one. Those failures keep the
+// generic unsupported/timeout Kind at the protocol level, but the user needs a
+// different answer: install OpenSSH, or touch the key before the deadline.
+func ProblemTextFor(m locales.Messages, err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, appconnection.ErrSecurityKeyUnsupported):
+		return m.ConnectionErrorSecurityKeyUnavailable()
+	case errors.Is(err, appconnection.ErrSecurityKeyDeviceTimeout):
+		return m.ConnectionErrorSecurityKeyTimeout()
+	}
+	return ProblemText(m, Kind(err))
+}
+
 // ProblemText localizes a connection failure. Unknown kinds render nothing, so
 // the UI never shows an untranslated token.
 func ProblemText(m locales.Messages, kind appconnection.Kind) string {
