@@ -143,14 +143,32 @@ func sysManagerLayoutPort(index, total int) int {
 }
 
 // sysManagerLayoutFixture builds a snapshot with rows processes, listeners,
-// and units. The process list sorts by CPU descending, so the bottom row of
-// every tab is the one the tests expect.
+// units, tmux sessions, Docker containers and images, and GPUs. The process
+// list sorts by CPU descending, so the bottom row of every tab is the one the
+// tests expect; tmux, Docker, and images sort by name.
 func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 	now := sysManagerLayoutNow
 	processes := make([]appsysmanager.Process, 0, rows)
 	ports := make([]appsysmanager.Port, 0, rows)
 	services := make([]appsysmanager.Unit, 0, rows)
+	sessions := make([]appsysmanager.TmuxSession, 0, rows)
+	containers := make([]appsysmanager.Container, 0, rows)
+	images := make([]appsysmanager.Image, 0, rows)
 	for i := 0; i < rows; i++ {
+		sessions = append(sessions, appsysmanager.TmuxSession{
+			Name: fmt.Sprintf("session-%02d", i), Windows: i + 1,
+			Attached: i%2 == 1, Created: 1790000000 + int64(i)*3600,
+		})
+		containers = append(containers, appsysmanager.Container{
+			ID: fmt.Sprintf("%064d", i), Name: fmt.Sprintf("container-%02d", i),
+			Image: fmt.Sprintf("image-%02d:latest", i), State: "running",
+			Status: "Up 2 hours", Ports: "0.0.0.0:8080->80/tcp",
+			CreatedAt: "2026-10-20 10:00:00 +0000 UTC",
+		})
+		images = append(images, appsysmanager.Image{
+			ID: fmt.Sprintf("%064d", i), Repository: fmt.Sprintf("image-%02d", i),
+			Tag: "latest", Size: "192MB", CreatedAt: "2026-10-20 10:00:00 +0000 UTC",
+		})
 		processes = append(processes, appsysmanager.Process{
 			PID: 100 + i, User: "app", CPUPercent: float64(i), MemPercent: 1,
 			Command: fmt.Sprintf("worker-%d", i),
@@ -190,6 +208,28 @@ func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 				Tab: appsysmanager.TabServices, Status: appsysmanager.StatusLive,
 				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond, Services: services,
 			},
+			appsysmanager.TabTmux: {
+				Tab: appsysmanager.TabTmux, Status: appsysmanager.StatusLive,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond, Sessions: sessions,
+			},
+			appsysmanager.TabDocker: {
+				Tab: appsysmanager.TabDocker, Status: appsysmanager.StatusLive,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond,
+				Containers: containers, Images: images,
+			},
+			appsysmanager.TabGPU: {
+				Tab: appsysmanager.TabGPU, Status: appsysmanager.StatusLive,
+				At: now.Add(-time.Hour), Latency: 12 * time.Millisecond,
+				GPU: appsysmanager.GPUInfo{
+					DriverVersion: "555.85",
+					Devices: []appsysmanager.GPUDevice{{
+						Index: 0, Name: "NVIDIA RTX 4090", Vendor: "nvidia",
+						UtilizationPercent: 37, MemoryUsedMB: 4096, MemoryTotalMB: 24576,
+						TemperatureC: 55, PowerDrawW: 120, PowerLimitW: 450, FanPercent: 42,
+						DriverVersion: "555.85",
+					}},
+				},
+			},
 		},
 	}
 }
@@ -197,11 +237,20 @@ func sysManagerLayoutFixture(rows int) appsysmanager.Snapshot {
 func newSysManagerLayoutTester(t *testing.T, width, height int, locale string,
 	tab appsysmanager.Tab, rows int) (*ui.Tester, *uisysmanager.State) {
 	t.Helper()
+	prefs := &sysManagerLayoutPrefs{settings: domainpreferences.Defaults()}
+	return newSysManagerLayoutTesterWithPrefs(t, width, height, locale, tab, rows, prefs)
+}
+
+// newSysManagerLayoutTesterWithPrefs is the shared tester builder: two surfaces
+// over the same preferences model a restart, so a test can prove a layout
+// change was saved and is restored.
+func newSysManagerLayoutTesterWithPrefs(t *testing.T, width, height int, locale string,
+	tab appsysmanager.Tab, rows int, prefs *sysManagerLayoutPrefs) (*ui.Tester, *uisysmanager.State) {
+	t.Helper()
 	hosts := []domainvault.Host{
 		{ID: model.HostID("h1"), Label: "Alpha", Hostname: "host-1"},
 	}
 	service := &sysManagerLayoutService{snapshot: sysManagerLayoutFixture(rows)}
-	prefs := &sysManagerLayoutPrefs{settings: domainpreferences.Defaults()}
 	manager := uisysmanager.NewState(service, sysManagerLayoutHosts{items: hosts}, prefs,
 		uisysmanager.WithClock(func() time.Time { return sysManagerLayoutNow }))
 	shellState := state.NewState(state.WithSystemManager(
