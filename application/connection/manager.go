@@ -758,6 +758,16 @@ type VersionedClient interface {
 	RemoteVersion() string
 }
 
+// LivenessClient is implemented by transports that can report, without a
+// network round trip, whether the physical peer is still connected. The pool
+// consults it before handing a shared or parked transport to another lease,
+// and again before parking one: a transport whose peer vanished while no
+// operation was in flight would otherwise be reused and fail the next
+// channel open instead of dialing.
+type LivenessClient interface {
+	Alive() bool
+}
+
 // Connection is one authenticated transport with a lease count. It is the
 // application's owner of the adapter's Client; the UI and domain never see it.
 type Connection struct {
@@ -1010,6 +1020,51 @@ type Lease struct {
 
 // ReusedFromIdle reports whether this lease woke a parked Connection.
 func (l *Lease) ReusedFromIdle() bool { return l != nil && l.fromIdle }
+
+// Alive reports whether the leased transport can still serve a channel: the
+// lease is not released, the Connection is not closed or discarded, its Done
+// signal is open, and a transport with a cheap liveness capability reports
+// its peer connected. It never performs a network round trip.
+func (l *Lease) Alive() bool {
+	if l == nil || l.conn == nil {
+		return false
+	}
+	l.mu.Lock()
+	released := l.released
+	l.mu.Unlock()
+	if released {
+		return false
+	}
+	return l.conn.alive()
+}
+
+// alive is the Connection-level liveness check behind Lease.Alive and the
+// pool's candidate validation.
+func (c *Connection) alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.aliveLocked()
+}
+
+// aliveLocked is alive with c.mu held. The optional transport probe runs
+// under that lock; it takes only the adapter's own lock and never calls back
+// into the Connection.
+func (c *Connection) aliveLocked() bool {
+	if c.closed || c.client == nil {
+		return false
+	}
+	if c.done != nil {
+		select {
+		case <-c.done:
+			return false
+		default:
+		}
+	}
+	if probe, ok := c.client.(LivenessClient); ok {
+		return probe.Alive()
+	}
+	return true
+}
 
 // Done closes when the leased Connection's transport is closed or discarded.
 // A forwarding rule uses it to leave the active state when the transport dies.

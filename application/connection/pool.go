@@ -289,26 +289,31 @@ func (p *pool) begin(ep endpointConfig, kind LeaseKind) (lease *Lease, wait *pen
 }
 
 // borrowLocked returns a lease on the best compatible transport. Live
-// transports are preferred over parked ones, then the fewest leases.
+// transports are preferred over parked ones, then the fewest leases. A
+// candidate whose Connection is closed, whose Done signal fired, or whose
+// transport reports its peer gone is retired and closed instead of handed
+// out: a transport can lose its peer while no lease operation is in flight,
+// so neither the lease count nor a caller-visible error proves it is usable.
 func (p *pool) borrowLocked(ep endpointConfig, kind LeaseKind) (*Lease, []*Connection) {
-	var expired []*Connection
+	var retired []*Connection
 	var best *Connection
 	bestIdle := false
 	bestRefs := 0
 	for _, candidate := range p.byKey[ep.key] {
 		candidate.mu.Lock()
-		closed := candidate.closed
-		compatible := !closed && ep.allowsReuse(candidate.endpoint, kind)
+		alive := candidate.aliveLocked()
+		compatible := alive && ep.allowsReuse(candidate.endpoint, kind)
 		idle := candidate.idle
 		refs := candidate.refs
-		expiredIdle := idle && p.idleTTL > 0 && !candidate.idleSince.IsZero() &&
+		expiredIdle := alive && idle && p.idleTTL > 0 && !candidate.idleSince.IsZero() &&
 			p.now().Sub(candidate.idleSince) >= p.idleTTL
 		candidate.mu.Unlock()
-		if closed {
+		if !alive {
+			retired = append(retired, candidate)
 			continue
 		}
 		if expiredIdle {
-			expired = append(expired, candidate)
+			retired = append(retired, candidate)
 			continue
 		}
 		if !compatible {
@@ -322,11 +327,11 @@ func (p *pool) borrowLocked(ep endpointConfig, kind LeaseKind) (*Lease, []*Conne
 			bestRefs = refs
 		}
 	}
-	for _, candidate := range expired {
+	for _, candidate := range retired {
 		p.removeLocked(candidate)
 	}
 	if best == nil {
-		return nil, expired
+		return nil, retired
 	}
 	fromIdle := false
 	if bestIdle {
@@ -336,16 +341,20 @@ func (p *pool) borrowLocked(ep endpointConfig, kind LeaseKind) (*Lease, []*Conne
 	best.mu.Lock()
 	best.refs++
 	best.mu.Unlock()
-	return &Lease{conn: best, kind: kind, fromIdle: fromIdle}, nil
+	// Retired transports are returned even when a live candidate serves the
+	// lease, so the caller closes them outside the pool lock instead of
+	// leaving an unlinked dead transport open.
+	return &Lease{conn: best, kind: kind, fromIdle: fromIdle}, retired
 }
 
-// borrow takes a lease on a completed pending dial.
+// borrow takes a lease on a completed pending dial. A join may wake after the
+// fresh transport's peer already vanished, so the same liveness rule applies
+// as for a parked or shared candidate.
 func (p *pool) borrow(conn *Connection, ep endpointConfig, kind LeaseKind) *Lease {
 	if conn == nil {
 		return nil
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	conn.mu.Lock()
 	// A no-reuse transport is never registered for reuse, so the only borrow
 	// it serves is its own leader's first lease. The endpoint key still has to
@@ -354,12 +363,18 @@ func (p *pool) borrow(conn *Connection, ep endpointConfig, kind LeaseKind) *Leas
 	if conn.endpoint.noReuse || ep.noReuse {
 		compatible = conn.endpoint.key == ep.key
 	}
-	if conn.closed || !compatible {
+	alive := conn.aliveLocked()
+	if conn.closed || !compatible || !alive {
 		conn.mu.Unlock()
+		p.mu.Unlock()
+		if compatible && !alive {
+			p.discard(conn, "transport-dead")
+		}
 		return nil
 	}
 	conn.refs++
 	conn.mu.Unlock()
+	p.mu.Unlock()
 	return &Lease{conn: conn, kind: kind}
 }
 
@@ -418,6 +433,16 @@ func (p *pool) park(conn *Connection) {
 	if conn.closed || conn.refs > 0 {
 		conn.mu.Unlock()
 		p.mu.Unlock()
+		return
+	}
+	// The last lease of a transport whose peer vanished while it was in use
+	// must not park it: the next Acquire would hand it out and fail its
+	// channel open instead of dialing.
+	if !conn.aliveLocked() {
+		p.removeLocked(conn)
+		conn.mu.Unlock()
+		p.mu.Unlock()
+		_ = conn.closeTransport("transport-dead")
 		return
 	}
 	if !conn.allowIdlePark || conn.endpoint.noReuse {
