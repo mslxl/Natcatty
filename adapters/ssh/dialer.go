@@ -315,6 +315,10 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 		}
 		client.x11 = bridge
 	}
+	// Record a peer-side disconnect as soon as the SSH client notices it, so
+	// the connection pool's liveness check sees a transport that died while
+	// no channel operation was in flight.
+	go client.watchDeath()
 	return client, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -99,6 +100,322 @@ func poolTestManager(t *testing.T, dialer Dialer, opts ...Option) *Manager {
 	manager := NewManager(dialer, &fakePasswordSource{password: "s3cret"}, &fakeKnownHosts{}, all...)
 	t.Cleanup(manager.CloseAll)
 	return manager
+}
+
+// probeClient models one physical transport whose peer can vanish without the
+// pool being told. Killing it leaves the Connection's closed flag and Done
+// channel untouched, exactly like a real adapter whose TCP peer died while
+// nothing watched the socket; Alive is the cheap capability the pool must
+// consult before handing the transport out again.
+type probeClient struct {
+	mu           sync.Mutex
+	closed       bool
+	dead         bool
+	subsystems   int
+	streams      []net.Conn
+	keepaliveErr error
+}
+
+func (c *probeClient) OpenTerminal(context.Context, TerminalSpec) (Terminal, error) {
+	return &fakeTerminal{}, nil
+}
+
+func (c *probeClient) Close() error {
+	c.mu.Lock()
+	c.closed = true
+	streams := c.streams
+	c.streams = nil
+	c.mu.Unlock()
+	closeTestStreams(streams)
+	return nil
+}
+
+func (c *probeClient) Keepalive() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dead {
+		return ErrClosed
+	}
+	return c.keepaliveErr
+}
+
+func (c *probeClient) RemoteVersion() string { return "SSH-2.0-OpenSSH_9.6" }
+
+// Alive reports the peer state without a network round trip.
+func (c *probeClient) Alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && !c.dead
+}
+
+// OpenSubsystem serves an in-memory echo channel, so a test can prove the
+// fresh transport carries real traffic rather than merely reporting alive.
+// The application layer cannot import the SFTP protocol library; the end-to-
+// end kill/restart/acquire proof over a real SFTP client lives in
+// adapters/sftp, where that dependency is allowed.
+func (c *probeClient) OpenSubsystem(_ context.Context, name string) (Subsystem, error) {
+	if name != "sftp" {
+		return nil, errors.New("connection: only the sftp subsystem is modelled")
+	}
+	c.mu.Lock()
+	if c.closed || c.dead {
+		c.mu.Unlock()
+		return nil, errors.New("ssh: connection lost")
+	}
+	c.subsystems++
+	clientConn, serverConn := net.Pipe()
+	c.streams = append(c.streams, clientConn, serverConn)
+	c.mu.Unlock()
+	go func() {
+		defer serverConn.Close()
+		_, _ = io.Copy(serverConn, serverConn)
+	}()
+	return clientConn, nil
+}
+
+func (c *probeClient) kill() {
+	c.mu.Lock()
+	c.dead = true
+	streams := c.streams
+	c.streams = nil
+	c.mu.Unlock()
+	closeTestStreams(streams)
+}
+
+func closeTestStreams(streams []net.Conn) {
+	for _, stream := range streams {
+		_ = stream.Close()
+	}
+}
+
+func (c *probeClient) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+func (c *probeClient) subsystemCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.subsystems
+}
+
+// probeDialer hands out one probeClient per physical dial and records each
+// attempted dial, including failed ones, so a test can tell a pool reuse from
+// a fresh connection attempt. kill models the server disappearing (dials fail
+// until restart); restart models the same endpoint listening again.
+type probeDialer struct {
+	mu      sync.Mutex
+	lost    bool
+	clients []*probeClient
+	errs    []error
+	calls   int
+}
+
+func (d *probeDialer) Dial(context.Context, DialRequest) (Client, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	index := d.calls
+	d.calls++
+	if d.lost {
+		return nil, errors.New("ssh: connect: connection refused")
+	}
+	if index < len(d.errs) && d.errs[index] != nil {
+		return nil, d.errs[index]
+	}
+	if index < len(d.clients) {
+		return d.clients[index], nil
+	}
+	client := &probeClient{}
+	d.clients = append(d.clients, client)
+	return client, nil
+}
+
+func (d *probeDialer) kill() {
+	d.mu.Lock()
+	d.lost = true
+	clients := append([]*probeClient(nil), d.clients...)
+	d.mu.Unlock()
+	for _, client := range clients {
+		client.kill()
+	}
+}
+
+func (d *probeDialer) restart() {
+	d.mu.Lock()
+	d.lost = false
+	d.mu.Unlock()
+}
+
+func (d *probeDialer) dialCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+func (d *probeDialer) client(index int) *probeClient {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.clients[index]
+}
+
+// TestAcquireRetiresASharedTransportWhosePeerDied reproduces the GUI's lost
+// connection: the pane still holds its SFTP lease on a Connection whose peer
+// is gone, the server is restarted, and a Retry acquires a transport for the
+// same Host. The pool must not hand the dead shared transport back; it must
+// dial a fresh one whose subsystem carries traffic. The same scenario over the
+// real SFTP client lives in adapters/sftp, which may import the protocol
+// library the application layer must not depend on.
+func TestAcquireRetiresASharedTransportWhosePeerDied(t *testing.T) {
+	dialer := &probeDialer{}
+	manager := poolTestManager(t, dialer)
+
+	held, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	if subsystem, err := held.Subsystem(context.Background(), "sftp"); err != nil {
+		t.Fatalf("first Subsystem: %v", err)
+	} else {
+		_ = subsystem.Close()
+	}
+
+	// The peer vanishes. The pane's lease is still open, so Release has not
+	// run and the Connection's Done signal has not fired. Restarting the
+	// server on the same endpoint does not revive the dead transport.
+	dialer.kill()
+	dialer.restart()
+
+	fresh, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire after the peer died: %v", err)
+	}
+	if got := dialer.dialCount(); got != 2 {
+		t.Fatalf("dial count = %d, want 2: the pool reused a dead transport", got)
+	}
+	if !dialer.client(0).isClosed() {
+		t.Fatal("the dead transport was not retired and closed")
+	}
+	subsystem, err := fresh.Subsystem(context.Background(), "sftp")
+	if err != nil {
+		t.Fatalf("the re-acquired transport cannot open a subsystem: %v", err)
+	}
+	if _, err := subsystem.Write([]byte("ping")); err != nil {
+		t.Fatalf("write through the fresh transport: %v", err)
+	}
+	reply := make([]byte, 4)
+	if _, err := io.ReadFull(subsystem, reply); err != nil {
+		t.Fatalf("read through the fresh transport: %v", err)
+	}
+	if string(reply) != "ping" {
+		t.Fatalf("the fresh transport answered %q, want %q", reply, "ping")
+	}
+	_ = subsystem.Close()
+	if got := dialer.client(1).subsystemCount(); got != 1 {
+		t.Fatalf("fresh transport subsystem opens = %d, want 1", got)
+	}
+	_ = fresh.Release()
+	_ = held.Release()
+}
+
+// TestBorrowClosesADeadTransportEvenWhenAnotherIsReusable keeps retirement
+// atomic: a dead candidate discovered in the same borrow that picks a live
+// transport must still be closed, not merely unlinked from the pool index.
+func TestBorrowClosesADeadTransportEvenWhenAnotherIsReusable(t *testing.T) {
+	dialer := &probeDialer{}
+	manager := poolTestManager(t, dialer)
+
+	plain, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("plain Acquire: %v", err)
+	}
+	forwarding := sshRequest()
+	forwarding.AgentForwarding = true
+	forwarding.ForwardingAgentFingerprint = "agent-a"
+	forwarded, err := manager.Acquire(context.Background(), forwarding)
+	if err != nil {
+		t.Fatalf("forwarding Acquire: %v", err)
+	}
+	if got := dialer.dialCount(); got != 2 {
+		t.Fatalf("dial count = %d, want two transports under one endpoint", got)
+	}
+	dialer.client(0).kill()
+
+	channel := sshRequest()
+	channel.LeaseKind = LeaseChannel
+	reuse, err := manager.Acquire(context.Background(), channel)
+	if err != nil {
+		t.Fatalf("channel Acquire: %v", err)
+	}
+	if got := dialer.dialCount(); got != 2 {
+		t.Fatalf("dial count = %d, want the live transport to serve the lease", got)
+	}
+	if !dialer.client(0).isClosed() {
+		t.Fatal("a dead transport retired beside a live one was left open")
+	}
+	_ = reuse.Release()
+	_ = forwarded.Release()
+	_ = plain.Release()
+}
+
+// TestReleaseAfterThePeerDiedDoesNotParkTheTransport covers the sftp session
+// Discard path: the lease is released after the transport died but before any
+// Done signal fired. The dead transport must be retired, never parked for the
+// next Acquire.
+func TestReleaseAfterThePeerDiedDoesNotParkTheTransport(t *testing.T) {
+	dialer := &probeDialer{}
+	manager := poolTestManager(t, dialer)
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	dialer.client(0).kill()
+	if lease.Alive() {
+		t.Fatal("a lease on a dead transport still reports alive")
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if !dialer.client(0).isClosed() {
+		t.Fatal("releasing a dead lease parked the transport instead of closing it")
+	}
+
+	fresh, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire after the release: %v", err)
+	}
+	if got := dialer.dialCount(); got != 2 {
+		t.Fatalf("dial count = %d, want 2: a released dead transport was reused", got)
+	}
+	_ = fresh.Release()
+}
+
+// TestBorrowRefusesADeadParkedTransport keeps the liveness rule honest for
+// transports without a cheap liveness probe: a candidate that can no longer
+// serve the requested channel must not be handed out. The pool probes with
+// Alive, so this is expressed through it.
+func TestBorrowRefusesADeadParkedTransport(t *testing.T) {
+	dialer := &probeDialer{}
+	manager := poolTestManager(t, dialer, WithIdleTTL(0))
+
+	lease, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	dialer.client(0).kill()
+
+	fresh, err := manager.Acquire(context.Background(), sshRequest())
+	if err != nil {
+		t.Fatalf("Acquire after the parked peer died: %v", err)
+	}
+	if got := dialer.dialCount(); got != 2 {
+		t.Fatalf("dial count = %d, want 2: the parked dead transport was reused", got)
+	}
+	_ = fresh.Release()
 }
 
 func TestPoolBeginJoinsAnInFlightCompatibleDial(t *testing.T) {
