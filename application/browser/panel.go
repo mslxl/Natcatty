@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"sync"
 
@@ -84,6 +85,16 @@ type Config struct {
 	// Redraw requests a frame after a state change. It may run on the
 	// tunnel's goroutine; the app's window invalidation is safe there.
 	Redraw func()
+	// Bookmarks and Icons are the shared process-wide stores. Both may be
+	// nil in tests that only exercise routing.
+	Bookmarks *Bookmarks
+	Icons     *SiteIcons
+	// Downloads is the page download policy. A nil Dir keeps downloads
+	// disabled.
+	Downloads DownloadOptions
+	// Cookies returns the Cookie header for a gateway URL. The app reads it
+	// from the WebView cookie store for favicon fetches.
+	Cookies func(gatewayURL string) string
 }
 
 // Tab is one panel tab. URL is the real page address; the WebView loads the
@@ -92,6 +103,7 @@ type Tab struct {
 	ID           string
 	URL          string
 	Title        string
+	IconDataURL  string
 	Loading      bool
 	CanGoBack    bool
 	CanGoForward bool
@@ -109,6 +121,7 @@ type Tab struct {
 type pageSnapshot struct {
 	url          string
 	title        string
+	icon         string
 	canGoBack    bool
 	canGoForward bool
 }
@@ -156,19 +169,50 @@ type Panel struct {
 	gateway    *gateway
 	listeners  map[int]func(State)
 	nextListen int
+	downloads  *downloadManager
+	iconTried  map[string]bool
+	iconActive map[string]bool
 }
 
 // New creates a closed panel. Start opens its dedicated tunnel; Close
 // releases everything.
 func New(cfg Config) *Panel {
 	life, cancel := context.WithCancel(context.Background())
-	return &Panel{
-		cfg:       cfg,
-		life:      life,
-		cancel:    cancel,
-		route:     RouteDisconnected,
-		listeners: make(map[int]func(State)),
+	if cfg.Downloads.Redraw == nil {
+		cfg.Downloads.Redraw = cfg.Redraw
 	}
+	panel := &Panel{
+		cfg:        cfg,
+		life:       life,
+		cancel:     cancel,
+		route:      RouteDisconnected,
+		listeners:  make(map[int]func(State)),
+		iconTried:  make(map[string]bool),
+		iconActive: make(map[string]bool),
+	}
+	downloadOptions := cfg.Downloads
+	downloadOptions.Validate = func(gatewayURL string) error {
+		panel.mu.Lock()
+		gateway := panel.gateway
+		panel.mu.Unlock()
+		if gateway == nil {
+			return ErrNotConnected
+		}
+		if _, ok := gateway.RemoteURL(gatewayURL); !ok {
+			return ErrDownloadURL
+		}
+		return nil
+	}
+	panel.downloads = newDownloadManager(downloadOptions, func(ctx context.Context, gatewayURL, cookies string) (*http.Response, error) {
+		panel.mu.Lock()
+		gateway := panel.gateway
+		panel.mu.Unlock()
+		if gateway == nil {
+			return nil, ErrDownloadURL
+		}
+		return gateway.openDownload(ctx, gatewayURL, cookies)
+	})
+	return panel
 }
 
 // Start opens the dedicated tunnel. It is idempotent while connecting or
@@ -250,6 +294,8 @@ func (p *Panel) failRoute(generation uint64, failure Failure, detail string) {
 	p.route = RouteDisconnected
 	p.failure = failure
 	p.detail = detail
+	p.iconTried = make(map[string]bool)
+	p.iconActive = make(map[string]bool)
 	for i := range p.tabs {
 		p.tabs[i].Loading = false
 		p.tabs[i].CanGoBack = false
@@ -257,6 +303,7 @@ func (p *Panel) failRoute(generation uint64, failure Failure, detail string) {
 	}
 	p.mu.Unlock()
 
+	p.downloads.cancelAll()
 	if gateway != nil {
 		gateway.Close()
 	}
@@ -306,6 +353,7 @@ func (p *Panel) Close() {
 	p.mu.Unlock()
 
 	p.cancel()
+	p.downloads.Close()
 	if gateway != nil {
 		gateway.Close()
 	}
@@ -485,12 +533,14 @@ func (p *Panel) Navigate(tabID, address string) (string, error) {
 		tab.previous = pageSnapshot{
 			url:          tab.URL,
 			title:        tab.Title,
+			icon:         tab.IconDataURL,
 			canGoBack:    tab.CanGoBack,
 			canGoForward: tab.CanGoForward,
 		}
 	}
 	tab.URL = normalized
 	tab.Title = hostLabel(normalized)
+	tab.IconDataURL = p.cachedIconLocked(normalized)
 	tab.provisional = true
 	tab.Loading = true
 	tab.CanGoBack = false
@@ -520,6 +570,7 @@ func (p *Panel) PageChanged(tabID string, page PageState) {
 	}
 	changed := false
 	committed := false
+	iconURL := ""
 	if page.URL != "" && p.gateway != nil {
 		if remote, ok := p.gateway.RemoteURL(page.URL); ok {
 			if p.tabs[index].URL != remote {
@@ -556,6 +607,16 @@ func (p *Panel) PageChanged(tabID string, page PageState) {
 		p.tabs[index].provisional = false
 		changed = true
 	}
+	if committed && p.tabs[index].URL != "" {
+		if cached := p.cachedIconLocked(p.tabs[index].URL); cached != "" {
+			if p.tabs[index].IconDataURL != cached {
+				p.tabs[index].IconDataURL = cached
+				changed = true
+			}
+		} else if p.cfg.Icons != nil {
+			iconURL = p.tabs[index].URL
+		}
+	}
 	if p.tabs[index].Loading != page.Loading {
 		p.tabs[index].Loading = page.Loading
 		changed = true
@@ -576,6 +637,9 @@ func (p *Panel) PageChanged(tabID string, page PageState) {
 	p.mu.Unlock()
 	if changed {
 		p.changed()
+	}
+	if iconURL != "" {
+		p.ensureFavicon(tabID)
 	}
 }
 
@@ -615,6 +679,7 @@ func (p *Panel) PageStopped(tabID string) bool {
 	if restored {
 		tab.URL = tab.previous.url
 		tab.Title = tab.previous.title
+		tab.IconDataURL = tab.previous.icon
 		tab.CanGoBack = tab.previous.canGoBack
 		tab.CanGoForward = tab.previous.canGoForward
 		tab.provisional = false
@@ -622,6 +687,86 @@ func (p *Panel) PageStopped(tabID string) bool {
 	p.mu.Unlock()
 	p.changed()
 	return restored
+}
+
+// cachedIconLocked looks up the Host's cached favicon for pageURL.
+func (p *Panel) cachedIconLocked(pageURL string) string {
+	if p.cfg.Icons == nil {
+		return ""
+	}
+	if icon, ok := p.cfg.Icons.Get(p.cfg.HostID, pageURL); ok {
+		return icon.DataURL
+	}
+	return ""
+}
+
+// ensureFavicon fetches the origin's favicon at most once per route, through
+// the panel's tunnel. The fetch runs off the UI goroutine; a missing or
+// undecodable icon leaves the letter/glyph fallback in place.
+func (p *Panel) ensureFavicon(tabID string) {
+	p.mu.Lock()
+	index := p.tabIndexLocked(tabID)
+	if index < 0 || p.closed || p.route != RouteConnected || p.gateway == nil || p.cfg.Icons == nil {
+		p.mu.Unlock()
+		return
+	}
+	pageURL := p.tabs[index].URL
+	origin, err := domainbrowser.Origin(pageURL)
+	if err != nil {
+		p.mu.Unlock()
+		return
+	}
+	key := string(p.cfg.HostID) + "\n" + origin
+	if p.iconTried[key] || p.iconActive[key] || p.tabs[index].IconDataURL != "" {
+		p.mu.Unlock()
+		return
+	}
+	p.iconActive[key] = true
+	gateway := p.gateway
+	p.mu.Unlock()
+
+	go func() {
+		dataURL, err := gateway.fetchFavicon(p.life, pageURL, p.cookieHeader(pageURL))
+		p.mu.Lock()
+		delete(p.iconActive, key)
+		p.iconTried[key] = true
+		if err == nil && p.route == RouteConnected && p.gateway == gateway {
+			p.cfg.Icons.SetAuto(p.cfg.HostID, pageURL, dataURL)
+			for i := range p.tabs {
+				if sameOrigin(p.tabs[i].URL, pageURL) {
+					p.tabs[i].IconDataURL = dataURL
+				}
+			}
+		}
+		p.mu.Unlock()
+		p.changed()
+	}()
+}
+
+func sameOrigin(a, b string) bool {
+	left, err := domainbrowser.Origin(a)
+	if err != nil {
+		return false
+	}
+	right, err := domainbrowser.Origin(b)
+	return err == nil && left == right
+}
+
+func (p *Panel) cookieHeader(pageURL string) string {
+	if p.cfg.Cookies == nil {
+		return ""
+	}
+	p.mu.Lock()
+	gateway := p.gateway
+	p.mu.Unlock()
+	if gateway == nil {
+		return ""
+	}
+	gatewayURL, err := gateway.URLFor(pageURL)
+	if err != nil {
+		return ""
+	}
+	return p.cfg.Cookies(gatewayURL)
 }
 
 // SetPageFlags updates the navigation state after a same-document history
@@ -676,6 +821,76 @@ func (p *Panel) IsGatewayURL(rawURL string) bool {
 	}
 	_, ok := gateway.RemoteURL(rawURL)
 	return ok
+}
+
+// StartDownload fetches a page download through this route's gateway. The
+// caller has already prevented the WebView's own download.
+func (p *Panel) StartDownload(gatewayURL, suggestedName string) (Download, error) {
+	if p == nil || p.downloads == nil {
+		return Download{}, ErrDownloadGone
+	}
+	return p.downloads.Start(gatewayURL, suggestedName)
+}
+
+// Downloads returns the download history, newest first.
+func (p *Panel) Downloads() []Download { return p.downloads.Downloads() }
+
+// CancelDownload aborts one active download.
+func (p *Panel) CancelDownload(id string) bool { return p.downloads.Cancel(id) }
+
+// RemoveDownload drops one finished record.
+func (p *Panel) RemoveDownload(id string) bool { return p.downloads.Remove(id) }
+
+// ClearDownloads removes every finished record.
+func (p *Panel) ClearDownloads() bool { return p.downloads.ClearFinished() }
+
+// BookmarkView adds display-only favicon data to a bookmark.
+type BookmarkView struct {
+	domainbrowser.Bookmark
+	IconDataURL string
+	IconGlyph   string
+	IconColor   string
+}
+
+// VisibleBookmarks returns this Host's bookmarks with cached favicon data.
+func (p *Panel) VisibleBookmarks() []BookmarkView {
+	if p.cfg.Bookmarks == nil {
+		return nil
+	}
+	items := p.cfg.Bookmarks.List(p.cfg.HostID)
+	out := make([]BookmarkView, 0, len(items))
+	for _, item := range items {
+		view := BookmarkView{Bookmark: item, IconGlyph: item.Icon, IconColor: item.Color}
+		if p.cfg.Icons != nil {
+			if icon, ok := p.cfg.Icons.Get(p.cfg.HostID, item.URL); ok {
+				view.IconDataURL = icon.DataURL
+				if icon.Glyph != "" {
+					view.IconGlyph = icon.Glyph
+				}
+				if icon.Color != "" {
+					view.IconColor = icon.Color
+				}
+			}
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// UpsertBookmark creates or edits a bookmark for this Host.
+func (p *Panel) UpsertBookmark(input domainbrowser.BookmarkInput) (domainbrowser.Bookmark, error) {
+	if p.cfg.Bookmarks == nil {
+		return domainbrowser.Bookmark{}, errors.New("browser: bookmarks are unavailable")
+	}
+	return p.cfg.Bookmarks.Upsert(p.cfg.HostID, input)
+}
+
+// RemoveBookmark deletes a bookmark on behalf of this Host.
+func (p *Panel) RemoveBookmark(id string) (bool, error) {
+	if p.cfg.Bookmarks == nil {
+		return false, errors.New("browser: bookmarks are unavailable")
+	}
+	return p.cfg.Bookmarks.Remove(p.cfg.HostID, id)
 }
 
 // hostLabel is the compact tab label used until the page reports a title.

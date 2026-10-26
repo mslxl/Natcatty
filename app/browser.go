@@ -2,14 +2,20 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/mslxl/natcatty/adapters/store"
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -17,6 +23,75 @@ import (
 	browserui "github.com/mslxl/natcatty/ui/browser"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 )
+
+// browserBookmarks and browserIcons are shared by every Session's browser
+// panel. One all-Host bookmark edit is therefore visible to every Host, and a
+// favicon cache entry is keyed by Host and origin.
+var (
+	browserBookmarks *appbrowser.Bookmarks
+	browserIcons     *appbrowser.SiteIcons
+	// browserDownloadsDir is a seam for the selftest, which must never write
+	// into the user's real Downloads directory.
+	browserDownloadsDir = func() (string, error) { return mygo.App.Path(mygo.PathDownloads) }
+)
+
+// setupBrowserStores opens the bookmark and favicon files beside Preferences.
+// A malformed or unreadable file starts empty instead of failing app launch.
+func setupBrowserStores(userData string) error {
+	bookmarks, err := appbrowser.NewBookmarks(
+		store.OpenBrowserBookmarks(filepath.Join(userData, "browser-bookmarks.json")),
+		time.Now, browserBookmarkID,
+	)
+	if err != nil {
+		return err
+	}
+	icons, err := appbrowser.NewSiteIcons(
+		store.OpenBrowserSiteIcons(filepath.Join(userData, "browser-site-icons.json")),
+	)
+	if err != nil {
+		return err
+	}
+	browserBookmarks = bookmarks
+	browserIcons = icons
+	return nil
+}
+
+func browserBookmarkID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("bookmark-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(bytes[:])
+}
+
+// browserCookieHeader reads the WebView's cookie store for a gateway URL so a
+// favicon or download fetch through the tunnel carries the same session. It is
+// called only from the app edge; the page itself never sees these values.
+func browserCookieHeader(gatewayURL string) string {
+	cookies, err := mygo.Cookies.List(mygo.CookieFilter{URL: gatewayURL})
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		parts = append(parts, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// browserDownloadName derives a display name from the real page URL when the
+// engine reports none.
+func browserDownloadName(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Path == "" {
+		return "download"
+	}
+	name := filepath.Base(parsed.Path)
+	if name == "/" || name == "." || name == "" {
+		return "download"
+	}
+	return name
+}
 
 // errBrowserSessionUnavailable is returned when a Session has no saved Host to
 // route a browser through. The Session menu keeps Open Browser disabled in
@@ -148,6 +223,14 @@ func openSessionBrowser(session *appsession.Session, windows *windowManager,
 		Label:     session.Label(),
 		Connector: connector,
 		Redraw:    redraw,
+		Bookmarks: browserBookmarks,
+		Icons:     browserIcons,
+		Cookies:   browserCookieHeader,
+		Downloads: appbrowser.DownloadOptions{
+			Dir:     browserDownloadsDir,
+			Cookies: browserCookieHeader,
+			Redraw:  redraw,
+		},
 	})
 	return browserui.New(core, mygoPageFactory{window: creator},
 		browserui.WithRedraw(redraw),
@@ -165,19 +248,38 @@ type mygoPageFactory struct {
 var _ browserui.PageFactory = mygoPageFactory{}
 
 func (f mygoPageFactory) NewPage() (browserui.Page, error) {
-	view, err := f.window.NewWebView(mygo.WebViewOptions{
-		Page: mygo.PageOptions{DevTools: mygo.DevToolsDisabled},
-	})
+	view, err := f.window.NewWebView(mygo.WebViewOptions{Page: browserPageOptions()})
 	if err != nil {
 		return nil, fmt.Errorf("create browser page: %w", err)
 	}
-	page := view.Page()
-	// The page never gets a capability that could bypass the Host route:
-	// permission prompts are denied, and window.open cannot create a second
-	// page the panel does not own.
+	hardenBrowserPage(view.Page())
+	return newMygoPage(view), nil
+}
+
+// browserPageOptions is the page configuration for untrusted web content.
+// There is deliberately no PreloadScript and no TrustedOrigins entry: MyGo's
+// typed bridge is injected into every page, but it rejects calls from an
+// origin outside the app's own pages. The gateway binds 127.0.0.2 rather than
+// 127.0.0.1 so a development build's localhost trust does not cover it.
+func browserPageOptions() mygo.PageOptions {
+	return mygo.PageOptions{DevTools: mygo.DevToolsDisabled}
+}
+
+// browserSandboxPage is the small part of a MyGo page the sandbox hardens.
+// Keeping it an interface lets a test prove both handlers are installed.
+type browserSandboxPage interface {
+	SetPermissionHandler(func(mygo.PermissionRequest) bool)
+	SetWindowOpenHandler(func(mygo.WindowOpenRequest) *mygo.WindowOptions)
+}
+
+// hardenBrowserPage removes the native capabilities a Host page must never
+// have. A permission prompt is always denied, and window.open cannot create a
+// page the browser panel does not own (the original allowed popups as new
+// tabs; this surface refuses them because MyGo cannot attach them to the
+// panel's isolated route).
+func hardenBrowserPage(page browserSandboxPage) {
 	page.SetPermissionHandler(func(mygo.PermissionRequest) bool { return false })
 	page.SetWindowOpenHandler(func(mygo.WindowOpenRequest) *mygo.WindowOptions { return nil })
-	return newMygoPage(view), nil
 }
 
 // mygoPage adapts one MyGo web view to the browser UI's page port.
@@ -219,13 +321,32 @@ func newMygoPage(view *mygo.WebView) *mygoPage {
 		p.page.OnPageTitleUpdated(func(event *mygo.TitleEvent) {
 			p.emit(browserui.PageEvent{Kind: browserui.PageTitle, Title: event.Title})
 		}),
+		p.page.OnWillDownload(func(event *mygo.DownloadEvent) {
+			if event == nil {
+				return
+			}
+			// The WebView's own download would write outside the panel's
+			// bounded, gateway-verified download path. Cancel it and hand the
+			// same gateway URL to the application manager.
+			event.PreventDefault()
+			suggested := event.SuggestedName
+			if suggested == "" {
+				suggested = browserDownloadName(event.URL)
+			}
+			p.emit(browserui.PageEvent{
+				Kind:          browserui.PageDownload,
+				URL:           event.URL,
+				SuggestedName: suggested,
+			})
+		}),
 		p.page.OnDidFinishLoad(func() {
 			p.emit(browserui.PageEvent{Kind: browserui.PageLoaded})
 		}),
 		p.page.OnDidFailLoad(func(loadError *mygo.LoadError) {
-			// ERR_ABORTED is what Stop and a superseded navigation report;
-			// neither is a page failure.
-			if loadError == nil || loadError.Code == -3 {
+			// A canceled navigation is not a page failure. Linux reports
+			// ERR_ABORTED as -3; WebView2 reports the connection abort of a
+			// download navigation as 9 and a stopped load as 14.
+			if loadError == nil || browserLoadIsAborted(loadError.Code) {
 				return
 			}
 			p.emit(browserui.PageEvent{
@@ -300,6 +421,19 @@ func (p *mygoPage) SetNavigationGuard(fn func(string) (string, bool)) {
 	p.mu.Lock()
 	p.guard = fn
 	p.mu.Unlock()
+}
+
+// browserLoadIsAborted reports navigation statuses that only mean a load was
+// canceled, not that the page still on screen failed. Linux's engine reports
+// ERR_ABORTED as -3; WebView2 reports a download navigation's connection abort
+// as 9 and a stopped load as 14.
+func browserLoadIsAborted(code int) bool {
+	switch code {
+	case -3, 9, 14:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *mygoPage) emit(event browserui.PageEvent) {
