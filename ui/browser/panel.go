@@ -125,6 +125,19 @@ type Panel struct {
 	downloadErr  error
 	iconCache    map[string]*ui.Bitmap
 	iconMiss     map[string]bool
+
+	// revealedBookmarkRow and revealedDownloadRow remember which row's
+	// controls last had the keyboard focus, so a row comes into view once as
+	// the focus enters it: revealing it every frame it holds the focus would
+	// pull it back while the user scrolls the list away.
+	revealedBookmarkRow string
+	revealedDownloadRow string
+
+	// bookmarkViewport and downloadViewport are the panes' Scroll widgets'
+	// cross-frame handles, so a shell test can measure the bounded viewport
+	// itself and not only the rows it clips.
+	bookmarkViewport ui.Handle
+	downloadViewport ui.Handle
 }
 
 type problemKind int
@@ -167,6 +180,17 @@ func (p *Panel) Close() {
 	if p.core != nil {
 		p.core.Close()
 	}
+}
+
+// BookmarkViewportBounds reports the bookmark list's Scroll viewport in the
+// coordinates of c. The shell's self-test uses it to prove the list is bounded
+// and that the last row lies inside the viewport, not only inside the client.
+// It is the zero rect before the pane has laid out.
+func (p *Panel) BookmarkViewportBounds(c *ui.Context) ui.Rect {
+	if p == nil {
+		return ui.Rect{}
+	}
+	return p.bookmarkViewport.Bounds(c)
 }
 
 // View renders the panel.
@@ -233,7 +257,17 @@ func (p *Panel) View(c *ui.Context) ui.Element {
 		}
 	}
 
-	return ui.Column(c).Fill().MinWidth(0).Background(t.Background).Children(func() {
+	// Height(0) with Grow(1), not Fill(), is load-bearing in the shell: the
+	// panel is a flex child of the Pane, and a Fill height of a percentage
+	// has no basis while the Pane measures its content, so the panel would
+	// report its whole bookmark or download list as its height. That makes
+	// the Pane's automatic minimum the list's height, and the Pane grows past
+	// the client however the list scrolls. A zero basis contributes nothing
+	// to the Pane's measurement; Grow gives the panel the Pane's remaining
+	// space, and MinHeight(0) lets it shrink there so the panes' scroll
+	// viewports are bounded.
+	return ui.Column(c).Height(0).Grow(1).FillWidth().MinWidth(0).MinHeight(0).
+		Background(t.Background).Children(func() {
 		p.toolbar(c, state, active, hasActive, m, t)
 		p.tabStrip(c, state, m, t)
 		if text := p.problemText(m); text != "" {

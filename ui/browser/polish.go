@@ -46,7 +46,11 @@ func (p *Panel) togglePane(pane polishPane) {
 }
 
 func (p *Panel) bookmarkPane(c *ui.Context, state appbrowser.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Grow(1).FillWidth().Padding(8).Gap(6).Children(func() {
+	// MinHeight(0) keeps this column inside the panel: its automatic minimum
+	// would be the whole list's height, which grows the panel past the Pane
+	// and leaves the list's last rows unreachable. With it, the column
+	// shrinks to the panel and the Scroll below takes the bounded remainder.
+	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(8).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, m.BrowserBookmarks()).FontSize(13).Bold().Grow(1).
 				SingleLine().TextColor(t.Text)
@@ -76,7 +80,8 @@ func (p *Panel) bookmarkPane(c *ui.Context, state appbrowser.State, m locales.Me
 			})
 			return
 		}
-		scroll := ui.Scroll(c).Grow(1).FillWidth().MinHeight(0)
+		scroll := ui.Scroll(c).Grow(1).FillWidth().MinHeight(0).
+			Bind(&p.bookmarkViewport)
 		scroll.Children(func() {
 			ui.Column(c).FillWidth().Gap(2).Children(func() {
 				for _, bookmark := range p.core.VisibleBookmarks() {
@@ -148,8 +153,9 @@ func (p *Panel) saveBookmark(c *ui.Context) {
 }
 
 func (p *Panel) bookmarkRow(c *ui.Context, bookmark appbrowser.BookmarkView, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Key("browser-bookmark-"+bookmark.ID).FillWidth().Height(34).
-		Padding(4, 2).Gap(6).AlignItems(ui.Center).Children(func() {
+	row := ui.Row(c).Key("browser-bookmark-"+bookmark.ID).FillWidth().Height(34).
+		Padding(4, 2).Gap(6).AlignItems(ui.Center)
+	row.Children(func() {
 		if bitmap := p.iconBitmap(bookmark.IconDataURL); bitmap != nil {
 			ui.Image(c, bitmap).Width(16).Height(16).Shrink(0)
 		} else {
@@ -188,6 +194,26 @@ func (p *Panel) bookmarkRow(c *ui.Context, bookmark appbrowser.BookmarkView, m l
 			c.Invalidate()
 		}
 	})
+	// Tab reveals only the focused control, and a control is shorter than
+	// the row's title and address together: the row's lower line would stay
+	// clipped at the viewport's edge when the focus reaches a row at the
+	// bottom. Revealing the whole row once, as the focus enters it, makes
+	// what the keyboard reaches wholly visible, and does not fight a later
+	// scroll of the list once the focus stays in the row.
+	revealRowOnFocus(row, bookmark.ID, &p.revealedBookmarkRow)
+}
+
+// revealRowOnFocus scrolls row into view once as the keyboard focus enters it.
+// Every frame it stays would otherwise undo a wheel scroll away from it.
+func revealRowOnFocus(row ui.Element, id string, revealed *string) {
+	if row.FocusWithin() {
+		if *revealed != id {
+			*revealed = id
+			row.ScrollIntoView()
+		}
+	} else if *revealed == id {
+		*revealed = ""
+	}
 }
 
 func (p *Panel) openBookmark(c *ui.Context, rawURL string) {
@@ -233,7 +259,9 @@ func bookmarkErrorText(err error, m locales.Messages) string {
 
 func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 	items := p.core.Downloads()
-	ui.Column(c).Grow(1).FillWidth().Padding(8).Gap(6).Children(func() {
+	// As the bookmark pane: an explicit zero minimum keeps the list in a
+	// bounded viewport inside the Pane instead of growing the panel.
+	ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(8).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
 			ui.Text(c, m.BrowserDownloads()).FontSize(13).Bold().Grow(1).
 				SingleLine().TextColor(t.Text)
@@ -257,7 +285,8 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 			})
 			return
 		}
-		scroll := ui.Scroll(c).Grow(1).FillWidth().MinHeight(0)
+		scroll := ui.Scroll(c).Grow(1).FillWidth().MinHeight(0).
+			Bind(&p.downloadViewport)
 		scroll.Children(func() {
 			ui.Column(c).FillWidth().Gap(2).Children(func() {
 				for _, item := range items {
@@ -270,11 +299,12 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 
 func (p *Panel) downloadRow(c *ui.Context, item appbrowser.Download, m locales.Messages, t *ui.Theme) {
 	active := item.Status == appbrowser.DownloadWaiting || item.Status == appbrowser.DownloadProgressing
-	ui.Row(c).Key("browser-download-"+item.ID).FillWidth().MinHeight(42).
-		Padding(4, 2).Gap(6).AlignItems(ui.Center).Children(func() {
+	row := ui.Row(c).Key("browser-download-"+item.ID).FillWidth().MinHeight(42).
+		Padding(4, 2).Gap(6).AlignItems(ui.Center)
+	row.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, item.Filename).FontSize(11).Bold().SingleLine().TextColor(t.Text)
-			ui.Text(c, downloadStatusText(item, m)).FontSize(9).SingleLine().
+			ui.Text(c, item.Filename).FontSize(12).Bold().SingleLine().TextColor(t.Text)
+			ui.Text(c, downloadStatusText(item, m)).FontSize(11).SingleLine().
 				TextColor(t.TextMuted)
 			if active {
 				value := float64(0)
@@ -294,6 +324,9 @@ func (p *Panel) downloadRow(c *ui.Context, item appbrowser.Download, m locales.M
 			c.Invalidate()
 		}
 	})
+	// As the bookmark rows: a control is shorter than the row's metadata,
+	// so the keyboard's minimal reveal would leave the status line clipped.
+	revealRowOnFocus(row, item.ID, &p.revealedDownloadRow)
 }
 
 func downloadStatusText(item appbrowser.Download, m locales.Messages) string {
