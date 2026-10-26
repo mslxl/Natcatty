@@ -209,6 +209,22 @@ NATCATTY_GDRIVE_* overrides exist only for the fake. A signed-in user with a
 Google client id can exercise the live flow.
 Ticket: 50
 
+### `sync.onedrive-live-endpoints`
+
+The OneDrive provider is verified against a local fake that mirrors Microsoft's
+authorize, token, `/me`, and Graph approot metadata and content endpoints,
+including PKCE S256 validation, refresh rotation, invalid_grant, eTag conflict
+handling, and per-account approot isolation. Live Microsoft endpoints are not
+contacted by tests or the self-test because they require a provisioned
+Microsoft Entra app registration with the app-folder delegated permission, a
+human consent, and a real OneDrive quota.
+
+Decision: excluded from automated acceptance by ticket 51; the provider's
+defaults remain the original Electron production endpoints and the
+NATCATTY_ONEDRIVE_* overrides exist only for the fake. A signed-in user with a
+Microsoft client id can exercise the live flow.
+Ticket: 51
+
 ## Protocol and platform limitations
 
 ### `connections.ssh-compression`

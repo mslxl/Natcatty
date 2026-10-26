@@ -2606,6 +2606,101 @@
   status: verified
   notes: "The profile stores AccountID (the Google userinfo id, falling back to the email) beside Login. Reauthorization compares the new identity with the stored one: a different account clears LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt before the next sync, while the same account keeps the baseline so the merge decision continues from the same cloud copy. The self-test switches from one@example.test to two@example.test, proves the anchor is empty, syncs into the second account's appDataFolder, and proves the first account's copy is untouched; reconnecting the second account keeps its anchor. Switching providers also clears the token and anchor."
 
+# --- Ticket 51: OneDrive approot ---
+
+- id: sync.onedrive-pkce
+  area: sync
+  feature: OneDrive PKCE authorization in the system browser with a loopback redirect
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/adapters/OneDriveAdapter.ts
+    - electron/bridges/onedriveAuthBridge.cjs
+    - electron/bridges/oauthBridge.cjs
+    - infrastructure/services/cloudSync/authMethods.ts
+  module: adapters/onedrive
+  tickets: [51]
+  acceptance_tests:
+    - adapters/onedrive.TestAuthorizeUsesTheSystemBrowserLoopbackAndPKCE
+    - adapters/onedrive.TestAuthorizeRejectsAMismatchedState
+    - adapters/onedrive.TestAuthorizeReportsADeniedConsent
+    - adapters/onedrive.TestAuthorizeTimesOutWithoutARedirect
+    - adapters/onedrive.TestAuthorizeReportsAnUnavailableBrowser
+    - adapters/onedrive.TestAuthorizeRequiresAClientID
+    - application/sync.TestOneDriveAuthorizationConnectsAndStoresTheProvider
+    - app.TestTicket51CheckRunsThroughTheKeyboard
+    - app.TestTicket51CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The flow reuses the provider-neutral adapters/oauthloopback implementation shared with Google Drive: a 32-byte PKCE verifier, its S256 challenge, and a 16-byte state; the authorize URL opens through the app's system-browser opener (MyGo Shell.OpenExternal, never a WebView), the listener binds an ephemeral 127.0.0.1 port at /oauth/callback, the state is validated, and the code is exchanged with the verifier and no client secret. Microsoft's consumers tenant, app-folder scope, response_mode=query, and prompt=consent stay in the adapter. Denial, state mismatch, timeout, and an unavailable browser are typed and localized. NATCATTY_ONEDRIVE_AUTH_BASE, NATCATTY_ONEDRIVE_TOKEN_BASE, NATCATTY_ONEDRIVE_GRAPH_BASE, and NATCATTY_ONEDRIVE_CLIENT_ID point the app at the local fake; defaults are the original Electron Microsoft endpoints. The self-test proves the fake accepted S256 and never saw a client secret."
+
+- id: sync.onedrive-approot
+  area: sync
+  feature: OneDrive approot (app folder) read and write
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/adapters/OneDriveAdapter.ts
+    - electron/bridges/onedriveAuthBridge.cjs
+  module: adapters/onedrive
+  tickets: [51]
+  acceptance_tests:
+    - adapters/onedrive.TestApprootReadWriteAndAccountIsolation
+    - adapters/onedrive.TestCreateIsConditionalOnNoExistingFile
+    - adapters/onedrive.TestUpdateRejectsAFileChangedSinceTheRead
+    - adapters/onedrive.TestUpdateOfADeletedFileBecomesAConflict
+    - adapters/onedrive.TestUpdateRefusesAnUnconditionalWrite
+    - adapters/onedrive.TestReadRetriesATransientNotFound
+    - adapters/onedrive.TestReadRetriesBeforeDeclaringTheCloudEmpty
+    - adapters/onedrive.TestReadRetriesATransientDownloadNotFound
+    - adapters/onedrive.TestGraphErrorsMapOntoTheSyncTaxonomy
+    - adapters/onedrive.TestOptionsFromEnvReadsTheFakeOverrides
+    - application/sync.TestManualSyncUploadsTheFirstCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - app.TestTicket51CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Reads locate netcatty-vault.json inside the approot special folder by path. Graph can briefly 404 a file a peer uploaded seconds ago, so both the metadata read and the download retry twice with a 1.5s-then-3s backoff (the original adapter's #779 window) before a 404 is accepted as no copy; the fake can inject transient misses. Downloads follow @microsoft.graph.downloadUrl without attaching the bearer token, falling back to /me/drive/items/{id}/content. Payloads are small, so writes use the simple PUT upload: creation is path-addressed with If-None-Match: *, and updates target the item id with If-Match: eTag. An update without an eTag is refused as ErrConflict rather than becoming unconditional. 412/409/423 become ErrConflict so the service re-observes; 401/403/404/429/5xx map onto the sync taxonomy. Each Microsoft account has an isolated approot in the fake. Unlike Google's Drive media update, Graph supports a real conditional update, so concurrent changes are detected without the original adapter's timestamp workaround."
+
+- id: sync.onedrive-refresh-reauth
+  area: sync
+  feature: OneDrive token rotation, refresh, and invalid_grant reauthorization
+  original_paths:
+    - infrastructure/services/adapters/OneDriveAdapter.ts
+    - infrastructure/services/cloudSync/authMethods.ts
+    - electron/bridges/onedriveAuthBridge.cjs
+  module: application/sync
+  tickets: [51]
+  acceptance_tests:
+    - application/sync.TestOneDriveReauthorizationResumesSync
+    - application/sync.TestOneDrivePersistentUnauthorizedRefreshesOnceAndStops
+    - application/sync.TestExpiredTokenRefreshesOnceAndPersistsRotation
+    - application/sync.TestRefreshIsSingleFlight
+    - adapters/onedrive.TestRefreshRotatesAndRejectsTheConsumedToken
+    - adapters/onedrive.TestRefreshKeepsThePresentedTokenWhenMicrosoftOmitsIt
+    - adapters/onedrive.TestRefreshInvalidGrantRequiresReauthorization
+    - adapters/onedrive.TestRefreshWithoutARefreshTokenRequiresReauthorization
+    - app.TestTicket51CheckRunsThroughTheKeyboard
+    - app.TestTicket51CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The service refreshes within 60 seconds of expiry and once after a 401, single-flight across concurrent callers, persists rotated refresh tokens, and carries the presented token forward when Microsoft omits a replacement. invalid_grant, interaction_required, consent_required, and login_required map to ErrReauthorizationRequired, which starts a fresh system-browser authorization, applies the grant, persists the new credential, and resumes the interrupted sync. A second 401 after the retry is reported without another refresh, so the retry cannot loop. A failure stores ProblemReauthorization for the actionable Reconnect state. Tokens remain provider-tagged in the secure store."
+
+- id: sync.onedrive-account-anchor
+  area: sync
+  feature: A different Microsoft account clears the merge anchor and the same account keeps it
+  original_paths:
+    - infrastructure/services/cloudSync/authMethods.ts
+    - infrastructure/services/syncAnchorDecision.js
+    - domain/sync.ts
+  module: application/sync
+  tickets: [51]
+  acceptance_tests:
+    - application/sync.TestOneDriveSameAccountKeepsTheMergeAnchor
+    - application/sync.TestOneDriveDifferentAccountClearsTheMergeAnchor
+    - application/sync.TestOneDriveReauthorizationOfTheSameAccountKeepsTheAnchor
+    - application/sync.TestOneDriveReauthorizationOfADifferentAccountClearsTheAnchor
+    - application/sync.TestOneDriveFailedReauthorizationPreservesTheAnchorAndCredential
+    - application/sync.TestSetProviderResetsTheConnectionAndAnchor
+    - app.TestTicket51CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "AccountID is the immutable Graph user id; Login is mail (falling back to userPrincipalName, then displayName) and is display-only. The same id keeps LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt across reauthorization even when the display name changes; a different id clears them before the next sync. Denied or timed-out reauthorization leaves the stored credential and the anchor untouched, so the existing remote copy is neither overwritten nor forgotten. The self-test covers same, different, and failed/cancelled cases against the fake."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 
@@ -2619,6 +2714,17 @@
   tickets: [50]
   status: excluded
   notes: "The Google Drive provider is verified against a local fake that implements the authorize, token, userinfo, Drive v3, and upload endpoints, including PKCE validation, refresh rotation, invalid_grant, pagination, and per-account appDataFolder isolation. No acceptance run contacts accounts.google.com, oauth2.googleapis.com, or www.googleapis.com: live OAuth needs a provisioned Google Cloud OAuth client, a human consent, and a real Drive quota, which CI cannot supply. The adapter defaults remain the original Electron production URLs."
+
+- id: sync.onedrive-live-endpoints
+  area: sync
+  feature: Verification against the production Microsoft OAuth and Graph endpoints
+  original_paths:
+    - infrastructure/services/adapters/OneDriveAdapter.ts
+    - electron/bridges/onedriveAuthBridge.cjs
+  module: adapters/onedrive
+  tickets: [51]
+  status: excluded
+  notes: "The OneDrive provider is verified against a local fake that implements Microsoft's authorize, token, /me, and Graph approot metadata/content endpoints, including PKCE validation, refresh rotation, invalid_grant, eTag conflicts, and per-account approot isolation. No acceptance run contacts login.microsoftonline.com or graph.microsoft.com: live OAuth needs a provisioned Microsoft Entra app registration with the app-folder delegated permission, a human consent, and a real OneDrive quota, which CI cannot supply. The adapter defaults remain the original Electron production URLs."
 
 - id: terminal.search
   area: terminal

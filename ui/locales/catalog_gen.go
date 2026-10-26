@@ -11716,6 +11716,16 @@ func (msgs Messages) SettingsSyncProviderGoogleDrive() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProviderGoogleDrive", nil)
 }
 
+// SettingsSyncProviderOneDrive says "OneDrive"
+// in the language the app shows.
+func SettingsSyncProviderOneDrive() string { return In(i18n.Locale()).SettingsSyncProviderOneDrive() }
+
+// SettingsSyncProviderOneDrive says "OneDrive"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProviderOneDrive() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProviderOneDrive", nil)
+}
+
 // SettingsSyncGoogleHint says "Your browser opens to sign in with Google. Netcatty never sees your password."
 // in the language the app shows.
 func SettingsSyncGoogleHint() string { return In(i18n.Locale()).SettingsSyncGoogleHint() }
@@ -11724,6 +11734,16 @@ func SettingsSyncGoogleHint() string { return In(i18n.Locale()).SettingsSyncGoog
 // in the language of msgs.
 func (msgs Messages) SettingsSyncGoogleHint() string {
 	return Catalog.Format(msgs.locale, "settingsSyncGoogleHint", nil)
+}
+
+// SettingsSyncOneDriveHint says "Your browser opens to sign in with Microsoft. Netcatty only accesses its own app folder in your OneDrive."
+// in the language the app shows.
+func SettingsSyncOneDriveHint() string { return In(i18n.Locale()).SettingsSyncOneDriveHint() }
+
+// SettingsSyncOneDriveHint says "Your browser opens to sign in with Microsoft. Netcatty only accesses its own app folder in your OneDrive."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncOneDriveHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncOneDriveHint", nil)
 }
 
 // SettingsSyncReconnect says "Reconnect"

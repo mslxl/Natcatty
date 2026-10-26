@@ -26,6 +26,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/histfile"
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
 	"github.com/mslxl/natcatty/adapters/localpty"
+	adapteronedrive "github.com/mslxl/natcatty/adapters/onedrive"
 	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
@@ -418,6 +419,10 @@ func run(afterReady func(hostWindow)) error {
 	// The NATCATTY_GDRIVE_* overrides point the whole app at the local fake for
 	// acceptance runs; production leaves them empty.
 	googleClient := adaptergdrive.New(adaptergdrive.OptionsFromEnv())
+	// OneDrive uses the same installed-app shape against Microsoft's consumer
+	// tenant. NATCATTY_ONEDRIVE_* overrides point the whole app at the local
+	// fake for acceptance runs; production leaves them empty.
+	oneDriveClient := adapteronedrive.New(adapteronedrive.OptionsFromEnv())
 	syncService = appsync.NewService(
 		githubClient,
 		adaptersyncvault.New(database, secretStore),
@@ -425,6 +430,7 @@ func run(afterReady func(hostWindow)) error {
 		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
 		appsync.WithDevice(deviceID, deviceName, version),
 		appsync.WithRemote(appsync.ProviderGoogleDrive, googleClient),
+		appsync.WithRemote(appsync.ProviderOneDrive, oneDriveClient),
 		appsync.WithBrowserOpener(mygo.Shell.OpenExternal),
 		appsync.WithRedrawRequest(invalidate),
 		// A downloaded cloud copy rewrites the Vault families. Mark the live

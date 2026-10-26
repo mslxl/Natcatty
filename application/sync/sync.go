@@ -112,6 +112,7 @@ var (
 const (
 	ProviderGitHub      = "github"
 	ProviderGoogleDrive = "google"
+	ProviderOneDrive    = "onedrive"
 )
 
 // NormalizeProvider maps empty and unknown historical values onto the
@@ -120,6 +121,8 @@ func NormalizeProvider(provider string) string {
 	switch provider {
 	case ProviderGoogleDrive:
 		return ProviderGoogleDrive
+	case ProviderOneDrive:
+		return ProviderOneDrive
 	default:
 		return ProviderGitHub
 	}
