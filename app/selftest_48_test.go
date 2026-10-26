@@ -16,7 +16,7 @@ import (
 )
 
 // runTicket48 presses 4 and 8, advances the harness to completion, and
-// asserts a passing eight-step result. openMenu presses F11 first.
+// asserts a passing nine-step result. openMenu presses F11 first.
 func runTicket48(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result {
 	t.Helper()
 	if openMenu {
@@ -42,8 +42,8 @@ func runTicket48(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 		}
 		t.Fatalf("ticket 48 self-test failed: %v", result.Errors)
 	}
-	if len(result.Steps) != 8 {
-		t.Fatalf("steps = %d, want 8: %+v", len(result.Steps), result.Steps)
+	if len(result.Steps) != 9 {
+		t.Fatalf("steps = %d, want 9: %+v", len(result.Steps), result.Steps)
 	}
 	return result
 }
@@ -74,8 +74,8 @@ func TestTicket48CheckRunsThroughTheKeyboard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("screenshot directory: %v", err)
 	}
-	if len(entries) != 10 {
-		t.Fatalf("screenshots = %d, want 10", len(entries))
+	if len(entries) != 14 {
+		t.Fatalf("screenshots = %d, want 14", len(entries))
 	}
 	for _, entry := range entries {
 		file, err := os.Open(filepath.Join(shots, entry.Name()))
@@ -88,10 +88,17 @@ func TestTicket48CheckRunsThroughTheKeyboard(t *testing.T) {
 			t.Fatalf("decode %s: %v", entry.Name(), err)
 		}
 		wantWidth, wantHeight := 868, 688
-		if filepath.Base(entry.Name()) == "bookmarks-long-en-440x380.png" ||
-			filepath.Base(entry.Name()) == "bookmarks-long-zh-CN-440x380.png" ||
-			filepath.Base(entry.Name()) == "blocked-typed-error-en-440x380.png" {
+		switch filepath.Base(entry.Name()) {
+		case "bookmarks-long-en-440x380.png",
+			"bookmarks-long-zh-CN-440x380.png",
+			"blocked-typed-error-en-440x380.png":
 			wantWidth, wantHeight = 440, 380
+		case "bookmarks-shell-704x421-en-bottom.png",
+			"bookmarks-shell-704x421-zh-CN-bottom.png":
+			wantWidth, wantHeight = 704, 421
+		case "bookmarks-shell-1084x661-en-bottom.png",
+			"bookmarks-shell-1084x661-zh-CN-bottom.png":
+			wantWidth, wantHeight = 1084, 661
 		}
 		if format != "png" || config.Width != wantWidth || config.Height != wantHeight {
 			t.Fatalf("%s = %s %dx%d, want %dx%d", entry.Name(), format,
@@ -126,8 +133,8 @@ func TestTicket48CheckPassesTwiceInOneProcess(t *testing.T) {
 		seen[step.Name] = step.Pass
 	}
 	for _, name := range []string{"open-panel", "bookmarks-add-edit",
-		"bookmarks-persist-and-scope", "favicon", "downloads", "sandbox",
-		"render-and-capture", "close-and-release"} {
+		"bookmarks-persist-and-scope", "bookmarks-long-list-shell", "favicon",
+		"downloads", "sandbox", "render-and-capture", "close-and-release"} {
 		if !seen[name] {
 			t.Fatalf("second run did not pass %q: %+v", name, second.Steps)
 		}

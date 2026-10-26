@@ -177,6 +177,21 @@ bridge for reading them.
 Decision: accepted for v1 by the rewrite spec "Out of Scope"; ticket 48.
 Ticket: 48
 
+### `browser.error-page-localization`
+
+Chromium's own blocked and load-error page is rendered inside the native web
+view, not by the app. MyGo v0.5.5 creates its WebView2/WebKit views without a
+UI-language option, an error-page override, or a hook that would let the app
+replace that document, so its body text follows the browser engine's locale
+and stays English under zh-CN. The app's own banner above it, its controls,
+and its bookmark and download panes are localized. Hiding the native view from
+a page failure would also hide the page still on screen after a stopped or
+download-aborted navigation, which is why the app keeps the engine page rather
+than forcing an app-rendered replacement.
+
+Decision: accepted for v1 as an engine-owned surface; ticket 48.
+Ticket: 48
+
 ## Provider verification limits
 
 ### `sync.google-drive-live-endpoints`
