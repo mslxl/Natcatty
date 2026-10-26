@@ -46,6 +46,30 @@ type RemoteTarget interface {
 	Write(ctx context.Context, content []byte) error
 }
 
+// Reconnector is an optional capability of a RemoteTarget whose transport can
+// be lost. Reconnect acquires a fresh transport for the same Host through the
+// application's Connection Manager (saved credentials, keys, known-host
+// trust, jump chain, and proxy) and returns a target bound to it. The service
+// only calls it for an explicit save or Retry: the background watcher never
+// dials, so an unattended upload cannot raise a login or host-key prompt.
+//
+// A target whose pane or Tab is gone refuses with an error instead of writing
+// through the dead connection; the session and local copy are kept. A Host
+// that was deleted or changed so it no longer authenticates fails the
+// acquisition, and the failure is reported the same way: the copy stays, the
+// prompt stays, and nothing is written through the old transport.
+type Reconnector interface {
+	Reconnect(ctx context.Context) (RemoteTarget, error)
+}
+
+// TransportLoss is an optional capability of a RemoteTarget that tells a lost
+// transport apart from the remote's own answer. Only a transport loss is
+// re-acquired automatically on Save: a permission or path refusal would get
+// the same answer from a new connection, so it is reported as it is.
+type TransportLoss interface {
+	TransportLost(cause error) bool
+}
+
 // Conflict describes a remote file that changed after the editing session
 // read it. Nothing is written until the user chooses to overwrite.
 type Conflict struct {
@@ -151,6 +175,12 @@ func (s *Service) newSession(name, localPath, tempDir string, remote bool,
 // writes nothing. overwrite is only true after the user approved replacing
 // the changed remote file.
 //
+// A failed write caused by a lost transport tries once more through a
+// re-acquired transport (see Reconnector) before it reports the failure. This
+// is an explicit save, so reconnecting here cannot surprise the user the way
+// an unattended watcher could; a permission or path failure does not dial,
+// because a new connection cannot change its answer.
+//
 // A failed write leaves the session and its local copy intact, so the editor
 // buffer and an external application's file both survive a lost connection.
 func (s *Service) Save(ctx context.Context, id EditID, content []byte, overwrite bool) error {
@@ -161,6 +191,19 @@ func (s *Service) Save(ctx context.Context, id EditID, content []byte, overwrite
 	if !ok {
 		return failure(ErrorSave, errors.New("the editing session is closed"))
 	}
+	err := s.saveOnce(ctx, sess, content, overwrite)
+	if err == nil {
+		return nil
+	}
+	fresh, recovered := s.recoverTarget(ctx, id, sess, err)
+	if !recovered {
+		return err
+	}
+	return s.saveOnce(ctx, fresh, content, overwrite)
+}
+
+// saveOnce is one guarded write through the session's current target.
+func (s *Service) saveOnce(ctx context.Context, sess sessionState, content []byte, overwrite bool) error {
 	if !sess.remote {
 		if err := writeLocalFile(sess.localPath, content); err != nil {
 			return failure(ErrorSave, err)
@@ -184,6 +227,57 @@ func (s *Service) Save(ctx context.Context, id EditID, content []byte, overwrite
 	}
 	s.recordSaved(ctx, sess, content)
 	return nil
+}
+
+// recoverTarget acquires a fresh transport for an explicit save that failed
+// on a lost one. A conflict is an answer, not a transport failure, so it is
+// never retried; a permission, path, or other remote refusal is reported as
+// it is, because dialing again cannot change that answer. The session keeps
+// the new target, and later saves and background uploads use it.
+func (s *Service) recoverTarget(ctx context.Context, id EditID, sess sessionState,
+	cause error) (sessionState, bool) {
+	if !sess.remote || sess.target == nil {
+		return sessionState{}, false
+	}
+	if _, ok := ConflictOf(cause); ok {
+		return sessionState{}, false
+	}
+	if !transportLost(sess, cause) {
+		return sessionState{}, false
+	}
+	reconnect, ok := sess.target.(Reconnector)
+	if !ok {
+		return sessionState{}, false
+	}
+	fresh, err := reconnect.Reconnect(ctx)
+	if err != nil || fresh == nil {
+		return sessionState{}, false
+	}
+	return s.installTarget(id, sess, fresh), true
+}
+
+// transportLost reports whether a save failure was caused by a lost or failed
+// transport, which is the only failure a new connection can fix. A target
+// that cannot classify its failures is never retried automatically.
+func transportLost(sess sessionState, cause error) bool {
+	var typed *Error
+	if !errors.As(cause, &typed) || typed.Err == nil {
+		return false
+	}
+	classifier, ok := sess.target.(TransportLoss)
+	return ok && classifier.TransportLost(typed.Err)
+}
+
+// installTarget makes a re-acquired transport the session's write-back
+// channel. It updates the map entry under the lock and the caller's snapshot.
+func (s *Service) installTarget(id EditID, sess sessionState, fresh RemoteTarget) sessionState {
+	s.mu.Lock()
+	if live := s.sessions[id]; live != nil {
+		live.target = fresh
+	}
+	s.mu.Unlock()
+	sess.target = fresh
+	return sess
 }
 
 // remoteVersion reads the current remote metadata and content digest. The
@@ -282,10 +376,27 @@ func (s *Service) ResolveExternal(ctx context.Context, id EditID, overwrite bool
 
 // RetryExternal retries an external upload after a failure. The local copy is
 // still on disk, so a lost connection loses no edits.
+//
+// A target that can reconnect acquires a fresh transport for the Host before
+// the guarded save runs, so a Retry after sshd returns uploads through the
+// live connection instead of the dead one. If the acquisition fails the
+// failure is reported and the prompt, local copy, and session all remain; a
+// pane the user closed refuses with its typed error instead of writing
+// through the dead transport.
 func (s *Service) RetryExternal(ctx context.Context, id EditID) error {
 	sess, ok := s.session(id)
 	if !ok {
 		return failure(ErrorSave, errors.New("the editing session is closed"))
+	}
+	if reconnect, ok := sess.target.(Reconnector); ok {
+		fresh, err := reconnect.Reconnect(ctx)
+		if err != nil {
+			return failure(ErrorSave, err)
+		}
+		if fresh == nil {
+			return failure(ErrorSave, errors.New("the remote pane returned no connection"))
+		}
+		sess = s.installTarget(id, sess, fresh)
 	}
 	content, err := os.ReadFile(sess.localPath)
 	if err != nil {
@@ -404,9 +515,11 @@ func (s *Service) SweepTemp(ctx context.Context) (int, error) {
 }
 
 // syncExternal uploads one local copy when the remote is unchanged, and
-// records a conflict instead of overwriting when it is not.
+// records a conflict instead of overwriting when it is not. It uses the
+// session's current target exactly once: the background watcher never dials a
+// new transport, and an explicit Retry has already re-acquired one.
 func (s *Service) syncExternal(ctx context.Context, sess sessionState, content []byte) error {
-	err := s.Save(ctx, sess.id, content, false)
+	err := s.saveOnce(ctx, sess, content, false)
 	if err == nil {
 		s.emit(WatchEvent{Kind: WatchSynced, Session: sess.id, Name: sess.name})
 		return nil
@@ -498,18 +611,24 @@ func (s *Service) runWatch(ctx context.Context, sess sessionState,
 // takes precedence: the user must answer it, and a later local save must not
 // take the remote version's place silently.
 func (s *Service) takeSettledChange(ctx context.Context, sess sessionState) {
-	if state, ok := s.session(sess.id); ok && state.pendingConflict {
+	state, ok := s.session(sess.id)
+	if !ok {
 		return
 	}
-	content, err := os.ReadFile(sess.localPath)
+	if state.pendingConflict {
+		return
+	}
+	content, err := os.ReadFile(state.localPath)
 	if err != nil {
-		s.emit(WatchEvent{Kind: WatchFailed, Session: sess.id, Name: sess.name, Err: err})
+		s.emit(WatchEvent{Kind: WatchFailed, Session: state.id, Name: state.name, Err: err})
 		return
 	}
 	if err := ctx.Err(); err != nil {
 		return
 	}
-	_ = s.syncExternal(ctx, sess, content)
+	// The live state, not the watcher's start snapshot: an explicit retry may
+	// have replaced the target with a re-acquired transport.
+	_ = s.syncExternal(ctx, state, content)
 }
 
 // observation is a local file version. The modification time and size are

@@ -95,6 +95,11 @@ type Tab struct {
 	// removes their materialized copies. Internal-editor sessions are owned by
 	// the editor, which outlives the Tab.
 	fileSessions []appfileopen.EditID
+
+	// link is a remote Tab's live transport cell. The Tab and every editing
+	// session opened from it share it, so a re-acquired transport is used by
+	// the next save without a new Tab. A local Tab has none.
+	link *remoteLink
 }
 
 // Title returns the Tab's display label: its Host's label, or its Host id.
@@ -346,7 +351,9 @@ func (s *State) Shutdown() {
 		for _, tab := range s.panes[side].Tabs {
 			tab.closed = true
 			s.closeTabFileSessions(tab)
-			if tab.FS != nil {
+			if tab.link != nil {
+				tab.link.close()
+			} else if tab.FS != nil {
 				_ = tab.FS.Close()
 			}
 		}
@@ -489,8 +496,16 @@ func (s *State) OpenLocal(side Side) {
 	s.load(tab, "")
 }
 
-// OpenRemote adds a remote Tab for a Host and makes it active.
+// OpenRemote adds a remote Tab for a Host and makes it active. Choosing a
+// Host that already has a Tab in this pane reconnects that Tab instead of
+// opening a second one: a GUI Host reconnect is the product's reconnect path,
+// and an editing session opened from the Tab follows the new transport.
 func (s *State) OpenRemote(side Side, hostID model.HostID, label string) {
+	if existing := s.remoteTab(side, hostID); existing != nil {
+		s.activateTab(side, existing)
+		s.reconnectTab(existing)
+		return
+	}
 	tab := &Tab{
 		ID:        s.nextID,
 		Kind:      KindRemote,
@@ -500,8 +515,118 @@ func (s *State) OpenRemote(side Side, hostID model.HostID, label string) {
 		Sort:      domainsftp.Sort{Field: domainsftp.SortName},
 	}
 	s.nextID++
+	tab.link = s.newRemoteLink(tab)
 	s.addTab(side, tab)
 	s.openRemote(tab)
+}
+
+// remoteTab returns the pane's Tab for a Host, if it already has one.
+func (s *State) remoteTab(side Side, hostID model.HostID) *Tab {
+	for _, tab := range s.panes[side].Tabs {
+		if tab != nil && !tab.closed && tab.Kind == KindRemote && tab.HostID == hostID {
+			return tab
+		}
+	}
+	return nil
+}
+
+// activateTab makes tab the pane's active Tab.
+func (s *State) activateTab(side Side, tab *Tab) {
+	pane := s.panes[side]
+	for i, candidate := range pane.Tabs {
+		if candidate == tab {
+			pane.Active = i
+			break
+		}
+	}
+	s.focused = side
+	s.RequestRedraw()
+}
+
+// newRemoteLink builds a Tab's transport cell. Dialing goes through the
+// transfer service, which is the app's Connection Manager path.
+func (s *State) newRemoteLink(tab *Tab) *remoteLink {
+	link := &remoteLink{
+		dial: func(ctx context.Context) (apptransfer.FileSystem, error) {
+			return s.service.OpenRemote(ctx, tab.HostID, tab.HostLabel)
+		},
+	}
+	link.adopt = func(files apptransfer.FileSystem) {
+		s.post(func() { s.adoptRemote(tab, files) })
+	}
+	return link
+}
+
+// adoptRemote installs a transport a save re-acquired. It runs on the UI
+// thread, so the pane lists, the Host's interrupted Transfers reattach, and
+// the open directory reloads through the live connection.
+func (s *State) adoptRemote(tab *Tab, files apptransfer.FileSystem) {
+	if tab == nil || tab.closed {
+		return
+	}
+	if tab.FS == files {
+		return
+	}
+	tab.FS = files
+	tab.Problem = nil
+	tab.Loading = false
+	s.reattachHost(tab.HostID, files)
+	if tab.Path != "" {
+		s.loadAt(tab, tab.Path, false)
+	}
+	s.RequestRedraw()
+}
+
+// reconnectTab re-acquires a transport for an existing remote Tab, keeping
+// its listing and editing sessions. The user reaches it by choosing the Host
+// again (the GUI's reconnect); no second Tab is created.
+func (s *State) reconnectTab(tab *Tab) {
+	if tab == nil || tab.closed || tab.Loading {
+		return
+	}
+	if tab.link == nil {
+		tab.link = s.newRemoteLink(tab)
+	}
+	tab.Loading = true
+	tab.Problem = nil
+	s.RequestRedraw()
+	go func() {
+		files, err := tab.link.acquire(s.ctx, false)
+		if err != nil {
+			s.post(func() {
+				if tab.closed {
+					return
+				}
+				tab.Loading = false
+				tab.Problem = err
+			})
+			return
+		}
+		root := tab.Path
+		if root == "" {
+			root, err = files.Root(s.ctx)
+			if err != nil {
+				s.post(func() {
+					if tab.closed {
+						return
+					}
+					tab.Loading = false
+					tab.Problem = err
+				})
+				return
+			}
+		}
+		s.post(func() {
+			if tab.closed {
+				return
+			}
+			tab.FS = files
+			tab.Loading = false
+			tab.Problem = nil
+			s.loadAt(tab, root, false)
+			s.reattachHost(tab.HostID, files)
+		})
+	}()
 }
 
 // Duplicate duplicates a side's active Tab at the same location.
@@ -522,11 +647,10 @@ func (s *State) Duplicate(side Side) {
 	s.nextID++
 	s.addTab(side, tab)
 	if tab.Kind == KindRemote {
-		host := tab.HostID
-		label := tab.HostLabel
+		tab.link = s.newRemoteLink(tab)
 		path := source.Path
 		go func() {
-			files, err := s.service.OpenRemote(s.ctx, host, label)
+			files, err := tab.link.acquire(s.ctx, false)
 			if err == nil && path == "" {
 				// The source Tab was duplicated before its first listing
 				// arrived. Its transport is the only source of a start
@@ -548,7 +672,6 @@ func (s *State) Duplicate(side Side) {
 			}
 			s.post(func() {
 				if tab.closed {
-					_ = files.Close()
 					return
 				}
 				tab.FS = files
@@ -576,7 +699,11 @@ func (s *State) CloseTab(side Side) {
 	}
 	tab.closed = true
 	s.closeTabFileSessions(tab)
-	if tab.FS != nil {
+	if tab.link != nil {
+		// The link refuses every later save with ErrPaneClosed; the Tab's own
+		// transport is released with it.
+		tab.link.close()
+	} else if tab.FS != nil {
 		_ = tab.FS.Close()
 	}
 	// A paste must never reach a transport the closed Tab owned.
@@ -610,11 +737,11 @@ func (s *State) addTab(side Side, tab *Tab) {
 	s.RequestRedraw()
 }
 
-// openRemote connects a remote Tab and lists its root.
+// openRemote connects a new remote Tab and lists its root.
 func (s *State) openRemote(tab *Tab) {
 	tab.Loading = true
 	go func() {
-		files, err := s.service.OpenRemote(s.ctx, tab.HostID, tab.HostLabel)
+		files, err := tab.link.acquire(s.ctx, false)
 		if err != nil {
 			s.post(func() {
 				if tab.closed {
@@ -627,7 +754,6 @@ func (s *State) openRemote(tab *Tab) {
 		}
 		root, err := files.Root(s.ctx)
 		if err != nil {
-			_ = files.Close()
 			s.post(func() {
 				if tab.closed {
 					return
@@ -639,7 +765,6 @@ func (s *State) openRemote(tab *Tab) {
 		}
 		s.post(func() {
 			if tab.closed {
-				_ = files.Close()
 				return
 			}
 			tab.FS = files
@@ -1055,17 +1180,25 @@ func (s *State) Open(side Side, entry domainsftp.Entry) {
 		request.Remote = true
 		fs := tab.FS
 		request.Source = func(ctx context.Context) (io.ReadCloser, error) {
+			if tab.link != nil {
+				live, _, err := tab.link.current()
+				if err != nil {
+					return nil, err
+				}
+				return live.Open(ctx, entry.Path)
+			}
 			if fs == nil {
 				return nil, errors.New("the remote pane has no connection")
 			}
 			return fs.Open(ctx, entry.Path)
 		}
-		if fs != nil {
-			// The same pane owns the write-back channel: saves return through
-			// this Tab's transport with the shared staging/rename transaction.
+		if tab.link != nil {
+			// The Tab's live transport is the write-back channel: saves return
+			// through the shared staging/rename transaction, and a Retry can
+			// re-acquire a transport without a new Tab.
 			request.Target = &paneRemoteTarget{
 				service: s.service,
-				tab:     tab,
+				link:    tab.link,
 				path:    entry.Path,
 			}
 		}

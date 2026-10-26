@@ -408,18 +408,24 @@ type opener struct {
 }
 
 func (o *opener) open() (apptransfer.FileSystem, error) {
-	if o.err != nil {
-		return nil, o.err
-	}
+	o.mu.Lock()
+	err := o.err
+	disk := o.disk
+	root := o.root
+	remote := o.remote
 	backing := o.backing
+	o.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	if backing == "" {
-		if o.remote {
+		if remote {
 			backing = "remote"
 		} else {
 			backing = "local"
 		}
 	}
-	handle := &fakeFS{disk: o.disk, root: o.root, backing: backing}
+	handle := &fakeFS{disk: disk, root: root, backing: backing}
 	o.mu.Lock()
 	o.handles = append(o.handles, handle)
 	o.mu.Unlock()
@@ -1695,8 +1701,9 @@ func TestOpenFileDoesNotAttachATargetToLocalFiles(t *testing.T) {
 }
 
 // The write target belongs to the Tab, not to the connection that existed when
-// the file was opened: a reconnected pane's live transport is the one a save
-// must use.
+// the file was opened: the GUI's Host reconnect reuses the Tab and installs a
+// live transport, and the next save must use it. It must not open a second Tab
+// the editing session would not use.
 func TestTheRemoteTargetFollowsAReplacedTransport(t *testing.T) {
 	requests := make(chan appfileopen.Request, 1)
 	f := newFixtureOptions(t, nil, nil, WithFileOpener(
@@ -1705,21 +1712,33 @@ func TestTheRemoteTargetFollowsAReplacedTransport(t *testing.T) {
 			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
 		}))
 	f.remote.put("/remote.txt", "remote", 0o640)
-	f.openRemote(t, Right)
-	f.state.Open(Right, entryNamed(t, f.state.Tab(Right), "remote.txt"))
+	tab := f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, tab, "remote.txt"))
 	request := nextOpenRequest(t, requests)
 	if request.Target == nil {
 		t.Fatal("a remote open request has no write target")
 	}
+	if tab.link == nil {
+		t.Fatal("the remote Tab has no transport link")
+	}
 
+	// The GUI reconnects the same Host: the selection reaches OpenRemote, the
+	// product's reconnect path.
 	reconnected := newFakeDisk()
 	reconnected.put("/remote.txt", "reconnected", 0o600)
-	other := &opener{disk: reconnected, root: "/", remote: true, backing: "remote:h1"}
-	files, err := other.OpenRemote(context.Background(), "h1", "Test")
-	if err != nil {
-		t.Fatal(err)
+	f.remoteOp.mu.Lock()
+	f.remoteOp.disk = reconnected
+	f.remoteOp.mu.Unlock()
+	f.state.OpenRemote(Right, "h1", "Test")
+	if tabs := len(f.state.Pane(Right).Tabs); tabs != 1 {
+		t.Fatalf("the Host reconnect left %d Tabs, want the same one", tabs)
 	}
-	f.state.Tab(Right).FS = files
+	if f.state.Tab(Right) != tab {
+		t.Fatal("the Host reconnect replaced the Tab instead of reconnecting it")
+	}
+	settle(t, f.state, "the reconnected listing", func() bool {
+		return !tab.Loading && tab.FS != nil && tab.Problem == nil
+	})
 
 	ctx := context.Background()
 	if stat, err := request.Target.Stat(ctx); err != nil || stat.Size != int64(len("reconnected")) {
@@ -1733,6 +1752,60 @@ func TestTheRemoteTargetFollowsAReplacedTransport(t *testing.T) {
 	}
 	if got, ok := f.remote.read("/remote.txt"); !ok || got != "remote" {
 		t.Fatalf("the stale transport was written: %q, %v", got, ok)
+	}
+}
+
+// A failed transport is re-acquired through the application's Connection
+// Manager at retry time, with no GUI reconnect and no second Tab.
+func TestTheRemoteTargetReacquiresALostTransport(t *testing.T) {
+	requests := make(chan appfileopen.Request, 1)
+	f := newFixtureOptions(t, nil, nil, WithFileOpener(
+		func(_ context.Context, request appfileopen.Request) (appfileopen.Result, error) {
+			requests <- request
+			return appfileopen.Result{Name: request.Name, Kind: domainpreferences.OpenerInternal}, nil
+		}))
+	f.remote.put("/remote.txt", "remote", 0o640)
+	tab := f.openRemote(t, Right)
+	f.state.Open(Right, entryNamed(t, tab, "remote.txt"))
+	request := nextOpenRequest(t, requests)
+	ctx := context.Background()
+	if _, err := request.Target.Stat(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The transport dies: the server is unreachable until it returns.
+	f.remoteOp.mu.Lock()
+	offline := f.remoteOp.err
+	f.remoteOp.err = errors.New("ssh: connect: connection refused")
+	f.remoteOp.mu.Unlock()
+	reconnecter, ok := request.Target.(appfileopen.Reconnector)
+	if !ok {
+		t.Fatal("the pane target does not offer reconnection")
+	}
+	if _, err := reconnecter.Reconnect(ctx); err == nil {
+		t.Fatal("a retry while the server is down reported success")
+	}
+
+	reconnected := newFakeDisk()
+	reconnected.put("/remote.txt", "after the server returned", 0o600)
+	f.remoteOp.mu.Lock()
+	f.remoteOp.err = offline
+	f.remoteOp.disk = reconnected
+	f.remoteOp.mu.Unlock()
+	if _, err := reconnecter.Reconnect(ctx); err != nil {
+		t.Fatalf("the retry after the server returned failed: %v", err)
+	}
+	if tabs := len(f.state.Pane(Right).Tabs); tabs != 1 {
+		t.Fatalf("the self-reconnect left %d Tabs, want 1", tabs)
+	}
+	if err := request.Target.Write(ctx, []byte("saved after reconnect")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reconnected.read("/remote.txt"); !ok || got != "saved after reconnect" {
+		t.Fatalf("reconnected content = %q, %v", got, ok)
+	}
+	if got, ok := f.remote.read("/remote.txt"); !ok || got != "remote" {
+		t.Fatalf("the dead transport was written: %q, %v", got, ok)
 	}
 }
 
@@ -1752,6 +1825,13 @@ func TestAClosedTabsRemoteTargetRefusesToWrite(t *testing.T) {
 	f.state.CloseTab(Right)
 	if err := request.Target.Write(context.Background(), []byte("late")); err == nil {
 		t.Fatal("a save through a closed Tab reported success")
+	}
+	if reconnecter, ok := request.Target.(appfileopen.Reconnector); ok {
+		if _, err := reconnecter.Reconnect(context.Background()); !errors.Is(err, ErrPaneClosed) {
+			t.Fatalf("a closed Tab's reconnect = %v, want the typed refusal", err)
+		}
+	} else {
+		t.Fatal("the pane target does not offer reconnection")
 	}
 	if got, ok := f.remote.read("/remote.txt"); !ok || got != "remote" {
 		t.Fatalf("a closed Tab's save changed the remote file: %q, %v", got, ok)
