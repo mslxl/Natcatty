@@ -99,6 +99,29 @@ func TestPollDeviceTokenMapsEveryGrantState(t *testing.T) {
 	}
 }
 
+func TestUserReturnsTheStableAccountIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user" {
+			t.Errorf("path = %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 583231, "login": "octocat"})
+	}))
+	defer server.Close()
+
+	grant, err := testClient(server).User(context.Background(), domainsync.Token{AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.ID != "583231" || grant.Login != "octocat" {
+		t.Fatalf("grant = %+v, want the numeric id and login", grant)
+	}
+	if grant.Identity() != "583231" {
+		t.Fatalf("identity = %q, want the stable id", grant.Identity())
+	}
+}
+
 func TestUserMapsUnauthorizedAndRateLimits(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

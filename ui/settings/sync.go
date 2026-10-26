@@ -27,6 +27,13 @@ type SyncService interface {
 	Sync(ctx context.Context, trigger appsync.Trigger) (appsync.Result, error)
 }
 
+// ProviderSyncService is the optional capability that lets the setup surface
+// choose between GitHub and Google Drive. Ticket 49's fake does not implement
+// it, so the selector is hidden rather than forced into that seam.
+type ProviderSyncService interface {
+	SetProvider(ctx context.Context, provider string) error
+}
+
 // SyncOption customizes a SyncState.
 type SyncOption func(*SyncState)
 
@@ -124,7 +131,8 @@ func (s *SyncState) CancelDisconnect() { s.disconnect = false }
 // Disconnecting reports whether the confirmation is open.
 func (s *SyncState) Disconnecting() bool { return s.disconnect }
 
-// Connect starts the GitHub device flow with the entered master password.
+// Connect starts the provider's authorization with the entered master
+// password.
 func (s *SyncState) Connect() {
 	if s.busy {
 		return
@@ -149,6 +157,53 @@ func (s *SyncState) Connect() {
 				return
 			}
 			state.password = ""
+		})
+	}()
+}
+
+// Reconnect starts a fresh authorization without asking for the master
+// password again. It is the actionable path out of ProblemReauthorization.
+func (s *SyncState) Reconnect() {
+	if s.busy {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		err := state.service.Connect(state.ctx, "", nil)
+		state.post(func() {
+			state.busy = false
+			if err != nil {
+				state.lastErr = err
+			}
+		})
+	}()
+}
+
+// SupportsProviderSelection reports whether the service can switch providers.
+func (s *SyncState) SupportsProviderSelection() bool {
+	_, ok := s.service.(ProviderSyncService)
+	return ok
+}
+
+// SetProvider persists the selected provider and clears the old account's
+// token and merge anchor on the application side.
+func (s *SyncState) SetProvider(provider string) {
+	service, ok := s.service.(ProviderSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		err := service.SetProvider(state.ctx, provider)
+		state.post(func() {
+			state.busy = false
+			if err != nil {
+				state.lastErr = err
+			}
 		})
 	}()
 }
@@ -253,12 +308,41 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 
 func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
+	syncProviderSelector(c, state, snapshot, m)
+	if snapshot.Provider == appsync.ProviderGoogleDrive {
+		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(11).TextColor(t.TextMuted)
+	}
 	syncDeviceCode(c, snapshot, m, t)
 	syncPasswordField(c, state, m)
 	ui.Text(c, m.SettingsSyncMasterPasswordHint()).FontSize(11).TextColor(t.TextMuted)
 	ui.Text(c, m.SettingsSyncSecurityNote()).FontSize(11).TextColor(t.TextMuted)
 	syncButtons(c, state, snapshot, m)
 	syncStatus(c, state, snapshot, m, t)
+}
+
+// syncProviderSelector appears only when the service can switch providers.
+// Choosing one clears the previous provider's token and merge anchor, so the
+// next Connect authorizes the new provider from a clean baseline.
+func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages) {
+	if !state.SupportsProviderSelection() {
+		return
+	}
+	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive}
+	names := []string{m.SettingsSyncProviderGitHub(), m.SettingsSyncProviderGoogleDrive()}
+	selected := names[indexOf(values, appsync.NormalizeProvider(snapshot.Provider))]
+	ui.Field(c, m.SettingsSyncProvider(), func() {
+		if ui.Select(c, &selected, names).Width(190).Changed() {
+			state.SetProvider(values[indexOf(names, selected)])
+			c.Invalidate()
+		}
+	})
+}
+
+func syncProviderName(provider string, m locales.Messages) string {
+	if appsync.NormalizeProvider(provider) == appsync.ProviderGoogleDrive {
+		return m.SettingsSyncProviderGoogleDrive()
+	}
+	return m.SettingsSyncProviderGitHub()
 }
 
 // syncDeviceCode shows the one-time code while GitHub authorization is in
@@ -287,6 +371,10 @@ func syncPasswordField(c *ui.Context, state *SyncState, m locales.Messages) {
 }
 
 func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Text(c, m.SettingsSyncProvider()).FontSize(11).TextColor(t.TextMuted)
+		ui.Text(c, syncProviderName(snapshot.Provider, m)).FontSize(11)
+	})
 	ui.Text(c, m.SettingsSyncConnectedAs(snapshot.Login)).Bold()
 	if snapshot.HasPassword {
 		ui.Text(c, m.SettingsSyncReady()).FontSize(11).TextColor(t.TextMuted)
@@ -347,6 +435,12 @@ func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m l
 			state.SyncNow()
 			c.Invalidate()
 		}
+		if snapshot.Problem == appsync.ProblemReauthorization {
+			if ui.Button(c, m.SettingsSyncReconnect()).Disabled(state.Busy()).Clicked() {
+				state.Reconnect()
+				c.Invalidate()
+			}
+		}
 		if ui.Button(c, m.SettingsSyncDisconnect()).Disabled(state.Busy()).Clicked() {
 			state.AskDisconnect()
 			c.Invalidate()
@@ -397,6 +491,8 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemEmptyVault()
 	case appsync.ProblemConflict:
 		return m.SettingsSyncProblemConflict()
+	case appsync.ProblemReauthorization:
+		return m.SettingsSyncProblemReauthorization()
 	case appsync.ProblemWrongPassword:
 		return m.SettingsSyncProblemWrongPassword()
 	case appsync.ProblemCorrupt:
@@ -445,6 +541,8 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemCorrupt
 	case errors.Is(err, appsync.ErrUnsupportedVersion):
 		return appsync.ProblemUnsupported
+	case errors.Is(err, appsync.ErrReauthorizationRequired):
+		return appsync.ProblemReauthorization
 	case errors.Is(err, appsync.ErrUnauthorized):
 		return appsync.ProblemUnauthorized
 	case errors.Is(err, appsync.ErrRateLimited):
