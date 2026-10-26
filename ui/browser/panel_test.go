@@ -259,6 +259,14 @@ type harness struct {
 	pages     *fakePages
 	tester    *ui.Tester
 	address   string
+	// redraws counts the panel's requests to repaint the window. A stale
+	// native child region can only be replaced by a repaint, so a locale or
+	// size change must ask for one.
+	redraws int
+	// ctx is the context of the last build pass. Handle.Bounds reads committed
+	// boxes through it between frames, which is how the minimum-window tests
+	// measure controls that share a label, as the five close buttons do.
+	ctx *ui.Context
 }
 
 func newHarness(t *testing.T, locale string, width, height int) *harness {
@@ -270,15 +278,20 @@ func newHarness(t *testing.T, locale string, width, height int) *harness {
 		Label:     "web-1",
 		Connector: connector,
 	})
-	panel := New(core, pages)
-	t.Cleanup(panel.Close)
-	tester := ui.NewTester(func(c *ui.Context) { panel.View(c) }, width, height)
-	tester.SetLocale(locale)
-	tester.Frame()
-	return &harness{
-		panel: panel, core: core, connector: connector, pages: pages,
-		tester: tester, address: locales.In(locale).BrowserAddress(),
+	h := &harness{
+		core: core, connector: connector, pages: pages,
+		address: locales.In(locale).BrowserAddress(),
 	}
+	panel := New(core, pages, WithRedraw(func() { h.redraws++ }))
+	t.Cleanup(panel.Close)
+	h.panel = panel
+	h.tester = ui.NewTester(func(c *ui.Context) {
+		h.ctx = c
+		panel.View(c)
+	}, width, height)
+	h.tester.SetLocale(locale)
+	h.tester.Frame()
+	return h
 }
 
 func (h *harness) waitRoute(t *testing.T, route appbrowser.Route) {
@@ -701,5 +714,364 @@ func TestPanelTabStripRendersTheActiveTabOnce(t *testing.T) {
 	}
 	if seen != 1 {
 		t.Fatalf("the active tab rendered %d times, want once: %q", seen, h.tester.Texts())
+	}
+}
+
+// boundsInside reports whether box lies wholly inside outer.
+func boundsInside(box, outer ui.Rect) bool {
+	return box.W > 0 && box.H > 0 &&
+		box.X >= outer.X-0.5 && box.Y >= outer.Y-0.5 &&
+		box.X+box.W <= outer.X+outer.W+0.5 && box.Y+box.H <= outer.Y+outer.H+0.5
+}
+
+// The app enforces a 720x480 window. At 96 DPI that is a 704x421 client, and
+// the shell's 232-DIP sidebar plus its 16-DIP padding leave the browser a
+// 440-DIP content column. The panel-level cases below render the panel alone,
+// so the content-column case uses that width and the client case the whole
+// 704-DIP client. The shell-mounted test in minsize_shell_test.go measures the
+// real window coordinates.
+const (
+	browserMinimumClientWidth  = 704
+	browserMinimumClientHeight = 421
+	browserMinimumColumnWidth  = 440
+)
+
+func (h *harness) openTabs(t *testing.T, count int) []appbrowser.Tab {
+	t.Helper()
+	for len(h.state().Tabs) < count {
+		if _, err := h.core.NewTab(); err != nil {
+			t.Fatalf("NewTab: %v", err)
+		}
+	}
+	h.frame()
+	tabs := h.state().Tabs
+	if len(tabs) != count {
+		t.Fatalf("tabs = %d, want %d", len(tabs), count)
+	}
+	return append([]appbrowser.Tab(nil), tabs...)
+}
+
+// waitTabRevealed frames until the active tab and its close control are whole
+// inside the scrolled viewport. It reports their boxes and the viewport's.
+// Every iteration renders a frame and checks the committed boxes, so it waits
+// on the real condition with a hard deadline rather than on a delay.
+func (h *harness) waitTabRevealed(t *testing.T, tabID string) (ui.Rect, ui.Rect, ui.Rect) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		h.frame()
+		itemNode, okItem := h.panel.tabItems[tabID]
+		closeNode, okClose := h.panel.tabCloses[tabID]
+		if okItem && okClose && itemNode != nil && closeNode != nil && h.ctx != nil {
+			item := itemNode.Bounds(h.ctx)
+			closing := closeNode.Bounds(h.ctx)
+			view := h.panel.stripView.Bounds(h.ctx)
+			if boundsInside(item, view) && boundsInside(closing, view) {
+				return item, closing, view
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the active tab %q never became whole in the strip", tabID)
+		}
+	}
+}
+
+// stripBounds reads the committed box of one of the tab strip's handles.
+func (h *harness) stripBounds(handle *ui.Handle) ui.Rect {
+	if h.ctx == nil {
+		return ui.Rect{}
+	}
+	return handle.Bounds(h.ctx)
+}
+
+func hasTab(state appbrowser.State, id string) bool {
+	for _, tab := range state.Tabs {
+		if tab.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPanelTabStripKeepsFiveTabsReachableAtTheMinimumWindow is the acceptance
+// regression at 960f22b1. With five tabs the strip overflows, so it must
+// scroll: each activated tab's whole item and its close control stay inside
+// the strip's viewport, and New tab stays outside the scroller and clickable
+// at the minimum size. It runs in English and zh-CN because the chrome widths
+// differ by locale.
+func TestPanelTabStripKeepsFiveTabsReachableAtTheMinimumWindow(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		for _, size := range []struct {
+			name          string
+			width, height int
+		}{
+			{"content-column", browserMinimumColumnWidth, browserMinimumClientHeight},
+			{"whole-client", browserMinimumClientWidth, browserMinimumClientHeight},
+		} {
+			t.Run(locale+"-"+size.name, func(t *testing.T) {
+				h := newHarness(t, locale, size.width, size.height)
+				h.waitRoute(t, appbrowser.RouteConnected)
+				h.frame()
+				tabs := h.openTabs(t, 5)
+
+				panelBox := ui.Rect{X: 0, Y: 0, W: float32(size.width), H: float32(size.height)}
+				plus := h.stripBounds(h.panel.newTab)
+				if !boundsInside(plus, panelBox) {
+					t.Fatalf("New tab is outside %dx%d with five tabs: %+v",
+						size.width, size.height, plus)
+				}
+				t.Logf("%s %dx%d: New tab at %.1f,%.1f %.0fx%.0f",
+					locale, size.width, size.height, plus.X, plus.Y, plus.W, plus.H)
+
+				// With all five tabs present, every one of them, including the
+				// last, must become whole inside the strip when activated.
+				for index, tab := range tabs {
+					if !h.core.Activate(tab.ID) {
+						t.Fatalf("Activate tab %d = false", index)
+					}
+					item, closing, view := h.waitTabRevealed(t, tab.ID)
+					if !boundsInside(item, panelBox) {
+						t.Fatalf("the active tab %d is outside the %d-wide panel: item %+v, view %+v",
+							index, size.width, item, view)
+					}
+					if !boundsInside(closing, panelBox) {
+						t.Fatalf("tab %d's close control is outside the %d-wide panel: %+v",
+							index, size.width, closing)
+					}
+					t.Logf("%s %dx%d: active tab %d item %.1f,%.1f %.0fx%.0f; close %.1f,%.1f %.0fx%.0f; view %.1f..%.1f",
+						locale, size.width, size.height, index,
+						item.X, item.Y, item.W, item.H,
+						closing.X, closing.Y, closing.W, closing.H,
+						view.X, view.X+view.W)
+				}
+				// Five fixed-width items are wider than the strip's viewport at
+				// this size, and the last activation above still showed the
+				// whole item: the strip had to scroll. An item compressed to
+				// fit would prove nothing, so its full width is checked too.
+				view := h.stripBounds(h.panel.stripView)
+				lastItem := h.stripBounds(h.panel.tabItems[tabs[len(tabs)-1].ID])
+				fullItemWidth := browserTabWidth + browserTabGap + browserTabCloseWidth
+				if lastItem.W < fullItemWidth-0.5 {
+					t.Fatalf("%s %dx%d: the last tab's item is compressed to %.1f DIPs, want %.0f: %+v",
+						locale, size.width, size.height, lastItem.W, fullItemWidth, lastItem)
+				}
+				if view.W >= lastItem.W*float32(len(tabs)) {
+					t.Fatalf("%s %dx%d: five items (%.0f each) fit the %.0f-DIP viewport; the test did not exercise scrolling",
+						locale, size.width, size.height, lastItem.W, view.W)
+				}
+
+				// New tab is reachable with five tabs open and makes a sixth,
+				// which is revealed and whose close control works.
+				before := len(h.state().Tabs)
+				h.tester.ClickAt(plus.X+plus.W/2, plus.Y+plus.H/2)
+				h.frame()
+				if got := len(h.state().Tabs); got != before+1 {
+					t.Fatalf("New tab made %d tabs, want %d", got, before+1)
+				}
+				extra := h.state().ActiveID
+				_, extraClose, _ := h.waitTabRevealed(t, extra)
+				h.tester.ClickAt(extraClose.X+extraClose.W/2, extraClose.Y+extraClose.H/2)
+				h.frame()
+				if hasTab(h.state(), extra) || len(h.state().Tabs) != before {
+					t.Fatalf("the extra tab was not closed: %+v", h.state().Tabs)
+				}
+
+				// Each surviving tab's close control is its hit target: click
+				// it while that tab is active, which also activates the next.
+				for index, tab := range tabs {
+					if hasTab(h.state(), tab.ID) {
+						if !h.core.Activate(tab.ID) {
+							t.Fatalf("Activate tab %d before close = false", index)
+						}
+					}
+					_, closing, _ := h.waitTabRevealed(t, tab.ID)
+					h.tester.ClickAt(closing.X+closing.W/2, closing.Y+closing.H/2)
+					h.frame()
+					if hasTab(h.state(), tab.ID) {
+						t.Fatalf("clicking tab %d's close control did not close it: %+v",
+							index, h.state().Tabs)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestPanelTabStripRevealsTheActiveTabWhenTheContentNarrows activates the last
+// of five tabs at a wide panel, then shrinks it to the minimum content column:
+// the active tab and its close control must be whole again, and New tab must
+// stay inside the column.
+func TestPanelTabStripRevealsTheActiveTabWhenTheContentNarrows(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		t.Run(locale, func(t *testing.T) {
+			h := newHarness(t, locale, 868, 688)
+			h.waitRoute(t, appbrowser.RouteConnected)
+			h.frame()
+			tabs := h.openTabs(t, 5)
+			last := tabs[len(tabs)-1].ID
+			if !h.core.Activate(last) {
+				t.Fatal("Activate the last tab = false")
+			}
+			h.waitTabRevealed(t, last)
+
+			h.tester.SetSize(browserMinimumColumnWidth, browserMinimumClientHeight)
+			h.frame()
+			item, closing, view := h.waitTabRevealed(t, last)
+			column := ui.Rect{X: 0, Y: 0, W: browserMinimumColumnWidth, H: browserMinimumClientHeight}
+			if view.X+view.W > float32(browserMinimumColumnWidth)+0.5 {
+				t.Fatalf("the strip viewport is wider than the %d-DIP column after the resize: %+v",
+					browserMinimumColumnWidth, view)
+			}
+			if !boundsInside(item, column) {
+				t.Fatalf("the active tab is cut after the resize: %+v", item)
+			}
+			if !boundsInside(closing, column) {
+				t.Fatalf("the active tab's close control is cut after the resize: %+v", closing)
+			}
+			plus := h.stripBounds(h.panel.newTab)
+			if !boundsInside(plus, column) {
+				t.Fatalf("New tab is outside the column after the resize: %+v", plus)
+			}
+			t.Logf("%s after 868 -> %d: active item %.1f,%.1f %.0fx%.0f; close %.1f,%.1f %.0fx%.0f; view %.1f..%.1f; New tab %.1f,%.1f %.0fx%.0f",
+				locale, browserMinimumColumnWidth,
+				item.X, item.Y, item.W, item.H, closing.X, closing.Y, closing.W, closing.H,
+				view.X, view.X+view.W, plus.X, plus.Y, plus.W, plus.H)
+		})
+	}
+}
+
+// TestPanelEmptyStateFollowsTheLocaleAfterAResize guards the acceptance
+// finding of an English "Browse through this Host" in a zh-CN window after a
+// resize: the empty state is built from the frame's locale every time, and a
+// size (either dimension) or language change asks for the repaint that
+// replaces old copy. The redraw count is the observable the panel controls;
+// without the request a native page's old pixels can survive in a region the
+// panel has grown into.
+func TestPanelEmptyStateFollowsTheLocaleAfterAResize(t *testing.T) {
+	h := newHarness(t, "en", 868, 688)
+	h.waitRoute(t, appbrowser.RouteConnected)
+	h.frame()
+	if !h.tester.HasText(locales.In("en").BrowserEmptyTitle()) {
+		t.Fatalf("the English empty state is missing: %q", h.tester.Texts())
+	}
+
+	zh := locales.In("zh-CN").BrowserEmptyTitle()
+
+	// A language change alone asks for a repaint and builds the new copy.
+	before := h.redraws
+	h.tester.SetLocale("zh-CN")
+	h.frame()
+	if h.redraws == before {
+		t.Fatalf("a locale change did not ask for a repaint")
+	}
+	waitFor(t, "the zh-CN empty state", func() bool { return h.tester.HasText(zh) })
+
+	// A height-only resize asks for a repaint too: a native page can cover a
+	// region the panel gains vertically.
+	before = h.redraws
+	h.tester.SetSize(868, browserMinimumClientHeight)
+	h.frame()
+	if h.redraws == before {
+		t.Fatalf("a height-only resize did not ask for a repaint")
+	}
+
+	// A width-only resize asks for a repaint and reveals the active tab.
+	before = h.redraws
+	h.tester.SetSize(browserMinimumClientWidth, browserMinimumClientHeight)
+	h.frame()
+	if h.redraws == before {
+		t.Fatalf("a width-only resize did not ask for a repaint")
+	}
+
+	if !h.tester.HasText(zh) {
+		t.Fatalf("the zh-CN empty state is missing after the resize: %q", h.tester.Texts())
+	}
+	if h.tester.HasText(locales.In("en").BrowserEmptyTitle()) {
+		t.Fatalf("English empty-state copy survived in the zh-CN frame: %q", h.tester.Texts())
+	}
+}
+
+// TestPanelRefusedCredentialedAddressLeavesNoCredential checks the address bar
+// after a refused credentialed submission: the refusal is visible, but the
+// unsubmitted username and password do not stay on screen. NormalizeURL
+// reports credentials only after its scheme, host, and length checks, so the
+// table includes forms refused for one of those reasons first; none may keep
+// the clear-text credential.
+func TestPanelRefusedCredentialedAddressLeavesNoCredential(t *testing.T) {
+	h := newHarness(t, "en", browserMinimumColumnWidth, browserMinimumClientHeight)
+	h.waitRoute(t, appbrowser.RouteConnected)
+	h.frame()
+	h.navigate(t, "example.com/docs")
+	h.frame()
+	waitFor(t, "the committed page", func() bool {
+		tab, ok := h.core.ActiveTab()
+		return ok && tab.URL == "https://example.com/docs"
+	})
+	loads := len(h.pages.at(0).loadsCopy())
+	refused := []struct {
+		address     string
+		credentials bool // NormalizeURL reports ErrAddressCredentials
+	}{
+		{"http://alice:" + "pw" + "@example.com/", true},
+		{"ftp://alice:" + "pw" + "@example.com/", false},
+		{"http://alice:" + "pw" + "@", false},
+		{"alice:" + "pw" + "@example.com", false},
+	}
+	for _, test := range refused {
+		h.tester.Key(ui.Cmd, ui.KeyL)
+		h.frame()
+		h.tester.Type(test.address)
+		h.tester.Key(0, ui.KeyEnter)
+		h.frame()
+
+		if test.credentials && !h.tester.HasText(locales.In("en").BrowserCredentials()) {
+			t.Fatalf("%q: the credential refusal is not visible: %q", test.address, h.tester.Texts())
+		}
+		if strings.Contains(h.panel.address, "alice") || strings.Contains(h.panel.address, "pw") {
+			t.Fatalf("%q: the refused credentialed address stayed on screen: %q", test.address, h.panel.address)
+		}
+		if h.panel.address != "https://example.com/docs" {
+			t.Fatalf("%q: the address bar = %q, want the tab's real address", test.address, h.panel.address)
+		}
+		if got := len(h.pages.at(0).loadsCopy()); got != loads {
+			t.Fatalf("%q: the refused address caused a page load: %d -> %d", test.address, loads, got)
+		}
+	}
+}
+
+// TestPanelStopDropsAProvisionalTabLabel stops a navigation that never
+// committed: the tab keeps the page it actually shows instead of the host
+// label it guessed from the typed address.
+func TestPanelStopDropsAProvisionalTabLabel(t *testing.T) {
+	h := newHarness(t, "en", browserMinimumColumnWidth, browserMinimumClientHeight)
+	h.waitRoute(t, appbrowser.RouteConnected)
+	h.frame()
+	h.navigate(t, "docs.example.com/a")
+	h.frame()
+	tab := h.activeTab(t)
+	h.core.PageChanged(tab.ID, appbrowser.PageState{Title: "Docs"})
+	h.frame()
+
+	if _, err := h.core.Navigate(tab.ID, "other.example/slow"); err != nil {
+		t.Fatalf("Navigate the slow address: %v", err)
+	}
+	h.frame()
+	if active := h.activeTab(t); active.Title != "other.example" || active.URL != "https://other.example/slow" {
+		t.Fatalf("the provisional tab = %+v", active)
+	}
+	if err := h.tester.Click(locales.In("en").BrowserStop()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.frame()
+
+	active := h.activeTab(t)
+	if active.Title != "Docs" || active.URL != "https://docs.example.com/a" {
+		t.Fatalf("the stopped tab kept %+v, want the committed Docs page", active)
+	}
+	if !h.tester.HasText("Docs") {
+		t.Fatalf("the restored tab label is missing: %q", h.tester.Texts())
+	}
+	if h.panel.address != "https://docs.example.com/a" {
+		t.Fatalf("the address bar = %q, want the restored page", h.panel.address)
 	}
 }

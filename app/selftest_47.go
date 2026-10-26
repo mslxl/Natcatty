@@ -77,8 +77,6 @@ type selftest47 struct {
 	core    *appbrowser.Panel
 	panel   *browserui.Panel
 
-	opening        bool
-	opened         bool
 	browserOpening bool
 	browserOpened  bool
 	openDeadline   time.Time
@@ -103,11 +101,6 @@ type selftest47 struct {
 }
 
 func (t *selftest47) check() selftest.Check {
-	t.connector = &selftest47Connector{}
-	t.pages = &selftest47Pages{}
-	t.factory = &selftest47Factory{}
-	t.service = appsession.NewService(t.factory)
-	t.shell = shellstate.NewState(shellstate.WithSessions(t.service, t.newSurface))
 	return selftest.Check{
 		Ticket: selftest47Ticket,
 		Name:   "Host-routed browser tunnel and panel",
@@ -122,6 +115,66 @@ func (t *selftest47) check() selftest.Check {
 			{Name: "close-and-release", Run: t.cleanupStep},
 		},
 	}
+}
+
+// resetRunState rebuilds the Session service, shell, panel seams, and every
+// per-run stage so pressing F11,4,7 again in the same process starts from the
+// same conditions as the first run. The harness registers one set of steps, so
+// without it a second run reuses opened flags, the first run's tunnel
+// counters and deadlines, and a closed shell/panel; disconnect-and-retry then
+// times out waiting for Retry to open a tunnel the old core can no longer
+// request. It follows tickets 44 and 45 and runs on every entry of the first
+// step, including after a run that failed before close-and-release.
+func (t *selftest47) resetRunState() {
+	// Close the browser panel and its dedicated tunnel explicitly: a run that
+	// failed before close-and-release leaves both live, and shell teardown
+	// alone must not be the only thing that discards them. Both closes are
+	// idempotent.
+	if t.panel != nil {
+		t.panel.Close()
+	}
+	if t.core != nil {
+		t.core.Close()
+	}
+	if t.shell != nil {
+		t.shell.Shutdown()
+		t.shell.CloseAllSessions()
+	}
+	if t.service != nil {
+		t.service.CloseAll()
+	}
+	if t.directory != "" {
+		_ = os.RemoveAll(t.directory)
+		t.directory = ""
+	}
+	t.connector = &selftest47Connector{}
+	t.pages = &selftest47Pages{}
+	t.factory = &selftest47Factory{}
+	t.service = appsession.NewService(t.factory)
+	t.shell = shellstate.NewState(shellstate.WithSessions(t.service, t.newSurface))
+	t.tester = nil
+
+	t.session = nil
+	t.surface = nil
+	t.core = nil
+	t.panel = nil
+
+	t.browserOpening = false
+	t.browserOpened = false
+	t.openDeadline = time.Time{}
+	t.localTyped = false
+	t.localDone = false
+	t.publicTab = false
+	t.publicTyped = false
+	t.publicDone = false
+	t.controls = false
+	t.tabsDone = false
+	t.disconnectStage = 0
+	t.disconnectDeadline = time.Time{}
+	t.variant = 0
+	t.captured = 0
+	t.closed = false
+	t.cleanupDeadline = time.Time{}
 }
 
 // newSurface builds the production Session surface with the browser opener
@@ -149,36 +202,39 @@ func (t *selftest47) newSurface(session *appsession.Session) (shellstate.Surface
 	return surface, nil
 }
 
+// openSessionStep opens the Session in one call, as the first step of every
+// run. It resets first, then drives frames until the surface attaches, so the
+// step never re-enters and re-resets mid-run.
 func (t *selftest47) openSessionStep(*ui.Context) selftest.Outcome {
-	if t.opened {
-		return selftest.Passed("the SSH Session and its surface are live", "shellstate.OpenHost")
+	t.resetRunState()
+	t.tester = ui.NewTester(uishell.View(t.shell), 1100, 720)
+	t.tester.SetLocale("en")
+	host := domainvault.Host{
+		ID:       model.HostID(selftest47Host),
+		Label:    "web-1",
+		Hostname: "web-1.selftest",
+		Port:     22,
+		Username: "root",
+		Protocol: domainvault.ProtocolSSH,
 	}
-	if !t.opening {
-		t.tester = ui.NewTester(uishell.View(t.shell), 1100, 720)
-		t.tester.SetLocale("en")
-		host := domainvault.Host{
-			ID:       model.HostID(selftest47Host),
-			Label:    "web-1",
-			Hostname: "web-1.selftest",
-			Port:     22,
-			Username: "root",
-			Protocol: domainvault.ProtocolSSH,
+	if err := t.shell.OpenHost(host); err != nil {
+		return selftest.Failed(fmt.Errorf("open the self-test Host: %w", err))
+	}
+	deadline := time.Now().Add(selftest47Wait)
+	for {
+		t.shell.Flush()
+		t.tester.Frame()
+		if t.session != nil && t.surface != nil && t.shell.TabCount() == 1 {
+			return selftest.Passed(
+				"an SSH Session opened through the production shell and its surface factory",
+				"shellstate.WithSessions")
 		}
-		if err := t.shell.OpenHost(host); err != nil {
-			return selftest.Failed(fmt.Errorf("open the self-test Host: %w", err))
+		if time.Now().After(deadline) {
+			return selftest.Failed(fmt.Errorf(
+				"timed out after %s waiting for the SSH Session to attach to its Tab",
+				selftest47Wait))
 		}
-		t.opening = true
-		t.openDeadline = time.Now().Add(selftest47Wait)
 	}
-	t.shell.Flush()
-	t.tester.Frame()
-	if t.session != nil && t.surface != nil && t.shell.TabCount() == 1 {
-		t.opened = true
-		return selftest.Passed(
-			"an SSH Session opened through the production shell and its surface factory",
-			"shellstate.WithSessions")
-	}
-	return pending(t.openDeadline, "the SSH Session to attach to its Tab")
 }
 
 func (t *selftest47) openBrowserStep(*ui.Context) selftest.Outcome {
