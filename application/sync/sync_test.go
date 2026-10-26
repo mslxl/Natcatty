@@ -261,17 +261,24 @@ func payloadWithHost(label string, syncedAt int64) Payload {
 
 func testService(t *testing.T) (*Service, *fakeRemote, *fakeVault, *memoryConfigs, *memoryTokens, *fakeWaiter) {
 	t.Helper()
+	return testServiceWith(t)
+}
+
+func testServiceWith(t *testing.T, opts ...Option) (*Service, *fakeRemote, *fakeVault, *memoryConfigs, *memoryTokens, *fakeWaiter) {
+	t.Helper()
 	remote := newFakeRemote()
 	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
 	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.StrategyNewest}}
 	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
 	waiter := &fakeWaiter{}
-	service := NewService(remote, vault, configs, tokens,
+	options := []Option{
 		WithWaiter(waiter),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
 		WithDevice("device-1", "Test Device", "1.0"),
-		WithDebounce(10*time.Millisecond),
-	)
+		WithDebounce(10 * time.Millisecond),
+	}
+	options = append(options, opts...)
+	service := NewService(remote, vault, configs, tokens, options...)
 	if err := service.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -371,6 +378,57 @@ func TestManualSyncDownloadsTheNewerRemoteCopy(t *testing.T) {
 	}
 	if remote.writeCount() != 0 {
 		t.Fatal("download must not write")
+	}
+}
+
+func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
+	applied := 0
+	service, remote, vault, _, _, _ := testServiceWith(t, WithAppliedSnapshot(func() { applied++ }))
+
+	// A first upload changes only the cloud copy.
+	result, err := service.Sync(context.Background(), TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Uploaded || applied != 0 {
+		t.Fatalf("upload = %+v, notifications = %d, want no applied notification", result, applied)
+	}
+
+	// A newer cloud copy is applied to the local Vault.
+	remote.exists = true
+	remote.file = RemoteFile{ID: "gist-1", ETag: "etag-other", UpdatedAt: 9000,
+		Content: encryptForTest(t, payloadWithHost("cloud", 9000), "secret", 9000)}
+	result, err = service.Sync(context.Background(), TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Downloaded || applied != 1 {
+		t.Fatalf("download = %+v, notifications = %d, want exactly one", result, applied)
+	}
+
+	// A converged no-op applies nothing.
+	result, err = service.Sync(context.Background(), TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != domainsync.ActionNone || applied != 1 {
+		t.Fatalf("no-op = %+v, notifications = %d, want still one", result, applied)
+	}
+
+	// A lost conditional write that newest-wins resolves to a download uses
+	// the same apply path and must notify too.
+	vault.set(payloadWithHost("edited", 6000))
+	remote.mu.Lock()
+	remote.conflictNext = true
+	remote.conflictFile = RemoteFile{ID: "gist-1", ETag: "etag-cloud", UpdatedAt: 12000,
+		Content: encryptForTest(t, payloadWithHost("other-device", 12000), "secret", 12000)}
+	remote.mu.Unlock()
+	result, err = service.Sync(context.Background(), TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Downloaded || applied != 2 {
+		t.Fatalf("conflict download = %+v, notifications = %d, want two", result, applied)
 	}
 }
 

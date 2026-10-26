@@ -73,7 +73,7 @@ func TestTicket49CheckRunsThroughTheKeyboard(t *testing.T) {
 	for _, want := range []string{
 		"domain/sync.OriginalFormatVector + EncryptBytes/MarshalFile",
 		"adapters/github.Client device flow + httptest fake GitHub",
-		"application/sync.Service + adapters/github.Client + adapters/syncvault",
+		"application/sync.WithAppliedSnapshot + ui/vault/state.InvalidateLists/FlushLists",
 		"application/sync.NotifyLocalChange debounce + adapters/store change hook",
 		"adapters/github conditional PATCH + domain/sync.Decide",
 		"application/sync.Service empty-Vault guard before any remote write",

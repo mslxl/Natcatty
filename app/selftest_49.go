@@ -11,7 +11,8 @@ package app
 //     re-encrypts byte-for-byte, and its master-key verifier matches;
 //   - GitHub's device flow authorizes a token and resolves the login;
 //   - a manual upload publishes the Vault and its encrypted secret, a newer
-//     cloud copy downloads, and the following sync is a no-op;
+//     cloud copy downloads into the real Vault state, the running list picks
+//     it up on the next frame, and the following sync is a no-op;
 //   - a Vault edit schedules the debounced automatic sync (twice);
 //   - a lost conditional write (412) re-reads the cloud copy and last-write-
 //     wins downloads it instead of overwriting it;
@@ -52,6 +53,7 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	"github.com/mslxl/natcatty/ui/selftest"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
 const (
@@ -89,6 +91,9 @@ type selftest49Report struct {
 	UploadSecret       string
 	DownloadAction     string
 	DownloadHost       string
+	ViewStaleHost      string
+	ViewFreshHost      string
+	ViewNotifications  int
 	NoOpAction         string
 	AutoFirstHost      string
 	AutoSecondHost     string
@@ -161,8 +166,8 @@ func (t *selftest49) scenarioStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(t.err)
 		}
 		return selftest.Passed(
-			"fake GitHub: envelope vector, device flow, manual up/down, two debounced writes, conflict download, empty guard",
-			"adapters/github + application/sync + adapters/syncvault + httptest")
+			"fake GitHub: envelope vector, device flow, manual up/down with a live Vault list refresh, two debounced writes, conflict download, empty guard",
+			"adapters/github + application/sync + adapters/syncvault + ui/vault/state")
 	default:
 		if !time.Now().Before(t.deadline) {
 			t.done = true
@@ -223,9 +228,16 @@ func (t *selftest49) manualStep(*ui.Context) selftest.Outcome {
 	if report.NoOpAction != string(domainsync.ActionNone) {
 		return selftest.Failed(fmt.Errorf("sync after download = %q, want none", report.NoOpAction))
 	}
+	if report.ViewNotifications != 1 {
+		return selftest.Failed(fmt.Errorf("applied-snapshot notifications = %d, want 1", report.ViewNotifications))
+	}
+	if report.ViewStaleHost != "initial-host" || report.ViewFreshHost != "cloud-host" {
+		return selftest.Failed(fmt.Errorf("live Vault list = %q before the frame, %q after, want initial-host then cloud-host",
+			report.ViewStaleHost, report.ViewFreshHost))
+	}
 	return selftest.Passed(
-		"upload carried the Host and its encrypted password; newer cloud copy applied; follow-up no-op",
-		"application/sync.Service + adapters/github.Client + adapters/syncvault")
+		"upload carried the Host and its encrypted password; newer cloud copy applied and the live Vault list refreshed in the same process; follow-up no-op",
+		"application/sync.WithAppliedSnapshot + ui/vault/state.InvalidateLists/FlushLists")
 }
 
 func (t *selftest49) autoStep(*ui.Context) selftest.Outcome {
@@ -530,9 +542,19 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 		ClientID: "selftest-client",
 	})
 	vault := adaptersyncvault.New(database, secrets)
+	// A live Vault state mirrors the running UI. The download step proves the
+	// applied-snapshot notification refreshes its lists in this same process,
+	// without a restart, and that the UI thread applies it on the next frame.
+	vaultService := appvault.NewService(database, appvault.WithSecrets(secrets))
+	vaultView := vaultstate.NewState(vaultService)
+	viewNotifications := 0
 	service := appsync.NewService(remote, vault, configs, tokens,
 		appsync.WithDebounce(selftest49Debounce),
 		appsync.WithDevice("selftest-device", "Self-test Device", "selftest"),
+		appsync.WithAppliedSnapshot(func() {
+			viewNotifications++
+			vaultView.InvalidateLists()
+		}),
 	)
 	defer service.Stop()
 	defer service.ClearPassword()
@@ -629,6 +651,13 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 	if len(remotePayload.Secrets) > 0 {
 		report.UploadSecret = remotePayload.Secrets[0].Value
 	}
+	// The running Vault surface loaded the local state before the sync.
+	if err := vaultView.Reload(); err != nil {
+		return report, fmt.Errorf("reload the live Vault state: %w", err)
+	}
+	if got := selftest49FirstLabel(vaultView.Items()); got != "initial-host" {
+		return report, fmt.Errorf("live Vault list before download = %q, want initial-host", got)
+	}
 
 	// 4. Manual download: a newer cloud copy replaces the local families.
 	cloudTime := time.Now().Add(time.Hour)
@@ -647,6 +676,13 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 		return report, fmt.Errorf("list the downloaded Hosts: %w", err)
 	}
 	report.DownloadHost = selftest49FirstLabel(hosts)
+	// The applied-snapshot notification must have marked the live state stale
+	// without touching its list off the UI thread. The scenario thread now
+	// stands in for the next UI frame and applies the reload.
+	report.ViewNotifications = viewNotifications
+	report.ViewStaleHost = selftest49FirstLabel(vaultView.Items())
+	vaultView.FlushLists()
+	report.ViewFreshHost = selftest49FirstLabel(vaultView.Items())
 	noop, err := service.Sync(ctx, appsync.TriggerManual)
 	if err != nil {
 		return report, fmt.Errorf("sync after download: %w", err)
