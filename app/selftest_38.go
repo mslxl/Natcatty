@@ -16,10 +16,14 @@ package app
 //   - Remote changes: an internal save and an external upload each detect that
 //     the remote file changed, show the conflict prompt, write nothing until
 //     Overwrite is pressed, and then replace it.
-//   - Lost connection: a wrapper around the real local transport fails the
-//     staging create; an internal save keeps the buffer and reports the
-//     failure, an external upload keeps the local copy and prompts; both
-//     retries succeed once the transport recovers.
+//   - Lost connection: killing the modelled sshd leaves every handed-out
+//     transport dead. An internal save keeps the buffer and reports the
+//     failure, an external upload keeps the local copy and prompts; a restart
+//     only makes the next dial work, and each retry acquires a fresh
+//     transport. The last stage reconnects the Host through the GUI's path
+//     (choosing it again), which must reuse the same Tab, and the same
+//     editing session then uploads through that transport without a second
+//     dial.
 //   - Temp sweep: an orphan left by a previous process is removed at startup;
 //     a live session's directory survives an explicit sweep; closing the
 //     document removes its directory; Shutdown sweeps the rest.
@@ -51,6 +55,7 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	"github.com/mslxl/natcatty/domain/model"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 	editorui "github.com/mslxl/natcatty/ui/editor"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/selftest"
@@ -67,7 +72,7 @@ type selftest38 struct {
 	downloadDir string
 	preferences *apppreferences.Service
 	launcher    *selftest38Launcher
-	remote      *selftest38RemoteFS
+	remote      *selftest38Remote
 	open        *appfileopen.Service
 	editor      *editorui.State
 	transfer    *transferstate.State
@@ -95,6 +100,8 @@ type selftest38Step struct {
 	text     string
 	path     string
 	before   int
+	dials    int
+	mark     int
 }
 
 func (t *selftest38) check() selftest.Check {
@@ -156,39 +163,172 @@ func (l *selftest38Launcher) lastPath() (string, bool) {
 	return l.calls[len(l.calls)-1].path, true
 }
 
-// selftest38RemoteFS wraps the real local transport as the remote pane's
-// filesystem. Only Create can be made to fail, which simulates a lost
-// connection at the point where a save stages its bytes; listing, reading,
-// and stats keep working.
+// selftest38Remote models the SSH server, not one connection: every dial
+// gets its own transport, and killing the server leaves every handed-out
+// transport permanently dead, as killing sshd and its sftp-server does. A
+// restart only lets the next dial succeed, so a retry that reuses the old
+// handle fails exactly as the GUI acceptance observed.
+type selftest38Remote struct {
+	mu         sync.Mutex
+	lost       bool
+	dials      int
+	transports []*selftest38RemoteFS
+}
+
+func (r *selftest38Remote) dial() (apptransfer.FileSystem, error) {
+	r.mu.Lock()
+	r.dials++
+	lost := r.lost
+	r.mu.Unlock()
+	if lost {
+		return nil, errors.New("ssh: connect: connection refused")
+	}
+	base, err := adaptersftp.NewLocal().OpenLocal(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	transport := &selftest38RemoteFS{FileSystem: base}
+	r.mu.Lock()
+	r.transports = append(r.transports, transport)
+	r.mu.Unlock()
+	return transport, nil
+}
+
+// kill is the server going away: the listener closes and every live transport
+// is reset. A later dial fails until restart.
+func (r *selftest38Remote) kill() {
+	r.mu.Lock()
+	r.lost = true
+	transports := append([]*selftest38RemoteFS(nil), r.transports...)
+	r.mu.Unlock()
+	for _, transport := range transports {
+		transport.kill()
+	}
+}
+
+// restart starts listening on the same endpoint. Existing transports stay
+// dead; only a new dial works.
+func (r *selftest38Remote) restart() {
+	r.mu.Lock()
+	r.lost = false
+	r.mu.Unlock()
+}
+
+func (r *selftest38Remote) dialCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dials
+}
+
+// selftest38RemoteFS wraps the real local transport as one remote pane's
+// connection. Kill makes every operation fail, which is what a reset
+// connection does; the underlying fixture files are only reached through a
+// live transport, so a dead handle cannot mutate the "remote" tree.
 type selftest38RemoteFS struct {
 	apptransfer.FileSystem
-	mu         sync.Mutex
-	failWrites bool
+	mu   sync.Mutex
+	dead bool
 }
 
 func (f *selftest38RemoteFS) Backing() string { return "selftest-remote" }
 
-func (f *selftest38RemoteFS) setFailWrites(fail bool) {
+func (f *selftest38RemoteFS) kill() {
 	f.mu.Lock()
-	f.failWrites = fail
+	f.dead = true
 	f.mu.Unlock()
 }
 
-func (f *selftest38RemoteFS) Create(ctx context.Context, path string) (io.WriteCloser, error) {
+func (f *selftest38RemoteFS) fail() error {
 	f.mu.Lock()
-	fail := f.failWrites
-	f.mu.Unlock()
-	if fail {
-		return nil, errors.New("the connection was reset")
+	defer f.mu.Unlock()
+	if f.dead {
+		return errors.New("connection reset by peer")
+	}
+	return nil
+}
+
+func (f *selftest38RemoteFS) Root(ctx context.Context) (string, error) {
+	if err := f.fail(); err != nil {
+		return "", err
+	}
+	return f.FileSystem.Root(ctx)
+}
+
+func (f *selftest38RemoteFS) List(ctx context.Context, dir string) ([]domainsftp.Entry, error) {
+	if err := f.fail(); err != nil {
+		return nil, err
+	}
+	return f.FileSystem.List(ctx, dir)
+}
+
+func (f *selftest38RemoteFS) Stat(ctx context.Context, path string) (domainsftp.Entry, error) {
+	if err := f.fail(); err != nil {
+		return domainsftp.Entry{}, err
+	}
+	return f.FileSystem.Stat(ctx, path)
+}
+
+func (f *selftest38RemoteFS) Mkdir(ctx context.Context, path string) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.Mkdir(ctx, path)
+}
+
+func (f *selftest38RemoteFS) MkdirAll(ctx context.Context, path string) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.MkdirAll(ctx, path)
+}
+
+func (f *selftest38RemoteFS) Open(ctx context.Context, path string) (io.ReadCloser, error) {
+	if err := f.fail(); err != nil {
+		return nil, err
+	}
+	return f.FileSystem.Open(ctx, path)
+}
+
+func (f *selftest38RemoteFS) Create(ctx context.Context, path string) (io.WriteCloser, error) {
+	if err := f.fail(); err != nil {
+		return nil, err
 	}
 	return f.FileSystem.Create(ctx, path)
 }
 
-// selftest38Opener supplies the local and remote panes. The remote one is the
-// wrapper above; it addresses a fixture directory the test navigates to.
+func (f *selftest38RemoteFS) Remove(ctx context.Context, path string) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.Remove(ctx, path)
+}
+
+func (f *selftest38RemoteFS) RemoveAll(ctx context.Context, path string) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.RemoveAll(ctx, path)
+}
+
+func (f *selftest38RemoteFS) Rename(ctx context.Context, oldPath, newPath string) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.Rename(ctx, oldPath, newPath)
+}
+
+func (f *selftest38RemoteFS) Chmod(ctx context.Context, path string, mode uint32) error {
+	if err := f.fail(); err != nil {
+		return err
+	}
+	return f.FileSystem.Chmod(ctx, path, mode)
+}
+
+// selftest38Opener supplies the local and remote panes. The remote one dials
+// the modelled server, so each open gets a distinct transport.
 type selftest38Opener struct {
 	local  apptransfer.FileSystem
-	remote apptransfer.FileSystem
+	remote *selftest38Remote
 }
 
 func (o *selftest38Opener) OpenLocal(context.Context) (apptransfer.FileSystem, error) {
@@ -196,7 +336,7 @@ func (o *selftest38Opener) OpenLocal(context.Context) (apptransfer.FileSystem, e
 }
 
 func (o *selftest38Opener) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
-	return o.remote, nil
+	return o.remote.dial()
 }
 
 func (t *selftest38) fixturesStep(*ui.Context) selftest.Outcome {
@@ -243,6 +383,7 @@ func (t *selftest38) setup() error {
 	for _, name := range []string{
 		"notes.txt", "watch.txt", "conflict-internal.txt",
 		"conflict-external.txt", "lost.txt", "lost-external.txt",
+		"lost-reconnect.txt",
 	} {
 		if err := os.WriteFile(filepath.Join(t.remoteDir, name),
 			[]byte("remote original"), 0o640); err != nil {
@@ -271,11 +412,7 @@ func (t *selftest38) setup() error {
 	if err != nil {
 		return fail(err)
 	}
-	remoteFiles, err := adaptersftp.NewLocal().OpenLocal(context.Background())
-	if err != nil {
-		return fail(err)
-	}
-	t.remote = &selftest38RemoteFS{FileSystem: remoteFiles}
+	t.remote = &selftest38Remote{}
 	t.open = appfileopen.New(t.preferences, t.launcher,
 		appfileopen.WithTempRoot(t.downloadDir),
 		appfileopen.WithWatchInterval(20*time.Millisecond),
@@ -734,6 +871,11 @@ func (t *selftest38) remoteConflictStep(*ui.Context) selftest.Outcome {
 	}
 }
 
+// lostConnectionStep kills the modelled sshd and its sftp-server, proves the
+// local state is preserved, then restarts it and proves recovery through a
+// newly dialed transport. The last stage reconnects the Host through the
+// GUI's path (choosing it again) and proves the same editing session follows
+// that transport without a second Tab.
 func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 	step := &t.failureStep
 	t.begin(step)
@@ -759,7 +901,9 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 		if !t.editor.Active() {
 			return t.expired(step, "the internal editor document")
 		}
-		t.remote.setFailWrites(true)
+		// The server goes away: the listener closes and the live transport is
+		// reset. The old handle must never work again, even after the restart.
+		t.remote.kill()
 		if err := t.view.Click("editor-content"); err != nil {
 			return selftest.Failed(fmt.Errorf("the editor text area was not reachable: %v", err))
 		}
@@ -788,7 +932,8 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 		if got := t.remoteText("lost.txt"); got != "remote original" {
 			return selftest.Failed(fmt.Errorf("the failed save changed the remote file to %q", got))
 		}
-		t.remote.setFailWrites(false)
+		t.remote.restart()
+		step.before = t.remote.dialCount()
 		if err := t.view.Click(m.SftpEditorSave()); err != nil {
 			return selftest.Failed(fmt.Errorf("the Save control was not reachable: %v", err))
 		}
@@ -808,6 +953,10 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 		}
 		if got := t.remoteText("lost.txt"); got != step.text {
 			return selftest.Failed(fmt.Errorf("the save retry wrote %q, want %q", got, step.text))
+		}
+		if got := t.remote.dialCount(); got != step.before+1 {
+			return selftest.Failed(fmt.Errorf("the save retry dialed %d transports, want one fresh dial",
+				got-step.before))
 		}
 		if err := t.view.Click(m.SftpEditorClose()); err != nil {
 			return selftest.Failed(fmt.Errorf("the Close control was not reachable: %v", err))
@@ -835,7 +984,7 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 			return t.expired(step, "the external application launch")
 		}
 		step.path = path
-		t.remote.setFailWrites(true)
+		t.remote.kill()
 		step.text = "external work kept locally"
 		if err := os.WriteFile(path, []byte(step.text), 0o600); err != nil {
 			return selftest.Failed(fmt.Errorf("the external edit could not be written: %v", err))
@@ -857,30 +1006,116 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(fmt.Errorf("the external local copy after the failure = %q, %v",
 				content, err))
 		}
-		t.remote.setFailWrites(false)
-		step.before = t.events.mark()
+		// Retry with no GUI reconnect: the session must acquire its own fresh
+		// transport through the same Connection Manager path.
+		t.remote.restart()
+		step.dials = t.remote.dialCount()
+		step.mark = t.events.mark()
+		step.phase = 7
 		if err := t.view.Click(m.SftpEditorRetry()); err != nil {
 			return selftest.Failed(fmt.Errorf("the Retry control was not reachable: %v", err))
 		}
 		t.view.Frame()
-		step.phase = 7
 		return t.expired(step, "the external upload retry")
-	default:
+	case 7:
 		t.frame()
 		if t.editor.FailurePending() {
 			return selftest.Failed(fmt.Errorf("the external upload retry failed"))
 		}
-		// Wait for the retry's synced event before reading the remote file, so
-		// the test's own read handle cannot block the replacement rename.
-		if !t.events.syncedSince(step.before, "lost-external.txt") {
+		if !t.events.syncedSince(step.mark, "lost-external.txt") {
 			return t.expired(step, "the external upload retry")
 		}
-		if got := t.remoteText("lost-external.txt"); got != step.text {
-			return selftest.Failed(fmt.Errorf("the retry wrote %q, want %q", got, step.text))
+		if got := t.remoteText("lost-external.txt"); got != "external work kept locally" {
+			return selftest.Failed(fmt.Errorf("the retry wrote %q", got))
+		}
+		if got := t.remote.dialCount(); got != step.dials+1 {
+			return selftest.Failed(fmt.Errorf("the Retry dialed %d transports, want one fresh dial",
+				got-step.dials))
+		}
+		// The GUI reconnect case: choose the same Host again. It must reuse the
+		// Tab (not open a second one) and install a transport the existing
+		// session follows.
+		t.launcher.reset()
+		if err := t.openRemoteFile("lost-reconnect.txt"); err != nil {
+			return selftest.Failed(err)
+		}
+		step.phase = 8
+		return t.expired(step, "the second external application launch")
+	case 8:
+		path, ok := t.launcher.lastPath()
+		if !ok || t.transfer.Notice() != "opened-external" {
+			return t.expired(step, "the second external application launch")
+		}
+		step.path = path
+		t.remote.kill()
+		step.text = "recovered through the GUI reconnect"
+		if err := os.WriteFile(path, []byte(step.text), 0o600); err != nil {
+			return selftest.Failed(fmt.Errorf("the external edit could not be written: %v", err))
+		}
+		step.phase = 9
+		return t.expired(step, "the second external upload failure prompt")
+	case 9:
+		t.frame()
+		if !t.editor.FailurePending() {
+			return t.expired(step, "the second external upload failure prompt")
+		}
+		if got := t.remoteText("lost-reconnect.txt"); got != "remote original" {
+			return selftest.Failed(fmt.Errorf("the failed upload changed the remote file to %q", got))
+		}
+		tab := t.transfer.Tab(transferstate.Right)
+		if tab == nil {
+			return selftest.Failed(fmt.Errorf("the remote pane disappeared"))
+		}
+		step.before = t.remote.dialCount()
+		t.remote.restart()
+		// The user reconnects the Host from the GUI: same pane, same Host.
+		t.transfer.OpenRemote(transferstate.Right, model.HostID("h1"), "Fixture")
+		step.phase = 10
+		return t.expired(step, "the GUI Host reconnect")
+	case 10:
+		t.frame()
+		tab := t.transfer.Tab(transferstate.Right)
+		if tab == nil || tab.Loading || tab.FS == nil {
+			return t.expired(step, "the GUI Host reconnect")
+		}
+		if tabs := len(t.transfer.Pane(transferstate.Right).Tabs); tabs != 1 {
+			return selftest.Failed(fmt.Errorf("the GUI Host reconnect left %d Tabs, want the same one", tabs))
+		}
+		if got := t.remote.dialCount(); got != step.before+1 {
+			return selftest.Failed(fmt.Errorf("the GUI Host reconnect dialed %d transports, want one",
+				got-step.before))
+		}
+		step.dials = t.remote.dialCount()
+		step.mark = t.events.mark()
+		if err := t.view.Click(m.SftpEditorRetry()); err != nil {
+			return selftest.Failed(fmt.Errorf("the Retry control was not reachable: %v", err))
+		}
+		t.view.Frame()
+		step.phase = 11
+		return t.expired(step, "the Retry through the reconnected pane")
+	default:
+		t.frame()
+		if t.editor.FailurePending() {
+			return selftest.Failed(fmt.Errorf("the Retry through the reconnected pane failed"))
+		}
+		if !t.events.syncedSince(step.mark, "lost-reconnect.txt") {
+			return t.expired(step, "the Retry through the reconnected pane")
+		}
+		if got := t.remoteText("lost-reconnect.txt"); got != "recovered through the GUI reconnect" {
+			return selftest.Failed(fmt.Errorf("the retry through the reconnected pane wrote %q", got))
+		}
+		// The session followed the GUI's transport instead of dialing a third
+		// one for itself.
+		if got := t.remote.dialCount(); got != step.dials {
+			return selftest.Failed(fmt.Errorf("the Retry dialed %d extra transports after the GUI reconnect",
+				got-step.dials))
+		}
+		if tabs := len(t.transfer.Pane(transferstate.Right).Tabs); tabs != 1 {
+			return selftest.Failed(fmt.Errorf("recovery left %d Tabs, want 1", tabs))
 		}
 		return selftest.Passed(
-			"a lost connection kept the internal buffer and the external local copy; both retries wrote the remote file once the transport returned",
-			"application/fileopen.Service error classification -> ui/editor.State retry -> application/transfer.Service.WriteFile")
+			"a killed sshd preserved the internal buffer and the external copy; the retry dialed a fresh transport and uploaded, and a GUI Host reconnect reused the same Tab whose live transport the same editing session then followed",
+			"application/fileopen.Service retry -> transferstate.remoteLink dial (Connection Manager) -> application/transfer.Service.WriteFile")
 	}
 }
 

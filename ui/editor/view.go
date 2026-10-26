@@ -7,13 +7,35 @@ import (
 )
 
 // The editor and its prompts are overlays over the active surface. The
-// geometry keeps them inside the 720x480 minimum window.
+// geometry keeps them inside the 720x480 minimum window and the 704x421
+// client area.
 const (
 	panelMaxWidth  float32 = 760
 	panelMaxHeight float32 = 560
 	panelTop       float32 = 24
 	panelPadding   float32 = 14
+
+	// promptWidth is the confirmation prompts' maximum width. Their height
+	// follows their content, so a prompt reads as a dialog, not as an empty
+	// editor frame.
+	promptWidth  float32 = 440
+	promptMargin float32 = 16
 )
+
+// promptPanel is a compact, centred confirmation: title, body, actions, and
+// no editor frame or text area. Modal supplies the dim backdrop, the centre,
+// and Escape/outside-click dismissal. The panel's height follows its content;
+// its width is clamped so a 704-pixel client keeps the margin.
+func promptPanel(c *ui.Context, label string, build func()) bool {
+	width, _ := c.Size()
+	promptPanelWidth := promptWidth
+	if promptPanelWidth > width-2*promptMargin {
+		promptPanelWidth = width - 2*promptMargin
+	}
+	open := true
+	ui.Modal(c, &open, build).Label(label).Width(promptPanelWidth)
+	return open
+}
 
 // View renders the editor document and its prompts. It is mounted by the
 // shell, above the SFTP surface, so a conflict raised by an external edit is
@@ -101,99 +123,68 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 }
 
 func confirmView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	cancelled := false
-	ui.Overlay(c, func() {
-		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(ui.RGBA(0, 0, 0, 0.4))
-		if back.OverlayShortcut(0, ui.KeyEscape) {
-			cancelled = true
-		}
-		back.Children(func() {
-			box := panel(c, t)
-			box.OnClick(func() {})
-			box.Children(func() {
-				ui.Text(c, m.SftpEditorUnsavedTitle()).FontSize(16).Bold().TextColor(t.Text)
-				ui.Text(c, m.SftpEditorUnsavedBody(s.Name())).FontSize(12).
-					TextColor(t.TextMuted)
-				ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
-					if ui.Button(c, m.SftpEditorCancel()).Clicked() {
-						s.CancelClose()
-						c.Invalidate()
-					}
-					if ui.PrimaryButton(c, m.SftpEditorDiscard()).Clicked() {
-						s.Discard()
-						c.Invalidate()
-					}
-				})
-			})
+	open := promptPanel(c, "editor-confirm-prompt", func() {
+		ui.Text(c, m.SftpEditorUnsavedTitle()).FontSize(16).Bold().TextColor(t.Text)
+		ui.Text(c, m.SftpEditorUnsavedBody(s.Name())).FontSize(12).
+			TextColor(t.TextMuted)
+		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
+			if ui.Button(c, m.SftpEditorCancel()).Clicked() {
+				s.CancelClose()
+				c.Invalidate()
+			}
+			if ui.PrimaryButton(c, m.SftpEditorDiscard()).Clicked() {
+				s.Discard()
+				c.Invalidate()
+			}
 		})
 	})
-	if cancelled {
+	if !open {
 		s.CancelClose()
 		c.Invalidate()
 	}
 }
 
 func conflictView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	cancelled := false
-	ui.Overlay(c, func() {
-		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(ui.RGBA(0, 0, 0, 0.4))
-		if back.OverlayShortcut(0, ui.KeyEscape) {
-			cancelled = true
-		}
-		back.Children(func() {
-			box := panel(c, t)
-			box.OnClick(func() {})
-			box.Children(func() {
-				ui.Text(c, m.SftpEditorConflictTitle()).FontSize(16).Bold().TextColor(t.Text)
-				ui.Text(c, m.SftpEditorConflictBody(s.ConflictName())).FontSize(12).
-					TextColor(t.TextMuted)
-				ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
-					if ui.Button(c, m.SftpEditorCancel()).Clicked() {
-						s.CancelConflict()
-						c.Invalidate()
-					}
-					if ui.PrimaryButton(c, m.SftpEditorOverwrite()).Clicked() {
-						s.Overwrite()
-						c.Invalidate()
-					}
-				})
-			})
+	open := promptPanel(c, "editor-conflict-prompt", func() {
+		ui.Text(c, m.SftpEditorConflictTitle()).FontSize(16).Bold().TextColor(t.Text)
+		ui.Text(c, m.SftpEditorConflictBody(s.ConflictName())).FontSize(12).
+			TextColor(t.TextMuted)
+		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
+			if ui.Button(c, m.SftpEditorCancel()).Clicked() {
+				s.CancelConflict()
+				c.Invalidate()
+			}
+			if ui.PrimaryButton(c, m.SftpEditorOverwrite()).Clicked() {
+				s.Overwrite()
+				c.Invalidate()
+			}
 		})
 	})
-	if cancelled {
+	if !open {
 		s.CancelConflict()
 		c.Invalidate()
 	}
 }
 
 func failureView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
-	ui.Overlay(c, func() {
-		back := ui.Column(c).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			AlignItems(ui.Center).Justify(ui.Start).Modal().
-			Background(ui.RGBA(0, 0, 0, 0.4))
-		back.Children(func() {
-			box := panel(c, t)
-			box.OnClick(func() {})
-			box.Children(func() {
-				ui.Text(c, m.SftpEditorSyncFailedTitle()).FontSize(16).Bold().
-					TextColor(t.Text)
-				ui.Text(c, m.SftpEditorSyncFailedBody(s.failure.name)).FontSize(12).
-					TextColor(t.TextMuted)
-				ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
-					if ui.Button(c, m.SftpEditorDismiss()).Clicked() {
-						s.DismissFailure()
-						c.Invalidate()
-					}
-					if ui.PrimaryButton(c, m.SftpEditorRetry()).Clicked() {
-						s.Retry()
-						c.Invalidate()
-					}
-				})
-			})
+	open := promptPanel(c, "editor-failure-prompt", func() {
+		ui.Text(c, m.SftpEditorSyncFailedTitle()).FontSize(16).Bold().
+			TextColor(t.Text)
+		ui.Text(c, m.SftpEditorSyncFailedBody(s.failure.name)).FontSize(12).
+			TextColor(t.TextMuted)
+		ui.Row(c).FillWidth().Gap(8).Justify(ui.End).Children(func() {
+			if ui.Button(c, m.SftpEditorDismiss()).Clicked() {
+				s.DismissFailure()
+				c.Invalidate()
+			}
+			if ui.PrimaryButton(c, m.SftpEditorRetry()).Clicked() {
+				s.Retry()
+				c.Invalidate()
+			}
 		})
 	})
+	if !open {
+		s.DismissFailure()
+		c.Invalidate()
+	}
 }
