@@ -58,7 +58,7 @@ func init() {
 		"application/browser", "application/portability", "application/mcp",
 		"application/desktop", "application/history",
 		"application/keybindings", "application/preferences", "application/themes",
-		"adapters/store", "adapters/ssh", "adapters/sftp", "adapters/scp",
+		"adapters/store", "adapters/ssh", "adapters/sftp", "adapters/scp", "adapters/gdrive",
 		"adapters/serial", "adapters/telnet", "adapters/mosh", "adapters/et",
 		"adapters/bundle",
 		"adapters/secrets", "adapters/sync", "adapters/applock", "adapters/localpty",

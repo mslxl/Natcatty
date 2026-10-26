@@ -392,4 +392,7 @@ type Token struct {
 	TokenType    string `json:"tokenType,omitempty"`
 	Scope        string `json:"scope,omitempty"`
 	ExpiresAt    int64  `json:"expiresAt,omitempty"`
+	// Provider binds the credential to the provider that issued it, so a
+	// stored GitHub token can never be sent to Google Drive or vice versa.
+	Provider string `json:"provider,omitempty"`
 }

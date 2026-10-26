@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -209,6 +210,7 @@ func (c *Client) Refresh(ctx context.Context, token domainsync.Token) (domainsyn
 }
 
 type userResponse struct {
+	ID    int64  `json:"id"`
 	Login string `json:"login"`
 }
 
@@ -225,7 +227,11 @@ func (c *Client) User(ctx context.Context, token domainsync.Token) (appsync.Gran
 	if user.Login == "" {
 		return appsync.Grant{}, fmt.Errorf("%w: user response has no login", appsync.ErrNetwork)
 	}
-	return appsync.Grant{Login: user.Login}, nil
+	id := ""
+	if user.ID != 0 {
+		id = strconv.FormatInt(user.ID, 10)
+	}
+	return appsync.Grant{ID: id, Login: user.Login}, nil
 }
 
 type gistFile struct {

@@ -177,6 +177,23 @@ bridge for reading them.
 Decision: accepted for v1 by the rewrite spec "Out of Scope"; ticket 48.
 Ticket: 48
 
+## Provider verification limits
+
+### `sync.google-drive-live-endpoints`
+
+The Google Drive provider is verified against a local fake that mirrors the
+authorize, token, userinfo, Drive v3, and upload endpoints, including PKCE
+S256 validation, refresh rotation, invalid_grant, pagination, and per-account
+appDataFolder isolation. Live Google endpoints are not contacted by tests or
+the self-test because they require a provisioned Google Cloud OAuth client, a
+human consent, and a real Drive quota.
+
+Decision: excluded from automated acceptance by ticket 50; the provider's
+defaults remain the original Electron production endpoints and the
+NATCATTY_GDRIVE_* overrides exist only for the fake. A signed-in user with a
+Google client id can exercise the live flow.
+Ticket: 50
+
 ## Protocol and platform limitations
 
 ### `connections.ssh-compression`
