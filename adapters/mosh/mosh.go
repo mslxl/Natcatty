@@ -289,6 +289,10 @@ func (f Factory) launch(resolved bundle.Resolved, cfg moshmodel.Config, spec app
 	if err != nil {
 		return nil, err
 	}
+	// platform/pty gives Args[0] to the child as its own name, and Windows
+	// builds the command line from Path plus Args[1:]. The bundled executable
+	// therefore has to open the argv, just as localpty passes spec.Command.
+	argv := append([]string{resolved.Path}, args...)
 	fallback := ""
 	if connect.Host != "" && !strings.EqualFold(connect.Host, cfg.Hostname) {
 		fallback = cfg.Hostname
@@ -310,7 +314,7 @@ func (f Factory) launch(resolved bundle.Resolved, cfg moshmodel.Config, spec app
 	}
 	client, err := spawn(pty.Options{
 		Path: resolved.Path,
-		Args: args,
+		Args: argv,
 		Dir:  f.homeDir(),
 		Env:  environment,
 		Cols: spec.Cols,
