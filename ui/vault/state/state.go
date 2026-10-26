@@ -1,6 +1,8 @@
 // Package state owns the Vault surface's window-scoped state: the listed
 // Hosts, the editor form, the delete confirmation, and the problem the view
-// must localize. It is mutated only on the UI thread.
+// must localize. Lists are loaded on the UI thread. InvalidateLists is safe
+// from any goroutine, like InvalidateKnownHosts: it only sets a guarded flag
+// and requests a redraw, and FlushLists applies the reload on the UI thread.
 package state
 
 import (
@@ -244,6 +246,12 @@ type State struct {
 	// goroutine sets. The list itself is still loaded only on the UI thread.
 	knownMu    sync.Mutex
 	knownStale bool
+
+	// staleMu guards stale, which a Vault change made off the UI thread (a
+	// sync-applied cloud copy) sets. Every list is still loaded only on the
+	// UI thread through FlushLists.
+	staleMu sync.Mutex
+	stale   bool
 
 	editingKey            bool
 	keyForm               KeyForm

@@ -118,6 +118,7 @@ func run(afterReady func(hostWindow)) error {
 	var shortcutsState *settings.ShortcutsState
 	var searchState *settings.SearchState
 	var syncService *appsync.Service
+	var vaultState *vaultstate.State
 	var syncState *settings.SyncState
 	var registry *command.Registry
 	var currentMenu *mygo.Menu
@@ -416,6 +417,14 @@ func run(afterReady func(hostWindow)) error {
 		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
 		appsync.WithDevice(deviceID, deviceName, version),
 		appsync.WithRedrawRequest(invalidate),
+		// A downloaded cloud copy rewrites the Vault families. Mark the live
+		// Vault state stale so its lists refresh on the next frame without a
+		// restart. The callback resolves vaultState lazily because the state is
+		// built below; it runs on the sync goroutine and only sets the guarded
+		// stale flag and requests a redraw.
+		appsync.WithAppliedSnapshot(appliedSnapshotRefresh(func() *vaultstate.State {
+			return vaultState
+		})),
 	)
 	if err := syncService.Load(context.Background()); err != nil {
 		return err
@@ -442,9 +451,9 @@ func run(afterReady func(hostWindow)) error {
 	trustPrompt := sessionui.NewTrustPrompt(sessionui.WithTrustRedrawRequest(invalidate))
 	authPrompt := sessionui.NewAuthPrompt(sessionui.WithAuthPromptRedrawRequest(invalidate))
 
-	// The Vault state is created below; a persisted host-key trust decision
-	// marks its Known Host list stale through this pointer.
-	var vaultState *vaultstate.State
+	// A persisted host-key trust decision marks the Vault's Known Host list
+	// stale through this pointer, which is declared with the app's other
+	// surface states so the sync service above can resolve it lazily.
 
 	// One SSH Connection per Session. The lease seam is what tickets 08 and 09
 	// extend into jump chains and a shared pool. Hardware security keys go
@@ -1402,4 +1411,18 @@ func syncGitHubAuthBase() string {
 		return auth
 	}
 	return os.Getenv("NATCATTY_GITHUB_API_BASE")
+}
+
+// appliedSnapshotRefresh returns the sync callback that marks the live Vault
+// state stale after a downloaded cloud copy has been written to the local
+// database. The state is resolved lazily because the sync service is built
+// before the Vault state. The callback runs on the sync goroutine and only
+// sets the state's guarded flag; the UI thread reloads the lists with
+// FlushLists before the next frame.
+func appliedSnapshotRefresh(state func() *vaultstate.State) func() {
+	return func() {
+		if s := state(); s != nil {
+			s.InvalidateLists()
+		}
+	}
 }

@@ -133,6 +133,28 @@ func TestVaultViewListsHostDetails(t *testing.T) {
 	}
 }
 
+// TestVaultViewShowsAnOffThreadVaultChangeOnTheNextFrame proves the view
+// applies a sync-applied snapshot's invalidation on the UI thread: no manual
+// Reload and no restart.
+func TestVaultViewShowsAnOffThreadVaultChangeOnTheNextFrame(t *testing.T) {
+	repo := &fakeHosts{items: []domainvault.Host{{ID: "host-1", Label: "gui-alpha"}}}
+	state, tt := newView(t, repo)
+	if !tt.HasText("gui-alpha") {
+		t.Fatalf("Vault does not list the initial Host, texts %q", tt.Texts())
+	}
+
+	repo.items = []domainvault.Host{{ID: "host-cloud", Label: "cloud-beta"}}
+	state.InvalidateLists()
+	tt.Frame()
+
+	if !tt.HasText("cloud-beta") {
+		t.Fatalf("the frame after InvalidateLists does not list the applied snapshot, texts %q", tt.Texts())
+	}
+	if tt.HasText("gui-alpha") {
+		t.Fatalf("the stale Host is still listed, texts %q", tt.Texts())
+	}
+}
+
 func TestVaultViewShowsTheX11WarningOnlyAfterEnablingForSSH(t *testing.T) {
 	m := locales.In("en")
 	repo := &fakeHosts{}
