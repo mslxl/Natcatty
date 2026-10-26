@@ -2684,7 +2684,7 @@
     - components/host-browser/BrowserBookmarkEditor.tsx
     - components/terminalLayer/browserPanelLifecycle.test.ts
   module: ui/browser
-  tickets: [47]
+  tickets: [47, 48]
   acceptance_tests:
     - ui/session.TestSessionMenuOpensTheBrowserAndItsCloseReturnsTheTerminal
     - ui/browser.TestPanelOpensFromASessionOnItsDedicatedTunnel
@@ -2693,9 +2693,105 @@
     - ui/browser.TestPanelDisconnectIsVisibleAndRetryOpensANewTunnelAndPage
     - ui/browser.TestPanelLayoutKeepsEveryControlReachable
     - ui/browser.TestPanelTabStripRendersTheActiveTabOnce
+    - ui/browser.TestBookmarkPaneReachableAtBothSizes
+    - ui/browser.TestDownloadPaneShowsProgressAndCompletion
+    - ui/browser.TestDownloadNavigationKeepsTheShownPage
     - app.TestTicket47CheckRunsThroughTheKeyboard
+    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: implemented
-  notes: "Opened from the Session menu of an SSH Session. Back, forward, reload, stop, address bar, new/close/activate tab, and a full-panel disconnect state with Retry. Stop clears the loading state itself because WebView2 reports a stopped load as an aborted navigation with no finish event. The panel replaces the Session's chrome and terminal while open because the terminal transport keeps running and a native WebView must not sit under trusted chrome; closing returns the terminal. Ctrl+L focuses and selects the address while Natcatty's chrome has keyboard focus; a focused native page owns the OS keyboard (WebView2 forwards only Tab out), so users click the address bar after typing in a page. Bookmarks, downloads, page-created popups, and side-panel resizing stay out of this ticket."
+  notes: "Opened from the Session menu of an SSH Session. Back, forward, reload, stop, address bar, new/close/activate tab, and a full-panel disconnect state with Retry. Stop clears the loading state itself because WebView2 reports a stopped load as an aborted navigation with no finish event. The panel replaces the Session's chrome and terminal while open because the terminal transport keeps running and a native WebView must not sit under trusted chrome; closing returns the terminal. Ctrl+L focuses and selects the address while Natcatty's chrome has keyboard focus; a focused native page owns the OS keyboard (WebView2 forwards only Tab out), so users click the address bar after typing in a page. Ticket 48 adds in-panel bookmarks and downloads panes; page-created popups and side-panel resizing remain out."
+
+- id: browser.bookmarks
+  area: browser
+  feature: Host-scoped and all-Host bookmarks persisted across restart
+  original_paths:
+    - domain/browserBookmark.ts
+    - application/hostBrowserBookmarks.ts
+    - electron/hostBrowser/bookmarkStore.cjs
+    - components/host-browser/BrowserBookmarkEditor.tsx
+    - components/host-browser/BrowserIconEditor.tsx
+  module: application/browser
+  tickets: [48]
+  acceptance_tests:
+    - domain/browser.TestNormalizeBookmarkDefaultsAndScopes
+    - domain/browser.TestNormalizeBookmarkRejectsInvalidValues
+    - domain/browser.TestNormalizeBookmarkCapsTitleIconAndPreservesIdentity
+    - application/browser.TestBookmarksHostAndAllHostScopes
+    - application/browser.TestBookmarksEditAndOwnership
+    - application/browser.TestBookmarksRollbackOnStoreFailure
+    - application/browser.TestBookmarksPersistReload
+    - adapters/store.TestBrowserBookmarkStoreRoundTrip
+    - adapters/store.TestBrowserBookmarkStoreMissingAndMalformed
+    - application/browser.TestPanelBookmarksPerHostAndAllHosts
+    - ui/browser.TestBookmarkPaneAddEditDelete
+    - ui/browser.TestBookmarkPaneLongListScrolls
+    - app.TestTicket48CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "A Host bookmark is visible only to its owning Host; an all-Host bookmark is visible everywhere. The owner Host alone may edit or delete a Host bookmark. Limits follow the original: 1000 items, 120-character title, 4-character glyph, #rrggbb color, ids at most 128 characters, and Host ids at most 256. Metadata is written atomically to browser-bookmarks.json beside app preferences and reloads across restart. Bookmark metadata is not synced through ticket 49's payload because that ticket did not include a bookmark entity; bookmark files remain local for now. The editor does not expose the original custom text/image icon and color pickers or quick search; it keeps site icons automatically."
+
+- id: browser.favicons
+  area: browser
+  feature: Favicons fetched through the Host tunnel and cached per Host and origin
+  original_paths:
+    - electron/hostBrowser/hostBrowserManager.cjs
+    - electron/hostBrowser/siteIconStore.cjs
+    - components/host-browser/BrowserIcon.tsx
+  module: application/browser
+  tickets: [48]
+  acceptance_tests:
+    - application/browser.TestPanelFetchesAndCachesFaviconThroughGateway
+    - application/browser.TestPanelFaviconFailureLeavesFallback
+    - application/browser.TestSiteIconsKeyByHostAndOrigin
+    - application/browser.TestSiteIconsCustomProtectedAndInvalidRejected
+    - application/browser.TestSiteIconsLimitAndPersistence
+    - adapters/store.TestBrowserSiteIconStoreRoundTrip
+    - ui/browser.TestBookmarkPaneReachableAtBothSizes
+    - app.TestTicket48CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "The favicon is fetched through the same dedicated Host tunnel and gateway as the page, with a 5-second timeout and a 64 KiB cap, sniffed as PNG, JPEG, GIF, or WebP, and cached by Host and origin in browser-site-icons.json. The tab strip and bookmark rows render it; a missing or undecodable icon keeps a glyph fallback. MyGo v0.5.5 exposes no page-declared favicon event, so this app requests only /favicon.ico rather than the page's <link rel=icon> list. ICO bytes are recognized but not stored because MyGo's native image decoder has no ICO support. Custom icon overrides exist in the service but the ticket-48 UI exposes automatic site icons only."
+
+- id: browser.downloads
+  area: browser
+  feature: Downloads through the Host tunnel with progress, bounds, and cleanup
+  original_paths:
+    - electron/hostBrowser/hostBrowserManager.cjs
+    - electron/hostBrowser/downloadFile.cjs
+    - electron/hostBrowser/downloadStore.cjs
+    - components/host-browser/BrowserDownloads.tsx
+  module: application/browser
+  tickets: [48]
+  acceptance_tests:
+    - application/browser.TestDownloadWritesBytesInsideDestination
+    - application/browser.TestDownloadRefusesOversizeAndLeavesNoFile
+    - application/browser.TestDownloadStreamingOverflowIsCleaned
+    - application/browser.TestDownloadCancelRemovesPartFile
+    - application/browser.TestDownloadFailureIsClean
+    - application/browser.TestDownloadRefusesNonGatewayURL
+    - application/browser.TestPanelDownloadUsesGatewayAndWritesExactBytes
+    - application/browser.TestPanelDownloadCancelFromPanel
+    - ui/browser.TestDownloadPaneShowsProgressAndCompletion
+    - app.TestAbortedBrowserNavigationsAreNotPageFailures
+    - app.TestTicket48CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "MyGo exposes OnWillDownload but no download progress or cancel API, and its own save path is outside the route policy. The panel therefore prevents the engine download and fetches the same gateway URL with the panel's tunnel transport, Cookie header, redirect limit, and a 256 MiB cap. Bytes stream to a reserved 0600 .part file in the app Downloads directory; success syncs and renames atomically, while cancel or failure removes the .part. Off-route URLs are refused before any file is reserved, and filenames are basenames with traversal and Windows-invalid characters removed. Unlike the original there is no Save-as dialog, open-folder/reveal action, or persisted download history: records live for the panel session, and finished files stay in Downloads."
+
+- id: browser.sandbox
+  area: browser
+  feature: Untrusted Host page isolated from product APIs, permissions, popups, and outside origins
+  original_paths:
+    - electron/hostBrowser/hostBrowserManager.cjs
+    - docs/designs/host-routed-browser.md
+  module: app
+  tickets: [48]
+  acceptance_tests:
+    - application/browser.TestGatewayHostilePageCannotLeaveTheRoute
+    - application/browser.TestGatewayLocksDownNonPageDocuments
+    - application/browser.TestGatewayErrorResponsesCarryNoProductCopyAndCannotRunScript
+    - application/browser.TestGatewaySandboxPolicyAndUntrustedLoopbackAddress
+    - app.TestBrowserPageCannotCallProductAPIs
+    - app.TestTicket48CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "Host content is loaded only from a loopback gateway on 127.0.0.2, which is loopback but outside the localhost/127.0.0.1/::1 hosts MyGo's development build auto-trusts for its typed bridge. The page gets no preload script and no TrustedOrigins, the app registers no MyGo bindings, permissions are denied, and window.open returns no window. The gateway replaces the page's CSP with default/connect/frame/worker/form restricted to 'self', object-src 'none', frame-ancestors 'none', no unsafe-eval, and script-src 'none' for non-HTML documents; it strips the page's meta CSP and refresh. Cross-origin fetch, image beacons, foreign frames/objects/forms, window.open, eval, and bridge calls are blocked. The ticket 48 GUI acceptance run loaded the hostile page in the real WebView: the page reported every attempt blocked (including a denied window.mygo call) and the fixture recorded zero requests to the foreign origin. A page-created popup that the original would open as a new tab is refused because MyGo cannot attach such a page to the panel's isolated route."
 
 - id: browser.cookie-partitioning
   area: browser
@@ -2706,7 +2802,7 @@
   module: application/browser
   tickets: [48]
   status: excluded
-  notes: "MyGo v0.5.5 has no per-webview session partition."
+  notes: "The original required an Electron session partition separate from the app and separate for each host profile, so tabs on one Host may share cookies while different Hosts must not (docs/designs/host-routed-browser.md). MyGo v0.5.5 has one cookie store and no per-webview session partition, so this app cannot enforce that boundary: every Host's gateway uses 127.0.0.2, cookies are keyed by host and path rather than port or remote origin, different Hosts can share or overwrite cookies, and a favicon or download fetch can carry a cookie set by another Host's page at the same path. Cookies stay local and are read only at the app edge for those fetches. Accepted for v1; ticket 48."
 
 - id: sync.smb-provider
   area: sync

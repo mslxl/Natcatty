@@ -167,6 +167,9 @@ func run(afterReady func(hostWindow)) error {
 	if err != nil {
 		return err
 	}
+	if err := setupBrowserStores(userData); err != nil {
+		return err
+	}
 
 	// Desktop integration lives in a versioned JSON file beside App Lock. The
 	// OS login-item state is refreshed once the application is ready; MyGo's

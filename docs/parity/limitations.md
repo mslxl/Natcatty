@@ -160,9 +160,19 @@ ticket 04.
 
 ### `browser.cookie-partitioning`
 
-MyGo v0.5.5 has no per-webview session partition, so the host-routed browser
-panel cannot guarantee per-host cookie isolation. Cookies remain local-only and
-the limitation is documented in the browser panel.
+The original design required each untrusted website to run in a sandboxed
+WebContentsView with "an Electron session partition separate from the
+application and separate for each host profile. Tabs for one host may share
+website cookies; different hosts must not" (`docs/designs/host-routed-browser.md`).
+MyGo v0.5.5 exposes one shared cookie store and no per-webview session
+partition, so the native browser cannot enforce that boundary. Every Host's
+gateway uses the same loopback host, 127.0.0.2, and cookies are keyed by host
+and path rather than by port or remote origin. Browser panels opened on
+different Hosts can therefore share or overwrite cookies, and a favicon or
+download fetch can carry a cookie another Host's page set at the same path.
+Cookies remain local; the app edge reads the shared store only to attach that
+Cookie header to favicon and download requests, and web content has no product
+bridge for reading them.
 
 Decision: accepted for v1 by the rewrite spec "Out of Scope"; ticket 48.
 Ticket: 48

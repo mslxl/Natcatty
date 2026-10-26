@@ -103,7 +103,7 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 	mux.HandleFunc("/vector.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		_, _ = io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg">`+
-			`<script>fetch("http://127.0.0.1:1/")</script><rect width="1" height="1"/></svg>`)
+			`<script>fetch("http://127.0.0.2:1/")</script><rect width="1" height="1"/></svg>`)
 	})
 	mux.HandleFunc("/image.png", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
@@ -128,7 +128,7 @@ func TestGatewayRoutesPageTrafficThroughTheTunnelAndRewritesThePage(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
+	if parsed.Hostname() != "127.0.0.2" || parsed.Port() == "" {
 		t.Fatalf("gateway URL = %q", gatewayURL)
 	}
 
@@ -150,13 +150,13 @@ func TestGatewayRoutesPageTrafficThroughTheTunnelAndRewritesThePage(t *testing.T
 	if count := strings.Count(text, "http://app.internal:8080"); count != 1 {
 		t.Fatalf("page holds %d direct remote URLs, want only the mapper constant:\n%s", count, text)
 	}
-	if !strings.Contains(text, `href="http://127.0.0.1:`) {
+	if !strings.Contains(text, `href="http://127.0.0.2:`) {
 		t.Fatalf("absolute link was not rewritten:\n%s", text)
 	}
-	if !strings.Contains(text, `src="//127.0.0.1:`) {
+	if !strings.Contains(text, `src="//127.0.0.2:`) {
 		t.Fatalf("protocol-relative URL was not rewritten:\n%s", text)
 	}
-	if !strings.Contains(text, `action="http://127.0.0.1:`) {
+	if !strings.Contains(text, `action="http://127.0.0.2:`) {
 		t.Fatalf("form action was not rewritten:\n%s", text)
 	}
 	if !strings.Contains(text, "new URL(u,document.baseURI)") {
@@ -257,7 +257,7 @@ func TestGatewayMapsHeadersAndFollowsRedirectsInsideTheRoute(t *testing.T) {
 	}
 	location := redirect.Header.Get("Location")
 	locationURL, err := url.Parse(location)
-	if err != nil || locationURL.Hostname() != "127.0.0.1" {
+	if err != nil || locationURL.Hostname() != "127.0.0.2" {
 		t.Fatalf("redirect Location = %q", location)
 	}
 	final, err := http.Get(location)
@@ -281,7 +281,7 @@ func TestGatewayMapsHeadersAndFollowsRedirectsInsideTheRoute(t *testing.T) {
 	cross.Body.Close()
 	crossLocation := cross.Header.Get("Location")
 	crossParsed, err := url.Parse(crossLocation)
-	if err != nil || crossParsed.Hostname() != "127.0.0.1" ||
+	if err != nil || crossParsed.Hostname() != "127.0.0.2" ||
 		crossParsed.Port() == locationURL.Port() {
 		t.Fatalf("cross-origin redirect Location = %q", crossLocation)
 	}
@@ -314,7 +314,7 @@ func TestGatewayRewritesStyleSheetsAndScriptsThroughTheSameOrigin(t *testing.T) 
 	css, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	if strings.Contains(string(css), "http://app.internal:8080") ||
-		!strings.Contains(string(css), "127.0.0.1") {
+		!strings.Contains(string(css), "127.0.0.2") {
 		t.Fatalf("CSS body = %s", css)
 	}
 
@@ -326,7 +326,7 @@ func TestGatewayRewritesStyleSheetsAndScriptsThroughTheSameOrigin(t *testing.T) 
 	script, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	if strings.Contains(string(script), "http://app.internal:8080") ||
-		!strings.Contains(string(script), "127.0.0.1") {
+		!strings.Contains(string(script), "127.0.0.2") {
 		t.Fatalf("JS body = %s", script)
 	}
 }
@@ -370,7 +370,7 @@ func TestGatewayLocksDownNonPageDocuments(t *testing.T) {
 			t.Fatalf("asset CSP = %q, missing %q", csp, want)
 		}
 	}
-	if strings.Contains(csp, "127.0.0.1") {
+	if strings.Contains(csp, "127.0.0.2") {
 		t.Fatalf("asset CSP = %q reaches loopback beyond its own origin", csp)
 	}
 	imageURL, err := fixture.gw.URLFor("http://app.internal:8080/image.png")
