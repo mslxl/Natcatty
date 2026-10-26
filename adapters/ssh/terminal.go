@@ -26,11 +26,16 @@ type sshClient struct {
 	x11           *x11Bridge
 	mu            sync.Mutex
 	closed        bool
+	// dead records that the peer-side transport ended without Close being
+	// called. Keeping it separate from closed preserves the Close path that
+	// still has to tear down jump-hop clients.
+	dead bool
 }
 
 var _ appconnection.Client = (*sshClient)(nil)
 var _ appconnection.KeepaliveClient = (*sshClient)(nil)
 var _ appconnection.VersionedClient = (*sshClient)(nil)
+var _ appconnection.LivenessClient = (*sshClient)(nil)
 var _ appconnection.ForwardingClient = (*sshClient)(nil)
 var _ appconnection.SubsystemClient = (*sshClient)(nil)
 var _ appconnection.Executor = (*sshClient)(nil)
@@ -224,13 +229,31 @@ func (c *sshClient) OpenExec(ctx context.Context, command string) (appconnection
 // the transport is no longer answering.
 func (c *sshClient) Keepalive() error {
 	c.mu.Lock()
-	closed := c.closed
+	closed := c.closed || c.dead
 	c.mu.Unlock()
 	if closed {
 		return appconnection.ErrClosed
 	}
 	_, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil)
 	return err
+}
+
+// Alive reports whether the transport is still connected without sending a
+// keepalive. watchDeath records the peer's close as soon as the SSH client's
+// read loop notices it, so the pool can retire a transport that died while
+// idle and dial instead of handing the dead one to the next lease.
+func (c *sshClient) Alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && !c.dead
+}
+
+// watchDeath waits for the SSH client's transport to end and records it.
+func (c *sshClient) watchDeath() {
+	_ = c.client.Wait()
+	c.mu.Lock()
+	c.dead = true
+	c.mu.Unlock()
 }
 
 // RemoteVersion returns the server's full SSH identification line (for

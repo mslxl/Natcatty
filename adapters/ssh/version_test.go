@@ -59,3 +59,19 @@ func TestRemoteVersionReportsTheCapturedBanner(t *testing.T) {
 		t.Fatalf("RemoteVersion = %q", got)
 	}
 }
+
+func TestAliveReportsThePhysicalTransportState(t *testing.T) {
+	client := &sshClient{}
+	if !client.Alive() {
+		t.Fatal("a fresh transport reports not alive")
+	}
+	client.dead = true
+	if client.Alive() {
+		t.Fatal("a transport whose peer ended still reports alive")
+	}
+	client.dead = false
+	client.closed = true
+	if client.Alive() {
+		t.Fatal("a closed transport reports alive")
+	}
+}

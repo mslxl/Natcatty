@@ -49,10 +49,11 @@ func runTicket38(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 	return result
 }
 
-// Ticket 38 self-test. The launcher is scripted and the remote pane is the
-// real local adapter behind a transport the test can kill; a killed transport
-// stays dead, so each retry must dial a fresh one, and the GUI Host reconnect
-// must reuse the same Tab.
+// Ticket 38 self-test. The launcher is scripted and the remote pane runs the
+// app's real opener, Connection Manager, pool, and SFTP adapter against an
+// in-process server the test can kill; a killed transport stays dead, so each
+// retry must dial a fresh one, and the GUI Host reconnect must reuse the same
+// Tab.
 func TestTicket38CheckRunsThroughTheKeyboard(t *testing.T) {
 	tester, dir := newTicket16Tester(t)
 	tester.Key(0, ui.KeyF11)
@@ -73,7 +74,7 @@ func TestTicket38CheckRunsThroughTheKeyboard(t *testing.T) {
 		"transferstate.State.Open -> application/fileopen.Service -> ui/editor.State -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service watcher (real launcher seam) -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service.Save conflict check -> ui/editor.State prompt -> application/transfer.Service.WriteFile",
-		"application/fileopen.Service retry -> transferstate.remoteLink dial (Connection Manager) -> application/transfer.Service.WriteFile",
+		"application/fileopen.Service retry -> transferstate.remoteLink dial -> application/connection.Manager.Acquire (real pool liveness) -> adapters/sftp -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service.SweepTemp + Close/Shutdown",
 	} {
 		if !seams[want] {

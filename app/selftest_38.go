@@ -28,10 +28,12 @@ package app
 //     a live session's directory survives an explicit sweep; closing the
 //     document removes its directory; Shutdown sweeps the rest.
 //
-// The remote pane is the real local adapter viewed as a remote transport, so
-// the test exercises the same FileSystem port and staging write a real SFTP
-// connection uses, without needing a server or the network. Every wait polls
-// the real surface under a 30-second deadline; there is no sleep.
+// The remote pane is the app's real sftpRemoteOpener over the real
+// application Connection Manager and its transport pool. A scripted dialer
+// stands in for the TCP handshake and an in-process pkg/sftp server serves the
+// fixture directory, so pool reuse, liveness retirement, the SFTP adapter, and
+// the staging write all run unchanged; only the network is modelled. Every
+// wait polls the real surface under a 30-second deadline; there is no sleep.
 //
 // Result: %TEMP%\natcatty-selftest-38.json.
 
@@ -39,7 +41,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,15 +49,18 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/pkg/sftp"
 
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	adaptersstore "github.com/mslxl/natcatty/adapters/store"
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appfileopen "github.com/mslxl/natcatty/application/fileopen"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
+	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
-	domainsftp "github.com/mslxl/natcatty/domain/transfer"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	editorui "github.com/mslxl/natcatty/ui/editor"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/selftest"
@@ -72,7 +77,8 @@ type selftest38 struct {
 	downloadDir string
 	preferences *apppreferences.Service
 	launcher    *selftest38Launcher
-	remote      *selftest38Remote
+	remote      *selftest38Server
+	manager     *appconnection.Manager
 	open        *appfileopen.Service
 	editor      *editorui.State
 	transfer    *transferstate.State
@@ -163,180 +169,216 @@ func (l *selftest38Launcher) lastPath() (string, bool) {
 	return l.calls[len(l.calls)-1].path, true
 }
 
-// selftest38Remote models the SSH server, not one connection: every dial
-// gets its own transport, and killing the server leaves every handed-out
-// transport permanently dead, as killing sshd and its sftp-server does. A
-// restart only lets the next dial succeed, so a retry that reuses the old
-// handle fails exactly as the GUI acceptance observed.
-type selftest38Remote struct {
-	mu         sync.Mutex
-	lost       bool
-	dials      int
-	transports []*selftest38RemoteFS
+// selftest38Server models the SSH server and its SFTP subsystem in-process,
+// behind the real application Connection Manager and pool. Every physical dial
+// through the manager gets its own authenticated client and its own SFTP
+// server session, so killing the server leaves every handed-out transport
+// permanently dead, as killing sshd and its sftp-server does. A restart only
+// lets the next dial succeed; a recovery that reuses the old pooled transport
+// fails exactly as the GUI acceptance observed.
+type selftest38Server struct {
+	localRoot string
+
+	mu      sync.Mutex
+	lost    bool
+	dials   int
+	clients []*selftest38Client
 }
 
-func (r *selftest38Remote) dial() (apptransfer.FileSystem, error) {
-	r.mu.Lock()
-	r.dials++
-	lost := r.lost
-	r.mu.Unlock()
+func newSelftest38Server(localRoot string) *selftest38Server {
+	return &selftest38Server{localRoot: localRoot}
+}
+
+// Dial is the appconnection.Dialer seam. It counts the physical dials the
+// real Connection Manager decides to make, so the self-test observes pool
+// reuse exactly as the GUI's sshd observes accepted handshakes.
+func (s *selftest38Server) Dial(context.Context, appconnection.DialRequest) (appconnection.Client, error) {
+	s.mu.Lock()
+	s.dials++
+	lost := s.lost
+	s.mu.Unlock()
 	if lost {
 		return nil, errors.New("ssh: connect: connection refused")
 	}
-	base, err := adaptersftp.NewLocal().OpenLocal(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	transport := &selftest38RemoteFS{FileSystem: base}
-	r.mu.Lock()
-	r.transports = append(r.transports, transport)
-	r.mu.Unlock()
-	return transport, nil
+	client := &selftest38Client{server: s}
+	s.mu.Lock()
+	s.clients = append(s.clients, client)
+	s.mu.Unlock()
+	return client, nil
 }
 
-// kill is the server going away: the listener closes and every live transport
-// is reset. A later dial fails until restart.
-func (r *selftest38Remote) kill() {
-	r.mu.Lock()
-	r.lost = true
-	transports := append([]*selftest38RemoteFS(nil), r.transports...)
-	r.mu.Unlock()
-	for _, transport := range transports {
-		transport.kill()
+// kill is the server going away: the listener closes and every handed-out
+// transport is reset. A later dial fails until restart.
+func (s *selftest38Server) kill() {
+	s.mu.Lock()
+	s.lost = true
+	clients := append([]*selftest38Client(nil), s.clients...)
+	s.mu.Unlock()
+	for _, client := range clients {
+		client.kill()
 	}
 }
 
 // restart starts listening on the same endpoint. Existing transports stay
 // dead; only a new dial works.
-func (r *selftest38Remote) restart() {
-	r.mu.Lock()
-	r.lost = false
-	r.mu.Unlock()
+func (s *selftest38Server) restart() {
+	s.mu.Lock()
+	s.lost = false
+	s.mu.Unlock()
 }
 
-func (r *selftest38Remote) dialCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.dials
+func (s *selftest38Server) dialCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dials
 }
 
-// selftest38RemoteFS wraps the real local transport as one remote pane's
-// connection. Kill makes every operation fail, which is what a reset
-// connection does; the underlying fixture files are only reached through a
-// live transport, so a dead handle cannot mutate the "remote" tree.
-type selftest38RemoteFS struct {
-	apptransfer.FileSystem
-	mu   sync.Mutex
-	dead bool
+// selftest38Client is one authenticated transport. Its liveness capability is
+// what the pool must consult: kill makes Alive false and resets every open
+// subsystem stream, while the pool-level Connection stays open until the pool
+// retires it.
+type selftest38Client struct {
+	server *selftest38Server
+
+	mu      sync.Mutex
+	closed  bool
+	dead    bool
+	streams []net.Conn
 }
 
-func (f *selftest38RemoteFS) Backing() string { return "selftest-remote" }
+var (
+	_ appconnection.Client          = (*selftest38Client)(nil)
+	_ appconnection.KeepaliveClient = (*selftest38Client)(nil)
+	_ appconnection.VersionedClient = (*selftest38Client)(nil)
+	_ appconnection.LivenessClient  = (*selftest38Client)(nil)
+	_ appconnection.SubsystemClient = (*selftest38Client)(nil)
+)
 
-func (f *selftest38RemoteFS) kill() {
-	f.mu.Lock()
-	f.dead = true
-	f.mu.Unlock()
+func (c *selftest38Client) OpenTerminal(context.Context, appconnection.TerminalSpec) (appconnection.Terminal, error) {
+	return nil, errors.New("the modelled server has no interactive terminal")
 }
 
-func (f *selftest38RemoteFS) fail() error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.dead {
-		return errors.New("connection reset by peer")
+func (c *selftest38Client) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	streams := c.streams
+	c.streams = nil
+	c.mu.Unlock()
+	closeAll(streams)
+	return nil
+}
+
+// Alive reports the physical peer state without opening a channel.
+func (c *selftest38Client) Alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && !c.dead
+}
+
+func (c *selftest38Client) Keepalive() error {
+	if !c.Alive() {
+		return appconnection.ErrClosed
 	}
 	return nil
 }
 
-func (f *selftest38RemoteFS) Root(ctx context.Context) (string, error) {
-	if err := f.fail(); err != nil {
-		return "", err
-	}
-	return f.FileSystem.Root(ctx)
-}
+func (c *selftest38Client) RemoteVersion() string { return "SSH-2.0-OpenSSH_9.6" }
 
-func (f *selftest38RemoteFS) List(ctx context.Context, dir string) ([]domainsftp.Entry, error) {
-	if err := f.fail(); err != nil {
+// OpenSubsystem serves the real pkg/sftp protocol over an in-memory pipe
+// rooted at the fixture directory, so the transfer service, the ADR-0012
+// write transaction, and the SFTP adapter run unchanged.
+func (c *selftest38Client) OpenSubsystem(_ context.Context, name string) (appconnection.Subsystem, error) {
+	if name != "sftp" {
+		return nil, fmt.Errorf("the modelled server has no %q subsystem", name)
+	}
+	if !c.Alive() {
+		return nil, errors.New("ssh: connection lost")
+	}
+	clientConn, serverConn := net.Pipe()
+	server, err := sftp.NewServer(serverConn, sftp.WithServerWorkingDirectory(c.server.localRoot))
+	if err != nil {
+		closeAll([]net.Conn{clientConn, serverConn})
 		return nil, err
 	}
-	return f.FileSystem.List(ctx, dir)
-}
-
-func (f *selftest38RemoteFS) Stat(ctx context.Context, path string) (domainsftp.Entry, error) {
-	if err := f.fail(); err != nil {
-		return domainsftp.Entry{}, err
+	go func() {
+		_ = server.Serve()
+		_ = server.Close()
+	}()
+	c.mu.Lock()
+	if c.closed || c.dead {
+		c.mu.Unlock()
+		closeAll([]net.Conn{clientConn, serverConn})
+		return nil, errors.New("ssh: connection lost")
 	}
-	return f.FileSystem.Stat(ctx, path)
+	c.streams = append(c.streams, clientConn, serverConn)
+	c.mu.Unlock()
+	return clientConn, nil
 }
 
-func (f *selftest38RemoteFS) Mkdir(ctx context.Context, path string) error {
-	if err := f.fail(); err != nil {
-		return err
+func (c *selftest38Client) kill() {
+	c.mu.Lock()
+	c.dead = true
+	streams := c.streams
+	c.streams = nil
+	c.mu.Unlock()
+	closeAll(streams)
+}
+
+func closeAll(conns []net.Conn) {
+	for _, conn := range conns {
+		_ = conn.Close()
 	}
-	return f.FileSystem.Mkdir(ctx, path)
 }
 
-func (f *selftest38RemoteFS) MkdirAll(ctx context.Context, path string) error {
-	if err := f.fail(); err != nil {
-		return err
-	}
-	return f.FileSystem.MkdirAll(ctx, path)
+// selftest38Vault supplies the modelled Host to the app's real remote opener.
+type selftest38Vault struct {
+	host domainvault.Host
 }
 
-func (f *selftest38RemoteFS) Open(ctx context.Context, path string) (io.ReadCloser, error) {
-	if err := f.fail(); err != nil {
-		return nil, err
-	}
-	return f.FileSystem.Open(ctx, path)
+func (v selftest38Vault) Get(_ context.Context, id model.HostID) (domainvault.Host, error) {
+	host := v.host
+	host.ID = id
+	return host, nil
 }
 
-func (f *selftest38RemoteFS) Create(ctx context.Context, path string) (io.WriteCloser, error) {
-	if err := f.fail(); err != nil {
-		return nil, err
-	}
-	return f.FileSystem.Create(ctx, path)
+func (selftest38Vault) Secret(context.Context, model.HostID, string) (string, error) {
+	return "", errors.New("the modelled Host stores no secret")
 }
 
-func (f *selftest38RemoteFS) Remove(ctx context.Context, path string) error {
-	if err := f.fail(); err != nil {
-		return err
-	}
-	return f.FileSystem.Remove(ctx, path)
+type selftest38Passwords struct{}
+
+func (selftest38Passwords) Password(context.Context, model.HostID) (string, error) {
+	return "", nil
 }
 
-func (f *selftest38RemoteFS) RemoveAll(ctx context.Context, path string) error {
-	if err := f.fail(); err != nil {
-		return err
-	}
-	return f.FileSystem.RemoveAll(ctx, path)
+type selftest38KnownHosts struct{}
+
+func (selftest38KnownHosts) ListKnownHosts(context.Context) ([]domainconn.KnownHost, error) {
+	return nil, nil
 }
 
-func (f *selftest38RemoteFS) Rename(ctx context.Context, oldPath, newPath string) error {
-	if err := f.fail(); err != nil {
-		return err
-	}
-	return f.FileSystem.Rename(ctx, oldPath, newPath)
+func (selftest38KnownHosts) UpsertKnownHost(context.Context, domainconn.KnownHost) error {
+	return nil
 }
 
-func (f *selftest38RemoteFS) Chmod(ctx context.Context, path string, mode uint32) error {
-	if err := f.fail(); err != nil {
-		return err
-	}
-	return f.FileSystem.Chmod(ctx, path, mode)
-}
-
-// selftest38Opener supplies the local and remote panes. The remote one dials
-// the modelled server, so each open gets a distinct transport.
+// selftest38Opener supplies the local and remote panes. The remote one is the
+// app's real opener, so every open goes through the real Connection Manager
+// and its pool.
 type selftest38Opener struct {
 	local  apptransfer.FileSystem
-	remote *selftest38Remote
+	remote *sftpRemoteOpener
 }
 
 func (o *selftest38Opener) OpenLocal(context.Context) (apptransfer.FileSystem, error) {
 	return o.local, nil
 }
 
-func (o *selftest38Opener) OpenRemote(context.Context, model.HostID, string) (apptransfer.FileSystem, error) {
-	return o.remote.dial()
+func (o *selftest38Opener) OpenRemote(ctx context.Context, hostID model.HostID, label string) (apptransfer.FileSystem, error) {
+	return o.remote.OpenRemote(ctx, hostID, label)
 }
 
 func (t *selftest38) fixturesStep(*ui.Context) selftest.Outcome {
@@ -412,7 +454,8 @@ func (t *selftest38) setup() error {
 	if err != nil {
 		return fail(err)
 	}
-	t.remote = &selftest38Remote{}
+	t.remote = newSelftest38Server(t.remoteDir)
+	t.manager = appconnection.NewManager(t.remote, selftest38Passwords{}, selftest38KnownHosts{})
 	t.open = appfileopen.New(t.preferences, t.launcher,
 		appfileopen.WithTempRoot(t.downloadDir),
 		appfileopen.WithWatchInterval(20*time.Millisecond),
@@ -435,8 +478,15 @@ func (t *selftest38) setup() error {
 	}
 
 	opener := &selftest38Opener{
-		local:  localFiles,
-		remote: t.remote,
+		local: localFiles,
+		remote: &sftpRemoteOpener{
+			manager: t.manager,
+			vault: selftest38Vault{host: domainvault.Host{
+				Label: "Fixture", Hostname: "fixture", Port: 22, Username: "tester",
+				Protocol:         domainvault.ProtocolSSH,
+				SFTPFileProtocol: domainvault.FileProtocolSFTP,
+			}},
+		},
 	}
 	transferService := apptransfer.NewService(opener, opener)
 	t.transfer = transferstate.NewState(transferService,
@@ -455,6 +505,12 @@ func (t *selftest38) setup() error {
 		}
 		if t.open != nil {
 			t.open.Shutdown()
+		}
+		if t.manager != nil {
+			t.manager.CloseAll()
+		}
+		if t.remote != nil {
+			t.remote.kill()
 		}
 		_ = os.RemoveAll(workdir)
 	}
@@ -533,7 +589,10 @@ func (t *selftest38) frame() {
 	t.view.Frame()
 }
 
-// remoteReady starts both panes and waits for the remote fixture listing.
+// remoteReady starts both panes and waits for the remote fixture listing. The
+// real opener starts at the SFTP server's working directory, which is the
+// fixture directory, so the listing itself proves the pane is ready; the
+// server's path spelling never has to match the local Windows path.
 func (t *selftest38) remoteReady() bool {
 	if !t.paneStarted {
 		t.paneStarted = true
@@ -544,11 +603,8 @@ func (t *selftest38) remoteReady() bool {
 	if tab == nil || tab.FS == nil || tab.Loading || tab.Path == "" {
 		return false
 	}
-	if !samePath(tab.Path, t.remoteDir) {
-		t.transfer.Navigate(transferstate.Right, t.remoteDir)
-		return false
-	}
-	return true
+	_, ok := entryByName(t.transfer, transferstate.Right, "notes.txt")
+	return ok
 }
 
 func (t *selftest38) openRemoteFile(name string) error {
@@ -1114,8 +1170,8 @@ func (t *selftest38) lostConnectionStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(fmt.Errorf("recovery left %d Tabs, want 1", tabs))
 		}
 		return selftest.Passed(
-			"a killed sshd preserved the internal buffer and the external copy; the retry dialed a fresh transport and uploaded, and a GUI Host reconnect reused the same Tab whose live transport the same editing session then followed",
-			"application/fileopen.Service retry -> transferstate.remoteLink dial (Connection Manager) -> application/transfer.Service.WriteFile")
+			"a killed sshd preserved the internal buffer and the external copy; each retry made the real Connection Manager dial exactly one fresh transport (the dead pooled one was retired) and the upload succeeded, and a GUI Host reconnect reused the same Tab whose live transport the same editing session then followed",
+			"application/fileopen.Service retry -> transferstate.remoteLink dial -> application/connection.Manager.Acquire (real pool liveness) -> adapters/sftp -> application/transfer.Service.WriteFile")
 	}
 }
 

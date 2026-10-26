@@ -189,16 +189,20 @@ func (s *sftpRemoteSession) OpenSudoSFTP(ctx context.Context, password string) (
 
 // Discard closes a transport protocol selection gave up on. A healthy
 // transport returns to the pool; one whose peer already vanished is dropped.
+// Done alone is not enough: a peer can die while the Connection's Done signal
+// is still open because nothing watched the socket, and releasing that lease
+// would park a dead transport for the next Acquire to reuse. The lease's
+// transport-level liveness decides, and the pool re-checks before parking in
+// any case.
 func (s *sftpRemoteSession) Discard() {
 	if !s.claim() {
 		return
 	}
-	select {
-	case <-s.lease.Done():
-		_ = s.lease.Discard()
-	default:
+	if s.lease.Alive() {
 		_ = s.lease.Release()
+		return
 	}
+	_ = s.lease.Discard()
 }
 
 // release hands the lease back when a filesystem closes, or discards a
