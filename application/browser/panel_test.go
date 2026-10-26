@@ -178,6 +178,78 @@ func TestPanelOpensOnADedicatedTunnelAndNavigatesItsTabs(t *testing.T) {
 	}
 }
 
+func TestPanelStopBeforeACommitDropsTheProvisionalLabel(t *testing.T) {
+	connector := &fakeConnector{}
+	panel, updates, state := startPanel(t, connector)
+	defer panel.Close()
+	tabID := state.ActiveID
+
+	gatewayURL, err := panel.Navigate(tabID, "https://docs.example.com/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel.PageChanged(tabID, PageState{URL: gatewayURL, Title: "Docs", Loading: false})
+	state = waitState(t, updates, "the committed page", func(state State) bool {
+		return state.Tabs[0].Title == "Docs" && !state.Tabs[0].Loading
+	})
+	panel.SetPageFlags(tabID, true, true, false)
+	waitState(t, updates, "the committed navigation flags", func(state State) bool {
+		return state.Tabs[0].CanGoBack && state.Tabs[0].CanGoForward
+	})
+
+	if _, err := panel.Navigate(tabID, "https://other.example/slow"); err != nil {
+		t.Fatal(err)
+	}
+	state = panel.State()
+	if state.Tabs[0].URL != "https://other.example/slow" || state.Tabs[0].Title != "other.example" ||
+		!state.Tabs[0].Loading {
+		t.Fatalf("the provisional navigation = %+v", state.Tabs[0])
+	}
+	if state.Tabs[0].CanGoBack || state.Tabs[0].CanGoForward {
+		t.Fatalf("the provisional navigation kept the previous history flags: %+v", state.Tabs[0])
+	}
+	if !panel.PageStopped(tabID) {
+		t.Fatal("Stopped before a commit = false, want the provisional tab restored")
+	}
+	state = panel.State()
+	if state.Tabs[0].URL != "https://docs.example.com/a" || state.Tabs[0].Title != "Docs" {
+		t.Fatalf("the stopped tab kept %+v, want the committed docs.example.com page",
+			state.Tabs[0])
+	}
+	// The restored page is the one the tab actually shows, so its history
+	// flags are the committed ones, not the provisional navigation's.
+	if !state.Tabs[0].CanGoBack || !state.Tabs[0].CanGoForward {
+		t.Fatalf("the restored tab lost its committed history flags: %+v", state.Tabs[0])
+	}
+	if state.Tabs[0].Loading {
+		t.Fatal("the stopped tab is still loading")
+	}
+}
+
+func TestPanelStopAfterACommitKeepsTheCommittedAddress(t *testing.T) {
+	connector := &fakeConnector{}
+	panel, updates, state := startPanel(t, connector)
+	defer panel.Close()
+	tabID := state.ActiveID
+
+	gatewayURL, err := panel.Navigate(tabID, "https://other.example/slow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A navigation event is a commit even when no title has arrived yet.
+	panel.PageChanged(tabID, PageState{URL: gatewayURL, Loading: true})
+	waitState(t, updates, "the committed navigation", func(state State) bool {
+		return state.Tabs[0].URL == "https://other.example/slow"
+	})
+	if panel.PageStopped(tabID) {
+		t.Fatal("Stopped after a commit restored a page the tab had already navigated away from")
+	}
+	state = panel.State()
+	if state.Tabs[0].URL != "https://other.example/slow" || state.Tabs[0].Title != "other.example" {
+		t.Fatalf("the committed tab = %+v", state.Tabs[0])
+	}
+}
+
 func TestPanelRefusesBadAddressesAndNavigationWithoutATunnel(t *testing.T) {
 	connector := &fakeConnector{}
 	panel, updates, state := startPanel(t, connector)
