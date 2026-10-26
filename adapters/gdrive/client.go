@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -24,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/oauthloopback"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 )
@@ -40,7 +40,6 @@ const (
 
 	authorizePath = "/o/oauth2/v2/auth"
 	tokenPath     = "/token"
-	callbackPath  = "/oauth/callback"
 	userInfoPath  = "/oauth2/v2/userinfo"
 
 	defaultAuthTimeout = 5 * time.Minute
@@ -200,121 +199,32 @@ func (c *Client) Authorize(ctx context.Context, open func(string) error) (domain
 	if c.clientID == "" {
 		return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: no Google OAuth client id configured", appsync.ErrNotConfigured)
 	}
-	if open == nil {
-		return domainsync.Token{}, appsync.Grant{}, appsync.ErrBrowserUnavailable
+	flow := oauthloopback.Flow{
+		Provider:      "Google",
+		AuthBase:      c.authBase,
+		AuthorizePath: authorizePath,
+		Scope:         c.scope,
+		ClientID:      c.clientID,
+		ExtraQuery: url.Values{
+			"access_type": {"offline"},
+			"prompt":      {"consent"},
+		},
+		Timeout: c.authTimeout,
+		Random:  c.random,
 	}
-	proof, err := NewPKCE(c.random)
+	authorization, err := flow.Authorize(ctx, open)
 	if err != nil {
 		return domainsync.Token{}, appsync.Grant{}, err
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	token, err := c.exchange(ctx, authorization.Code, authorization.Verifier, authorization.RedirectURI)
 	if err != nil {
-		return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: start the loopback listener: %v", appsync.ErrNetwork, err)
+		return domainsync.Token{}, appsync.Grant{}, err
 	}
-	redirectURI := "http://" + listener.Addr().String() + callbackPath
-	results := make(chan callbackResult, 1)
-	server := &http.Server{Handler: callbackHandler(proof.State, results)}
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- server.Serve(listener)
-	}()
-	defer func() {
-		_ = server.Close()
-	}()
-
-	authURL := c.authorizationURL(redirectURI, proof)
-	if err := open(authURL); err != nil {
-		return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: %v", appsync.ErrBrowserUnavailable, err)
+	grant, err := c.User(ctx, token)
+	if err != nil {
+		return domainsync.Token{}, appsync.Grant{}, err
 	}
-
-	timer := time.NewTimer(c.authTimeout)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: %v", appsync.ErrAuthorizationTimeout, ctx.Err())
-		}
-		return domainsync.Token{}, appsync.Grant{}, ctx.Err()
-	case <-timer.C:
-		return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: no redirect within %s", appsync.ErrAuthorizationTimeout, c.authTimeout)
-	case err := <-serveErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return domainsync.Token{}, appsync.Grant{}, fmt.Errorf("%w: loopback listener: %v", appsync.ErrNetwork, err)
-		}
-		return domainsync.Token{}, appsync.Grant{}, appsync.ErrNetwork
-	case result := <-results:
-		if result.err != nil {
-			return domainsync.Token{}, appsync.Grant{}, result.err
-		}
-		token, err := c.exchange(ctx, result.code, proof.Verifier, redirectURI)
-		if err != nil {
-			return domainsync.Token{}, appsync.Grant{}, err
-		}
-		grant, err := c.User(ctx, token)
-		if err != nil {
-			return domainsync.Token{}, appsync.Grant{}, err
-		}
-		return token, grant, nil
-	}
-}
-
-type callbackResult struct {
-	code string
-	err  error
-}
-
-// callbackHandler answers the loopback redirect. The page is written before
-// the result is published so the browser is never cut off by authorization
-// completing.
-func callbackHandler(expectedState string, results chan<- callbackResult) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc(callbackPath, func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		switch {
-		case query.Get("state") != expectedState:
-			writeCallbackPage(w, http.StatusBadRequest, "Authorization failed", "The authorization state did not match this attempt. Return to Netcatty and try again.")
-			publishCallback(results, callbackResult{err: appsync.ErrAuthorizationState})
-		case query.Get("error") != "":
-			writeCallbackPage(w, http.StatusOK, "Authorization cancelled", "Google did not grant access. You can close this window and try again from Netcatty.")
-			publishCallback(results, callbackResult{err: appsync.ErrAuthorizationDenied})
-		case query.Get("code") == "":
-			writeCallbackPage(w, http.StatusBadRequest, "Authorization failed", "The redirect carried no authorization code. Return to Netcatty and try again.")
-			publishCallback(results, callbackResult{err: fmt.Errorf("%w: the redirect carried no code", appsync.ErrAuthorizationDenied)})
-		default:
-			writeCallbackPage(w, http.StatusOK, "Netcatty is connected", "Authorization finished. You can close this window and return to Netcatty.")
-			publishCallback(results, callbackResult{code: query.Get("code")})
-		}
-	})
-	return mux
-}
-
-func publishCallback(results chan<- callbackResult, result callbackResult) {
-	select {
-	case results <- result:
-	default:
-	}
-}
-
-func writeCallbackPage(w http.ResponseWriter, status int, title, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>"+
-		title+"</title></head><body style=\"font-family: system-ui, sans-serif; margin: 3rem; color: #1f2328;\"><h1 style=\"font-size: 1.35rem;\">"+
-		title+"</h1><p style=\"font-size: 0.95rem; max-width: 30rem;\">"+message+"</p></body></html>")
-}
-
-func (c *Client) authorizationURL(redirectURI string, proof PKCE) string {
-	query := url.Values{}
-	query.Set("client_id", c.clientID)
-	query.Set("redirect_uri", redirectURI)
-	query.Set("response_type", "code")
-	query.Set("scope", c.scope)
-	query.Set("state", proof.State)
-	query.Set("code_challenge", proof.Challenge)
-	query.Set("code_challenge_method", "S256")
-	query.Set("access_type", "offline")
-	query.Set("prompt", "consent")
-	return c.authBase + authorizePath + "?" + query.Encode()
+	return token, grant, nil
 }
 
 func (c *Client) exchange(ctx context.Context, code, verifier, redirectURI string) (domainsync.Token, error) {
