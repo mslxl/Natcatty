@@ -252,6 +252,14 @@ func WithRedrawRequest(fn func()) Option {
 	return func(s *Service) { s.notify = fn }
 }
 
+// WithAppliedSnapshot sets the callback invoked after a downloaded cloud copy
+// has been written to the local Vault. The app uses it to refresh
+// Vault-backed surfaces without a restart. It runs on the goroutine executing
+// the sync, so it must not touch UI-thread state directly.
+func WithAppliedSnapshot(fn func()) Option {
+	return func(s *Service) { s.onSnapshotApplied = fn }
+}
+
 // WithRandom sets the envelope's salt and IV source.
 func WithRandom(reader io.Reader) Option {
 	return func(s *Service) {
@@ -277,6 +285,9 @@ type Service struct {
 	debounce time.Duration
 	random   io.Reader
 	notify   func()
+	// onSnapshotApplied, when set, reports that a downloaded cloud copy has
+	// been written locally. It runs on the sync goroutine.
+	onSnapshotApplied func()
 
 	password   string
 	status     Status
@@ -689,6 +700,10 @@ func (s *Service) download(
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
+	// The Vault now holds the cloud copy. Notify Vault-backed surfaces before
+	// the baseline bookkeeping: even if saving the baseline fails, the local
+	// data has already changed and the UI must show it.
+	s.notifySnapshotApplied()
 	appliedSignature, err := s.appliedSignature(ctx)
 	if err != nil {
 		s.finishSync(ProblemLocal)
@@ -944,6 +959,17 @@ func (s *Service) changed() {
 	s.mu.Unlock()
 	if notify != nil {
 		notify()
+	}
+}
+
+// notifySnapshotApplied reports that a downloaded payload was written to the
+// local Vault. The callback may run on any goroutine and must not block.
+func (s *Service) notifySnapshotApplied() {
+	s.mu.Lock()
+	applied := s.onSnapshotApplied
+	s.mu.Unlock()
+	if applied != nil {
+		applied()
 	}
 }
 

@@ -150,6 +150,10 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 		// A host-key trust decision persists off the UI thread and marks the
 		// Known Host list stale; apply it here, on the UI thread.
 		s.FlushKnownHosts()
+		// A sync-applied cloud copy rewrites the Vault families off the UI
+		// thread; apply the stale flag here so the lists refresh in this
+		// frame. An open editor form is left intact.
+		s.FlushLists()
 		if configured.forwarding != nil {
 			// Runtime status arrives on the forwarding manager's goroutine;
 			// apply it on the UI thread before rendering.
