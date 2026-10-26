@@ -111,6 +111,7 @@ func (s *fixtureStream) isClosed() bool {
 
 // fakeClient models the bundled mosh-client PTY.
 type fakeClient struct {
+	path string
 	args []string
 	env  []string
 	cols int
@@ -257,6 +258,7 @@ func newHarness(t *testing.T, output string) *harness {
 			if h.spawnErr != nil {
 				return nil, h.spawnErr
 			}
+			client.path = options.Path
 			client.args = append([]string(nil), options.Args...)
 			client.env = append([]string(nil), options.Env...)
 			client.cols, client.rows = options.Cols, options.Rows
@@ -366,6 +368,40 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// assertClientArgv checks the pty contract: Path is the resolved bundle and
+// Args[0] is that same program, followed by the business arguments.
+func (h *harness) assertClientArgv(t *testing.T, want ...string) {
+	t.Helper()
+	expected := append([]string{h.binaryPath}, want...)
+	if h.client.path != h.binaryPath {
+		t.Fatalf("client Path = %q, want %q", h.client.path, h.binaryPath)
+	}
+	if len(h.client.args) != len(expected) {
+		t.Fatalf("client Args = %#v, want %#v", h.client.args, expected)
+	}
+	for index := range expected {
+		if h.client.args[index] != expected[index] {
+			t.Fatalf("client Args = %#v, want %#v", h.client.args, expected)
+		}
+	}
+}
+
+// TestClientArgvStartsWithBundledExecutable is the regression for ticket 43's
+// real-binary failure: mosh-client read the host as its own name and printed
+// Usage instead of connecting.
+func TestClientArgvStartsWithBundledExecutable(t *testing.T) {
+	h := newHarness(t, "MOSH CONNECT 60006 "+testKey+"\n")
+	transport, err := h.factory.Open(context.Background(), testSpec())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer transport.Close()
+	h.assertClientArgv(t, "example.test", "60006")
+	if key := envValue(h.client.env, "MOSH_KEY"); key != testKey {
+		t.Fatalf("MOSH_KEY = %q", key)
+	}
+}
+
 func TestHandshakeSwapsToBundledClient(t *testing.T) {
 	h := newHarness(t, "Last login: today\r\n"+
 		"MOSH IP 203.0.113.9\r\n"+
@@ -391,9 +427,7 @@ func TestHandshakeSwapsToBundledClient(t *testing.T) {
 	if h.spawns != 1 {
 		t.Fatalf("spawns = %d", h.spawns)
 	}
-	if strings.Join(h.client.args, " ") != "203.0.113.9 60001" {
-		t.Fatalf("client args = %#v", h.client.args)
-	}
+	h.assertClientArgv(t, "203.0.113.9", "60001")
 	clientEnv := strings.Join(h.client.env, "\n")
 	for _, want := range []string{
 		"MOSH_KEY=" + testKey + "==",
@@ -462,9 +496,7 @@ func TestHandshakeParsesUnterminatedAnnouncement(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer transport.Close()
-	if strings.Join(h.client.args, " ") != "example.test 60002" {
-		t.Fatalf("client args = %#v", h.client.args)
-	}
+	h.assertClientArgv(t, "example.test", "60002")
 	if strings.Contains(strings.Join(h.client.env, "\n"), "MOSH_FALLBACK_HOST") {
 		t.Fatal("fallback host set without a MOSH IP")
 	}
@@ -614,6 +646,149 @@ func TestBootstrapAndSpawnFailures(t *testing.T) {
 	_, err := h.factory.Open(context.Background(), testSpec())
 	if err == nil || !strings.Contains(err.Error(), "exec denied") {
 		t.Fatalf("spawn error = %v", err)
+	}
+}
+
+// bundledMoshSpec returns the committed Windows x64 bundle for a real-binary
+// test, or skips when the artifact is not present in this checkout.
+func bundledMoshSpec(t *testing.T) (bundle.Spec, string) {
+	t.Helper()
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		t.Skipf("the committed mosh-client is a Windows x64 binary; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	root, err := filepath.Abs(filepath.Join("..", "..", "resources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, string(bundle.Mosh), "win32-x64", "mosh-client.exe")
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("the bundled mosh-client is absent: %v", err)
+	}
+	return bundle.MoshSpec([]string{root}), path
+}
+
+// TestBundledMoshClientUsesContractArgv runs the committed mosh-client with
+// exactly the pty.Options the adapter builds. Before the ticket-43 rework its
+// argv was [host, port], so the Windows command line was
+// "mosh-client.exe <port>" and the client printed Usage and sent no UDP.
+func TestBundledMoshClientUsesContractArgv(t *testing.T) {
+	spec, exe := bundledMoshSpec(t)
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	port := server.LocalAddr().(*net.UDPAddr).Port
+
+	type datagram struct {
+		size int
+		from net.Addr
+	}
+	received := make(chan datagram, 1)
+	go func() {
+		buffer := make([]byte, 2048)
+		n, from, readErr := server.ReadFrom(buffer)
+		if readErr != nil {
+			return
+		}
+		received <- datagram{size: n, from: from}
+	}()
+
+	// A real mosh-client base64-decodes MOSH_KEY: sixteen bytes, unpadded.
+	const realKey = "MDEyMzQ1Njc4OWFiY2RlZg"
+	bootstrap := &fixtureBootstrap{
+		output: "welcome\r\nMOSH CONNECT " + strconv.Itoa(port) + " " + realKey + "\r\n",
+		hold:   true,
+	}
+	var spawned pty.Options
+	factory := Factory{
+		Spec:      spec,
+		Bootstrap: bootstrap,
+		Spawn: func(options pty.Options) (Process, error) {
+			spawned = options
+			terminal, startErr := pty.Start(options)
+			if startErr != nil {
+				return nil, startErr
+			}
+			return terminal, nil
+		},
+		BaseEnv:          os.Environ,
+		HomeDir:          func() string { return t.TempDir() },
+		HandshakeTimeout: 15 * time.Second,
+	}
+	cfg := moshmodel.Config{Hostname: "127.0.0.1", Port: 22, Username: "alice"}.Normalized()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	transport, err := factory.Open(ctx, appsession.StartSpec{
+		Kind: appsession.KindMosh, Hostname: cfg.Hostname, Port: cfg.Port,
+		Username: cfg.Username, Mosh: &cfg, Cols: 100, Rows: 40,
+	})
+	if err != nil {
+		t.Fatalf("Open the bundled client: %v", err)
+	}
+	defer transport.Close()
+
+	if spawned.Path != exe || len(spawned.Args) != 3 ||
+		spawned.Args[0] != exe || spawned.Args[1] != "127.0.0.1" ||
+		spawned.Args[2] != strconv.Itoa(port) {
+		t.Fatalf("adapter pty argv = Path %q Args %#v, want [%s 127.0.0.1 %d]",
+			spawned.Path, spawned.Args, exe, port)
+	}
+	if key := envValue(spawned.Env, "MOSH_KEY"); key != realKey {
+		t.Fatalf("adapter MOSH_KEY = %q", key)
+	}
+
+	reader := newCollector(transport)
+	exited := make(chan struct{})
+	go func() {
+		if waiter, ok := transport.(appsession.ExitWaiter); ok {
+			_, _ = waiter.Wait()
+			close(exited)
+		}
+	}()
+	select {
+	case datagram := <-received:
+		if datagram.size == 0 {
+			t.Fatalf("the bundled client sent an empty datagram from %v", datagram.from)
+		}
+		// The UDP listener is loopback-only, so the datagram proves the
+		// advertised host and port reached the client as argv[1] and argv[2].
+		if host, _, splitErr := net.SplitHostPort(datagram.from.String()); splitErr != nil || host != "127.0.0.1" {
+			t.Fatalf("datagram source = %v", datagram.from)
+		}
+		t.Logf("real mosh-client sent %d UDP bytes from %v to 127.0.0.1:%d", datagram.size, datagram.from, port)
+	case <-exited:
+		text, _ := reader.text()
+		t.Fatalf("the bundled client exited without sending UDP; output = %q", text)
+	case <-time.After(20 * time.Second):
+		text, _ := reader.text()
+		t.Fatalf("the bundled client sent no UDP datagram within 20s; output = %q", text)
+	}
+	_ = transport.Close()
+	text, readErr := waitForCollectorEnd(t, reader)
+	if readErr == nil {
+		t.Fatal("the terminal stream did not end after Close")
+	}
+	if strings.Contains(text, "Usage:") {
+		t.Fatalf("the bundled client printed Usage instead of connecting: %q", text)
+	}
+}
+
+// waitForCollectorEnd waits for the transport reader to report EOF after the
+// process was closed, so the full output can be inspected.
+func waitForCollectorEnd(t *testing.T, reader *collector) (string, error) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		text, err := reader.text()
+		if err != nil {
+			return text, err
+		}
+		select {
+		case <-reader.updated:
+		case <-deadline:
+			return text, nil
+		}
 	}
 }
 

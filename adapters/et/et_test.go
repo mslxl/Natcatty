@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -526,6 +527,9 @@ func TestOpenProcessLifecycle(t *testing.T) {
 	if spawned.Path != env.binaryPath {
 		t.Fatalf("spawn path = %q", spawned.Path)
 	}
+	if len(spawned.Args) == 0 || spawned.Args[0] != spawned.Path {
+		t.Fatalf("spawn Args = %#v, want argv[0] = %q", spawned.Args, spawned.Path)
+	}
 	if !hasOption(spawned.Args, "StrictHostKeyChecking=accept-new") {
 		t.Fatalf("spawn args = %#v", spawned.Args)
 	}
@@ -573,6 +577,218 @@ func TestOpenProcessLifecycle(t *testing.T) {
 	}
 	if err := transport.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestClientArgvStartsWithBundledExecutable is the regression for ticket 43's
+// real-binary failure: et read port 8737 as the destination because Args[0]
+// was not the executable.
+func TestClientArgvStartsWithBundledExecutable(t *testing.T) {
+	env := newEnv(t)
+	client := newFakeProcess()
+	var spawned pty.Options
+	env.factory.Spawn = func(options pty.Options) (Process, error) {
+		spawned = options
+		return client, nil
+	}
+	cfg := baseConfig()
+	cfg.ETPort = 8737
+	cfg = cfg.Normalized()
+	transport, err := env.factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindET, ET: &cfg,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer transport.Close()
+	if spawned.Path != env.binaryPath {
+		t.Fatalf("spawn Path = %q, want %q", spawned.Path, env.binaryPath)
+	}
+	if len(spawned.Args) == 0 || spawned.Args[0] != env.binaryPath {
+		t.Fatalf("spawn Args = %#v, want argv[0] = %q", spawned.Args, env.binaryPath)
+	}
+	joined := strings.Join(spawned.Args, " ")
+	if !strings.Contains(joined, "-p 8737") || spawned.Args[len(spawned.Args)-1] != "alice@example.test" {
+		t.Fatalf("spawn Args = %#v", spawned.Args)
+	}
+}
+
+// bundledETSpec returns the committed Windows x64 bundle for a real-binary
+// test, or skips when the artifact is not present in this checkout.
+func bundledETSpec(t *testing.T) (bundle.Spec, string) {
+	t.Helper()
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		t.Skipf("the committed et client is a Windows x64 binary; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	root, err := filepath.Abs(filepath.Join("..", "..", "resources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, string(bundle.ET), "win32-x64", "et.exe")
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("the bundled et client is absent: %v", err)
+	}
+	return bundle.ETSpec([]string{root}), path
+}
+
+// TestBundledETClientUsesContractArgv runs the committed et client with the
+// adapter's actual pty.Options against a closed local SSH port. Before the
+// ticket-43 rework argv[0] was "-p", so et read 8737 as the destination and
+// reported "8737:2022" instead of the Host's address and ET port.
+func TestBundledETClientUsesContractArgv(t *testing.T) {
+	spec, exe := bundledETSpec(t)
+
+	// Reserve a local port, then close it: the ET client's SSH bootstrap must
+	// fail fast and the transport must classify the non-zero exit as an error.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedPort := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+
+	var spawned pty.Options
+	factory := Factory{
+		Spec:      spec,
+		BaseEnv:   os.Environ,
+		TempDir:   func() string { return t.TempDir() },
+		HomeDir:   func() string { return t.TempDir() },
+		UserName:  func() string { return "" },
+		ReadDir:   func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist },
+		Exists:    func(string) bool { return false },
+		HardenACL: func(string) {},
+		Spawn: func(options pty.Options) (Process, error) {
+			spawned = options
+			terminal, startErr := pty.Start(options)
+			if startErr != nil {
+				return nil, startErr
+			}
+			return terminal, nil
+		},
+	}
+	cfg := etmodel.Config{
+		Hostname:       "127.0.0.1",
+		Port:           closedPort,
+		ETPort:         8737,
+		Auth:           etmodel.Auth{Method: etmodel.AuthAuto},
+		VerifyHostKeys: false,
+		SessionID:      "real-binary-43",
+		Cols:           100,
+		Rows:           40,
+	}.Normalized()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	transport, err := factory.Open(ctx, appsession.StartSpec{Kind: appsession.KindET, ET: &cfg})
+	if err != nil {
+		t.Fatalf("Open the bundled client: %v", err)
+	}
+	defer transport.Close()
+
+	if spawned.Path != exe || len(spawned.Args) == 0 || spawned.Args[0] != exe {
+		t.Fatalf("adapter pty argv = Path %q Args %#v, want argv[0] = %q", spawned.Path, spawned.Args, exe)
+	}
+	if len(spawned.Args) < 3 || spawned.Args[1] != "-p" || spawned.Args[2] != "8737" ||
+		spawned.Args[len(spawned.Args)-1] != "127.0.0.1" {
+		t.Fatalf("adapter pty args = %#v, want [%s -p 8737 ... 127.0.0.1]", spawned.Args, exe)
+	}
+
+	reader := newProcessCollector(transport)
+	// Wait for the complete failure line so a partial read cannot split the
+	// address. The line is ET's typed connection failure; the transport must
+	// then classify the non-zero exit as EndReasonError, not a normal exit.
+	want := "Could not reach the ET server: 127.0.0.1:8737"
+	text := reader.waitFor(t, want)
+	if strings.Contains(text, "8737:2022") {
+		t.Fatalf("et consumed the ET port as its destination: %q", text)
+	}
+	waiter, ok := transport.(appsession.ExitWaiter)
+	if !ok {
+		t.Fatal("the ET transport does not report an exit status")
+	}
+	exited := make(chan int, 1)
+	go func() {
+		code, _ := waiter.Wait()
+		exited <- code
+	}()
+	select {
+	case code := <-exited:
+		if code == 0 {
+			t.Fatalf("et exited normally after a connection failure: %q", text)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("et did not exit after a connection failure: %q", text)
+	}
+	reporter, ok := transport.(appsession.EndReporter)
+	if !ok {
+		t.Fatal("the ET transport does not classify its end")
+	}
+	if end := reporter.End(); end.Reason != appsession.EndReasonError || !end.HasExitCode || end.ExitCode == 0 {
+		t.Fatalf("transport end = %+v, want a typed error with a non-zero exit", end)
+	}
+	t.Logf("real et client output: %q", strings.TrimSpace(text))
+}
+
+// processCollector drains a transport so waits on its output see every chunk.
+type processCollector struct {
+	mu      sync.Mutex
+	text    string
+	err     error
+	updated chan struct{}
+}
+
+func newProcessCollector(reader io.Reader) *processCollector {
+	c := &processCollector{updated: make(chan struct{}, 1)}
+	go func() {
+		buffer := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buffer)
+			if n > 0 {
+				c.mu.Lock()
+				c.text += string(buffer[:n])
+				c.mu.Unlock()
+				c.signal()
+			}
+			if err != nil {
+				c.mu.Lock()
+				c.err = err
+				c.mu.Unlock()
+				c.signal()
+				return
+			}
+		}
+	}()
+	return c
+}
+
+func (c *processCollector) signal() {
+	select {
+	case c.updated <- struct{}{}:
+	default:
+	}
+}
+
+func (c *processCollector) snapshot() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.text, c.err
+}
+
+func (c *processCollector) waitFor(t *testing.T, want string) string {
+	t.Helper()
+	deadline := time.After(20 * time.Second)
+	for {
+		text, err := c.snapshot()
+		if strings.Contains(text, want) {
+			return text
+		}
+		if err != nil {
+			t.Fatalf("et output ended before %q: %v; output = %q", want, err, text)
+		}
+		select {
+		case <-c.updated:
+		case <-deadline:
+			t.Fatalf("timed out waiting for %q; output = %q", want, text)
+		}
 	}
 }
 

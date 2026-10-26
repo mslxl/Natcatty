@@ -210,6 +210,10 @@ func (t *selftest43) handshakeStep(*ui.Context) selftest.Outcome {
 	}
 	defer os.RemoveAll(root)
 
+	resolved, err := selftest43Spec(root).Resolve()
+	if err != nil {
+		return selftest.Failed(fmt.Errorf("resolve the mosh fixture bundle: %w", err))
+	}
 	bootstrap := &selftest43Bootstrap{
 		announcement: fmt.Sprintf("bootstrap banner\r\n\x1b]0;title\x07MOSH CONNECT %d %s\r\n", port, selftest43Key),
 	}
@@ -218,11 +222,14 @@ func (t *selftest43) handshakeStep(*ui.Context) selftest.Outcome {
 		Spec:      selftest43Spec(root),
 		Bootstrap: bootstrap,
 		Spawn: func(options pty.Options) (moshadapter.Process, error) {
+			if err := selftest43PTYContract(options, resolved.Path); err != nil {
+				return nil, err
+			}
 			client.record(options)
 			client.push("client-ready\r\n")
 			key := selftest43Env(options.Env, "MOSH_KEY")
-			if len(options.Args) == 2 {
-				connection, dialErr := net.Dial("udp", net.JoinHostPort("127.0.0.1", options.Args[1]))
+			if len(options.Args) == 3 {
+				connection, dialErr := net.Dial("udp", net.JoinHostPort("127.0.0.1", options.Args[2]))
 				if dialErr == nil {
 					_, _ = connection.Write([]byte(key))
 					_ = connection.Close()
@@ -302,8 +309,10 @@ func (t *selftest43) handshakeStep(*ui.Context) selftest.Outcome {
 	if got := selftest43Env(client.env, "MOSH_KEY"); got != selftest43Key {
 		return selftest.Failed(fmt.Errorf("MOSH_KEY = %q, want the announced key", got))
 	}
-	if len(client.args) != 2 || client.args[1] != fmt.Sprint(port) {
-		return selftest.Failed(fmt.Errorf("client args = %v, want the announced UDP port", client.args))
+	if len(client.args) != 3 || client.args[0] != resolved.Path ||
+		client.args[1] != cfg.Hostname || client.args[2] != fmt.Sprint(port) {
+		return selftest.Failed(fmt.Errorf("client args = %v, want [%s %s %d]",
+			client.args, resolved.Path, cfg.Hostname, port))
 	}
 	if _, err := transport.Write([]byte("ls\r")); err != nil {
 		return selftest.Failed(fmt.Errorf("write input: %w", err))
@@ -333,7 +342,7 @@ func (t *selftest43) handshakeStep(*ui.Context) selftest.Outcome {
 	}
 
 	return selftest.Passed(
-		"MOSH CONNECT was parsed and hidden, the client got MOSH_KEY and the UDP port, input and resize reached it, the UDP fixture received the key, and Close reaped the client",
+		"MOSH CONNECT was parsed and hidden, the pty argv opened with the bundle path and carried the host and announced UDP port, the client got MOSH_KEY, input and resize reached it, the UDP fixture received the key, and Close reaped the client",
 		"adapters/mosh.Factory + domain/model/mosh.Sniffer + in-process SSH/UDP/PTY fixtures")
 }
 
@@ -354,7 +363,8 @@ func (t *selftest43) environmentStep(*ui.Context) selftest.Outcome {
 	}
 	// The committed bundle must verify before any environment is built.
 	roots := transportBundleRoots()
-	if _, err := bundle.ETSpec(roots).Resolve(); err != nil {
+	resolved, err := bundle.ETSpec(roots).Resolve()
+	if err != nil {
 		return selftest.Failed(fmt.Errorf("the committed et client does not verify: %w", err))
 	}
 	factory := etadapter.Factory{
@@ -472,11 +482,11 @@ func (t *selftest43) environmentStep(*ui.Context) selftest.Outcome {
 	}
 	args := strings.Join(prepared.Args, " ")
 	for _, want := range []string{
-		"-p 8737",
+		fmt.Sprintf("-p %d", cfg.ETPort),
 		"--ssh-option",
 		"--jumphost jumpuser@jump.example",
 		"--jport 2022",
-		"alice@target.example",
+		prepared.UserHost,
 	} {
 		if !strings.Contains(args, want) {
 			return selftest.Failed(fmt.Errorf("et args %q are missing %q", args, want))
@@ -499,14 +509,44 @@ func (t *selftest43) environmentStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("et proxy error = %v", err))
 	}
 
+	// Open with a fake PTY process so the adapter's actual spawn arguments are
+	// checked against the pty contract: argv[0] is the bundled executable, and
+	// the ET port and destination follow. The old bare prepared.Args would put
+	// "-p" in argv[0] and make et treat 8737 as its destination.
+	spawnFactory := factory
+	var spawned pty.Options
+	spawnFactory.Spawn = func(options pty.Options) (etadapter.Process, error) {
+		spawned = options
+		if err := selftest43PTYContract(options, resolved.Path); err != nil {
+			return nil, err
+		}
+		return newSelftest43Process(), nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), selftest43Wait)
+	defer cancel()
+	transport, err := spawnFactory.Open(ctx, appsession.StartSpec{Kind: appsession.KindET, ET: &cfg})
+	if err != nil {
+		return selftest.Failed(fmt.Errorf("open ET with the spawn seam: %w", err))
+	}
+	if len(spawned.Args) < 4 || spawned.Args[0] != resolved.Path ||
+		spawned.Args[1] != "-p" || spawned.Args[2] != fmt.Sprint(cfg.ETPort) ||
+		spawned.Args[len(spawned.Args)-1] != prepared.UserHost {
+		_ = transport.Close()
+		return selftest.Failed(fmt.Errorf("et pty args = %#v, want [%s -p %d ... %s]",
+			spawned.Args, resolved.Path, cfg.ETPort, prepared.UserHost))
+	}
+	if err := transport.Close(); err != nil {
+		return selftest.Failed(err)
+	}
+
 	prepared.Cleanup()
 	if _, err := os.Stat(prepared.Artifacts); !os.IsNotExist(err) {
 		return selftest.Failed(fmt.Errorf("the private ET home survived Cleanup: %v", err))
 	}
 
 	return selftest.Passed(
-		"ET ran with a private HOME, app-backed SSH_ASKPASS and three secrets, a Vault known-hosts snapshot, one jump Host, legacy algorithms, and typed route restrictions",
-		"adapters/et.Factory.Prepare + domain/model/et.CheckRoute + AskpassEntries")
+		"ET ran with a private HOME, app-backed SSH_ASKPASS and three secrets, a Vault known-hosts snapshot, one jump Host, legacy algorithms, a pty argv opened by the bundle path with -p 8737 and the destination, and typed route restrictions",
+		"adapters/et.Factory.Prepare + adapters/et.Factory.Open + domain/model/et.CheckRoute + AskpassEntries")
 }
 
 const selftest43Key = "selftestkeyabcdefghijk"
@@ -572,6 +612,17 @@ func selftest43Env(environment []string, name string) string {
 		}
 	}
 	return ""
+}
+
+// selftest43PTYContract checks the platform/pty argument contract: Path is the
+// resolved executable and Args[0] is that same program, followed by the
+// arguments the child parses. Both transport adapters must satisfy it.
+func selftest43PTYContract(options pty.Options, path string) error {
+	if options.Path != path || len(options.Args) == 0 || options.Args[0] != path {
+		return fmt.Errorf("pty contract: Path=%q Args=%#v, want argv[0]=%q",
+			options.Path, options.Args, path)
+	}
+	return nil
 }
 
 // selftest43Bootstrap is the in-process SSH bootstrap.
