@@ -27,14 +27,16 @@ const (
 	PageLoading
 	PageLoaded
 	PageFailed
+	PageDownload
 )
 
 // PageEvent is one page lifecycle event.
 type PageEvent struct {
-	Kind  PageEventKind
-	URL   string
-	Title string
-	Error string
+	Kind          PageEventKind
+	URL           string
+	Title         string
+	Error         string
+	SuggestedName string
 }
 
 // Page is one native web page. The app implements it with MyGo; tests use a
@@ -117,6 +119,12 @@ type Panel struct {
 	lastRoute    appbrowser.Route
 	focusAddress bool
 	closed       bool
+
+	pane         polishPane
+	bookmarkForm bookmarkForm
+	downloadErr  error
+	iconCache    map[string]*ui.Bitmap
+	iconMiss     map[string]bool
 }
 
 type problemKind int
@@ -217,7 +225,7 @@ func (p *Panel) View(c *ui.Context) ui.Element {
 	p.lastRoute = state.Route
 	p.syncAddress(state)
 	active, hasActive := activeTab(state)
-	if state.Route == appbrowser.RouteConnected && hasActive && active.URL != "" {
+	if state.Route == appbrowser.RouteConnected && hasActive && active.URL != "" && p.pane == paneNone {
 		// A page is created lazily and kept while its tab exists. This also
 		// recreates it after a retry, without touching other tabs.
 		if _, exists := p.openTabs[active.ID]; !exists {
@@ -243,9 +251,14 @@ func (p *Panel) View(c *ui.Context) ui.Element {
 			}
 			p.status(c, title, body, m.BrowserRetry(), m, t)
 		default:
-			if hasActive && active.URL != "" {
+			switch {
+			case p.pane == paneBookmarks:
+				p.bookmarkPane(c, state, m, t)
+			case p.pane == paneDownloads:
+				p.downloadPane(c, m, t)
+			case hasActive && active.URL != "":
 				p.page(c, active, t)
-			} else {
+			default:
 				p.status(c, m.BrowserEmptyTitle(), m.BrowserEmptyBody(), "", m, t)
 			}
 		}
@@ -271,6 +284,12 @@ func (p *Panel) toolbar(c *ui.Context, state appbrowser.State, active appbrowser
 		if ui.Button(c, "✕").Label(m.BrowserStop()).Width(30).Height(28).
 			Disabled(!connected || !hasActive || !active.Loading).Clicked() {
 			p.stopPage(active.ID)
+		}
+		if ui.Button(c, "★").Label(m.BrowserBookmarks()).Width(30).Height(28).Clicked() {
+			p.togglePane(paneBookmarks)
+		}
+		if ui.Button(c, "⇩").Label(m.BrowserDownloads()).Width(30).Height(28).Clicked() {
+			p.togglePane(paneDownloads)
 		}
 		input := ui.TextInput(c, &p.address).Grow(1).MinWidth(0).
 			Label(m.BrowserAddress())
@@ -372,6 +391,9 @@ func (p *Panel) tabStrip(c *ui.Context, state appbrowser.State, m locales.Messag
 					item := ui.Row(c).Key("browser-tab-" + tab.ID).Gap(browserTabGap).
 						AlignItems(ui.Center).Bind(itemHandle)
 					item.Children(func() {
+						if bitmap := p.iconBitmap(tab.IconDataURL); bitmap != nil {
+							ui.Image(c, bitmap).Width(14).Height(14).Shrink(0)
+						}
 						var button ui.Element
 						if active {
 							button = ui.PrimaryButton(c, label)
@@ -633,6 +655,12 @@ func (p *Panel) onPageEvent(tabID string, page Page, event PageEvent) {
 		})
 	case PageFailed:
 		p.core.PageFailed(tabID, event.Error)
+	case PageDownload:
+		// The engine aborts the navigation that produced the download. Settle
+		// the provisional tab so the address and loading state describe the
+		// page still on screen; the download pane owns the new outcome.
+		p.core.PageStopped(tabID)
+		p.startDownloadFromPage(event.URL, event.SuggestedName)
 	}
 	p.invalidate()
 }

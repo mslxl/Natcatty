@@ -132,7 +132,7 @@ func TestPanelOpensOnADedicatedTunnelAndNavigatesItsTabs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Navigate localhost: %v", err)
 	}
-	if !strings.HasPrefix(gatewayURL, "http://127.0.0.1:") || !strings.HasSuffix(gatewayURL, "/admin") {
+	if !strings.HasPrefix(gatewayURL, "http://127.0.0.2:") || !strings.HasSuffix(gatewayURL, "/admin") {
 		t.Fatalf("gateway URL = %q", gatewayURL)
 	}
 	state = waitState(t, updates, "the localhost tab URL", func(state State) bool {
@@ -223,6 +223,48 @@ func TestPanelStopBeforeACommitDropsTheProvisionalLabel(t *testing.T) {
 	}
 	if state.Tabs[0].Loading {
 		t.Fatal("the stopped tab is still loading")
+	}
+}
+
+func TestPanelStopRestoresTheCommittedTabIcon(t *testing.T) {
+	icons, err := NewSiteIcons(&memoryIconStore{items: []domainbrowser.SiteIcon{{
+		HostID: "host-1", Origin: "https://docs.example.com",
+		Mode: domainbrowser.IconModeAuto, DataURL: testPNGDataURL,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel := New(Config{
+		HostID: "host-1", Label: "web-1", Connector: &fakeConnector{}, Icons: icons,
+	})
+	updates := subscribePanel(t, panel)
+	panel.Start()
+	state := waitState(t, updates, "the dedicated tunnel", func(state State) bool {
+		return state.Route == RouteConnected
+	})
+	defer panel.Close()
+	tabID := state.ActiveID
+
+	gatewayURL, err := panel.Navigate(tabID, "https://docs.example.com/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel.PageChanged(tabID, PageState{URL: gatewayURL, Title: "Docs", Loading: false})
+	waitState(t, updates, "the committed docs icon", func(state State) bool {
+		return state.Tabs[0].IconDataURL == testPNGDataURL
+	})
+
+	if _, err := panel.Navigate(tabID, "https://other.example/slow"); err != nil {
+		t.Fatal(err)
+	}
+	if icon := panel.State().Tabs[0].IconDataURL; icon != "" {
+		t.Fatalf("the provisional tab kept icon %q", icon)
+	}
+	if !panel.PageStopped(tabID) {
+		t.Fatal("Stopped before a commit = false, want the provisional tab restored")
+	}
+	if icon := panel.State().Tabs[0].IconDataURL; icon != testPNGDataURL {
+		t.Fatalf("the stopped tab icon = %q, want the committed docs icon", icon)
 	}
 }
 

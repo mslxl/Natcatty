@@ -18397,3 +18397,313 @@ func BrowserOpenFailed() string { return In(i18n.Locale()).BrowserOpenFailed() }
 func (msgs Messages) BrowserOpenFailed() string {
 	return Catalog.Format(msgs.locale, "browserOpenFailed", nil)
 }
+
+// BrowserBookmarks says "Bookmarks"
+// in the language the app shows.
+func BrowserBookmarks() string { return In(i18n.Locale()).BrowserBookmarks() }
+
+// BrowserBookmarks says "Bookmarks"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarks() string {
+	return Catalog.Format(msgs.locale, "browserBookmarks", nil)
+}
+
+// BrowserDownloads says "Downloads"
+// in the language the app shows.
+func BrowserDownloads() string { return In(i18n.Locale()).BrowserDownloads() }
+
+// BrowserDownloads says "Downloads"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloads() string {
+	return Catalog.Format(msgs.locale, "browserDownloads", nil)
+}
+
+// BrowserBookmarkAdd says "Add bookmark"
+// in the language the app shows.
+func BrowserBookmarkAdd() string { return In(i18n.Locale()).BrowserBookmarkAdd() }
+
+// BrowserBookmarkAdd says "Add bookmark"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkAdd() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkAdd", nil)
+}
+
+// BrowserBookmarkEdit says "Edit"
+// in the language the app shows.
+func BrowserBookmarkEdit() string { return In(i18n.Locale()).BrowserBookmarkEdit() }
+
+// BrowserBookmarkEdit says "Edit"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkEdit() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkEdit", nil)
+}
+
+// BrowserBookmarkDelete says "Delete"
+// in the language the app shows.
+func BrowserBookmarkDelete() string { return In(i18n.Locale()).BrowserBookmarkDelete() }
+
+// BrowserBookmarkDelete says "Delete"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkDelete() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkDelete", nil)
+}
+
+// BrowserBookmarkSave says "Save"
+// in the language the app shows.
+func BrowserBookmarkSave() string { return In(i18n.Locale()).BrowserBookmarkSave() }
+
+// BrowserBookmarkSave says "Save"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkSave() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkSave", nil)
+}
+
+// BrowserBookmarkCancel says "Cancel"
+// in the language the app shows.
+func BrowserBookmarkCancel() string { return In(i18n.Locale()).BrowserBookmarkCancel() }
+
+// BrowserBookmarkCancel says "Cancel"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkCancel() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkCancel", nil)
+}
+
+// BrowserBookmarkTitle says "Title"
+// in the language the app shows.
+func BrowserBookmarkTitle() string { return In(i18n.Locale()).BrowserBookmarkTitle() }
+
+// BrowserBookmarkTitle says "Title"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkTitle() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkTitle", nil)
+}
+
+// BrowserBookmarkAddress says "Address"
+// in the language the app shows.
+func BrowserBookmarkAddress() string { return In(i18n.Locale()).BrowserBookmarkAddress() }
+
+// BrowserBookmarkAddress says "Address"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkAddress() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkAddress", nil)
+}
+
+// BrowserBookmarkScope says "Scope"
+// in the language the app shows.
+func BrowserBookmarkScope() string { return In(i18n.Locale()).BrowserBookmarkScope() }
+
+// BrowserBookmarkScope says "Scope"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkScope() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkScope", nil)
+}
+
+// BrowserBookmarkThisHost says "This Host"
+// in the language the app shows.
+func BrowserBookmarkThisHost() string { return In(i18n.Locale()).BrowserBookmarkThisHost() }
+
+// BrowserBookmarkThisHost says "This Host"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkThisHost() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkThisHost", nil)
+}
+
+// BrowserBookmarkAllHosts says "All Hosts"
+// in the language the app shows.
+func BrowserBookmarkAllHosts() string { return In(i18n.Locale()).BrowserBookmarkAllHosts() }
+
+// BrowserBookmarkAllHosts says "All Hosts"
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkAllHosts() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkAllHosts", nil)
+}
+
+// BrowserBookmarkEmpty says "No bookmarks on this Host yet."
+// in the language the app shows.
+func BrowserBookmarkEmpty() string { return In(i18n.Locale()).BrowserBookmarkEmpty() }
+
+// BrowserBookmarkEmpty says "No bookmarks on this Host yet."
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkEmpty() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkEmpty", nil)
+}
+
+// BrowserBookmarkLimit says "Bookmark limit reached."
+// in the language the app shows.
+func BrowserBookmarkLimit() string { return In(i18n.Locale()).BrowserBookmarkLimit() }
+
+// BrowserBookmarkLimit says "Bookmark limit reached."
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkLimit() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkLimit", nil)
+}
+
+// BrowserBookmarkSaveFailed says "The bookmark could not be saved."
+// in the language the app shows.
+func BrowserBookmarkSaveFailed() string { return In(i18n.Locale()).BrowserBookmarkSaveFailed() }
+
+// BrowserBookmarkSaveFailed says "The bookmark could not be saved."
+// in the language of msgs.
+func (msgs Messages) BrowserBookmarkSaveFailed() string {
+	return Catalog.Format(msgs.locale, "browserBookmarkSaveFailed", nil)
+}
+
+// BrowserDownloadEmpty says "No downloads yet."
+// in the language the app shows.
+func BrowserDownloadEmpty() string { return In(i18n.Locale()).BrowserDownloadEmpty() }
+
+// BrowserDownloadEmpty says "No downloads yet."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadEmpty() string {
+	return Catalog.Format(msgs.locale, "browserDownloadEmpty", nil)
+}
+
+// BrowserDownloadWaiting says "Waiting…"
+// in the language the app shows.
+func BrowserDownloadWaiting() string { return In(i18n.Locale()).BrowserDownloadWaiting() }
+
+// BrowserDownloadWaiting says "Waiting…"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadWaiting() string {
+	return Catalog.Format(msgs.locale, "browserDownloadWaiting", nil)
+}
+
+// BrowserDownloadProgressing says "Downloading…"
+// in the language the app shows.
+func BrowserDownloadProgressing() string { return In(i18n.Locale()).BrowserDownloadProgressing() }
+
+// BrowserDownloadProgressing says "Downloading…"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadProgressing() string {
+	return Catalog.Format(msgs.locale, "browserDownloadProgressing", nil)
+}
+
+// BrowserDownloadCompleted says "Completed"
+// in the language the app shows.
+func BrowserDownloadCompleted() string { return In(i18n.Locale()).BrowserDownloadCompleted() }
+
+// BrowserDownloadCompleted says "Completed"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadCompleted() string {
+	return Catalog.Format(msgs.locale, "browserDownloadCompleted", nil)
+}
+
+// BrowserDownloadFailed says "Failed"
+// in the language the app shows.
+func BrowserDownloadFailed() string { return In(i18n.Locale()).BrowserDownloadFailed() }
+
+// BrowserDownloadFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadFailed() string {
+	return Catalog.Format(msgs.locale, "browserDownloadFailed", nil)
+}
+
+// BrowserDownloadCancelled says "Cancelled"
+// in the language the app shows.
+func BrowserDownloadCancelled() string { return In(i18n.Locale()).BrowserDownloadCancelled() }
+
+// BrowserDownloadCancelled says "Cancelled"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadCancelled() string {
+	return Catalog.Format(msgs.locale, "browserDownloadCancelled", nil)
+}
+
+// BrowserDownloadTooLarge says "The file is larger than the download limit."
+// in the language the app shows.
+func BrowserDownloadTooLarge() string { return In(i18n.Locale()).BrowserDownloadTooLarge() }
+
+// BrowserDownloadTooLarge says "The file is larger than the download limit."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadTooLarge() string {
+	return Catalog.Format(msgs.locale, "browserDownloadTooLarge", nil)
+}
+
+// BrowserDownloadNetwork says "The download connection failed."
+// in the language the app shows.
+func BrowserDownloadNetwork() string { return In(i18n.Locale()).BrowserDownloadNetwork() }
+
+// BrowserDownloadNetwork says "The download connection failed."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadNetwork() string {
+	return Catalog.Format(msgs.locale, "browserDownloadNetwork", nil)
+}
+
+// BrowserDownloadStatus says "The server refused the download."
+// in the language the app shows.
+func BrowserDownloadStatus() string { return In(i18n.Locale()).BrowserDownloadStatus() }
+
+// BrowserDownloadStatus says "The server refused the download."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadStatus() string {
+	return Catalog.Format(msgs.locale, "browserDownloadStatus", nil)
+}
+
+// BrowserDownloadWrite says "The file could not be written."
+// in the language the app shows.
+func BrowserDownloadWrite() string { return In(i18n.Locale()).BrowserDownloadWrite() }
+
+// BrowserDownloadWrite says "The file could not be written."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadWrite() string {
+	return Catalog.Format(msgs.locale, "browserDownloadWrite", nil)
+}
+
+// BrowserDownloadClear says "Clear finished"
+// in the language the app shows.
+func BrowserDownloadClear() string { return In(i18n.Locale()).BrowserDownloadClear() }
+
+// BrowserDownloadClear says "Clear finished"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadClear() string {
+	return Catalog.Format(msgs.locale, "browserDownloadClear", nil)
+}
+
+// BrowserDownloadCancel says "Cancel download"
+// in the language the app shows.
+func BrowserDownloadCancel() string { return In(i18n.Locale()).BrowserDownloadCancel() }
+
+// BrowserDownloadCancel says "Cancel download"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadCancel() string {
+	return Catalog.Format(msgs.locale, "browserDownloadCancel", nil)
+}
+
+// BrowserDownloadRemove says "Remove download"
+// in the language the app shows.
+func BrowserDownloadRemove() string { return In(i18n.Locale()).BrowserDownloadRemove() }
+
+// BrowserDownloadRemove says "Remove download"
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadRemove() string {
+	return Catalog.Format(msgs.locale, "browserDownloadRemove", nil)
+}
+
+// BrowserDownloadRefused says "This download is not on the browser route."
+// in the language the app shows.
+func BrowserDownloadRefused() string { return In(i18n.Locale()).BrowserDownloadRefused() }
+
+// BrowserDownloadRefused says "This download is not on the browser route."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadRefused() string {
+	return Catalog.Format(msgs.locale, "browserDownloadRefused", nil)
+}
+
+// BrowserDownloadNoDirectory says "The downloads folder is unavailable."
+// in the language the app shows.
+func BrowserDownloadNoDirectory() string { return In(i18n.Locale()).BrowserDownloadNoDirectory() }
+
+// BrowserDownloadNoDirectory says "The downloads folder is unavailable."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadNoDirectory() string {
+	return Catalog.Format(msgs.locale, "browserDownloadNoDirectory", nil)
+}
+
+// BrowserDownloadStartFailed says "The download could not start."
+// in the language the app shows.
+func BrowserDownloadStartFailed() string { return In(i18n.Locale()).BrowserDownloadStartFailed() }
+
+// BrowserDownloadStartFailed says "The download could not start."
+// in the language of msgs.
+func (msgs Messages) BrowserDownloadStartFailed() string {
+	return Catalog.Format(msgs.locale, "browserDownloadStartFailed", nil)
+}

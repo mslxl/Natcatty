@@ -1,6 +1,8 @@
 package browser
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +25,13 @@ import (
 // every request through the panel's dedicated tunnel, rewrites the page's
 // absolute same-origin URLs to the listener, and refuses to expose a direct
 // route.
+// GatewayLoopbackHost is the loopback address every origin gateway binds.
+// It is deliberately not 127.0.0.1: MyGo's development builds auto-trust
+// localhost, 127.0.0.1, and ::1 for its typed Go bridge, while 127.0.0.2 is
+// still loopback but outside that trust set. No product API is bound on the
+// gateway; this address is defence in depth around MyGo's origin check.
+const GatewayLoopbackHost = "127.0.0.2"
+
 const (
 	maxRewrittenBody = 16 << 20
 	// gatewayPageCSP keeps every fetch, frame, and form on the page's own
@@ -136,7 +145,7 @@ func (g *gateway) ensureOrigin(origin string, parsed *url.URL) (*originProxy, er
 	if existing := g.origins[origin]; existing != nil {
 		return existing, nil
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", net.JoinHostPort(GatewayLoopbackHost, "0"))
 	if err != nil {
 		return nil, fmt.Errorf("browser: open the loopback gateway: %w", err)
 	}
@@ -215,6 +224,98 @@ func (g *gateway) gatewayOriginOf(remoteOrigin string) (string, bool) {
 		return "", false
 	}
 	return proxy.gatewayOrigin, true
+}
+
+// fetchFavicon fetches the origin's /favicon.ico through the Host tunnel and
+// returns a data URL. The page-declared icon list is not visible to this
+// build, so the origin fallback is the only candidate; ICO is rejected
+// because the MyGo bitmap decoder cannot display it.
+func (g *gateway) fetchFavicon(ctx context.Context, pageURL, cookies string) (string, error) {
+	origin, err := domainbrowser.Origin(pageURL)
+	if err != nil {
+		return "", err
+	}
+	gatewayURL, err := g.URLFor(origin + "/favicon.ico")
+	if err != nil {
+		return "", err
+	}
+	remoteRaw, ok := g.RemoteURL(gatewayURL)
+	if !ok {
+		return "", ErrDownloadURL
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteRaw, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Accept", "image/png,image/jpeg,image/gif,image/webp,image/x-icon;q=0.1")
+	request.Header.Set("Accept-Encoding", "identity")
+	if cookies != "" {
+		request.Header.Set("Cookie", cookies)
+	}
+	response, err := g.transport.RoundTrip(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("browser: favicon status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, domainbrowser.MaxIconBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > domainbrowser.MaxIconBytes {
+		return "", errors.New("browser: favicon exceeds the size limit")
+	}
+	mime := domainbrowser.SniffImageMIME(body)
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(body), nil
+	default:
+		return "", errors.New("browser: unsupported favicon format")
+	}
+}
+
+// openDownload starts a download from one of this route's gateway URLs. It
+// refuses every other URL, so a page-supplied string cannot turn the tunnel
+// into an open proxy. Redirects stay on the route's remote origin and are
+// bounded, so a redirect cannot reach another address the Host can dial.
+func (g *gateway) openDownload(ctx context.Context, gatewayURL, cookies string) (*http.Response, error) {
+	remoteRaw, ok := g.RemoteURL(gatewayURL)
+	if !ok {
+		return nil, ErrDownloadURL
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteRaw, nil)
+	if err != nil {
+		return nil, ErrDownloadURL
+	}
+	request.Header.Set("Accept", "*/*")
+	request.Header.Set("Accept-Encoding", "identity")
+	if cookies != "" {
+		request.Header.Set("Cookie", cookies)
+	}
+	client := &http.Client{
+		Transport: g.transport,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("browser: too many download redirects")
+			}
+			// The first URL was mapped from this route's gateway origin. A
+			// redirect that changes scheme, host, or port would fetch an
+			// address the page could never navigate to, so refuse it.
+			if next.URL.Scheme != request.URL.Scheme ||
+				!strings.EqualFold(next.URL.Host, request.URL.Host) {
+				return ErrDownloadURL
+			}
+			return nil
+		},
+	}
+	return client.Do(request)
 }
 
 // Close stops every listener and request. In-flight requests fail rather
