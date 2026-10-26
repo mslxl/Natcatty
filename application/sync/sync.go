@@ -48,6 +48,10 @@ const (
 	ProblemAuthorization     Problem = "authorization"
 	ProblemAlreadyInProgress Problem = "already-syncing"
 	ProblemUnsupported       Problem = "unsupported-version"
+	// ProblemReauthorization reports that the provider rejected its refresh
+	// token and a fresh interactive authorization is required. It is
+	// actionable: the UI offers Reconnect instead of a generic failure.
+	ProblemReauthorization Problem = "reauthorization"
 )
 
 // Status is the sync surface's state.
@@ -65,7 +69,7 @@ const (
 
 // Errors the UI maps onto localized messages.
 var (
-	ErrNotConfigured     = errors.New("sync: GitHub is not connected")
+	ErrNotConfigured     = errors.New("sync: the provider is not connected")
 	ErrPasswordRequired  = errors.New("sync: master password required")
 	ErrEmptyVault        = errors.New("sync: refusing to overwrite the cloud copy with an empty Vault")
 	ErrConflict          = errors.New("sync: the cloud copy changed during the upload")
@@ -87,7 +91,39 @@ var (
 	ErrNetwork              = errors.New("sync: network failure")
 	ErrRemoteCorrupt        = errors.New("sync: remote envelope is corrupt")
 	ErrWrongPassword        = errors.New("sync: incorrect master password")
+
+	// ErrReauthorizationRequired reports that the provider rejected the
+	// refresh token (invalid_grant). The service starts a fresh browser
+	// authorization and resumes the operation; if that cannot complete, the
+	// UI shows the actionable reconnect state.
+	ErrReauthorizationRequired = errors.New("sync: the provider requires a fresh authorization")
+	// ErrAuthorizationTimeout reports that the loopback redirect did not
+	// arrive before the authorization deadline.
+	ErrAuthorizationTimeout = errors.New("sync: authorization timed out")
+	// ErrAuthorizationState reports a redirect whose state parameter did not
+	// match the one this attempt generated.
+	ErrAuthorizationState = errors.New("sync: authorization state did not match")
+	// ErrBrowserUnavailable reports that no system-browser opener is wired.
+	ErrBrowserUnavailable = errors.New("sync: no system browser is available")
 )
+
+// Provider identifiers persisted in the Sync Profile. They match the original
+// provider names.
+const (
+	ProviderGitHub      = "github"
+	ProviderGoogleDrive = "google"
+)
+
+// NormalizeProvider maps empty and unknown historical values onto the
+// GitHub profile this build has always written.
+func NormalizeProvider(provider string) string {
+	switch provider {
+	case ProviderGoogleDrive:
+		return ProviderGoogleDrive
+	default:
+		return ProviderGitHub
+	}
+}
 
 // DeviceCode is the one-time code the user enters on GitHub.
 type DeviceCode struct {
@@ -100,7 +136,21 @@ type DeviceCode struct {
 
 // Grant is the authorized account.
 type Grant struct {
+	// ID is the provider's stable account id. Google returns a numeric-ish
+	// string, GitHub a numeric id. It is the merge-anchor identity.
+	ID string
+	// Login is the display identity: the GitHub login or the Google email.
 	Login string
+}
+
+// Identity returns the value compared across authorizations. A provider that
+// reports no id falls back to the login so a same-name reconnect keeps its
+// anchor.
+func (g Grant) Identity() string {
+	if g.ID != "" {
+		return g.ID
+	}
+	return g.Login
 }
 
 // RemoteFile is one cloud copy. ID is empty when no file exists yet; ETag is
@@ -115,15 +165,36 @@ type RemoteFile struct {
 // Remote is the provider port. Every method must be safe to call from another
 // goroutine and must never require a real network in tests.
 type Remote interface {
+	User(ctx context.Context, token domainsync.Token) (Grant, error)
+	// Read returns the provider's vault file. exists is false when the
+	// account has no Netcatty cloud copy yet.
+	Read(ctx context.Context, token domainsync.Token) (file RemoteFile, exists bool, err error)
+	// Write creates the file when current.ID is empty and updates it
+	// otherwise. A lost conditional write is ErrConflict.
+	Write(ctx context.Context, token domainsync.Token, current RemoteFile, content []byte) (RemoteFile, error)
+}
+
+// DeviceAuthorizer is implemented by remotes that run the RFC 8628 device
+// grant (GitHub today).
+type DeviceAuthorizer interface {
 	RequestDeviceCode(ctx context.Context) (DeviceCode, error)
 	PollDeviceToken(ctx context.Context, code DeviceCode) (domainsync.Token, error)
-	User(ctx context.Context, token domainsync.Token) (Grant, error)
-	// Read returns the configured Gist's vault file. exists is false when the
-	// account has no Netcatty Gist yet.
-	Read(ctx context.Context, token domainsync.Token) (file RemoteFile, exists bool, err error)
-	// Write creates the Gist when current.ID is empty and updates it
-	// conditionally otherwise. A lost conditional write is ErrConflict.
-	Write(ctx context.Context, token domainsync.Token, current RemoteFile, content []byte) (RemoteFile, error)
+}
+
+// BrowserAuthorizer is implemented by remotes that use an authorization code
+// with PKCE in the system browser and a loopback redirect (Google Drive).
+// Authorize must open the URL through open, listen on loopback, validate the
+// redirect's state, and exchange the code without a client secret. Tests pass
+// an opener that drives a local fake.
+type BrowserAuthorizer interface {
+	Authorize(ctx context.Context, open func(url string) error) (domainsync.Token, Grant, error)
+}
+
+// TokenRefresher is implemented by remotes whose access tokens expire. A
+// rejected refresh token is ErrReauthorizationRequired; the service turns
+// that into a fresh browser authorization.
+type TokenRefresher interface {
+	Refresh(ctx context.Context, token domainsync.Token) (domainsync.Token, error)
 }
 
 // Vault is the local Vault port. Snapshot must include plaintext credential
@@ -136,9 +207,12 @@ type Vault interface {
 
 // Config is the non-secret sync profile persisted beside the Vault.
 type Config struct {
-	Provider        string              `json:"provider"`
-	Connected       bool                `json:"connected"`
-	Login           string              `json:"login"`
+	Provider  string `json:"provider"`
+	Connected bool   `json:"connected"`
+	Login     string `json:"login"`
+	// AccountID is the provider's stable account identity. A different value
+	// across authorizations rotates the merge anchor.
+	AccountID       string              `json:"accountId,omitempty"`
 	AutoSync        bool                `json:"autoSync"`
 	Strategy        domainsync.Strategy `json:"strategy"`
 	DeviceID        string              `json:"deviceId"`
@@ -197,6 +271,7 @@ type Result struct {
 // Snapshot is the state the UI renders.
 type Snapshot struct {
 	Connected    bool
+	Provider     string
 	Login        string
 	AutoSync     bool
 	Strategy     domainsync.Strategy
@@ -269,14 +344,56 @@ func WithRandom(reader io.Reader) Option {
 	}
 }
 
+// WithProvider names the default provider of a new profile and registers the
+// service's primary remote under it. The zero value is GitHub.
+func WithProvider(provider string) Option {
+	return func(s *Service) {
+		provider = NormalizeProvider(provider)
+		if s.remote != nil {
+			// NewService registered the primary remote under GitHub. When the
+			// caller names a different default, that registration would route
+			// a later switch back to GitHub into the wrong provider.
+			if s.remotes[ProviderGitHub] == s.remote {
+				delete(s.remotes, ProviderGitHub)
+			}
+			s.remotes[provider] = s.remote
+		}
+		s.provider = provider
+	}
+}
+
+// WithRemote registers a remote for another provider, so one Sync Profile can
+// switch between GitHub and Google Drive.
+func WithRemote(provider string, remote Remote) Option {
+	return func(s *Service) {
+		if remote != nil {
+			s.remotes[NormalizeProvider(provider)] = remote
+		}
+	}
+}
+
+// WithBrowserOpener supplies the system-browser opener a browser-authorized
+// provider uses. The composition root passes mygo.Shell.OpenExternal; tests
+// pass a fake. The callback runs on the sync goroutine and must not touch UI
+// state directly.
+func WithBrowserOpener(open func(url string) error) Option {
+	return func(s *Service) { s.openBrowser = open }
+}
+
 // Service owns the sync state. Snapshot, NotifyLocalChange, and Stop are safe
 // from any goroutine; Sync and Connect serialize on one lock.
 type Service struct {
 	mu     sync.Mutex
 	syncMu sync.Mutex
+	// tokenMu serializes token rotation. Concurrent callers that find an
+	// expired credential wait here and then reuse the rotated one instead of
+	// refreshing again.
+	tokenMu sync.Mutex
 
 	config   Config
 	remote   Remote
+	remotes  map[string]Remote
+	provider string
 	vault    Vault
 	configs  ConfigStore
 	tokens   TokenStore
@@ -285,6 +402,8 @@ type Service struct {
 	debounce time.Duration
 	random   io.Reader
 	notify   func()
+	// openBrowser opens a provider's authorization URL in the system browser.
+	openBrowser func(url string) error
 	// onSnapshotApplied, when set, reports that a downloaded cloud copy has
 	// been written locally. It runs on the sync goroutine.
 	onSnapshotApplied func()
@@ -307,6 +426,8 @@ type Service struct {
 func NewService(remote Remote, vault Vault, configs ConfigStore, tokens TokenStore, opts ...Option) *Service {
 	service := &Service{
 		remote:   remote,
+		remotes:  map[string]Remote{ProviderGitHub: remote},
+		provider: ProviderGitHub,
 		vault:    vault,
 		configs:  configs,
 		tokens:   tokens,
@@ -341,6 +462,17 @@ func (s *Service) Load(ctx context.Context) error {
 		s.config.AppVersion = appVersion
 	}
 	s.config.Strategy = domainsync.NormalizeStrategy(s.config.Strategy)
+	if s.config.Provider == "" {
+		s.config.Provider = s.provider
+	}
+	if remote, ok := s.remotes[s.config.Provider]; ok {
+		s.remote = remote
+	} else {
+		// A profile naming a provider this build did not register is not
+		// usable. Keep the default so the surface shows the truth.
+		s.config.Provider = s.provider
+		s.remote = s.remotes[s.provider]
+	}
 	s.status = StatusNeedsSetup
 	s.problem = ProblemNotConfigured
 	if s.config.Connected {
@@ -388,6 +520,7 @@ func (s *Service) Snapshot() Snapshot {
 	defer s.mu.Unlock()
 	return Snapshot{
 		Connected:    s.config.Connected,
+		Provider:     NormalizeProvider(s.config.Provider),
 		Login:        s.config.Login,
 		AutoSync:     s.config.AutoSync,
 		Strategy:     domainsync.NormalizeStrategy(s.config.Strategy),
@@ -434,9 +567,60 @@ func (s *Service) SetStrategy(ctx context.Context, strategy domainsync.Strategy)
 	return nil
 }
 
-// Connect runs GitHub's device flow. onDevice is called with the code the user
-// must enter before the first poll; it may be nil.
+// SetProvider switches the Sync Profile's provider. The provider token and the
+// merge anchor belong to the old account, so both are cleared and the profile
+// must authorize again; local Vault data is untouched.
+func (s *Service) SetProvider(ctx context.Context, provider string) error {
+	provider = NormalizeProvider(provider)
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	s.mu.Lock()
+	remote, ok := s.remotes[provider]
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotConfigured
+	}
+	if NormalizeProvider(s.config.Provider) == provider && s.remote == remote {
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
+
+	if err := s.tokens.Clear(ctx); err != nil {
+		return err
+	}
+	config := s.currentConfig()
+	config.Provider = provider
+	config.Connected = false
+	config.Login = ""
+	config.AccountID = ""
+	clearAnchor(&config)
+	s.mu.Lock()
+	s.config = config
+	s.remote = remote
+	s.status = StatusNeedsSetup
+	s.problem = ProblemNotConfigured
+	s.device = DeviceCode{}
+	s.mu.Unlock()
+	if err := s.configs.Save(ctx, config); err != nil {
+		return err
+	}
+	s.changed()
+	return nil
+}
+
+// Connect authorizes the profile's provider. GitHub shows a device code; a
+// browser provider opens the system browser and waits on its loopback
+// redirect. onDevice is called with the device code before the first poll and
+// is nil for browser providers.
 func (s *Service) Connect(ctx context.Context, password string, onDevice func(DeviceCode)) error {
+	if password == "" {
+		// Reconnect after a rejected refresh does not ask for the master
+		// password again: it is still held for this run once it was accepted.
+		s.mu.Lock()
+		password = s.password
+		s.mu.Unlock()
+	}
 	if password == "" {
 		return ErrPasswordRequired
 	}
@@ -451,10 +635,44 @@ func (s *Service) Connect(ctx context.Context, password string, onDevice func(De
 	s.mu.Unlock()
 	s.changed()
 
-	code, err := s.remote.RequestDeviceCode(ctx)
+	token, grant, err := s.authorize(ctx, onDevice)
 	if err != nil {
 		s.fail(problemFor(err))
 		return err
+	}
+	if saveErr := s.saveToken(ctx, token); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+	if saveErr := s.applyGrant(ctx, grant); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+	s.mu.Lock()
+	s.device = DeviceCode{}
+	s.status = StatusIdle
+	s.problem = ProblemNone
+	s.mu.Unlock()
+	s.changed()
+	return nil
+}
+
+// authorize runs whichever grant the active provider implements.
+func (s *Service) authorize(ctx context.Context, onDevice func(DeviceCode)) (domainsync.Token, Grant, error) {
+	remote := s.activeRemote()
+	if browser, ok := remote.(BrowserAuthorizer); ok {
+		if s.openBrowser == nil {
+			return domainsync.Token{}, Grant{}, ErrBrowserUnavailable
+		}
+		return browser.Authorize(ctx, s.openBrowser)
+	}
+	device, ok := remote.(DeviceAuthorizer)
+	if !ok {
+		return domainsync.Token{}, Grant{}, ErrNotConfigured
+	}
+	code, err := device.RequestDeviceCode(ctx)
+	if err != nil {
+		return domainsync.Token{}, Grant{}, err
 	}
 	s.mu.Lock()
 	s.device = code
@@ -469,55 +687,68 @@ func (s *Service) Connect(ctx context.Context, password string, onDevice func(De
 		interval = time.Second
 	}
 	for {
-		token, err := s.remote.PollDeviceToken(ctx, code)
+		token, err := device.PollDeviceToken(ctx, code)
 		switch {
 		case err == nil:
-			grant, userErr := s.remote.User(ctx, token)
+			grant, userErr := remote.User(ctx, token)
 			if userErr != nil {
-				s.fail(problemFor(userErr))
-				return userErr
+				return domainsync.Token{}, Grant{}, userErr
 			}
-			if saveErr := s.tokens.Save(ctx, token); saveErr != nil {
-				s.fail(ProblemLocal)
-				return saveErr
-			}
-			s.mu.Lock()
-			s.config.Connected = true
-			s.config.Login = grant.Login
-			config := s.config
-			s.device = DeviceCode{}
-			s.status = StatusIdle
-			s.problem = ProblemNone
-			s.mu.Unlock()
-			if saveErr := s.configs.Save(ctx, config); saveErr != nil {
-				s.fail(ProblemLocal)
-				return saveErr
-			}
-			s.changed()
-			return nil
+			return token, grant, nil
 		case errors.Is(err, ErrSlowDown):
 			interval += 5 * time.Second
 		case errors.Is(err, ErrAuthorizationPending):
 			// Keep the server-provided cadence.
-		case errors.Is(err, ErrDeviceCodeExpired):
-			s.fail(ProblemAuthorization)
-			return err
-		case errors.Is(err, ErrAuthorizationDenied):
-			s.fail(ProblemAuthorization)
-			return err
+		case errors.Is(err, ErrDeviceCodeExpired), errors.Is(err, ErrAuthorizationDenied):
+			return domainsync.Token{}, Grant{}, err
 		default:
-			s.fail(problemFor(err))
-			return err
+			return domainsync.Token{}, Grant{}, err
 		}
 		if err := s.waiter.Wait(ctx, interval); err != nil {
-			s.fail(problemFor(err))
-			return err
+			return domainsync.Token{}, Grant{}, err
 		}
 	}
 }
 
+// applyGrant connects the profile to the authorized account. A different
+// account (Google id/email, GitHub id/login) rotates the merge anchor so the
+// new account's cloud copy never merges against the previous account's
+// baseline. The same account keeps it.
+func (s *Service) applyGrant(ctx context.Context, grant Grant) error {
+	s.mu.Lock()
+	config := s.config
+	previous := config.AccountID
+	if previous == "" {
+		previous = config.Login
+	}
+	next := grant.Identity()
+	sameAccount := previous == next
+	if !sameAccount {
+		clearAnchor(&config)
+	}
+	config.Connected = true
+	config.Login = grant.Login
+	config.AccountID = next
+	s.config = config
+	s.mu.Unlock()
+	if err := s.configs.Save(ctx, config); err != nil {
+		return err
+	}
+	s.changed()
+	return nil
+}
+
+// clearAnchor forgets the baseline a merge would otherwise use.
+func clearAnchor(config *Config) {
+	config.LocalSignature = ""
+	config.RemoteID = ""
+	config.RemoteETag = ""
+	config.RemoteUpdatedAt = 0
+	config.LastSyncedAt = 0
+}
+
 // Disconnect forgets the provider token and the baseline. It leaves the local
-// Vault untouched.
+// Vault untouched and keeps the selected provider.
 func (s *Service) Disconnect(ctx context.Context) error {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -527,7 +758,7 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	s.mu.Lock()
 	deviceID, deviceName, appVersion := s.config.DeviceID, s.config.DeviceName, s.config.AppVersion
 	s.config = Config{
-		Provider:   "github",
+		Provider:   NormalizeProvider(s.config.Provider),
 		DeviceID:   deviceID,
 		DeviceName: deviceName,
 		AppVersion: appVersion,
@@ -544,6 +775,155 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	return nil
 }
 
+func (s *Service) activeRemote() Remote {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.remote
+}
+
+func (s *Service) providerValue() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return NormalizeProvider(s.config.Provider)
+}
+
+// saveToken persists the credential under the active provider's identity.
+func (s *Service) saveToken(ctx context.Context, token domainsync.Token) error {
+	token.Provider = s.providerValue()
+	return s.tokens.Save(ctx, token)
+}
+
+// ensureFreshToken loads the stored credential, rejects one issued for a
+// different provider, and refreshes an expired token once.
+func (s *Service) ensureFreshToken(ctx context.Context) (domainsync.Token, error) {
+	token, err := s.tokens.Load(ctx)
+	if err != nil {
+		return domainsync.Token{}, err
+	}
+	if token.Provider == "" {
+		// A credential stored before providers existed belongs to whatever
+		// profile holds it. Explicit provider tags still guard against a token
+		// crossing providers after a switch.
+		token.Provider = s.providerValue()
+	}
+	if token.Provider != s.providerValue() {
+		return domainsync.Token{}, errNoToken
+	}
+	if !s.needsRefresh(token) {
+		return token, nil
+	}
+	return s.refreshToken(ctx, token)
+}
+
+func (s *Service) needsRefresh(token domainsync.Token) bool {
+	if token.ExpiresAt == 0 {
+		return false
+	}
+	return s.now().UnixMilli() >= token.ExpiresAt-60_000
+}
+
+// refreshToken rotates the credential. The mutex makes concurrent callers
+// single-flight: a waiter reloads the store and reuses the token another
+// caller just persisted instead of refreshing again. A provider rejection
+// (invalid_grant) starts a fresh browser authorization and resumes.
+func (s *Service) refreshToken(ctx context.Context, current domainsync.Token) (domainsync.Token, error) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+
+	stored, loadErr := s.tokens.Load(ctx)
+	if loadErr == nil && stored.AccessToken != "" && stored.AccessToken != current.AccessToken &&
+		!s.needsRefresh(stored) {
+		return stored, nil
+	}
+	source := current
+	if loadErr == nil && stored.AccessToken != "" {
+		source = stored
+	}
+	refresher, ok := s.activeRemote().(TokenRefresher)
+	if !ok {
+		return domainsync.Token{}, ErrUnauthorized
+	}
+	if source.RefreshToken == "" {
+		return domainsync.Token{}, ErrReauthorizationRequired
+	}
+	refreshed, err := refresher.Refresh(ctx, source)
+	if errors.Is(err, ErrReauthorizationRequired) {
+		return s.reauthorize(ctx, source)
+	}
+	if err != nil {
+		return domainsync.Token{}, err
+	}
+	merged := refreshed
+	if merged.RefreshToken == "" {
+		// Google's refresh response usually omits the refresh token. Losing
+		// it would make the stored credential unrefreshable.
+		merged.RefreshToken = source.RefreshToken
+	}
+	if merged.TokenType == "" {
+		merged.TokenType = source.TokenType
+	}
+	if merged.Scope == "" {
+		merged.Scope = source.Scope
+	}
+	if saveErr := s.saveToken(ctx, merged); saveErr != nil {
+		return domainsync.Token{}, saveErr
+	}
+	return merged, nil
+}
+
+// reauthorize starts a fresh browser flow after the provider rejected the
+// refresh token. The caller retries its operation with the returned token.
+func (s *Service) reauthorize(ctx context.Context, stale domainsync.Token) (domainsync.Token, error) {
+	browser, ok := s.activeRemote().(BrowserAuthorizer)
+	if !ok || s.openBrowser == nil {
+		return stale, fmt.Errorf("%w: %w", ErrReauthorizationRequired, ErrBrowserUnavailable)
+	}
+	s.mu.Lock()
+	s.status = StatusAuthorizing
+	s.problem = ProblemNone
+	s.mu.Unlock()
+	s.changed()
+	token, grant, err := browser.Authorize(ctx, s.openBrowser)
+	if err != nil {
+		return stale, fmt.Errorf("%w: %w", ErrReauthorizationRequired, err)
+	}
+	if saveErr := s.saveToken(ctx, token); saveErr != nil {
+		return stale, saveErr
+	}
+	if saveErr := s.applyGrant(ctx, grant); saveErr != nil {
+		return stale, saveErr
+	}
+	return token, nil
+}
+
+// readRemote retries a 401 once with a refreshed credential.
+func (s *Service) readRemote(ctx context.Context, remote Remote, token domainsync.Token) (RemoteFile, bool, domainsync.Token, error) {
+	file, exists, err := remote.Read(ctx, token)
+	if !errors.Is(err, ErrUnauthorized) {
+		return file, exists, token, err
+	}
+	refreshed, refreshErr := s.refreshToken(ctx, token)
+	if refreshErr != nil {
+		return RemoteFile{}, false, token, refreshErr
+	}
+	file, exists, err = remote.Read(ctx, refreshed)
+	return file, exists, refreshed, err
+}
+
+// writeRemote retries a 401 once with a refreshed credential.
+func (s *Service) writeRemote(ctx context.Context, remote Remote, token domainsync.Token, current RemoteFile, content []byte) (RemoteFile, domainsync.Token, error) {
+	written, err := remote.Write(ctx, token, current, content)
+	if !errors.Is(err, ErrUnauthorized) {
+		return written, token, err
+	}
+	refreshed, refreshErr := s.refreshToken(ctx, token)
+	if refreshErr != nil {
+		return RemoteFile{}, token, refreshErr
+	}
+	written, err = remote.Write(ctx, refreshed, current, content)
+	return written, refreshed, err
+}
+
 // Sync runs one manual or automatic sync. It is safe to call from the UI
 // thread: the caller usually runs it in the UI's worker goroutine.
 func (s *Service) Sync(ctx context.Context, trigger Trigger) (Result, error) {
@@ -555,15 +935,6 @@ func (s *Service) Sync(ctx context.Context, trigger Trigger) (Result, error) {
 }
 
 func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, error) {
-	token, err := s.tokens.Load(ctx)
-	if err != nil {
-		if errors.Is(err, errNoToken) {
-			s.fail(ProblemNotConfigured)
-			return Result{Trigger: trigger}, ErrNotConfigured
-		}
-		s.fail(ProblemLocal)
-		return Result{Trigger: trigger}, err
-	}
 	s.mu.Lock()
 	password := s.password
 	configured := s.config.Connected
@@ -579,6 +950,16 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		s.mu.Unlock()
 		s.changed()
 		return Result{Trigger: trigger}, ErrPasswordRequired
+	}
+
+	token, err := s.ensureFreshToken(ctx)
+	if err != nil {
+		if errors.Is(err, errNoToken) {
+			s.fail(ProblemNotConfigured)
+			return Result{Trigger: trigger}, ErrNotConfigured
+		}
+		s.fail(problemFor(err))
+		return Result{Trigger: trigger}, err
 	}
 
 	s.mu.Lock()
@@ -601,7 +982,8 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		return Result{Trigger: trigger}, ErrEmptyVault
 	}
 
-	remoteFile, exists, readErr := s.remote.Read(ctx, token)
+	remote := s.activeRemote()
+	remoteFile, exists, token, readErr := s.readRemote(ctx, remote, token)
 	if readErr != nil {
 		s.finishSync(problemFor(readErr))
 		return Result{Trigger: trigger}, readErr
@@ -729,6 +1111,7 @@ func (s *Service) upload(
 	current RemoteFile,
 	config Config,
 ) (Result, error) {
+	remote := s.activeRemote()
 	for attempt := 0; attempt < 2; attempt++ {
 		envelope, err := domainsync.EncryptPayload(local, s.passwordValue(), domainsync.EncryptOptions{
 			Version:    versionFor(current),
@@ -748,11 +1131,13 @@ func (s *Service) upload(
 			s.finishSync(ProblemLocal)
 			return Result{Trigger: trigger}, err
 		}
-		written, writeErr := s.remote.Write(ctx, token, current, content)
+		written, nextToken, writeErr := s.writeRemote(ctx, remote, token, current, content)
+		token = nextToken
 		if errors.Is(writeErr, ErrConflict) && attempt == 0 {
 			// Last-write-wins with a fresh observation: read what landed and
 			// make the strategy decision again instead of forcing this copy.
-			fresh, exists, readErr := s.remote.Read(ctx, token)
+			fresh, exists, readToken, readErr := s.readRemote(ctx, remote, token)
+			token = readToken
 			if readErr != nil {
 				s.finishSync(problemFor(readErr))
 				return Result{Trigger: trigger}, readErr
@@ -977,6 +1362,8 @@ func problemFor(err error) Problem {
 	switch {
 	case err == nil:
 		return ProblemNone
+	case errors.Is(err, ErrReauthorizationRequired):
+		return ProblemReauthorization
 	case errors.Is(err, ErrUnauthorized), errors.Is(err, errNoToken):
 		return ProblemUnauthorized
 	case errors.Is(err, ErrRateLimited):
@@ -984,7 +1371,9 @@ func problemFor(err error) Problem {
 	case errors.Is(err, ErrNetwork):
 		return ProblemNetwork
 	case errors.Is(err, ErrAuthorizationDenied), errors.Is(err, ErrDeviceCodeExpired),
-		errors.Is(err, ErrAuthorizationPending), errors.Is(err, ErrSlowDown):
+		errors.Is(err, ErrAuthorizationPending), errors.Is(err, ErrSlowDown),
+		errors.Is(err, ErrAuthorizationState), errors.Is(err, ErrAuthorizationTimeout),
+		errors.Is(err, ErrBrowserUnavailable):
 		return ProblemAuthorization
 	case errors.Is(err, ErrConflict):
 		return ProblemConflict

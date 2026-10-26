@@ -21,6 +21,7 @@ import (
 
 	fileapplock "github.com/mslxl/natcatty/adapters/applock"
 	adapteret "github.com/mslxl/natcatty/adapters/et"
+	adaptergdrive "github.com/mslxl/natcatty/adapters/gdrive"
 	adaptergithub "github.com/mslxl/natcatty/adapters/github"
 	"github.com/mslxl/natcatty/adapters/histfile"
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
@@ -413,12 +414,18 @@ func run(afterReady func(hostWindow)) error {
 		AuthBase: syncGitHubAuthBase(),
 		ClientID: os.Getenv("NATCATTY_GITHUB_CLIENT_ID"),
 	})
+	// Google Drive uses an authorization-code grant in the system browser.
+	// The NATCATTY_GDRIVE_* overrides point the whole app at the local fake for
+	// acceptance runs; production leaves them empty.
+	googleClient := adaptergdrive.New(adaptergdrive.OptionsFromEnv())
 	syncService = appsync.NewService(
 		githubClient,
 		adaptersyncvault.New(database, secretStore),
 		syncConfigStore,
 		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
 		appsync.WithDevice(deviceID, deviceName, version),
+		appsync.WithRemote(appsync.ProviderGoogleDrive, googleClient),
+		appsync.WithBrowserOpener(mygo.Shell.OpenExternal),
 		appsync.WithRedrawRequest(invalidate),
 		// A downloaded cloud copy rewrites the Vault families. Mark the live
 		// Vault state stale so its lists refresh on the next frame without a

@@ -11664,24 +11664,88 @@ func (msgs Messages) SettingsSyncTitle() string {
 	return Catalog.Format(msgs.locale, "settingsSyncTitle", nil)
 }
 
-// SettingsSyncDescription says "Sync the encrypted Vault through a private GitHub Gist. The master password never leaves this device."
+// SettingsSyncDescription says "Sync the encrypted Vault through your cloud provider. The master password never leaves this device."
 // in the language the app shows.
 func SettingsSyncDescription() string { return In(i18n.Locale()).SettingsSyncDescription() }
 
-// SettingsSyncDescription says "Sync the encrypted Vault through a private GitHub Gist. The master password never leaves this device."
+// SettingsSyncDescription says "Sync the encrypted Vault through your cloud provider. The master password never leaves this device."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncDescription() string {
 	return Catalog.Format(msgs.locale, "settingsSyncDescription", nil)
 }
 
-// SettingsSyncSecurityNote says "Vault metadata such as device name, app version, and timestamps is visible to GitHub. Vault records and credentials s…"
+// SettingsSyncSecurityNote says "The provider can see Vault metadata, such as the device name, app version, and timestamps. Vault records and credenti…"
 // in the language the app shows.
 func SettingsSyncSecurityNote() string { return In(i18n.Locale()).SettingsSyncSecurityNote() }
 
-// SettingsSyncSecurityNote says "Vault metadata such as device name, app version, and timestamps is visible to GitHub. Vault records and credentials s…"
+// SettingsSyncSecurityNote says "The provider can see Vault metadata, such as the device name, app version, and timestamps. Vault records and credenti…"
 // in the language of msgs.
 func (msgs Messages) SettingsSyncSecurityNote() string {
 	return Catalog.Format(msgs.locale, "settingsSyncSecurityNote", nil)
+}
+
+// SettingsSyncProvider says "Provider"
+// in the language the app shows.
+func SettingsSyncProvider() string { return In(i18n.Locale()).SettingsSyncProvider() }
+
+// SettingsSyncProvider says "Provider"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProvider() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProvider", nil)
+}
+
+// SettingsSyncProviderGitHub says "GitHub"
+// in the language the app shows.
+func SettingsSyncProviderGitHub() string { return In(i18n.Locale()).SettingsSyncProviderGitHub() }
+
+// SettingsSyncProviderGitHub says "GitHub"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProviderGitHub() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProviderGitHub", nil)
+}
+
+// SettingsSyncProviderGoogleDrive says "Google Drive"
+// in the language the app shows.
+func SettingsSyncProviderGoogleDrive() string {
+	return In(i18n.Locale()).SettingsSyncProviderGoogleDrive()
+}
+
+// SettingsSyncProviderGoogleDrive says "Google Drive"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProviderGoogleDrive() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProviderGoogleDrive", nil)
+}
+
+// SettingsSyncGoogleHint says "Your browser opens to sign in with Google. Netcatty never sees your password."
+// in the language the app shows.
+func SettingsSyncGoogleHint() string { return In(i18n.Locale()).SettingsSyncGoogleHint() }
+
+// SettingsSyncGoogleHint says "Your browser opens to sign in with Google. Netcatty never sees your password."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGoogleHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGoogleHint", nil)
+}
+
+// SettingsSyncReconnect says "Reconnect"
+// in the language the app shows.
+func SettingsSyncReconnect() string { return In(i18n.Locale()).SettingsSyncReconnect() }
+
+// SettingsSyncReconnect says "Reconnect"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncReconnect() string {
+	return Catalog.Format(msgs.locale, "settingsSyncReconnect", nil)
+}
+
+// SettingsSyncProblemReauthorization says "The provider needs a fresh sign-in. Choose Reconnect to continue."
+// in the language the app shows.
+func SettingsSyncProblemReauthorization() string {
+	return In(i18n.Locale()).SettingsSyncProblemReauthorization()
+}
+
+// SettingsSyncProblemReauthorization says "The provider needs a fresh sign-in. Choose Reconnect to continue."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemReauthorization() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemReauthorization", nil)
 }
 
 // SettingsSyncAutoSync says "Sync automatically"
@@ -11746,11 +11810,11 @@ func (msgs Messages) SettingsSyncConnectedAs(login string) string {
 	return Catalog.Format(msgs.locale, "settingsSyncConnectedAs", map[string]any{"login": login})
 }
 
-// SettingsSyncNotConnected says "Not connected. Enter the master password and connect GitHub."
+// SettingsSyncNotConnected says "Not connected. Enter the master password and connect a provider."
 // in the language the app shows.
 func SettingsSyncNotConnected() string { return In(i18n.Locale()).SettingsSyncNotConnected() }
 
-// SettingsSyncNotConnected says "Not connected. Enter the master password and connect GitHub."
+// SettingsSyncNotConnected says "Not connected. Enter the master password and connect a provider."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncNotConnected() string {
 	return Catalog.Format(msgs.locale, "settingsSyncNotConnected", nil)
@@ -11778,11 +11842,11 @@ func (msgs Messages) SettingsSyncMasterPasswordHint() string {
 	return Catalog.Format(msgs.locale, "settingsSyncMasterPasswordHint", nil)
 }
 
-// SettingsSyncConnect says "Connect GitHub"
+// SettingsSyncConnect says "Connect"
 // in the language the app shows.
 func SettingsSyncConnect() string { return In(i18n.Locale()).SettingsSyncConnect() }
 
-// SettingsSyncConnect says "Connect GitHub"
+// SettingsSyncConnect says "Connect"
 // in the language of msgs.
 func (msgs Messages) SettingsSyncConnect() string {
 	return Catalog.Format(msgs.locale, "settingsSyncConnect", nil)
@@ -11798,11 +11862,11 @@ func (msgs Messages) SettingsSyncDisconnect() string {
 	return Catalog.Format(msgs.locale, "settingsSyncDisconnect", nil)
 }
 
-// SettingsSyncDisconnectConfirm says "Disconnect GitHub? Automatic sync stops. The Gist and the local Vault stay unchanged."
+// SettingsSyncDisconnectConfirm says "Disconnect cloud sync? Automatic sync stops. The cloud copy and the local Vault stay unchanged."
 // in the language the app shows.
 func SettingsSyncDisconnectConfirm() string { return In(i18n.Locale()).SettingsSyncDisconnectConfirm() }
 
-// SettingsSyncDisconnectConfirm says "Disconnect GitHub? Automatic sync stops. The Gist and the local Vault stay unchanged."
+// SettingsSyncDisconnectConfirm says "Disconnect cloud sync? Automatic sync stops. The cloud copy and the local Vault stay unchanged."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncDisconnectConfirm() string {
 	return Catalog.Format(msgs.locale, "settingsSyncDisconnectConfirm", nil)
@@ -11892,11 +11956,11 @@ func (msgs Messages) SettingsSyncOperationFailed() string {
 	return Catalog.Format(msgs.locale, "settingsSyncOperationFailed", nil)
 }
 
-// SettingsSyncStatusAuthorizing says "Waiting for GitHub authorization..."
+// SettingsSyncStatusAuthorizing says "Waiting for authorization..."
 // in the language the app shows.
 func SettingsSyncStatusAuthorizing() string { return In(i18n.Locale()).SettingsSyncStatusAuthorizing() }
 
-// SettingsSyncStatusAuthorizing says "Waiting for GitHub authorization..."
+// SettingsSyncStatusAuthorizing says "Waiting for authorization..."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncStatusAuthorizing() string {
 	return Catalog.Format(msgs.locale, "settingsSyncStatusAuthorizing", nil)
@@ -11986,25 +12050,25 @@ func (msgs Messages) SettingsSyncProblemCorrupt() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemCorrupt", nil)
 }
 
-// SettingsSyncProblemUnauthorized says "GitHub rejected the saved token. Connect GitHub again."
+// SettingsSyncProblemUnauthorized says "The provider rejected the saved token. Reconnect to continue."
 // in the language the app shows.
 func SettingsSyncProblemUnauthorized() string {
 	return In(i18n.Locale()).SettingsSyncProblemUnauthorized()
 }
 
-// SettingsSyncProblemUnauthorized says "GitHub rejected the saved token. Connect GitHub again."
+// SettingsSyncProblemUnauthorized says "The provider rejected the saved token. Reconnect to continue."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemUnauthorized() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemUnauthorized", nil)
 }
 
-// SettingsSyncProblemRateLimited says "GitHub is rate limiting requests. Try again later."
+// SettingsSyncProblemRateLimited says "The provider is rate limiting requests. Try again later."
 // in the language the app shows.
 func SettingsSyncProblemRateLimited() string {
 	return In(i18n.Locale()).SettingsSyncProblemRateLimited()
 }
 
-// SettingsSyncProblemRateLimited says "GitHub is rate limiting requests. Try again later."
+// SettingsSyncProblemRateLimited says "The provider is rate limiting requests. Try again later."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemRateLimited() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemRateLimited", nil)
@@ -12020,25 +12084,25 @@ func (msgs Messages) SettingsSyncProblemNetwork() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemNetwork", nil)
 }
 
-// SettingsSyncProblemAuthorization says "GitHub authorization did not complete. Try again."
+// SettingsSyncProblemAuthorization says "Authorization did not complete. Try again."
 // in the language the app shows.
 func SettingsSyncProblemAuthorization() string {
 	return In(i18n.Locale()).SettingsSyncProblemAuthorization()
 }
 
-// SettingsSyncProblemAuthorization says "GitHub authorization did not complete. Try again."
+// SettingsSyncProblemAuthorization says "Authorization did not complete. Try again."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemAuthorization() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemAuthorization", nil)
 }
 
-// SettingsSyncProblemNotConfigured says "GitHub is not connected."
+// SettingsSyncProblemNotConfigured says "Cloud sync is not connected."
 // in the language the app shows.
 func SettingsSyncProblemNotConfigured() string {
 	return In(i18n.Locale()).SettingsSyncProblemNotConfigured()
 }
 
-// SettingsSyncProblemNotConfigured says "GitHub is not connected."
+// SettingsSyncProblemNotConfigured says "Cloud sync is not connected."
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemNotConfigured() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemNotConfigured", nil)

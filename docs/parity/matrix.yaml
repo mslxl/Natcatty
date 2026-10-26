@@ -2515,8 +2515,110 @@
   status: verified
   notes: "The guard runs before any remote read or write and applies to both manual and automatic triggers. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful, matching the original's hasMeaningfulCloudSyncData. Conversely, an empty cloud payload is forced to upload rather than erase a populated local Vault."
 
+# --- Ticket 50: Google Drive appDataFolder ---
+
+- id: sync.google-drive-pkce
+  area: sync
+  feature: Google Drive PKCE authorization in the system browser with a loopback redirect
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/adapters/GoogleDriveAdapter.ts
+    - electron/bridges/googleAuthBridge.cjs
+    - electron/bridges/oauthBridge.cjs
+    - infrastructure/services/cloudSync/authMethods.ts
+  module: adapters/gdrive
+  tickets: [50]
+  acceptance_tests:
+    - adapters/gdrive.TestNewPKCEProducesAnS256Proof
+    - adapters/gdrive.TestAuthorizeUsesTheSystemBrowserLoopbackAndPKCE
+    - adapters/gdrive.TestAuthorizeRejectsAMismatchedState
+    - adapters/gdrive.TestAuthorizeReportsADeniedConsent
+    - adapters/gdrive.TestAuthorizeTimesOutWithoutARedirect
+    - adapters/gdrive.TestAuthorizeReportsAnUnavailableBrowser
+    - adapters/gdrive.TestAuthorizeRequiresAClientID
+    - application/sync.TestBrowserAuthorizationConnectsAndStoresTheProvider
+    - app.TestTicket50CheckRunsThroughTheKeyboard
+    - app.TestTicket50CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The flow generates a 32-byte PKCE verifier, its S256 challenge, and a 16-byte state, opens the authorize URL through the app's system-browser opener (MyGo Shell.OpenExternal, never a WebView), listens on an ephemeral 127.0.0.1 port at /oauth/callback, validates the state, and exchanges the code with the verifier and no client secret. Denial, state mismatch, timeout, and an unavailable browser are typed and localized. NATCATTY_GDRIVE_AUTH_BASE, NATCATTY_GDRIVE_TOKEN_BASE, NATCATTY_GDRIVE_API_BASE, NATCATTY_GDRIVE_UPLOAD_BASE, and NATCATTY_GDRIVE_CLIENT_ID point the app at the local fake; defaults are the original Electron Google endpoints. The self-test proves the fake accepted the S256 verifier and never saw a client secret."
+
+- id: sync.google-drive-appdatafolder
+  area: sync
+  feature: Google Drive appDataFolder read and write
+  original_paths:
+    - domain/sync.ts
+    - infrastructure/services/adapters/GoogleDriveAdapter.ts
+    - electron/bridges/googleAuthBridge.cjs
+  module: adapters/gdrive
+  tickets: [50]
+  acceptance_tests:
+    - adapters/gdrive.TestAppDataFolderReadWriteAndAccountIsolation
+    - adapters/gdrive.TestAppDataFolderPaginationIsFollowed
+    - adapters/gdrive.TestReadRequiresAppDataFolder
+    - adapters/gdrive.TestUpdateRejectsAFileChangedSinceTheRead
+    - adapters/gdrive.TestDriveErrorsMapOntoTheSyncTaxonomy
+    - adapters/gdrive.TestDriveMissingFilesMapToThePort
+    - adapters/gdrive.TestOptionsFromEnvReadsTheFakeOverrides
+    - application/sync.TestManualSyncUploadsTheFirstCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - app.TestTicket50CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "Reads list only spaces=appDataFolder with the original netcatty-vault.json name, follow nextPageToken, and treat an empty account or a file deleted before download as no copy. Creates use multipart/related with parents=[appDataFolder]; updates replace media on the existing file. Access tokens are bearer credentials, 401/403/404/409/412/429/5xx map onto the sync taxonomy, and each Google account has an isolated appDataFolder in the fake. Drive has no conditional media update, so concurrent-change detection compares modifiedTime before writing and re-observes after a 404 or conflict instead of forcing bytes; the ticket records this divergence from GitHub's If-Match."
+
+- id: sync.google-drive-refresh-reauth
+  area: sync
+  feature: Google Drive token refresh and invalid_grant reauthorization
+  original_paths:
+    - infrastructure/services/adapters/GoogleDriveAdapter.ts
+    - infrastructure/services/cloudSync/authMethods.ts
+    - electron/bridges/googleAuthBridge.cjs
+  module: application/sync
+  tickets: [50]
+  acceptance_tests:
+    - application/sync.TestExpiredTokenRefreshesOnceAndPersistsRotation
+    - application/sync.TestUnauthorizedReadRefreshesAndRetries
+    - application/sync.TestInvalidGrantReauthorizesAndResumesSync
+    - application/sync.TestReauthorizationFailureSurfacesAnActionableProblem
+    - application/sync.TestRefreshIsSingleFlight
+    - application/sync.TestAProviderTokenNeverLeaksToAnotherProvider
+    - adapters/gdrive.TestRefreshKeepsTheOriginalRefreshTokenWhenGoogleOmitsIt
+    - adapters/gdrive.TestRefreshRotationAndInvalidGrant
+    - adapters/gdrive.TestRefreshWithoutARefreshTokenRequiresReauthorization
+    - app.TestTicket50CheckRunsThroughTheKeyboard
+    - app.TestTicket50CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The service refreshes before an operation whose access token is within 60 seconds of expiry, and once more after a 401, then retries the same read or write. A mutex makes concurrent refreshes single-flight: waiters reuse the token another caller persisted. Rotated refresh tokens are persisted; when Google omits refresh_token the old one is retained. invalid_grant maps to ErrReauthorizationRequired, starts a fresh system-browser authorization, applies the returned grant, and resumes the interrupted sync. If that flow cannot finish, ProblemReauthorization is stored and the UI shows Reconnect instead of a generic failure. A stored token is tagged with its provider so it can never cross to another provider."
+
+- id: sync.google-drive-account-anchor
+  area: sync
+  feature: A different Google account clears the merge anchor and the same account keeps it
+  original_paths:
+    - infrastructure/services/cloudSync/authMethods.ts
+    - infrastructure/services/syncAnchorDecision.js
+    - domain/sync.ts
+  module: application/sync
+  tickets: [50]
+  acceptance_tests:
+    - application/sync.TestDifferentAccountClearsTheMergeAnchor
+    - application/sync.TestSameAccountKeepsTheMergeAnchor
+    - application/sync.TestSetProviderResetsTheConnectionAndAnchor
+    - app.TestTicket50CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The profile stores AccountID (the Google userinfo id, falling back to the email) beside Login. Reauthorization compares the new identity with the stored one: a different account clears LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt before the next sync, while the same account keeps the baseline so the merge decision continues from the same cloud copy. The self-test switches from one@example.test to two@example.test, proves the anchor is empty, syncs into the second account's appDataFolder, and proves the first account's copy is untouched; reconnecting the second account keeps its anchor. Switching providers also clears the token and anchor."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
+
+- id: sync.google-drive-live-endpoints
+  area: sync
+  feature: Verification against the production Google OAuth and Drive endpoints
+  original_paths:
+    - infrastructure/services/adapters/GoogleDriveAdapter.ts
+    - electron/bridges/googleAuthBridge.cjs
+  module: adapters/gdrive
+  tickets: [50]
+  status: excluded
+  notes: "The Google Drive provider is verified against a local fake that implements the authorize, token, userinfo, Drive v3, and upload endpoints, including PKCE validation, refresh rotation, invalid_grant, pagination, and per-account appDataFolder isolation. No acceptance run contacts accounts.google.com, oauth2.googleapis.com, or www.googleapis.com: live OAuth needs a provisioned Google Cloud OAuth client, a human consent, and a real Drive quota, which CI cannot supply. The adapter defaults remain the original Electron production URLs."
 
 - id: terminal.search
   area: terminal
