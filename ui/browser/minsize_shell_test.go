@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -81,6 +82,7 @@ type browserShellHarness struct {
 	factory   *browserShellFactory
 	connector *fakeConnector
 	pages     *fakePages
+	bookmarks *appbrowser.Bookmarks
 	context   *ui.Context
 	core      *appbrowser.Panel
 	panel     *Panel
@@ -95,6 +97,11 @@ func newBrowserShellTester(t *testing.T, locale string, width, height int) *brow
 		connector: &fakeConnector{},
 		pages:     &fakePages{},
 	}
+	nextBookmarkID := 0
+	h.bookmarks, _ = appbrowser.NewBookmarks(&polishBookmarkStore{}, time.Now, func() string {
+		nextBookmarkID++
+		return "shell-bookmark-" + itoa(nextBookmarkID)
+	})
 	h.service = appsession.NewService(h.factory)
 	opener := func(session *appsession.Session) (shellstate.Surface, error) {
 		return sessionui.New(session, sessionui.WithBrowser(
@@ -103,6 +110,7 @@ func newBrowserShellTester(t *testing.T, locale string, width, height int) *brow
 					HostID:    session.HostID(),
 					Label:     session.Label(),
 					Connector: h.connector,
+					Bookmarks: h.bookmarks,
 				})
 				panel := New(core, h.pages, WithCloseRequest(onClose))
 				h.core = core
@@ -166,8 +174,47 @@ func newBrowserShellTester(t *testing.T, locale string, width, height int) *brow
 			t.Fatalf("timed out waiting for the browser route; texts %q", h.tester.Texts())
 		}
 	}
-	h.tester.Frame()
+	h.waitSettled(t, m, m.BrowserNewTab(), m.BrowserAddress())
 	return h
+}
+
+// waitSettled frames until the shell reports the same positive geometry for
+// the content pane and the named labels on two consecutive frames. The shell
+// applies session state asynchronously, so a measurement taken right after
+// the browser opens can land on a pane that is still taking its final size.
+func (h *browserShellHarness) waitSettled(t *testing.T, m locales.Messages, labels ...string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var previous []ui.Rect
+	stable := 0
+	for {
+		h.shell.Flush()
+		h.tester.Frame()
+		rects := make([]ui.Rect, 0, len(labels)+1)
+		pane, ok := h.tester.Find(m.PaneRegion(1))
+		good := ok && pane.W > 0 && pane.H > 0
+		rects = append(rects, pane)
+		for _, label := range labels {
+			rect, found := h.tester.Find(label)
+			if !found || rect.W <= 0 || rect.H <= 0 {
+				good = false
+			}
+			rects = append(rects, rect)
+		}
+		if good && slices.Equal(rects, previous) {
+			stable++
+			if stable >= 2 {
+				return
+			}
+		} else {
+			stable = 0
+		}
+		previous = rects
+		if time.Now().After(deadline) {
+			t.Fatalf("the shell's pane never settled: pane %+v, labels %v; texts %q",
+				pane, labels, h.tester.Texts())
+		}
+	}
 }
 
 func (h *browserShellHarness) newTabTitles(t *testing.T, count int) []appbrowser.Tab {

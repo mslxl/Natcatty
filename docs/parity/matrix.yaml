@@ -2827,9 +2827,10 @@
     - application/browser.TestPanelBookmarksPerHostAndAllHosts
     - ui/browser.TestBookmarkPaneAddEditDelete
     - ui/browser.TestBookmarkPaneLongListScrolls
+    - ui/browser.TestBookmarkPaneLongListStaysInsideTheShellAtBothSizes
     - app.TestTicket48CheckRunsThroughTheKeyboard
   status: implemented
-  notes: "A Host bookmark is visible only to its owning Host; an all-Host bookmark is visible everywhere. The owner Host alone may edit or delete a Host bookmark. Limits follow the original: 1000 items, 120-character title, 4-character glyph, #rrggbb color, ids at most 128 characters, and Host ids at most 256. Metadata is written atomically to browser-bookmarks.json beside app preferences and reloads across restart. Bookmark metadata is not synced through ticket 49's payload because that ticket did not include a bookmark entity; bookmark files remain local for now. The editor does not expose the original custom text/image icon and color pickers or quick search; it keeps site icons automatically."
+  notes: "A Host bookmark is visible only to its owning Host; an all-Host bookmark is visible everywhere. The owner Host alone may edit or delete a Host bookmark. Limits follow the original: 1000 items, 120-character title, 4-character glyph, #rrggbb color, ids at most 128 characters, and Host ids at most 256. Metadata is written atomically to browser-bookmarks.json beside app preferences and reloads across restart. Bookmark metadata is not synced through ticket 49's payload because that ticket did not include a bookmark entity; bookmark files remain local for now. The editor does not expose the original custom text/image icon and color pickers or quick search; it keeps site icons automatically. The long list stays in a bounded scroll viewport inside the shell's Pane at 720x480 and 1100x720 in English and zh-CN, and the wheel, End, and Tab focus reveal reach the last row whole above the pinned action bar."
 
 - id: browser.favicons
   area: browser
@@ -2905,6 +2906,17 @@
   tickets: [48]
   status: excluded
   notes: "The original required an Electron session partition separate from the app and separate for each host profile, so tabs on one Host may share cookies while different Hosts must not (docs/designs/host-routed-browser.md). MyGo v0.5.5 has one cookie store and no per-webview session partition, so this app cannot enforce that boundary: every Host's gateway uses 127.0.0.2, cookies are keyed by host and path rather than port or remote origin, different Hosts can share or overwrite cookies, and a favicon or download fetch can carry a cookie set by another Host's page at the same path. Cookies stay local and are read only at the app edge for those fetches. Accepted for v1; ticket 48."
+
+- id: browser.error-page-localization
+  area: browser
+  feature: Native WebView error and blocked-page localization
+  original_paths:
+    - electron/hostBrowser/hostBrowserManager.cjs
+    - infrastructure/services/hostBrowserService.ts
+  module: app
+  tickets: [48]
+  status: excluded
+  notes: "MyGo v0.5.5 creates its WebView2/WebKit views with no UI-language or error-page override, so the engine's own blocked and load-error page follows the Chromium engine locale and its body stays English under zh-CN. The app's banner, controls, bookmark and download panes are localized. Replacing the internal page would mean hiding the native view from a page failure the app cannot distinguish from a stopped or downloading navigation, so it is accepted for v1; ticket 48."
 
 - id: sync.smb-provider
   area: sync

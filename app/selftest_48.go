@@ -16,6 +16,10 @@ package app
 //   - a page-reported download completes through the gateway with exact
 //     bytes; a slow download shows progress and cancel removes its .part
 //     file; an off-route URL is refused before a file is reserved;
+//   - the long bookmark list is rendered inside the real shell at 704x421 and
+//     1084x661 in English and zh-CN; the wheel and End bring the last row
+//     wholly inside the scrolled viewport and the client, above the pinned
+//     action bar, while the pane stays inside the client;
 //   - a hostile page is fetched through the gateway and its CSP blocks
 //     cross-origin fetch, images, frames, objects, forms, window.open, and
 //     eval; the foreign origin records zero requests, and the page options
@@ -41,6 +45,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,11 +55,16 @@ import (
 
 	"github.com/mslxl/natcatty/adapters/store"
 	appbrowser "github.com/mslxl/natcatty/application/browser"
+	appsession "github.com/mslxl/natcatty/application/session"
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	browserui "github.com/mslxl/natcatty/ui/browser"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/selftest"
+	sessionui "github.com/mslxl/natcatty/ui/session"
+	uishell "github.com/mslxl/natcatty/ui/shell"
+	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 )
 
 const (
@@ -126,6 +136,7 @@ func (t *selftest48) check() selftest.Check {
 			{Name: "open-panel", Run: t.openPanelStep},
 			{Name: "bookmarks-add-edit", Run: t.bookmarksStep},
 			{Name: "bookmarks-persist-and-scope", Run: t.persistStep},
+			{Name: "bookmarks-long-list-shell", Run: t.shellLongListStep},
 			{Name: "favicon", Run: t.faviconStep},
 			{Name: "downloads", Run: t.downloadsStep},
 			{Name: "sandbox", Run: t.sandboxStep},
@@ -531,6 +542,421 @@ func (t *selftest48) persistStep(*ui.Context) selftest.Outcome {
 		"adapters/store + appbrowser.Bookmarks scopes")
 }
 
+// shellLongListStep renders the persisted long list in the real shell, where
+// the browser panel is a flex child of the Pane: that is where the panel used
+// to grow with the list and leave the last rows below the client however the
+// user scrolled. At 704x421 and 1084x661, in English and zh-CN, the wheel and
+// End must bring the last row whole into the client, inside the scrolled
+// viewport and above the pinned action bar, while the pane stays inside the
+// client. The measured rects are the pass condition, not the row's text.
+func (t *selftest48) shellLongListStep(*ui.Context) selftest.Outcome {
+	variants := []struct {
+		width, height int
+		locale        string
+	}{
+		{704, 421, "en"},
+		{704, 421, "zh-CN"},
+		{1084, 661, "en"},
+		{1084, 661, "zh-CN"},
+	}
+	details := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		detail, err := t.checkShellLongList(variant.width, variant.height, variant.locale)
+		if err != nil {
+			return selftest.Failed(fmt.Errorf("%dx%d %s: %w",
+				variant.width, variant.height, variant.locale, err))
+		}
+		details = append(details, detail)
+	}
+	return selftest.Passed(
+		"the long bookmark list stayed in a bounded viewport in the real shell: "+strings.Join(details, "; "),
+		"uishell + browserui bookmark pane + ui.Tester")
+}
+
+// checkShellLongList mounts the real shell at width×height, opens the
+// production browser panel and the bookmark pane, and measures the last row
+// after scrolling by wheel and keyboard. It returns the measured rects.
+func (t *selftest48) checkShellLongList(width, height int, locale string) (string, error) {
+	h, err := t.openShellHarness(width, height, locale)
+	if err != nil {
+		return "", err
+	}
+	defer h.Close()
+
+	m := locales.In(locale)
+	if err := h.tester.Click(m.BrowserBookmarks()); err != nil {
+		return "", fmt.Errorf("open the bookmark pane: %w", err)
+	}
+	h.tester.Frame()
+	if !h.tester.HasText(m.BrowserBookmarkAdd()) {
+		return "", fmt.Errorf("the bookmark pane did not open: %v", h.tester.Texts())
+	}
+	items := h.core.VisibleBookmarks()
+	if len(items) < 20 {
+		return "", fmt.Errorf("visible bookmarks = %d, want the long list", len(items))
+	}
+	first, last := items[0], items[len(items)-1]
+	firstAddress := selftest48BookmarkAddress(first, m)
+	lastAddress := selftest48BookmarkAddress(last, m)
+	// Measure only after the pane has stopped resizing: the shell applies
+	// session state asynchronously, and a rect read mid-resize says nothing
+	// about the layout under test.
+	if err := h.waitSettled(m, m.BrowserBookmarkAdd(), first.Title, firstAddress); err != nil {
+		return "", err
+	}
+	firstTitle, ok := h.tester.Find(first.Title)
+	if !ok || firstTitle.H <= 0 {
+		return "", fmt.Errorf("the first row's title is missing: %v", h.tester.Texts())
+	}
+	firstURL, ok := h.tester.Find(firstAddress)
+	if !ok || firstURL.H <= 0 {
+		return "", fmt.Errorf("the first row's address is missing: %v", h.tester.Texts())
+	}
+	lastTitle, _ := h.tester.Find(last.Title)
+	lastURL, _ := h.tester.Find(lastAddress)
+	if selftest48FullLabel(lastTitle, firstTitle) && selftest48FullLabel(lastURL, firstURL) &&
+		selftest48InsideClient(lastTitle, width, height) {
+		return "", fmt.Errorf("the %d-row list fits without scrolling; the viewport was not exercised",
+			len(items))
+	}
+	bar, ok := h.tester.Find(m.BrowserBookmarkAdd())
+	if !ok {
+		return "", fmt.Errorf("the pinned action bar is missing: %v", h.tester.Texts())
+	}
+	// A point over the list's favicon column, left of the title and address.
+	listX := firstURL.X - 14
+	listY := firstTitle.Y + firstTitle.H/2
+
+	assertBottom := func(how string) error {
+		title, _ := h.tester.Find(last.Title)
+		address, _ := h.tester.Find(lastAddress)
+		if !selftest48FullLabel(title, firstTitle) {
+			return fmt.Errorf("after %s the last title is clipped: %+v (whole is %+v)",
+				how, title, firstTitle)
+		}
+		if !selftest48FullLabel(address, firstURL) {
+			return fmt.Errorf("after %s the last address is clipped: %+v (whole is %+v)",
+				how, address, firstURL)
+		}
+		if !selftest48InsideClient(title, width, height) {
+			return fmt.Errorf("after %s the last title is outside the %dx%d client: %+v",
+				how, width, height, title)
+		}
+		if !selftest48InsideClient(address, width, height) {
+			return fmt.Errorf("after %s the last address is outside the %dx%d client: %+v",
+				how, width, height, address)
+		}
+		if title.Y < bar.Y+bar.H-0.5 {
+			return fmt.Errorf("after %s the last row runs under the pinned bar %+v: %+v",
+				how, bar, title)
+		}
+		pane, ok := h.tester.Find(m.PaneRegion(1))
+		if !ok {
+			return fmt.Errorf("the shell's content pane is missing: %v", h.tester.Texts())
+		}
+		if pane.Y < -0.5 || pane.Y+pane.H > float32(height)+0.5 {
+			return fmt.Errorf("the browser pane %+v exceeds the %dx%d client", pane, width, height)
+		}
+		// Measure the Scroll widget itself, not only the pane and client:
+		// the acceptance defect was an unbounded viewport that the pane grew
+		// with. The row must be whole inside this viewport, below the pinned
+		// bar.
+		if h.context == nil {
+			return fmt.Errorf("the shell has not been built yet")
+		}
+		viewport := h.panel.BookmarkViewportBounds(h.context)
+		if viewport.W <= 0 || viewport.H <= 0 {
+			return fmt.Errorf("the bookmark scroll viewport has no size: %+v", viewport)
+		}
+		if !selftest48InsideClient(viewport, width, height) {
+			return fmt.Errorf("the bookmark scroll viewport is outside the %dx%d client: %+v",
+				width, height, viewport)
+		}
+		if title.Y < viewport.Y-0.5 || title.Y+title.H > viewport.Y+viewport.H+0.5 ||
+			address.Y < viewport.Y-0.5 || address.Y+address.H > viewport.Y+viewport.H+0.5 {
+			return fmt.Errorf("after %s the last row is not inside the scroll viewport %+v: title %+v address %+v",
+				how, viewport, title, address)
+		}
+		return nil
+	}
+
+	deadline := time.Now().Add(selftest48Wait)
+	for {
+		title, _ := h.tester.Find(last.Title)
+		address, _ := h.tester.Find(lastAddress)
+		if selftest48FullLabel(title, firstTitle) && selftest48FullLabel(address, firstURL) &&
+			selftest48InsideClient(title, width, height) &&
+			selftest48InsideClient(address, width, height) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("the wheel never brought the last row into the viewport: title %+v address %+v",
+				title, address)
+		}
+		h.tester.Scroll(listX, listY, 0, 300)
+		h.tester.Frame()
+	}
+	if err := assertBottom("the wheel"); err != nil {
+		return "", err
+	}
+	if firstTitle, ok := h.tester.Find(first.Title); ok && selftest48InsideClient(firstTitle, width, height) {
+		return "", fmt.Errorf("the first row is still whole after scrolling to the last: %+v", firstTitle)
+	}
+	shot := fmt.Sprintf("bookmarks-shell-%dx%d-%s-bottom.png", width, height, locale)
+	if err := capture(h.tester, filepath.Join(t.shotDir, shot)); err != nil {
+		return "", err
+	}
+	t.captured++
+
+	// Keyboard: the pointer is over the list and no text field takes the
+	// keyboard, so Home and End scroll the list under it.
+	h.tester.Move(listX, listY)
+	h.tester.Key(0, ui.KeyHome)
+	deadline = time.Now().Add(selftest48Wait)
+	for {
+		title, _ := h.tester.Find(first.Title)
+		address, _ := h.tester.Find(firstAddress)
+		if selftest48FullLabel(title, firstTitle) && selftest48FullLabel(address, firstURL) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("Home never brought the first row back: title %+v address %+v",
+				title, address)
+		}
+		h.tester.Frame()
+	}
+	h.tester.Key(0, ui.KeyEnd)
+	deadline = time.Now().Add(selftest48Wait)
+	for {
+		title, _ := h.tester.Find(last.Title)
+		address, _ := h.tester.Find(lastAddress)
+		if selftest48FullLabel(title, firstTitle) && selftest48FullLabel(address, firstURL) &&
+			selftest48InsideClient(title, width, height) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("End never brought the last row into the viewport: title %+v address %+v",
+				title, address)
+		}
+		h.tester.Frame()
+	}
+	if err := assertBottom("End"); err != nil {
+		return "", err
+	}
+	pane, _ := h.tester.Find(m.PaneRegion(1))
+	viewport := h.panel.BookmarkViewportBounds(h.context)
+	title, _ := h.tester.Find(last.Title)
+	address, _ := h.tester.Find(lastAddress)
+	return fmt.Sprintf("%dx%d %s last title y %.1f..%.1f, address y %.1f..%.1f, client %d, pane bottom %.1f, viewport bottom %.1f, bar bottom %.1f",
+		width, height, locale, title.Y, title.Y+title.H, address.Y, address.Y+address.H,
+		height, pane.Y+pane.H, viewport.Y+viewport.H, bar.Y+bar.H), nil
+}
+
+// selftest48BookmarkAddress is the address line the bookmark row renders.
+func selftest48BookmarkAddress(item appbrowser.BookmarkView, m locales.Messages) string {
+	if item.Scope == domainbrowser.ScopeAllHosts {
+		return m.BrowserBookmarkAllHosts() + " · " + item.URL
+	}
+	return item.URL
+}
+
+// selftest48FullLabel reports whether r shows its whole built height: a
+// label clipped by the scroll viewport keeps only the intersection with it.
+// Width is not compared because the first and last rows carry different text;
+// the viewport band is checked separately against the pane.
+func selftest48FullLabel(r, reference ui.Rect) bool {
+	return r.W > 0 && r.H > 0 && r.H >= reference.H-0.5
+}
+
+func selftest48InsideClient(r ui.Rect, width, height int) bool {
+	return r.W > 0 && r.H > 0 &&
+		r.X >= -0.5 && r.Y >= -0.5 &&
+		r.X+r.W <= float32(width)+0.5 && r.Y+r.H <= float32(height)+0.5
+}
+
+// selftest48ShellHarness mounts the real shell with the production Session
+// surface and browser panel, using its own quiet transport and page factory so
+// it never disturbs the panel-alone harness of the other steps.
+type selftest48ShellHarness struct {
+	service *appsession.Service
+	factory *selftest48ShellFactory
+	shell   *shellstate.State
+	tester  *ui.Tester
+	context *ui.Context
+	pages   *selftest48Pages
+	core    *appbrowser.Panel
+	panel   *browserui.Panel
+}
+
+func (t *selftest48) openShellHarness(width, height int, locale string) (*selftest48ShellHarness, error) {
+	h := &selftest48ShellHarness{
+		factory: &selftest48ShellFactory{},
+		pages:   &selftest48Pages{},
+	}
+	// Every error path below must release what it started: a leaked Session
+	// or service would keep the next variant's shell from settling.
+	complete := false
+	defer func() {
+		if !complete {
+			h.Close()
+		}
+	}()
+	h.service = appsession.NewService(h.factory)
+	connector := &selftest48Connector{}
+	opener := func(session *appsession.Session) (shellstate.Surface, error) {
+		return sessionui.New(session, sessionui.WithBrowser(
+			func(onClose func()) (sessionui.BrowserPanel, error) {
+				core := appbrowser.New(appbrowser.Config{
+					HostID:    session.HostID(),
+					Label:     session.Label(),
+					Connector: connector,
+					Bookmarks: t.bookmarks,
+				})
+				panel := browserui.New(core, h.pages, browserui.WithCloseRequest(onClose))
+				h.core = core
+				h.panel = panel
+				return panel, nil
+			}))
+	}
+	h.shell = shellstate.NewState(shellstate.WithSessions(h.service, opener))
+	h.tester = ui.NewTester(func(c *ui.Context) {
+		h.context = c
+		uishell.View(h.shell)(c)
+	}, width, height)
+	h.tester.SetLocale(locale)
+	h.tester.Frame()
+
+	host := domainvault.Host{
+		ID:       model.HostID(selftest48Host),
+		Label:    "48",
+		Hostname: "selftest-48.shell",
+		Port:     22,
+		Username: "root",
+		Protocol: domainvault.ProtocolSSH,
+	}
+	if err := h.shell.OpenHost(host); err != nil {
+		return nil, fmt.Errorf("open the shell Session: %w", err)
+	}
+	deadline := time.Now().Add(selftest48Wait)
+	for h.shell.TabCount() != 1 {
+		h.shell.Flush()
+		h.tester.Frame()
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for the shell Session: %v", h.tester.Texts())
+		}
+	}
+	m := locales.In(locale)
+	if err := h.tester.Click(m.SessionMenuFor(1)); err != nil {
+		return nil, fmt.Errorf("open the Session menu: %w", err)
+	}
+	h.tester.Frame()
+	if err := h.tester.ChooseMenuItem(m.SessionMenuOpenBrowser()); err != nil {
+		return nil, fmt.Errorf("choose Open Browser: %w", err)
+	}
+	deadline = time.Now().Add(selftest48Wait)
+	for {
+		h.tester.Frame()
+		if h.core != nil && h.core.State().Route == appbrowser.RouteConnected {
+			break
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for the shell browser route: %v", h.tester.Texts())
+		}
+	}
+	if err := h.waitSettled(m, m.BrowserNewTab(), m.BrowserAddress()); err != nil {
+		return nil, err
+	}
+	complete = true
+	return h, nil
+}
+
+// waitSettled frames until the shell's content pane and the named labels
+// report the same positive geometry on two consecutive frames. The shell
+// applies session state asynchronously, so a measurement taken right after
+// the browser opens can land on a pane that is still taking its final size.
+func (h *selftest48ShellHarness) waitSettled(m locales.Messages, labels ...string) error {
+	deadline := time.Now().Add(selftest48Wait)
+	var previous []ui.Rect
+	stable := 0
+	for {
+		h.shell.Flush()
+		h.tester.Frame()
+		rects := make([]ui.Rect, 0, len(labels)+1)
+		pane, ok := h.tester.Find(m.PaneRegion(1))
+		good := ok && pane.W > 0 && pane.H > 0
+		rects = append(rects, pane)
+		for _, label := range labels {
+			rect, found := h.tester.Find(label)
+			if !found || rect.W <= 0 || rect.H <= 0 {
+				good = false
+			}
+			rects = append(rects, rect)
+		}
+		if good && slices.Equal(rects, previous) {
+			stable++
+			if stable >= 2 {
+				return nil
+			}
+		} else {
+			stable = 0
+		}
+		previous = rects
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the shell's pane never settled: pane %+v, labels %v; texts %v",
+				pane, labels, h.tester.Texts())
+		}
+	}
+}
+
+func (h *selftest48ShellHarness) Close() {
+	if h.panel != nil {
+		h.panel.Close()
+	}
+	if h.shell != nil {
+		h.shell.CloseAllSessions()
+		h.shell.Shutdown()
+	}
+	if h.service != nil {
+		h.service.CloseAll()
+	}
+}
+
+// selftest48ShellFactory opens a quiet in-process SSH transport for the
+// shell-mounted check; no bytes flow.
+type selftest48ShellFactory struct {
+	mu         sync.Mutex
+	transports []*selftest48ShellTransport
+}
+
+func (f *selftest48ShellFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	if spec.HostID != model.HostID(selftest48Host) {
+		return nil, fmt.Errorf("shell self-test transport got Host %q", spec.HostID)
+	}
+	transport := &selftest48ShellTransport{done: make(chan struct{})}
+	f.mu.Lock()
+	f.transports = append(f.transports, transport)
+	f.mu.Unlock()
+	return transport, nil
+}
+
+type selftest48ShellTransport struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func (t *selftest48ShellTransport) Read([]byte) (int, error) {
+	<-t.done
+	return 0, io.EOF
+}
+
+func (t *selftest48ShellTransport) Write(p []byte) (int, error) { return len(p), nil }
+func (t *selftest48ShellTransport) Resize(int, int) error       { return nil }
+
+func (t *selftest48ShellTransport) Close() error {
+	t.once.Do(func() { close(t.done) })
+	return nil
+}
+
 func (t *selftest48) faviconStep(*ui.Context) selftest.Outcome {
 	if t.faviconDone {
 		return selftest.Passed("the PNG favicon was fetched through the tunnel, cached, and shown",
@@ -903,8 +1329,8 @@ func (t *selftest48) cleanupStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(fmt.Errorf("cleanup left %s", name))
 		}
 	}
-	if t.captured < 8 {
-		return selftest.Failed(fmt.Errorf("captured %d screenshots, want at least 8", t.captured))
+	if t.captured < 14 {
+		return selftest.Failed(fmt.Errorf("captured %d screenshots, want at least 14", t.captured))
 	}
 	t.foreignSeen = selftest48ForeignCount.Load()
 	if t.foreignSeen != 0 {
