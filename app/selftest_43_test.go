@@ -73,7 +73,7 @@ func TestTicket43CheckRunsThroughTheKeyboard(t *testing.T) {
 	for _, want := range []string{
 		"adapters/bundle.Resolve + adapters/mosh.Factory + adapters/et.Factory",
 		"adapters/mosh.Factory + domain/model/mosh.Sniffer + in-process SSH/UDP/PTY fixtures",
-		"adapters/et.Factory.Prepare + domain/model/et.CheckRoute + AskpassEntries",
+		"adapters/et.Factory.Prepare + adapters/et.Factory.Open + domain/model/et.CheckRoute + AskpassEntries",
 	} {
 		if !seams[want] {
 			t.Fatalf("seams = %v, missing %q", seams, want)

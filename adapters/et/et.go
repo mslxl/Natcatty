@@ -131,9 +131,13 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 			return terminal, nil
 		}
 	}
+	// Args[0] is the program name in platform/pty, and Windows builds the
+	// command line from Path plus Args[1:]. A bare prepared.Args would make et
+	// read its first flag or port as the destination.
+	argv := append([]string{resolved.Path}, prepared.Args...)
 	client, err := spawn(pty.Options{
 		Path: resolved.Path,
-		Args: prepared.Args,
+		Args: argv,
 		Dir:  prepared.Dir,
 		Env:  prepared.Env,
 		Cols: spec.Cols,

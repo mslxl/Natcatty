@@ -77,11 +77,15 @@ func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 
 		ui.Text(c, m.NavLanguage()).FontSize(12).TextColor(t.TextMuted)
 		current := c.Locale()
+		// Wrapping keeps all five language options inside the 704x421 client
+		// area at the enforced 720x480 minimum window, where a single column
+		// ran 28 DIPs past the bottom. Ticket 61 tracks the cross-cutting
+		// minimum-window shell defect.
 		ui.RadioGroup(c, func() {
 			for _, tag := range locales.Tags() {
 				ui.Radio(c.Key("locale-"+tag), &current, tag, i18n.Autonym(tag))
 			}
-		})
+		}).Row().Wrap()
 		if current != c.Locale() {
 			s.RequestLocale(current)
 			c.Invalidate()
