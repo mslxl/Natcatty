@@ -28,8 +28,8 @@ type SyncService interface {
 }
 
 // ProviderSyncService is the optional capability that lets the setup surface
-// choose between GitHub and Google Drive. Ticket 49's fake does not implement
-// it, so the selector is hidden rather than forced into that seam.
+// choose between GitHub, Google Drive, and OneDrive. Ticket 49's fake does not
+// implement it, so the selector is hidden rather than forced into that seam.
 type ProviderSyncService interface {
 	SetProvider(ctx context.Context, provider string) error
 }
@@ -309,8 +309,11 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
 	syncProviderSelector(c, state, snapshot, m)
-	if snapshot.Provider == appsync.ProviderGoogleDrive {
+	switch appsync.NormalizeProvider(snapshot.Provider) {
+	case appsync.ProviderGoogleDrive:
 		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(11).TextColor(t.TextMuted)
+	case appsync.ProviderOneDrive:
+		ui.Text(c, m.SettingsSyncOneDriveHint()).FontSize(11).TextColor(t.TextMuted)
 	}
 	syncDeviceCode(c, snapshot, m, t)
 	syncPasswordField(c, state, m)
@@ -327,8 +330,12 @@ func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snap
 	if !state.SupportsProviderSelection() {
 		return
 	}
-	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive}
-	names := []string{m.SettingsSyncProviderGitHub(), m.SettingsSyncProviderGoogleDrive()}
+	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive, appsync.ProviderOneDrive}
+	names := []string{
+		m.SettingsSyncProviderGitHub(),
+		m.SettingsSyncProviderGoogleDrive(),
+		m.SettingsSyncProviderOneDrive(),
+	}
 	selected := names[indexOf(values, appsync.NormalizeProvider(snapshot.Provider))]
 	ui.Field(c, m.SettingsSyncProvider(), func() {
 		if ui.Select(c, &selected, names).Width(190).Changed() {
@@ -339,10 +346,14 @@ func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snap
 }
 
 func syncProviderName(provider string, m locales.Messages) string {
-	if appsync.NormalizeProvider(provider) == appsync.ProviderGoogleDrive {
+	switch appsync.NormalizeProvider(provider) {
+	case appsync.ProviderGoogleDrive:
 		return m.SettingsSyncProviderGoogleDrive()
+	case appsync.ProviderOneDrive:
+		return m.SettingsSyncProviderOneDrive()
+	default:
+		return m.SettingsSyncProviderGitHub()
 	}
-	return m.SettingsSyncProviderGitHub()
 }
 
 // syncDeviceCode shows the one-time code while GitHub authorization is in
