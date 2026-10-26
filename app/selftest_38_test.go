@@ -49,10 +49,10 @@ func runTicket38(t *testing.T, tester *ui.Tester, openMenu bool) selftest.Result
 	return result
 }
 
-// TestTicket38CheckRunsThroughTheKeyboard drives F11,3,8 from the initial
-// view. The real transfer surface, the real file-open service, the real
-// editor view (through a headless tester), and the real staged write run;
-// only the launcher and the remote transport's Create failure are scripted.
+// Ticket 38 self-test. The launcher is scripted and the remote pane is the
+// real local adapter behind a transport the test can kill; a killed transport
+// stays dead, so each retry must dial a fresh one, and the GUI Host reconnect
+// must reuse the same Tab.
 func TestTicket38CheckRunsThroughTheKeyboard(t *testing.T) {
 	tester, dir := newTicket16Tester(t)
 	tester.Key(0, ui.KeyF11)
@@ -73,7 +73,7 @@ func TestTicket38CheckRunsThroughTheKeyboard(t *testing.T) {
 		"transferstate.State.Open -> application/fileopen.Service -> ui/editor.State -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service watcher (real launcher seam) -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service.Save conflict check -> ui/editor.State prompt -> application/transfer.Service.WriteFile",
-		"application/fileopen.Service error classification -> ui/editor.State retry -> application/transfer.Service.WriteFile",
+		"application/fileopen.Service retry -> transferstate.remoteLink dial (Connection Manager) -> application/transfer.Service.WriteFile",
 		"application/fileopen.Service.SweepTemp + Close/Shutdown",
 	} {
 		if !seams[want] {
