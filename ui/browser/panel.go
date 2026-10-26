@@ -7,6 +7,7 @@ package browser
 import (
 	"errors"
 	"net/url"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
@@ -94,6 +95,23 @@ type Panel struct {
 
 	openTabs map[string]Page
 
+	// tabItems, tabCloses, newTab, and stripView identify the tab strip's
+	// controls across frames. A MyGo element belongs to one build pass; a
+	// Handle is its cross-frame identity, which the panel keeps to read the
+	// committed boxes and to notice when the strip's viewport narrows.
+	tabItems  map[string]*ui.Handle
+	tabCloses map[string]*ui.Handle
+	newTab    *ui.Handle
+	stripView *ui.Handle
+
+	activeTabID string
+	revealTab   bool
+	stripWidth  float32
+
+	lastLocale string
+	lastWidth  float32
+	lastHeight float32
+
 	problem problemKind
 
 	lastRoute    appbrowser.Route
@@ -164,6 +182,29 @@ func (p *Panel) View(c *ui.Context) ui.Element {
 	state := p.core.State()
 	m := locales.In(c.Locale())
 	t := c.Theme()
+
+	// A rebuilt surface at a new size or in new copy asks for one more frame.
+	// A native page is a child window, and a region it used to cover can keep
+	// old pixels until the panel repaints: acceptance at 960f22b1 caught
+	// English empty-state copy left in a region of a window that had grown
+	// into it. The copy itself is always built from this frame's locale; the
+	// request is only about repainting the region. A width change also asks
+	// the strip to reveal the active tab in this frame instead of after the
+	// committed strip width catches up.
+	if width, height := c.Size(); width > 0 && height > 0 {
+		localeChanged := p.lastLocale != "" && p.lastLocale != c.Locale()
+		widthChanged := p.lastWidth > 0 && p.lastWidth != width
+		heightChanged := p.lastHeight > 0 && p.lastHeight != height
+		if localeChanged || widthChanged || heightChanged {
+			p.invalidate()
+		}
+		if widthChanged {
+			p.revealTab = true
+		}
+		p.lastLocale = c.Locale()
+		p.lastWidth = width
+		p.lastHeight = height
+	}
 
 	if state.Route != appbrowser.RouteConnected {
 		p.destroyPages()
@@ -253,41 +294,138 @@ func (p *Panel) toolbar(c *ui.Context, state appbrowser.State, active appbrowser
 	})
 }
 
+const (
+	// browserTabStripHeight is the strip's height: one browserTabControlHeight
+	// control plus vertical breathing room.
+	browserTabStripHeight float32 = 32
+	// browserTabWidth is one tab label's fixed width. A fixed width keeps an
+	// activated tab's whole item (label and close control) stable while page
+	// titles arrive, so ScrollIntoView reveals it once rather than chasing a
+	// growing label.
+	browserTabWidth float32 = 128
+	// browserTabCloseWidth is the close control beside each label.
+	browserTabCloseWidth float32 = 24
+	// browserTabGap separates a label from its close control, and one tab item
+	// from the next.
+	browserTabGap float32 = 2
+	// browserTabControlHeight is the height of a tab label and its close
+	// control.
+	browserTabControlHeight float32 = 26
+)
+
+// tabStrip renders the tab strip. Five tabs need more width than the 440-DIP
+// content column at the minimum window (a 704x421 client with the 232-DIP
+// sidebar and the shell's 16-DIP padding), so the strip scrolls sideways
+// exactly like the shell's work-Tab strip and the System manager's tab strip.
+// The active tab is scrolled fully into view when it changes or the strip's
+// viewport narrows, so its label and its close control are never cut at
+// either edge. The New tab control sits outside the scrolling area, so it is
+// reachable at every width, and ScrollHorizontal gives the same hover
+// affordance the other strips have.
 func (p *Panel) tabStrip(c *ui.Context, state appbrowser.State, m locales.Messages, t *ui.Theme) {
-	ui.ScrollHorizontal(c).FillWidth().Height(32).Shrink(0).Children(func() {
-		ui.Row(c).Gap(4).Padding(0, 8).AlignItems(ui.Center).Children(func() {
-			for _, tab := range state.Tabs {
-				tab := tab
-				label := tab.Title
-				if label == "" {
-					label = m.BrowserBlankTab()
-				}
-				active := tab.ID == state.ActiveID
-				var button ui.Element
-				if active {
-					button = ui.PrimaryButton(c, label)
-				} else {
-					button = ui.Button(c, label)
-				}
-				if button.MaxWidth(180).Clicked() {
-					if p.core.Activate(tab.ID) {
-						p.addressDirty = false
+	if state.ActiveID != p.activeTabID {
+		p.activeTabID = state.ActiveID
+		p.revealTab = true
+	}
+	if p.tabItems == nil {
+		p.tabItems = make(map[string]*ui.Handle, len(state.Tabs))
+		p.tabCloses = make(map[string]*ui.Handle, len(state.Tabs))
+	}
+	if p.stripView == nil {
+		p.stripView = &ui.Handle{}
+	}
+	if p.newTab == nil {
+		p.newTab = &ui.Handle{}
+	}
+	reveal := p.revealTab
+	p.revealTab = false
+
+	ui.Row(c).FillWidth().Height(browserTabStripHeight).Shrink(0).Padding(0, 8).Gap(4).
+		AlignItems(ui.Center).Children(func() {
+		scroll := ui.ScrollHorizontal(c).Grow(1).MinWidth(0).
+			Height(browserTabStripHeight).Bind(p.stripView)
+		// The strip's own width is the room its tabs have. A narrower window
+		// (or a wider sidebar) shrinks it; reveal the active tab again so one
+		// chosen at a wide window does not stay half cut.
+		if width := p.stripView.Bounds(c).W; width > 0 {
+			if p.stripWidth > 0 && width != p.stripWidth {
+				reveal = true
+			}
+			p.stripWidth = width
+		}
+		scroll.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				for _, tab := range state.Tabs {
+					tab := tab
+					label := tab.Title
+					if label == "" {
+						label = m.BrowserBlankTab()
 					}
-					c.Invalidate()
+					active := tab.ID == state.ActiveID
+					// Label and close control are one item: revealing the tab
+					// reveals the close control beside it too.
+					itemHandle := p.tabItems[tab.ID]
+					if itemHandle == nil {
+						itemHandle = &ui.Handle{}
+						p.tabItems[tab.ID] = itemHandle
+					}
+					item := ui.Row(c).Key("browser-tab-" + tab.ID).Gap(browserTabGap).
+						AlignItems(ui.Center).Bind(itemHandle)
+					item.Children(func() {
+						var button ui.Element
+						if active {
+							button = ui.PrimaryButton(c, label)
+						} else {
+							button = ui.Button(c, label)
+						}
+						button.Width(browserTabWidth).Height(browserTabControlHeight)
+						if button.Clicked() {
+							if p.core.Activate(tab.ID) {
+								p.addressDirty = false
+							}
+							c.Invalidate()
+						}
+						closeHandle := p.tabCloses[tab.ID]
+						if closeHandle == nil {
+							closeHandle = &ui.Handle{}
+							p.tabCloses[tab.ID] = closeHandle
+						}
+						close := ui.Button(c, "×").Label(m.BrowserCloseTab()).
+							Width(browserTabCloseWidth).Height(browserTabControlHeight).Bind(closeHandle)
+						if close.Clicked() {
+							p.closeTab(tab.ID)
+							c.Invalidate()
+						}
+					})
+					if active && reveal {
+						item.ScrollIntoView()
+					}
 				}
-				if ui.Button(c, "×").Label(m.BrowserCloseTab()).Width(24).Height(26).Clicked() {
-					p.closeTab(tab.ID)
-					c.Invalidate()
-				}
-			}
-			if ui.Button(c, "+").Label(m.BrowserNewTab()).Width(30).Height(26).Clicked() {
-				if _, err := p.core.NewTab(); err != nil {
-					p.setProblem(err)
-				}
-				c.Invalidate()
-			}
+			})
 		})
+		// New tab stays outside the scroller, so it is reachable at every
+		// width and never scrolls away with the labels. It must not be
+		// compressed by a wide strip either.
+		plus := ui.Button(c, "+").Label(m.BrowserNewTab()).Width(30).
+			Height(browserTabControlHeight).Shrink(0).Bind(p.newTab)
+		if plus.Clicked() {
+			if _, err := p.core.NewTab(); err != nil {
+				p.setProblem(err)
+			}
+			c.Invalidate()
+		}
 	})
+	// Forget handles of tabs that no longer exist.
+	live := make(map[string]bool, len(state.Tabs))
+	for _, tab := range state.Tabs {
+		live[tab.ID] = true
+	}
+	for id := range p.tabItems {
+		if !live[id] {
+			delete(p.tabItems, id)
+			delete(p.tabCloses, id)
+		}
+	}
 	// Keep a hairline under the chrome without stealing room from the page.
 	ui.Row(c).FillWidth().Height(1).Background(t.Border)
 }
@@ -361,9 +499,20 @@ func (p *Panel) submit(c *ui.Context) {
 	if !ok {
 		return
 	}
+	previous := active.URL
 	gatewayURL, err := p.core.Navigate(active.ID, p.address)
 	if err != nil {
 		p.setProblem(err)
+		// The refused text is never submitted, and it must not stay on screen
+		// either: it may carry a username and password in clear text. Put the
+		// tab's real address back instead. NormalizeURL reports credentials
+		// only after its scheme, host, and length checks, so a refusal for one
+		// of those reasons can still contain them; inspect the text too.
+		if errors.Is(err, domainbrowser.ErrAddressCredentials) || addressCarriesCredentials(p.address) {
+			p.address = previous
+			p.addressURL = previous
+			p.addressDirty = false
+		}
 		c.Invalidate()
 		return
 	}
@@ -372,6 +521,22 @@ func (p *Panel) submit(c *ui.Context) {
 	p.addressURL = p.address
 	p.loadPage(active.ID, gatewayURL)
 	c.Invalidate()
+}
+
+// addressCarriesCredentials reports whether address-bar text puts a username
+// or password in the URL's authority, with or without a scheme. It is used
+// only to keep refused text off screen: an address can be refused for a bad
+// scheme, a missing host, or its length before URL normalization looks at its
+// user information, and those refusals must not leave a password visible.
+func addressCarriesCredentials(address string) bool {
+	authority := address
+	if i := strings.Index(authority, "://"); i >= 0 {
+		authority = authority[i+len("://"):]
+	}
+	if i := strings.IndexAny(authority, "/?#"); i >= 0 {
+		authority = authority[:i]
+	}
+	return strings.Contains(authority, "@")
 }
 
 func (p *Panel) loadTab(tabID string) {
@@ -402,6 +567,10 @@ func (p *Panel) stopPage(tabID string) {
 		return
 	}
 	page.Stop()
+	// A stop before the page committed drops the address' provisional label
+	// and restores the page actually shown; the tab label follows the real
+	// navigation outcome.
+	p.core.PageStopped(tabID)
 	p.core.SetPageFlags(tabID, page.CanGoBack(), page.CanGoForward(), false)
 	p.invalidate()
 }

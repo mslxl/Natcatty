@@ -95,6 +95,22 @@ type Tab struct {
 	Loading      bool
 	CanGoBack    bool
 	CanGoForward bool
+
+	// provisional marks URL, Title, and the navigation flags as the address'
+	// guess before the page reports anything. A Stop that aborts the
+	// navigation restores the last committed page, so the tab never outlives
+	// the navigation it described.
+	provisional bool
+	previous    pageSnapshot
+}
+
+// pageSnapshot is the last committed page of a tab, held while a navigation is
+// provisional so a stop can put the tab back exactly as it was.
+type pageSnapshot struct {
+	url          string
+	title        string
+	canGoBack    bool
+	canGoForward bool
 }
 
 // State is an immutable snapshot for the UI and tests.
@@ -461,11 +477,24 @@ func (p *Panel) Navigate(tabID, address string) (string, error) {
 		p.mu.Unlock()
 		return "", err
 	}
-	p.tabs[index].URL = normalized
-	p.tabs[index].Title = hostLabel(normalized)
-	p.tabs[index].Loading = true
-	p.tabs[index].CanGoBack = false
-	p.tabs[index].CanGoForward = false
+	tab := &p.tabs[index]
+	// The address is a guess until the page commits or reports a title. Keep
+	// the last committed page so Stop can put the tab back instead of leaving
+	// a label for a page that never arrived.
+	if !tab.provisional {
+		tab.previous = pageSnapshot{
+			url:          tab.URL,
+			title:        tab.Title,
+			canGoBack:    tab.CanGoBack,
+			canGoForward: tab.CanGoForward,
+		}
+	}
+	tab.URL = normalized
+	tab.Title = hostLabel(normalized)
+	tab.provisional = true
+	tab.Loading = true
+	tab.CanGoBack = false
+	tab.CanGoForward = false
 	p.active = tabID
 	p.notice = FailureNone
 	p.noticeMsg = ""
@@ -490,20 +519,41 @@ func (p *Panel) PageChanged(tabID string, page PageState) {
 		return
 	}
 	changed := false
+	committed := false
 	if page.URL != "" && p.gateway != nil {
 		if remote, ok := p.gateway.RemoteURL(page.URL); ok {
 			if p.tabs[index].URL != remote {
 				p.tabs[index].URL = remote
 				changed = true
 			}
-			if p.tabs[index].Title == "" {
-				p.tabs[index].Title = hostLabel(remote)
-				changed = true
+			if p.tabs[index].Title == "" || p.tabs[index].provisional {
+				// A provisional host label follows the committed URL (a
+				// redirect may land somewhere else) until a title arrives.
+				if label := hostLabel(remote); p.tabs[index].Title != label {
+					p.tabs[index].Title = label
+					changed = true
+				}
 			}
+			// Reaching a gateway page commits the navigation.
+			committed = true
 		}
 	}
-	if page.Title != "" && p.tabs[index].Title != page.Title {
-		p.tabs[index].Title = page.Title
+	if page.Title != "" {
+		// A title is reported for the page that committed, so it settles the
+		// navigation even when it happens to equal the provisional label.
+		if p.tabs[index].Title != page.Title {
+			p.tabs[index].Title = page.Title
+			changed = true
+		}
+		committed = true
+	}
+	// A finished load is a committed navigation even when the page never
+	// reports a title: the host label now describes a page that exists.
+	if page.URL != "" && !page.Loading {
+		committed = true
+	}
+	if committed && p.tabs[index].provisional {
+		p.tabs[index].provisional = false
 		changed = true
 	}
 	if p.tabs[index].Loading != page.Loading {
@@ -539,10 +589,39 @@ func (p *Panel) PageFailed(tabID, detail string) {
 		return
 	}
 	p.tabs[index].Loading = false
+	p.tabs[index].provisional = false
 	p.notice = FailurePage
 	p.noticeMsg = detail
 	p.mu.Unlock()
 	p.changed()
+}
+
+// PageStopped records a stopped load. WebView2 reports a stopped load as an
+// aborted navigation and fires no finish event, so the panel must settle the
+// tab itself. A stop before the page committed drops the provisional address,
+// title, and navigation flags and restores the last committed page; the tab
+// then describes the page that is actually shown rather than the one that was
+// asked for. It reports whether the tab was provisional.
+func (p *Panel) PageStopped(tabID string) bool {
+	p.mu.Lock()
+	index := p.tabIndexLocked(tabID)
+	if index < 0 || p.closed {
+		p.mu.Unlock()
+		return false
+	}
+	tab := &p.tabs[index]
+	tab.Loading = false
+	restored := tab.provisional
+	if restored {
+		tab.URL = tab.previous.url
+		tab.Title = tab.previous.title
+		tab.CanGoBack = tab.previous.canGoBack
+		tab.CanGoForward = tab.previous.canGoForward
+		tab.provisional = false
+	}
+	p.mu.Unlock()
+	p.changed()
+	return restored
 }
 
 // SetPageFlags updates the navigation state after a same-document history
