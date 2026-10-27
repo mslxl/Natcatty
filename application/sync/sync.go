@@ -77,6 +77,17 @@ const (
 	// region from the one the request was signed for (PermanentRedirect).
 	// No retry is attempted: the user must correct the region.
 	ProblemWrongRegion Problem = "wrong-region"
+	// ProblemShrinkGuard reports that the outgoing payload would delete too
+	// much of a family compared with the merge anchor or cloud copy. The UI
+	// offers Restore and an explicitly confirmed Force push; automatic sync
+	// never forces.
+	ProblemShrinkGuard Problem = "shrink-guard"
+	// ProblemTombstoneGuard reports that the outgoing payload would replace
+	// the whole cloud Vault with nothing (or with tombstones for everything).
+	ProblemTombstoneGuard Problem = "tombstone-guard"
+	// ProblemBackup reports that a mandatory protective backup could not be
+	// written, so the destructive operation was refused.
+	ProblemBackup Problem = "backup-failed"
 )
 
 // Status is the sync surface's state.
@@ -90,6 +101,9 @@ const (
 	StatusFailed        Status = "failed"
 	StatusNeedsPassword Status = "needs-password"
 	StatusNeedsSetup    Status = "needs-setup"
+	// StatusConflict reports an unresolved both-sides change that survived a
+	// restart and blocks further syncs until the user resolves it.
+	StatusConflict Status = "conflict"
 )
 
 // Errors the UI maps onto localized messages.
@@ -99,6 +113,13 @@ var (
 	ErrEmptyVault        = errors.New("sync: refusing to overwrite the cloud copy with an empty Vault")
 	ErrConflict          = errors.New("sync: the cloud copy changed during the upload")
 	ErrAlreadyInProgress = errors.New("sync: a sync is already running")
+	// ErrShrinkGuard refuses an upload that would delete too many records.
+	ErrShrinkGuard = errors.New("sync: the upload would delete too much of the Vault")
+	// ErrTombstoneGuard refuses an upload that would empty the cloud Vault.
+	ErrTombstoneGuard = errors.New("sync: the upload would replace the cloud Vault with nothing")
+	// ErrBackupUnavailable reports that the mandatory protective backup could
+	// not be written, so the destructive operation was aborted.
+	ErrBackupUnavailable = errors.New("sync: the protective backup could not be written")
 	// ErrUnsupportedVersion refuses a cloud copy written by a newer schema
 	// instead of overwriting it with a payload this build cannot read.
 	ErrUnsupportedVersion = errors.New("sync: the cloud copy uses a newer sync schema")
@@ -328,6 +349,25 @@ type Config struct {
 	RemoteETag      string              `json:"remoteEtag"`
 	RemoteUpdatedAt int64               `json:"remoteUpdatedAt"`
 	LocalSignature  string              `json:"localSignature"`
+	// AnchorVersion is the merge-anchor format. It is 3 for the encrypted
+	// base payload introduced with issue 54; an unknown version is ignored
+	// and the next successful sync writes a fresh one.
+	AnchorVersion int `json:"anchorVersion,omitempty"`
+	// SyncBase is the encrypted merge anchor: the last successfully synced
+	// payload, sealed with the master password exactly like the cloud copy.
+	// cloud-sync.json therefore contains no plaintext entity or credential.
+	SyncBase string `json:"syncBase,omitempty"`
+	// BaseSignature is the SHA-256 of the plaintext base payload. A mismatch
+	// means the anchor is corrupt and the merge falls back to no base.
+	BaseSignature string `json:"baseSignature,omitempty"`
+	// PendingConflict is an unresolved both-sides change. It persists across
+	// restarts; the encrypted cloud copy is kept so resolution does not
+	// depend on the network.
+	PendingConflict *PendingConflict `json:"pendingConflict,omitempty"`
+	// RemoteBackups retains recent cloud copies that a resolution or restore
+	// overwrote, so either side can be recovered. Content is the original
+	// encrypted envelope.
+	RemoteBackups []RemoteBackup `json:"remoteBackups,omitempty"`
 }
 
 // ConfigStore persists Config.
@@ -403,6 +443,17 @@ type Snapshot struct {
 	// S3Insecure reports a saved plain-HTTP endpoint, with the same gate as
 	// WebDAV: automatic sync never starts, and a manual sync asks first.
 	S3Insecure bool
+	// Guard is the destructive-sync finding that blocked the last upload.
+	// The zero value means no guard is active.
+	Guard GuardFinding
+	// Conflict is the unresolved both-sides change, including per-item detail
+	// and whether the current strategy may merge. It survives a restart.
+	Conflict *ConflictInfo
+	// Backups lists restorable restore points: local Vault backups and cloud
+	// copies that a resolution overwrote. Newest first.
+	Backups []BackupInfo
+	// BackupsProblem reports why the backup list could not be loaded.
+	BackupsProblem Problem
 }
 
 // Option customizes a Service.
@@ -447,6 +498,18 @@ func WithDevice(id, name, appVersion string) Option {
 // WithRedrawRequest sets the callback invoked after state changes.
 func WithRedrawRequest(fn func()) Option {
 	return func(s *Service) { s.notify = fn }
+}
+
+// WithBackups sets the local Vault backup port. When configured, every
+// destructive local apply takes a protective backup first and fails closed if
+// it cannot. Conflict resolution additionally requires the port, so
+// overwriting either side always writes a backup.
+func WithBackups(backups Backups) Option {
+	return func(s *Service) {
+		if backups != nil {
+			s.backups = backups
+		}
+	}
 }
 
 // WithAppliedSnapshot sets the callback invoked after a downloaded cloud copy
@@ -519,6 +582,7 @@ type Service struct {
 	vault    Vault
 	configs  ConfigStore
 	tokens   TokenStore
+	backups  Backups
 	waiter   Waiter
 	now      func() time.Time
 	debounce time.Duration
@@ -530,11 +594,14 @@ type Service struct {
 	// been written locally. It runs on the sync goroutine.
 	onSnapshotApplied func()
 
-	password   string
-	status     Status
-	problem    Problem
-	device     DeviceCode
-	lastAction domainsync.Action
+	password       string
+	status         Status
+	problem        Problem
+	device         DeviceCode
+	lastAction     domainsync.Action
+	guard          GuardFinding
+	backupsList    []BackupInfo
+	backupsProblem Problem
 
 	// WebDAV connection state. The secrets stay in the token store; these are
 	// the non-secret fields the setup form prefills.
@@ -618,6 +685,19 @@ func (s *Service) Load(ctx context.Context) error {
 	if s.config.Connected {
 		s.status = StatusNeedsPassword
 		s.problem = ProblemPasswordRequired
+	}
+	if s.config.PendingConflict != nil {
+		// A conflict blocks every sync, automatic or manual, until it is
+		// resolved. Loading it here is what makes resolution survive a
+		// restart.
+		s.status = StatusConflict
+		s.problem = ProblemConflict
+	}
+	if s.config.AnchorVersion != AnchorVersion {
+		// An anchor this build does not understand is ignored; the next
+		// successful sync writes a fresh one.
+		s.config.SyncBase = ""
+		s.config.BaseSignature = ""
 	}
 	provider := s.config.Provider
 	s.mu.Unlock()
@@ -753,6 +833,10 @@ func (s *Service) Snapshot() Snapshot {
 		S3Bucket:       s.s3Bucket,
 		S3Prefix:       s.s3Prefix,
 		S3Insecure:     s.s3Insecure,
+		Guard:          s.guard,
+		Conflict:       conflictInfoFor(s.config),
+		Backups:        append([]BackupInfo(nil), s.backupsList...),
+		BackupsProblem: s.backupsProblem,
 	}
 }
 
@@ -1202,8 +1286,21 @@ func (s *Service) applyGrant(ctx context.Context, grant Grant) error {
 	return nil
 }
 
-// clearAnchor forgets the baseline a merge would otherwise use.
+// clearAnchorFields forgets the merge anchor and any conflict detail that only
+// makes sense for the previous cloud copy.
+func clearAnchorFields(config *Config) {
+	config.AnchorVersion = 0
+	config.SyncBase = ""
+	config.BaseSignature = ""
+	config.PendingConflict = nil
+}
+
+// clearAnchor forgets the baseline a merge would otherwise use. Retained cloud
+// copies belong to the previous account's envelope key, so they are dropped
+// too; local Vault backups stay untouched.
 func clearAnchor(config *Config) {
+	clearAnchorFields(config)
+	config.RemoteBackups = nil
 	config.LocalSignature = ""
 	config.RemoteID = ""
 	config.RemoteETag = ""
@@ -1226,11 +1323,14 @@ func (s *Service) Disconnect(ctx context.Context) error {
 		DeviceID:   deviceID,
 		DeviceName: deviceName,
 		AppVersion: appVersion,
-		Strategy:   domainsync.StrategyNewest,
+		Strategy:   domainsync.DefaultStrategy,
 	}
 	s.status = StatusNeedsSetup
 	s.problem = ProblemNotConfigured
 	s.device = DeviceCode{}
+	s.guard = GuardFinding{}
+	s.backupsList = nil
+	s.backupsProblem = ProblemNone
 	s.webdavEndpoint = ""
 	s.webdavAuthType = ""
 	s.webdavUsername = ""
@@ -1399,23 +1499,58 @@ func (s *Service) writeRemote(ctx context.Context, remote Remote, token domainsy
 }
 
 // Sync runs one manual or automatic sync. It is safe to call from the UI
-// thread: the caller usually runs it in the UI's worker goroutine.
+// thread: the caller usually runs it in the UI's worker goroutine. A guard is
+// never overridden by this entry point.
 func (s *Service) Sync(ctx context.Context, trigger Trigger) (Result, error) {
+	return s.sync(ctx, trigger, false)
+}
+
+// ForcePush reruns a manual sync with the destructive guards explicitly
+// overridden. It is only reachable from the UI's confirmed Force push action;
+// automatic syncs never pass force and the service refuses it for TriggerAuto.
+// The protected cloud copy is still recorded in RemoteBackups before the write.
+func (s *Service) ForcePush(ctx context.Context) (Result, error) {
+	return s.sync(ctx, TriggerManual, true)
+}
+
+func (s *Service) sync(ctx context.Context, trigger Trigger, force bool) (Result, error) {
 	if !s.syncMu.TryLock() {
 		return Result{Trigger: trigger}, ErrAlreadyInProgress
 	}
 	defer s.syncMu.Unlock()
-	return s.syncLocked(ctx, trigger)
+	if trigger != TriggerManual {
+		// There is no automatic force path, by construction.
+		force = false
+	}
+	return s.syncLocked(ctx, trigger, force)
 }
 
-func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, error) {
+func (s *Service) syncLocked(ctx context.Context, trigger Trigger, force bool) (Result, error) {
 	s.mu.Lock()
 	password := s.password
 	configured := s.config.Connected
+	pending := s.config.PendingConflict != nil
 	s.mu.Unlock()
 	if !configured {
 		s.fail(ProblemNotConfigured)
 		return Result{Trigger: trigger}, ErrNotConfigured
+	}
+	if pending {
+		if force && trigger == TriggerManual {
+			// Force push is the explicit, confirmed destructive choice: keep
+			// the local Vault and overwrite the conflicting cloud copy, after a
+			// backup and with the guards still evaluated.
+			return s.resolveLocked(ctx, ResolutionLocal, true)
+		}
+		// An unresolved conflict blocks every other trigger, including
+		// automatic sync. Overwriting either side before the user chooses would
+		// be the silent data loss the conflict state exists to prevent.
+		s.mu.Lock()
+		s.status = StatusConflict
+		s.problem = ProblemConflict
+		s.mu.Unlock()
+		s.changed()
+		return Result{Trigger: trigger}, ErrConflict
 	}
 	if password == "" {
 		s.mu.Lock()
@@ -1463,6 +1598,7 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 	s.status = StatusSyncing
 	s.syncing = true
 	s.problem = ProblemNone
+	s.guard = GuardFinding{}
 	s.mu.Unlock()
 	s.changed()
 
@@ -1471,13 +1607,13 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, snapErr
 	}
-	if !local.HasData() {
-		// The guard runs before any write. An empty local Vault must never
-		// replace a populated cloud copy, whether the trigger is manual or
-		// automatic.
-		s.finishSync(ProblemEmptyVault)
-		return Result{Trigger: trigger}, ErrEmptyVault
+	localSignature, err := local.Signature()
+	if err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
 	}
+	config := s.currentConfig()
+	base := s.loadBase(ctx)
 
 	remote := s.activeRemote()
 	remoteFile, exists, token, readErr := s.readRemote(ctx, remote, token)
@@ -1486,22 +1622,34 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		return Result{Trigger: trigger}, readErr
 	}
 
-	strategy := s.currentConfig().Strategy
-	localSignature, err := local.Signature()
-	if err != nil {
-		s.finishSync(ProblemLocal)
-		return Result{Trigger: trigger}, err
+	var remotePayload Payload
+	remoteUpdatedAt := int64(0)
+	if exists {
+		var problem Problem
+		remotePayload, remoteUpdatedAt, problem, err = s.decodeRemote(remoteFile)
+		if err != nil {
+			s.finishSync(problem)
+			return Result{Trigger: trigger}, err
+		}
 	}
-	config := s.currentConfig()
+
+	if !local.HasData() {
+		return s.syncEmptyLocal(ctx, trigger, force, token, local, localSignature, config, base,
+			remoteFile, exists, remotePayload)
+	}
 
 	if !exists {
-		return s.upload(ctx, trigger, token, local, localSignature, RemoteFile{}, config)
-	}
-
-	remotePayload, remoteUpdatedAt, problem, err := s.decodeRemote(remoteFile)
-	if err != nil {
-		s.finishSync(problem)
-		return Result{Trigger: trigger}, err
+		outgoing := s.prepareOutgoing(local, base, nil, config.DeviceID)
+		if blocked, result, guardErr := s.applyGuard(outgoing, base, nil, force, trigger); blocked {
+			return result, guardErr
+		}
+		_, err := s.upload(ctx, trigger, force, token, outgoing, local, localSignature,
+			base, nil, RemoteFile{}, config, "")
+		if err != nil {
+			return Result{Trigger: trigger}, err
+		}
+		s.completeSync(domainsync.ActionUpload)
+		return Result{Trigger: trigger, Action: domainsync.ActionUpload, Uploaded: true}, nil
 	}
 
 	localChanged := config.LocalSignature == "" || config.LocalSignature != localSignature
@@ -1509,7 +1657,7 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		config.RemoteUpdatedAt != remoteUpdatedAt ||
 		(config.RemoteETag != "" && config.RemoteETag != remoteFile.ETag)
 
-	action := domainsync.Decide(localChanged, remoteChanged, strategy, local.SyncedAt, remoteUpdatedAt)
+	action := domainsync.Decide(localChanged, remoteChanged, config.Strategy)
 	if !remotePayload.HasData() {
 		// Never let an empty cloud copy replace a populated local Vault: a
 		// first-ever upload is the only correct action.
@@ -1519,16 +1667,141 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 	switch action {
 	case domainsync.ActionDownload:
 		return s.download(ctx, trigger, remoteFile, remotePayload, remoteUpdatedAt)
+	case domainsync.ActionMerge:
+		return s.mergeAndUpload(ctx, trigger, force, token, local, localSignature, config, base,
+			remoteFile, remotePayload)
 	case domainsync.ActionUpload:
-		return s.upload(ctx, trigger, token, local, localSignature, remoteFile, config)
+		outgoing := s.prepareOutgoing(local, base, &remotePayload, config.DeviceID)
+		if blocked, result, guardErr := s.applyGuard(outgoing, base, &remotePayload, force, trigger); blocked {
+			return result, guardErr
+		}
+		_, err := s.upload(ctx, trigger, force, token, outgoing, local, localSignature,
+			base, &remotePayload, remoteFile, config, "")
+		if err != nil {
+			return Result{Trigger: trigger}, err
+		}
+		s.completeSync(domainsync.ActionUpload)
+		return Result{Trigger: trigger, Action: domainsync.ActionUpload, Uploaded: true}, nil
 	default:
-		if err := s.recordSync(remoteFile, localSignature, remoteUpdatedAt); err != nil {
+		var basePtr *Payload
+		if base != nil {
+			basePtr = base
+		} else {
+			basePtr = &local
+		}
+		if err := s.recordSync(ctx, remoteFile, localSignature, remoteUpdatedAt, basePtr); err != nil {
 			s.finishSync(ProblemLocal)
 			return Result{Trigger: trigger}, err
 		}
 		s.completeSync(domainsync.ActionNone)
 		return Result{Trigger: trigger, Action: domainsync.ActionNone}, nil
 	}
+}
+
+// syncEmptyLocal handles the tombstone case: the local Vault has no synced
+// records. With no populated cloud copy this is the existing empty-Vault
+// refusal. With one, an unconfirmed sync is blocked as a tombstone guard; an
+// explicit manual ForcePush uploads the empty payload with tombstones for the
+// old entities.
+func (s *Service) syncEmptyLocal(
+	ctx context.Context,
+	trigger Trigger,
+	force bool,
+	token domainsync.Token,
+	local Payload,
+	localSignature string,
+	config Config,
+	base *Payload,
+	remoteFile RemoteFile,
+	exists bool,
+	remotePayload Payload,
+) (Result, error) {
+	var reference *Payload
+	if exists && remotePayload.HasData() {
+		reference = &remotePayload
+	}
+	if reference == nil && (base == nil || !base.HasData()) {
+		// There is no populated copy anywhere to protect: this is the
+		// original empty-Vault refusal, not a tombstone overwrite.
+		s.finishSync(ProblemEmptyVault)
+		return Result{Trigger: trigger}, ErrEmptyVault
+	}
+	finding := DetectDestructiveSync(local, base, reference)
+	if blocked, result, guardErr := s.applyGuardFinding(finding, force, trigger); blocked {
+		return result, guardErr
+	}
+	outgoing := s.prepareOutgoing(local, base, reference, config.DeviceID)
+	_, err := s.upload(ctx, trigger, force, token, outgoing, local, localSignature,
+		base, reference, remoteFile, config, "")
+	if err != nil {
+		return Result{Trigger: trigger}, err
+	}
+	s.completeSync(domainsync.ActionUpload)
+	return Result{Trigger: trigger, Action: domainsync.ActionUpload, Uploaded: true}, nil
+}
+
+// mergeAndUpload runs the selected three-way merge, applies the result locally
+// (so both sides converge on exactly what is uploaded), takes a protective
+// backup first, and then publishes it.
+func (s *Service) mergeAndUpload(
+	ctx context.Context,
+	trigger Trigger,
+	force bool,
+	token domainsync.Token,
+	local Payload,
+	localSignature string,
+	config Config,
+	base *Payload,
+	remoteFile RemoteFile,
+	remotePayload Payload,
+) (Result, error) {
+	merged, err := MergePayloads(base, local, remotePayload, MergeOptions{
+		PreserveDeletions: domainsync.IsPreserveDeletionsStrategy(config.Strategy),
+	})
+	if err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
+	}
+	outgoing := s.prepareOutgoing(merged.Payload, base, &remotePayload, config.DeviceID)
+	if blocked, result, guardErr := s.applyGuard(outgoing, base, &remotePayload, force, trigger); blocked {
+		return result, guardErr
+	}
+	// Both sides are overwritten by a merge: retain the cloud copy that is
+	// being replaced and take a local restore point before applying.
+	if err := s.retainRemoteBackup(ctx, remoteFile, "merge"); err != nil {
+		s.finishSync(ProblemBackup)
+		return Result{Trigger: trigger}, err
+	}
+	if err := s.ensureProtectiveBackup(ctx); err != nil {
+		s.finishSync(ProblemBackup)
+		return Result{Trigger: trigger}, err
+	}
+	if err := s.vault.Apply(ctx, outgoing); err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
+	}
+	s.notifySnapshotApplied()
+	applied, err := s.vault.Snapshot(ctx)
+	if err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
+	}
+	appliedSignature, err := applied.Signature()
+	if err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
+	}
+	if _, err := s.upload(ctx, trigger, force, token, outgoing, applied, appliedSignature,
+		base, &remotePayload, remoteFile, config, "merge"); err != nil {
+		return Result{Trigger: trigger}, err
+	}
+	s.completeSync(domainsync.ActionMerge)
+	return Result{
+		Trigger:    trigger,
+		Action:     domainsync.ActionMerge,
+		Uploaded:   true,
+		Downloaded: true,
+	}, nil
 }
 
 // decodeRemote parses and decrypts one cloud copy. It fails closed on a newer
@@ -1566,8 +1839,8 @@ func (s *Service) decodeRemote(file RemoteFile) (Payload, int64, Problem, error)
 }
 
 // download applies a decided cloud payload and records the applied snapshot as
-// the new baseline. Both the normal path and the lost-write path use it so the
-// next sync converges to a no-op.
+// the new baseline. Both the normal path and the guard-restore path use it so
+// the next sync converges to a no-op.
 func (s *Service) download(
 	ctx context.Context,
 	trigger Trigger,
@@ -1575,6 +1848,10 @@ func (s *Service) download(
 	remotePayload Payload,
 	remoteUpdatedAt int64,
 ) (Result, error) {
+	if err := s.ensureProtectiveBackup(ctx); err != nil {
+		s.finishSync(ProblemBackup)
+		return Result{Trigger: trigger}, err
+	}
 	if err := s.vault.Apply(ctx, remotePayload); err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
@@ -1583,12 +1860,17 @@ func (s *Service) download(
 	// the baseline bookkeeping: even if saving the baseline fails, the local
 	// data has already changed and the UI must show it.
 	s.notifySnapshotApplied()
-	appliedSignature, err := s.appliedSignature(ctx)
+	applied, err := s.vault.Snapshot(ctx)
 	if err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
-	if err := s.recordSync(remoteFile, appliedSignature, remoteUpdatedAt); err != nil {
+	appliedSignature, err := applied.Signature()
+	if err != nil {
+		s.finishSync(ProblemLocal)
+		return Result{Trigger: trigger}, err
+	}
+	if err := s.recordSync(ctx, remoteFile, appliedSignature, remoteUpdatedAt, &applied); err != nil {
 		s.finishSync(ProblemLocal)
 		return Result{Trigger: trigger}, err
 	}
@@ -1596,21 +1878,48 @@ func (s *Service) download(
 	return Result{Trigger: trigger, Action: domainsync.ActionDownload, Downloaded: true}, nil
 }
 
-// upload encrypts and writes the local payload. A conditional-write conflict
-// re-reads the cloud copy once and decides again, so a concurrent device can
-// never be silently overwritten.
+// upload encrypts and writes the payload. Every write is preceded by the
+// destructive-sync guard. A conditional-write loss is surfaced as a durable
+// conflict instead of silently overwriting the concurrent device.
+//
+// local is the payload that must become the applied baseline's local copy (for
+// a merge, the already-applied merged snapshot), localSignature its signature,
+// base the outgoing payload stored as the merge anchor, and remote the cloud
+// reference used by the guards.
 func (s *Service) upload(
 	ctx context.Context,
 	trigger Trigger,
+	force bool,
 	token domainsync.Token,
+	outgoing Payload,
 	local Payload,
 	localSignature string,
+	base *Payload,
+	remotePayload *Payload,
 	current RemoteFile,
 	config Config,
-) (Result, error) {
+	backupReason string,
+) (RemoteFile, error) {
 	remote := s.activeRemote()
+	if blocked, _, guardErr := s.applyGuard(outgoing, base, remotePayload, force, trigger); blocked {
+		return RemoteFile{}, guardErr
+	}
+	s.mu.Lock()
+	guardOverridden := force && s.guard.Suspicious()
+	s.mu.Unlock()
+	if guardOverridden {
+		// An explicitly forced destructive write always retains the copy it
+		// replaces, independent of the caller's reason.
+		backupReason = "guard-force"
+	}
+	if backupReason != "" {
+		if err := s.retainRemoteBackup(ctx, current, backupReason); err != nil {
+			s.finishSync(ProblemBackup)
+			return RemoteFile{}, err
+		}
+	}
 	for attempt := 0; attempt < 2; attempt++ {
-		envelope, err := domainsync.EncryptPayload(local, s.passwordValue(), domainsync.EncryptOptions{
+		envelope, err := domainsync.EncryptPayload(outgoing, s.passwordValue(), domainsync.EncryptOptions{
 			Version:    versionFor(current),
 			UpdatedAt:  s.now().UnixMilli(),
 			DeviceID:   config.DeviceID,
@@ -1621,63 +1930,60 @@ func (s *Service) upload(
 		})
 		if err != nil {
 			s.finishSync(ProblemLocal)
-			return Result{Trigger: trigger}, err
+			return RemoteFile{}, err
 		}
 		content, err := domainsync.MarshalFile(envelope)
 		if err != nil {
 			s.finishSync(ProblemLocal)
-			return Result{Trigger: trigger}, err
+			return RemoteFile{}, err
 		}
 		written, nextToken, writeErr := s.writeRemote(ctx, remote, token, current, content)
 		token = nextToken
 		if errors.Is(writeErr, ErrConflict) && attempt == 0 {
-			// Last-write-wins with a fresh observation: read what landed and
-			// make the strategy decision again instead of forcing this copy.
+			// Another device wrote between our read and our write. Re-read it
+			// once. An empty cloud copy is safe to fill; otherwise surface a
+			// durable conflict and let the user choose, exactly as the
+			// original conflict state machine does.
 			fresh, exists, readToken, readErr := s.readRemote(ctx, remote, token)
 			token = readToken
 			if readErr != nil {
 				s.finishSync(problemFor(readErr))
-				return Result{Trigger: trigger}, readErr
+				return RemoteFile{}, readErr
 			}
 			if !exists {
 				current = RemoteFile{}
 				continue
 			}
-			remotePayload, remoteUpdatedAt, problem, decodeErr := s.decodeRemote(fresh)
+			freshPayload, freshUpdatedAt, problem, decodeErr := s.decodeRemote(fresh)
 			if decodeErr != nil {
 				s.finishSync(problem)
-				return Result{Trigger: trigger}, decodeErr
+				return RemoteFile{}, decodeErr
 			}
-			if !remotePayload.HasData() {
-				// The same guard as the normal path: an empty cloud copy can
-				// never replace this populated Vault, even when the conflict
-				// strategy would otherwise choose the remote.
+			if !freshPayload.HasData() {
 				current = fresh
 				continue
 			}
-			action := domainsync.Decide(true, true, config.Strategy, local.SyncedAt, remoteUpdatedAt)
-			if action == domainsync.ActionDownload {
-				return s.download(ctx, trigger, fresh, remotePayload, remoteUpdatedAt)
-			}
-			current = fresh
-			continue
+			return RemoteFile{}, s.surfaceConflict(ctx, trigger, config, local, localSignature,
+				fresh, freshPayload, freshUpdatedAt)
 		}
 		if writeErr != nil {
 			s.finishSync(problemFor(writeErr))
-			return Result{Trigger: trigger}, writeErr
+			return RemoteFile{}, writeErr
 		}
 		if written.UpdatedAt == 0 {
 			written.UpdatedAt = envelope.Meta.UpdatedAt
 		}
-		if err := s.recordSync(written, localSignature, written.UpdatedAt); err != nil {
+		written.Content = content
+		// An upload always publishes exactly outgoing, so that is the new
+		// merge anchor. The caller's base stays the guard reference only.
+		if err := s.recordSync(ctx, written, localSignature, written.UpdatedAt, &outgoing); err != nil {
 			s.finishSync(ProblemLocal)
-			return Result{Trigger: trigger}, err
+			return RemoteFile{}, err
 		}
-		s.completeSync(domainsync.ActionUpload)
-		return Result{Trigger: trigger, Action: domainsync.ActionUpload, Uploaded: true}, nil
+		return written, nil
 	}
 	s.finishSync(ProblemConflict)
-	return Result{Trigger: trigger}, ErrConflict
+	return RemoteFile{}, ErrConflict
 }
 
 func versionFor(current RemoteFile) int {
@@ -1703,10 +2009,19 @@ func (s *Service) appliedSignature(ctx context.Context) (string, error) {
 	return applied.Signature()
 }
 
-// recordSync persists the new baseline. The caller reports a save failure as
+// recordSync persists the new baseline and seals the payload that both sides
+// now agree on as the merge anchor. The caller reports a save failure as
 // ProblemLocal, so a sync is never presented as successful when the next run
 // would not know what it synced.
-func (s *Service) recordSync(remote RemoteFile, localSignature string, remoteUpdatedAt int64) error {
+func (s *Service) recordSync(ctx context.Context, remote RemoteFile, localSignature string, remoteUpdatedAt int64, base *Payload) error {
+	var encoded, signature string
+	if base != nil {
+		var err error
+		encoded, signature, err = s.encodeAnchor(ctx, *base)
+		if err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	config := s.config
 	config.LocalSignature = localSignature
@@ -1714,7 +2029,16 @@ func (s *Service) recordSync(remote RemoteFile, localSignature string, remoteUpd
 	config.RemoteETag = remote.ETag
 	config.RemoteUpdatedAt = remoteUpdatedAt
 	config.LastSyncedAt = s.now().UnixMilli()
+	config.PendingConflict = nil
+	if base != nil {
+		config.AnchorVersion = AnchorVersion
+		config.SyncBase = encoded
+		config.BaseSignature = signature
+	} else {
+		clearAnchorFields(&config)
+	}
 	s.config = config
+	s.guard = GuardFinding{}
 	s.mu.Unlock()
 	if err := s.configs.Save(context.Background(), config); err != nil {
 		return fmt.Errorf("sync: save the profile: %w", err)
@@ -1891,6 +2215,12 @@ func problemFor(err error) Problem {
 		return ProblemAuthorization
 	case errors.Is(err, ErrConflict):
 		return ProblemConflict
+	case errors.Is(err, ErrShrinkGuard):
+		return ProblemShrinkGuard
+	case errors.Is(err, ErrTombstoneGuard):
+		return ProblemTombstoneGuard
+	case errors.Is(err, ErrBackupUnavailable):
+		return ProblemBackup
 	case errors.Is(err, ErrUnsupportedVersion):
 		return ProblemUnsupported
 	case errors.Is(err, ErrNotConfigured):

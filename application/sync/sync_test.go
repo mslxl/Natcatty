@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -105,13 +106,70 @@ func (v *fakeVault) set(payload Payload) {
 }
 
 func clonePayload(p Payload) Payload {
-	return Payload{
+	clone := Payload{
 		Hosts:               append([]domainvault.Host(nil), p.Hosts...),
 		SyncedAt:            p.SyncedAt,
 		Secrets:             append([]SecretValue(nil), p.Secrets...),
 		Groups:              append([]domainvault.Group(nil), p.Groups...),
 		PortForwardingRules: p.PortForwardingRules,
 	}
+	if p.Settings != nil {
+		clone.Settings = make(map[string]json.RawMessage, len(p.Settings))
+		for key, value := range p.Settings {
+			clone.Settings[key] = append(json.RawMessage(nil), value...)
+		}
+	}
+	if p.SyncMeta != nil {
+		meta := *p.SyncMeta
+		meta.Deletions = append([]SyncDeletion(nil), p.SyncMeta.Deletions...)
+		clone.SyncMeta = &meta
+	}
+	return clone
+}
+
+type fakeBackups struct {
+	mu         sync.Mutex
+	created    int
+	list       []BackupInfo
+	listErr    error
+	createErr  error
+	restored   []string
+	restoreErr error
+}
+
+func (b *fakeBackups) CreateProtective(context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.createErr != nil {
+		return b.createErr
+	}
+	b.created++
+	return nil
+}
+
+func (b *fakeBackups) List(context.Context) ([]BackupInfo, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.listErr != nil {
+		return nil, b.listErr
+	}
+	return append([]BackupInfo(nil), b.list...), nil
+}
+
+func (b *fakeBackups) Restore(_ context.Context, id string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.restoreErr != nil {
+		return b.restoreErr
+	}
+	b.restored = append(b.restored, id)
+	return nil
+}
+
+func (b *fakeBackups) createdCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.created
 }
 
 type fakeRemote struct {
@@ -268,7 +326,7 @@ func testServiceWith(t *testing.T, opts ...Option) (*Service, *fakeRemote, *fake
 	t.Helper()
 	remote := newFakeRemote()
 	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
-	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.StrategyNewest}}
+	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.DefaultStrategy}}
 	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
 	waiter := &fakeWaiter{}
 	options := []Option{
@@ -358,8 +416,11 @@ func TestManualSyncUploadsTheFirstCopy(t *testing.T) {
 	}
 }
 
-func TestManualSyncDownloadsTheNewerRemoteCopy(t *testing.T) {
+func TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud(t *testing.T) {
 	service, remote, vault, _, _, _ := testService(t)
+	if err := service.SetStrategy(context.Background(), domainsync.StrategyPreferCloud); err != nil {
+		t.Fatal(err)
+	}
 	remote.exists = true
 	remote.file = RemoteFile{ID: "gist-1", ETag: "etag-other", UpdatedAt: 9000, Content: encryptForTest(t, payloadWithHost("cloud", 9000), "secret", 9000)}
 
@@ -381,9 +442,16 @@ func TestManualSyncDownloadsTheNewerRemoteCopy(t *testing.T) {
 	}
 }
 
-func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
+func TestAppliedSnapshotNotifiesOnlyWhenALocalApplyHappens(t *testing.T) {
 	applied := 0
-	service, remote, vault, _, _, _ := testServiceWith(t, WithAppliedSnapshot(func() { applied++ }))
+	backups := &fakeBackups{}
+	service, remote, vault, _, _, _ := testServiceWith(t,
+		WithAppliedSnapshot(func() { applied++ }),
+		WithBackups(backups),
+	)
+	if err := service.SetStrategy(context.Background(), domainsync.StrategyPreferCloud); err != nil {
+		t.Fatal(err)
+	}
 
 	// A first upload changes only the cloud copy.
 	result, err := service.Sync(context.Background(), TriggerManual)
@@ -394,7 +462,7 @@ func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
 		t.Fatalf("upload = %+v, notifications = %d, want no applied notification", result, applied)
 	}
 
-	// A newer cloud copy is applied to the local Vault.
+	// A newer cloud copy is applied to the local Vault after a backup.
 	remote.exists = true
 	remote.file = RemoteFile{ID: "gist-1", ETag: "etag-other", UpdatedAt: 9000,
 		Content: encryptForTest(t, payloadWithHost("cloud", 9000), "secret", 9000)}
@@ -402,8 +470,8 @@ func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Downloaded || applied != 1 {
-		t.Fatalf("download = %+v, notifications = %d, want exactly one", result, applied)
+	if !result.Downloaded || applied != 1 || backups.createdCount() != 1 {
+		t.Fatalf("download = %+v, notifications = %d, backups = %d, want exactly one of each", result, applied, backups.createdCount())
 	}
 
 	// A converged no-op applies nothing.
@@ -415,8 +483,8 @@ func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
 		t.Fatalf("no-op = %+v, notifications = %d, want still one", result, applied)
 	}
 
-	// A lost conditional write that newest-wins resolves to a download uses
-	// the same apply path and must notify too.
+	// A lost conditional write surfaces a durable conflict. Resolving it to the
+	// cloud copy uses the same apply path and must notify too.
 	vault.set(payloadWithHost("edited", 6000))
 	remote.mu.Lock()
 	remote.conflictNext = true
@@ -424,16 +492,26 @@ func TestAppliedSnapshotNotifiesOnlyWhenADownloadIsApplied(t *testing.T) {
 		Content: encryptForTest(t, payloadWithHost("other-device", 12000), "secret", 12000)}
 	remote.mu.Unlock()
 	result, err = service.Sync(context.Background(), TriggerManual)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("conditional write conflict error = %v", err)
+	}
+	if snapshot := service.Snapshot(); snapshot.Status != StatusConflict || snapshot.Conflict == nil {
+		t.Fatalf("conflict snapshot = %+v", snapshot)
+	}
+	result, err = service.ResolveConflict(context.Background(), ResolutionRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Downloaded || applied != 2 {
-		t.Fatalf("conflict download = %+v, notifications = %d, want two", result, applied)
+	if !result.Downloaded || applied != 2 || backups.createdCount() != 2 {
+		t.Fatalf("conflict download = %+v, notifications = %d, backups = %d, want two", result, applied, backups.createdCount())
 	}
 }
 
 func TestAfterDownloadTheNextSyncIsANoOp(t *testing.T) {
 	service, remote, _, configs, _, _ := testService(t)
+	if err := service.SetStrategy(context.Background(), domainsync.StrategyPreferCloud); err != nil {
+		t.Fatal(err)
+	}
 	remote.exists = true
 	remote.file = RemoteFile{ID: "gist-1", ETag: "etag-other", UpdatedAt: 9000, Content: encryptForTest(t, payloadWithHost("cloud", 9000), "secret", 9000)}
 
@@ -456,14 +534,16 @@ func TestAfterDownloadTheNextSyncIsANoOp(t *testing.T) {
 	}
 }
 
-func TestAfterConflictDownloadTheNextSyncIsANoOp(t *testing.T) {
-	service, remote, vault, _, _, _ := testService(t)
+func TestAfterConflictRemoteResolutionTheNextSyncIsANoOp(t *testing.T) {
+	backups := &fakeBackups{}
+	service, remote, vault, _, _, _ := testServiceWith(t, WithBackups(backups))
 	if _, err := service.Sync(context.Background(), TriggerManual); err != nil {
 		t.Fatal(err)
 	}
 	vault.set(payloadWithHost("edited", 6000))
 	// The local side changed and the cloud side changed under a lost
-	// conditional write; newest-wins applies the cloud copy.
+	// conditional write. The conflict is surfaced; choosing the cloud copy
+	// applies it and records a converged baseline.
 	remote.mu.Lock()
 	remote.conflictNext = true
 	remote.conflictFile = RemoteFile{
@@ -471,10 +551,10 @@ func TestAfterConflictDownloadTheNextSyncIsANoOp(t *testing.T) {
 		Content: encryptForTest(t, payloadWithHost("other-device", 9000), "secret", 9000),
 	}
 	remote.mu.Unlock()
-	if err := service.SetStrategy(context.Background(), domainsync.StrategyNewest); err != nil {
-		t.Fatal(err)
+	if _, err := service.Sync(context.Background(), TriggerManual); !errors.Is(err, ErrConflict) {
+		t.Fatalf("sync error = %v, want a surfaced conflict", err)
 	}
-	result, err := service.Sync(context.Background(), TriggerManual)
+	result, err := service.ResolveConflict(context.Background(), ResolutionRemote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,8 +570,9 @@ func TestAfterConflictDownloadTheNextSyncIsANoOp(t *testing.T) {
 	}
 }
 
-func TestEmptyVaultNeverOverwritesTheCloudCopy(t *testing.T) {
-	service, remote, vault, _, _, _ := testService(t)
+func TestTombstoneGuardBlocksAWholeVaultDeletionAndOffersRestoreOrForce(t *testing.T) {
+	backups := &fakeBackups{}
+	service, remote, vault, configs, _, _ := testServiceWith(t, WithBackups(backups))
 	// Establish a populated cloud copy and a baseline first.
 	if _, err := service.Sync(context.Background(), TriggerManual); err != nil {
 		t.Fatal(err)
@@ -500,20 +581,106 @@ func TestEmptyVaultNeverOverwritesTheCloudCopy(t *testing.T) {
 
 	// The user deletes everything locally. Both triggers must refuse.
 	vault.set(Payload{})
-	if _, err := service.Sync(context.Background(), TriggerManual); !errors.Is(err, ErrEmptyVault) {
-		t.Fatalf("manual error = %v, want ErrEmptyVault", err)
+	if _, err := service.Sync(context.Background(), TriggerManual); !errors.Is(err, ErrTombstoneGuard) {
+		t.Fatalf("manual error = %v, want ErrTombstoneGuard", err)
 	}
-	if snapshot := service.Snapshot(); snapshot.Problem != ProblemEmptyVault {
-		t.Fatalf("problem = %q", snapshot.Problem)
+	snapshot := service.Snapshot()
+	if snapshot.Problem != ProblemTombstoneGuard || snapshot.Guard.Kind != GuardTombstone || snapshot.Guard.Lost != 1 {
+		t.Fatalf("guard snapshot = %+v", snapshot)
 	}
-	if _, err := service.Sync(context.Background(), TriggerAuto); !errors.Is(err, ErrEmptyVault) {
-		t.Fatalf("auto error = %v, want ErrEmptyVault", err)
+	if _, err := service.Sync(context.Background(), TriggerAuto); !errors.Is(err, ErrTombstoneGuard) {
+		t.Fatalf("auto error = %v, want ErrTombstoneGuard", err)
 	}
 	if remote.writeCount() != before {
 		t.Fatal("the empty Vault overwrote the cloud copy")
 	}
 	if payload := remote.payload(t, "secret"); len(payload.Hosts) != 1 {
 		t.Fatalf("cloud payload was lost: %+v", payload)
+	}
+
+	// Restore pulls the good copy back without writing to the provider.
+	if _, err := service.RestoreGuard(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if remote.writeCount() != before {
+		t.Fatal("restore wrote to the provider")
+	}
+	vault.mu.Lock()
+	restoredLabel := vault.payload.Hosts[0].Label
+	vault.mu.Unlock()
+	if restoredLabel != "local" {
+		t.Fatalf("restored label = %q", restoredLabel)
+	}
+	if snapshot := service.Snapshot(); snapshot.Guard.Suspicious() {
+		t.Fatalf("guard still active after restore: %+v", snapshot.Guard)
+	}
+
+	// A manual force push is the explicit destructive path: it empties the
+	// cloud copy and retains the overwritten envelope.
+	vault.set(Payload{})
+	if _, err := service.ForcePush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if payload := remote.payload(t, "secret"); len(payload.Hosts) != 0 {
+		t.Fatalf("forced cloud payload = %+v", payload)
+	}
+	if len(configs.config.RemoteBackups) != 1 {
+		t.Fatalf("remote backups = %d, want the overwritten copy", len(configs.config.RemoteBackups))
+	}
+	if backups.createdCount() == 0 {
+		t.Fatal("restore did not take a protective local backup")
+	}
+}
+
+// TestTombstoneGuardProtectsACloudCopyRepopulatedAfterAnEmptyForcePush covers
+// the sequence that an empty base anchor used to bypass: force-pushing an empty
+// Vault stores an empty anchor, another device repopulates the cloud, and the
+// still-empty local Vault must be blocked rather than wiping the new data.
+func TestTombstoneGuardProtectsACloudCopyRepopulatedAfterAnEmptyForcePush(t *testing.T) {
+	service, remote, vault, configs, _, _ := testService(t)
+	if _, err := service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	vault.set(Payload{})
+	if _, err := service.ForcePush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if payload := remote.payload(t, "secret"); payload.HasData() {
+		t.Fatalf("forced cloud payload is not empty: %+v", payload)
+	}
+	configs.mu.Lock()
+	anchor := configs.config.SyncBase
+	configs.mu.Unlock()
+	if anchor == "" {
+		t.Fatal("the force push stored no anchor")
+	}
+
+	// A different device repopulates the same cloud file while this device is
+	// still empty. This is an external write, not a local conditional update.
+	remote.mu.Lock()
+	remote.etagSeq++
+	remote.file = RemoteFile{
+		ID: "gist-1", ETag: "etag-other-device", UpdatedAt: 9000,
+		Content: encryptForTest(t, payloadWithHost("other-device", 9000), "secret", 9000),
+	}
+	remote.exists = true
+	remote.mu.Unlock()
+	writes := remote.writeCount()
+
+	if _, err := service.Sync(context.Background(), TriggerManual); !errors.Is(err, ErrTombstoneGuard) {
+		t.Fatalf("empty local sync error = %v, want ErrTombstoneGuard", err)
+	}
+	if snapshot := service.Snapshot(); snapshot.Problem != ProblemTombstoneGuard || !snapshot.Guard.ViaRemote {
+		t.Fatalf("guard snapshot = %+v", snapshot)
+	}
+	if _, err := service.Sync(context.Background(), TriggerAuto); !errors.Is(err, ErrTombstoneGuard) {
+		t.Fatalf("automatic sync error = %v, want ErrTombstoneGuard", err)
+	}
+	if remote.writeCount() != writes {
+		t.Fatal("the empty Vault overwrote the repopulated cloud copy")
+	}
+	if payload := remote.payload(t, "secret"); len(payload.Hosts) != 1 || payload.Hosts[0].Label != "other-device" {
+		t.Fatalf("repopulated cloud payload was lost: %+v", payload)
 	}
 }
 
@@ -548,8 +715,9 @@ func TestAutoSyncDoesNothingWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestConditionalWriteConflictRedecidesWithNewestWins(t *testing.T) {
-	service, remote, vault, _, _, _ := testService(t)
+func TestConditionalWriteConflictIsSurfacedAndResolvedWithABackup(t *testing.T) {
+	backups := &fakeBackups{}
+	service, remote, vault, configs, _, _ := testServiceWith(t, WithBackups(backups))
 	if _, err := service.Sync(context.Background(), TriggerManual); err != nil {
 		t.Fatal(err)
 	}
@@ -561,18 +729,51 @@ func TestConditionalWriteConflictRedecidesWithNewestWins(t *testing.T) {
 		ID: "gist-1", ETag: "etag-new", UpdatedAt: 9000,
 		Content: encryptForTest(t, newer, "secret", 9000),
 	}
-	result, err := service.Sync(context.Background(), TriggerManual)
+	_, err := service.Sync(context.Background(), TriggerManual)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want a surfaced conflict", err)
+	}
+	snapshot := service.Snapshot()
+	if snapshot.Status != StatusConflict || snapshot.Conflict == nil {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if len(snapshot.Conflict.Items) != 1 || snapshot.Conflict.Items[0].Kind != ConflictBothModified ||
+		snapshot.Conflict.Items[0].EntityID != "host-1" {
+		t.Fatalf("conflict items = %+v", snapshot.Conflict.Items)
+	}
+	if snapshot.Conflict.RemoteDevice != "Other" {
+		t.Fatalf("remote device = %q", snapshot.Conflict.RemoteDevice)
+	}
+
+	// Choosing the local side overwrites the cloud copy after a backup and
+	// clears the durable conflict.
+	result, err := service.ResolveConflict(context.Background(), ResolutionLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Downloaded {
-		t.Fatalf("result = %+v, want the newer remote copy", result)
+	if !result.Uploaded {
+		t.Fatalf("result = %+v", result)
 	}
-	vault.mu.Lock()
-	label := vault.payload.Hosts[0].Label
-	vault.mu.Unlock()
-	if label != "other-device" {
-		t.Fatalf("local label = %q", label)
+	if backups.createdCount() != 1 {
+		t.Fatalf("protective backups = %d, want 1", backups.createdCount())
+	}
+	if len(configs.config.RemoteBackups) != 1 {
+		t.Fatalf("retained cloud copies = %d, want 1", len(configs.config.RemoteBackups))
+	}
+	if payload := remote.payload(t, "secret"); payload.Hosts[0].Label != "local-new" {
+		t.Fatalf("remote label = %q", payload.Hosts[0].Label)
+	}
+	if configs.config.PendingConflict != nil {
+		t.Fatal("the conflict was not cleared")
+	}
+	if snapshot := service.Snapshot(); snapshot.Status != StatusSynced || snapshot.Conflict != nil {
+		t.Fatalf("snapshot after resolution = %+v", snapshot)
+	}
+	if _, err := service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	if remote.writeCount() != 2 {
+		t.Fatalf("writes = %d, want upload plus resolution only", remote.writeCount())
 	}
 }
 

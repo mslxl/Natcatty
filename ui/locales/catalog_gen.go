@@ -12272,6 +12272,54 @@ func (msgs Messages) SettingsSyncRemote() string {
 	return Catalog.Format(msgs.locale, "settingsSyncRemote", nil)
 }
 
+// SettingsSyncStrategySmartMerge says "Merge changes from both devices"
+// in the language the app shows.
+func SettingsSyncStrategySmartMerge() string {
+	return In(i18n.Locale()).SettingsSyncStrategySmartMerge()
+}
+
+// SettingsSyncStrategySmartMerge says "Merge changes from both devices"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStrategySmartMerge() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStrategySmartMerge", nil)
+}
+
+// SettingsSyncStrategySmartMergePreserve says "Merge, but never delete from one device"
+// in the language the app shows.
+func SettingsSyncStrategySmartMergePreserve() string {
+	return In(i18n.Locale()).SettingsSyncStrategySmartMergePreserve()
+}
+
+// SettingsSyncStrategySmartMergePreserve says "Merge, but never delete from one device"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStrategySmartMergePreserve() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStrategySmartMergePreserve", nil)
+}
+
+// SettingsSyncStrategyPreferCloud says "The cloud copy wins"
+// in the language the app shows.
+func SettingsSyncStrategyPreferCloud() string {
+	return In(i18n.Locale()).SettingsSyncStrategyPreferCloud()
+}
+
+// SettingsSyncStrategyPreferCloud says "The cloud copy wins"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStrategyPreferCloud() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStrategyPreferCloud", nil)
+}
+
+// SettingsSyncStrategyPreferLocal says "This device wins"
+// in the language the app shows.
+func SettingsSyncStrategyPreferLocal() string {
+	return In(i18n.Locale()).SettingsSyncStrategyPreferLocal()
+}
+
+// SettingsSyncStrategyPreferLocal says "This device wins"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStrategyPreferLocal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStrategyPreferLocal", nil)
+}
+
 // SettingsSyncConnectedAs says "Connected as {login}"
 // in the language the app shows.
 func SettingsSyncConnectedAs(login string) string {
@@ -12626,6 +12674,464 @@ func SettingsSyncProblemUnsupported() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemUnsupported() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemUnsupported", nil)
+}
+
+// SettingsSyncProblemShrinkGuard says "Sync blocked: the upload would delete too much of the Vault. Restore the last good copy or confirm a force push."
+// in the language the app shows.
+func SettingsSyncProblemShrinkGuard() string {
+	return In(i18n.Locale()).SettingsSyncProblemShrinkGuard()
+}
+
+// SettingsSyncProblemShrinkGuard says "Sync blocked: the upload would delete too much of the Vault. Restore the last good copy or confirm a force push."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemShrinkGuard() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemShrinkGuard", nil)
+}
+
+// SettingsSyncProblemTombstoneGuard says "Sync blocked: the upload would erase the cloud Vault. Restore the last good copy or confirm a force push."
+// in the language the app shows.
+func SettingsSyncProblemTombstoneGuard() string {
+	return In(i18n.Locale()).SettingsSyncProblemTombstoneGuard()
+}
+
+// SettingsSyncProblemTombstoneGuard says "Sync blocked: the upload would erase the cloud Vault. Restore the last good copy or confirm a force push."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemTombstoneGuard() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemTombstoneGuard", nil)
+}
+
+// SettingsSyncProblemBackup says "The protective backup could not be written, so nothing was changed. Check the backup keychain and try again."
+// in the language the app shows.
+func SettingsSyncProblemBackup() string { return In(i18n.Locale()).SettingsSyncProblemBackup() }
+
+// SettingsSyncProblemBackup says "The protective backup could not be written, so nothing was changed. Check the backup keychain and try again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemBackup() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemBackup", nil)
+}
+
+// SettingsSyncStatusConflict says "Resolve the conflict to resume sync."
+// in the language the app shows.
+func SettingsSyncStatusConflict() string { return In(i18n.Locale()).SettingsSyncStatusConflict() }
+
+// SettingsSyncStatusConflict says "Resolve the conflict to resume sync."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncStatusConflict() string {
+	return Catalog.Format(msgs.locale, "settingsSyncStatusConflict", nil)
+}
+
+// SettingsSyncGuardTitle says "Sync blocked to protect your data"
+// in the language the app shows.
+func SettingsSyncGuardTitle() string { return In(i18n.Locale()).SettingsSyncGuardTitle() }
+
+// SettingsSyncGuardTitle says "Sync blocked to protect your data"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardTitle", nil)
+}
+
+// SettingsSyncGuardShrink says "The upload would remove {lost} of {base} {entity} records, leaving {outgoing}. This looks like a partial or restored …"
+// in the language the app shows.
+func SettingsSyncGuardShrink(lost string, base string, entity string, outgoing string) string {
+	return In(i18n.Locale()).SettingsSyncGuardShrink(lost, base, entity, outgoing)
+}
+
+// SettingsSyncGuardShrink says "The upload would remove {lost} of {base} {entity} records, leaving {outgoing}. This looks like a partial or restored …"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardShrink(lost string, base string, entity string, outgoing string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardShrink", map[string]any{"lost": lost, "base": base, "entity": entity, "outgoing": outgoing})
+}
+
+// SettingsSyncGuardTombstone says "The upload would replace the entire cloud Vault ({base} records) with nothing."
+// in the language the app shows.
+func SettingsSyncGuardTombstone(base string) string {
+	return In(i18n.Locale()).SettingsSyncGuardTombstone(base)
+}
+
+// SettingsSyncGuardTombstone says "The upload would replace the entire cloud Vault ({base} records) with nothing."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardTombstone(base string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardTombstone", map[string]any{"base": base})
+}
+
+// SettingsSyncGuardViaRemote says "Compared with the current cloud copy because no local sync history was available."
+// in the language the app shows.
+func SettingsSyncGuardViaRemote() string { return In(i18n.Locale()).SettingsSyncGuardViaRemote() }
+
+// SettingsSyncGuardViaRemote says "Compared with the current cloud copy because no local sync history was available."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardViaRemote() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardViaRemote", nil)
+}
+
+// SettingsSyncGuardRestore says "Restore the last good copy"
+// in the language the app shows.
+func SettingsSyncGuardRestore() string { return In(i18n.Locale()).SettingsSyncGuardRestore() }
+
+// SettingsSyncGuardRestore says "Restore the last good copy"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardRestore() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardRestore", nil)
+}
+
+// SettingsSyncGuardForce says "Force push anyway"
+// in the language the app shows.
+func SettingsSyncGuardForce() string { return In(i18n.Locale()).SettingsSyncGuardForce() }
+
+// SettingsSyncGuardForce says "Force push anyway"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardForce() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardForce", nil)
+}
+
+// SettingsSyncGuardForceConfirm says "Force push is destructive"
+// in the language the app shows.
+func SettingsSyncGuardForceConfirm() string { return In(i18n.Locale()).SettingsSyncGuardForceConfirm() }
+
+// SettingsSyncGuardForceConfirm says "Force push is destructive"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardForceConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardForceConfirm", nil)
+}
+
+// SettingsSyncGuardForceWarning says "This permanently replaces the cloud copy with the data on this device. The replaced cloud copy stays in Backups, but …"
+// in the language the app shows.
+func SettingsSyncGuardForceWarning() string { return In(i18n.Locale()).SettingsSyncGuardForceWarning() }
+
+// SettingsSyncGuardForceWarning says "This permanently replaces the cloud copy with the data on this device. The replaced cloud copy stays in Backups, but …"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncGuardForceWarning() string {
+	return Catalog.Format(msgs.locale, "settingsSyncGuardForceWarning", nil)
+}
+
+// SettingsSyncDoForcePush says "Force push"
+// in the language the app shows.
+func SettingsSyncDoForcePush() string { return In(i18n.Locale()).SettingsSyncDoForcePush() }
+
+// SettingsSyncDoForcePush says "Force push"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncDoForcePush() string {
+	return Catalog.Format(msgs.locale, "settingsSyncDoForcePush", nil)
+}
+
+// SettingsSyncConflictTitle says "Changes conflict"
+// in the language the app shows.
+func SettingsSyncConflictTitle() string { return In(i18n.Locale()).SettingsSyncConflictTitle() }
+
+// SettingsSyncConflictTitle says "Changes conflict"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictTitle", nil)
+}
+
+// SettingsSyncConflictRemoteDevice says "Other device: {device}"
+// in the language the app shows.
+func SettingsSyncConflictRemoteDevice(device string) string {
+	return In(i18n.Locale()).SettingsSyncConflictRemoteDevice(device)
+}
+
+// SettingsSyncConflictRemoteDevice says "Other device: {device}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictRemoteDevice(device string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictRemoteDevice", map[string]any{"device": device})
+}
+
+// SettingsSyncConflictUnknownDevice says "Unknown device"
+// in the language the app shows.
+func SettingsSyncConflictUnknownDevice() string {
+	return In(i18n.Locale()).SettingsSyncConflictUnknownDevice()
+}
+
+// SettingsSyncConflictUnknownDevice says "Unknown device"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictUnknownDevice() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictUnknownDevice", nil)
+}
+
+// SettingsSyncEntityUnknown says "Unknown item"
+// in the language the app shows.
+func SettingsSyncEntityUnknown() string { return In(i18n.Locale()).SettingsSyncEntityUnknown() }
+
+// SettingsSyncEntityUnknown says "Unknown item"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncEntityUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsSyncEntityUnknown", nil)
+}
+
+// SettingsSyncConflictRemoteVersion says "Cloud version {version}, updated {time}"
+// in the language the app shows.
+func SettingsSyncConflictRemoteVersion(version string, time_ string) string {
+	return In(i18n.Locale()).SettingsSyncConflictRemoteVersion(version, time_)
+}
+
+// SettingsSyncConflictRemoteVersion says "Cloud version {version}, updated {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictRemoteVersion(version string, time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictRemoteVersion", map[string]any{"version": version, "time": time_})
+}
+
+// SettingsSyncConflictSummary says "This device added {addedLocal}, changed {modifiedLocal}, and deleted {deletedLocal}. The cloud added {addedRemote}, c…"
+// in the language the app shows.
+func SettingsSyncConflictSummary(addedLocal string, modifiedLocal string, deletedLocal string, addedRemote string, modifiedRemote string, deletedRemote string) string {
+	return In(i18n.Locale()).SettingsSyncConflictSummary(addedLocal, modifiedLocal, deletedLocal, addedRemote, modifiedRemote, deletedRemote)
+}
+
+// SettingsSyncConflictSummary says "This device added {addedLocal}, changed {modifiedLocal}, and deleted {deletedLocal}. The cloud added {addedRemote}, c…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictSummary(addedLocal string, modifiedLocal string, deletedLocal string, addedRemote string, modifiedRemote string, deletedRemote string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictSummary", map[string]any{"addedLocal": addedLocal, "modifiedLocal": modifiedLocal, "deletedLocal": deletedLocal, "addedRemote": addedRemote, "modifiedRemote": modifiedRemote, "deletedRemote": deletedRemote})
+}
+
+// SettingsSyncConflictKindBothAdded says "added on both devices"
+// in the language the app shows.
+func SettingsSyncConflictKindBothAdded() string {
+	return In(i18n.Locale()).SettingsSyncConflictKindBothAdded()
+}
+
+// SettingsSyncConflictKindBothAdded says "added on both devices"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictKindBothAdded() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictKindBothAdded", nil)
+}
+
+// SettingsSyncConflictKindBothModified says "changed on both devices"
+// in the language the app shows.
+func SettingsSyncConflictKindBothModified() string {
+	return In(i18n.Locale()).SettingsSyncConflictKindBothModified()
+}
+
+// SettingsSyncConflictKindBothModified says "changed on both devices"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictKindBothModified() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictKindBothModified", nil)
+}
+
+// SettingsSyncConflictKindLocalDeleted says "deleted here, changed in the cloud"
+// in the language the app shows.
+func SettingsSyncConflictKindLocalDeleted() string {
+	return In(i18n.Locale()).SettingsSyncConflictKindLocalDeleted()
+}
+
+// SettingsSyncConflictKindLocalDeleted says "deleted here, changed in the cloud"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictKindLocalDeleted() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictKindLocalDeleted", nil)
+}
+
+// SettingsSyncConflictKindRemoteDeleted says "changed here, deleted in the cloud"
+// in the language the app shows.
+func SettingsSyncConflictKindRemoteDeleted() string {
+	return In(i18n.Locale()).SettingsSyncConflictKindRemoteDeleted()
+}
+
+// SettingsSyncConflictKindRemoteDeleted says "changed here, deleted in the cloud"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictKindRemoteDeleted() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictKindRemoteDeleted", nil)
+}
+
+// SettingsSyncConflictItem says "{entity} {id}: {kind}"
+// in the language the app shows.
+func SettingsSyncConflictItem(entity string, id string, kind string) string {
+	return In(i18n.Locale()).SettingsSyncConflictItem(entity, id, kind)
+}
+
+// SettingsSyncConflictItem says "{entity} {id}: {kind}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictItem(entity string, id string, kind string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictItem", map[string]any{"entity": entity, "id": id, "kind": kind})
+}
+
+// SettingsSyncConflictUseLocal says "Keep this device"
+// in the language the app shows.
+func SettingsSyncConflictUseLocal() string { return In(i18n.Locale()).SettingsSyncConflictUseLocal() }
+
+// SettingsSyncConflictUseLocal says "Keep this device"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictUseLocal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictUseLocal", nil)
+}
+
+// SettingsSyncConflictUseRemote says "Keep the cloud copy"
+// in the language the app shows.
+func SettingsSyncConflictUseRemote() string { return In(i18n.Locale()).SettingsSyncConflictUseRemote() }
+
+// SettingsSyncConflictUseRemote says "Keep the cloud copy"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictUseRemote() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictUseRemote", nil)
+}
+
+// SettingsSyncConflictMerge says "Merge both"
+// in the language the app shows.
+func SettingsSyncConflictMerge() string { return In(i18n.Locale()).SettingsSyncConflictMerge() }
+
+// SettingsSyncConflictMerge says "Merge both"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConflictMerge() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConflictMerge", nil)
+}
+
+// SettingsSyncBackupsTitle says "Backups"
+// in the language the app shows.
+func SettingsSyncBackupsTitle() string { return In(i18n.Locale()).SettingsSyncBackupsTitle() }
+
+// SettingsSyncBackupsTitle says "Backups"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsTitle", nil)
+}
+
+// SettingsSyncBackupsDescription says "Restore points from this device and cloud copies replaced by a resolution or force push."
+// in the language the app shows.
+func SettingsSyncBackupsDescription() string {
+	return In(i18n.Locale()).SettingsSyncBackupsDescription()
+}
+
+// SettingsSyncBackupsDescription says "Restore points from this device and cloud copies replaced by a resolution or force push."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsDescription", nil)
+}
+
+// SettingsSyncBackupsRefresh says "Refresh backups"
+// in the language the app shows.
+func SettingsSyncBackupsRefresh() string { return In(i18n.Locale()).SettingsSyncBackupsRefresh() }
+
+// SettingsSyncBackupsRefresh says "Refresh backups"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsRefresh() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsRefresh", nil)
+}
+
+// SettingsSyncBackupsEmpty says "No backups yet."
+// in the language the app shows.
+func SettingsSyncBackupsEmpty() string { return In(i18n.Locale()).SettingsSyncBackupsEmpty() }
+
+// SettingsSyncBackupsEmpty says "No backups yet."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsEmpty", nil)
+}
+
+// SettingsSyncBackupsProblem says "The local backup list could not be loaded. Cloud copies are still shown."
+// in the language the app shows.
+func SettingsSyncBackupsProblem() string { return In(i18n.Locale()).SettingsSyncBackupsProblem() }
+
+// SettingsSyncBackupsProblem says "The local backup list could not be loaded. Cloud copies are still shown."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupsProblem() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupsProblem", nil)
+}
+
+// SettingsSyncBackupLocal says "This device"
+// in the language the app shows.
+func SettingsSyncBackupLocal() string { return In(i18n.Locale()).SettingsSyncBackupLocal() }
+
+// SettingsSyncBackupLocal says "This device"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupLocal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupLocal", nil)
+}
+
+// SettingsSyncBackupRemote says "Cloud copy"
+// in the language the app shows.
+func SettingsSyncBackupRemote() string { return In(i18n.Locale()).SettingsSyncBackupRemote() }
+
+// SettingsSyncBackupRemote says "Cloud copy"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupRemote() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupRemote", nil)
+}
+
+// SettingsSyncBackupRestore says "Restore"
+// in the language the app shows.
+func SettingsSyncBackupRestore() string { return In(i18n.Locale()).SettingsSyncBackupRestore() }
+
+// SettingsSyncBackupRestore says "Restore"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupRestore() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupRestore", nil)
+}
+
+// SettingsSyncBackupReasonVaultChange says "Automatic backup"
+// in the language the app shows.
+func SettingsSyncBackupReasonVaultChange() string {
+	return In(i18n.Locale()).SettingsSyncBackupReasonVaultChange()
+}
+
+// SettingsSyncBackupReasonVaultChange says "Automatic backup"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonVaultChange() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonVaultChange", nil)
+}
+
+// SettingsSyncBackupReasonBeforeRestore says "Before restore"
+// in the language the app shows.
+func SettingsSyncBackupReasonBeforeRestore() string {
+	return In(i18n.Locale()).SettingsSyncBackupReasonBeforeRestore()
+}
+
+// SettingsSyncBackupReasonBeforeRestore says "Before restore"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonBeforeRestore() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonBeforeRestore", nil)
+}
+
+// SettingsSyncBackupReasonAppVersionChange says "App update"
+// in the language the app shows.
+func SettingsSyncBackupReasonAppVersionChange() string {
+	return In(i18n.Locale()).SettingsSyncBackupReasonAppVersionChange()
+}
+
+// SettingsSyncBackupReasonAppVersionChange says "App update"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonAppVersionChange() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonAppVersionChange", nil)
+}
+
+// SettingsSyncBackupReasonMerge says "Before a merge"
+// in the language the app shows.
+func SettingsSyncBackupReasonMerge() string { return In(i18n.Locale()).SettingsSyncBackupReasonMerge() }
+
+// SettingsSyncBackupReasonMerge says "Before a merge"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonMerge() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonMerge", nil)
+}
+
+// SettingsSyncBackupReasonConflict says "Before conflict resolution"
+// in the language the app shows.
+func SettingsSyncBackupReasonConflict() string {
+	return In(i18n.Locale()).SettingsSyncBackupReasonConflict()
+}
+
+// SettingsSyncBackupReasonConflict says "Before conflict resolution"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonConflict() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonConflict", nil)
+}
+
+// SettingsSyncBackupReasonGuardForce says "Before a force push"
+// in the language the app shows.
+func SettingsSyncBackupReasonGuardForce() string {
+	return In(i18n.Locale()).SettingsSyncBackupReasonGuardForce()
+}
+
+// SettingsSyncBackupReasonGuardForce says "Before a force push"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonGuardForce() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonGuardForce", nil)
+}
+
+// SettingsSyncBackupReasonOther says "Backup"
+// in the language the app shows.
+func SettingsSyncBackupReasonOther() string { return In(i18n.Locale()).SettingsSyncBackupReasonOther() }
+
+// SettingsSyncBackupReasonOther says "Backup"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncBackupReasonOther() string {
+	return Catalog.Format(msgs.locale, "settingsSyncBackupReasonOther", nil)
 }
 
 // SettingsSecurityTitle says "Security"

@@ -186,7 +186,9 @@ func TestWebDAVEndToEndThroughTheRealAdapter(t *testing.T) {
 	}
 
 	// A second process-like service restores the credential and profile. Its
-	// older local copy must download the newer cloud copy.
+	// local edit is compared with the shared anchor: the cloud copy still
+	// matches that anchor, so smartMerge keeps the local edit instead of
+	// discarding it for the older payload timestamp, then converges both sides.
 	restored := configs.Config()
 	restored.LocalSignature = ""
 	restored.RemoteETag = ""
@@ -211,14 +213,14 @@ func TestWebDAVEndToEndThroughTheRealAdapter(t *testing.T) {
 	}
 	if result, err := service2.Sync(ctx, appsync.TriggerManual); err != nil {
 		t.Fatalf("restored sync: %v", err)
-	} else if !result.Downloaded {
-		t.Fatalf("restored sync did not download: %+v", result)
+	} else if result.Action != domainsync.ActionMerge || !result.Uploaded || !result.Downloaded {
+		t.Fatalf("restored sync did not merge the local edit: %+v", result)
 	}
 	vault2.mu.Lock()
-	downloaded := cloneIntegrationPayload(vault2.payload)
+	merged := cloneIntegrationPayload(vault2.payload)
 	vault2.mu.Unlock()
-	if len(downloaded.Hosts) != 1 || downloaded.Hosts[0].Label != "laptop-1" {
-		t.Fatalf("downloaded payload = %+v", downloaded)
+	if len(merged.Hosts) != 1 || merged.Hosts[0].Label != "laptop-2" {
+		t.Fatalf("merged payload = %+v", merged)
 	}
 
 	// A newer local edit uploads through the same restored profile.

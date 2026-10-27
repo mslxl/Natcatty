@@ -3,6 +3,8 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +64,17 @@ type S3SyncService interface {
 	ConnectS3(ctx context.Context, password string, settings appsync.S3Settings, confirmInsecure bool) error
 	S3Settings() appsync.S3Settings
 	ConfirmInsecureEndpoint(ctx context.Context) bool
+}
+
+// DestructiveSyncService is the optional guard, conflict, and backup
+// capability introduced with issue 54. Ticket 49-53 fakes do not implement it,
+// so their surfaces are unchanged; the real service does.
+type DestructiveSyncService interface {
+	ForcePush(ctx context.Context) (appsync.Result, error)
+	RestoreGuard(ctx context.Context) (appsync.Result, error)
+	ResolveConflict(ctx context.Context, resolution appsync.Resolution) (appsync.Result, error)
+	LoadBackups(ctx context.Context) error
+	RestoreBackup(ctx context.Context, source appsync.BackupSource, id string) error
 }
 
 // SyncOption customizes a SyncState.
@@ -125,6 +138,8 @@ type SyncState struct {
 	insecurePrompt bool
 	insecureAction string
 	reconfigure    bool
+	forceConfirm   bool
+	backupsAsked   bool
 }
 
 // NewSyncState builds the sync surface from the application service.
@@ -903,6 +918,133 @@ func (s *SyncState) SetStrategy(strategy domainsync.Strategy) {
 	}()
 }
 
+// ForcePushing reports whether the destructive force-push confirmation is
+// open. The confirmation is never the default: AskForcePush is only called by
+// the explicit second button.
+func (s *SyncState) ForcePushing() bool { return s.forceConfirm }
+
+// AskForcePush opens the destructive confirmation.
+func (s *SyncState) AskForcePush() { s.forceConfirm = true }
+
+// CancelForcePush closes it without pushing.
+func (s *SyncState) CancelForcePush() { s.forceConfirm = false }
+
+// BackupsAsked reports whether the automatic first load has already been
+// requested for this surface.
+func (s *SyncState) BackupsAsked() bool { return s.backupsAsked }
+
+// ForcePush overrides a shrink or tombstone guard after the explicit
+// confirmation. The application service still takes a protective local
+// backup and retains the overwritten cloud copy.
+func (s *SyncState) ForcePush() {
+	service, ok := s.service.(DestructiveSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.forceConfirm = false
+	state := s
+	go func() {
+		_, err := service.ForcePush(state.ctx)
+		state.post(func() {
+			state.busy = false
+			// A successful force push supersedes the blocked-sync error that
+			// opened this dialog; keeping it would claim the upload is still
+			// blocked after it reached the provider.
+			state.lastErr = err
+			state.requestBackups()
+		})
+	}()
+}
+
+// RestoreGuard restores the last good cloud copy after a blocked upload. It
+// never writes to the provider.
+func (s *SyncState) RestoreGuard() {
+	service, ok := s.service.(DestructiveSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.forceConfirm = false
+	state := s
+	go func() {
+		_, err := service.RestoreGuard(state.ctx)
+		state.post(func() {
+			state.busy = false
+			// The guard is satisfied by the restored copy; the old blocking
+			// error must not outlive the successful restore.
+			state.lastErr = err
+			state.requestBackups()
+		})
+	}()
+}
+
+// ResolveConflict applies the user's choice for a surfaced conflict.
+func (s *SyncState) ResolveConflict(resolution appsync.Resolution) {
+	service, ok := s.service.(DestructiveSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.forceConfirm = false
+	state := s
+	go func() {
+		_, err := service.ResolveConflict(state.ctx, resolution)
+		state.post(func() {
+			state.busy = false
+			// The resolution replaced the conflict; the pre-resolution error
+			// would otherwise stay on screen as if the conflict were pending.
+			state.lastErr = err
+			state.requestBackups()
+		})
+	}()
+}
+
+// LoadBackups refreshes the restore-point list. It is safe to call on the UI
+// thread; the work runs on a worker goroutine.
+func (s *SyncState) LoadBackups() { s.requestBackups() }
+
+func (s *SyncState) requestBackups() {
+	service, ok := s.service.(DestructiveSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.backupsAsked = true
+	state := s
+	go func() {
+		err := service.LoadBackups(state.ctx)
+		state.post(func() {
+			state.busy = false
+			if err != nil {
+				state.lastErr = err
+			}
+		})
+	}()
+}
+
+// RestoreBackup restores one local or cloud-copy restore point. The local path
+// delegates to the backup service, which writes a before-restore backup; the
+// cloud-copy path decrypts only inside the application service.
+func (s *SyncState) RestoreBackup(source appsync.BackupSource, id string) {
+	service, ok := s.service.(DestructiveSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	state := s
+	go func() {
+		err := service.RestoreBackup(state.ctx, source, id)
+		state.post(func() {
+			state.busy = false
+			// Restoring succeeded, so an earlier failed-sync error is stale and
+			// must not suggest the restore failed.
+			state.lastErr = err
+			state.requestBackups()
+		})
+	}()
+}
+
 // syncSection renders the Sync & Cloud area.
 func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
 	state.Flush()
@@ -1277,19 +1419,35 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 			}
 		})
 	}
-	strategies := []string{m.SettingsSyncNewest(), m.SettingsSyncLocal(), m.SettingsSyncRemote()}
-	values := []domainsync.Strategy{domainsync.StrategyNewest, domainsync.StrategyLocal, domainsync.StrategyRemote}
+	strategies := []string{
+		m.SettingsSyncStrategySmartMerge(),
+		m.SettingsSyncStrategySmartMergePreserve(),
+		m.SettingsSyncStrategyPreferCloud(),
+		m.SettingsSyncStrategyPreferLocal(),
+	}
+	values := []domainsync.Strategy{
+		domainsync.StrategySmartMerge,
+		domainsync.StrategySmartMergePreserve,
+		domainsync.StrategyPreferCloud,
+		domainsync.StrategyPreferLocal,
+	}
 	strategy := strategies[syncStrategyIndex(values, snapshot.Strategy)]
 	ui.Field(c, m.SettingsSyncConflictStrategy(), func() {
-		if ui.Select(c, &strategy, strategies).Width(190).Changed() {
+		if ui.Select(c, &strategy, strategies).Width(300).Changed() {
 			state.SetStrategy(values[indexOf(strategies, strategy)])
 			c.Invalidate()
 		}
 	})
 	ui.Text(c, syncLastSynced(m, snapshot.LastSyncedAt)).FontSize(11).TextColor(t.TextMuted)
 
+	syncConflictPanel(c, state, snapshot, m, t)
+	syncGuardPanel(c, state, snapshot, m, t)
 	syncButtons(c, state, snapshot, m)
 	syncStatus(c, state, snapshot, m, t)
+	if _, ok := state.service.(DestructiveSyncService); ok && !state.BackupsAsked() {
+		state.LoadBackups()
+	}
+	syncBackupsPanel(c, state, snapshot, m, t)
 
 	if state.Disconnecting() {
 		ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, t.Danger).Children(func() {
@@ -1305,6 +1463,221 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 				}
 			})
 		})
+	}
+}
+
+// syncEntityLabel localizes the payload family keys used by the sync engine.
+// Those keys are protocol identifiers ("hosts", "portForwardingRules"), not
+// display strings; ADR-0009 requires every user-visible label to come from the
+// catalog, so guards and conflict rows must never print them raw.
+func syncEntityLabel(entityType string, m locales.Messages) string {
+	switch entityType {
+	case "hosts":
+		return m.SearchSectionHost()
+	case "keys":
+		return m.SearchSectionKey()
+	case "identities":
+		return m.SearchSectionIdentity()
+	case "proxyProfiles":
+		return m.SearchSectionProxyProfile()
+	case "snippets":
+		return m.SearchSectionSnippet()
+	case "groups":
+		return m.SearchSectionHostGroup()
+	case "snippetPackages":
+		return m.SearchSectionSnippetPackage()
+	case "notes":
+		return m.SearchSectionNote()
+	case "noteGroups":
+		return m.SearchSectionNoteGroup()
+	case "portForwardingRules":
+		return m.TrayForwarding()
+	case "settings":
+		return m.NavSettings()
+	default:
+		return m.SettingsSyncEntityUnknown()
+	}
+}
+
+// syncGuardPanel explains a blocked destructive upload. Restore is the safe
+// default; the force push action opens a second, explicitly destructive
+// confirmation and is never preselected.
+func syncGuardPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	finding := snapshot.Guard
+	if !finding.Suspicious() {
+		return
+	}
+	ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, t.Warning).Children(func() {
+		ui.Text(c, m.SettingsSyncGuardTitle()).FontSize(12).Bold().TextColor(syncWarningTextColor(t))
+		detail := m.SettingsSyncGuardShrink(
+			strconv.Itoa(finding.Lost),
+			strconv.Itoa(finding.BaseCount),
+			syncEntityLabel(finding.EntityType, m),
+			strconv.Itoa(finding.OutgoingCount),
+		)
+		if finding.Kind == appsync.GuardTombstone {
+			detail = m.SettingsSyncGuardTombstone(strconv.Itoa(finding.BaseCount))
+		}
+		ui.Text(c, detail).FontSize(11).TextColor(t.Text)
+		if finding.ViaRemote {
+			ui.Text(c, m.SettingsSyncGuardViaRemote()).FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, m.SettingsSyncGuardRestore()).Disabled(state.Busy()).Clicked() {
+				state.RestoreGuard()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsSyncGuardForce()).Disabled(state.Busy()).Clicked() {
+				state.AskForcePush()
+				c.Invalidate()
+			}
+		})
+		if state.ForcePushing() {
+			ui.Column(c).Padding(8).Gap(6).Border(1, t.Danger).Children(func() {
+				ui.Text(c, m.SettingsSyncGuardForceConfirm()).FontSize(12).Bold().TextColor(t.Danger)
+				ui.Text(c, m.SettingsSyncGuardForceWarning()).FontSize(11).TextColor(t.Text)
+				ui.Row(c).Gap(8).Children(func() {
+					if ui.Button(c, m.SettingsSyncDoForcePush()).Disabled(state.Busy()).Clicked() {
+						state.ForcePush()
+						c.Invalidate()
+					}
+					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+						state.CancelForcePush()
+						c.Invalidate()
+					}
+				})
+			})
+		}
+	})
+}
+
+// syncConflictPanel shows the per-item conflict detail and the three
+// resolutions. Merge is offered only when the selected strategy merges.
+func syncConflictPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	info := snapshot.Conflict
+	if info == nil {
+		return
+	}
+	device := info.RemoteDevice
+	if device == "" {
+		device = m.SettingsSyncConflictUnknownDevice()
+	}
+	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
+		ui.Text(c, m.SettingsSyncConflictTitle()).FontSize(12).Bold()
+		ui.Text(c, m.SettingsSyncConflictRemoteDevice(device)).FontSize(11).TextColor(t.TextMuted)
+		if info.RemoteVersion > 0 {
+			ui.Text(c, m.SettingsSyncConflictRemoteVersion(
+				strconv.Itoa(info.RemoteVersion), formatSyncTime(info.RemoteUpdatedAt))).
+				FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Text(c, m.SettingsSyncConflictSummary(
+			strconv.Itoa(info.Summary.AddedLocal),
+			strconv.Itoa(info.Summary.ModifiedLocal),
+			strconv.Itoa(info.Summary.DeletedLocal),
+			strconv.Itoa(info.Summary.AddedRemote),
+			strconv.Itoa(info.Summary.ModifiedRemote),
+			strconv.Itoa(info.Summary.DeletedRemote),
+		)).FontSize(11).TextColor(t.Text)
+		for _, item := range info.Items {
+			id := item.EntityID
+			if id == "" {
+				id = "—"
+			}
+			ui.Text(c, m.SettingsSyncConflictItem(syncEntityLabel(item.EntityType, m), id,
+				syncConflictKindName(item.Kind, m))).FontSize(11).TextColor(t.Text)
+		}
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConflict(appsync.ResolutionLocal)
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
+				state.ResolveConflict(appsync.ResolutionRemote)
+				c.Invalidate()
+			}
+			if info.CanMerge {
+				if ui.Button(c, m.SettingsSyncConflictMerge()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConflict(appsync.ResolutionMerge)
+					c.Invalidate()
+				}
+			}
+		})
+	})
+}
+
+func syncConflictKindName(kind appsync.ConflictKind, m locales.Messages) string {
+	switch kind {
+	case appsync.ConflictBothAdded:
+		return m.SettingsSyncConflictKindBothAdded()
+	case appsync.ConflictBothModified:
+		return m.SettingsSyncConflictKindBothModified()
+	case appsync.ConflictLocalDeletedRemoteModified:
+		return m.SettingsSyncConflictKindLocalDeleted()
+	case appsync.ConflictRemoteDeletedLocalModified:
+		return m.SettingsSyncConflictKindRemoteDeleted()
+	default:
+		return string(kind)
+	}
+}
+
+// syncBackupsPanel lists local restore points and retained cloud copies. Both
+// are timestamped and restorable; no entry carries decrypted data.
+func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Gap(6).Children(func() {
+		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(12).Bold()
+		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(11).TextColor(t.TextMuted)
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, m.SettingsSyncBackupsRefresh()).Disabled(state.Busy()).Clicked() {
+				state.LoadBackups()
+				c.Invalidate()
+			}
+		})
+		if snapshot.BackupsProblem != appsync.ProblemNone {
+			ui.Text(c, m.SettingsSyncBackupsProblem()).FontSize(11).TextColor(syncWarningTextColor(t))
+		}
+		if len(snapshot.Backups) == 0 {
+			ui.Text(c, m.SettingsSyncBackupsEmpty()).FontSize(11).TextColor(t.TextMuted)
+			return
+		}
+		for _, backup := range snapshot.Backups {
+			entry := backup
+			ui.Row(c).Gap(8).Children(func() {
+				ui.Text(c, fmt.Sprintf("%s · %s · %s",
+					syncBackupSourceName(entry.Source, m),
+					syncBackupReasonName(entry.Reason, m),
+					formatSyncTime(entry.CreatedAt))).FontSize(11).TextColor(t.Text)
+				if ui.Button(c, m.SettingsSyncBackupRestore()).Disabled(state.Busy()).Clicked() {
+					state.RestoreBackup(entry.Source, entry.ID)
+					c.Invalidate()
+				}
+			})
+		}
+	})
+}
+
+func syncBackupSourceName(source appsync.BackupSource, m locales.Messages) string {
+	if source == appsync.BackupSourceRemote {
+		return m.SettingsSyncBackupRemote()
+	}
+	return m.SettingsSyncBackupLocal()
+}
+
+func syncBackupReasonName(reason string, m locales.Messages) string {
+	switch reason {
+	case "vault_change":
+		return m.SettingsSyncBackupReasonVaultChange()
+	case "before_restore":
+		return m.SettingsSyncBackupReasonBeforeRestore()
+	case "app_version_change":
+		return m.SettingsSyncBackupReasonAppVersionChange()
+	case "merge":
+		return m.SettingsSyncBackupReasonMerge()
+	case "conflict":
+		return m.SettingsSyncBackupReasonConflict()
+	case "guard-force":
+		return m.SettingsSyncBackupReasonGuardForce()
+	default:
+		return m.SettingsSyncBackupReasonOther()
 	}
 }
 
@@ -1405,6 +1778,8 @@ func syncStatusText(m locales.Messages, status appsync.Status) string {
 		return m.SettingsSyncStatusFailed()
 	case appsync.StatusNeedsPassword:
 		return m.SettingsSyncStatusNeedsPassword()
+	case appsync.StatusConflict:
+		return m.SettingsSyncStatusConflict()
 	default:
 		return ""
 	}
@@ -1454,6 +1829,12 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemLocal()
 	case appsync.ProblemUnsupported:
 		return m.SettingsSyncProblemUnsupported()
+	case appsync.ProblemShrinkGuard:
+		return m.SettingsSyncProblemShrinkGuard()
+	case appsync.ProblemTombstoneGuard:
+		return m.SettingsSyncProblemTombstoneGuard()
+	case appsync.ProblemBackup:
+		return m.SettingsSyncProblemBackup()
 	default:
 		return ""
 	}
@@ -1474,6 +1855,12 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemNotConfigured
 	case errors.Is(err, appsync.ErrConflict):
 		return appsync.ProblemConflict
+	case errors.Is(err, appsync.ErrShrinkGuard):
+		return appsync.ProblemShrinkGuard
+	case errors.Is(err, appsync.ErrTombstoneGuard):
+		return appsync.ProblemTombstoneGuard
+	case errors.Is(err, appsync.ErrBackupUnavailable):
+		return appsync.ProblemBackup
 	case errors.Is(err, appsync.ErrWrongPassword):
 		return appsync.ProblemWrongPassword
 	case errors.Is(err, appsync.ErrRemoteCorrupt):
