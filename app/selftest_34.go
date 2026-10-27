@@ -20,7 +20,7 @@ package app
 // fixed sleep. Temporary and backup artifacts are checked on disk after every
 // step.
 //
-// Result: %TEMP%\natcatty-selftest-34.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-34.json.
 
 import (
 	"context"

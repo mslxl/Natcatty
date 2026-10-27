@@ -27,8 +27,8 @@ package app
 // Every wait observes service or fake state with a hard deadline; there is no
 // sleep.
 //
-// Result: %TEMP%\natcatty-selftest-46.json and
-// %TEMP%\natcatty-selftest-46-shots\*.png.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-46.json and
+// %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-46-shots\*.png.
 
 import (
 	"context"

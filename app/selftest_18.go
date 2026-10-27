@@ -8,7 +8,7 @@ package app
 // hook and OSC notification modes, and the chrome layout at both supported
 // sizes.
 //
-// Result: %TEMP%\natcatty-selftest-18.json. Every step closes the Sessions it
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-18.json. Every step closes the Sessions it
 // opened, removes its temporary directory, and clears its own state, so
 // F11,1,8 passes twice in one process.
 

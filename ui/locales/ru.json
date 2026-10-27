@@ -68,6 +68,7 @@
   "vaultHostLabel": "Название",
   "vaultHostHostname": "Имя хоста",
   "vaultHostPort": "Порт",
+  "vaultHostPortHint": "Оставьте пустым для наследования; используется порт {port}.",
   "vaultHostUsername": "Пользователь",
   "vaultHostProtocol": "Протокол",
   "vaultHostGroup": "Группа хостов",
@@ -76,7 +77,7 @@
   "vaultGroupNew": "Новая группа",
   "vaultGroupEmpty": "Групп хостов пока нет.",
   "vaultGroupUngrouped": "Корень Vault (без группы хостов)",
-  "vaultGroupMemberCount": "{count} хостов",
+  "vaultGroupMemberCount": "{count, plural, one {# хост} few {# хоста} many {# хостов} other {# хоста}}",
   "vaultGroupFormCreateTitle": "Новая группа хостов",
   "vaultGroupFormEditTitle": "Изменить группу хостов",
   "vaultGroupDefaults": "Значения по умолчанию для хостов группы",
@@ -236,7 +237,7 @@
   "vaultImportRows": "Строки",
   "vaultImportIssues": "Проблемы",
   "vaultImportNoIssues": "Проблем не найдено.",
-  "vaultImportSelected": "Выбрано: {count}",
+  "vaultImportSelected": "{count, plural, one {Выбран #} few {Выбрано #} many {Выбрано #} other {Выбрано #}}",
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
@@ -985,7 +986,7 @@
   "vaultSnippetSummaryTargets": "Цели: {targets}",
   "vaultSnippetSummaryAllHosts": "Все хосты",
   "vaultSnippetSummaryNoTargets": "Любой сеанс",
-  "vaultSnippetVariableCount": "{count} переменных",
+  "vaultSnippetVariableCount": "{count, plural, one {# переменная} few {# переменные} many {# переменных} other {# переменной}}",
   "vaultSnippetNoAutoRun": "Без автозапуска",
   "vaultSnippetLineDelay": "Построчно",
   "vaultSnippetFormCreateTitle": "Новый сниппет",
@@ -1007,7 +1008,7 @@
   "vaultSnippetPackageFormEditTitle": "Переименовать пакет сниппетов",
   "vaultSnippetPackagePath": "Путь пакета",
   "vaultSnippetPackagePathHint": "Пакеты вкладываются через '/', например ops/linux.",
-  "vaultSnippetPackageSnippetCount": "{count} сниппетов",
+  "vaultSnippetPackageSnippetCount": "{count, plural, one {# сниппет} few {# сниппета} many {# сниппетов} other {# сниппета}}",
   "vaultSnippetDeleteConfirm": "Удалить сниппет «{label}»?",
   "vaultSnippetPackageDeleteConfirm": "Удалить пакет «{path}»? Его сниппеты сохранятся и перейдут в корень Vault.",
   "vaultSnippetRunTitle": "Запустить «{label}»",
@@ -1151,7 +1152,7 @@
   "@vaultNoteGroupPathHint": {
     "description": "The Note Group path field's hint."
   },
-  "vaultNoteGroupNoteCount": "Заметок: {count}",
+  "vaultNoteGroupNoteCount": "{count, plural, one {# заметка} few {# заметки} many {# заметок} other {# заметки}}",
   "@vaultNoteGroupNoteCount": {
     "description": "How many Notes one Note Group directly contains.",
     "placeholders": {
@@ -1303,7 +1304,7 @@
       }
     }
   },
-  "vaultExportUnreadable": "Не удалось прочитать учётные данные: {count}; они пропущены.",
+  "vaultExportUnreadable": "{count, plural, one {Не удалось прочитать # запись, она пропущена.} few {Не удалось прочитать # записи, они пропущены.} many {Не удалось прочитать # записей, они пропущены.} other {Не удалось прочитать # записи, они пропущены.}}",
   "vaultExportOmitted": "{count, plural, one {Пропущена # сохранённая учётная запись; включите секреты, чтобы добавить её.} few {Пропущены # сохранённые учётные записи; включите секреты, чтобы добавить их.} many {Пропущено # сохранённых учётных записей; включите секреты, чтобы добавить их.} other {Пропущено # сохранённых учётных записей; включите секреты, чтобы добавить их.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
@@ -1463,9 +1464,9 @@
   "settingsAreaLayout": "Макет и вкладки",
   "settingsAreaSFTPEditor": "SFTP и редактор",
   "settingsAreaLogs": "Журналы",
-  "settingsAreaSystem": "Система и рабочий стол",
-  "settingsAreaSecurity": "Безопасность и блокировка",
-  "settingsAreaSync": "Синхронизация и облако",
+  "settingsAreaSystem": "Система",
+  "settingsAreaSecurity": "Безопасность",
+  "settingsAreaSync": "Синхронизация",
   "settingsAreaShortcuts": "Горячие клавиши",
   "settingsSearchPlaceholder": "Поиск настроек…",
   "settingsSearchHint": "Введите текст для фильтрации. Стрелки вверх и вниз перемещают, Enter открывает раздел.",
@@ -1936,7 +1937,7 @@
   "sftpEditorSyncFailedBody": "Изменения {name} ожидают локально. Удалённый файл не изменён.",
   "sftpEditorRetry": "Повторить",
   "sftpEditorDismiss": "Закрыть",
-  "sftpSelected": "Выбрано: {count}",
+  "sftpSelected": "{count, plural, one {Выбран #} few {Выбрано #} many {Выбрано #} other {Выбрано #}}",
   "sftpItemCount": "{count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элементов}}",
   "sftpProgress": "{current} · {percent}%",
   "sftpProgressDone": "{current} · завершено",
@@ -2097,7 +2098,7 @@
   "@sftpTransferConflictFailed": {
     "description": "The Transfer center error for a failed conflict answer."
   },
-  "sftpTransferSkipped": "{count} пропущено",
+  "sftpTransferSkipped": "{count, plural, one {# пропущен} few {# пропущено} many {# пропущено} other {# пропущено}}",
   "@sftpTransferSkipped": {
     "description": "The count of entries a Transfer left untouched.",
     "placeholders": {
@@ -2195,7 +2196,7 @@
   "monitoringName": "Имя",
   "monitoringDescription": "Описание",
   "monitoringPanelHosts": "Хосты",
-  "monitoringSelectedCount": "Выбрано: {count}",
+  "monitoringSelectedCount": "{count, plural, one {Выбран #} few {Выбрано #} many {Выбрано #} other {Выбрано #}}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -2283,7 +2284,7 @@
   "sysManagerSearchProcesses": "Поиск процессов…",
   "sysManagerSearchPorts": "Поиск портов…",
   "sysManagerSearchServices": "Поиск служб…",
-  "sysManagerProcessesCount": "Процессы: {count}",
+  "sysManagerProcessesCount": "{count, plural, one {# процесс} few {# процесса} many {# процессов} other {# процесса}}",
   "@sysManagerProcessesCount": {
     "description": "The number of processes matching the search.",
     "placeholders": {
@@ -2293,7 +2294,7 @@
       }
     }
   },
-  "sysManagerPortsCount": "Прослушивания: {count}",
+  "sysManagerPortsCount": "{count, plural, one {# прослушивание} few {# прослушивания} many {# прослушиваний} other {# прослушивания}}",
   "@sysManagerPortsCount": {
     "description": "The number of listening sockets matching the search.",
     "placeholders": {
@@ -2303,7 +2304,7 @@
       }
     }
   },
-  "sysManagerServicesCount": "Модули: {count}",
+  "sysManagerServicesCount": "{count, plural, one {# модуль} few {# модуля} many {# модулей} other {# модуля}}",
   "@sysManagerServicesCount": {
     "description": "The number of systemd units matching the search.",
     "placeholders": {
@@ -2505,7 +2506,7 @@
   "sysManagerOverviewKernel": "Ядро",
   "sysManagerOverviewUptime": "Время работы",
   "sysManagerOverviewLoad": "Нагрузка",
-  "sysManagerOverviewCores": "Ядра: {count}",
+  "sysManagerOverviewCores": "{count, plural, one {# ядро} few {# ядра} many {# ядер} other {# ядра}}",
   "@sysManagerOverviewCores": {
     "description": "The Host's CPU core count.",
     "placeholders": {
@@ -2607,7 +2608,7 @@
   "sysManagerReasonDockerDaemon": "Демон Docker недоступен.",
   "sysManagerProblemAttach": "Не удалось открыть сеанс tmux.",
   "sysManagerSearchSessions": "Поиск сеансов…",
-  "sysManagerSessionsCount": "{count} сеансов",
+  "sysManagerSessionsCount": "{count, plural, one {# сеанс} few {# сеанса} many {# сеансов} other {# сеанса}}",
   "@sysManagerSessionsCount": {
     "description": "",
     "placeholders": {
@@ -2668,7 +2669,7 @@
   "sysManagerDockerView": "Вид",
   "sysManagerSearchContainers": "Поиск контейнеров…",
   "sysManagerSearchImages": "Поиск образов…",
-  "sysManagerContainersCount": "{count} контейнеров",
+  "sysManagerContainersCount": "{count, plural, one {# контейнер} few {# контейнера} many {# контейнеров} other {# контейнера}}",
   "@sysManagerContainersCount": {
     "description": "",
     "placeholders": {
@@ -2678,7 +2679,7 @@
       }
     }
   },
-  "sysManagerImagesCount": "{count} образов",
+  "sysManagerImagesCount": "{count, plural, one {# образ} few {# образа} many {# образов} other {# образа}}",
   "@sysManagerImagesCount": {
     "description": "",
     "placeholders": {
@@ -2801,7 +2802,7 @@
   "sysManagerGPUPower": "Мощность",
   "sysManagerGPUFan": "Вентилятор",
   "sysManagerGPUVendor": "Производитель",
-  "sysManagerGPUCount": "{count} GPU",
+  "sysManagerGPUCount": "{count, plural, one {# GPU} few {# GPU} many {# GPU} other {# GPU}}",
   "@sysManagerGPUCount": {
     "description": "",
     "placeholders": {

@@ -25,7 +25,7 @@ package app
 // Every listing and transfer completes off the UI thread. The steps wait on
 // their real state with a hard deadline; there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-36.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-36.json.
 
 import (
 	"archive/tar"

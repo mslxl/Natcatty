@@ -899,6 +899,199 @@ func TestHostPortBlankInheritsTheGroupPortInTheEditor(t *testing.T) {
 	}
 }
 
+func TestHostEditorPortHintFollowsProtocolAndGroup(t *testing.T) {
+	m := locales.In("en")
+	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
+	groups.items = []domainvault.Group{{Path: "prod2", Port: 2222}}
+	hosts.items[0].Group = "prod2"
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	state.BeginCreate()
+	tt.Frame()
+
+	// A new Host starts as SSH with an empty Port field; the hint shows the
+	// protocol default a connection would use.
+	if state.Form().Port != "" {
+		t.Fatalf("new Host Port = %q, want blank", state.Form().Port)
+	}
+	if got := state.HostPortPlaceholder(); got != "22" {
+		t.Fatalf("SSH Port hint = %q, want 22", got)
+	}
+	if !tt.HasText(m.VaultHostPortHint("22")) {
+		t.Fatalf("the editor does not render the SSH Port hint, texts %q", tt.Texts())
+	}
+
+	// A Telnet Host connects on 23; the hint must not stay at 22.
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	if got := state.HostPortPlaceholder(); got != "23" {
+		t.Fatalf("Telnet Port hint = %q, want 23", got)
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostPortHint("23")) {
+		t.Fatalf("the editor does not render the Telnet Port hint, texts %q", tt.Texts())
+	}
+
+	// A Host in a Host Group inherits that group's port, so the hint shows it.
+	state.Form().Group = "prod2"
+	if got := state.HostPortPlaceholder(); got != "2222" {
+		t.Fatalf("group Port hint = %q, want 2222", got)
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultHostPortHint("2222")) {
+		t.Fatalf("the editor does not render the inherited group Port hint, texts %q", tt.Texts())
+	}
+
+	// A Local shell has no port to suggest.
+	state.SetHostProtocol(string(domainvault.ProtocolLocal))
+	state.Form().Group = ""
+	if got := state.HostPortPlaceholder(); got != "" {
+		t.Fatalf("Local Port hint = %q, want none", got)
+	}
+}
+
+// TestHostEditorHidesSSHOnlyAuthenticationForNonSSHProtocols covers ticket 61:
+// a Telnet or Local Host must not offer Identity, SSH Key, Method, agent, or
+// MFA controls that its transport never reads, and a protocol switch must not
+// keep the credentials a now-hidden control selected.
+func TestHostEditorHidesSSHOnlyAuthenticationForNonSSHProtocols(t *testing.T) {
+	m := locales.In("en")
+	state, _, _, _, _, tt := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	tt.Frame()
+
+	for _, title := range []string{
+		m.VaultHostAuthSection(), m.VaultHostIdentity(), m.VaultHostKey(),
+		m.VaultHostAuthMethod(), m.VaultHostUseAgent(), m.VaultHostRequiresMFA(),
+	} {
+		if !tt.HasText(title) {
+			t.Fatalf("an SSH Host does not show %q, texts %q", title, tt.Texts())
+		}
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	tt.Frame()
+	for _, title := range []string{
+		m.VaultHostAuthSection(), m.VaultHostIdentity(), m.VaultHostKey(),
+		m.VaultHostAuthMethod(), m.VaultHostUseAgent(), m.VaultHostRequiresMFA(),
+	} {
+		if tt.HasText(title) {
+			t.Fatalf("a Telnet Host still shows the SSH-only %q, texts %q", title, tt.Texts())
+		}
+	}
+
+	// Mosh and ET bootstrap over SSH, so they keep the credential controls.
+	for _, protocol := range []domainvault.Protocol{domainvault.ProtocolMosh, domainvault.ProtocolET} {
+		state.SetHostProtocol(string(protocol))
+		tt.Frame()
+		if !tt.HasText(m.VaultHostIdentity()) || !tt.HasText(m.VaultHostAuthMethod()) {
+			t.Fatalf("%s Host lost its SSH credential controls", protocol)
+		}
+	}
+}
+
+func TestHostProtocolSwitchClearsSSHOnlyCredentials(t *testing.T) {
+	state, _, _, _, _, _ := newProductionEntityView(t, 720, 480)
+	state.BeginCreate()
+	form := state.Form()
+	form.IdentityID = "identity-1"
+	form.KeyID = "key-1"
+	form.AuthMethod = string(domainvault.HostAuthKey)
+	form.UseSSHAgent = true
+	form.RequiresMFA = true
+
+	// Mosh keeps the SSH credential bundle.
+	state.SetHostProtocol(string(domainvault.ProtocolMosh))
+	if form.IdentityID != "identity-1" || form.KeyID != "key-1" ||
+		form.AuthMethod != string(domainvault.HostAuthKey) ||
+		!form.UseSSHAgent || !form.RequiresMFA {
+		t.Fatalf("Mosh cleared SSH credentials: %+v", *form)
+	}
+
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	if form.IdentityID != "" || form.KeyID != "" ||
+		form.AuthMethod != string(domainvault.HostAuthAuto) ||
+		form.UseSSHAgent || form.RequiresMFA {
+		t.Fatalf("Telnet kept SSH credentials from a hidden control: %+v", *form)
+	}
+
+	// Returning to SSH starts from Auto rather than the cleared values.
+	state.SetHostProtocol(string(domainvault.ProtocolSSH))
+	if form.IdentityID != "" || form.KeyID != "" || form.UseSSHAgent {
+		t.Fatalf("the cleared credentials came back: %+v", *form)
+	}
+}
+
+func TestGroupEditorPortHintAndSSHOnlyDefaultsFollowProtocol(t *testing.T) {
+	state, _, groups, _, _, tt := newProductionEntityView(t, 720, 480)
+	groups.items = []domainvault.Group{{Path: "prod", Port: 2200}}
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	state.BeginCreateGroup()
+	state.GroupForm().Path = "prod/web"
+	tt.Frame()
+	if got := state.GroupPortPlaceholder(); got != "2200" {
+		t.Fatalf("group Port hint = %q, want the parent 2200", got)
+	}
+	state.SetGroupProtocol(string(domainvault.ProtocolTelnet))
+	state.GroupForm().Path = ""
+	if got := state.GroupPortPlaceholder(); got != "23" {
+		t.Fatalf("root Telnet group Port hint = %q, want 23", got)
+	}
+	tt.Frame()
+	if tt.HasText(locales.In("en").VaultHostIdentity()) {
+		t.Fatal("a Telnet group editor still shows the SSH-only Identity default")
+	}
+}
+
+// TestHostEditorSaveProblemStaysVisibleAtBothSizes is the ticket 61 pinned
+// feedback regression: a save failure must be readable without scrolling, and
+// it must not sit under the pinned Save/Cancel bar.
+func TestHostEditorSaveProblemStaysVisibleAtBothSizes(t *testing.T) {
+	m := locales.In("en")
+	for _, size := range [][2]int{{704, 421}, {1084, 661}} {
+		state, hosts, _, _, _, tt := newProductionEntityView(t, size[0], size[1])
+		if !state.BeginEdit("host-1") {
+			t.Fatalf("%dx%d: BeginEdit failed", size[0], size[1])
+		}
+		tt.Frame()
+
+		// The Host disappears between opening the editor and saving it.
+		kept := hosts.items[:0]
+		for _, host := range hosts.items {
+			if host.ID != "host-1" {
+				kept = append(kept, host)
+			}
+		}
+		hosts.items = kept
+		if err := tt.Click(m.VaultHostSave()); err != nil {
+			t.Fatalf("%dx%d: click Save: %v", size[0], size[1], err)
+		}
+		tt.Frame()
+
+		problem, ok := tt.Find(m.VaultProblemNotFound())
+		if !ok {
+			t.Fatalf("%dx%d: the not-found message is not rendered, texts %q",
+				size[0], size[1], tt.Texts())
+		}
+		save, ok := tt.Find(m.VaultHostSave())
+		if !ok {
+			t.Fatalf("%dx%d: Save is not rendered", size[0], size[1])
+		}
+		if problem.X < -0.5 || problem.Y < -0.5 ||
+			problem.X+problem.W > float32(size[0])+0.5 ||
+			problem.Y+problem.H > float32(size[1])+0.5 {
+			t.Fatalf("%dx%d: the not-found message is outside the client: %+v",
+				size[0], size[1], problem)
+		}
+		if problem.Y+problem.H > save.Y+0.5 {
+			t.Fatalf("%dx%d: the not-found message is below the pinned actions: message %+v save %+v",
+				size[0], size[1], problem, save)
+		}
+	}
+}
+
 func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
 	m := locales.In("en")
 	state, _, _, _, known, tt := newProductionEntityView(t, 1100, 720)

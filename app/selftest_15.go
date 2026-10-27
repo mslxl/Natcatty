@@ -5,7 +5,7 @@ package app
 // Ticket 15 self-test.
 //
 // Press F11, then 1, then 5. The check runs on the UI thread one step per
-// frame and writes %TEMP%\natcatty-selftest-15.json.
+// frame and writes %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-15.json.
 //
 // Three steps open real local shell Sessions through the production Session
 // service and local PTY adapter, one per log format. Two steps use a pipe
@@ -48,6 +48,7 @@ type selftest15 struct {
 	state *state.State
 
 	prepared bool
+	logDir   string
 	logs     [3]selftest15Log
 	osc      *selftest15FakeSession
 	transfer *selftest15FakeSession
@@ -88,8 +89,19 @@ func (t *selftest15) check() selftest.Check {
 	}
 }
 
+// logRoot returns this process's private log directory. It is created once per
+// run on demand, so two check processes sharing the system temp directory
+// never write into the same Host folders.
 func (t *selftest15) logRoot() string {
-	return filepath.Join(os.TempDir(), "natcatty-selftest-15-logs")
+	if t.logDir == "" {
+		dir, err := os.MkdirTemp("", "natcatty-selftest-15-logs-")
+		if err != nil {
+			dir = filepath.Join(os.TempDir(),
+				fmt.Sprintf("natcatty-selftest-15-logs-%d", os.Getpid()))
+		}
+		t.logDir = dir
+	}
+	return t.logDir
 }
 
 // resetRunState removes files and Sessions from a previous F11,1,5 run. It is

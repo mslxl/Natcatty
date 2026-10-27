@@ -14,6 +14,7 @@ import (
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // View returns the monitoring surface. The surface is one flex column that
@@ -36,7 +37,7 @@ func View(s *State) func(*ui.Context) {
 				return
 			}
 			if problem := problemText(m, s.Problem()); problem != "" {
-				ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
+				ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
 			}
 			panel, ok := s.ActivePanel()
 			if !ok {
@@ -638,14 +639,14 @@ func editor(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				}
 			}
 			if problem := problemText(m, s.Problem()); problem != "" {
-				ui.Text(c, problem).FontSize(12).TextColor(t.Danger).Wrap()
+				ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t)).Wrap()
 			}
 		})
 	})
 
 	if s.pendingDelete {
 		ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
-			ui.Text(c, m.MonitoringDeleteConfirm(form.Name)).Grow(1).MinWidth(120).TextColor(t.Danger).Wrap()
+			ui.Text(c, m.MonitoringDeleteConfirm(form.Name)).Grow(1).MinWidth(120).TextColor(uitheme.DangerText(t)).Wrap()
 			if ui.Button(c, m.MonitoringCancel()).Clicked() {
 				s.CancelDeletePanel()
 				c.Invalidate()
@@ -679,7 +680,7 @@ func (s *State) activePanelID() string { return s.activeID }
 func statusText(m locales.Messages, state domainmonitor.HostState,
 	panel domainpreferences.MonitorPanel, now time.Time, t *ui.Theme) (string, ui.Color) {
 	if domainmonitor.IsStale(state, time.Duration(panel.Interval)*time.Second, now) {
-		return m.MonitoringStale(), t.Warning
+		return m.MonitoringStale(), uitheme.WarningText(t)
 	}
 	switch state.Status {
 	case domainmonitor.StatusLive:
@@ -689,17 +690,17 @@ func statusText(m locales.Messages, state domainmonitor.HostState,
 	case domainmonitor.StatusQueued:
 		return m.MonitoringStatusQueued(), t.TextMuted
 	case domainmonitor.StatusLogin:
-		return m.MonitoringStatusLogin(), t.Danger
+		return m.MonitoringStatusLogin(), uitheme.DangerText(t)
 	case domainmonitor.StatusError:
-		return m.MonitoringStatusError(), t.Danger
+		return m.MonitoringStatusError(), uitheme.DangerText(t)
 	case domainmonitor.StatusUnsupported:
 		return m.MonitoringStatusUnsupported(), t.TextMuted
 	case domainmonitor.StatusDisconnected:
-		return m.MonitoringStatusDisconnected(), t.Warning
+		return m.MonitoringStatusDisconnected(), uitheme.WarningText(t)
 	case domainmonitor.StatusUnavailable:
-		return m.MonitoringStatusUnavailable(), t.Danger
+		return m.MonitoringStatusUnavailable(), uitheme.DangerText(t)
 	case domainmonitor.StatusLimit:
-		return m.MonitoringStatusLimit(), t.Warning
+		return m.MonitoringStatusLimit(), uitheme.WarningText(t)
 	default:
 		return m.MonitoringUnknown(), t.TextMuted
 	}
@@ -731,9 +732,9 @@ func reasonText(m locales.Messages, reason domainmonitor.Reason) string {
 func toneColor(t *ui.Theme, tone domainmonitor.Tone) ui.Color {
 	switch tone {
 	case domainmonitor.ToneDanger:
-		return t.Danger
+		return uitheme.DangerText(t)
 	case domainmonitor.ToneWarning:
-		return t.Warning
+		return uitheme.WarningText(t)
 	case domainmonitor.ToneUnknown:
 		return t.TextMuted
 	default:

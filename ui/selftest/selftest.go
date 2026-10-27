@@ -31,8 +31,8 @@
 //
 // A finished check writes JSON to the process's temporary directory:
 //
-//	%TEMP%\natcatty-selftest-13.json   (on Windows)
-//	$TMPDIR/natcatty-selftest-13.json  (elsewhere)
+//	%TEMP%\natcatty-selftest-<pid>\natcatty-selftest-13.json   (on Windows)
+//	$TMPDIR/natcatty-selftest-<pid>/natcatty-selftest-13.json  (elsewhere)
 //
 // The file carries pass, steps, errors, and timestamp. The overlay shows the
 // same status and the path after the run.
@@ -51,6 +51,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // Outcome is what one step reports for one frame.
@@ -181,7 +183,8 @@ const (
 // Option customizes a Harness.
 type Option func(*Harness)
 
-// WithResultDir writes result files under dir. The default is os.TempDir.
+// WithResultDir writes result files under dir. The default is a directory
+// private to this process (see DefaultResultDir).
 func WithResultDir(dir string) Option {
 	return func(h *Harness) {
 		if dir != "" {
@@ -215,6 +218,13 @@ type Harness struct {
 	written bool
 }
 
+// DefaultResultDir returns a result directory private to this process. Two
+// Natcatty instances, or an app run beside a `go test` run, must not overwrite
+// each other's result files in the shared system temp directory.
+func DefaultResultDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("natcatty-selftest-%d", os.Getpid()))
+}
+
 // NewHarness returns a harness for registry.
 func NewHarness(registry *Registry, opts ...Option) *Harness {
 	if registry == nil {
@@ -222,7 +232,7 @@ func NewHarness(registry *Registry, opts ...Option) *Harness {
 	}
 	harness := &Harness{
 		registry:  registry,
-		resultDir: os.TempDir(),
+		resultDir: DefaultResultDir(),
 		now:       time.Now,
 	}
 	for _, opt := range opts {
@@ -431,7 +441,11 @@ func (h *Harness) write() {
 	data, err := json.MarshalIndent(h.result, "", "  ")
 	if err == nil {
 		data = append(data, '\n')
-		err = os.WriteFile(path, data, 0o644)
+		if mkdirErr := os.MkdirAll(h.resultDir, 0o755); mkdirErr != nil {
+			err = mkdirErr
+		} else {
+			err = os.WriteFile(path, data, 0o644)
+		}
 	}
 	if err != nil {
 		h.result.Pass = false
@@ -480,7 +494,7 @@ func (h *Harness) draw(c *ui.Context) {
 					ui.Text(c, "Ticket: "+h.digits+"_").FontSize(12)
 				}
 				if h.problem != "" {
-					ui.Text(c, h.problem).FontSize(12).TextColor(theme.Danger)
+					ui.Text(c, h.problem).FontSize(12).TextColor(uitheme.DangerText(theme))
 				}
 			case StateRunning:
 				ui.Text(c, fmt.Sprintf("Running %02d  %s", h.check.Ticket, h.check.Name)).FontSize(12)
@@ -493,13 +507,13 @@ func (h *Harness) draw(c *ui.Context) {
 				color := theme.Accent
 				if h.state == StateFailed {
 					label = "FAIL"
-					color = theme.Danger
+					color = uitheme.DangerText(theme)
 				}
 				ui.Text(c, fmt.Sprintf("%s  %02d  %s", label, h.result.Ticket, h.result.Name)).
 					FontSize(14).Bold().TextColor(color)
 				h.drawSteps(c, theme)
 				for _, problem := range h.result.Errors {
-					ui.Text(c, problem).FontSize(12).TextColor(theme.Danger)
+					ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(theme))
 				}
 				if h.result.Path != "" {
 					ui.Text(c, "Result: "+h.result.Path).FontSize(11).TextColor(theme.TextMuted)
@@ -516,7 +530,7 @@ func (h *Harness) drawSteps(c *ui.Context, theme *ui.Theme) {
 		color := theme.TextMuted
 		if !step.Pass {
 			marker = "fail"
-			color = theme.Danger
+			color = uitheme.DangerText(theme)
 		}
 		line := fmt.Sprintf("%s  %s", marker, step.Name)
 		if step.Seam != "" {

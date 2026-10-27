@@ -15,6 +15,7 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // SyncService is the cloud-sync application seam the Settings surface drives.
@@ -1250,44 +1251,19 @@ func insecureWarningFor(provider string, m locales.Messages) string {
 	return m.SettingsSyncWebDAVInsecureWarning()
 }
 
-// syncWarningTextColor keeps the warning amber readable at the 11-point body
-// size. The theme's warning token is tuned for icons and borders; as small
-// text on a light surface it falls below the 4.5:1 contrast target, so light
-// mode uses a darker amber while dark mode keeps the brighter token.
+// syncWarningTextColor keeps warning text readable at the 11-point body size.
+// It delegates to the shared theme helper, which checks both the background
+// and the surface fill of every appearance preset.
 func syncWarningTextColor(t *ui.Theme) ui.Color {
-	if t.Dark {
-		return t.Warning
-	}
-	return ui.Hex("#9a5c00")
+	return uitheme.WarningText(t)
 }
 
-// syncDangerDarkTexts are the dark-mode danger text candidates, brightest
-// last. A single fixed red cannot clear 4.5:1 on every dark preset's fill:
-// the lightest preset background (blue-dolphin, relative luminance 0.118)
-// needs a very pale red, while the default Midnight fill already accepts the
-// first candidate. The helper picks the first candidate that clears the
-// target against the prompt's fill.
-var syncDangerDarkTexts = []string{"#ff6b6b", "#ff9999", "#ffb3b3", "#ffd1d1"}
-
 // syncDangerTextColor keeps danger text readable at the 12-point body size of
-// the confirmations. The theme's destructive token is tuned for borders and
-// filled buttons; as body text on the light sync panel it measures about
-// 4.47:1, below the 4.5:1 target, so light mode uses a darker red that clears
-// the target on the default Snow fill (6.16:1) and on white (6.79:1), and on
-// every light preset's fill (at least 4.79:1). Dark mode starts from a red
-// that clears 4.5:1 on the default Midnight fill and brightens it only as far
-// as the selected preset's fill demands.
+// the confirmations. It delegates to the shared theme helper: light mode uses
+// a darker red (#b51616) and dark mode brightens the red only as far as the
+// preset's fills demand.
 func syncDangerTextColor(t *ui.Theme) ui.Color {
-	if !t.Dark {
-		return ui.Hex("#b51616")
-	}
-	for _, hex := range syncDangerDarkTexts {
-		candidate := ui.Hex(hex)
-		if syncColorContrast(candidate, t.Background) >= 4.5 {
-			return candidate
-		}
-	}
-	return ui.Hex(syncDangerDarkTexts[len(syncDangerDarkTexts)-1])
+	return uitheme.DangerText(t)
 }
 
 // syncColorHex renders an opaque ui.Color as the #rrggbb form the domain WCAG
@@ -1499,7 +1475,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 	if snapshot.HasPassword {
 		ui.Text(c, m.SettingsSyncReady()).FontSize(11).TextColor(t.TextMuted)
 	} else {
-		ui.Text(c, m.SettingsSyncNeedsPassword()).FontSize(11).TextColor(t.Warning)
+		ui.Text(c, m.SettingsSyncNeedsPassword()).FontSize(11).TextColor(uitheme.WarningText(t))
 		syncPasswordField(c, state, m)
 	}
 	syncDeviceCode(c, snapshot, m, t)
@@ -2244,7 +2220,7 @@ func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m l
 func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
 	provider := appsync.NormalizeProvider(snapshot.Provider)
 	if problem := syncProblemTextFor(m, provider, snapshot.Problem); problem != "" {
-		ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
 		return
 	}
 	if err := state.Err(); err != nil {
@@ -2253,7 +2229,7 @@ func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m lo
 		if text == "" {
 			text = m.SettingsSyncOperationFailed()
 		}
-		ui.Text(c, text).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, text).FontSize(12).TextColor(uitheme.DangerText(t))
 		return
 	}
 	status := syncStatusText(m, snapshot.Status)

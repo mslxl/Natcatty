@@ -17,7 +17,7 @@ package app
 //   - Layout: the real shell with sidebar and tab strip renders at 1100x720
 //     and 720x480 with no horizontal overflow.
 //
-// Result: %TEMP%\natcatty-selftest-21.json. Every resource is closed and the
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-21.json. Every resource is closed and the
 // temporary directory removed, so F11,2,1 passes twice in one process.
 
 import (

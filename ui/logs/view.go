@@ -7,6 +7,7 @@ import (
 
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // View renders Logs and History. The whole surface scrolls as one region, so
@@ -72,7 +73,7 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	}
 	if s.PendingClear() {
 		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, clearConfirm).Grow(1).TextColor(t.Danger)
+			ui.Text(c, clearConfirm).Grow(1).TextColor(uitheme.DangerText(t))
 			if ui.Button(c, m.LogsCancel()).Clicked() {
 				s.CancelClear()
 				c.Invalidate()
@@ -87,13 +88,13 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 
 func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	if text := problemText(m, s.ProblemTab(), s.Problem()); text != "" {
-		ui.Text(c, text).TextColor(t.Danger).FontSize(12)
+		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(12)
 	}
 	if text := problemText(m, s.Tab(), s.OpenProblem()); text != "" {
-		ui.Text(c, text).TextColor(t.Danger).FontSize(12)
+		ui.Text(c, text).TextColor(uitheme.DangerText(t)).FontSize(12)
 	}
 	if s.DateProblem() {
-		ui.Text(c, m.LogsProblemDate()).TextColor(t.Danger).FontSize(12)
+		ui.Text(c, m.LogsProblemDate()).TextColor(uitheme.DangerText(t)).FontSize(12)
 	}
 	if count := s.Cleared(); count > 0 {
 		if s.ClearedTab() == TabConnections {
@@ -262,7 +263,7 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 						ui.Text(c, address).FontSize(12).TextColor(t.TextMuted)
 					}
 					if log.Error != "" {
-						ui.Text(c, log.Error).FontSize(12).TextColor(t.Danger)
+						ui.Text(c, log.Error).FontSize(12).TextColor(uitheme.DangerText(t))
 					}
 					ui.Text(c, timestamp(log.StartedAt)).FontSize(11).TextColor(t.TextMuted)
 				})

@@ -11,7 +11,7 @@ package app
 // deleting its Host. A layout step renders the same surface at 1100x720 and
 // 720x480 and checks that no visible text overflows the window.
 //
-// Result: %TEMP%\natcatty-selftest-20.json. The steps close their temporary
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-20.json. The steps close their temporary
 // store and remove their directory, so F11,2,0 passes twice in one process.
 
 import (

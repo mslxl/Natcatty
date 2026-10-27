@@ -11,6 +11,7 @@ import (
 
 	appaplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // Problem identifies the unlock failure the view must localize.
@@ -143,7 +144,7 @@ func (g *Gate) lockScreen(c *ui.Context) {
 		})
 
 		if message := problemText(m, g.problem); message != "" {
-			ui.Text(c, message).TextColor(t.Danger)
+			ui.Text(c, message).TextColor(uitheme.DangerText(t))
 		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,42 @@ func install(harness *Harness, content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		harness.Bind(c)
 		view(c)
+	}
+}
+
+// TestDefaultResultDirIsPrivateToTheProcess is the ticket 61 isolation
+// regression: the default result path must not be the shared system temp
+// directory, so two check processes cannot overwrite each other's result.
+func TestDefaultResultDirIsPrivateToTheProcess(t *testing.T) {
+	dir := DefaultResultDir()
+	if dir == os.TempDir() || dir == filepath.Clean(os.TempDir()) {
+		t.Fatalf("DefaultResultDir = %q, which is the shared temp directory", dir)
+	}
+	if !strings.Contains(dir, strconv.Itoa(os.Getpid())) {
+		t.Fatalf("DefaultResultDir = %q, want the process id %d", dir, os.Getpid())
+	}
+	if !strings.HasPrefix(dir, os.TempDir()) {
+		t.Fatalf("DefaultResultDir = %q, want it under %q", dir, os.TempDir())
+	}
+}
+
+// TestHarnessCreatesItsResultDirectory proves a missing result directory is
+// created on demand instead of failing the check, which is what a per-process
+// directory under %TEMP% needs on its first run.
+func TestHarnessCreatesItsResultDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "result")
+	harness := NewHarness(nil, WithResultDir(dir))
+	harness.result = Result{Ticket: 61, Pass: true}
+	harness.write()
+	if !harness.result.Pass {
+		t.Fatalf("write failed: %v", harness.result.Errors)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "natcatty-selftest-61.json"))
+	if err != nil {
+		t.Fatalf("read the written result: %v", err)
+	}
+	if !strings.Contains(string(data), `"pass": true`) {
+		t.Fatalf("written result = %s", data)
 	}
 }
 

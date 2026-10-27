@@ -11,7 +11,7 @@ package app
 // The check runs
 // on the UI thread one step per frame, so the event loop is never blocked.
 //
-// Result: %TEMP%\natcatty-selftest-13.json (os.TempDir on other platforms),
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-13.json (os.TempDir on other platforms),
 // holding pass, steps, errors, and timestamp. The overlay shows the same
 // PASS/FAIL status and the path.
 //
@@ -28,7 +28,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -52,9 +51,10 @@ const (
 // bridge reads it on the UI thread.
 var activeSelftest *selftest.Harness
 
-// selftestResultDir is os.TempDir in the app; the selftest-tagged tests point
-// it at a temporary directory so they do not write the documented %TEMP% file.
-var selftestResultDir = os.TempDir()
+// selftestResultDir is a per-process directory in the app, so two running
+// instances never overwrite each other's result; the selftest-tagged tests
+// point it at a temporary directory so they do not write the documented file.
+var selftestResultDir = selftest.DefaultResultDir()
 
 // installSelftest registers ticket 13's check and attaches the overlay to the
 // main window. It is called only from selftest-tagged builds.
@@ -114,6 +114,7 @@ func installSelftest(windows *windowManager, shellState *state.State,
 	registry.Register((&selftest56{}).check())
 	registry.Register((&selftest57{}).check())
 	registry.Register((&selftest58{}).check())
+	registry.Register((&selftest61{}).check())
 	activeSelftest = selftest.NewHarness(registry,
 		selftest.WithResultDir(selftestResultDir),
 	)

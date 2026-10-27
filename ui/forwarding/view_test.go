@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
+	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -125,6 +126,72 @@ func TestViewLocalizesFormProblems(t *testing.T) {
 	if !tt.HasText(locales.In("es").VaultForwardingProblemLocalPortInvalid()) {
 		t.Fatalf("editor does not show the Spanish problem, texts %q", tt.Texts())
 	}
+}
+
+// TestEditorKeepsActionsAndProblemPinnedAtTheMinimumWindow is the ticket 61
+// regression for the forwarding editor: at 704x421 a long Host list must not
+// push Save, Cancel, or the save failure below the window. The last form row
+// scrolls fully above the pinned actions.
+func TestEditorKeepsActionsAndProblemPinnedAtTheMinimumWindow(t *testing.T) {
+	hosts := make([]domainvault.Host, 0, 12)
+	for index := 0; index < 12; index++ {
+		hosts = append(hosts, domainvault.Host{
+			ID:    domainvaultHostID(index),
+			Label: "bastion-" + string(rune('a'+index)),
+		})
+	}
+	state := newState(t, newFakeService(), hosts...)
+	state.BeginCreate()
+	*state.Form() = validForm()
+	state.Form().HostID = string(hosts[0].ID)
+	state.Form().LocalPort = "not-a-port"
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	tt := ui.NewTester(View(state), 704, 421)
+	tt.SetLocale("en")
+	tt.Frame()
+
+	m := locales.In("en")
+	inside := func(name string) ui.Rect {
+		t.Helper()
+		rect, ok := tt.Find(name)
+		if !ok {
+			t.Fatalf("704x421 does not render %q, texts %q", name, tt.Texts())
+		}
+		if rect.X < -0.5 || rect.Y < -0.5 ||
+			rect.X+rect.W > 704.5 || rect.Y+rect.H > 421.5 {
+			t.Fatalf("704x421 clips %q: %+v", name, rect)
+		}
+		return rect
+	}
+	save := inside(m.VaultHostSave())
+	inside(m.VaultHostCancel())
+	problem := inside(m.VaultForwardingProblemLocalPortInvalid())
+	if problem.Y+problem.H > save.Y+0.5 {
+		t.Fatalf("the save problem is below the pinned actions: problem %+v save %+v", problem, save)
+	}
+
+	// The last form row starts below the fold or close to it; scrolling must
+	// bring it fully above the pinned action bar.
+	tt.Scroll(352, 180, 0, 4000)
+	tt.Frame()
+	enabled, ok := tt.Find(m.VaultForwardingEnabled())
+	if !ok || enabled.W <= 0 || enabled.H <= 0 {
+		t.Fatalf("the last form row is not reachable by scrolling: %+v (%v)", enabled, ok)
+	}
+	if enabled.Y < 0 || enabled.Y+enabled.H > save.Y+0.5 {
+		t.Fatalf("the last form row did not clear the pinned actions: row %+v save %+v", enabled, save)
+	}
+	// The problem stays pinned above the actions after scrolling.
+	problem = inside(m.VaultForwardingProblemLocalPortInvalid())
+	if problem.Y+problem.H > save.Y+0.5 {
+		t.Fatalf("scrolling moved the save problem under the actions: problem %+v save %+v", problem, save)
+	}
+}
+
+func domainvaultHostID(index int) model.HostID {
+	return model.HostID("host-" + string(rune('a'+index)))
 }
 
 func TestViewDeleteConfirmationNamesTheRule(t *testing.T) {

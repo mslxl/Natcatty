@@ -8,7 +8,7 @@ package app
 // that neither path creates a second live terminal view, and that both entry
 // points and the observer fit the supported window sizes.
 //
-// Result: %TEMP%\natcatty-selftest-19.json. The steps close the Session they
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-19.json. The steps close the Session they
 // opened and remove their temporary directory, so F11,1,9 passes twice in one
 // process.
 
