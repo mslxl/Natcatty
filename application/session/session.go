@@ -919,6 +919,19 @@ func (s *Service) SetChangeHook(fn func(Snapshot)) {
 	s.mu.Unlock()
 }
 
+// Close closes one live Session by ID. It reports whether the Session was
+// registered; the close itself is idempotent and asynchronous, matching
+// Session.Close.
+func (s *Service) Close(id model.SessionID) (bool, error) {
+	s.mu.Lock()
+	session, ok := s.sessions[id]
+	s.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	return true, session.Close()
+}
+
 // CloseAll closes every live Session and stops accepting new ones.
 func (s *Service) CloseAll() {
 	s.mu.Lock()

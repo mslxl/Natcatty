@@ -38,6 +38,11 @@ const (
 	// ContextResourceURI is the environment resource the original server
 	// exposed beside the tools.
 	ContextResourceURI = "netcatty://context"
+
+	// reservedClientArgument carries the clientInfo identity to the app. It is
+	// transport metadata, never a tool argument, and is excluded from approval
+	// summaries.
+	reservedClientArgument = "_mcpClient"
 )
 
 // JSON-RPC protocol error codes.
@@ -57,6 +62,10 @@ type Caller interface {
 type Server struct {
 	caller     Caller
 	visibility *catalog.Visibility
+	// clientID is the sanitized clientInfo from initialize. It is forwarded as
+	// the reserved _mcpClient argument so the app can show which client is
+	// asking for approval.
+	clientID string
 }
 
 // NewServer starts a session with the original 14 core tools plus the loader.
@@ -149,8 +158,13 @@ func (s *Server) handleLine(ctx context.Context, line []byte, out io.Writer) err
 func (s *Server) initialize(params json.RawMessage) (any, *mcprpc.RPCError) {
 	var body struct {
 		ProtocolVersion string `json:"protocolVersion"`
+		ClientInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
 	}
 	_ = json.Unmarshal(params, &body)
+	s.clientID = clientLabel(body.ClientInfo.Name, body.ClientInfo.Version)
 	version := supportedProtocolVersion(body.ProtocolVersion)
 	return map[string]any{
 		"protocolVersion": version,
@@ -208,6 +222,9 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, any
 	}
 	if body.Arguments == nil {
 		body.Arguments = map[string]any{}
+	}
+	if s.clientID != "" {
+		body.Arguments[reservedClientArgument] = s.clientID
 	}
 	if body.Name == catalog.LoaderName {
 		return s.loadTools(body.Arguments)
@@ -285,7 +302,9 @@ func (s *Server) readResource(ctx context.Context, id json.RawMessage, params js
 	if err := json.Unmarshal(params, &body); err != nil || body.URI != ContextResourceURI {
 		return writeError(out, id, codeInvalidParams, "Unknown resource")
 	}
-	value, err := s.caller.Call(ctx, "netcatty/getContext", map[string]any{})
+	value, err := s.caller.Call(ctx, "netcatty/getContext", map[string]any{
+		reservedClientArgument: s.clientID,
+	})
 	if err != nil {
 		return writeError(out, id, codeInternal, err.Error())
 	}
@@ -341,13 +360,50 @@ func formatToolResult(value any) (string, bool) {
 }
 
 func rpcErrorText(result map[string]any) string {
-	if message, ok := result["error"].(string); ok && message != "" {
-		return message
+	message := ""
+	if text, ok := result["error"].(string); ok && text != "" {
+		message = text
 	}
-	if code, ok := result["code"]; ok {
-		return fmt.Sprintf("Operation failed (%v)", code)
+	if message == "" {
+		if code, ok := result["code"]; ok {
+			message = fmt.Sprintf("Operation failed (%v)", code)
+		} else {
+			message = "Operation failed"
+		}
 	}
-	return "Operation failed"
+	// A typed policy denial carries a stable protocol code. Keep the message
+	// first so clients that only display text remain readable, and append the
+	// code so an automated client and the end-to-end tests can branch on it.
+	if code, ok := result["code"].(string); ok && code != "" {
+		return message + " (code: " + code + ")"
+	}
+	return message
+}
+
+// clientLabel sanitizes the MCP clientInfo identity. The app shows it in an
+// approval prompt, so control characters and an unbounded name never cross the
+// process boundary.
+func clientLabel(name, version string) string {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" {
+		return ""
+	}
+	label := name
+	if version != "" {
+		label += "/" + version
+	}
+	var builder strings.Builder
+	for _, character := range label {
+		if builder.Len() >= 120 {
+			break
+		}
+		if character < 0x20 || character == 0x7f {
+			continue
+		}
+		builder.WriteRune(character)
+	}
+	return builder.String()
 }
 
 func toolError(text string) map[string]any {

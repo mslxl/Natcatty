@@ -177,20 +177,7 @@ func (b *mcpReadBridge) Call(ctx context.Context, method string, params map[stri
 func (b *mcpReadBridge) environment(ctx context.Context) map[string]any {
 	hosts := make([]any, 0)
 	for _, description := range b.sessions.DescribeAll() {
-		hosts = append(hosts, map[string]any{
-			"sessionId":          string(description.ID),
-			"hostname":           description.Hostname,
-			"label":              description.Label,
-			"os":                 "",
-			"username":           description.Username,
-			"protocol":           string(description.Kind),
-			"shellType":          shellTypeFor(description.Kind),
-			"deviceType":         "",
-			"connected":          description.Connected,
-			"hostId":             string(description.HostID),
-			"hostChain":          []any{},
-			"activePortForwards": []any{},
-		})
+		hosts = append(hosts, sessionHostView(description))
 	}
 	return map[string]any{
 		"environment": "netcatty-terminal",
@@ -220,6 +207,26 @@ func (b *mcpReadBridge) environment(ctx context.Context) map[string]any {
 				"upload":   "sftp_upload",
 			},
 		},
+	}
+}
+
+// sessionHostView is the environment entry for one live Session. The read
+// bridge and the scoped policy handler share it so their host shapes cannot
+// drift apart.
+func sessionHostView(description appsession.SessionDescription) map[string]any {
+	return map[string]any{
+		"sessionId":          string(description.ID),
+		"hostname":           description.Hostname,
+		"label":              description.Label,
+		"os":                 "",
+		"username":           description.Username,
+		"protocol":           string(description.Kind),
+		"shellType":          shellTypeFor(description.Kind),
+		"deviceType":         "",
+		"connected":          description.Connected,
+		"hostId":             string(description.HostID),
+		"hostChain":          []any{},
+		"activePortForwards": []any{},
 	}
 }
 
@@ -867,6 +874,26 @@ type externalMCP struct {
 	closeOnce     sync.Once
 }
 
+// externalMCPOption customizes the listener without changing the ticket-56
+// startExternalMCP call shape.
+type externalMCPOption func(*externalMCPConfig)
+
+type externalMCPConfig struct {
+	handler mcprpc.Handler
+	mode    *mcpModeState
+}
+
+// withMCPHandler serves a policy handler instead of the bare read bridge.
+func withMCPHandler(handler mcprpc.Handler) externalMCPOption {
+	return func(config *externalMCPConfig) { config.handler = handler }
+}
+
+// withMCPModeState makes the discovery file's permissionMode authoritative and
+// lets Settings rewrite it.
+func withMCPModeState(mode *mcpModeState) externalMCPOption {
+	return func(config *externalMCPConfig) { config.mode = mode }
+}
+
 // runningExternalMCP is the listener run() started, published so the selftest
 // build can authenticate against the production surface. It stays nil when the
 // listener failed to start and when a test builds the window graph directly.
@@ -876,7 +903,11 @@ var runningExternalMCP *externalMCP
 // discovery file. The listener is bound before the file is written, so a
 // client that reads the file can always connect.
 func startExternalMCP(parent context.Context, bridge *mcpReadBridge,
-	discoveryPath string, logf func(string, ...any)) (*externalMCP, error) {
+	discoveryPath string, logf func(string, ...any), options ...externalMCPOption) (*externalMCP, error) {
+	config := externalMCPConfig{}
+	for _, option := range options {
+		option(&config)
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("external MCP: listen: %w", err)
@@ -889,17 +920,25 @@ func startExternalMCP(parent context.Context, bridge *mcpReadBridge,
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	server := mcprpc.NewServer(token, mcprpc.HandlerFunc(bridge.Handle))
+	handler := config.handler
+	if handler == nil {
+		handler = mcprpc.HandlerFunc(bridge.Handle)
+	}
+	server := mcprpc.NewServer(token, handler)
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx, listener) }()
 
+	mode := "confirm"
+	if config.mode != nil {
+		mode = string(config.mode.Get())
+	}
 	if _, err := mcprpc.WriteDiscovery(discoveryPath, mcprpc.Discovery{
 		Host:           "127.0.0.1",
 		Port:           port,
 		Token:          token,
 		PID:            os.Getpid(),
-		PermissionMode: "confirm",
+		PermissionMode: mode,
 		ChatSessionID:  mcprpc.ExternalScope,
 	}); err != nil {
 		cancel()
