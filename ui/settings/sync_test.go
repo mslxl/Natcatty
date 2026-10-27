@@ -248,3 +248,73 @@ func TestSyncSectionLocalizesWorkerErrors(t *testing.T) {
 		t.Errorf("raw Go error text was rendered: %q", tester.Texts())
 	}
 }
+
+// TestSyncProviderPromptsUseTheAccessibleDangerTextColor renders both
+// providers' plain-HTTP confirmation prompts and checks the warning body text
+// against the pixels, so a provider cannot keep the raw theme danger token.
+func TestSyncProviderPromptsUseTheAccessibleDangerTextColor(t *testing.T) {
+	m := locales.In("en")
+	want := syncDangerTextColor(ui.LightTheme())
+	raw := ui.LightTheme().Danger
+
+	webdavService := newFakeWebDAVSyncService()
+	webdavService.snapshot = appsync.Snapshot{
+		Connected: true, Provider: appsync.ProviderWebDAV, HasPassword: true,
+		WebDAVEndpoint: "http://dav.test/dav", WebDAVAuthType: domainsync.WebDAVAuthBasic,
+		WebDAVInsecure: true,
+	}
+	webdavState := NewSyncState(webdavService)
+	webdavState.SyncNow()
+	waitSyncIdle(t, webdavState)
+
+	s3Service := newFakeS3SyncService()
+	s3Service.snapshot = appsync.Snapshot{
+		Connected: true, Provider: appsync.ProviderS3, HasPassword: true,
+		S3Endpoint: "http://s3.test", S3Region: "us-east-1", S3Bucket: "vault",
+		S3Insecure: true, Status: appsync.StatusFailed, Problem: appsync.ProblemInsecureEndpoint,
+	}
+	s3State := NewSyncState(s3Service)
+	s3State.SyncNow()
+	waitSyncIdle(t, s3State)
+
+	for _, test := range []struct {
+		name    string
+		state   *SyncState
+		warning string
+	}{
+		{"webdav", webdavState, m.SettingsSyncWebDAVInsecureWarning()},
+		{"s3", s3State, m.SettingsSyncS3InsecureWarning()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tester := ui.NewTester(viewAt(AreaSync, Config{Sync: test.state}), 1100, 720)
+			tester.Frame()
+			rect, ok := tester.Find(test.warning)
+			if !ok {
+				t.Fatalf("the confirmation warning %q is not rendered: %q", test.warning, tester.Texts())
+			}
+			if !testerRectHasColor(tester, rect, want) {
+				t.Errorf("the confirmation warning does not use the accessible danger text color %v", want)
+			}
+			if testerRectHasColor(tester, rect, raw) {
+				t.Errorf("the confirmation warning still uses the raw theme danger text color %v", raw)
+			}
+		})
+	}
+}
+
+// testerRectHasColor reports whether any pixel in rect paints color exactly.
+// Glyph cores carry the text color; anti-aliased edges blend toward the fill.
+func testerRectHasColor(tester *ui.Tester, rect ui.Rect, color ui.Color) bool {
+	img := tester.Image()
+	left, top := max(int(rect.X), img.Rect.Min.X), max(int(rect.Y), img.Rect.Min.Y)
+	right, bottom := min(int(rect.X+rect.W), img.Rect.Max.X), min(int(rect.Y+rect.H), img.Rect.Max.Y)
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			offset := img.PixOffset(x, y)
+			if img.Pix[offset] == color.R && img.Pix[offset+1] == color.G && img.Pix[offset+2] == color.B {
+				return true
+			}
+		}
+	}
+	return false
+}
