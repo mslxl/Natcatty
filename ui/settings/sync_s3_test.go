@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -366,5 +367,60 @@ func TestSyncWarningTextColorKeepsLightModeReadable(t *testing.T) {
 	dark := &ui.Theme{Dark: true, Warning: ui.Hex("#fbbf24")}
 	if got := syncWarningTextColor(dark); got != dark.Warning {
 		t.Fatalf("dark warning text = %+v, want the theme warning", got)
+	}
+}
+
+func TestSyncDangerTextColorKeepsLightModeReadable(t *testing.T) {
+	// The theme destructive token is tuned for borders and filled buttons. As
+	// 12-point body text on the light sync panel's Snow fill it measures about
+	// 4.47:1, below the 4.5:1 target, so light mode uses a darker red while
+	// dark mode keeps the theme token.
+	light := &ui.Theme{Danger: ui.Hex("#d92626")}
+	want := ui.Hex("#b51616")
+	if got := syncDangerTextColor(light); got != want {
+		t.Fatalf("light danger text = %+v, want the darker red", got)
+	}
+	dark := &ui.Theme{Dark: true, Danger: ui.Hex("#ef4444")}
+	if got := syncDangerTextColor(dark); got != dark.Danger {
+		t.Fatalf("dark danger text = %+v, want the theme danger", got)
+	}
+
+	// The prompt's fill is the theme background: the default light preset
+	// (Snow) paints rgb(241,244,248), and a light theme with a white
+	// background is possible too. Compute contrast from the WCAG definition
+	// rather than from the helper, so the pinned color has to clear 4.5:1 on
+	// its own.
+	textLuminance, ok := domaintheme.HexLuminance("#b51616")
+	if !ok {
+		t.Fatal("the pinned danger color is not a hex color")
+	}
+	for _, background := range []string{"#f1f4f8", "#ffffff"} {
+		backgroundLuminance, ok := domaintheme.HexLuminance(background)
+		if !ok {
+			t.Fatalf("%s is not a hex color", background)
+		}
+		if ratio := domaintheme.ContrastRatio(textLuminance, backgroundLuminance); ratio < 4.5 {
+			t.Errorf("danger text on %s = %.2f:1, want at least 4.5:1", background, ratio)
+		}
+	}
+	// A user can pick any light preset, and the prompt fills with its
+	// background token, so the one fixed light red must clear the target on
+	// every one of them.
+	for _, preset := range domaintheme.LightPresets() {
+		background, ok := domaintheme.ParseHSL(preset.Tokens.Background)
+		if !ok {
+			t.Fatalf("preset %s has an unparseable background %q", preset.ID, preset.Tokens.Background)
+		}
+		if ratio := domaintheme.ContrastRatio(textLuminance, background.RelativeLuminance()); ratio < 4.5 {
+			t.Errorf("danger text on preset %s = %.2f:1, want at least 4.5:1", preset.ID, ratio)
+		}
+	}
+
+	// The premise: the raw theme token really does fall short on the Snow
+	// fill, so this test would catch a regression to it.
+	rawLuminance, _ := domaintheme.HexLuminance("#d92626")
+	snowLuminance, _ := domaintheme.HexLuminance("#f1f4f8")
+	if ratio := domaintheme.ContrastRatio(rawLuminance, snowLuminance); ratio >= 4.5 {
+		t.Fatalf("the raw theme danger measures %.2f:1 on Snow; the fix would be unnecessary", ratio)
 	}
 }

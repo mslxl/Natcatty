@@ -1188,6 +1188,19 @@ func syncWarningTextColor(t *ui.Theme) ui.Color {
 	return ui.Hex("#9a5c00")
 }
 
+// syncDangerTextColor keeps danger text readable at the 12-point body size of
+// the confirmations. The theme's destructive token is tuned for borders and
+// filled buttons; as body text on the light sync panel it measures about
+// 4.47:1, below the 4.5:1 target, so light mode uses a darker red that clears
+// the target on the default Snow fill (6.16:1) and on white (6.79:1), and on
+// every light preset's fill (at least 4.79:1). Dark mode keeps the theme token.
+func syncDangerTextColor(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return t.Danger
+	}
+	return ui.Hex("#b51616")
+}
+
 // syncS3Form renders the endpoint, region, bucket, prefix, and signing fields.
 // The secret access key and session token are masked; the access key id is an
 // identifier rather than a secret, but it is cleared after a successful
@@ -1257,7 +1270,7 @@ func syncInsecurePrompt(c *ui.Context, state *SyncState, endpointText, warning s
 		if endpointText != "" {
 			ui.Text(c, endpointText).FontSize(11).TextColor(t.TextMuted)
 		}
-		ui.Text(c, warning).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, warning).FontSize(12).TextColor(syncDangerTextColor(t))
 		ui.Row(c).Gap(8).Children(func() {
 			label := m.SettingsSyncWebDAVInsecureConfirm()
 			if state.InsecureSyncPrompt() {
