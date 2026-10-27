@@ -63,6 +63,11 @@ type ConvergentConfig struct {
 	VerifiedPayload   string `json:"verifiedPayload,omitempty"`
 	VerifiedSignature string `json:"verifiedSignature,omitempty"`
 	LastVerifiedAt    int64  `json:"lastVerifiedAt,omitempty"`
+	// EntityCount and ConflictCount describe the last verified state. They are
+	// persisted so a restarted profile reports the real numbers instead of
+	// zeros and a fabricated round.
+	EntityCount   int `json:"entityCount,omitempty"`
+	ConflictCount int `json:"conflictCount,omitempty"`
 	// PendingApply records that the provider was verified but the local Vault
 	// apply did not finish. The next sync reapplies the materialization before
 	// treating the stale Vault as local edits.
@@ -134,7 +139,8 @@ func convergentInfoFor(config Config) ConvergentInfo {
 	info := ConvergentInfo{
 		SchemaVersion:  config.Convergent.SchemaVersion,
 		Enabled:        config.Convergent.Enabled,
-		TotalRounds:    ConvergentVerifyRounds,
+		EntityCount:    config.Convergent.EntityCount,
+		ConflictCount:  config.Convergent.ConflictCount,
 		LastVerifiedAt: config.Convergent.LastVerifiedAt,
 	}
 	switch {
@@ -883,6 +889,28 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.finishSync(ProblemPasswordRequired)
 		return ConvergentMigrationPreview{}, ErrPasswordRequired
 	}
+	if enabled && config.PendingConflict != nil {
+		// The pending conflict keeps the losing cloud envelope only in this
+		// device's encrypted conflict record. Migrating now would clear that
+		// record and publish v2 without retaining the only copy of those
+		// bytes, so refuse before any provider or local write.
+		preview := ConvergentMigrationPreview{
+			SchemaVersion: domainsync.ConvergentSchemaVersion,
+			BlockedReasons: []ConvergentBlockedReason{{
+				Code:   "pending-conflict",
+				Detail: fmt.Sprintf("%d unresolved conflict items", len(config.PendingConflict.Items)),
+			}},
+		}
+		s.setConvergentInfo(ConvergentInfo{
+			SchemaVersion: config.Convergent.SchemaVersion,
+			Enabled:       config.Convergent.Enabled,
+			Phase:         "blocked",
+			Migration:     &preview,
+			ConflictCount: len(config.PendingConflict.Items),
+		})
+		s.finishSync(ProblemConvergentMigration)
+		return preview, fmt.Errorf("%w: pending-conflict", ErrConvergentMigration)
+	}
 	if !enabled {
 		if config.Convergent.SchemaVersion == 0 {
 			return ConvergentMigrationPreview{SchemaVersion: domainsync.ConvergentSchemaVersion, CanInitialize: true}, nil
@@ -977,7 +1005,6 @@ func (s *Service) SetConvergentEnabled(ctx context.Context, enabled bool) (Conve
 		s.setConvergentInfo(ConvergentInfo{
 			SchemaVersion: 0,
 			Phase:         "blocked",
-			TotalRounds:   ConvergentVerifyRounds,
 			Migration:     &preview,
 		})
 		s.finishSync(ProblemConvergentMigration)
@@ -1280,7 +1307,10 @@ func (s *Service) syncConvergent(
 	}
 
 	if strategy == domainsync.StrategyPreferLocal {
-		state, stateChanged, err = domainsync.ApplyConvergentSnapshot(state, localSnapshot, config.DeviceID, s.now().UnixMilli(), true)
+		// Only write values that actually differ from the joined state. A
+		// converged repeat must not allocate fresh dots: force-writing every
+		// field would turn each repeat into a provider write.
+		state, stateChanged, err = domainsync.ApplyConvergentSnapshot(state, localSnapshot, config.DeviceID, s.now().UnixMilli(), false)
 		if err != nil {
 			return fail(ProblemLocal, "failed", err)
 		}
@@ -1327,9 +1357,21 @@ func (s *Service) syncConvergent(
 	remoteAffecting := remoteChanged
 	backupRetained := false
 	verifiedRemote := convergentRemote{}
-	success := false
 	var lastErr error
-	for round := 1; round <= ConvergentVerifyRounds; round++ {
+	success := false
+	retriedFinal := false
+	nextRound := func(round int) int {
+		// A failed final round can be ordinary concurrency: another device
+		// wrote between our write and read-back. Genuine divergence returns
+		// from the body immediately, so a remaining failure is retried once,
+		// still reported as round 3, before it is called unstable.
+		if round == ConvergentVerifyRounds && !success && !retriedFinal {
+			retriedFinal = true
+			return ConvergentVerifyRounds
+		}
+		return round + 1
+	}
+	for round := 1; round <= ConvergentVerifyRounds; round = nextRound(round) {
 		kind := roundKind(round)
 		s.mergeConvergentInfo(func(info *ConvergentInfo) {
 			info.Phase = "verifying"
@@ -1473,6 +1515,11 @@ func (s *Service) syncConvergent(
 		if lastErr == nil {
 			lastErr = fmt.Errorf("%w: replicas did not converge", ErrConvergentDivergence)
 		}
+		if !errors.Is(lastErr, ErrConvergentDivergence) {
+			// A provider write failure or a malformed read-back is an I/O
+			// outcome, not a disagreement between replica states.
+			return fail(problemFor(lastErr), "failed", lastErr)
+		}
 		divergence := &domainsync.ConvergentDivergence{
 			Kind:   "unstable-replicas",
 			Detail: "the provider did not satisfy all three verification rounds: " + lastErr.Error(),
@@ -1559,6 +1606,10 @@ func (s *Service) persistVerifiedConvergent(config Config, state domainsync.Conv
 	if err != nil {
 		return err
 	}
+	materialized, err := domainsync.MaterializeConvergentSnapshot(state)
+	if err != nil {
+		return err
+	}
 	config = s.currentConfig()
 	config.Convergent.SchemaVersion = domainsync.ConvergentSchemaVersion
 	config.Convergent.Enabled = true
@@ -1567,6 +1618,8 @@ func (s *Service) persistVerifiedConvergent(config Config, state domainsync.Conv
 	config.Convergent.VerifiedPayload = verifiedBlob
 	config.Convergent.VerifiedSignature = verifiedSignature
 	config.Convergent.LastVerifiedAt = s.now().UnixMilli()
+	config.Convergent.EntityCount = snapshotEntityCount(materialized)
+	config.Convergent.ConflictCount = domainsync.ConvergentConflictCount(state)
 	config.Convergent.PendingApply = pendingApply
 	config.AnchorVersion = AnchorVersion
 	config.SyncBase = anchorBlob
