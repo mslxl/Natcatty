@@ -20505,3 +20505,379 @@ func SettingsSyncProblemConvergentPaused() string {
 func (msgs Messages) SettingsSyncProblemConvergentPaused() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentPaused", nil)
 }
+
+// SettingsAreaMCP says "External MCP"
+// in the language the app shows.
+func SettingsAreaMCP() string { return In(i18n.Locale()).SettingsAreaMCP() }
+
+// SettingsAreaMCP says "External MCP"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaMCP() string {
+	return Catalog.Format(msgs.locale, "settingsAreaMCP", nil)
+}
+
+// SettingsMCPDescription says "Control how an external MCP client may use this app: its Session scope, permission mode, and approval requests."
+// in the language the app shows.
+func SettingsMCPDescription() string { return In(i18n.Locale()).SettingsMCPDescription() }
+
+// SettingsMCPDescription says "Control how an external MCP client may use this app: its Session scope, permission mode, and approval requests."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPDescription() string {
+	return Catalog.Format(msgs.locale, "settingsMCPDescription", nil)
+}
+
+// SettingsMCPMode says "Permission mode"
+// in the language the app shows.
+func SettingsMCPMode() string { return In(i18n.Locale()).SettingsMCPMode() }
+
+// SettingsMCPMode says "Permission mode"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPMode() string {
+	return Catalog.Format(msgs.locale, "settingsMCPMode", nil)
+}
+
+// SettingsMCPModeObserver says "Observer"
+// in the language the app shows.
+func SettingsMCPModeObserver() string { return In(i18n.Locale()).SettingsMCPModeObserver() }
+
+// SettingsMCPModeObserver says "Observer"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeObserver() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeObserver", nil)
+}
+
+// SettingsMCPModeConfirm says "Confirm every write"
+// in the language the app shows.
+func SettingsMCPModeConfirm() string { return In(i18n.Locale()).SettingsMCPModeConfirm() }
+
+// SettingsMCPModeConfirm says "Confirm every write"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeConfirm", nil)
+}
+
+// SettingsMCPModeAuto says "Automatic"
+// in the language the app shows.
+func SettingsMCPModeAuto() string { return In(i18n.Locale()).SettingsMCPModeAuto() }
+
+// SettingsMCPModeAuto says "Automatic"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeAuto() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeAuto", nil)
+}
+
+// SettingsMCPModeObserverDescription says "Reads are allowed. Every write is denied, except session_close and terminal_stop."
+// in the language the app shows.
+func SettingsMCPModeObserverDescription() string {
+	return In(i18n.Locale()).SettingsMCPModeObserverDescription()
+}
+
+// SettingsMCPModeObserverDescription says "Reads are allowed. Every write is denied, except session_close and terminal_stop."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeObserverDescription() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeObserverDescription", nil)
+}
+
+// SettingsMCPModeConfirmDescription says "Every write asks for approval first. Reads are allowed. An approval expires 110 seconds after it is requested."
+// in the language the app shows.
+func SettingsMCPModeConfirmDescription() string {
+	return In(i18n.Locale()).SettingsMCPModeConfirmDescription()
+}
+
+// SettingsMCPModeConfirmDescription says "Every write asks for approval first. Reads are allowed. An approval expires 110 seconds after it is requested."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeConfirmDescription() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeConfirmDescription", nil)
+}
+
+// SettingsMCPModeAutoDescription says "Writes run without an approval prompt. Scope, allowlist, and ownership still apply."
+// in the language the app shows.
+func SettingsMCPModeAutoDescription() string {
+	return In(i18n.Locale()).SettingsMCPModeAutoDescription()
+}
+
+// SettingsMCPModeAutoDescription says "Writes run without an approval prompt. Scope, allowlist, and ownership still apply."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPModeAutoDescription() string {
+	return Catalog.Format(msgs.locale, "settingsMCPModeAutoDescription", nil)
+}
+
+// SettingsMCPScope says "Forced scope"
+// in the language the app shows.
+func SettingsMCPScope() string { return In(i18n.Locale()).SettingsMCPScope() }
+
+// SettingsMCPScope says "Forced scope"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPScope() string {
+	return Catalog.Format(msgs.locale, "settingsMCPScope", nil)
+}
+
+// SettingsMCPScopeValue says "{scope}"
+// in the language the app shows.
+func SettingsMCPScopeValue(scope string) string {
+	return In(i18n.Locale()).SettingsMCPScopeValue(scope)
+}
+
+// SettingsMCPScopeValue says "{scope}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPScopeValue(scope string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPScopeValue", map[string]any{"scope": scope})
+}
+
+// SettingsMCPSessions says "Shared Sessions"
+// in the language the app shows.
+func SettingsMCPSessions() string { return In(i18n.Locale()).SettingsMCPSessions() }
+
+// SettingsMCPSessions says "Shared Sessions"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSessions() string {
+	return Catalog.Format(msgs.locale, "settingsMCPSessions", nil)
+}
+
+// SettingsMCPSessionsValue says "{sessions}"
+// in the language the app shows.
+func SettingsMCPSessionsValue(sessions string) string {
+	return In(i18n.Locale()).SettingsMCPSessionsValue(sessions)
+}
+
+// SettingsMCPSessionsValue says "{sessions}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSessionsValue(sessions string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPSessionsValue", map[string]any{"sessions": sessions})
+}
+
+// SettingsMCPNoSessions says "No Sessions are shared. Clients cannot read Session data."
+// in the language the app shows.
+func SettingsMCPNoSessions() string { return In(i18n.Locale()).SettingsMCPNoSessions() }
+
+// SettingsMCPNoSessions says "No Sessions are shared. Clients cannot read Session data."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPNoSessions() string {
+	return Catalog.Format(msgs.locale, "settingsMCPNoSessions", nil)
+}
+
+// SettingsMCPGeneration says "Ownership generation: {generation}"
+// in the language the app shows.
+func SettingsMCPGeneration(generation string) string {
+	return In(i18n.Locale()).SettingsMCPGeneration(generation)
+}
+
+// SettingsMCPGeneration says "Ownership generation: {generation}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPGeneration(generation string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPGeneration", map[string]any{"generation": generation})
+}
+
+// SettingsMCPBypassHint says "session_close and terminal_stop never ask for approval, but they still obey scope, the allowlist, and ownership."
+// in the language the app shows.
+func SettingsMCPBypassHint() string { return In(i18n.Locale()).SettingsMCPBypassHint() }
+
+// SettingsMCPBypassHint says "session_close and terminal_stop never ask for approval, but they still obey scope, the allowlist, and ownership."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPBypassHint() string {
+	return Catalog.Format(msgs.locale, "settingsMCPBypassHint", nil)
+}
+
+// SettingsMCPApprovalTitle says "Approval required"
+// in the language the app shows.
+func SettingsMCPApprovalTitle() string { return In(i18n.Locale()).SettingsMCPApprovalTitle() }
+
+// SettingsMCPApprovalTitle says "Approval required"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalTitle", nil)
+}
+
+// SettingsMCPApprovalExpiredTitle says "Approval expired"
+// in the language the app shows.
+func SettingsMCPApprovalExpiredTitle() string {
+	return In(i18n.Locale()).SettingsMCPApprovalExpiredTitle()
+}
+
+// SettingsMCPApprovalExpiredTitle says "Approval expired"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalExpiredTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalExpiredTitle", nil)
+}
+
+// SettingsMCPApprovalClient says "Client: {client}"
+// in the language the app shows.
+func SettingsMCPApprovalClient(client string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalClient(client)
+}
+
+// SettingsMCPApprovalClient says "Client: {client}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalClient(client string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalClient", map[string]any{"client": client})
+}
+
+// SettingsMCPUnknownClient says "Unknown client"
+// in the language the app shows.
+func SettingsMCPUnknownClient() string { return In(i18n.Locale()).SettingsMCPUnknownClient() }
+
+// SettingsMCPUnknownClient says "Unknown client"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPUnknownClient() string {
+	return Catalog.Format(msgs.locale, "settingsMCPUnknownClient", nil)
+}
+
+// SettingsMCPApprovalTool says "Tool: {tool}"
+// in the language the app shows.
+func SettingsMCPApprovalTool(tool string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalTool(tool)
+}
+
+// SettingsMCPApprovalTool says "Tool: {tool}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalTool(tool string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalTool", map[string]any{"tool": tool})
+}
+
+// SettingsMCPApprovalTarget says "Target: {target}"
+// in the language the app shows.
+func SettingsMCPApprovalTarget(target string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalTarget(target)
+}
+
+// SettingsMCPApprovalTarget says "Target: {target}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalTarget(target string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalTarget", map[string]any{"target": target})
+}
+
+// SettingsMCPApprovalScope says "Scope: {scope}"
+// in the language the app shows.
+func SettingsMCPApprovalScope(scope string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalScope(scope)
+}
+
+// SettingsMCPApprovalScope says "Scope: {scope}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalScope(scope string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalScope", map[string]any{"scope": scope})
+}
+
+// SettingsMCPApprovalSummary says "Arguments: {summary}"
+// in the language the app shows.
+func SettingsMCPApprovalSummary(summary string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalSummary(summary)
+}
+
+// SettingsMCPApprovalSummary says "Arguments: {summary}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalSummary(summary string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalSummary", map[string]any{"summary": summary})
+}
+
+// SettingsMCPApprovalRemaining says "Expires in {seconds} s"
+// in the language the app shows.
+func SettingsMCPApprovalRemaining(seconds string) string {
+	return In(i18n.Locale()).SettingsMCPApprovalRemaining(seconds)
+}
+
+// SettingsMCPApprovalRemaining says "Expires in {seconds} s"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalRemaining(seconds string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalRemaining", map[string]any{"seconds": seconds})
+}
+
+// SettingsMCPApprovalExpired says "The deadline passed. The waiting call was denied and this approval cannot be replayed."
+// in the language the app shows.
+func SettingsMCPApprovalExpired() string { return In(i18n.Locale()).SettingsMCPApprovalExpired() }
+
+// SettingsMCPApprovalExpired says "The deadline passed. The waiting call was denied and this approval cannot be replayed."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprovalExpired() string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprovalExpired", nil)
+}
+
+// SettingsMCPApprove says "Approve"
+// in the language the app shows.
+func SettingsMCPApprove() string { return In(i18n.Locale()).SettingsMCPApprove() }
+
+// SettingsMCPApprove says "Approve"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPApprove() string {
+	return Catalog.Format(msgs.locale, "settingsMCPApprove", nil)
+}
+
+// SettingsMCPDeny says "Deny"
+// in the language the app shows.
+func SettingsMCPDeny() string { return In(i18n.Locale()).SettingsMCPDeny() }
+
+// SettingsMCPDeny says "Deny"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPDeny() string {
+	return Catalog.Format(msgs.locale, "settingsMCPDeny", nil)
+}
+
+// SettingsMCPDismiss says "Dismiss"
+// in the language the app shows.
+func SettingsMCPDismiss() string { return In(i18n.Locale()).SettingsMCPDismiss() }
+
+// SettingsMCPDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPDismiss() string {
+	return Catalog.Format(msgs.locale, "settingsMCPDismiss", nil)
+}
+
+// SettingsMCPMorePending says "{count, plural, one {# more request is waiting.} other {# more requests are waiting.}}"
+// in the language the app shows.
+func SettingsMCPMorePending(count int) string { return In(i18n.Locale()).SettingsMCPMorePending(count) }
+
+// SettingsMCPMorePending says "{count, plural, one {# more request is waiting.} other {# more requests are waiting.}}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPMorePending(count int) string {
+	return Catalog.Format(msgs.locale, "settingsMCPMorePending", map[string]any{"count": count})
+}
+
+// SettingsMCPUnavailable says "External MCP is not available in this build."
+// in the language the app shows.
+func SettingsMCPUnavailable() string { return In(i18n.Locale()).SettingsMCPUnavailable() }
+
+// SettingsMCPUnavailable says "External MCP is not available in this build."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsMCPUnavailable", nil)
+}
+
+// SettingsMCPProblemExpired says "The approval expired before it could be used."
+// in the language the app shows.
+func SettingsMCPProblemExpired() string { return In(i18n.Locale()).SettingsMCPProblemExpired() }
+
+// SettingsMCPProblemExpired says "The approval expired before it could be used."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemExpired() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemExpired", nil)
+}
+
+// SettingsMCPProblemStale says "An ownership change invalidated the approval."
+// in the language the app shows.
+func SettingsMCPProblemStale() string { return In(i18n.Locale()).SettingsMCPProblemStale() }
+
+// SettingsMCPProblemStale says "An ownership change invalidated the approval."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemStale() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemStale", nil)
+}
+
+// SettingsMCPProblemInvalid says "The approval was already used or is no longer pending."
+// in the language the app shows.
+func SettingsMCPProblemInvalid() string { return In(i18n.Locale()).SettingsMCPProblemInvalid() }
+
+// SettingsMCPProblemInvalid says "The approval was already used or is no longer pending."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemInvalid", nil)
+}
+
+// SettingsMCPProblemMode says "The permission mode could not be changed."
+// in the language the app shows.
+func SettingsMCPProblemMode() string { return In(i18n.Locale()).SettingsMCPProblemMode() }
+
+// SettingsMCPProblemMode says "The permission mode could not be changed."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemMode() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemMode", nil)
+}

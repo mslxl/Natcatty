@@ -21,12 +21,13 @@ const (
 	AreaSecurity   Area = "security"
 	AreaSync       Area = "sync"
 	AreaShortcuts  Area = "shortcuts"
+	AreaMCP        Area = "mcp"
 )
 
 // Areas returns the sidebar order.
 func Areas() []Area {
 	return []Area{AreaAppearance, AreaTerminal, AreaLayout, AreaSFTPEditor,
-		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts}
+		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts, AreaMCP}
 }
 
 // AreaTitle returns the localized area name.
@@ -50,6 +51,8 @@ func AreaTitle(m locales.Messages, area Area) string {
 		return m.SettingsAreaSync()
 	case AreaShortcuts:
 		return m.SettingsAreaShortcuts()
+	case AreaMCP:
+		return m.SettingsAreaMCP()
 	default:
 		return ""
 	}
@@ -76,6 +79,8 @@ func AreaDescription(m locales.Messages, area Area) string {
 		return m.SettingsSyncDescription()
 	case AreaShortcuts:
 		return m.SettingsShortcutsDescription()
+	case AreaMCP:
+		return m.SettingsMCPDescription()
 	default:
 		return ""
 	}
@@ -201,6 +206,12 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 
 	add(AreaSync, domain.FieldSyncAutoSync, m.SettingsSyncAutoSync(), "auto sync")
 	add(AreaSync, domain.FieldSyncConflictStrategy, m.SettingsSyncConflictStrategy(), "conflict strategy")
+
+	add(AreaMCP, "", m.SettingsMCPMode(), "permission mode observer confirm auto write approval")
+	add(AreaMCP, "", m.SettingsMCPSessions(), "session allowlist scope ownership generation")
+	add(AreaMCP, "", m.SettingsMCPApprovalTitle(), "approval prompt approve deny expiry")
+	add(AreaMCP, "", m.SettingsMCPApprove(), "approve accept")
+	add(AreaMCP, "", m.SettingsMCPDeny(), "deny reject")
 
 	add(AreaShortcuts, "", m.SettingsShortcutScheme(), "scheme mac pc disabled")
 	add(AreaShortcuts, "", m.SettingsShortcutResetAll(), "reset all shortcuts")

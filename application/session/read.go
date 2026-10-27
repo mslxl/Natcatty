@@ -26,6 +26,28 @@ type SessionDescription struct {
 	Connected  bool
 }
 
+// LiveIdentity is the cheap Session identity projection ownership tracking
+// consumes. Unlike SessionDescription it takes no per-Session snapshot.
+type LiveIdentity struct {
+	ID     model.SessionID
+	HostID model.HostID
+}
+
+// LiveIdentities returns every live Session's ID and Host, ordered by ID. It
+// runs on every Session change, so it deliberately avoids snapshotting.
+func (s *Service) LiveIdentities() []LiveIdentity {
+	s.mu.Lock()
+	identities := make([]LiveIdentity, 0, len(s.sessions))
+	for id, session := range s.sessions {
+		identities = append(identities, LiveIdentity{ID: id, HostID: session.spec.HostID})
+	}
+	s.mu.Unlock()
+	sort.Slice(identities, func(left, right int) bool {
+		return identities[left].ID < identities[right].ID
+	})
+	return identities
+}
+
 // Describe returns one Session's projection. A Session that already ended is
 // not described.
 func (s *Service) Describe(id model.SessionID) (SessionDescription, bool) {

@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -48,6 +50,7 @@ import (
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	apphistory "github.com/mslxl/natcatty/application/history"
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
+	appmcp "github.com/mslxl/natcatty/application/mcp"
 	appmonitor "github.com/mslxl/natcatty/application/monitor"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -68,6 +71,7 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
 	uiapplock "github.com/mslxl/natcatty/ui/applock"
 	editorui "github.com/mslxl/natcatty/ui/editor"
@@ -786,13 +790,24 @@ func run(afterReady func(hostWindow)) error {
 	)
 	// The external MCP listener publishes an authenticated loopback pointer so
 	// the natcatty-mcp stdio process can reach the same application services.
-	// It is read-only in this build; a bind or discovery failure is reported
-	// without blocking startup.
-	externalMCPServer, err = startExternalMCP(context.Background(), newMCPReadBridge(
-		vaultService, forwardingManager, sessions, transferService,
-	), externalMCPDiscoveryPath(userData), func(format string, args ...any) {
-		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	// Every request is forced into the synthetic external scope, constrained by
+	// the session allowlist, and evaluated against the discovery-backed
+	// permission mode before any read runs or any action starts. A bind or
+	// discovery failure is reported without blocking startup.
+	mcpBridge := newMCPReadBridge(vaultService, forwardingManager, sessions, transferService)
+	mcpMode := newMCPModeState(externalMCPDiscoveryPath(userData))
+	mcpPolicy := appmcp.NewService(appmcp.Config{
+		ForcedChatSessionID: mcprpc.ExternalScope,
+		Allowlist:           mcpSessionAllowlist(),
+		Mode:                mcpMode.Get,
+		Redraw:              invalidate,
 	})
+	mcpHandler := newMCPPolicyHandler(mcpBridge, mcpPolicy, sessions, sessions, nil)
+	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{policy: mcpPolicy, mode: mcpMode})
+	externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
+		externalMCPDiscoveryPath(userData), func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		}, withMCPHandler(mcpHandler), withMCPModeState(mcpMode))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
 	}
@@ -972,6 +987,7 @@ func run(afterReady func(hostWindow)) error {
 				Shortcuts:    shortcutsState,
 				Search:       searchState,
 				Sync:         syncState,
+				MCP:          mcpSettingsState,
 			})
 		},
 		func() string { return mygo.App.Locale() },
@@ -1144,6 +1160,8 @@ func run(afterReady func(hostWindow)) error {
 		// Terminal widgets consume their own input, so the gate never sees
 		// keystrokes typed there. A Session change (including the echo of
 		// that input) is the observable activity.
+		var mcpObserveMu sync.Mutex
+		mcpObserved := ""
 		sessions.SetChangeHook(func(snapshot appsession.Snapshot) {
 			gate.RecordActivity()
 			shellState.NoteSessionActivity(snapshot.ID)
@@ -1154,6 +1172,36 @@ func run(afterReady func(hostWindow)) error {
 			// Session's Host has a pane; reporting here costs nothing when it
 			// is off.
 			forwardTerminalCwd(sessions, transferState, snapshot)
+			// A Session replaced under the same Host (host re-open, tab
+			// replacement) advances the external scope's ownership generation,
+			// invalidating prior grants and pending approvals. The hook runs for
+			// every output/state change, so only a changed ID/Host set is worth
+			// a policy observation.
+			identities := sessions.LiveIdentities()
+			var signature strings.Builder
+			for _, identity := range identities {
+				signature.WriteString(string(identity.ID))
+				signature.WriteByte('@')
+				signature.WriteString(string(identity.HostID))
+				signature.WriteByte(';')
+			}
+			current := signature.String()
+			mcpObserveMu.Lock()
+			changed := current != mcpObserved
+			if changed {
+				mcpObserved = current
+			}
+			mcpObserveMu.Unlock()
+			if changed {
+				refs := make([]appmcp.SessionRef, 0, len(identities))
+				for _, identity := range identities {
+					refs = append(refs, appmcp.SessionRef{
+						ID:     string(identity.ID),
+						HostID: string(identity.HostID),
+					})
+				}
+				mcpPolicy.ObserveSessions(refs)
+			}
 		})
 
 		// Tabs, splits, and working directories come back; their Sessions open

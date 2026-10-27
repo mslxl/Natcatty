@@ -29,6 +29,7 @@ type Config struct {
 	Shortcuts    *ShortcutsState
 	Search       *SearchState
 	Sync         *SyncState
+	MCP          *MCPState
 }
 
 // viewState owns the Settings window's scroll positions for as long as the
@@ -45,6 +46,7 @@ type viewState struct {
 type viewLayout struct {
 	Content     ui.Handle
 	SyncActions ui.Handle
+	MCPActions  ui.Handle
 }
 
 // View builds the Settings window's native view with App Lock only. The app
@@ -125,6 +127,9 @@ func viewWithSettings(config Config, layout *viewLayout) func(*ui.Context) {
 			if config.Sync != nil && search.Area() == AreaSync {
 				syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
 				syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
+			}
+			if config.MCP != nil && search.Area() == AreaMCP {
+				mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
 			}
 		})
 	}
@@ -288,6 +293,8 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 		syncArea(c, config, m, t)
 	case AreaShortcuts:
 		shortcutsArea(c, config.Shortcuts, m, t)
+	case AreaMCP:
+		mcpArea(c, config.MCP, m, t)
 	}
 }
 
