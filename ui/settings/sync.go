@@ -29,9 +29,9 @@ type SyncService interface {
 }
 
 // ProviderSyncService is the optional capability that lets the setup surface
-// choose between GitHub, Google Drive, OneDrive, and WebDAV. Ticket 49's fake
-// does not implement it, so the selector is hidden rather than forced into
-// that seam.
+// choose between GitHub, Google Drive, OneDrive, WebDAV, and S3. Ticket 49's
+// fake does not implement it, so the selector is hidden rather than forced
+// into that seam.
 type ProviderSyncService interface {
 	SetProvider(ctx context.Context, provider string) error
 }
@@ -44,6 +44,23 @@ type ProviderSyncService interface {
 type WebDAVSyncService interface {
 	ConnectWebDAV(ctx context.Context, password string, settings appsync.WebDAVSettings, confirmInsecure bool) error
 	WebDAVSettings() appsync.WebDAVSettings
+	ConfirmInsecureEndpoint(ctx context.Context) bool
+}
+
+// pendingKind identifies which provider captured the settings frozen behind an
+// outstanding plain-HTTP confirmation. Only one warning can be open at a time.
+const (
+	pendingKindWebDAV = "webdav"
+	pendingKindS3     = "s3"
+)
+
+// S3SyncService is the optional S3-compatible capability. The form passes the
+// user-entered endpoint, region, bucket, prefix, and signing material
+// explicitly; confirmInsecure is true only after the user has seen and
+// accepted the plain-HTTP warning for this exact attempt.
+type S3SyncService interface {
+	ConnectS3(ctx context.Context, password string, settings appsync.S3Settings, confirmInsecure bool) error
+	S3Settings() appsync.S3Settings
 	ConfirmInsecureEndpoint(ctx context.Context) bool
 }
 
@@ -86,9 +103,28 @@ type SyncState struct {
 	// cannot change what is sent.
 	pendingConnect  appsync.WebDAVSettings
 	pendingPassword string
-	insecurePrompt  bool
-	insecureAction  string
-	reconfigure     bool
+	// S3 form state. The access key id, secret access key, and session token
+	// live only in this UI state for the duration of an attempt; after a
+	// successful connect they are cleared, and they are never part of a
+	// snapshot or a log line.
+	s3Loaded          bool
+	s3Endpoint        string
+	s3Region          string
+	s3Bucket          string
+	s3Prefix          string
+	s3AccessKeyID     string
+	s3SecretAccessKey string
+	s3SessionToken    string
+	// pendingS3 and pendingS3Password freeze exactly what the user confirmed
+	// after the plain-HTTP warning.
+	pendingS3         appsync.S3Settings
+	pendingS3Password string
+	// pendingKind is pendingKindWebDAV or pendingKindS3 while a warning confirmation is
+	// outstanding, so ConfirmInsecure knows which frozen settings to retry.
+	pendingKind    string
+	insecurePrompt bool
+	insecureAction string
+	reconfigure    bool
 }
 
 // NewSyncState builds the sync surface from the application service.
@@ -162,8 +198,9 @@ func (s *SyncState) CancelDisconnect() { s.disconnect = false }
 func (s *SyncState) Disconnecting() bool { return s.disconnect }
 
 // Connect starts the provider's authorization with the entered master
-// password. For a WebDAV profile it sends the form's connection settings; a
-// plain-HTTP endpoint first produces the explicit warning confirmation.
+// password. For a WebDAV or S3 profile it sends the form's connection
+// settings; a plain-HTTP endpoint first produces the explicit warning
+// confirmation.
 func (s *SyncState) Connect() {
 	if s.busy {
 		return
@@ -176,6 +213,11 @@ func (s *SyncState) Connect() {
 	if service, ok := s.webDAVService(); ok &&
 		appsync.NormalizeProvider(s.service.Snapshot().Provider) == appsync.ProviderWebDAV {
 		s.connectWebDAV(service, password)
+		return
+	}
+	if service, ok := s.s3Service(); ok &&
+		appsync.NormalizeProvider(s.service.Snapshot().Provider) == appsync.ProviderS3 {
+		s.connectS3(service, password)
 		return
 	}
 	s.busy = true
@@ -203,6 +245,12 @@ func (s *SyncState) webDAVService() (WebDAVSyncService, bool) {
 	return service, ok
 }
 
+// s3Service reports the S3 capability of the current service.
+func (s *SyncState) s3Service() (S3SyncService, bool) {
+	service, ok := s.service.(S3SyncService)
+	return service, ok
+}
+
 // connectWebDAV validates the form, then connects with confirmInsecure=false.
 // The service's gate returns ErrInsecureEndpoint before storing or sending the
 // credential; the view then shows the warning and ConfirmInsecure retries the
@@ -224,6 +272,7 @@ func (s *SyncState) connectWebDAV(service WebDAVSyncService, password string) {
 	s.lastErr = nil
 	s.pendingConnect = settings
 	s.pendingPassword = password
+	s.pendingKind = pendingKindWebDAV
 	state := s
 	go func() {
 		err := state.service.SetPassword(password)
@@ -241,6 +290,7 @@ func (s *SyncState) connectWebDAV(service WebDAVSyncService, password string) {
 				state.lastErr = err
 				state.pendingConnect = appsync.WebDAVSettings{}
 				state.pendingPassword = ""
+				state.pendingKind = ""
 			default:
 				state.lastErr = nil
 				state.password = ""
@@ -248,6 +298,7 @@ func (s *SyncState) connectWebDAV(service WebDAVSyncService, password string) {
 				state.webdavToken = ""
 				state.pendingConnect = appsync.WebDAVSettings{}
 				state.pendingPassword = ""
+				state.pendingKind = ""
 				state.reconfigure = false
 			}
 		})
@@ -269,6 +320,70 @@ func (s *SyncState) webDAVSettings() appsync.WebDAVSettings {
 		settings.Password = s.webdavPassword
 	}
 	return settings
+}
+
+// connectS3 validates the form, then connects with confirmInsecure=false. The
+// service's gate returns ErrInsecureEndpoint before storing or sending the
+// signing material; the view then shows the warning and ConfirmInsecure retries
+// the same captured settings.
+func (s *SyncState) connectS3(service S3SyncService, password string) {
+	settings := s.s3Settings()
+	valid := settings.Endpoint != "" && settings.Region != "" && settings.Bucket != "" &&
+		settings.AccessKeyID != "" && settings.SecretAccessKey != ""
+	if !valid {
+		s.lastErr = appsync.ErrInvalidEndpoint
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	s.pendingS3 = settings
+	s.pendingS3Password = password
+	s.pendingKind = pendingKindS3
+	state := s
+	go func() {
+		err := state.service.SetPassword(password)
+		if err == nil {
+			err = service.ConnectS3(state.ctx, password, settings, false)
+		}
+		state.post(func() {
+			state.busy = false
+			switch {
+			case errors.Is(err, appsync.ErrInsecureEndpoint):
+				state.lastErr = err
+				state.insecurePrompt = true
+				state.insecureAction = "connect"
+			case err != nil:
+				state.lastErr = err
+				state.pendingS3 = appsync.S3Settings{}
+				state.pendingS3Password = ""
+				state.pendingKind = ""
+			default:
+				state.lastErr = nil
+				state.password = ""
+				state.s3AccessKeyID = ""
+				state.s3SecretAccessKey = ""
+				state.s3SessionToken = ""
+				state.pendingS3 = appsync.S3Settings{}
+				state.pendingS3Password = ""
+				state.pendingKind = ""
+				state.reconfigure = false
+			}
+		})
+	}()
+}
+
+// s3Settings reads the form. All three signing fields stay in the UI state
+// until the connect succeeds.
+func (s *SyncState) s3Settings() appsync.S3Settings {
+	return appsync.S3Settings{
+		Endpoint:        strings.TrimSpace(s.s3Endpoint),
+		Region:          strings.TrimSpace(s.s3Region),
+		Bucket:          strings.TrimSpace(s.s3Bucket),
+		Prefix:          strings.TrimSpace(s.s3Prefix),
+		AccessKeyID:     strings.TrimSpace(s.s3AccessKeyID),
+		SecretAccessKey: s.s3SecretAccessKey,
+		SessionToken:    strings.TrimSpace(s.s3SessionToken),
+	}
 }
 
 // EnsureWebDAVForm prefills the non-secret form fields once from the stored
@@ -307,6 +422,97 @@ func (s *SyncState) ResetWebDAVForm() {
 	s.webdavToken = ""
 	s.pendingConnect = appsync.WebDAVSettings{}
 	s.pendingPassword = ""
+	s.pendingKind = ""
+}
+
+// EnsureS3Form prefills the non-secret form fields once from the stored
+// profile. Access key id, secret access key, and session token are never
+// prefilled: they live only in the secure store.
+func (s *SyncState) EnsureS3Form() {
+	if s.s3Loaded {
+		return
+	}
+	settings := appsync.S3Settings{}
+	if service, ok := s.s3Service(); ok {
+		settings = service.S3Settings()
+	}
+	snapshot := s.service.Snapshot()
+	if settings.Endpoint == "" {
+		settings.Endpoint = snapshot.S3Endpoint
+	}
+	if settings.Region == "" {
+		settings.Region = snapshot.S3Region
+	}
+	if settings.Bucket == "" {
+		settings.Bucket = snapshot.S3Bucket
+	}
+	if settings.Prefix == "" {
+		settings.Prefix = snapshot.S3Prefix
+	}
+	s.s3Endpoint = settings.Endpoint
+	s.s3Region = settings.Region
+	s.s3Bucket = settings.Bucket
+	s.s3Prefix = settings.Prefix
+	s.s3Loaded = true
+}
+
+// ResetS3Form forgets the form, including any unsent signing material.
+func (s *SyncState) ResetS3Form() {
+	s.s3Loaded = false
+	s.s3Endpoint = ""
+	s.s3Region = ""
+	s.s3Bucket = ""
+	s.s3Prefix = ""
+	s.s3AccessKeyID = ""
+	s.s3SecretAccessKey = ""
+	s.s3SessionToken = ""
+	s.pendingS3 = appsync.S3Settings{}
+	s.pendingS3Password = ""
+	s.pendingKind = ""
+}
+
+// S3 form accessors. They run on the UI thread in response to text edits.
+func (s *SyncState) S3Endpoint() string        { return s.s3Endpoint }
+func (s *SyncState) S3Region() string          { return s.s3Region }
+func (s *SyncState) S3Bucket() string          { return s.s3Bucket }
+func (s *SyncState) S3Prefix() string          { return s.s3Prefix }
+func (s *SyncState) S3AccessKeyID() string     { return s.s3AccessKeyID }
+func (s *SyncState) S3SecretAccessKey() string { return s.s3SecretAccessKey }
+func (s *SyncState) S3SessionToken() string    { return s.s3SessionToken }
+
+func (s *SyncState) SetS3Endpoint(value string) {
+	s.s3Loaded = true
+	s.s3Endpoint = value
+}
+
+func (s *SyncState) SetS3Region(value string) {
+	s.s3Loaded = true
+	s.s3Region = value
+}
+
+func (s *SyncState) SetS3Bucket(value string) {
+	s.s3Loaded = true
+	s.s3Bucket = value
+}
+
+func (s *SyncState) SetS3Prefix(value string) {
+	s.s3Loaded = true
+	s.s3Prefix = value
+}
+
+func (s *SyncState) SetS3AccessKeyID(value string) {
+	s.s3Loaded = true
+	s.s3AccessKeyID = value
+}
+
+func (s *SyncState) SetS3SecretAccessKey(value string) {
+	s.s3Loaded = true
+	s.s3SecretAccessKey = value
+}
+
+func (s *SyncState) SetS3SessionToken(value string) {
+	s.s3Loaded = true
+	s.s3SessionToken = value
 }
 
 // WebDAV form accessors. They run on the UI thread in response to text edits.
@@ -355,6 +561,9 @@ func (s *SyncState) SetWebDAVToken(value string) {
 // HTTP. It drives the inline warning before any credential is sent; the
 // application and adapter still perform the authoritative check.
 func (s *SyncState) InsecureEndpointEntered() bool {
+	if appsync.NormalizeProvider(s.service.Snapshot().Provider) == appsync.ProviderS3 {
+		return appsync.EndpointIsInsecure(s.s3Endpoint)
+	}
 	return appsync.EndpointIsInsecure(s.webdavEndpoint)
 }
 
@@ -371,8 +580,14 @@ func (s *SyncState) CancelInsecure() {
 	s.insecureAction = ""
 	s.pendingConnect = appsync.WebDAVSettings{}
 	s.pendingPassword = ""
+	s.pendingS3 = appsync.S3Settings{}
+	s.pendingS3Password = ""
+	s.pendingKind = ""
 	s.webdavPassword = ""
 	s.webdavToken = ""
+	s.s3AccessKeyID = ""
+	s.s3SecretAccessKey = ""
+	s.s3SessionToken = ""
 	s.lastErr = nil
 }
 
@@ -383,11 +598,19 @@ func (s *SyncState) ConfirmInsecure() {
 		return
 	}
 	action := s.insecureAction
+	provider := appsync.NormalizeProvider(s.service.Snapshot().Provider)
 	s.insecurePrompt = false
 	s.insecureAction = ""
 	if action == "sync" {
-		service, ok := s.webDAVService()
-		if !ok {
+		var confirm func() bool
+		if provider == appsync.ProviderS3 {
+			if service, ok := s.s3Service(); ok {
+				confirm = func() bool { return service.ConfirmInsecureEndpoint(s.ctx) }
+			}
+		} else if service, ok := s.webDAVService(); ok {
+			confirm = func() bool { return service.ConfirmInsecureEndpoint(s.ctx) }
+		}
+		if confirm == nil {
 			s.lastErr = appsync.ErrNotConfigured
 			return
 		}
@@ -395,7 +618,7 @@ func (s *SyncState) ConfirmInsecure() {
 		s.lastErr = nil
 		state := s
 		go func() {
-			confirmed := service.ConfirmInsecureEndpoint(state.ctx)
+			confirmed := confirm()
 			var err error
 			if !confirmed {
 				err = appsync.ErrInsecureEndpoint
@@ -413,6 +636,42 @@ func (s *SyncState) ConfirmInsecure() {
 				if err != nil {
 					state.lastErr = err
 				}
+			})
+		}()
+		return
+	}
+
+	if s.pendingKind == pendingKindS3 {
+		service, ok := s.s3Service()
+		if !ok {
+			s.lastErr = appsync.ErrNotConfigured
+			return
+		}
+		settings := s.pendingS3
+		password := s.pendingS3Password
+		if settings.Endpoint == "" || password == "" {
+			s.lastErr = appsync.ErrPasswordRequired
+			return
+		}
+		s.busy = true
+		s.lastErr = nil
+		state := s
+		go func() {
+			err := service.ConnectS3(state.ctx, password, settings, true)
+			state.post(func() {
+				state.busy = false
+				if err != nil {
+					state.lastErr = err
+					return
+				}
+				state.password = ""
+				state.s3AccessKeyID = ""
+				state.s3SecretAccessKey = ""
+				state.s3SessionToken = ""
+				state.pendingS3 = appsync.S3Settings{}
+				state.pendingS3Password = ""
+				state.pendingKind = ""
+				state.reconfigure = false
 			})
 		}()
 		return
@@ -445,14 +704,15 @@ func (s *SyncState) ConfirmInsecure() {
 			state.webdavToken = ""
 			state.pendingConnect = appsync.WebDAVSettings{}
 			state.pendingPassword = ""
+			state.pendingKind = ""
 			state.reconfigure = false
 		})
 	}()
 }
 
-// Reconfigure opens the WebDAV form while the existing credential remains in
-// place, so a rejected credential can be corrected without losing the profile
-// (or the endpoint) first.
+// Reconfigure opens the connection form while the existing credential remains
+// in place, so a rejected credential can be corrected without losing the
+// profile (or the endpoint) first.
 func (s *SyncState) Reconfigure() {
 	if s.busy {
 		return
@@ -461,6 +721,11 @@ func (s *SyncState) Reconfigure() {
 	s.lastErr = nil
 	s.insecurePrompt = false
 	s.insecureAction = ""
+	if appsync.NormalizeProvider(s.service.Snapshot().Provider) == appsync.ProviderS3 {
+		s.ResetS3Form()
+		s.EnsureS3Form()
+		return
+	}
 	s.ResetWebDAVForm()
 	s.EnsureWebDAVForm()
 }
@@ -470,8 +735,14 @@ func (s *SyncState) CancelReconfigure() {
 	s.reconfigure = false
 	s.pendingConnect = appsync.WebDAVSettings{}
 	s.pendingPassword = ""
+	s.pendingS3 = appsync.S3Settings{}
+	s.pendingS3Password = ""
+	s.pendingKind = ""
 	s.webdavPassword = ""
 	s.webdavToken = ""
+	s.s3AccessKeyID = ""
+	s.s3SecretAccessKey = ""
+	s.s3SessionToken = ""
 	s.lastErr = nil
 }
 
@@ -527,6 +798,7 @@ func (s *SyncState) SetProvider(provider string) {
 			state.insecurePrompt = false
 			state.insecureAction = ""
 			state.ResetWebDAVForm()
+			state.ResetS3Form()
 		})
 	}()
 }
@@ -552,6 +824,7 @@ func (s *SyncState) Disconnect() {
 			state.insecurePrompt = false
 			state.insecureAction = ""
 			state.ResetWebDAVForm()
+			state.ResetS3Form()
 		})
 	}()
 }
@@ -648,14 +921,16 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 		ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
 	}
 	syncProviderSelector(c, state, snapshot, m)
+	provider := appsync.NormalizeProvider(snapshot.Provider)
 	if state.InsecurePrompt() {
 		// No input or button other than the explicit decision is live while
 		// the warning is open, so the endpoint that was confirmed cannot be
 		// changed behind it.
-		syncInsecurePrompt(c, state, state.WebDAVEndpoint(), m, t)
+		syncInsecurePrompt(c, state, insecureEndpointText(provider, state.formEndpoint(provider), m),
+			insecureWarningFor(provider, m), m, t)
 		return
 	}
-	switch appsync.NormalizeProvider(snapshot.Provider) {
+	switch provider {
 	case appsync.ProviderGoogleDrive:
 		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(11).TextColor(t.TextMuted)
 	case appsync.ProviderOneDrive:
@@ -663,6 +938,9 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 	case appsync.ProviderWebDAV:
 		ui.Text(c, m.SettingsSyncWebDAVHint()).FontSize(11).TextColor(t.TextMuted)
 		syncWebDAVForm(c, state, m, t)
+	case appsync.ProviderS3:
+		ui.Text(c, m.SettingsSyncS3Hint()).FontSize(11).TextColor(t.TextMuted)
+		syncS3Form(c, state, m, t)
 	}
 	syncDeviceCode(c, snapshot, m, t)
 	syncPasswordField(c, state, m)
@@ -727,7 +1005,104 @@ func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.T
 
 	if state.InsecureEndpointEntered() {
 		ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Warning).Children(func() {
-			ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(11).TextColor(t.Warning)
+			ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(11).TextColor(syncWarningTextColor(t))
+		})
+	}
+}
+
+// formEndpoint returns the endpoint currently entered in the provider's form.
+func (s *SyncState) formEndpoint(provider string) string {
+	if provider == appsync.ProviderS3 {
+		return s.S3Endpoint()
+	}
+	return s.WebDAVEndpoint()
+}
+
+func insecureEndpointText(provider, endpoint string, m locales.Messages) string {
+	if endpoint == "" {
+		return ""
+	}
+	if provider == appsync.ProviderS3 {
+		return m.SettingsSyncS3EndpointValue(endpoint)
+	}
+	return m.SettingsSyncWebDAVEndpointValue(endpoint)
+}
+
+func insecureWarningFor(provider string, m locales.Messages) string {
+	if provider == appsync.ProviderS3 {
+		return m.SettingsSyncS3InsecureWarning()
+	}
+	return m.SettingsSyncWebDAVInsecureWarning()
+}
+
+// syncWarningTextColor keeps the warning amber readable at the 11-point body
+// size. The theme's warning token is tuned for icons and borders; as small
+// text on a light surface it falls below the 4.5:1 contrast target, so light
+// mode uses a darker amber while dark mode keeps the brighter token.
+func syncWarningTextColor(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return t.Warning
+	}
+	return ui.Hex("#9a5c00")
+}
+
+// syncS3Form renders the endpoint, region, bucket, prefix, and signing fields.
+// The secret access key and session token are masked; the access key id is an
+// identifier rather than a secret, but it is cleared after a successful
+// connect and is never prefilled. The plain-HTTP warning appears before the
+// Connect button.
+func syncS3Form(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
+	state.EnsureS3Form()
+	ui.Field(c, m.SettingsSyncS3Endpoint(), func() {
+		endpoint := state.S3Endpoint()
+		if ui.TextInput(c, &endpoint).Width(360).Changed() {
+			state.SetS3Endpoint(endpoint)
+		}
+	})
+	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.End).Children(func() {
+		ui.Field(c, m.SettingsSyncS3Region(), func() {
+			region := state.S3Region()
+			if ui.TextInput(c, &region).Width(150).Changed() {
+				state.SetS3Region(region)
+			}
+		})
+		ui.Field(c, m.SettingsSyncS3Bucket(), func() {
+			bucket := state.S3Bucket()
+			if ui.TextInput(c, &bucket).Width(210).Changed() {
+				state.SetS3Bucket(bucket)
+			}
+		})
+	})
+	ui.Field(c, m.SettingsSyncS3Prefix(), func() {
+		prefix := state.S3Prefix()
+		if ui.TextInput(c, &prefix).Width(220).Changed() {
+			state.SetS3Prefix(prefix)
+		}
+	})
+	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.End).Children(func() {
+		ui.Field(c, m.SettingsSyncS3AccessKeyID(), func() {
+			accessKeyID := state.S3AccessKeyID()
+			if ui.TextInput(c, &accessKeyID).Width(200).Changed() {
+				state.SetS3AccessKeyID(accessKeyID)
+			}
+		})
+		ui.Field(c, m.SettingsSyncS3SecretAccessKey(), func() {
+			secret := state.S3SecretAccessKey()
+			if ui.TextInput(c, &secret).Password().Width(220).Changed() {
+				state.SetS3SecretAccessKey(secret)
+			}
+		})
+	})
+	ui.Field(c, m.SettingsSyncS3SessionToken(), func() {
+		token := state.S3SessionToken()
+		if ui.TextInput(c, &token).Password().Width(280).Changed() {
+			state.SetS3SessionToken(token)
+		}
+	})
+
+	if state.InsecureEndpointEntered() {
+		ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Warning).Children(func() {
+			ui.Text(c, m.SettingsSyncS3InsecureWarning()).FontSize(11).TextColor(syncWarningTextColor(t))
 		})
 	}
 }
@@ -735,12 +1110,12 @@ func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.T
 // syncInsecurePrompt is the explicit decision the plain-HTTP warning demands.
 // For a connect it reuses the settings captured before the warning; for a sync
 // it records the confirmation in the service and retries.
-func syncInsecurePrompt(c *ui.Context, state *SyncState, endpoint string, m locales.Messages, t *ui.Theme) {
+func syncInsecurePrompt(c *ui.Context, state *SyncState, endpointText, warning string, m locales.Messages, t *ui.Theme) {
 	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
-		if endpoint != "" {
-			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(endpoint)).FontSize(11).TextColor(t.TextMuted)
+		if endpointText != "" {
+			ui.Text(c, endpointText).FontSize(11).TextColor(t.TextMuted)
 		}
-		ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, warning).FontSize(12).TextColor(t.Danger)
 		ui.Row(c).Gap(8).Children(func() {
 			label := m.SettingsSyncWebDAVInsecureConfirm()
 			if state.InsecureSyncPrompt() {
@@ -765,12 +1140,13 @@ func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snap
 	if !state.SupportsProviderSelection() || snapshot.Connected {
 		return
 	}
-	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive, appsync.ProviderOneDrive, appsync.ProviderWebDAV}
+	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive, appsync.ProviderOneDrive, appsync.ProviderWebDAV, appsync.ProviderS3}
 	names := []string{
 		m.SettingsSyncProviderGitHub(),
 		m.SettingsSyncProviderGoogleDrive(),
 		m.SettingsSyncProviderOneDrive(),
 		m.SettingsSyncProviderWebDAV(),
+		m.SettingsSyncProviderS3(),
 	}
 	selected := names[indexOf(values, appsync.NormalizeProvider(snapshot.Provider))]
 	ui.Field(c, m.SettingsSyncProvider(), func() {
@@ -789,6 +1165,8 @@ func syncProviderName(provider string, m locales.Messages) string {
 		return m.SettingsSyncProviderOneDrive()
 	case appsync.ProviderWebDAV:
 		return m.SettingsSyncProviderWebDAV()
+	case appsync.ProviderS3:
+		return m.SettingsSyncProviderS3()
 	default:
 		return m.SettingsSyncProviderGitHub()
 	}
@@ -831,12 +1209,13 @@ func syncPasswordField(c *ui.Context, state *SyncState, m locales.Messages) {
 }
 
 func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	provider := appsync.NormalizeProvider(snapshot.Provider)
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Text(c, m.SettingsSyncProvider()).FontSize(11).TextColor(t.TextMuted)
 		ui.Text(c, syncProviderName(snapshot.Provider, m)).FontSize(11)
 	})
 	ui.Text(c, m.SettingsSyncConnectedAs(snapshot.Login)).Bold()
-	if appsync.NormalizeProvider(snapshot.Provider) == appsync.ProviderWebDAV {
+	if provider == appsync.ProviderWebDAV {
 		if snapshot.WebDAVEndpoint != "" {
 			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(snapshot.WebDAVEndpoint)).FontSize(11).TextColor(t.TextMuted)
 		}
@@ -845,8 +1224,27 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 			ui.Text(c, webDAVAuthName(snapshot.WebDAVAuthType, m)).FontSize(11)
 		})
 	}
+	if provider == appsync.ProviderS3 {
+		if snapshot.S3Endpoint != "" {
+			ui.Text(c, m.SettingsSyncS3EndpointValue(snapshot.S3Endpoint)).FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Text(c, m.SettingsSyncS3Region()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, snapshot.S3Region).FontSize(11)
+			ui.Text(c, m.SettingsSyncS3Bucket()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, snapshot.S3Bucket).FontSize(11)
+		})
+		if snapshot.S3Prefix != "" {
+			ui.Text(c, m.SettingsSyncS3PrefixValue(snapshot.S3Prefix)).FontSize(11).TextColor(t.TextMuted)
+		}
+	}
 	if state.InsecurePrompt() {
-		syncInsecurePrompt(c, state, snapshot.WebDAVEndpoint, m, t)
+		endpoint := snapshot.WebDAVEndpoint
+		if provider == appsync.ProviderS3 {
+			endpoint = snapshot.S3Endpoint
+		}
+		syncInsecurePrompt(c, state, insecureEndpointText(provider, endpoint, m),
+			insecureWarningFor(provider, m), m, t)
 		return
 	}
 	if snapshot.HasPassword {
@@ -857,11 +1255,19 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 	}
 	syncDeviceCode(c, snapshot, m, t)
 
-	if snapshot.WebDAVInsecure {
-		// A plain-HTTP WebDAV profile never auto-syncs; the service also
-		// refuses the automatic trigger. Explain why instead of offering a
-		// checkbox that would do nothing.
-		ui.Text(c, m.SettingsSyncWebDAVInsecureAutoSync()).FontSize(11).TextColor(t.Warning)
+	insecureProfile := snapshot.WebDAVInsecure
+	if provider == appsync.ProviderS3 {
+		insecureProfile = snapshot.S3Insecure
+	}
+	if insecureProfile {
+		// A plain-HTTP profile never auto-syncs; the service also refuses the
+		// automatic trigger. Explain why instead of offering a checkbox that
+		// would do nothing.
+		warning := m.SettingsSyncWebDAVInsecureAutoSync()
+		if provider == appsync.ProviderS3 {
+			warning = m.SettingsSyncS3InsecureAutoSync()
+		}
+		ui.Text(c, warning).FontSize(11).TextColor(syncWarningTextColor(t))
 	} else {
 		ui.Field(c, m.SettingsSyncAutoSync(), func() {
 			auto := snapshot.AutoSync
@@ -921,8 +1327,14 @@ func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m l
 			state.SyncNow()
 			c.Invalidate()
 		}
-		if appsync.NormalizeProvider(snapshot.Provider) == appsync.ProviderWebDAV {
+		switch appsync.NormalizeProvider(snapshot.Provider) {
+		case appsync.ProviderWebDAV:
 			if ui.Button(c, m.SettingsSyncWebDAVReconfigure()).Disabled(state.Busy()).Clicked() {
+				state.Reconfigure()
+				c.Invalidate()
+			}
+		case appsync.ProviderS3:
+			if ui.Button(c, m.SettingsSyncS3Reconfigure()).Disabled(state.Busy()).Clicked() {
 				state.Reconfigure()
 				c.Invalidate()
 			}
@@ -941,13 +1353,14 @@ func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m l
 }
 
 func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
-	if problem := syncProblemText(m, snapshot.Problem); problem != "" {
+	provider := appsync.NormalizeProvider(snapshot.Provider)
+	if problem := syncProblemTextFor(m, provider, snapshot.Problem); problem != "" {
 		ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
 		return
 	}
 	if err := state.Err(); err != nil {
 		// Worker errors carry typed sentinels; never render Go error text.
-		text := syncProblemText(m, syncProblemForError(err))
+		text := syncProblemTextFor(m, provider, syncProblemForError(err))
 		if text == "" {
 			text = m.SettingsSyncOperationFailed()
 		}
@@ -958,6 +1371,26 @@ func syncStatus(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m lo
 	if status != "" {
 		ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
 	}
+}
+
+// syncProblemTextFor prefers the S3 wording for problems whose generic text
+// names WebDAV, so an S3 failure never tells the user to fix a WebDAV URL.
+func syncProblemTextFor(m locales.Messages, provider string, problem appsync.Problem) string {
+	if provider == appsync.ProviderS3 {
+		switch problem {
+		case appsync.ProblemCredentials:
+			return m.SettingsSyncS3ProblemCredentials()
+		case appsync.ProblemForbidden:
+			return m.SettingsSyncS3ProblemForbidden()
+		case appsync.ProblemInvalidEndpoint:
+			return m.SettingsSyncS3ProblemInvalidEndpoint()
+		case appsync.ProblemInsecureEndpoint:
+			return m.SettingsSyncS3ProblemInsecureEndpoint()
+		case appsync.ProblemWrongRegion:
+			return m.SettingsSyncS3ProblemWrongRegion()
+		}
+	}
+	return syncProblemText(m, problem)
 }
 
 func syncStatusText(m locales.Messages, status appsync.Status) string {
@@ -997,6 +1430,8 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemInsecureEndpoint()
 	case appsync.ProblemRedirect:
 		return m.SettingsSyncProblemRedirect()
+	case appsync.ProblemWrongRegion:
+		return m.SettingsSyncProblemWrongRegion()
 	case appsync.ProblemWrongPassword:
 		return m.SettingsSyncProblemWrongPassword()
 	case appsync.ProblemCorrupt:
@@ -1059,6 +1494,8 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemInsecureEndpoint
 	case errors.Is(err, appsync.ErrRedirectRefused):
 		return appsync.ProblemRedirect
+	case errors.Is(err, appsync.ErrWrongRegion):
+		return appsync.ProblemWrongRegion
 	case errors.Is(err, appsync.ErrUnauthorized):
 		return appsync.ProblemUnauthorized
 	case errors.Is(err, appsync.ErrRateLimited):
