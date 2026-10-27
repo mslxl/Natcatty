@@ -239,6 +239,21 @@ server would count as real, but this suite deliberately starts none, and the
 fake is never described as a live service.
 Ticket: 52
 
+### `sync.s3-live-endpoints`
+
+The S3 provider is verified against an in-process fake that independently
+recomputes SigV4, enforces an optional session token, serves path-style
+`<endpoint>/<bucket>/<key>` requests, rejects a wrong region with
+`PermanentRedirect`, enforces `If-Match` and `If-None-Match`, and returns
+403/404/412/5xx. It does not contact AWS S3, MinIO, Ceph, Cloudflare R2, or any
+other commercial S3-compatible service; those need real credentials, a
+provisioned bucket, and a network, which CI cannot supply.
+
+Decision: excluded from automated acceptance by ticket 53. A local real
+S3-compatible server would count as real, but this suite starts none, and the
+fake is never described as AWS.
+Ticket: 53
+
 ## Protocol and platform limitations
 
 ### `connections.ssh-compression`

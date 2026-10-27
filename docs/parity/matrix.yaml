@@ -2814,6 +2814,119 @@
   status: excluded
   notes: "The WebDAV provider is verified against a local in-process server that implements Basic, Digest (with a real challenge and stale nonce), Bearer, GET/HEAD/PUT/OPTIONS/MKCOL, ETags with If-Match and If-None-Match, 401/403/404/412, redirects, and self-signed TLS. No acceptance run contacts a public WebDAV service or a vendor endpoint: public services need a live account, credentials, and a network, which CI cannot supply, and vendor quirks (Nextcloud, ownCloud, SharePoint) are out of scope. A local real WebDAV server would count as real, but none is started by the suite; the fake is explicit about being a fake. The adapter remains generic RFC 4918/7616/7617 and does not claim vendor-specific parity."
 
+# --- Ticket 53: S3-compatible storage ---
+
+- id: sync.s3-sigv4
+  area: sync
+  feature: S3 Signature Version 4 signing and path-style addressing
+  original_paths:
+    - infrastructure/services/adapters/S3Adapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+  module: adapters/s3
+  tickets: [53]
+  acceptance_tests:
+    - adapters/s3.TestSignMatchesThePublishedS3Vectors
+    - adapters/s3.TestSignIncludesTheSessionTokenWhenPresent
+    - adapters/s3.TestSignRequiresItsInputs
+    - adapters/s3.TestURIEncodingLeavesOnlyUnreservedBytesAndSlashes
+    - adapters/s3.TestCanonicalQueryIsEncodedAndSorted
+    - adapters/s3.TestPayloadSHA256MatchesTheDocumentedEmptyHash
+    - adapters/s3.TestPrepareNormalizesAndKeepsSecrets
+    - adapters/s3.TestPrepareRequiresEachField
+    - adapters/s3.TestObjectAddressHonorsSchemeHostPortBasePathAndEncodesTheKey
+    - adapters/s3.TestObjectKeyUsesTheNormalizedPrefix
+    - adapters/s3.TestGrantIdentityIncludesBucketAndPrefix
+    - adapters/s3/fake.TestFakeVerifiesSigV4ServerSide
+    - adapters/s3/fake.TestFakeRejectsTampering
+    - app.TestTicket53CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The signer is implemented in-house with no AWS SDK: canonical request, string-to-sign, SHA-256 payload hash, HMAC-SHA256 key derivation, x-amz-date, x-amz-content-sha256, and x-amz-security-token when a session token is present. URI encoding is S3's single-encoding form with no path normalization, and the canonical query is sorted and encoded. Four published AWS S3 examples pin the exact signatures (GET object, PUT object with a '$' in the key, a subresource query, and a sorted/encoded query); a separate test pins x-amz-security-token as a signed header, and the local fake recomputes the canonical request and signature with independent code, so a shared-canonicalization bug cannot hide. Requests are always path-style: endpoint scheme, host, port, and base path are honored, and the object key is the slash-normalized prefix plus netcatty-vault.json. x-amz-* headers must be signed, and the server rejects a tampered body, header, signature, or session token."
+
+- id: sync.s3-read-write
+  area: sync
+  feature: S3 sync-file read, conditional write, conflict, and error mapping
+  original_paths:
+    - infrastructure/services/adapters/S3Adapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+    - domain/sync.ts
+  module: adapters/s3
+  tickets: [53]
+  acceptance_tests:
+    - adapters/s3.TestNormalizeEndpoint
+    - adapters/s3.TestNormalizePrefix
+    - adapters/s3.TestMapStatusUsesActionableSentinels
+    - adapters/s3.TestCredentialForRequiresAnS3Credential
+    - adapters/s3.TestConnectReadWriteAndConflictAgainstTheFake
+    - adapters/s3.TestEndpointBasePathIsHonored
+    - adapters/s3.TestSessionTokenIsEnforced
+    - adapters/s3.TestWrongRegionIsReportedAndNotFollowed
+    - adapters/s3.TestHTTPFailuresMapToActionableErrors
+    - adapters/s3.TestFailuresNeverCarryTheSecret
+    - adapters/s3.TestReadDoesNotTreatAMissingBucketAsAnEmptyAccount
+    - adapters/s3.TestClientNeverFollowsARedirect
+    - app.TestTicket53CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "GET returns 404 or NoSuchKey as the empty state, while NoSuchBucket is ErrInvalidEndpoint rather than an empty account. PUT creates with If-None-Match: * and updates with If-Match on the observed ETag; a lost condition is ErrConflict so the service re-observes. A server that omits ETags entirely falls back to re-read-and-compare immediately before the PUT, which is best-effort rather than atomic; real S3 always returns ETags, so the conditional path is the normal one. HeadObject is the connect probe and the post-PUT ETag fallback; the payload envelope supplies UpdatedAt. The fake verifies SigV4 on every request and enforces the configured session token, path-style routing, region, and bucket. A wrong-region 301/PermanentRedirect is reported as ErrWrongRegion with the bucket region, never followed, and retried nowhere; 401, SignatureDoesNotMatch, InvalidAccessKeyId, and InvalidToken are ErrCredentialsRejected with actionable reconfiguration and no refresh loop; a 403 AccessDenied document is ErrForbidden (a separate actionable permissions state); a bodyless HEAD 403 cannot be distinguished and is reported as a credential problem; 412 is ErrConflict, 429 is ErrRateLimited, and 5xx is ErrNetwork. TLS verification is always on. This is stricter than the original's unconditional PUT and its silent allowInsecure TLS bypass."
+
+- id: sync.s3-insecure-gate
+  area: sync
+  feature: S3 credential storage, plain-HTTP warning, and explicit confirmation
+  original_paths:
+    - infrastructure/services/adapters/S3Adapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+    - infrastructure/services/cloudSync/authMethods.ts
+  module: application/sync
+  tickets: [53]
+  acceptance_tests:
+    - application/sync.TestConnectS3RefusesInsecureWithoutConfirmation
+    - application/sync.TestConnectS3StoresSecretsOnlyInTheCredentialStore
+    - application/sync.TestConnectS3ConfirmsInsecureButNeverAutoSyncs
+    - application/sync.TestManualSyncOfARestoredInsecureS3ProfileRequiresAFreshConfirmation
+    - application/sync.TestConfirmInsecureEndpointRefusesSecureAndMissingS3Credentials
+    - application/sync.TestS3ProblemTaxonomy
+    - application/sync.TestS3WrongRegionIsReportedWithoutFollowingTheRedirect
+    - application/sync.TestS3SyncRejectedCredentialDoesNotRefreshOrRetry
+    - application/sync.TestS3ProfileRestoresNonSecretFieldsOnLoad
+    - application/sync.TestS3AnchorKeepsTheSameAccountAndClearsAChangedOne
+    - application/sync.TestDisconnectAndSetProviderClearS3FormState
+    - app.TestTicket53CheckRunsThroughTheKeyboard
+    - app.TestTicket53CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "The access key id, secret access key, optional session token, endpoint, region, bucket, and prefix live together in the existing OS credential store as domain/sync.Token.S3; cloud-sync.json carries no S3 fields at all, and the in-memory snapshot carries only endpoint, region, bucket, and prefix. A normalized plain-HTTP endpoint is refused before the token store is written or a request is sent, and the service records ProblemInsecureEndpoint. Confirmation is explicit and per connect; automatic sync is always refused for plain HTTP, and a restored profile requires a fresh in-process confirmation for manual sync. HTTPS never warns, and TLS certificate verification is never disabled (unlike the original's allowInsecure option). A rejected credential is a reconfiguration prompt with no refresh or retry loop. The account identity includes bucket and prefix, so changing either rotates the merge anchor. The fake's traces redact Authorization and x-amz-security-token, and the self-test scans the config, snapshot, credential store, and traces for the signing material and reports zero secret violations."
+
+- id: sync.s3-settings
+  area: sync
+  feature: S3 provider form, warnings, and reconfigure flow
+  original_paths:
+    - components/CloudSyncSettings.tsx
+    - components/cloud-sync/CloudSyncDialogs.tsx
+    - infrastructure/services/adapters/S3Adapter.ts
+  module: ui/settings
+  tickets: [53]
+  acceptance_tests:
+    - ui/settings.TestSyncStateS3InsecureConnectNeedsConfirmation
+    - ui/settings.TestSyncStateS3RejectsAnIncompleteForm
+    - ui/settings.TestSyncStateS3ReconfigurePrefillsOnlyNonSecrets
+    - ui/settings.TestSyncStateS3RestoredInsecureSyncNeedsConfirmation
+    - ui/settings.TestSyncSectionShowsTheS3FormAndInsecureWarning
+    - ui/settings.TestSyncSectionS3HTTPSDoesNotWarn
+    - ui/settings.TestSyncSectionShowsS3ProblemsAndReconfigure
+    - ui/settings.TestSyncSectionS3InsecurePromptUsesS3Wording
+    - app.TestTicket53CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The provider selector offers S3, and the setup form collects endpoint, region, bucket, prefix, access key id, secret access key, and an optional session token. The secret and session-token inputs are masked; an http endpoint renders an inline warning before Connect, which then opens the explicit confirmation prompt. Reconfigure prefills only endpoint, region, bucket, and prefix, never the access key, secret, or token, and keeps the existing profile until a replacement connects. Wrong-region, credentials, forbidden, and insecure-endpoint states use S3-specific localized wording and a Reconfigure action. Labels and messages are localized in en, es, ru, zh-CN, and zh-TW."
+
+- id: sync.s3-live-endpoints
+  area: sync
+  feature: Verification against AWS S3 and commercial S3-compatible services
+  original_paths:
+    - infrastructure/services/adapters/S3Adapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+  module: adapters/s3
+  tickets: [53]
+  status: excluded
+  notes: "The S3 provider is verified against a local in-process fake that independently verifies SigV4, enforces the session token, path-style addressing, region, bucket, and conditional ETags, and returns 403/404/412/5xx. No acceptance run contacts AWS S3, MinIO, Ceph, R2, or another live S3-compatible service: those need real credentials, a provisioned bucket, and a network, which CI cannot supply. The fake is explicit about being a fake and the endpoint is not described as AWS."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

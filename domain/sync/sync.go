@@ -401,6 +401,25 @@ type Token struct {
 	// other provider credential, so the endpoint password or bearer token is
 	// never written to the plaintext sync profile.
 	WebDAV *WebDAVCredential `json:"webdav,omitempty"`
+	// S3 carries the S3-compatible connection settings and signing material.
+	// It lives in the same OS credential-store blob as every other provider
+	// credential, so the access key, secret access key, and session token are
+	// never written to the plaintext sync profile or a log.
+	S3 *S3Credential `json:"s3,omitempty"`
+}
+
+// S3Credential is one S3-compatible connection. Endpoint, Region, Bucket, and
+// Prefix are not secret, but keeping the whole connection in the credential
+// blob means one storage path for both secret and non-secret connection state
+// and nothing S3-specific in cloud-sync.json.
+type S3Credential struct {
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	Bucket          string `json:"bucket"`
+	Prefix          string `json:"prefix,omitempty"`
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
+	SessionToken    string `json:"sessionToken,omitempty"`
 }
 
 // WebDAV credential modes. They match the original Electron provider's
@@ -445,5 +464,8 @@ func (t Token) HasCredential() bool {
 	if t.AccessToken != "" {
 		return true
 	}
-	return t.WebDAV != nil && strings.TrimSpace(t.WebDAV.Endpoint) != ""
+	if t.WebDAV != nil && strings.TrimSpace(t.WebDAV.Endpoint) != "" {
+		return true
+	}
+	return t.S3 != nil && strings.TrimSpace(t.S3.Endpoint) != ""
 }

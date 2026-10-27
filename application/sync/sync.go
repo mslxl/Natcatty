@@ -73,6 +73,10 @@ const (
 	// ProblemRedirect reports a redirect to another host or an HTTPS to HTTP
 	// downgrade, which this build refuses rather than leak the credential.
 	ProblemRedirect Problem = "unsafe-redirect"
+	// ProblemWrongRegion reports that the S3 bucket lives in a different
+	// region from the one the request was signed for (PermanentRedirect).
+	// No retry is attempted: the user must correct the region.
+	ProblemWrongRegion Problem = "wrong-region"
 )
 
 // Status is the sync surface's state.
@@ -148,6 +152,11 @@ var (
 	// different host (which could receive the credential) or an HTTPS to
 	// plain-HTTP downgrade.
 	ErrRedirectRefused = errors.New("sync: the provider redirected to an unsafe location")
+	// ErrWrongRegion reports an S3 PermanentRedirect: the bucket belongs to a
+	// different region from the one in the SigV4 credential scope. The
+	// original SDK client did not follow region redirects, and neither does
+	// this build; the user corrects the region instead.
+	ErrWrongRegion = errors.New("sync: the S3 bucket is in a different region")
 )
 
 // Provider identifiers persisted in the Sync Profile. They match the original
@@ -157,6 +166,7 @@ const (
 	ProviderGoogleDrive = "google"
 	ProviderOneDrive    = "onedrive"
 	ProviderWebDAV      = "webdav"
+	ProviderS3          = "s3"
 )
 
 // NormalizeProvider maps empty and unknown historical values onto the
@@ -169,6 +179,8 @@ func NormalizeProvider(provider string) string {
 		return ProviderOneDrive
 	case ProviderWebDAV:
 		return ProviderWebDAV
+	case ProviderS3:
+		return ProviderS3
 	default:
 		return ProviderGitHub
 	}
@@ -267,6 +279,29 @@ type WebDAVConnector interface {
 	Connect(ctx context.Context, settings WebDAVSettings) (domainsync.Token, Grant, error)
 }
 
+// S3Settings is the S3 form's user-entered connection state. AccessKeyID,
+// SecretAccessKey, and SessionToken are secrets: they go to the secure token
+// store and never into the profile, a snapshot, or a log.
+type S3Settings struct {
+	Endpoint        string
+	Region          string
+	Bucket          string
+	Prefix          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+}
+
+// S3Connector is implemented by remotes that connect with explicit S3
+// settings rather than an interactive authorization. Prepare validates and
+// normalizes the settings and reports whether the endpoint would send the
+// signing material without transport encryption; the service refuses to call
+// Connect until the user has explicitly confirmed that case.
+type S3Connector interface {
+	Prepare(settings S3Settings) (S3Settings, bool, error)
+	Connect(ctx context.Context, settings S3Settings) (domainsync.Token, Grant, error)
+}
+
 // Vault is the local Vault port. Snapshot must include plaintext credential
 // values so a second device can restore them; Apply rewrites the synced
 // families and never touches local-only tables.
@@ -359,6 +394,15 @@ type Snapshot struct {
 	// WebDAVInsecure reports a saved plain-HTTP endpoint. Automatic sync is
 	// never started for one, and a manual sync asks for confirmation first.
 	WebDAVInsecure bool
+	// S3 connection state for the setup form. None of the signing material is
+	// ever part of the snapshot.
+	S3Endpoint string
+	S3Region   string
+	S3Bucket   string
+	S3Prefix   string
+	// S3Insecure reports a saved plain-HTTP endpoint, with the same gate as
+	// WebDAV: automatic sync never starts, and a manual sync asks first.
+	S3Insecure bool
 }
 
 // Option customizes a Service.
@@ -498,6 +542,13 @@ type Service struct {
 	webdavAuthType string
 	webdavUsername string
 	webdavInsecure bool
+	// S3 connection state. The signing material stays in the token store;
+	// these are the non-secret fields the setup form prefills.
+	s3Endpoint string
+	s3Region   string
+	s3Bucket   string
+	s3Prefix   string
+	s3Insecure bool
 	// insecureConfirmedEndpoint is the exact endpoint the user explicitly
 	// confirmed in this process. It is never persisted, so a later process
 	// asks again; automatic sync never uses it.
@@ -568,13 +619,14 @@ func (s *Service) Load(ctx context.Context) error {
 		s.status = StatusNeedsPassword
 		s.problem = ProblemPasswordRequired
 	}
-	webdav := s.config.Provider == ProviderWebDAV
+	provider := s.config.Provider
 	s.mu.Unlock()
-	if webdav {
+	if provider == ProviderWebDAV || provider == ProviderS3 {
 		// Best effort: the form's non-secret fields survive a restart. A
 		// missing or corrupt credential is simply the unconfigured form.
 		if token, err := s.tokens.Load(ctx); err == nil {
 			s.rememberWebDAV(token)
+			s.rememberS3(token)
 		}
 	}
 	s.changed()
@@ -604,6 +656,35 @@ func (s *Service) rememberWebDAV(token domainsync.Token) {
 	s.webdavAuthType = domainsync.NormalizeWebDAVAuthType(token.WebDAV.AuthType)
 	s.webdavUsername = token.WebDAV.Username
 	s.webdavInsecure = EndpointIsInsecure(token.WebDAV.Endpoint)
+}
+
+// rememberS3 caches the non-secret S3 form fields from a credential. It never
+// copies the access key id, secret access key, or session token into the
+// profile or snapshot.
+func (s *Service) rememberS3(token domainsync.Token) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if token.Provider != "" && token.Provider != ProviderS3 {
+		s.s3Endpoint = ""
+		s.s3Region = ""
+		s.s3Bucket = ""
+		s.s3Prefix = ""
+		s.s3Insecure = false
+		return
+	}
+	if token.S3 == nil || token.S3.Endpoint == "" {
+		s.s3Endpoint = ""
+		s.s3Region = ""
+		s.s3Bucket = ""
+		s.s3Prefix = ""
+		s.s3Insecure = false
+		return
+	}
+	s.s3Endpoint = token.S3.Endpoint
+	s.s3Region = token.S3.Region
+	s.s3Bucket = token.S3.Bucket
+	s.s3Prefix = token.S3.Prefix
+	s.s3Insecure = EndpointIsInsecure(token.S3.Endpoint)
 }
 
 // EndpointIsInsecure reports whether a normalized endpoint would send its
@@ -667,6 +748,11 @@ func (s *Service) Snapshot() Snapshot {
 		WebDAVAuthType: s.webdavAuthType,
 		WebDAVUsername: s.webdavUsername,
 		WebDAVInsecure: s.webdavInsecure,
+		S3Endpoint:     s.s3Endpoint,
+		S3Region:       s.s3Region,
+		S3Bucket:       s.s3Bucket,
+		S3Prefix:       s.s3Prefix,
+		S3Insecure:     s.s3Insecure,
 	}
 }
 
@@ -742,6 +828,11 @@ func (s *Service) SetProvider(ctx context.Context, provider string) error {
 	s.webdavAuthType = ""
 	s.webdavUsername = ""
 	s.webdavInsecure = false
+	s.s3Endpoint = ""
+	s.s3Region = ""
+	s.s3Bucket = ""
+	s.s3Prefix = ""
+	s.s3Insecure = false
 	s.insecureConfirmedEndpoint = ""
 	s.mu.Unlock()
 	if err := s.configs.Save(ctx, config); err != nil {
@@ -899,20 +990,133 @@ func (s *Service) WebDAVSettings() WebDAVSettings {
 	}
 }
 
+// ConnectS3 connects the profile to an S3-compatible bucket with explicit
+// user-entered settings. Prepare validates and normalizes the settings before
+// anything else happens. A plain-HTTP endpoint returns ErrInsecureEndpoint
+// without storing or sending the signing material unless the caller confirms;
+// that confirmation is explicit, per connect, and never persisted. On success
+// the whole connection, including the access key id, secret access key, and
+// session token, goes to the secure token store and only non-secret fields
+// enter the profile.
+func (s *Service) ConnectS3(ctx context.Context, password string, settings S3Settings, confirmInsecure bool) error {
+	if password == "" {
+		s.mu.Lock()
+		password = s.password
+		s.mu.Unlock()
+	}
+	if password == "" {
+		return ErrPasswordRequired
+	}
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	remote := s.remotes[ProviderS3]
+	connector, ok := remote.(S3Connector)
+	if !ok {
+		s.fail(ProblemNotConfigured)
+		return ErrNotConfigured
+	}
+	normalized, insecure, err := connector.Prepare(settings)
+	if err != nil {
+		s.fail(problemFor(err))
+		return err
+	}
+	if insecure && !confirmInsecure {
+		// The gate runs before the token store is written and before any
+		// request, so no signing material can leave the process unconfirmed.
+		s.fail(ProblemInsecureEndpoint)
+		return ErrInsecureEndpoint
+	}
+
+	s.mu.Lock()
+	s.password = password
+	s.status = StatusAuthorizing
+	s.problem = ProblemNone
+	s.device = DeviceCode{}
+	s.mu.Unlock()
+	s.changed()
+
+	token, grant, err := connector.Connect(ctx, normalized)
+	if err != nil {
+		s.fail(problemFor(err))
+		return err
+	}
+	token.Provider = ProviderS3
+	if saveErr := s.tokens.Save(ctx, token); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+
+	s.mu.Lock()
+	config := s.config
+	if NormalizeProvider(config.Provider) != ProviderS3 {
+		// An S3 profile never reuses another provider's baseline.
+		clearAnchor(&config)
+	}
+	config.Provider = ProviderS3
+	s.config = config
+	s.remote = remote
+	s.s3Endpoint = normalized.Endpoint
+	s.s3Region = normalized.Region
+	s.s3Bucket = normalized.Bucket
+	s.s3Prefix = normalized.Prefix
+	s.s3Insecure = insecure
+	if insecure {
+		s.insecureConfirmedEndpoint = normalized.Endpoint
+	} else {
+		s.insecureConfirmedEndpoint = ""
+	}
+	s.mu.Unlock()
+
+	if saveErr := s.applyGrant(ctx, grant); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+	s.mu.Lock()
+	s.status = StatusIdle
+	s.problem = ProblemNone
+	s.mu.Unlock()
+	s.changed()
+	return nil
+}
+
+// S3Settings returns the non-secret form state for the active S3 profile. The
+// access key id, secret access key, and session token are never part of this
+// value.
+func (s *Service) S3Settings() S3Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return S3Settings{
+		Endpoint: s.s3Endpoint,
+		Region:   s.s3Region,
+		Bucket:   s.s3Bucket,
+		Prefix:   s.s3Prefix,
+	}
+}
+
 // ConfirmInsecureEndpoint records the user's explicit confirmation for the
 // stored plain-HTTP endpoint in this process. It is used by "Sync anyway"
 // after the warning; a saved profile in a later process asks again, and
 // automatic sync never consults it.
 func (s *Service) ConfirmInsecureEndpoint(ctx context.Context) bool {
 	token, err := s.tokens.Load(ctx)
-	if err != nil || token.Provider != ProviderWebDAV || token.WebDAV == nil {
+	if err != nil {
 		return false
 	}
-	if !EndpointIsInsecure(token.WebDAV.Endpoint) {
+	endpoint := ""
+	switch {
+	case token.Provider == ProviderWebDAV && token.WebDAV != nil:
+		endpoint = token.WebDAV.Endpoint
+	case token.Provider == ProviderS3 && token.S3 != nil:
+		endpoint = token.S3.Endpoint
+	default:
+		return false
+	}
+	if !EndpointIsInsecure(endpoint) {
 		return false
 	}
 	s.mu.Lock()
-	s.insecureConfirmedEndpoint = token.WebDAV.Endpoint
+	s.insecureConfirmedEndpoint = endpoint
 	s.mu.Unlock()
 	return true
 }
@@ -1031,6 +1235,11 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	s.webdavAuthType = ""
 	s.webdavUsername = ""
 	s.webdavInsecure = false
+	s.s3Endpoint = ""
+	s.s3Region = ""
+	s.s3Bucket = ""
+	s.s3Prefix = ""
+	s.s3Insecure = false
 	s.insecureConfirmedEndpoint = ""
 	s.mu.Unlock()
 	if err := s.configs.Save(ctx, s.currentConfig()); err != nil {
@@ -1226,7 +1435,14 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		s.fail(problemFor(err))
 		return Result{Trigger: trigger}, err
 	}
-	if token.WebDAV != nil && EndpointIsInsecure(token.WebDAV.Endpoint) {
+	insecureEndpoint := ""
+	switch {
+	case token.WebDAV != nil && EndpointIsInsecure(token.WebDAV.Endpoint):
+		insecureEndpoint = token.WebDAV.Endpoint
+	case token.S3 != nil && EndpointIsInsecure(token.S3.Endpoint):
+		insecureEndpoint = token.S3.Endpoint
+	}
+	if insecureEndpoint != "" {
 		// A plain-HTTP endpoint never syncs on its own: automatic sync would
 		// send the credential with no person in the loop, and a manual sync
 		// requires the warning to be confirmed in this process.
@@ -1235,7 +1451,7 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 			return Result{Trigger: trigger}, ErrInsecureEndpoint
 		}
 		s.mu.Lock()
-		confirmed := s.insecureConfirmedEndpoint == token.WebDAV.Endpoint
+		confirmed := s.insecureConfirmedEndpoint == insecureEndpoint
 		s.mu.Unlock()
 		if !confirmed {
 			s.fail(ProblemInsecureEndpoint)
@@ -1542,7 +1758,7 @@ func (s *Service) NotifyLocalChange() {
 	// A saved plain-HTTP endpoint never auto-syncs. The service refuses the
 	// automatic trigger as well; skipping the timer keeps the preference from
 	// producing a failure on every local edit.
-	if s.stopped || !s.config.AutoSync || s.webdavInsecure {
+	if s.stopped || !s.config.AutoSync || s.webdavInsecure || s.s3Insecure {
 		s.mu.Unlock()
 		return
 	}
@@ -1660,6 +1876,8 @@ func problemFor(err error) Problem {
 		return ProblemInsecureEndpoint
 	case errors.Is(err, ErrRedirectRefused):
 		return ProblemRedirect
+	case errors.Is(err, ErrWrongRegion):
+		return ProblemWrongRegion
 	case errors.Is(err, ErrUnauthorized), errors.Is(err, errNoToken):
 		return ProblemUnauthorized
 	case errors.Is(err, ErrRateLimited):

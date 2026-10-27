@@ -11916,6 +11916,212 @@ func (msgs Messages) SettingsSyncWebDAVReconfigure() string {
 	return Catalog.Format(msgs.locale, "settingsSyncWebDAVReconfigure", nil)
 }
 
+// SettingsSyncProviderS3 says "S3"
+// in the language the app shows.
+func SettingsSyncProviderS3() string { return In(i18n.Locale()).SettingsSyncProviderS3() }
+
+// SettingsSyncProviderS3 says "S3"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProviderS3() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProviderS3", nil)
+}
+
+// SettingsSyncS3Hint says "Store the encrypted Vault in an S3-compatible bucket. Requests use AWS Signature Version 4 with path-style addressing…"
+// in the language the app shows.
+func SettingsSyncS3Hint() string { return In(i18n.Locale()).SettingsSyncS3Hint() }
+
+// SettingsSyncS3Hint says "Store the encrypted Vault in an S3-compatible bucket. Requests use AWS Signature Version 4 with path-style addressing…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Hint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Hint", nil)
+}
+
+// SettingsSyncS3Endpoint says "Endpoint"
+// in the language the app shows.
+func SettingsSyncS3Endpoint() string { return In(i18n.Locale()).SettingsSyncS3Endpoint() }
+
+// SettingsSyncS3Endpoint says "Endpoint"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Endpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Endpoint", nil)
+}
+
+// SettingsSyncS3EndpointValue says "Endpoint: {endpoint}"
+// in the language the app shows.
+func SettingsSyncS3EndpointValue(endpoint string) string {
+	return In(i18n.Locale()).SettingsSyncS3EndpointValue(endpoint)
+}
+
+// SettingsSyncS3EndpointValue says "Endpoint: {endpoint}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3EndpointValue(endpoint string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3EndpointValue", map[string]any{"endpoint": endpoint})
+}
+
+// SettingsSyncS3Region says "Region"
+// in the language the app shows.
+func SettingsSyncS3Region() string { return In(i18n.Locale()).SettingsSyncS3Region() }
+
+// SettingsSyncS3Region says "Region"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Region() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Region", nil)
+}
+
+// SettingsSyncS3Bucket says "Bucket"
+// in the language the app shows.
+func SettingsSyncS3Bucket() string { return In(i18n.Locale()).SettingsSyncS3Bucket() }
+
+// SettingsSyncS3Bucket says "Bucket"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Bucket() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Bucket", nil)
+}
+
+// SettingsSyncS3Prefix says "Prefix (optional)"
+// in the language the app shows.
+func SettingsSyncS3Prefix() string { return In(i18n.Locale()).SettingsSyncS3Prefix() }
+
+// SettingsSyncS3Prefix says "Prefix (optional)"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Prefix() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Prefix", nil)
+}
+
+// SettingsSyncS3PrefixValue says "Prefix: {prefix}"
+// in the language the app shows.
+func SettingsSyncS3PrefixValue(prefix string) string {
+	return In(i18n.Locale()).SettingsSyncS3PrefixValue(prefix)
+}
+
+// SettingsSyncS3PrefixValue says "Prefix: {prefix}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3PrefixValue(prefix string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3PrefixValue", map[string]any{"prefix": prefix})
+}
+
+// SettingsSyncS3AccessKeyID says "Access key ID"
+// in the language the app shows.
+func SettingsSyncS3AccessKeyID() string { return In(i18n.Locale()).SettingsSyncS3AccessKeyID() }
+
+// SettingsSyncS3AccessKeyID says "Access key ID"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3AccessKeyID() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3AccessKeyID", nil)
+}
+
+// SettingsSyncS3SecretAccessKey says "Secret access key"
+// in the language the app shows.
+func SettingsSyncS3SecretAccessKey() string { return In(i18n.Locale()).SettingsSyncS3SecretAccessKey() }
+
+// SettingsSyncS3SecretAccessKey says "Secret access key"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3SecretAccessKey() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3SecretAccessKey", nil)
+}
+
+// SettingsSyncS3SessionToken says "Session token (optional)"
+// in the language the app shows.
+func SettingsSyncS3SessionToken() string { return In(i18n.Locale()).SettingsSyncS3SessionToken() }
+
+// SettingsSyncS3SessionToken says "Session token (optional)"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3SessionToken() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3SessionToken", nil)
+}
+
+// SettingsSyncS3InsecureWarning says "This endpoint uses plain HTTP. The access key, secret, session token, and encrypted Vault will be sent without encryp…"
+// in the language the app shows.
+func SettingsSyncS3InsecureWarning() string { return In(i18n.Locale()).SettingsSyncS3InsecureWarning() }
+
+// SettingsSyncS3InsecureWarning says "This endpoint uses plain HTTP. The access key, secret, session token, and encrypted Vault will be sent without encryp…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3InsecureWarning() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3InsecureWarning", nil)
+}
+
+// SettingsSyncS3InsecureAutoSync says "Automatic sync stays off while this S3 endpoint uses plain HTTP."
+// in the language the app shows.
+func SettingsSyncS3InsecureAutoSync() string {
+	return In(i18n.Locale()).SettingsSyncS3InsecureAutoSync()
+}
+
+// SettingsSyncS3InsecureAutoSync says "Automatic sync stays off while this S3 endpoint uses plain HTTP."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3InsecureAutoSync() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3InsecureAutoSync", nil)
+}
+
+// SettingsSyncS3Reconfigure says "Reconfigure"
+// in the language the app shows.
+func SettingsSyncS3Reconfigure() string { return In(i18n.Locale()).SettingsSyncS3Reconfigure() }
+
+// SettingsSyncS3Reconfigure says "Reconfigure"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3Reconfigure() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3Reconfigure", nil)
+}
+
+// SettingsSyncS3ProblemCredentials says "The S3 endpoint rejected the access key, secret access key, or session token. Choose Reconfigure to enter them again."
+// in the language the app shows.
+func SettingsSyncS3ProblemCredentials() string {
+	return In(i18n.Locale()).SettingsSyncS3ProblemCredentials()
+}
+
+// SettingsSyncS3ProblemCredentials says "The S3 endpoint rejected the access key, secret access key, or session token. Choose Reconfigure to enter them again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3ProblemCredentials() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3ProblemCredentials", nil)
+}
+
+// SettingsSyncS3ProblemForbidden says "The S3 endpoint refused access. Check the bucket policy and this key's permissions."
+// in the language the app shows.
+func SettingsSyncS3ProblemForbidden() string {
+	return In(i18n.Locale()).SettingsSyncS3ProblemForbidden()
+}
+
+// SettingsSyncS3ProblemForbidden says "The S3 endpoint refused access. Check the bucket policy and this key's permissions."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3ProblemForbidden() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3ProblemForbidden", nil)
+}
+
+// SettingsSyncS3ProblemInvalidEndpoint says "The S3 endpoint, region, bucket, or prefix is not usable. Check them and the bucket's region, then reconnect."
+// in the language the app shows.
+func SettingsSyncS3ProblemInvalidEndpoint() string {
+	return In(i18n.Locale()).SettingsSyncS3ProblemInvalidEndpoint()
+}
+
+// SettingsSyncS3ProblemInvalidEndpoint says "The S3 endpoint, region, bucket, or prefix is not usable. Check them and the bucket's region, then reconnect."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3ProblemInvalidEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3ProblemInvalidEndpoint", nil)
+}
+
+// SettingsSyncS3ProblemInsecureEndpoint says "This S3 endpoint uses plain HTTP. Confirm that you want to send the signing key without encryption."
+// in the language the app shows.
+func SettingsSyncS3ProblemInsecureEndpoint() string {
+	return In(i18n.Locale()).SettingsSyncS3ProblemInsecureEndpoint()
+}
+
+// SettingsSyncS3ProblemInsecureEndpoint says "This S3 endpoint uses plain HTTP. Confirm that you want to send the signing key without encryption."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3ProblemInsecureEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3ProblemInsecureEndpoint", nil)
+}
+
+// SettingsSyncS3ProblemWrongRegion says "The S3 bucket is in a different region. Correct the region, then reconnect."
+// in the language the app shows.
+func SettingsSyncS3ProblemWrongRegion() string {
+	return In(i18n.Locale()).SettingsSyncS3ProblemWrongRegion()
+}
+
+// SettingsSyncS3ProblemWrongRegion says "The S3 bucket is in a different region. Correct the region, then reconnect."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncS3ProblemWrongRegion() string {
+	return Catalog.Format(msgs.locale, "settingsSyncS3ProblemWrongRegion", nil)
+}
+
 // SettingsSyncReconnect says "Reconnect"
 // in the language the app shows.
 func SettingsSyncReconnect() string { return In(i18n.Locale()).SettingsSyncReconnect() }
@@ -12002,6 +12208,18 @@ func SettingsSyncProblemRedirect() string { return In(i18n.Locale()).SettingsSyn
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemRedirect() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemRedirect", nil)
+}
+
+// SettingsSyncProblemWrongRegion says "The bucket is in a different region. Correct the region and reconnect."
+// in the language the app shows.
+func SettingsSyncProblemWrongRegion() string {
+	return In(i18n.Locale()).SettingsSyncProblemWrongRegion()
+}
+
+// SettingsSyncProblemWrongRegion says "The bucket is in a different region. Correct the region and reconnect."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemWrongRegion() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemWrongRegion", nil)
 }
 
 // SettingsSyncAutoSync says "Sync automatically"
