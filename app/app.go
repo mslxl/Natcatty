@@ -27,6 +27,7 @@ import (
 	adapterslaunch "github.com/mslxl/natcatty/adapters/launch"
 	"github.com/mslxl/natcatty/adapters/localpty"
 	adapteronedrive "github.com/mslxl/natcatty/adapters/onedrive"
+	adapters3 "github.com/mslxl/natcatty/adapters/s3"
 	adapterserial "github.com/mslxl/natcatty/adapters/serial"
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
@@ -428,6 +429,10 @@ func run(afterReady func(hostWindow)) error {
 	// a Basic, Digest, or bearer credential. The adapter never disables TLS
 	// verification and refuses unsafe redirects.
 	webDAVClient := adapterwebdav.New(adapterwebdav.Options{})
+	// S3-compatible storage is addressed path-style with SigV4. The signer is
+	// in-house; certificates are never skipped, and a wrong-region redirect is
+	// reported rather than followed.
+	s3Client := adapters3.New(adapters3.Options{})
 	syncService = appsync.NewService(
 		githubClient,
 		adaptersyncvault.New(database, secretStore),
@@ -437,6 +442,7 @@ func run(afterReady func(hostWindow)) error {
 		appsync.WithRemote(appsync.ProviderGoogleDrive, googleClient),
 		appsync.WithRemote(appsync.ProviderOneDrive, oneDriveClient),
 		appsync.WithRemote(appsync.ProviderWebDAV, webDAVClient),
+		appsync.WithRemote(appsync.ProviderS3, s3Client),
 		appsync.WithBrowserOpener(mygo.Shell.OpenExternal),
 		appsync.WithRedrawRequest(invalidate),
 		// A downloaded cloud copy rewrites the Vault families. Mark the live
