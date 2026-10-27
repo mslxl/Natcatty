@@ -1876,7 +1876,7 @@ func convergentReasonName(code string, m locales.Messages) string {
 		return m.SettingsSyncConvergentReasonDamaged()
 	case "no-trusted-baseline":
 		return m.SettingsSyncConvergentReasonNoBaseline()
-	case "legacy-conflict", "conflicts-unresolved", "legacy-merge-failed":
+	case "legacy-conflict", "conflicts-unresolved", "legacy-merge-failed", "pending-conflict":
 		return m.SettingsSyncConvergentReasonConflict()
 	case "shrunk-vault":
 		return m.SettingsSyncConvergentReasonShrink()
