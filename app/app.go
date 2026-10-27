@@ -32,6 +32,7 @@ import (
 	adaptersftp "github.com/mslxl/natcatty/adapters/sftp"
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
+	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
 	adaptersyncstore "github.com/mslxl/natcatty/adapters/syncstore"
 	adaptersyncvault "github.com/mslxl/natcatty/adapters/syncvault"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
@@ -445,6 +446,9 @@ func run(afterReady func(hostWindow)) error {
 		appsync.WithRemote(appsync.ProviderS3, s3Client),
 		appsync.WithBrowserOpener(mygo.Shell.OpenExternal),
 		appsync.WithRedrawRequest(invalidate),
+		// Protective restore points come from the same local backup service
+		// the Vault editor already uses, including its retention policy.
+		appsync.WithBackups(adaptersyncbackup.New(backupService)),
 		// A downloaded cloud copy rewrites the Vault families. Mark the live
 		// Vault state stale so its lists refresh on the next frame without a
 		// restart. The callback resolves vaultState lazily because the state is
