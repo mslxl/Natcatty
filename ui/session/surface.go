@@ -565,7 +565,7 @@ func (s *Surface) View(c *ui.Context) ui.Element {
 			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
 				Background(t.Surface).Children(func() {
 				ui.Text(c, m.BrowserOpenFailed()).FontSize(11).Grow(1).
-					MinWidth(0).SingleLine().TextColor(t.Danger)
+					MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
 				if ui.Button(c, m.SessionDismiss()).Clicked() {
 					s.browserErr = nil
 					s.redraw()

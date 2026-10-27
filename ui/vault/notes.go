@@ -10,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/domain/markdown"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -133,7 +134,7 @@ func noteDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t 
 		return
 	}
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultNoteDeleteConfirm(title)).Grow(1).TextColor(t.Danger)
+		ui.Text(c, m.VaultNoteDeleteConfirm(title)).Grow(1).TextColor(uitheme.DangerText(t))
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteNote()
 			c.Invalidate()
@@ -151,7 +152,7 @@ func noteGroupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Message
 		return
 	}
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Wrap().Background(t.Surface).Children(func() {
-		ui.Text(c, m.VaultNoteGroupDeleteConfirm(path)).Grow(1).TextColor(t.Danger)
+		ui.Text(c, m.VaultNoteGroupDeleteConfirm(path)).Grow(1).TextColor(uitheme.DangerText(t))
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteNoteGroup()
 			c.Invalidate()
@@ -167,7 +168,7 @@ func noteGroupDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Message
 func noteExportBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
 	if message := s.NoteExportProblem(); message != vaultstate.ProblemNone {
 		if text := noteExportProblemText(m, message); text != "" {
-			ui.Text(c, text).TextColor(t.Danger)
+			ui.Text(c, text).TextColor(uitheme.DangerText(t))
 		}
 		return
 	}
@@ -215,9 +216,9 @@ func noteEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Th
 				}
 			}).Description(m.VaultNoteContentHint())
 		})
-		problem(c, s, t)
 	})
 
+	problem(c, s, t)
 	editorActions(c, func() { _ = s.SaveNote() }, s.CancelNoteEdit, m)
 }
 
@@ -235,9 +236,9 @@ func noteGroupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *
 				ui.TextInput(c, &form.Path).Placeholder("ops/runbooks")
 			}).Description(m.VaultNoteGroupPathHint())
 		})
-		problem(c, s, t)
 	})
 
+	problem(c, s, t)
 	editorActions(c, func() { _ = s.SaveNoteGroup() }, s.CancelNoteGroupEdit, m)
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // tabRef binds the split renderer to either a main-window Tab or a detached
@@ -58,16 +59,47 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 	}
 }
 
+// workTabReveal remembers which work Tab the strip last showed and how wide
+// the window was. The strip scrolls sideways, so without this a Tab opened or
+// chosen while the strip is scrolled could stay out of view; the active Tab is
+// scrolled into view whenever either changes.
+type workTabReveal struct {
+	active model.TabID
+	width  float32
+	reveal bool
+}
+
+func newWorkTabReveal() *workTabReveal { return &workTabReveal{} }
+
 // workTabs renders the ordered Tab strip. Each Tab is a drag source; the thin
 // strips on either side of it are the insertion targets that show where a
 // dropped Tab will land. A drop directly on a Tab inserts before it.
-func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
 	// The strip scrolls sideways at the minimum window width. Tabs keep a
 	// readable title width instead of shrinking or clipping the last Tab;
 	// every Tab stays reachable with the wheel, trackpad or keyboard.
 	// The strip keeps its 30 DIPs when the panels below need room. Without
 	// Shrink(0) a Column under height pressure shrinks the first flexible
 	// child to nothing, hiding every Tab at the minimum window size.
+	if reveal == nil {
+		reveal = newWorkTabReveal()
+	}
+	activeID, _ := s.TabID(s.ActiveTab())
+	if activeID != "" && activeID != reveal.active {
+		reveal.active = activeID
+		reveal.reveal = true
+	}
+	// A resize changes the room the strip has for its Tabs. Reveal the active
+	// Tab again so one chosen at a wider window does not stay half cut.
+	if width, _ := c.Size(); width > 0 {
+		if reveal.width > 0 && width != reveal.width {
+			reveal.reveal = true
+		}
+		reveal.width = width
+	}
+	revealActive := reveal.reveal
+	reveal.reveal = false
+
 	ui.ScrollHorizontal(c).FillWidth().Height(30).Shrink(0).Label(m.WorkTabsLabel()).
 		Children(func() {
 			ui.Row(c).Gap(2).Children(func() {
@@ -77,7 +109,7 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 						continue
 					}
 					tabInsertionStrip(c, s, t, info.ID, false)
-					tabBody(c, s, m, t, index, info)
+					tabBody(c, s, m, t, index, info, revealActive)
 					tabInsertionStrip(c, s, t, info.ID, true)
 				}
 			})
@@ -100,7 +132,7 @@ func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.
 	}
 }
 
-func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo) {
+func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo, reveal bool) {
 	background := t.Background
 	if info.Active {
 		background = t.Surface
@@ -136,7 +168,7 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			title.Bold()
 		}
 		if info.Dirty {
-			ui.Text(c, m.TabDirtyMarker()).FontSize(10).TextColor(t.Warning)
+			ui.Text(c, m.TabDirtyMarker()).FontSize(10).TextColor(uitheme.WarningText(t))
 		}
 		ui.Column(c).Grow(1)
 		ui.MenuButton(c, m.TabMenuGlyph(), func(menu *ui.Menu) {
@@ -174,6 +206,11 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			c.Invalidate()
 		}
 	})
+	if info.Active && reveal {
+		// The strip scrolls sideways; keep the active Tab whole when it is
+		// opened or selected while the strip is scrolled, and after a resize.
+		body.ScrollIntoView()
+	}
 }
 
 func tabTitle(m locales.Messages, info state.TabInfo) string {
@@ -414,7 +451,7 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			message = m.PaneHostMissing()
 		}
 		ui.Column(c).Fill().Padding(12).Children(func() {
-			ui.Text(c, message).TextColor(t.Danger).FontSize(12)
+			ui.Text(c, message).TextColor(uitheme.DangerText(t)).FontSize(12)
 		})
 	case info.Surface != nil:
 		info.Surface.View(c)

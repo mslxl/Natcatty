@@ -15,6 +15,7 @@ import (
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // PageEventKind is a page lifecycle event. Page views report navigation,
@@ -488,7 +489,7 @@ func (p *Panel) tabStrip(c *ui.Context, state appbrowser.State, m locales.Messag
 
 func (p *Panel) banner(c *ui.Context, text string, t *ui.Theme) {
 	ui.Row(c).FillWidth().Padding(6, 8).Background(t.Surface).Children(func() {
-		ui.Text(c, text).FontSize(11).Grow(1).MinWidth(0).SingleLine().TextColor(t.Danger)
+		ui.Text(c, text).FontSize(11).Grow(1).MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
 	})
 }
 

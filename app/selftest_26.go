@@ -21,7 +21,7 @@ package app
 //     Simplified Chinese without horizontal overflow; the row action stays
 //     clear of the scroll bar gutter, and restore and clear are present.
 //
-// Result: %TEMP%\natcatty-selftest-26.json. Every temporary store, secret
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-26.json. Every temporary store, secret
 // store, backup service, and directory is closed and removed, so F11,2,6
 // passes twice in one process.
 

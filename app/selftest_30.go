@@ -31,7 +31,7 @@ package app
 // Every listing and operation completes off the UI thread, so the steps wait
 // on their real state with a hard deadline rather than a fixed delay.
 //
-// Result: %TEMP%\natcatty-selftest-30.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-30.json.
 
 import (
 	"context"

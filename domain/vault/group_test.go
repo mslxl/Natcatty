@@ -2,7 +2,41 @@ package vault
 
 import (
 	"testing"
+
+	"github.com/mslxl/natcatty/domain/model"
 )
+
+func TestNormalizeGroupDraftDropsSSHDefaultsOnlyForExplicitNonSSHProtocols(t *testing.T) {
+	// A group that explicitly selects Telnet never reads its members' SSH
+	// bundle, so a draft left over from an SSH group must not persist it. A
+	// blank protocol still inherits from the parent group and keeps the
+	// defaults untouched.
+	credentialed := GroupDraft{
+		Path: "prod", AuthMethod: HostAuthKey,
+		IdentityID:  model.IdentityID("identity-1"),
+		KeyID:       model.KeyID("key-1"),
+		UseSSHAgent: true, RequiresMFA: true,
+	}
+	telnet := credentialed
+	telnet.Protocol = ProtocolTelnet
+	normalized, err := NormalizeGroupDraft(telnet)
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft telnet: %v", err)
+	}
+	if normalized.IdentityID != "" || normalized.KeyID != "" || normalized.AuthMethod != "" ||
+		normalized.UseSSHAgent || normalized.RequiresMFA {
+		t.Fatalf("telnet group kept its SSH defaults: %+v", normalized)
+	}
+
+	inherited, err := NormalizeGroupDraft(credentialed)
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft blank protocol: %v", err)
+	}
+	if inherited.IdentityID != "identity-1" || inherited.KeyID != "key-1" ||
+		inherited.AuthMethod != HostAuthKey || !inherited.UseSSHAgent || !inherited.RequiresMFA {
+		t.Fatalf("blank-protocol group lost its defaults: %+v", inherited)
+	}
+}
 
 func TestNormalizeGroupDraftCanonicalizesAndValidates(t *testing.T) {
 	draft, err := NormalizeGroupDraft(GroupDraft{
@@ -196,6 +230,24 @@ func TestGroupPathHelpers(t *testing.T) {
 	}
 	if got := ReplaceGroupPrefix("prod/db", "prod/web", "prod/app"); got != "prod/db" {
 		t.Fatalf("unrelated ReplaceGroupPrefix = %q", got)
+	}
+}
+
+func TestParentGroupPathDropsTheLastSegment(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{"prod/web/db", "prod/web"},
+		{"prod/web", "prod"},
+		{"prod", ""},
+		{"", ""},
+		{" prod / web / db ", "prod/web"},
+		{"prod//web", "prod"},
+	} {
+		if got := ParentGroupPath(test.path); got != test.want {
+			t.Errorf("ParentGroupPath(%q) = %q, want %q", test.path, got, test.want)
+		}
 	}
 }
 

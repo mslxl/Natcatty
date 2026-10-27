@@ -64,6 +64,15 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	draft.KeyID = model.KeyID(strings.TrimSpace(string(draft.KeyID)))
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
+	// A blank protocol inherits from the parent group, so only an explicit
+	// non-SSH protocol drops defaults its members would never read.
+	if draft.Protocol != "" && !draft.Protocol.UsesSSHAuth() {
+		draft.IdentityID = ""
+		draft.KeyID = ""
+		draft.AuthMethod = ""
+		draft.UseSSHAgent = false
+		draft.RequiresMFA = false
+	}
 
 	if draft.Path == "" {
 		return GroupDraft{}, validation(FieldGroup, RuleRequired)
@@ -288,6 +297,20 @@ func GroupAncestors(path string) []string {
 		ancestors = append(ancestors, strings.Join(segments[:i+1], "/"))
 	}
 	return ancestors
+}
+
+// ParentGroupPath returns the group that contains path, or "" at the root.
+// "A/B/C" yields "A/B"; "A" and "" yield "".
+func ParentGroupPath(path string) string {
+	path = NormalizeGroup(path)
+	if path == "" {
+		return ""
+	}
+	index := strings.LastIndex(path, "/")
+	if index < 0 {
+		return ""
+	}
+	return path[:index]
 }
 
 // GroupName returns the last segment of a Host Group path.

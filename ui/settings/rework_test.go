@@ -61,6 +61,68 @@ func insideSettingsContent(r ui.Rect, w, h int) bool {
 		r.X+r.W <= float32(w)+0.5 && r.Y+r.H <= float32(h)+0.5
 }
 
+// intrinsicSettingsTextWidth measures one line of the Settings theme's text
+// at an unconstrained width. A nav label's laid-out box narrower than this is
+// shortened with an ellipsis by MyGo's SingleLine text.
+func intrinsicSettingsTextWidth(t *testing.T, text string) float32 {
+	t.Helper()
+	var width float32
+	tester := ui.NewTester(func(c *ui.Context) {
+		width, _ = c.MeasureText(0, ui.Span{Text: text, Size: ui.LightTheme().FontSize})
+	}, 200, 100)
+	tester.Frame()
+	if width <= 0 {
+		t.Fatalf("the reference label %q measured %v", text, width)
+	}
+	return width
+}
+
+// TestSettingsSidebarLabelsAreNotEllipsized keeps every area name whole in
+// the 168 DIP sidebar at both supported window sizes and in every catalog.
+// The old "Security & App Lock" label did not fit and rendered as
+// "Security & App Lo..."; a label box narrower than its own measured text is
+// the same defect.
+func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
+	for _, tag := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(tag)
+		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", tag, size[0], size[1]), func(t *testing.T) {
+				tester := ui.NewTester(ViewWithSettings(Config{Search: NewSearchState()}), size[0], size[1])
+				tester.SetLocale(tag)
+				tester.Frame()
+				for _, area := range Areas() {
+					label := AreaTitle(m, area)
+					needed := intrinsicSettingsTextWidth(t, label)
+					rect, ok := tester.Find(label)
+					if !ok {
+						t.Fatalf("%q is not rendered; texts %q", label, tester.Texts())
+					}
+					// The sidebar scrolls at the minimum size, so a later area
+					// starts below the viewport. Wheel it into view the way a
+					// user would before judging its label.
+					for step := 0; step < 40 && rect.Y+rect.H > float32(size[1]); step++ {
+						tester.Scroll(80, float32(size[1])*0.6, 0, 40)
+						rect, ok = tester.Find(label)
+						if !ok {
+							t.Fatalf("%q disappeared while scrolling the sidebar", label)
+						}
+					}
+					if rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])+0.5 {
+						t.Fatalf("%q is not laid out inside the window: %+v", label, rect)
+					}
+					if rect.X+rect.W > 180+0.5 {
+						t.Fatalf("%q extends past the 168 DIP sidebar: %+v", label, rect)
+					}
+					if rect.W+0.5 < needed {
+						t.Fatalf("%q needs %.1fpx on one line but its box is %.1fpx wide, so it is ellipsized",
+							label, needed, rect.W)
+					}
+				}
+			})
+		}
+	}
+}
+
 // TestSettingsShortcutPaneScrollsEveryRowIntoView renders the Shortcuts area
 // at both supported sizes and wheels through it. Every one of the 42 binding
 // rows must pass through the content viewport, the last row must end inside

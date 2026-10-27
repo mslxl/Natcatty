@@ -24,7 +24,7 @@ package app
 //     wheel, PageDown, and End move the surface through its own scroll state,
 //     and the last row ends up inside the window.
 //
-// Result: %TEMP%\natcatty-selftest-23.json. Every store, Session, and
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-23.json. Every store, Session, and
 // temporary directory is closed and removed, so F11,2,3 passes twice in one
 // process.
 

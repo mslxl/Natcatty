@@ -5,7 +5,7 @@ package app
 // Ticket 14 self-test.
 //
 // Press F11, then 1, then 4. The check runs on the UI thread one step per
-// frame and writes %TEMP%\natcatty-selftest-14.json.
+// frame and writes %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-14.json.
 //
 // The steps exercise the production tray controller, deep-link and
 // command-line routing, notification transition policy, global-hotkey

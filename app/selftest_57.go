@@ -30,7 +30,7 @@ package app
 // or the scenario context's hard deadline. Nothing sleeps, and a repeated
 // F11,5,7 resets all state and reruns the whole scenario.
 //
-// Result: %TEMP%\natcatty-selftest-57.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-57.json.
 
 import (
 	"bufio"

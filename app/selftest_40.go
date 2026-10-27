@@ -23,7 +23,7 @@ package app
 // Every wait selects on an observable result with a hard deadline; there is no
 // sleep and no external network or hardware.
 //
-// Result: %TEMP%\natcatty-selftest-40.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-40.json.
 
 import (
 	"bytes"

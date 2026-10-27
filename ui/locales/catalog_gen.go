@@ -746,6 +746,16 @@ func (msgs Messages) VaultHostPort() string {
 	return Catalog.Format(msgs.locale, "vaultHostPort", nil)
 }
 
+// VaultHostPortHint says "Leave empty to inherit; port {port} is used."
+// in the language the app shows.
+func VaultHostPortHint(port string) string { return In(i18n.Locale()).VaultHostPortHint(port) }
+
+// VaultHostPortHint says "Leave empty to inherit; port {port} is used."
+// in the language of msgs.
+func (msgs Messages) VaultHostPortHint(port string) string {
+	return Catalog.Format(msgs.locale, "vaultHostPortHint", map[string]any{"port": port})
+}
+
 // VaultHostUsername says "Username"
 // in the language the app shows.
 func VaultHostUsername() string { return In(i18n.Locale()).VaultHostUsername() }
@@ -830,13 +840,13 @@ func (msgs Messages) VaultGroupUngrouped() string {
 	return Catalog.Format(msgs.locale, "vaultGroupUngrouped", nil)
 }
 
-// VaultGroupMemberCount says "{count} Hosts"
+// VaultGroupMemberCount says "{count, plural, one {# Host} other {# Hosts}}"
 // in the language the app shows.
 //
 // The number of Hosts at or below a Host Group.
 func VaultGroupMemberCount(count int) string { return In(i18n.Locale()).VaultGroupMemberCount(count) }
 
-// VaultGroupMemberCount says "{count} Hosts"
+// VaultGroupMemberCount says "{count, plural, one {# Host} other {# Hosts}}"
 // in the language of msgs.
 //
 // The number of Hosts at or below a Host Group.
@@ -1852,13 +1862,13 @@ func (msgs Messages) VaultImportNoIssues() string {
 	return Catalog.Format(msgs.locale, "vaultImportNoIssues", nil)
 }
 
-// VaultImportSelected says "{count} selected"
+// VaultImportSelected says "{count, plural, one {# selected} other {# selected}}"
 // in the language the app shows.
 //
 // How many rows the user selected.
 func VaultImportSelected(count int) string { return In(i18n.Locale()).VaultImportSelected(count) }
 
-// VaultImportSelected says "{count} selected"
+// VaultImportSelected says "{count, plural, one {# selected} other {# selected}}"
 // in the language of msgs.
 //
 // How many rows the user selected.
@@ -7492,7 +7502,7 @@ func (msgs Messages) VaultSnippetSummaryNoTargets() string {
 	return Catalog.Format(msgs.locale, "vaultSnippetSummaryNoTargets", nil)
 }
 
-// VaultSnippetVariableCount says "{count} variables"
+// VaultSnippetVariableCount says "{count, plural, one {# variable} other {# variables}}"
 // in the language the app shows.
 //
 // How many variables a Snippet asks for.
@@ -7500,7 +7510,7 @@ func VaultSnippetVariableCount(count int) string {
 	return In(i18n.Locale()).VaultSnippetVariableCount(count)
 }
 
-// VaultSnippetVariableCount says "{count} variables"
+// VaultSnippetVariableCount says "{count, plural, one {# variable} other {# variables}}"
 // in the language of msgs.
 //
 // How many variables a Snippet asks for.
@@ -7722,7 +7732,7 @@ func (msgs Messages) VaultSnippetPackagePathHint() string {
 	return Catalog.Format(msgs.locale, "vaultSnippetPackagePathHint", nil)
 }
 
-// VaultSnippetPackageSnippetCount says "{count} Snippets"
+// VaultSnippetPackageSnippetCount says "{count, plural, one {# Snippet} other {# Snippets}}"
 // in the language the app shows.
 //
 // How many Snippets one package contains.
@@ -7730,7 +7740,7 @@ func VaultSnippetPackageSnippetCount(count int) string {
 	return In(i18n.Locale()).VaultSnippetPackageSnippetCount(count)
 }
 
-// VaultSnippetPackageSnippetCount says "{count} Snippets"
+// VaultSnippetPackageSnippetCount says "{count, plural, one {# Snippet} other {# Snippets}}"
 // in the language of msgs.
 //
 // How many Snippets one package contains.
@@ -8328,7 +8338,7 @@ func (msgs Messages) VaultNoteGroupPathHint() string {
 	return Catalog.Format(msgs.locale, "vaultNoteGroupPathHint", nil)
 }
 
-// VaultNoteGroupNoteCount says "{count} notes"
+// VaultNoteGroupNoteCount says "{count, plural, one {# note} other {# notes}}"
 // in the language the app shows.
 //
 // How many Notes one Note Group directly contains.
@@ -8336,7 +8346,7 @@ func VaultNoteGroupNoteCount(count int) string {
 	return In(i18n.Locale()).VaultNoteGroupNoteCount(count)
 }
 
-// VaultNoteGroupNoteCount says "{count} notes"
+// VaultNoteGroupNoteCount says "{count, plural, one {# note} other {# notes}}"
 // in the language of msgs.
 //
 // How many Notes one Note Group directly contains.
@@ -9358,13 +9368,13 @@ func (msgs Messages) VaultExportDone(path string, bytes int) string {
 	return Catalog.Format(msgs.locale, "vaultExportDone", map[string]any{"path": path, "bytes": bytes})
 }
 
-// VaultExportUnreadable says "{count} credentials could not be read and were left out."
+// VaultExportUnreadable says "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and wer…"
 // in the language the app shows.
 //
 // Credentials that could not be decrypted and were left out.
 func VaultExportUnreadable(count int) string { return In(i18n.Locale()).VaultExportUnreadable(count) }
 
-// VaultExportUnreadable says "{count} credentials could not be read and were left out."
+// VaultExportUnreadable says "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and wer…"
 // in the language of msgs.
 //
 // Credentials that could not be decrypted and were left out.
@@ -10008,11 +10018,11 @@ func (msgs Messages) SettingsAreaSystem() string {
 	return Catalog.Format(msgs.locale, "settingsAreaSystem", nil)
 }
 
-// SettingsAreaSecurity says "Security & App Lock"
+// SettingsAreaSecurity says "Security"
 // in the language the app shows.
 func SettingsAreaSecurity() string { return In(i18n.Locale()).SettingsAreaSecurity() }
 
-// SettingsAreaSecurity says "Security & App Lock"
+// SettingsAreaSecurity says "Security"
 // in the language of msgs.
 func (msgs Messages) SettingsAreaSecurity() string {
 	return Catalog.Format(msgs.locale, "settingsAreaSecurity", nil)
@@ -15164,13 +15174,13 @@ func (msgs Messages) SftpEditorDismiss() string {
 	return Catalog.Format(msgs.locale, "sftpEditorDismiss", nil)
 }
 
-// SftpSelected says "{count} selected"
+// SftpSelected says "{count, plural, one {# selected} other {# selected}}"
 // in the language the app shows.
 //
 // The pane footer's selected-item count.
 func SftpSelected(count int) string { return In(i18n.Locale()).SftpSelected(count) }
 
-// SftpSelected says "{count} selected"
+// SftpSelected says "{count, plural, one {# selected} other {# selected}}"
 // in the language of msgs.
 //
 // The pane footer's selected-item count.
@@ -16308,13 +16318,13 @@ func (msgs Messages) SftpTransferConflictFailed() string {
 	return Catalog.Format(msgs.locale, "sftpTransferConflictFailed", nil)
 }
 
-// SftpTransferSkipped says "{count} skipped"
+// SftpTransferSkipped says "{count, plural, one {# skipped} other {# skipped}}"
 // in the language the app shows.
 //
 // The count of entries a Transfer left untouched.
 func SftpTransferSkipped(count int) string { return In(i18n.Locale()).SftpTransferSkipped(count) }
 
-// SftpTransferSkipped says "{count} skipped"
+// SftpTransferSkipped says "{count, plural, one {# skipped} other {# skipped}}"
 // in the language of msgs.
 //
 // The count of entries a Transfer left untouched.
@@ -16910,7 +16920,7 @@ func (msgs Messages) MonitoringPanelHosts() string {
 	return Catalog.Format(msgs.locale, "monitoringPanelHosts", nil)
 }
 
-// MonitoringSelectedCount says "{count} selected"
+// MonitoringSelectedCount says "{count, plural, one {# selected} other {# selected}}"
 // in the language the app shows.
 //
 // The number of Hosts selected in the panel editor.
@@ -16918,7 +16928,7 @@ func MonitoringSelectedCount(count int) string {
 	return In(i18n.Locale()).MonitoringSelectedCount(count)
 }
 
-// MonitoringSelectedCount says "{count} selected"
+// MonitoringSelectedCount says "{count, plural, one {# selected} other {# selected}}"
 // in the language of msgs.
 //
 // The number of Hosts selected in the panel editor.
@@ -17542,7 +17552,7 @@ func (msgs Messages) SysManagerSearchServices() string {
 	return Catalog.Format(msgs.locale, "sysManagerSearchServices", nil)
 }
 
-// SysManagerProcessesCount says "{count} processes"
+// SysManagerProcessesCount says "{count, plural, one {# process} other {# processes}}"
 // in the language the app shows.
 //
 // The number of processes matching the search.
@@ -17550,7 +17560,7 @@ func SysManagerProcessesCount(count int) string {
 	return In(i18n.Locale()).SysManagerProcessesCount(count)
 }
 
-// SysManagerProcessesCount says "{count} processes"
+// SysManagerProcessesCount says "{count, plural, one {# process} other {# processes}}"
 // in the language of msgs.
 //
 // The number of processes matching the search.
@@ -17558,13 +17568,13 @@ func (msgs Messages) SysManagerProcessesCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerProcessesCount", map[string]any{"count": count})
 }
 
-// SysManagerPortsCount says "{count} listeners"
+// SysManagerPortsCount says "{count, plural, one {# listener} other {# listeners}}"
 // in the language the app shows.
 //
 // The number of listening sockets matching the search.
 func SysManagerPortsCount(count int) string { return In(i18n.Locale()).SysManagerPortsCount(count) }
 
-// SysManagerPortsCount says "{count} listeners"
+// SysManagerPortsCount says "{count, plural, one {# listener} other {# listeners}}"
 // in the language of msgs.
 //
 // The number of listening sockets matching the search.
@@ -17572,7 +17582,7 @@ func (msgs Messages) SysManagerPortsCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerPortsCount", map[string]any{"count": count})
 }
 
-// SysManagerServicesCount says "{count} units"
+// SysManagerServicesCount says "{count, plural, one {# unit} other {# units}}"
 // in the language the app shows.
 //
 // The number of systemd units matching the search.
@@ -17580,7 +17590,7 @@ func SysManagerServicesCount(count int) string {
 	return In(i18n.Locale()).SysManagerServicesCount(count)
 }
 
-// SysManagerServicesCount says "{count} units"
+// SysManagerServicesCount says "{count, plural, one {# unit} other {# units}}"
 // in the language of msgs.
 //
 // The number of systemd units matching the search.
@@ -18150,7 +18160,7 @@ func (msgs Messages) SysManagerOverviewLoad() string {
 	return Catalog.Format(msgs.locale, "sysManagerOverviewLoad", nil)
 }
 
-// SysManagerOverviewCores says "{count} cores"
+// SysManagerOverviewCores says "{count, plural, one {# core} other {# cores}}"
 // in the language the app shows.
 //
 // The Host's CPU core count.
@@ -18158,7 +18168,7 @@ func SysManagerOverviewCores(count int) string {
 	return In(i18n.Locale()).SysManagerOverviewCores(count)
 }
 
-// SysManagerOverviewCores says "{count} cores"
+// SysManagerOverviewCores says "{count, plural, one {# core} other {# cores}}"
 // in the language of msgs.
 //
 // The Host's CPU core count.
@@ -18414,13 +18424,13 @@ func (msgs Messages) SysManagerSearchSessions() string {
 	return Catalog.Format(msgs.locale, "sysManagerSearchSessions", nil)
 }
 
-// SysManagerSessionsCount says "{count} sessions"
+// SysManagerSessionsCount says "{count, plural, one {# session} other {# sessions}}"
 // in the language the app shows.
 func SysManagerSessionsCount(count int) string {
 	return In(i18n.Locale()).SysManagerSessionsCount(count)
 }
 
-// SysManagerSessionsCount says "{count} sessions"
+// SysManagerSessionsCount says "{count, plural, one {# session} other {# sessions}}"
 // in the language of msgs.
 func (msgs Messages) SysManagerSessionsCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerSessionsCount", map[string]any{"count": count})
@@ -18612,23 +18622,23 @@ func (msgs Messages) SysManagerSearchImages() string {
 	return Catalog.Format(msgs.locale, "sysManagerSearchImages", nil)
 }
 
-// SysManagerContainersCount says "{count} containers"
+// SysManagerContainersCount says "{count, plural, one {# container} other {# containers}}"
 // in the language the app shows.
 func SysManagerContainersCount(count int) string {
 	return In(i18n.Locale()).SysManagerContainersCount(count)
 }
 
-// SysManagerContainersCount says "{count} containers"
+// SysManagerContainersCount says "{count, plural, one {# container} other {# containers}}"
 // in the language of msgs.
 func (msgs Messages) SysManagerContainersCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerContainersCount", map[string]any{"count": count})
 }
 
-// SysManagerImagesCount says "{count} images"
+// SysManagerImagesCount says "{count, plural, one {# image} other {# images}}"
 // in the language the app shows.
 func SysManagerImagesCount(count int) string { return In(i18n.Locale()).SysManagerImagesCount(count) }
 
-// SysManagerImagesCount says "{count} images"
+// SysManagerImagesCount says "{count, plural, one {# image} other {# images}}"
 // in the language of msgs.
 func (msgs Messages) SysManagerImagesCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerImagesCount", map[string]any{"count": count})
@@ -18980,11 +18990,11 @@ func (msgs Messages) SysManagerGPUVendor() string {
 	return Catalog.Format(msgs.locale, "sysManagerGPUVendor", nil)
 }
 
-// SysManagerGPUCount says "{count} GPUs"
+// SysManagerGPUCount says "{count, plural, one {# GPU} other {# GPUs}}"
 // in the language the app shows.
 func SysManagerGPUCount(count int) string { return In(i18n.Locale()).SysManagerGPUCount(count) }
 
-// SysManagerGPUCount says "{count} GPUs"
+// SysManagerGPUCount says "{count, plural, one {# GPU} other {# GPUs}}"
 // in the language of msgs.
 func (msgs Messages) SysManagerGPUCount(count int) string {
 	return Catalog.Format(msgs.locale, "sysManagerGPUCount", map[string]any{"count": count})

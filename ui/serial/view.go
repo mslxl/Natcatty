@@ -7,6 +7,7 @@ import (
 
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // The dialog keeps its action row inside the card at the 720x480 minimum
@@ -102,10 +103,10 @@ func statusView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, m.SerialStopBitsWarning()).FontSize(11).TextColor(t.TextMuted)
 		}
 		if portsFailed {
-			ui.Text(c, m.SerialPortsFailed()).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, m.SerialPortsFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 		if problem != nil {
-			ui.Text(c, ProblemText(m, problem)).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, ProblemText(m, problem)).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 	})
 }

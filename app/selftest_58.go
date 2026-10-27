@@ -26,7 +26,7 @@ package app
 // completion, or the scenario deadline). The approval clock is injected and
 // nothing sleeps. A repeated F11,5,8 resets the report and reruns the scenario.
 //
-// Result: %TEMP%\natcatty-selftest-58.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-58.json.
 
 import (
 	"context"

@@ -25,7 +25,7 @@ package app
 //     720x480 the list and import panel render without horizontal overflow,
 //     the panel's actions stay visible, and its scroll reaches the last row.
 //
-// Result: %TEMP%\natcatty-selftest-24.json. Every store, secret store, and
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-24.json. Every store, secret store, and
 // temporary directory is closed and removed, so F11,2,4 passes twice in one
 // process.
 

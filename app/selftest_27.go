@@ -23,7 +23,7 @@ package app
 // Every temporary service lives in its own directory, removed at the end of
 // its step, so F11,2,7 can run twice in one process.
 //
-// Result: %TEMP%\natcatty-selftest-27.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-27.json.
 
 import (
 	"context"

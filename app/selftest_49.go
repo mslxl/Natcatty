@@ -23,7 +23,7 @@ package app
 // first step polls its result channel with a hard 30 s deadline; later steps
 // assert one area each. A repeated F11,4,9 starts from a clean scenario.
 //
-// Result: %TEMP%\natcatty-selftest-49.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-49.json.
 
 import (
 	"bytes"

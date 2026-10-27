@@ -8,7 +8,7 @@ package app
 // (quoted insertion, multiple paths, the upload seam), the real Session menu
 // with its disabled states, and the chrome layout at both supported sizes.
 //
-// Result: %TEMP%\natcatty-selftest-17.json. Every run closes the Sessions it
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-17.json. Every run closes the Sessions it
 // opened and clears the demo state before preparing it again, so F11,1,7
 // passes twice in one process.
 
@@ -316,8 +316,16 @@ func (t *selftest17) pasteStep(*ui.Context) selftest.Outcome {
 		p.session = session
 		p.gate = sessionui.NewPasteGate(
 			func() (bool, int) { return p.protection, 2 },
-			func(text string) { _, _ = session.TerminalConn().Write([]byte(text)) })
-		p.acceptedText = selftest17PasteText(p.acceptedOne, p.acceptedTwo)
+			func(text string) {
+				// The gate normalizes every line ending to LF, as the
+				// production boundary does. Emulate the terminal's Paste
+				// encoding, which sends each LF as a carriage return.
+				wire := strings.ReplaceAll(text, "\n", "\r")
+				_, _ = session.TerminalConn().Write([]byte(wire))
+			})
+		// Request stores the normalized text, so compare with normalized input.
+		p.acceptedText = domainterminal.NormalizePasteText(
+			selftest17PasteText(p.acceptedOne, p.acceptedTwo))
 		if p.gate.Request(p.acceptedText) {
 			return t.finishPaste(selftest.Failed(errors.New("the guarded paste was delivered immediately")))
 		}

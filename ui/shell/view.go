@@ -10,6 +10,7 @@ import (
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // sidebarWidth is the fixed width of the Vault navigation column. The content
@@ -22,6 +23,10 @@ const shellPadding float32 = 16
 // View returns the main window's shell: the fixed Vault navigation, the
 // Settings entry point, the five-language selector, and the ordered work tabs.
 func View(s *state.State) func(*ui.Context) {
+	// The work Tab strip scrolls sideways at the minimum window. This tracker
+	// belongs to this window's content function, so the active Tab is revealed
+	// when it changes or the window is resized.
+	reveal := newWorkTabReveal()
 	return func(c *ui.Context) {
 		// Connections complete off the UI thread; applying them here keeps
 		// every Tab mutation on this thread.
@@ -32,7 +37,7 @@ func View(s *state.State) func(*ui.Context) {
 
 		ui.Row(c).Fill().Children(func() {
 			sidebar(c, s, m, t)
-			content(c, s, m, t)
+			content(c, s, m, t, reveal)
 		})
 
 		if prompt := s.TrustPrompt(); prompt != nil {
@@ -109,7 +114,7 @@ func navButton(c *ui.Context, key, label string, active bool, show func()) {
 	}
 }
 
-func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
 	// Grow takes the width the sidebar leaves; Fill would ask for the whole
 	// window again and clip the tab strip and Panes at the right edge.
 	// MinWidth(0) keeps the content column at the window's width when the
@@ -121,15 +126,15 @@ func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
 		}
 		if notice := desktopNoticeText(m, s.DesktopNotice()); notice != "" {
-			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, notice).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 		if problem := uiconnection.ProblemTextFor(m, s.ProblemError()); problem != "" {
-			ui.Text(c, problem).TextColor(t.Danger)
+			ui.Text(c, problem).TextColor(uitheme.DangerText(t))
 		}
 		// The ordered work Tabs stay visible over the Vault so a user who
 		// returned to the Vault can select a Session again.
 		if s.TabCount() > 0 {
-			workTabs(c, s, m, t)
+			workTabs(c, s, m, t, reveal)
 		}
 		if s.VaultVisible() {
 			if view := s.VaultView(); view != nil {
@@ -189,7 +194,7 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
 		}
 		if notice := noticeText(m, snapshot.Notice); notice != "" {
-			ui.Text(c, notice).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, notice).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 	}
 	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {

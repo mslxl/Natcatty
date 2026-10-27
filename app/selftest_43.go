@@ -22,7 +22,7 @@ package app
 //
 // Every wait observes a condition with a hard deadline; there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-43.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-43.json.
 
 import (
 	"bytes"

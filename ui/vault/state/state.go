@@ -738,6 +738,47 @@ func (s *State) SetX11Forwarding(enabled bool) {
 	}
 }
 
+// SetHostProtocol records the Host editor's protocol and clears settings that
+// belong to the previous protocol. A hidden control must never leave a value
+// behind that Save would persist: file-transfer settings, Mosh and ET paths,
+// and SSH-only credentials all follow the protocol.
+func (s *State) SetHostProtocol(protocol string) {
+	s.form.Protocol = protocol
+	if protocol != string(domainvault.ProtocolSSH) {
+		s.SetX11Forwarding(false)
+		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
+		s.form.SFTPSudo = false
+		s.form.NetworkDevice = false
+	}
+	if protocol != string(domainvault.ProtocolMosh) {
+		s.form.MoshServerPath = ""
+	}
+	if protocol != string(domainvault.ProtocolET) {
+		s.form.ETPort = ""
+	}
+	if !domainvault.Protocol(protocol).UsesSSHAuth() {
+		s.form.IdentityID = ""
+		s.form.KeyID = ""
+		s.form.AuthMethod = string(domainvault.HostAuthAuto)
+		s.form.UseSSHAgent = false
+		s.form.RequiresMFA = false
+	}
+}
+
+// SetGroupProtocol records the Host Group editor's protocol. Telnet groups do
+// not authenticate over SSH, so their SSH-only defaults are cleared instead of
+// being inherited silently by member Hosts.
+func (s *State) SetGroupProtocol(protocol string) {
+	s.groupForm.Protocol = protocol
+	if !domainvault.Protocol(protocol).UsesSSHAuth() {
+		s.groupForm.IdentityID = ""
+		s.groupForm.KeyID = ""
+		s.groupForm.AuthMethod = ""
+		s.groupForm.UseSSHAgent = false
+		s.groupForm.RequiresMFA = false
+	}
+}
+
 // CancelEdit closes the editor without saving.
 func (s *State) CancelEdit() {
 	s.editing = false
@@ -967,6 +1008,45 @@ func etPortText(host domainvault.Host) string {
 		return ""
 	}
 	return strconv.Itoa(host.ETPort)
+}
+
+// HostPortPlaceholder is the Port field's hint: the effective default for the
+// protocol and Host Group currently selected in the editor. A blank field
+// still means "inherit", so the stored value stays empty; the hint shows what
+// a connection would use (a group port when one is set, otherwise 22 for SSH
+// and 23 for Telnet).
+func (s *State) HostPortPlaceholder() string {
+	defaults := domainvault.ResolveGroupDefaults(s.groupItems, s.form.Group)
+	protocol := domainvault.Protocol(s.form.Protocol)
+	if protocol == "" {
+		protocol = domainvault.ProtocolSSH
+	}
+	return portPlaceholder(protocol, defaults.Port)
+}
+
+// GroupPortPlaceholder is the Host Group editor's Port hint. A group inherits
+// from its parent groups, so the parent chain supplies the port and protocol
+// before the protocol default applies.
+func (s *State) GroupPortPlaceholder() string {
+	defaults := domainvault.ResolveGroupDefaults(s.groupItems,
+		domainvault.ParentGroupPath(s.groupForm.Path))
+	protocol := domainvault.Protocol(s.groupForm.Protocol)
+	if protocol == "" {
+		protocol = defaults.Protocol
+	}
+	if protocol == "" {
+		protocol = domainvault.ProtocolSSH
+	}
+	return portPlaceholder(protocol, defaults.Port)
+}
+
+// portPlaceholder renders the effective default port a blank field inherits.
+// A Local shell has no port, so it shows no hint.
+func portPlaceholder(protocol domainvault.Protocol, inherited int) string {
+	if port := domainvault.EffectivePort(protocol, inherited); port > 0 {
+		return strconv.Itoa(port)
+	}
+	return ""
 }
 
 // draftFromHost turns a Host into the draft an edit would submit, optionally

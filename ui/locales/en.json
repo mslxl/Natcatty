@@ -113,6 +113,7 @@
   "vaultHostLabel": "Label",
   "vaultHostHostname": "Hostname",
   "vaultHostPort": "Port",
+  "vaultHostPortHint": "Leave empty to inherit; port {port} is used.",
   "vaultHostUsername": "Username",
   "vaultHostProtocol": "Protocol",
   "vaultHostGroup": "Host Group",
@@ -130,7 +131,7 @@
   "vaultGroupNew": "New Group",
   "vaultGroupEmpty": "No Host Groups yet.",
   "vaultGroupUngrouped": "Vault root (no Host Group)",
-  "vaultGroupMemberCount": "{count} Hosts",
+  "vaultGroupMemberCount": "{count, plural, one {# Host} other {# Hosts}}",
   "@vaultGroupMemberCount": {
     "description": "The number of Hosts at or below a Host Group.",
     "placeholders": {
@@ -357,7 +358,7 @@
   "vaultImportRows": "Rows",
   "vaultImportIssues": "Problems",
   "vaultImportNoIssues": "No problems found.",
-  "vaultImportSelected": "{count} selected",
+  "vaultImportSelected": "{count, plural, one {# selected} other {# selected}}",
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
@@ -1471,7 +1472,7 @@
   },
   "vaultSnippetSummaryAllHosts": "All Hosts",
   "vaultSnippetSummaryNoTargets": "Any session",
-  "vaultSnippetVariableCount": "{count} variables",
+  "vaultSnippetVariableCount": "{count, plural, one {# variable} other {# variables}}",
   "@vaultSnippetVariableCount": {
     "description": "How many variables a Snippet asks for.",
     "placeholders": {
@@ -1502,7 +1503,7 @@
   "vaultSnippetPackageFormEditTitle": "Rename Snippet package",
   "vaultSnippetPackagePath": "Package path",
   "vaultSnippetPackagePathHint": "Packages nest with '/', for example ops/linux.",
-  "vaultSnippetPackageSnippetCount": "{count} Snippets",
+  "vaultSnippetPackageSnippetCount": "{count, plural, one {# Snippet} other {# Snippets}}",
   "@vaultSnippetPackageSnippetCount": {
     "description": "How many Snippets one package contains.",
     "placeholders": {
@@ -1709,7 +1710,7 @@
   "@vaultNoteGroupPathHint": {
     "description": "The Note Group path field's hint."
   },
-  "vaultNoteGroupNoteCount": "{count} notes",
+  "vaultNoteGroupNoteCount": "{count, plural, one {# note} other {# notes}}",
   "@vaultNoteGroupNoteCount": {
     "description": "How many Notes one Note Group directly contains.",
     "placeholders": {
@@ -2069,7 +2070,7 @@
       }
     }
   },
-  "vaultExportUnreadable": "{count} credentials could not be read and were left out.",
+  "vaultExportUnreadable": "{count, plural, one {# credential could not be read and was left out.} other {# credentials could not be read and were left out.}}",
   "vaultExportOmitted": "{count, plural, one {# stored credential was left out; enable secrets to include it.} other {# stored credentials were left out; enable secrets to include them.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
@@ -2230,7 +2231,7 @@
   "settingsAreaSFTPEditor": "SFTP & Editor",
   "settingsAreaLogs": "Logs",
   "settingsAreaSystem": "System & Desktop",
-  "settingsAreaSecurity": "Security & App Lock",
+  "settingsAreaSecurity": "Security",
   "settingsAreaSync": "Sync & Cloud",
   "settingsAreaShortcuts": "Shortcuts",
   "settingsSearchPlaceholder": "Search settings…",
@@ -2915,7 +2916,7 @@
   "@sftpOpenFileUnavailable": {
     "description": "The notice shown when a file is opened instead of copied."
   },
-  "sftpSelected": "{count} selected",
+  "sftpSelected": "{count, plural, one {# selected} other {# selected}}",
   "@sftpSelected": {
     "description": "The pane footer's selected-item count.",
     "placeholders": {
@@ -3347,7 +3348,7 @@
   "@sftpTransferConflictFailed": {
     "description": "The Transfer center error for a failed conflict answer."
   },
-  "sftpTransferSkipped": "{count} skipped",
+  "sftpTransferSkipped": "{count, plural, one {# skipped} other {# skipped}}",
   "@sftpTransferSkipped": {
     "description": "The count of entries a Transfer left untouched.",
     "placeholders": {
@@ -3445,7 +3446,7 @@
   "monitoringName": "Name",
   "monitoringDescription": "Description",
   "monitoringPanelHosts": "Hosts",
-  "monitoringSelectedCount": "{count} selected",
+  "monitoringSelectedCount": "{count, plural, one {# selected} other {# selected}}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -3533,7 +3534,7 @@
   "sysManagerSearchProcesses": "Search processes…",
   "sysManagerSearchPorts": "Search ports…",
   "sysManagerSearchServices": "Search services…",
-  "sysManagerProcessesCount": "{count} processes",
+  "sysManagerProcessesCount": "{count, plural, one {# process} other {# processes}}",
   "@sysManagerProcessesCount": {
     "description": "The number of processes matching the search.",
     "placeholders": {
@@ -3543,7 +3544,7 @@
       }
     }
   },
-  "sysManagerPortsCount": "{count} listeners",
+  "sysManagerPortsCount": "{count, plural, one {# listener} other {# listeners}}",
   "@sysManagerPortsCount": {
     "description": "The number of listening sockets matching the search.",
     "placeholders": {
@@ -3553,7 +3554,7 @@
       }
     }
   },
-  "sysManagerServicesCount": "{count} units",
+  "sysManagerServicesCount": "{count, plural, one {# unit} other {# units}}",
   "@sysManagerServicesCount": {
     "description": "The number of systemd units matching the search.",
     "placeholders": {
@@ -3755,7 +3756,7 @@
   "sysManagerOverviewKernel": "Kernel",
   "sysManagerOverviewUptime": "Uptime",
   "sysManagerOverviewLoad": "Load",
-  "sysManagerOverviewCores": "{count} cores",
+  "sysManagerOverviewCores": "{count, plural, one {# core} other {# cores}}",
   "@sysManagerOverviewCores": {
     "description": "The Host's CPU core count.",
     "placeholders": {
@@ -3857,7 +3858,7 @@
   "sysManagerReasonDockerDaemon": "The Docker daemon is not reachable.",
   "sysManagerProblemAttach": "Could not open the tmux session.",
   "sysManagerSearchSessions": "Search sessions…",
-  "sysManagerSessionsCount": "{count} sessions",
+  "sysManagerSessionsCount": "{count, plural, one {# session} other {# sessions}}",
   "@sysManagerSessionsCount": {
     "description": "",
     "placeholders": {
@@ -3918,7 +3919,7 @@
   "sysManagerDockerView": "View",
   "sysManagerSearchContainers": "Search containers…",
   "sysManagerSearchImages": "Search images…",
-  "sysManagerContainersCount": "{count} containers",
+  "sysManagerContainersCount": "{count, plural, one {# container} other {# containers}}",
   "@sysManagerContainersCount": {
     "description": "",
     "placeholders": {
@@ -3928,7 +3929,7 @@
       }
     }
   },
-  "sysManagerImagesCount": "{count} images",
+  "sysManagerImagesCount": "{count, plural, one {# image} other {# images}}",
   "@sysManagerImagesCount": {
     "description": "",
     "placeholders": {
@@ -4051,7 +4052,7 @@
   "sysManagerGPUPower": "Power",
   "sysManagerGPUFan": "Fan",
   "sysManagerGPUVendor": "Vendor",
-  "sysManagerGPUCount": "{count} GPUs",
+  "sysManagerGPUCount": "{count, plural, one {# GPU} other {# GPUs}}",
   "@sysManagerGPUCount": {
     "description": "",
     "placeholders": {

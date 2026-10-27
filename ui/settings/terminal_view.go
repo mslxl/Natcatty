@@ -5,6 +5,7 @@ import (
 
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t *ui.Theme) {
@@ -119,7 +120,7 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 		})
 
 		if state.Problem() {
-			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(t.Danger).FontSize(12)
+			ui.Text(c, m.SettingsTerminalSaveFailed()).TextColor(uitheme.DangerText(t)).FontSize(12)
 		}
 	})
 }

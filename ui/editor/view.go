@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // The editor and its prompts are overlays over the active surface. The
@@ -109,7 +110,7 @@ func documentView(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 				case s.Saving():
 					ui.Text(c, m.SftpEditorSaving()).FontSize(11).TextColor(t.TextMuted)
 				case s.SaveError():
-					ui.Text(c, m.SftpEditorSaveFailed()).FontSize(11).TextColor(t.Danger)
+					ui.Text(c, m.SftpEditorSaveFailed()).FontSize(11).TextColor(uitheme.DangerText(t))
 				case s.Saved():
 					ui.Text(c, m.SftpEditorSaved()).FontSize(11).TextColor(t.TextMuted)
 				}

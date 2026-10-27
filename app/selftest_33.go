@@ -22,7 +22,7 @@ package app
 // dialog, or filesystem condition with a hard deadline; there is no fixed
 // sleep.
 //
-// Result: %TEMP%\natcatty-selftest-33.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-33.json.
 
 import (
 	"context"

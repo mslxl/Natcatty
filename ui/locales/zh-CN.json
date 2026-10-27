@@ -65,9 +65,10 @@
   "vaultHostLocal": "本地 Shell",
   "vaultHostFormCreateTitle": "新建主机",
   "vaultHostFormEditTitle": "编辑主机",
-  "vaultHostLabel": "标签",
+  "vaultHostLabel": "名称",
   "vaultHostHostname": "主机名",
   "vaultHostPort": "端口",
+  "vaultHostPortHint": "留空以继承；将使用端口 {port}。",
   "vaultHostUsername": "用户名",
   "vaultHostProtocol": "协议",
   "vaultHostGroup": "主机组",
@@ -76,7 +77,7 @@
   "vaultGroupNew": "新建组",
   "vaultGroupEmpty": "暂无主机组。",
   "vaultGroupUngrouped": "Vault 根目录（无主机组）",
-  "vaultGroupMemberCount": "{count} 台主机",
+  "vaultGroupMemberCount": "{count, plural, other {# 台主机}}",
   "vaultGroupFormCreateTitle": "新建主机组",
   "vaultGroupFormEditTitle": "编辑主机组",
   "vaultGroupDefaults": "成员主机的默认值",
@@ -236,7 +237,7 @@
   "vaultImportRows": "行",
   "vaultImportIssues": "问题",
   "vaultImportNoIssues": "未发现问题。",
-  "vaultImportSelected": "已选择 {count} 项",
+  "vaultImportSelected": "{count, plural, other {已选择 # 项}}",
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
@@ -985,7 +986,7 @@
   "vaultSnippetSummaryTargets": "目标：{targets}",
   "vaultSnippetSummaryAllHosts": "所有主机",
   "vaultSnippetSummaryNoTargets": "任意会话",
-  "vaultSnippetVariableCount": "{count} 个变量",
+  "vaultSnippetVariableCount": "{count, plural, other {# 个变量}}",
   "vaultSnippetNoAutoRun": "不自动运行",
   "vaultSnippetLineDelay": "逐行运行",
   "vaultSnippetFormCreateTitle": "新建代码片段",
@@ -1007,7 +1008,7 @@
   "vaultSnippetPackageFormEditTitle": "重命名代码片段包",
   "vaultSnippetPackagePath": "包路径",
   "vaultSnippetPackagePathHint": "包使用“/”嵌套，例如 ops/linux。",
-  "vaultSnippetPackageSnippetCount": "{count} 个代码片段",
+  "vaultSnippetPackageSnippetCount": "{count, plural, other {# 个代码片段}}",
   "vaultSnippetDeleteConfirm": "删除代码片段“{label}”？",
   "vaultSnippetPackageDeleteConfirm": "删除包“{path}”？其中的代码片段会保留并移到 Vault 根目录。",
   "vaultSnippetRunTitle": "运行“{label}”",
@@ -1151,7 +1152,7 @@
   "@vaultNoteGroupPathHint": {
     "description": "The Note Group path field's hint."
   },
-  "vaultNoteGroupNoteCount": "{count} 条笔记",
+  "vaultNoteGroupNoteCount": "{count, plural, other {# 条笔记}}",
   "@vaultNoteGroupNoteCount": {
     "description": "How many Notes one Note Group directly contains.",
     "placeholders": {
@@ -1303,7 +1304,7 @@
       }
     }
   },
-  "vaultExportUnreadable": "有 {count} 个凭据无法读取，已省略。",
+  "vaultExportUnreadable": "{count, plural, other {有 # 个凭据无法读取，已省略。}}",
   "vaultExportOmitted": "{count, plural, other {已省略 # 个已保存的凭据；启用密钥导出以包含它们。}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
@@ -1464,7 +1465,7 @@
   "settingsAreaSFTPEditor": "SFTP 与编辑器",
   "settingsAreaLogs": "日志",
   "settingsAreaSystem": "系统与桌面",
-  "settingsAreaSecurity": "安全与应用锁",
+  "settingsAreaSecurity": "安全",
   "settingsAreaSync": "同步与云",
   "settingsAreaShortcuts": "快捷键",
   "settingsSearchPlaceholder": "搜索设置…",
@@ -1936,7 +1937,7 @@
   "sftpEditorSyncFailedBody": "{name} 的更改正在本地等待。远程文件未被更改。",
   "sftpEditorRetry": "重试",
   "sftpEditorDismiss": "关闭",
-  "sftpSelected": "已选择 {count} 项",
+  "sftpSelected": "{count, plural, other {已选择 # 项}}",
   "sftpItemCount": "{count, plural, other {# 项}}",
   "sftpProgress": "{current} · {percent}%",
   "sftpProgressDone": "{current} · 已完成",
@@ -2097,7 +2098,7 @@
   "@sftpTransferConflictFailed": {
     "description": "The Transfer center error for a failed conflict answer."
   },
-  "sftpTransferSkipped": "已跳过 {count} 个",
+  "sftpTransferSkipped": "{count, plural, other {已跳过 # 个}}",
   "@sftpTransferSkipped": {
     "description": "The count of entries a Transfer left untouched.",
     "placeholders": {
@@ -2195,7 +2196,7 @@
   "monitoringName": "名称",
   "monitoringDescription": "描述",
   "monitoringPanelHosts": "主机",
-  "monitoringSelectedCount": "已选择 {count} 台",
+  "monitoringSelectedCount": "{count, plural, other {已选择 # 台}}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -2283,7 +2284,7 @@
   "sysManagerSearchProcesses": "搜索进程…",
   "sysManagerSearchPorts": "搜索端口…",
   "sysManagerSearchServices": "搜索服务…",
-  "sysManagerProcessesCount": "{count} 个进程",
+  "sysManagerProcessesCount": "{count, plural, other {# 个进程}}",
   "@sysManagerProcessesCount": {
     "description": "The number of processes matching the search.",
     "placeholders": {
@@ -2293,7 +2294,7 @@
       }
     }
   },
-  "sysManagerPortsCount": "{count} 个监听",
+  "sysManagerPortsCount": "{count, plural, other {# 个监听}}",
   "@sysManagerPortsCount": {
     "description": "The number of listening sockets matching the search.",
     "placeholders": {
@@ -2303,7 +2304,7 @@
       }
     }
   },
-  "sysManagerServicesCount": "{count} 个单元",
+  "sysManagerServicesCount": "{count, plural, other {# 个单元}}",
   "@sysManagerServicesCount": {
     "description": "The number of systemd units matching the search.",
     "placeholders": {
@@ -2505,7 +2506,7 @@
   "sysManagerOverviewKernel": "内核",
   "sysManagerOverviewUptime": "运行时间",
   "sysManagerOverviewLoad": "负载",
-  "sysManagerOverviewCores": "{count} 个核心",
+  "sysManagerOverviewCores": "{count, plural, other {# 个核心}}",
   "@sysManagerOverviewCores": {
     "description": "The Host's CPU core count.",
     "placeholders": {
@@ -2607,7 +2608,7 @@
   "sysManagerReasonDockerDaemon": "无法连接 Docker 守护进程。",
   "sysManagerProblemAttach": "无法打开 tmux 会话。",
   "sysManagerSearchSessions": "搜索会话…",
-  "sysManagerSessionsCount": "{count} 个会话",
+  "sysManagerSessionsCount": "{count, plural, other {# 个会话}}",
   "@sysManagerSessionsCount": {
     "description": "",
     "placeholders": {
@@ -2668,7 +2669,7 @@
   "sysManagerDockerView": "视图",
   "sysManagerSearchContainers": "搜索容器…",
   "sysManagerSearchImages": "搜索镜像…",
-  "sysManagerContainersCount": "{count} 个容器",
+  "sysManagerContainersCount": "{count, plural, other {# 个容器}}",
   "@sysManagerContainersCount": {
     "description": "",
     "placeholders": {
@@ -2678,7 +2679,7 @@
       }
     }
   },
-  "sysManagerImagesCount": "{count} 个镜像",
+  "sysManagerImagesCount": "{count, plural, other {# 个镜像}}",
   "@sysManagerImagesCount": {
     "description": "",
     "placeholders": {
@@ -2801,7 +2802,7 @@
   "sysManagerGPUPower": "功耗",
   "sysManagerGPUFan": "风扇",
   "sysManagerGPUVendor": "厂商",
-  "sysManagerGPUCount": "{count} 块 GPU",
+  "sysManagerGPUCount": "{count, plural, other {# 块 GPU}}",
   "@sysManagerGPUCount": {
     "description": "",
     "placeholders": {

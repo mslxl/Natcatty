@@ -5,7 +5,7 @@ package app
 // Ticket 16 self-test.
 //
 // Press F11, then 1, then 6. The check runs on the UI thread one step per
-// frame and writes %TEMP%\natcatty-selftest-16.json.
+// frame and writes %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-16.json.
 //
 // Three real local shell Sessions are opened through the production Session
 // service and local PTY adapter. A typed marker is sent from the first Session
@@ -165,7 +165,14 @@ func (t *selftest16) resetRunState() {
 	t.broadcastAt = time.Time{}
 	t.broadcastPreview = ""
 	t.marker = fmt.Sprintf("NATCATTY16_%d", time.Now().UnixNano())
-	t.root = filepath.Join(os.TempDir(), "natcatty-selftest-16")
+	if t.root == "" {
+		root, err := os.MkdirTemp("", "natcatty-selftest-16-")
+		if err != nil {
+			root = filepath.Join(os.TempDir(),
+				fmt.Sprintf("natcatty-selftest-16-%d", os.Getpid()))
+		}
+		t.root = root
+	}
 	_ = os.RemoveAll(t.root)
 	_ = os.MkdirAll(t.root, 0o755)
 }

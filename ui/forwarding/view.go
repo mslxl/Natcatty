@@ -10,14 +10,16 @@ import (
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // View returns a standalone forwarding surface. The Vault embeds Section
 // instead; this entry point keeps the surface testable in isolation.
 func View(s *State) func(*ui.Context) {
+	var scroll ui.ScrollState
 	return func(c *ui.Context) {
 		if s.Editing() {
-			Editor(c, s)
+			Editor(c, s, &scroll)
 			return
 		}
 		Section(c, s)
@@ -48,7 +50,7 @@ func Section(c *ui.Context, s *State) {
 			}
 		}
 		ui.Row(c).Fill().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, message).Grow(1).TextColor(t.Danger)
+			ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
 			if ui.Button(c, m.VaultHostCancel()).Clicked() {
 				s.CancelDelete()
 				c.Invalidate()
@@ -62,7 +64,7 @@ func Section(c *ui.Context, s *State) {
 
 	if s.Problem() != ProblemNone {
 		if text := problemText(m, s.Problem()); text != "" {
-			ui.Text(c, text).TextColor(t.Danger)
+			ui.Text(c, text).TextColor(uitheme.DangerText(t))
 		}
 	}
 
@@ -84,7 +86,7 @@ func ruleRow(c *ui.Context, s *State, view appforwarding.View, m locales.Message
 			if text, danger := statusText(m, view); text != "" {
 				color := t.TextMuted
 				if danger {
-					color = t.Danger
+					color = uitheme.DangerText(t)
 				}
 				ui.Text(c, text).FontSize(12).TextColor(color)
 			}
@@ -196,8 +198,10 @@ func typeLabel(m locales.Messages, kind domainforward.Type) string {
 	}
 }
 
-// Editor renders the create or edit form.
-func Editor(c *ui.Context, s *State) {
+// Editor renders the create or edit form. The form scrolls with Save, Cancel,
+// and the problem pinned below it, so the minimum window never hides a
+// control or the reason a save failed.
+func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	form := s.Form()
@@ -205,62 +209,67 @@ func Editor(c *ui.Context, s *State) {
 	if form.ID != "" {
 		title = m.VaultForwardingFormEditTitle()
 	}
-	ui.Text(c, title).FontSize(20).Bold()
 
-	ui.Form(c, func() {
-		ui.Field(c, m.VaultForwardingType(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.Type, string(domainforward.TypeLocal), m.VaultForwardingTypeLocal())
-				ui.Radio(c, &form.Type, string(domainforward.TypeRemote), m.VaultForwardingTypeRemote())
-				ui.Radio(c, &form.Type, string(domainforward.TypeDynamic), m.VaultForwardingTypeDynamic())
+	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
+		ui.Text(c, title).FontSize(20).Bold()
+
+		ui.Form(c, func() {
+			ui.Field(c, m.VaultForwardingType(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.Type, string(domainforward.TypeLocal), m.VaultForwardingTypeLocal())
+					ui.Radio(c, &form.Type, string(domainforward.TypeRemote), m.VaultForwardingTypeRemote())
+					ui.Radio(c, &form.Type, string(domainforward.TypeDynamic), m.VaultForwardingTypeDynamic())
+				})
 			})
-		})
-		ui.Field(c, m.VaultForwardingLabel(), func() {
-			ui.TextInput(c, &form.Label)
-		})
-		ui.Field(c, m.VaultForwardingHost(), func() {
-			if len(s.Hosts()) == 0 {
-				ui.Text(c, m.VaultForwardingHostNone()).FontSize(12).TextColor(t.Danger)
-				return
-			}
-			ui.RadioGroup(c, func() {
-				for _, host := range s.Hosts() {
-					ui.Radio(c, &form.HostID, string(host.ID), host.Label)
+			ui.Field(c, m.VaultForwardingLabel(), func() {
+				ui.TextInput(c, &form.Label)
+			})
+			ui.Field(c, m.VaultForwardingHost(), func() {
+				if len(s.Hosts()) == 0 {
+					ui.Text(c, m.VaultForwardingHostNone()).FontSize(12).TextColor(uitheme.DangerText(t))
+					return
 				}
+				ui.RadioGroup(c, func() {
+					for _, host := range s.Hosts() {
+						ui.Radio(c, &form.HostID, string(host.ID), host.Label)
+					}
+				})
 			})
-		})
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Field(c, m.VaultForwardingBindAddress(), func() {
-				ui.TextInput(c, &form.BindAddress).Width(200)
-			})
-			ui.Field(c, m.VaultForwardingLocalPort(), func() {
-				ui.TextInput(c, &form.LocalPort).Placeholder("8080").Width(120)
-			})
-		})
-		if form.Type != string(domainforward.TypeDynamic) {
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Field(c, m.VaultForwardingRemoteHost(), func() {
-					ui.TextInput(c, &form.RemoteHost).Placeholder("localhost").Width(220)
+				ui.Field(c, m.VaultForwardingBindAddress(), func() {
+					ui.TextInput(c, &form.BindAddress).Width(200)
 				})
-				ui.Field(c, m.VaultForwardingRemotePort(), func() {
-					ui.TextInput(c, &form.RemotePort).Placeholder("80").Width(120)
+				ui.Field(c, m.VaultForwardingLocalPort(), func() {
+					ui.TextInput(c, &form.LocalPort).Placeholder("8080").Width(120)
 				})
 			})
-		}
-		ui.Checkbox(c, &form.AutoStart, m.VaultForwardingAutoStart())
-		ui.Field(c, m.VaultForwardingAutoReconnect(), func() {
-			ui.RadioGroup(c, func() {
-				ui.Radio(c, &form.AutoReconnect, AutoReconnectFollow, m.VaultForwardingAutoReconnectFollow())
-				ui.Radio(c, &form.AutoReconnect, AutoReconnectOn, m.VaultForwardingAutoReconnectOn())
-				ui.Radio(c, &form.AutoReconnect, AutoReconnectOff, m.VaultForwardingAutoReconnectOff())
+			if form.Type != string(domainforward.TypeDynamic) {
+				ui.Row(c).Gap(8).Children(func() {
+					ui.Field(c, m.VaultForwardingRemoteHost(), func() {
+						ui.TextInput(c, &form.RemoteHost).Placeholder("localhost").Width(220)
+					})
+					ui.Field(c, m.VaultForwardingRemotePort(), func() {
+						ui.TextInput(c, &form.RemotePort).Placeholder("80").Width(120)
+					})
+				})
+			}
+			ui.Checkbox(c, &form.AutoStart, m.VaultForwardingAutoStart())
+			ui.Field(c, m.VaultForwardingAutoReconnect(), func() {
+				ui.RadioGroup(c, func() {
+					ui.Radio(c, &form.AutoReconnect, AutoReconnectFollow, m.VaultForwardingAutoReconnectFollow())
+					ui.Radio(c, &form.AutoReconnect, AutoReconnectOn, m.VaultForwardingAutoReconnectOn())
+					ui.Radio(c, &form.AutoReconnect, AutoReconnectOff, m.VaultForwardingAutoReconnectOff())
+				})
 			})
+			ui.Checkbox(c, &form.Enabled, m.VaultForwardingEnabled())
 		})
-		ui.Checkbox(c, &form.Enabled, m.VaultForwardingEnabled())
 	})
 
+	// The problem sits between the scrolling form and the pinned actions, so a
+	// failed save is visible without scrolling.
 	if s.Problem() != ProblemNone {
 		if text := problemText(m, s.Problem()); text != "" {
-			ui.Text(c, text).TextColor(t.Danger)
+			ui.Text(c, text).TextColor(uitheme.DangerText(t))
 		}
 	}
 

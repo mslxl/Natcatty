@@ -6,6 +6,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // inputLineHeight is the height of one line of text in the broadcast and
@@ -148,7 +149,7 @@ func broadcastPanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.The
 		}
 		if notice := s.BroadcastNotice(); notice > 0 {
 			ui.Text(c, m.BroadcastTargetsRemoved(notice)).FontSize(11).
-				TextColor(t.Warning)
+				TextColor(uitheme.WarningText(t))
 		}
 		if result, ok := s.BroadcastResult(); ok {
 			ui.Text(c, m.BroadcastSummary(result.DeliveredCount(), len(result.Deliveries))).
@@ -175,7 +176,7 @@ func broadcastTargetRow(c *ui.Context, s *state.State, m locales.Messages, t *ui
 			ui.Text(c, deliveryText(m, info.Status)).FontSize(11).
 				TextColor(deliveryColor(info.Status, t))
 		} else if !info.Running {
-			ui.Text(c, m.BroadcastMissing()).FontSize(11).TextColor(t.Danger)
+			ui.Text(c, m.BroadcastMissing()).FontSize(11).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -209,9 +210,9 @@ func deliveryColor(status appsession.DeliveryStatus, t *ui.Theme) ui.Color {
 	case appsession.DeliveryDelivered:
 		return t.Success
 	case appsession.DeliveryGated:
-		return t.Warning
+		return uitheme.WarningText(t)
 	default:
-		return t.Danger
+		return uitheme.DangerText(t)
 	}
 }
 
@@ -219,15 +220,30 @@ func summaryColor(result appsession.SendResult, t *ui.Theme) ui.Color {
 	if result.Complete() {
 		return t.Success
 	}
-	return t.Warning
+	return uitheme.WarningText(t)
 }
 
 // composeBar edits a multi-line draft and previews the original
 // transformations before sending to the focused Session or the broadcast set.
 func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	preview := s.ComposePreview()
-	ui.Column(c).FillWidth().Padding(6).Gap(3).Radius(t.Radius).
-		Background(t.Surface).Border(1, t.Border).Children(func() {
+	_, windowHeight := c.Size()
+	// The compose bar shares the content column with the terminal and, when
+	// open, the broadcast target list. At the 421-DIP client of the enforced
+	// 720x480 window that pressure pushed Trim, Paste, and Send below the
+	// client. With both panels open at that client the header, editor, and
+	// preview scroll as a bounded body; the option row with Send stays pinned
+	// at the bar's bottom, as the Vault and forwarding editors pin their
+	// actions, so the primary action is always inside the window. A 480-DIP
+	// content height still fits the whole bar, and with no target list there
+	// is room for it, so those cases keep the preview in view.
+	bounded := s.BroadcastPanelOpen() && windowHeight > 0 && windowHeight < 470
+	draftHeight, previewHeight := float32(40), float32(36)
+	if bounded {
+		draftHeight, previewHeight = 26, 24
+	}
+
+	body := func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.ComposeTitle()).FontSize(13).Bold()
 			// At the minimum width the target and result stay on one line:
@@ -246,7 +262,7 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			}
 		})
 
-		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(40).
+		area := ui.TextArea(c, s.ComposeDraft()).FillWidth().Height(draftHeight).
 			Placeholder(m.ComposePlaceholder()).Label(m.ComposePlaceholder())
 		area.OnTextKey(func(k ui.TextKey) bool {
 			switch {
@@ -279,11 +295,13 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 			// The transformed draft wraps in a short scroll view: a long
 			// multi-line command can be inspected in full before Send instead
 			// of being cut at the first line.
-			ui.Scroll(c).Grow(1).Height(36).Children(func() {
+			ui.Scroll(c).Grow(1).Height(previewHeight).Children(func() {
 				ui.Text(c, previewText).FontSize(11).Wrap().TextColor(t.Text)
 			})
 		})
+	}
 
+	actions := func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 			if inputCheckbox(c, s.ComposeTrim(), m.ComposeTrim()).Changed() {
 				c.Invalidate()
@@ -313,6 +331,20 @@ func composeBar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) 
 				c.Invalidate()
 			}
 		})
+	}
+
+	bar := ui.Column(c).FillWidth().Padding(6).Gap(3).Radius(t.Radius).
+		Background(t.Surface).Border(1, t.Border)
+	if bounded {
+		bar.MaxHeight(windowHeight * 0.28)
+	}
+	bar.Children(func() {
+		if bounded {
+			ui.Scroll(c).FillWidth().Grow(1).Children(body)
+		} else {
+			body()
+		}
+		actions()
 	})
 }
 
