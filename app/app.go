@@ -36,6 +36,7 @@ import (
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	"github.com/mslxl/natcatty/adapters/textcodec"
 	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
+	adapterwebdav "github.com/mslxl/natcatty/adapters/webdav"
 	appapplock "github.com/mslxl/natcatty/application/applock"
 	"github.com/mslxl/natcatty/application/autocomplete"
 	"github.com/mslxl/natcatty/application/command"
@@ -423,6 +424,10 @@ func run(afterReady func(hostWindow)) error {
 	// tenant. NATCATTY_ONEDRIVE_* overrides point the whole app at the local
 	// fake for acceptance runs; production leaves them empty.
 	oneDriveClient := adapteronedrive.New(adapteronedrive.OptionsFromEnv())
+	// WebDAV has no OAuth endpoints: the user supplies the collection URL and
+	// a Basic, Digest, or bearer credential. The adapter never disables TLS
+	// verification and refuses unsafe redirects.
+	webDAVClient := adapterwebdav.New(adapterwebdav.Options{})
 	syncService = appsync.NewService(
 		githubClient,
 		adaptersyncvault.New(database, secretStore),
@@ -431,6 +436,7 @@ func run(afterReady func(hostWindow)) error {
 		appsync.WithDevice(deviceID, deviceName, version),
 		appsync.WithRemote(appsync.ProviderGoogleDrive, googleClient),
 		appsync.WithRemote(appsync.ProviderOneDrive, oneDriveClient),
+		appsync.WithRemote(appsync.ProviderWebDAV, webDAVClient),
 		appsync.WithBrowserOpener(mygo.Shell.OpenExternal),
 		appsync.WithRedrawRequest(invalidate),
 		// A downloaded cloud copy rewrites the Vault families. Mark the live
