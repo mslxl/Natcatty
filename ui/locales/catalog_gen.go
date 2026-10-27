@@ -19751,3 +19751,757 @@ func BrowserDownloadStartFailed() string { return In(i18n.Locale()).BrowserDownl
 func (msgs Messages) BrowserDownloadStartFailed() string {
 	return Catalog.Format(msgs.locale, "browserDownloadStartFailed", nil)
 }
+
+// SettingsSyncConvergentTitle says "Convergent sync v2"
+// in the language the app shows.
+func SettingsSyncConvergentTitle() string { return In(i18n.Locale()).SettingsSyncConvergentTitle() }
+
+// SettingsSyncConvergentTitle says "Convergent sync v2"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentTitle", nil)
+}
+
+// SettingsSyncConvergentDescription says "Version vectors and multi-value registers make repeated syncs converge to the same state on every device. Enabling wr…"
+// in the language the app shows.
+func SettingsSyncConvergentDescription() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDescription()
+}
+
+// SettingsSyncConvergentDescription says "Version vectors and multi-value registers make repeated syncs converge to the same state on every device. Enabling wr…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDescription", nil)
+}
+
+// SettingsSyncConvergentEnable says "Enable convergent sync"
+// in the language the app shows.
+func SettingsSyncConvergentEnable() string { return In(i18n.Locale()).SettingsSyncConvergentEnable() }
+
+// SettingsSyncConvergentEnable says "Enable convergent sync"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentEnable() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentEnable", nil)
+}
+
+// SettingsSyncConvergentPause says "Pause convergent sync"
+// in the language the app shows.
+func SettingsSyncConvergentPause() string { return In(i18n.Locale()).SettingsSyncConvergentPause() }
+
+// SettingsSyncConvergentPause says "Pause convergent sync"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPause() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPause", nil)
+}
+
+// SettingsSyncConvergentResume says "Resume convergent sync"
+// in the language the app shows.
+func SettingsSyncConvergentResume() string { return In(i18n.Locale()).SettingsSyncConvergentResume() }
+
+// SettingsSyncConvergentResume says "Resume convergent sync"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentResume() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentResume", nil)
+}
+
+// SettingsSyncConvergentEnableHint says "A protective backup is written before the first v2 upload. If any replica cannot parse v2, nothing is changed."
+// in the language the app shows.
+func SettingsSyncConvergentEnableHint() string {
+	return In(i18n.Locale()).SettingsSyncConvergentEnableHint()
+}
+
+// SettingsSyncConvergentEnableHint says "A protective backup is written before the first v2 upload. If any replica cannot parse v2, nothing is changed."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentEnableHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentEnableHint", nil)
+}
+
+// SettingsSyncConvergentPausedHint says "Convergent sync is paused. The legacy engine never writes the provider while the v2 marker exists. Resume to verify t…"
+// in the language the app shows.
+func SettingsSyncConvergentPausedHint() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPausedHint()
+}
+
+// SettingsSyncConvergentPausedHint says "Convergent sync is paused. The legacy engine never writes the provider while the v2 marker exists. Resume to verify t…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPausedHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPausedHint", nil)
+}
+
+// SettingsSyncConvergentState says "State: {phase}"
+// in the language the app shows.
+func SettingsSyncConvergentState(phase string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentState(phase)
+}
+
+// SettingsSyncConvergentState says "State: {phase}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentState(phase string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentState", map[string]any{"phase": phase})
+}
+
+// SettingsSyncConvergentPhaseDisabled says "Off"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseDisabled() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseDisabled()
+}
+
+// SettingsSyncConvergentPhaseDisabled says "Off"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseDisabled() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseDisabled", nil)
+}
+
+// SettingsSyncConvergentPhaseIdle says "Ready"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseIdle() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseIdle()
+}
+
+// SettingsSyncConvergentPhaseIdle says "Ready"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseIdle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseIdle", nil)
+}
+
+// SettingsSyncConvergentPhasePaused says "Paused"
+// in the language the app shows.
+func SettingsSyncConvergentPhasePaused() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhasePaused()
+}
+
+// SettingsSyncConvergentPhasePaused says "Paused"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhasePaused() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhasePaused", nil)
+}
+
+// SettingsSyncConvergentPhaseMigrating says "Migrating"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseMigrating() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseMigrating()
+}
+
+// SettingsSyncConvergentPhaseMigrating says "Migrating"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseMigrating() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseMigrating", nil)
+}
+
+// SettingsSyncConvergentPhaseVerifying says "Verifying"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseVerifying() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseVerifying()
+}
+
+// SettingsSyncConvergentPhaseVerifying says "Verifying"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseVerifying() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseVerifying", nil)
+}
+
+// SettingsSyncConvergentPhaseConverged says "Converged"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseConverged() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseConverged()
+}
+
+// SettingsSyncConvergentPhaseConverged says "Converged"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseConverged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseConverged", nil)
+}
+
+// SettingsSyncConvergentPhaseDiverged says "Divergence detected"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseDiverged() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseDiverged()
+}
+
+// SettingsSyncConvergentPhaseDiverged says "Divergence detected"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseDiverged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseDiverged", nil)
+}
+
+// SettingsSyncConvergentPhaseBlocked says "Migration blocked"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseBlocked() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseBlocked()
+}
+
+// SettingsSyncConvergentPhaseBlocked says "Migration blocked"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseBlocked() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseBlocked", nil)
+}
+
+// SettingsSyncConvergentPhaseFailed says "Failed"
+// in the language the app shows.
+func SettingsSyncConvergentPhaseFailed() string {
+	return In(i18n.Locale()).SettingsSyncConvergentPhaseFailed()
+}
+
+// SettingsSyncConvergentPhaseFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentPhaseFailed() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentPhaseFailed", nil)
+}
+
+// SettingsSyncConvergentRound says "Verification round {round} of {total}: {kind} — {outcome}"
+// in the language the app shows.
+func SettingsSyncConvergentRound(round string, total string, kind string, outcome string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentRound(round, total, kind, outcome)
+}
+
+// SettingsSyncConvergentRound says "Verification round {round} of {total}: {kind} — {outcome}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRound(round string, total string, kind string, outcome string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRound", map[string]any{"round": round, "total": total, "kind": kind, "outcome": outcome})
+}
+
+// SettingsSyncConvergentRoundManifest says "manifest and version vectors"
+// in the language the app shows.
+func SettingsSyncConvergentRoundManifest() string {
+	return In(i18n.Locale()).SettingsSyncConvergentRoundManifest()
+}
+
+// SettingsSyncConvergentRoundManifest says "manifest and version vectors"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRoundManifest() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRoundManifest", nil)
+}
+
+// SettingsSyncConvergentRoundEntities says "per-entity hashes"
+// in the language the app shows.
+func SettingsSyncConvergentRoundEntities() string {
+	return In(i18n.Locale()).SettingsSyncConvergentRoundEntities()
+}
+
+// SettingsSyncConvergentRoundEntities says "per-entity hashes"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRoundEntities() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRoundEntities", nil)
+}
+
+// SettingsSyncConvergentRoundState says "full-state hash"
+// in the language the app shows.
+func SettingsSyncConvergentRoundState() string {
+	return In(i18n.Locale()).SettingsSyncConvergentRoundState()
+}
+
+// SettingsSyncConvergentRoundState says "full-state hash"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRoundState() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRoundState", nil)
+}
+
+// SettingsSyncConvergentRoundUnknown says "verification"
+// in the language the app shows.
+func SettingsSyncConvergentRoundUnknown() string {
+	return In(i18n.Locale()).SettingsSyncConvergentRoundUnknown()
+}
+
+// SettingsSyncConvergentRoundUnknown says "verification"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRoundUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRoundUnknown", nil)
+}
+
+// SettingsSyncConvergentOutcomePending says "pending"
+// in the language the app shows.
+func SettingsSyncConvergentOutcomePending() string {
+	return In(i18n.Locale()).SettingsSyncConvergentOutcomePending()
+}
+
+// SettingsSyncConvergentOutcomePending says "pending"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentOutcomePending() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentOutcomePending", nil)
+}
+
+// SettingsSyncConvergentOutcomeRunning says "running"
+// in the language the app shows.
+func SettingsSyncConvergentOutcomeRunning() string {
+	return In(i18n.Locale()).SettingsSyncConvergentOutcomeRunning()
+}
+
+// SettingsSyncConvergentOutcomeRunning says "running"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentOutcomeRunning() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentOutcomeRunning", nil)
+}
+
+// SettingsSyncConvergentOutcomeVerified says "verified"
+// in the language the app shows.
+func SettingsSyncConvergentOutcomeVerified() string {
+	return In(i18n.Locale()).SettingsSyncConvergentOutcomeVerified()
+}
+
+// SettingsSyncConvergentOutcomeVerified says "verified"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentOutcomeVerified() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentOutcomeVerified", nil)
+}
+
+// SettingsSyncConvergentOutcomeRetry says "retrying"
+// in the language the app shows.
+func SettingsSyncConvergentOutcomeRetry() string {
+	return In(i18n.Locale()).SettingsSyncConvergentOutcomeRetry()
+}
+
+// SettingsSyncConvergentOutcomeRetry says "retrying"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentOutcomeRetry() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentOutcomeRetry", nil)
+}
+
+// SettingsSyncConvergentOutcomeFailed says "failed"
+// in the language the app shows.
+func SettingsSyncConvergentOutcomeFailed() string {
+	return In(i18n.Locale()).SettingsSyncConvergentOutcomeFailed()
+}
+
+// SettingsSyncConvergentOutcomeFailed says "failed"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentOutcomeFailed() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentOutcomeFailed", nil)
+}
+
+// SettingsSyncConvergentWrites says "Provider writes this sync: {count}"
+// in the language the app shows.
+func SettingsSyncConvergentWrites(count string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentWrites(count)
+}
+
+// SettingsSyncConvergentWrites says "Provider writes this sync: {count}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentWrites(count string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentWrites", map[string]any{"count": count})
+}
+
+// SettingsSyncConvergentSummary says "Synced records: {entities} · contested fields: {conflicts}"
+// in the language the app shows.
+func SettingsSyncConvergentSummary(entities string, conflicts string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentSummary(entities, conflicts)
+}
+
+// SettingsSyncConvergentSummary says "Synced records: {entities} · contested fields: {conflicts}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentSummary(entities string, conflicts string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentSummary", map[string]any{"entities": entities, "conflicts": conflicts})
+}
+
+// SettingsSyncConvergentLastVerified says "Last verified: {time}"
+// in the language the app shows.
+func SettingsSyncConvergentLastVerified(time_ string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentLastVerified(time_)
+}
+
+// SettingsSyncConvergentLastVerified says "Last verified: {time}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentLastVerified(time_ string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentLastVerified", map[string]any{"time": time_})
+}
+
+// SettingsSyncConvergentMigrationBlocked says "Migration to convergent sync v2 was refused. No cloud or local data was overwritten."
+// in the language the app shows.
+func SettingsSyncConvergentMigrationBlocked() string {
+	return In(i18n.Locale()).SettingsSyncConvergentMigrationBlocked()
+}
+
+// SettingsSyncConvergentMigrationBlocked says "Migration to convergent sync v2 was refused. No cloud or local data was overwritten."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentMigrationBlocked() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentMigrationBlocked", nil)
+}
+
+// SettingsSyncConvergentMigrationSummary says "Provider schema {provider} · local schema {local} · {entities} records ready"
+// in the language the app shows.
+func SettingsSyncConvergentMigrationSummary(provider string, local string, entities string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentMigrationSummary(provider, local, entities)
+}
+
+// SettingsSyncConvergentMigrationSummary says "Provider schema {provider} · local schema {local} · {entities} records ready"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentMigrationSummary(provider string, local string, entities string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentMigrationSummary", map[string]any{"provider": provider, "local": local, "entities": entities})
+}
+
+// SettingsSyncConvergentReasonNewer says "The cloud copy uses a newer schema than this version supports."
+// in the language the app shows.
+func SettingsSyncConvergentReasonNewer() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonNewer()
+}
+
+// SettingsSyncConvergentReasonNewer says "The cloud copy uses a newer schema than this version supports."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonNewer() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonNewer", nil)
+}
+
+// SettingsSyncConvergentReasonInvalid says "The schema marker is not a version this app can read."
+// in the language the app shows.
+func SettingsSyncConvergentReasonInvalid() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonInvalid()
+}
+
+// SettingsSyncConvergentReasonInvalid says "The schema marker is not a version this app can read."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonInvalid() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonInvalid", nil)
+}
+
+// SettingsSyncConvergentReasonDamaged says "The encrypted v2 payload is missing, damaged, or does not match its materialized data."
+// in the language the app shows.
+func SettingsSyncConvergentReasonDamaged() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonDamaged()
+}
+
+// SettingsSyncConvergentReasonDamaged says "The encrypted v2 payload is missing, damaged, or does not match its materialized data."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonDamaged() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonDamaged", nil)
+}
+
+// SettingsSyncConvergentReasonNoBaseline says "This device and the cloud hold different data and there is no trusted baseline, so edits cannot be distinguished from…"
+// in the language the app shows.
+func SettingsSyncConvergentReasonNoBaseline() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonNoBaseline()
+}
+
+// SettingsSyncConvergentReasonNoBaseline says "This device and the cloud hold different data and there is no trusted baseline, so edits cannot be distinguished from…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonNoBaseline() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonNoBaseline", nil)
+}
+
+// SettingsSyncConvergentReasonConflict says "Unresolved legacy edits would be lost by the merge."
+// in the language the app shows.
+func SettingsSyncConvergentReasonConflict() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonConflict()
+}
+
+// SettingsSyncConvergentReasonConflict says "Unresolved legacy edits would be lost by the merge."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonConflict() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonConflict", nil)
+}
+
+// SettingsSyncConvergentReasonShrink says "The migration would shrink the Vault beyond the destructive-sync guard."
+// in the language the app shows.
+func SettingsSyncConvergentReasonShrink() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonShrink()
+}
+
+// SettingsSyncConvergentReasonShrink says "The migration would shrink the Vault beyond the destructive-sync guard."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonShrink() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonShrink", nil)
+}
+
+// SettingsSyncConvergentReasonEmpty says "There is no syncable data to initialize."
+// in the language the app shows.
+func SettingsSyncConvergentReasonEmpty() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonEmpty()
+}
+
+// SettingsSyncConvergentReasonEmpty says "There is no syncable data to initialize."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonEmpty() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonEmpty", nil)
+}
+
+// SettingsSyncConvergentReasonCorruptBaseline says "The stored legacy baseline cannot be decrypted or verified."
+// in the language the app shows.
+func SettingsSyncConvergentReasonCorruptBaseline() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonCorruptBaseline()
+}
+
+// SettingsSyncConvergentReasonCorruptBaseline says "The stored legacy baseline cannot be decrypted or verified."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonCorruptBaseline() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonCorruptBaseline", nil)
+}
+
+// SettingsSyncConvergentReasonUnknown says "The migration was refused for a reason this version does not recognize."
+// in the language the app shows.
+func SettingsSyncConvergentReasonUnknown() string {
+	return In(i18n.Locale()).SettingsSyncConvergentReasonUnknown()
+}
+
+// SettingsSyncConvergentReasonUnknown says "The migration was refused for a reason this version does not recognize."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentReasonUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentReasonUnknown", nil)
+}
+
+// SettingsSyncConvergentDivergenceTitle says "Replicas diverged"
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceTitle() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceTitle()
+}
+
+// SettingsSyncConvergentDivergenceTitle says "Replicas diverged"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceTitle() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceTitle", nil)
+}
+
+// SettingsSyncConvergentDivergenceDescription says "The provider and this device claim the same causal history but hold different data. Nothing was overwritten automatic…"
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceDescription() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceDescription()
+}
+
+// SettingsSyncConvergentDivergenceDescription says "The provider and this device claim the same causal history but hold different data. Nothing was overwritten automatic…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceDescription() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceDescription", nil)
+}
+
+// SettingsSyncConvergentDivergenceKind says "Divergence kind: {kind}"
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceKind(kind string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceKind(kind)
+}
+
+// SettingsSyncConvergentDivergenceKind says "Divergence kind: {kind}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceKind(kind string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceKind", map[string]any{"kind": kind})
+}
+
+// SettingsSyncConvergentDivergenceAddress says "Record: {family} {id}"
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceAddress(family string, id string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceAddress(family, id)
+}
+
+// SettingsSyncConvergentDivergenceAddress says "Record: {family} {id}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceAddress(family string, id string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceAddress", map[string]any{"family": family, "id": id})
+}
+
+// SettingsSyncConvergentDivergenceDot says "Version marker: {dot}"
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceDot(dot string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceDot(dot)
+}
+
+// SettingsSyncConvergentDivergenceDot says "Version marker: {dot}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceDot(dot string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceDot", map[string]any{"dot": dot})
+}
+
+// SettingsSyncConvergentInspect says "Inspect details"
+// in the language the app shows.
+func SettingsSyncConvergentInspect() string { return In(i18n.Locale()).SettingsSyncConvergentInspect() }
+
+// SettingsSyncConvergentInspect says "Inspect details"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentInspect() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentInspect", nil)
+}
+
+// SettingsSyncConvergentRestore says "Restore last verified copy"
+// in the language the app shows.
+func SettingsSyncConvergentRestore() string { return In(i18n.Locale()).SettingsSyncConvergentRestore() }
+
+// SettingsSyncConvergentRestore says "Restore last verified copy"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRestore() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRestore", nil)
+}
+
+// SettingsSyncConvergentResync says "Re-sync"
+// in the language the app shows.
+func SettingsSyncConvergentResync() string { return In(i18n.Locale()).SettingsSyncConvergentResync() }
+
+// SettingsSyncConvergentResync says "Re-sync"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentResync() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentResync", nil)
+}
+
+// SettingsSyncConvergentActionsHint says "Only safe actions are offered. Inspecting is read-only, restore changes only this device behind a backup, and re-sync…"
+// in the language the app shows.
+func SettingsSyncConvergentActionsHint() string {
+	return In(i18n.Locale()).SettingsSyncConvergentActionsHint()
+}
+
+// SettingsSyncConvergentActionsHint says "Only safe actions are offered. Inspecting is read-only, restore changes only this device behind a backup, and re-sync…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentActionsHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentActionsHint", nil)
+}
+
+// SettingsSyncConvergentInspectDetails says "Local hash {local} · remote hash {remote}"
+// in the language the app shows.
+func SettingsSyncConvergentInspectDetails(local string, remote string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentInspectDetails(local, remote)
+}
+
+// SettingsSyncConvergentInspectDetails says "Local hash {local} · remote hash {remote}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentInspectDetails(local string, remote string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentInspectDetails", map[string]any{"local": local, "remote": remote})
+}
+
+// SettingsSyncConvergentVectorDetail says "Local version entries: {local} · remote version entries: {remote}"
+// in the language the app shows.
+func SettingsSyncConvergentVectorDetail(local string, remote string) string {
+	return In(i18n.Locale()).SettingsSyncConvergentVectorDetail(local, remote)
+}
+
+// SettingsSyncConvergentVectorDetail says "Local version entries: {local} · remote version entries: {remote}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentVectorDetail(local string, remote string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentVectorDetail", map[string]any{"local": local, "remote": remote})
+}
+
+// SettingsSyncConvergentRestoreHint says "Restore applies the last provider-verified copy locally and never writes the provider."
+// in the language the app shows.
+func SettingsSyncConvergentRestoreHint() string {
+	return In(i18n.Locale()).SettingsSyncConvergentRestoreHint()
+}
+
+// SettingsSyncConvergentRestoreHint says "Restore applies the last provider-verified copy locally and never writes the provider."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentRestoreHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentRestoreHint", nil)
+}
+
+// SettingsSyncConvergentDivergenceOrigin says "A version marker is owned by a different field on each replica."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceOrigin() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceOrigin()
+}
+
+// SettingsSyncConvergentDivergenceOrigin says "A version marker is owned by a different field on each replica."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceOrigin() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceOrigin", nil)
+}
+
+// SettingsSyncConvergentDivergenceDotPayload says "The same write carries different data on each replica."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceDotPayload() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceDotPayload()
+}
+
+// SettingsSyncConvergentDivergenceDotPayload says "The same write carries different data on each replica."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceDotPayload() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceDotPayload", nil)
+}
+
+// SettingsSyncConvergentDivergenceEntityHash says "The same entity history has different canonical bytes."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceEntityHash() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceEntityHash()
+}
+
+// SettingsSyncConvergentDivergenceEntityHash says "The same entity history has different canonical bytes."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceEntityHash() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceEntityHash", nil)
+}
+
+// SettingsSyncConvergentDivergenceEqualVector says "Both replicas have the same version vector but different state."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceEqualVector() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceEqualVector()
+}
+
+// SettingsSyncConvergentDivergenceEqualVector says "Both replicas have the same version vector but different state."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceEqualVector() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceEqualVector", nil)
+}
+
+// SettingsSyncConvergentDivergenceCausal says "A later write would hide data this replica never observed."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceCausal() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceCausal()
+}
+
+// SettingsSyncConvergentDivergenceCausal says "A later write would hide data this replica never observed."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceCausal() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceCausal", nil)
+}
+
+// SettingsSyncConvergentDivergenceUnstable says "The replicas did not satisfy all three verification rounds."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceUnstable() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceUnstable()
+}
+
+// SettingsSyncConvergentDivergenceUnstable says "The replicas did not satisfy all three verification rounds."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceUnstable() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceUnstable", nil)
+}
+
+// SettingsSyncConvergentDivergenceUnknown says "The divergence is not a recognized kind."
+// in the language the app shows.
+func SettingsSyncConvergentDivergenceUnknown() string {
+	return In(i18n.Locale()).SettingsSyncConvergentDivergenceUnknown()
+}
+
+// SettingsSyncConvergentDivergenceUnknown says "The divergence is not a recognized kind."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncConvergentDivergenceUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsSyncConvergentDivergenceUnknown", nil)
+}
+
+// SettingsSyncProblemConvergentMigration says "Convergent sync could not migrate safely. Review the refusal details; nothing was overwritten."
+// in the language the app shows.
+func SettingsSyncProblemConvergentMigration() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentMigration()
+}
+
+// SettingsSyncProblemConvergentMigration says "Convergent sync could not migrate safely. Review the refusal details; nothing was overwritten."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentMigration() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentMigration", nil)
+}
+
+// SettingsSyncProblemConvergentDivergence says "Convergent replicas diverged. No automatic overwrite was made."
+// in the language the app shows.
+func SettingsSyncProblemConvergentDivergence() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentDivergence()
+}
+
+// SettingsSyncProblemConvergentDivergence says "Convergent replicas diverged. No automatic overwrite was made."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentDivergence() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentDivergence", nil)
+}
+
+// SettingsSyncProblemConvergentCorrupt says "The encrypted convergent sync record is damaged or partially migrated."
+// in the language the app shows.
+func SettingsSyncProblemConvergentCorrupt() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentCorrupt()
+}
+
+// SettingsSyncProblemConvergentCorrupt says "The encrypted convergent sync record is damaged or partially migrated."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentCorrupt() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentCorrupt", nil)
+}
+
+// SettingsSyncProblemConvergentPaused says "Convergent sync is paused. Resume it to sync; the legacy engine is not used."
+// in the language the app shows.
+func SettingsSyncProblemConvergentPaused() string {
+	return In(i18n.Locale()).SettingsSyncProblemConvergentPaused()
+}
+
+// SettingsSyncProblemConvergentPaused says "Convergent sync is paused. Resume it to sync; the legacy engine is not used."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemConvergentPaused() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemConvergentPaused", nil)
+}
