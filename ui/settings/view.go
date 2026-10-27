@@ -103,6 +103,9 @@ func ViewWithSettings(config Config) func(*ui.Context) {
 				return
 			}
 			body(c, config, search, panes, m, t)
+			if config.Sync != nil && search.Area() == AreaSync {
+				syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
+			}
 		})
 	}
 }

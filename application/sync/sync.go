@@ -88,6 +88,23 @@ const (
 	// ProblemBackup reports that a mandatory protective backup could not be
 	// written, so the destructive operation was refused.
 	ProblemBackup Problem = "backup-failed"
+	// ProblemConvergentMigration reports that convergent sync could not be
+	// enabled because the migration plan is fail-closed: an unknown or newer
+	// schema, a mismatched envelope, a damaged replica, a legacy payload
+	// without a trusted baseline, unresolved conflicts, or a suspected shrink.
+	// The cloud bytes are left untouched.
+	ProblemConvergentMigration Problem = "convergent-migration-blocked"
+	// ProblemConvergentDivergence reports that two replicas with the same
+	// causal history serialize differently, or that a provider did not
+	// converge after all verification rounds. No side is overwritten
+	// automatically; the UI offers inspect, restore, and re-sync.
+	ProblemConvergentDivergence Problem = "convergent-divergence"
+	// ProblemConvergentCorrupt reports a damaged or partially migrated v2
+	// local replica or envelope. The service refuses to fall back to v1.
+	ProblemConvergentCorrupt Problem = "convergent-corrupt"
+	// ProblemConvergentPaused reports that convergent sync was initialized and
+	// later paused. The legacy writer never resumes implicitly.
+	ProblemConvergentPaused Problem = "convergent-paused"
 )
 
 // Status is the sync surface's state.
@@ -123,6 +140,17 @@ var (
 	// ErrUnsupportedVersion refuses a cloud copy written by a newer schema
 	// instead of overwriting it with a payload this build cannot read.
 	ErrUnsupportedVersion = errors.New("sync: the cloud copy uses a newer sync schema")
+	// ErrConvergentMigration refuses to enable v2 unless every migration input
+	// is understood and has a trusted baseline.
+	ErrConvergentMigration = errors.New("sync: convergent migration is blocked")
+	// ErrConvergentDivergence refuses to overwrite a genuinely divergent
+	// replica.
+	ErrConvergentDivergence = errors.New("sync: convergent replicas diverged")
+	// ErrConvergentCorrupt reports a damaged or incomplete local v2 record.
+	ErrConvergentCorrupt = errors.New("sync: the local convergent record is damaged")
+	// ErrConvergentPaused refuses to fall through to the legacy writer after
+	// convergent sync has been initialized.
+	ErrConvergentPaused = errors.New("sync: convergent sync is paused")
 )
 
 // Provider-level errors the remote adapter reports. The application maps them
@@ -368,6 +396,11 @@ type Config struct {
 	// overwrote, so either side can be recovered. Content is the original
 	// encrypted envelope.
 	RemoteBackups []RemoteBackup `json:"remoteBackups,omitempty"`
+	// Convergent holds the v2 CRDT replica and trusted materialized baselines.
+	// Only ciphertext is persisted. The device-local Enabled flag pauses v2
+	// without deleting any causal history; SchemaVersion 2 is the explicit
+	// migration marker.
+	Convergent ConvergentConfig `json:"convergent,omitempty"`
 }
 
 // ConfigStore persists Config.
@@ -411,6 +444,10 @@ type Result struct {
 	Action     domainsync.Action
 	Uploaded   bool
 	Downloaded bool
+	// Writes is the number of provider writes performed. A repeated sync after
+	// convergence reports zero, which is how the UI and self-test prove
+	// idempotence.
+	Writes int
 }
 
 // Snapshot is the state the UI renders.
@@ -454,6 +491,8 @@ type Snapshot struct {
 	Backups []BackupInfo
 	// BackupsProblem reports why the backup list could not be loaded.
 	BackupsProblem Problem
+	// Convergent is the v2 enable/verification/divergence surface.
+	Convergent ConvergentInfo
 }
 
 // Option customizes a Service.
@@ -602,6 +641,7 @@ type Service struct {
 	guard          GuardFinding
 	backupsList    []BackupInfo
 	backupsProblem Problem
+	convergent     ConvergentInfo
 
 	// WebDAV connection state. The secrets stay in the token store; these are
 	// the non-secret fields the setup form prefills.
@@ -698,6 +738,10 @@ func (s *Service) Load(ctx context.Context) error {
 		// successful sync writes a fresh one.
 		s.config.SyncBase = ""
 		s.config.BaseSignature = ""
+	}
+	s.convergent = convergentInfoFor(s.config)
+	if s.config.Convergent.SchemaVersion == 2 && !s.config.Convergent.Enabled {
+		s.problem = ProblemConvergentPaused
 	}
 	provider := s.config.Provider
 	s.mu.Unlock()
@@ -837,6 +881,7 @@ func (s *Service) Snapshot() Snapshot {
 		Conflict:       conflictInfoFor(s.config),
 		Backups:        append([]BackupInfo(nil), s.backupsList...),
 		BackupsProblem: s.backupsProblem,
+		Convergent:     s.convergent,
 	}
 }
 
@@ -918,6 +963,7 @@ func (s *Service) SetProvider(ctx context.Context, provider string) error {
 	s.s3Prefix = ""
 	s.s3Insecure = false
 	s.insecureConfirmedEndpoint = ""
+	s.convergent = ConvergentInfo{}
 	s.mu.Unlock()
 	if err := s.configs.Save(ctx, config); err != nil {
 		return err
@@ -1306,6 +1352,11 @@ func clearAnchor(config *Config) {
 	config.RemoteETag = ""
 	config.RemoteUpdatedAt = 0
 	config.LastSyncedAt = 0
+	// A v2 provider baseline is trust in one remote identity. Replacing the
+	// account, endpoint, bucket, or provider invalidates it together with the
+	// legacy anchor. The explicit migration marker is dropped too, so the new
+	// remote cannot inherit trust from the old one.
+	config.Convergent = ConvergentConfig{}
 }
 
 // Disconnect forgets the provider token and the baseline. It leaves the local
@@ -1614,6 +1665,24 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger, force bool) (
 	}
 	config := s.currentConfig()
 	base := s.loadBase(ctx)
+
+	if config.Convergent.SchemaVersion != 0 {
+		// A v2 marker must never fall through to the legacy writer. An
+		// unknown marker is a partial/corrupt migration and fails closed; a
+		// paused profile waits for the user to resume.
+		if config.Convergent.SchemaVersion != domainsync.ConvergentSchemaVersion {
+			s.finishSync(ProblemConvergentCorrupt)
+			return Result{Trigger: trigger}, ErrConvergentCorrupt
+		}
+		if !config.Convergent.Enabled {
+			s.mu.Lock()
+			s.problem = ProblemConvergentPaused
+			s.mu.Unlock()
+			s.finishSync(ProblemConvergentPaused)
+			return Result{Trigger: trigger}, ErrConvergentPaused
+		}
+		return s.syncConvergent(ctx, trigger, force, token, local, config)
+	}
 
 	remote := s.activeRemote()
 	remoteFile, exists, token, readErr := s.readRemote(ctx, remote, token)
@@ -2223,6 +2292,14 @@ func problemFor(err error) Problem {
 		return ProblemBackup
 	case errors.Is(err, ErrUnsupportedVersion):
 		return ProblemUnsupported
+	case errors.Is(err, ErrConvergentMigration):
+		return ProblemConvergentMigration
+	case errors.Is(err, ErrConvergentDivergence):
+		return ProblemConvergentDivergence
+	case errors.Is(err, ErrConvergentCorrupt):
+		return ProblemConvergentCorrupt
+	case errors.Is(err, ErrConvergentPaused):
+		return ProblemConvergentPaused
 	case errors.Is(err, ErrNotConfigured):
 		return ProblemNotConfigured
 	case errors.Is(err, ErrPasswordRequired):

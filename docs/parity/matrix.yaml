@@ -2524,6 +2524,51 @@
   status: verified
   notes: "The guard runs before any remote write on every provider path, for manual and automatic triggers. Ticket 49's empty-payload stop is now the ticket 54 tombstone guard plus the original shrink thresholds: block at 10 or more lost records, or at 3 or more lost while at least half the reference is removed. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful. Guards offer Restore the last good copy as the safe default and an explicitly confirmed force push that is never preselected or reached from background sync. Conversely, an empty cloud payload is still forced to upload rather than erase a populated local Vault."
 
+- id: sync.convergent-v2
+  area: sync
+  feature: Opt-in convergent sync v2 with version vectors, multi-value registers, HLC tie-breaking, fail-closed migration, and typed divergence
+  original_paths:
+    - domain/convergentSync/state.ts
+    - domain/convergentSync/register.ts
+    - domain/convergentSync/migration.ts
+    - application/convergentSyncMigration.ts
+    - application/convergentSyncReplica.ts
+    - application/state/useAutoSync.ts
+    - components/CloudSyncSettings.tsx
+  module: domain/sync
+  tickets: [55]
+  acceptance_tests:
+    - domain/sync.TestMergeLaws
+    - domain/sync.TestMultiValueRegisterConcurrentWrites
+    - domain/sync.TestConcurrentDeleteAndEdit
+    - domain/sync.TestApplyIsNoOpAfterConvergence
+    - domain/sync.TestRandomizedReplicasConverge
+    - domain/sync.TestCanonicalBytesIgnoreSliceOrder
+    - domain/sync.TestEnvelopeStrictParsing
+    - domain/sync.TestEnvelopeMatchesMaterializedSnapshot
+    - domain/sync.TestManifestComparison
+    - domain/sync.TestDetectDivergence
+    - application/sync.TestConvergentEnableMigratesV1AndRepeatedSyncWritesNothing
+    - application/sync.TestConvergentEnableAdoptsMatchingV1Payload
+    - application/sync.TestConvergentMigrationMergesTrustedV1Baseline
+    - application/sync.TestConvergentMigrationRefusesWithoutTrustedBaseline
+    - application/sync.TestConvergentMigrationRefusesUnresolvedLegacyConflict
+    - application/sync.TestConvergentMigrationFailClosedMatrix
+    - application/sync.TestConvergentPartialMigrationFailsClosed
+    - application/sync.TestConvergentSyncRefusesUnreadableRemoteWithoutOverwrite
+    - application/sync.TestConvergentVerificationRoundDetectsInjectedDivergence
+    - application/sync.TestConvergentEqualVectorDifferentStateIsDivergenceAndRestoreIsSafe
+    - application/sync.TestConvergentPauseNeverFallsBackToLegacy
+    - application/sync.TestConvergentTwoDeviceProfilesConvergeIncludingConcurrentWrites
+    - ui/settings.TestSyncConvergentEnablePauseResume
+    - ui/settings.TestSyncConvergentVerificationRoundsAreSurfaced
+    - ui/settings.TestSyncConvergentMigrationRefusalIsFailClosed
+    - ui/settings.TestSyncConvergentDivergenceOffersOnlySafeActions
+    - app.TestTicket55CheckRunsThroughTheKeyboard
+    - app.TestTicket55CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Settings and credentials remain device-local and outside the CRDT. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not verified byte-for-byte against an original CRDT fixture, so this row is implemented rather than verified. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
+
 # --- Ticket 50: Google Drive appDataFolder ---
 
 - id: sync.google-drive-pkce

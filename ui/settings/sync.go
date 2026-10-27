@@ -77,6 +77,13 @@ type DestructiveSyncService interface {
 	RestoreBackup(ctx context.Context, source appsync.BackupSource, id string) error
 }
 
+// ConvergentSyncService is the optional v2 capability. Fakes without it keep
+// the ticket 49-54 surface unchanged; the production service implements it.
+type ConvergentSyncService interface {
+	SetConvergentEnabled(ctx context.Context, enabled bool) (appsync.ConvergentMigrationPreview, error)
+	RestoreLastVerified(ctx context.Context) (appsync.Result, error)
+}
+
 // SyncOption customizes a SyncState.
 type SyncOption func(*SyncState)
 
@@ -140,6 +147,9 @@ type SyncState struct {
 	reconfigure    bool
 	forceConfirm   bool
 	backupsAsked   bool
+	// convergentDetails reveals the safe, value-free divergence detail. It
+	// starts collapsed so the actionable safe buttons stay prominent.
+	convergentDetails bool
 }
 
 // NewSyncState builds the sync surface from the application service.
@@ -979,6 +989,60 @@ func (s *SyncState) RestoreGuard() {
 	}()
 }
 
+// SetConvergentEnabled enables v2 (migrating fail-closed on first use) or
+// pauses an initialized replica. Pausing never falls back to the legacy
+// writer; resuming reuses the existing replica.
+func (s *SyncState) SetConvergentEnabled(enabled bool) {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	s.convergentDetails = false
+	state := s
+	go func() {
+		_, err := service.SetConvergentEnabled(state.ctx, enabled)
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
+// RestoreLastVerified applies the last provider-verified materialized copy
+// locally behind a protective backup. It never writes the provider and never
+// mutates the CRDT replica, so it is safe during divergence.
+func (s *SyncState) RestoreLastVerified() {
+	service, ok := s.service.(ConvergentSyncService)
+	if !ok || s.busy {
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		_, err := service.RestoreLastVerified(state.ctx)
+		state.post(func() {
+			state.busy = false
+			state.lastErr = err
+			if err == nil {
+				state.convergentDetails = false
+				state.requestBackups()
+			}
+		})
+	}()
+}
+
+// ShowConvergentDetails reports whether the safe divergence detail is open.
+func (s *SyncState) ShowConvergentDetails() bool { return s.convergentDetails }
+
+// ToggleConvergentDetails opens or closes the value-free divergence detail.
+func (s *SyncState) ToggleConvergentDetails() { s.convergentDetails = !s.convergentDetails }
+
 // ResolveConflict applies the user's choice for a surfaced conflict.
 func (s *SyncState) ResolveConflict(resolution appsync.Resolution) {
 	service, ok := s.service.(DestructiveSyncService)
@@ -1453,6 +1517,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 	})
 	ui.Text(c, syncLastSynced(m, snapshot.LastSyncedAt)).FontSize(11).TextColor(t.TextMuted)
 
+	syncConvergentPanel(c, state, snapshot, m, t)
 	syncConflictPanel(c, state, snapshot, m, t)
 	syncGuardPanel(c, state, snapshot, m, t)
 	syncButtons(c, state, snapshot, m)
@@ -1509,6 +1574,337 @@ func syncEntityLabel(entityType string, m locales.Messages) string {
 		return m.NavSettings()
 	default:
 		return m.SettingsSyncEntityUnknown()
+	}
+}
+
+// syncConvergentBarHeight is the pinned action bar's height. The Settings
+// viewport reserves the same height at the end of its scroll content.
+const syncConvergentBarHeight float32 = 52
+
+// syncConvergentPinnedBarShown reports whether the v2 action bar is available.
+// The bar stays at the bottom edge of the client so the controls are never
+// clipped by the scrolling report above them.
+func syncConvergentPinnedBarShown(state *SyncState, snapshot appsync.Snapshot) bool {
+	if state == nil || !snapshot.Connected {
+		return false
+	}
+	_, ok := state.service.(ConvergentSyncService)
+	return ok
+}
+
+// syncConvergentPinnedBar draws the convergence actions in an overlay pinned
+// to the bottom of the Settings client. Only safe actions appear, and their
+// availability follows the same phase the report renders.
+func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	if !syncConvergentPinnedBarShown(state, snapshot) {
+		return
+	}
+	info := snapshot.Convergent
+	phase := convergentPhase(info)
+	showEnable := info.SchemaVersion == 0 && phase != "paused"
+	showResume := phase == "paused"
+	showPause := info.Enabled && phase != "paused" && phase != "diverged" && phase != "blocked"
+	showDivergence := phase == "diverged"
+	if !showEnable && !showResume && !showPause && !showDivergence {
+		return
+	}
+	ui.Row(c).FillWidth().Height(syncConvergentBarHeight).
+		Padding(10).Gap(12).AlignItems(ui.Center).Justify(ui.End).
+		Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if showEnable {
+				if ui.Button(c, m.SettingsSyncConvergentEnable()).Disabled(state.Busy()).Clicked() {
+					state.SetConvergentEnabled(true)
+					c.Invalidate()
+				}
+			}
+			if showResume {
+				if ui.Button(c, m.SettingsSyncConvergentResume()).Disabled(state.Busy()).Clicked() {
+					state.SetConvergentEnabled(true)
+					c.Invalidate()
+				}
+			}
+			if showPause {
+				if ui.Button(c, m.SettingsSyncConvergentPause()).Disabled(state.Busy()).Clicked() {
+					state.SetConvergentEnabled(false)
+					c.Invalidate()
+				}
+			}
+			if showDivergence {
+				if ui.Button(c, m.SettingsSyncConvergentInspect()).Disabled(state.Busy()).Clicked() {
+					state.ToggleConvergentDetails()
+					c.Invalidate()
+				}
+				if ui.Button(c, m.SettingsSyncConvergentRestore()).Disabled(state.Busy()).Clicked() {
+					state.RestoreLastVerified()
+					c.Invalidate()
+				}
+				if ui.Button(c, m.SettingsSyncConvergentResync()).Disabled(state.Busy()).Clicked() {
+					state.SyncNow()
+					c.Invalidate()
+				}
+			}
+		})
+	})
+}
+
+// convergentPhase fills in the device-local phase when a snapshot predates the
+// explicit field, so the panel and the pinned bar never disagree.
+func convergentPhase(info appsync.ConvergentInfo) string {
+	if info.Phase != "" {
+		return info.Phase
+	}
+	switch {
+	case info.SchemaVersion == 0:
+		return "disabled"
+	case !info.Enabled:
+		return "paused"
+	default:
+		return "idle"
+	}
+}
+
+// syncConvergentPanel is the v2 enable, migration-refusal, verification, and
+// divergence surface. It is shown only when the service provides the optional
+// capability. Every body paragraph uses the theme text color, and warnings and
+// refusals use the shared accessible warning/danger text helpers, so the panel
+// stays at 4.5:1 at the settings body sizes in both themes. The actionable
+// controls live in syncConvergentPinnedBar, outside this scrolling report.
+func syncConvergentPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
+	if _, ok := state.service.(ConvergentSyncService); !ok {
+		return
+	}
+	info := snapshot.Convergent
+	phase := convergentPhase(info)
+	border := t.Border
+	if phase == "blocked" || phase == "diverged" || phase == "failed" {
+		border = t.Danger
+	}
+	ui.Column(c).Padding(10).Gap(8).Background(t.Background).Border(1, border).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SettingsSyncConvergentTitle()).FontSize(12).Bold().TextColor(t.Text)
+			ui.Text(c, m.SettingsSyncConvergentState(convergentPhaseName(phase, m))).FontSize(11).TextColor(t.Text)
+		})
+		ui.Text(c, m.SettingsSyncConvergentDescription()).FontSize(11).TextColor(t.Text)
+
+		switch {
+		case phase == "blocked":
+			syncConvergentMigrationBlocked(c, state, info, m, t)
+			return
+		case phase == "diverged":
+			syncConvergentDivergence(c, state, info, m, t)
+			return
+		case info.SchemaVersion == 0:
+			ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(11).TextColor(t.Text)
+			return
+		}
+
+		if !info.Enabled {
+			ui.Text(c, m.SettingsSyncConvergentPausedHint()).FontSize(11).TextColor(t.Text)
+			return
+		}
+		syncConvergentVerification(c, state, info, m, t)
+	})
+}
+
+// syncConvergentMigrationBlocked explains a fail-closed migration without
+// rendering raw Go error text. The cloud bytes and local Vault are unchanged
+// until the user resolves the named condition and retries.
+func syncConvergentMigrationBlocked(c *ui.Context, state *SyncState, info appsync.ConvergentInfo, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsSyncConvergentMigrationBlocked()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
+	ui.Text(c, m.SettingsSyncConvergentEnableHint()).FontSize(11).TextColor(t.Text)
+	if preview := info.Migration; preview != nil {
+		ui.Text(c, m.SettingsSyncConvergentMigrationSummary(
+			strconv.Itoa(preview.ProviderSchemaVersion),
+			strconv.Itoa(preview.LocalSchemaVersion),
+			strconv.Itoa(preview.EntityCount),
+		)).FontSize(11).TextColor(t.Text)
+		for _, reason := range preview.BlockedReasons {
+			ui.Text(c, convergentReasonName(reason.Code, m)).FontSize(11).TextColor(syncDangerTextColor(t))
+		}
+	}
+}
+
+// syncConvergentDivergence offers only the safe actions: inspect the
+// value-free report, restore the last provider-verified local copy, or re-run
+// sync. There is deliberately no overwrite-provider action.
+func syncConvergentDivergence(c *ui.Context, state *SyncState, info appsync.ConvergentInfo, m locales.Messages, t *ui.Theme) {
+	ui.Text(c, m.SettingsSyncConvergentDivergenceTitle()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
+	ui.Text(c, m.SettingsSyncConvergentDivergenceDescription()).FontSize(11).TextColor(t.Text)
+	divergence := info.Divergence
+	if divergence != nil {
+		ui.Text(c, m.SettingsSyncConvergentDivergenceKind(convergentDivergenceKindName(divergence.Kind, m))).
+			FontSize(11).TextColor(t.Text)
+		if divergence.Family != "" || divergence.EntityID != "" {
+			family := m.SettingsSyncEntityUnknown()
+			if divergence.Family != "" {
+				family = syncEntityLabel(divergence.Family, m)
+			}
+			ui.Text(c, m.SettingsSyncConvergentDivergenceAddress(family, divergence.EntityID)).
+				FontSize(11).TextColor(t.Text)
+		}
+		if divergence.Dot != "" {
+			ui.Text(c, m.SettingsSyncConvergentDivergenceDot(divergence.Dot)).FontSize(11).TextColor(t.Text)
+		}
+	}
+	ui.Text(c, m.SettingsSyncConvergentActionsHint()).FontSize(11).TextColor(t.Text)
+	if state.ShowConvergentDetails() {
+		detail := m.SettingsSyncConvergentInspectDetails(
+			divergenceHash(divergence, true),
+			divergenceHash(divergence, false),
+		)
+		ui.Text(c, detail).FontSize(11).TextColor(t.Text)
+		if divergence != nil && (divergence.LocalVector != nil || divergence.RemoteVector != nil) {
+			ui.Text(c, m.SettingsSyncConvergentVectorDetail(
+				strconv.Itoa(len(divergence.LocalVector)),
+				strconv.Itoa(len(divergence.RemoteVector)),
+			)).FontSize(11).TextColor(t.Text)
+		}
+	}
+	ui.Text(c, m.SettingsSyncConvergentRestoreHint()).FontSize(11).TextColor(t.Text)
+}
+
+func divergenceHash(divergence *appsync.ConvergentDivergenceInfo, local bool) string {
+	if divergence == nil {
+		return "—"
+	}
+	hash := divergence.RemoteHash
+	if local {
+		hash = divergence.LocalHash
+	}
+	if hash == "" {
+		return "—"
+	}
+	if len(hash) > 16 {
+		return hash[:16]
+	}
+	return hash
+}
+
+// syncConvergentVerification shows the three progressive comparisons, their
+// live outcome, the write count (zero on a converged repeat), record/conflict
+// counts, and the last verification time.
+func syncConvergentVerification(c *ui.Context, state *SyncState, info appsync.ConvergentInfo, m locales.Messages, t *ui.Theme) {
+	if info.TotalRounds > 0 || len(info.Rounds) > 0 {
+		total := info.TotalRounds
+		if total == 0 {
+			total = len(info.Rounds)
+		}
+		if len(info.Rounds) == 0 {
+			ui.Text(c, m.SettingsSyncConvergentRound(strconv.Itoa(info.Round), strconv.Itoa(total),
+				convergentRoundKindName(info.RoundKind, m),
+				convergentRoundOutcomeName(info.Outcome, m))).FontSize(11).TextColor(t.Text)
+		} else {
+			for _, round := range info.Rounds {
+				ui.Text(c, m.SettingsSyncConvergentRound(strconv.Itoa(round.Round), strconv.Itoa(total),
+					convergentRoundKindName(round.Kind, m),
+					convergentRoundOutcomeName(round.Outcome, m))).FontSize(11).TextColor(t.Text)
+			}
+		}
+	}
+	ui.Text(c, m.SettingsSyncConvergentWrites(strconv.Itoa(info.Writes))).FontSize(11).TextColor(t.Text)
+	ui.Text(c, m.SettingsSyncConvergentSummary(strconv.Itoa(info.EntityCount), strconv.Itoa(info.ConflictCount))).FontSize(11).TextColor(t.Text)
+	if info.LastVerifiedAt > 0 {
+		ui.Text(c, m.SettingsSyncConvergentLastVerified(formatSyncTime(info.LastVerifiedAt))).
+			FontSize(11).TextColor(t.Text)
+	}
+}
+
+func convergentPhaseName(phase string, m locales.Messages) string {
+	switch phase {
+	case "disabled":
+		return m.SettingsSyncConvergentPhaseDisabled()
+	case "paused":
+		return m.SettingsSyncConvergentPhasePaused()
+	case "migrating":
+		return m.SettingsSyncConvergentPhaseMigrating()
+	case "verifying":
+		return m.SettingsSyncConvergentPhaseVerifying()
+	case "converged":
+		return m.SettingsSyncConvergentPhaseConverged()
+	case "diverged":
+		return m.SettingsSyncConvergentPhaseDiverged()
+	case "blocked":
+		return m.SettingsSyncConvergentPhaseBlocked()
+	case "failed":
+		return m.SettingsSyncConvergentPhaseFailed()
+	default:
+		return m.SettingsSyncConvergentPhaseIdle()
+	}
+}
+
+func convergentRoundKindName(kind string, m locales.Messages) string {
+	switch kind {
+	case appsync.ConvergentRoundManifest:
+		return m.SettingsSyncConvergentRoundManifest()
+	case appsync.ConvergentRoundEntities:
+		return m.SettingsSyncConvergentRoundEntities()
+	case appsync.ConvergentRoundState:
+		return m.SettingsSyncConvergentRoundState()
+	default:
+		return m.SettingsSyncConvergentRoundUnknown()
+	}
+}
+
+func convergentRoundOutcomeName(outcome string, m locales.Messages) string {
+	switch outcome {
+	case "verified":
+		return m.SettingsSyncConvergentOutcomeVerified()
+	case "running":
+		return m.SettingsSyncConvergentOutcomeRunning()
+	case "retry":
+		return m.SettingsSyncConvergentOutcomeRetry()
+	case "failed":
+		return m.SettingsSyncConvergentOutcomeFailed()
+	case "converged":
+		return m.SettingsSyncConvergentOutcomeVerified()
+	default:
+		return m.SettingsSyncConvergentOutcomePending()
+	}
+}
+
+// convergentReasonName localizes the migration plan's stable reason codes.
+func convergentReasonName(code string, m locales.Messages) string {
+	switch code {
+	case "unsupported-newer-schema", "future-schema":
+		return m.SettingsSyncConvergentReasonNewer()
+	case "invalid-schema":
+		return m.SettingsSyncConvergentReasonInvalid()
+	case "damaged-envelope", "missing-envelope", "corrupt-envelope",
+		"envelope-metadata-mismatch", "envelope-materialized-mismatch",
+		"damaged-materialized-payload":
+		return m.SettingsSyncConvergentReasonDamaged()
+	case "no-trusted-baseline":
+		return m.SettingsSyncConvergentReasonNoBaseline()
+	case "legacy-conflict", "conflicts-unresolved", "legacy-merge-failed":
+		return m.SettingsSyncConvergentReasonConflict()
+	case "shrunk-vault":
+		return m.SettingsSyncConvergentReasonShrink()
+	case "empty-vault":
+		return m.SettingsSyncConvergentReasonEmpty()
+	case "corrupt-local-baseline":
+		return m.SettingsSyncConvergentReasonCorruptBaseline()
+	default:
+		return m.SettingsSyncConvergentReasonUnknown()
+	}
+}
+
+func convergentDivergenceKindName(kind string, m locales.Messages) string {
+	switch kind {
+	case "origin-mismatch":
+		return m.SettingsSyncConvergentDivergenceOrigin()
+	case "dot-payload-mismatch":
+		return m.SettingsSyncConvergentDivergenceDotPayload()
+	case "entity-hash-mismatch":
+		return m.SettingsSyncConvergentDivergenceEntityHash()
+	case "equal-vector-different-state":
+		return m.SettingsSyncConvergentDivergenceEqualVector()
+	case "causal-overwrite":
+		return m.SettingsSyncConvergentDivergenceCausal()
+	case "unstable-replicas":
+		return m.SettingsSyncConvergentDivergenceUnstable()
+	default:
+		return m.SettingsSyncConvergentDivergenceUnknown()
 	}
 }
 
@@ -1848,6 +2244,14 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemTombstoneGuard()
 	case appsync.ProblemBackup:
 		return m.SettingsSyncProblemBackup()
+	case appsync.ProblemConvergentMigration:
+		return m.SettingsSyncProblemConvergentMigration()
+	case appsync.ProblemConvergentDivergence:
+		return m.SettingsSyncProblemConvergentDivergence()
+	case appsync.ProblemConvergentCorrupt:
+		return m.SettingsSyncProblemConvergentCorrupt()
+	case appsync.ProblemConvergentPaused:
+		return m.SettingsSyncProblemConvergentPaused()
 	default:
 		return ""
 	}
@@ -1902,6 +2306,14 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemRateLimited
 	case errors.Is(err, appsync.ErrNetwork):
 		return appsync.ProblemNetwork
+	case errors.Is(err, appsync.ErrConvergentMigration):
+		return appsync.ProblemConvergentMigration
+	case errors.Is(err, appsync.ErrConvergentDivergence):
+		return appsync.ProblemConvergentDivergence
+	case errors.Is(err, appsync.ErrConvergentCorrupt):
+		return appsync.ProblemConvergentCorrupt
+	case errors.Is(err, appsync.ErrConvergentPaused):
+		return appsync.ProblemConvergentPaused
 	case errors.Is(err, appsync.ErrAuthorizationDenied), errors.Is(err, appsync.ErrDeviceCodeExpired),
 		errors.Is(err, appsync.ErrAuthorizationPending), errors.Is(err, appsync.ErrSlowDown):
 		return appsync.ProblemAuthorization

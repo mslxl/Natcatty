@@ -37,6 +37,11 @@ type Payload struct {
 	// unknown keys.
 	Settings map[string]json.RawMessage `json:"settings,omitempty"`
 	Secrets  []SecretValue              `json:"secrets,omitempty"`
+	// ConvergentSync is the v2 CRDT envelope. It is present only when the
+	// plaintext metadata advertises syncSchemaVersion 2; a v1 payload must
+	// never carry it. The complete materialized v1 fields stay beside it so an
+	// older client can still read the Vault.
+	ConvergentSync json.RawMessage `json:"convergentSync,omitempty"`
 	// SyncMeta carries durable deletion tombstones, matching the original
 	// syncReliability metadata. It lets a device distinguish "deleted" from
 	// "this client did not send the entity" when no base anchor exists.
