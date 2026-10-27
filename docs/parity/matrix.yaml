@@ -3089,6 +3089,94 @@
   status: implemented
   notes: "A lost conditional write is persisted with per-family/per-item kind, the remote device identity, and the encrypted cloud copy, so the conflict survives a process restart and resolution is idempotent. This is the original conflict state machine: a smartMerge same-field clash is resolved by the selected strategy rather than surfaced, because the user already chose that strategy and no complete copy is at risk. The UI lists each item with a localized family name and offers Keep this device, Keep the cloud copy, and Merge both; Merge is offered only by smartMerge and smartMergePreserve. Before either side is overwritten the service takes a protective local backup and retains the replaced cloud envelope in RemoteBackups (five newest), both timestamped with source and reason and restorable from the Backups panel without a provider write. Ordinary sync works without a backup port, but conflict resolution refuses to proceed without one. Backup records contain the same encrypted Vault data as the normal local backup subsystem and no new secrets. Service tests cover a real concurrent conditional-write loss, both choices, idempotent restart, and backup restore. An external GUI acceptance run recorded under the ticket (not a committed test) exercised both choices, backup rows, and final cloud contents through the local fake provider."
 
+# --- Ticket 57: MCP scopes, permission modes, and approvals ---
+
+- id: mcp.scope-permissions-approvals
+  area: mcp
+  feature: Forced scope, session allowlist, ownership generations, permission modes, and expiring approvals
+  original_paths:
+    - electron/capabilities/policy.cjs
+    - electron/capabilities/scope.cjs
+    - electron/bridges/mcpServerBridge.cjs
+    - electron/bridges/mcpServerBridge/capabilityRpcDispatch.cjs
+    - electron/bridges/mcpServerBridge/sessionOwnership.cjs
+    - electron/bridges/mcpServerBridge.hostOpenScope.test.cjs
+    - electron/bridges/mcpServerBridge.hostApproval.test.cjs
+    - electron/bridges/mcpServerBridge.approvalTimeout.test.cjs
+  module: application/mcp
+  tickets: [57]
+  acceptance_tests:
+    - application/mcp.TestScopeIntersection
+    - application/mcp.TestEmptyAllowlistIsNoAccess
+    - application/mcp.TestRequestedScopeFromRejectsMalformedValues
+    - application/mcp.TestScopeIsCheckedBeforeAnyApproval
+    - application/mcp.TestTargetSessionMustBeInsideEffectiveScope
+    - application/mcp.TestObserverModeDeniesEveryWriteAndAllowsReads
+    - application/mcp.TestAutoModeAllowsWritesWithoutApproval
+    - application/mcp.TestConfirmModeRequiresOneApprovalPerWrite
+    - application/mcp.TestConfirmModeDenyResolvesTheCall
+    - application/mcp.TestApprovalBoundary109Point9SecondsAllowed
+    - application/mcp.TestApprovalBoundary110SecondsExpired
+    - application/mcp.TestSnapshotExpiresAtTheAbsoluteDeadline
+    - application/mcp.TestExpiredApprovalCannotBeReplayed
+    - application/mcp.TestApprovedApprovalCannotBeReplayed
+    - application/mcp.TestApprovalTimeoutIsAbsoluteNotSliding
+    - application/mcp.TestModeChangeAppliesToTheNextCallAndCannotBeBypassed
+    - application/mcp.TestBypassToolsSkipObserverBlockAndApprovalButStillNeedScope
+    - application/mcp.TestApprovalPromptRedactsSecrets
+    - application/mcp.TestOwnershipGenerationInvalidatesGrantsAndApprovals
+    - application/mcp.TestObserveSessionsBumpsGenerationOnReplacement
+    - application/mcp.TestObserveSessionsDropsClosedGrantWithoutBumpingGeneration
+    - application/mcp.TestSnapshotReportsModeScopeAllowlistAndGeneration
+    - app.TestMCPPolicyScopeFiltersEnvironmentAndRejectsOutsideScope
+    - app.TestMCPPolicyEnvironmentFiltersTunnelsToScopedHosts
+    - app.TestMCPPolicyReadContextUsesTheEffectiveScope
+    - app.TestMCPPolicyObserverDeniesEveryWriteExceptTheBypassSet
+    - app.TestMCPPolicyConfirmRequiresApprovalForEveryNonBypassWrite
+    - app.TestMCPPolicyAutoAllowsEveryWriteWithoutPrompt
+    - app.TestMCPBypassSetIsExactlySessionCloseAndTerminalStop
+    - app.TestMCPPolicyHostOpenAdoptsAndSessionCloseBypassesApproval
+    - app.TestMCPPolicyCloseRejectsStaleGenerationAndRequiresFreshGrant
+    - app.TestMCPPolicyPendingApprovalIsInvalidatedBySessionReplacement
+    - app.TestMCPPolicyTerminalStopBypassesApprovalButObeysScopeAndGeneration
+    - app.TestMCPPolicyExpiryBoundaryThroughTheHandler
+    - app.TestMCPPolicyPromptRedactsSecrets
+    - app.TestMCPPolicyModeChangesApplyToTheNextCall
+    - app.TestExternalMCPPolicyEndToEndThroughStdio
+    - app.TestMCPPolicyDiscoveryModeRoundTrip
+    - app.TestTicket57CheckRunsThroughTheKeyboard
+    - app.TestTicket57CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "Every external call is forced into __external_mcp__ and the effective scope is the intersection of that forced chat scope and the launch-time NETCATTY_MCP_SESSION_IDS allowlist: an omitted list inherits the allowlist, a requested list must be a deduplicated subset, an explicit empty list exposes no Session, and an empty allowlist is no access rather than a wildcard. A requested chat scope other than the forced one is mcp_scope_mismatch, a Session outside the effective scope is mcp_session_out_of_scope, and both are rejected before a prompt or an action. The mode is re-read from discovery for every write, so a Settings change applies to the next call; observer denies all 41 non-bypass writes with mcp_permission_denied naming the tool, confirm creates one prompt per non-bypass write, and auto allows all 43 writes with no prompt. Exactly session_close and terminal_stop bypass approval and the observer block. session_close still obeys scope, allowlist, and ownership. terminal_stop uses the catalog's real jobId input; a resolver seam maps it to the owning Session (production has no background-job execution yet), and a test/selftest mapping proves an out-of-scope job is mcp_session_out_of_scope and a job from a superseded generation is mcp_stale_generation without a prompt; with no live job the call honestly returns Background job not found. Approvals are single-use with an absolute 110 s deadline from creation: a 109.9 s approval succeeds, exactly 110.0 s expires, the waiting call receives mcp_approval_expired, an approved id replays as mcp_approval_invalid, and an expired id cannot be replayed. Snapshot reconciles the deadline itself, so the UI never reports an overdue prompt as pending even before its timer fires. getContext filters both hosts and active port-forward tunnels to the effective scope, so a Host with no scoped Session cannot leak its tunnel. Reads never prompt, and the prompt summary redacts secret-named arguments. Ownership generation starts at 1; observing a replacement Session for an owned Host or invalidating ownership advances it, resolves pending approvals and old grants as mcp_stale_generation, and requires a fresh grant before session_close or terminal_stop can act. Divergences from the original: the original's persistent Always allow / Allow host grants and socket-scoped Allow session cache are deliberately replaced by single-use approvals as ticket 57 requires; the original's sensitive-read confirm rule and per-session approval lock are not ported because this ticket's reads never prompt and write execution is still gated. Update, command blocklist, and full write execution are deferred to ticket 58; in this build host_open adopts the one live scoped Session for a Host instead of opening a new tab and rejects newTab, terminal_stop reports Background job not found because background job execution does not exist yet, and every other approved write returns the explicit not-available result. The original also required chatSessionId on builtin writes; this bridge makes the forced scope implicit and validates any requested value against it."
+
+- id: mcp.settings-approval-surface
+  area: mcp
+  feature: Settings shows MCP scope and mode status and resolves the current approval prompt
+  original_paths:
+    - components/ai/ExternalMcpApprovalsHost.tsx
+    - components/settings/tabs/ai/ExternalMcpCard.tsx
+    - components/ai/useExternalMcpGrantPersister.ts
+    - application/state/useExternalMcpSessionSync.ts
+    - application/state/useExternalMcpToggleState.ts
+  module: ui/settings
+  tickets: [57]
+  acceptance_tests:
+    - ui/settings.TestMCPApprovalPromptShowsEveryFieldAndPinnedDecision
+    - ui/settings.TestMCPPromptLocalizesAnUnknownClient
+    - ui/settings.TestMCPMorePendingUsesThePluralCount
+    - ui/settings.TestMCPExpiredPromptShowsExpiredStateAndDismisses
+    - ui/settings.TestMCPApprovalProblemsAreLocalizedNotRawErrors
+    - ui/settings.TestMCPModeSelectionReachesThePolicy
+    - ui/settings.TestMCPAreaLocalizesInEveryCatalog
+    - ui/settings.TestMCPApprovalPinnedActionsAtRealClientSizes
+    - ui/settings.TestMCPExpiredStateScreenshots
+    - ui/settings.TestMCPBodyWarningDangerContrastIsAccessible
+    - ui/settings.TestMCPPromptUsesTheAccessibleTextColors
+    - app.TestTicket57CheckRunsThroughTheKeyboard
+    - app.TestTicket57CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "The Settings External MCP area shows the selected observer/confirm/auto mode and its localized description, the forced __external_mcp__ scope, the shared-Session allowlist (or the explicit no-Sessions state), the ownership generation, and the bypass hint. The oldest pending approval is current: its card shows the client identity (an empty forwarded identity renders a localized Unknown client), tool, target label, scope, redacted argument summary, and remaining time rounded up from the policy clock; the more-pending line uses an ICU plural count, and Approve/Deny sit in a pinned sibling bar below the scrolling content. A recently expired prompt shows the danger-styled expired state and explanation with only Dismiss available. Because only one prompt is current, the action row fits at the real 720x480 client (704x421 content) and at 1100x720 (1084x661), is inside the client, does not move while the body scrolls, and never clips; the pending and expired states were rendered in all five locales and the PNGs were inspected at 100%. Body, warning, and danger text clear 4.5:1 on every light and dark preset using the shared WCAG helpers, with a ticket-local fallback for custom presets whose fill makes the shared token too low. The controller calls the same application/mcp Service, so a mode change persists to discovery and applies to the next call; Approve, Deny, Dismiss, and typed expired/stale/invalid outcomes are localized rather than rendering Go error text. Divergences from the original: the prompt lives in a dedicated Settings → External MCP area rather than the AI settings tab and the approval host's grant choices; original Always allow / Allow session / Allow host options are absent because approvals here are single-use, and an expired card stays dismissable instead of being cleared automatically."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 
