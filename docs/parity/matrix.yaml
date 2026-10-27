@@ -2701,6 +2701,119 @@
   status: verified
   notes: "AccountID is the immutable Graph user id; Login is mail (falling back to userPrincipalName, then displayName) and is display-only. The same id keeps LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt across reauthorization even when the display name changes; a different id clears them before the next sync. Denied or timed-out reauthorization leaves the stored credential and the anchor untouched, so the existing remote copy is neither overwritten nor forgotten. The self-test covers same, different, and failed/cancelled cases against the fake."
 
+# --- Ticket 52: WebDAV ---
+
+- id: sync.webdav-auth
+  area: sync
+  feature: WebDAV Basic, Digest, and Bearer authentication
+  original_paths:
+    - infrastructure/services/adapters/WebDAVAdapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+    - infrastructure/services/cloudSync/authMethods.ts
+  module: adapters/webdav
+  tickets: [52]
+  acceptance_tests:
+    - adapters/webdav.TestBasicAuthUsesUTF8AndRoundTripsBytes
+    - adapters/webdav.TestDigestAuthChallengeResponseAcrossAlgorithms
+    - adapters/webdav.TestDigestStaleNonceIsRetriedOnce
+    - adapters/webdav.TestDigestWrongPasswordIsACredentialRejectionWithoutALoop
+    - adapters/webdav.TestBearerAuth
+    - adapters/webdav.TestDigestAuthorizationMatchesTheRFCFormula
+    - adapters/webdav.TestDigestChallengeParsingHandlesMultipleChallenges
+    - adapters/webdav.TestUserIdentitySeparatesCollectionsAndCredentials
+    - adapters/webdav/fake.TestFakeDigestChallengeUsesARealNonce
+    - app.TestTicket52CheckRunsThroughTheKeyboard
+    - app.TestTicket52CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Basic sends RFC 7617 credentials as UTF-8, Digest implements RFC 7616 challenge-response in-house (the project's no-new-dependency rule excludes golang.org/x/net/webdav), and Bearer sends the token directly. Digest supports MD5, MD5-sess, SHA-256, and SHA-256-sess with qop=auth (selected even when a server also offers auth-int), random cnonce, nc=00000001, opaque, and one stale-nonce retry; a wrong password returns a typed credential rejection exactly once, so it cannot loop. The fake verifies the response with its own parser rather than sharing the adapter's, and the self-test proves all three modes against it. Credentials are tagged with the webdav provider in the OS credential store; two collections or two usernames on one host have separate merge identities."
+
+- id: sync.webdav-read-write
+  area: sync
+  feature: WebDAV sync-file read, conditional write, conflict, and transport policy
+  original_paths:
+    - infrastructure/services/adapters/WebDAVAdapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+    - domain/sync.ts
+  module: adapters/webdav
+  tickets: [52]
+  acceptance_tests:
+    - adapters/webdav.TestNormalizeEndpoint
+    - adapters/webdav.TestPrepareValidatesAndFlagsInsecure
+    - adapters/webdav.TestCreateAndUpdateUseConditionalHeaders
+    - adapters/webdav.TestNoETagFallsBackToAFreshReadBeforeWriting
+    - adapters/webdav.TestForbiddenIsDistinctFromCredentialRejection
+    - adapters/webdav.TestRead404IsTheEmptyState
+    - adapters/webdav.TestConnectingToAMissingCollectionFailsOnTheFirstCreate
+    - adapters/webdav.TestProbeFallsBackWhenHEADIsDisabled
+    - adapters/webdav.TestTLSRejectsASelfSignedCertificate
+    - adapters/webdav.TestSameHostRedirectIsFollowed
+    - adapters/webdav.TestWriteRefusesARedirectThatDropsTheUpload
+    - adapters/webdav.TestCrossHostAndLoopingRedirectsAreRefused
+    - adapters/webdav.TestRedirectPolicyRefusesDowngradeAndForeignHost
+    - adapters/webdav/fake.TestFakeSupportsOptionsMKCOLAndConditionalWrites
+    - adapters/webdav.TestWebDAVEndToEndThroughTheRealAdapter
+    - app.TestTicket52CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The endpoint is normalized to http or https with a cleaned path and no userinfo, query, or fragment. GET returns 404 as the empty state; PUT creates with If-None-Match: * and updates with If-Match on the observed ETag. A lost condition is ErrConflict so the service re-observes, and a server that omits ETags gets a fresh read-and-compare before the write. 409 or 404 on creation means the collection does not exist and is ErrInvalidEndpoint; the adapter does not auto-create it with MKCOL, matching the original's unconditional PUT behavior while adding the conditional checks the original lacked. TLS verification is always on: a self-signed certificate is ErrTLS and no request is served. Redirects are followed only within the same host, never from HTTPS to HTTP, and loops stop at five; a redirect that would rewrite the method (301/302/303 on PUT) is refused so an upload cannot silently become a body-less GET. All three auth modes round-trip arbitrary bytes exactly."
+
+- id: sync.webdav-insecure-gate
+  area: sync
+  feature: Plain-HTTP warning, explicit confirmation, and WebDAV credential storage
+  original_paths:
+    - infrastructure/services/adapters/WebDAVAdapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+    - infrastructure/services/cloudSync/authMethods.ts
+  module: application/sync
+  tickets: [52]
+  acceptance_tests:
+    - application/sync.TestConnectWebDAVRefusesInsecureWithoutConfirmation
+    - application/sync.TestConnectWebDAVStoresSecretsOnlyInTheCredentialStore
+    - application/sync.TestConnectWebDAVConfirmsInsecureButNeverAutoSyncs
+    - application/sync.TestManualSyncOfARestoredInsecureProfileRequiresAFreshConfirmation
+    - application/sync.TestConfirmInsecureEndpointRefusesSecureAndMissingCredentials
+    - application/sync.TestWebDAVProblemTaxonomy
+    - application/sync.TestWebDAVSyncRejectedCredentialDoesNotRefreshOrRetry
+    - application/sync.TestWebDAVProfileNormalizationAndRemoteSelection
+    - application/sync.TestWebDAVAnchorKeepsTheSameAccountAndClearsAChangedOne
+    - application/sync.TestBrowserBearerWebDAVUsesTheTokenMode
+    - app.TestTicket52CheckRunsThroughTheKeyboard
+    - app.TestTicket52CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "A normalized http endpoint is refused before the credential reaches the token store or the network, and the service records ProblemInsecureEndpoint. The UI shows a localized warning naming the plain-HTTP risk before Connect is actionable; confirmation is explicit, per connect, and never persisted. Automatic sync is always refused for plain HTTP, while a manual sync requires a confirmation made in the current process, so a restored profile cannot silently send its password. HTTPS never warns. The full credential (endpoint, auth type, username, password or bearer token) lives in the OS credential store; cloud-sync.json and the snapshot carry only non-secret fields, and the fake records redacted Authorization traces. 401 becomes a reconfiguration prompt with no refresh loop and 403 is a distinct forbidden state."
+
+- id: sync.webdav-settings
+  area: sync
+  feature: WebDAV provider form, warning, and reconfigure flow
+  original_paths:
+    - components/CloudSyncSettings.tsx
+    - components/cloud-sync/CloudSyncDialogs.tsx
+    - infrastructure/services/adapters/WebDAVAdapter.ts
+  module: ui/settings
+  tickets: [52]
+  acceptance_tests:
+    - ui/settings.TestSyncStateWebDAVInsecureConnectNeedsConfirmation
+    - ui/settings.TestSyncStateWebDAVRestoredInsecureSyncNeedsConfirmation
+    - ui/settings.TestSyncStateWebDAVReconfigurePrefillsAndCancels
+    - ui/settings.TestSyncStateWebDAVRejectsAnIncompleteForm
+    - ui/settings.TestSyncSectionShowsTheWebDAVFormAndInsecureWarning
+    - ui/settings.TestSyncSectionShowsTheInsecureSyncPromptInsteadOfSyncNow
+    - ui/settings.TestSyncSectionShowsReconfigureForARejectedCredential
+    - ui/settings.TestSyncSectionDoesNotWarnForHTTPS
+    - app.TestTicket52CheckRunsThroughTheKeyboard
+  status: verified
+  notes: "The provider selector offers WebDAV, and the setup form collects URL, Basic/Digest/Bearer mode, then username/password or a token. A plain-HTTP URL renders an inline warning; Connect first asks the service without confirmation and opens the explicit confirm/cancel prompt only when the endpoint is insecure. A restored insecure profile replaces Sync now with the warning and per-process confirmation. ProblemCredentials shows Reconfigure, which prefills the non-secret fields and keeps the existing profile until a replacement connects. Labels and problem messages are localized in en, es, ru, zh-CN, and zh-TW."
+
+- id: sync.webdav-live-endpoints
+  area: sync
+  feature: Verification against public WebDAV services and vendor-specific extensions
+  original_paths:
+    - infrastructure/services/adapters/WebDAVAdapter.ts
+    - electron/bridges/cloudSyncBridge.cjs
+  module: adapters/webdav
+  tickets: [52]
+  status: excluded
+  notes: "The WebDAV provider is verified against a local in-process server that implements Basic, Digest (with a real challenge and stale nonce), Bearer, GET/HEAD/PUT/OPTIONS/MKCOL, ETags with If-Match and If-None-Match, 401/403/404/412, redirects, and self-signed TLS. No acceptance run contacts a public WebDAV service or a vendor endpoint: public services need a live account, credentials, and a network, which CI cannot supply, and vendor quirks (Nextcloud, ownCloud, SharePoint) are out of scope. A local real WebDAV server would count as real, but none is started by the suite; the fake is explicit about being a fake. The adapter remains generic RFC 4918/7616/7617 and does not claim vendor-specific parity."
+
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
 

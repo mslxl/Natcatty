@@ -129,7 +129,10 @@ func (s *TokenStore) Load(ctx context.Context) (domainsync.Token, error) {
 		return domainsync.Token{}, fmt.Errorf("syncstore: read token: %w", err)
 	}
 	var token domainsync.Token
-	if err := json.Unmarshal(data, &token); err != nil || token.AccessToken == "" {
+	if err := json.Unmarshal(data, &token); err != nil || !token.HasCredential() {
+		// A WebDAV basic/digest profile has no access token but is a valid
+		// credential; anything else with no credential is corrupt or empty and
+		// keeps the historical "no stored token" meaning.
 		return domainsync.Token{}, appsync.ErrNoToken
 	}
 	return token, nil

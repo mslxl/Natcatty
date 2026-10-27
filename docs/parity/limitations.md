@@ -225,6 +225,20 @@ NATCATTY_ONEDRIVE_* overrides exist only for the fake. A signed-in user with a
 Microsoft client id can exercise the live flow.
 Ticket: 51
 
+### `sync.webdav-live-endpoints`
+
+The WebDAV provider is verified against an in-process fake that mirrors the
+RFC 4918 methods and the RFC 7617/7616 authentication surface, including a real
+Digest challenge with a stale nonce, conditional ETags, 401/403/404/412,
+redirects, and self-signed TLS. It does not contact a public WebDAV service or
+a vendor-specific endpoint (Nextcloud, ownCloud, SharePoint); those need a live
+account and credentials, and their extensions are outside the generic adapter.
+
+Decision: excluded from automated acceptance by ticket 52. A local real WebDAV
+server would count as real, but this suite deliberately starts none, and the
+fake is never described as a live service.
+Ticket: 52
+
 ## Protocol and platform limitations
 
 ### `connections.ssh-compression`

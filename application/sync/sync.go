@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +54,25 @@ const (
 	// token and a fresh interactive authorization is required. It is
 	// actionable: the UI offers Reconnect instead of a generic failure.
 	ProblemReauthorization Problem = "reauthorization"
+	// ProblemCredentials reports that a WebDAV endpoint rejected the stored
+	// username/password or bearer token. It is actionable: the UI offers
+	// Reconfigure instead of retrying the same credential.
+	ProblemCredentials Problem = "credentials-rejected"
+	// ProblemForbidden is a WebDAV 403, which is a permission problem rather
+	// than a rejected credential.
+	ProblemForbidden Problem = "forbidden"
+	// ProblemTLS reports that the endpoint's TLS certificate could not be
+	// verified. The app never disables certificate verification.
+	ProblemTLS Problem = "tls"
+	// ProblemInvalidEndpoint reports a WebDAV URL that is not a usable
+	// http/https collection.
+	ProblemInvalidEndpoint Problem = "invalid-endpoint"
+	// ProblemInsecureEndpoint is the explicit-confirmation gate for a plain
+	// HTTP WebDAV endpoint. No credential is sent until the user confirms.
+	ProblemInsecureEndpoint Problem = "insecure-endpoint"
+	// ProblemRedirect reports a redirect to another host or an HTTPS to HTTP
+	// downgrade, which this build refuses rather than leak the credential.
+	ProblemRedirect Problem = "unsafe-redirect"
 )
 
 // Status is the sync surface's state.
@@ -105,6 +126,28 @@ var (
 	ErrAuthorizationState = errors.New("sync: authorization state did not match")
 	// ErrBrowserUnavailable reports that no system-browser opener is wired.
 	ErrBrowserUnavailable = errors.New("sync: no system browser is available")
+
+	// ErrCredentialsRejected reports that a provider rejected the stored
+	// credential itself (WebDAV 401). Unlike ErrUnauthorized it is not
+	// retryable with a refresh: the user must re-enter the credential.
+	ErrCredentialsRejected = errors.New("sync: the provider rejected the stored credentials")
+	// ErrForbidden reports that the credential is valid but the provider
+	// refuses this operation (HTTP 403). It is distinct from a rejected
+	// credential so the UI can say what to fix.
+	ErrForbidden = errors.New("sync: the provider refused access")
+	// ErrTLS reports that the endpoint's certificate chain could not be
+	// verified. This build never disables certificate verification.
+	ErrTLS = errors.New("sync: the endpoint certificate could not be verified")
+	// ErrInvalidEndpoint reports a provider endpoint that cannot be used.
+	ErrInvalidEndpoint = errors.New("sync: the provider endpoint is invalid")
+	// ErrInsecureEndpoint reports a plain-HTTP endpoint whose credentials
+	// would travel in clear. The caller must ask the user for explicit
+	// confirmation before retrying.
+	ErrInsecureEndpoint = errors.New("sync: the provider endpoint is not encrypted")
+	// ErrRedirectRefused reports a redirect this build will not follow: a
+	// different host (which could receive the credential) or an HTTPS to
+	// plain-HTTP downgrade.
+	ErrRedirectRefused = errors.New("sync: the provider redirected to an unsafe location")
 )
 
 // Provider identifiers persisted in the Sync Profile. They match the original
@@ -113,6 +156,7 @@ const (
 	ProviderGitHub      = "github"
 	ProviderGoogleDrive = "google"
 	ProviderOneDrive    = "onedrive"
+	ProviderWebDAV      = "webdav"
 )
 
 // NormalizeProvider maps empty and unknown historical values onto the
@@ -123,6 +167,8 @@ func NormalizeProvider(provider string) string {
 		return ProviderGoogleDrive
 	case ProviderOneDrive:
 		return ProviderOneDrive
+	case ProviderWebDAV:
+		return ProviderWebDAV
 	default:
 		return ProviderGitHub
 	}
@@ -198,6 +244,27 @@ type BrowserAuthorizer interface {
 // that into a fresh browser authorization.
 type TokenRefresher interface {
 	Refresh(ctx context.Context, token domainsync.Token) (domainsync.Token, error)
+}
+
+// WebDAVSettings is the WebDAV form's user-entered connection state. Password
+// is the basic/digest secret and Token the bearer secret; exactly one of them
+// is used for the selected AuthType.
+type WebDAVSettings struct {
+	Endpoint string
+	AuthType string
+	Username string
+	Password string
+	Token    string
+}
+
+// WebDAVConnector is implemented by remotes that connect with explicit,
+// user-entered settings rather than an interactive authorization. Prepare
+// validates and normalizes the endpoint and reports whether the connection
+// would send credentials without transport encryption; the service refuses to
+// call Connect until the user has explicitly confirmed that case.
+type WebDAVConnector interface {
+	Prepare(settings WebDAVSettings) (WebDAVSettings, bool, error)
+	Connect(ctx context.Context, settings WebDAVSettings) (domainsync.Token, Grant, error)
 }
 
 // Vault is the local Vault port. Snapshot must include plaintext credential
@@ -284,6 +351,14 @@ type Snapshot struct {
 	LastSyncedAt int64
 	LastAction   domainsync.Action
 	HasPassword  bool
+	// WebDAV connection state for the setup form. The secret is never part of
+	// the snapshot.
+	WebDAVEndpoint string
+	WebDAVAuthType string
+	WebDAVUsername string
+	// WebDAVInsecure reports a saved plain-HTTP endpoint. Automatic sync is
+	// never started for one, and a manual sync asks for confirmation first.
+	WebDAVInsecure bool
 }
 
 // Option customizes a Service.
@@ -417,6 +492,17 @@ type Service struct {
 	device     DeviceCode
 	lastAction domainsync.Action
 
+	// WebDAV connection state. The secrets stay in the token store; these are
+	// the non-secret fields the setup form prefills.
+	webdavEndpoint string
+	webdavAuthType string
+	webdavUsername string
+	webdavInsecure bool
+	// insecureConfirmedEndpoint is the exact endpoint the user explicitly
+	// confirmed in this process. It is never persisted, so a later process
+	// asks again; automatic sync never uses it.
+	insecureConfirmedEndpoint string
+
 	timer      *time.Timer
 	generation uint64
 	scheduled  bool
@@ -482,9 +568,53 @@ func (s *Service) Load(ctx context.Context) error {
 		s.status = StatusNeedsPassword
 		s.problem = ProblemPasswordRequired
 	}
+	webdav := s.config.Provider == ProviderWebDAV
 	s.mu.Unlock()
+	if webdav {
+		// Best effort: the form's non-secret fields survive a restart. A
+		// missing or corrupt credential is simply the unconfigured form.
+		if token, err := s.tokens.Load(ctx); err == nil {
+			s.rememberWebDAV(token)
+		}
+	}
 	s.changed()
 	return nil
+}
+
+// rememberWebDAV caches the non-secret WebDAV form fields from a credential.
+// It never copies the password or bearer token into the profile or snapshot.
+func (s *Service) rememberWebDAV(token domainsync.Token) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if token.Provider != "" && token.Provider != ProviderWebDAV {
+		s.webdavEndpoint = ""
+		s.webdavAuthType = ""
+		s.webdavUsername = ""
+		s.webdavInsecure = false
+		return
+	}
+	if token.WebDAV == nil || token.WebDAV.Endpoint == "" {
+		s.webdavEndpoint = ""
+		s.webdavAuthType = ""
+		s.webdavUsername = ""
+		s.webdavInsecure = false
+		return
+	}
+	s.webdavEndpoint = token.WebDAV.Endpoint
+	s.webdavAuthType = domainsync.NormalizeWebDAVAuthType(token.WebDAV.AuthType)
+	s.webdavUsername = token.WebDAV.Username
+	s.webdavInsecure = EndpointIsInsecure(token.WebDAV.Endpoint)
+}
+
+// EndpointIsInsecure reports whether a normalized endpoint would send its
+// credentials without transport encryption. It is the application layer's
+// copy of the rule; adapters perform the authoritative normalization.
+func EndpointIsInsecure(endpoint string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, "http")
 }
 
 // SetPassword unlocks cloud sync for this run. The password is never written
@@ -522,17 +652,21 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Snapshot{
-		Connected:    s.config.Connected,
-		Provider:     NormalizeProvider(s.config.Provider),
-		Login:        s.config.Login,
-		AutoSync:     s.config.AutoSync,
-		Strategy:     domainsync.NormalizeStrategy(s.config.Strategy),
-		Status:       s.status,
-		Problem:      s.problem,
-		DeviceCode:   s.device,
-		LastSyncedAt: s.config.LastSyncedAt,
-		LastAction:   s.lastAction,
-		HasPassword:  s.password != "",
+		Connected:      s.config.Connected,
+		Provider:       NormalizeProvider(s.config.Provider),
+		Login:          s.config.Login,
+		AutoSync:       s.config.AutoSync,
+		Strategy:       domainsync.NormalizeStrategy(s.config.Strategy),
+		Status:         s.status,
+		Problem:        s.problem,
+		DeviceCode:     s.device,
+		LastSyncedAt:   s.config.LastSyncedAt,
+		LastAction:     s.lastAction,
+		HasPassword:    s.password != "",
+		WebDAVEndpoint: s.webdavEndpoint,
+		WebDAVAuthType: s.webdavAuthType,
+		WebDAVUsername: s.webdavUsername,
+		WebDAVInsecure: s.webdavInsecure,
 	}
 }
 
@@ -604,6 +738,11 @@ func (s *Service) SetProvider(ctx context.Context, provider string) error {
 	s.status = StatusNeedsSetup
 	s.problem = ProblemNotConfigured
 	s.device = DeviceCode{}
+	s.webdavEndpoint = ""
+	s.webdavAuthType = ""
+	s.webdavUsername = ""
+	s.webdavInsecure = false
+	s.insecureConfirmedEndpoint = ""
 	s.mu.Unlock()
 	if err := s.configs.Save(ctx, config); err != nil {
 		return err
@@ -658,6 +797,124 @@ func (s *Service) Connect(ctx context.Context, password string, onDevice func(De
 	s.mu.Unlock()
 	s.changed()
 	return nil
+}
+
+// ConnectWebDAV connects the profile to a WebDAV collection with explicit
+// user-entered settings. Prepare validates and normalizes the endpoint before
+// anything else happens. A plain-HTTP endpoint returns ErrInsecureEndpoint
+// without storing or sending the credential unless the caller confirms; that
+// confirmation is explicit, per connect, and never persisted. On success the
+// credential (including the username/password or bearer token) goes to the
+// secure token store and only non-secret fields enter the profile.
+func (s *Service) ConnectWebDAV(ctx context.Context, password string, settings WebDAVSettings, confirmInsecure bool) error {
+	if password == "" {
+		s.mu.Lock()
+		password = s.password
+		s.mu.Unlock()
+	}
+	if password == "" {
+		return ErrPasswordRequired
+	}
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	remote := s.remotes[ProviderWebDAV]
+	connector, ok := remote.(WebDAVConnector)
+	if !ok {
+		s.fail(ProblemNotConfigured)
+		return ErrNotConfigured
+	}
+	normalized, insecure, err := connector.Prepare(settings)
+	if err != nil {
+		s.fail(problemFor(err))
+		return err
+	}
+	if insecure && !confirmInsecure {
+		// The gate runs before the token store is written and before any
+		// request, so no secret can leave the process unconfirmed.
+		s.fail(ProblemInsecureEndpoint)
+		return ErrInsecureEndpoint
+	}
+
+	s.mu.Lock()
+	s.password = password
+	s.status = StatusAuthorizing
+	s.problem = ProblemNone
+	s.device = DeviceCode{}
+	s.mu.Unlock()
+	s.changed()
+
+	token, grant, err := connector.Connect(ctx, normalized)
+	if err != nil {
+		s.fail(problemFor(err))
+		return err
+	}
+	token.Provider = ProviderWebDAV
+	if saveErr := s.tokens.Save(ctx, token); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+
+	s.mu.Lock()
+	config := s.config
+	if NormalizeProvider(config.Provider) != ProviderWebDAV {
+		// A WebDAV profile never reuses another provider's baseline.
+		clearAnchor(&config)
+	}
+	config.Provider = ProviderWebDAV
+	s.config = config
+	s.remote = remote
+	s.webdavEndpoint = normalized.Endpoint
+	s.webdavAuthType = domainsync.NormalizeWebDAVAuthType(normalized.AuthType)
+	s.webdavUsername = normalized.Username
+	s.webdavInsecure = insecure
+	if insecure {
+		s.insecureConfirmedEndpoint = normalized.Endpoint
+	} else {
+		s.insecureConfirmedEndpoint = ""
+	}
+	s.mu.Unlock()
+
+	if saveErr := s.applyGrant(ctx, grant); saveErr != nil {
+		s.fail(ProblemLocal)
+		return saveErr
+	}
+	s.mu.Lock()
+	s.status = StatusIdle
+	s.problem = ProblemNone
+	s.mu.Unlock()
+	s.changed()
+	return nil
+}
+
+// WebDAVSettings returns the non-secret form state for the active WebDAV
+// profile. The password and bearer token are never part of this value.
+func (s *Service) WebDAVSettings() WebDAVSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return WebDAVSettings{
+		Endpoint: s.webdavEndpoint,
+		AuthType: s.webdavAuthType,
+		Username: s.webdavUsername,
+	}
+}
+
+// ConfirmInsecureEndpoint records the user's explicit confirmation for the
+// stored plain-HTTP endpoint in this process. It is used by "Sync anyway"
+// after the warning; a saved profile in a later process asks again, and
+// automatic sync never consults it.
+func (s *Service) ConfirmInsecureEndpoint(ctx context.Context) bool {
+	token, err := s.tokens.Load(ctx)
+	if err != nil || token.Provider != ProviderWebDAV || token.WebDAV == nil {
+		return false
+	}
+	if !EndpointIsInsecure(token.WebDAV.Endpoint) {
+		return false
+	}
+	s.mu.Lock()
+	s.insecureConfirmedEndpoint = token.WebDAV.Endpoint
+	s.mu.Unlock()
+	return true
 }
 
 // authorize runs whichever grant the active provider implements.
@@ -770,6 +1027,11 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	s.status = StatusNeedsSetup
 	s.problem = ProblemNotConfigured
 	s.device = DeviceCode{}
+	s.webdavEndpoint = ""
+	s.webdavAuthType = ""
+	s.webdavUsername = ""
+	s.webdavInsecure = false
+	s.insecureConfirmedEndpoint = ""
 	s.mu.Unlock()
 	if err := s.configs.Save(ctx, s.currentConfig()); err != nil {
 		return err
@@ -963,6 +1225,22 @@ func (s *Service) syncLocked(ctx context.Context, trigger Trigger) (Result, erro
 		}
 		s.fail(problemFor(err))
 		return Result{Trigger: trigger}, err
+	}
+	if token.WebDAV != nil && EndpointIsInsecure(token.WebDAV.Endpoint) {
+		// A plain-HTTP endpoint never syncs on its own: automatic sync would
+		// send the credential with no person in the loop, and a manual sync
+		// requires the warning to be confirmed in this process.
+		if trigger == TriggerAuto {
+			s.fail(ProblemInsecureEndpoint)
+			return Result{Trigger: trigger}, ErrInsecureEndpoint
+		}
+		s.mu.Lock()
+		confirmed := s.insecureConfirmedEndpoint == token.WebDAV.Endpoint
+		s.mu.Unlock()
+		if !confirmed {
+			s.fail(ProblemInsecureEndpoint)
+			return Result{Trigger: trigger}, ErrInsecureEndpoint
+		}
 	}
 
 	s.mu.Lock()
@@ -1261,7 +1539,10 @@ func (s *Service) finishSync(problem Problem) {
 // Vault change hook after a committed write and never blocks.
 func (s *Service) NotifyLocalChange() {
 	s.mu.Lock()
-	if s.stopped || !s.config.AutoSync {
+	// A saved plain-HTTP endpoint never auto-syncs. The service refuses the
+	// automatic trigger as well; skipping the timer keeps the preference from
+	// producing a failure on every local edit.
+	if s.stopped || !s.config.AutoSync || s.webdavInsecure {
 		s.mu.Unlock()
 		return
 	}
@@ -1367,6 +1648,18 @@ func problemFor(err error) Problem {
 		return ProblemNone
 	case errors.Is(err, ErrReauthorizationRequired):
 		return ProblemReauthorization
+	case errors.Is(err, ErrCredentialsRejected):
+		return ProblemCredentials
+	case errors.Is(err, ErrForbidden):
+		return ProblemForbidden
+	case errors.Is(err, ErrTLS):
+		return ProblemTLS
+	case errors.Is(err, ErrInvalidEndpoint):
+		return ProblemInvalidEndpoint
+	case errors.Is(err, ErrInsecureEndpoint):
+		return ProblemInsecureEndpoint
+	case errors.Is(err, ErrRedirectRefused):
+		return ProblemRedirect
 	case errors.Is(err, ErrUnauthorized), errors.Is(err, errNoToken):
 		return ProblemUnauthorized
 	case errors.Is(err, ErrRateLimited):

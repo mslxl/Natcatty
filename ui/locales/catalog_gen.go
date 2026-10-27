@@ -11726,6 +11726,16 @@ func (msgs Messages) SettingsSyncProviderOneDrive() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProviderOneDrive", nil)
 }
 
+// SettingsSyncProviderWebDAV says "WebDAV"
+// in the language the app shows.
+func SettingsSyncProviderWebDAV() string { return In(i18n.Locale()).SettingsSyncProviderWebDAV() }
+
+// SettingsSyncProviderWebDAV says "WebDAV"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProviderWebDAV() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProviderWebDAV", nil)
+}
+
 // SettingsSyncGoogleHint says "Your browser opens to sign in with Google. Netcatty never sees your password."
 // in the language the app shows.
 func SettingsSyncGoogleHint() string { return In(i18n.Locale()).SettingsSyncGoogleHint() }
@@ -11744,6 +11754,166 @@ func SettingsSyncOneDriveHint() string { return In(i18n.Locale()).SettingsSyncOn
 // in the language of msgs.
 func (msgs Messages) SettingsSyncOneDriveHint() string {
 	return Catalog.Format(msgs.locale, "settingsSyncOneDriveHint", nil)
+}
+
+// SettingsSyncWebDAVHint says "Store the encrypted Vault in a WebDAV collection. Use the collection URL, without a username or password in it."
+// in the language the app shows.
+func SettingsSyncWebDAVHint() string { return In(i18n.Locale()).SettingsSyncWebDAVHint() }
+
+// SettingsSyncWebDAVHint says "Store the encrypted Vault in a WebDAV collection. Use the collection URL, without a username or password in it."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVHint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVHint", nil)
+}
+
+// SettingsSyncWebDAVEndpoint says "WebDAV URL"
+// in the language the app shows.
+func SettingsSyncWebDAVEndpoint() string { return In(i18n.Locale()).SettingsSyncWebDAVEndpoint() }
+
+// SettingsSyncWebDAVEndpoint says "WebDAV URL"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVEndpoint", nil)
+}
+
+// SettingsSyncWebDAVEndpointValue says "WebDAV URL: {endpoint}"
+// in the language the app shows.
+func SettingsSyncWebDAVEndpointValue(endpoint string) string {
+	return In(i18n.Locale()).SettingsSyncWebDAVEndpointValue(endpoint)
+}
+
+// SettingsSyncWebDAVEndpointValue says "WebDAV URL: {endpoint}"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVEndpointValue(endpoint string) string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVEndpointValue", map[string]any{"endpoint": endpoint})
+}
+
+// SettingsSyncWebDAVAuth says "Authentication"
+// in the language the app shows.
+func SettingsSyncWebDAVAuth() string { return In(i18n.Locale()).SettingsSyncWebDAVAuth() }
+
+// SettingsSyncWebDAVAuth says "Authentication"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVAuth() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVAuth", nil)
+}
+
+// SettingsSyncWebDAVAuthBasic says "Username and password"
+// in the language the app shows.
+func SettingsSyncWebDAVAuthBasic() string { return In(i18n.Locale()).SettingsSyncWebDAVAuthBasic() }
+
+// SettingsSyncWebDAVAuthBasic says "Username and password"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVAuthBasic() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVAuthBasic", nil)
+}
+
+// SettingsSyncWebDAVAuthDigest says "Digest"
+// in the language the app shows.
+func SettingsSyncWebDAVAuthDigest() string { return In(i18n.Locale()).SettingsSyncWebDAVAuthDigest() }
+
+// SettingsSyncWebDAVAuthDigest says "Digest"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVAuthDigest() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVAuthDigest", nil)
+}
+
+// SettingsSyncWebDAVAuthBearer says "Bearer token"
+// in the language the app shows.
+func SettingsSyncWebDAVAuthBearer() string { return In(i18n.Locale()).SettingsSyncWebDAVAuthBearer() }
+
+// SettingsSyncWebDAVAuthBearer says "Bearer token"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVAuthBearer() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVAuthBearer", nil)
+}
+
+// SettingsSyncWebDAVUsername says "Username"
+// in the language the app shows.
+func SettingsSyncWebDAVUsername() string { return In(i18n.Locale()).SettingsSyncWebDAVUsername() }
+
+// SettingsSyncWebDAVUsername says "Username"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVUsername() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVUsername", nil)
+}
+
+// SettingsSyncWebDAVPassword says "Password"
+// in the language the app shows.
+func SettingsSyncWebDAVPassword() string { return In(i18n.Locale()).SettingsSyncWebDAVPassword() }
+
+// SettingsSyncWebDAVPassword says "Password"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVPassword() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVPassword", nil)
+}
+
+// SettingsSyncWebDAVToken says "Token"
+// in the language the app shows.
+func SettingsSyncWebDAVToken() string { return In(i18n.Locale()).SettingsSyncWebDAVToken() }
+
+// SettingsSyncWebDAVToken says "Token"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVToken() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVToken", nil)
+}
+
+// SettingsSyncWebDAVInsecureWarning says "This URL uses plain HTTP. Your username and password, or token, and the encrypted Vault will be sent without encrypti…"
+// in the language the app shows.
+func SettingsSyncWebDAVInsecureWarning() string {
+	return In(i18n.Locale()).SettingsSyncWebDAVInsecureWarning()
+}
+
+// SettingsSyncWebDAVInsecureWarning says "This URL uses plain HTTP. Your username and password, or token, and the encrypted Vault will be sent without encrypti…"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVInsecureWarning() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVInsecureWarning", nil)
+}
+
+// SettingsSyncWebDAVInsecureConfirm says "Connect anyway"
+// in the language the app shows.
+func SettingsSyncWebDAVInsecureConfirm() string {
+	return In(i18n.Locale()).SettingsSyncWebDAVInsecureConfirm()
+}
+
+// SettingsSyncWebDAVInsecureConfirm says "Connect anyway"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVInsecureConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVInsecureConfirm", nil)
+}
+
+// SettingsSyncWebDAVInsecureSyncConfirm says "Sync anyway"
+// in the language the app shows.
+func SettingsSyncWebDAVInsecureSyncConfirm() string {
+	return In(i18n.Locale()).SettingsSyncWebDAVInsecureSyncConfirm()
+}
+
+// SettingsSyncWebDAVInsecureSyncConfirm says "Sync anyway"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVInsecureSyncConfirm() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVInsecureSyncConfirm", nil)
+}
+
+// SettingsSyncWebDAVInsecureAutoSync says "Automatic sync stays off while this WebDAV URL uses plain HTTP."
+// in the language the app shows.
+func SettingsSyncWebDAVInsecureAutoSync() string {
+	return In(i18n.Locale()).SettingsSyncWebDAVInsecureAutoSync()
+}
+
+// SettingsSyncWebDAVInsecureAutoSync says "Automatic sync stays off while this WebDAV URL uses plain HTTP."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVInsecureAutoSync() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVInsecureAutoSync", nil)
+}
+
+// SettingsSyncWebDAVReconfigure says "Reconfigure"
+// in the language the app shows.
+func SettingsSyncWebDAVReconfigure() string { return In(i18n.Locale()).SettingsSyncWebDAVReconfigure() }
+
+// SettingsSyncWebDAVReconfigure says "Reconfigure"
+// in the language of msgs.
+func (msgs Messages) SettingsSyncWebDAVReconfigure() string {
+	return Catalog.Format(msgs.locale, "settingsSyncWebDAVReconfigure", nil)
 }
 
 // SettingsSyncReconnect says "Reconnect"
@@ -11766,6 +11936,72 @@ func SettingsSyncProblemReauthorization() string {
 // in the language of msgs.
 func (msgs Messages) SettingsSyncProblemReauthorization() string {
 	return Catalog.Format(msgs.locale, "settingsSyncProblemReauthorization", nil)
+}
+
+// SettingsSyncProblemCredentials says "The WebDAV endpoint rejected the username, password, or token. Choose Reconfigure to enter it again."
+// in the language the app shows.
+func SettingsSyncProblemCredentials() string {
+	return In(i18n.Locale()).SettingsSyncProblemCredentials()
+}
+
+// SettingsSyncProblemCredentials says "The WebDAV endpoint rejected the username, password, or token. Choose Reconfigure to enter it again."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemCredentials() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemCredentials", nil)
+}
+
+// SettingsSyncProblemForbidden says "The WebDAV endpoint refused access. Check the account's permission for this collection."
+// in the language the app shows.
+func SettingsSyncProblemForbidden() string { return In(i18n.Locale()).SettingsSyncProblemForbidden() }
+
+// SettingsSyncProblemForbidden says "The WebDAV endpoint refused access. Check the account's permission for this collection."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemForbidden() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemForbidden", nil)
+}
+
+// SettingsSyncProblemTLS says "The endpoint's TLS certificate could not be verified. This app never disables certificate verification."
+// in the language the app shows.
+func SettingsSyncProblemTLS() string { return In(i18n.Locale()).SettingsSyncProblemTLS() }
+
+// SettingsSyncProblemTLS says "The endpoint's TLS certificate could not be verified. This app never disables certificate verification."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemTLS() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemTLS", nil)
+}
+
+// SettingsSyncProblemInvalidEndpoint says "The WebDAV URL is not usable. Enter an http or https URL to an existing collection and the credential it requires."
+// in the language the app shows.
+func SettingsSyncProblemInvalidEndpoint() string {
+	return In(i18n.Locale()).SettingsSyncProblemInvalidEndpoint()
+}
+
+// SettingsSyncProblemInvalidEndpoint says "The WebDAV URL is not usable. Enter an http or https URL to an existing collection and the credential it requires."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemInvalidEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemInvalidEndpoint", nil)
+}
+
+// SettingsSyncProblemInsecureEndpoint says "This WebDAV URL uses plain HTTP. Confirm that you want to send credentials without encryption."
+// in the language the app shows.
+func SettingsSyncProblemInsecureEndpoint() string {
+	return In(i18n.Locale()).SettingsSyncProblemInsecureEndpoint()
+}
+
+// SettingsSyncProblemInsecureEndpoint says "This WebDAV URL uses plain HTTP. Confirm that you want to send credentials without encryption."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemInsecureEndpoint() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemInsecureEndpoint", nil)
+}
+
+// SettingsSyncProblemRedirect says "The endpoint redirected to another host or to plain HTTP. The connection was stopped before credentials were sent."
+// in the language the app shows.
+func SettingsSyncProblemRedirect() string { return In(i18n.Locale()).SettingsSyncProblemRedirect() }
+
+// SettingsSyncProblemRedirect says "The endpoint redirected to another host or to plain HTTP. The connection was stopped before credentials were sent."
+// in the language of msgs.
+func (msgs Messages) SettingsSyncProblemRedirect() string {
+	return Catalog.Format(msgs.locale, "settingsSyncProblemRedirect", nil)
 }
 
 // SettingsSyncAutoSync says "Sync automatically"

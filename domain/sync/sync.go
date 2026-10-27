@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -395,4 +396,54 @@ type Token struct {
 	// Provider binds the credential to the provider that issued it, so a
 	// stored GitHub token can never be sent to Google Drive or vice versa.
 	Provider string `json:"provider,omitempty"`
+	// WebDAV carries the user-entered connection settings and secret for a
+	// WebDAV profile. It lives in the same OS credential-store blob as every
+	// other provider credential, so the endpoint password or bearer token is
+	// never written to the plaintext sync profile.
+	WebDAV *WebDAVCredential `json:"webdav,omitempty"`
+}
+
+// WebDAV credential modes. They match the original Electron provider's
+// authType values for basic and digest; the original called the bearer mode
+// "token".
+const (
+	WebDAVAuthBasic  = "basic"
+	WebDAVAuthDigest = "digest"
+	WebDAVAuthBearer = "bearer"
+)
+
+// NormalizeWebDAVAuthType maps the persisted mode onto the three supported
+// schemes. Unknown and empty values are basic, matching the original form's
+// default selection.
+func NormalizeWebDAVAuthType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case WebDAVAuthDigest:
+		return WebDAVAuthDigest
+	case WebDAVAuthBearer, "token":
+		return WebDAVAuthBearer
+	default:
+		return WebDAVAuthBasic
+	}
+}
+
+// WebDAVCredential is one WebDAV connection. Endpoint, AuthType, and Username
+// are not secrets, but keeping the whole connection in the credential blob
+// means one storage path for both secret and non-secret connection state and
+// nothing WebDAV-specific in cloud-sync.json.
+type WebDAVCredential struct {
+	Endpoint string `json:"endpoint"`
+	AuthType string `json:"authType"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
+}
+
+// HasCredential reports whether the token carries a usable credential. OAuth
+// tokens normally have an access token; a WebDAV basic or digest profile
+// legitimately has none.
+func (t Token) HasCredential() bool {
+	if t.AccessToken != "" {
+		return true
+	}
+	return t.WebDAV != nil && strings.TrimSpace(t.WebDAV.Endpoint) != ""
 }

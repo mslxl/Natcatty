@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,10 +29,22 @@ type SyncService interface {
 }
 
 // ProviderSyncService is the optional capability that lets the setup surface
-// choose between GitHub, Google Drive, and OneDrive. Ticket 49's fake does not
-// implement it, so the selector is hidden rather than forced into that seam.
+// choose between GitHub, Google Drive, OneDrive, and WebDAV. Ticket 49's fake
+// does not implement it, so the selector is hidden rather than forced into
+// that seam.
 type ProviderSyncService interface {
 	SetProvider(ctx context.Context, provider string) error
+}
+
+// WebDAVSyncService is the optional WebDAV capability. The form passes the
+// user-entered connection settings explicitly; confirmInsecure is true only
+// after the user has seen and accepted the plain-HTTP warning for this exact
+// attempt. ConfirmInsecureEndpoint records the warning acceptance for a later
+// manual sync of the stored profile in this process.
+type WebDAVSyncService interface {
+	ConnectWebDAV(ctx context.Context, password string, settings appsync.WebDAVSettings, confirmInsecure bool) error
+	WebDAVSettings() appsync.WebDAVSettings
+	ConfirmInsecureEndpoint(ctx context.Context) bool
 }
 
 // SyncOption customizes a SyncState.
@@ -59,6 +72,23 @@ type SyncState struct {
 	busy       bool
 	lastErr    error
 	disconnect bool
+
+	// WebDAV form state. The secret fields live only in this UI state for the
+	// duration of an attempt and are never part of a snapshot or a log line.
+	webdavLoaded   bool
+	webdavEndpoint string
+	webdavAuthType string
+	webdavUsername string
+	webdavPassword string
+	webdavToken    string
+	// pendingConnect and pendingPassword freeze exactly what the user
+	// confirmed after the plain-HTTP warning, so an edit behind the warning
+	// cannot change what is sent.
+	pendingConnect  appsync.WebDAVSettings
+	pendingPassword string
+	insecurePrompt  bool
+	insecureAction  string
+	reconfigure     bool
 }
 
 // NewSyncState builds the sync surface from the application service.
@@ -132,7 +162,8 @@ func (s *SyncState) CancelDisconnect() { s.disconnect = false }
 func (s *SyncState) Disconnecting() bool { return s.disconnect }
 
 // Connect starts the provider's authorization with the entered master
-// password.
+// password. For a WebDAV profile it sends the form's connection settings; a
+// plain-HTTP endpoint first produces the explicit warning confirmation.
 func (s *SyncState) Connect() {
 	if s.busy {
 		return
@@ -140,6 +171,11 @@ func (s *SyncState) Connect() {
 	password := s.password
 	if password == "" {
 		s.lastErr = nil
+		return
+	}
+	if service, ok := s.webDAVService(); ok &&
+		appsync.NormalizeProvider(s.service.Snapshot().Provider) == appsync.ProviderWebDAV {
+		s.connectWebDAV(service, password)
 		return
 	}
 	s.busy = true
@@ -160,6 +196,288 @@ func (s *SyncState) Connect() {
 		})
 	}()
 }
+
+// webDAVService reports the WebDAV capability of the current service.
+func (s *SyncState) webDAVService() (WebDAVSyncService, bool) {
+	service, ok := s.service.(WebDAVSyncService)
+	return service, ok
+}
+
+// connectWebDAV validates the form, then connects with confirmInsecure=false.
+// The service's gate returns ErrInsecureEndpoint before storing or sending the
+// credential; the view then shows the warning and ConfirmInsecure retries the
+// same captured settings.
+func (s *SyncState) connectWebDAV(service WebDAVSyncService, password string) {
+	settings := s.webDAVSettings()
+	authType := domainsync.NormalizeWebDAVAuthType(settings.AuthType)
+	valid := settings.Endpoint != ""
+	if authType == domainsync.WebDAVAuthBearer {
+		valid = valid && settings.Token != ""
+	} else {
+		valid = valid && settings.Username != "" && settings.Password != ""
+	}
+	if !valid {
+		s.lastErr = appsync.ErrInvalidEndpoint
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	s.pendingConnect = settings
+	s.pendingPassword = password
+	state := s
+	go func() {
+		err := state.service.SetPassword(password)
+		if err == nil {
+			err = service.ConnectWebDAV(state.ctx, password, settings, false)
+		}
+		state.post(func() {
+			state.busy = false
+			switch {
+			case errors.Is(err, appsync.ErrInsecureEndpoint):
+				state.lastErr = err
+				state.insecurePrompt = true
+				state.insecureAction = "connect"
+			case err != nil:
+				state.lastErr = err
+				state.pendingConnect = appsync.WebDAVSettings{}
+				state.pendingPassword = ""
+			default:
+				state.lastErr = nil
+				state.password = ""
+				state.webdavPassword = ""
+				state.webdavToken = ""
+				state.pendingConnect = appsync.WebDAVSettings{}
+				state.pendingPassword = ""
+				state.reconfigure = false
+			}
+		})
+	}()
+}
+
+// webDAVSettings reads the form. Both secrets stay in the UI state; only the
+// one selected by the authentication mode is copied.
+func (s *SyncState) webDAVSettings() appsync.WebDAVSettings {
+	authType := domainsync.NormalizeWebDAVAuthType(s.webdavAuthType)
+	settings := appsync.WebDAVSettings{
+		Endpoint: strings.TrimSpace(s.webdavEndpoint),
+		AuthType: authType,
+		Username: strings.TrimSpace(s.webdavUsername),
+	}
+	if authType == domainsync.WebDAVAuthBearer {
+		settings.Token = s.webdavToken
+	} else {
+		settings.Password = s.webdavPassword
+	}
+	return settings
+}
+
+// EnsureWebDAVForm prefills the non-secret form fields once from the stored
+// profile. It runs on the UI thread.
+func (s *SyncState) EnsureWebDAVForm() {
+	if s.webdavLoaded {
+		return
+	}
+	settings := appsync.WebDAVSettings{}
+	if service, ok := s.webDAVService(); ok {
+		settings = service.WebDAVSettings()
+	}
+	snapshot := s.service.Snapshot()
+	if settings.Endpoint == "" {
+		settings.Endpoint = snapshot.WebDAVEndpoint
+	}
+	if settings.AuthType == "" {
+		settings.AuthType = snapshot.WebDAVAuthType
+	}
+	if settings.Username == "" {
+		settings.Username = snapshot.WebDAVUsername
+	}
+	s.webdavEndpoint = settings.Endpoint
+	s.webdavAuthType = domainsync.NormalizeWebDAVAuthType(settings.AuthType)
+	s.webdavUsername = settings.Username
+	s.webdavLoaded = true
+}
+
+// ResetWebDAVForm forgets the form, including any unsent secret.
+func (s *SyncState) ResetWebDAVForm() {
+	s.webdavLoaded = false
+	s.webdavEndpoint = ""
+	s.webdavAuthType = ""
+	s.webdavUsername = ""
+	s.webdavPassword = ""
+	s.webdavToken = ""
+	s.pendingConnect = appsync.WebDAVSettings{}
+	s.pendingPassword = ""
+}
+
+// WebDAV form accessors. They run on the UI thread in response to text edits.
+func (s *SyncState) WebDAVEndpoint() string { return s.webdavEndpoint }
+func (s *SyncState) WebDAVUsername() string { return s.webdavUsername }
+func (s *SyncState) WebDAVAuthType() string {
+	return domainsync.NormalizeWebDAVAuthType(s.webdavAuthType)
+}
+func (s *SyncState) WebDAVPassword() string { return s.webdavPassword }
+func (s *SyncState) WebDAVToken() string    { return s.webdavToken }
+
+func (s *SyncState) SetWebDAVEndpoint(value string) {
+	s.webdavLoaded = true
+	s.webdavEndpoint = value
+}
+
+func (s *SyncState) SetWebDAVUsername(value string) {
+	s.webdavLoaded = true
+	s.webdavUsername = value
+}
+
+// SetWebDAVAuthType changes the mode and drops the secret that no longer
+// applies, so a stale password can never be sent as a bearer token or vice
+// versa.
+func (s *SyncState) SetWebDAVAuthType(value string) {
+	s.webdavLoaded = true
+	s.webdavAuthType = domainsync.NormalizeWebDAVAuthType(value)
+	if s.webdavAuthType == domainsync.WebDAVAuthBearer {
+		s.webdavPassword = ""
+	} else {
+		s.webdavToken = ""
+	}
+}
+
+func (s *SyncState) SetWebDAVPassword(value string) {
+	s.webdavLoaded = true
+	s.webdavPassword = value
+}
+
+func (s *SyncState) SetWebDAVToken(value string) {
+	s.webdavLoaded = true
+	s.webdavToken = value
+}
+
+// InsecureEndpointEntered reports whether the current URL would use plain
+// HTTP. It drives the inline warning before any credential is sent; the
+// application and adapter still perform the authoritative check.
+func (s *SyncState) InsecureEndpointEntered() bool {
+	return appsync.EndpointIsInsecure(s.webdavEndpoint)
+}
+
+// InsecurePrompt reports that the plain-HTTP warning is awaiting an explicit
+// decision.
+func (s *SyncState) InsecurePrompt() bool { return s.insecurePrompt }
+
+// InsecureSyncPrompt reports which action follows the warning.
+func (s *SyncState) InsecureSyncPrompt() bool { return s.insecureAction == "sync" }
+
+// CancelInsecure dismisses the warning without sending anything.
+func (s *SyncState) CancelInsecure() {
+	s.insecurePrompt = false
+	s.insecureAction = ""
+	s.pendingConnect = appsync.WebDAVSettings{}
+	s.pendingPassword = ""
+	s.webdavPassword = ""
+	s.webdavToken = ""
+	s.lastErr = nil
+}
+
+// ConfirmInsecure is the explicit "Connect anyway" or "Sync anyway" action.
+// The connect path reuses the exact settings captured before the warning.
+func (s *SyncState) ConfirmInsecure() {
+	if s.busy {
+		return
+	}
+	action := s.insecureAction
+	s.insecurePrompt = false
+	s.insecureAction = ""
+	if action == "sync" {
+		service, ok := s.webDAVService()
+		if !ok {
+			s.lastErr = appsync.ErrNotConfigured
+			return
+		}
+		s.busy = true
+		s.lastErr = nil
+		state := s
+		go func() {
+			confirmed := service.ConfirmInsecureEndpoint(state.ctx)
+			var err error
+			if !confirmed {
+				err = appsync.ErrInsecureEndpoint
+			} else {
+				_, err = state.service.Sync(state.ctx, appsync.TriggerManual)
+			}
+			state.post(func() {
+				state.busy = false
+				if errors.Is(err, appsync.ErrInsecureEndpoint) {
+					state.lastErr = err
+					state.insecurePrompt = true
+					state.insecureAction = "sync"
+					return
+				}
+				if err != nil {
+					state.lastErr = err
+				}
+			})
+		}()
+		return
+	}
+
+	service, ok := s.webDAVService()
+	if !ok {
+		s.lastErr = appsync.ErrNotConfigured
+		return
+	}
+	settings := s.pendingConnect
+	password := s.pendingPassword
+	if settings.Endpoint == "" || password == "" {
+		s.lastErr = appsync.ErrPasswordRequired
+		return
+	}
+	s.busy = true
+	s.lastErr = nil
+	state := s
+	go func() {
+		err := service.ConnectWebDAV(state.ctx, password, settings, true)
+		state.post(func() {
+			state.busy = false
+			if err != nil {
+				state.lastErr = err
+				return
+			}
+			state.password = ""
+			state.webdavPassword = ""
+			state.webdavToken = ""
+			state.pendingConnect = appsync.WebDAVSettings{}
+			state.pendingPassword = ""
+			state.reconfigure = false
+		})
+	}()
+}
+
+// Reconfigure opens the WebDAV form while the existing credential remains in
+// place, so a rejected credential can be corrected without losing the profile
+// (or the endpoint) first.
+func (s *SyncState) Reconfigure() {
+	if s.busy {
+		return
+	}
+	s.reconfigure = true
+	s.lastErr = nil
+	s.insecurePrompt = false
+	s.insecureAction = ""
+	s.ResetWebDAVForm()
+	s.EnsureWebDAVForm()
+}
+
+// CancelReconfigure returns to the connected view without changing anything.
+func (s *SyncState) CancelReconfigure() {
+	s.reconfigure = false
+	s.pendingConnect = appsync.WebDAVSettings{}
+	s.pendingPassword = ""
+	s.webdavPassword = ""
+	s.webdavToken = ""
+	s.lastErr = nil
+}
+
+// Reconfiguring reports that the WebDAV setup form is shown over an existing
+// connection.
+func (s *SyncState) Reconfiguring() bool { return s.reconfigure }
 
 // Reconnect starts a fresh authorization without asking for the master
 // password again. It is the actionable path out of ProblemReauthorization.
@@ -203,7 +521,12 @@ func (s *SyncState) SetProvider(provider string) {
 			state.busy = false
 			if err != nil {
 				state.lastErr = err
+				return
 			}
+			state.reconfigure = false
+			state.insecurePrompt = false
+			state.insecureAction = ""
+			state.ResetWebDAVForm()
 		})
 	}()
 }
@@ -223,7 +546,12 @@ func (s *SyncState) Disconnect() {
 			state.busy = false
 			if err != nil {
 				state.lastErr = err
+				return
 			}
+			state.reconfigure = false
+			state.insecurePrompt = false
+			state.insecureAction = ""
+			state.ResetWebDAVForm()
 		})
 	}()
 }
@@ -248,6 +576,15 @@ func (s *SyncState) SyncNow() {
 		}
 		state.post(func() {
 			state.busy = false
+			if errors.Is(err, appsync.ErrInsecureEndpoint) {
+				// A restored plain-HTTP profile is never synced silently.
+				// The warning is shown again and "Sync anyway" records the
+				// confirmation for this process before retrying.
+				state.lastErr = err
+				state.insecurePrompt = true
+				state.insecureAction = "sync"
+				return
+			}
 			if err != nil {
 				state.lastErr = err
 				return
@@ -298,7 +635,7 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 	state.Flush()
 	snapshot := state.Snapshot()
 	section(c, m.SettingsSyncTitle(), m.SettingsSyncDescription(), t, func() {
-		if !snapshot.Connected {
+		if !snapshot.Connected || state.Reconfiguring() {
 			syncSetup(c, state, snapshot, m, t)
 			return
 		}
@@ -307,13 +644,25 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 }
 
 func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
+	if !snapshot.Connected {
+		ui.Text(c, m.SettingsSyncNotConnected()).FontSize(12).TextColor(t.TextMuted)
+	}
 	syncProviderSelector(c, state, snapshot, m)
+	if state.InsecurePrompt() {
+		// No input or button other than the explicit decision is live while
+		// the warning is open, so the endpoint that was confirmed cannot be
+		// changed behind it.
+		syncInsecurePrompt(c, state, state.WebDAVEndpoint(), m, t)
+		return
+	}
 	switch appsync.NormalizeProvider(snapshot.Provider) {
 	case appsync.ProviderGoogleDrive:
 		ui.Text(c, m.SettingsSyncGoogleHint()).FontSize(11).TextColor(t.TextMuted)
 	case appsync.ProviderOneDrive:
 		ui.Text(c, m.SettingsSyncOneDriveHint()).FontSize(11).TextColor(t.TextMuted)
+	case appsync.ProviderWebDAV:
+		ui.Text(c, m.SettingsSyncWebDAVHint()).FontSize(11).TextColor(t.TextMuted)
+		syncWebDAVForm(c, state, m, t)
 	}
 	syncDeviceCode(c, snapshot, m, t)
 	syncPasswordField(c, state, m)
@@ -323,18 +672,105 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 	syncStatus(c, state, snapshot, m, t)
 }
 
+// syncWebDAVForm renders the endpoint and credential fields. The inline
+// plain-HTTP warning appears before the Connect button, so the risk is visible
+// before any credential can be sent.
+func syncWebDAVForm(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme) {
+	state.EnsureWebDAVForm()
+	ui.Field(c, m.SettingsSyncWebDAVEndpoint(), func() {
+		endpoint := state.WebDAVEndpoint()
+		if ui.TextInput(c, &endpoint).Width(360).Changed() {
+			state.SetWebDAVEndpoint(endpoint)
+		}
+	})
+
+	authValues := []string{
+		domainsync.WebDAVAuthBasic,
+		domainsync.WebDAVAuthDigest,
+		domainsync.WebDAVAuthBearer,
+	}
+	authLabels := []string{
+		m.SettingsSyncWebDAVAuthBasic(),
+		m.SettingsSyncWebDAVAuthDigest(),
+		m.SettingsSyncWebDAVAuthBearer(),
+	}
+	authType := state.WebDAVAuthType()
+	selected := authLabels[indexOf(authValues, authType)]
+	ui.Field(c, m.SettingsSyncWebDAVAuth(), func() {
+		if ui.Select(c, &selected, authLabels).Width(300).Changed() {
+			state.SetWebDAVAuthType(authValues[indexOf(authLabels, selected)])
+			c.Invalidate()
+		}
+	})
+
+	if state.WebDAVAuthType() == domainsync.WebDAVAuthBearer {
+		ui.Field(c, m.SettingsSyncWebDAVToken(), func() {
+			token := state.WebDAVToken()
+			if ui.TextInput(c, &token).Password().Width(280).Changed() {
+				state.SetWebDAVToken(token)
+			}
+		})
+	} else {
+		ui.Field(c, m.SettingsSyncWebDAVUsername(), func() {
+			username := state.WebDAVUsername()
+			if ui.TextInput(c, &username).Width(280).Changed() {
+				state.SetWebDAVUsername(username)
+			}
+		})
+		ui.Field(c, m.SettingsSyncWebDAVPassword(), func() {
+			password := state.WebDAVPassword()
+			if ui.TextInput(c, &password).Password().Width(280).Changed() {
+				state.SetWebDAVPassword(password)
+			}
+		})
+	}
+
+	if state.InsecureEndpointEntered() {
+		ui.Column(c).Padding(10).Gap(4).Background(t.Background).Border(1, t.Warning).Children(func() {
+			ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(11).TextColor(t.Warning)
+		})
+	}
+}
+
+// syncInsecurePrompt is the explicit decision the plain-HTTP warning demands.
+// For a connect it reuses the settings captured before the warning; for a sync
+// it records the confirmation in the service and retries.
+func syncInsecurePrompt(c *ui.Context, state *SyncState, endpoint string, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
+		if endpoint != "" {
+			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(endpoint)).FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Text(c, m.SettingsSyncWebDAVInsecureWarning()).FontSize(12).TextColor(t.Danger)
+		ui.Row(c).Gap(8).Children(func() {
+			label := m.SettingsSyncWebDAVInsecureConfirm()
+			if state.InsecureSyncPrompt() {
+				label = m.SettingsSyncWebDAVInsecureSyncConfirm()
+			}
+			if ui.Button(c, label).Disabled(state.Busy()).Clicked() {
+				state.ConfirmInsecure()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+				state.CancelInsecure()
+				c.Invalidate()
+			}
+		})
+	})
+}
+
 // syncProviderSelector appears only when the service can switch providers.
 // Choosing one clears the previous provider's token and merge anchor, so the
 // next Connect authorizes the new provider from a clean baseline.
 func syncProviderSelector(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages) {
-	if !state.SupportsProviderSelection() {
+	if !state.SupportsProviderSelection() || snapshot.Connected {
 		return
 	}
-	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive, appsync.ProviderOneDrive}
+	values := []string{appsync.ProviderGitHub, appsync.ProviderGoogleDrive, appsync.ProviderOneDrive, appsync.ProviderWebDAV}
 	names := []string{
 		m.SettingsSyncProviderGitHub(),
 		m.SettingsSyncProviderGoogleDrive(),
 		m.SettingsSyncProviderOneDrive(),
+		m.SettingsSyncProviderWebDAV(),
 	}
 	selected := names[indexOf(values, appsync.NormalizeProvider(snapshot.Provider))]
 	ui.Field(c, m.SettingsSyncProvider(), func() {
@@ -351,8 +787,21 @@ func syncProviderName(provider string, m locales.Messages) string {
 		return m.SettingsSyncProviderGoogleDrive()
 	case appsync.ProviderOneDrive:
 		return m.SettingsSyncProviderOneDrive()
+	case appsync.ProviderWebDAV:
+		return m.SettingsSyncProviderWebDAV()
 	default:
 		return m.SettingsSyncProviderGitHub()
+	}
+}
+
+func webDAVAuthName(authType string, m locales.Messages) string {
+	switch domainsync.NormalizeWebDAVAuthType(authType) {
+	case domainsync.WebDAVAuthDigest:
+		return m.SettingsSyncWebDAVAuthDigest()
+	case domainsync.WebDAVAuthBearer:
+		return m.SettingsSyncWebDAVAuthBearer()
+	default:
+		return m.SettingsSyncWebDAVAuthBasic()
 	}
 }
 
@@ -387,6 +836,19 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		ui.Text(c, syncProviderName(snapshot.Provider, m)).FontSize(11)
 	})
 	ui.Text(c, m.SettingsSyncConnectedAs(snapshot.Login)).Bold()
+	if appsync.NormalizeProvider(snapshot.Provider) == appsync.ProviderWebDAV {
+		if snapshot.WebDAVEndpoint != "" {
+			ui.Text(c, m.SettingsSyncWebDAVEndpointValue(snapshot.WebDAVEndpoint)).FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Text(c, m.SettingsSyncWebDAVAuth()).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, webDAVAuthName(snapshot.WebDAVAuthType, m)).FontSize(11)
+		})
+	}
+	if state.InsecurePrompt() {
+		syncInsecurePrompt(c, state, snapshot.WebDAVEndpoint, m, t)
+		return
+	}
 	if snapshot.HasPassword {
 		ui.Text(c, m.SettingsSyncReady()).FontSize(11).TextColor(t.TextMuted)
 	} else {
@@ -395,13 +857,20 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 	}
 	syncDeviceCode(c, snapshot, m, t)
 
-	ui.Field(c, m.SettingsSyncAutoSync(), func() {
-		auto := snapshot.AutoSync
-		if ui.Checkbox(c, &auto, "").Changed() {
-			state.SetAutoSync(auto)
-			c.Invalidate()
-		}
-	})
+	if snapshot.WebDAVInsecure {
+		// A plain-HTTP WebDAV profile never auto-syncs; the service also
+		// refuses the automatic trigger. Explain why instead of offering a
+		// checkbox that would do nothing.
+		ui.Text(c, m.SettingsSyncWebDAVInsecureAutoSync()).FontSize(11).TextColor(t.Warning)
+	} else {
+		ui.Field(c, m.SettingsSyncAutoSync(), func() {
+			auto := snapshot.AutoSync
+			if ui.Checkbox(c, &auto, "").Changed() {
+				state.SetAutoSync(auto)
+				c.Invalidate()
+			}
+		})
+	}
 	strategies := []string{m.SettingsSyncNewest(), m.SettingsSyncLocal(), m.SettingsSyncRemote()}
 	values := []domainsync.Strategy{domainsync.StrategyNewest, domainsync.StrategyLocal, domainsync.StrategyRemote}
 	strategy := strategies[syncStrategyIndex(values, snapshot.Strategy)]
@@ -435,16 +904,28 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 
 func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages) {
 	ui.Row(c).Gap(8).Children(func() {
-		if !snapshot.Connected {
+		if !snapshot.Connected || state.Reconfiguring() {
 			if ui.Button(c, m.SettingsSyncConnect()).Disabled(state.Busy()).Clicked() {
 				state.Connect()
 				c.Invalidate()
+			}
+			if state.Reconfiguring() {
+				if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+					state.CancelReconfigure()
+					c.Invalidate()
+				}
 			}
 			return
 		}
 		if ui.Button(c, m.SettingsSyncSyncNow()).Disabled(state.Busy()).Clicked() {
 			state.SyncNow()
 			c.Invalidate()
+		}
+		if appsync.NormalizeProvider(snapshot.Provider) == appsync.ProviderWebDAV {
+			if ui.Button(c, m.SettingsSyncWebDAVReconfigure()).Disabled(state.Busy()).Clicked() {
+				state.Reconfigure()
+				c.Invalidate()
+			}
 		}
 		if snapshot.Problem == appsync.ProblemReauthorization {
 			if ui.Button(c, m.SettingsSyncReconnect()).Disabled(state.Busy()).Clicked() {
@@ -504,6 +985,18 @@ func syncProblemText(m locales.Messages, problem appsync.Problem) string {
 		return m.SettingsSyncProblemConflict()
 	case appsync.ProblemReauthorization:
 		return m.SettingsSyncProblemReauthorization()
+	case appsync.ProblemCredentials:
+		return m.SettingsSyncProblemCredentials()
+	case appsync.ProblemForbidden:
+		return m.SettingsSyncProblemForbidden()
+	case appsync.ProblemTLS:
+		return m.SettingsSyncProblemTLS()
+	case appsync.ProblemInvalidEndpoint:
+		return m.SettingsSyncProblemInvalidEndpoint()
+	case appsync.ProblemInsecureEndpoint:
+		return m.SettingsSyncProblemInsecureEndpoint()
+	case appsync.ProblemRedirect:
+		return m.SettingsSyncProblemRedirect()
 	case appsync.ProblemWrongPassword:
 		return m.SettingsSyncProblemWrongPassword()
 	case appsync.ProblemCorrupt:
@@ -554,6 +1047,18 @@ func syncProblemForError(err error) appsync.Problem {
 		return appsync.ProblemUnsupported
 	case errors.Is(err, appsync.ErrReauthorizationRequired):
 		return appsync.ProblemReauthorization
+	case errors.Is(err, appsync.ErrCredentialsRejected):
+		return appsync.ProblemCredentials
+	case errors.Is(err, appsync.ErrForbidden):
+		return appsync.ProblemForbidden
+	case errors.Is(err, appsync.ErrTLS):
+		return appsync.ProblemTLS
+	case errors.Is(err, appsync.ErrInvalidEndpoint):
+		return appsync.ProblemInvalidEndpoint
+	case errors.Is(err, appsync.ErrInsecureEndpoint):
+		return appsync.ProblemInsecureEndpoint
+	case errors.Is(err, appsync.ErrRedirectRefused):
+		return appsync.ProblemRedirect
 	case errors.Is(err, appsync.ErrUnauthorized):
 		return appsync.ProblemUnauthorized
 	case errors.Is(err, appsync.ErrRateLimited):
