@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -24,14 +25,25 @@ var reservedArguments = map[string]bool{
 	"scopedSessionIds": true,
 }
 
+// secretNameMarkers are the field-name fragments that mark a credential or
+// file body. Both direct arguments and the fallback scan for malformed
+// structured text use this one list, so a new marker cannot drift between them.
+var secretNameMarkers = []string{
+	"password", "passphrase", "secret", "token", "privatekey", "private_key",
+	"apikey", "api_key", "credential", "content",
+}
+
 // secretArgument reports whether an argument likely carries a credential or
 // file body. Its value is never echoed into a prompt or a log.
 func secretArgument(name string) bool {
 	lower := strings.ToLower(name)
-	for _, marker := range []string{
-		"password", "passphrase", "secret", "token", "privatekey", "private_key",
-		"apikey", "api_key", "credential", "content",
-	} {
+	// "text" is the raw exported-host payload of vault_hosts_import. It can
+	// contain passwords in several export formats, so it is treated as a
+	// secret body rather than previewed.
+	if lower == "text" {
+		return true
+	}
+	for _, marker := range secretNameMarkers {
 		if strings.Contains(lower, marker) {
 			return true
 		}
@@ -80,6 +92,7 @@ func SummarizeArguments(args map[string]any) string {
 
 // previewValue renders one non-secret argument value on one line.
 func previewValue(value any) string {
+	value = redactNestedSecrets(value)
 	var text string
 	switch typed := value.(type) {
 	case string:
@@ -104,6 +117,92 @@ func previewValue(value any) string {
 		text = truncateRunes(text, valuePreviewLimit) + "…"
 	}
 	return strconv.Quote(text)
+}
+
+// redactedValue replaces credential-bearing fields inside an already-decoded
+// structure. It recurses through arrays and objects so a JSON string argument
+// (such as vault_hosts_create's hosts array) cannot carry a password into the
+// approval prompt.
+func redactedValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, entry := range typed {
+			if secretArgument(key) {
+				redacted[key] = "[redacted]"
+				continue
+			}
+			redacted[key] = redactedValue(entry)
+		}
+		return redacted
+	case []any:
+		redacted := make([]any, len(typed))
+		for index, entry := range typed {
+			redacted[index] = redactedValue(entry)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+// redactNestedSecrets sanitizes structured argument values, including JSON
+// encoded in a string. A malformed JSON-looking value that names a secret is
+// replaced as a whole because its fields cannot be localized safely.
+func redactNestedSecrets(value any) any {
+	switch typed := value.(type) {
+	case map[string]any, []any:
+		return redactedValue(typed)
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if len(trimmed) == 0 || (trimmed[0] != '[' && trimmed[0] != '{') {
+			return typed
+		}
+		var decoded any
+		decoder := json.NewDecoder(strings.NewReader(trimmed))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			if namesSecretField(trimmed) {
+				return "[structured value with secrets redacted]"
+			}
+			return typed
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err == nil {
+			// More than one JSON value: not a structure this summary can
+			// sanitize field by field.
+			if namesSecretField(trimmed) {
+				return "[structured value with secrets redacted]"
+			}
+			return typed
+		}
+		encoded, err := json.Marshal(redactedValue(decoded))
+		if err != nil {
+			return "[structured value with secrets redacted]"
+		}
+		return string(encoded)
+	default:
+		return value
+	}
+}
+
+// namesSecretField reports whether text names a credential field, used only
+// for malformed structured values that cannot be redacted in place.
+func namesSecretField(text string) bool {
+	lower := strings.ToLower(text)
+	// A raw export payload uses the exact key "text"; check it separately so
+	// unrelated names such as "context" are not redacted as a whole.
+	if strings.Contains(lower, `"text"`) {
+		return true
+	}
+	for _, marker := range secretNameMarkers {
+		// Match the opening quote only: a malformed key such as password_hash
+		// still carries the marker even when its closing quote is not intact.
+		if strings.Contains(lower, `"`+marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // truncateRunes cuts text to limit runes without splitting a character.

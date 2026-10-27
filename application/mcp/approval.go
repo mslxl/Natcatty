@@ -90,6 +90,9 @@ type Service struct {
 	generation  uint64
 	grants      map[string]grant
 	staleGrants map[string]uint64
+
+	// lastActivity is the newest write outcome shown by the Settings surface.
+	lastActivity *ActivityView
 }
 
 // Config builds a policy service. The composition root supplies the clock and

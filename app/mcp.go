@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appforwarding "github.com/mslxl/natcatty/application/forwarding"
+	appmcp "github.com/mslxl/natcatty/application/mcp"
 	appsession "github.com/mslxl/natcatty/application/session"
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -40,11 +41,12 @@ import (
 // limits stop an individual listing or file read from allocating an unbounded
 // buffer before that cap is applied.
 const (
-	// maxMCPListEntries bounds one directory listing.
-	maxMCPListEntries = 5000
+	// maxMCPListEntries bounds one directory listing. The write executor and the
+	// read bridge share one source of truth for the original SFTP ceilings.
+	maxMCPListEntries = appmcp.SFTPListLimit
 	// maxMCPReadFileBytes matches the original in-memory SFTP read ceiling.
 	// Larger files are refused with the original guidance, never truncated.
-	maxMCPReadFileBytes = 10 << 20
+	maxMCPReadFileBytes = appmcp.SFTPReadLimit
 )
 
 // mcpVaultReader is the read-only Vault surface the bridge consumes.
