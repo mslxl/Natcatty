@@ -127,7 +127,7 @@ func newS3FormState(service *fakeS3SyncService) *SyncState {
 	state.SetS3Bucket("natcatty-test")
 	state.SetS3Prefix("team/vault")
 	state.SetS3AccessKeyID("fake-access-key")
-	state.SetS3SecretAccessKey("{{SECRET_7hgnan3g}}")
+	state.SetS3SecretAccessKey("fake-secret")
 	state.SetS3SessionToken("fake-session-token")
 	return state
 }

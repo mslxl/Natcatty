@@ -413,7 +413,7 @@ func TestFailuresNeverCarryTheSecret(t *testing.T) {
 	server := startFake(t)
 	client := New(Options{})
 	settings := settingsFor(server)
-	settings.SecretAccessKey = "{{SECRET_e7a2n4vq}}"
+	settings.SecretAccessKey = "wrong-secret"
 	_, _, err := client.Connect(context.Background(), settings)
 	if !errors.Is(err, appsync.ErrCredentialsRejected) {
 		t.Fatalf("wrong secret error = %v", err)
