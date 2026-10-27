@@ -108,6 +108,8 @@ type Snapshot struct {
 	Generation  uint64
 	Pending     []ApprovalView
 	Recent      []ApprovalView
+	// LastActivity is the newest write outcome, or nil when no write ran.
+	LastActivity *ActivityView
 }
 
 // Snapshot returns a consistent read model for the Settings surface. It first
@@ -124,6 +126,10 @@ func (s *Service) Snapshot() Snapshot {
 		Generation:  s.generation,
 		Pending:     s.snapshotPendingLocked(now),
 		Recent:      append([]ApprovalView(nil), s.recent...),
+	}
+	if s.lastActivity != nil {
+		activity := *s.lastActivity
+		snapshot.LastActivity = &activity
 	}
 	s.mu.Unlock()
 	if expired {

@@ -27,13 +27,24 @@ const (
 	// CodeSessionNotOwned reports a close of a session this scope did not open
 	// in the current generation.
 	CodeSessionNotOwned ErrorCode = "mcp_session_not_owned"
+	// CodeCommandBlocked reports a command rejected by the default blocklist.
+	CodeCommandBlocked ErrorCode = "mcp_command_blocked"
+	// CodeCommandTimeout reports a command or transfer that exceeded its
+	// per-call deadline.
+	CodeCommandTimeout ErrorCode = "mcp_command_timeout"
+	// CodeToolUnavailable reports a catalog write this build cannot execute.
+	CodeToolUnavailable ErrorCode = "mcp_tool_unavailable"
+	// CodeInvalidArgument reports a missing or malformed tool argument.
+	CodeInvalidArgument ErrorCode = "mcp_invalid_argument"
 )
 
 // Error is a typed policy denial. Tool names the catalog tool whose call was
-// rejected, so a client and a test can identify the affected action.
+// rejected, so a client and a test can identify the affected action. Rule is
+// set for command-blocklist rejections.
 type Error struct {
 	Code    ErrorCode
 	Tool    string
+	Rule    string
 	Message string
 }
 
@@ -63,6 +74,9 @@ func Result(err error) map[string]any {
 	}
 	if typed.Tool != "" {
 		result["tool"] = typed.Tool
+	}
+	if typed.Rule != "" {
+		result["rule"] = typed.Rule
 	}
 	return result
 }

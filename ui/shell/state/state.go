@@ -172,8 +172,12 @@ type State struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu           sync.Mutex
-	outcomes     []openOutcome
+	mu       sync.Mutex
+	outcomes []openOutcome
+	// pendingAdds carries dial-in-progress labels from callers outside the UI
+	// thread, such as the external MCP host_open handler. Flush appends them to
+	// pending on the UI thread; openOutcome then clears them as usual.
+	pendingAdds  []string
 	paneOutcomes []paneOutcome
 	// startupFailures counts startup deliveries that failed since the last
 	// Flush, so a later successful open cannot hide the problem.
@@ -666,6 +670,70 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 	return nil
 }
 
+// OpenHostForMCP opens a real Host Session for an external MCP host_open call.
+// Unlike OpenHostWithStartup it waits for the transport, so the caller can
+// return the new Session id and grant ownership. The Tab is attached on the
+// next Flush, exactly like any other opened Host.
+func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (model.SessionID, error) {
+	if s.sessions == nil || s.surfaces == nil {
+		return "", ErrNoSessions
+	}
+	label := host.Label
+	if label == "" {
+		label = host.Hostname
+	}
+	// This runs on the external MCP handler goroutine, not the UI thread.
+	// Queue the connecting label and let Flush mutate pending.
+	s.mu.Lock()
+	s.pendingAdds = append(s.pendingAdds, label)
+	s.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	plan := hostSessionTransport(host)
+	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
+	session, err := s.sessions.Open(ctx, appsession.StartSpec{
+		Kind:          plan.kind,
+		Label:         label,
+		HostID:        host.ID,
+		Hostname:      host.Hostname,
+		Port:          host.Port,
+		Username:      host.Username,
+		X11Forwarding: x11,
+		NetworkDevice: plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
+		Telnet:        plan.telnet,
+		Mosh:          plan.mosh,
+		ET:            plan.et,
+		Reconnect:     plan.reconnect,
+	})
+	if err != nil {
+		// Flush clears the pending label and records the problem on the UI
+		// thread, exactly like a failed background Host open.
+		s.mu.Lock()
+		s.outcomes = append(s.outcomes, openOutcome{label: label, err: err})
+		s.mu.Unlock()
+		s.RequestRedraw()
+		return "", err
+	}
+	s.mu.Lock()
+	s.outcomes = append(s.outcomes, openOutcome{
+		session: session,
+		label:   label,
+		descriptor: domainworkspace.SessionDescriptor{
+			Kind:          plan.descriptor,
+			Label:         label,
+			HostID:        host.ID,
+			Hostname:      host.Hostname,
+			Port:          host.Port,
+			Username:      host.Username,
+			X11Forwarding: x11,
+		},
+	})
+	s.mu.Unlock()
+	s.RequestRedraw()
+	return session.ID(), nil
+}
+
 // hostTransportPlan is the transport, restore descriptor kind, endpoint, and
 // reconnect policy one saved Host maps onto.
 type hostTransportPlan struct {
@@ -798,6 +866,8 @@ func (s *State) Flush() {
 	s.refreshWorkingDirectories()
 
 	s.mu.Lock()
+	pendingAdds := s.pendingAdds
+	s.pendingAdds = nil
 	paneOutcomes := s.paneOutcomes
 	s.paneOutcomes = nil
 	outcomes := s.outcomes
@@ -808,6 +878,9 @@ func (s *State) Flush() {
 	s.startupFailures = 0
 	s.mu.Unlock()
 
+	for _, label := range pendingAdds {
+		s.pending = append(s.pending, label)
+	}
 	for _, id := range activity {
 		s.applySessionActivity(id)
 	}

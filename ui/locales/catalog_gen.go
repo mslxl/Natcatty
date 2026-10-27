@@ -20678,6 +20678,134 @@ func (msgs Messages) SettingsMCPBypassHint() string {
 	return Catalog.Format(msgs.locale, "settingsMCPBypassHint", nil)
 }
 
+// SettingsMCPActivityTitle says "Last external action"
+// in the language the app shows.
+func SettingsMCPActivityTitle() string { return In(i18n.Locale()).SettingsMCPActivityTitle() }
+
+// SettingsMCPActivityTitle says "Last external action"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityTitle", nil)
+}
+
+// SettingsMCPActivityTool says "Tool: {tool}"
+// in the language the app shows.
+func SettingsMCPActivityTool(tool string) string {
+	return In(i18n.Locale()).SettingsMCPActivityTool(tool)
+}
+
+// SettingsMCPActivityTool says "Tool: {tool}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityTool(tool string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityTool", map[string]any{"tool": tool})
+}
+
+// SettingsMCPActivityRule says "Matched rule: {rule}"
+// in the language the app shows.
+func SettingsMCPActivityRule(rule string) string {
+	return In(i18n.Locale()).SettingsMCPActivityRule(rule)
+}
+
+// SettingsMCPActivityRule says "Matched rule: {rule}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityRule(rule string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityRule", map[string]any{"rule": rule})
+}
+
+// SettingsMCPActivityStatusOK says "Succeeded"
+// in the language the app shows.
+func SettingsMCPActivityStatusOK() string { return In(i18n.Locale()).SettingsMCPActivityStatusOK() }
+
+// SettingsMCPActivityStatusOK says "Succeeded"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusOK() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusOK", nil)
+}
+
+// SettingsMCPActivityStatusBlocked says "Blocked by the command blocklist"
+// in the language the app shows.
+func SettingsMCPActivityStatusBlocked() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusBlocked()
+}
+
+// SettingsMCPActivityStatusBlocked says "Blocked by the command blocklist"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusBlocked() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusBlocked", nil)
+}
+
+// SettingsMCPActivityStatusTimeout says "Timed out"
+// in the language the app shows.
+func SettingsMCPActivityStatusTimeout() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusTimeout()
+}
+
+// SettingsMCPActivityStatusTimeout says "Timed out"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusTimeout() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusTimeout", nil)
+}
+
+// SettingsMCPActivityStatusTruncated says "Output truncated"
+// in the language the app shows.
+func SettingsMCPActivityStatusTruncated() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusTruncated()
+}
+
+// SettingsMCPActivityStatusTruncated says "Output truncated"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusTruncated() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusTruncated", nil)
+}
+
+// SettingsMCPActivityStatusUnavailable says "Not available in this build"
+// in the language the app shows.
+func SettingsMCPActivityStatusUnavailable() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusUnavailable()
+}
+
+// SettingsMCPActivityStatusUnavailable says "Not available in this build"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusUnavailable", nil)
+}
+
+// SettingsMCPActivityStatusDenied says "Denied by the permission policy"
+// in the language the app shows.
+func SettingsMCPActivityStatusDenied() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusDenied()
+}
+
+// SettingsMCPActivityStatusDenied says "Denied by the permission policy"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusDenied() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusDenied", nil)
+}
+
+// SettingsMCPActivityStatusFailed says "Failed"
+// in the language the app shows.
+func SettingsMCPActivityStatusFailed() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusFailed()
+}
+
+// SettingsMCPActivityStatusFailed says "Failed"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusFailed() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusFailed", nil)
+}
+
+// SettingsMCPActivityStatusUnknown says "Unknown outcome"
+// in the language the app shows.
+func SettingsMCPActivityStatusUnknown() string {
+	return In(i18n.Locale()).SettingsMCPActivityStatusUnknown()
+}
+
+// SettingsMCPActivityStatusUnknown says "Unknown outcome"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPActivityStatusUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsMCPActivityStatusUnknown", nil)
+}
+
 // SettingsMCPApprovalTitle says "Approval required"
 // in the language the app shows.
 func SettingsMCPApprovalTitle() string { return In(i18n.Locale()).SettingsMCPApprovalTitle() }
