@@ -96,22 +96,28 @@ type mcpSessionCloser interface {
 }
 
 // mcpJobSessions resolves a background job id to the Session that started it.
-// Background job execution arrives with ticket 58; until then production has no
-// resolver and every real jobId is honestly reported as not found. The seam
-// lets tests prove terminal_stop's scope and generation checks against the
-// catalog's actual jobId input instead of the read bridge's placeholder shape.
+// The write executor's job manager supplies the production implementation;
+// ticket-57 tests keep the nil seam and still prove terminal_stop's scope and
+// generation checks against the catalog's actual jobId input.
 type mcpJobSessions interface {
 	SessionForJob(jobID string) (model.SessionID, bool)
 }
 
-// mcpPolicyHandler evaluates policy before dispatching to the read bridge or
-// one of the two approval-bypassing actions this build can execute.
+// mcpPolicyHandler evaluates policy before dispatching to the read bridge or a
+// write executor. When writes is nil the ticket-57 fallback is preserved so the
+// policy tests run without a full app graph.
 type mcpPolicyHandler struct {
 	bridge   *mcpReadBridge
 	policy   *appmcp.Service
 	sessions mcpSessionReader
 	closer   mcpSessionCloser
-	jobs     mcpJobSessions
+
+	// mu guards the late write-executor attachment. The loopback listener can
+	// serve a call before app startup finishes constructing the shell-backed
+	// executor, so every read of writes/jobs takes this lock.
+	mu     sync.RWMutex
+	jobs   mcpJobSessions
+	writes *mcpWriteExecutor
 }
 
 func newMCPPolicyHandler(bridge *mcpReadBridge, policy *appmcp.Service,
@@ -119,6 +125,28 @@ func newMCPPolicyHandler(bridge *mcpReadBridge, policy *appmcp.Service,
 	return &mcpPolicyHandler{
 		bridge: bridge, policy: policy, sessions: sessions, closer: closer, jobs: jobs,
 	}
+}
+
+// attachWrites installs the real write executor and its job manager.
+func (h *mcpPolicyHandler) attachWrites(writes *mcpWriteExecutor) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.writes = writes
+	if writes != nil {
+		h.jobs = writes.jobs
+	}
+}
+
+func (h *mcpPolicyHandler) writeExecutor() *mcpWriteExecutor {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.writes
+}
+
+func (h *mcpPolicyHandler) jobSessions() mcpJobSessions {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.jobs
 }
 
 // Handle is the mcprpc handler. Every call is forced through the policy before
@@ -154,9 +182,15 @@ func (h *mcpPolicyHandler) Handle(ctx context.Context, method string, params jso
 		Arguments: arguments,
 	})
 	if err != nil {
+		if tool.Policy.Write {
+			h.policy.RecordActivity(appmcp.ActivityView{
+				Tool: tool.Name, Status: appmcp.ActivityDenied,
+			})
+		}
 		return mcpPolicyFailure(err, tool.Name), nil
 	}
 
+	writes := h.writeExecutor()
 	switch method {
 	case "netcatty/getContext":
 		return h.environment(ctx, decision.Sessions), nil
@@ -170,7 +204,16 @@ func (h *mcpPolicyHandler) Handle(ctx context.Context, method string, params jso
 		}
 	case "public/session/close":
 		return h.closeSession(arguments, tool.Name), nil
+	case "netcatty/jobPoll":
+		if writes != nil {
+			jobID := stringParam(arguments, "jobId")
+			offset, _ := intArg(arguments, "offset")
+			return writes.PollJob(jobID, offset), nil
+		}
 	case "public/vault/hosts/open":
+		if writes != nil {
+			return writes.OpenHost(ctx, arguments, decision), nil
+		}
 		return h.openHost(arguments, decision), nil
 	case "netcatty/jobStop":
 		// terminal_stop bypasses approval and the observer block, but a job
@@ -183,9 +226,15 @@ func (h *mcpPolicyHandler) Handle(ctx context.Context, method string, params jso
 				return mcpPolicyFailure(err, tool.Name), nil
 			}
 		}
+		if writes != nil {
+			return writes.StopJob(stringParam(arguments, "jobId")), nil
+		}
 		return mcpFailure("Background job not found."), nil
 	}
 	if tool.Policy.Write {
+		if writes != nil {
+			return writes.Execute(ctx, tool.Name, arguments, decision), nil
+		}
 		return mcpFailure("External MCP write execution is not available in this build yet."), nil
 	}
 	return h.bridge.Call(ctx, method, arguments)
@@ -214,8 +263,8 @@ func (h *mcpPolicyHandler) describeTarget(ctx context.Context, toolName string, 
 	}
 	if jobID := stringParam(arguments, "jobId"); jobID != "" {
 		target := appmcp.Target{Display: jobID}
-		if h.jobs != nil {
-			if sessionID, ok := h.jobs.SessionForJob(jobID); ok && sessionID != "" {
+		if jobs := h.jobSessions(); jobs != nil {
+			if sessionID, ok := jobs.SessionForJob(jobID); ok && sessionID != "" {
 				target.SessionID = string(sessionID)
 				if description, ok := h.sessions.Describe(sessionID); ok {
 					target.HostID = string(description.HostID)

@@ -963,6 +963,18 @@ func run(afterReady func(hostWindow)) error {
 			}
 		}),
 	)
+	// The write executor is attached after the shell exists because host_open
+	// can open a new Tab; the closure resolves the shell lazily so MCP calls
+	// arriving at any point after startup still work.
+	mcpHandler.attachWrites(newMCPWriteExecutor(
+		mcpPolicy, sessions, vaultService, forwardingManager, transferService,
+		func(ctx context.Context, host domainvault.Host) (model.SessionID, error) {
+			if shellState == nil {
+				return "", errors.New("external MCP: the shell is not available")
+			}
+			return shellState.OpenHostForMCP(ctx, host)
+		},
+	))
 	registry = newRegistry(shellState, mygo.App.Quit, gate.Lock, vaultState, func() {
 		if windows != nil {
 			windows.FocusMain()

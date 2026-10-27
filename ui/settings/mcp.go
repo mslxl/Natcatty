@@ -182,6 +182,43 @@ func mcpProblemText(problem MCPProblem, m locales.Messages) string {
 	}
 }
 
+// mcpActivityStatusText localizes the last write outcome. The status is a
+// stable application enum, so no engine error string reaches the surface.
+func mcpActivityStatusText(status appmcp.ActivityStatus, m locales.Messages) string {
+	switch status {
+	case appmcp.ActivityOK:
+		return m.SettingsMCPActivityStatusOK()
+	case appmcp.ActivityBlocked:
+		return m.SettingsMCPActivityStatusBlocked()
+	case appmcp.ActivityTimeout:
+		return m.SettingsMCPActivityStatusTimeout()
+	case appmcp.ActivityTruncated:
+		return m.SettingsMCPActivityStatusTruncated()
+	case appmcp.ActivityUnavailable:
+		return m.SettingsMCPActivityStatusUnavailable()
+	case appmcp.ActivityDenied:
+		return m.SettingsMCPActivityStatusDenied()
+	case appmcp.ActivityFailed:
+		return m.SettingsMCPActivityStatusFailed()
+	default:
+		return m.SettingsMCPActivityStatusUnknown()
+	}
+}
+
+// mcpActivityStatusColor gives a blocked or failed outcome the shared danger
+// color and a bounded/degraded outcome the shared warning color. Success stays
+// on the normal body token.
+func mcpActivityStatusColor(status appmcp.ActivityStatus, t *ui.Theme, fill ui.Color) ui.Color {
+	switch status {
+	case appmcp.ActivityBlocked, appmcp.ActivityDenied, appmcp.ActivityFailed:
+		return mcpDangerTextColor(t, fill)
+	case appmcp.ActivityTimeout, appmcp.ActivityTruncated, appmcp.ActivityUnavailable:
+		return mcpWarningTextColor(t, fill)
+	default:
+		return mcpBodyTextColor(t, fill)
+	}
+}
+
 // mcpCurrentPrompt returns the one prompt the surface is asking about: the
 // oldest pending request, or the most recent expired one when nothing is
 // pending. Keeping one prompt current keeps its action row inside one pinned
@@ -294,6 +331,9 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 		if problem := mcpProblemText(state.Problem(), m); problem != "" {
 			ui.Text(c, problem).FontSize(12).TextColor(mcpWarningTextColor(t, t.Surface))
 		}
+		if snapshot.LastActivity != nil {
+			mcpActivityCard(c, *snapshot.LastActivity, m, t)
+		}
 
 		prompt, expired, ok := mcpCurrentPrompt(snapshot)
 		if !ok {
@@ -339,6 +379,32 @@ func mcpAllowlistLabel(allowlist []string, m locales.Messages) string {
 		return m.SettingsMCPNoSessions()
 	}
 	return m.SettingsMCPSessionsValue(strings.Join(allowlist, ", "))
+}
+
+// mcpActivityCard shows the last write outcome. Rule is a stable blocklist
+// identifier, not raw error text; status is localized from the activity enum.
+// The card is inside the scrolling area, so a short window never loses the
+// pinned approval decisions when the activity row is present.
+func mcpActivityCard(c *ui.Context, activity appmcp.ActivityView,
+	m locales.Messages, t *ui.Theme) {
+	fill := t.Surface
+	body := mcpBodyTextColor(t, fill)
+	statusColor := mcpActivityStatusColor(activity.Status, t, fill)
+	border := t.Border
+	switch activity.Status {
+	case appmcp.ActivityBlocked, appmcp.ActivityDenied, appmcp.ActivityFailed:
+		border = t.Danger
+	case appmcp.ActivityTimeout, appmcp.ActivityTruncated, appmcp.ActivityUnavailable:
+		border = t.Warning
+	}
+	ui.Column(c).Padding(10).Gap(4).Background(fill).Border(1, border).Children(func() {
+		ui.Text(c, m.SettingsMCPActivityTitle()).FontSize(12).Bold().TextColor(body)
+		ui.Text(c, m.SettingsMCPActivityTool(activity.Tool)).FontSize(12).TextColor(body)
+		ui.Text(c, mcpActivityStatusText(activity.Status, m)).FontSize(12).TextColor(statusColor)
+		if activity.Rule != "" {
+			ui.Text(c, m.SettingsMCPActivityRule(activity.Rule)).FontSize(11).TextColor(body)
+		}
+	})
 }
 
 // mcpPromptCard shows the client, tool, target, scope, already-redacted
