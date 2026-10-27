@@ -36,6 +36,15 @@ type Config struct {
 type viewState struct {
 	content ui.ScrollState
 	sidebar ui.ScrollState
+	layout  *viewLayout
+}
+
+// viewLayout receives the boxes of the Settings content viewport and the Sync
+// page's pinned action bar, so a same-package shell test can measure that
+// primary actions stay fully visible above the scrolling content.
+type viewLayout struct {
+	Content     ui.Handle
+	SyncActions ui.Handle
 }
 
 // View builds the Settings window's native view with App Lock only. The app
@@ -48,11 +57,21 @@ func View(lock *AppLockState) func(*ui.Context) {
 // sidebar, the typed areas, the desktop integration, App Lock, and keyboard
 // shortcuts.
 func ViewWithSettings(config Config) func(*ui.Context) {
+	return viewWithSettings(config, nil)
+}
+
+// viewWithLayout is ViewWithSettings with the content viewport and the Sync
+// page's pinned action bar bound to layout for the shell test.
+func viewWithLayout(config Config, layout *viewLayout) func(*ui.Context) {
+	return viewWithSettings(config, layout)
+}
+
+func viewWithSettings(config Config, layout *viewLayout) func(*ui.Context) {
 	search := config.Search
 	if search == nil {
 		search = NewSearchState()
 	}
-	panes := &viewState{}
+	panes := &viewState{layout: layout}
 	return func(c *ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
@@ -104,6 +123,7 @@ func ViewWithSettings(config Config) func(*ui.Context) {
 			}
 			body(c, config, search, panes, m, t)
 			if config.Sync != nil && search.Area() == AreaSync {
+				syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
 				syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
 			}
 		})
@@ -188,8 +208,12 @@ func body(c *ui.Context, config Config, search *SearchState, panes *viewState,
 	gutter := scrollbarGutter(t)
 	ui.Row(c).Grow(1).Gap(16).MinWidth(0).Children(func() {
 		sidebar(c, search, panes, m, t)
-		ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).
-			PaddingEnd(gutter).TrackScroll(&panes.content).Children(func() {
+		content := ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).
+			PaddingEnd(gutter).TrackScroll(&panes.content)
+		if panes.layout != nil {
+			content = content.Bind(&panes.layout.Content)
+		}
+		content.Children(func() {
 			ui.Column(c).FillWidth().MinWidth(0).Gap(14).Children(func() {
 				area := search.Area()
 				ui.Text(c, AreaTitle(m, area)).FontSize(20).Bold()
