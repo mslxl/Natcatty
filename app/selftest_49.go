@@ -14,10 +14,10 @@ package app
 //     cloud copy downloads into the real Vault state, the running list picks
 //     it up on the next frame, and the following sync is a no-op;
 //   - a Vault edit schedules the debounced automatic sync (twice);
-//   - a lost conditional write (412) re-reads the cloud copy and last-write-
-//     wins downloads it instead of overwriting it;
-//   - an emptied local Vault refuses both manual and automatic sync without
-//     changing the cloud bytes.
+//   - a lost conditional write (412) surfaces a durable conflict without
+//     writing, and choosing the cloud copy downloads it;
+//   - an emptied local Vault is blocked as a tombstone sync for both manual
+//     and automatic triggers without changing the cloud bytes.
 //
 // The scenario runs in one goroutine so the event loop is never blocked. The
 // first step polls its result channel with a hard 30 s deadline; later steps
@@ -44,10 +44,13 @@ import (
 
 	adaptergithub "github.com/mslxl/natcatty/adapters/github"
 	adapterstore "github.com/mslxl/natcatty/adapters/store"
+	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
 	adaptersyncstore "github.com/mslxl/natcatty/adapters/syncstore"
 	adaptersyncvault "github.com/mslxl/natcatty/adapters/syncvault"
+	adapterbackup "github.com/mslxl/natcatty/adapters/vaultbackup"
 	appsync "github.com/mslxl/natcatty/application/sync"
 	appvault "github.com/mslxl/natcatty/application/vault"
+	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	"github.com/mslxl/natcatty/domain/model"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -98,6 +101,7 @@ type selftest49Report struct {
 	AutoFirstHost      string
 	AutoSecondHost     string
 	AutoWrites         int
+	ConflictSurfaced   bool
 	ConflictAction     string
 	ConflictLocalHost  string
 	ConflictRemoteHost string
@@ -259,8 +263,11 @@ func (t *selftest49) conflictStep(*ui.Context) selftest.Outcome {
 	if report.ConflictAttempts < 1 {
 		return selftest.Failed(errors.New("the conditional write never conflicted"))
 	}
+	if !report.ConflictSurfaced {
+		return selftest.Failed(errors.New("the lost conditional write did not surface a durable conflict"))
+	}
 	if report.ConflictAction != string(domainsync.ActionDownload) {
-		return selftest.Failed(fmt.Errorf("conflict action = %q, want download", report.ConflictAction))
+		return selftest.Failed(fmt.Errorf("conflict resolution action = %q, want download", report.ConflictAction))
 	}
 	if report.ConflictLocalHost != "conflict-cloud" || report.ConflictRemoteHost != "conflict-cloud" {
 		return selftest.Failed(fmt.Errorf("local host = %q cloud host = %q",
@@ -270,19 +277,19 @@ func (t *selftest49) conflictStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("successful writes during conflict = %d, want 0", report.ConflictWrites))
 	}
 	return selftest.Passed(
-		"If-Match 412 caused a fresh read; newest-wins downloaded the newer cloud copy without overwriting it",
-		"adapters/github conditional PATCH + domain/sync.Decide")
+		"If-Match 412 surfaced a durable conflict without a write; choosing the cloud copy downloaded it, and the next sync was a no-op",
+		"adapters/github conditional PATCH + application/sync.ResolveConflict")
 }
 
 func (t *selftest49) emptyStep(*ui.Context) selftest.Outcome {
 	report := t.report
-	if report.EmptyManualError != "empty Vault" || report.EmptyAutoError != "empty Vault" {
+	if report.EmptyManualError != "tombstone guard" || report.EmptyAutoError != "tombstone guard" {
 		return selftest.Failed(fmt.Errorf("manual error = %q automatic error = %q",
 			report.EmptyManualError, report.EmptyAutoError))
 	}
-	if report.EmptyProblem != string(appsync.ProblemEmptyVault) {
+	if report.EmptyProblem != string(appsync.ProblemTombstoneGuard) {
 		return selftest.Failed(fmt.Errorf("problem = %q, want %q",
-			report.EmptyProblem, appsync.ProblemEmptyVault))
+			report.EmptyProblem, appsync.ProblemTombstoneGuard))
 	}
 	if report.EmptyCloudBytes == 0 || report.EmptyCloudHost != "conflict-cloud" {
 		return selftest.Failed(fmt.Errorf("cloud bytes = %d host = %q",
@@ -292,8 +299,8 @@ func (t *selftest49) emptyStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("writes while empty = %d, want 0", report.EmptyWrites))
 	}
 	return selftest.Passed(fmt.Sprintf(
-		"manual and automatic sync refused; %d cloud bytes unchanged", report.EmptyCloudBytes),
-		"application/sync.Service empty-Vault guard before any remote write")
+		"the tombstone guard refused manual and automatic sync; %d cloud bytes unchanged", report.EmptyCloudBytes),
+		"application/sync detectTombstone before any remote write")
 }
 
 // selftest49KeyStore is the in-memory credential store. The field-secret
@@ -548,9 +555,16 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 	vaultService := appvault.NewService(database, appvault.WithSecrets(secrets))
 	vaultView := vaultstate.NewState(vaultService)
 	viewNotifications := 0
+	// Conflict resolution requires a backup port; use the real local backup
+	// service so this self-test covers the protective restore point too.
+	backupStore := adapterbackup.Open(filepath.Join(directory, "backups"), &selftest49KeyStore{values: map[string][]byte{}})
+	backupService := appbackup.NewService(database, backupStore, appbackup.WithRetentionStore(backupStore))
+	backupService.Start()
+	defer backupService.Stop()
 	service := appsync.NewService(remote, vault, configs, tokens,
 		appsync.WithDebounce(selftest49Debounce),
 		appsync.WithDevice("selftest-device", "Self-test Device", "selftest"),
+		appsync.WithBackups(adaptersyncbackup.New(backupService)),
 		appsync.WithAppliedSnapshot(func() {
 			viewNotifications++
 			vaultView.InvalidateLists()
@@ -727,8 +741,9 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 	report.AutoSecondHost = selftest49Contains(secondPayload, "auto-two")
 	report.AutoWrites = writesTwo - before
 
-	// 6. A conditional write that loses must re-read and choose the newer
-	// cloud copy instead of overwriting it.
+	// 6. A conditional write that loses must surface a durable conflict and
+	// leave the cloud bytes alone. Choosing the cloud copy then downloads the
+	// newer copy instead of overwriting it.
 	if err := service.SetAutoSync(ctx, false); err != nil {
 		return report, fmt.Errorf("disable automatic sync: %w", err)
 	}
@@ -743,11 +758,16 @@ func runSelftest49(ctx context.Context) (report selftest49Report, err error) {
 	}
 	github.armConflict(conflictContent)
 	_, conflictWritesBefore, _ := github.snapshot()
-	conflicted, err := service.Sync(ctx, appsync.TriggerManual)
-	if err != nil {
-		return report, fmt.Errorf("sync under a lost conditional write: %w", err)
+	if _, err := service.Sync(ctx, appsync.TriggerManual); !errors.Is(err, appsync.ErrConflict) {
+		return report, fmt.Errorf("sync under a lost conditional write = %v, want conflict", err)
 	}
-	report.ConflictAction = string(conflicted.Action)
+	conflictSnapshot := service.Snapshot()
+	report.ConflictSurfaced = conflictSnapshot.Status == appsync.StatusConflict && conflictSnapshot.Conflict != nil
+	resolved, err := service.ResolveConflict(ctx, appsync.ResolutionRemote)
+	if err != nil {
+		return report, fmt.Errorf("resolve the conflict with the cloud copy: %w", err)
+	}
+	report.ConflictAction = string(resolved.Action)
 	hosts, err = database.List(ctx)
 	if err != nil {
 		return report, fmt.Errorf("list the conflict result: %w", err)
@@ -868,6 +888,8 @@ func selftest49Contains(payload appsync.Payload, label string) string {
 
 func selftest49ErrorName(err error) string {
 	switch {
+	case errors.Is(err, appsync.ErrTombstoneGuard):
+		return "tombstone guard"
 	case errors.Is(err, appsync.ErrEmptyVault):
 		return "empty Vault"
 	case err == nil:

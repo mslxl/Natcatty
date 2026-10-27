@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"encoding/json"
+
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -28,10 +30,38 @@ type Payload struct {
 	NoteGroups      []domainvault.NoteGroup      `json:"noteGroups"`
 	// PortForwardingRules follows notes in the original's field order.
 	PortForwardingRules []domainforward.Rule `json:"portForwardingRules"`
-	Secrets             []SecretValue        `json:"secrets,omitempty"`
-	// SyncedAt is the newest content timestamp. The newest-wins decision uses
-	// it against the remote envelope's updatedAt.
+	// Settings is the original payload's flat settings object. This build
+	// treats app preferences as device-local and never publishes them (spec
+	// item 111), but the field is carried so a payload written by another
+	// client merges with the original's deep-merge rules instead of losing
+	// unknown keys.
+	Settings map[string]json.RawMessage `json:"settings,omitempty"`
+	Secrets  []SecretValue              `json:"secrets,omitempty"`
+	// SyncMeta carries durable deletion tombstones, matching the original
+	// syncReliability metadata. It lets a device distinguish "deleted" from
+	// "this client did not send the entity" when no base anchor exists.
+	SyncMeta *SyncMeta `json:"syncMeta,omitempty"`
+	// SyncedAt is the newest content timestamp.
 	SyncedAt int64 `json:"syncedAt"`
+}
+
+// SyncMeta is the original's durable sync metadata. Only the parts this build
+// reads and writes are modeled: a schema version, the generation time, the
+// device that generated it, and the deletion tombstones.
+type SyncMeta struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	GeneratedAt   int64          `json:"generatedAt"`
+	DeviceID      string         `json:"deviceId,omitempty"`
+	Deletions     []SyncDeletion `json:"deletions,omitempty"`
+}
+
+// SyncDeletion is one tombstone. EntityType uses this build's payload family
+// name and ID is the entity's ID (or Path for path-identified families).
+type SyncDeletion struct {
+	EntityType string `json:"entityType"`
+	ID         string `json:"id"`
+	DeletedAt  int64  `json:"deletedAt"`
+	DeviceID   string `json:"deviceId,omitempty"`
 }
 
 // HasData reports whether any synced family has a record. Known Hosts are

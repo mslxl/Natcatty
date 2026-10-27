@@ -75,8 +75,8 @@ func TestTicket49CheckRunsThroughTheKeyboard(t *testing.T) {
 		"adapters/github.Client device flow + httptest fake GitHub",
 		"application/sync.WithAppliedSnapshot + ui/vault/state.InvalidateLists/FlushLists",
 		"application/sync.NotifyLocalChange debounce + adapters/store change hook",
-		"adapters/github conditional PATCH + domain/sync.Decide",
-		"application/sync.Service empty-Vault guard before any remote write",
+		"adapters/github conditional PATCH + application/sync.ResolveConflict",
+		"application/sync detectTombstone before any remote write",
 	} {
 		if !seams[want] {
 			t.Fatalf("seams = %v, missing %q", seams, want)

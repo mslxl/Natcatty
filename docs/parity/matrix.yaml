@@ -2458,7 +2458,7 @@
     - adapters/syncvault.TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp
     - adapters/syncvault.TestApplyStoresIncomingSecretsAndClearsStaleOnes
     - application/sync.TestManualSyncUploadsTheFirstCopy
-    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
     - application/sync.TestAfterDownloadTheNextSyncIsANoOp
     - app.TestTicket49CheckRunsThroughTheKeyboard
   status: verified
@@ -2483,37 +2483,46 @@
 
 - id: sync.conflict-last-write-wins
   area: sync
-  feature: Conditional-write conflict resolution with last-write-wins
+  feature: Conditional-write conflict detection with strategy-specific resolution
   original_paths:
     - domain/sync.ts
     - domain/syncStrategy.ts
     - application/state/useAutoSync.ts
   module: domain/sync
-  tickets: [49]
+  tickets: [49, 54]
   acceptance_tests:
     - domain/sync.TestDecideCoversEveryChangeCombination
     - domain/sync.TestNormalizeStrategy
-    - application/sync.TestConditionalWriteConflictRedecidesWithNewestWins
-    - application/sync.TestAfterConflictDownloadTheNextSyncIsANoOp
+    - application/sync.TestConditionalWriteConflictIsSurfacedAndResolvedWithABackup
+    - application/sync.TestConflictSurvivesARestartAndResolvesIdempotently
+    - application/sync.TestAfterConflictRemoteResolutionTheNextSyncIsANoOp
+    - application/sync.TestPreferCloudAppliesTheCloudCopyOnATwoSidedChange
+    - application/sync.TestPreferLocalUploadsTheLocalCopyOnATwoSidedChange
     - app.TestTicket49CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckRunsThroughTheKeyboard
   status: verified
-  notes: "A lost conditional write (HTTP 412) makes the service re-read the cloud copy once and decide again rather than force the local bytes. The newest strategy compares the local payload timestamp with the envelope updatedAt and gives ties to the remote so both devices converge; local and remote pin one side. A downloaded copy records the applied snapshot's signature, so the next sync is a no-op instead of echoing the download back. Full three-way merge beyond these strategies remains ticket 54."
+  notes: "A lost conditional write (HTTP 412, 409, or a page-token miss) never forces the local bytes. Ticket 49's silent newest-wins re-decision was replaced in ticket 54: smartMerge and smartMergePreserve persist a durable conflict with per-item detail, and the UI resolves it with local, remote, or merge while taking a protective backup of both sides first. preferCloud and preferLocal still pin one side, now through the same durable conflict state rather than an implicit timestamp race. A resolved download records the applied snapshot's signature, so the next sync is a no-op instead of echoing the download back."
 
 - id: sync.empty-vault-guard
   area: sync
-  feature: An empty local Vault never overwrites the cloud copy
+  feature: An empty or partial local Vault never overwrites the cloud copy
   original_paths:
     - application/state/useAutoSync.ts
     - application/syncPayload.ts
   module: application/sync
-  tickets: [49]
+  tickets: [49, 54]
   acceptance_tests:
-    - application/sync.TestEmptyVaultNeverOverwritesTheCloudCopy
+    - application/sync.TestTombstoneGuardBlocksAWholeVaultDeletion
+    - application/sync.TestTombstoneGuardBlocksAWholeVaultDeletionAndOffersRestoreOrForce
+    - application/sync.TestTombstoneGuardDoesNotFireWhenAnyEntitySurvives
+    - application/sync.TestShrinkGuardBlocksBulkRatioAtThreeOrMore
+    - application/sync.TestShrinkGuardBlocksLargeAbsoluteLoss
     - application/sync.TestConflictWithAnEmptyCloudCopyForcesUpload
     - adapters/syncvault.TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp
     - app.TestTicket49CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckRunsThroughTheKeyboard
   status: verified
-  notes: "The guard runs before any remote read or write and applies to both manual and automatic triggers. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful, matching the original's hasMeaningfulCloudSyncData. Conversely, an empty cloud payload is forced to upload rather than erase a populated local Vault."
+  notes: "The guard runs before any remote write on every provider path, for manual and automatic triggers. Ticket 49's empty-payload stop is now the ticket 54 tombstone guard plus the original shrink thresholds: block at 10 or more lost records, or at 3 or more lost while at least half the reference is removed. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful. Guards offer Restore the last good copy as the safe default and an explicitly confirmed force push that is never preselected or reached from background sync. Conversely, an empty cloud payload is still forced to upload rather than erase a populated local Vault."
 
 # --- Ticket 50: Google Drive appDataFolder ---
 
@@ -2560,7 +2569,7 @@
     - adapters/gdrive.TestDriveMissingFilesMapToThePort
     - adapters/gdrive.TestOptionsFromEnvReadsTheFakeOverrides
     - application/sync.TestManualSyncUploadsTheFirstCopy
-    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
     - app.TestTicket50CheckRunsThroughTheKeyboard
   status: verified
   notes: "Reads list only spaces=appDataFolder with the original netcatty-vault.json name, follow nextPageToken, and treat an empty account or a file deleted before download as no copy. Creates use multipart/related with parents=[appDataFolder]; updates replace media on the existing file. Access tokens are bearer credentials, 401/403/404/409/412/429/5xx map onto the sync taxonomy, and each Google account has an isolated appDataFolder in the fake. Drive has no conditional media update, so concurrent-change detection compares modifiedTime before writing and re-observes after a 404 or conflict instead of forcing bytes; the ticket records this divergence from GitHub's If-Match."
@@ -2653,7 +2662,7 @@
     - adapters/onedrive.TestGraphErrorsMapOntoTheSyncTaxonomy
     - adapters/onedrive.TestOptionsFromEnvReadsTheFakeOverrides
     - application/sync.TestManualSyncUploadsTheFirstCopy
-    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopy
+    - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
     - app.TestTicket51CheckRunsThroughTheKeyboard
   status: verified
   notes: "Reads locate netcatty-vault.json inside the approot special folder by path. Graph can briefly 404 a file a peer uploaded seconds ago, so both the metadata read and the download retry twice with a 1.5s-then-3s backoff (the original adapter's #779 window) before a 404 is accepted as no copy; the fake can inject transient misses. Downloads follow @microsoft.graph.downloadUrl without attaching the bearer token, falling back to /me/drive/items/{id}/content. Payloads are small, so writes use the simple PUT upload: creation is path-addressed with If-None-Match: *, and updates target the item id with If-Match: eTag. An update without an eTag is refused as ErrConflict rather than becoming unconditional. 412/409/423 become ErrConflict so the service re-observes; 401/403/404/429/5xx map onto the sync taxonomy. Each Microsoft account has an isolated approot in the fake. Unlike Google's Drive media update, Graph supports a real conditional update, so concurrent changes are detected without the original adapter's timestamp workaround."
@@ -2926,6 +2935,114 @@
   tickets: [53]
   status: excluded
   notes: "The S3 provider is verified against a local in-process fake that independently verifies SigV4, enforces the session token, path-style addressing, region, bucket, and conditional ETags, and returns 403/404/412/5xx. No acceptance run contacts AWS S3, MinIO, Ceph, R2, or another live S3-compatible service: those need real credentials, a provisioned bucket, and a network, which CI cannot supply. The fake is explicit about being a fake and the endpoint is not described as AWS."
+
+# --- Ticket 54: merge strategies, anchors, guards, and conflicts ---
+
+- id: sync.merge-strategies
+  area: sync
+  feature: smartMerge, smartMergePreserve, preferCloud, and preferLocal strategies
+  original_paths:
+    - domain/sync.ts
+    - domain/syncStrategy.ts
+    - application/state/useAutoSync.ts
+  module: domain/sync
+  tickets: [54]
+  acceptance_tests:
+    - domain/sync.TestDecideCoversEveryChangeCombination
+    - domain/sync.TestNormalizeStrategy
+    - application/sync.TestSmartMergeCombinesBothSidesUsingTheStoredAnchor
+    - application/sync.TestSmartMergeDeletesAOneSidedDeletion
+    - application/sync.TestSmartMergePreserveKeepsAOneSidedDeletion
+    - application/sync.TestSmartMergeSameFieldClashUsesLocalWithoutAPendingConflict
+    - application/sync.TestPreferCloudAppliesTheCloudCopyOnATwoSidedChange
+    - application/sync.TestPreferLocalUploadsTheLocalCopyOnATwoSidedChange
+    - app.TestTicket54CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "smartMerge combines both sides with a three-way field merge and deletes a record only when the deletion is one-sided and the other side did not modify it. smartMergePreserve uses the same merge but carries a one-sided record forward, so an entry disappears only after every device deletes it. preferCloud applies the cloud copy without a provider write, and preferLocal publishes this device and ignores the cloud edit; both still keep the encrypted anchor current. The selected strategy is persisted in cloud-sync.json. The GUI offers all four with localized names and descriptions; an external GUI acceptance run recorded under the ticket (not a committed test) exercised each strategy against a local fake WebDAV server through the real WebDAV adapter. Divergence from the original: the original field-merges only monitorPanels on a both-modified record; this build applies the same deterministic top-level field merge to every synced family and reports a same-field clash in the merge result. The smartMerge strategies still resolve that clash locally, as the original does; only a lost conditional write creates the durable, user-resolved conflict described in sync.conflict-backups."
+
+- id: sync.three-way-merge
+  area: sync
+  feature: Three-way field merge with an encrypted anchor and settings deep merge
+  original_paths:
+    - domain/sync.ts
+    - application/syncPayload.ts
+    - infrastructure/services/syncAnchorDecision.js
+  module: application/sync
+  tickets: [54]
+  acceptance_tests:
+    - application/sync.TestMergeAddAddUpdateUpdateDeleteUpdateDeleteDeleteAndUnchanged
+    - application/sync.TestMergeBothModifiedSameFieldPrefersLocalAndReportsConflict
+    - application/sync.TestMergeDeleteRemoteAndLocalUpdateKeepsTheModification
+    - application/sync.TestMergeEmptyBaseIsASetUnionPreferringLocal
+    - application/sync.TestMergeFieldDeletedLocallyStaysFromRemote
+    - application/sync.TestMergeIsDeterministicAndIgnoresMapFieldOrder
+    - application/sync.TestMergePathIdentifiedFamilies
+    - application/sync.TestMergePreserveDeletionsNeverPropagatesOneSidedDeletion
+    - application/sync.TestMergeRecordsNewTombstonesForDeletedEntities
+    - application/sync.TestMergeSecretsFollowsTheEntityAndIsScrubbedAfterDeletion
+    - application/sync.TestMergeSettingsBothSidesDeletingAKeyIsNotAConflict
+    - application/sync.TestMergeSettingsDeepMergesNestedMapsAndPreservesUnknownKeys
+    - application/sync.TestMergeSettingsFirstMergePrefersCloudOnSameField
+    - application/sync.TestMergeSettingsFixesLegacyAutoClose
+    - application/sync.TestMergeSettingsHonorsExplicitEmptyObjectReset
+    - application/sync.TestMergeSettingsMergesIDArrays
+    - application/sync.TestMergeTombstonesPreventResurrectionWithoutBase
+    - application/sync.TestSmartMergeCarriesSettingsThroughTheService
+    - application/sync.TestAnchorPersistsOnlyCiphertext
+    - app.TestTicket54CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "The anchor is the last successfully synced plaintext payload sealed with the master password under AES-256-GCM and stored as base64 in SyncBase, with format version 3 and a SHA-256 BaseSignature; cloud-sync.json contains no plaintext entity, hostname, credential, or master password. A corrupt or unknown anchor falls back to a base-less set union. The field merge is keyed by record id (path for configuration families) and covers add/add, update/update, delete/update, delete/delete, one-sided changes, empty base, tombstones, and secret values. A field deleted locally while the other side edits a different field stays from the remote copy, matching the original local-key iteration; this is covered by TestMergeFieldDeletedLocallyStaysFromRemote. Settings merge recursively and is exercised both as a pure function and through the service: nested maps merge, unknown keys on both sides survive, id-keyed arrays merge by id, an explicit empty object resets a map, a first merge with no base prefers cloud on a same-field clash, both sides deleting the same key is agreement rather than a conflict, and terminalSettings.autoCloseOnExit keeps its original migration. The real SyncVault adapter deliberately omits device-local settings from its payload (ticket 49 and the Cloud sync spec), so production sync does not publish this build's app settings."
+
+- id: sync.destructive-guards
+  area: sync
+  feature: Shrink and tombstone guards block destructive uploads and offer restore or force push
+  original_paths:
+    - application/state/useAutoSync.ts
+    - application/syncPayload.ts
+    - domain/sync.ts
+  module: application/sync
+  tickets: [54]
+  acceptance_tests:
+    - application/sync.TestShrinkGuardBlocksBulkRatioAtThreeOrMore
+    - application/sync.TestShrinkGuardBlocksLargeAbsoluteLoss
+    - application/sync.TestShrinkGuardAllowsSmallOrdinaryDeletes
+    - application/sync.TestShrinkGuardGroupSpecialCase
+    - application/sync.TestShrinkGuardUsesTheRemoteWhenNoBaseExists
+    - application/sync.TestShrinkGuardBlocksRestoreAndForceFlow
+    - application/sync.TestTombstoneGuardBlocksAWholeVaultDeletion
+    - application/sync.TestTombstoneGuardBlocksAWholeVaultDeletionAndOffersRestoreOrForce
+    - application/sync.TestTombstoneGuardDoesNotFireWhenAnyEntitySurvives
+    - application/sync.TestTombstoneGuardFallsBackToTheRemoteWhenTheAnchorIsEmpty
+    - application/sync.TestTombstoneGuardProtectsACloudCopyRepopulatedAfterAnEmptyForcePush
+    - ui/settings.TestSyncSurfaceLocalizesEntityFamilies
+    - app.TestTicket54CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "The original thresholds are preserved: block when at least 10 records would be lost, or when at least 3 records and at least half of the reference would be lost, with the group-config special case. The reference is the stored anchor, falling back to the current cloud copy when the anchor is missing or empty (including after an explicit empty force push); a repopulated cloud is therefore still protected from a later empty local sync. Ticket 54 adds a whole-Vault tombstone guard for an empty outgoing payload. Guards run before any remote write on every provider path and never upload. Restore is the safe default and restores the last good anchor/backup without a cloud write; force push requires a second explicit confirmation, is never preselected, and writes a cloud-copy backup first. Background sync can block but cannot force or silently discard data. The explanation, confirmation, and entity-family names are localized in all five catalogs. Service tests cover block, restore, force, and backup retention; an external GUI acceptance run recorded under the ticket (not a committed test) exercised the same flows against the local fake provider."
+
+- id: sync.conflict-backups
+  area: sync
+  feature: Durable per-item conflict resolution with protective backups
+  original_paths:
+    - domain/sync.ts
+    - application/state/useCloudSync.ts
+    - components/cloud-sync/CloudSyncDialogs.tsx
+  module: application/sync
+  tickets: [54]
+  acceptance_tests:
+    - application/sync.TestConditionalWriteConflictIsSurfacedAndResolvedWithABackup
+    - application/sync.TestConflictMergeResolutionIsOfferedOnlyByMergeStrategies
+    - application/sync.TestConflictResolutionRequiresABackupPort
+    - application/sync.TestConflictSurvivesARestartAndResolvesIdempotently
+    - application/sync.TestAfterConflictRemoteResolutionTheNextSyncIsANoOp
+    - application/sync.TestBackupListAndRestoreLocalAndRemote
+    - application/sync.TestLoadBackupsReportsALocalListFailure
+    - app.TestTicket54CheckRunsThroughTheKeyboard
+    - app.TestTicket54CheckPassesTwiceInOneProcess
+  status: implemented
+  notes: "A lost conditional write is persisted with per-family/per-item kind, the remote device identity, and the encrypted cloud copy, so the conflict survives a process restart and resolution is idempotent. This is the original conflict state machine: a smartMerge same-field clash is resolved by the selected strategy rather than surfaced, because the user already chose that strategy and no complete copy is at risk. The UI lists each item with a localized family name and offers Keep this device, Keep the cloud copy, and Merge both; Merge is offered only by smartMerge and smartMergePreserve. Before either side is overwritten the service takes a protective local backup and retains the replaced cloud envelope in RemoteBackups (five newest), both timestamped with source and reason and restorable from the Backups panel without a provider write. Ordinary sync works without a backup port, but conflict resolution refuses to proceed without one. Backup records contain the same encrypted Vault data as the normal local backup subsystem and no new secrets. Service tests cover a real concurrent conditional-write loss, both choices, idempotent restart, and backup restore. An external GUI acceptance run recorded under the ticket (not a committed test) exercised both choices, backup rows, and final cloud contents through the local fake provider."
 
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
