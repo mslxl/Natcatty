@@ -1035,3 +1035,260 @@ func TestConvergentTwoDeviceProfilesConvergeIncludingConcurrentWrites(t *testing
 		t.Fatal("repeated converged sync did not report zero writes")
 	}
 }
+
+func TestConvergentPreferLocalRepeatedSyncWritesNothing(t *testing.T) {
+	service, remote, vault, _ := serviceForStrategy(t, domainsync.StrategyPreferLocal, &fakeBackups{})
+	migrateToConvergent(t, service)
+
+	remote.mu.Lock()
+	writesBefore := len(remote.writeLog)
+	contentBefore := append([]byte(nil), remote.file.Content...)
+	remote.mu.Unlock()
+	vault.mu.Lock()
+	appliedBefore := len(vault.applied)
+	vault.mu.Unlock()
+
+	result, err := service.Sync(context.Background(), TriggerManual)
+	if err != nil {
+		t.Fatalf("repeated sync: %v", err)
+	}
+	if result.Writes != 0 || result.Uploaded || result.Action != domainsync.ActionNone {
+		t.Fatalf("repeated preferLocal result = %+v", result)
+	}
+	remote.mu.Lock()
+	writesAfter := len(remote.writeLog)
+	contentAfter := append([]byte(nil), remote.file.Content...)
+	remote.mu.Unlock()
+	if writesAfter != writesBefore {
+		t.Fatalf("repeated preferLocal sync wrote the provider: %d -> %d", writesBefore, writesAfter)
+	}
+	if !bytes.Equal(contentBefore, contentAfter) {
+		t.Fatal("repeated preferLocal sync changed the provider bytes")
+	}
+	vault.mu.Lock()
+	appliedAfter := len(vault.applied)
+	vault.mu.Unlock()
+	if appliedAfter != appliedBefore {
+		t.Fatalf("repeated preferLocal sync rewrote the Vault: %d -> %d", appliedBefore, appliedAfter)
+	}
+	info := service.Snapshot().Convergent
+	if info.Writes != 0 || info.Phase != "converged" {
+		t.Fatalf("repeated preferLocal info = %+v", info)
+	}
+}
+
+func TestConvergentMigrationRefusesPersistedPendingConflict(t *testing.T) {
+	backups := &fakeBackups{}
+	service, remote, vault, configs, _, _ := testServiceWith(t, WithBackups(backups))
+	base := payloadWithHosts(host("h1", "Base", "base.example"))
+	vault.set(base)
+	establishAnchor(t, service, remote, base)
+
+	vault.set(payloadWithHosts(host("h1", "Local edit", "base.example")))
+	remote.mu.Lock()
+	remote.conflictNext = true
+	remote.conflictFile = RemoteFile{
+		ID: "gist-1", ETag: "etag-cloud", UpdatedAt: 12000,
+		Content: encryptForTest(t, payloadWithHosts(host("h1", "Cloud edit", "cloud.example")), "secret", 12000),
+	}
+	remote.mu.Unlock()
+	if _, err := service.Sync(context.Background(), TriggerManual); !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want a surfaced conflict", err)
+	}
+	configs.mu.Lock()
+	pending := configs.config.PendingConflict
+	configs.mu.Unlock()
+	if pending == nil {
+		t.Fatal("the conflict was not persisted")
+	}
+	remoteContent := append([]byte(nil), pending.RemoteContent...)
+	remote.mu.Lock()
+	writesBefore := len(remote.writeLog)
+	remoteBefore := append([]byte(nil), remote.file.Content...)
+	remote.mu.Unlock()
+	backupsBefore := backups.createdCount()
+	vault.mu.Lock()
+	appliedBefore := len(vault.applied)
+	vault.mu.Unlock()
+
+	preview, err := service.SetConvergentEnabled(context.Background(), true)
+	if !errors.Is(err, ErrConvergentMigration) {
+		t.Fatalf("error = %v, want a fail-closed migration refusal", err)
+	}
+	if preview.CanInitialize || len(preview.BlockedReasons) == 0 || preview.BlockedReasons[0].Code != "pending-conflict" {
+		t.Fatalf("preview = %+v", preview)
+	}
+	configs.mu.Lock()
+	after := configs.config
+	configs.mu.Unlock()
+	if after.Convergent.SchemaVersion != 0 {
+		t.Fatalf("refused migration wrote marker %d", after.Convergent.SchemaVersion)
+	}
+	if after.PendingConflict == nil {
+		t.Fatal("refused migration dropped the pending conflict")
+	}
+	if !bytes.Equal(after.PendingConflict.RemoteContent, remoteContent) {
+		t.Fatal("refused migration changed the pending conflict's cloud bytes")
+	}
+	remote.mu.Lock()
+	writesAfter := len(remote.writeLog)
+	remoteAfter := append([]byte(nil), remote.file.Content...)
+	remote.mu.Unlock()
+	if writesAfter != writesBefore || !bytes.Equal(remoteBefore, remoteAfter) {
+		t.Fatal("refused migration touched the provider")
+	}
+	if backups.createdCount() != backupsBefore {
+		t.Fatal("refused migration took a misleading protective backup")
+	}
+	vault.mu.Lock()
+	appliedAfter := len(vault.applied)
+	vault.mu.Unlock()
+	if appliedAfter != appliedBefore {
+		t.Fatal("refused migration changed the Vault")
+	}
+	info := service.Snapshot().Convergent
+	if info.Phase != "blocked" || info.ConflictCount == 0 {
+		t.Fatalf("refused migration info = %+v", info)
+	}
+	if info.TotalRounds != 0 || len(info.Rounds) != 0 {
+		t.Fatalf("refused migration reported a verification round: %+v", info)
+	}
+}
+
+func TestConvergentRestartReportsVerifiedCountsWithoutFabricatedRound(t *testing.T) {
+	backups := &fakeBackups{}
+	service, remote, vault, configs, tokens, waiter := testServiceWith(t, WithBackups(backups))
+	migrateToConvergent(t, service)
+
+	restarted := NewService(remote, vault, configs, tokens,
+		WithWaiter(waiter),
+		WithBackups(backups),
+		WithClock(func() time.Time { return time.UnixMilli(5000) }),
+		WithDevice("device-1", "Test Device", "1.0"),
+	)
+	if err := restarted.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.SetPassword("secret"); err != nil {
+		t.Fatal(err)
+	}
+	info := restarted.Snapshot().Convergent
+	if info.Phase != "idle" {
+		t.Fatalf("restart phase = %q", info.Phase)
+	}
+	if info.TotalRounds != 0 || info.Round != 0 || len(info.Rounds) != 0 {
+		t.Fatalf("restart fabricated a verification round: %+v", info)
+	}
+	if info.EntityCount != 1 || info.ConflictCount != 0 {
+		t.Fatalf("restart counts = %d entities, %d conflicts", info.EntityCount, info.ConflictCount)
+	}
+	if info.LastVerifiedAt == 0 {
+		t.Fatal("restart did not retain the verification time")
+	}
+}
+
+type concurrentFinalRoundRemote struct {
+	*fakeRemote
+	stale      []byte
+	concurrent func([]byte) []byte
+	writes     int
+}
+
+func (r *concurrentFinalRoundRemote) Write(ctx context.Context, token domainsync.Token, current RemoteFile, content []byte) (RemoteFile, error) {
+	written, err := r.fakeRemote.Write(ctx, token, current, content)
+	if err != nil {
+		return written, err
+	}
+	r.writes++
+	stored := append([]byte(nil), r.stale...)
+	if r.writes >= ConvergentVerifyRounds {
+		stored = r.concurrent(content)
+	}
+	envelope, parseErr := domainsync.UnmarshalFile(stored)
+	if parseErr != nil {
+		return RemoteFile{}, parseErr
+	}
+	r.fakeRemote.mu.Lock()
+	r.fakeRemote.file = RemoteFile{
+		ID:        written.ID,
+		ETag:      written.ETag + "-race",
+		Content:   stored,
+		UpdatedAt: envelope.Meta.UpdatedAt,
+	}
+	r.fakeRemote.mu.Unlock()
+	return written, nil
+}
+
+// TestConvergentFinalRoundRetriesOrdinaryConcurrency proves a concurrent
+// writer landing between the final upload and its read-back is retried once,
+// not reported as divergence. Genuine divergence still returns immediately.
+func TestConvergentFinalRoundRetriesOrdinaryConcurrency(t *testing.T) {
+	fake := newFakeRemote()
+	stale := convergentContentForState(t, convergentStateForTest(t,
+		payloadWithHosts(host("stale", "Stale", "stale.example")), "stale", 1000), 1000, "stale")
+	remote := &concurrentFinalRoundRemote{fakeRemote: fake, stale: stale}
+	remote.concurrent = func(content []byte) []byte {
+		envelope, err := domainsync.UnmarshalFile(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plaintext, err := domainsync.DecryptPayload(envelope, convergentTestPassword)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := decodePayloadBytes(plaintext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateEnvelope, err := domainsync.ParseConvergentEnvelope(payload.ConvergentSync)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload.Hosts = append(payload.Hosts, host("h2", "Concurrent", "b.example"))
+		snapshot, err := payloadSnapshot(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		merged, _, err := domainsync.ApplyConvergentSnapshot(stateEnvelope.State, snapshot, "concurrent", 7000, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return convergentContentForState(t, merged, envelope.Meta.UpdatedAt, "concurrent")
+	}
+	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
+	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.StrategySmartMerge}}
+	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
+	service := NewService(remote, vault, configs, tokens,
+		WithWaiter(&fakeWaiter{}),
+		WithBackups(&fakeBackups{}),
+		WithClock(func() time.Time { return time.UnixMilli(5000) }),
+		WithDevice("device-1", "Test Device", "1.0"),
+		WithDebounce(10*time.Millisecond),
+	)
+	if err := service.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPassword(convergentTestPassword); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.SetConvergentEnabled(context.Background(), true); err != nil {
+		t.Fatalf("enable with ordinary concurrency: %v", err)
+	}
+	if remote.writes != ConvergentVerifyRounds {
+		t.Fatalf("provider writes = %d, want %d", remote.writes, ConvergentVerifyRounds)
+	}
+	info := service.Snapshot().Convergent
+	if info.Phase != "converged" || info.Outcome != "converged" || info.Divergence != nil {
+		t.Fatalf("convergent info = %+v", info)
+	}
+	if len(info.Rounds) != ConvergentVerifyRounds || info.Rounds[ConvergentVerifyRounds-1].Outcome != "verified" {
+		t.Fatalf("rounds = %+v", info.Rounds)
+	}
+	vault.mu.Lock()
+	haveConcurrent := hasHostID(vault.payload, "h2")
+	vault.mu.Unlock()
+	if !haveConcurrent {
+		t.Fatal("the retried final round did not materialize the concurrent record")
+	}
+}
