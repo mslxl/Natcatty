@@ -356,9 +356,9 @@ func importStatus(c *ui.Context, themes *ThemesState, m locales.Messages, t *ui.
 		ui.Text(c, m.SettingsTerminalThemeImported(themes.ImportedName())).
 			FontSize(12).TextColor(t.Success)
 	case ThemeImportInvalid:
-		ui.Text(c, m.SettingsTerminalThemeImportInvalid()).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, m.SettingsTerminalThemeImportInvalid()).FontSize(12).TextColor(uitheme.DangerText(t))
 	case ThemeImportFailed:
-		ui.Text(c, m.SettingsTerminalThemeImportFailed()).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, m.SettingsTerminalThemeImportFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
 	}
 }
 

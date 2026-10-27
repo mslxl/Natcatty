@@ -21,7 +21,7 @@ package app
 //     source editor opens at the beginning of a long Note, including after
 //     cancel and reopen.
 //
-// Result: %TEMP%\natcatty-selftest-22.json. Every resource is closed and the
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-22.json. Every resource is closed and the
 // temporary directory removed, so F11,2,2 passes twice in one process.
 
 import (

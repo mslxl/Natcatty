@@ -361,11 +361,19 @@ func TestSyncWarningTextColorKeepsLightModeReadable(t *testing.T) {
 	// The theme warning token is the border/icon amber. As 11-point body text
 	// on the light surface it measures about 1.9:1, so light mode must use the
 	// darker amber that reaches the 4.5:1 contrast target.
-	light := &ui.Theme{Warning: ui.Hex("#f59e0b")}
+	snow, ok := domaintheme.LookupPreset(false, "snow")
+	if !ok {
+		t.Fatal("the Snow preset is missing")
+	}
+	light := uitheme.UI(false, snow, uitheme.Options{})
 	if got := syncWarningTextColor(light); got != ui.Hex("#9a5c00") {
 		t.Fatalf("light warning text = %+v, want the darker amber", got)
 	}
-	dark := &ui.Theme{Dark: true, Warning: ui.Hex("#fbbf24")}
+	midnight, ok := domaintheme.LookupPreset(true, "midnight")
+	if !ok {
+		t.Fatal("the Midnight preset is missing")
+	}
+	dark := uitheme.UI(true, midnight, uitheme.Options{})
 	if got := syncWarningTextColor(dark); got != dark.Warning {
 		t.Fatalf("dark warning text = %+v, want the theme warning", got)
 	}

@@ -14,6 +14,7 @@ import (
 	appsysmanager "github.com/mslxl/natcatty/application/sysmanager"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // surfaceGap is the vertical space between the surface's rows. It is tighter
@@ -146,7 +147,7 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	})
 
 	if problem := problemText(m, s.Problem()); problem != "" {
-		ui.Text(c, problem).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
 	}
 	if notice := actionNotice(s, m); notice != "" {
 		ui.Text(c, notice).FontSize(12).TextColor(actionNoticeColor(s, t))
@@ -670,7 +671,7 @@ func documentPanel(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		case s.DocumentBusy():
 			ui.Text(c, m.SysManagerDocumentLoading()).FontSize(11).TextColor(t.TextMuted)
 		case s.DocumentError() != nil:
-			ui.Text(c, m.SysManagerDocumentFailed()).FontSize(11).TextColor(t.Danger)
+			ui.Text(c, m.SysManagerDocumentFailed()).FontSize(11).TextColor(uitheme.DangerText(t))
 			ui.Text(c, s.DocumentError().Error()).FontSize(11).TextColor(t.TextMuted).SingleLine()
 		default:
 			if document.Truncated {
@@ -925,7 +926,7 @@ func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.
 				color := t.TextMuted
 				switch unit.ActiveState {
 				case "failed":
-					color = t.Danger
+					color = uitheme.DangerText(t)
 				case "active":
 					color = t.Text
 				}
@@ -1174,13 +1175,13 @@ func statusText(m locales.Messages, state appsysmanager.TabState, t *ui.Theme) (
 	case appsysmanager.StatusConnecting:
 		return m.SysManagerStatusConnecting(), t.TextMuted
 	case appsysmanager.StatusLogin:
-		return m.SysManagerStatusLogin(), t.Danger
+		return m.SysManagerStatusLogin(), uitheme.DangerText(t)
 	case appsysmanager.StatusError:
-		return m.SysManagerStatusError(), t.Danger
+		return m.SysManagerStatusError(), uitheme.DangerText(t)
 	case appsysmanager.StatusUnsupported:
 		return m.SysManagerStatusUnsupported(), t.TextMuted
 	case appsysmanager.StatusUnavailable:
-		return m.SysManagerStatusUnavailable(), t.Danger
+		return m.SysManagerStatusUnavailable(), uitheme.DangerText(t)
 	default:
 		return m.SysManagerStatusIdle(), t.TextMuted
 	}
@@ -1275,10 +1276,10 @@ func actionNotice(s *State, m locales.Messages) string {
 
 func actionNoticeColor(s *State, t *ui.Theme) ui.Color {
 	if s.ActionBusy() {
-		return t.Warning
+		return uitheme.WarningText(t)
 	}
 	if s.ActionError() != nil && !errors.Is(s.ActionError(), context.Canceled) {
-		return t.Danger
+		return uitheme.DangerText(t)
 	}
 	return t.TextMuted
 }

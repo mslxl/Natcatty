@@ -26,8 +26,8 @@ package app
 // Every wait observes panel, page, or service state with a hard deadline;
 // there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-47.json and
-// %TEMP%\natcatty-selftest-47-shots\*.png.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-47.json and
+// %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-47-shots\*.png.
 
 import (
 	"context"

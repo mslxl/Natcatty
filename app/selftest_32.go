@@ -25,7 +25,7 @@ package app
 // wait polls a real task state or the persisted repository with a hard
 // deadline; there is no fixed sleep.
 //
-// Result: %TEMP%\natcatty-selftest-32.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-32.json.
 
 import (
 	"context"

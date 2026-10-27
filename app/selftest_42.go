@@ -22,7 +22,7 @@ package app
 // Every wait observes a result with a hard deadline; there is no sleep. The
 // deadline step intentionally waits the real 30 seconds.
 //
-// Result: %TEMP%\natcatty-selftest-42.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-42.json.
 
 import (
 	"bytes"

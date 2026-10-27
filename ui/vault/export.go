@@ -5,6 +5,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -86,7 +87,7 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	ui.Text(c, m.VaultExportTitle()).FontSize(20).Bold()
 	problem(c, s, t)
 	if issue := s.ExportProblem(); issue != vaultstate.ProblemNone {
-		ui.Text(c, problemText(m, issue)).TextColor(t.Danger)
+		ui.Text(c, problemText(m, issue)).TextColor(uitheme.DangerText(t))
 	}
 
 	gutter := scrollbarGutter(t)
@@ -133,7 +134,7 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 		case s.ExportSecretsConfirmed():
 			ui.Text(c, m.VaultExportSecretsConfirmed()).FontSize(11).TextColor(t.Success)
 		default:
-			ui.Text(c, m.VaultExportSecretsWarning()).FontSize(11).TextColor(t.Warning)
+			ui.Text(c, m.VaultExportSecretsWarning()).FontSize(11).TextColor(uitheme.WarningText(t))
 			if ui.Button(c, m.VaultExportConfirmSecrets()).Clicked() {
 				s.ConfirmExportSecrets()
 				c.Invalidate()
@@ -142,7 +143,7 @@ func exportPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	})
 
 	if s.ExportIncludesSecrets() && !s.ExportSecretsConfirmed() {
-		ui.Text(c, m.VaultExportUnconfirmed()).FontSize(12).TextColor(t.Warning)
+		ui.Text(c, m.VaultExportUnconfirmed()).FontSize(12).TextColor(uitheme.WarningText(t))
 	} else {
 		ui.Text(c, m.VaultExportSaveHint()).FontSize(12).TextColor(t.TextMuted)
 	}
@@ -181,7 +182,7 @@ func exportOutcomeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 			ui.Text(c, m.VaultExportDone(outcome.Path, outcome.Bytes)).FontSize(12)
 			if outcome.Unreadable > 0 {
 				ui.Text(c, m.VaultExportUnreadable(outcome.Unreadable)).
-					FontSize(11).TextColor(t.Warning)
+					FontSize(11).TextColor(uitheme.WarningText(t))
 			}
 			if outcome.Omitted > 0 {
 				ui.Text(c, m.VaultExportOmitted(outcome.Omitted)).

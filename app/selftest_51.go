@@ -27,7 +27,7 @@ package app
 // goroutine so the event loop is never blocked; waits poll an observable
 // condition with the scenario deadline as the hard bound.
 //
-// Result: %TEMP%\natcatty-selftest-51.json (os.TempDir on other platforms).
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-51.json (os.TempDir on other platforms).
 
 import (
 	"bytes"

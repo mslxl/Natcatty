@@ -8,6 +8,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -107,7 +108,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	ui.Text(c, m.VaultImportTitle()).FontSize(20).Bold()
 	problem(c, s, t)
 	if problem := s.ImportProblem(); problem != vaultstate.ProblemNone {
-		ui.Text(c, problemText(m, problem)).TextColor(t.Danger)
+		ui.Text(c, problemText(m, problem)).TextColor(uitheme.DangerText(t))
 	}
 
 	preview := s.ImportPreview()
@@ -196,7 +197,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			}
 			color := t.TextMuted
 			if item.Severity == vaultimport.SeverityError {
-				color = t.Danger
+				color = uitheme.DangerText(t)
 			}
 			ui.Text(c, line).FontSize(12).TextColor(color)
 		}
@@ -253,7 +254,7 @@ func importPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	selected := s.ImportSelectedCount()
 	familyCount := s.ImportFamilyCounts().Total()
 	if selected == 0 && familyCount == 0 {
-		ui.Text(c, m.VaultImportNoneSelected()).FontSize(12).TextColor(t.Warning)
+		ui.Text(c, m.VaultImportNoneSelected()).FontSize(12).TextColor(uitheme.WarningText(t))
 	} else {
 		if selected > 0 {
 			ui.Text(c, m.VaultImportSelected(selected)).FontSize(12).TextColor(t.TextMuted)
@@ -291,11 +292,11 @@ func importStatusText(m locales.Messages, status appvault.ImportStatus) string {
 func importStatusColor(t *ui.Theme, status appvault.ImportStatus) ui.Color {
 	switch status {
 	case appvault.ImportStatusConflict:
-		return t.Warning
+		return uitheme.WarningText(t)
 	case appvault.ImportStatusDuplicate:
 		return t.TextMuted
 	case appvault.ImportStatusInvalid:
-		return t.Danger
+		return uitheme.DangerText(t)
 	default:
 		return t.Success
 	}

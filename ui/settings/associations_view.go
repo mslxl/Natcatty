@@ -5,6 +5,7 @@ import (
 
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // associationsSection renders the default opener and the per-extension list.
@@ -136,7 +137,7 @@ func associationProblem(c *ui.Context, state *AssociationsState, m locales.Messa
 		message = m.SettingsSaveFailed()
 	}
 	if message != "" {
-		ui.Text(c, message).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, message).FontSize(12).TextColor(uitheme.DangerText(t))
 	}
 }
 

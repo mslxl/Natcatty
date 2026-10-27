@@ -8,6 +8,7 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
@@ -68,7 +69,7 @@ func centerView(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui
 				centerHeader(c, s, m, t)
 				if code := s.CenterError(); code != "" {
 					ui.Text(c, noticeText(m, code)).FontSize(11).
-						TextColor(t.Danger).SingleLine()
+						TextColor(uitheme.DangerText(t)).SingleLine()
 				}
 				if len(tasks) == 0 {
 					ui.Column(c).Grow(1).FillWidth().
@@ -154,7 +155,7 @@ func centerRow(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.
 		// instead of ending in an ellipsis, so the whole instruction is read.
 		if task.ReconnectRequired {
 			ui.Text(c, m.SftpTransferReconnectRequired()).FontSize(10).
-				TextColor(t.Warning).FillWidth().MinWidth(0)
+				TextColor(uitheme.WarningText(t)).FillWidth().MinWidth(0)
 		}
 	})
 }
@@ -233,9 +234,9 @@ func transferStatusColor(t *ui.Theme, status domainsftp.TaskStatus) ui.Color {
 	case domainsftp.TaskCompleted:
 		return t.Success
 	case domainsftp.TaskFailed:
-		return t.Danger
+		return uitheme.DangerText(t)
 	case domainsftp.TaskAttention, domainsftp.TaskInterrupted:
-		return t.Warning
+		return uitheme.WarningText(t)
 	default:
 		return t.TextMuted
 	}

@@ -11,6 +11,7 @@ import (
 	appbrowser "github.com/mslxl/natcatty/application/browser"
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // polishPane is one of the panel's local management surfaces. A pane replaces
@@ -97,7 +98,7 @@ func (p *Panel) bookmarkEditor(c *ui.Context, m locales.Messages, t *ui.Theme) {
 		Background(t.Surface).Children(func() {
 		if p.bookmarkForm.err != nil {
 			ui.Text(c, bookmarkErrorText(p.bookmarkForm.err, m)).FontSize(10).
-				SingleLine().TextColor(t.Danger)
+				SingleLine().TextColor(uitheme.DangerText(t))
 		}
 		ui.TextInput(c, &p.bookmarkForm.title).FillWidth().
 			Label(m.BrowserBookmarkTitle())
@@ -276,7 +277,7 @@ func (p *Panel) downloadPane(c *ui.Context, m locales.Messages, t *ui.Theme) {
 		})
 		if p.downloadErr != nil {
 			ui.Text(c, downloadErrorText(p.downloadErr, m)).FontSize(10).
-				SingleLine().TextColor(t.Danger)
+				SingleLine().TextColor(uitheme.DangerText(t))
 		}
 		if len(items) == 0 {
 			ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Children(func() {

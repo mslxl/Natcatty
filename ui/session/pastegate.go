@@ -42,7 +42,15 @@ func NewPasteGate(policy func() (bool, int), send func(string)) *PasteGate {
 
 // Request applies the policy to text. It reports true when the text was sent
 // immediately, false when it is waiting for Accept or Cancel.
+//
+// Request normalizes line endings exactly once, before the policy or any send.
+// This is the single input boundary shared by the terminal's paste key, the
+// Session menu, and the clipboard banner, so a Windows CRLF or an old-Mac CR
+// reaches every Session as one LF per line. MyGo's terminal encoder turns each
+// LF into a carriage return for the wire; without this normalization a CRLF
+// would become CR CR and open a blank line.
 func (g *PasteGate) Request(text string) bool {
+	text = domainterminal.NormalizePasteText(text)
 	protection, minLines := g.policy()
 	if !domainterminal.ShouldConfirmPaste(text, protection, minLines) {
 		g.mu.Lock()
@@ -56,7 +64,7 @@ func (g *PasteGate) Request(text string) bool {
 	pending := &PendingPaste{
 		Text:      text,
 		Lines:     domainterminal.PasteLineCount(text),
-		Chars:     len([]rune(domainterminal.NormalizePasteText(text))),
+		Chars:     len([]rune(text)),
 		Preview:   preview,
 		Truncated: truncated,
 	}

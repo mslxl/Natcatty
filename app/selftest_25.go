@@ -27,7 +27,7 @@ package app
 //   - Layout: the list and export panel render at 1100x720 and 720x480 without
 //     horizontal overflow, the actions stay visible, and the panel scrolls.
 //
-// Result: %TEMP%\natcatty-selftest-25.json. Every store, secret store, and
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-25.json. Every store, secret store, and
 // temporary directory is closed and removed, so F11,2,5 passes twice in one
 // process.
 

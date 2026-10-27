@@ -9,6 +9,7 @@ import (
 	apptransfer "github.com/mslxl/natcatty/application/transfer"
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
@@ -104,7 +105,7 @@ func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 		if dialog.Err == "invalid-mode" {
 			message = m.SftpInvalidMode()
 		}
-		ui.Text(c, message).FontSize(11).TextColor(t.Danger)
+		ui.Text(c, message).FontSize(11).TextColor(uitheme.DangerText(t))
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
@@ -123,7 +124,7 @@ func inputDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Di
 }
 
 func deleteDialog(c *ui.Context, s *transferstate.State, dialog *transferstate.Dialog, m locales.Messages, t *ui.Theme) {
-	ui.Text(c, m.SftpDeleteTitle()).FontSize(15).Bold().TextColor(t.Danger)
+	ui.Text(c, m.SftpDeleteTitle()).FontSize(15).Bold().TextColor(uitheme.DangerText(t))
 	ui.Text(c, m.SftpDeleteBody(len(dialog.Paths))).FontSize(12).TextColor(t.Text)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1)
@@ -182,7 +183,7 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 		ui.Text(c, m.SftpConflictMergeHint()).FontSize(11).TextColor(t.TextMuted)
 	}
 	if conflict.IsDirectory && conflict.ExistingKind == domainsftp.ExistingDirectory {
-		ui.Text(c, m.SftpConflictReplaceWarning()).FontSize(11).TextColor(t.Danger)
+		ui.Text(c, m.SftpConflictReplaceWarning()).FontSize(11).TextColor(uitheme.DangerText(t))
 	}
 
 	count := conflict.ApplyToAllCount
@@ -190,7 +191,7 @@ func conflictDialog(c *ui.Context, s *transferstate.State, dialog *transferstate
 		ui.Checkbox(c, &dialog.ApplyToAll, m.SftpConflictApplyToAll(count)).FontSize(11)
 	}
 	if dialog.Err != "" {
-		ui.Text(c, m.SftpConflictInvalidAction()).FontSize(11).TextColor(t.Danger)
+		ui.Text(c, m.SftpConflictInvalidAction()).FontSize(11).TextColor(uitheme.DangerText(t))
 	}
 
 	ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {

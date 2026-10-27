@@ -20,7 +20,7 @@ package app
 // dedicated listener with the same bridge and empty readers.
 //
 // No step sleeps: readiness is a JSON-RPC response, and every wait has a hard
-// deadline. Result: %TEMP%\natcatty-selftest-56.json.
+// deadline. Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-56.json.
 
 import (
 	"bufio"

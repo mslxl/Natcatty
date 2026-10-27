@@ -15,7 +15,7 @@ package app
 //
 // Every step is synchronous or checks a real condition; there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-35.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-35.json.
 
 import (
 	"context"

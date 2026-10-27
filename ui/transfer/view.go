@@ -9,6 +9,7 @@ import (
 
 	domainsftp "github.com/mslxl/natcatty/domain/transfer"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
@@ -138,7 +139,7 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, m loca
 		}
 		pathRow(c, s, side, tab, m, t)
 		if tab.Problem != nil {
-			ui.Text(c, errorText(m, tab.Problem)).FontSize(11).TextColor(t.Danger).
+			ui.Text(c, errorText(m, tab.Problem)).FontSize(11).TextColor(uitheme.DangerText(t)).
 				SingleLine().MinWidth(0)
 		}
 		viewRow(c, s, side, tab, m, t)
@@ -458,7 +459,7 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 		}
 		color := t.Text
 		if op.Err != nil {
-			color = t.Danger
+			color = uitheme.DangerText(t)
 		}
 		ui.Text(c, text).FontSize(12).Grow(1).MinWidth(0).SingleLine().TextColor(color)
 		if op.Status != "" {
@@ -480,7 +481,7 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 
 func status(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
 	if problem := s.Problem(); problem != nil {
-		ui.Text(c, errorText(m, problem)).FontSize(11).TextColor(t.Danger).
+		ui.Text(c, errorText(m, problem)).FontSize(11).TextColor(uitheme.DangerText(t)).
 			SingleLine().MinWidth(0)
 		return
 	}

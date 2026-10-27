@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func assertInputInside(t *testing.T, tester *ui.Tester, width, height int, text 
 // overlap.
 func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 	m := locales.In("en")
-	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
+	for _, size := range [][2]int{{1084, 661}, {704, 421}} {
 		graph := newInputGraph(t)
 		prepareBroadcastAndCompose(t, graph)
 
@@ -87,8 +88,6 @@ func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 			{m.BroadcastStop(), 16},
 			{m.ComposeTitle(), 15},
 			{m.ComposeTargetBroadcast(2), 12},
-			{m.ComposePreview(), 11},
-			{"echo one\\necho two", 12},
 			{m.ComposeTrim(), 16},
 			{m.ComposeDecodeEscapes(), 16},
 			{m.ComposeSend(), 16},
@@ -122,6 +121,27 @@ func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 		if send.Y < compose.Y {
 			t.Fatalf("%dx%d Send is above the compose header: send %+v title %+v",
 				size[0], size[1], send, compose)
+		}
+
+		// The compose body above the pinned option row scrolls. At the
+		// minimum client the preview sits below the body viewport at rest;
+		// scrolling must bring it fully above the pinned Send row, and the
+		// row itself must not move.
+		if rect, ok := tester.Find(m.ComposePreview()); !ok || rect.H < 11 {
+			tester.Scroll(352, 330, 0, 400)
+			tester.Frame()
+		}
+		preview := assertInputInside(t, tester, size[0], size[1], m.ComposePreview())
+		if preview.H < 11 {
+			t.Fatalf("%dx%d clips the scrolled preview label: %+v", size[0], size[1], preview)
+		}
+		if !strings.Contains(strings.Join(tester.Texts(), "\n"), "echo one\\necho two") {
+			t.Fatalf("%dx%d lost the preview text after scrolling: %q", size[0], size[1], tester.Texts())
+		}
+		moved := rects[m.ComposeSend()]
+		if moved != send {
+			t.Fatalf("%dx%d moved the pinned Send row while scrolling the body: %+v -> %+v",
+				size[0], size[1], send, moved)
 		}
 	}
 }
@@ -469,8 +489,9 @@ func TestComposePreviewShowsTheFullWrappedResult(t *testing.T) {
 }
 
 // TestTabStripScrollsToReachEveryTabAtMinimumWidth covers the overflow of the
-// Tab strip: the last Tab of a wide strip is reachable by scrolling, and the
-// first one comes back.
+// Tab strip: the active Tab of a wide strip is scrolled into view when it is
+// opened, every Tab stays reachable by scrolling, and selecting a Tab that is
+// scrolled out of view brings it back.
 func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 	m := locales.In("en")
 	graph := newTestGraph(t)
@@ -481,24 +502,41 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 	}
 	graph.state.Flush()
 
-	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester := ui.NewTester(View(graph.state), 704, 421)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	strip := assertInputInside(t, tester, 720, 480, m.WorkTabsLabel())
-	first := assertInputInside(t, tester, 720, 480, "Local Session 1")
-	if first.X < strip.X-0.5 || first.X+first.W > strip.X+strip.W+0.5 {
-		t.Fatalf("the first Tab leaves the strip: tab %+v strip %+v", first, strip)
+	strip := assertInputInside(t, tester, 704, 421, m.WorkTabsLabel())
+	// The sixth Tab is active and was opened while the strip overflowed; it
+	// must be whole inside the strip without the user scrolling.
+	last := assertInputInside(t, tester, 704, 421, "Local Session 6")
+	if last.W < 40 {
+		t.Fatalf("the active last Tab is clipped at rest: %+v", last)
 	}
-	if last, ok := tester.Find("Local Session 6"); ok && last.W < 20 {
-		// Offscreen at the start is expected; it must become reachable below.
-	} else if ok {
-		t.Fatalf("the strip did not overflow at 720 DIPs: last Tab %+v", last)
+	if last.X < strip.X-0.5 || last.X+last.W > strip.X+strip.W+0.5 {
+		t.Fatalf("the active last Tab is outside the strip at rest: tab %+v strip %+v", last, strip)
+	}
+	if first, ok := tester.Find("Local Session 1"); ok {
+		// The first Tab is allowed to start off-screen, but it must not be
+		// half cut inside the viewport: either it is whole or fully out.
+		if first.X < strip.X+strip.W && first.X+first.W > strip.X {
+			t.Fatalf("the first Tab is half cut at rest: tab %+v strip %+v", first, strip)
+		}
+	}
+
+	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, -2000, 0)
+	tester.Frame()
+	first := assertInputInside(t, tester, 704, 421, "Local Session 1")
+	if first.W < 40 {
+		t.Fatalf("the first Tab is still clipped after scrolling back: %+v", first)
+	}
+	if first.X < strip.X-0.5 || first.X+first.W > strip.X+strip.W+0.5 {
+		t.Fatalf("the first Tab is outside the strip: tab %+v strip %+v", first, strip)
 	}
 
 	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, 2000, 0)
 	tester.Frame()
-	last := assertInputInside(t, tester, 720, 480, "Local Session 6")
+	last = assertInputInside(t, tester, 704, 421, "Local Session 6")
 	if last.W < 40 {
 		t.Fatalf("the last Tab is still clipped after scrolling: %+v", last)
 	}
@@ -506,11 +544,13 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 		t.Fatalf("the last Tab is outside the strip: tab %+v strip %+v", last, strip)
 	}
 
-	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, -2000, 0)
+	// Selecting the first Tab while the strip is scrolled to the end must
+	// reveal it, so a Tab can never be selected yet invisible.
+	graph.state.SelectTab(0)
 	tester.Frame()
-	first = assertInputInside(t, tester, 720, 480, "Local Session 1")
-	if first.W < 40 {
-		t.Fatalf("the first Tab did not come back after scrolling: %+v", first)
+	first = assertInputInside(t, tester, 704, 421, "Local Session 1")
+	if first.W < 40 || first.X < strip.X-0.5 || first.X+first.W > strip.X+strip.W+0.5 {
+		t.Fatalf("selecting the first Tab did not reveal it: tab %+v strip %+v", first, strip)
 	}
 }
 
@@ -530,21 +570,22 @@ func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
 	// End one selected Session so its row reports Missing beside Delivered.
 	_ = graph.sessions[1].Close()
 
-	tester := ui.NewTester(View(graph.state), 720, 480)
+	tester := ui.NewTester(View(graph.state), 704, 421)
 	tester.SetLocale("en")
 	tester.Frame()
 
-	strip := assertInputInside(t, tester, 720, 480, m.WorkTabsLabel())
+	strip := assertInputInside(t, tester, 704, 421, m.WorkTabsLabel())
 	if strip.H < 25 {
 		t.Fatalf("the Tab strip shrank to %.1f DIPs: %+v", strip.H, strip)
 	}
-	first := assertInputInside(t, tester, 720, 480, "Local Session 1")
+	// The third Tab is active; the strip reveals it when it overflows.
+	first := assertInputInside(t, tester, 704, 421, "Local Session 3")
 	if first.W < 40 {
-		t.Fatalf("the first Tab is clipped: %+v", first)
+		t.Fatalf("the active Tab is clipped: %+v", first)
 	}
 	if first.Y+first.H > strip.Y+strip.H+0.5 {
 		t.Fatalf("the Tab leaves the strip: tab %+v strip %+v", first, strip)
 	}
-	assertInputInside(t, tester, 720, 480, m.ComposeSend())
-	assertInputInside(t, tester, 720, 480, m.ComposeCancel())
+	assertInputInside(t, tester, 704, 421, m.ComposeSend())
+	assertInputInside(t, tester, 704, 421, m.ComposeCancel())
 }

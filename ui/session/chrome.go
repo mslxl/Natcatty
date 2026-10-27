@@ -10,6 +10,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // maxVisibleSuggestions bounds the popup so it cannot cover the terminal at
@@ -359,7 +360,7 @@ func pastePrompt(c *ui.Context, pending PendingPaste, m locales.Messages, t *ui.
 		})
 		if pending.Truncated {
 			ui.Text(c, m.SessionPasteTruncated()).FontSize(10).
-				SingleLine().TextColor(t.Warning)
+				SingleLine().TextColor(uitheme.WarningText(t))
 		}
 	})
 }
@@ -427,7 +428,7 @@ func logDetail(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 		switch {
 		case model.LogProblem:
 			ui.Text(c, m.SessionLoggingFailed()).FontSize(10).
-				SingleLine().MinWidth(0).Grow(1).TextColor(t.Danger)
+				SingleLine().MinWidth(0).Grow(1).TextColor(uitheme.DangerText(t))
 		case model.Logging.Path != "":
 			ui.Text(c, m.SessionLoggingPath(filepath.Clean(model.Logging.Path))).FontSize(10).
 				SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
@@ -442,7 +443,7 @@ func transferBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.
 	ui.Row(c).Height(30).Padding(2, 8).Gap(8).Background(t.Surface).
 		Border(1, t.Warning).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, m.SessionTransferActive(transferKindLabel(model.Transfer.Kind))).FontSize(11).
-			SingleLine().MinWidth(0).Grow(1).TextColor(t.Warning)
+			SingleLine().MinWidth(0).Grow(1).TextColor(uitheme.WarningText(t))
 		if ui.Button(c, m.SessionTransferCancel()).Clicked() && actions.CancelTransfer != nil {
 			actions.CancelTransfer()
 		}

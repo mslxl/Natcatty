@@ -28,7 +28,7 @@ package app
 // a real task state, the persisted repository, or the rendered view with a
 // hard deadline; there is no fixed sleep.
 //
-// Result: %TEMP%\natcatty-selftest-31.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-31.json.
 
 import (
 	"bytes"

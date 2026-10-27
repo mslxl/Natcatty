@@ -9,6 +9,7 @@ import (
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -42,7 +43,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	})
 
 	if !s.BackupEncryptionAvailable() {
-		ui.Text(c, m.VaultBackupUnavailable()).FontSize(12).TextColor(t.Warning)
+		ui.Text(c, m.VaultBackupUnavailable()).FontSize(12).TextColor(uitheme.WarningText(t))
 	} else {
 		ui.Text(c, m.VaultBackupIntro()).FontSize(12).TextColor(t.TextMuted)
 	}
@@ -62,7 +63,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	)).FontSize(11).TextColor(t.TextMuted)
 
 	if problem := s.BackupProblem(); problem != vaultstate.ProblemNone {
-		ui.Text(c, problemText(m, problem)).TextColor(t.Danger)
+		ui.Text(c, problemText(m, problem)).TextColor(uitheme.DangerText(t))
 	}
 	backupNoticeBanner(c, s, m, t)
 
@@ -75,7 +76,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 			}
 		}
 		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Wrap().Children(func() {
-			ui.Text(c, message).Grow(1).TextColor(t.Danger)
+			ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
 			if ui.Button(c, m.VaultHostCancel()).Clicked() {
 				s.CancelRestoreBackup()
 				c.Invalidate()
@@ -90,7 +91,7 @@ func backupPanel(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 	if s.BackupPendingClear() {
 		count := len(s.BackupItems())
 		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Wrap().Children(func() {
-			ui.Text(c, m.VaultBackupClearConfirm(count)).Grow(1).TextColor(t.Danger)
+			ui.Text(c, m.VaultBackupClearConfirm(count)).Grow(1).TextColor(uitheme.DangerText(t))
 			if ui.Button(c, m.VaultHostCancel()).Clicked() {
 				s.CancelClearBackups()
 				c.Invalidate()
@@ -178,13 +179,13 @@ func backupNoticeBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, 
 	switch notice.Kind {
 	case appbackup.StatusSkippedTooLarge:
 		message = m.VaultBackupSkippedTooLarge()
-		color = t.Warning
+		color = uitheme.WarningText(t)
 	case appbackup.StatusSkippedUnavailable:
 		message = m.VaultBackupSkippedUnavailable()
-		color = t.Warning
+		color = uitheme.WarningText(t)
 	case appbackup.StatusSkippedFailed:
 		message = m.VaultBackupSkippedFailed()
-		color = t.Warning
+		color = uitheme.WarningText(t)
 	case appbackup.StatusCleared:
 		// The clear count is its own field: appending Pruned here would
 		// report the same deleted entries a second time.

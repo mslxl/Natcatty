@@ -19,7 +19,7 @@ package app
 // Every step is synchronous and checks its observable result; there is no
 // sleep and no dependency on a real serial device.
 //
-// Result: %TEMP%\natcatty-selftest-39.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-39.json.
 
 import (
 	"context"

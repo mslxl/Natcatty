@@ -28,7 +28,7 @@ package app
 // one goroutine so the event loop is never blocked; the step polls its result
 // channel with the scenario deadline as the hard bound. No step sleeps.
 //
-// Result: %TEMP%\natcatty-selftest-54.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-54.json.
 
 import (
 	"context"

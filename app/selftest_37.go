@@ -23,7 +23,7 @@ package app
 // Every wait polls the real surface state or the recorded launcher under a
 // 30-second deadline; there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-37.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-37.json.
 
 import (
 	"context"

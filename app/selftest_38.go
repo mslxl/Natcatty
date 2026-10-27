@@ -35,7 +35,7 @@ package app
 // the staging write all run unchanged; only the network is modelled. Every
 // wait polls the real surface under a 30-second deadline; there is no sleep.
 //
-// Result: %TEMP%\natcatty-selftest-38.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-38.json.
 
 import (
 	"context"

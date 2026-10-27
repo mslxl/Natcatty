@@ -12,6 +12,7 @@ import (
 	kb "github.com/mslxl/natcatty/domain/keybindings"
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // Config is everything the Settings window can show. A nil state leaves its
@@ -525,7 +526,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 		}
 		conflicts := state.Conflicts()
 		if len(conflicts) > 0 {
-			ui.Text(c, m.SettingsShortcutConflictTitle()).Bold().TextColor(t.Warning)
+			ui.Text(c, m.SettingsShortcutConflictTitle()).Bold().TextColor(uitheme.WarningText(t))
 			for _, conflict := range conflicts {
 				names := make([]string, 0, len(conflict.Bindings))
 				for _, binding := range conflict.Bindings {
@@ -535,7 +536,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 					names = append(names, conflictMenuName(m, menu))
 				}
 				ui.Text(c, m.SettingsShortcutConflictBody(conflict.Chord, joinNames(names))).
-					FontSize(12).TextColor(t.Warning)
+					FontSize(12).TextColor(uitheme.WarningText(t))
 			}
 		}
 
@@ -585,7 +586,7 @@ func shortcutsArea(c *ui.Context, state *ShortcutsState, m locales.Messages, t *
 			}
 		}
 		if state.Failed() {
-			ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(t.Danger)
+			ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -605,9 +606,9 @@ func pendingConflict(c *ui.Context, state *ShortcutsState, pending PendingConfli
 		}
 	}
 	ui.Column(c).Padding(10).Gap(6).Background(t.Surface).Border(1, t.Warning).Children(func() {
-		ui.Text(c, m.SettingsShortcutConflictTitle()).Bold().TextColor(t.Warning)
+		ui.Text(c, m.SettingsShortcutConflictTitle()).Bold().TextColor(uitheme.WarningText(t))
 		ui.Text(c, m.SettingsShortcutConflictBody(pending.Chord, joinNames(names))).
-			FontSize(12).TextColor(t.Warning)
+			FontSize(12).TextColor(uitheme.WarningText(t))
 		ui.Row(c).Gap(8).Children(func() {
 			if ui.PrimaryButton(c, m.SettingsShortcutConflictReplace()).Clicked() {
 				state.Replace()
@@ -629,7 +630,7 @@ func bindingRow(c *ui.Context, state *ShortcutsState, binding kb.Binding,
 		ui.Column(c).Width(280).Children(func() {
 			ui.Text(c, label).FontSize(13)
 			if !state.Available(binding.ID) {
-				ui.Text(c, m.SettingsShortcutUnavailable()).FontSize(10).TextColor(t.Warning)
+				ui.Text(c, m.SettingsShortcutUnavailable()).FontSize(10).TextColor(uitheme.WarningText(t))
 			}
 		})
 		chord := state.Chord(binding.ID)
@@ -711,7 +712,7 @@ func groupReset(c *ui.Context, m locales.Messages, t *ui.Theme, group string,
 
 func saveProblem(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
 	if state.Failed() {
-		ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(t.Danger)
+		ui.Text(c, m.SettingsSaveFailed()).FontSize(12).TextColor(uitheme.DangerText(t))
 	}
 }
 
@@ -848,7 +849,7 @@ func hotkeySection(c *ui.Context, state *DesktopState, settings desktop.Settings
 			}
 		})
 		if state.Problem() == DesktopProblemHotkey {
-			ui.Text(c, m.SettingsHotkeyProblem()).TextColor(t.Danger)
+			ui.Text(c, m.SettingsHotkeyProblem()).TextColor(uitheme.DangerText(t))
 		}
 	})
 }
@@ -994,7 +995,7 @@ func appLockProblem(c *ui.Context, lock *AppLockState, t *ui.Theme) {
 	if message == "" {
 		return
 	}
-	ui.Text(c, message).TextColor(t.Danger)
+	ui.Text(c, message).TextColor(uitheme.DangerText(t))
 }
 
 func desktopProblem(c *ui.Context, state *DesktopState, m locales.Messages, t *ui.Theme) {
@@ -1006,7 +1007,7 @@ func desktopProblem(c *ui.Context, state *DesktopState, m locales.Messages, t *u
 		message = m.SettingsDesktopUpdateFailed()
 	}
 	if message != "" {
-		ui.Text(c, message).TextColor(t.Danger)
+		ui.Text(c, message).TextColor(uitheme.DangerText(t))
 	}
 }
 

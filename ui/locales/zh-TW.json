@@ -65,9 +65,10 @@
   "vaultHostLocal": "本機 Shell",
   "vaultHostFormCreateTitle": "新增主機",
   "vaultHostFormEditTitle": "編輯主機",
-  "vaultHostLabel": "標籤",
+  "vaultHostLabel": "名稱",
   "vaultHostHostname": "主機名稱",
   "vaultHostPort": "連接埠",
+  "vaultHostPortHint": "留空以繼承；將使用連接埠 {port}。",
   "vaultHostUsername": "使用者名稱",
   "vaultHostProtocol": "協定",
   "vaultHostGroup": "主機群組",
@@ -76,7 +77,7 @@
   "vaultGroupNew": "新增群組",
   "vaultGroupEmpty": "尚無主機群組。",
   "vaultGroupUngrouped": "Vault 根目錄（無主機群組）",
-  "vaultGroupMemberCount": "{count} 台主機",
+  "vaultGroupMemberCount": "{count, plural, other {# 台主機}}",
   "vaultGroupFormCreateTitle": "新增主機群組",
   "vaultGroupFormEditTitle": "編輯主機群組",
   "vaultGroupDefaults": "成員主機的預設值",
@@ -236,7 +237,7 @@
   "vaultImportRows": "列",
   "vaultImportIssues": "問題",
   "vaultImportNoIssues": "未發現問題。",
-  "vaultImportSelected": "已選取 {count} 項",
+  "vaultImportSelected": "{count, plural, other {已選取 # 項}}",
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
@@ -985,7 +986,7 @@
   "vaultSnippetSummaryTargets": "目標：{targets}",
   "vaultSnippetSummaryAllHosts": "所有主機",
   "vaultSnippetSummaryNoTargets": "任意工作階段",
-  "vaultSnippetVariableCount": "{count} 個變數",
+  "vaultSnippetVariableCount": "{count, plural, other {# 個變數}}",
   "vaultSnippetNoAutoRun": "不自動執行",
   "vaultSnippetLineDelay": "逐行執行",
   "vaultSnippetFormCreateTitle": "新增程式碼片段",
@@ -1007,7 +1008,7 @@
   "vaultSnippetPackageFormEditTitle": "重新命名程式碼片段套件",
   "vaultSnippetPackagePath": "套件路徑",
   "vaultSnippetPackagePathHint": "套件以「/」巢狀，例如 ops/linux。",
-  "vaultSnippetPackageSnippetCount": "{count} 個程式碼片段",
+  "vaultSnippetPackageSnippetCount": "{count, plural, other {# 個程式碼片段}}",
   "vaultSnippetDeleteConfirm": "刪除程式碼片段「{label}」？",
   "vaultSnippetPackageDeleteConfirm": "刪除套件「{path}」？其中程式碼片段會保留並移到 Vault 根目錄。",
   "vaultSnippetRunTitle": "執行「{label}」",
@@ -1151,7 +1152,7 @@
   "@vaultNoteGroupPathHint": {
     "description": "The Note Group path field's hint."
   },
-  "vaultNoteGroupNoteCount": "{count} 則筆記",
+  "vaultNoteGroupNoteCount": "{count, plural, other {# 則筆記}}",
   "@vaultNoteGroupNoteCount": {
     "description": "How many Notes one Note Group directly contains.",
     "placeholders": {
@@ -1303,7 +1304,7 @@
       }
     }
   },
-  "vaultExportUnreadable": "有 {count} 個憑證無法讀取，已省略。",
+  "vaultExportUnreadable": "{count, plural, other {有 # 個憑證無法讀取，已省略。}}",
   "vaultExportOmitted": "{count, plural, other {已省略 # 個已儲存的認證；啟用密鑰匯出以包含它們。}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
@@ -1464,7 +1465,7 @@
   "settingsAreaSFTPEditor": "SFTP 與編輯器",
   "settingsAreaLogs": "日誌",
   "settingsAreaSystem": "系統與桌面",
-  "settingsAreaSecurity": "安全性與應用程式鎖定",
+  "settingsAreaSecurity": "安全性",
   "settingsAreaSync": "同步與雲端",
   "settingsAreaShortcuts": "快速鍵",
   "settingsSearchPlaceholder": "搜尋設定…",
@@ -1936,7 +1937,7 @@
   "sftpEditorSyncFailedBody": "{name} 的變更正在本機等待。遠端檔案未被變更。",
   "sftpEditorRetry": "重試",
   "sftpEditorDismiss": "關閉",
-  "sftpSelected": "已選取 {count} 項",
+  "sftpSelected": "{count, plural, other {已選取 # 項}}",
   "sftpItemCount": "{count, plural, other {# 項}}",
   "sftpProgress": "{current} · {percent}%",
   "sftpProgressDone": "{current} · 已完成",
@@ -2097,7 +2098,7 @@
   "@sftpTransferConflictFailed": {
     "description": "The Transfer center error for a failed conflict answer."
   },
-  "sftpTransferSkipped": "已略過 {count} 個",
+  "sftpTransferSkipped": "{count, plural, other {已略過 # 個}}",
   "@sftpTransferSkipped": {
     "description": "The count of entries a Transfer left untouched.",
     "placeholders": {
@@ -2195,7 +2196,7 @@
   "monitoringName": "名稱",
   "monitoringDescription": "描述",
   "monitoringPanelHosts": "主機",
-  "monitoringSelectedCount": "已選擇 {count} 台",
+  "monitoringSelectedCount": "{count, plural, other {已選擇 # 台}}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -2283,7 +2284,7 @@
   "sysManagerSearchProcesses": "搜尋程序…",
   "sysManagerSearchPorts": "搜尋連接埠…",
   "sysManagerSearchServices": "搜尋服務…",
-  "sysManagerProcessesCount": "{count} 個程序",
+  "sysManagerProcessesCount": "{count, plural, other {# 個程序}}",
   "@sysManagerProcessesCount": {
     "description": "The number of processes matching the search.",
     "placeholders": {
@@ -2293,7 +2294,7 @@
       }
     }
   },
-  "sysManagerPortsCount": "{count} 個監聽",
+  "sysManagerPortsCount": "{count, plural, other {# 個監聽}}",
   "@sysManagerPortsCount": {
     "description": "The number of listening sockets matching the search.",
     "placeholders": {
@@ -2303,7 +2304,7 @@
       }
     }
   },
-  "sysManagerServicesCount": "{count} 個單元",
+  "sysManagerServicesCount": "{count, plural, other {# 個單元}}",
   "@sysManagerServicesCount": {
     "description": "The number of systemd units matching the search.",
     "placeholders": {
@@ -2505,7 +2506,7 @@
   "sysManagerOverviewKernel": "核心",
   "sysManagerOverviewUptime": "運作時間",
   "sysManagerOverviewLoad": "負載",
-  "sysManagerOverviewCores": "{count} 個核心",
+  "sysManagerOverviewCores": "{count, plural, other {# 個核心}}",
   "@sysManagerOverviewCores": {
     "description": "The Host's CPU core count.",
     "placeholders": {
@@ -2607,7 +2608,7 @@
   "sysManagerReasonDockerDaemon": "無法連線 Docker 守護程序。",
   "sysManagerProblemAttach": "無法開啟 tmux 工作階段。",
   "sysManagerSearchSessions": "搜尋工作階段…",
-  "sysManagerSessionsCount": "{count} 個工作階段",
+  "sysManagerSessionsCount": "{count, plural, other {# 個工作階段}}",
   "@sysManagerSessionsCount": {
     "description": "",
     "placeholders": {
@@ -2668,7 +2669,7 @@
   "sysManagerDockerView": "檢視",
   "sysManagerSearchContainers": "搜尋容器…",
   "sysManagerSearchImages": "搜尋映像…",
-  "sysManagerContainersCount": "{count} 個容器",
+  "sysManagerContainersCount": "{count, plural, other {# 個容器}}",
   "@sysManagerContainersCount": {
     "description": "",
     "placeholders": {
@@ -2678,7 +2679,7 @@
       }
     }
   },
-  "sysManagerImagesCount": "{count} 個映像",
+  "sysManagerImagesCount": "{count, plural, other {# 個映像}}",
   "@sysManagerImagesCount": {
     "description": "",
     "placeholders": {
@@ -2801,7 +2802,7 @@
   "sysManagerGPUPower": "功耗",
   "sysManagerGPUFan": "風扇",
   "sysManagerGPUVendor": "廠商",
-  "sysManagerGPUCount": "{count} 張 GPU",
+  "sysManagerGPUCount": "{count, plural, other {# 張 GPU}}",
   "@sysManagerGPUCount": {
     "description": "",
     "placeholders": {

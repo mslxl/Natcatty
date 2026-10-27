@@ -11,6 +11,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // defaultTrustTimeout matches the original host-key request TTL. An unanswered
@@ -167,12 +168,12 @@ func TrustView(p *TrustPrompt) func(*ui.Context) {
 					title = m.HostKeyPromptChangedTitle()
 					body = m.HostKeyPromptChangedBody(key.Hostname)
 				}
-				ui.Text(c, title).FontSize(18).Bold().TextColor(t.Danger)
+				ui.Text(c, title).FontSize(18).Bold().TextColor(uitheme.DangerText(t))
 				ui.Text(c, body).TextColor(t.TextMuted)
 				ui.Text(c, m.HostKeyPromptFingerprint(key.KeyType, key.Fingerprint)).FontSize(12)
 				if key.Status == domainconn.StatusChanged && key.ExpectedFingerprint != "" {
-					ui.Text(c, m.HostKeyPromptExpected(key.ExpectedFingerprint)).FontSize(12).TextColor(t.Danger)
-					ui.Text(c, m.HostKeyPromptChangedHint()).FontSize(12).TextColor(t.Danger)
+					ui.Text(c, m.HostKeyPromptExpected(key.ExpectedFingerprint)).FontSize(12).TextColor(uitheme.DangerText(t))
+					ui.Text(c, m.HostKeyPromptChangedHint()).FontSize(12).TextColor(uitheme.DangerText(t))
 				}
 
 				ui.Row(c).Gap(8).Children(func() {

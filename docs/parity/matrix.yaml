@@ -1387,10 +1387,13 @@
     - ui/session.TestPasteGateANewerPasteSupersedesTheWaitingOne
     - ui/session.TestPasteGateProtectionOffSendsImmediately
     - ui/session.TestPasteGateOneLineIsDirectEvenWhenProtected
+    - ui/session.TestPasteGateNormalizesEveryLineEndingOnce
+    - ui/session.TestPasteGateNormalizesTheWaitingTextBeforeAccept
     - ui/session.TestPastePromptShowsCountsAndCallsExactlyOneAction
     - app.TestTicket17CheckRunsThroughTheKeyboard
+    - app.TestSelftest61PassesTwiceInOneProcess
   status: verified
-  notes: "The original defaults are preserved: protection is off, the threshold is 2 lines (range 1..1000), CRLF and CR normalize to LF, and one trailing newline is not an extra line. With protection on, every terminal paste path (Ctrl+Shift+V, the native menu, and the Session menu) is consumed by the gate, and a banner shows the line count, character count, and a bounded preview. Send delivers the exact stored text once through the terminal's bracketed paste; Cancel sends no bytes. A newer paste replaces the waiting one, and the old text is never sent. With protection off, the same text is delivered immediately."
+  notes: "The original defaults are preserved: protection is off, the threshold is 2 lines (range 1..1000), CRLF and lone CR normalize to LF, and one trailing newline is not an extra line. CRLF and lone-CR normalization happens exactly once at the shared paste gate, before the policy, preview, or send, so every paste path and every Session kind (SSH, serial, Telnet) stores and sends one LF per line. MyGo's vt.EncodePaste runs after that boundary and turns each LF into the carriage return the wire expects; it never sees a CRLF, so the old CR CR blank-line defect cannot recur. With protection on, every terminal paste path (Ctrl+Shift+V, the native menu, and the Session menu) is consumed by the gate, and a banner shows the line count, character count, and a bounded preview. Send delivers the exact stored text once through the terminal's bracketed paste; Cancel sends no bytes. A newer paste replaces the waiting one, and the old text is never sent. With protection off, the same text is delivered immediately."
 
 - id: terminal.color-schemes
   area: terminal

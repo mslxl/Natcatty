@@ -68,6 +68,7 @@
   "vaultHostLabel": "Etiqueta",
   "vaultHostHostname": "Nombre de host",
   "vaultHostPort": "Puerto",
+  "vaultHostPortHint": "Déjelo vacío para heredar; se usa el puerto {port}.",
   "vaultHostUsername": "Usuario",
   "vaultHostProtocol": "Protocolo",
   "vaultHostGroup": "Grupo de hosts",
@@ -76,7 +77,7 @@
   "vaultGroupNew": "Nuevo grupo",
   "vaultGroupEmpty": "Aún no hay grupos de hosts.",
   "vaultGroupUngrouped": "Raíz del Vault (sin grupo de hosts)",
-  "vaultGroupMemberCount": "{count} hosts",
+  "vaultGroupMemberCount": "{count, plural, one {# host} many {# hosts} other {# hosts}}",
   "vaultGroupFormCreateTitle": "Nuevo grupo de hosts",
   "vaultGroupFormEditTitle": "Editar grupo de hosts",
   "vaultGroupDefaults": "Valores predeterminados para los hosts del grupo",
@@ -236,7 +237,7 @@
   "vaultImportRows": "Filas",
   "vaultImportIssues": "Problemas",
   "vaultImportNoIssues": "No se encontraron problemas.",
-  "vaultImportSelected": "{count} seleccionadas",
+  "vaultImportSelected": "{count, plural, one {# seleccionado} many {# seleccionados} other {# seleccionados}}",
   "@vaultImportSelected": {
     "description": "How many rows the user selected.",
     "placeholders": {
@@ -985,7 +986,7 @@
   "vaultSnippetSummaryTargets": "Destinos: {targets}",
   "vaultSnippetSummaryAllHosts": "Todos los hosts",
   "vaultSnippetSummaryNoTargets": "Cualquier sesión",
-  "vaultSnippetVariableCount": "{count} variables",
+  "vaultSnippetVariableCount": "{count, plural, one {# variable} many {# variables} other {# variables}}",
   "vaultSnippetNoAutoRun": "Sin ejecución automática",
   "vaultSnippetLineDelay": "Línea por línea",
   "vaultSnippetFormCreateTitle": "Nuevo fragmento",
@@ -1007,7 +1008,7 @@
   "vaultSnippetPackageFormEditTitle": "Renombrar paquete de fragmentos",
   "vaultSnippetPackagePath": "Ruta del paquete",
   "vaultSnippetPackagePathHint": "Los paquetes se anidan con '/', por ejemplo ops/linux.",
-  "vaultSnippetPackageSnippetCount": "{count} fragmentos",
+  "vaultSnippetPackageSnippetCount": "{count, plural, one {# fragmento} many {# fragmentos} other {# fragmentos}}",
   "vaultSnippetDeleteConfirm": "¿Eliminar el fragmento «{label}»?",
   "vaultSnippetPackageDeleteConfirm": "¿Eliminar el paquete «{path}»? Sus fragmentos se conservan y pasan a la raíz del Vault.",
   "vaultSnippetRunTitle": "Ejecutar «{label}»",
@@ -1151,7 +1152,7 @@
   "@vaultNoteGroupPathHint": {
     "description": "The Note Group path field's hint."
   },
-  "vaultNoteGroupNoteCount": "{count} notas",
+  "vaultNoteGroupNoteCount": "{count, plural, one {# nota} many {# notas} other {# notas}}",
   "@vaultNoteGroupNoteCount": {
     "description": "How many Notes one Note Group directly contains.",
     "placeholders": {
@@ -1303,7 +1304,7 @@
       }
     }
   },
-  "vaultExportUnreadable": "No se pudieron leer {count} credenciales y se omitieron.",
+  "vaultExportUnreadable": "{count, plural, one {No se pudo leer # credencial y se omitió.} many {No se pudieron leer # credenciales y se omitieron.} other {No se pudieron leer # credenciales y se omitieron.}}",
   "vaultExportOmitted": "{count, plural, one {Se omitió # credencial guardada; activa los secretos para incluirla.} many {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.} other {Se omitieron # credenciales guardadas; activa los secretos para incluirlas.}}",
   "@vaultExportUnreadable": {
     "description": "Credentials that could not be decrypted and were left out.",
@@ -1464,8 +1465,8 @@
   "settingsAreaSFTPEditor": "SFTP y editor",
   "settingsAreaLogs": "Registros",
   "settingsAreaSystem": "Sistema y escritorio",
-  "settingsAreaSecurity": "Seguridad y bloqueo",
-  "settingsAreaSync": "Sincronización y nube",
+  "settingsAreaSecurity": "Seguridad",
+  "settingsAreaSync": "Sincronización",
   "settingsAreaShortcuts": "Atajos",
   "settingsSearchPlaceholder": "Buscar ajustes…",
   "settingsSearchHint": "Escribe para filtrar los ajustes. Arriba y Abajo se mueven; Intro abre la sección.",
@@ -1936,7 +1937,7 @@
   "sftpEditorSyncFailedBody": "Los cambios de {name} esperan localmente. El archivo remoto no cambió.",
   "sftpEditorRetry": "Reintentar",
   "sftpEditorDismiss": "Descartar",
-  "sftpSelected": "{count} seleccionados",
+  "sftpSelected": "{count, plural, one {# seleccionado} many {# seleccionados} other {# seleccionados}}",
   "sftpItemCount": "{count, plural, one {# elemento} many {# elementos} other {# elementos}}",
   "sftpProgress": "{current} · {percent} %",
   "sftpProgressDone": "{current} · completado",
@@ -2097,7 +2098,7 @@
   "@sftpTransferConflictFailed": {
     "description": "The Transfer center error for a failed conflict answer."
   },
-  "sftpTransferSkipped": "{count} omitidos",
+  "sftpTransferSkipped": "{count, plural, one {# omitido} many {# omitidos} other {# omitidos}}",
   "@sftpTransferSkipped": {
     "description": "The count of entries a Transfer left untouched.",
     "placeholders": {
@@ -2195,7 +2196,7 @@
   "monitoringName": "Nombre",
   "monitoringDescription": "Descripción",
   "monitoringPanelHosts": "Hosts",
-  "monitoringSelectedCount": "{count} seleccionados",
+  "monitoringSelectedCount": "{count, plural, one {# seleccionado} many {# seleccionados} other {# seleccionados}}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -2283,7 +2284,7 @@
   "sysManagerSearchProcesses": "Buscar procesos…",
   "sysManagerSearchPorts": "Buscar puertos…",
   "sysManagerSearchServices": "Buscar servicios…",
-  "sysManagerProcessesCount": "{count} procesos",
+  "sysManagerProcessesCount": "{count, plural, one {# proceso} many {# procesos} other {# procesos}}",
   "@sysManagerProcessesCount": {
     "description": "The number of processes matching the search.",
     "placeholders": {
@@ -2293,7 +2294,7 @@
       }
     }
   },
-  "sysManagerPortsCount": "{count} escuchas",
+  "sysManagerPortsCount": "{count, plural, one {# escucha} many {# escuchas} other {# escuchas}}",
   "@sysManagerPortsCount": {
     "description": "The number of listening sockets matching the search.",
     "placeholders": {
@@ -2303,7 +2304,7 @@
       }
     }
   },
-  "sysManagerServicesCount": "{count} unidades",
+  "sysManagerServicesCount": "{count, plural, one {# unidad} many {# unidades} other {# unidades}}",
   "@sysManagerServicesCount": {
     "description": "The number of systemd units matching the search.",
     "placeholders": {
@@ -2505,7 +2506,7 @@
   "sysManagerOverviewKernel": "Kernel",
   "sysManagerOverviewUptime": "Tiempo activo",
   "sysManagerOverviewLoad": "Carga",
-  "sysManagerOverviewCores": "{count} núcleos",
+  "sysManagerOverviewCores": "{count, plural, one {# núcleo} many {# núcleos} other {# núcleos}}",
   "@sysManagerOverviewCores": {
     "description": "The Host's CPU core count.",
     "placeholders": {
@@ -2607,7 +2608,7 @@
   "sysManagerReasonDockerDaemon": "No se puede acceder al demonio de Docker.",
   "sysManagerProblemAttach": "No se pudo abrir la sesión de tmux.",
   "sysManagerSearchSessions": "Buscar sesiones…",
-  "sysManagerSessionsCount": "{count} sesiones",
+  "sysManagerSessionsCount": "{count, plural, one {# sesión} many {# sesiones} other {# sesiones}}",
   "@sysManagerSessionsCount": {
     "description": "",
     "placeholders": {
@@ -2668,7 +2669,7 @@
   "sysManagerDockerView": "Vista",
   "sysManagerSearchContainers": "Buscar contenedores…",
   "sysManagerSearchImages": "Buscar imágenes…",
-  "sysManagerContainersCount": "{count} contenedores",
+  "sysManagerContainersCount": "{count, plural, one {# contenedor} many {# contenedores} other {# contenedores}}",
   "@sysManagerContainersCount": {
     "description": "",
     "placeholders": {
@@ -2678,7 +2679,7 @@
       }
     }
   },
-  "sysManagerImagesCount": "{count} imágenes",
+  "sysManagerImagesCount": "{count, plural, one {# imagen} many {# imágenes} other {# imágenes}}",
   "@sysManagerImagesCount": {
     "description": "",
     "placeholders": {
@@ -2801,7 +2802,7 @@
   "sysManagerGPUPower": "Potencia",
   "sysManagerGPUFan": "Ventilador",
   "sysManagerGPUVendor": "Fabricante",
-  "sysManagerGPUCount": "{count} GPU",
+  "sysManagerGPUCount": "{count, plural, one {# GPU} many {# GPU} other {# GPU}}",
   "@sysManagerGPUCount": {
     "description": "",
     "placeholders": {

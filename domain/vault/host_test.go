@@ -627,6 +627,75 @@ func TestNetworkDeviceModeIsKeptOnlyForSSH(t *testing.T) {
 	}
 }
 
+func TestProtocolUsesSSHAuthOnlyForSSHBootstrappedProtocols(t *testing.T) {
+	// The Host editor hides Identity, SSH Key, and Method when the selected
+	// protocol does not bootstrap through SSH. Mosh and Eternal Terminal do
+	// ride SSH, so they keep the controls; Telnet, a Local shell, and File
+	// transfer do not. The editor and the state layer both call this method,
+	// so the boundary is pinned here.
+	for _, test := range []struct {
+		protocol Protocol
+		want     bool
+	}{
+		{ProtocolSSH, true},
+		{ProtocolMosh, true},
+		{ProtocolET, true},
+		{ProtocolTelnet, false},
+		{ProtocolLocal, false},
+		{Protocol("unknown"), false},
+	} {
+		if got := test.protocol.UsesSSHAuth(); got != test.want {
+			t.Errorf("%q.UsesSSHAuth() = %v, want %v", test.protocol, got, test.want)
+		}
+	}
+}
+
+func TestNormalizeDraftDropsSSHCredentialsFromNonSSHProtocols(t *testing.T) {
+	// The Host editor hides Identity, SSH Key, and Method for Telnet and a
+	// Local shell, but an existing Host opened for edit still carries their
+	// stored values in its draft. NormalizeDraft is the last gate before the
+	// save, so it must drop the hidden bundle there too.
+	credentialed := Draft{
+		Label: "web", Hostname: "example.com",
+		IdentityID:  model.IdentityID("identity-1"),
+		KeyID:       model.KeyID("key-1"),
+		AuthMethod:  HostAuthKey,
+		UseSSHAgent: true, RequiresMFA: true,
+	}
+	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolLocal} {
+		draft := credentialed
+		draft.Protocol = protocol
+		if protocol == ProtocolLocal {
+			draft.Hostname = ""
+		}
+		normalized, err := NormalizeDraft(draft)
+		if err != nil {
+			t.Fatalf("NormalizeDraft %q: %v", protocol, err)
+		}
+		if normalized.IdentityID != "" || normalized.KeyID != "" ||
+			normalized.UseSSHAgent || normalized.RequiresMFA {
+			t.Errorf("%q kept the hidden SSH bundle: %+v", protocol, normalized)
+		}
+		if normalized.AuthMethod != HostAuthAuto {
+			t.Errorf("%q AuthMethod = %q, want %q", protocol, normalized.AuthMethod, HostAuthAuto)
+		}
+	}
+
+	for _, protocol := range []Protocol{ProtocolSSH, ProtocolMosh, ProtocolET} {
+		draft := credentialed
+		draft.Protocol = protocol
+		normalized, err := NormalizeDraft(draft)
+		if err != nil {
+			t.Fatalf("NormalizeDraft %q: %v", protocol, err)
+		}
+		if normalized.IdentityID != "identity-1" || normalized.KeyID != "key-1" ||
+			normalized.AuthMethod != HostAuthKey ||
+			!normalized.UseSSHAgent || !normalized.RequiresMFA {
+			t.Errorf("%q lost its SSH bundle: %+v", protocol, normalized)
+		}
+	}
+}
+
 func TestNormalizeDraftKeepsMoshAndETSettingsOnTheirProtocol(t *testing.T) {
 	mosh, err := NormalizeDraft(Draft{
 		Label: "web", Hostname: "example.com", Protocol: ProtocolMosh,

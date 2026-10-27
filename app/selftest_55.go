@@ -25,7 +25,7 @@ package app
 // directory. The scenario runs in one goroutine; its step polls the result
 // channel with the scenario deadline as the hard bound. No step sleeps.
 //
-// Result: %TEMP%\natcatty-selftest-55.json.
+// Result: %TEMP%\natcatty-selftest-<pid>\natcatty-selftest-55.json.
 
 import (
 	"context"

@@ -416,6 +416,16 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	if draft.Protocol != ProtocolET {
 		draft.ETPort = 0
 	}
+	if !draft.Protocol.UsesSSHAuth() {
+		// Telnet and a Local shell never read the SSH credential bundle. Clear
+		// it here as well as in the editor: a Host saved from a legacy or
+		// imported draft must not keep credentials whose controls it hides.
+		draft.IdentityID = ""
+		draft.KeyID = ""
+		draft.AuthMethod = HostAuthAuto
+		draft.UseSSHAgent = false
+		draft.RequiresMFA = false
+	}
 	draft.Label = strings.TrimSpace(draft.Label)
 	draft.Hostname = strings.TrimSpace(draft.Hostname)
 	draft.Username = strings.TrimSpace(draft.Username)
@@ -885,6 +895,18 @@ func EffectivePort(protocol Protocol, port int) int {
 		return port
 	}
 	return defaultPort(protocol)
+}
+
+// UsesSSHAuth reports whether a protocol authenticates with the shared SSH
+// credential settings (Identity, SSH Key, Method, agent, and MFA). SSH, Mosh,
+// and EternalTerminal all bootstrap through SSH; Telnet and a Local shell do
+// not, so their editors must not show those controls.
+func (p Protocol) UsesSSHAuth() bool {
+	switch p {
+	case ProtocolSSH, ProtocolMosh, ProtocolET:
+		return true
+	}
+	return false
 }
 
 func validation(field Field, rule Rule) error {
