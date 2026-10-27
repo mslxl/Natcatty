@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsync "github.com/mslxl/natcatty/application/sync"
+	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
 )
@@ -801,6 +802,13 @@ func (s *SyncState) SupportsProviderSelection() bool {
 	return ok
 }
 
+// destructiveService returns the optional guard, conflict, and backup
+// capability, if this service has it.
+func (s *SyncState) destructiveService() (DestructiveSyncService, bool) {
+	service, ok := s.service.(DestructiveSyncService)
+	return service, ok
+}
+
 // SetProvider persists the selected provider and clears the old account's
 // token and merge anchor on the application side.
 func (s *SyncState) SetProvider(provider string) {
@@ -947,7 +955,7 @@ func (s *SyncState) BackupsAsked() bool { return s.backupsAsked }
 // confirmation. The application service still takes a protective local
 // backup and retains the overwritten cloud copy.
 func (s *SyncState) ForcePush() {
-	service, ok := s.service.(DestructiveSyncService)
+	service, ok := s.destructiveService()
 	if !ok || s.busy {
 		return
 	}
@@ -970,7 +978,7 @@ func (s *SyncState) ForcePush() {
 // RestoreGuard restores the last good cloud copy after a blocked upload. It
 // never writes to the provider.
 func (s *SyncState) RestoreGuard() {
-	service, ok := s.service.(DestructiveSyncService)
+	service, ok := s.destructiveService()
 	if !ok || s.busy {
 		return
 	}
@@ -1045,7 +1053,7 @@ func (s *SyncState) ToggleConvergentDetails() { s.convergentDetails = !s.converg
 
 // ResolveConflict applies the user's choice for a surfaced conflict.
 func (s *SyncState) ResolveConflict(resolution appsync.Resolution) {
-	service, ok := s.service.(DestructiveSyncService)
+	service, ok := s.destructiveService()
 	if !ok || s.busy {
 		return
 	}
@@ -1069,7 +1077,7 @@ func (s *SyncState) ResolveConflict(resolution appsync.Resolution) {
 func (s *SyncState) LoadBackups() { s.requestBackups() }
 
 func (s *SyncState) requestBackups() {
-	service, ok := s.service.(DestructiveSyncService)
+	service, ok := s.destructiveService()
 	if !ok || s.busy {
 		return
 	}
@@ -1091,7 +1099,7 @@ func (s *SyncState) requestBackups() {
 // delegates to the backup service, which writes a before-restore backup; the
 // cloud-copy path decrypts only inside the application service.
 func (s *SyncState) RestoreBackup(source appsync.BackupSource, id string) {
-	service, ok := s.service.(DestructiveSyncService)
+	service, ok := s.destructiveService()
 	if !ok || s.busy {
 		return
 	}
@@ -1114,7 +1122,7 @@ func syncSection(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Them
 	state.Flush()
 	snapshot := state.Snapshot()
 	section(c, m.SettingsSyncTitle(), m.SettingsSyncDescription(), t, func() {
-		if !snapshot.Connected || state.Reconfiguring() {
+		if syncSetupShown(state, snapshot) {
 			syncSetup(c, state, snapshot, m, t)
 			return
 		}
@@ -1132,8 +1140,8 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 		// No input or button other than the explicit decision is live while
 		// the warning is open, so the endpoint that was confirmed cannot be
 		// changed behind it.
-		syncInsecurePrompt(c, state, insecureEndpointText(provider, state.formEndpoint(provider), m),
-			insecureWarningFor(provider, m), m, t)
+		syncInsecurePrompt(c, insecureEndpointText(provider, state.formEndpoint(provider), m),
+			insecureWarningFor(provider, m), t)
 		return
 	}
 	switch provider {
@@ -1152,7 +1160,8 @@ func syncSetup(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m loc
 	syncPasswordField(c, state, m)
 	ui.Text(c, m.SettingsSyncMasterPasswordHint()).FontSize(11).TextColor(t.TextMuted)
 	ui.Text(c, m.SettingsSyncSecurityNote()).FontSize(11).TextColor(t.TextMuted)
-	syncButtons(c, state, snapshot, m)
+	// Connect (and the Reconfigure Cancel) is pinned in
+	// syncActionsPinnedBar, outside this scrolling form.
 	syncStatus(c, state, snapshot, m, t)
 }
 
@@ -1252,17 +1261,50 @@ func syncWarningTextColor(t *ui.Theme) ui.Color {
 	return ui.Hex("#9a5c00")
 }
 
+// syncDangerDarkTexts are the dark-mode danger text candidates, brightest
+// last. A single fixed red cannot clear 4.5:1 on every dark preset's fill:
+// the lightest preset background (blue-dolphin, relative luminance 0.118)
+// needs a very pale red, while the default Midnight fill already accepts the
+// first candidate. The helper picks the first candidate that clears the
+// target against the prompt's fill.
+var syncDangerDarkTexts = []string{"#ff6b6b", "#ff9999", "#ffb3b3", "#ffd1d1"}
+
 // syncDangerTextColor keeps danger text readable at the 12-point body size of
 // the confirmations. The theme's destructive token is tuned for borders and
 // filled buttons; as body text on the light sync panel it measures about
 // 4.47:1, below the 4.5:1 target, so light mode uses a darker red that clears
 // the target on the default Snow fill (6.16:1) and on white (6.79:1), and on
-// every light preset's fill (at least 4.79:1). Dark mode keeps the theme token.
+// every light preset's fill (at least 4.79:1). Dark mode starts from a red
+// that clears 4.5:1 on the default Midnight fill and brightens it only as far
+// as the selected preset's fill demands.
 func syncDangerTextColor(t *ui.Theme) ui.Color {
-	if t.Dark {
-		return t.Danger
+	if !t.Dark {
+		return ui.Hex("#b51616")
 	}
-	return ui.Hex("#b51616")
+	for _, hex := range syncDangerDarkTexts {
+		candidate := ui.Hex(hex)
+		if syncColorContrast(candidate, t.Background) >= 4.5 {
+			return candidate
+		}
+	}
+	return ui.Hex(syncDangerDarkTexts[len(syncDangerDarkTexts)-1])
+}
+
+// syncColorHex renders an opaque ui.Color as the #rrggbb form the domain WCAG
+// helpers parse.
+func syncColorHex(c ui.Color) string {
+	return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
+}
+
+// syncColorContrast returns the WCAG contrast ratio of two opaque colors,
+// using the domain's single luminance/contrast implementation.
+func syncColorContrast(a, b ui.Color) float64 {
+	la, okA := domaintheme.HexLuminance(syncColorHex(a))
+	lb, okB := domaintheme.HexLuminance(syncColorHex(b))
+	if !okA || !okB {
+		return 0
+	}
+	return domaintheme.ContrastRatio(la, lb)
 }
 
 // syncS3Form renders the endpoint, region, bucket, prefix, and signing fields.
@@ -1329,26 +1371,14 @@ func syncS3Form(c *ui.Context, state *SyncState, m locales.Messages, t *ui.Theme
 // syncInsecurePrompt is the explicit decision the plain-HTTP warning demands.
 // For a connect it reuses the settings captured before the warning; for a sync
 // it records the confirmation in the service and retries.
-func syncInsecurePrompt(c *ui.Context, state *SyncState, endpointText, warning string, m locales.Messages, t *ui.Theme) {
+func syncInsecurePrompt(c *ui.Context, endpointText, warning string, t *ui.Theme) {
 	ui.Column(c).Padding(10).Gap(6).Background(t.Background).Border(1, t.Danger).Children(func() {
 		if endpointText != "" {
 			ui.Text(c, endpointText).FontSize(11).TextColor(t.TextMuted)
 		}
 		ui.Text(c, warning).FontSize(12).TextColor(syncDangerTextColor(t))
-		ui.Row(c).Gap(8).Children(func() {
-			label := m.SettingsSyncWebDAVInsecureConfirm()
-			if state.InsecureSyncPrompt() {
-				label = m.SettingsSyncWebDAVInsecureSyncConfirm()
-			}
-			if ui.Button(c, label).Disabled(state.Busy()).Clicked() {
-				state.ConfirmInsecure()
-				c.Invalidate()
-			}
-			if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
-				state.CancelInsecure()
-				c.Invalidate()
-			}
-		})
+		// Confirm and Cancel are pinned in syncActionsPinnedBar, outside this
+		// scrolling card, so the decision is fully visible at every window size.
 	})
 }
 
@@ -1462,8 +1492,8 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		if provider == appsync.ProviderS3 {
 			endpoint = snapshot.S3Endpoint
 		}
-		syncInsecurePrompt(c, state, insecureEndpointText(provider, endpoint, m),
-			insecureWarningFor(provider, m), m, t)
+		syncInsecurePrompt(c, insecureEndpointText(provider, endpoint, m),
+			insecureWarningFor(provider, m), t)
 		return
 	}
 	if snapshot.HasPassword {
@@ -1522,7 +1552,7 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 	syncGuardPanel(c, state, snapshot, m, t)
 	syncButtons(c, state, snapshot, m)
 	syncStatus(c, state, snapshot, m, t)
-	if _, ok := state.service.(DestructiveSyncService); ok && !state.BackupsAsked() {
+	if _, ok := state.destructiveService(); ok && !state.BackupsAsked() {
 		state.LoadBackups()
 	}
 	syncBackupsPanel(c, state, snapshot, m, t)
@@ -1646,6 +1676,132 @@ func syncConvergentPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.S
 			}
 		})
 	})
+}
+
+// syncSetupShown reports whether the Sync page is on the setup/reconfigure
+// surface rather than the connected surface.
+func syncSetupShown(state *SyncState, snapshot appsync.Snapshot) bool {
+	return !snapshot.Connected || state.Reconfiguring()
+}
+
+// syncActionsPinnedBar draws ticket 54's primary actions below the scrolling
+// Settings content: the conflict resolutions, the shrink/tombstone guard
+// Restore and Force push rows, the setup Connect action, and Refresh backups.
+// The bar is a sibling of the bounded content viewport, so it subtracts its
+// height from the content and is never cut at the scroll edge. It is drawn
+// above ticket 55's convergent bar, which keeps the very bottom edge of the
+// client.
+func syncActionsPinnedBar(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages, t *ui.Theme, layout *viewLayout) {
+	if state == nil {
+		return
+	}
+	setup := syncSetupShown(state, snapshot)
+	prompt := state.InsecurePrompt()
+	_, destructive := state.destructiveService()
+	conflict := snapshot.Conflict
+	finding := snapshot.Guard
+	showSetup := setup && !prompt
+	showConflict := !setup && !prompt && conflict != nil
+	showGuard := !setup && !prompt && finding.Suspicious()
+	showBackups := !setup && !prompt && destructive
+	if !prompt && !showSetup && !showConflict && !showGuard && !showBackups {
+		return
+	}
+
+	bar := ui.Column(c).FillWidth().Padding(10).Gap(6).
+		Background(t.Surface).Border(1, t.Border)
+	if layout != nil {
+		bar = bar.Bind(&layout.SyncActions)
+	}
+	bar.Children(func() {
+		if prompt {
+			syncActionRow(c, func() {
+				label := m.SettingsSyncWebDAVInsecureConfirm()
+				if state.InsecureSyncPrompt() {
+					label = m.SettingsSyncWebDAVInsecureSyncConfirm()
+				}
+				if ui.Button(c, label).Disabled(state.Busy()).Clicked() {
+					state.ConfirmInsecure()
+					c.Invalidate()
+				}
+				if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+					state.CancelInsecure()
+					c.Invalidate()
+				}
+			})
+			return
+		}
+		if showSetup {
+			syncActionRow(c, func() {
+				if ui.Button(c, m.SettingsSyncConnect()).Disabled(state.Busy()).Clicked() {
+					state.Connect()
+					c.Invalidate()
+				}
+				if state.Reconfiguring() {
+					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+						state.CancelReconfigure()
+						c.Invalidate()
+					}
+				}
+			})
+			return
+		}
+		if showConflict {
+			syncActionRow(c, func() {
+				if ui.Button(c, m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConflict(appsync.ResolutionLocal)
+					c.Invalidate()
+				}
+				if ui.Button(c, m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
+					state.ResolveConflict(appsync.ResolutionRemote)
+					c.Invalidate()
+				}
+				if conflict.CanMerge {
+					if ui.Button(c, m.SettingsSyncConflictMerge()).Disabled(state.Busy()).Clicked() {
+						state.ResolveConflict(appsync.ResolutionMerge)
+						c.Invalidate()
+					}
+				}
+			})
+		}
+		if showGuard {
+			syncActionRow(c, func() {
+				if ui.Button(c, m.SettingsSyncGuardRestore()).Disabled(state.Busy()).Clicked() {
+					state.RestoreGuard()
+					c.Invalidate()
+				}
+				if ui.Button(c, m.SettingsSyncGuardForce()).Disabled(state.Busy()).Clicked() {
+					state.AskForcePush()
+					c.Invalidate()
+				}
+			})
+			if state.ForcePushing() {
+				syncActionRow(c, func() {
+					if ui.Button(c, m.SettingsSyncDoForcePush()).Disabled(state.Busy()).Clicked() {
+						state.ForcePush()
+						c.Invalidate()
+					}
+					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
+						state.CancelForcePush()
+						c.Invalidate()
+					}
+				})
+			}
+		}
+		if showBackups {
+			syncActionRow(c, func() {
+				if ui.Button(c, m.SettingsSyncBackupsRefresh()).Disabled(state.Busy()).Clicked() {
+					state.LoadBackups()
+					c.Invalidate()
+				}
+			})
+		}
+	})
+}
+
+// syncActionRow lays out one right-aligned row of primary actions.
+func syncActionRow(c *ui.Context, children func()) {
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Justify(ui.End).Children(children)
 }
 
 // convergentPhase fills in the device-local phase when a snapshot predates the
@@ -1931,30 +2087,12 @@ func syncGuardPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, 
 		if finding.ViaRemote {
 			ui.Text(c, m.SettingsSyncGuardViaRemote()).FontSize(11).TextColor(t.TextMuted)
 		}
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsSyncGuardRestore()).Disabled(state.Busy()).Clicked() {
-				state.RestoreGuard()
-				c.Invalidate()
-			}
-			if ui.Button(c, m.SettingsSyncGuardForce()).Disabled(state.Busy()).Clicked() {
-				state.AskForcePush()
-				c.Invalidate()
-			}
-		})
+		// Restore and Force push are pinned in syncActionsPinnedBar, outside
+		// this scrolling report, so a short window can never cut them.
 		if state.ForcePushing() {
 			ui.Column(c).Padding(8).Gap(6).Border(1, t.Danger).Children(func() {
-				ui.Text(c, m.SettingsSyncGuardForceConfirm()).FontSize(12).Bold().TextColor(t.Danger)
+				ui.Text(c, m.SettingsSyncGuardForceConfirm()).FontSize(12).Bold().TextColor(syncDangerTextColor(t))
 				ui.Text(c, m.SettingsSyncGuardForceWarning()).FontSize(11).TextColor(t.Text)
-				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c, m.SettingsSyncDoForcePush()).Disabled(state.Busy()).Clicked() {
-						state.ForcePush()
-						c.Invalidate()
-					}
-					if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
-						state.CancelForcePush()
-						c.Invalidate()
-					}
-				})
 			})
 		}
 	})
@@ -1995,22 +2133,8 @@ func syncConflictPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapsho
 			ui.Text(c, m.SettingsSyncConflictItem(syncEntityLabel(item.EntityType, m), id,
 				syncConflictKindName(item.Kind, m))).FontSize(11).TextColor(t.Text)
 		}
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsSyncConflictUseLocal()).Disabled(state.Busy()).Clicked() {
-				state.ResolveConflict(appsync.ResolutionLocal)
-				c.Invalidate()
-			}
-			if ui.Button(c, m.SettingsSyncConflictUseRemote()).Disabled(state.Busy()).Clicked() {
-				state.ResolveConflict(appsync.ResolutionRemote)
-				c.Invalidate()
-			}
-			if info.CanMerge {
-				if ui.Button(c, m.SettingsSyncConflictMerge()).Disabled(state.Busy()).Clicked() {
-					state.ResolveConflict(appsync.ResolutionMerge)
-					c.Invalidate()
-				}
-			}
-		})
+		// The three resolutions are pinned in syncActionsPinnedBar so the
+		// row is never cut at the bottom of a short window.
 	})
 }
 
@@ -2035,12 +2159,8 @@ func syncBackupsPanel(c *ui.Context, state *SyncState, snapshot appsync.Snapshot
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Text(c, m.SettingsSyncBackupsTitle()).FontSize(12).Bold()
 		ui.Text(c, m.SettingsSyncBackupsDescription()).FontSize(11).TextColor(t.TextMuted)
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsSyncBackupsRefresh()).Disabled(state.Busy()).Clicked() {
-				state.LoadBackups()
-				c.Invalidate()
-			}
-		})
+		// Refresh backups is pinned in syncActionsPinnedBar so it stays
+		// visible even when the list is long.
 		if snapshot.BackupsProblem != appsync.ProblemNone {
 			ui.Text(c, m.SettingsSyncBackupsProblem()).FontSize(11).TextColor(syncWarningTextColor(t))
 		}
@@ -2092,19 +2212,6 @@ func syncBackupReasonName(reason string, m locales.Messages) string {
 
 func syncButtons(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m locales.Messages) {
 	ui.Row(c).Gap(8).Children(func() {
-		if !snapshot.Connected || state.Reconfiguring() {
-			if ui.Button(c, m.SettingsSyncConnect()).Disabled(state.Busy()).Clicked() {
-				state.Connect()
-				c.Invalidate()
-			}
-			if state.Reconfiguring() {
-				if ui.Button(c, m.SettingsCancel()).Disabled(state.Busy()).Clicked() {
-					state.CancelReconfigure()
-					c.Invalidate()
-				}
-			}
-			return
-		}
 		if ui.Button(c, m.SettingsSyncSyncNow()).Disabled(state.Busy()).Clicked() {
 			state.SyncNow()
 			c.Invalidate()

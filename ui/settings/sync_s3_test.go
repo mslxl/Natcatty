@@ -13,6 +13,7 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainsync "github.com/mslxl/natcatty/domain/sync"
 	"github.com/mslxl/natcatty/ui/locales"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
 // fakeS3SyncService adds the S3 provider capability to the existing fake. It
@@ -370,31 +371,35 @@ func TestSyncWarningTextColorKeepsLightModeReadable(t *testing.T) {
 	}
 }
 
-func TestSyncDangerTextColorKeepsLightModeReadable(t *testing.T) {
+func TestSyncDangerTextColorStaysReadableInBothAppearances(t *testing.T) {
 	// The theme destructive token is tuned for borders and filled buttons. As
 	// 12-point body text on the light sync panel's Snow fill it measures about
-	// 4.47:1, below the 4.5:1 target, so light mode uses a darker red while
-	// dark mode keeps the theme token.
-	light := &ui.Theme{Danger: ui.Hex("#d92626")}
+	// 4.47:1, below the 4.5:1 target, so light mode uses a darker red. Dark
+	// mode picks the first ladder red that clears the target on the selected
+	// preset's fill, because no single red clears every dark preset.
+	snow, ok := domaintheme.LookupPreset(false, "snow")
+	if !ok {
+		t.Fatal("the Snow preset is missing")
+	}
+	light := uitheme.UI(false, snow, uitheme.Options{})
 	want := ui.Hex("#b51616")
 	if got := syncDangerTextColor(light); got != want {
 		t.Fatalf("light danger text = %+v, want the darker red", got)
 	}
-	dark := &ui.Theme{Dark: true, Danger: ui.Hex("#ef4444")}
-	if got := syncDangerTextColor(dark); got != dark.Danger {
-		t.Fatalf("dark danger text = %+v, want the theme danger", got)
-	}
 
-	// The prompt's fill is the theme background: the default light preset
-	// (Snow) paints rgb(241,244,248), and a light theme with a white
-	// background is possible too. Compute contrast from the WCAG definition
-	// rather than from the helper, so the pinned color has to clear 4.5:1 on
-	// its own.
+	// The light branch must keep its measured 6.158:1 on the Snow fill.
 	textLuminance, ok := domaintheme.HexLuminance("#b51616")
 	if !ok {
 		t.Fatal("the pinned danger color is not a hex color")
 	}
-	for _, background := range []string{"#f1f4f8", "#ffffff"} {
+	snowLuminance, ok := domaintheme.HexLuminance("#f1f4f8")
+	if !ok {
+		t.Fatal("the Snow fill is not a hex color")
+	}
+	if ratio := domaintheme.ContrastRatio(textLuminance, snowLuminance); ratio < 6.15 || ratio > 6.17 {
+		t.Fatalf("the light danger text measures %.3f:1 on Snow, want the pinned 6.158:1", ratio)
+	}
+	for _, background := range []string{"#ffffff"} {
 		backgroundLuminance, ok := domaintheme.HexLuminance(background)
 		if !ok {
 			t.Fatalf("%s is not a hex color", background)
@@ -403,24 +408,132 @@ func TestSyncDangerTextColorKeepsLightModeReadable(t *testing.T) {
 			t.Errorf("danger text on %s = %.2f:1, want at least 4.5:1", background, ratio)
 		}
 	}
-	// A user can pick any light preset, and the prompt fills with its
-	// background token, so the one fixed light red must clear the target on
-	// every one of them.
-	for _, preset := range domaintheme.LightPresets() {
-		background, ok := domaintheme.ParseHSL(preset.Tokens.Background)
-		if !ok {
-			t.Fatalf("preset %s has an unparseable background %q", preset.ID, preset.Tokens.Background)
-		}
-		if ratio := domaintheme.ContrastRatio(textLuminance, background.RelativeLuminance()); ratio < 4.5 {
-			t.Errorf("danger text on preset %s = %.2f:1, want at least 4.5:1", preset.ID, ratio)
+
+	// Pin the dark branch on the default preset: the first ladder candidate,
+	// not the raw theme token. Midnight's raw danger is about 3.6:1 there.
+	midnight, ok := domaintheme.LookupPreset(true, "midnight")
+	if !ok {
+		t.Fatal("the Midnight preset is missing")
+	}
+	dark := uitheme.UI(true, midnight, uitheme.Options{})
+	if got := syncDangerTextColor(dark); got != ui.Hex("#ff6b6b") {
+		t.Fatalf("dark danger text on Midnight = %+v, want the first ladder red #ff6b6b", got)
+	}
+	if ratio := syncColorContrast(dark.Danger, dark.Background); ratio >= 4.5 {
+		t.Fatalf("the raw dark theme danger measures %.2f:1 on Midnight; the fix would be unnecessary", ratio)
+	}
+
+	// Every prompt fill, on both appearances, must clear the target. Compute
+	// the luminance through the independent domain WCAG helper from the hex
+	// value the helper actually returned.
+	for _, test := range []struct {
+		name    string
+		dark    bool
+		presets []domaintheme.Preset
+	}{
+		{"light", false, domaintheme.LightPresets()},
+		{"dark", true, domaintheme.DarkPresets()},
+	} {
+		for _, preset := range test.presets {
+			theme := uitheme.UI(test.dark, preset, uitheme.Options{})
+			text := syncDangerTextColor(theme)
+			textLum, ok := domaintheme.HexLuminance(dangerHex(text))
+			if !ok {
+				t.Fatalf("%s preset %s: %+v is not a hex color", test.name, preset.ID, text)
+			}
+			backgroundLum, ok := domaintheme.HexLuminance(dangerHex(theme.Background))
+			if !ok {
+				t.Fatalf("%s preset %s: background %+v is not a hex color", test.name, preset.ID, theme.Background)
+			}
+			if ratio := domaintheme.ContrastRatio(textLum, backgroundLum); ratio < 4.5 {
+				t.Errorf("%s preset %s: danger text %+v = %.2f:1 on its fill, want at least 4.5:1",
+					test.name, preset.ID, text, ratio)
+			}
 		}
 	}
 
-	// The premise: the raw theme token really does fall short on the Snow
-	// fill, so this test would catch a regression to it.
+	// The premise: the raw light theme token really does fall short on the
+	// Snow fill, so this test would catch a regression to it.
 	rawLuminance, _ := domaintheme.HexLuminance("#d92626")
-	snowLuminance, _ := domaintheme.HexLuminance("#f1f4f8")
 	if ratio := domaintheme.ContrastRatio(rawLuminance, snowLuminance); ratio >= 4.5 {
 		t.Fatalf("the raw theme danger measures %.2f:1 on Snow; the fix would be unnecessary", ratio)
+	}
+}
+
+// dangerHex renders an opaque ui.Color as the "#rrggbb" form the domain WCAG
+// helper parses.
+func dangerHex(c ui.Color) string {
+	return syncColorHex(c)
+}
+
+// TestSyncColorContrastMatchesWCAG pins the helper's math to published WCAG
+// values, so the dark ladder is judged against the real definition.
+func TestSyncColorContrastMatchesWCAG(t *testing.T) {
+	if ratio := syncColorContrast(ui.Hex("#000000"), ui.Hex("#ffffff")); ratio < 20.99 || ratio > 21.01 {
+		t.Fatalf("black on white = %.3f:1, want 21:1", ratio)
+	}
+	if ratio := syncColorContrast(ui.Hex("#b51616"), ui.Hex("#f1f4f8")); ratio < 6.15 || ratio > 6.17 {
+		t.Fatalf("the light danger on Snow = %.3f:1, want 6.158:1", ratio)
+	}
+}
+
+// TestSyncForcePushPromptUsesTheAccessibleDangerTextColor renders the
+// guard's explicit force-push confirmation in both themes and reads the
+// pixels: the prompt uses syncDangerTextColor and never the raw theme token.
+func TestSyncForcePushPromptUsesTheAccessibleDangerTextColor(t *testing.T) {
+	m := locales.In("en")
+	for _, test := range []struct {
+		name   string
+		dark   bool
+		preset string
+	}{
+		{"light", false, "snow"},
+		{"dark", true, "midnight"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			preset, ok := domaintheme.LookupPreset(test.dark, test.preset)
+			if !ok {
+				t.Fatalf("%s preset is missing", test.preset)
+			}
+			theme := uitheme.UI(test.dark, preset, uitheme.Options{})
+			want := syncDangerTextColor(theme)
+			raw := theme.Danger
+			if want == raw {
+				t.Fatalf("the helper returned the raw theme danger %v; the pixel check would be vacuous", raw)
+			}
+
+			service := newFakeDestructiveSyncService()
+			service.snapshot.Conflict = nil
+			state := NewSyncState(service)
+			state.AskForcePush()
+			view := viewAt(AreaSync, Config{Sync: state})
+			tester := ui.NewTester(func(c *ui.Context) {
+				c.SetTheme(theme)
+				view(c)
+			}, 1100, 720)
+			tester.SetLocale("en")
+			tester.Frame()
+			waitSyncIdle(t, state)
+			tester.Frame()
+
+			confirm := m.SettingsSyncGuardForceConfirm()
+			rect, ok := tester.Find(confirm)
+			if !ok {
+				t.Fatalf("the force-push confirmation %q is not rendered: %q", confirm, tester.Texts())
+			}
+			for step := 0; step < 240 && rect.H < 12; step++ {
+				tester.Scroll(700, 400, 0, 40)
+				rect, _ = tester.Find(confirm)
+			}
+			if rect.H < 12 {
+				t.Fatalf("the force-push confirmation was never fully laid out: %+v", rect)
+			}
+			if !testerRectHasColor(tester, rect, want) {
+				t.Errorf("the force-push prompt does not use the accessible danger text color %v", want)
+			}
+			if testerRectHasColor(tester, rect, raw) {
+				t.Errorf("the force-push prompt still uses the raw theme danger text color %v", raw)
+			}
+		})
 	}
 }
