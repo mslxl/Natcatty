@@ -414,19 +414,10 @@ jobs:
           pattern: natcatty-*
 
       - name: Verify each platform's checksums after transfer
-        run: |
-          set -euo pipefail
-          for dir in downloads/*; do
-            if [ ! -f "${dir}/SHA256SUMS" ]; then
-              # natcatty-release-notes matches the natcatty-* download pattern
-              # but is not a platform artifact, so it carries no checksums.
-              test -s "${dir}/RELEASE_NOTES.md"
-              echo "${dir} holds the release notes, not a platform artifact"
-              continue
-            fi
-            go run ./internal/tools/releasecheck verify-sums -dir "${dir}"
-            echo "verified ${dir}/SHA256SUMS"
-          done
+        # releasecheck classify names the platform and release-notes
+        # directories; the script verifies each platform and skips the notes,
+        # and fails closed on an unknown directory.
+        run: bash scripts/verify-downloads.sh downloads
 
       - name: Collect the release artifacts
         run: |
