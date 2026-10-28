@@ -24,6 +24,10 @@ type MCPService interface {
 	Approve(id string) error
 	Deny(id string) error
 	Dismiss(id string)
+	// SetSharing flips the live-Session sharing switch.
+	SetSharing(enabled bool) error
+	// RefreshScope repaints the exposed-Session list from the live scope.
+	RefreshScope()
 }
 
 // MCPProblem is the last action outcome the surface shows. It is a stable
@@ -36,6 +40,7 @@ const (
 	MCPProblemStale
 	MCPProblemInvalid
 	MCPProblemMode
+	MCPProblemSharing
 )
 
 // MCPState owns the Settings MCP surface. All fields are mutated only on the
@@ -95,6 +100,27 @@ func (s *MCPState) Dismiss(id string) {
 	}
 	s.service.Dismiss(id)
 	s.problem = MCPProblemNone
+}
+
+// SetSharing flips the live-Session sharing switch. The policy re-reads the
+// source on the next call, so the change applies without a restart.
+func (s *MCPState) SetSharing(enabled bool) {
+	if s == nil || s.service == nil {
+		return
+	}
+	if err := s.service.SetSharing(enabled); err != nil {
+		s.problem = MCPProblemSharing
+		return
+	}
+	s.problem = MCPProblemNone
+}
+
+// RefreshScope asks the policy to repaint from the current live Sessions.
+func (s *MCPState) RefreshScope() {
+	if s == nil || s.service == nil {
+		return
+	}
+	s.service.RefreshScope()
 }
 
 // Problem returns the last localized problem, or MCPProblemNone.
@@ -177,6 +203,8 @@ func mcpProblemText(problem MCPProblem, m locales.Messages) string {
 		return m.SettingsMCPProblemInvalid()
 	case MCPProblemMode:
 		return m.SettingsMCPProblemMode()
+	case MCPProblemSharing:
+		return m.SettingsMCPProblemSharing()
 	default:
 		return ""
 	}
@@ -313,6 +341,14 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 	snapshot := state.Snapshot()
 	body := mcpBodyTextColor(t, t.Surface)
 	sectionBody(c, t, func() {
+		// The last action is the strip a user checks after a client call, so it
+		// is the first thing in the area: at the shortest client size, and with
+		// the longer zh-CN status text, it stays above the fold without a
+		// scroll. It is compact (two rows) so it never pushes the mode control
+		// or the prompt heading out of view either.
+		if snapshot.LastActivity != nil {
+			mcpActivityStrip(c, *snapshot.LastActivity, m, t)
+		}
 		mcpModeField(c, state, snapshot, m, t)
 		ui.Text(c, mcpModeDescription(snapshot.Mode, m)).FontSize(12).TextColor(body)
 
@@ -320,19 +356,13 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, m.SettingsMCPScope()).FontSize(11).TextColor(body)
 			ui.Text(c, m.SettingsMCPScopeValue(snapshot.ForcedScope)).FontSize(12).TextColor(body)
 		})
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.SettingsMCPSessions()).FontSize(11).TextColor(body)
-			ui.Text(c, mcpAllowlistLabel(snapshot.Allowlist, m)).FontSize(12).TextColor(body)
-		})
+		mcpSessionsSection(c, state, snapshot, m, t)
 		ui.Text(c, m.SettingsMCPGeneration(strconv.FormatUint(snapshot.Generation, 10))).
 			FontSize(12).TextColor(body)
 		ui.Text(c, m.SettingsMCPBypassHint()).FontSize(11).TextColor(body)
 
 		if problem := mcpProblemText(state.Problem(), m); problem != "" {
 			ui.Text(c, problem).FontSize(12).TextColor(mcpWarningTextColor(t, t.Surface))
-		}
-		if snapshot.LastActivity != nil {
-			mcpActivityCard(c, *snapshot.LastActivity, m, t)
 		}
 
 		prompt, expired, ok := mcpCurrentPrompt(snapshot)
@@ -354,6 +384,79 @@ func mcpArea(c *ui.Context, state *MCPState, m locales.Messages, t *ui.Theme) {
 			c.After(delay)
 		}
 	})
+}
+
+// mcpSessionsSection shows the live Sessions the external scope currently
+// exposes. Before this rework the page only printed the launch-time allowlist,
+// so a shipped app with live Sessions always read "No Sessions are shared".
+// The toggle and the refresh control are the shipped-app sharing controls the
+// original ExternalMcpCard offered; no secret store or AI capability appears.
+func mcpSessionsSection(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot,
+	m locales.Messages, t *ui.Theme) {
+	body := mcpBodyTextColor(t, t.Surface)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, m.SettingsMCPSessions()).FontSize(11).TextColor(body)
+		ui.Text(c, mcpExposedCountLabel(snapshot, m)).FontSize(12).TextColor(body)
+	})
+	if !snapshot.LiveScope {
+		// A graph without the live-Session port keeps the ticket-57 static
+		// allowlist display; the header already renders it through
+		// mcpExposedCountLabel.
+		return
+	}
+	sharing := snapshot.SharingEnabled
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		label := m.SettingsMCPSharingTitle()
+		if ui.Checkbox(c, &sharing, label).Changed() {
+			state.SetSharing(sharing)
+			c.Invalidate()
+		}
+		if ui.Button(c, m.SettingsMCPRefreshSessions()).Clicked() {
+			state.RefreshScope()
+			c.Invalidate()
+		}
+	})
+	ui.Text(c, mcpSharingHint(snapshot, m)).FontSize(11).TextColor(body)
+	if snapshot.EnvAllowlistSet {
+		ui.Text(c, m.SettingsMCPEnvAllowlist(strings.Join(snapshot.EnvAllowlist, ", "))).
+			FontSize(11).TextColor(body)
+	}
+	if len(snapshot.ExposedSessions) == 0 {
+		return
+	}
+	ui.Column(c).Padding(8).Gap(2).Background(t.Surface).Border(1, t.Border).Children(func() {
+		for _, session := range snapshot.ExposedSessions {
+			ui.Text(c, mcpExposedSessionLabel(session, m)).FontSize(11).TextColor(body)
+		}
+	})
+}
+
+func mcpExposedCountLabel(snapshot appmcp.Snapshot, m locales.Messages) string {
+	if !snapshot.LiveScope {
+		return mcpAllowlistLabel(snapshot.Allowlist, m)
+	}
+	return m.SettingsMCPExposedCount(len(snapshot.ExposedSessions))
+}
+
+func mcpSharingHint(snapshot appmcp.Snapshot, m locales.Messages) string {
+	if !snapshot.SharingEnabled {
+		return m.SettingsMCPSharingOff()
+	}
+	if len(snapshot.ExposedSessions) == 0 {
+		return m.SettingsMCPSharingNoSessions()
+	}
+	return m.SettingsMCPSharingOn()
+}
+
+// mcpExposedSessionLabel is the localized "label (id)" row for one shared
+// Session. A Session without a label falls back to the localized unnamed
+// placeholder so the raw id is never the only text.
+func mcpExposedSessionLabel(session appmcp.ExposedSession, m locales.Messages) string {
+	label := strings.TrimSpace(session.Label)
+	if label == "" {
+		label = m.SettingsMCPUnnamedSession()
+	}
+	return label + " (" + session.ID + ")"
 }
 
 func mcpModeField(c *ui.Context, state *MCPState, snapshot appmcp.Snapshot,
@@ -381,11 +484,12 @@ func mcpAllowlistLabel(allowlist []string, m locales.Messages) string {
 	return m.SettingsMCPSessionsValue(strings.Join(allowlist, ", "))
 }
 
-// mcpActivityCard shows the last write outcome. Rule is a stable blocklist
-// identifier, not raw error text; status is localized from the activity enum.
-// The card is inside the scrolling area, so a short window never loses the
-// pinned approval decisions when the activity row is present.
-func mcpActivityCard(c *ui.Context, activity appmcp.ActivityView,
+// mcpActivityStrip is the compact last-action row shown first in the area. The
+// tool and status share one line so the status (including the longer zh-CN
+// words) is visible above the fold at 704x421; the matched rule is the second
+// line. It replaces the former multi-row card, whose status could start below
+// the fold once the header and mode field were laid out.
+func mcpActivityStrip(c *ui.Context, activity appmcp.ActivityView,
 	m locales.Messages, t *ui.Theme) {
 	fill := t.Surface
 	body := mcpBodyTextColor(t, fill)
@@ -397,10 +501,13 @@ func mcpActivityCard(c *ui.Context, activity appmcp.ActivityView,
 	case appmcp.ActivityTimeout, appmcp.ActivityTruncated, appmcp.ActivityUnavailable:
 		border = t.Warning
 	}
-	ui.Column(c).Padding(10).Gap(4).Background(fill).Border(1, border).Children(func() {
-		ui.Text(c, m.SettingsMCPActivityTitle()).FontSize(12).Bold().TextColor(body)
-		ui.Text(c, m.SettingsMCPActivityTool(activity.Tool)).FontSize(12).TextColor(body)
-		ui.Text(c, mcpActivityStatusText(activity.Status, m)).FontSize(12).TextColor(statusColor)
+	ui.Column(c).Padding(8).Gap(2).Background(fill).Border(1, border).Children(func() {
+		ui.Text(c, m.SettingsMCPActivityTitle()).FontSize(11).TextColor(body)
+		ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
+			ui.Text(c, mcpActivityStatusText(activity.Status, m)).FontSize(12).Bold().
+				TextColor(statusColor)
+			ui.Text(c, m.SettingsMCPActivityTool(activity.Tool)).FontSize(11).TextColor(body)
+		})
 		if activity.Rule != "" {
 			ui.Text(c, m.SettingsMCPActivityRule(activity.Rule)).FontSize(11).TextColor(body)
 		}

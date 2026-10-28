@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -322,7 +321,7 @@ func buildCommandWrapper(command, shell, marker string) string {
 	case "powershell":
 		escaped := strings.ReplaceAll(command, "'", "''")
 		return "$" + marker + "=0; $" + marker + "_cmd='" + escaped + "'; & { Write-Output '" +
-			marker + "_S'; $LASTEXITCODE=$null; try { Invoke-Expression $" + marker +
+			marker + "_S'; $global:LASTEXITCODE=$null; try { Invoke-Expression $" + marker +
 			"_cmd; $" + marker + "_rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 } } catch { $" +
 			marker + "_rc = 1 }; Write-Output \"" + marker + "_E:$" + marker + "_rc\" }\r\n"
 	case "cmd":
@@ -363,6 +362,11 @@ type commandCollector struct {
 	total     int
 	truncated bool
 	preClosed bool
+	// scanFrom is where the next end-marker search resumes. A terminal can
+	// deliver a megabyte of output in tiny chunks; rescanning the whole
+	// rolling window on every chunk is quadratic and can outlast the call
+	// deadline, so only new bytes (plus an unfinished candidate) are scanned.
+	scanFrom int
 }
 
 func (c *commandCollector) feed(chunk []byte) (int, bool) {
@@ -408,13 +412,15 @@ func (c *commandCollector) consumed(chunk []byte) (int, bool) {
 func (c *commandCollector) consume(chunk []byte) (int, bool) {
 	c.total += len(chunk)
 	c.output = append(c.output, chunk...)
-	if index, code, ok := findEndMarker(c.output, c.marker); ok {
+	if index, code, ok, resume := findEndMarkerFrom(c.output, c.marker, c.scanFrom); ok {
 		c.total -= len(c.output) - index
 		c.output = c.output[:index]
 		c.trimOutput()
 		c.exitCode = code
 		c.finished = true
 		return code, true
+	} else {
+		c.scanFrom = resume
 	}
 	c.trimOutput()
 	return 0, false
@@ -431,6 +437,11 @@ func (c *commandCollector) trimOutput() {
 	c.output = append(c.output[:0], c.output[cut:]...)
 	c.dropped += cut
 	c.truncated = true
+	if c.scanFrom > cut {
+		c.scanFrom -= cut
+	} else {
+		c.scanFrom = 0
+	}
 }
 
 func (c *commandCollector) result() CommandResult {
@@ -456,56 +467,295 @@ func (c *commandCollector) stdout() string {
 	return strings.TrimSpace(stdout)
 }
 
-// findOwnLineMarker finds a start marker that ends its line. The preceding
-// bytes are deliberately not constrained: a real ConPTY may emit cursor or
-// color escapes before the marker (PowerShell does), so the marker is a line
-// of its own on screen without a preceding LF in the byte stream. The echoed
-// wrapper always has another character after its marker token, never a line
-// ending, so it cannot match.
+// skipMarkerNoise steps over bytes a terminal may insert inside a printed
+// line: ConPTY hard-wraps a line that reaches the margin by emitting CRLF, a
+// cursor-position escape, and a re-rendered copy of the cell at the margin, so
+// a long marker arrives split and apparently duplicated. It returns whether
+// the buffer holds a complete unit at that position; incomplete means more
+// output must arrive before the scan can decide.
+func skipMarkerNoise(data []byte, index int) (int, bool) {
+	if next, gap, incomplete := skipWrapGap(data, index); gap {
+		return next, true
+	} else if incomplete {
+		return index, false
+	}
+	for index < len(data) {
+		switch data[index] {
+		case '\r', '\n', '\b', 0x07:
+			index++
+		case 0x1b:
+			end, complete := skipEscapeSequence(data, index)
+			if !complete {
+				return index, false
+			}
+			index = end
+		default:
+			return index, true
+		}
+	}
+	return index, true
+}
+
+// skipWrapGap is skipConPTYWrapGap plus the cell ConPTY re-renders at the
+// margin. The re-rendered byte repeats the last character before the gap and
+// is not new output. incomplete reports that the buffer ends before the
+// re-rendered cell is known.
+func skipWrapGap(data []byte, index int) (next int, gap, incomplete bool) {
+	after, gap, incomplete := skipConPTYWrapGap(data, index)
+	if !gap {
+		return index, false, incomplete
+	}
+	if after >= len(data) {
+		return index, false, true
+	}
+	return after + 1, true, false
+}
+
+// skipEscapeSequence returns the first index after the escape sequence that
+// starts at index. It reports false when the sequence is cut off by the end of
+// the buffer.
+func skipEscapeSequence(data []byte, index int) (int, bool) {
+	if index+1 >= len(data) {
+		return index, false
+	}
+	switch data[index+1] {
+	case '[': // CSI: parameters then a final byte in 0x40..0x7e.
+		for scan := index + 2; scan < len(data); scan++ {
+			if data[scan] >= 0x40 && data[scan] <= 0x7e {
+				return scan + 1, true
+			}
+		}
+		return index, false
+	case ']': // OSC: terminated by BEL or ST.
+		for scan := index + 2; scan < len(data); scan++ {
+			switch data[scan] {
+			case 0x07:
+				return scan + 1, true
+			case 0x1b:
+				if scan+1 >= len(data) {
+					return index, false
+				}
+				if data[scan+1] == '\\' {
+					return scan + 2, true
+				}
+			}
+		}
+		return index, false
+	default:
+		return index + 2, true
+	}
+}
+
+// matchMarkerCharacters matches token at start, ignoring wrap noise between
+// characters. matched reports how many token characters matched; incomplete
+// reports that the buffer ended inside a possible match.
+func matchMarkerCharacters(data []byte, start int, token string) (end, matched int, incomplete bool) {
+	position := start
+	for index := 0; index < len(token); index++ {
+		if index > 0 {
+			next, complete := skipMarkerNoise(data, position)
+			if !complete {
+				return 0, 0, true
+			}
+			position = next
+		}
+		if position >= len(data) {
+			return 0, 0, true
+		}
+		if data[position] != token[index] {
+			return position, index, false
+		}
+		position++
+	}
+	return position, len(token), false
+}
+
+// findOwnLineMarker finds a start marker that ends its line, tolerating the
+// CRLF and cursor escapes ConPTY inserts when a narrow terminal wraps a long
+// line. The preceding bytes are deliberately not constrained: a real ConPTY
+// may emit cursor or color escapes before the marker (PowerShell does), so the
+// marker is a line of its own on screen without a preceding LF in the byte
+// stream. The echoed wrapper contains the same token inside quotes, so a
+// preceding quote and a following non-line-ending character both keep the echo
+// from starting the command.
 func findOwnLineMarker(data []byte, startMarker string) (int, int, bool) {
-	needle := []byte(startMarker)
-	for search := 0; search < len(data); {
-		offset := bytes.Index(data[search:], needle)
-		if offset < 0 {
+	if startMarker == "" {
+		return 0, 0, false
+	}
+	for start := 0; start < len(data); start++ {
+		if data[start] != startMarker[0] {
+			continue
+		}
+		if start > 0 && data[start-1] == '\'' {
+			continue
+		}
+		end, matched, incomplete := matchMarkerCharacters(data, start, startMarker)
+		if incomplete {
 			return 0, 0, false
 		}
-		index := search + offset
-		end := index + len(needle)
-		// Wait for the line ending when the marker is split across reads.
-		if end < len(data) && (data[end] == '\r' || data[end] == '\n') {
-			return index, end, true
+		if matched < len(startMarker) {
+			continue
 		}
-		search = index + 1
+		// Wait for the line ending when the marker is split across reads; a
+		// wrapper echo has another character after the token, never a line
+		// ending, so it cannot match.
+		if end >= len(data) {
+			return 0, 0, false
+		}
+		if data[end] != '\r' && data[end] != '\n' {
+			continue
+		}
+		return start, end, true
 	}
 	return 0, 0, false
 }
 
-func findEndMarker(data []byte, marker string) (int, int, bool) {
-	needle := []byte(marker + "_E:")
-	for search := 0; search < len(data); {
-		offset := bytes.Index(data[search:], needle)
-		if offset < 0 {
-			return 0, 0, false
-		}
-		index := search + offset
-		position := index + len(needle)
-		digits := position
-		for digits < len(data) && data[digits] >= '0' && data[digits] <= '9' {
-			digits++
-		}
-		// The end marker must end its line. A wrapper echo has a shell
-		// expression after the colon instead of digits, and a marker split
-		// across reads waits for more bytes rather than completing early.
-		if digits > position && digits < len(data) &&
-			(data[digits] == '\r' || data[digits] == '\n') {
-			code, err := strconv.Atoi(string(data[position:digits]))
-			if err == nil {
-				return index, code, true
-			}
-		}
-		search = index + 1
+// skipConPTYWrapGap recognizes the bytes ConPTY inserts where a long line
+// reaches the right margin: a line ending followed by an optional SGR reset
+// and a cursor-position escape. It reports the index after the gap. incomplete
+// reports that the buffer ends inside a possible gap.
+func skipConPTYWrapGap(data []byte, index int) (next int, gap, incomplete bool) {
+	if index >= len(data) {
+		return index, false, true
 	}
-	return 0, 0, false
+	if data[index] != '\r' && data[index] != '\n' {
+		return index, false, false
+	}
+	scan := index
+	for scan < len(data) && (data[scan] == '\r' || data[scan] == '\n' || data[scan] == '\b') {
+		scan++
+	}
+	for {
+		if scan >= len(data) {
+			return index, false, true
+		}
+		if data[scan] != 0x1b {
+			return index, false, false
+		}
+		if scan+1 >= len(data) {
+			return index, false, true
+		}
+		if data[scan+1] != '[' {
+			return index, false, false
+		}
+		end := scan + 2
+		for end < len(data) && (data[end] < 0x40 || data[end] > 0x7e) {
+			end++
+		}
+		if end >= len(data) {
+			return index, false, true
+		}
+		switch data[end] {
+		case 'H': // Cursor position: the wrapped line continues here.
+			return end + 1, true, false
+		case 'm': // SGR reset or color: keep looking for the cursor position.
+			scan = end + 1
+		default:
+			return index, false, false
+		}
+	}
+}
+
+// findEndMarker finds the exit line. ConPTY may wrap the marker and the digits
+// across several visual lines, so both the token and the digits are matched
+// with wrap noise between characters. The line must still end after the last
+// digit, which a wrapper echo (whose colon is followed by a shell expression
+// rather than digits) never does.
+// findEndMarkerFrom searches data for the exit line, starting at from. resume
+// is where the next call must start when the marker is absent: it is the
+// earliest candidate that the current end of the buffer left undecided, or the
+// end of data when every candidate was decided. Scanning only from resume is
+// what keeps a megabyte of tiny PTY chunks linear instead of quadratic.
+func findEndMarkerFrom(data []byte, marker string, from int) (start, code int, ok bool, resume int) {
+	token := marker + "_E:"
+	if token == "_E:" {
+		return 0, 0, false, len(data)
+	}
+	if from < 0 {
+		from = 0
+	}
+	if from > len(data) {
+		from = len(data)
+	}
+	incompleteAt := -1
+	markIncomplete := func(at int) {
+		if incompleteAt < 0 {
+			incompleteAt = at
+		}
+	}
+	for start := from; start < len(data); start++ {
+		if data[start] != token[0] {
+			continue
+		}
+		end, matched, incomplete := matchMarkerCharacters(data, start, token)
+		if incomplete {
+			markIncomplete(start)
+			continue
+		}
+		if matched < len(token) {
+			continue
+		}
+		position := end
+		digits := make([]byte, 0, 4)
+		digitsIncomplete := false
+		for {
+			if position < len(data) && data[position] >= '0' && data[position] <= '9' {
+				digits = append(digits, data[position])
+				position++
+				continue
+			}
+			if len(digits) > 0 && position < len(data) &&
+				(data[position] == '\r' || data[position] == '\n') {
+				// A wrapped continuation of the exit line is a gap that leads
+				// to another digit. Anything else ends the line here.
+				next, gap, _ := skipWrapGap(data, position)
+				if gap && next < len(data) && data[next] >= '0' && data[next] <= '9' {
+					position = next
+					continue
+				}
+				break
+			}
+			if len(digits) == 0 {
+				// The marker line may wrap between the colon and the code.
+				next, gap, gapIncomplete := skipWrapGap(data, position)
+				if next == position && gapIncomplete {
+					digitsIncomplete = true
+					break
+				}
+				if gap {
+					if next < len(data) && data[next] >= '0' && data[next] <= '9' {
+						position = next
+						continue
+					}
+					break
+				}
+			}
+			break
+		}
+		if digitsIncomplete {
+			markIncomplete(start)
+			continue
+		}
+		if len(digits) == 0 {
+			continue
+		}
+		if position >= len(data) {
+			markIncomplete(start)
+			continue
+		}
+		if data[position] != '\r' && data[position] != '\n' {
+			continue
+		}
+		code, err := strconv.Atoi(string(digits))
+		if err != nil {
+			continue
+		}
+		return start, code, true, 0
+	}
+	if incompleteAt >= 0 {
+		return 0, 0, false, incompleteAt
+	}
+	return 0, 0, false, len(data)
 }
 
 func trimLineEnding(data []byte) []byte {

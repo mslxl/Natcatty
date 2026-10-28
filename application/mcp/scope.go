@@ -62,6 +62,61 @@ func RequestedScopeFrom(params map[string]any) (RequestedScope, error) {
 	return requested, nil
 }
 
+// LiveSession is one Session the app currently has open. It is the dynamic
+// scope the original External MCP bridge published on every Session change.
+type LiveSession struct {
+	ID     string
+	HostID string
+	Label  string
+}
+
+// ExposedSession is the Settings read model for one shared Session. The id is
+// displayed so a client can target the Session explicitly.
+type ExposedSession struct {
+	ID     string `json:"id"`
+	HostID string `json:"hostId,omitempty"`
+	Label  string `json:"label,omitempty"`
+}
+
+// LiveSessionSource is the application port the composition root implements
+// over the live Session service. SharingEnabled is the Settings toggle: while
+// it is off, no live Session is in scope.
+type LiveSessionSource interface {
+	LiveSessions() []LiveSession
+	SharingEnabled() bool
+}
+
+// scopeView is the single reading of the effective scope. With no source the
+// ticket-57 static allowlist is the scope. With a source, every live Session is
+// the dynamic scope while sharing is on, narrowed by the static env allowlist
+// when that variable was present (an explicitly empty value stays no access).
+func (s *Service) scopeView() (effective []string, exposed []ExposedSession, live, sharing bool) {
+	if s.sessions == nil {
+		return append([]string(nil), s.allowlist...), nil, false, false
+	}
+	live = true
+	sharing = s.sessions.SharingEnabled()
+	if !sharing {
+		return nil, nil, live, sharing
+	}
+	seen := map[string]bool{}
+	for _, session := range s.sessions.LiveSessions() {
+		id := strings.TrimSpace(session.ID)
+		if id == "" || seen[id] {
+			continue
+		}
+		if s.allowlistSet && !SessionAllowed(s.allowlist, id) {
+			continue
+		}
+		seen[id] = true
+		effective = append(effective, id)
+		exposed = append(exposed, ExposedSession{
+			ID: id, HostID: session.HostID, Label: session.Label,
+		})
+	}
+	return effective, exposed, live, sharing
+}
+
 // ParseSessionAllowlist reads the comma-separated NETCATTY_MCP_SESSION_IDS
 // value. An empty value is intentional no access, never a wildcard.
 func ParseSessionAllowlist(value string) []string {

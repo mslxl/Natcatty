@@ -796,14 +796,24 @@ func run(afterReady func(hostWindow)) error {
 	// discovery failure is reported without blocking startup.
 	mcpBridge := newMCPReadBridge(vaultService, forwardingManager, sessions, transferService)
 	mcpMode := newMCPModeState(externalMCPDiscoveryPath(userData))
+	// The live-Session scope mirrors the original useExternalMcpSessionSync:
+	// every Session the shell has open is shared while the External MCP
+	// sharing switch is on. The launch-time NETCATTY_MCP_SESSION_IDS value, when
+	// present, narrows that set instead of replacing it.
+	mcpLive := newMCPLiveSessions(sessions, userData, invalidate)
+	allowlist, allowlistSet := mcpSessionAllowlist()
 	mcpPolicy := appmcp.NewService(appmcp.Config{
 		ForcedChatSessionID: mcprpc.ExternalScope,
-		Allowlist:           mcpSessionAllowlist(),
+		Allowlist:           allowlist,
+		AllowlistSet:        allowlistSet,
+		Sessions:            mcpLive,
 		Mode:                mcpMode.Get,
 		Redraw:              invalidate,
 	})
 	mcpHandler := newMCPPolicyHandler(mcpBridge, mcpPolicy, sessions, sessions, nil)
-	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{policy: mcpPolicy, mode: mcpMode})
+	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{
+		policy: mcpPolicy, mode: mcpMode, sessions: mcpLive,
+	})
 	externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
 		externalMCPDiscoveryPath(userData), func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)

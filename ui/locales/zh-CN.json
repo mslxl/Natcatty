@@ -2966,6 +2966,14 @@
   "settingsMCPSessions": "共享会话",
   "settingsMCPSessionsValue": "{sessions}",
   "settingsMCPNoSessions": "未共享任何会话。客户端无法读取会话数据。",
+  "settingsMCPExposedCount": "{count, plural, =0 {未共享会话} other {已共享 # 个会话}}",
+  "settingsMCPSharingTitle": "共享活动会话",
+  "settingsMCPSharingOn": "共享开启时，所有已打开的会话都会提供给外部客户端。",
+  "settingsMCPSharingOff": "共享已关闭。客户端无法读取任何会话或对其进行操作。",
+  "settingsMCPSharingNoSessions": "共享已开启，但尚未打开任何会话。打开一个会话即可共享。",
+  "settingsMCPRefreshSessions": "刷新会话",
+  "settingsMCPEnvAllowlist": "启动允许列表：{sessions}",
+  "settingsMCPUnnamedSession": "未命名会话",
   "settingsMCPGeneration": "所有权代数：{generation}",
   "settingsMCPBypassHint": "session_close 和 terminal_stop 从不请求审批，但仍须遵守范围、允许列表和所有权。",
   "settingsMCPActivityTitle": "最近一次外部操作",
@@ -2997,5 +3005,6 @@
   "settingsMCPProblemExpired": "审批在使用前已过期。",
   "settingsMCPProblemStale": "所有权变更使审批失效。",
   "settingsMCPProblemInvalid": "审批已被使用或不再等待。",
-  "settingsMCPProblemMode": "无法更改权限模式。"
+  "settingsMCPProblemMode": "无法更改权限模式。",
+  "settingsMCPProblemSharing": "无法保存会话共享设置。"
 }

@@ -147,6 +147,34 @@ func TestMCPWriteCommandTimeoutReturnsPartialOutputAndReleasesTheSession(t *test
 	}
 }
 
+// TestMCPWriteReportsANativeExitCodeFromTheRealLocalShell proves the PowerShell
+// wrapper propagates a failing native command's status. The outcome drives the
+// error result, the Failed activity state, and the user-visible code.
+func TestMCPWriteReportsANativeExitCodeFromTheRealLocalShell(t *testing.T) {
+	fixture := newMCPWriteFixture(t)
+	shell, _ := fixture.sessions.ShellKind(fixture.localSession)
+	command := "sh -c 'exit 3'"
+	if shell == "powershell" || shell == "cmd" {
+		command = "cmd /c exit 3"
+	}
+	result := callMCPTool(t, fixture, "terminal_execute", map[string]any{
+		"sessionId": string(fixture.localSession),
+		"command":   command,
+	})
+	if result["ok"] != false {
+		t.Fatalf("a failing command reported ok: %#v", result)
+	}
+	if got := fmt.Sprint(result["exitCode"]); got != "3" {
+		t.Fatalf("exitCode = %v, want 3 (%#v)", result["exitCode"], result)
+	}
+	if got := fmt.Sprint(result["error"]); !strings.Contains(got, "exited with code 3") {
+		t.Fatalf("error = %q, want the exit code message", got)
+	}
+	if code, _ := result["code"].(string); code != "" {
+		t.Fatalf("an ordinary exit failure carried code %q: %#v", code, result)
+	}
+}
+
 func TestMCPWriteForegroundOutputIsBoundedAndReportsTruncation(t *testing.T) {
 	fixture := newMCPWriteFixture(t)
 	production := appmcp.ForegroundOutputLimit + 4096

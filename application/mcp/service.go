@@ -99,15 +99,27 @@ func (s *Service) Authorize(ctx context.Context, request Request) (Decision, err
 	return decision, nil
 }
 
-// Snapshot is the UI's read model: current mode, forced scope, allowlist,
-// generation, live prompts, and recently expired prompts.
+// Snapshot is the UI's read model: current mode, forced scope, effective
+// session scope, the shared live Sessions, generation, live prompts, and
+// recently expired prompts.
 type Snapshot struct {
 	Mode        Mode
 	ForcedScope string
-	Allowlist   []string
-	Generation  uint64
-	Pending     []ApprovalView
-	Recent      []ApprovalView
+	// Allowlist is the effective session scope: the live Sessions while
+	// sharing is on, intersected with the static env allowlist when present.
+	Allowlist []string
+	// EnvAllowlist is the static NETCATTY_MCP_SESSION_IDS value and
+	// EnvAllowlistSet records that the variable was present.
+	EnvAllowlist    []string
+	EnvAllowlistSet bool
+	// LiveScope reports that the app is wired to the live Session provider, so
+	// the Settings surface can show the sharing control and the exposed list.
+	LiveScope       bool
+	SharingEnabled  bool
+	ExposedSessions []ExposedSession
+	Generation      uint64
+	Pending         []ApprovalView
+	Recent          []ApprovalView
 	// LastActivity is the newest write outcome, or nil when no write ran.
 	LastActivity *ActivityView
 }
@@ -118,14 +130,20 @@ type Snapshot struct {
 // has not run yet.
 func (s *Service) Snapshot() Snapshot {
 	now := s.now()
+	effective, exposed, live, sharing := s.scopeView()
 	s.mu.Lock()
 	expired := s.expireDueLocked(now)
 	snapshot := Snapshot{
-		ForcedScope: s.forcedChatScope,
-		Allowlist:   append([]string(nil), s.allowlist...),
-		Generation:  s.generation,
-		Pending:     s.snapshotPendingLocked(now),
-		Recent:      append([]ApprovalView(nil), s.recent...),
+		ForcedScope:     s.forcedChatScope,
+		Allowlist:       effective,
+		EnvAllowlist:    append([]string(nil), s.allowlist...),
+		EnvAllowlistSet: s.allowlistSet,
+		LiveScope:       live,
+		SharingEnabled:  sharing,
+		ExposedSessions: exposed,
+		Generation:      s.generation,
+		Pending:         s.snapshotPendingLocked(now),
+		Recent:          append([]ApprovalView(nil), s.recent...),
 	}
 	if s.lastActivity != nil {
 		activity := *s.lastActivity
@@ -140,6 +158,16 @@ func (s *Service) Snapshot() Snapshot {
 		return approvalNewer(snapshot.Recent[left], snapshot.Recent[right])
 	})
 	return snapshot
+}
+
+// NotifyViewChanged asks the UI to redraw after the live Session scope or the
+// sharing toggle changed. The policy itself re-reads the source on every call,
+// so this only repaints the Settings read model.
+func (s *Service) NotifyViewChanged() {
+	if s == nil {
+		return
+	}
+	s.notify()
 }
 
 // withTool attaches the catalog tool name to a policy error that was produced
