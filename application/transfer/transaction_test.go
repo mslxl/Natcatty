@@ -512,3 +512,51 @@ func (f *stuckBackupFS) RemoveAll(ctx context.Context, p string) error {
 var _ FileSystem = (*recordingDestFS)(nil)
 var _ FileSystem = (*shortSourceFS)(nil)
 var _ FileSystem = (*stuckBackupFS)(nil)
+
+// TestCopyAcceptsTheRemoteModeForAWindowsSource reproduces the ticket-58
+// acceptance failure: a local Windows source reports 0666, the remote SFTP
+// server creates its staging file as 0600, and the copy must succeed instead
+// of demanding the local mode back from a transport that cannot represent it.
+func TestCopyAcceptsTheRemoteModeForAWindowsSource(t *testing.T) {
+	source := windowsSourceFS{newFakeFS("local")}
+	source.addFile("/", "a.txt", "new", 0o666)
+	dest := newRecordingDest("remote")
+	dest.stageMode = 0o600
+
+	_, err := NewService(nil, nil).Copy(context.Background(), CopyRequest{
+		Source: source, Dest: dest, Sources: []string{`C:\dir\a.txt`}, DestDir: "/",
+		Conflict: ConflictReplace,
+	})
+	if err != nil {
+		t.Fatalf("copy from a Windows source with a 0600 remote stage: %v", err)
+	}
+	if got, ok := dest.file("/a.txt"); !ok || string(got) != "new" {
+		t.Fatalf("destination = %q, exists = %v; want the copied bytes", got, ok)
+	}
+	assertNoTransferArtifacts(t, dest.fakeFS)
+}
+
+// TestCopyVerifiesAPOSIXSourceModeForANewDestination keeps the strict half of
+// the same rule: when both panes speak POSIX modes, a server that accepted the
+// chmod but reports a different mode back must not publish the file.
+func TestCopyVerifiesAPOSIXSourceModeForANewDestination(t *testing.T) {
+	source := newFakeFS("source")
+	source.addFile("/", "a.txt", "new", 0o640)
+	dest := newRecordingDest("dest")
+	dest.stageMode = 0o600
+
+	_, err := NewService(nil, nil).Copy(context.Background(), CopyRequest{
+		Source: source, Dest: dest, Sources: []string{"/a.txt"}, DestDir: "/",
+		Conflict: ConflictReplace,
+	})
+	if err == nil {
+		t.Fatal("a staged file with the wrong mode was promoted")
+	}
+	if KindOf(err) != KindInternal {
+		t.Fatalf("mode verification failure kind = %q, want %q", KindOf(err), KindInternal)
+	}
+	if _, ok := dest.file("/a.txt"); ok {
+		t.Fatal("the destination was created despite the failed verification")
+	}
+	assertNoTransferArtifacts(t, dest.fakeFS)
+}
