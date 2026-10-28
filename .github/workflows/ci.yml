@@ -43,6 +43,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install CJK fonts
+        # The runner image has no font covering Han or Hangul, so the shipped
+        # zh-CN and zh-TW text renders no glyphs through Pango: MyGo skips the
+        # boxes Pango draws for unknown glyphs, so the real-size tests see no
+        # ink. The ink classifier names the missing font when that happens.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-cache -f
+
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -108,6 +119,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install CJK fonts
+        # Same reason as the checks job: the image has no font covering Han or
+        # Hangul, and the real-size settings tests render the shipped zh-CN and
+        # zh-TW text through Pango.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-cache -f
 
       - name: Check for a C compiler
         id: cc

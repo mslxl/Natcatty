@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"math"
 	"sync"
@@ -330,20 +331,56 @@ func testerRectHasColor(tester *ui.Tester, rect ui.Rect, color ui.Color) bool {
 // bold must match the sampled node's weight, or the reference's coverage
 // differs from the painted glyphs. A rect that is blank, clipped, or painted
 // in a color matching no candidate (including the plain body text color)
-// fails rather than guessing.
+// fails rather than guessing: a fill is far from every glyph reference, so
+// the tolerance rejects it.
+//
+// A platform whose installed fonts cover none of the text's script paints no
+// glyph at all (MyGo skips the boxes Pango draws for unknown glyphs), so both
+// reference renders stay blank and no color could be told apart. That is not
+// a color defect to guess at: it is an environment without a font for a
+// shipped locale, and it fails with that reason so CI must install one.
 func testerRectInk(t *testing.T, tester *ui.Tester, rect ui.Rect, text string, size float32, bold bool, inks ...ui.Color) ui.Color {
 	t.Helper()
-	if len(inks) < 2 {
-		t.Fatalf("testerRectInk needs at least two candidate inks")
+	ink, err := classifyRectInk(tester, rect, text, size, bold, inks...)
+	if err != nil {
+		t.Fatal(err)
 	}
-	painted, ok := darkestRectPixel(tester.Image(), rect)
+	return ink
+}
+
+// classifyRectInk is testerRectInk without a *testing.T, so the rejection
+// paths are unit tested against a real frame.
+func classifyRectInk(tester *ui.Tester, rect ui.Rect, text string, size float32, bold bool, inks ...ui.Color) (ui.Color, error) {
+	if len(inks) < 2 {
+		return ui.Color{}, fmt.Errorf("classifyRectInk needs at least two candidate inks")
+	}
+	img := tester.Image()
+	// The fill behind the glyphs is the rect's dominant color, which is what
+	// the references must blend into: a row on the panel's surface must not be
+	// compared with a row on the page's background.
+	fill, ok := dominantRectPixel(img, rect)
 	if !ok {
-		t.Fatalf("no pixels were painted inside %+v for %q", rect, text)
+		return ui.Color{}, fmt.Errorf("no pixels were painted inside %+v for %q", rect, text)
+	}
+	references := make([]ui.Color, len(inks))
+	rasterized := false
+	for i, ink := range inks {
+		references[i] = renderedTextInk(text, size, bold, ink, fill)
+		if i > 0 && !sameRGB(references[i], references[0]) {
+			rasterized = true
+		}
+	}
+	if !rasterized {
+		return ui.Color{}, fmt.Errorf("the platform paints no glyphs for %q: no installed font covers its script, so neither candidate ink rasterizes differently; install one (on Linux, for example, fonts-noto-cjk)", text)
+	}
+	painted, ok := darkestRectPixel(img, rect)
+	if !ok {
+		return ui.Color{}, fmt.Errorf("no pixels were painted inside %+v for %q", rect, text)
 	}
 	best, second := -1, -1
 	var bestDistance, secondDistance float64
-	for i, ink := range inks {
-		distance := colorDistance(painted, renderedTextInk(t, text, size, bold, ink))
+	for i, reference := range references {
+		distance := colorDistance(painted, reference)
 		switch {
 		case best < 0 || distance < bestDistance:
 			second, secondDistance = best, bestDistance
@@ -354,37 +391,41 @@ func testerRectInk(t *testing.T, tester *ui.Tester, rect ui.Rect, text string, s
 	}
 	const matchTolerance, separation = 24, 8
 	if bestDistance > matchTolerance || secondDistance-bestDistance < separation {
-		t.Fatalf("the glyphs of %q in %+v are %v; nearest candidate is %v at %.1f but the next is only %.1f away",
+		return ui.Color{}, fmt.Errorf("the glyphs of %q in %+v are %v; nearest candidate is %v at %.1f but the next is only %.1f away",
 			text, rect, painted, inks[best], bestDistance, secondDistance)
 	}
-	return inks[best]
+	return inks[best], nil
 }
 
-// renderedTextInk renders one line in ink on the theme background and returns
-// its darkest painted pixel: the coverage the same line gets at its most
-// saturated point on this platform.
-func renderedTextInk(t *testing.T, text string, size float32, bold bool, ink ui.Color) ui.Color {
-	t.Helper()
+// renderedTextInk renders one line in ink on fill and returns its darkest
+// painted pixel: the coverage the same line gets at its most saturated point
+// on this platform.
+func renderedTextInk(text string, size float32, bold bool, ink, fill ui.Color) ui.Color {
 	var rect ui.Rect
 	tester := ui.NewTester(func(c *ui.Context) {
-		ui.Column(c).Fill().Background(ui.LightTheme().Background).Children(func() {
+		ui.Column(c).Fill().Background(fill).Children(func() {
+			line := ui.Text(c, text).FontSize(size).TextColor(ink)
 			if bold {
-				ui.Text(c, text).FontSize(size).Bold().TextColor(ink)
-				return
+				line.Bold()
 			}
-			ui.Text(c, text).FontSize(size).TextColor(ink)
 		})
 	}, 1200, 200)
 	tester.Frame()
 	rect, ok := tester.Find(text)
 	if !ok {
-		t.Fatalf("the %v reference render of %q is not laid out", ink, text)
+		return ui.Color{}
 	}
 	darkest, ok := darkestRectPixel(tester.Image(), rect)
 	if !ok {
-		t.Fatalf("the %v reference render of %q painted no pixels", ink, text)
+		return ui.Color{}
 	}
 	return darkest
+}
+
+// sameRGB compares the sRGB value of two colors, ignoring their wide-gamut
+// forms: a pixel read back from the frame carries none.
+func sameRGB(a, b ui.Color) bool {
+	return a.R == b.R && a.G == b.G && a.B == b.B
 }
 
 // darkestRectPixel returns the darkest pixel inside rect, which is the one a
@@ -407,9 +448,81 @@ func darkestRectPixel(img *image.RGBA, rect ui.Rect) (ui.Color, bool) {
 	return darkest, found
 }
 
+// dominantRectPixel returns the color most pixels of rect share: the fill the
+// glyphs are drawn on, so a reference render blends into the same one.
+func dominantRectPixel(img *image.RGBA, rect ui.Rect) (ui.Color, bool) {
+	left, top := max(int(rect.X), img.Rect.Min.X), max(int(rect.Y), img.Rect.Min.Y)
+	right, bottom := min(int(rect.X+rect.W), img.Rect.Max.X), min(int(rect.Y+rect.H), img.Rect.Max.Y)
+	counts := map[ui.Color]int{}
+	var most ui.Color
+	best := 0
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			offset := img.PixOffset(x, y)
+			c := ui.RGB(img.Pix[offset], img.Pix[offset+1], img.Pix[offset+2])
+			counts[c]++
+			if counts[c] > best {
+				most, best = c, counts[c]
+			}
+		}
+	}
+	return most, best > 0
+}
+
 func colorDistance(a, b ui.Color) float64 {
 	dr := float64(int(a.R) - int(b.R))
 	dg := float64(int(a.G) - int(b.G))
 	db := float64(int(a.B) - int(b.B))
 	return math.Sqrt(dr*dr + dg*dg + db*db)
+}
+
+// TestRectInkClassifierNamesThePaintedInkOrFails pins the three outcomes the
+// refusal tests rely on, against a real frame: the wanted ink is named, the
+// rejected ink is not, and a rect whose row is not painted is rejected rather
+// than silently accepted because two blank references look alike.
+func TestRectInkClassifierNamesThePaintedInkOrFails(t *testing.T) {
+	want := syncDangerTextColor(ui.LightTheme())
+	raw := ui.LightTheme().Danger
+	if want == raw {
+		t.Fatalf("the danger helper returned the raw token %v; the classifier test would be vacuous", raw)
+	}
+	const label = "The cloud copy uses a newer schema than this version supports."
+	render := func(ink ui.Color) (*ui.Tester, ui.Rect) {
+		var rect ui.Rect
+		tester := ui.NewTester(func(c *ui.Context) {
+			ui.Column(c).Padding(10).Children(func() {
+				ui.Text(c, label).FontSize(11).TextColor(ink)
+			})
+		}, 600, 120)
+		tester.Frame()
+		found, ok := tester.Find(label)
+		if !ok {
+			t.Fatalf("the %v line is not laid out", ink)
+		}
+		rect = found
+		return tester, rect
+	}
+
+	tester, rect := render(want)
+	if ink, err := classifyRectInk(tester, rect, label, 11, false, want, raw); err != nil {
+		t.Fatalf("the wanted ink was not classified: %v", err)
+	} else if ink != want {
+		t.Fatalf("classified %v, want syncDangerTextColor(%v)", ink, want)
+	}
+
+	tester, rect = render(raw)
+	if ink, err := classifyRectInk(tester, rect, label, 11, false, want, raw); err != nil {
+		t.Fatalf("the rejected ink was not classified: %v", err)
+	} else if ink != raw {
+		t.Fatalf("classified %v, want the raw theme danger %v", ink, raw)
+	}
+
+	// A rect below the painted row is still a real rect with pixels, but no
+	// glyph ink; it must be reported, not matched to whichever reference is
+	// nearest.
+	tester, rect = render(want)
+	blank := ui.Rect{X: rect.X, Y: rect.Y + rect.H + 40, W: rect.W, H: rect.H}
+	if _, err := classifyRectInk(tester, blank, label, 11, false, want, raw); err == nil {
+		t.Fatalf("a blank row %+v was classified as an ink", blank)
+	}
 }

@@ -249,10 +249,10 @@ func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 // realShellDir returns a short working directory for the real shell.
 // t.TempDir() embeds the whole test name, and with a long private TEMP the
 // PowerShell prompt then fills the hundred-column terminal: the wrapped prompt
-// merges the command echo and its output into one logical screen line, so the
-// exact-line proof below can never match even though the shell ran the
-// command. The length of a temporary path must not decide whether the accepted
-// line is observable, so keep the prompt short and the proof strict.
+// merges the command echo and its output into one logical screen line, which
+// the wrap-independent proof below has to tolerate. The length of a temporary
+// path must not decide whether the accepted line is observable, so keep the
+// prompt short and the proof strict.
 func realShellDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "ncat-auto-")
