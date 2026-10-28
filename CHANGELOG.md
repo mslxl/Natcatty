@@ -82,6 +82,8 @@ do not maintain them by hand.
   1100x720 default sizes in all five locales.
 - Contrast of danger and warning text on every light and dark appearance
   preset, and of accent-colored self-test overlay text.
+- macOS launch no longer panics when the Dock icon is applied during startup;
+  the icon is set once the application is ready.
 - CJK text rendering in the packaged application on systems with a CJK font,
   and a dedicated search path that keeps CJK queries literal.
 
