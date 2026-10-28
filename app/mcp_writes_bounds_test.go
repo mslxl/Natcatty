@@ -125,6 +125,20 @@ func shellEcho(shell, text string) string {
 	}
 }
 
+// shellSlowCommand is the action a timeout test interrupts. The sleep is much
+// longer than the test-only deadline so a loaded runner cannot let it finish
+// first; the deadline, not the sleep, bounds the test.
+func shellSlowCommand(shell string, seconds int) string {
+	switch shell {
+	case "powershell":
+		return fmt.Sprintf("Start-Sleep -Seconds %d", seconds)
+	case "cmd":
+		return fmt.Sprintf("timeout /t %d /nobreak >nul", seconds)
+	default:
+		return fmt.Sprintf("sleep %d", seconds)
+	}
+}
+
 // shellReadyCommand prints marker so that the typed command does not contain
 // it: a PTY can echo the input before the shell has started, so only the
 // marker assembled at run time proves the shell is ready. Half the marker is
@@ -156,18 +170,13 @@ func TestMCPWriteCommandTimeoutReturnsPartialOutputAndReleasesTheSession(t *test
 	if stdout, _ := warm["stdout"].(string); !strings.Contains(stdout, "shell-ready") {
 		t.Fatalf("shell warm-up stdout = %q", stdout)
 	}
-	var slow string
-	switch shell {
-	case "powershell":
-		slow = "Start-Sleep -Seconds 3"
-	case "cmd":
-		slow = "timeout /t 3 /nobreak >nul"
-	case "fish":
-		slow = "sleep 3"
-	default:
-		slow = "sleep 3"
-	}
-	fixture.executor.toolTimeout = time.Second
+	// The warm-up above removes shell startup from the measured interval, but
+	// a loaded parallel suite can still delay the shell's first echoed line.
+	// Keep the test-only deadline short enough to exercise the timeout path
+	// while leaving ample room for that line; the 10 s sleep cannot finish
+	// first.
+	slow := shellSlowCommand(shell, 10)
+	fixture.executor.toolTimeout = 3 * time.Second
 	timedOut := callMCPTool(t, fixture, "terminal_execute", map[string]any{
 		"sessionId": string(fixture.localSession),
 		"command":   shellCommandFor(shell, "before-timeout", slow),

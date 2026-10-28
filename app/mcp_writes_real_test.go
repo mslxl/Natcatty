@@ -866,11 +866,13 @@ func TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell(t *testing.T) {
 	// A timeout is a typed failure over the protocol and the Session stays
 	// usable. The partial output rides on the handler result; the generic
 	// stdio renderer keeps only the error line for an ok:false result, which
-	// the handler-seam test below asserts.
-	fixture.executor.toolTimeout = 700 * time.Millisecond
+	// the handler-seam test below asserts. The test-only deadlines below leave
+	// room for a loaded runner to echo the command while remaining far shorter
+	// than the interrupted sleeps.
+	fixture.executor.toolTimeout = 3 * time.Second
 	call := e2eToolCall(t, client, "terminal_execute", map[string]any{
 		"sessionId": sessionID,
-		"command":   "printf 'real-before-timeout\n'; sleep 5; printf 'never\n'",
+		"command":   "printf 'real-before-timeout\n'; sleep 12; printf 'never\n'",
 	})
 	if !call.isError || !strings.Contains(call.text, "mcp_command_timeout") {
 		t.Fatalf("timeout over stdio = %q (isError=%v)", call.text, call.isError)
@@ -884,9 +886,9 @@ func TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell(t *testing.T) {
 	}
 	// With the shell responsive again, the partial output of a slow command is
 	// returned alongside the typed timeout.
-	fixture.executor.toolTimeout = 900 * time.Millisecond
+	fixture.executor.toolTimeout = 3 * time.Second
 	partial := fixture.executor.Execute(fixture.ctx, "terminal_execute", map[string]any{
-		"sessionId": sessionID, "command": "printf 'real-partial\n'; sleep 3",
+		"sessionId": sessionID, "command": "printf 'real-partial\n'; sleep 12",
 	}, appmcp.Decision{})
 	if partial["code"] != string(appmcp.CodeCommandTimeout) ||
 		!strings.Contains(fmt.Sprint(partial["stdout"]), "real-partial") {
