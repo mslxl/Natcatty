@@ -121,10 +121,12 @@ func TestTicket58CheckPassesTwiceAfterACommandTimeout(t *testing.T) {
 	})
 	requireMCPWriteOK(t, "terminal_execute", warm)
 	previousTimeout := fixture.executor.toolTimeout
-	fixture.executor.toolTimeout = time.Second
+	// The deadline is test-only and must exceed a loaded runner's first echoed
+	// line; the interrupted action sleeps far longer than the deadline.
+	fixture.executor.toolTimeout = 3 * time.Second
 	timedOut := callMCPTool(t, fixture, "terminal_execute", map[string]any{
 		"sessionId": string(fixture.localSession),
-		"command":   shellCommandFor(shell, "before-timeout", selftest58SlowCommand(shell)),
+		"command":   shellCommandFor(shell, "before-timeout", shellSlowCommand(shell, 10)),
 	})
 	requireMCPWriteCode(t, "terminal_execute", timedOut, appmcp.CodeCommandTimeout)
 	if stdout, _ := timedOut["stdout"].(string); !strings.Contains(stdout, "before-timeout") {
