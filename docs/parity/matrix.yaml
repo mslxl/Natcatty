@@ -3752,6 +3752,30 @@
   status: excluded
   notes: "Windows arm64 is unsupported because mosh and ET binaries are unavailable for the target."
 
+- id: platform.release-artifacts
+  area: packaging
+  feature: Installable artifacts for every supported platform with embedded resources and checksums
+  original_paths:
+    - .github/workflows/build.yml
+    - electron-builder.config.cjs
+    - build/installer.nsh
+    - package.json
+  module: app
+  tickets: [59]
+  acceptance_tests:
+    - internal/release.TestParseTagAcceptsStrictSemVer
+    - internal/release.TestParseTagRejectsInvalidSemVer
+    - internal/release.TestValidateTagMatchesManifestVersion
+    - internal/tools/releasecheck.TestGenerateAndVerifySums
+    - internal/tools/releasecheck.TestVerifySumsRejectsMismatchAndMissing
+    - internal/tools/releasecheck.TestCollectFlattensArtifactsAndRejectsDuplicates
+    - internal/tools/releasecheck.TestAssertNoUpdateMetadata
+    - internal/tools/releasecheck.TestCheckBinaryFindsEveryCatalog
+    - app.TestTicket59CheckPassesTwiceInOneProcess
+    - app.TestTicket59CheckRunsThroughTheKeyboard
+  status: implemented
+  notes: "MyGo builds the macOS universal .app and DMG, the Windows amd64 NSIS Setup exe, and the Linux amd64/arm64 tar.gz plus deb (with install.sh) from mygo.json. The release workflow validates a strict SemVer tag against mygo.json in internal/release, refuses update, signing, and notarization configuration and environment, builds on macOS, Windows, and Linux runners, and inspects each artifact itself: hdiutil verify plus a mounted-DMG plist/resource/codesign check, a 7z NSIS listing plus extracted-binary check, and dpkg-deb/tar listings plus extracted-binary checks. It verifies all five embedded locale catalogs by searching the packaged executables, requires the et/mosh provenance, licenses, and platform transport clients in the artifact, and rejects update-*.json, latest*.yml, appcast, delta, and certificate files. Per-platform and aggregate SHA256SUMS are generated and verified from a clean flattened set; the workflow uploads workflow artifacts only and never creates a GitHub release. The macOS signature is ad hoc, not Developer ID. The ticket 59 self-test proves the running packaged version and name match the shipped mygo.json, the five catalogs and seven bundled resources, and disabled updates, twice in one F11,5,9 process."
+
 - id: sftp.dual-panes
   area: sftp-transfer
   feature: Local and remote panes browse independently
