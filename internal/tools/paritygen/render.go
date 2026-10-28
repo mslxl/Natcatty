@@ -5,9 +5,11 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/mslxl/natcatty/internal/parity"
 )
 
-func countRows(rows []row) map[string]int {
+func countRows(rows []parity.Row) map[string]int {
 	counts := map[string]int{}
 	for _, row := range rows {
 		counts[row.Status]++
@@ -17,8 +19,8 @@ func countRows(rows []row) map[string]int {
 
 // render produces the committed matrix.md. Rows are sorted by area and id so
 // regeneration is deterministic across machines.
-func render(m *matrix) []byte {
-	rows := append([]row(nil), m.Rows...)
+func render(m *parity.Matrix) []byte {
+	rows := append([]parity.Row(nil), m.Rows...)
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Area != rows[j].Area {
 			return rows[i].Area < rows[j].Area
@@ -70,7 +72,7 @@ func cell(value string) string {
 	return value
 }
 
-func summarize(w io.Writer, m *matrix) {
+func summarize(w io.Writer, m *parity.Matrix) {
 	rows := m.Rows
 	counts := countRows(rows)
 	areas := map[string]map[string]int{}

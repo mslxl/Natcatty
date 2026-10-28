@@ -3,10 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -14,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mslxl/natcatty/internal/parity"
 )
 
 var (
@@ -85,64 +83,6 @@ type repo struct {
 	commit string
 }
 
-type testIndex struct {
-	byDir map[string]map[string]bool
-	all   map[string]bool
-}
-
-func (idx testIndex) resolves(entry string) bool {
-	entry = strings.TrimPrefix(entry, "./")
-	entry = strings.TrimPrefix(entry, modulePath+"/")
-	if i := strings.LastIndex(entry, "."); i > 0 {
-		return idx.byDir[entry[:i]][entry[i+1:]]
-	}
-	return idx.all[entry]
-}
-
-func buildTestIndex(root string) (testIndex, error) {
-	idx := testIndex{byDir: map[string]map[string]bool{}, all: map[string]bool{}}
-	err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".scratch", "build", ".mygo", "node_modules", "vendor":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(entry.Name(), "_test.go") {
-			return nil
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), filePath, nil, 0)
-		if err != nil {
-			return fmt.Errorf("parse %s: %w", filePath, err)
-		}
-		dir, err := filepath.Rel(root, filepath.Dir(filePath))
-		if err != nil {
-			return err
-		}
-		dir = filepath.ToSlash(dir)
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "Test") {
-				continue
-			}
-			idx.all[fn.Name.Name] = true
-			if idx.byDir[dir] == nil {
-				idx.byDir[dir] = map[string]bool{}
-			}
-			idx.byDir[dir][fn.Name.Name] = true
-		}
-		return nil
-	})
-	if err != nil {
-		return testIndex{}, err
-	}
-	return idx, nil
-}
-
 func originalPathSet(r repo) (map[string]bool, error) {
 	if !commitPattern.MatchString(r.commit) {
 		return nil, fmt.Errorf("invalid original commit %q", r.commit)
@@ -173,40 +113,36 @@ func isCleanRelPath(value string) bool {
 	return path.Clean(value) == value && !strings.HasPrefix(value, "../")
 }
 
-func validate(r repo, m *matrix) []error {
+func validate(r repo, m *parity.Matrix, tests parity.TestIndex) []error {
 	var errs []error
 	add := func(format string, args ...any) {
 		errs = append(errs, fmt.Errorf(format, args...))
 	}
 
-	limitationData, err := os.ReadFile(filepath.Join(r.root, limitationsPath))
+	limitationData, err := os.ReadFile(filepath.Join(r.root, parity.LimitationsPath))
 	if err != nil {
-		add("read %s: %v", limitationsPath, err)
+		add("read %s: %v", parity.LimitationsPath, err)
 	}
-	limitations := parseLimitations(limitationData)
-	limitationByID := map[string]limitation{}
+	limitations := parity.ParseLimitations(limitationData)
+	limitationByID := map[string]parity.Limitation{}
 	for _, entry := range limitations {
-		if _, ok := limitationByID[entry.id]; ok {
-			add("limitations.md defines %q more than once", entry.id)
+		if _, ok := limitationByID[entry.ID]; ok {
+			add("limitations.md defines %q more than once", entry.ID)
 			continue
 		}
-		limitationByID[entry.id] = entry
+		limitationByID[entry.ID] = entry
 	}
 
 	originalPaths, gitErr := originalPathSet(r)
 	if gitErr != nil {
 		add("%v (fetch full history, e.g. actions/checkout fetch-depth: 0)", gitErr)
 	}
-	tests, testErr := buildTestIndex(r.root)
-	if testErr != nil {
-		add("%v", testErr)
-	}
 
 	seenIDs := map[string]bool{}
 	for index := range m.Rows {
 		row := &m.Rows[index]
 		where := func(format string, args ...any) {
-			prefix := fmt.Sprintf("row %q (line %d): ", row.ID, row.line)
+			prefix := fmt.Sprintf("row %q (line %d): ", row.ID, row.Line)
 			errs = append(errs, fmt.Errorf(prefix+format, args...))
 		}
 
@@ -287,7 +223,7 @@ func validate(r repo, m *matrix) []error {
 				}
 				continue
 			}
-			if testErr == nil && !tests.resolves(entry) {
+			if !tests.Resolves(entry) {
 				where("acceptance test %q does not resolve to a Go test", entry)
 			}
 		}
@@ -296,17 +232,25 @@ func validate(r repo, m *matrix) []error {
 				where("needs an acceptance test, or manual_qa plus automation_exception")
 			}
 		}
+		// A verified row is a claim that the behavior is covered by the
+		// default test jobs. A test behind the selftest or launchsmoke tag is
+		// real evidence, but `go test ./...` does not run it, so it cannot be
+		// the only evidence for verified. A row may keep such a test in its
+		// list as long as another named test runs in the default build.
+		if row.Status == "verified" && !parity.HasCIRunnableTest(row, tests) {
+			where("status verified needs at least one acceptance test that runs in the default CI build")
+		}
 
 		if row.Status == "excluded" {
 			limitation, ok := limitationByID[row.ID]
 			if !ok {
-				where("excluded row needs an entry in %s", limitationsPath)
+				where("excluded row needs an entry in %s", parity.LimitationsPath)
 			} else {
-				if !hasLinePrefix(limitation.body, "Decision:") {
-					where("excluded row needs a \"Decision:\" line in %s", limitationsPath)
+				if !hasLinePrefix(limitation.Body, "Decision:") {
+					where("excluded row needs a \"Decision:\" line in %s", parity.LimitationsPath)
 				}
-				if !hasLinePrefix(limitation.body, "Ticket:") {
-					where("excluded row needs a \"Ticket:\" sign-off line in %s", limitationsPath)
+				if !hasLinePrefix(limitation.Body, "Ticket:") {
+					where("excluded row needs a \"Ticket:\" sign-off line in %s", parity.LimitationsPath)
 				}
 			}
 			if strings.TrimSpace(row.Notes) == "" {
@@ -316,30 +260,47 @@ func validate(r repo, m *matrix) []error {
 	}
 
 	for _, limitation := range limitations {
-		row := findByID(m.Rows, limitation.id)
+		row := parity.FindByID(m.Rows, limitation.ID)
 		if row == nil {
-			add("limitations.md has an entry for %q, but no matrix row uses that id", limitation.id)
+			add("limitations.md has an entry for %q, but no matrix row uses that id", limitation.ID)
 			continue
 		}
 		if row.Status != "excluded" {
-			add("limitations.md has an entry for %q, but the row is not excluded", limitation.id)
+			add("limitations.md has an entry for %q, but the row is not excluded", limitation.ID)
 		}
 	}
 	return errs
 }
 
 // validateRelease applies the release-readiness rules from rewrite spec §17
-// rule 7 and the ticket-coverage half of rule 4. CI runs it only at release
-// time; the PR gate keeps unverified work visible instead.
-func validateRelease(m *matrix) []error {
+// rule 7 and the ticket-coverage half of rule 4. Every non-excluded row must
+// be verified, every exclusion must be signed in limitations.md, every
+// verified row must name a test the default CI jobs run, and every ticket
+// 01-60 must appear on a row. CI runs it at release time; the PR gate keeps
+// unverified work visible instead.
+func validateRelease(r repo, m *parity.Matrix, tests parity.TestIndex) []error {
 	var errs []error
+	limitationData, err := os.ReadFile(filepath.Join(r.root, filepath.FromSlash(parity.LimitationsPath)))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("read %s: %v", parity.LimitationsPath, err))
+	}
+	for _, problem := range parity.Audit(m, parity.ParseLimitations(limitationData)) {
+		errs = append(errs, fmt.Errorf("%s", problem))
+	}
+	for index := range m.Rows {
+		row := &m.Rows[index]
+		if row.Status != "verified" {
+			continue
+		}
+		if !parity.HasCIRunnableTest(row, tests) {
+			errs = append(errs, fmt.Errorf(
+				"row %q names no acceptance test that runs in the default CI build", row.ID))
+		}
+	}
 	covered := map[string]bool{}
 	for _, row := range m.Rows {
 		for _, ticket := range row.Tickets {
 			covered[ticket] = true
-		}
-		if row.Status != "excluded" && row.Status != "verified" {
-			errs = append(errs, fmt.Errorf("row %q is %s; release requires every non-excluded row to be verified", row.ID, row.Status))
 		}
 	}
 	for number := 1; number <= 60; number++ {
@@ -372,13 +333,4 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func findByID(rows []row, id string) *row {
-	for index := range rows {
-		if rows[index].ID == id {
-			return &rows[index]
-		}
-	}
-	return nil
 }

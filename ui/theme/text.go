@@ -44,6 +44,28 @@ func WarningText(t *ui.Theme) ui.Color {
 	return readableText(t, light, dark)
 }
 
+// AccentBodyText returns an accent color readable as body text on the theme's
+// background and surface. The Accent token is tuned for fills, focus rings,
+// and primary buttons; as small text on a light fill it measures below the
+// body-text target (the Snow accent is about 3.5:1 on white). Moving the
+// accent toward black in a light theme, or white in a dark theme, keeps its
+// hue while reaching the target.
+func AccentBodyText(t *ui.Theme) ui.Color {
+	candidate := t.Accent
+	target := ui.Hex("#000000")
+	if t.Dark {
+		target = ui.Hex("#ffffff")
+	}
+	for step := 0; step < 20; step++ {
+		if contrast(candidate, t.Background) >= MinimumTextContrast &&
+			contrast(candidate, t.Surface) >= MinimumTextContrast {
+			return candidate
+		}
+		candidate = mix(candidate, target, 0.15)
+	}
+	return candidate
+}
+
 // readableText picks the first candidate that clears the target against both
 // fills text is drawn on, so one helper covers a plain panel and a card row.
 // The last candidate is the fallback for a pathological theme.

@@ -61,3 +61,70 @@ func TestDangerAndWarningTextClearTheBodyContrastTarget(t *testing.T) {
 		}
 	}
 }
+
+// TestAccentBodyTextClearsTheBodyContrastTarget keeps accent-colored body text
+// (the developer self-test overlay title and PASS label) readable on every
+// appearance preset. The Snow accent is #0088ff, which measures 3.52:1 on
+// white; AccentBodyText darkens it until it clears the target.
+func TestAccentBodyTextClearsTheBodyContrastTarget(t *testing.T) {
+	snow, ok := domaintheme.LookupPreset(false, "snow")
+	if !ok {
+		t.Fatal("the Snow preset is missing")
+	}
+	snowTheme := UI(false, snow, Options{})
+	if ratio := contrast(snowTheme.Accent, snowTheme.Surface); ratio >= MinimumTextContrast {
+		t.Fatalf("the Snow accent now clears the target by itself (%.2f:1); the helper's premise changed", ratio)
+	}
+	if ratio := contrast(AccentBodyText(snowTheme), snowTheme.Surface); ratio < MinimumTextContrast {
+		t.Errorf("Snow accent body text on the surface = %.2f:1", ratio)
+	}
+
+	for _, test := range []struct {
+		name    string
+		dark    bool
+		presets []domaintheme.Preset
+	}{
+		{"light", false, domaintheme.LightPresets()},
+		{"dark", true, domaintheme.DarkPresets()},
+	} {
+		for _, preset := range test.presets {
+			uiTheme := UI(test.dark, preset, Options{})
+			text := AccentBodyText(uiTheme)
+			if ratio := contrast(text, uiTheme.Background); ratio < MinimumTextContrast {
+				t.Errorf("%s preset %s: accent body text on the background = %.2f:1", test.name, preset.ID, ratio)
+			}
+			if ratio := contrast(text, uiTheme.Surface); ratio < MinimumTextContrast {
+				t.Errorf("%s preset %s: accent body text on the surface = %.2f:1", test.name, preset.ID, ratio)
+			}
+		}
+	}
+}
+
+// TestPlaceholderTextClearsTheBodyContrastTarget pins the real placeholder
+// color. Ticket 59's acceptance reported "Search the Vault" as #6786b4 at
+// 3.72:1, but that value is a subpixel-antialiasing fringe: MyGo paints the
+// placeholder with the theme's TextMuted, #676f7e on the Snow preset, which
+// measures 5.05:1 on the white input surface (4.62:1 on the Snow background).
+// Sampling the solid glyph pixels confirms the foreground; the fringe pixels
+// must not be used as the text color.
+func TestPlaceholderTextClearsTheBodyContrastTarget(t *testing.T) {
+	snow, ok := domaintheme.LookupPreset(false, "snow")
+	if !ok {
+		t.Fatal("the Snow preset is missing")
+	}
+	uiTheme := UI(false, snow, Options{})
+	if got, want := uiTheme.TextMuted, ui.Hex("#676f7e"); got != want {
+		t.Fatalf("Snow placeholder color = %+v, want %+v", got, want)
+	}
+	for _, fill := range []struct {
+		name  string
+		color ui.Color
+	}{
+		{"surface", uiTheme.Surface},
+		{"background", uiTheme.Background},
+	} {
+		if ratio := contrast(uiTheme.TextMuted, fill.color); ratio < MinimumTextContrast {
+			t.Errorf("placeholder on the %s = %.2f:1", fill.name, ratio)
+		}
+	}
+}

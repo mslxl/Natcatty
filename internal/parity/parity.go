@@ -1,4 +1,7 @@
-package main
+// Package parity parses the editable parity matrix and its limitations file.
+// The generator in internal/tools/paritygen and the ticket 60 release self-test
+// share this parser so both read the same definition of done.
+package parity
 
 import (
 	"bufio"
@@ -8,8 +11,15 @@ import (
 	"strings"
 )
 
-// row is one parity-matrix entry. The schema is fixed by rewrite spec §17.
-type row struct {
+const (
+	// MatrixPath is the committed parity matrix.
+	MatrixPath = "docs/parity/matrix.yaml"
+	// LimitationsPath is the committed accepted-limitations file.
+	LimitationsPath = "docs/parity/limitations.md"
+)
+
+// Row is one parity-matrix entry. The schema is fixed by rewrite spec §17.
+type Row struct {
 	ID                  string
 	Area                string
 	Feature             string
@@ -22,20 +32,22 @@ type row struct {
 	Status              string
 	Notes               string
 
-	line int
+	// Line is the matrix line the row starts on, for diagnostics.
+	Line int
 }
 
-type matrix struct {
-	Rows []row
+// Matrix is the parsed matrix.
+type Matrix struct {
+	Rows []Row
 }
 
-// parseMatrix reads the deliberately small YAML subset the matrix uses: a
+// ParseMatrix reads the deliberately small YAML subset the matrix uses: a
 // top-level sequence of rows, scalar fields, block string sequences, and
 // bracketed inline string sequences. It is not a general YAML parser, so an
 // unsupported construct fails with its line number instead of being guessed.
-func parseMatrix(data []byte) (*matrix, error) {
-	m := &matrix{}
-	var current *row
+func ParseMatrix(data []byte) (*Matrix, error) {
+	m := &Matrix{}
+	var current *Row
 	var activeList *[]string
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
@@ -50,36 +62,36 @@ func parseMatrix(data []byte) (*matrix, error) {
 		indent := len(raw) - len(strings.TrimLeft(raw, " "))
 
 		if indent == 0 && strings.HasPrefix(trimmed, "- ") {
-			m.Rows = append(m.Rows, row{line: lineNo})
+			m.Rows = append(m.Rows, Row{Line: lineNo})
 			current = &m.Rows[len(m.Rows)-1]
 			activeList = nil
 			key, value, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")), ":")
 			if !ok {
-				return nil, fmt.Errorf("%s:%d: expected a field after \"- \"", matrixPath, lineNo)
+				return nil, fmt.Errorf("%s:%d: expected a field after \"- \"", MatrixPath, lineNo)
 			}
 			if strings.TrimSpace(key) != "id" {
-				return nil, fmt.Errorf("%s:%d: a row must start with id", matrixPath, lineNo)
+				return nil, fmt.Errorf("%s:%d: a row must start with id", MatrixPath, lineNo)
 			}
 			v, err := parseScalar(value)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %v", matrixPath, lineNo, err)
+				return nil, fmt.Errorf("%s:%d: %v", MatrixPath, lineNo, err)
 			}
 			current.ID = v
 			continue
 		}
 		if indent == 0 {
-			return nil, fmt.Errorf("%s:%d: expected a row starting with \"- \"", matrixPath, lineNo)
+			return nil, fmt.Errorf("%s:%d: expected a row starting with \"- \"", MatrixPath, lineNo)
 		}
 		if current == nil {
-			return nil, fmt.Errorf("%s:%d: field outside a row", matrixPath, lineNo)
+			return nil, fmt.Errorf("%s:%d: field outside a row", MatrixPath, lineNo)
 		}
 		if indent >= 4 && strings.HasPrefix(trimmed, "- ") {
 			if activeList == nil {
-				return nil, fmt.Errorf("%s:%d: list item without a list field", matrixPath, lineNo)
+				return nil, fmt.Errorf("%s:%d: list item without a list field", MatrixPath, lineNo)
 			}
 			v, err := parseScalar(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %v", matrixPath, lineNo, err)
+				return nil, fmt.Errorf("%s:%d: %v", MatrixPath, lineNo, err)
 			}
 			*activeList = append(*activeList, v)
 			continue
@@ -87,7 +99,7 @@ func parseMatrix(data []byte) (*matrix, error) {
 
 		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
-			return nil, fmt.Errorf("%s:%d: expected \"key: value\"", matrixPath, lineNo)
+			return nil, fmt.Errorf("%s:%d: expected \"key: value\"", MatrixPath, lineNo)
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
@@ -100,7 +112,7 @@ func parseMatrix(data []byte) (*matrix, error) {
 			}
 			items, err := parseInlineList(value)
 			if err != nil {
-				return fmt.Errorf("%s:%d: %v", matrixPath, lineNo, err)
+				return fmt.Errorf("%s:%d: %v", MatrixPath, lineNo, err)
 			}
 			*target = items
 			return nil
@@ -131,17 +143,17 @@ func parseMatrix(data []byte) (*matrix, error) {
 		case "manual_qa":
 			err = stringList(&current.ManualQA)
 		default:
-			return nil, fmt.Errorf("%s:%d: unknown field %q", matrixPath, lineNo, key)
+			return nil, fmt.Errorf("%s:%d: unknown field %q", MatrixPath, lineNo, key)
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read %s: %w", matrixPath, err)
+		return nil, fmt.Errorf("read %s: %w", MatrixPath, err)
 	}
 	if len(m.Rows) == 0 {
-		return nil, fmt.Errorf("%s has no rows", matrixPath)
+		return nil, fmt.Errorf("%s has no rows", MatrixPath)
 	}
 	return m, nil
 }
@@ -225,14 +237,90 @@ func parseInlineList(value string) ([]string, error) {
 	return out, nil
 }
 
-type limitation struct {
-	id   string
-	body string
+// Limitation is one accepted-limitation section of limitations.md.
+type Limitation struct {
+	ID   string
+	Body string
 }
 
-func parseLimitations(data []byte) []limitation {
-	var out []limitation
-	var current *limitation
+// Audit reports the release-readiness problems the parity gate and the ticket
+// 60 self-test share: every non-excluded row must be verified and name an
+// acceptance test, and every excluded row must have a signed limitation entry
+// that names an excluded row and carries Decision and Ticket lines.
+func Audit(m *Matrix, limitations []Limitation) []string {
+	var problems []string
+	add := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	limitationByID := map[string]Limitation{}
+	for _, entry := range limitations {
+		if _, ok := limitationByID[entry.ID]; ok {
+			add("limitations.md defines %q more than once", entry.ID)
+			continue
+		}
+		limitationByID[entry.ID] = entry
+	}
+
+	for _, row := range m.Rows {
+		switch row.Status {
+		case "verified":
+			if len(row.AcceptanceTests) == 0 {
+				add("row %q is verified but names no acceptance test", row.ID)
+			}
+		case "excluded":
+			limitation, ok := limitationByID[row.ID]
+			if !ok {
+				add("excluded row %q has no entry in %s", row.ID, LimitationsPath)
+				continue
+			}
+			if !limitationHasLine(limitation.Body, "Decision:") {
+				add("excluded row %q has no \"Decision:\" line in %s", row.ID, LimitationsPath)
+			}
+			if !limitationHasLine(limitation.Body, "Ticket:") {
+				add("excluded row %q has no \"Ticket:\" sign-off line in %s", row.ID, LimitationsPath)
+			}
+		default:
+			add("row %q is %s; release requires every non-excluded row to be verified", row.ID, row.Status)
+		}
+	}
+
+	for _, limitation := range limitations {
+		row := FindByID(m.Rows, limitation.ID)
+		if row == nil {
+			add("limitations.md has an entry for %q, but no matrix row uses that id", limitation.ID)
+			continue
+		}
+		if row.Status != "excluded" {
+			add("limitations.md has an entry for %q, but the row is not excluded", limitation.ID)
+		}
+	}
+	return problems
+}
+
+// FindByID returns the row with id, or nil.
+func FindByID(rows []Row, id string) *Row {
+	for index := range rows {
+		if rows[index].ID == id {
+			return &rows[index]
+		}
+	}
+	return nil
+}
+
+func limitationHasLine(body, prefix string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseLimitations reads the "### `id`" sections that document excluded rows.
+func ParseLimitations(data []byte) []Limitation {
+	var out []Limitation
+	var current *Limitation
 	flush := func() {
 		if current != nil {
 			out = append(out, *current)
@@ -244,7 +332,7 @@ func parseLimitations(data []byte) []limitation {
 		if strings.HasPrefix(trimmed, "### ") {
 			flush()
 			id := strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "### ")), "`")
-			current = &limitation{id: id}
+			current = &Limitation{ID: id}
 			continue
 		}
 		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "# ") {
@@ -252,7 +340,7 @@ func parseLimitations(data []byte) []limitation {
 			continue
 		}
 		if current != nil {
-			current.body += line + "\n"
+			current.Body += line + "\n"
 		}
 	}
 	flush()

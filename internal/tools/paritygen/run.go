@@ -6,22 +6,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/mslxl/natcatty/internal/parity"
 )
 
 const (
-	defaultCommit   = "73d15da7"
-	matrixPath      = "docs/parity/matrix.yaml"
-	generatedPath   = "docs/parity/matrix.md"
-	limitationsPath = "docs/parity/limitations.md"
-	modulePath      = "github.com/mslxl/natcatty"
+	defaultCommit = "73d15da7"
+	generatedPath = "docs/parity/matrix.md"
 )
 
-func loadMatrix(root string) (*matrix, error) {
-	data, err := os.ReadFile(filepath.Join(root, matrixPath))
+func loadMatrix(root string) (*parity.Matrix, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(parity.MatrixPath)))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", matrixPath, err)
+		return nil, fmt.Errorf("read %s: %w", parity.MatrixPath, err)
 	}
-	m, err := parseMatrix(data)
+	m, err := parity.ParseMatrix(data)
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +60,14 @@ func run(args []string, root string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "paritygen: %v\n", err)
 		return 1
 	}
-	errs := validate(repo{root: root, commit: commit}, m)
+	tests, testErr := parity.BuildTestIndex(root)
+	if testErr != nil {
+		fmt.Fprintf(stderr, "paritygen: %v\n", testErr)
+		return 1
+	}
+	errs := validate(repo{root: root, commit: commit}, m, tests)
 	if release {
-		errs = append(errs, validateRelease(m)...)
+		errs = append(errs, validateRelease(repo{root: root, commit: commit}, m, tests)...)
 	}
 	if len(errs) > 0 {
 		for _, err := range errs {

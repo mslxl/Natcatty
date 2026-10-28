@@ -10,6 +10,13 @@ The original behavior is defined by commit `73d15da7`. The decision sources are
 the native rewrite spec, the ADRs, and the research inventory listed in
 `.scratch/rewrite/`.
 
+Sign-off for v0.1.0: ticket 60 reviewed every section below together with its
+matrix row and signs off the accepted gaps and exclusions as release
+limitations. The user-visible prerequisites (the Linux CJK font requirement)
+are documented in `README.md` and `docs/packaging.md`, not hidden in CI. The
+two threat-model/widget entries called out in the ticket 60 brief carry their
+own explicit sign-off lines.
+
 ## Out-of-scope product surfaces
 
 ### `plugins.runtime`
@@ -198,17 +205,23 @@ Ticket: 48
 
 MyGo v0.5.5's `ui.Select` exposes the selected value and the ExpandCollapse
 state through UIA, and the popup is fully operable with the pointer and the
-keyboard, but the option rows the native popup draws are absent from the
-accessibility tree. A screen reader therefore cannot enumerate the three
-External MCP permission modes from the open popup; the selected mode is still
-announced, and the mode description and the last-activity strip state the
-active mode in text. The original component used a native select whose options
-were part of the browser accessibility tree. The product keeps the combobox as
-its mode control and records the gap instead of claiming an accessible popup.
+keyboard. When the popup is expanded, raw UIA does expose the three External
+MCP permission-mode option texts (Observer, Confirm every write, Automatic) as
+`ControlType.Text` elements. The gap is that those rows are not exposed as
+selectable option roles (`ControlType.ListItem` or an equivalent selection
+pattern), so a screen reader cannot enumerate or select them as list options;
+the selected mode is still announced, and the mode description and the
+last-activity strip state the active mode in text. The original component used
+a native select whose options were part of the browser accessibility tree. The
+product keeps the combobox as its mode control and records the gap instead of
+claiming an accessible selectable popup. The mode text is not absent.
 
 Decision: accepted as a MyGo v0.5.5 widget limitation; ticket 58 records the
 gap rather than replacing the product's mode control.
 Ticket: 58
+Sign-off: ticket 60 re-measured the expanded popup with raw UIA and corrected
+the wording above; the option text is present, the selectable option roles are
+not.
 
 ## Threat-model boundaries
 
@@ -221,17 +234,24 @@ any command piped into a shell (including through common wrappers such as
 `sudo`, `env`, and `command`), `find -delete`, PowerShell constant folding and
 same-command alias resolution, `%ComSpec%`/`$env:ComSpec`, and a nested
 `cmd /c`, `/k`, `/r`, or glued `/c` payload; a command word that is still
-dynamic after that reading fails closed. Arbitrary computed command construction is out of scope: a command word
-decoded at run time by an interpreter from data the guard cannot see, an
-external script, or a function built and invoked dynamically can still do what
-the textual matcher cannot observe. Serial and network-device raw Sessions skip
-the blocklist by design. The rewrite makes no OS-sandbox, capability-drop, or
-process-isolation claim, and the in-model corpus above is what ticket 58
-enforces and tests, including its disposable-marker execution proof.
+dynamic after that reading fails closed. The blocklist is **not a sandbox** and
+makes no OS-sandbox, capability-drop, or process-isolation claim. Constructs
+whose command is computed at run time by an interpreter or another program from
+data the guard cannot see remain allowed by design, including for example
+`sh < script`, `powershell -EncodedCommand`, an interpreter reading commands
+from a file or stdin, and a function built and invoked dynamically. Serial and
+network-device raw Sessions skip the blocklist by design. The in-model corpus
+above is what ticket 58 enforces and tests, including its disposable-marker
+execution proof; the out-of-model class is an explicit, signed exclusion rather
+than an unnoticed bypass.
 
-Decision: accepted as a textual safety net; arbitrary computed command
-construction is excluded while the in-model corpus is enforced; ticket 58.
+Decision: accepted as a textual safety net; arbitrary runtime-computed and
+cross-interpreter command construction is excluded by design while the
+in-model corpus is enforced; ticket 58.
 Ticket: 58
+Sign-off: ticket 60 signs off this threat-model boundary for v0.1.0: the
+blocklist reduces accidental and in-model dangerous command execution; it is
+not and must not be described as an OS sandbox.
 
 ## Provider verification limits
 
