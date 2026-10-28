@@ -166,6 +166,28 @@ func newDesktopTestController(t *testing.T) (*desktopController, *windowGraph,
 	return controller, graph, backend, repository, hotkeys, notifier, opener
 }
 
+// TestTraySyncWaitsForReadiness guards the launch path: the first preference
+// apply invalidates before App.Run, so a sync scheduled there would post to
+// MyGo's main-thread queue while the event loop is still starting, where
+// MyGo v0.5.5 can lose that post and every later one.
+func TestTraySyncWaitsForReadiness(t *testing.T) {
+	scheduled := 0
+	controller := &desktopController{
+		schedule: func(time.Duration, func()) { scheduled++ },
+	}
+	controller.ScheduleSync()
+	if scheduled != 0 {
+		t.Fatalf("a tray sync was scheduled before readiness (%d)", scheduled)
+	}
+	controller.mu.Lock()
+	controller.ready = true
+	controller.mu.Unlock()
+	controller.ScheduleSync()
+	if scheduled != 1 {
+		t.Fatalf("a ready controller scheduled %d syncs, want 1", scheduled)
+	}
+}
+
 // TestTrayIconProviderReachesTheLiveTray proves an icon change recolors the
 // notification-area icon without recreating the tray.
 func TestTrayIconProviderReachesTheLiveTray(t *testing.T) {

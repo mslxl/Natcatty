@@ -369,8 +369,15 @@ func (c *desktopController) NoteForwarding(event appforwarding.Event) {
 }
 
 // ScheduleSync coalesces redraw-driven tray updates off the caller's stack.
+// Nothing is scheduled before MarkReady: there is no tray to update yet, and
+// a post to MyGo's main-thread queue before its event loop starts can be lost
+// for good (MyGo v0.5.5 can register a nil dispatch callback when a post
+// races launch, which then swallows every later wakeup, quit included).
 func (c *desktopController) ScheduleSync() {
-	if !c.syncPending.CompareAndSwap(false, true) {
+	c.mu.Lock()
+	ready := c.ready
+	c.mu.Unlock()
+	if !ready || !c.syncPending.CompareAndSwap(false, true) {
 		return
 	}
 	if c.schedule == nil {
