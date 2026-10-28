@@ -75,11 +75,15 @@ tag or on a pushed `v*` tag.
      executable must embed all five catalogs.
    Every job also runs `releasecheck assert-no-updates`, then generates and
    verifies a per-platform `SHA256SUMS`.
-3. **checksums** downloads all platform artifacts, verifies each platform's
-   list again after transfer, flattens the release set, and generates one
+3. **checksums** downloads every `natcatty-*` workflow artifact, including
+   `natcatty-release-notes`, then runs `scripts/verify-downloads.sh`, which
+   asks `releasecheck classify` which directories are platform artifact sets
+   and which is the release notes. It verifies each platform's list again
+   after transfer, skips the notes directory (it has no `SHA256SUMS` and is
+   not a release artifact), flattens the release set, and generates one
    aggregate `SHA256SUMS` with relative names. It also asserts the exact
-   seven-file set. Both the platform artifacts and the aggregate checksum file
-   are uploaded as workflow artifacts. **No GitHub release is created or
+   seven-file set. Both the platform artifacts and the aggregate checksum
+   file are uploaded as workflow artifacts. **No GitHub release is created or
    published.**
 
 `releasecheck` is checked Go tooling in `internal/tools/releasecheck`; its
