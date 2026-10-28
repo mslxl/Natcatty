@@ -142,28 +142,7 @@ jobs:
 
       - name: Race tests
         if: steps.cc.outputs.available == 'true'
-        run: |
-          set -o pipefail
-          go test -race ./... -count=1 2>&1 | tee "$RUNNER_TEMP/race-tests.log"
-
-      - name: Report race test failure
-        # The job log needs a signed-in session, so on failure the failing
-        # package/test lines and the output tail are published where the run
-        # page shows them.
-        if: failure() && steps.cc.outputs.available == 'true'
-        run: |
-          log="$RUNNER_TEMP/race-tests.log"
-          {
-            echo '### Race tests failed'
-            echo '```'
-            grep -nE '^(--- FAIL|FAIL|WARNING: DATA RACE|panic:)' "$log" | head -n 40 || true
-            echo '```'
-            echo '```'
-            tail -n 200 "$log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          message=$(grep -E '^(--- FAIL|FAIL|WARNING: DATA RACE|panic:)' "$log" | head -n 40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-          echo "::error title=Race tests failed::${message:0:60000}"
+        run: go test -race ./... -count=1
 
   launch-smoke:
     name: launch smoke (${{ matrix.os }})
