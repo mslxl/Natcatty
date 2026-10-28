@@ -1274,8 +1274,7 @@ func (t *selftest48) sandboxStep(*ui.Context) selftest.Outcome {
 	// macOS, which assigns only 127.0.0.1, the gateway used the documented
 	// fallback; the app registers no MyGo bindings, so the bridge still
 	// reaches no product API there.
-	if gatewayHost != appbrowser.GatewayLoopbackHost &&
-		gatewayHost != appbrowser.GatewayFallbackLoopbackHost {
+	if !appbrowser.IsGatewayHost(gatewayHost) {
 		return selftest.Failed(fmt.Errorf("this run's gateway host = %q, want a gateway address", gatewayHost))
 	}
 	entry, ok := t.tester.Find(m.BrowserInvalidScheme())

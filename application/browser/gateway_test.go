@@ -498,8 +498,12 @@ func TestGatewayLocksDownNonPageDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SVG gateway URL %q: %v", svgURL, err)
 	}
-	if strings.Contains(csp, svgGateway.Hostname()) {
-		t.Fatalf("asset CSP = %q reaches loopback beyond its own origin", csp)
+	// The asset must not be allowed to reach any gateway loopback address,
+	// not only the one this platform happened to bind.
+	for _, host := range []string{svgGateway.Hostname(), GatewayLoopbackHost, GatewayFallbackLoopbackHost} {
+		if strings.Contains(csp, host) {
+			t.Fatalf("asset CSP = %q reaches loopback host %q beyond its own origin", csp, host)
+		}
 	}
 	imageURL, err := fixture.gw.URLFor("http://app.internal:8080/image.png")
 	if err != nil {

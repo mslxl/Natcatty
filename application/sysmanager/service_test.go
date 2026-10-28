@@ -413,6 +413,7 @@ const (
 type sampleCounter struct{ calls atomic.Int64 }
 
 func (c *sampleCounter) sampled() int { return int(c.calls.Load()) }
+func (c *sampleCounter) next() int    { return int(c.calls.Add(1)) }
 
 func fakeExec(overviewCall *sampleCounter) func(domainvault.Host, string) (ExecResult, error) {
 	return func(_ domainvault.Host, command string) (ExecResult, error) {
@@ -420,8 +421,7 @@ func fakeExec(overviewCall *sampleCounter) func(domainvault.Host, string) (ExecR
 		case command == probeCommand():
 			return ExecResult{Stdout: fakeProbeAll}, nil
 		case strings.Contains(command, "PRETTY_NAME"):
-			call := int(overviewCall.calls.Add(1))
-			return ExecResult{Stdout: sprintfOverview(call)}, nil
+			return ExecResult{Stdout: sprintfOverview(overviewCall.next())}, nil
 		case strings.Contains(command, "ps -eo"):
 			return ExecResult{Stdout: fakeProcesses}, nil
 		case strings.Contains(command, "__NC_PORTS_BEGIN__"):
@@ -466,8 +466,12 @@ func TestServiceSamplesEveryTabAndHonorsTheInterval(t *testing.T) {
 		t.Fatalf("start overview: %v", err)
 	}
 	waitStatus(t, service, TabOverview, StatusLive)
-	waitFor(t, 3*time.Second, "two overview samples", func() bool {
-		return overviewCalls.sampled() >= 2
+	// The fake counts its command before the sampler parses and publishes the
+	// result, so the counter is not the condition this test needs: the product
+	// state is. A Linux CPU percentage needs a second counter reading, so wait
+	// until the published snapshot carries a real value, not the first NaN.
+	waitFor(t, 3*time.Second, "the second overview sample to be published", func() bool {
+		return Valid(service.Snapshot().Tabs[TabOverview].Overview.CPUPercent)
 	})
 	state := service.Snapshot().Tabs[TabOverview]
 	if state.Overview.Hostname != "fake-host" || state.Overview.UptimeSeconds != 7200 ||
