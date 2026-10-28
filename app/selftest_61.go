@@ -22,6 +22,9 @@ package app
 //   - the Vault's not-found problem stays visible above pinned Save/Cancel at
 //     both client sizes, and the forwarding editor's Save, Cancel, problem,
 //     and last form row stay reachable above its pinned action bar;
+//   - the forwarding editor's responsive rows keep the Label input and every
+//     address/port label and input inside the real 704x421 client in en and
+//     zh-CN, and 1084x661 keeps each pair on one row;
 //   - the self-test result directory is private to the process, and the
 //     shared danger/warning text helpers clear 4.5:1 on every preset.
 //
@@ -89,6 +92,7 @@ func (t *selftest61) check() selftest.Check {
 			{Name: "sidebar-languages", Run: t.sidebarStep},
 			{Name: "plurals-and-no-sample", Run: t.pluralsAndDashStep},
 			{Name: "pinned-editors", Run: t.pinnedEditorsStep},
+			{Name: "forwarding-width", Run: t.forwardingWidthStep},
 			{Name: "process-isolation-and-contrast", Run: t.isolationAndContrastStep},
 		},
 	}
@@ -195,11 +199,184 @@ func selftest61Inside(tester *ui.Tester, width, height int, text string) (ui.Rec
 	if !ok {
 		return ui.Rect{}, fmt.Errorf("%dx%d does not render %q: %q", width, height, text, tester.Texts())
 	}
-	if rect.X < -0.5 || rect.Y < -0.5 ||
-		rect.X+rect.W > float32(width)+0.5 || rect.Y+rect.H > float32(height)+0.5 {
+	if !selftest61Fits(rect, width, height) {
 		return rect, fmt.Errorf("%dx%d clips %q: %+v", width, height, text, rect)
 	}
 	return rect, nil
+}
+
+// selftest61Fits reports whether rect lies inside the width x height client,
+// with the half-DIP tolerance the layout rounds by.
+func selftest61Fits(rect ui.Rect, width, height int) bool {
+	return rect.X >= -0.5 && rect.Y >= -0.5 &&
+		rect.X+rect.W <= float32(width)+0.5 && rect.Y+rect.H <= float32(height)+0.5
+}
+
+// selftest61InsideRect fails unless rect is laid out and lies inside the
+// width x height client. It is the input-side twin of selftest61Inside,
+// which finds a text.
+func selftest61InsideRect(rect ui.Rect, width, height int, name string) error {
+	if rect.W <= 0 || rect.H <= 0 {
+		return fmt.Errorf("%dx%d: %s is not laid out: %+v", width, height, name, rect)
+	}
+	if !selftest61Fits(rect, width, height) {
+		return fmt.Errorf("%dx%d clips the %s: %+v", width, height, name, rect)
+	}
+	return nil
+}
+
+// selftest61Overlaps reports whether a and b share any area.
+func selftest61Overlaps(a, b ui.Rect) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+// newSelftest61ForwardingEditor builds the production shell with the Vault
+// showing the forwarding editor and an in-flight form, so its responsive
+// address and port rows can be measured at real client sizes.
+func newSelftest61ForwardingEditor() (*selftest61Shell, *forwarding.State, error) {
+	vault := vaultstate.NewState(newSelftest61Hosts(domainvault.Host{
+		ID: "ticket-61-host", Label: "web-1", Hostname: "10.0.0.1",
+		Port: 22, Protocol: domainvault.ProtocolSSH,
+	}))
+	if err := vault.Reload(); err != nil {
+		return nil, nil, fmt.Errorf("reload the Vault: %w", err)
+	}
+	host := domainvault.Host{
+		ID:    domainmodel.HostID("ticket-61-bastion-00"),
+		Label: "bastion-00",
+	}
+	forwardingState := forwarding.NewState(
+		&selftest61ForwardingService{}, &selftest61MonitorHosts{items: []domainvault.Host{host}})
+	if err := forwardingState.Reload(); err != nil {
+		forwardingState.Close()
+		return nil, nil, fmt.Errorf("reload forwarding: %w", err)
+	}
+	shell, err := newSelftest61Shell(1,
+		shellstate.WithVault(uivault.View(vault, uivault.WithForwarding(forwardingState))))
+	if err != nil {
+		forwardingState.Close()
+		return nil, nil, err
+	}
+	shell.state.ShowVault()
+	forwardingState.BeginCreate()
+	form := forwardingState.Form()
+	form.Type = string(domainforward.TypeLocal)
+	form.Label = "web"
+	form.HostID = string(host.ID)
+	form.BindAddress = "127.0.0.1"
+	form.LocalPort = "8080"
+	form.RemoteHost = "localhost"
+	form.RemotePort = "80"
+	form.Enabled = true
+	return shell, forwardingState, nil
+}
+
+// renderSelftest61ForwardingEditor renders the fixture at a real client size
+// and returns the cleanup for both the shell and the forwarding state. The
+// two frames commit the layout before the bound handles are read.
+func renderSelftest61ForwardingEditor(width, height int, locale string) (*ui.Tester, *ui.Context, *forwarding.State, func(), error) {
+	shell, forwardingState, err := newSelftest61ForwardingEditor()
+	if err != nil {
+		return nil, nil, nil, func() {}, err
+	}
+	cleanup := func() {
+		shell.close()
+		forwardingState.Close()
+	}
+	var context *ui.Context
+	view := uishell.View(shell.state)
+	tester := ui.NewTester(func(c *ui.Context) {
+		context = c
+		view(c)
+	}, width, height)
+	tester.SetLocale(locale)
+	tester.Frame()
+	tester.Frame()
+	return tester, context, forwardingState, cleanup, nil
+}
+
+// selftest61ForwardingWidth checks one rendered client size: every text
+// input's label and box stays inside the client, no input covers its label,
+// and a client size the caller declares keeps each address/port pair on one
+// row. The minimum window reflows the pairs so the fixed-width fields cannot
+// leave the client.
+func selftest61ForwardingWidth(tester *ui.Tester, c *ui.Context, state *forwarding.State,
+	width, height int, pairedRows bool, m locales.Messages) error {
+	type fieldCheck struct {
+		field forwarding.SelftestEditorField
+		label string
+		name  string
+	}
+	checks := []fieldCheck{
+		{forwarding.SelftestEditorLabel, m.VaultForwardingLabel(), "label"},
+		{forwarding.SelftestEditorBindAddress, m.VaultForwardingBindAddress(), "bind address"},
+		{forwarding.SelftestEditorLocalPort, m.VaultForwardingLocalPort(), "local port"},
+		{forwarding.SelftestEditorRemoteHost, m.VaultForwardingRemoteHost(), "destination host"},
+		{forwarding.SelftestEditorRemotePort, m.VaultForwardingRemotePort(), "destination port"},
+	}
+	inputs := make(map[forwarding.SelftestEditorField]ui.Rect, len(checks))
+	// At the minimum window the form is taller than its viewport, so a field
+	// below the fold scrolls into view before it is measured. The input's
+	// layout box is checked for horizontal clipping on every attempt, because
+	// scrolling cannot repair a field that is wider than the client. The
+	// first label's height is the full single-line height; later fields keep
+	// scrolling until they are fully visible instead of half under the clip.
+	measure := func(check fieldCheck, fullLabelHeight float32) (ui.Rect, ui.Rect, error) {
+		var label, input ui.Rect
+		for attempt := 0; attempt < 40; attempt++ {
+			var ok bool
+			label, ok = tester.Find(check.label)
+			input = forwarding.SelftestEditorFieldBounds(state, c, check.field)
+			if input.W > 0 && (input.X < -0.5 || input.X+input.W > float32(width)+0.5) {
+				return label, input, fmt.Errorf("%dx%d clips the %s input: %+v",
+					width, height, check.name, input)
+			}
+			fullyVisible := fullLabelHeight <= 0 || label.H >= fullLabelHeight-1
+			if ok && label.W > 0 && fullyVisible && input.W > 0 && input.H > 0 {
+				return label, input, nil
+			}
+			tester.Scroll(float32(width)/2, float32(height)/2, 0, 24)
+			tester.Frame()
+		}
+		return label, input, fmt.Errorf("%dx%d: the %s field did not become visible: label %+v input %+v",
+			width, height, check.name, label, input)
+	}
+	var fullLabelHeight float32
+	for index, check := range checks {
+		label, input, err := measure(check, fullLabelHeight)
+		if err != nil {
+			return err
+		}
+		if index == 0 {
+			fullLabelHeight = label.H
+		}
+		if err := selftest61InsideRect(label, width, height, check.name+" label"); err != nil {
+			return err
+		}
+		if err := selftest61InsideRect(input, width, height, check.name+" input"); err != nil {
+			return err
+		}
+		if selftest61Overlaps(label, input) {
+			return fmt.Errorf("%dx%d: the %s input %+v covers its label %+v",
+				width, height, check.name, input, label)
+		}
+		inputs[check.field] = input
+	}
+	// The caller declares whether this client size keeps the two-column look
+	// (each address/port pair sharing a row).
+	if pairedRows {
+		for _, pair := range [][2]forwarding.SelftestEditorField{
+			{forwarding.SelftestEditorBindAddress, forwarding.SelftestEditorLocalPort},
+			{forwarding.SelftestEditorRemoteHost, forwarding.SelftestEditorRemotePort},
+		} {
+			a, b := inputs[pair[0]], inputs[pair[1]]
+			if a.Y-b.Y > 0.5 || b.Y-a.Y > 0.5 {
+				return fmt.Errorf("%dx%d: paired inputs are not on one row: %+v and %+v",
+					width, height, a, b)
+			}
+		}
+	}
+	return nil
 }
 
 // --- tab strip ------------------------------------------------------------
@@ -798,6 +975,35 @@ func (selftest61ForwardingService) Snapshot() appforwarding.Snapshot {
 
 func (selftest61ForwardingService) Subscribe(func(appforwarding.Event)) func() {
 	return func() {}
+}
+
+// --- forwarding width -----------------------------------------------------
+
+func (t *selftest61) forwardingWidthStep(*ui.Context) selftest.Outcome {
+	for _, size := range []struct {
+		width, height int
+		pairedRows    bool
+	}{
+		{704, 421, false},
+		{1084, 661, true},
+	} {
+		for _, locale := range []string{"en", "zh-CN"} {
+			tester, context, forwardingState, cleanup, err := renderSelftest61ForwardingEditor(
+				size.width, size.height, locale)
+			if err != nil {
+				return selftest.Failed(err)
+			}
+			err = selftest61ForwardingWidth(tester, context, forwardingState,
+				size.width, size.height, size.pairedRows, locales.In(locale))
+			cleanup()
+			if err != nil {
+				return selftest.Failed(fmt.Errorf("%dx%d %s: %w", size.width, size.height, locale, err))
+			}
+		}
+	}
+	return selftest.Passed(
+		"the forwarding editor's label, address, and port inputs stay inside 704x421 and 1084x661 in en and zh-CN; no input covers its label; 1084x661 keeps each pair on one row",
+		"ui/forwarding.Editor + ui/shell.View")
 }
 
 // --- process isolation and contrast --------------------------------------

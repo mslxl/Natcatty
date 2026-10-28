@@ -371,6 +371,19 @@ func (h *Harness) start(check Check) {
 		Timestamp: h.now().UTC().Format(time.RFC3339Nano),
 	}
 	h.state = StateRunning
+	// Checkers create working files under the result directory in their first
+	// step (ticket 48 opens a run directory there before its preview). Create
+	// the per-process directory before any step runs, so the first check in a
+	// brand-new process does not depend on the result write that comes last.
+	if err := h.ensureResultDir(); err != nil {
+		h.fail(fmt.Errorf("create the self-test result directory %q: %w", h.resultDir, err))
+	}
+}
+
+// ensureResultDir creates the per-process directory checkers and the result
+// write both depend on.
+func (h *Harness) ensureResultDir() error {
+	return os.MkdirAll(h.resultDir, 0o755)
 }
 
 func (h *Harness) advance(c *ui.Context) {
@@ -441,7 +454,7 @@ func (h *Harness) write() {
 	data, err := json.MarshalIndent(h.result, "", "  ")
 	if err == nil {
 		data = append(data, '\n')
-		if mkdirErr := os.MkdirAll(h.resultDir, 0o755); mkdirErr != nil {
+		if mkdirErr := h.ensureResultDir(); mkdirErr != nil {
 			err = mkdirErr
 		} else {
 			err = os.WriteFile(path, data, 0o644)
