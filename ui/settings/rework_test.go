@@ -381,8 +381,13 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 						rect, ok := tester.Find(label)
 						// Scrolling down through the pane reaches a field below
 						// the fold; a label clipped out of the scene reports an
-						// empty box until it scrolls in.
+						// empty box until it scrolls in. Start each label from
+						// the top: the list here need not be in document order,
+						// and a label above the current offset would otherwise
+						// stay clipped while the loop scrolled further down.
 						x, y := viewport.X+viewport.W-4, viewport.Y+viewport.H/2
+						tester.Scroll(x, y, 0, -1e6)
+						rect, ok = tester.Find(label)
 						for step := 0; step < 80 && (!ok || rect.W <= 0 || rect.H <= 0); step++ {
 							tester.Scroll(x, y, 0, 40)
 							rect, ok = tester.Find(label)
