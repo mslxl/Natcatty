@@ -40,6 +40,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # paritygen checks original paths at 73d15da7 and the release gate
+          # needs the full history.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -48,7 +52,10 @@ jobs:
           cache: true
 
       - name: Test the release tooling
-        run: go test ./internal/release ./internal/tools/releasecheck -count=1
+        run: go test ./internal/release ./internal/tools/releasecheck ./internal/releasenotes ./internal/tools/releasenotes -count=1
+
+      - name: Check the parity release gate
+        run: go run ./internal/tools/paritygen -release
 
       - name: Validate the tag against mygo.json
         id: tag
@@ -83,6 +90,23 @@ jobs:
             fi
           done
           echo "no update, signing, or notarization configuration is present"
+
+      - name: Generate release notes from the changelog
+        run: |
+          set -euo pipefail
+          version="$(go run ./internal/tools/releasecheck version -manifest mygo.json)"
+          go run ./internal/tools/releasenotes \
+            -version "${version}" -changelog CHANGELOG.md -out RELEASE_NOTES.md
+          test -s RELEASE_NOTES.md
+          grep -q "^# Natcatty ${version}$" RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: natcatty-release-notes
+          path: RELEASE_NOTES.md
+          if-no-files-found: error
 
   build:
     name: build (${{ matrix.artifact }})
@@ -163,6 +187,7 @@ jobs:
             mosh/LICENSE-MoshCatty-GPL-3.0.txt
             mosh/README.md
             THIRD-PARTY-NOTICES.md
+            CHANGELOG.md
             mygo.json)
           case "${{ matrix.artifact }}" in
             darwin-universal)
@@ -224,6 +249,7 @@ jobs:
             mosh/BUILD-PROVENANCE.json \
             mosh/LICENSE-MoshCatty-GPL-3.0.txt \
             THIRD-PARTY-NOTICES.md \
+            CHANGELOG.md \
             mygo.json \
             et/darwin-universal/et \
             mosh/darwin-universal/mosh-client; do
@@ -262,7 +288,7 @@ jobs:
           "${sevenzip}" l "${setup}" | tr -d '\r' > nsis-list.txt
           sed -n '1,25p' nsis-list.txt
           grep -q '^Type = Nsis$' nsis-list.txt
-          for entry in 'Natcatty.exe' 'mygo.json' 'THIRD-PARTY-NOTICES.md' \
+          for entry in 'Natcatty.exe' 'mygo.json' 'CHANGELOG.md' 'THIRD-PARTY-NOTICES.md' \
             'et\BUILD-PROVENANCE.json' 'et\LICENSE-EternalTerminal-Apache-2.0.txt' \
             'mosh\BUILD-PROVENANCE.json' 'mosh\LICENSE-MoshCatty-GPL-3.0.txt' \
             'et\win32-x64\et.exe' 'mosh\win32-x64\mosh-client.exe'; do
@@ -274,7 +300,7 @@ jobs:
           fi
           "${sevenzip}" x -y -o"nsis-extracted" "${setup}" >/dev/null
           test -s nsis-extracted/Natcatty.exe
-          for entry in et/BUILD-PROVENANCE.json THIRD-PARTY-NOTICES.md mygo.json \
+          for entry in et/BUILD-PROVENANCE.json THIRD-PARTY-NOTICES.md CHANGELOG.md mygo.json \
             et/win32-x64/et.exe mosh/win32-x64/mosh-client.exe; do
             test -s "nsis-extracted/${entry}"
           done
@@ -310,6 +336,7 @@ jobs:
             dpkg-deb -c "${deb}" > "deb-${arch}.txt"
             for entry in opt/natcatty/natcatty \
               opt/natcatty/mygo.json \
+              opt/natcatty/CHANGELOG.md \
               opt/natcatty/THIRD-PARTY-NOTICES.md \
               opt/natcatty/et/BUILD-PROVENANCE.json \
               opt/natcatty/et/LICENSE-EternalTerminal-Apache-2.0.txt \
@@ -320,7 +347,7 @@ jobs:
               grep -q "\./${entry}\$" "deb-${arch}.txt"
             done
             tar -tzf "${tarball}" > "tar-${arch}.txt"
-            for entry in natcatty mygo.json THIRD-PARTY-NOTICES.md \
+            for entry in natcatty mygo.json CHANGELOG.md THIRD-PARTY-NOTICES.md \
               et/BUILD-PROVENANCE.json \
               et/LICENSE-EternalTerminal-Apache-2.0.txt \
               et/README.md \

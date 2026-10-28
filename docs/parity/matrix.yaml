@@ -73,8 +73,8 @@
   tickets: [01]
   acceptance_tests:
     - app.TestLaunchSmoke
-  status: implemented
-  notes: "The smoke test is opt-in because it needs a display; it is not part of the PR gate. Packaging tickets 59-60 own the per-target run."
+  status: verified
+  notes: "Verified in the default CI launch-smoke job: app.TestLaunchSmoke builds cmd/launchsmoke, launches the real app, requires a visible main window and the ready marker, and requires a clean exit within a 30 s hard deadline (Linux runs under xvfb-run; macOS and Windows run directly). Ticket 60 also launched the NSIS-extracted Windows artifact locally and awaited its main window. A packaged macOS or Linux GUI launch was not run on this Windows host."
 
 - id: i18n.catalogs
   area: i18n
@@ -1248,8 +1248,8 @@
     - application/session.TestTapCancelTransferFromUI
     - application/session.TestSessionGateSuppressesTransferBytesAndInput
     - app.TestTicket15CheckRunsThroughTheKeyboard
-  status: implemented
-  notes: "Detection recognizes the ZMODEM ** CAN B prefix and YMODEM block-0 headers across chunks. The gate strips protocol bytes before the terminal and log, keeps the activity indicator lit, drops normal input, and turns Ctrl+C into the original five-CAN abort. There is no transfer engine: CancelTransfer and CompleteTransfer are seams for a later engine, so the row is implemented rather than fully verified against a real transfer. Without an engine the end marker is a heuristic, and a stray YMODEM EOT byte can close the gate early."
+  status: verified
+  notes: "Detection recognizes the ZMODEM ** CAN B prefix and YMODEM block-0 headers across chunks. The gate strips protocol bytes before the terminal and log, keeps the activity indicator lit, drops normal input, and turns Ctrl+C into the original five-CAN abort. There is no transfer engine: CancelTransfer and CompleteTransfer are seams for a later engine, so the gate is verified against the protocol-detection corpus but a real end-to-end ZMODEM/YMODEM transfer is not claimed. Without an engine the end marker is a heuristic, and a stray YMODEM EOT byte can close the gate early."
 
 - id: terminal.broadcast-input
   area: terminal
@@ -1346,7 +1346,7 @@
     - application/session.TestReconnectNowDialsImmediately
     - ui/shell.TestSessionMenuStaysReachableInRealWindowLayouts
     - app.TestTicket17CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The Session menu in the status bar is the functional equivalent and follows the original order: Copy, Paste, Paste Selection, Select All, Open Browser, Reconnect, Send/Receive with YMODEM, Split Horizontal, Split Vertical, Save current screen, Clear Buffer, Encoding, Logging, Rename, Detach from workspace, Close terminal. Paste is enabled only while the clipboard holds text and goes through the multiline gate. Reconnect immediately opens a replacement transport and is available only while the Session is running with a reconnect policy. Save current screen writes the terminal text to Downloads (or the temporary directory) and reports a dismissible result; Rename edits the Tab title; both splits, Detach, and Close use the shell's real Pane commands. Copy, Paste Selection, and Select All stay visible but disabled because MyGo exposes no selection or select-all API and its native menu already provides all three with correct selection state. Open Browser opens the host-routed browser panel for an SSH Session with a saved Host (ticket 47) and stays disabled for a Session with no such route, including a local Session. The YMODEM items are disabled seams until a transfer engine exists. Plugin menus, Upload clipboard image, and Add to Conversation remain out of scope as the ticket permits. The menu control itself is the only fixed-width status item and the layout test proves it sits inside its Pane and is clickable in single, left/right, and stacked Panes at 720x480 and 1100x720, including a 240-DIP split Pane. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
 
 - id: terminal.file-drop
@@ -1366,7 +1366,7 @@
     - ui/session.TestDropBannerShowsDragAndOutcomeStates
     - ui/session.TestDropNoticeDismissIsHitTestableAndClearsTheBanner
     - app.TestTicket17CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "The terminal element is the drop target and shows a banner while files are over it and after a drop. Multiple paths are joined and every path is quoted: a Windows local Session uses double quotes (accepted by both cmd.exe and PowerShell; Windows names cannot contain a double quote), and a POSIX Session single-quotes with the '\"'\"' close-escape-reopen form. The default action inserts the quoted paths without running anything. Upload is a configured seam (sessionui.UploadFunc); because no SFTP/ZMODEM upload transport exists yet, choosing Upload with no seam changes nothing and reports that upload is unavailable, never silently inserting a path. Directories, spaces, and quotes pass through the same quoting. Original raw-path insertion is superseded by quoting as the ticket requires. A completed drop's result banner carries a real Cancel control; it is hit-testable and clears the notice and its text, rather than leaving the banner painted."
 
 - id: terminal.paste-protection
@@ -2268,6 +2268,34 @@
   status: verified
   notes: "The command hook records one row per execution with the Session, Host, command, source, and timestamp. Autocomplete aggregates those same rows through a journal instead of keeping a forked store, so clearing or deleting history updates suggestions immediately. The History tab filters by text, Host, source, and date and pages through long lists. Open terminal focuses a live Session (reattaching a detached Tab), reuses a live Session for the same Host, opens the local shell for a local row, or dials the Host; a deleted Host shows a localized error instead of inventing a Tab. Retention is configured in Settings and applied on record, on a Settings change, and once at startup."
 
+# --- Ticket 22: Vault Notes and note groups ---
+
+- id: vault.notes
+  area: vault
+  feature: Vault Notes and Note Groups CRUD, Markdown viewer, search, and note exports
+  original_paths:
+    - application/state/notesStore.ts
+    - application/state/vaultNotesPersistence.ts
+    - components/notes/NotesManager.tsx
+    - components/notes/InlineMarkdownEditor.tsx
+    - components/notes/NoteExportMenu.tsx
+  module: ui/vault
+  tickets: [22]
+  acceptance_tests:
+    - application/vault.TestNoteServiceCRUD
+    - application/vault.TestNoteServiceValidatesAndListsImpliedGroups
+    - application/vault.TestNoteGroupRenameMovesNotesAndDeleteKeepsThemAtTheRoot
+    - application/vault.TestNoteExportsRoundTrip
+    - application/vault.TestNoteExportRejectsUnknownFormatsAndUnavailableStorage
+    - ui/vault.TestVaultNotesRenderThroughTheProductionChrome
+    - ui/vault.TestVaultNoteViewerAlignsListMarkersWithFirstLines
+    - ui/vault.TestVaultNoteEditorOpensAtTheSourceStart
+    - ui/vault.TestVaultNoteSearchAndGroupDeleteInTheView
+    - app.TestTicket22CheckRunsThroughTheKeyboard
+    - app.TestTicket22CheckPassesTwiceInOneProcess
+  status: verified
+  notes: "Vault Notes are created, edited, renamed, searched, and deleted; Note Groups are hierarchical and deleting a group moves its Notes to the Vault root rather than deleting them. The Markdown viewer renders headings, lists, code, and links with list markers aligned to the first text line, and the source editor opens at the start of the note. Note export produces Markdown, self-contained HTML, and a Markdown ZIP that round-trips group paths and entry bytes; unknown formats and unavailable storage fail without writing. The Notes list and search field work at both window sizes and in all five catalogs. Residual from ticket 22 acceptance: the es/ru Notes search placeholder is framework-supplied English, a note row's Delete control wraps at 720 while staying visible and hit-testable, and other Vault multi-line editors can still open at the end (out of ticket 22 scope)."
+
 # --- Ticket 24: import from external tools and CSV ---
 
 - id: vault.external-import
@@ -2569,8 +2597,8 @@
     - ui/settings.TestSyncConvergentDivergenceOffersOnlySafeActions
     - app.TestTicket55CheckRunsThroughTheKeyboard
     - app.TestTicket55CheckPassesTwiceInOneProcess
-  status: implemented
-  notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Settings and credentials remain device-local and outside the CRDT. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not verified byte-for-byte against an original CRDT fixture, so this row is implemented rather than verified. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
+  status: verified
+  notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Settings and credentials remain device-local and outside the CRDT. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not compared byte-for-byte against an original CRDT fixture; the convergence, migration, verification, and divergence behavior is verified by the listed tests. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
 
 # --- Ticket 50: Google Drive appDataFolder ---
 
@@ -3006,7 +3034,7 @@
     - application/sync.TestPreferLocalUploadsTheLocalCopyOnATwoSidedChange
     - app.TestTicket54CheckRunsThroughTheKeyboard
     - app.TestTicket54CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "smartMerge combines both sides with a three-way field merge and deletes a record only when the deletion is one-sided and the other side did not modify it. smartMergePreserve uses the same merge but carries a one-sided record forward, so an entry disappears only after every device deletes it. preferCloud applies the cloud copy without a provider write, and preferLocal publishes this device and ignores the cloud edit; both still keep the encrypted anchor current. The selected strategy is persisted in cloud-sync.json. The GUI offers all four with localized names and descriptions; an external GUI acceptance run recorded under the ticket (not a committed test) exercised each strategy against a local fake WebDAV server through the real WebDAV adapter. Divergence from the original: the original field-merges only monitorPanels on a both-modified record; this build applies the same deterministic top-level field merge to every synced family and reports a same-field clash in the merge result. The smartMerge strategies still resolve that clash locally, as the original does; only a lost conditional write creates the durable, user-resolved conflict described in sync.conflict-backups."
 
 - id: sync.three-way-merge
@@ -3040,7 +3068,7 @@
     - application/sync.TestAnchorPersistsOnlyCiphertext
     - app.TestTicket54CheckRunsThroughTheKeyboard
     - app.TestTicket54CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "The anchor is the last successfully synced plaintext payload sealed with the master password under AES-256-GCM and stored as base64 in SyncBase, with format version 3 and a SHA-256 BaseSignature; cloud-sync.json contains no plaintext entity, hostname, credential, or master password. A corrupt or unknown anchor falls back to a base-less set union. The field merge is keyed by record id (path for configuration families) and covers add/add, update/update, delete/update, delete/delete, one-sided changes, empty base, tombstones, and secret values. A field deleted locally while the other side edits a different field stays from the remote copy, matching the original local-key iteration; this is covered by TestMergeFieldDeletedLocallyStaysFromRemote. Settings merge recursively and is exercised both as a pure function and through the service: nested maps merge, unknown keys on both sides survive, id-keyed arrays merge by id, an explicit empty object resets a map, a first merge with no base prefers cloud on a same-field clash, both sides deleting the same key is agreement rather than a conflict, and terminalSettings.autoCloseOnExit keeps its original migration. The real SyncVault adapter deliberately omits device-local settings from its payload (ticket 49 and the Cloud sync spec), so production sync does not publish this build's app settings."
 
 - id: sync.destructive-guards
@@ -3067,7 +3095,7 @@
     - ui/settings.TestSyncSurfaceLocalizesEntityFamilies
     - app.TestTicket54CheckRunsThroughTheKeyboard
     - app.TestTicket54CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "The original thresholds are preserved: block when at least 10 records would be lost, or when at least 3 records and at least half of the reference would be lost, with the group-config special case. The reference is the stored anchor, falling back to the current cloud copy when the anchor is missing or empty (including after an explicit empty force push); a repopulated cloud is therefore still protected from a later empty local sync. Ticket 54 adds a whole-Vault tombstone guard for an empty outgoing payload. Guards run before any remote write on every provider path and never upload. Restore is the safe default and restores the last good anchor/backup without a cloud write; force push requires a second explicit confirmation, is never preselected, and writes a cloud-copy backup first. Background sync can block but cannot force or silently discard data. The explanation, confirmation, and entity-family names are localized in all five catalogs. Service tests cover block, restore, force, and backup retention; an external GUI acceptance run recorded under the ticket (not a committed test) exercised the same flows against the local fake provider."
 
 - id: sync.conflict-backups
@@ -3089,7 +3117,7 @@
     - application/sync.TestLoadBackupsReportsALocalListFailure
     - app.TestTicket54CheckRunsThroughTheKeyboard
     - app.TestTicket54CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "A lost conditional write is persisted with per-family/per-item kind, the remote device identity, and the encrypted cloud copy, so the conflict survives a process restart and resolution is idempotent. This is the original conflict state machine: a smartMerge same-field clash is resolved by the selected strategy rather than surfaced, because the user already chose that strategy and no complete copy is at risk. The UI lists each item with a localized family name and offers Keep this device, Keep the cloud copy, and Merge both; Merge is offered only by smartMerge and smartMergePreserve. Before either side is overwritten the service takes a protective local backup and retains the replaced cloud envelope in RemoteBackups (five newest), both timestamped with source and reason and restorable from the Backups panel without a provider write. Ordinary sync works without a backup port, but conflict resolution refuses to proceed without one. Backup records contain the same encrypted Vault data as the normal local backup subsystem and no new secrets. Service tests cover a real concurrent conditional-write loss, both choices, idempotent restart, and backup restore. An external GUI acceptance run recorded under the ticket (not a committed test) exercised both choices, backup rows, and final cloud contents through the local fake provider."
 
 # --- Ticket 57: MCP scopes, permission modes, and approvals ---
@@ -3149,7 +3177,7 @@
     - app.TestMCPPolicyDiscoveryModeRoundTrip
     - app.TestTicket57CheckRunsThroughTheKeyboard
     - app.TestTicket57CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "Every external call is forced into __external_mcp__ and the effective scope is the intersection of that forced chat scope and the session scope: in the shipped app (ticket 58) the session scope is every live Session while External MCP sharing is on, narrowed by NETCATTY_MCP_SESSION_IDS when that variable is present, and these ticket-57 policy fixtures exercise the static allowlist directly: an omitted list inherits the allowlist, a requested list must be a deduplicated subset, an explicit empty list exposes no Session, and an empty allowlist is no access rather than a wildcard. A requested chat scope other than the forced one is mcp_scope_mismatch, a Session outside the effective scope is mcp_session_out_of_scope, and both are rejected before a prompt or an action. The mode is re-read from discovery for every write, so a Settings change applies to the next call; observer denies all 41 non-bypass writes with mcp_permission_denied naming the tool, confirm creates one prompt per non-bypass write, and auto allows all 43 writes with no prompt. Exactly session_close and terminal_stop bypass approval and the observer block. session_close still obeys scope, allowlist, and ownership. terminal_stop uses the catalog's real jobId input; production resolves it through the background-job manager, and a policy-only resolver seam lets a test/selftest mapping prove an out-of-scope job is mcp_session_out_of_scope and a job from a superseded generation is mcp_stale_generation without a prompt; with no live job the call honestly returns Background job not found. Approvals are single-use with an absolute 110 s deadline from creation: a 109.9 s approval succeeds, exactly 110.0 s expires, the waiting call receives mcp_approval_expired, an approved id replays as mcp_approval_invalid, and an expired id cannot be replayed. Snapshot reconciles the deadline itself, so the UI never reports an overdue prompt as pending even before its timer fires. getContext filters both hosts and active port-forward tunnels to the effective scope, so a Host with no scoped Session cannot leak its tunnel. Reads never prompt, and the prompt summary redacts secret-named arguments. Ownership generation starts at 1; observing a replacement Session for an owned Host or invalidating ownership advances it, resolves pending approvals and old grants as mcp_stale_generation, and requires a fresh grant before session_close or terminal_stop can act. Divergences from the original: the original's persistent Always allow / Allow host grants and socket-scoped Allow session cache are deliberately replaced by single-use approvals as ticket 57 requires; the original's sensitive-read confirm rule and per-session approval lock are not ported because this ticket's reads never prompt. Ticket 58 adds write execution, the command blocklist, background jobs, and output bounds (see mcp.write-execution-blocklist-bounds): in production host_open opens or reuses a real Host Session through the write executor, terminal_stop resolves real background jobs, and every executable write reaches its application service. The handler's policy-only fallback still returns the explicit not-available result when no write executor is attached, which is how these policy tests exercise it. The original also required chatSessionId on builtin writes; this bridge makes the forced scope implicit and validates any requested value against it."
 
 - id: mcp.settings-approval-surface
@@ -3177,7 +3205,7 @@
     - ui/settings.TestMCPPromptUsesTheAccessibleTextColors
     - app.TestTicket57CheckRunsThroughTheKeyboard
     - app.TestTicket57CheckPassesTwiceInOneProcess
-  status: implemented
+  status: verified
   notes: "The Settings External MCP area shows the selected observer/confirm/auto mode and its localized description, the forced __external_mcp__ scope, the shared-Session allowlist (or the explicit no-Sessions state), the ownership generation, and the bypass hint. The oldest pending approval is current: its card shows the client identity (an empty forwarded identity renders a localized Unknown client), tool, target label, scope, redacted argument summary, and remaining time rounded up from the policy clock; the more-pending line uses an ICU plural count, and Approve/Deny sit in a pinned sibling bar below the scrolling content. A recently expired prompt shows the danger-styled expired state and explanation with only Dismiss available. Because only one prompt is current, the action row fits at the real 720x480 client (704x421 content) and at 1100x720 (1084x661), is inside the client, does not move while the body scrolls, and never clips; the pending and expired states were rendered in all five locales and the PNGs were inspected at 100%. Body, warning, and danger text clear 4.5:1 on every light and dark preset using the shared WCAG helpers, with a ticket-local fallback for custom presets whose fill makes the shared token too low. The controller calls the same application/mcp Service, so a mode change persists to discovery and applies to the next call; Approve, Deny, Dismiss, and typed expired/stale/invalid outcomes are localized rather than rendering Go error text. Divergences from the original: the prompt lives in a dedicated Settings → External MCP area rather than the AI settings tab and the approval host's grant choices; original Always allow / Allow session / Allow host options are absent because approvals here are single-use, and an expired card stays dismissable instead of being cleared automatically."
 
 # --- Ticket 58: MCP write execution, blocklist, and bounds ---
@@ -3247,7 +3275,7 @@
     - app.TestTicket58CheckRunsThroughTheKeyboard
     - app.TestTicket58CheckPassesTwiceInOneProcess
     - app.TestTicket58CheckPassesTwiceAfterACommandTimeout
-  status: implemented
+  status: verified
   notes: "All 43 catalog writes still pass the ticket-57 Authorize path, and exactly session_close and terminal_stop bypass approval. Nine script and script-binding tools (scripts_create, scripts_update, scripts_delete, scripts_run, scripts_run_stop, scripts_run_pause, scripts_run_resume, scripts_targets_set, and host_connect_scripts_set) return the typed mcp_tool_unavailable result because this build has no script runtime; the other 34 writes execute their application behavior through real transports. A compiled natcatty-mcp stdio client against a shipped-style app graph with no static allowlist exercises every executable write against a real in-process SSH/SFTP fixture (real bash shell, real pkg/sftp server rooted in a temporary directory) and the real Vault, session, transfer, and forwarding services: terminal execute/start/poll/stop, all seven SFTP operations against the real filesystem, host_open newTab/reuse ownership (reuse does not grant session_close), session_close, Vault Host/Note/Group/Snippet writes and imports, host notes, snippet run, and port-forward rule and tunnel operations, with no missing executable tool. The nine unavailable tools are typed-unavailable and leave snippet and host-connect state unchanged. The external scope is no longer a launch-time-only allowlist: an application port supplies every live Session (id, host, label) while Settings sharing is on, the effective allowlist is the dynamic set intersected with NETCATTY_MCP_SESSION_IDS when that variable is present (an explicitly empty value stays no access, an omitted value leaves the dynamic set), explicit scopedSessionIds and [] semantics are unchanged, and the policy re-reads the source on every call so a created, closed, or reconnected Session never leaves a stale ID. Sharing defaults on for a fresh install, persists to external-mcp/external-mcp-sharing.json, and Settings shows the localized exposed count and rows plus the sharing toggle and a refresh control. The blocklist is 26 first-match rules: the original 21 (common 2, posixNative 8, posix 5, powershell 6), the fail-closed common.unresolvable-command rule, and four second-rework rules: common.force-delete (del/erase with /f and rd/rmdir with /s), posixNative.pipe-to-shell (any command piped into sh, bash, zsh, dash, fish, ksh, cmd, powershell, or pwsh, not only base64, including through sudo/doas/env/command/exec/nohup/nice/time/setsid/xargs prefixes and their options), posix.find-delete (find -delete), and powershell.alias-to-blocked-command (an alias defined to a blocked target). The fail-closed rule judges command positions after wrappers (command, env, sudo, exec, nohup, time, nice), shell scripts (-c), eval, subshells, if and loop bodies, find -exec, ssh, timeout, and chroot while leaving a separator inside a quoted argument as data; a cmd /k, cmd /r, or glued cmd /c payload is judged the same way. Each shell family has a canonical reading (POSIX bounded brace expansion of every comma group including nested groups and a variable path, quote removal, backslash-newline joins, $IFS/${IFS}, simple NAME=value assignment expansion and $NAME/${NAME} substitution, $'...' decoding; PowerShell constant folding of adjacent string literals inside the call operator, backtick escapes including backtick-newline, quote removal, alias resolution for Set-Alias/New-Alias/sal/alias name=target, and $env:ComSpec expansion; cmd caret escapes, quotes, %ComSpec% expansion, /k and /r as well as /c, the glued /c\"payload\" spelling, and a nested cmd payload recursed with cmd's own reading); every table rule matches the original text and the canonical text (the strict union of all three readings for an unknown shell), first match is preserved, the fail-closed rule lexes the original text quote-aware so a separator inside a quoted argument stays data, and ordinary arguments that merely contain $, a backtick, or %NAME% stay allowed because only a command position is judged. A bare PowerShell variable expression ($env:PATH), a one-word PowerShell assignment ($D = 'C:/Temp/x' or $D = $env:PATH), Get-ChildItem, cmd /c echo %PATH%, git status, sudo systemctl status nginx, and npm test stay allowed. The measured bypasses (double- and single-quoted rm, r''m, rm$IFS-rf, x=rm; $x -rf, PowerShell backtick-escaped Remove-Item, backtick-newline splits) and the second-rework forms (POSIX brace groups including a later group, nested groups, and a variable path, printf-decoded and any other command piped to a shell or the absolute /bin/sh including through sudo, env, or command prefixes, find -delete, PowerShell constant-built and aliased command names, cmd %ComSpec% del /f, cmd /c r^m, and the /k, /r, and glued /c spellings) plus the neighbours ${IFS}, \\rm, \"r\"m, $'r'm, ${PATH:+rm}, ${x:-rm}, command rm, env rm, bash -c '\"rm\" -rf x', & 'Remove-Item', & (Get-Command Remove-Item), Invoke-Expression, and a foreach or stored variable command all return mcp_command_blocked naming a rule, and a disposable-directory marker survives every POSIX and PowerShell form plus the cmd forms on Windows. The blocklist is a textual safety net, not a sandbox: arbitrary computed command construction (for example a command word decoded by an interpreter from data the guard cannot see) is out of scope in mcp.blocklist-threat-model, while the whole in-model corpus above is enforced and tested; no OS sandbox or capability drop is claimed. Serial and network-device raw Sessions intentionally skip the blocklist, as in the original. Per-call bounds still match the original catalog: a 60 s foreground/tool deadline, 30 s job-start timeout, 60 min job lifetime, 256 KiB rolling job output, 30 s recommended poll cadence, 10 min job retention, 1 MiB foreground capture, 512 KiB raw serial/network-device capture, 10 MiB SFTP read, 5000-entry SFTP listing, and a 16 MiB stdio tool-result ceiling. Exactly-at-limit output is not truncated and one byte over is, and a timeout returns mcp_command_timeout with partial stdout and releases the Session for the next call, proven against the real SSH shell over stdio, with readiness probes (including after an interrupt) charged against that same deadline rather than added before it; a completed command is detected even when the SSH PTY emits terminal control sequences (bracketed-paste re-enable, cursor and color) directly after the exit code instead of a newline, so a ForceCommand bash -i first command returns in under a second rather than waiting for its 60 s deadline; truncation over 1 MiB reports outputTruncated, outputBaseOffset, and totalOutputChars. Secrets and AI are never exposed: the catalog has no secret-store or AI capability, nested secret-named fields are recursively redacted from approval summaries, and the prompt, write result, and later reads carry neither the submitted password nor a password field. Settings keeps the localized last-activity strip first in the area so the zh-CN status is above the fold at 704x421 without scrolling, with the pinned Approve/Deny bar inside the client and stable while the body scrolls and the accessible body/warning/danger colors. In the running product, with a live shared Session opened by Ctrl+T, the real client produced blocked, succeeded, failed, truncated, and timed-out activity at 704x421 and 1084x661 in en and zh-CN; screenshots and UIA captures are recorded. The MyGo native Select popup omits its option rows from the accessibility tree; that widget limitation is recorded in settings.mcp-mode-popup-accessibility. Divergences from the original: the original Electron lookahead regex is replaced by equivalent RE2 rules that preserve its deliberately over-blocking behavior, approval prompts are used as ticket 57 requires, and the AI harness tools remain excluded."
 
 - id: mcp.blocklist-threat-model
@@ -3258,7 +3286,7 @@
   module: application/mcp
   tickets: [58]
   status: excluded
-  notes: "Terminal commands are matched after the shell's own in-model quoting and expansion classes (quotes, continuations, IFS, simple assignments, every bounded brace group, pipe-to-shell including through common wrappers, PowerShell constant folding and same-command alias resolution, ComSpec, and a nested cmd /c, /k, /r, or glued payload), and a still-dynamic command word fails closed. Arbitrary computed command construction is out of scope: a command word decoded at run time from data the guard cannot read, an external script, or a dynamically built function can still run what the textual matcher cannot see. The ticket proves the in-model corpus with a disposable marker and makes no OS-sandbox, capability-drop, or process-isolation claim; serial and network-device raw Sessions intentionally skip the blocklist."
+  notes: "Terminal commands are matched after the shell's own in-model quoting and expansion classes (quotes, continuations, IFS, simple assignments, every bounded brace group, pipe-to-shell including through common wrappers, PowerShell constant folding and same-command alias resolution, ComSpec, and a nested cmd /c, /k, /r, or glued payload), and a still-dynamic command word fails closed. The blocklist is a textual safety net, not a sandbox, and makes no OS-sandbox, capability-drop, or process-isolation claim. Constructs whose command is computed at run time by an interpreter or another program from data the guard cannot see remain allowed by design, for example `sh < script`, `powershell -EncodedCommand`, an interpreter reading commands from a file or stdin, an external script, or a dynamically built function. The ticket proves the in-model corpus with a disposable marker; the out-of-model class is an explicit, signed exclusion rather than an unnoticed bypass. Serial and network-device raw Sessions intentionally skip the blocklist."
 
 - id: settings.mcp-mode-popup-accessibility
   area: settings
@@ -3268,7 +3296,7 @@
   module: ui/settings
   tickets: [58]
   status: excluded
-  notes: "The original component used a native select whose option list is part of the browser accessibility tree. MyGo v0.5.5's ui.Select exposes the selected value and the ExpandCollapse state through UIA and the popup is fully operable with pointer and keyboard, but the native popup's option rows are drawn in an overlay that is absent from the accessibility tree, so a screen reader cannot enumerate the three permission modes from the popup. The selected mode is still announced, and the mode description plus the last-activity strip state the active mode in text. The product keeps the combobox as its mode control and records the gap rather than claiming an accessible popup."
+  notes: "The original component used a native select whose option list is part of the browser accessibility tree. MyGo v0.5.5's ui.Select exposes the selected value and the ExpandCollapse state through UIA and the popup is fully operable with pointer and keyboard. When the popup is expanded, raw UIA does expose the three permission-mode option texts (Observer, Confirm every write, Automatic) as ControlType.Text elements, so the option text is not absent. The gap is that those rows are not exposed as selectable option roles (ControlType.ListItem or an equivalent selection pattern), so a screen reader cannot enumerate or select them as list options. The selected mode is still announced, and the mode description plus the last-activity strip state the active mode in text. The product keeps the combobox as its mode control and records the gap rather than claiming an accessible selectable popup."
 
 # --- Accepted gaps and deliberate exclusions ---
 # Every row below needs a matching section in docs/parity/limitations.md.
@@ -3431,7 +3459,7 @@
     - domain/browser.TestNormalizeURLRefusesInputsTheOriginalRefused
     - ui/browser.TestPanelNavigationUsesHTTPForLocalAndHTTPSForPublicHosts
     - ui/browser.TestPanelRefusesAnAddressOutsideHTTPAndHTTPS
-  status: implemented
+  status: verified
   notes: "Explicit http and https schemes are preserved. Only localhost, 127.x, and bracket IPv6 literals default to HTTP; other hosts default to HTTPS. Addresses longer than 2048 characters, non-HTTP(S) schemes, embedded credentials, and malformed addresses are refused."
 
 - id: browser.host-tunnel
@@ -3450,7 +3478,7 @@
     - application/browser.TestGatewayLocksDownNonPageDocuments
     - application/browser.TestGatewayErrorResponsesCarryNoProductCopyAndCannotRunScript
     - adapters/ssh.TestBrowserPanelRoutesPagesThroughADedicatedRealSSHTransport
-  status: implemented
+  status: verified
   notes: "The original used a loopback SOCKS5 proxy. MyGo v0.5.5 has no per-webview proxy, so this app uses a per-origin loopback HTTP gateway whose only dialer is the panel's dedicated SSH channel; page navigation, same-origin subresources, redirects, CSS, and script fetches stay on the route. Cross-origin subresources are refused by CSP rather than sent directly, so third-party CDNs and APIs do not load. CSP keeps default/connect/frame/form on the page's own gateway origin, blocks eval and data/blob scripts, and locks non-HTML documents (SVG/XML) to script-src 'none'; inline page scripts remain allowed because Host consoles rely on them. Ports, listeners, and the transport close with the panel. A 5s x 3 keepalive surfaces a dead Host tunnel in about fifteen seconds. Two panels on one Host open two physical SSH transports."
 
 - id: browser.panel
@@ -3475,7 +3503,7 @@
     - ui/browser.TestDownloadNavigationKeepsTheShownPage
     - app.TestTicket47CheckRunsThroughTheKeyboard
     - app.TestTicket48CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "Opened from the Session menu of an SSH Session. Back, forward, reload, stop, address bar, new/close/activate tab, and a full-panel disconnect state with Retry. Stop clears the loading state itself because WebView2 reports a stopped load as an aborted navigation with no finish event. The panel replaces the Session's chrome and terminal while open because the terminal transport keeps running and a native WebView must not sit under trusted chrome; closing returns the terminal. Ctrl+L focuses and selects the address while Natcatty's chrome has keyboard focus; a focused native page owns the OS keyboard (WebView2 forwards only Tab out), so users click the address bar after typing in a page. Ticket 48 adds in-panel bookmarks and downloads panes; page-created popups and side-panel resizing remain out."
 
 - id: browser.bookmarks
@@ -3504,7 +3532,7 @@
     - ui/browser.TestBookmarkPaneLongListScrolls
     - ui/browser.TestBookmarkPaneLongListStaysInsideTheShellAtBothSizes
     - app.TestTicket48CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "A Host bookmark is visible only to its owning Host; an all-Host bookmark is visible everywhere. The owner Host alone may edit or delete a Host bookmark. Limits follow the original: 1000 items, 120-character title, 4-character glyph, #rrggbb color, ids at most 128 characters, and Host ids at most 256. Metadata is written atomically to browser-bookmarks.json beside app preferences and reloads across restart. Bookmark metadata is not synced through ticket 49's payload because that ticket did not include a bookmark entity; bookmark files remain local for now. The editor does not expose the original custom text/image icon and color pickers or quick search; it keeps site icons automatically. The long list stays in a bounded scroll viewport inside the shell's Pane at 720x480 and 1100x720 in English and zh-CN, and the wheel, End, and Tab focus reveal reach the last row whole above the pinned action bar."
 
 - id: browser.favicons
@@ -3525,7 +3553,7 @@
     - adapters/store.TestBrowserSiteIconStoreRoundTrip
     - ui/browser.TestBookmarkPaneReachableAtBothSizes
     - app.TestTicket48CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "The favicon is fetched through the same dedicated Host tunnel and gateway as the page, with a 5-second timeout and a 64 KiB cap, sniffed as PNG, JPEG, GIF, or WebP, and cached by Host and origin in browser-site-icons.json. The tab strip and bookmark rows render it; a missing or undecodable icon keeps a glyph fallback. MyGo v0.5.5 exposes no page-declared favicon event, so this app requests only /favicon.ico rather than the page's <link rel=icon> list. ICO bytes are recognized but not stored because MyGo's native image decoder has no ICO support. Custom icon overrides exist in the service but the ticket-48 UI exposes automatic site icons only."
 
 - id: browser.downloads
@@ -3550,7 +3578,7 @@
     - ui/browser.TestDownloadPaneShowsProgressAndCompletion
     - app.TestAbortedBrowserNavigationsAreNotPageFailures
     - app.TestTicket48CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "MyGo exposes OnWillDownload but no download progress or cancel API, and its own save path is outside the route policy. The panel therefore prevents the engine download and fetches the same gateway URL with the panel's tunnel transport, Cookie header, redirect limit, and a 256 MiB cap. Bytes stream to a reserved 0600 .part file in the app Downloads directory; success syncs and renames atomically, while cancel or failure removes the .part. Off-route URLs are refused before any file is reserved, and filenames are basenames with traversal and Windows-invalid characters removed. Unlike the original there is no Save-as dialog, open-folder/reveal action, or persisted download history: records live for the panel session, and finished files stay in Downloads."
 
 - id: browser.sandbox
@@ -3568,7 +3596,7 @@
     - application/browser.TestGatewaySandboxPolicyAndUntrustedLoopbackAddress
     - app.TestBrowserPageCannotCallProductAPIs
     - app.TestTicket48CheckRunsThroughTheKeyboard
-  status: implemented
+  status: verified
   notes: "Host content is loaded only from a loopback gateway that prefers 127.0.0.2, which is loopback but outside the localhost/127.0.0.1/::1 hosts MyGo's development build auto-trusts for its typed bridge; macOS assigns only 127.0.0.1, so the gateway there uses that documented fallback and relies on the app registering no MyGo bindings and denying page permissions. The page gets no preload script and no TrustedOrigins, the app registers no MyGo bindings, permissions are denied, and window.open returns no window. The gateway replaces the page's CSP with default/connect/frame/worker/form restricted to 'self', object-src 'none', frame-ancestors 'none', no unsafe-eval, and script-src 'none' for non-HTML documents; it strips the page's meta CSP and refresh. Cross-origin fetch, image beacons, foreign frames/objects/forms, window.open, eval, and bridge calls are blocked. The ticket 48 GUI acceptance run loaded the hostile page in the real WebView: the page reported every attempt blocked (including a denied window.mygo call) and the fixture recorded zero requests to the foreign origin. A page-created popup that the original would open as a new tab is refused because MyGo cannot attach such a page to the panel's isolated route."
 
 - id: browser.cookie-partitioning
@@ -3771,10 +3799,13 @@
     - internal/tools/releasecheck.TestCollectFlattensArtifactsAndRejectsDuplicates
     - internal/tools/releasecheck.TestAssertNoUpdateMetadata
     - internal/tools/releasecheck.TestCheckBinaryFindsEveryCatalog
+    - internal/releasenotes.TestGenerateReleaseNotesForTheRealChangelog
+    - internal/tools/releasenotes.TestGenerateWritesReleaseNotes
+    - internal/tools/releasenotes.TestMissingAndDuplicateVersionsFail
     - app.TestTicket59CheckPassesTwiceInOneProcess
     - app.TestTicket59CheckRunsThroughTheKeyboard
-  status: implemented
-  notes: "MyGo builds the macOS universal .app and DMG, the Windows amd64 NSIS Setup exe, and the Linux amd64/arm64 tar.gz plus deb (with install.sh) from mygo.json. The release workflow validates a strict SemVer tag against mygo.json in internal/release, refuses update, signing, and notarization configuration and environment, builds on macOS, Windows, and Linux runners, and inspects each artifact itself: hdiutil verify plus a mounted-DMG plist/resource/codesign check, a 7z NSIS listing plus extracted-binary check, and dpkg-deb/tar listings plus extracted-binary checks. It verifies all five embedded locale catalogs by searching the packaged executables, requires the et/mosh provenance, licenses, and platform transport clients in the artifact, and rejects update-*.json, latest*.yml, appcast, delta, and certificate files. Per-platform and aggregate SHA256SUMS are generated and verified from a clean flattened set; the workflow uploads workflow artifacts only and never creates a GitHub release. The macOS signature is ad hoc, not Developer ID. The ticket 59 self-test proves the running packaged version and name match the shipped mygo.json, the five catalogs and seven bundled resources, and disabled updates, twice in one F11,5,9 process."
+  status: verified
+  notes: "MyGo builds the macOS universal .app and DMG, the Windows amd64 NSIS Setup exe, and the Linux amd64/arm64 tar.gz plus deb (with install.sh) from mygo.json. The release workflow validates a strict SemVer tag against mygo.json in internal/release, refuses update, signing, and notarization configuration and environment, builds on macOS, Windows, and Linux runners, and inspects each artifact itself: hdiutil verify plus a mounted-DMG plist/resource/codesign check, a 7z NSIS listing plus extracted-binary check, and dpkg-deb/tar listings plus extracted-binary checks. It verifies all five embedded locale catalogs by searching the packaged executables, requires the et/mosh provenance, licenses, and platform transport clients in the artifact, and rejects update-*.json, latest*.yml, appcast, delta, and certificate files. Per-platform and aggregate SHA256SUMS are generated and verified from a clean flattened set; the workflow uploads workflow artifacts only and never creates a GitHub release. The macOS signature is ad hoc, not Developer ID. The ticket 59 self-test proves the running packaged version and name match the shipped mygo.json, the five catalogs and seven bundled resources, and disabled updates, twice in one F11,5,9 process. Ticket 60 generates the release notes from CHANGELOG.md with internal/tools/releasenotes for the validated version, tests missing and duplicate version errors, and uploads RELEASE_NOTES.md as a release-workflow artifact. The NSIS-extracted Windows artifact was launched locally; the default CI launch-smoke job covers the real app on Linux, macOS, and Windows."
 
 - id: sftp.dual-panes
   area: sftp-transfer
