@@ -454,6 +454,12 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			ui.Text(c, message).TextColor(uitheme.DangerText(t)).FontSize(12)
 		})
 	case info.Surface != nil:
+		// The focused Pane's terminal takes the keyboard; every other Pane
+		// renders without asking for it, so a split cannot steal the focus.
+		if target, ok := info.Surface.(state.FocusedSurface); ok {
+			target.ViewFocused(c, info.Focused)
+			return
+		}
 		info.Surface.View(c)
 	default:
 		ui.Column(c).Fill().Padding(12).Children(func() {

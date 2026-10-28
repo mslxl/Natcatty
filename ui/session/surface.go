@@ -242,6 +242,15 @@ type Surface struct {
 	renaming     bool
 	renameValue  string
 	paneActions  PaneActions
+	// terminalKey names this Surface's terminal in the element tree. It is
+	// unique per Session so two Tabs never share one node's keyboard, editor,
+	// or focus state.
+	terminalKey string
+	// focused is whether the Pane holding this Surface held the keyboard on
+	// the last frame. focusPending asks the next terminalView for a one-shot
+	// Focus when the Pane gained focus while its terminal was already shown.
+	focused      bool
+	focusPending bool
 	// browser replaces the Session chrome and terminal while open. The
 	// Session and its transport keep running underneath.
 	browser    BrowserPanel
@@ -276,9 +285,10 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 		option(&options)
 	}
 	surface := &Surface{
-		session:   session,
-		options:   options,
-		logFormat: domainterminal.DefaultLogFormat,
+		session:     session,
+		options:     options,
+		logFormat:   domainterminal.DefaultLogFormat,
+		terminalKey: "session-terminal-" + string(session.ID()),
 	}
 	if options.LogDefaults != nil {
 		if defaults := options.LogDefaults(); validLogFormat(defaults.Format) {
@@ -420,9 +430,27 @@ func validLogFormat(format domainterminal.LogFormat) bool {
 	}
 }
 
-// View shows the Session chrome above the terminal and gives the terminal the
-// keyboard focus.
+// View shows the Session chrome above its terminal without asking for the
+// keyboard. The shell uses ViewFocused so only the focused Pane's terminal
+// takes the keyboard.
 func (s *Surface) View(c *ui.Context) ui.Element {
+	return s.view(c, false)
+}
+
+// ViewFocused shows the Session and, when focused, gives its terminal the
+// keyboard. Only the shell's focused Pane sets focused, so several Panes in
+// one frame do not fight over it: the terminal takes the keyboard in the frame
+// its element first appears (a new Tab, a Tab shown again after a switch, or
+// Resume after Hibernate) and once when its Pane gains focus while already
+// shown. It never reclaims the keyboard on later frames, so Compose, a dialog,
+// or another control keeps the focus the user gave it.
+func (s *Surface) ViewFocused(c *ui.Context, focused bool) ui.Element {
+	return s.view(c, focused)
+}
+
+func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
+	s.focusPending = focused && !s.focused
+	s.focused = focused
 	// A dismissed observer stops rendering immediately; its feed and shadow
 	// terminal are released before the next frame builds anything over them.
 	if !s.observing && s.observation != nil {
@@ -593,8 +621,21 @@ func (s *Surface) terminalView(c *ui.Context) {
 	// inserts or removes a row above it (autocomplete popup, statistics,
 	// banners). MyGo derives unkeyed node ids from the child position, so an
 	// inserted row above the terminal would move the keyboard focus to the new
-	// row and the user's next keystroke would go nowhere.
-	termView := terminal.View(c, s.terminal).Grow(1).Key("session-terminal")
+	// row and the user's next keystroke would go nowhere. The key carries the
+	// Session's identity so two Tabs never reuse one terminal node's state.
+	termView := terminal.View(c, s.terminal).Grow(1).Key(s.terminalKey)
+	// AutoFocus fires only in the frame the terminal node appears: a new Tab,
+	// a Tab shown again after a switch, and Resume after Hibernate. A Pane
+	// that gains focus while its terminal is already shown needs the one-shot
+	// Focus instead. Neither runs on a steady frame, so the keyboard the user
+	// gave Compose or another control is not taken back.
+	if s.focused {
+		termView.AutoFocus()
+		if s.focusPending {
+			termView.Focus()
+		}
+	}
+	s.focusPending = false
 	// File drag/drop belongs to the terminal element. Reading it here marks
 	// the terminal as the drop target and consumes a completed drop once; the
 	// resulting banner appears on the next frame.
