@@ -59,6 +59,14 @@ type TerminalFontSetter interface {
 	SetTerminalFont(family string, size float32)
 }
 
+// FocusedSurface is implemented by a Surface whose terminal takes the keyboard
+// only when its Pane is the focused one. The shell renders every Pane through
+// it so a split cannot steal the keyboard from the focused Pane or from
+// Compose.
+type FocusedSurface interface {
+	ViewFocused(c *ui.Context, focused bool) ui.Element
+}
+
 // TerminalThemeSetter is implemented by a Surface whose terminal can recolor
 // without being recreated. The Settings window uses it to apply a color scheme
 // to open Sessions.
