@@ -366,7 +366,8 @@ func TestQueueRetriesAFailedTransfer(t *testing.T) {
 	if err := queue.Retry(id); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	waitQueueActive(t, queue, 1)
+	// A retried copy of a tiny in-memory file can finish before an active
+	// worker sample is possible, so completion is the condition to await.
 	task := waitQueueTask(t, queue, id, domainsftp.TaskCompleted)
 	if task.BytesDone != int64(len("recovered")) {
 		t.Errorf("retried task copied %d bytes", task.BytesDone)
