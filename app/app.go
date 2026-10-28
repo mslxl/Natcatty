@@ -1058,7 +1058,14 @@ func run(afterReady func(hostWindow)) error {
 			desktopCtl.SetIconProvider(func() []byte { return trayIconPNG(current.Appearance.AppIcon) })
 		}
 		if runtime.GOOS == "darwin" {
-			_ = mygo.App.Dock.SetIcon(appIconPNG(current.Appearance.AppIcon))
+			// MyGo panics when Dock.SetIcon runs before App.Run, and the
+			// initial preference apply below happens before the event loop
+			// starts. WhenReady also schedules immediately after startup, so
+			// later appearance changes still update the Dock icon.
+			icon := appIconPNG(current.Appearance.AppIcon)
+			mygo.App.WhenReady(func() {
+				_ = mygo.App.Dock.SetIcon(icon)
+			})
 		}
 		if shellState != nil {
 			shellState.SetTerminalFont(current.Appearance.TerminalFontFamily,
