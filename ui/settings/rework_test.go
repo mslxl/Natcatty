@@ -136,8 +136,12 @@ func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
 					}
 					// The sidebar scrolls at the minimum size, so a later area
 					// starts below the viewport. Wheel it into view the way a
-					// user would before judging its label.
-					for step := 0; step < 40 && rect.Y+rect.H > float32(size[1]); step++ {
+					// user would before judging its label. A row clipped at the
+					// viewport's bottom edge reports an empty box, so the loop
+					// must react to that too, not only to a visible row whose
+					// bottom overflows: a taller font can leave the label at
+					// the edge with H zero.
+					for step := 0; step < 40 && (rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])); step++ {
 						tester.Scroll(80, float32(size[1])*0.6, 0, 40)
 						rect, ok = tester.Find(label)
 						if !ok {
@@ -355,9 +359,20 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 					case AreaSync:
 						config.Sync = NewSyncState(newFakeSyncService())
 					}
-					tester := ui.NewTester(viewAt(test.area, config), w, h)
+					var layout viewLayout
+					var context *ui.Context
+					view := viewAtWithLayout(test.area, config, &layout)
+					tester := ui.NewTester(func(c *ui.Context) {
+						context = c
+						view(c)
+					}, w, h)
 					tester.SetLocale(locale)
 					tester.Frame()
+					// Wheel over the content scroll's own end padding: a point
+					// over the middle of the pane can land on a text input or a
+					// list that consumes the wheel, and which control lands there
+					// moves with the platform's font metrics.
+					viewport := layout.Content.Bounds(context)
 					for _, label := range test.labels(m) {
 						if !tester.HasText(label) {
 							t.Errorf("%q has no label: %q", label, tester.Texts())
@@ -367,7 +382,7 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 						// Scrolling down through the pane reaches a field below
 						// the fold; a label clipped out of the scene reports an
 						// empty box until it scrolls in.
-						x, y := float32(w)*3/5, float32(h)*3/5
+						x, y := viewport.X+viewport.W-4, viewport.Y+viewport.H/2
 						for step := 0; step < 80 && (!ok || rect.W <= 0 || rect.H <= 0); step++ {
 							tester.Scroll(x, y, 0, 40)
 							rect, ok = tester.Find(label)

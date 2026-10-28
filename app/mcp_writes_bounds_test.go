@@ -120,9 +120,37 @@ func shellEcho(shell, text string) string {
 	}
 }
 
+// shellReadyCommand prints marker so that the typed command does not contain
+// it: a PTY can echo the input before the shell has started, so only the
+// marker assembled at run time proves the shell is ready. Half the marker is
+// quoted separately for each shell's concatenation rules.
+func shellReadyCommand(shell, marker string) string {
+	half := len(marker) / 2
+	left, right := marker[:half], marker[half:]
+	switch shell {
+	case "powershell":
+		return fmt.Sprintf("Write-Output ('%s'+'%s')", left, right)
+	case "cmd":
+		return fmt.Sprintf("echo %s^%s", left, right)
+	default:
+		return fmt.Sprintf("printf '%%s\\n' %s''%s", left, right)
+	}
+}
+
 func TestMCPWriteCommandTimeoutReturnsPartialOutputAndReleasesTheSession(t *testing.T) {
 	fixture := newMCPWriteFixture(t)
 	shell, _ := fixture.sessions.ShellKind(fixture.localSession)
+	// Warm the real shell before starting the clock. A cold shell on a loaded
+	// runner can take longer than the one-second command deadline to start,
+	// and the deadline must measure the command, not shell startup.
+	warm := callMCPTool(t, fixture, "terminal_execute", map[string]any{
+		"sessionId": string(fixture.localSession),
+		"command":   shellReadyCommand(shell, "shell-ready"),
+	})
+	requireMCPWriteOK(t, "terminal_execute", warm)
+	if stdout, _ := warm["stdout"].(string); !strings.Contains(stdout, "shell-ready") {
+		t.Fatalf("shell warm-up stdout = %q", stdout)
+	}
 	var slow string
 	switch shell {
 	case "powershell":
