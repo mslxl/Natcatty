@@ -112,11 +112,13 @@ func TestMCPJobStreamsABoundedWindowWithMonotonicOffsets(t *testing.T) {
 
 func TestMCPJobPollShowsPartialOutputWhileTheCommandRuns(t *testing.T) {
 	release := make(chan struct{})
+	produced := make(chan struct{})
 	session := &jobTestSession{run: func(_ context.Context, options appsession.CommandOptions) (appsession.CommandResult, error) {
 		options.OnStart()
 		options.OnProgress(appsession.CommandProgress{
 			Stdout: "partial output", TotalOutputChars: len("partial output"),
 		})
+		close(produced)
 		<-release
 		return appsession.CommandResult{
 			Stdout: "partial output done", HasExitCode: true,
@@ -126,6 +128,14 @@ func TestMCPJobPollShowsPartialOutputWhileTheCommandRuns(t *testing.T) {
 	manager := newJobTestManager(session)
 	if _, err := manager.Start(context.Background(), "s1", "echo"); err != nil {
 		t.Fatalf("Start: %v", err)
+	}
+	// Start returns before the job goroutine has reported anything. Poll only
+	// after the progress callback ran, so the assertion is about the running
+	// window, not about losing a scheduling race on a loaded machine.
+	select {
+	case <-produced:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command never reported its partial output")
 	}
 	polled, err := manager.Poll("job_test_1", 0)
 	if err != nil {
