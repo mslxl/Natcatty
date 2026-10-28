@@ -15,7 +15,14 @@ import (
 
 func newTicket15Tester(t *testing.T) (*ui.Tester, string) {
 	t.Helper()
-	dir := t.TempDir()
+	return newTicket15TesterInDir(t, t.TempDir())
+}
+
+// newTicket15TesterInDir is newTicket15Tester with dir as the process result
+// directory. A test passes a path that does not exist yet to prove the first
+// check in a fresh process creates it before a checker writes into it.
+func newTicket15TesterInDir(t *testing.T, dir string) (*ui.Tester, string) {
+	t.Helper()
 	savedDir := selftestResultDir
 	selftestResultDir = dir
 	t.Cleanup(func() { selftestResultDir = savedDir })
