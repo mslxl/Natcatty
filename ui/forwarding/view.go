@@ -198,6 +198,17 @@ func typeLabel(m locales.Messages, kind domainforward.Type) string {
 	}
 }
 
+// editorFieldHandles are bound to the editor's text inputs on every build so
+// the shell self-test can measure their real boxes through the
+// selftest-only observer. They carry no behavior.
+type editorFieldHandles struct {
+	label       ui.Handle
+	bindAddress ui.Handle
+	localPort   ui.Handle
+	remoteHost  ui.Handle
+	remotePort  ui.Handle
+}
+
 // Editor renders the create or edit form. The form scrolls with Save, Cancel,
 // and the problem pinned below it, so the minimum window never hides a
 // control or the reason a save failed.
@@ -222,7 +233,7 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 				})
 			})
 			ui.Field(c, m.VaultForwardingLabel(), func() {
-				ui.TextInput(c, &form.Label)
+				ui.TextInput(c, &form.Label).Bind(&s.editorFields.label)
 			})
 			ui.Field(c, m.VaultForwardingHost(), func() {
 				if len(s.Hosts()) == 0 {
@@ -235,21 +246,26 @@ func Editor(c *ui.Context, s *State, scroll *ui.ScrollState) {
 					}
 				})
 			})
-			ui.Row(c).Gap(8).Children(func() {
+			// The two-column pairs wrap at the minimum window: the form's
+			// label column plus the fixed-width inputs is wider than the
+			// content column at 704x421, so the second field moves to its
+			// own row instead of clipping at the right edge. The default
+			// 1084x661 window keeps both fields on one row.
+			ui.Row(c).Gap(8).Wrap().Children(func() {
 				ui.Field(c, m.VaultForwardingBindAddress(), func() {
-					ui.TextInput(c, &form.BindAddress).Width(200)
+					ui.TextInput(c, &form.BindAddress).Width(200).Bind(&s.editorFields.bindAddress)
 				})
 				ui.Field(c, m.VaultForwardingLocalPort(), func() {
-					ui.TextInput(c, &form.LocalPort).Placeholder("8080").Width(120)
+					ui.TextInput(c, &form.LocalPort).Placeholder("8080").Width(120).Bind(&s.editorFields.localPort)
 				})
 			})
 			if form.Type != string(domainforward.TypeDynamic) {
-				ui.Row(c).Gap(8).Children(func() {
+				ui.Row(c).Gap(8).Wrap().Children(func() {
 					ui.Field(c, m.VaultForwardingRemoteHost(), func() {
-						ui.TextInput(c, &form.RemoteHost).Placeholder("localhost").Width(220)
+						ui.TextInput(c, &form.RemoteHost).Placeholder("localhost").Width(220).Bind(&s.editorFields.remoteHost)
 					})
 					ui.Field(c, m.VaultForwardingRemotePort(), func() {
-						ui.TextInput(c, &form.RemotePort).Placeholder("80").Width(120)
+						ui.TextInput(c, &form.RemotePort).Placeholder("80").Width(120).Bind(&s.editorFields.remotePort)
 					})
 				})
 			}

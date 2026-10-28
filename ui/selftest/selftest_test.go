@@ -2,6 +2,7 @@ package selftest
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,6 +56,57 @@ func TestHarnessCreatesItsResultDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"pass": true`) {
 		t.Fatalf("written result = %s", data)
+	}
+}
+
+// TestCheckStartCreatesTheMissingResultDirectory is the ticket 61 rework
+// regression for the first check of a brand-new process. Checkers create
+// working files under the per-process result directory before the harness
+// writes its result; ticket 48 creates a run directory there in its first
+// step. The directory therefore has to exist when a check starts, not only
+// when its result is written.
+func TestCheckStartCreatesTheMissingResultDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), fmt.Sprintf("natcatty-selftest-%d", os.Getpid()))
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the fixture directory %q already exists: %v", dir, err)
+	}
+	registry := NewRegistry()
+	registry.Register(Check{
+		Ticket: 48,
+		Name:   "first check in a fresh process",
+		Steps: []Step{{
+			Name: "working-directory",
+			Run: func(*ui.Context) Outcome {
+				info, err := os.Stat(dir)
+				if err != nil || !info.IsDir() {
+					return Failed(fmt.Errorf("the result directory is missing at the first step: %v", err))
+				}
+				return Passed("the result directory exists before the first step writes", "")
+			},
+		}},
+	})
+	stamp := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	harness := NewHarness(registry,
+		WithResultDir(dir),
+		WithClock(func() time.Time { return stamp }),
+	)
+	tester := ui.NewTester(install(harness, func(c *ui.Context) { ui.Text(c, "content") }), 800, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	tester.Key(0, ui.Key4)
+	tester.Frame()
+	tester.Key(0, ui.Key8)
+	tester.Frame()
+
+	result, ok := harness.LastResult()
+	if !ok || !result.Pass || len(result.Errors) != 0 {
+		t.Fatalf("the first check in a fresh process failed: %+v (%v)", result, ok)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "natcatty-selftest-48.json")); err != nil {
+		t.Fatalf("result file: %v", err)
 	}
 }
 
