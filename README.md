@@ -15,3 +15,27 @@ This is the **Native edition** of [Netcatty](https://github.com/binaricat/Netcat
 - Any consequences of using this repository are the user's own responsibility.
 
 For a stable and reliable version, use the upstream project: [binaricat/Netcatty](https://github.com/binaricat/Netcatty).
+
+## Building and release artifacts
+
+The native app is built with MyGo (see [docs/packaging.md](docs/packaging.md)):
+
+```sh
+go tool mygo build -platform windows/amd64 -o dist
+go tool mygo build -platform linux/amd64,linux/arm64 -o dist
+go tool mygo build -platform darwin/universal -o dist    # macOS runner needed for the DMG
+```
+
+A release produces a macOS universal `.app` and DMG, a Windows amd64 NSIS Setup
+`.exe`, and Linux amd64/arm64 `.tar.gz` archives with `install.sh` plus `.deb`
+packages. The macOS app is **ad hoc signed only**; nothing is Developer ID
+signed, notarized, or Authenticode signed. The app ships no self-updater and no
+update metadata. Release artifacts are uploaded as CI workflow artifacts, not
+published as a GitHub release.
+
+The interface uses the operating system's fonts. On Linux, a system without a
+CJK font (for example a minimal container) renders Chinese text with no
+visible glyphs. Install a CJK font such as `fonts-noto-cjk` before running the
+app; the `.deb` does not declare a CJK font dependency. The CI images install
+`fonts-noto-cjk` for the same reason.
+
