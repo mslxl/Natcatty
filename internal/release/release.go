@@ -98,19 +98,15 @@ func ParseTag(tag string) (Version, error) {
 // strict versions, so a tag cannot smuggle another spelling of the same
 // version past the manifest.
 func ValidateTag(tag, manifestVersion string) error {
+	if _, err := ParseVersion(manifestVersion); err != nil {
+		return fmt.Errorf("mygo.json: %w", err)
+	}
 	version, err := ParseTag(tag)
 	if err != nil {
 		return err
 	}
-	manifest, err := ParseVersion(manifestVersion)
-	if err != nil {
-		return fmt.Errorf("mygo.json: %w", err)
-	}
 	if tag[1:] != manifestVersion {
 		return fmt.Errorf("tag %q names version %s, but mygo.json says %s", tag, version, manifestVersion)
-	}
-	if version.String() != manifest.String() {
-		return fmt.Errorf("tag %q and mygo.json version %q parse differently", tag, manifestVersion)
 	}
 	return nil
 }

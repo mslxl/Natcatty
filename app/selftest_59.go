@@ -69,6 +69,10 @@ type selftest59 struct {
 	// step derives its state from the manifest and the files on disk again.
 	run int
 
+	// readyDeadline is cleared by resetStep so every run gets its own wait
+	// window instead of inheriting a deadline another run already consumed.
+	readyDeadline time.Time
+
 	manifestPath string
 	manifest     release.Manifest
 	resourceRoot string
@@ -91,6 +95,7 @@ func (t *selftest59) check() selftest.Check {
 
 func (t *selftest59) resetStep(*ui.Context) selftest.Outcome {
 	t.run++
+	t.readyDeadline = time.Time{}
 	t.manifestPath = ""
 	t.manifest = release.Manifest{}
 	t.resourceRoot = ""
@@ -100,17 +105,16 @@ func (t *selftest59) resetStep(*ui.Context) selftest.Outcome {
 // readyStep waits for the packaged lifecycle with a hard deadline. A test
 // harness has no running Application, so only a packaged build can be gated.
 func (t *selftest59) readyStep() selftest.Step {
-	var deadline time.Time
 	return selftest.Step{
 		Name: "app-ready",
 		Run: func(*ui.Context) selftest.Outcome {
 			if !mygo.App.IsPackaged() || mygo.App.IsReady() {
 				return selftest.Passed("the application is ready", "")
 			}
-			if deadline.IsZero() {
-				deadline = time.Now().Add(selftest59Wait)
+			if t.readyDeadline.IsZero() {
+				t.readyDeadline = time.Now().Add(selftest59Wait)
 			}
-			if time.Now().After(deadline) {
+			if time.Now().After(t.readyDeadline) {
 				return selftest.Failed(fmt.Errorf("the packaged app was not ready within %s", selftest59Wait))
 			}
 			return selftest.Pending
