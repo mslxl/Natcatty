@@ -14,11 +14,13 @@ configuration; `go tool mygo build` reads it directly.
 | Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty_0.1.0_arm64.deb`, `install.sh` | Same shape; the arm64 bundle selects the arm64 transport clients. |
 
 Every artifact copies the `resources/` tree next to the executable (inside
-`Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`, the ET
-and mosh metadata and licenses, the platform transport clients fetched for the
-build, `icon.png`, and the `mygo.json` release manifest. The five locale
-catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the executable
-with `go:embed`; they are not loose files.
+`Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
+`CHANGELOG.md`, the ET and mosh metadata and licenses, the platform transport
+clients fetched for the build, `icon.png`, and the `mygo.json` release
+manifest. `CHANGELOG.md` ships so the packaged application's ticket 60
+self-test can generate release notes from the file it was built with. The five
+locale catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the
+executable with `go:embed`; they are not loose files.
 
 ## Building
 
@@ -50,21 +52,27 @@ from the ephemeral workspace so each package carries only runnable clients.
 `.github/workflows/release.yml` runs on `workflow_dispatch` with an explicit
 tag or on a pushed `v*` tag.
 
-1. **validate** checks the Go release tooling tests, requires the tag to be
+1. **validate** checks the Go release tooling tests (including the changelog
+   parser and release-note generator), runs the parity release gate
+   (`go run ./internal/tools/paritygen -release`), requires the tag to be
    strict SemVer (`vMAJOR.MINOR.PATCH[-pre]`) exactly matching `mygo.json`
-   `version`, rejects signing/notarization/update configuration, and refuses
-   updater or signing environment variables.
+   `version`, rejects signing/notarization/update configuration, refuses
+   updater or signing environment variables, and generates `RELEASE_NOTES.md`
+   from `CHANGELOG.md` for that version and uploads it as the
+   `natcatty-release-notes` workflow artifact. A missing changelog entry, a
+   duplicate version, or an empty section fails validation.
 2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
    builds with MyGo, and verifies the artifact itself:
    - macOS: `hdiutil verify`, mounts the DMG, checks `Info.plist`, the version,
-     the resources, the embedded catalogs, and `codesign -dv` (ad hoc, no
-     `Authority`).
+     the resources (including `CHANGELOG.md`), the embedded catalogs, and
+     `codesign -dv` (ad hoc, no `Authority`).
    - Windows: `7z l` must identify the NSIS installer and list the app and
-     resources; it is extracted, the embedded catalogs are checked, and
-     `Get-AuthenticodeSignature` must report `NotSigned`.
-   - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources, and
-     platform transport clients; the extracted executable must embed all five
-     catalogs.
+     resources (including `CHANGELOG.md`); it is extracted, the embedded
+     catalogs are checked, and `Get-AuthenticodeSignature` must report
+     `NotSigned`.
+   - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
+     (including `CHANGELOG.md`), and platform transport clients; the extracted
+     executable must embed all five catalogs.
    Every job also runs `releasecheck assert-no-updates`, then generates and
    verifies a per-platform `SHA256SUMS`.
 3. **checksums** downloads all platform artifacts, verifies each platform's
@@ -86,6 +94,25 @@ go run ./internal/tools/releasecheck verify-sums -dir dist
 `SHA256SUMS` is compatible with `sha256sum -c` when run from the directory the
 names are relative to. The aggregate file is flat, so run it from the directory
 holding the collected artifacts.
+
+## Release notes
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Release notes are generated from it, never written by hand, with the library in
+`internal/releasenotes` and the checked tool in
+`internal/tools/releasenotes`:
+
+```sh
+go run ./internal/tools/releasenotes -version 0.1.0 -out RELEASE_NOTES.md
+```
+
+The tool reads the version section from `CHANGELOG.md` (`-changelog` overrides
+the default), accepts `v`-prefixed tags, and fails when the version has no
+section, appears twice, or has an empty body. The output is deterministic for
+the same changelog and version: the title is `# Natcatty <version>`, then the
+release date, then the section body. The release workflow writes
+`RELEASE_NOTES.md` for the validated manifest version and uploads it beside the
+build artifacts; it does not create a GitHub release.
 
 ## Signing, notarization, and updates
 

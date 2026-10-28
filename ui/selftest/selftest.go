@@ -495,7 +495,10 @@ func (h *Harness) draw(c *ui.Context) {
 		})
 		ui.Column(c).Absolute().Top(16).Left(16).Width(520).Padding(12).Gap(6).
 			Radius(8).Background(theme.Surface).Border(1, theme.Accent).Children(func() {
-			ui.Text(c, "Self-test").FontSize(15).Bold().TextColor(theme.Accent)
+			// The accent token is tuned for fills; as text on the overlay's
+			// light surface it is below the body-text contrast target, so the
+			// developer overlay uses the readable accent variant.
+			ui.Text(c, "Self-test").FontSize(15).Bold().TextColor(uitheme.AccentBodyText(theme))
 			switch h.state {
 			case StateMenu:
 				ui.Text(c, "F11, then a two-digit ticket number. Escape cancels.").
@@ -517,7 +520,7 @@ func (h *Harness) draw(c *ui.Context) {
 				h.drawSteps(c, theme)
 			case StatePassed, StateFailed:
 				label := "PASS"
-				color := theme.Accent
+				color := uitheme.AccentBodyText(theme)
 				if h.state == StateFailed {
 					label = "FAIL"
 					color = uitheme.DangerText(theme)
