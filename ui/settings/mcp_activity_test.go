@@ -277,6 +277,8 @@ func TestMCPWritesEvidenceScreenshotsAtRealClientSizes(t *testing.T) {
 						func(m locales.Messages) string { return m.SettingsMCPActivityStatusTimeout() }, "timeout"},
 					{"truncated", appmcp.ActivityTruncated, "",
 						func(m locales.Messages) string { return m.SettingsMCPActivityStatusTruncated() }, "truncated"},
+					{"failed", appmcp.ActivityFailed, "",
+						func(m locales.Messages) string { return m.SettingsMCPActivityStatusFailed() }, "failed"},
 				}
 				for _, notice := range notices {
 					activity := mcpActivityFixture(notice.status, notice.rule)

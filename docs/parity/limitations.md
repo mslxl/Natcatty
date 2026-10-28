@@ -192,6 +192,22 @@ than forcing an app-rendered replacement.
 Decision: accepted for v1 as an engine-owned surface; ticket 48.
 Ticket: 48
 
+### `settings.mcp-mode-popup-accessibility`
+
+MyGo v0.5.5's `ui.Select` exposes the selected value and the ExpandCollapse
+state through UIA, and the popup is fully operable with the pointer and the
+keyboard, but the option rows the native popup draws are absent from the
+accessibility tree. A screen reader therefore cannot enumerate the three
+External MCP permission modes from the open popup; the selected mode is still
+announced, and the mode description and the last-activity strip state the
+active mode in text. The original component used a native select whose options
+were part of the browser accessibility tree. The product keeps the combobox as
+its mode control and records the gap instead of claiming an accessible popup.
+
+Decision: accepted as a MyGo v0.5.5 widget limitation; ticket 58 records the
+gap rather than replacing the product's mode control.
+Ticket: 58
+
 ## Provider verification limits
 
 ### `sync.google-drive-live-endpoints`

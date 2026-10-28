@@ -274,6 +274,12 @@ func (s *Session) subscribeRawOutput() *rawOutputFeed {
 	s.rawMu.Lock()
 	s.rawFeed = feed
 	s.rawMu.Unlock()
+	// A headless Session may already be paused on output no view ever drained.
+	// The command feed is now the consumer, so release the terminal backlog
+	// (the replay keeps it) or the first big command would never be read.
+	if !s.conn.hasView() {
+		s.conn.discardPending()
+	}
 	return feed
 }
 

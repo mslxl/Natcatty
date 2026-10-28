@@ -2966,6 +2966,14 @@
   "settingsMCPSessions": "共用工作階段",
   "settingsMCPSessionsValue": "{sessions}",
   "settingsMCPNoSessions": "未共用任何工作階段。用戶端無法讀取工作階段資料。",
+  "settingsMCPExposedCount": "{count, plural, =0 {未共用工作階段} other {已共用 # 個工作階段}}",
+  "settingsMCPSharingTitle": "共用使用中的工作階段",
+  "settingsMCPSharingOn": "共用開啟時，所有已開啟的工作階段都會提供給外部用戶端。",
+  "settingsMCPSharingOff": "共用已關閉。用戶端無法讀取任何工作階段或對其進行操作。",
+  "settingsMCPSharingNoSessions": "共用已開啟，但尚未開啟任何工作階段。開啟一個工作階段即可共用。",
+  "settingsMCPRefreshSessions": "重新整理工作階段",
+  "settingsMCPEnvAllowlist": "啟動允許清單：{sessions}",
+  "settingsMCPUnnamedSession": "未命名工作階段",
   "settingsMCPGeneration": "所有權代數：{generation}",
   "settingsMCPBypassHint": "session_close 和 terminal_stop 從不請求審批，但仍須遵守範圍、允許清單和所有權。",
   "settingsMCPActivityTitle": "最近一次外部操作",
@@ -2997,5 +3005,6 @@
   "settingsMCPProblemExpired": "審批在使用前已過期。",
   "settingsMCPProblemStale": "所有權變更使審批失效。",
   "settingsMCPProblemInvalid": "審批已被使用或不再等待。",
-  "settingsMCPProblemMode": "無法變更權限模式。"
+  "settingsMCPProblemMode": "無法變更權限模式。",
+  "settingsMCPProblemSharing": "無法儲存工作階段共用設定。"
 }

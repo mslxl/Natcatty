@@ -118,9 +118,12 @@ func TestCommandBlocklistShellGroups(t *testing.T) {
 	for _, rule := range CommandRules(ShellKindUnknown) {
 		groupCounts[rule.Group]++
 	}
-	if groupCounts["common"] != 2 || groupCounts["posixNative"] != 8 ||
+	if groupCounts["common"] != 3 || groupCounts["posixNative"] != 8 ||
 		groupCounts["posix"] != 5 || groupCounts["powershell"] != 6 {
-		t.Fatalf("unknown shell group counts = %#v; want common=2 posixNative=8 posix=5 powershell=6", groupCounts)
+		t.Fatalf("unknown shell group counts = %#v; want common=3 posixNative=8 posix=5 powershell=6", groupCounts)
+	}
+	if len(CommandRules(ShellKindUnknown)) != 22 {
+		t.Fatalf("unknown shell rule count = %d; want 22", len(CommandRules(ShellKindUnknown)))
 	}
 	cases := []struct {
 		shell ShellKind
@@ -147,8 +150,14 @@ func TestCommandBlocklistShellGroups(t *testing.T) {
 		}
 	}
 	for _, rule := range CommandRules(ShellKindUnknown) {
-		if rule.Name == "" || rule.Pattern == "" {
-			t.Fatalf("rule %#v has an empty name or pattern", rule)
+		if rule.Name == "" {
+			t.Fatalf("rule %#v has an empty name", rule)
+		}
+		// The fail-closed dynamic-command rule is a word-position check, not a
+		// regular expression over the whole line, so it intentionally has no
+		// Pattern.
+		if rule.Name != UnresolvableCommandRule && rule.Pattern == "" {
+			t.Fatalf("rule %#v has an empty pattern", rule)
 		}
 	}
 }

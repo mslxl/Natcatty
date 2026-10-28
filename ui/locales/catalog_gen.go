@@ -20666,6 +20666,90 @@ func (msgs Messages) SettingsMCPNoSessions() string {
 	return Catalog.Format(msgs.locale, "settingsMCPNoSessions", nil)
 }
 
+// SettingsMCPExposedCount says "{count, plural, =0 {No Sessions shared} one {# Session shared} other {# Sessions shared}}"
+// in the language the app shows.
+func SettingsMCPExposedCount(count int) string {
+	return In(i18n.Locale()).SettingsMCPExposedCount(count)
+}
+
+// SettingsMCPExposedCount says "{count, plural, =0 {No Sessions shared} one {# Session shared} other {# Sessions shared}}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPExposedCount(count int) string {
+	return Catalog.Format(msgs.locale, "settingsMCPExposedCount", map[string]any{"count": count})
+}
+
+// SettingsMCPSharingTitle says "Share live Sessions"
+// in the language the app shows.
+func SettingsMCPSharingTitle() string { return In(i18n.Locale()).SettingsMCPSharingTitle() }
+
+// SettingsMCPSharingTitle says "Share live Sessions"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSharingTitle() string {
+	return Catalog.Format(msgs.locale, "settingsMCPSharingTitle", nil)
+}
+
+// SettingsMCPSharingOn says "Every open Session is shared with external clients while sharing is on."
+// in the language the app shows.
+func SettingsMCPSharingOn() string { return In(i18n.Locale()).SettingsMCPSharingOn() }
+
+// SettingsMCPSharingOn says "Every open Session is shared with external clients while sharing is on."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSharingOn() string {
+	return Catalog.Format(msgs.locale, "settingsMCPSharingOn", nil)
+}
+
+// SettingsMCPSharingOff says "Sharing is off. Clients cannot read or act on any Session."
+// in the language the app shows.
+func SettingsMCPSharingOff() string { return In(i18n.Locale()).SettingsMCPSharingOff() }
+
+// SettingsMCPSharingOff says "Sharing is off. Clients cannot read or act on any Session."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSharingOff() string {
+	return Catalog.Format(msgs.locale, "settingsMCPSharingOff", nil)
+}
+
+// SettingsMCPSharingNoSessions says "Sharing is on, but no Session is open yet. Open a Session to share it."
+// in the language the app shows.
+func SettingsMCPSharingNoSessions() string { return In(i18n.Locale()).SettingsMCPSharingNoSessions() }
+
+// SettingsMCPSharingNoSessions says "Sharing is on, but no Session is open yet. Open a Session to share it."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPSharingNoSessions() string {
+	return Catalog.Format(msgs.locale, "settingsMCPSharingNoSessions", nil)
+}
+
+// SettingsMCPRefreshSessions says "Refresh Sessions"
+// in the language the app shows.
+func SettingsMCPRefreshSessions() string { return In(i18n.Locale()).SettingsMCPRefreshSessions() }
+
+// SettingsMCPRefreshSessions says "Refresh Sessions"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPRefreshSessions() string {
+	return Catalog.Format(msgs.locale, "settingsMCPRefreshSessions", nil)
+}
+
+// SettingsMCPEnvAllowlist says "Launch allowlist: {sessions}"
+// in the language the app shows.
+func SettingsMCPEnvAllowlist(sessions string) string {
+	return In(i18n.Locale()).SettingsMCPEnvAllowlist(sessions)
+}
+
+// SettingsMCPEnvAllowlist says "Launch allowlist: {sessions}"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPEnvAllowlist(sessions string) string {
+	return Catalog.Format(msgs.locale, "settingsMCPEnvAllowlist", map[string]any{"sessions": sessions})
+}
+
+// SettingsMCPUnnamedSession says "Unnamed Session"
+// in the language the app shows.
+func SettingsMCPUnnamedSession() string { return In(i18n.Locale()).SettingsMCPUnnamedSession() }
+
+// SettingsMCPUnnamedSession says "Unnamed Session"
+// in the language of msgs.
+func (msgs Messages) SettingsMCPUnnamedSession() string {
+	return Catalog.Format(msgs.locale, "settingsMCPUnnamedSession", nil)
+}
+
 // SettingsMCPGeneration says "Ownership generation: {generation}"
 // in the language the app shows.
 func SettingsMCPGeneration(generation string) string {
@@ -21018,4 +21102,14 @@ func SettingsMCPProblemMode() string { return In(i18n.Locale()).SettingsMCPProbl
 // in the language of msgs.
 func (msgs Messages) SettingsMCPProblemMode() string {
 	return Catalog.Format(msgs.locale, "settingsMCPProblemMode", nil)
+}
+
+// SettingsMCPProblemSharing says "The Session sharing setting could not be saved."
+// in the language the app shows.
+func SettingsMCPProblemSharing() string { return In(i18n.Locale()).SettingsMCPProblemSharing() }
+
+// SettingsMCPProblemSharing says "The Session sharing setting could not be saved."
+// in the language of msgs.
+func (msgs Messages) SettingsMCPProblemSharing() string {
+	return Catalog.Format(msgs.locale, "settingsMCPProblemSharing", nil)
 }

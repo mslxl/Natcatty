@@ -1,8 +1,10 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -149,6 +151,148 @@ func TestCommandUsesMarkersAndReturnsOutputAndExitCode(t *testing.T) {
 	}
 	if !got.result.HasExitCode || got.result.ExitCode != 7 {
 		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+	}
+}
+
+// conptyWrap splits a token the way ConPTY rewrites output that reaches the
+// right margin: a CRLF, a cursor-position escape, and a re-rendered copy of
+// the cell at the margin are inserted at the wrap point. A narrow real
+// PowerShell terminal wraps the marker this way.
+func conptyWrap(token string, columns int) string {
+	var wrapped strings.Builder
+	for index := 0; index < len(token); index += columns {
+		end := index + columns
+		if end > len(token) {
+			end = len(token)
+		}
+		if index > 0 {
+			wrapped.WriteString(fmt.Sprintf("\r\n\x1b[9;%dH", columns))
+			wrapped.WriteByte(token[index-1])
+		}
+		wrapped.WriteString(token[index:end])
+	}
+	return wrapped.String()
+}
+
+// TestCommandToleratesConPTYHardWrappedMarkers proves the marker protocol
+// survives a narrow real terminal. ConPTY inserts CRLF and a cursor escape
+// inside a long marker line, so the start and end markers arrive split; the
+// echoed wrapper, which is also wrapped, must still not start the command.
+func TestCommandToleratesConPTYHardWrappedMarkers(t *testing.T) {
+	session, transport := newShellSession(t)
+	done := startTestCommand(session, context.Background(), "echo hello", CommandOptions{
+		Timeout: 5 * time.Second,
+	})
+	var marker string
+	eventually(t, "the wrapped command to reach the transport", func() bool {
+		marker = markerPattern.FindString(transport.input())
+		return marker != ""
+	})
+	// The echo of the start marker is quoted and hard-wrapped; it must not be
+	// mistaken for the marker line.
+	echo := "\r\n\x1b[36m'" + conptyWrap(marker+"_S", 20) + "'\x1b[37m; " + marker + "=0\r\n"
+	transport.send(echo)
+	transport.send(conptyWrap(marker+"_S", 20) + "\r\nhello\r\n" + conptyWrap(marker+"_E:7", 20) + "\r\n")
+
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("Command: %v", got.err)
+	}
+	if got.result.Stdout != "hello" {
+		t.Fatalf("stdout = %q; want hello", got.result.Stdout)
+	}
+	if !got.result.HasExitCode || got.result.ExitCode != 7 {
+		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+	}
+}
+
+// TestCommandCollectorScansTheEndMarkerIncrementally feeds a full rolling
+// window one byte at a time, the shape a terminal uses when it dribbles a
+// megabyte of output. A full rescan of the window per chunk is quadratic and
+// can outlast the command deadline; the incremental scanner must stay linear.
+func TestCommandCollectorScansTheEndMarkerIncrementally(t *testing.T) {
+	const limit = 1 << 20
+	marker := "__NCMCP_linear_0123456789abcdef__"
+	collector := &commandCollector{marker: marker, limit: limit}
+	feedBytes := func(text []byte) {
+		for _, character := range text {
+			collector.feed([]byte{character})
+		}
+	}
+	feedBytes([]byte(marker + "_S\r\n"))
+	if !collector.started {
+		t.Fatal("the start marker was not found in single-byte chunks")
+	}
+	payload := bytes.Repeat([]byte("x"), limit)
+	begin := time.Now()
+	feedBytes(payload)
+	// The end marker is wrapped exactly as a narrow ConPTY splits it, still
+	// one byte per chunk, so the resume path is exercised as well.
+	feedBytes([]byte(conptyWrap(marker+"_E:7", 20) + "\r\n"))
+	elapsed := time.Since(begin)
+	if !collector.finished || collector.exitCode != 7 {
+		t.Fatalf("collector = finished:%v exit:%d", collector.finished, collector.exitCode)
+	}
+	result := collector.result()
+	if len(result.Stdout) > limit {
+		t.Fatalf("stdout = %d bytes, cap %d", len(result.Stdout), limit)
+	}
+	if result.TotalOutputChars < limit {
+		t.Fatalf("total output = %d, want at least %d", result.TotalOutputChars, limit)
+	}
+	// The quadratic scan would have to examine hundreds of gigabytes here and
+	// cannot finish in this window; the linear scan is well under a second.
+	if elapsed > 60*time.Second {
+		t.Fatalf("single-byte scan took %v; the end-marker search is not incremental", elapsed)
+	}
+}
+
+// TestCommandHeadlessOutputDoesNotDeadlockOnTerminalBackpressure proves a
+// programmatic command on a Session with no attached view can read past the
+// terminal's high watermark. Without the fix, the undrained live queue pauses
+// the transport at HighWaterMark and the command never sees its end marker.
+func TestCommandHeadlessOutputDoesNotDeadlockOnTerminalBackpressure(t *testing.T) {
+	session, transport := newShellSession(t)
+	done := startTestCommand(session, context.Background(), "generate", CommandOptions{
+		Timeout: 5 * time.Second, MaxOutputBytes: 1 << 20,
+	})
+	var marker string
+	eventually(t, "the wrapper", func() bool {
+		marker = markerPattern.FindString(transport.input())
+		return marker != ""
+	})
+	transport.send("\n" + marker + "_S\r\n")
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		payload := bytes.Repeat([]byte("x"), (1<<20)+(64<<10))
+		for len(payload) > 0 {
+			chunk := 16 << 10
+			if chunk > len(payload) {
+				chunk = len(payload)
+			}
+			select {
+			case transport.output <- append([]byte(nil), payload[:chunk]...):
+			case <-stop:
+				return
+			}
+			payload = payload[chunk:]
+		}
+		select {
+		case transport.output <- []byte("\r\n" + marker + "_E:0\r\n"):
+		case <-stop:
+		}
+	}()
+
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("Command: %v; the headless terminal backlog stalled the transport", got.err)
+	}
+	if !got.result.Truncated {
+		t.Fatal("Truncated = false for output over the cap")
+	}
+	if got.result.TotalOutputChars < 1<<20 {
+		t.Fatalf("total output = %d; want at least %d", got.result.TotalOutputChars, 1<<20)
 	}
 }
 
