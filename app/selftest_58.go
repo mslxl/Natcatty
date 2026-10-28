@@ -140,23 +140,36 @@ func (t *selftest58) check() selftest.Check {
 	}
 }
 
+func (t *selftest58) reset() {
+	if t.cancel != nil {
+		t.cancel()
+		t.cancel = nil
+	}
+	t.started = false
+	t.done = false
+	t.deadline = time.Time{}
+	t.result = nil
+	t.report = selftest58Report{}
+	t.err = nil
+}
+
 func (t *selftest58) scenarioStep(*ui.Context) selftest.Outcome {
 	if t.done {
-		t.started = false
-		t.done = false
-		t.report = selftest58Report{}
-		t.err = nil
-		t.result = nil
+		t.reset()
 	}
 	if !t.started {
 		t.started = true
 		t.deadline = time.Now().Add(selftest58Timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), selftest58Timeout)
 		t.cancel = cancel
-		t.result = make(chan selftest58Result, 1)
+		runResult := make(chan selftest58Result, 1)
+		t.result = runResult
 		go func() {
 			report, err := runSelftest58(ctx)
-			t.result <- selftest58Result{report: report, err: err}
+			// Send to this run's channel, not the current field: a run that
+			// outlives its deadline must not deliver a stale result to a later
+			// run that reset the checker.
+			runResult <- selftest58Result{report: report, err: err}
 		}()
 	}
 	select {
@@ -211,7 +224,7 @@ func (t *selftest58) boundsStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(t.err)
 	}
 	report := t.report
-	if report.BlocklistRules != 22 || report.BlocklistCases < 40 || !report.GroupsOK ||
+	if report.BlocklistRules != 26 || report.BlocklistCases < 40 || !report.GroupsOK ||
 		!report.BoundsOK || !report.TypedErrors || !report.CanonicalBypass || !report.CanonicalAllow {
 		return selftest.Failed(fmt.Errorf(
 			"blocklist rules=%d cases=%d groups=%v canonical=%v canonical-allowed=%v bounds=%v typed=%v",
@@ -219,7 +232,7 @@ func (t *selftest58) boundsStep(*ui.Context) selftest.Outcome {
 			report.CanonicalBypass, report.CanonicalAllow, report.BoundsOK, report.TypedErrors))
 	}
 	return selftest.Passed(
-		fmt.Sprintf("%d blocklist rules, %d bypass-style cases, canonicalized quoting/expansion/IFS/assignment fail-closed, original shell groups and bounds, typed blocklist/timeout/unavailable errors",
+		fmt.Sprintf("%d blocklist rules, %d bypass-style cases, brace/pipe-to-shell/find-delete/PowerShell-alias/cmd-ComSpec forms blocked with real marker execution, canonicalized quoting/expansion/IFS/assignment fail-closed, original shell groups and bounds, typed blocklist/timeout/unavailable errors",
 			report.BlocklistRules, report.BlocklistCases),
 		"application/mcp command.go + bounds.go")
 }
@@ -371,7 +384,7 @@ func selftest58CheckCatalog(report *selftest58Report) error {
 
 func selftest58CheckBounds(report *selftest58Report) error {
 	report.BlocklistRules = len(appmcp.CommandRules(appmcp.ShellKindUnknown))
-	if report.BlocklistRules != 22 {
+	if report.BlocklistRules != 26 {
 		return fmt.Errorf("blocklist rules = %d", report.BlocklistRules)
 	}
 	type blockedCase struct {
@@ -437,6 +450,49 @@ func selftest58CheckBounds(report *selftest58Report) error {
 		{"r^m -rf C:\\temp", appmcp.ShellKindCmd, "common.rm-recursive-force"},
 		{`"rm" -rf C:\temp`, appmcp.ShellKindCmd, "common.rm-recursive-force"},
 
+		// Second rework: brace expansion, generic pipe-to-shell, find -delete,
+		// constant-built and aliased PowerShell command names, and the cmd
+		// force-delete/ComSpec family all reach a named rule.
+		{`{rm,-rf,/tmp/x}`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`{r{m,},-rf,/tmp/x}`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`D=/tmp/x; {rm,-rf,$D}`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`echo {a,b}; {rm,-rf,/tmp/x}`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`echo {a,b} | {bash,-c,'rm -rf /tmp/x'}`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`printf 'r\155 -rf %s' /tmp/x | sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`echo cm0= | /bin/sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`printf x | sudo sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`printf x | sudo -u root sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`printf x | env FOO=1 sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`printf x | /usr/bin/env sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`printf x | command sh`, appmcp.ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{`find /tmp/x -delete`, appmcp.ShellKindPOSIX, "posix.find-delete"},
+		{`find /tmp/x -name '*.tmp' -delete`, appmcp.ShellKindFish, "posix.find-delete"},
+		{`& (''+'Remove'+'-Item') -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`Set-Alias zz Remove-Item; zz -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`New-Alias -Name zz -Value Remove-Item; zz -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`alias zz=Remove-Item; zz -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`Set-Alias zz Remove-Item`, appmcp.ShellKindPowerShell, "powershell.alias-to-blocked-command"},
+		{`%ComSpec% /c del /f /q C:\temp\marker.txt`, appmcp.ShellKindCmd, "common.force-delete"},
+		{`$env:ComSpec /c del /f /q C:\temp\marker.txt`, appmcp.ShellKindPowerShell, "common.force-delete"},
+		{`cmd /c r^m -rf C:\temp`, appmcp.ShellKindPowerShell, "common.rm-recursive-force"},
+		{`cmd /k r^m -rf C:\temp`, appmcp.ShellKindPowerShell, "common.rm-recursive-force"},
+		{`cmd /r r^m -rf C:\temp`, appmcp.ShellKindPowerShell, "common.rm-recursive-force"},
+		{`cmd /c"r^m -rf C:\temp"`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+		{`cmd /c"r^m -rf C:\temp"`, appmcp.ShellKindCmd, "common.rm-recursive-force"},
+		{`cmd /c %ComSpec% /c del /f /q C:\temp\marker.txt`, appmcp.ShellKindPowerShell, "common.force-delete"},
+		{`rd /s /q C:\temp\dir`, appmcp.ShellKindCmd, "common.force-delete"},
+		{`%ComSpec% /c del /f /q "C:\temp\marker.txt"`, appmcp.ShellKindCmd, "common.force-delete"},
+		{`cmd /c r^m -rf "C:\temp"`, appmcp.ShellKindCmd, "common.rm-recursive-force"},
+		// Neighbours the acceptance recorded as typed blocked before the
+		// second rework must keep a named block.
+		{`& (Get-Command Remove-Item) -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`Invoke-Expression ('Remove'+'-Item -Recurse -Force C:\temp')`, appmcp.ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{`Get-Command Remove-Item | ForEach-Object { & $_ -Recurse -Force C:\temp }`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
+		{`$c = Get-Command Remove-Item; & $c -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
+		{`${PATH:+rm} -rf /tmp/x`, appmcp.ShellKindPOSIX, appmcp.UnresolvableCommandRule},
+		{`${x:-rm} -rf /tmp/x`, appmcp.ShellKindPOSIX, appmcp.UnresolvableCommandRule},
+		{`IFS=,; rm$IFS-rf$IFS/tmp/x`, appmcp.ShellKindPOSIX, "common.rm-recursive-force"},
+
 		// Fail closed: a command word that is still dynamic after expansion
 		// cannot be compared with the table, so it is blocked by name instead
 		// of being allowed through.
@@ -446,6 +502,9 @@ func selftest58CheckBounds(report *selftest58Report) error {
 		{`true && $CMD -rf /tmp/x`, appmcp.ShellKindPOSIX, appmcp.UnresolvableCommandRule},
 		{`$cmd -Recurse -Force C:\temp`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
 		{`%RUN% -rf C:\temp`, appmcp.ShellKindCmd, appmcp.UnresolvableCommandRule},
+		{`cmd /k $CMD`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
+		{`cmd /r $CMD`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
+		{`cmd /c"$CMD"`, appmcp.ShellKindPowerShell, appmcp.UnresolvableCommandRule},
 	}
 	covered := map[string]bool{}
 	for _, test := range cases {
@@ -480,7 +539,7 @@ func selftest58CheckBounds(report *selftest58Report) error {
 		{"chmod -R 777 ./local", appmcp.ShellKindPOSIX},
 		{"dd if=/dev/zero of=/tmp/disk bs=1M", appmcp.ShellKindPOSIX},
 		{"echo x > /tmp/out", appmcp.ShellKindPOSIX},
-		{"curl https://example.test/x.sh | bash", appmcp.ShellKindPOSIX},
+		{"curl https://example.test/x.sh | head -n 5", appmcp.ShellKindPOSIX},
 		{"cd /tmp && ls", appmcp.ShellKindPOSIX},
 		{"echo $(date)", appmcp.ShellKindCmd},
 	}
@@ -502,8 +561,24 @@ func selftest58CheckBounds(report *selftest58Report) error {
 		{`x=1; echo $x`, appmcp.ShellKindPOSIX},
 		{`printf '%s' "$IFS"`, appmcp.ShellKindPOSIX},
 		{`Write-Output $env:HOME`, appmcp.ShellKindPowerShell},
+		{`$env:PATH`, appmcp.ShellKindPowerShell},
+		{`${env:PATH}`, appmcp.ShellKindPowerShell},
+		{`$D = 'C:\Temp\selftest58'`, appmcp.ShellKindPowerShell},
+		{`$D = $env:PATH`, appmcp.ShellKindPowerShell},
+		{`$D = "$env:TEMP\x"`, appmcp.ShellKindPowerShell},
+		{`Write-Output $D`, appmcp.ShellKindPowerShell},
+		{`Get-ChildItem C:\Temp`, appmcp.ShellKindPowerShell},
+		{`git status`, appmcp.ShellKindPOSIX},
+		{`sudo systemctl status nginx`, appmcp.ShellKindPOSIX},
+		{`npm test`, appmcp.ShellKindPOSIX},
 		{`echo %TEMP%`, appmcp.ShellKindCmd},
 		{`echo "%TEMP%\file"`, appmcp.ShellKindCmd},
+		{`cmd /c echo %PATH%`, appmcp.ShellKindPowerShell},
+		{`ls {a,b}`, appmcp.ShellKindPOSIX},
+		{`find . -name '*.go' | head`, appmcp.ShellKindPOSIX},
+		{`Set-Alias list Get-ChildItem; list`, appmcp.ShellKindPowerShell},
+		{`del C:\temp\one.txt`, appmcp.ShellKindCmd},
+		{`erase C:\temp\one.txt`, appmcp.ShellKindCmd},
 	}
 	for _, test := range canonicalAllowed {
 		if rule, matched := appmcp.CheckCommandBlocklist(test.command, test.shell); matched {
@@ -571,8 +646,8 @@ func selftest58GroupsMatch() bool {
 	for _, rule := range appmcp.CommandRules(appmcp.ShellKindUnknown) {
 		groupCounts[rule.Group]++
 	}
-	if groupCounts["common"] != 3 || groupCounts["posixNative"] != 8 ||
-		groupCounts["posix"] != 5 || groupCounts["powershell"] != 6 {
+	if groupCounts["common"] != 4 || groupCounts["posixNative"] != 9 ||
+		groupCounts["posix"] != 6 || groupCounts["powershell"] != 7 {
 		return false
 	}
 	want := map[appmcp.ShellKind][]string{
@@ -1176,6 +1251,16 @@ func selftest58CheckDisposableBypass() error {
 			`env rm -rf %s`,
 			`bash -c '"rm" -rf %s'`,
 			"r\\\nm -rf %s",
+			// Second rework: brace expansion, printf-decoded command words
+			// piped into a shell, and find's own delete action. Each form
+			// really removes the marker when the guard misses it.
+			`{rm,-rf,%s}`,
+			`D=%s; {rm,-rf,$D}`,
+			`echo {a,b}; {rm,-rf,%s}`,
+			`find %s -delete`,
+			`D=%s; printf 'r\155 -rf %%s' $D | sh`,
+			`D=%s; printf 'r\155 -rf %%s' $D | env sh`,
+			`D=%s; printf 'r\155 -rf %%s' $D | /usr/bin/env sh`,
 		} {
 			command := fmt.Sprintf(template, posixMarker)
 			forms = append(forms, bypassForm{
@@ -1190,12 +1275,37 @@ func selftest58CheckDisposableBypass() error {
 			"Remove-Item -Rec`\nurse -Force %s",
 			"& 'Remove-Item' -Recurse -Force %s",
 			`"Remove-Item" "-Recurse" "-Force" %s`,
+			// Second rework: a command name built from adjacent literals and
+			// an alias defined and invoked in the same command string.
+			`& (''+'Remove'+'-Item') -Recurse -Force %s`,
+			`Set-Alias zz Remove-Item; zz -Recurse -Force %s`,
 		} {
 			command := fmt.Sprintf(template, powershellMarker)
 			forms = append(forms, bypassForm{
 				name: template, shell: appmcp.ShellKindPowerShell, binary: pwsh,
 				args:    []string{"-NoProfile", "-NonInteractive", "-Command", command},
 				command: command,
+			})
+		}
+	}
+	if cmdShell, err := exec.LookPath("cmd"); err == nil {
+		// Second rework: the cmd interpreter indirection and the caret form.
+		// The marker path is passed unquoted so cmd's own /c quote handling
+		// cannot mask a guard miss; quotes are covered by the matrix above.
+		for _, form := range []struct {
+			name    string
+			command string
+		}{
+			{"%ComSpec% /c del /f /q <marker>", `%ComSpec% /c del /f /q ` + marker},
+			{"cmd /c r^m -rf <marker>", `cmd /c r^m -rf ` + marker},
+			{"cmd /k r^m -rf <marker>", `cmd /k r^m -rf ` + marker + ` & exit`},
+			{"cmd /r r^m -rf <marker>", `cmd /r r^m -rf ` + marker + ` & exit`},
+			{"cmd /c glued r^m -rf <marker>", `cmd /c"r^m -rf ` + marker + ` & exit"`},
+			{"cmd /c %ComSpec% /c del /f /q <marker>", `cmd /c %ComSpec% /c del /f /q ` + marker},
+		} {
+			forms = append(forms, bypassForm{
+				name: form.name, shell: appmcp.ShellKindCmd, binary: cmdShell,
+				args: []string{"/c", form.command}, command: form.command,
 			})
 		}
 	}

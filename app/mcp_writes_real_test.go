@@ -38,6 +38,7 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
 	"github.com/mslxl/natcatty/domain/model"
+	domainstransfer "github.com/mslxl/natcatty/domain/transfer"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/internal/adapters/mcprpc"
 )
@@ -508,13 +509,28 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 		{"env-prefix", fmt.Sprintf(`env rm -rf %s`, posixMarker)},
 		{"backslash", fmt.Sprintf(`\rm -rf %s`, posixMarker)},
 		{"shell-payload", fmt.Sprintf(`bash -c '"rm" -rf %s'`, posixMarker)},
+		// Second rework: brace expansion, any-command-into-shell, and find's
+		// own delete action, through the real client and real SSH shell.
+		{"brace-words", fmt.Sprintf(`{rm,-rf,%s}`, posixMarker)},
+		{"second-brace-group", fmt.Sprintf(`echo {a,b}; {rm,-rf,%s}`, posixMarker)},
+		{"brace-variable-path", fmt.Sprintf(`D=%s; {rm,-rf,$D}`, posixMarker)},
+		{"printf-pipe-sh", fmt.Sprintf("printf 'r\\155 -rf %%s' %s | sh", posixMarker)},
+		{"printf-pipe-env-sh", fmt.Sprintf("printf 'r\\155 -rf %%s' %s | env sh", posixMarker)},
+		{"find-delete", fmt.Sprintf(`find %s -delete`, posixMarker)},
 	}
 	for _, form := range posixForms {
 		blocked := e2eToolErrorContains(t, client, "terminal_execute", map[string]any{
 			"sessionId": sshSessionID, "command": form.command,
 		}, "mcp_command_blocked")
-		if !strings.Contains(blocked, "common.") {
-			t.Fatalf("%s block did not name a common rule: %s", form.name, blocked)
+		expectedRule := "common."
+		switch form.name {
+		case "printf-pipe-sh", "printf-pipe-env-sh":
+			expectedRule = "posixNative.pipe-to-shell"
+		case "find-delete":
+			expectedRule = "posix.find-delete"
+		}
+		if !strings.Contains(blocked, expectedRule) {
+			t.Fatalf("%s block did not name %s: %s", form.name, expectedRule, blocked)
 		}
 		if _, err := os.Stat(marker); err != nil {
 			t.Fatalf("bypass %q was blocked but the marker is gone: %v", form.name, err)
@@ -531,6 +547,12 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 			{"backtick-newline", fmt.Sprintf("Remove-Item -Rec`\nurse -Force %s", windowsMarker)},
 			{"call-operator-quoted", fmt.Sprintf("& 'Remove-Item' -Recurse -Force %s", windowsMarker)},
 			{"quoted-command-and-parameters", fmt.Sprintf("\"Remove-Item\" \"-Recurse\" \"-Force\" %s", windowsMarker)},
+			// Second rework: constant folding, alias resolution, and the cmd
+			// interpreter carrying a force delete.
+			{"folded-call-operator", fmt.Sprintf("& (''+'Remove'+'-Item') -Recurse -Force %s", windowsMarker)},
+			{"alias-then-invoke", fmt.Sprintf("Set-Alias zz Remove-Item; zz -Recurse -Force %s", windowsMarker)},
+			{"cmd-keep-open-delete", fmt.Sprintf(`cmd /k del /f /q "%s" & exit`, windowsMarker)},
+			{"cmd-glued-delete", fmt.Sprintf(`cmd /c"del /f /q "%s" & exit"`, windowsMarker)},
 		}
 		for _, form := range powerShellForms {
 			e2eToolErrorContains(t, client, "terminal_execute", map[string]any{
@@ -904,4 +926,69 @@ func TestMCPWriteTimeoutAndTruncationOnTheRealSSHShell(t *testing.T) {
 	if base <= 0 || total < float64(produced) || base+float64(len(stdout)) > total+1 {
 		t.Fatalf("offsets base=%v total=%v stdout=%d", base, total, len(stdout))
 	}
+}
+
+// stageModeReportingFS models the Windows OpenSSH sftp-server behaviour the
+// ticket-58 acceptance hit: it accepts a chmod but creates staging files as
+// 0600 and reports that mode back. The underlying filesystem (and every other
+// operation) is the real adapter on the real fakessh/pkg-sftp fixture.
+type stageModeReportingFS struct {
+	apptransfer.FileSystem
+}
+
+func (f stageModeReportingFS) Chmod(context.Context, string, uint32) error {
+	// Windows OpenSSH accepts the request; the POSIX bits do not stick.
+	return nil
+}
+
+func (f stageModeReportingFS) Stat(ctx context.Context, p string) (domainstransfer.Entry, error) {
+	entry, err := f.FileSystem.Stat(ctx, p)
+	if err == nil && apptransfer.IsStagingName(f.FileSystem.Base(p)) {
+		entry.Mode = 0o600
+	}
+	return entry, err
+}
+
+type stageModeReportingOpener struct {
+	inner apptransfer.RemoteOpener
+}
+
+func (o stageModeReportingOpener) OpenRemote(ctx context.Context, hostID model.HostID, label string) (apptransfer.FileSystem, error) {
+	files, err := o.inner.OpenRemote(ctx, hostID, label)
+	if err != nil {
+		return nil, err
+	}
+	return stageModeReportingFS{FileSystem: files}, nil
+}
+
+// TestMCPWriteSFTPUploadAcceptsTheRemoteStageMode drives sftp_upload through
+// the compiled stdio client and the real fixture while the destination reports
+// the Windows OpenSSH staging mode (0600) for a local Windows source (0666).
+// Before the ticket-58 rework this returned sftp_tool_unavailable instead of
+// creating the file.
+func TestMCPWriteSFTPUploadAcceptsTheRemoteStageMode(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("models a local Windows source mode against a POSIX-mode destination")
+	}
+	fixture := newMCPRealWriteFixture(t)
+	opener := stageModeReportingOpener{inner: &sftpRemoteOpener{
+		manager: fixture.manager, vault: fixture.vault,
+	}}
+	fixture.transfer = apptransfer.NewService(adaptersftp.NewLocal(), opener)
+	fixture.executor = newMCPWriteExecutor(fixture.policy, fixture.sessions,
+		fixture.vault, fixture.forwarding, fixture.transfer, fixture.openHost)
+	fixture.handler.attachWrites(fixture.executor)
+
+	client, stop := realStdioClient(t, fixture)
+	defer stop()
+
+	localPath := filepath.Join(fixture.localRoot, "stage-mode.txt")
+	if err := os.WriteFile(localPath, []byte("stage mode upload"), 0o644); err != nil {
+		t.Fatalf("seed the local upload: %v", err)
+	}
+	e2eToolOK(t, client, "sftp_upload", map[string]any{
+		"sessionId": string(fixture.sshSession), "localPath": localPath,
+		"remotePath": fixture.remoteRoot + "/stage-mode.txt",
+	})
+	requireRealFile(t, filepath.Join(fixture.network.root, "stage-mode.txt"), "stage mode upload")
 }

@@ -375,18 +375,20 @@ func (s *Service) Copy(ctx context.Context, request CopyRequest) (CopyResult, er
 				}
 				// A replaced file keeps the destination's own mode, the way
 				// the original's stage/verify/promote transaction does. A file
-				// inside a replaced tree keeps its source mode, and can be
-				// checked only where the destination actually carries POSIX
-				// modes (Windows local files expose just the read-only bit).
-				// The staged copy is checked against both values before it may
-				// take the destination name.
+				// inside a replaced tree keeps its source mode only when both
+				// sides speak POSIX modes; a local Windows source exposes just
+				// the read-only bit, so its 0666 must not be demanded back from
+				// an SFTP server (a Windows OpenSSH server reports 0600 there,
+				// and a POSIX server's umask may differ too).
 				verify := stagedVerification{Size: entry.Size}
 				if source.Replace && !entry.Directory {
 					switch {
 					case entryIndex == source.First && backup.modeKnown:
 						verify.Mode = backup.mode
 						verify.ModeKnown = true
-					case entry.Mode != 0 && request.Dest.Style() == StylePOSIX:
+					case entry.Mode != 0 &&
+						request.Source.Style() == StylePOSIX &&
+						request.Dest.Style() == StylePOSIX:
 						verify.Mode = entry.Mode
 						verify.ModeKnown = true
 					}

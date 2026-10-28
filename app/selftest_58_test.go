@@ -5,11 +5,13 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	appmcp "github.com/mslxl/natcatty/application/mcp"
 	"github.com/mslxl/natcatty/ui/selftest"
 )
 
@@ -96,6 +98,63 @@ func TestTicket58CheckPassesTwiceInOneProcess(t *testing.T) {
 		if !step.Pass {
 			t.Fatalf("second-run step %q failed: %+v", step.Name, second.Steps)
 		}
+	}
+	if !tester.HasText("PASS  58") {
+		t.Fatalf("the overlay does not show PASS after the second run: %v", tester.Texts())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "natcatty-selftest-58.json")); err != nil {
+		t.Fatalf("result file: %v", err)
+	}
+}
+
+// TestTicket58CheckPassesTwiceAfterACommandTimeout reproduces the acceptance's
+// repeatability failure: a real command timeout happens in the process first,
+// and then the check passes twice in a row. Each check still causes its own
+// internal timeout; the point is that the second run starts from a reset
+// scenario and a shell that answers again, not from the first run's state.
+func TestTicket58CheckPassesTwiceAfterACommandTimeout(t *testing.T) {
+	fixture := newMCPWriteFixture(t)
+	shell, _ := fixture.sessions.ShellKind(fixture.localSession)
+	warm := callMCPTool(t, fixture, "terminal_execute", map[string]any{
+		"sessionId": string(fixture.localSession),
+		"command":   shellReadyCommand(shell, "after-timeout-warm"),
+	})
+	requireMCPWriteOK(t, "terminal_execute", warm)
+	previousTimeout := fixture.executor.toolTimeout
+	fixture.executor.toolTimeout = time.Second
+	timedOut := callMCPTool(t, fixture, "terminal_execute", map[string]any{
+		"sessionId": string(fixture.localSession),
+		"command":   shellCommandFor(shell, "before-timeout", selftest58SlowCommand(shell)),
+	})
+	requireMCPWriteCode(t, "terminal_execute", timedOut, appmcp.CodeCommandTimeout)
+	if stdout, _ := timedOut["stdout"].(string); !strings.Contains(stdout, "before-timeout") {
+		t.Fatalf("timeout partial stdout = %q", stdout)
+	}
+	fixture.executor.toolTimeout = previousTimeout
+	// The same Session must be reusable immediately after the timeout; the
+	// acceptance's repeatability failure started with this state.
+	recovered := callMCPTool(t, fixture, "terminal_execute", map[string]any{
+		"sessionId": string(fixture.localSession),
+		"command":   shellReadyCommand(shell, "after-timeout-recovered"),
+	})
+	requireMCPWriteOK(t, "terminal_execute", recovered)
+	if stdout, _ := recovered["stdout"].(string); !strings.Contains(stdout, "after-timeout-recovered") {
+		t.Fatalf("post-timeout stdout = %q", stdout)
+	}
+
+	tester, dir := newTicket16Tester(t)
+	first := runTicket58(t, tester, true)
+	if !first.Pass {
+		t.Fatalf("first run after a timeout failed: %+v", first)
+	}
+
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	tester.Key(0, ui.KeyF11)
+	tester.Frame()
+	second := runTicket58(t, tester, false)
+	if !second.Pass {
+		t.Fatalf("second run after a timeout failed: %+v", second)
 	}
 	if !tester.HasText("PASS  58") {
 		t.Fatalf("the overlay does not show PASS after the second run: %v", tester.Texts())

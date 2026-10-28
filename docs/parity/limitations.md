@@ -210,6 +210,29 @@ Decision: accepted as a MyGo v0.5.5 widget limitation; ticket 58 records the
 gap rather than replacing the product's mode control.
 Ticket: 58
 
+## Threat-model boundaries
+
+### `mcp.blocklist-threat-model`
+
+The terminal command blocklist is a textual safety net over the commands an
+external MCP client submits. It canonicalizes the shell's own in-model quoting,
+continuations, `$IFS`, simple assignments, every bounded POSIX brace group,
+any command piped into a shell (including through common wrappers such as
+`sudo`, `env`, and `command`), `find -delete`, PowerShell constant folding and
+same-command alias resolution, `%ComSpec%`/`$env:ComSpec`, and a nested
+`cmd /c`, `/k`, `/r`, or glued `/c` payload; a command word that is still
+dynamic after that reading fails closed. Arbitrary computed command construction is out of scope: a command word
+decoded at run time by an interpreter from data the guard cannot see, an
+external script, or a function built and invoked dynamically can still do what
+the textual matcher cannot observe. Serial and network-device raw Sessions skip
+the blocklist by design. The rewrite makes no OS-sandbox, capability-drop, or
+process-isolation claim, and the in-model corpus above is what ticket 58
+enforces and tests, including its disposable-marker execution proof.
+
+Decision: accepted as a textual safety net; arbitrary computed command
+construction is excluded while the in-model corpus is enforced; ticket 58.
+Ticket: 58
+
 ## Provider verification limits
 
 ### `sync.google-drive-live-endpoints`

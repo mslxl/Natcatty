@@ -20,14 +20,15 @@ import (
 var boundsMarkerPattern = regexp.MustCompile(`__NCMCP_[a-z0-9]+_[0-9a-f]+__`)
 
 // writeShellTransport is a deterministic shell PTY for bound tests. It answers
-// the first wrapper with a start marker, the requested output, and an end
-// marker, exactly as a real shell would, without ConPTY's rendering cost.
+// every wrapper with a start marker, the requested output, and an end marker,
+// exactly as a real shell would, without ConPTY's rendering cost. Answering
+// each wrapper (rather than only the first) also keeps the Session's readiness
+// probe honest: the probe is a wrapper too.
 type writeShellTransport struct {
 	mu       sync.Mutex
 	output   int
 	response []byte
 	offset   int
-	started  bool
 	ready    chan struct{}
 	done     chan struct{}
 	once     sync.Once
@@ -41,17 +42,21 @@ func newWriteShellTransport(output int) *writeShellTransport {
 
 func (t *writeShellTransport) Write(p []byte) (int, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.started {
-		return len(p), nil
-	}
 	marker := boundsMarkerPattern.Find(p)
 	if marker == nil {
+		t.mu.Unlock()
 		return len(p), nil
 	}
-	t.started = true
+	// A readiness probe is the no-op ':' wrapper; it deserves an answer but
+	// must not generate the bulk output the measured command asked for.
+	output := t.output
+	if strings.Contains(string(p), "( eval ':' );") {
+		output = 0
+	}
 	t.response = []byte("\n" + string(marker) + "_S\r\n" +
-		strings.Repeat("x", t.output) + "\r\n" + string(marker) + "_E:0\r\n")
+		strings.Repeat("x", output) + "\r\n" + string(marker) + "_E:0\r\n")
+	t.offset = 0
+	t.mu.Unlock()
 	select {
 	case t.ready <- struct{}{}:
 	default:

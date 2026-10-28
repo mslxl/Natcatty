@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mslxl/natcatty/domain/model"
@@ -385,6 +386,14 @@ type Session struct {
 	rawMu     sync.Mutex
 	rawFeed   *rawOutputFeed
 
+	// commandReady records that the interactive shell has answered a
+	// programmatic wrapper since it started, reconnected, or was interrupted.
+	// A remote shell (and any shell after Ctrl+C) may not be at a prompt yet;
+	// Command types a no-op probe until it answers, so the real command cannot
+	// be swallowed by a line editor that is still aborting. A local shell is
+	// ready by construction.
+	commandReady atomic.Bool
+
 	// outputMu orders rendered output against hibernate/resume. replay holds
 	// the bounded screen snapshot, feeds holds the observers, and the live
 	// view's queue is appended under the same lock.
@@ -680,6 +689,10 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		onChange: s.changed,
 	}
 	session.conn = newTerminalConn(session)
+	// A local PTY is attached to a live shell at Open; a remote shell has to
+	// finish its startup (a ForceCommand bash -i included) before it can read a
+	// wrapper, so the first command probes readiness first.
+	session.commandReady.Store(spec.Kind == KindLocal)
 
 	s.mu.Lock()
 	if s.closing {
@@ -1104,6 +1117,7 @@ func (s *Session) loop() {
 				// end event from the dead transport is ignored.
 				s.generation++
 				s.reopening = true
+				s.commandReady.Store(false)
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				s.update(func(snapshot *Snapshot) {
@@ -1118,6 +1132,7 @@ func (s *Session) loop() {
 				// its end event is ignored, as an automatic reconnect does.
 				s.generation++
 				s.reopening = true
+				s.commandReady.Store(false)
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				if s.transport != nil {
