@@ -275,6 +275,10 @@ func (s *State) SubmitDialog() {
 			return
 		}
 		tab := dialog.Tab
+		// The one-shot runs on its own goroutine. A listing load may complete
+		// on the UI goroutine meanwhile and update tab.Path, so the operation
+		// uses the path the dialog was opened for, captured here.
+		dir := tab.Path
 		s.dialog = nil
 		kind := domainsftp.OpMkdir
 		if dialog.Kind == DialogNewFile {
@@ -283,9 +287,9 @@ func (s *State) SubmitDialog() {
 		s.runOneShot(kind, tab, func(ctx context.Context) error {
 			var err error
 			if dialog.Kind == DialogNewFolder {
-				_, err = s.service.Mkdir(ctx, tab.FS, tab.Path, name)
+				_, err = s.service.Mkdir(ctx, tab.FS, dir, name)
 			} else {
-				_, err = s.service.CreateFile(ctx, tab.FS, tab.Path, name)
+				_, err = s.service.CreateFile(ctx, tab.FS, dir, name)
 			}
 			return err
 		})
