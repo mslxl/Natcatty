@@ -265,7 +265,17 @@ func (s *Session) emitOutput(p []byte) {
 	for feed := range s.feeds {
 		feed.push(p)
 	}
-	s.conn.appendOutput(p)
+	// A running programmatic command reads transport output through the raw
+	// feed. If no view is attached there is no terminal reader to drain this
+	// live queue, so appending a megabyte would hit HighWaterMark, pause the
+	// transport, and deadlock the command before its end marker arrives. The
+	// replay and observers above still receive the output.
+	s.rawMu.Lock()
+	rawCommand := s.rawFeed != nil
+	s.rawMu.Unlock()
+	if !rawCommand || s.conn.hasView() {
+		s.conn.appendOutput(p)
+	}
 	s.outputMu.Unlock()
 }
 

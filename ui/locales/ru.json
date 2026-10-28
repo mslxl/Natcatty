@@ -2966,6 +2966,14 @@
   "settingsMCPSessions": "Общие Sessions",
   "settingsMCPSessionsValue": "{sessions}",
   "settingsMCPNoSessions": "Ни одна Session не является общей. Клиенты не могут читать данные Sessions.",
+  "settingsMCPExposedCount": "{count, plural, =0 {Нет общих Sessions} one {# общая Session} few {# общие Sessions} many {# общих Sessions} other {# общих Sessions}}",
+  "settingsMCPSharingTitle": "Делиться живыми Sessions",
+  "settingsMCPSharingOn": "Пока общий доступ включён, каждая открытая Session доступна внешним клиентам.",
+  "settingsMCPSharingOff": "Общий доступ выключен. Клиенты не могут читать данные Sessions или действовать в них.",
+  "settingsMCPSharingNoSessions": "Общий доступ включён, но ни одна Session ещё не открыта. Откройте Session, чтобы поделиться ею.",
+  "settingsMCPRefreshSessions": "Обновить Sessions",
+  "settingsMCPEnvAllowlist": "Список при запуске: {sessions}",
+  "settingsMCPUnnamedSession": "Session без имени",
   "settingsMCPGeneration": "Поколение владения: {generation}",
   "settingsMCPBypassHint": "session_close и terminal_stop никогда не запрашивают подтверждение, но по-прежнему подчиняются области, списку Sessions и владению.",
   "settingsMCPActivityTitle": "Последнее внешнее действие",
@@ -2997,5 +3005,6 @@
   "settingsMCPProblemExpired": "Подтверждение истекло до того, как его успели использовать.",
   "settingsMCPProblemStale": "Изменение владения аннулировало подтверждение.",
   "settingsMCPProblemInvalid": "Подтверждение уже использовано или больше не ожидает.",
-  "settingsMCPProblemMode": "Не удалось изменить режим разрешений."
+  "settingsMCPProblemMode": "Не удалось изменить режим разрешений.",
+  "settingsMCPProblemSharing": "Не удалось сохранить настройку общего доступа к сеансам."
 }

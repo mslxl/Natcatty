@@ -4216,6 +4216,14 @@
   "settingsMCPSessions": "Shared Sessions",
   "settingsMCPSessionsValue": "{sessions}",
   "settingsMCPNoSessions": "No Sessions are shared. Clients cannot read Session data.",
+  "settingsMCPExposedCount": "{count, plural, =0 {No Sessions shared} one {# Session shared} other {# Sessions shared}}",
+  "settingsMCPSharingTitle": "Share live Sessions",
+  "settingsMCPSharingOn": "Every open Session is shared with external clients while sharing is on.",
+  "settingsMCPSharingOff": "Sharing is off. Clients cannot read or act on any Session.",
+  "settingsMCPSharingNoSessions": "Sharing is on, but no Session is open yet. Open a Session to share it.",
+  "settingsMCPRefreshSessions": "Refresh Sessions",
+  "settingsMCPEnvAllowlist": "Launch allowlist: {sessions}",
+  "settingsMCPUnnamedSession": "Unnamed Session",
   "settingsMCPGeneration": "Ownership generation: {generation}",
   "settingsMCPBypassHint": "session_close and terminal_stop never ask for approval, but they still obey scope, the allowlist, and ownership.",
   "settingsMCPActivityTitle": "Last external action",
@@ -4247,5 +4255,6 @@
   "settingsMCPProblemExpired": "The approval expired before it could be used.",
   "settingsMCPProblemStale": "An ownership change invalidated the approval.",
   "settingsMCPProblemInvalid": "The approval was already used or is no longer pending.",
-  "settingsMCPProblemMode": "The permission mode could not be changed."
+  "settingsMCPProblemMode": "The permission mode could not be changed.",
+  "settingsMCPProblemSharing": "The Session sharing setting could not be saved."
 }

@@ -73,6 +73,8 @@ type Service struct {
 
 	forcedChatScope string
 	allowlist       []string
+	allowlistSet    bool
+	sessions        LiveSessionSource
 	mode            func() Mode
 	now             func() time.Time
 	timeout         time.Duration
@@ -103,6 +105,16 @@ type Config struct {
 	// Allowlist is the per-session allowlist from NETCATTY_MCP_SESSION_IDS. An
 	// empty list means no session access, never a wildcard.
 	Allowlist []string
+	// AllowlistSet records that NETCATTY_MCP_SESSION_IDS was present, so a
+	// dynamic live-Session scope is intersected with it (an explicitly empty
+	// value means no access) instead of ignoring it. It has no effect when
+	// Sessions is nil.
+	AllowlistSet bool
+	// Sessions is the live-Session port. When set, every live Session is the
+	// dynamic scope while SharingEnabled reports true, matching the original
+	// useExternalMcpSessionSync. Nil keeps the static allowlist behavior used
+	// by ticket-57 unit fixtures.
+	Sessions LiveSessionSource
 	// Mode is consulted on every write so a Settings change applies to the
 	// next call. Nil defaults to confirm.
 	Mode func() Mode
@@ -142,6 +154,8 @@ func NewService(config Config) *Service {
 	return &Service{
 		forcedChatScope: config.ForcedChatSessionID,
 		allowlist:       append([]string(nil), config.Allowlist...),
+		allowlistSet:    config.AllowlistSet,
+		sessions:        config.Sessions,
 		mode:            mode,
 		now:             now,
 		timeout:         timeout,
@@ -158,8 +172,16 @@ func NewService(config Config) *Service {
 // ForcedScope returns the synthetic chat scope.
 func (s *Service) ForcedScope() string { return s.forcedChatScope }
 
-// Allowlist returns a copy of the session allowlist.
-func (s *Service) Allowlist() []string { return append([]string(nil), s.allowlist...) }
+// Allowlist returns a copy of the effective session scope.
+func (s *Service) Allowlist() []string { return s.effectiveAllowlist() }
+
+// effectiveAllowlist reads the dynamic live-Session scope or the static
+// ticket-57 allowlist on every call, so a Session opening, closing, or the
+// sharing toggle applies to the next tool call without a cached list.
+func (s *Service) effectiveAllowlist() []string {
+	effective, _, _, _ := s.scopeView()
+	return effective
+}
 
 // CurrentMode reads the mode source now. It is used for status displays; the
 // enforcement path re-reads it on every write.
@@ -168,7 +190,7 @@ func (s *Service) CurrentMode() Mode { return s.mode() }
 // EffectiveSessions intersects a request with the forced scope. Anything
 // outside the intersection is rejected here, before any action runs.
 func (s *Service) EffectiveSessions(requested RequestedScope) ([]string, error) {
-	return intersect(s.forcedChatScope, s.allowlist, requested)
+	return intersect(s.forcedChatScope, s.effectiveAllowlist(), requested)
 }
 
 // RequestApproval creates a prompt, arms the absolute deadline, and blocks the

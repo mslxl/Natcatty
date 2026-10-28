@@ -28,7 +28,13 @@ import (
 // the loader's tools/list_changed notification (which has no id).
 func (c *stdioMCPClient) receiveID(t *testing.T, id int) stdioResponse {
 	t.Helper()
-	timeout := time.After(60 * time.Second)
+	// The real-PTY tests deliberately set short per-call tool deadlines to
+	// prove the typed timeout, but a loaded parallel suite can also make a
+	// legitimate megabyte of terminal output take far longer than the
+	// production 60 s call bound. The client budget is a test deadline, not
+	// the tool deadline, so it stays well above the slowest real-transport
+	// fixture.
+	timeout := time.After(210 * time.Second)
 	for {
 		select {
 		case line := <-c.lines:

@@ -769,6 +769,11 @@ func (b *mcpReadBridge) forwardingTunnels(ctx context.Context) map[string]any {
 }
 
 func (b *mcpReadBridge) activeTunnels(ctx context.Context) []any {
+	// A graph built without forwarding still answers get_environment; it just
+	// has no tunnels to report.
+	if b.forwarding == nil {
+		return []any{}
+	}
 	views, err := b.forwarding.List(ctx)
 	if err != nil {
 		return []any{}

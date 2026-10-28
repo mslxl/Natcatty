@@ -31,9 +31,12 @@ type fakeMCPService struct {
 	approved   []string
 	denied     []string
 	dismissed  []string
+	shared     bool
+	refreshed  int
 	approveErr error
 	denyErr    error
 	modeErr    error
+	sharingErr error
 }
 
 func (f *fakeMCPService) Snapshot() appmcp.Snapshot { return f.snapshot }
@@ -85,6 +88,24 @@ func (f *fakeMCPService) removePending(id string) {
 	}
 	f.snapshot.Pending = out
 }
+
+// SetSharing records the sharing switch and mirrors it into the read model, so
+// the surface test sees the same state the policy would report.
+func (f *fakeMCPService) SetSharing(enabled bool) error {
+	if f.sharingErr != nil {
+		return f.sharingErr
+	}
+	f.shared = enabled
+	f.snapshot.SharingEnabled = enabled
+	if !enabled {
+		f.snapshot.ExposedSessions = nil
+		f.snapshot.Allowlist = nil
+	}
+	return nil
+}
+
+// RefreshScope counts refresh requests; the fake's snapshot is fixed.
+func (f *fakeMCPService) RefreshScope() { f.refreshed++ }
 
 func mcpPendingFixture(id string) appmcp.ApprovalView {
 	return appmcp.ApprovalView{
@@ -316,6 +337,272 @@ func TestMCPModeSelectionReachesThePolicy(t *testing.T) {
 	}
 	if !tester.HasText(m.SettingsMCPModeObserverDescription()) {
 		t.Fatalf("the observer description is not shown: %q", tester.Texts())
+	}
+}
+
+// mcpLiveSnapshot is the read model of a graph wired to the live Session
+// provider: sharing is on and two live Sessions are exposed.
+func mcpLiveSnapshot() appmcp.Snapshot {
+	return appmcp.Snapshot{
+		Mode:            appmcp.ModeConfirm,
+		ForcedScope:     "__external_mcp__",
+		Allowlist:       []string{"s1", "s2"},
+		LiveScope:       true,
+		SharingEnabled:  true,
+		ExposedSessions: []appmcp.ExposedSession{{ID: "s1", HostID: "h1", Label: "web"}, {ID: "s2", HostID: "h2"}},
+		Generation:      7,
+	}
+}
+
+// TestMCPExposedSessionsSectionListsTheLiveScope is the shipped-app
+// reachability surface: a live-scope graph lists the shared Sessions with
+// their labels instead of the ticket-57 "No Sessions are shared" line.
+func TestMCPExposedSessionsSectionListsTheLiveScope(t *testing.T) {
+	service := &fakeMCPService{snapshot: mcpLiveSnapshot()}
+	state := NewMCPState(service)
+	m := locales.In("en")
+	tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	for _, text := range []string{
+		m.SettingsMCPSessions(),
+		m.SettingsMCPExposedCount(2),
+		m.SettingsMCPSharingTitle(),
+		m.SettingsMCPRefreshSessions(),
+		m.SettingsMCPSharingOn(),
+		"web (s1)",
+		m.SettingsMCPUnnamedSession() + " (s2)",
+	} {
+		if !tester.HasText(text) {
+			t.Fatalf("%q is missing: %q", text, tester.Texts())
+		}
+	}
+	if tester.HasText(m.SettingsMCPNoSessions()) {
+		t.Fatalf("the empty static line reached the live-scope surface: %q", tester.Texts())
+	}
+	if tester.HasText(m.SettingsMCPEnvAllowlist("s1, s2")) {
+		t.Fatalf("the launch allowlist line appeared without the env variable: %q", tester.Texts())
+	}
+}
+
+// TestMCPExposedSessionsSectionShowsTheLaunchIntersection keeps the explicit
+// static allowlist visible when it narrows the dynamic scope.
+func TestMCPExposedSessionsSectionShowsTheLaunchIntersection(t *testing.T) {
+	snapshot := mcpLiveSnapshot()
+	snapshot.EnvAllowlist = []string{"s1"}
+	snapshot.EnvAllowlistSet = true
+	snapshot.ExposedSessions = []appmcp.ExposedSession{{ID: "s1", HostID: "h1", Label: "web"}}
+	snapshot.Allowlist = []string{"s1"}
+	service := &fakeMCPService{snapshot: snapshot}
+	state := NewMCPState(service)
+	m := locales.In("en")
+	tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	for _, text := range []string{
+		m.SettingsMCPExposedCount(1),
+		m.SettingsMCPEnvAllowlist("s1"),
+		m.SettingsMCPSharingOn(),
+	} {
+		if !tester.HasText(text) {
+			t.Fatalf("%q is missing: %q", text, tester.Texts())
+		}
+	}
+}
+
+// TestMCPExposedSessionsSectionLocalizesInEveryCatalog renders the count, the
+// sharing switch, the refresh control, and the exposed Session rows in each
+// catalog, and proves no English leaking on the live-scope path.
+func TestMCPExposedSessionsSectionLocalizesInEveryCatalog(t *testing.T) {
+	for _, tag := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		t.Run(tag, func(t *testing.T) {
+			m := locales.In(tag)
+			service := &fakeMCPService{snapshot: mcpLiveSnapshot()}
+			state := NewMCPState(service)
+			tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+			tester.SetLocale(tag)
+			tester.Frame()
+			for _, text := range []string{
+				m.SettingsMCPSessions(),
+				m.SettingsMCPExposedCount(2),
+				m.SettingsMCPSharingTitle(),
+				m.SettingsMCPRefreshSessions(),
+				m.SettingsMCPSharingOn(),
+				m.SettingsMCPUnnamedSession() + " (s2)",
+			} {
+				if !tester.HasText(text) {
+					t.Fatalf("%s: %q is missing: %q", tag, text, tester.Texts())
+				}
+			}
+			if tag != "en" && tester.HasText(locales.In("en").SettingsMCPSharingTitle()) {
+				t.Fatalf("%s: an English live-scope line reached the surface: %q", tag, tester.Texts())
+			}
+		})
+	}
+}
+
+// TestMCPSharingSwitchAndRefreshReachThePolicy clicks the sharing switch and
+// the refresh control on the rendered surface and checks the policy seam saw
+// both, then that an off switch stops listing Sessions.
+func TestMCPSharingSwitchAndRefreshReachThePolicy(t *testing.T) {
+	service := &fakeMCPService{snapshot: mcpLiveSnapshot()}
+	state := NewMCPState(service)
+	m := locales.In("en")
+	tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	if err := tester.Click(m.SettingsMCPSharingTitle()); err != nil {
+		t.Fatalf("click the sharing switch: %v", err)
+	}
+	tester.Frame()
+	if service.shared {
+		t.Fatal("the sharing switch did not turn sharing off")
+	}
+	if !tester.HasText(m.SettingsMCPSharingOff()) {
+		t.Fatalf("the off hint is missing: %q", tester.Texts())
+	}
+	if tester.HasText("web (s1)") {
+		t.Fatalf("an exposed Session survived sharing being off: %q", tester.Texts())
+	}
+
+	if err := tester.Click(m.SettingsMCPRefreshSessions()); err != nil {
+		t.Fatalf("click refresh: %v", err)
+	}
+	tester.Frame()
+	if service.refreshed != 1 {
+		t.Fatalf("refresh reached the policy %d times, want 1", service.refreshed)
+	}
+}
+
+// TestMCPSharingSwitchTurnsSharingBackOn proves the switch is not one-way.
+func TestMCPSharingSwitchTurnsSharingBackOn(t *testing.T) {
+	snapshot := mcpLiveSnapshot()
+	snapshot.SharingEnabled = false
+	snapshot.ExposedSessions = nil
+	snapshot.Allowlist = nil
+	service := &fakeMCPService{snapshot: snapshot}
+	state := NewMCPState(service)
+	m := locales.In("en")
+	tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !tester.HasText(m.SettingsMCPSharingOff()) {
+		t.Fatalf("the off hint is missing: %q", tester.Texts())
+	}
+	if err := tester.Click(m.SettingsMCPSharingTitle()); err != nil {
+		t.Fatalf("click the sharing switch: %v", err)
+	}
+	tester.Frame()
+	if !service.shared {
+		t.Fatal("the sharing switch did not turn sharing on")
+	}
+}
+
+// TestMCPSharingSaveFailureIsReportedAsASharingProblem keeps a failed
+// preference write from being mislabeled as a permission-mode change and
+// proves the message exists in every catalog.
+func TestMCPSharingSaveFailureIsReportedAsASharingProblem(t *testing.T) {
+	service := &fakeMCPService{
+		snapshot:   mcpLiveSnapshot(),
+		sharingErr: fmt.Errorf("the disk is full"),
+	}
+	state := NewMCPState(service)
+	state.SetSharing(false)
+	if state.Problem() != MCPProblemSharing {
+		t.Fatalf("problem = %v, want MCPProblemSharing", state.Problem())
+	}
+	if text := mcpProblemText(MCPProblemSharing, locales.In("en")); text == "" ||
+		text == mcpProblemText(MCPProblemMode, locales.In("en")) {
+		t.Fatalf("the sharing problem text = %q, want its own message", text)
+	}
+	for _, tag := range locales.Tags() {
+		if text := mcpProblemText(MCPProblemSharing, locales.In(tag)); text == "" {
+			t.Fatalf("%s has no sharing problem message", tag)
+		}
+	}
+}
+
+// TestMCPExposedSessionsEmptyAndOffHints distinguishes "sharing is on but no
+// Session is open" from "sharing is off".
+func TestMCPExposedSessionsEmptyAndOffHints(t *testing.T) {
+	m := locales.In("en")
+	on := mcpLiveSnapshot()
+	on.ExposedSessions = nil
+	on.Allowlist = nil
+	service := &fakeMCPService{snapshot: on}
+	state := NewMCPState(service)
+	tester := ui.NewTester(viewAt(AreaMCP, Config{MCP: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	for _, text := range []string{m.SettingsMCPExposedCount(0), m.SettingsMCPSharingNoSessions()} {
+		if !tester.HasText(text) {
+			t.Fatalf("%q is missing: %q", text, tester.Texts())
+		}
+	}
+}
+
+// TestMCPActivityStripIsAboveTheFoldAtShortestClientSize is the zh-CN finding
+// from the failed acceptance: at 704x421 the localized last-action status must
+// be visible without scrolling, before the mode field. It checks the rendered
+// text lands inside the content viewport and above the mode control.
+func TestMCPActivityStripIsAboveTheFoldAtShortestClientSize(t *testing.T) {
+	for _, locale := range []string{"en", "zh-CN"} {
+		t.Run(locale, func(t *testing.T) {
+			m := locales.In(locale)
+			activity := mcpActivityFixture(appmcp.ActivityTruncated, "")
+			service := &fakeMCPService{snapshot: mcpActivitySnapshot(activity)}
+			state := NewMCPState(service)
+			var layout viewLayout
+			var context *ui.Context
+			view := mcpViewWithLayout(AreaMCP, Config{MCP: state}, &layout)
+			tester := ui.NewTester(func(c *ui.Context) {
+				context = c
+				view(c)
+			}, 704, 421)
+			tester.SetLocale(locale)
+			tester.Frame()
+			viewport := layout.Content.Bounds(context)
+			status := mcpActivityFixtureStatusText(activity.Status, m)
+			rect, ok := tester.Find(status)
+			if !ok {
+				t.Fatalf("%s: the status %q is not rendered: %q", locale, status, tester.Texts())
+			}
+			if rect.H < 11 {
+				t.Fatalf("%s: the status row is a clipped sliver: %+v", locale, rect)
+			}
+			if rect.Y < viewport.Y-0.5 || rect.Y+rect.H > viewport.Y+viewport.H+0.5 {
+				t.Fatalf("%s: the status row %+v is outside the viewport %+v without scrolling",
+					locale, rect, viewport)
+			}
+			mode, ok := tester.Find(m.SettingsMCPMode())
+			if !ok {
+				t.Fatalf("%s: the mode label is missing: %q", locale, tester.Texts())
+			}
+			if rect.Y+rect.H > mode.Y+0.5 {
+				t.Fatalf("%s: the status row %+v is not above the mode field %+v",
+					locale, rect, mode)
+			}
+		})
+	}
+}
+
+func mcpActivityFixtureStatusText(status appmcp.ActivityStatus, m locales.Messages) string {
+	switch status {
+	case appmcp.ActivityBlocked:
+		return m.SettingsMCPActivityStatusBlocked()
+	case appmcp.ActivityTimeout:
+		return m.SettingsMCPActivityStatusTimeout()
+	case appmcp.ActivityTruncated:
+		return m.SettingsMCPActivityStatusTruncated()
+	case appmcp.ActivityUnavailable:
+		return m.SettingsMCPActivityStatusUnavailable()
+	case appmcp.ActivityDenied:
+		return m.SettingsMCPActivityStatusDenied()
+	case appmcp.ActivityFailed:
+		return m.SettingsMCPActivityStatusFailed()
+	default:
+		return m.SettingsMCPActivityStatusOK()
 	}
 }
 

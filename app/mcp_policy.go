@@ -429,16 +429,23 @@ func mcpClientLabel(value string) string {
 	return builder.String()
 }
 
-// mcpSessionAllowlist reads the launch-time allowlist.
-func mcpSessionAllowlist() []string {
-	return appmcp.ParseSessionAllowlist(os.Getenv(envMCPSessionIDs))
+// mcpSessionAllowlist reads the launch-time allowlist and whether the variable
+// was present at all. Presence distinguishes "intersect the dynamic live-Session
+// scope with this list" from "no static restriction".
+func mcpSessionAllowlist() (ids []string, set bool) {
+	value, present := os.LookupEnv(envMCPSessionIDs)
+	if !present {
+		return nil, false
+	}
+	return appmcp.ParseSessionAllowlist(value), true
 }
 
 // mcpSettingsController adapts the policy and its discovery-backed mode to
 // the Settings surface without teaching the application layer about MyGo.
 type mcpSettingsController struct {
-	policy *appmcp.Service
-	mode   *mcpModeState
+	policy   *appmcp.Service
+	mode     *mcpModeState
+	sessions *mcpLiveSessions
 }
 
 func (c *mcpSettingsController) Snapshot() appmcp.Snapshot { return c.policy.Snapshot() }
@@ -450,3 +457,18 @@ func (c *mcpSettingsController) Approve(id string) error { return c.policy.Appro
 func (c *mcpSettingsController) Deny(id string) error { return c.policy.Deny(id) }
 
 func (c *mcpSettingsController) Dismiss(id string) { c.policy.Dismiss(id) }
+
+// SetSharing flips the live-Session sharing switch.
+func (c *mcpSettingsController) SetSharing(enabled bool) error {
+	if c.sessions == nil {
+		return fmt.Errorf("external MCP: the live Session scope is not available")
+	}
+	return c.sessions.SetEnabled(enabled)
+}
+
+// RefreshScope repaints the read model from the current live Sessions.
+func (c *mcpSettingsController) RefreshScope() {
+	if c.sessions != nil {
+		c.policy.NotifyViewChanged()
+	}
+}
