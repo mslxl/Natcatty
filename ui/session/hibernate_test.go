@@ -240,6 +240,35 @@ func TestHibernateAndResumeKeepTheScreenAndSessionState(t *testing.T) {
 	eventually(t, func() bool { return strings.Contains(surface.ScreenText(), "after resume") })
 }
 
+// TestResumedTerminalTakesTheKeyboardWithoutAClick proves Resume gives the
+// keyboard back to the terminal, as a user who hibernated and resumed expects
+// to keep typing without clicking. The focused Pane's terminal is the only
+// one asking for the keyboard.
+func TestResumedTerminalTakesTheKeyboardWithoutAClick(t *testing.T) {
+	surface, transport := newScriptedSurface(t)
+	tester := ui.NewTester(func(c *ui.Context) { surface.ViewFocused(c, true) }, 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+
+	tester.Type("before")
+	eventually(t, func() bool { return strings.Contains(transport.Input(), "before") })
+
+	if !surface.Hibernate() {
+		t.Fatal("Hibernate returned false")
+	}
+	tester.Frame()
+	if err := surface.Resume(); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	tester.Frame()
+
+	// No click after Resume: the rebuilt terminal must hold the keyboard.
+	tester.Type("after")
+	if !waitFor(t, func() bool { return strings.Contains(transport.Input(), "after") }) {
+		t.Fatalf("input after Resume never reached the transport: %q", transport.Input())
+	}
+}
+
 func TestObserverRendersTheOwningScreensSnapshotAndFeed(t *testing.T) {
 	m := locales.In("en")
 	surface, transport := newScriptedSurface(t)
