@@ -36,6 +36,8 @@ func run(args []string) error {
 		return verifySumsCommand(rest)
 	case "collect":
 		return collectCommand(rest)
+	case "classify":
+		return classifyCommand(rest)
 	case "assert-no-updates":
 		return assertNoUpdatesCommand(rest)
 	case "check-binary":
@@ -61,6 +63,7 @@ commands:
   generate-sums     -dir DIR [-out FILE]
   verify-sums       -dir DIR [-sums FILE]
   collect           -from DIR -to DIR
+  classify          -dir DIR
   assert-no-updates [-dir DIR] [-manifest mygo.json]
   check-binary      -binary FILE [-catalog-dir ui/locales]
 `
@@ -183,6 +186,30 @@ func collectCommand(args []string) error {
 		fmt.Println(name)
 	}
 	fmt.Printf("collected %d artifacts into %s\n", len(names), *to)
+	return nil
+}
+
+// classifyCommand names each downloaded workflow-artifact directory as a
+// platform artifact set (it carries SHA256SUMS) or the release notes (it
+// carries only RELEASE_NOTES.md). The release workflow's checksums job reads
+// this output instead of guessing from file names, so the two cannot drift.
+// The output is one "kind<TAB>path" line per directory.
+func classifyCommand(args []string) error {
+	flags := newFlagSet("classify")
+	dir := flags.String("dir", "", "download root holding one directory per workflow artifact")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" {
+		return fmt.Errorf("classify needs -dir")
+	}
+	dirs, err := release.ClassifyArtifactDirs(*dir)
+	if err != nil {
+		return err
+	}
+	for _, classified := range dirs {
+		fmt.Printf("%s\t%s\n", classified.Kind, classified.Path)
+	}
 	return nil
 }
 

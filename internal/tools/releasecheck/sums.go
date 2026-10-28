@@ -11,29 +11,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mslxl/natcatty/internal/release"
 )
 
-// Release artifacts are the files a release hands to users: the macOS disk
-// image, the Windows NSIS Setup executable, the Linux tar.gz and deb packages,
-// and the Linux install script. The raw executable and the .app bundle are
-// carried with them but are not installers of their own.
-func isReleaseArtifact(name string) bool {
-	base := path.Base(name)
-	switch {
-	case strings.HasSuffix(base, ".dmg"),
-		strings.HasSuffix(base, ".deb"),
-		strings.HasSuffix(base, ".tar.gz"):
-		return true
-	case base == "install.sh":
-		return true
-	case strings.HasSuffix(base, ".exe") && strings.Contains(base, " Setup "):
-		return true
-	}
-	return false
-}
-
 // releaseArtifacts lists the release artifacts under root as clean
-// forward-slash paths relative to root, sorted.
+// forward-slash paths relative to root, sorted. What counts as an artifact is
+// release.IsArtifact, the same rule the workflow-artifact classifier uses.
 func releaseArtifacts(root string) ([]string, error) {
 	var names []string
 	err := filepath.WalkDir(root, func(filePath string, entry os.DirEntry, err error) error {
@@ -48,7 +32,7 @@ func releaseArtifacts(root string) ([]string, error) {
 			return err
 		}
 		relative = filepath.ToSlash(relative)
-		if isReleaseArtifact(relative) {
+		if release.IsArtifact(relative) {
 			names = append(names, relative)
 		}
 		return nil
