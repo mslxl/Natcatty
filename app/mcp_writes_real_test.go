@@ -715,9 +715,13 @@ func TestMCPWriteEveryExecutableToolWithRealTransportsAndDynamicScope(t *testing
 	if closed["status"] != "closed" {
 		t.Fatalf("session_close = %#v", closed)
 	}
-	if _, ok := fixture.sessions.Describe(model.SessionID(openedSessionID)); ok {
-		t.Fatal("session_close left the opened Session live")
-	}
+	// session_close is asynchronous: the Session is unregistered when its
+	// lifecycle loop finishes, which can be after the tool has already
+	// returned. Wait for the observable condition instead of sampling once.
+	waitFor(t, "session_close to unregister the opened Session", func() bool {
+		_, ok := fixture.sessions.Describe(model.SessionID(openedSessionID))
+		return !ok
+	})
 
 	// Vault Host delete completes the vault family.
 	e2eToolOK(t, client, "vault_hosts_delete", map[string]any{"hostId": createdHostID})
