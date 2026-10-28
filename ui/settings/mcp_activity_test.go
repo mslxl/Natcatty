@@ -158,9 +158,10 @@ func TestMCPActivityLocalizesInEveryCatalog(t *testing.T) {
 
 func revealMCPActivityRow(t *testing.T, tester *ui.Tester, viewport ui.Rect, text string) {
 	t.Helper()
+	rowHeight := measuredSettingsTextHeight(t, text, 11)
 	revealed := func() bool {
 		row, ok := tester.Find(text)
-		return ok && row.H >= 11 && row.Y >= viewport.Y-0.5 &&
+		return ok && row.H+0.5 >= rowHeight && row.Y >= viewport.Y-0.5 &&
 			row.Y+row.H <= viewport.Y+viewport.H+0.5
 	}
 	for step := 0; step < 240 && !revealed(); step++ {

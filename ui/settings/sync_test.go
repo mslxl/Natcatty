@@ -3,6 +3,8 @@ package settings
 import (
 	"context"
 	"errors"
+	"image"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -317,4 +319,97 @@ func testerRectHasColor(tester *ui.Tester, rect ui.Rect, color ui.Color) bool {
 		}
 	}
 	return false
+}
+
+// testerRectInk names the ink the glyphs inside rect are painted with. At a
+// small size a platform's rasterizer may never paint a glyph core at the
+// exact token color — the Ubuntu CJK fallback at 11 DIP does not — so an
+// exact pixel cannot identify the color there. Instead the same line is
+// rendered in each candidate ink by the same tester pipeline; its darkest
+// pixel has the same glyph coverage, so the nearest reference names the ink.
+// bold must match the sampled node's weight, or the reference's coverage
+// differs from the painted glyphs. A rect that is blank, clipped, or painted
+// in a color matching no candidate (including the plain body text color)
+// fails rather than guessing.
+func testerRectInk(t *testing.T, tester *ui.Tester, rect ui.Rect, text string, size float32, bold bool, inks ...ui.Color) ui.Color {
+	t.Helper()
+	if len(inks) < 2 {
+		t.Fatalf("testerRectInk needs at least two candidate inks")
+	}
+	painted, ok := darkestRectPixel(tester.Image(), rect)
+	if !ok {
+		t.Fatalf("no pixels were painted inside %+v for %q", rect, text)
+	}
+	best, second := -1, -1
+	var bestDistance, secondDistance float64
+	for i, ink := range inks {
+		distance := colorDistance(painted, renderedTextInk(t, text, size, bold, ink))
+		switch {
+		case best < 0 || distance < bestDistance:
+			second, secondDistance = best, bestDistance
+			best, bestDistance = i, distance
+		case second < 0 || distance < secondDistance:
+			second, secondDistance = i, distance
+		}
+	}
+	const matchTolerance, separation = 24, 8
+	if bestDistance > matchTolerance || secondDistance-bestDistance < separation {
+		t.Fatalf("the glyphs of %q in %+v are %v; nearest candidate is %v at %.1f but the next is only %.1f away",
+			text, rect, painted, inks[best], bestDistance, secondDistance)
+	}
+	return inks[best]
+}
+
+// renderedTextInk renders one line in ink on the theme background and returns
+// its darkest painted pixel: the coverage the same line gets at its most
+// saturated point on this platform.
+func renderedTextInk(t *testing.T, text string, size float32, bold bool, ink ui.Color) ui.Color {
+	t.Helper()
+	var rect ui.Rect
+	tester := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Background(ui.LightTheme().Background).Children(func() {
+			if bold {
+				ui.Text(c, text).FontSize(size).Bold().TextColor(ink)
+				return
+			}
+			ui.Text(c, text).FontSize(size).TextColor(ink)
+		})
+	}, 1200, 200)
+	tester.Frame()
+	rect, ok := tester.Find(text)
+	if !ok {
+		t.Fatalf("the %v reference render of %q is not laid out", ink, text)
+	}
+	darkest, ok := darkestRectPixel(tester.Image(), rect)
+	if !ok {
+		t.Fatalf("the %v reference render of %q painted no pixels", ink, text)
+	}
+	return darkest
+}
+
+// darkestRectPixel returns the darkest pixel inside rect, which is the one a
+// glyph's most covered stroke leaves on the light theme fill.
+func darkestRectPixel(img *image.RGBA, rect ui.Rect) (ui.Color, bool) {
+	left, top := max(int(rect.X), img.Rect.Min.X), max(int(rect.Y), img.Rect.Min.Y)
+	right, bottom := min(int(rect.X+rect.W), img.Rect.Max.X), min(int(rect.Y+rect.H), img.Rect.Max.Y)
+	best, found := 1<<30, false
+	var darkest ui.Color
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			offset := img.PixOffset(x, y)
+			sum := int(img.Pix[offset]) + int(img.Pix[offset+1]) + int(img.Pix[offset+2])
+			if sum < best {
+				best, found = sum, true
+				darkest = ui.RGB(img.Pix[offset], img.Pix[offset+1], img.Pix[offset+2])
+			}
+		}
+	}
+	return darkest, found
+}
+
+func colorDistance(a, b ui.Color) float64 {
+	dr := float64(int(a.R) - int(b.R))
+	dg := float64(int(a.G) - int(b.G))
+	db := float64(int(a.B) - int(b.B))
+	return math.Sqrt(dr*dr + dg*dg + db*db)
 }

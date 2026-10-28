@@ -568,6 +568,19 @@ func WithRandom(reader io.Reader) Option {
 	}
 }
 
+// WithKDFIterations lowers the PBKDF2 work factor written into sealed
+// envelopes. It is a test seam for suites that exercise the real sealing and
+// opening path many times; production leaves it unset, which keeps the
+// domain default of 600000. The envelope stores the chosen value, so the
+// producing and consuming paths are otherwise unchanged.
+func WithKDFIterations(iterations int) Option {
+	return func(s *Service) {
+		if iterations > 0 {
+			s.kdfIterations = iterations
+		}
+	}
+}
+
 // WithProvider names the default provider of a new profile and registers the
 // service's primary remote under it. The zero value is GitHub.
 func WithProvider(provider string) Option {
@@ -626,7 +639,12 @@ type Service struct {
 	now      func() time.Time
 	debounce time.Duration
 	random   io.Reader
-	notify   func()
+	// kdfIterations lowers the PBKDF2 work factor in tests that seal many
+	// envelopes. Production leaves it zero, which keeps domain/sync's default
+	// 600000 iterations; every envelope records the value it was sealed with,
+	// so opening still runs the real KDF.
+	kdfIterations int
+	notify        func()
 	// openBrowser opens a provider's authorization URL in the system browser.
 	openBrowser func(url string) error
 	// onSnapshotApplied, when set, reports that a downloaded cloud copy has
@@ -1988,15 +2006,8 @@ func (s *Service) upload(
 		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		envelope, err := domainsync.EncryptPayload(outgoing, s.passwordValue(), domainsync.EncryptOptions{
-			Version:    versionFor(current),
-			UpdatedAt:  s.now().UnixMilli(),
-			DeviceID:   config.DeviceID,
-			DeviceName: config.DeviceName,
-			AppVersion: config.AppVersion,
-			Random:     s.random,
-			Now:        s.now,
-		})
+		envelope, err := domainsync.EncryptPayload(outgoing, s.passwordValue(),
+			s.encryptOptions(config, versionFor(current)))
 		if err != nil {
 			s.finishSync(ProblemLocal)
 			return RemoteFile{}, err
@@ -2215,6 +2226,21 @@ func (s *Service) currentConfig() Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.config
+}
+
+// encryptOptions returns the envelope metadata every sealing path shares.
+// Callers add a schema marker to the result when their payload needs one.
+func (s *Service) encryptOptions(config Config, version int) domainsync.EncryptOptions {
+	return domainsync.EncryptOptions{
+		Version:       version,
+		UpdatedAt:     s.now().UnixMilli(),
+		DeviceID:      config.DeviceID,
+		DeviceName:    config.DeviceName,
+		AppVersion:    config.AppVersion,
+		Random:        s.random,
+		Now:           s.now,
+		KDFIterations: s.kdfIterations,
+	}
 }
 
 func (s *Service) passwordValue() string {

@@ -468,6 +468,7 @@ func TestConflictSurvivesARestartAndResolvesIdempotently(t *testing.T) {
 
 	// A new Service over the same persisted profile must still see it.
 	restarted := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithWaiter(waiter),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
 		WithDevice("device-1", "Test Device", "1.0"),

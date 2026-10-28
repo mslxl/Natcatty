@@ -568,7 +568,7 @@ func TestMCPActivityStripIsAboveTheFoldAtShortestClientSize(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s: the status %q is not rendered: %q", locale, status, tester.Texts())
 			}
-			if rect.H < 11 {
+			if rect.H+0.5 < measuredSettingsTextHeight(t, status, 12) {
 				t.Fatalf("%s: the status row is a clipped sliver: %+v", locale, rect)
 			}
 			if rect.Y < viewport.Y-0.5 || rect.Y+rect.H > viewport.Y+viewport.H+0.5 {
@@ -704,7 +704,7 @@ func TestMCPApprovalPinnedActionsAtRealClientSizes(t *testing.T) {
 					if !ok {
 						t.Fatalf("%s: the action %q is not rendered: %q", size.name, label, tester.Texts())
 					}
-					if rect.W <= 0 || rect.H < 18 {
+					if rect.W <= 0 || rect.H+0.5 < measuredSettingsTextHeight(t, label, ui.LightTheme().FontSize) {
 						t.Fatalf("%s: the action %q is a clipped sliver: %+v", size.name, label, rect)
 					}
 					if !insideClientRect(rect, size.width, size.height) {
@@ -743,9 +743,10 @@ func TestMCPApprovalPinnedActionsAtRealClientSizes(t *testing.T) {
 				}
 
 				lastText := m.SettingsMCPApprovalSummary(prompt.Summary)
+				lastRowHeight := measuredSettingsTextHeight(t, lastText, 12)
 				revealed := func() bool {
 					row, ok := tester.Find(lastText)
-					return ok && row.H >= 12 && row.Y >= viewport.Y-0.5 &&
+					return ok && row.H+0.5 >= lastRowHeight && row.Y >= viewport.Y-0.5 &&
 						row.Y+row.H <= viewport.Y+viewport.H+0.5
 				}
 				for step := 0; step < 240 && !revealed(); step++ {
@@ -822,9 +823,10 @@ func TestMCPExpiredStateScreenshots(t *testing.T) {
 			// render; at 704x421 only part of the status and prompt fits at once.
 			viewport := layout.Content.Bounds(context)
 			expiredLine := m.SettingsMCPApprovalExpired()
+			expiredHeight := measuredSettingsTextHeight(t, expiredLine, 12)
 			revealed := func() bool {
 				row, ok := tester.Find(expiredLine)
-				return ok && row.H >= 12 && row.Y >= viewport.Y-0.5 &&
+				return ok && row.H+0.5 >= expiredHeight && row.Y >= viewport.Y-0.5 &&
 					row.Y+row.H <= viewport.Y+viewport.H+0.5
 			}
 			for step := 0; step < 240 && !revealed(); step++ {

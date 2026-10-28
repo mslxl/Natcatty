@@ -243,13 +243,41 @@ func scrollbarGutter(t *ui.Theme) float32 {
 	return width + 6
 }
 
+// sidebarWidth is the sidebar's DIP width. 168 DIPs holds every catalog's
+// area names at the default metrics; a platform whose fonts are wider gets
+// the width its longest area name needs instead of an ellipsized label. The
+// scroll gutter, the nav buttons' horizontal padding, and their borders take
+// the rest of a label's box away from its text.
+func sidebarWidth(c *ui.Context, m locales.Messages, t *ui.Theme) float32 {
+	const (
+		baseSidebarWidth = 168
+		// A nav button has a left and a right border outside its padding.
+		sidebarButtonBorders = 2
+		// MeasureText and the button's layout both round fractional DIPs. A
+		// box exactly as wide as the measured text can still clip its last
+		// glyph after the button's own rounding, so leave one DIP of room.
+		sidebarRoundingRoom = 1
+	)
+	width := float32(baseSidebarWidth)
+	chrome := scrollbarGutter(t) + 2*t.Space(3.5) + sidebarButtonBorders
+	for _, area := range Areas() {
+		label := AreaTitle(m, area)
+		if measured, _ := c.MeasureText(0, ui.Span{Text: label, Size: t.FontSize}); measured > 0 {
+			if wanted := measured + chrome + sidebarRoundingRoom; wanted > width {
+				width = wanted
+			}
+		}
+	}
+	return width
+}
+
 // sidebar lists the areas. At 720x480 the nine buttons can exceed the height
 // left by the header, so the list scrolls instead of losing its last entry to
 // the window edge.
 func sidebar(c *ui.Context, search *SearchState, panes *viewState,
 	m locales.Messages, t *ui.Theme) {
 	gutter := scrollbarGutter(t)
-	ui.Scroll(c).Width(168).Shrink(0).FillHeight().
+	ui.Scroll(c).Width(sidebarWidth(c, m, t)).Shrink(0).FillHeight().
 		PaddingEnd(gutter).TrackScroll(&panes.sidebar).Children(func() {
 		ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
 			for _, area := range Areas() {

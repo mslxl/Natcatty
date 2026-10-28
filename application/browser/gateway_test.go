@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -128,9 +129,13 @@ func TestGatewayRoutesPageTrafficThroughTheTunnelAndRewritesThePage(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Hostname() != "127.0.0.2" || parsed.Port() == "" {
+	if !IsGatewayHost(parsed.Hostname()) || parsed.Port() == "" {
 		t.Fatalf("gateway URL = %q", gatewayURL)
 	}
+	// The page's absolute URLs must move to this exact gateway origin: the
+	// host may be the preferred address or the fallback one the platform
+	// could bind, and the port is the listener's.
+	gatewayAuthority := parsed.Host
 
 	request, _ := http.NewRequest(http.MethodGet, gatewayURL, nil)
 	request.Header.Set("Origin", parsed.Scheme+"://"+parsed.Host)
@@ -150,13 +155,13 @@ func TestGatewayRoutesPageTrafficThroughTheTunnelAndRewritesThePage(t *testing.T
 	if count := strings.Count(text, "http://app.internal:8080"); count != 1 {
 		t.Fatalf("page holds %d direct remote URLs, want only the mapper constant:\n%s", count, text)
 	}
-	if !strings.Contains(text, `href="http://127.0.0.2:`) {
+	if !strings.Contains(text, `href="http://`+gatewayAuthority+`/next`) {
 		t.Fatalf("absolute link was not rewritten:\n%s", text)
 	}
-	if !strings.Contains(text, `src="//127.0.0.2:`) {
+	if !strings.Contains(text, `src="//`+gatewayAuthority+`/logo.png`) {
 		t.Fatalf("protocol-relative URL was not rewritten:\n%s", text)
 	}
-	if !strings.Contains(text, `action="http://127.0.0.2:`) {
+	if !strings.Contains(text, `action="http://`+gatewayAuthority+`/echo`) {
 		t.Fatalf("form action was not rewritten:\n%s", text)
 	}
 	if !strings.Contains(text, "new URL(u,document.baseURI)") {
@@ -257,7 +262,7 @@ func TestGatewayMapsHeadersAndFollowsRedirectsInsideTheRoute(t *testing.T) {
 	}
 	location := redirect.Header.Get("Location")
 	locationURL, err := url.Parse(location)
-	if err != nil || locationURL.Hostname() != "127.0.0.2" {
+	if err != nil || !IsGatewayHost(locationURL.Hostname()) || locationURL.Port() == "" {
 		t.Fatalf("redirect Location = %q", location)
 	}
 	final, err := http.Get(location)
@@ -281,7 +286,7 @@ func TestGatewayMapsHeadersAndFollowsRedirectsInsideTheRoute(t *testing.T) {
 	cross.Body.Close()
 	crossLocation := cross.Header.Get("Location")
 	crossParsed, err := url.Parse(crossLocation)
-	if err != nil || crossParsed.Hostname() != "127.0.0.2" ||
+	if err != nil || !IsGatewayHost(crossParsed.Hostname()) ||
 		crossParsed.Port() == locationURL.Port() {
 		t.Fatalf("cross-origin redirect Location = %q", crossLocation)
 	}
@@ -313,8 +318,12 @@ func TestGatewayRewritesStyleSheetsAndScriptsThroughTheSameOrigin(t *testing.T) 
 	}
 	css, _ := io.ReadAll(response.Body)
 	response.Body.Close()
+	cssGateway, err := url.Parse(cssURL)
+	if err != nil {
+		t.Fatalf("CSS gateway URL %q: %v", cssURL, err)
+	}
 	if strings.Contains(string(css), "http://app.internal:8080") ||
-		!strings.Contains(string(css), "127.0.0.2") {
+		!strings.Contains(string(css), cssGateway.Host) {
 		t.Fatalf("CSS body = %s", css)
 	}
 
@@ -325,9 +334,124 @@ func TestGatewayRewritesStyleSheetsAndScriptsThroughTheSameOrigin(t *testing.T) 
 	}
 	script, _ := io.ReadAll(response.Body)
 	response.Body.Close()
+	jsGateway, err := url.Parse(jsURL)
+	if err != nil {
+		t.Fatalf("JS gateway URL %q: %v", jsURL, err)
+	}
 	if strings.Contains(string(script), "http://app.internal:8080") ||
-		!strings.Contains(string(script), "127.0.0.2") {
+		!strings.Contains(string(script), jsGateway.Host) {
 		t.Fatalf("JS body = %s", script)
+	}
+}
+
+// TestListenGatewayFallsBackWhenThePreferredAddressIsUnassigned proves the
+// gateway opens on the first loopback address the OS assigns. macOS assigns
+// only 127.0.0.1, so binding the preferred 127.0.0.2 there fails with
+// "can't assign requested address"; TEST-NET-1 (192.0.2.0/24) stands in for
+// such an unassigned address on every platform.
+func TestListenGatewayFallsBackWhenThePreferredAddressIsUnassigned(t *testing.T) {
+	listener, err := listenGatewayAt([]string{"192.0.2.1", GatewayFallbackLoopbackHost})
+	if err != nil {
+		t.Fatalf("listen with a fallback address: %v", err)
+	}
+	defer listener.Close()
+	host, _, splitErr := net.SplitHostPort(listener.Addr().String())
+	if splitErr != nil || host != GatewayFallbackLoopbackHost {
+		t.Fatalf("listener address = %q, want the fallback %s", listener.Addr(), GatewayFallbackLoopbackHost)
+	}
+	if leaked, err := listenGatewayAt([]string{"192.0.2.1", "192.0.2.2"}); err == nil {
+		leaked.Close()
+		t.Fatal("listen with no assigned loopback address succeeded")
+	}
+}
+
+// TestListenGatewayFallsBackOnlyForUnassignedAddresses proves the fallback is
+// not a blanket error swallow. The real OS error for an address no interface
+// owns is classified as unavailable, so the next address is tried; a
+// permission failure is returned immediately, so a transient bind problem
+// cannot silently move a gateway onto the development-trusted address.
+func TestListenGatewayFallsBackOnlyForUnassignedAddresses(t *testing.T) {
+	probe, probeErr := net.Listen("tcp", "192.0.2.1:0")
+	if probeErr == nil {
+		probe.Close()
+		t.Fatal("TEST-NET-1 192.0.2.1 unexpectedly binds; the unassigned-address probe cannot run")
+	}
+	if !gatewayAddressUnavailable(probeErr) {
+		t.Fatalf("the OS error for an unassigned address is not classified as unavailable: %v", probeErr)
+	}
+
+	var tried []string
+	listener, err := listenGatewayWith(
+		[]string{"192.0.2.1", GatewayFallbackLoopbackHost},
+		func(host string) (net.Listener, error) {
+			tried = append(tried, host)
+			if host == "192.0.2.1" {
+				return nil, probeErr
+			}
+			return net.Listen("tcp", net.JoinHostPort(host, "0"))
+		})
+	if err != nil {
+		t.Fatalf("listen with an unassigned preferred address: %v", err)
+	}
+	listener.Close()
+	if len(tried) != 2 || tried[0] != "192.0.2.1" || tried[1] != GatewayFallbackLoopbackHost {
+		t.Fatalf("addresses tried = %v, want the preferred then the fallback", tried)
+	}
+
+	tried = nil
+	permission := errors.New("bind: permission denied")
+	leaked, err := listenGatewayWith(
+		[]string{"192.0.2.1", GatewayFallbackLoopbackHost},
+		func(host string) (net.Listener, error) {
+			tried = append(tried, host)
+			if host == "192.0.2.1" {
+				return nil, permission
+			}
+			return net.Listen("tcp", net.JoinHostPort(host, "0"))
+		})
+	if err == nil {
+		leaked.Close()
+		t.Fatal("a non-availability bind error was masked by the fallback")
+	}
+	if !errors.Is(err, permission) {
+		t.Fatalf("listen error = %v, want the permission failure", err)
+	}
+	if len(tried) != 1 {
+		t.Fatalf("addresses tried after a permission failure = %v, want only the preferred", tried)
+	}
+}
+
+// TestListenGatewayUsesTheAddressTheOSAssigns exercises the real listener
+// path. A fake host list cannot catch an always-127.0.0.1 regression, so this
+// probes the OS first and then requires the production listener to use the
+// preferred address where it is assignable and the documented fallback where
+// it is not (macOS). No skip: each platform asserts its actual behavior.
+func TestListenGatewayUsesTheAddressTheOSAssigns(t *testing.T) {
+	probe, probeErr := net.Listen("tcp", net.JoinHostPort(GatewayLoopbackHost, "0"))
+	if probeErr == nil {
+		probe.Close()
+	}
+	listener, err := listenGateway()
+	if err != nil {
+		t.Fatalf("open the gateway listener: %v", err)
+	}
+	defer listener.Close()
+	host, _, splitErr := net.SplitHostPort(listener.Addr().String())
+	if splitErr != nil {
+		t.Fatalf("listener address = %q: %v", listener.Addr(), splitErr)
+	}
+	want := GatewayLoopbackHost
+	if probeErr != nil {
+		want = GatewayFallbackLoopbackHost
+	}
+	if host != want {
+		t.Fatalf("gateway bound %q, want %q (preferred bind error: %v)", host, want, probeErr)
+	}
+	if want == GatewayLoopbackHost && GatewayHostIsDevTrusted(host) {
+		t.Fatalf("preferred gateway host %q is inside MyGo's dev-trusted set", host)
+	}
+	if want == GatewayFallbackLoopbackHost && !GatewayHostIsDevTrusted(host) {
+		t.Fatalf("fallback gateway host %q is not the documented dev-trusted fallback", host)
 	}
 }
 
@@ -370,7 +494,11 @@ func TestGatewayLocksDownNonPageDocuments(t *testing.T) {
 			t.Fatalf("asset CSP = %q, missing %q", csp, want)
 		}
 	}
-	if strings.Contains(csp, "127.0.0.2") {
+	svgGateway, err := url.Parse(svgURL)
+	if err != nil {
+		t.Fatalf("SVG gateway URL %q: %v", svgURL, err)
+	}
+	if strings.Contains(csp, svgGateway.Hostname()) {
 		t.Fatalf("asset CSP = %q reaches loopback beyond its own origin", csp)
 	}
 	imageURL, err := fixture.gw.URLFor("http://app.internal:8080/image.png")

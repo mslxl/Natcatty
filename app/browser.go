@@ -259,8 +259,11 @@ func (f mygoPageFactory) NewPage() (browserui.Page, error) {
 // browserPageOptions is the page configuration for untrusted web content.
 // There is deliberately no PreloadScript and no TrustedOrigins entry: MyGo's
 // typed bridge is injected into every page, but it rejects calls from an
-// origin outside the app's own pages. The gateway binds 127.0.0.2 rather than
-// 127.0.0.1 so a development build's localhost trust does not cover it.
+// origin outside the app's own pages. The gateway prefers 127.0.0.2 rather
+// than 127.0.0.1 so a development build's localhost trust does not cover it;
+// macOS assigns only 127.0.0.1, so there the gateway uses the documented
+// fallback address and the sandbox rests on the app registering no MyGo
+// bindings, denied permissions, and refused popups.
 func browserPageOptions() mygo.PageOptions {
 	return mygo.PageOptions{DevTools: mygo.DevToolsDisabled}
 }

@@ -76,34 +76,64 @@ func (f *fakeConvergentSyncService) RestoreLastVerified(context.Context) (appsyn
 }
 
 // scrollSettingsTo wheels the Settings content viewport until text is laid out
-// inside it. It uses the real wheel path and a hard step bound; no sleeps.
-func scrollSettingsTo(t *testing.T, tester *ui.Tester, text string, w, h int) ui.Rect {
+// fully inside it. It uses the real viewport bounds bound by viewWithLayout,
+// the real wheel path, and a hard step bound; no sleeps and no guessed
+// viewport height.
+func scrollSettingsTo(t *testing.T, tester *ui.Tester, text string, w, h int, viewport ui.Rect) ui.Rect {
 	t.Helper()
-	x, y := float32(w)*3/5, float32(h)*3/5
-	// The v2 action bar is pinned below the scrolling report: the report
-	// viewport ends at the bar's top border, one window padding and one
-	// column gap above it.
-	contentHeight := h - int(syncConvergentBarHeight) - 30
+	if viewport.W <= 0 || viewport.H <= 0 {
+		t.Fatalf("the settings content viewport has no size: %+v", viewport)
+	}
+	x, y := viewport.X+viewport.W-30, viewport.Y+viewport.H-12
 	for step := 0; step < 240; step++ {
 		if rect, ok := tester.Find(text); ok &&
-			((insideSettingsContent(rect, w, contentHeight) && rect.H >= 10) ||
-				insidePinnedConvergentBar(rect, w, h)) {
+			((insideContentViewport(rect, viewport) && rect.H >= 10) ||
+				insidePinnedConvergentBar(rect, viewport, w, h)) {
 			return rect
 		}
 		tester.Scroll(x, y, 0, 40)
 	}
 	rect, ok := tester.Find(text)
-	t.Fatalf("%q was not reachable inside %dx%d settings content: rect=%+v found=%v texts=%q",
-		text, w, h, rect, ok, tester.Texts())
+	t.Fatalf("%q was not reachable inside %dx%d settings content viewport %+v: rect=%+v found=%v texts=%q",
+		text, w, h, viewport, rect, ok, tester.Texts())
+	return ui.Rect{}
+}
+
+// insideContentViewport reports whether r is wholly laid out inside the real
+// scrolling content viewport, with sub-pixel tolerance for fractional layout.
+func insideContentViewport(r ui.Rect, viewport ui.Rect) bool {
+	return r.W > 0 && r.H > 0 &&
+		r.X >= viewport.X-0.5 && r.Y >= viewport.Y-0.5 &&
+		r.X+r.W <= viewport.X+viewport.W+0.5 &&
+		r.Y+r.H <= viewport.Y+viewport.H+0.5
+}
+
+// scrollSettingsUp wheels the content toward its start until text is fully
+// inside the viewport. Painted-pixel checks need the node inside the clip: a
+// node left above the viewport is not painted at its laid-out coordinates.
+func scrollSettingsUp(t *testing.T, tester *ui.Tester, text string, viewport ui.Rect) ui.Rect {
+	t.Helper()
+	x, y := viewport.X+viewport.W-30, viewport.Y+12
+	for step := 0; step < 240; step++ {
+		if rect, ok := tester.Find(text); ok && insideContentViewport(rect, viewport) {
+			return rect
+		}
+		tester.Scroll(x, y, 0, -40)
+	}
+	rect, ok := tester.Find(text)
+	t.Fatalf("%q was not reachable above the current scroll position inside %+v: rect=%+v found=%v texts=%q",
+		text, viewport, rect, ok, tester.Texts())
 	return ui.Rect{}
 }
 
 // insidePinnedConvergentBar reports whether r is a control laid out in the
-// bottom action bar rather than in the scrolling report.
-func insidePinnedConvergentBar(r ui.Rect, w, h int) bool {
+// bottom action bar rather than in the scrolling report. The left edge is the
+// real content column's, so a wider localized sidebar does not move the bar's
+// controls into a guessed band.
+func insidePinnedConvergentBar(r ui.Rect, viewport ui.Rect, w, h int) bool {
 	return r.W > 0 && r.H > 0 &&
-		r.X >= 190 && r.X+r.W <= float32(w)+0.5 &&
-		r.Y >= float32(h)-syncConvergentBarHeight-8 && r.Y+r.H <= float32(h)+0.5
+		r.X >= viewport.X-0.5 && r.X+r.W <= float32(w)+0.5 &&
+		r.Y >= float32(h)-syncConvergentBarHeight-8-0.5 && r.Y+r.H <= float32(h)+0.5
 }
 
 // TestSyncConvergentEnablePauseResume drives the v2 control at the smallest
@@ -117,9 +147,16 @@ func TestSyncConvergentEnablePauseResume(t *testing.T) {
 		TotalRounds: appsync.ConvergentVerifyRounds,
 	}
 	state := NewSyncState(service)
-	tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), 720, 480)
+	var layout viewLayout
+	var context *ui.Context
+	view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+	tester := ui.NewTester(func(c *ui.Context) {
+		context = c
+		view(c)
+	}, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
+	viewport := layout.Content.Bounds(context)
 
 	for _, want := range []string{
 		m.SettingsSyncConvergentTitle(),
@@ -128,7 +165,7 @@ func TestSyncConvergentEnablePauseResume(t *testing.T) {
 		m.SettingsSyncConvergentEnableHint(),
 		m.SettingsSyncConvergentEnable(),
 	} {
-		scrollSettingsTo(t, tester, want, 720, 480)
+		scrollSettingsTo(t, tester, want, 720, 480, viewport)
 	}
 
 	if err := tester.Click(m.SettingsSyncConvergentEnable()); err != nil {
@@ -148,7 +185,7 @@ func TestSyncConvergentEnablePauseResume(t *testing.T) {
 		m.SettingsSyncConvergentState(m.SettingsSyncConvergentPhaseConverged()),
 		m.SettingsSyncConvergentPause(),
 	} {
-		scrollSettingsTo(t, tester, want, 720, 480)
+		scrollSettingsTo(t, tester, want, 720, 480, viewport)
 	}
 	if err := tester.Click(m.SettingsSyncConvergentPause()); err != nil {
 		t.Fatal(err)
@@ -160,7 +197,7 @@ func TestSyncConvergentEnablePauseResume(t *testing.T) {
 		m.SettingsSyncConvergentPausedHint(),
 		m.SettingsSyncConvergentResume(),
 	} {
-		scrollSettingsTo(t, tester, want, 720, 480)
+		scrollSettingsTo(t, tester, want, 720, 480, viewport)
 	}
 	if err := tester.Click(m.SettingsSyncConvergentResume()); err != nil {
 		t.Fatal(err)
@@ -192,9 +229,16 @@ func TestSyncConvergentVerificationRoundsAreSurfaced(t *testing.T) {
 				service.snapshot.Convergent.EntityCount = 12
 				service.snapshot.Convergent.ConflictCount = 1
 				state := NewSyncState(service)
-				tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), w, h)
+				var layout viewLayout
+				var context *ui.Context
+				view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+				tester := ui.NewTester(func(c *ui.Context) {
+					context = c
+					view(c)
+				}, w, h)
 				tester.SetLocale(locale)
 				tester.Frame()
+				viewport := layout.Content.Bounds(context)
 
 				wants := []string{
 					m.SettingsSyncConvergentTitle(),
@@ -209,7 +253,7 @@ func TestSyncConvergentVerificationRoundsAreSurfaced(t *testing.T) {
 					m.SettingsSyncConvergentPause(),
 				}
 				for _, want := range wants {
-					scrollSettingsTo(t, tester, want, w, h)
+					scrollSettingsTo(t, tester, want, w, h, viewport)
 				}
 				if locale == "zh-CN" {
 					en := locales.In("en")
@@ -251,14 +295,21 @@ func TestSyncConvergentMigrationRefusalIsFailClosed(t *testing.T) {
 					},
 				}
 				state := NewSyncState(service)
-				tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), w, h)
+				var layout viewLayout
+				var context *ui.Context
+				view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+				tester := ui.NewTester(func(c *ui.Context) {
+					context = c
+					view(c)
+				}, w, h)
 				tester.SetLocale(locale)
 				tester.Frame()
+				viewport := layout.Content.Bounds(context)
 
 				if _, ok := tester.Find(m.SettingsSyncConvergentMigrationBlocked()); !ok {
 					// The refusal is below the fold at 720x480; wheel to it.
 					scrollSettingsTo(t, tester, m.SettingsSyncConvergentState(
-						m.SettingsSyncConvergentPhaseBlocked()), w, h)
+						m.SettingsSyncConvergentPhaseBlocked()), w, h, viewport)
 				}
 				for _, want := range []string{
 					m.SettingsSyncConvergentState(m.SettingsSyncConvergentPhaseBlocked()),
@@ -266,24 +317,29 @@ func TestSyncConvergentMigrationRefusalIsFailClosed(t *testing.T) {
 					m.SettingsSyncConvergentMigrationSummary("3", "0", "5"),
 					m.SettingsSyncConvergentReasonNewer(),
 				} {
-					scrollSettingsTo(t, tester, want, w, h)
+					scrollSettingsTo(t, tester, want, w, h, viewport)
 				}
-				refusal, ok := tester.Find(m.SettingsSyncConvergentMigrationBlocked())
-				if !ok {
-					t.Fatalf("the refusal text is not laid out: %q", tester.Texts())
+				// The reason is the last content row, so the loop above leaves
+				// it fully visible above the pinned bars. A small 11 DIP line
+				// may have no exact token-colored pixel on some rasterizers,
+				// so identify the ink actually painted against references of
+				// the same line in the wanted and the rejected color.
+				reasonText := m.SettingsSyncConvergentReasonNewer()
+				reason := scrollSettingsTo(t, tester, reasonText, w, h, viewport)
+				if ink := testerRectInk(t, tester, reason, reasonText, 11, false, wantDanger, rawDanger); ink != wantDanger {
+					t.Errorf("the refusal reason %+v is painted %v, want syncDangerTextColor(%v)", reason, ink, wantDanger)
 				}
-				if !testerRectHasColor(tester, refusal, wantDanger) {
-					t.Errorf("the refusal does not use syncDangerTextColor(%v)", wantDanger)
-				}
-				if testerRectHasColor(tester, refusal, rawDanger) {
-					t.Errorf("the refusal still uses the raw theme danger color %v", rawDanger)
-				}
-				reason, ok := tester.Find(m.SettingsSyncConvergentReasonNewer())
-				if !ok {
-					t.Fatalf("the refusal reason is not laid out: %q", tester.Texts())
-				}
-				if !testerRectHasColor(tester, reason, wantDanger) {
-					t.Errorf("the refusal reason %+v does not use syncDangerTextColor(%v)", reason, wantDanger)
+
+				// The refusal title is above the reason, so after scrolling to
+				// the last row wheel back up and sample it while it is painted
+				// inside the viewport rather than clipped by its top edge. The
+				// title is bold 12 DIP text, so its reference render uses the
+				// same weight: a rasterizer that paints no exact token-colored
+				// pixel must still be classified, not reported as wrong.
+				titleText := m.SettingsSyncConvergentMigrationBlocked()
+				refusal := scrollSettingsUp(t, tester, titleText, viewport)
+				if ink := testerRectInk(t, tester, refusal, titleText, 12, true, wantDanger, rawDanger); ink != wantDanger {
+					t.Errorf("the refusal title %+v is painted %v, want syncDangerTextColor(%v)", refusal, ink, wantDanger)
 				}
 
 				// The pinned text color clears 4.5:1 on the light surface.
@@ -327,9 +383,16 @@ func TestSyncConvergentDivergenceOffersOnlySafeActions(t *testing.T) {
 					Actions:      []string{"inspect", "restore", "resync"},
 				}
 				state := NewSyncState(service)
-				tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), w, h)
+				var layout viewLayout
+				var context *ui.Context
+				view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+				tester := ui.NewTester(func(c *ui.Context) {
+					context = c
+					view(c)
+				}, w, h)
 				tester.SetLocale(locale)
 				tester.Frame()
+				viewport := layout.Content.Bounds(context)
 
 				wantAddress := m.SettingsSyncConvergentDivergenceAddress(m.SearchSectionHost(), "host-1")
 				for _, want := range []string{
@@ -346,7 +409,7 @@ func TestSyncConvergentDivergenceOffersOnlySafeActions(t *testing.T) {
 					m.SettingsSyncConvergentActionsHint(),
 					m.SettingsSyncConvergentRestoreHint(),
 				} {
-					scrollSettingsTo(t, tester, want, w, h)
+					scrollSettingsTo(t, tester, want, w, h, viewport)
 				}
 				// The payload family key is a protocol identifier and must be
 				// localized, never printed raw beside the entity id.
@@ -366,7 +429,7 @@ func TestSyncConvergentDivergenceOffersOnlySafeActions(t *testing.T) {
 				}
 				tester.Frame()
 				detail := m.SettingsSyncConvergentInspectDetails("aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb")
-				scrollSettingsTo(t, tester, detail, w, h)
+				scrollSettingsTo(t, tester, detail, w, h, viewport)
 				if !tester.HasText(m.SettingsSyncConvergentVectorDetail("2", "2")) {
 					t.Fatalf("the vector detail is missing: %q", tester.Texts())
 				}
@@ -376,7 +439,7 @@ func TestSyncConvergentDivergenceOffersOnlySafeActions(t *testing.T) {
 
 				// Re-sync runs the normal manual sync path and leaves the report
 				// in place, so the user can still choose a safe restore.
-				scrollSettingsTo(t, tester, m.SettingsSyncConvergentResync(), w, h)
+				scrollSettingsTo(t, tester, m.SettingsSyncConvergentResync(), w, h, viewport)
 				if err := tester.Click(m.SettingsSyncConvergentResync()); err != nil {
 					t.Fatal(err)
 				}
@@ -391,7 +454,7 @@ func TestSyncConvergentDivergenceOffersOnlySafeActions(t *testing.T) {
 				// Restore is local-only. It applies the last verified copy and
 				// deliberately clears the divergence report.
 				tester.Frame()
-				scrollSettingsTo(t, tester, m.SettingsSyncConvergentRestore(), w, h)
+				scrollSettingsTo(t, tester, m.SettingsSyncConvergentRestore(), w, h, viewport)
 				if err := tester.Click(m.SettingsSyncConvergentRestore()); err != nil {
 					t.Fatal(err)
 				}
@@ -422,9 +485,16 @@ func TestSyncConvergentActionsStayPinnedAboveTheScroll(t *testing.T) {
 					Kind: "equal-vector-different-state",
 				}
 				state := NewSyncState(service)
-				tester := ui.NewTester(viewAt(AreaSync, Config{Sync: state}), w, h)
+				var layout viewLayout
+				var context *ui.Context
+				view := viewAtWithLayout(AreaSync, Config{Sync: state}, &layout)
+				tester := ui.NewTester(func(c *ui.Context) {
+					context = c
+					view(c)
+				}, w, h)
 				tester.SetLocale(locale)
 				tester.Frame()
+				viewport := layout.Content.Bounds(context)
 
 				labels := []string{
 					m.SettingsSyncConvergentInspect(),
@@ -437,13 +507,18 @@ func TestSyncConvergentActionsStayPinnedAboveTheScroll(t *testing.T) {
 					if !ok {
 						t.Fatalf("%q is not laid out: %q", label, tester.Texts())
 					}
-					if !insidePinnedConvergentBar(rect, w, h) || rect.H < 18 {
+					if !insidePinnedConvergentBar(rect, viewport, w, h) ||
+						rect.H+0.5 < measuredSettingsTextHeight(t, label, ui.LightTheme().FontSize) {
 						t.Fatalf("%q is not fully inside the pinned bar: %+v", label, rect)
+					}
+					if insideContentViewport(rect, viewport) {
+						t.Fatalf("%q is laid out in the scrolling content viewport %+v rather than the pinned bar: %+v",
+							label, viewport, rect)
 					}
 					before[label] = rect
 				}
 				for step := 0; step < 8; step++ {
-					tester.Scroll(float32(w)*3/5, float32(h)/3, 0, 40)
+					tester.Scroll(viewport.X+viewport.W-30, viewport.Y+viewport.H-12, 0, 40)
 				}
 				for _, label := range labels {
 					after, ok := tester.Find(label)

@@ -317,6 +317,13 @@ func payloadWithHost(label string, syncedAt int64) Payload {
 	}
 }
 
+// testKDFIterations keeps the real seal/open path affordable. Under -race the
+// production 600000 PBKDF2 iterations make the suite's many envelope round
+// trips outlast the 10-minute package timeout; the envelope records this
+// value and DecryptPayload honors it, so sealing and opening still run their
+// production code.
+const testKDFIterations = 1000
+
 func testService(t *testing.T) (*Service, *fakeRemote, *fakeVault, *memoryConfigs, *memoryTokens, *fakeWaiter) {
 	t.Helper()
 	return testServiceWith(t)
@@ -334,6 +341,7 @@ func testServiceWith(t *testing.T, opts ...Option) (*Service, *fakeRemote, *fake
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
 		WithDevice("device-1", "Test Device", "1.0"),
 		WithDebounce(10 * time.Millisecond),
+		WithKDFIterations(testKDFIterations),
 	}
 	options = append(options, opts...)
 	service := NewService(remote, vault, configs, tokens, options...)
@@ -947,6 +955,7 @@ func encryptForTest(t *testing.T, payload Payload, password string, updatedAt in
 	t.Helper()
 	envelope, err := domainsync.EncryptPayload(payload, password, domainsync.EncryptOptions{
 		Version: 1, UpdatedAt: updatedAt, DeviceID: "other", DeviceName: "Other", AppVersion: "1.0",
+		KDFIterations: testKDFIterations,
 	})
 	if err != nil {
 		t.Fatal(err)
