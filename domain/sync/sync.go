@@ -96,6 +96,11 @@ type EncryptOptions struct {
 	Now        func() time.Time
 	Salt       []byte
 	IV         []byte
+	// KDFIterations overrides the PBKDF2 work factor written into the
+	// envelope. Zero keeps the package's production value; callers that pay
+	// the cost repeatedly in tests may lower it and still exercise the real
+	// sealing and opening paths, which honor the value in the metadata.
+	KDFIterations int
 	// SyncSchemaVersion is written only when non-zero.
 	SyncSchemaVersion int
 }
@@ -145,7 +150,11 @@ func EncryptBytes(plaintext []byte, password string, opts EncryptOptions) (File,
 		return File{}, fmt.Errorf("%w: iv is %d bytes, want %d", ErrCorrupt, len(iv), IVBytes)
 	}
 
-	key, err := DeriveKey(password, salt, KDFIterations)
+	iterations := opts.KDFIterations
+	if iterations <= 0 {
+		iterations = KDFIterations
+	}
+	key, err := DeriveKey(password, salt, iterations)
 	if err != nil {
 		return File{}, err
 	}
@@ -177,7 +186,7 @@ func EncryptBytes(plaintext []byte, password string, opts EncryptOptions) (File,
 		Salt:          base64.StdEncoding.EncodeToString(salt),
 		Algorithm:     AlgorithmAESGCM,
 		KDF:           KDFPBKDF2,
-		KDFIterations: KDFIterations,
+		KDFIterations: iterations,
 	}
 	if opts.SyncSchemaVersion != 0 {
 		meta.SyncSchemaVersion = opts.SyncSchemaVersion

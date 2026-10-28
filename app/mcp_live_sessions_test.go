@@ -20,7 +20,7 @@ import (
 
 func TestMCPLiveSessionsSharesLiveSessionsByDefault(t *testing.T) {
 	userData := t.TempDir()
-	sessions := appsession.NewService(writeTestFactory{ssh: newWriteTestTransport()})
+	sessions := appsession.NewService(writeTestFactory{newSSH: newWriteTestTransport})
 	t.Cleanup(sessions.CloseAll)
 	session, err := sessions.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindSSH, Label: "shared", HostID: "host-1",
@@ -80,7 +80,7 @@ func TestMCPLiveSessionsSharesLiveSessionsByDefault(t *testing.T) {
 
 func TestMCPLiveSessionsSwitchPersistsAndSurvivesAReload(t *testing.T) {
 	userData := t.TempDir()
-	sessions := appsession.NewService(writeTestFactory{ssh: newWriteTestTransport()})
+	sessions := appsession.NewService(writeTestFactory{newSSH: newWriteTestTransport})
 	t.Cleanup(sessions.CloseAll)
 	if _, err := sessions.OpenLocal(context.Background()); err != nil {
 		t.Fatalf("open the local shell: %v", err)
@@ -143,7 +143,7 @@ func TestMCPLiveSessionsDefaultsOnForMissingOrMalformedFiles(t *testing.T) {
 // enforced by the policy path, not only rendered in Settings.
 func TestMCPLiveSessionSwitchDeniesScopeThroughTheHandler(t *testing.T) {
 	userData := t.TempDir()
-	sessions := appsession.NewService(writeTestFactory{ssh: newWriteTestTransport()})
+	sessions := appsession.NewService(writeTestFactory{newSSH: newWriteTestTransport})
 	t.Cleanup(sessions.CloseAll)
 	session, err := sessions.OpenLocal(context.Background())
 	if err != nil {

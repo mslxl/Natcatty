@@ -120,6 +120,7 @@ func browserService(t *testing.T, remote *browserRemote, tokens *memoryTokens, c
 	t.Helper()
 	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
 	service := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithProvider(ProviderGoogleDrive),
 		WithDevice("device-1", "Test Device", "1.0"),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
@@ -314,6 +315,7 @@ func TestStableAccountIDKeepsTheAnchorAcrossALoginRename(t *testing.T) {
 	}}
 	tokens := &memoryTokens{set: true, token: domainsync.Token{AccessToken: "first-account", Provider: ProviderGitHub}}
 	service := NewService(remote, &fakeVault{}, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithProvider(ProviderGitHub),
 		WithDevice("device-1", "Test Device", "1.0"),
 		WithBrowserOpener(func(string) error { return nil }))
@@ -397,6 +399,7 @@ func TestRefreshIsSingleFlight(t *testing.T) {
 func TestWithProviderDoesNotLeaveThePrimaryRemoteUnderGitHub(t *testing.T) {
 	google := newBrowserRemote()
 	service := NewService(google, &fakeVault{}, &memoryConfigs{}, &memoryTokens{},
+		WithKDFIterations(testKDFIterations),
 		WithProvider(ProviderGoogleDrive))
 	if _, ok := service.remotes[ProviderGitHub]; ok {
 		t.Fatalf("GitHub still points at the primary remote: %v", service.remotes)
@@ -412,6 +415,7 @@ func TestSwitchingBackToGitHubUsesTheRegisteredGitHubRemote(t *testing.T) {
 	configs := &memoryConfigs{}
 	tokens := &memoryTokens{}
 	service := NewService(google, &fakeVault{}, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithRemote(ProviderGitHub, github),
 		WithProvider(ProviderGoogleDrive),
 		WithDevice("d", "n", "v"))
@@ -450,6 +454,7 @@ func TestSetProviderResetsTheConnectionAndAnchor(t *testing.T) {
 	}}
 	tokens := &memoryTokens{set: true, token: domainsync.Token{AccessToken: "github-token"}}
 	service := NewService(github, &fakeVault{}, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithRemote(ProviderGoogleDrive, google),
 		WithDevice("d", "n", "v"))
 	if err := service.Load(context.Background()); err != nil {
@@ -479,6 +484,7 @@ func TestAProviderTokenNeverLeaksToAnotherProvider(t *testing.T) {
 	}}
 	tokens := &memoryTokens{set: true, token: domainsync.Token{AccessToken: "github-token", Provider: ProviderGitHub}}
 	service := NewService(newFakeRemote(), &fakeVault{}, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithRemote(ProviderGoogleDrive, google))
 	if err := service.Load(context.Background()); err != nil {
 		t.Fatal(err)

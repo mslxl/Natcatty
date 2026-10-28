@@ -15,6 +15,7 @@ import (
 func oneDriveService(t *testing.T, remote *browserRemote, tokens *memoryTokens, configs *memoryConfigs) *Service {
 	t.Helper()
 	service := NewService(remote, &fakeVault{payload: payloadWithHost("local", 1000)}, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithProvider(ProviderOneDrive),
 		WithDevice("device-1", "Test Device", "1.0"),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),

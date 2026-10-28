@@ -339,6 +339,14 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 	}
 }
 
+// isLoopbackGatewayURL reports whether raw names a loopback address a
+// gateway may bind. The gateway prefers 127.0.0.2 and falls back to
+// 127.0.0.1 where the platform assigns only the latter, so tests ask the
+// application layer for the shared shape instead of assuming either address.
+func isLoopbackGatewayURL(raw string) bool {
+	return appbrowser.IsGatewayURL(raw)
+}
+
 func assertVisible(t *testing.T, tester *ui.Tester, text string, width, height int) {
 	t.Helper()
 	rect, ok := tester.Find(text)
@@ -392,11 +400,8 @@ func TestPanelNavigationUsesHTTPForLocalAndHTTPSForPublicHosts(t *testing.T) {
 		t.Fatalf("local tab URL = %q, want HTTP", tab.URL)
 	}
 	loads := h.pages.at(0).loadsCopy()
-	if len(loads) != 1 || !strings.HasPrefix(loads[0], "http://127.0.0.2:") {
+	if len(loads) != 1 || !h.core.IsGatewayURL(loads[0]) {
 		t.Fatalf("local page loads = %q, want a loopback gateway URL", loads)
-	}
-	if !h.core.IsGatewayURL(loads[0]) {
-		t.Fatalf("page load %q is not this panel's gateway URL", loads[0])
 	}
 
 	h.navigate(t, "example.com/docs")
@@ -407,7 +412,7 @@ func TestPanelNavigationUsesHTTPForLocalAndHTTPSForPublicHosts(t *testing.T) {
 		t.Fatalf("public tab URL = %q, want HTTPS", tab.URL)
 	}
 	loads = h.pages.at(0).loadsCopy()
-	if !strings.HasPrefix(loads[1], "http://127.0.0.2:") || !h.core.IsGatewayURL(loads[1]) {
+	if !isLoopbackGatewayURL(loads[1]) || !h.core.IsGatewayURL(loads[1]) {
 		t.Fatalf("public page load = %q, want a loopback gateway URL", loads[1])
 	}
 	if loads[1] == loads[0] {
@@ -584,7 +589,7 @@ func TestPanelDisconnectIsVisibleAndRetryOpensANewTunnelAndPage(t *testing.T) {
 		t.Fatalf("connector calls = %d, want a fresh tunnel on retry", h.connector.callCount())
 	}
 	loads := h.pages.at(1).loadsCopy()
-	if len(loads) != 1 || !strings.HasPrefix(loads[0], "http://127.0.0.2:") {
+	if len(loads) != 1 || !isLoopbackGatewayURL(loads[0]) {
 		t.Fatalf("the retried page did not load through the new gateway: %q", loads)
 	}
 	if state := h.state(); len(state.Tabs) != 1 || state.Tabs[0].Title != "Console" {
@@ -636,7 +641,7 @@ func TestPanelSendsPageInitiatedNavigationBackThroughTheTunnel(t *testing.T) {
 		t.Fatalf("a gateway navigation was blocked: replacement %q", replacement)
 	}
 	replacement, handled := page.guard("https://other.example/page")
-	if !handled || !strings.HasPrefix(replacement, "http://127.0.0.2:") {
+	if !handled || !isLoopbackGatewayURL(replacement) {
 		t.Fatalf("page-initiated navigation = (%q, %t), want a gateway URL", replacement, handled)
 	}
 	if tab := h.activeTab(t); tab.URL != "https://other.example/page" {

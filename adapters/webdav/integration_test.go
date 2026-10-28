@@ -100,11 +100,17 @@ func integrationPayload(label string, syncedAt int64) appsync.Payload {
 	}
 }
 
+// integrationKDFIterations keeps the real sealing path affordable under the
+// race detector. The envelope records the work factor and decryption honors
+// it, so the adapter still round-trips production payloads.
+const integrationKDFIterations = 1000
+
 func newIntegrationService(t *testing.T, client *webdav.Client, vault appsync.Vault, configs appsync.ConfigStore, tokens appsync.TokenStore) *appsync.Service {
 	t.Helper()
 	service := appsync.NewService(client, vault, configs, tokens,
 		appsync.WithRemote(appsync.ProviderWebDAV, client),
 		appsync.WithClock(func() time.Time { return time.UnixMilli(5000) }),
+		appsync.WithKDFIterations(integrationKDFIterations),
 	)
 	if err := service.Load(context.Background()); err != nil {
 		t.Fatalf("load: %v", err)
@@ -119,6 +125,9 @@ func TestWebDAVEndToEndThroughTheRealAdapter(t *testing.T) {
 	}
 	defer server.Close()
 	client := webdav.New(webdav.Options{})
+	// One bounded budget for the whole scenario, as before the KDF seam. The
+	// per-operation work is now cheap enough under -race without extending
+	// the test's total deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 

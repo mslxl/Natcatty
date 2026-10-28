@@ -166,10 +166,12 @@ application and separate for each host profile. Tabs for one host may share
 website cookies; different hosts must not" (`docs/designs/host-routed-browser.md`).
 MyGo v0.5.5 exposes one shared cookie store and no per-webview session
 partition, so the native browser cannot enforce that boundary. Every Host's
-gateway uses the same loopback host, 127.0.0.2, and cookies are keyed by host
-and path rather than by port or remote origin. Browser panels opened on
-different Hosts can therefore share or overwrite cookies, and a favicon or
-download fetch can carry a cookie another Host's page set at the same path.
+gateway uses the same loopback host, 127.0.0.2 (or the documented 127.0.0.1
+fallback on macOS, which assigns only 127.0.0.1), and cookies are
+keyed by host and path rather than by port or remote origin. Browser panels
+opened on different Hosts can therefore share or overwrite cookies, and a
+favicon or download fetch can carry a cookie another Host's page set at the
+same path.
 Cookies remain local; the app edge reads the shared store only to attach that
 Cookie header to favicon and download requests, and web content has no product
 bridge for reading them.

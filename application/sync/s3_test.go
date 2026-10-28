@@ -153,6 +153,7 @@ func newS3TestService(t *testing.T, connector *fakeS3, config Config, tokens *me
 	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
 	configs := &memoryConfigs{config: config}
 	service := NewService(connector, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithRemote(ProviderS3, connector),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
 		WithDebounce(10*time.Millisecond),

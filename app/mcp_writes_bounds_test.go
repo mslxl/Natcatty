@@ -106,6 +106,20 @@ func shellCommandFor(shell, before, action string) string {
 	}
 }
 
+// shellEcho prints one literal word in the fixture's real shell. The local
+// shell differs per platform (PowerShell, cmd, fish, POSIX sh), so the test
+// builds its command for the shell that is actually running.
+func shellEcho(shell, text string) string {
+	switch shell {
+	case "powershell":
+		return "Write-Output " + text
+	case "cmd":
+		return "echo " + text
+	default:
+		return fmt.Sprintf("printf '%%s\\n' %s", text)
+	}
+}
+
 func TestMCPWriteCommandTimeoutReturnsPartialOutputAndReleasesTheSession(t *testing.T) {
 	fixture := newMCPWriteFixture(t)
 	shell, _ := fixture.sessions.ShellKind(fixture.localSession)
@@ -139,7 +153,7 @@ func TestMCPWriteCommandTimeoutReturnsPartialOutputAndReleasesTheSession(t *test
 	// The deadline released the Session: the next command completes normally.
 	fixture.executor.toolTimeout = 30 * time.Second
 	after := callMCPTool(t, fixture, "terminal_execute", map[string]any{
-		"sessionId": string(fixture.localSession), "command": "Write-Output after-timeout",
+		"sessionId": string(fixture.localSession), "command": shellEcho(shell, "after-timeout"),
 	})
 	requireMCPWriteOK(t, "terminal_execute", after)
 	if stdout, _ := after["stdout"].(string); !strings.Contains(stdout, "after-timeout") {

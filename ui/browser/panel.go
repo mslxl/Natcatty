@@ -91,10 +91,14 @@ type Panel struct {
 	closeRequest func()
 
 	address      string
-	addressInput ui.Element
-	addressTab   string
-	addressURL   string
-	addressDirty bool
+	addressInput ui.Handle
+	// selectAddress asks the next build to select the whole address after
+	// Ctrl+L. A Handle is the input's cross-frame identity; the element it
+	// stands for belongs to one build pass and must not be stored.
+	selectAddress bool
+	addressTab    string
+	addressURL    string
+	addressDirty  bool
 
 	openTabs map[string]Page
 
@@ -207,10 +211,11 @@ func (p *Panel) View(c *ui.Context) ui.Element {
 	// has focus; clicking the page moves keyboard focus into the page.
 	c.OnShortcut(ui.Cmd, ui.KeyL, func() {
 		p.addressDirty = false
-		p.addressInput.Focus()
+		p.addressInput.Focus(c)
 		// Ctrl+L selects the whole address, so typing replaces it as in a
-		// browser rather than appending to the previous page.
-		p.addressInput.SetTextSelection(0, utf8.RuneCountInString(p.address))
+		// browser rather than appending to the previous page. The input
+		// applies the selection on its next build.
+		p.selectAddress = true
 	})
 	state := p.core.State()
 	m := locales.In(c.Locale())
@@ -327,14 +332,18 @@ func (p *Panel) toolbar(c *ui.Context, state appbrowser.State, active appbrowser
 			p.togglePane(paneDownloads)
 		}
 		input := ui.TextInput(c, &p.address).Grow(1).MinWidth(0).
-			Label(m.BrowserAddress())
-		p.addressInput = input
+			Label(m.BrowserAddress()).
+			Bind(&p.addressInput)
 		// Opening the browser puts the keyboard in the address bar: the panel
 		// is replacing a focused terminal, and its own shortcuts live in this
 		// surface's focus scope.
 		if p.focusAddress && connected {
 			input.Focus()
 			p.focusAddress = false
+		}
+		if p.selectAddress {
+			input.Focus().SetTextSelection(0, utf8.RuneCountInString(p.address))
+			p.selectAddress = false
 		}
 		if input.Changed() {
 			p.addressDirty = true

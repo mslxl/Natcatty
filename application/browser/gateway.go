@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	domainbrowser "github.com/mslxl/natcatty/domain/browser"
@@ -25,12 +27,133 @@ import (
 // every request through the panel's dedicated tunnel, rewrites the page's
 // absolute same-origin URLs to the listener, and refuses to expose a direct
 // route.
-// GatewayLoopbackHost is the loopback address every origin gateway binds.
-// It is deliberately not 127.0.0.1: MyGo's development builds auto-trust
-// localhost, 127.0.0.1, and ::1 for its typed Go bridge, while 127.0.0.2 is
-// still loopback but outside that trust set. No product API is bound on the
-// gateway; this address is defence in depth around MyGo's origin check.
+// GatewayLoopbackHost is the preferred loopback address every origin gateway
+// binds. It is deliberately not 127.0.0.1: MyGo's development builds
+// auto-trust localhost, 127.0.0.1, and ::1 for its typed Go bridge, while
+// 127.0.0.2 is still loopback but outside that trust set. No product API is
+// bound on the gateway; this address is defence in depth around MyGo's
+// origin check.
+//
+// Not every platform assigns 127.0.0.2 to its loopback interface: macOS
+// assigns only 127.0.0.1, so binding 127.0.0.2 there fails with
+// "can't assign requested address". The gateway falls back to
+// GatewayFallbackLoopbackHost on such a platform, because a browser that
+// cannot open any gateway cannot browse at all. The fallback is inside the
+// development trust set; release builds (mygo build sets MYGO_ENV=production)
+// are not, and the app registers no MyGo bindings, so the bridge can only
+// reach MyGo's own window controls.
 const GatewayLoopbackHost = "127.0.0.2"
+
+// GatewayFallbackLoopbackHost is the last loopback address a gateway tries:
+// the one every supported OS assigns. It is inside the hosts MyGo's
+// development builds auto-trust, so it is used only where the preferred
+// address cannot be bound.
+const GatewayFallbackLoopbackHost = "127.0.0.1"
+
+// gatewayHosts lists the loopback addresses a gateway may bind, preferred
+// first.
+func gatewayHosts() []string {
+	return []string{GatewayLoopbackHost, GatewayFallbackLoopbackHost}
+}
+
+// IsGatewayHost reports whether host is a loopback address a gateway may
+// bind. Callers that see a gateway URL use it instead of assuming the
+// preferred address: macOS only assigns 127.0.0.1, so the gateway there
+// binds the fallback.
+func IsGatewayHost(host string) bool {
+	for _, candidate := range gatewayHosts() {
+		if host == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// IsGatewayURL reports whether raw is an HTTP URL for a gateway address with
+// an explicit port. Callers that need the components still parse the URL;
+// this is the shape check shared by the self-tests and the UI tests, so they
+// cannot drift from the address set.
+func IsGatewayURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.Port() == "" {
+		return false
+	}
+	return IsGatewayHost(parsed.Hostname())
+}
+
+// GatewayHostIsDevTrusted reports whether MyGo development builds auto-trust
+// pages at host for their typed Go bridge. The preferred gateway address is
+// outside that set; the macOS fallback is inside it.
+func GatewayHostIsDevTrusted(host string) bool {
+	switch host {
+	case "localhost", GatewayFallbackLoopbackHost, "::1":
+		return true
+	}
+	return false
+}
+
+// listenGateway opens a loopback listener for one origin gateway. It tries
+// the addresses in gatewayHosts order and reports the first that binds.
+func listenGateway() (net.Listener, error) {
+	return listenGatewayAt(gatewayHosts())
+}
+
+// listenGatewayAt opens a listener on the first host that the OS assigns to a
+// local interface. It keeps the first failure for the error when none binds.
+// Only an unavailable address permits trying the next host (see
+// listenGatewayWith); any other failure is returned immediately.
+func listenGatewayAt(hosts []string) (net.Listener, error) {
+	return listenGatewayWith(hosts, func(host string) (net.Listener, error) {
+		return net.Listen("tcp", net.JoinHostPort(host, "0"))
+	})
+}
+
+// listenGatewayWith is listenGatewayAt with the bind operation injected so a
+// test can prove which errors permit the next address. Only an address the OS
+// does not assign, or an unsupported address family, may fall through: a
+// permission or resource failure must surface rather than be masked by the
+// fallback, which would silently drop the preferred address's defence in
+// depth.
+func listenGatewayWith(hosts []string, bind func(host string) (net.Listener, error)) (net.Listener, error) {
+	var firstErr error
+	for _, host := range hosts {
+		listener, err := bind(host)
+		if err == nil {
+			return listener, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !gatewayAddressUnavailable(err) {
+			return nil, err
+		}
+	}
+	if firstErr == nil {
+		firstErr = errors.New("no loopback address to bind")
+	}
+	return nil, firstErr
+}
+
+// gatewayAddressUnavailable reports whether err means the OS does not assign
+// the address to a local interface, or does not support its address family.
+// These are the only failures that justify trying the next loopback address.
+func gatewayAddressUnavailable(err error) bool {
+	if errors.Is(err, syscall.EADDRNOTAVAIL) || errors.Is(err, syscall.EAFNOSUPPORT) {
+		return true
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) || runtime.GOOS != "windows" {
+		return false
+	}
+	// Go's Windows syscall package defines EADDRNOTAVAIL as its own
+	// os.Errno sentinel, not the Winsock code net.Listen returns, so compare
+	// the Winsock values directly.
+	const (
+		wsaEAFNOSUPPORT  = syscall.Errno(10047)
+		wsaEADDRNOTAVAIL = syscall.Errno(10049)
+	)
+	return errno == wsaEADDRNOTAVAIL || errno == wsaEAFNOSUPPORT
+}
 
 const (
 	maxRewrittenBody = 16 << 20
@@ -145,7 +268,7 @@ func (g *gateway) ensureOrigin(origin string, parsed *url.URL) (*originProxy, er
 	if existing := g.origins[origin]; existing != nil {
 		return existing, nil
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(GatewayLoopbackHost, "0"))
+	listener, err := listenGateway()
 	if err != nil {
 		return nil, fmt.Errorf("browser: open the loopback gateway: %w", err)
 	}
