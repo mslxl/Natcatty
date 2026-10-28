@@ -41,6 +41,13 @@ const (
 	// commandInterruptSettle bounds the wait even if the interrupted process
 	// keeps producing output.
 	commandInterruptSettle = time.Second
+	// commandReadinessProbeTimeout bounds one no-op readiness wrapper. Probes
+	// and the real command share the caller's overall deadline, so an
+	// unresponsive shell cannot add this window on top of CommandOptions.Timeout.
+	commandReadinessProbeTimeout = 750 * time.Millisecond
+	// commandReadinessProbeAttempts bounds readiness retries so one dropped
+	// line does not consume the caller's whole deadline before the command runs.
+	commandReadinessProbeAttempts = 3
 )
 
 var (
@@ -200,6 +207,21 @@ func (s *Session) Command(ctx context.Context, command string, opts CommandOptio
 
 	feed := s.subscribeRawOutput()
 	defer s.unsubscribeRawOutput(feed)
+	deadline := time.Now().Add(timeout)
+
+	// A remote shell that is still starting, and any shell just aborted by
+	// Ctrl+C, may discard the wrapper line. Probe with a harmless no-op until
+	// the shell answers before typing the command the caller asked for. The
+	// probes run against the same overall deadline as the command.
+	s.ensureShellReady(ctx, feed, deadline)
+
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		s.commandReady.Store(false)
+		s.interruptCommand()
+		s.settleAfterInterrupt(feed)
+		return CommandResult{}, ErrCommandTimeout
+	}
 
 	marker := newCommandMarker()
 	wrapper := buildCommandWrapper(command, s.ShellKind(), marker)
@@ -210,25 +232,30 @@ func (s *Session) Command(ctx context.Context, command string, opts CommandOptio
 	collector := &commandCollector{
 		marker: marker, limit: limit, onStart: opts.OnStart, onProgress: opts.OnProgress,
 	}
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			s.commandReady.Store(false)
 			s.interruptCommand()
 			s.settleAfterInterrupt(feed)
 			return collector.result(), ErrCommandCancelled
 		case <-s.done:
+			s.commandReady.Store(false)
 			return collector.result(), ErrCommandClosed
 		case <-feed.done:
+			s.commandReady.Store(false)
 			return collector.result(), ErrCommandClosed
 		case <-timer.C:
+			s.commandReady.Store(false)
 			s.interruptCommand()
 			s.settleAfterInterrupt(feed)
 			return collector.result(), ErrCommandTimeout
 		case chunk := <-feed.chunks:
 			exitCode, finished := collector.feed(chunk)
 			if finished {
+				s.commandReady.Store(true)
 				result := collector.result()
 				result.ExitCode = exitCode
 				result.HasExitCode = true
@@ -300,6 +327,82 @@ func (s *Session) settleAfterInterrupt(feed *rawOutputFeed) {
 			quiet.Reset(commandInterruptQuiet)
 		case <-quiet.C:
 			return
+		}
+	}
+}
+
+// ensureShellReady types a harmless no-op wrapper until the shell answers it.
+// A remote shell that is still starting (an interactive ForceCommand bash -i,
+// for example) and a line editor that just processed Ctrl+C can both discard
+// the first wrapper; retrying with a no-op makes the caller's real command
+// deterministic instead of letting its whole deadline be consumed by a lost
+// line. Probes share the command's overall deadline; a shell that never
+// answers leaves the caller with ErrCommandTimeout rather than adding the
+// probe window to the documented budget.
+func (s *Session) ensureShellReady(ctx context.Context, feed *rawOutputFeed, deadline time.Time) {
+	if s.commandReady.Load() {
+		return
+	}
+	for attempt := 0; attempt < commandReadinessProbeAttempts; attempt++ {
+		if !time.Now().Before(deadline) {
+			return
+		}
+		if s.probeShell(ctx, feed, deadline) {
+			s.commandReady.Store(true)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.done:
+			return
+		case <-feed.done:
+			return
+		default:
+		}
+		// Do not interrupt between probes: the timeout already sent Ctrl+C,
+		// and an extra one would flush the retried line before the shell is
+		// stable. A probe that was discarded is simply retried.
+	}
+}
+
+// probeShell writes one echo wrapper and waits for its end marker. The probe
+// output is consumed here; it never enters the command result. Its timer is
+// capped by the overall command deadline.
+func (s *Session) probeShell(ctx context.Context, feed *rawOutputFeed, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return false
+	}
+	timerWindow := commandReadinessProbeTimeout
+	if remaining < timerWindow {
+		timerWindow = remaining
+	}
+	marker := newCommandMarker()
+	// ":" is a no-op builtin in POSIX shells, a label in cmd, and a caught
+	// command error in PowerShell; unlike "echo" it never prompts for mandatory
+	// input in an interactive PowerShell host.
+	wrapper := buildCommandWrapper(":", s.ShellKind(), marker)
+	if err := s.writeRaw([]byte(wrapper)); err != nil {
+		return false
+	}
+	collector := &commandCollector{marker: marker, limit: 4096}
+	timer := time.NewTimer(timerWindow)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.done:
+			return false
+		case <-feed.done:
+			return false
+		case <-timer.C:
+			return false
+		case chunk := <-feed.chunks:
+			if _, finished := collector.feed(chunk); finished {
+				return true
+			}
 		}
 	}
 }
@@ -659,8 +762,9 @@ func skipConPTYWrapGap(data []byte, index int) (next int, gap, incomplete bool) 
 // findEndMarker finds the exit line. ConPTY may wrap the marker and the digits
 // across several visual lines, so both the token and the digits are matched
 // with wrap noise between characters. The line must still end after the last
-// digit, which a wrapper echo (whose colon is followed by a shell expression
-// rather than digits) never does.
+// digit — with a line ending or a terminal escape sequence — which a wrapper
+// echo (whose colon is followed by a shell expression rather than digits)
+// never does.
 // findEndMarkerFrom searches data for the exit line, starting at from. resume
 // is where the next call must start when the marker is absent: it is the
 // earliest candidate that the current end of the buffer left undecided, or the
@@ -743,7 +847,12 @@ func findEndMarkerFrom(data []byte, marker string, from int) (start, code int, o
 			markIncomplete(start)
 			continue
 		}
-		if data[position] != '\r' && data[position] != '\n' {
+		// A line ending terminates the exit line. So does a terminal control
+		// sequence: a shell that re-enables bracketed paste or repositions the
+		// prompt may emit escape bytes immediately after the digits and deliver
+		// the newline as part of the prompt redraw, so requiring CR/LF here
+		// would leave a completed command running until its deadline.
+		if data[position] != '\r' && data[position] != '\n' && data[position] != 0x1b {
 			continue
 		}
 		code, err := strconv.Atoi(string(digits))

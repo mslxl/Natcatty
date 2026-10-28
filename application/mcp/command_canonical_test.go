@@ -50,6 +50,42 @@ func TestCommandBlocklistCanonicalBypasses(t *testing.T) {
 		{"cmd quoted command word", `"rm" -rf C:\temp`, ShellKindCmd, "common.rm-recursive-force"},
 		{"cmd caret newline continuation", "r^\nm -rf C:\\temp", ShellKindCmd, "common.rm-recursive-force"},
 
+		// Rework 2: shell expansion classes the first canonicalizer still
+		// missed. Every one of these executed against the independent
+		// acceptance's disposable marker.
+		{"posix brace expanded command word", `{rm,-rf,/tmp/x}`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"posix nested brace expansion", `{r{m,},-rf,/tmp/x}`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"posix brace expansion with a variable path", `D=/tmp/x; {rm,-rf,$D}`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"posix second brace group", `echo {a,b}; {rm,-rf,/tmp/x}`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"posix brace group after a pipeline", `echo {a,b} | {bash,-c,'rm -rf /tmp/x'}`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"printf escape piped to a shell", `printf 'r\155 -rf %s' /tmp/x | sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"printf piped to bash", `printf '%s' 'echo hello' | bash`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to an absolute shell", `echo cm0= | /bin/sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to sudo sh", `printf x | sudo sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to sudo with an option", `printf x | sudo -u root sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to env sh", `printf x | env FOO=1 sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to absolute env sh", `printf x | /usr/bin/env sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"command piped to command sh", `printf x | command sh`, ShellKindPOSIX, "posixNative.pipe-to-shell"},
+		{"find delete", `find /tmp/x -delete`, ShellKindPOSIX, "posix.find-delete"},
+		{"find delete with a predicate", `find /tmp/x -name '*.tmp' -delete`, ShellKindFish, "posix.find-delete"},
+		{"powershell folded command word", `& (''+'Remove'+'-Item') -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell folded command word with double quotes", `& ("Remove"+"-Item") -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell aliased command", `Set-Alias zz Remove-Item; zz -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell new-alias command", `New-Alias -Name zz -Value Remove-Item; zz -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell sal command", `sal zz Remove-Item; zz -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell alias equals command", `alias zz=Remove-Item; zz -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell alias definition only", `Set-Alias zz Remove-Item`, ShellKindPowerShell, "powershell.alias-to-blocked-command"},
+		{"cmd comspec indirection", `%ComSpec% /c del /f /q C:\temp\marker.txt`, ShellKindCmd, "common.force-delete"},
+		{"powershell comspec indirection", `$env:ComSpec /c del /f /q C:\temp\marker.txt`, ShellKindPowerShell, "common.force-delete"},
+		{"cmd nested under powershell", `cmd /c r^m -rf C:\temp`, ShellKindPowerShell, "common.rm-recursive-force"},
+		{"cmd nested under powershell with comspec", `cmd /c %ComSpec% /c del /f /q C:\temp\marker.txt`, ShellKindPowerShell, "common.force-delete"},
+		{"cmd keep-open nested payload", `cmd /k r^m -rf C:\temp`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"cmd undocumented r switch payload", `cmd /r r^m -rf C:\temp`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"cmd glued switch payload", `cmd /c"r^m -rf C:\temp"`, ShellKindPOSIX, "common.rm-recursive-force"},
+		{"cmd glued switch payload under cmd", `cmd /c"r^m -rf C:\temp"`, ShellKindCmd, "common.rm-recursive-force"},
+		{"cmd keep-open caret under cmd", `cmd /k r^m -rf C:\temp`, ShellKindCmd, "common.rm-recursive-force"},
+		{"cmd recursive directory delete", `rd /s /q C:\temp\dir`, ShellKindCmd, "common.force-delete"},
+
 		// Fail closed: a command word that is still dynamic after expansion
 		// cannot be matched against the table, so it is blocked by name.
 		{"unresolved command variable", `$CMD -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
@@ -59,6 +95,9 @@ func TestCommandBlocklistCanonicalBypasses(t *testing.T) {
 		{"unresolved command after a pipe", `echo ok | $CMD -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
 		{"unresolved powershell variable command", `$cmd -Recurse -Force C:\temp`, ShellKindPowerShell, "common.unresolvable-command"},
 		{"unresolved cmd variable command", `%RUN% -rf C:\temp`, ShellKindCmd, "common.unresolvable-command"},
+		{"unresolved cmd keep-open variable", `cmd /k $CMD`, ShellKindPowerShell, "common.unresolvable-command"},
+		{"unresolved cmd r-switch variable", `cmd /r $CMD`, ShellKindPowerShell, "common.unresolvable-command"},
+		{"unresolved cmd glued variable", `cmd /c"$CMD"`, ShellKindPowerShell, "common.unresolvable-command"},
 		{"unmatched backtick in command word", "x`y -rf /tmp/x", ShellKindPOSIX, "common.unresolvable-command"},
 
 		// A wrapper or shell construct executes the word after it, so a
@@ -85,6 +124,16 @@ func TestCommandBlocklistCanonicalBypasses(t *testing.T) {
 		{"unresolved command after timeout", `timeout 30 $CMD -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
 		{"unresolved command after chroot", `chroot /tmp $CMD -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
 		{"unresolved command through su -c", `su -c "$CMD -rf /tmp/x"`, ShellKindPOSIX, "common.unresolvable-command"},
+
+		// Rework 2: neighbours the independent acceptance recorded as typed
+		// blocked before this rework must stay blocked.
+		{"powershell get-command invocation", `& (Get-Command Remove-Item) -Recurse -Force C:\temp`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell folded invoke-expression", `Invoke-Expression ('Remove'+'-Item -Recurse -Force C:\temp')`, ShellKindPowerShell, "powershell.remove-recursive-force"},
+		{"powershell foreach variable invocation", `Get-Command Remove-Item | ForEach-Object { & $_ -Recurse -Force C:\temp }`, ShellKindPowerShell, "common.unresolvable-command"},
+		{"powershell stored command invocation", `$c = Get-Command Remove-Item; & $c -Recurse -Force C:\temp`, ShellKindPowerShell, "common.unresolvable-command"},
+		{"posix parameter expansion command", `${PATH:+rm} -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
+		{"posix default expansion command", `${x:-rm} -rf /tmp/x`, ShellKindPOSIX, "common.unresolvable-command"},
+		{"posix ifs assignment then variable path", `IFS=,; rm$IFS-rf$IFS/tmp/x`, ShellKindPOSIX, "common.rm-recursive-force"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -137,6 +186,30 @@ func TestCommandBlocklistCanonicalizationKeepsArgumentsUsable(t *testing.T) {
 		{"dynamic argument after timeout", `timeout 30 echo $HOME`, ShellKindPOSIX},
 		{"dynamic argument after sudo", `sudo -u root echo $HOME`, ShellKindPOSIX},
 		{"dynamic find argument", `find . -name '$HOME'`, ShellKindPOSIX},
+
+		// Rework 2: the fail-closed rule must not judge ordinary read and
+		// assignment statements in PowerShell as dynamic commands, and the new
+		// expansions must not touch ordinary command lines.
+		{"powershell environment variable expression", `$env:PATH`, ShellKindPowerShell},
+		{"powershell environment variable expression braced", `${env:PATH}`, ShellKindPowerShell},
+		{"powershell variable expression", `$D`, ShellKindPowerShell},
+		{"powershell quoted assignment", `$D = 'C:\Temp\natcatty target'`, ShellKindPowerShell},
+		{"powershell compact assignment", `$D='C:\Temp\natcatty target'`, ShellKindPowerShell},
+		{"powershell variable assignment read", `$D = $env:PATH`, ShellKindPowerShell},
+		{"powershell child item", `Get-ChildItem`, ShellKindPowerShell},
+		{"powershell write variable argument", `Write-Output $D`, ShellKindPowerShell},
+		{"cmd echo path", `cmd /c echo %PATH%`, ShellKindCmd},
+		{"cmd echo path under powershell", `cmd /c echo %PATH%`, ShellKindPowerShell},
+		{"git status", `git status`, ShellKindPOSIX},
+		{"sudo service status", `sudo systemctl status nginx`, ShellKindPOSIX},
+		{"npm test", `npm test`, ShellKindPOSIX},
+		{"find with a name predicate", `find . -name '*.go'`, ShellKindPOSIX},
+		{"brace expansion without a hazard", `ls {a,b}`, ShellKindPOSIX},
+		{"pipe to a non-shell", `find . -name '*.go' | head`, ShellKindPOSIX},
+		{"powershell alias to a safe command", `Set-Alias list Get-ChildItem; list`, ShellKindPowerShell},
+		{"powershell set-alias unrelated", `Set-Alias gci Get-ChildItem`, ShellKindPowerShell},
+		{"cmd delete without force", `del C:\temp\one.txt`, ShellKindCmd},
+		{"cmd erase without force", `erase C:\temp\one.txt`, ShellKindCmd},
 	}
 	for _, test := range allowed {
 		t.Run(test.name, func(t *testing.T) {

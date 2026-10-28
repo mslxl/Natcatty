@@ -206,6 +206,38 @@ func TestCommandToleratesConPTYHardWrappedMarkers(t *testing.T) {
 	}
 }
 
+// TestCommandCompletesWhenTerminalControlsFollowTheEndMarker reproduces the
+// real SSH ForceCommand bash -i capture where readline re-enables bracketed
+// paste and repositions the prompt immediately after the exit code, so the
+// newline is delivered as part of the prompt redraw rather than directly after
+// the digits. The command has finished; waiting for CR/LF would hold it until
+// the deadline.
+func TestCommandCompletesWhenTerminalControlsFollowTheEndMarker(t *testing.T) {
+	session, transport := newShellSession(t)
+	done := startTestCommand(session, context.Background(), "echo hello", CommandOptions{
+		Timeout: 5 * time.Second,
+	})
+	var marker string
+	eventually(t, "the wrapped command to reach the transport", func() bool {
+		marker = markerPattern.FindString(transport.input())
+		return marker != ""
+	})
+	transport.send("\n" + marker + "_S\r\nhello\r\n")
+	transport.send(marker + "_E:7\x1b[?2004h")
+	transport.send("\x1b[32m\x1b[22;1Hmslxl@host ~\r\n$ ")
+
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("Command: %v", got.err)
+	}
+	if got.result.Stdout != "hello" {
+		t.Fatalf("stdout = %q; want hello", got.result.Stdout)
+	}
+	if !got.result.HasExitCode || got.result.ExitCode != 7 {
+		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+	}
+}
+
 // TestCommandCollectorScansTheEndMarkerIncrementally feeds a full rolling
 // window one byte at a time, the shape a terminal uses when it dribbles a
 // megabyte of output. A full rescan of the window per chunk is quadratic and
@@ -317,6 +349,42 @@ func TestCommandTimeoutSendsInterruptAndReturnsPartialOutput(t *testing.T) {
 	eventually(t, "Ctrl+C after the timeout", func() bool {
 		return strings.Contains(transport.input(), "\x03")
 	})
+}
+
+// TestCommandReadinessProbesStayInsideTheOverallTimeout pins the
+// CommandOptions.Timeout contract: probes are part of the command's budget,
+// not a window added before it. With an unresponsive shell the command must
+// time out at the deadline, must not type the real wrapper, and must still
+// release the interrupt path.
+func TestCommandReadinessProbesStayInsideTheOverallTimeout(t *testing.T) {
+	session, transport := newShellSession(t)
+	session.commandReady.Store(false)
+	started := time.Now()
+	done := startTestCommand(session, context.Background(), "echo never-typed", CommandOptions{
+		Timeout: 120 * time.Millisecond,
+	})
+	got := awaitTestCommand(t, done)
+	elapsed := time.Since(started)
+	if !errors.Is(got.err, ErrCommandTimeout) {
+		t.Fatalf("err = %v; want ErrCommandTimeout", got.err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("unresponsive readiness probes took %s; CommandOptions.Timeout is 120ms", elapsed)
+	}
+	input := transport.input()
+	if strings.Contains(input, "echo never-typed") {
+		t.Fatalf("the real wrapper was typed after the command deadline: %q", input)
+	}
+	distinctMarkers := map[string]bool{}
+	for _, marker := range markerPattern.FindAllString(input, -1) {
+		distinctMarkers[marker] = true
+	}
+	if len(distinctMarkers) != 1 {
+		t.Fatalf("readiness wrappers = %d; want one bounded probe", len(distinctMarkers))
+	}
+	if !strings.Contains(input, "\x03") {
+		t.Fatal("the timed-out readiness path did not send Ctrl+C")
+	}
 }
 
 func TestCommandCancellationSendsInterrupt(t *testing.T) {
@@ -439,4 +507,75 @@ func TestCommandIsSerializedOnOneSession(t *testing.T) {
 	}
 	cancel()
 	<-first
+}
+
+// TestCommandProbesAfterAnInterruptAndRetriesADiscardedWrapper reproduces the
+// ticket-58 selftest failure: after a timeout the line editor discards the
+// next wrapper, so the following command used to wait for its whole deadline.
+// The readiness probe is discarded once here; the retry and the real command
+// must still complete.
+func TestCommandProbesAfterAnInterruptAndRetriesADiscardedWrapper(t *testing.T) {
+	session, transport := newShellSession(t)
+	// Force the state a timeout leaves behind: the shell must prove it is at a
+	// prompt before the command is typed.
+	session.commandReady.Store(false)
+
+	done := startTestCommand(session, context.Background(), "echo after-interrupt", CommandOptions{
+		Timeout: 5 * time.Second,
+	})
+	distinctMarkers := func() []string {
+		seen := map[string]bool{}
+		var markers []string
+		for _, marker := range markerPattern.FindAllString(transport.input(), -1) {
+			if !seen[marker] {
+				seen[marker] = true
+				markers = append(markers, marker)
+			}
+		}
+		return markers
+	}
+	var firstProbe string
+	eventually(t, "the first readiness probe", func() bool {
+		markers := distinctMarkers()
+		if len(markers) == 0 {
+			return false
+		}
+		firstProbe = markers[0]
+		return true
+	})
+	// Model the dropped line: answer nothing. The probe times out, the Session
+	// interrupts, and a second probe is written.
+	var secondProbe string
+	eventually(t, "a retried readiness probe", func() bool {
+		for _, marker := range distinctMarkers() {
+			if marker != firstProbe {
+				secondProbe = marker
+				return true
+			}
+		}
+		return false
+	})
+	transport.send("\n" + secondProbe + "_S\r\n")
+	transport.send("\r\n" + secondProbe + "_E:0\r\n")
+
+	var commandMarker string
+	eventually(t, "the real command wrapper", func() bool {
+		for _, marker := range distinctMarkers() {
+			if marker != firstProbe && marker != secondProbe {
+				commandMarker = marker
+				return true
+			}
+		}
+		return false
+	})
+	transport.send("\n" + commandMarker + "_S\r\n")
+	transport.send("after-interrupt\r\n" + commandMarker + "_E:0\r\n")
+
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("the command after a discarded wrapper failed: %v", got.err)
+	}
+	if !strings.Contains(got.result.Stdout, "after-interrupt") {
+		t.Fatalf("stdout = %q", got.result.Stdout)
+	}
 }
