@@ -417,7 +417,13 @@ jobs:
         run: |
           set -euo pipefail
           for dir in downloads/*; do
-            test -f "${dir}/SHA256SUMS"
+            if [ ! -f "${dir}/SHA256SUMS" ]; then
+              # natcatty-release-notes matches the natcatty-* download pattern
+              # but is not a platform artifact, so it carries no checksums.
+              test -s "${dir}/RELEASE_NOTES.md"
+              echo "${dir} holds the release notes, not a platform artifact"
+              continue
+            fi
             go run ./internal/tools/releasecheck verify-sums -dir "${dir}"
             echo "verified ${dir}/SHA256SUMS"
           done
