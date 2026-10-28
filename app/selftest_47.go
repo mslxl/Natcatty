@@ -38,7 +38,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +62,14 @@ const (
 	selftest47Local  = "http://localhost:8080/"
 	selftest47Public = "https://example.com/docs"
 )
+
+// selftestLoopbackGatewayURL reports whether raw is a browser gateway URL.
+// The gateway prefers 127.0.0.2 and falls back to 127.0.0.1 on a platform
+// (macOS) that does not assign the preferred address, so the self-test asks
+// the application layer for the shared shape instead of assuming one host.
+func selftestLoopbackGatewayURL(raw string) bool {
+	return appbrowser.IsGatewayURL(raw)
+}
 
 type selftest47 struct {
 	service   *appsession.Service
@@ -316,7 +323,7 @@ func (t *selftest47) navigateLocalStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("pages = %d, want 1", len(pages)))
 	}
 	loads := pages[0].loads()
-	if len(loads) != 1 || !strings.HasPrefix(loads[0], "http://127.0.0.2:") {
+	if len(loads) != 1 || !selftestLoopbackGatewayURL(loads[0]) {
 		return selftest.Failed(fmt.Errorf("the page loaded %v, want one loopback gateway URL", loads))
 	}
 	pages[0].report(browserui.PageTitle, "", "Local console", "")
@@ -371,7 +378,7 @@ func (t *selftest47) navigatePublicStep(*ui.Context) selftest.Outcome {
 	}
 	page := pages[1]
 	loads := page.loads()
-	if len(loads) != 1 || !strings.HasPrefix(loads[0], "http://127.0.0.2:") {
+	if len(loads) != 1 || !selftestLoopbackGatewayURL(loads[0]) {
 		return selftest.Failed(fmt.Errorf("the public page loaded %v, want one loopback gateway URL", loads))
 	}
 	page.report(browserui.PageTitle, "", "Public console", "")
@@ -531,7 +538,7 @@ func (t *selftest47) disconnectStep(*ui.Context) selftest.Outcome {
 		}
 		pages := t.pages.snapshot()
 		loads := pages[len(pages)-1].loads()
-		if len(loads) != 1 || !strings.HasPrefix(loads[0], "http://127.0.0.2:") {
+		if len(loads) != 1 || !selftestLoopbackGatewayURL(loads[0]) {
 			return selftest.Failed(fmt.Errorf(
 				"the retried page loaded %v, want one loopback gateway URL", loads))
 		}

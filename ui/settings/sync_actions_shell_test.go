@@ -451,7 +451,9 @@ func TestSyncPrimaryActionsStayPinnedAtTheRealClientSizes(t *testing.T) {
 								locale, size.width, size.height, label, tester.Texts())
 						}
 						t.Logf("%s %dx%d: action %q at %+v", locale, size.width, size.height, label, rect)
-						if rect.W <= 0 || rect.H < 18 {
+						// A full action row is at least one measured line of
+						// the tester's own font; a shorter box is clipped.
+						if rect.W <= 0 || rect.H+0.5 < measuredSettingsTextHeight(t, label, ui.LightTheme().FontSize) {
 							t.Fatalf("%s %dx%d: the primary action %q is a clipped sliver: %+v",
 								locale, size.width, size.height, label, rect)
 						}
@@ -500,7 +502,7 @@ func TestSyncPrimaryActionsStayPinnedAtTheRealClientSizes(t *testing.T) {
 							t.Fatalf("%s %dx%d: ticket 54's bar %+v reaches into ticket 55's bottom band",
 								locale, size.width, size.height, bar)
 						}
-						if pause.X < 190-0.5 || pause.Y < float32(size.height)-syncConvergentBarHeight-8-0.5 ||
+						if pause.X < viewport.X-0.5 || pause.Y < float32(size.height)-syncConvergentBarHeight-8-0.5 ||
 							pause.Y+pause.H > float32(size.height)+0.5 {
 							t.Fatalf("%s %dx%d: ticket 55's pinned action %q %+v left its bottom band",
 								locale, size.width, size.height, m.SettingsSyncConvergentPause(), pause)
@@ -520,12 +522,14 @@ func TestSyncPrimaryActionsStayPinnedAtTheRealClientSizes(t *testing.T) {
 					}
 					scrollX := viewport.X + viewport.W - 30
 					scrollY := viewport.Y + viewport.H - 12
+					// The last row is secondary text at 11 DIP. A row clipped
+					// by the viewport keeps only its visible sliver as the
+					// measured height; require a full measured line, not just
+					// a positive fragment.
+					lastRowHeight := measuredSettingsTextHeight(t, lastText, 11)
 					revealed := func() bool {
 						row, ok := tester.Find(lastText)
-						// A row clipped by the viewport keeps only its visible
-						// sliver as the measured height; require the full
-						// body-text height, not just a positive fragment.
-						return ok && row.H >= 12 &&
+						return ok && row.H+0.5 >= lastRowHeight &&
 							row.Y >= viewport.Y-0.5 &&
 							row.Y+row.H <= viewport.Y+viewport.H+0.5
 					}

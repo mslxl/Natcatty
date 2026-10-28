@@ -56,15 +56,7 @@ func (s *Service) encodeAnchor(ctx context.Context, payload Payload) (string, st
 		return "", "", ErrPasswordRequired
 	}
 	config := s.currentConfig()
-	file, err := domainsync.EncryptPayload(payload, password, domainsync.EncryptOptions{
-		Version:    1,
-		UpdatedAt:  s.now().UnixMilli(),
-		DeviceID:   config.DeviceID,
-		DeviceName: config.DeviceName,
-		AppVersion: config.AppVersion,
-		Random:     s.random,
-		Now:        s.now,
-	})
+	file, err := domainsync.EncryptPayload(payload, password, s.encryptOptions(config, 1))
 	if err != nil {
 		return "", "", fmt.Errorf("sync: encrypt the merge anchor: %w", err)
 	}

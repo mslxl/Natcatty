@@ -77,19 +77,56 @@ func intrinsicSettingsTextWidth(t *testing.T, text string) float32 {
 	return width
 }
 
+// measuredSettingsTextHeight measures the height one laid-out line of
+// Settings text takes in the tester's own font metrics. GitHub runners
+// legitimately measure 17px where Windows measures 18px for the same theme
+// size, so a test that calls a box shorter than a full line must compare it
+// with this measurement rather than a literal pixel height. MeasureText
+// reports the font's line box, which is not the height a Text element
+// occupies, so this renders a reference Text node and reads its bounds.
+func measuredSettingsTextHeight(t *testing.T, text string, size float32) float32 {
+	t.Helper()
+	var rect ui.Rect
+	var ok bool
+	tester := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Children(func() {
+			ui.Text(c, text).FontSize(size)
+		})
+	}, 1200, 200)
+	tester.Frame()
+	rect, ok = tester.Find(text)
+	if !ok || rect.H <= 0 {
+		t.Fatalf("the reference label %q at size %v was laid out as %+v (found=%v)", text, size, rect, ok)
+	}
+	return rect.H
+}
+
 // TestSettingsSidebarLabelsAreNotEllipsized keeps every area name whole in
-// the 168 DIP sidebar at both supported window sizes and in every catalog.
-// The old "Security & App Lock" label did not fit and rendered as
+// the sidebar at both supported window sizes and in every catalog. The old
+// "Security & App Lock" label did not fit and rendered as
 // "Security & App Lo..."; a label box narrower than its own measured text is
-// the same defect.
+// the same defect. The sidebar takes the width its widest localized name
+// needs on the running platform, so the label must also stay on the sidebar
+// side of the content viewport.
 func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
 	for _, tag := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
 		m := locales.In(tag)
 		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
 			t.Run(fmt.Sprintf("%s/%dx%d", tag, size[0], size[1]), func(t *testing.T) {
-				tester := ui.NewTester(ViewWithSettings(Config{Search: NewSearchState()}), size[0], size[1])
+				var layout viewLayout
+				var context *ui.Context
+				view := viewWithLayout(Config{Search: NewSearchState()}, &layout)
+				tester := ui.NewTester(func(c *ui.Context) {
+					context = c
+					view(c)
+				}, size[0], size[1])
 				tester.SetLocale(tag)
 				tester.Frame()
+				viewport := layout.Content.Bounds(context)
+				if viewport.W <= 0 {
+					t.Fatalf("%s/%dx%d: the content viewport has no width: %+v",
+						tag, size[0], size[1], viewport)
+				}
 				for _, area := range Areas() {
 					label := AreaTitle(m, area)
 					needed := intrinsicSettingsTextWidth(t, label)
@@ -110,8 +147,8 @@ func TestSettingsSidebarLabelsAreNotEllipsized(t *testing.T) {
 					if rect.W <= 0 || rect.H <= 0 || rect.Y < 0 || rect.Y+rect.H > float32(size[1])+0.5 {
 						t.Fatalf("%q is not laid out inside the window: %+v", label, rect)
 					}
-					if rect.X+rect.W > 180+0.5 {
-						t.Fatalf("%q extends past the 168 DIP sidebar: %+v", label, rect)
+					if rect.X+rect.W > viewport.X-0.5 {
+						t.Fatalf("%q runs into the content viewport %+v: %+v", label, viewport, rect)
 					}
 					if rect.W+0.5 < needed {
 						t.Fatalf("%q needs %.1fpx on one line but its box is %.1fpx wide, so it is ellipsized",

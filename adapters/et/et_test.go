@@ -68,6 +68,13 @@ func newEnv(t *testing.T) *preparedEnv {
 		binaryPath: path,
 		spec:       spec,
 	}
+	// FindSSH must return a host-absolute path: the transport rejects a path
+	// that is not absolute for the running OS, as a Windows path is on Linux
+	// and macOS. The wrapper points at it and never executes it here.
+	fakeSSH := filepath.Join(env.tempParent, "ssh")
+	if runtime.GOOS == "windows" {
+		fakeSSH += ".exe"
+	}
 	env.factory = Factory{
 		Spec:      spec,
 		BaseEnv:   func() []string { return []string{"PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"} },
@@ -75,7 +82,7 @@ func newEnv(t *testing.T) *preparedEnv {
 		HomeDir:   func() string { return env.home },
 		UserName:  func() string { return "alice" },
 		Program:   func() (string, error) { return `C:\Program Files\Natcatty\natcatty.exe`, nil },
-		FindSSH:   func() (string, error) { return `C:\Windows\System32\OpenSSH\ssh.exe`, nil },
+		FindSSH:   func() (string, error) { return fakeSSH, nil },
 		ReadDir:   os.ReadDir,
 		Exists:    func(string) bool { return false },
 		HardenACL: func(string) { env.aclMu.Lock(); env.aclCalls++; env.aclMu.Unlock() },

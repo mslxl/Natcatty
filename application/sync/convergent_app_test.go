@@ -34,6 +34,7 @@ func encryptedContentForTest(t *testing.T, payload Payload, schema int, updatedA
 		DeviceID:          "other-device",
 		DeviceName:        "Other Device",
 		AppVersion:        "1.0",
+		KDFIterations:     testKDFIterations,
 		SyncSchemaVersion: schema,
 	})
 	if err != nil {
@@ -677,6 +678,7 @@ func TestConvergentVerificationRoundDetectsInjectedDivergence(t *testing.T) {
 	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.StrategySmartMerge}}
 	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
 	service := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithWaiter(&fakeWaiter{}),
 		WithBackups(&fakeBackups{}),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
@@ -887,6 +889,7 @@ func newConvergentDevice(t *testing.T, remote *fakeRemote, id string, payload Pa
 	}}
 	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
 	service := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithWaiter(&fakeWaiter{}),
 		WithBackups(&fakeBackups{}),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
@@ -1161,6 +1164,7 @@ func TestConvergentRestartReportsVerifiedCountsWithoutFabricatedRound(t *testing
 	migrateToConvergent(t, service)
 
 	restarted := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithWaiter(waiter),
 		WithBackups(backups),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
@@ -1259,6 +1263,7 @@ func TestConvergentFinalRoundRetriesOrdinaryConcurrency(t *testing.T) {
 	configs := &memoryConfigs{config: Config{Connected: true, Login: "octocat", Strategy: domainsync.StrategySmartMerge}}
 	tokens := &memoryTokens{token: domainsync.Token{AccessToken: "token"}, set: true}
 	service := NewService(remote, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithWaiter(&fakeWaiter{}),
 		WithBackups(&fakeBackups{}),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),

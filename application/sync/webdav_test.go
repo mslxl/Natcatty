@@ -128,6 +128,7 @@ func newWebDAVTestService(t *testing.T, connector *fakeWebDAV, config Config, to
 	vault := &fakeVault{payload: payloadWithHost("local", 1000)}
 	configs := &memoryConfigs{config: config}
 	service := NewService(connector, vault, configs, tokens,
+		WithKDFIterations(testKDFIterations),
 		WithRemote(ProviderWebDAV, connector),
 		WithClock(func() time.Time { return time.UnixMilli(5000) }),
 		WithDebounce(10*time.Millisecond),

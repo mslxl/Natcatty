@@ -529,12 +529,18 @@ func TestSyncForcePushPromptUsesTheAccessibleDangerTextColor(t *testing.T) {
 			if !ok {
 				t.Fatalf("the force-push confirmation %q is not rendered: %q", confirm, tester.Texts())
 			}
-			for step := 0; step < 240 && rect.H < 12; step++ {
+			// The row is fully laid out when it is at least one line of the
+			// prompt's 12 DIP text tall. The height comes from the tester's
+			// own metrics so a platform whose font is shorter does not wait
+			// for a row it will never see, and a clipped row still fails.
+			confirmHeight := measuredSettingsTextHeight(t, confirm, 12)
+			for step := 0; step < 240 && rect.H+0.5 < confirmHeight; step++ {
 				tester.Scroll(700, 400, 0, 40)
 				rect, _ = tester.Find(confirm)
 			}
-			if rect.H < 12 {
-				t.Fatalf("the force-push confirmation was never fully laid out: %+v", rect)
+			if rect.H+0.5 < confirmHeight {
+				t.Fatalf("the force-push confirmation was never fully laid out: %+v (line height %v)",
+					rect, confirmHeight)
 			}
 			if !testerRectHasColor(tester, rect, want) {
 				t.Errorf("the force-push prompt does not use the accessible danger text color %v", want)

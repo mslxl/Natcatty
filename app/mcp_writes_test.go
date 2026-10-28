@@ -98,14 +98,22 @@ func (t *writeTestTransport) Close() error {
 	return nil
 }
 
+// writeTestFactory opens the real local shell and a fresh blocking PTY for
+// each SSH Session. Sharing one PTY between SSH Sessions coupled their
+// lifetimes: closing one Session ended the other one's reader too.
 type writeTestFactory struct {
 	local *localpty.Factory
-	ssh   *writeTestTransport
+	// newSSH makes the SSH transport; nil makes a fresh blocking one. Each
+	// call gets its own, so Sessions keep independent lifetimes.
+	newSSH func() *writeTestTransport
 }
 
 func (f writeTestFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
 	if spec.Kind == appsession.KindSSH {
-		return f.ssh, nil
+		if f.newSSH != nil {
+			return f.newSSH(), nil
+		}
+		return newWriteTestTransport(), nil
 	}
 	factory := localpty.Factory{}
 	return factory.Open(ctx, spec)
@@ -458,8 +466,7 @@ func newMCPWriteFixture(t *testing.T) *mcpWriteFixture {
 		t.Fatalf("create the fixture Host: %v", err)
 	}
 
-	sshTransport := newWriteTestTransport()
-	factory := writeTestFactory{ssh: sshTransport}
+	factory := writeTestFactory{newSSH: newWriteTestTransport}
 	sessions := appsession.NewService(factory)
 	t.Cleanup(sessions.CloseAll)
 	localSession, err := sessions.OpenLocal(ctx)
@@ -945,7 +952,7 @@ func TestMCPWriteBlocklistAndRawSessions(t *testing.T) {
 
 	// Serial and network-device Sessions deliberately skip the blocklist.
 	rawTransport := newWriteTestTransport()
-	rawFactory := writeTestFactory{ssh: rawTransport}
+	rawFactory := writeTestFactory{newSSH: func() *writeTestTransport { return rawTransport }}
 	rawSessions := appsession.NewService(rawFactory)
 	t.Cleanup(rawSessions.CloseAll)
 	serial, err := rawSessions.Open(fixture.ctx, appsession.StartSpec{
@@ -968,7 +975,7 @@ func TestMCPWriteBlocklistAndRawSessions(t *testing.T) {
 
 	// Network-device SSH Sessions use the same vendor-CLI escape hatch: their
 	// peer may treat "shutdown" or "rm" as configuration commands.
-	networkSessions := appsession.NewService(writeTestFactory{ssh: newWriteTestTransport()})
+	networkSessions := appsession.NewService(writeTestFactory{newSSH: newWriteTestTransport})
 	t.Cleanup(networkSessions.CloseAll)
 	network, err := networkSessions.Open(fixture.ctx, appsession.StartSpec{
 		Kind: appsession.KindSSH, Label: "network device", Hostname: "switch.example",

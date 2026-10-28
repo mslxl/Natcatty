@@ -350,19 +350,6 @@ func chooseSettings(remote *Payload, verified *Payload, local Payload) map[strin
 // Local sealing and strict loading
 // ---------------------------------------------------------------------------
 
-func (s *Service) convergentEncryptOptions(version int) domainsync.EncryptOptions {
-	config := s.currentConfig()
-	return domainsync.EncryptOptions{
-		Version:    version,
-		UpdatedAt:  s.now().UnixMilli(),
-		DeviceID:   config.DeviceID,
-		DeviceName: config.DeviceName,
-		AppVersion: config.AppVersion,
-		Random:     s.random,
-		Now:        s.now,
-	}
-}
-
 func (s *Service) sealConvergentState(state domainsync.ConvergentState) (string, string, error) {
 	password := s.passwordValue()
 	if password == "" {
@@ -372,7 +359,7 @@ func (s *Service) sealConvergentState(state domainsync.ConvergentState) (string,
 	if err != nil {
 		return "", "", err
 	}
-	file, err := domainsync.EncryptPayload(envelope, password, s.convergentEncryptOptions(1))
+	file, err := domainsync.EncryptPayload(envelope, password, s.encryptOptions(s.currentConfig(), 1))
 	if err != nil {
 		return "", "", err
 	}
@@ -438,7 +425,7 @@ func (s *Service) sealVerifiedPayload(payload Payload) (string, string, error) {
 	if password == "" {
 		return "", "", ErrPasswordRequired
 	}
-	file, err := domainsync.EncryptPayload(payload, password, s.convergentEncryptOptions(1))
+	file, err := domainsync.EncryptPayload(payload, password, s.encryptOptions(s.currentConfig(), 1))
 	if err != nil {
 		return "", "", err
 	}
@@ -1727,16 +1714,9 @@ func (s *Service) encodeConvergentCloudPayload(state domainsync.ConvergentState,
 	if password == "" {
 		return nil, ErrPasswordRequired
 	}
-	file, err := domainsync.EncryptPayload(payload, password, domainsync.EncryptOptions{
-		Version:           1,
-		UpdatedAt:         s.now().UnixMilli(),
-		DeviceID:          config.DeviceID,
-		DeviceName:        config.DeviceName,
-		AppVersion:        config.AppVersion,
-		Random:            s.random,
-		Now:               s.now,
-		SyncSchemaVersion: domainsync.ConvergentSchemaVersion,
-	})
+	options := s.encryptOptions(config, 1)
+	options.SyncSchemaVersion = domainsync.ConvergentSchemaVersion
+	file, err := domainsync.EncryptPayload(payload, password, options)
 	if err != nil {
 		return nil, err
 	}

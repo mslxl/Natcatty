@@ -26,8 +26,11 @@ func (p *sandboxPage) SetWindowOpenHandler(fn func(mygo.WindowOpenRequest) *mygo
 // could use to reach app state:
 //   - the page gets no preload script and no TrustedOrigins entry, so MyGo's
 //     typed bridge refuses it;
-//   - the gateway origin is 127.0.0.2, which is loopback but outside the
-//     localhost/127.0.0.1/::1 hosts MyGo's development bridge auto-trusts;
+//   - the gateway prefers 127.0.0.2, which is loopback but outside the
+//     localhost/127.0.0.1/::1 hosts MyGo's development bridge auto-trusts.
+//     macOS assigns only 127.0.0.1, so there the gateway falls back to it
+//     (GatewayFallbackLoopbackHost); the app registers no MyGo bindings, so
+//     even a development-trusted origin can reach no product API;
 //   - permissions are denied and window.open returns no window options;
 //   - there are no app-level MyGo bindings for it to call.
 func TestBrowserPageCannotCallProductAPIs(t *testing.T) {
@@ -46,14 +49,15 @@ func TestBrowserPageCannotCallProductAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gatewayURL.Hostname() != "127.0.0.2" {
-		t.Fatalf("gateway host = %q", gatewayURL.Hostname())
+	if !appbrowser.IsGatewayHost(gatewayURL.Hostname()) {
+		t.Fatalf("gateway host = %q, want a loopback address a gateway binds", gatewayURL.Hostname())
 	}
-	for _, trusted := range []string{"localhost", "127.0.0.1", "::1"} {
-		if gatewayURL.Hostname() == trusted {
-			t.Fatalf("gateway origin %q is trusted by MyGo's development bridge",
-				gatewayURL.Host)
-		}
+	if appbrowser.GatewayHostIsDevTrusted(gatewayURL.Hostname()) {
+		t.Fatalf("gateway origin %q is trusted by MyGo's development bridge", gatewayURL.Host)
+	}
+	if !appbrowser.GatewayHostIsDevTrusted(appbrowser.GatewayFallbackLoopbackHost) {
+		t.Fatalf("fallback gateway host %q is not the documented dev-trusted fallback",
+			appbrowser.GatewayFallbackLoopbackHost)
 	}
 
 	page := &sandboxPage{}

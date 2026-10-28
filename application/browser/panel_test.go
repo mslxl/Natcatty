@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -132,7 +133,9 @@ func TestPanelOpensOnADedicatedTunnelAndNavigatesItsTabs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Navigate localhost: %v", err)
 	}
-	if !strings.HasPrefix(gatewayURL, "http://127.0.0.2:") || !strings.HasSuffix(gatewayURL, "/admin") {
+	gatewayParsed, err := url.Parse(gatewayURL)
+	if err != nil || gatewayParsed.Scheme != "http" || !IsGatewayHost(gatewayParsed.Hostname()) ||
+		gatewayParsed.Port() == "" || !strings.HasSuffix(gatewayURL, "/admin") {
 		t.Fatalf("gateway URL = %q", gatewayURL)
 	}
 	state = waitState(t, updates, "the localhost tab URL", func(state State) bool {

@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -405,17 +406,21 @@ const (
 		"nginx.service loaded active running Web server\n__NC_SERVICES_END__\n"
 )
 
-func fakeExec(overviewCall *int) func(domainvault.Host, string) (ExecResult, error) {
-	var mu sync.Mutex
+// sampleCounter counts overview samples across the sampler goroutine and the
+// test goroutine. The fake shells run on the service's goroutines, so a plain
+// int read by waitFor's closure is a data race under -race; the atomic gives
+// both sides one synchronization point without changing the product.
+type sampleCounter struct{ calls atomic.Int64 }
+
+func (c *sampleCounter) sampled() int { return int(c.calls.Load()) }
+
+func fakeExec(overviewCall *sampleCounter) func(domainvault.Host, string) (ExecResult, error) {
 	return func(_ domainvault.Host, command string) (ExecResult, error) {
 		switch {
 		case command == probeCommand():
 			return ExecResult{Stdout: fakeProbeAll}, nil
 		case strings.Contains(command, "PRETTY_NAME"):
-			mu.Lock()
-			*overviewCall++
-			call := *overviewCall
-			mu.Unlock()
+			call := int(overviewCall.calls.Add(1))
 			return ExecResult{Stdout: sprintfOverview(call)}, nil
 		case strings.Contains(command, "ps -eo"):
 			return ExecResult{Stdout: fakeProcesses}, nil
@@ -451,8 +456,8 @@ func intString(value int) string {
 
 func TestServiceSamplesEveryTabAndHonorsTheInterval(t *testing.T) {
 	connector := newFakeConnector()
-	overviewCalls := 0
-	connector.exec = fakeExec(&overviewCalls)
+	overviewCalls := &sampleCounter{}
+	connector.exec = fakeExec(overviewCalls)
 	service := NewService(connector)
 	defer service.Close()
 
@@ -462,7 +467,7 @@ func TestServiceSamplesEveryTabAndHonorsTheInterval(t *testing.T) {
 	}
 	waitStatus(t, service, TabOverview, StatusLive)
 	waitFor(t, 3*time.Second, "two overview samples", func() bool {
-		return overviewCalls >= 2
+		return overviewCalls.sampled() >= 2
 	})
 	state := service.Snapshot().Tabs[TabOverview]
 	if state.Overview.Hostname != "fake-host" || state.Overview.UptimeSeconds != 7200 ||
@@ -561,8 +566,8 @@ func TestServiceStartClearsSamplesWhenTheHostChanges(t *testing.T) {
 
 func TestServiceRefreshRequestsAnImmediateSample(t *testing.T) {
 	connector := newFakeConnector()
-	overviewCalls := 0
-	connector.exec = fakeExec(&overviewCalls)
+	overviewCalls := &sampleCounter{}
+	connector.exec = fakeExec(overviewCalls)
 	service := NewService(connector)
 	defer service.Close()
 
@@ -625,8 +630,8 @@ func TestServiceDoesNotExecBeforeTheHostKeyIsTrusted(t *testing.T) {
 		}
 		return nil
 	}
-	overviewCalls := 0
-	connector.exec = fakeExec(&overviewCalls)
+	overviewCalls := &sampleCounter{}
+	connector.exec = fakeExec(overviewCalls)
 	service := NewService(connector)
 	defer service.Close()
 
@@ -647,15 +652,15 @@ func TestServiceDoesNotExecBeforeTheHostKeyIsTrusted(t *testing.T) {
 
 func TestServiceCloseCancelsSampling(t *testing.T) {
 	connector := newFakeConnector()
-	overviewCalls := 0
-	connector.exec = fakeExec(&overviewCalls)
+	overviewCalls := &sampleCounter{}
+	connector.exec = fakeExec(overviewCalls)
 	service := NewService(connector)
 
 	if err := service.Start(fakeHost("stop"), TabOverview, 10*time.Millisecond); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	waitFor(t, 2*time.Second, "at least two samples", func() bool {
-		return overviewCalls >= 2
+		return overviewCalls.sampled() >= 2
 	})
 	service.Close()
 	service.Wait()

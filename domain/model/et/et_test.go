@@ -2,6 +2,7 @@ package et
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -147,7 +148,12 @@ func TestPasswordPromptMatchers(t *testing.T) {
 }
 
 func TestPassphrasePromptMatchers(t *testing.T) {
-	matchers := PassphrasePromptMatchers(`C:\Temp\et-home\.ssh\session-key`)
+	// The key path must be one the running OS actually produces: key paths
+	// come from the user's filesystem, and the adapter derives the matchers
+	// with the host's own separators. A Windows path on POSIX is one
+	// component there, so it is not a platform-neutral fixture.
+	keyPath := filepath.Join(t.TempDir(), "et-home", ".ssh", "session-key")
+	matchers := PassphrasePromptMatchers(keyPath)
 	if len(matchers) != 2 {
 		t.Fatalf("matchers = %#v", matchers)
 	}

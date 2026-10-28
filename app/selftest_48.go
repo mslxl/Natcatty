@@ -23,7 +23,9 @@ package app
 //   - a hostile page is fetched through the gateway and its CSP blocks
 //     cross-origin fetch, images, frames, objects, forms, window.open, and
 //     eval; the foreign origin records zero requests, and the page options
-//     carry no preload or trusted origin while the gateway binds 127.0.0.2;
+//     carry no preload or trusted origin while the gateway binds a loopback
+//     address outside MyGo's development trust where the platform assigns
+//     one (127.0.0.2; macOS falls back to 127.0.0.1);
 //   - the bookmark, editor, favicon, download, and typed-address-error
 //     states are captured at content sizes for 1100x720 and 720x480 in
 //     English and zh-CN.
@@ -43,6 +45,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -978,8 +981,8 @@ func (t *selftest48) faviconStep(*ui.Context) selftest.Outcome {
 		page := t.pages.only()
 		if page != nil && len(page.loads()) == 1 {
 			gatewayURL := page.loads()[0]
-			if !strings.HasPrefix(gatewayURL, "http://127.0.0.2:") {
-				return selftest.Failed(fmt.Errorf("page loaded %q, want the 127.0.0.2 gateway", gatewayURL))
+			if !selftestLoopbackGatewayURL(gatewayURL) {
+				return selftest.Failed(fmt.Errorf("page loaded %q, want a loopback gateway URL", gatewayURL))
 			}
 			page.report(browserui.PageNavigated, gatewayURL, "", "")
 			page.reportTitle("Ticket 48 Console")
@@ -1205,6 +1208,15 @@ func (t *selftest48) sandboxStep(*ui.Context) selftest.Outcome {
 	if err != nil {
 		return selftest.Failed(fmt.Errorf("navigate to the hostile page: %w", err))
 	}
+	if !selftestLoopbackGatewayURL(gatewayURL) {
+		return selftest.Failed(fmt.Errorf("hostile page gateway URL = %q, want a loopback gateway address",
+			gatewayURL))
+	}
+	parsedGateway, parseErr := url.Parse(gatewayURL)
+	if parseErr != nil {
+		return selftest.Failed(fmt.Errorf("parse the hostile gateway URL %q: %w", gatewayURL, parseErr))
+	}
+	gatewayHost := parsedGateway.Hostname()
 	client := &http.Client{Timeout: 5 * time.Second}
 	response, err := client.Get(gatewayURL)
 	if err != nil {
@@ -1249,9 +1261,22 @@ func (t *selftest48) sandboxStep(*ui.Context) selftest.Outcome {
 		return selftest.Failed(fmt.Errorf("browser page options include a bridge: preload=%q trusted=%v",
 			options.PreloadScript, options.TrustedOrigins))
 	}
-	if appbrowser.GatewayLoopbackHost != "127.0.0.2" {
-		return selftest.Failed(fmt.Errorf("gateway host = %q, want 127.0.0.2 outside MyGo dev trust",
+	if appbrowser.GatewayLoopbackHost != "127.0.0.2" ||
+		appbrowser.GatewayHostIsDevTrusted(appbrowser.GatewayLoopbackHost) {
+		return selftest.Failed(fmt.Errorf("preferred gateway host = %q, want 127.0.0.2 outside MyGo dev trust",
 			appbrowser.GatewayLoopbackHost))
+	}
+	if !appbrowser.GatewayHostIsDevTrusted(appbrowser.GatewayFallbackLoopbackHost) {
+		return selftest.Failed(fmt.Errorf("fallback gateway host = %q, want the documented loopback fallback",
+			appbrowser.GatewayFallbackLoopbackHost))
+	}
+	// The run used the preferred address where the platform assigns it. On
+	// macOS, which assigns only 127.0.0.1, the gateway used the documented
+	// fallback; the app registers no MyGo bindings, so the bridge still
+	// reaches no product API there.
+	if gatewayHost != appbrowser.GatewayLoopbackHost &&
+		gatewayHost != appbrowser.GatewayFallbackLoopbackHost {
+		return selftest.Failed(fmt.Errorf("this run's gateway host = %q, want a gateway address", gatewayHost))
 	}
 	entry, ok := t.tester.Find(m.BrowserInvalidScheme())
 	if !ok || entry.W <= 0 || entry.H <= 0 {
@@ -1259,7 +1284,8 @@ func (t *selftest48) sandboxStep(*ui.Context) selftest.Outcome {
 	}
 	t.sandboxDone = true
 	return selftest.Passed(
-		"the hostile page was pinned to 'self' CSP on an untrusted 127.0.0.2 gateway; its body carried no bridge, the page options had no preload or trusted origin, and the foreign origin recorded 0 requests",
+		fmt.Sprintf("the hostile page was pinned to 'self' CSP on the loopback gateway %s (preferred %s is outside MyGo dev trust); its body carried no bridge, the page options had no preload or trusted origin, and the foreign origin recorded 0 requests",
+			gatewayHost, appbrowser.GatewayLoopbackHost),
 		"gatewayPageCSP + browserPageOptions + hardenBrowserPage")
 }
 

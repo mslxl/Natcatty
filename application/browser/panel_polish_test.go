@@ -286,8 +286,20 @@ func TestGatewaySandboxPolicyAndUntrustedLoopbackAddress(t *testing.T) {
 		t.Fatalf("URLFor: %v", err)
 	}
 	parsed, _ := http.NewRequest("GET", gatewayURL, nil)
-	if parsed.URL.Hostname() != "127.0.0.2" {
-		t.Fatalf("gateway host = %q, want loopback address outside MyGo's dev-trusted set", parsed.URL.Hostname())
+	host := parsed.URL.Hostname()
+	if !IsGatewayHost(host) {
+		t.Fatalf("gateway host = %q, want a loopback address a gateway binds", host)
+	}
+	// The preferred address must stay outside MyGo's development trust set.
+	// A platform that cannot bind it (macOS assigns only 127.0.0.1) uses the
+	// documented fallback, which is inside that set; the sandbox relies on
+	// the app registering no MyGo bindings there.
+	if GatewayHostIsDevTrusted(GatewayLoopbackHost) {
+		t.Fatalf("preferred gateway host %q is inside MyGo's dev-trusted set", GatewayLoopbackHost)
+	}
+	if !GatewayHostIsDevTrusted(GatewayFallbackLoopbackHost) {
+		t.Fatalf("fallback gateway host %q is not the documented dev-trusted fallback",
+			GatewayFallbackLoopbackHost)
 	}
 	if gatewayPageCSP == "" || !strings.Contains(gatewayPageCSP, "connect-src 'self'") ||
 		!strings.Contains(gatewayPageCSP, "object-src 'none'") ||
