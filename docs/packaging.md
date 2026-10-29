@@ -50,7 +50,8 @@ from the ephemeral workspace so each package carries only runnable clients.
 ## Release workflow
 
 `.github/workflows/release.yml` runs on `workflow_dispatch` with an explicit
-tag or on a pushed `v*` tag.
+tag or on a pushed `v*` tag. A pushed tag publishes a GitHub release; a
+`workflow_dispatch` run validates and builds only, as a dry run.
 
 1. **validate** checks the Go release tooling tests (including the changelog
    parser and release-note generator), runs the parity release gate
@@ -80,8 +81,37 @@ tag or on a pushed `v*` tag.
    manifest with relative names. `releasecheck` names each downloaded
    directory and fails closed on anything unexpected. It also asserts the
    exact seven-file set. Both the platform artifacts and the aggregate
-   manifest are uploaded as workflow artifacts. **No GitHub release is created
-   or published.**
+   manifest are uploaded as workflow artifacts.
+4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
+   `checksums`, and is the only job with `contents: write`. It downloads the
+   already-verified platform artifacts, re-runs their checksums after
+   transfer, and flattens them again. It regenerates the aggregate checksum
+   manifest, verifies it, and requires it to be byte-identical to the one the
+   `checksums` job produced, so the published manifest is provably the
+   verified one. It then creates a GitHub release titled `Natcatty <version>`
+   for the tag, or edits the existing release when the tag is re-pushed or
+   force-moved, and attaches the release assets with `--clobber`. The tag and
+   the release are never deleted. A `workflow_dispatch` run skips this job and
+   publishes nothing.
+
+## Release page
+
+A tag push creates a GitHub release for that tag. Its body is the generated
+`RELEASE_NOTES.md`, so the notes come from `CHANGELOG.md` and are never written
+by hand. The assets are the seven installers and the checksum manifest:
+
+- `Natcatty <version>.dmg` (macOS universal)
+- `Natcatty Setup <version> amd64.exe` (Windows amd64)
+- `natcatty-<version>-linux-amd64.tar.gz`
+- `natcatty-<version>-linux-arm64.tar.gz`
+- `natcatty_<version>_amd64.deb`
+- `natcatty_<version>_arm64.deb`
+- `install.sh`
+- the checksum manifest, which lists all seven with relative names
+
+The release stays unsigned apart from MyGo's ad hoc macOS signature and carries
+no notarization or update metadata; publishing it does not relax any of the
+checks above.
 
 `releasecheck` is checked Go tooling in `internal/tools/releasecheck`; its
 rules live in `internal/release`. Run it locally with:
@@ -111,8 +141,9 @@ the default), accepts `v`-prefixed tags, and fails when the version has no
 section, appears twice, or has an empty body. The output is deterministic for
 the same changelog and version: the title is `# Natcatty <version>`, then the
 release date, then the section body. The release workflow writes
-`RELEASE_NOTES.md` for the validated manifest version and uploads it beside the
-build artifacts; it does not create a GitHub release.
+`RELEASE_NOTES.md` for the validated manifest version, uploads it beside the
+build artifacts, and uses it as the body of the GitHub release that a tag push
+publishes.
 
 ## Signing, notarization, and updates
 
