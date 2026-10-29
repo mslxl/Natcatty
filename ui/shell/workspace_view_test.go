@@ -2,12 +2,17 @@ package shell
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appworkspace "github.com/mslxl/natcatty/application/workspace"
+	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -254,6 +259,165 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	root, _, ok := graph.state.TabTree(0)
 	if !ok || len(domainworkspace.CollectPaneIDs(root)) != 2 {
 		t.Fatalf("target Tab panes = %+v, want two", root)
+	}
+}
+
+// failingTelnetFactory fails the first Open with a network failure and opens
+// every later attempt, so a restored Pane can be reconnected in a test.
+type failingTelnetFactory struct {
+	mu    sync.Mutex
+	opens int
+	specs []appsession.StartSpec
+}
+
+func (f *failingTelnetFactory) Open(_ context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opens++
+	f.specs = append(f.specs, spec)
+	if f.opens == 1 {
+		return nil, &appconnection.Error{Kind: appconnection.KindNetwork}
+	}
+	return newFakeTransport(), nil
+}
+
+// viewWorkspaceRepository keeps one restore payload in memory.
+type viewWorkspaceRepository struct {
+	payload domainworkspace.Payload
+}
+
+func (r *viewWorkspaceRepository) Load(context.Context) (domainworkspace.Payload, error) {
+	return r.payload, nil
+}
+
+func (r *viewWorkspaceRepository) Save(_ context.Context, payload domainworkspace.Payload) error {
+	r.payload = payload
+	return nil
+}
+
+func (r *viewWorkspaceRepository) Clear(context.Context) error {
+	r.payload = domainworkspace.EmptyPayload()
+	return nil
+}
+
+func telnetRestorePayload() domainworkspace.Payload {
+	return domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-telnet", Number: 1, Root: domainworkspace.NewPaneNode("pane-telnet"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-telnet",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
+				Hostname: "127.0.0.1", Port: 2323, Label: "telnet-fake",
+			},
+		}},
+	}
+}
+
+func TestRestoredPaneShowsTheConnectionFailureAndReconnects(t *testing.T) {
+	factory := &failingTelnetFactory{}
+	service := appsession.NewService(factory)
+	t.Cleanup(service.CloseAll)
+	repo := &viewWorkspaceRepository{payload: telnetRestorePayload()}
+	st := state.NewState(
+		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+			return fakeSurface{}, nil
+		}),
+		// A nil Host resolver keeps the stored endpoint, so the failure is the
+		// factory's typed network error rather than a missing Host.
+		state.WithWorkspace(appworkspace.NewService(repo), nil),
+	)
+	st.Restore(context.Background())
+	tt := ui.NewTester(View(st), 900, 600)
+	tt.SetLocale("en")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		st.Flush()
+		info, ok := st.PaneInfoAt(0, "pane-telnet")
+		if ok && !info.Pending && info.Err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the failed Pane; info %+v", info)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	tt.Frame()
+
+	networkProblem := locales.In("en").ConnectionErrorNetwork()
+	if !tt.HasText(networkProblem) {
+		t.Fatalf("Pane does not show %q, texts %q", networkProblem, tt.Texts())
+	}
+	if !tt.HasText(locales.In("en").SessionMenuReconnect()) {
+		t.Fatalf("Pane has no Reconnect control, texts %q", tt.Texts())
+	}
+	if tt.HasText(locales.In("en").PaneOpenFailed()) {
+		t.Fatalf("Pane still shows the generic open failure, texts %q", tt.Texts())
+	}
+
+	if err := tt.Click(locales.In("en").SessionMenuReconnect()); err != nil {
+		t.Fatalf("click Reconnect: %v", err)
+	}
+	tt.Frame()
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		st.Flush()
+		info, ok := st.PaneInfoAt(0, "pane-telnet")
+		if ok && info.Surface != nil && info.Err == nil {
+			tt.Frame()
+			if !tt.HasText("terminal-surface") {
+				t.Fatalf("reconnected Pane does not render its surface, texts %q", tt.Texts())
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the reconnected Pane; info %+v", info)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestMissingHostPaneShowsNoReconnect(t *testing.T) {
+	repo := &viewWorkspaceRepository{payload: telnetRestorePayload()}
+	service := appsession.NewService(multiFactory{})
+	t.Cleanup(service.CloseAll)
+	st := state.NewState(
+		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
+			return fakeSurface{}, nil
+		}),
+		state.WithWorkspace(appworkspace.NewService(repo),
+			func(context.Context, model.HostID) (domainvault.Host, bool) {
+				return domainvault.Host{}, false
+			}),
+	)
+	st.Restore(context.Background())
+	tt := ui.NewTester(View(st), 900, 600)
+	tt.SetLocale("en")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		st.Flush()
+		info, ok := st.PaneInfoAt(0, "pane-telnet")
+		if ok && !info.Pending && info.Err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the missing-Host Pane; info %+v", info)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	tt.Frame()
+
+	if !tt.HasText(locales.In("en").PaneHostMissing()) {
+		t.Fatalf("Pane does not show the missing Host text, texts %q", tt.Texts())
+	}
+	if tt.HasText(locales.In("en").SessionMenuReconnect()) {
+		t.Fatalf("a missing Host Pane offers a retry, texts %q", tt.Texts())
 	}
 }
 
