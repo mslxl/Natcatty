@@ -9,6 +9,12 @@ do not maintain them by hand.
 
 ## [Unreleased]
 
+### Changed
+
+- Session restore is opt-in. A fresh profile lands on the Vault and opens no
+  Tabs; the previous Tabs and layout are restored only after enabling Restore
+  the previous session in Settings → Layout & Tabs.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added

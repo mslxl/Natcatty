@@ -190,7 +190,9 @@ const (
 	MinWindowOpacity        = 0.5
 )
 
-// Defaults returns the original's defaults for every group.
+// Defaults returns the defaults for every group. Deliberate divergences from
+// the original are noted beside the field, such as session restore being
+// opt-in where the original enabled it.
 func Defaults() Settings {
 	return Settings{
 		Appearance: Appearance{
@@ -213,9 +215,11 @@ func Defaults() Settings {
 			TabBarPosition:              TabBarTop,
 			ShellOnlyTabNumberShortcuts: false,
 			ShowTabNumberBadges:         true,
-			RestorePreviousSession:      true,
-			StartupLanding:              StartupVault,
-			SidePanelDock:               DockRight,
+			// Restore is opt-in: a fresh profile lands on the Vault instead
+			// of reopening a stale Workspace and its connections.
+			RestorePreviousSession: false,
+			StartupLanding:         StartupVault,
+			SidePanelDock:          DockRight,
 		},
 		SFTPEditor: SFTPEditor{
 			DoubleClickBehavior: DoubleClickOpen,
