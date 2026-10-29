@@ -114,10 +114,37 @@ func TestClassifyArtifactDirsRejectsWhatItCannotName(t *testing.T) {
 	})
 }
 
+func TestGitHubAssetNameReplacesSpacesWithDots(t *testing.T) {
+	// GitHub replaces every space in an uploaded release-asset filename with
+	// a dot. The flat release set is published under these names, so the
+	// checksum manifest must list them; the five other assets are unchanged.
+	for _, test := range []struct {
+		name string
+		want string
+	}{
+		{"Natcatty 0.1.0.dmg", "Natcatty.0.1.0.dmg"},
+		{"Natcatty Setup 0.1.0 amd64.exe", "Natcatty.Setup.0.1.0.amd64.exe"},
+		{"Natcatty 0.1.0-rc.1.dmg", "Natcatty.0.1.0-rc.1.dmg"},
+		{"natcatty-0.1.0-linux-amd64.tar.gz", "natcatty-0.1.0-linux-amd64.tar.gz"},
+		{"natcatty-0.1.0-linux-arm64.tar.gz", "natcatty-0.1.0-linux-arm64.tar.gz"},
+		{"natcatty_0.1.0_amd64.deb", "natcatty_0.1.0_amd64.deb"},
+		{"natcatty_0.1.0_arm64.deb", "natcatty_0.1.0_arm64.deb"},
+		{"install.sh", "install.sh"},
+	} {
+		if got := GitHubAssetName(test.name); got != test.want {
+			t.Errorf("GitHubAssetName(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
 func TestIsArtifactNamesInstallersButNotRawExecutables(t *testing.T) {
 	artifacts := []string{
 		"darwin-universal/Natcatty 0.1.0.dmg",
 		"windows-amd64/Natcatty Setup 0.1.0 amd64.exe",
+		// The flat release set carries the published names after
+		// normalization, so the same artifact must still be recognized.
+		"darwin-universal/Natcatty.0.1.0.dmg",
+		"windows-amd64/Natcatty.Setup.0.1.0.amd64.exe",
 		"linux-amd64/natcatty-0.1.0-linux-amd64.tar.gz",
 		"linux-amd64/natcatty_0.1.0_amd64.deb",
 		"linux-amd64/install.sh",
@@ -129,6 +156,8 @@ func TestIsArtifactNamesInstallersButNotRawExecutables(t *testing.T) {
 	}
 	for _, name := range []string{
 		"windows-amd64/Natcatty.exe",
+		"windows-amd64/Natcatty.Setup.exe",
+		"windows-amd64/tool.Setup.helper.exe",
 		"linux-amd64/natcatty",
 		"darwin-universal/Natcatty.app/Contents/MacOS/Natcatty",
 		"linux-amd64/SHA256SUMS",
