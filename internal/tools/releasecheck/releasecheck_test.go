@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -179,6 +181,130 @@ func TestCollectFlattensArtifactsAndRejectsDuplicates(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "install.sh")); err != nil {
 		t.Fatalf("install.sh was not collected: %v", err)
 	}
+}
+
+// collectedReleaseDir collects the sample platform tree into one flat
+// directory, the state both release jobs are in immediately after collect.
+func collectedReleaseDir(t *testing.T) string {
+	t.Helper()
+	out := t.TempDir()
+	if _, err := collect(releaseTree(t), out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// publishedReleaseNames is the flat release set after normalize-assets, in
+// sorted order: the seven installers under the names GitHub publishes.
+func publishedReleaseNames() []string {
+	return []string{
+		"Natcatty.0.1.0.dmg",
+		"Natcatty.Setup.0.1.0.amd64.exe",
+		"install.sh",
+		"natcatty-0.1.0-linux-amd64.tar.gz",
+		"natcatty-0.1.0-linux-arm64.tar.gz",
+		"natcatty_0.1.0_amd64.deb",
+		"natcatty_0.1.0_arm64.deb",
+	}
+}
+
+func TestNormalizeAssetsRenamesAsGitHubDoes(t *testing.T) {
+	dir := collectedReleaseDir(t)
+	renames, err := normalizeAssets(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRenames := []assetRename{
+		{From: "Natcatty 0.1.0.dmg", To: "Natcatty.0.1.0.dmg"},
+		{From: "Natcatty Setup 0.1.0 amd64.exe", To: "Natcatty.Setup.0.1.0.amd64.exe"},
+	}
+	if !reflect.DeepEqual(renames, wantRenames) {
+		t.Fatalf("renames = %+v, want %+v", renames, wantRenames)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	want := publishedReleaseNames()
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("flat set after normalization = %v, want %v", names, want)
+	}
+}
+
+func TestNormalizedReleaseSetManifestListsPublishedNames(t *testing.T) {
+	dir := collectedReleaseDir(t)
+	if _, err := normalizeAssets(dir); err != nil {
+		t.Fatal(err)
+	}
+	sumsPath := filepath.Join(dir, "SHA256SUMS")
+	entries, err := writeSums(dir, sumsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 7 {
+		t.Fatalf("manifest lists %d artifacts, want 7: %+v", len(entries), entries)
+	}
+	got := make([]string, len(entries))
+	for index, entry := range entries {
+		got[index] = entry.Name
+	}
+	want := publishedReleaseNames()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest names = %v, want %v", got, want)
+	}
+	if _, err := verifySums(dir, sumsPath); err != nil {
+		t.Fatalf("the normalized manifest does not verify: %v", err)
+	}
+}
+
+func TestNormalizeAssetsFailsClosed(t *testing.T) {
+	t.Run("collision", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "Natcatty 0.1.0.dmg"), "dmg")
+		writeFile(t, filepath.Join(dir, "Natcatty.0.1.0.dmg"), "dmg")
+		_, err := normalizeAssets(dir)
+		if err == nil || !strings.Contains(err.Error(), "normalize to") {
+			t.Fatalf("a normalized-name collision: %v", err)
+		}
+		// A failed run must not leave a half-renamed set behind.
+		if _, err := os.Stat(filepath.Join(dir, "Natcatty 0.1.0.dmg")); err != nil {
+			t.Fatalf("the source name was renamed despite the collision: %v", err)
+		}
+	})
+
+	t.Run("unknown name", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "notes.txt"), "not a release asset")
+		_, err := normalizeAssets(dir)
+		if err == nil || !strings.Contains(err.Error(), "not a release asset") {
+			t.Fatalf("an unknown name: %v", err)
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "linux-amd64", "install.sh"), "#!/bin/sh\n")
+		_, err := normalizeAssets(dir)
+		if err == nil || !strings.Contains(err.Error(), "directory") {
+			t.Fatalf("a directory in the flat set: %v", err)
+		}
+		// The per-platform artifact must stay where it is.
+		if _, err := os.Stat(filepath.Join(dir, "linux-amd64", "install.sh")); err != nil {
+			t.Fatalf("a per-platform artifact was touched: %v", err)
+		}
+	})
+
+	t.Run("empty directory", func(t *testing.T) {
+		if _, err := normalizeAssets(t.TempDir()); err == nil {
+			t.Fatal("an empty flat release set was normalized")
+		}
+	})
 }
 
 func TestAssertNoUpdateMetadata(t *testing.T) {
