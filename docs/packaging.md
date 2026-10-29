@@ -77,22 +77,23 @@ tag or on a pushed `v*` tag. A pushed tag publishes a GitHub release; a
    Every job also runs `releasecheck assert-no-updates`, then writes and
    verifies a checksum manifest for its own artifacts.
 3. **checksums** downloads the platform artifacts, re-verifies each one after
-   transfer, flattens the release set, and generates one aggregate checksum
-   manifest with relative names. `releasecheck` names each downloaded
-   directory and fails closed on anything unexpected. It also asserts the
-   exact seven-file set. Both the platform artifacts and the aggregate
-   manifest are uploaded as workflow artifacts.
+   transfer, flattens the release set, renames the flat assets the way GitHub
+   does for release assets (every space becomes a dot), and generates one
+   aggregate checksum manifest with relative names. `releasecheck` names each
+   downloaded directory and fails closed on anything unexpected. It also
+   asserts the exact seven-file set. Both the platform artifacts and the
+   aggregate manifest are uploaded as workflow artifacts.
 4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
    `checksums`, and is the only job with `contents: write`. It downloads the
    already-verified platform artifacts, re-runs their checksums after
-   transfer, and flattens them again. It regenerates the aggregate checksum
-   manifest, verifies it, and requires it to be byte-identical to the one the
-   `checksums` job produced, so the published manifest is provably the
-   verified one. It then creates a GitHub release titled `Natcatty <version>`
-   for the tag, or edits the existing release when the tag is re-pushed or
-   force-moved, and attaches the release assets with `--clobber`. The tag and
-   the release are never deleted. A `workflow_dispatch` run skips this job and
-   publishes nothing.
+   transfer, and flattens them again. It applies the same asset rename,
+   regenerates the aggregate checksum manifest, verifies it, and requires it
+   to be byte-identical to the one the `checksums` job produced, so the
+   published manifest is provably the verified one. It then creates a GitHub
+   release titled `Natcatty <version>` for the tag, or edits the existing
+   release when the tag is re-pushed or force-moved, and attaches the release
+   assets with `--clobber`. The tag and the release are never deleted. A
+   `workflow_dispatch` run skips this job and publishes nothing.
 
 ## Release page
 
@@ -100,14 +101,18 @@ A tag push creates a GitHub release for that tag. Its body is the generated
 `RELEASE_NOTES.md`, so the notes come from `CHANGELOG.md` and are never written
 by hand. The assets are the seven installers and the checksum manifest:
 
-- `Natcatty <version>.dmg` (macOS universal)
-- `Natcatty Setup <version> amd64.exe` (Windows amd64)
+- `Natcatty.<version>.dmg` (macOS universal)
+- `Natcatty.Setup.<version>.amd64.exe` (Windows amd64)
 - `natcatty-<version>-linux-amd64.tar.gz`
 - `natcatty-<version>-linux-arm64.tar.gz`
 - `natcatty_<version>_amd64.deb`
 - `natcatty_<version>_arm64.deb`
 - `install.sh`
 - the checksum manifest, which lists all seven with relative names
+
+GitHub replaces every space in a release-asset filename with a dot, which is
+why the published names above differ from the in-package names in the
+Artifacts table.
 
 The release stays unsigned apart from MyGo's ad hoc macOS signature and carries
 no notarization or update metadata; publishing it does not relax any of the

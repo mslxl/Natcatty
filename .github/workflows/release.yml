@@ -431,9 +431,20 @@ jobs:
         run: |
           set -euo pipefail
           go run ./internal/tools/releasecheck collect -from downloads -to release
+
+      - name: Normalize the published asset names
+        # GitHub replaces every space in an uploaded asset filename with a dot.
+        # Normalizing the flat release set here makes the aggregate manifest
+        # list the names users actually download; the per-platform artifacts
+        # keep their in-package names.
+        run: go run ./internal/tools/releasecheck normalize-assets -dir release
+
+      - name: Assert the flat release set
+        run: |
+          set -euo pipefail
           cat > expected.txt <<EOF
-          Natcatty ${NATCATTY_VERSION}.dmg
-          Natcatty Setup ${NATCATTY_VERSION} amd64.exe
+          Natcatty.${NATCATTY_VERSION}.dmg
+          Natcatty.Setup.${NATCATTY_VERSION}.amd64.exe
           install.sh
           natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz
           natcatty-${NATCATTY_VERSION}-linux-arm64.tar.gz
@@ -533,6 +544,11 @@ jobs:
 
       - name: Collect the release artifacts
         run: go run ./internal/tools/releasecheck collect -from downloads -to release
+
+      - name: Normalize the published asset names
+        # The same rename the checksums job applies, so the regenerated
+        # manifest stays byte-identical to the downloaded one.
+        run: go run ./internal/tools/releasecheck normalize-assets -dir release
 
       - name: Prove the aggregate checksums are the verified ones
         run: |

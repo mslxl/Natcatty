@@ -36,6 +36,8 @@ func run(args []string) error {
 		return verifySumsCommand(rest)
 	case "collect":
 		return collectCommand(rest)
+	case "normalize-assets":
+		return normalizeAssetsCommand(rest)
 	case "classify":
 		return classifyCommand(rest)
 	case "assert-no-updates":
@@ -63,6 +65,7 @@ commands:
   generate-sums     -dir DIR [-out FILE]
   verify-sums       -dir DIR [-sums FILE]
   collect           -from DIR -to DIR
+  normalize-assets  -dir DIR
   classify          -dir DIR
   assert-no-updates [-dir DIR] [-manifest mygo.json]
   check-binary      -binary FILE [-catalog-dir ui/locales]
@@ -186,6 +189,29 @@ func collectCommand(args []string) error {
 		fmt.Println(name)
 	}
 	fmt.Printf("collected %d artifacts into %s\n", len(names), *to)
+	return nil
+}
+
+// normalizeAssetsCommand renames the flat release set exactly as GitHub does
+// when it publishes release assets, so the checksum manifest lists the names
+// users download rather than the in-package names.
+func normalizeAssetsCommand(args []string) error {
+	flags := newFlagSet("normalize-assets")
+	dir := flags.String("dir", "", "flat directory of collected release assets")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" {
+		return fmt.Errorf("normalize-assets needs -dir")
+	}
+	renames, err := normalizeAssets(*dir)
+	if err != nil {
+		return err
+	}
+	for _, rename := range renames {
+		fmt.Printf("%s -> %s\n", rename.From, rename.To)
+	}
+	fmt.Printf("normalized %d asset names in %s\n", len(renames), *dir)
 	return nil
 }
 

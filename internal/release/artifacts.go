@@ -13,6 +13,10 @@ import (
 // deb packages, and the Linux install script. The raw executable and the .app
 // bundle are carried with them but are not installers of their own.
 //
+// The Windows installer is accepted both as built ("Natcatty Setup ... .exe")
+// and as GitHub publishes it ("Natcatty.Setup....exe") because the flat
+// release set handed to users carries the published names.
+//
 // This is the one rule for what a release contains: SHA256SUMS generation,
 // verification, and collection all use it.
 func IsArtifact(name string) bool {
@@ -24,10 +28,34 @@ func IsArtifact(name string) bool {
 		return true
 	case base == "install.sh":
 		return true
-	case strings.HasSuffix(base, ".exe") && strings.Contains(base, " Setup "):
+	case strings.HasSuffix(base, ".exe") &&
+		(strings.Contains(base, " Setup ") || containsPublishedSetup(base)):
 		return true
 	}
 	return false
+}
+
+// containsPublishedSetup reports whether base carries the versioned NSIS
+// Setup name GitHub publishes after replacing spaces with dots, for example
+// "Natcatty.Setup.0.1.0.amd64.exe". Requiring a version digit after
+// ".Setup." keeps a raw executable such as "Natcatty.Setup.exe" or
+// "tool.Setup.helper.exe" from counting as an installer.
+func containsPublishedSetup(base string) bool {
+	const marker = ".Setup."
+	index := strings.Index(base, marker)
+	if index < 0 {
+		return false
+	}
+	after := base[index+len(marker):]
+	return after != "" && after[0] >= '0' && after[0] <= '9'
+}
+
+// GitHubAssetName returns the release-asset name GitHub shows for an uploaded
+// file: GitHub replaces every space in the filename with a dot. The flat
+// release set is renamed to these names before the checksum manifest is
+// generated, so the manifest lists exactly what users download.
+func GitHubAssetName(name string) string {
+	return strings.ReplaceAll(path.Base(name), " ", ".")
 }
 
 // ArtifactKind names what one downloaded workflow-artifact directory holds.
