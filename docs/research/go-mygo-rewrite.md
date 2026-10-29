@@ -1259,7 +1259,8 @@ Exit criteria:
 - Daily-driver SSH client for password and key hosts, including a jump host and an
   MFA host.
 - No plaintext secrets on disk.
-- Restart restores tabs/workspaces and reconnects only on user action.
+- With session restore enabled in Settings, restart restores tabs/workspaces and
+  reconnects only on user action; restore is off by default.
 - Integration tests use an in-process or containerized SSH server.
 
 ### Phase 2: SFTP, local protocols, forwarding (3-6 weeks)

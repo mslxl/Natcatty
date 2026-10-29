@@ -12,7 +12,7 @@ func TestDefaultsMatchTheOriginal(t *testing.T) {
 	}
 	if !got.Layout.ShowHostTreeSidebar || !got.Layout.ShowSFTPTab || !got.Layout.ShowRecentHosts ||
 		got.Layout.ShellOnlyTabNumberShortcuts || !got.Layout.ShowTabNumberBadges ||
-		!got.Layout.RestorePreviousSession || got.Layout.TabBarPosition != TabBarTop {
+		got.Layout.TabBarPosition != TabBarTop {
 		t.Errorf("layout defaults = %+v", got.Layout)
 	}
 	if got.SFTPEditor.DoubleClickBehavior != DoubleClickOpen || !got.SFTPEditor.UseCompressedUpload ||
@@ -21,6 +21,18 @@ func TestDefaultsMatchTheOriginal(t *testing.T) {
 	}
 	if got.Logs.SSHDebug || got.Sync.Enabled || !got.Security.ConfirmCloseSessions {
 		t.Errorf("logs/sync/security defaults = %+v %+v %+v", got.Logs, got.Sync, got.Security)
+	}
+}
+
+// TestSessionRestoreIsOptIn covers the deliberate divergence from the
+// original, which restored the previous session by default.
+func TestSessionRestoreIsOptIn(t *testing.T) {
+	got := Defaults()
+	if got.Layout.RestorePreviousSession {
+		t.Error("session restore is on by default")
+	}
+	if got.Layout.StartupLanding != StartupVault {
+		t.Errorf("startup landing = %q, want %q", got.Layout.StartupLanding, StartupVault)
 	}
 }
 

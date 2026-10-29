@@ -1836,7 +1836,7 @@
     - ui/shell.TestMissingHostPaneShowsNoReconnect
     - domain/workspace.TestSanitizePayloadMapsActiveTabPastDroppedTabs
   status: verified
-  notes: "Payload version 1 stores only layout and non-secret Session descriptors; terminal output and scrollback are deliberately absent. A missing Host renders an error Pane in place, and an invalid local directory is cleared. Dropped Tabs remap the active Tab instead of shifting it by index. A corrupt row restores an empty Workspace. A restored Pane that fails to open shows the localized failure and offers Reconnect, which retries the same descriptor; a missing Host still renders PaneHostMissing with no retry."
+  notes: "Session restore is opt-in: it is off by default, so a profile with no preferences.json lands on the Vault and opens no Tabs; enabling Restore the previous session in Settings → Layout & Tabs restores the previous Tabs and layout on the next launch. Payload version 1 stores only layout and non-secret Session descriptors; terminal output and scrollback are deliberately absent. A missing Host renders an error Pane in place, and an invalid local directory is cleared. Dropped Tabs remap the active Tab instead of shifting it by index. A corrupt row restores an empty Workspace. A restored Pane that fails to open shows the localized failure and offers Reconnect, which retries the same descriptor; a missing Host still renders PaneHostMissing with no retry."
 
 - id: workspace.cwd-restore
   area: terminal
