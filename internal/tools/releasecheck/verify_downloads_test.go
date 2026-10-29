@@ -43,8 +43,9 @@ func requireBash(t *testing.T) {
 }
 
 // downloadTree creates one platform artifact directory whose SHA256SUMS
-// matches its DMG, and one release-notes directory, as the checksums job
-// receives them.
+// matches its DMG, as the checksums job receives it. The notes and aggregate
+// checksum artifacts stay outside the workflow's `natcatty-*` pattern, so a
+// valid download root holds platform directories only.
 func downloadTree(t *testing.T, binary string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "downloads")
@@ -54,11 +55,10 @@ func downloadTree(t *testing.T, binary string) string {
 	if output, err := generate.CombinedOutput(); err != nil {
 		t.Fatalf("generate-sums: %v\n%s", err, output)
 	}
-	writeFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
 	return root
 }
 
-func TestVerifyDownloadsScriptAcceptsPlatformsAndNotes(t *testing.T) {
+func TestVerifyDownloadsScriptAcceptsPlatforms(t *testing.T) {
 	requireBash(t)
 	binary := buildReleasecheck(t)
 	root := downloadTree(t, binary)
@@ -67,10 +67,8 @@ func TestVerifyDownloadsScriptAcceptsPlatformsAndNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the script rejected a valid download tree: %v\n%s", err, output)
 	}
-	for _, want := range []string{"verified", "holds the release notes"} {
-		if !strings.Contains(output, want) {
-			t.Errorf("output lacks %q:\n%s", want, output)
-		}
+	if !strings.Contains(output, "verified") {
+		t.Errorf("output lacks %q:\n%s", "verified", output)
 	}
 }
 
@@ -90,9 +88,16 @@ func TestVerifyDownloadsScriptFailsClosed(t *testing.T) {
 			},
 		},
 		{
-			name: "empty release notes",
+			name: "unlisted artifact",
 			setup: func(t *testing.T, root string) {
-				writeFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), "")
+				writeFile(t, filepath.Join(root, "natcatty-darwin-universal",
+					"Natcatty 0.1.1.dmg"), "unlisted")
+			},
+		},
+		{
+			name: "release notes directory",
+			setup: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
 			},
 		},
 		{
@@ -128,7 +133,7 @@ func TestVerifyDownloadsScriptFailsClosed(t *testing.T) {
 
 	t.Run("notes only", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "downloads")
-		writeFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
+		writeFile(t, filepath.Join(root, "release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
 		output, err := verifyDownloads(t, binary, root)
 		if err == nil {
 			t.Fatalf("the script accepted a download tree with no platform artifacts:\n%s", output)

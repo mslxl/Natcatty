@@ -104,7 +104,7 @@ jobs:
       - name: Upload the release notes
         uses: actions/upload-artifact@v4
         with:
-          name: natcatty-release-notes
+          name: release-notes
           path: RELEASE_NOTES.md
           if-no-files-found: error
 
@@ -372,7 +372,7 @@ jobs:
           test -x dist/linux-arm64/install.sh
           cmp dist/linux-amd64/install.sh dist/linux-arm64/install.sh
 
-      - name: Generate and verify SHA256SUMS
+      - name: Generate and verify checksums
         run: |
           set -euo pipefail
           go run ./internal/tools/releasecheck assert-no-updates -dir dist -manifest mygo.json
@@ -388,7 +388,7 @@ jobs:
           if-no-files-found: error
 
   checksums:
-    name: aggregate SHA256SUMS
+    name: aggregate checksums
     needs:
       - validate
       - build
@@ -408,15 +408,19 @@ jobs:
           cache: true
 
       - name: Download every platform artifact
+        # `natcatty-*` selects exactly the three platform artifacts the build
+        # job uploads. The notes artifact (`release-notes`) and the aggregate
+        # checksum artifact (`release-checksums`) stay outside the pattern, so
+        # a re-run cannot sweep the previous attempt's aggregate file back in.
         uses: actions/download-artifact@v4
         with:
           path: downloads
           pattern: natcatty-*
 
       - name: Verify each platform's checksums after transfer
-        # releasecheck classify names the platform and release-notes
-        # directories; the script verifies each platform and skips the notes,
-        # and fails closed on an unknown directory.
+        # releasecheck classify accepts only platform artifact sets, each of
+        # which carries SHA256SUMS; the script verifies every one and fails
+        # closed on anything unexpected.
         run: bash scripts/verify-downloads.sh downloads
 
       - name: Collect the release artifacts
@@ -439,17 +443,17 @@ jobs:
         env:
           NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
 
-      - name: Generate and verify the aggregate SHA256SUMS
+      - name: Generate and verify the aggregate checksums
         run: |
           set -euo pipefail
           go run ./internal/tools/releasecheck generate-sums -dir release
           go run ./internal/tools/releasecheck verify-sums -dir release
           cat release/SHA256SUMS
 
-      - name: Upload the aggregate SHA256SUMS
+      - name: Upload the aggregate checksums
         uses: actions/upload-artifact@v4
         with:
-          name: natcatty-SHA256SUMS
+          name: release-checksums
           path: release/SHA256SUMS
           if-no-files-found: error
 

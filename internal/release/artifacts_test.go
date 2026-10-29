@@ -18,19 +18,23 @@ func writeArtifactFile(t *testing.T, filePath, content string) {
 	}
 }
 
-func TestClassifyArtifactDirsNamesPlatformsAndNotes(t *testing.T) {
+func TestClassifyArtifactDirsNamesPlatforms(t *testing.T) {
 	root := t.TempDir()
 	sums := strings.Repeat("a", 64) + "  Natcatty 0.1.0.dmg\n"
+	for _, dir := range []string{"natcatty-darwin-universal", "natcatty-linux", "natcatty-windows-amd64"} {
+		writeArtifactFile(t, filepath.Join(root, dir, "SHA256SUMS"), sums)
+	}
+	writeArtifactFile(t, filepath.Join(root, "natcatty-darwin-universal", "Natcatty 0.1.0.dmg"), "dmg")
+	writeArtifactFile(t, filepath.Join(root, "natcatty-linux", "install.sh"), "#!/bin/sh\n")
 	writeArtifactFile(t, filepath.Join(root, "natcatty-windows-amd64", "Natcatty Setup 0.1.0 amd64.exe"), "setup")
-	writeArtifactFile(t, filepath.Join(root, "natcatty-windows-amd64", "SHA256SUMS"), sums)
-	writeArtifactFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
 
 	got, err := ClassifyArtifactDirs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []ArtifactDir{
-		{Path: filepath.Join(root, "natcatty-release-notes"), Kind: ArtifactReleaseNotes},
+		{Path: filepath.Join(root, "natcatty-darwin-universal"), Kind: ArtifactPlatform},
+		{Path: filepath.Join(root, "natcatty-linux"), Kind: ArtifactPlatform},
 		{Path: filepath.Join(root, "natcatty-windows-amd64"), Kind: ArtifactPlatform},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -39,40 +43,42 @@ func TestClassifyArtifactDirsNamesPlatformsAndNotes(t *testing.T) {
 }
 
 func TestClassifyArtifactDirsRejectsWhatItCannotName(t *testing.T) {
-	notes := "# Natcatty 0.1.0\n"
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, root string)
 		want  string
 	}{
 		{
-			name: "empty release notes",
+			name: "release notes directory",
 			setup: func(t *testing.T, root string) {
-				writeArtifactFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), "")
+				writeArtifactFile(t, filepath.Join(root, "release-notes", "RELEASE_NOTES.md"), "# Natcatty 0.1.0\n")
 			},
-			want: "RELEASE_NOTES.md",
+			want: "not a platform artifact set",
 		},
 		{
-			name: "missing release notes",
+			name: "stray file without sums",
 			setup: func(t *testing.T, root string) {
-				writeArtifactFile(t, filepath.Join(root, "natcatty-release-notes", "notes.txt"), notes)
+				writeArtifactFile(t, filepath.Join(root, "natcatty-mystery", "stray.bin"), "x")
 			},
-			want: "neither",
+			want: "not a platform artifact set",
 		},
 		{
-			name: "notes beside another file",
+			name: "empty directory",
 			setup: func(t *testing.T, root string) {
-				writeArtifactFile(t, filepath.Join(root, "natcatty-release-notes", "RELEASE_NOTES.md"), notes)
-				writeArtifactFile(t, filepath.Join(root, "natcatty-release-notes", "unexpected.bin"), "x")
+				if err := os.MkdirAll(filepath.Join(root, "natcatty-empty"), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			},
-			want: "unexpected.bin",
+			want: "not a platform artifact set",
 		},
 		{
-			name: "unknown directory",
+			name: "sha256sums is a directory",
 			setup: func(t *testing.T, root string) {
-				writeArtifactFile(t, filepath.Join(root, "natcatty-mystery", "something.txt"), "x")
+				if err := os.MkdirAll(filepath.Join(root, "natcatty-platform", "SHA256SUMS"), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			},
-			want: "neither",
+			want: "not a regular file",
 		},
 		{
 			name: "file where a directory belongs",

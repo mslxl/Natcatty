@@ -190,10 +190,10 @@ func collectCommand(args []string) error {
 }
 
 // classifyCommand names each downloaded workflow-artifact directory as a
-// platform artifact set (it carries SHA256SUMS) or the release notes (it
-// carries only RELEASE_NOTES.md). The release workflow's checksums job reads
-// this output instead of guessing from file names, so the two cannot drift.
-// The output is one "kind<TAB>path" line per directory.
+// platform artifact set when it carries SHA256SUMS. The release workflow's
+// checksums job reads this output instead of guessing from file names, so the
+// two cannot drift. The output is one "kind<TAB>path" line per directory, and
+// anything that is not a platform artifact set is an error.
 func classifyCommand(args []string) error {
 	flags := newFlagSet("classify")
 	dir := flags.String("dir", "", "download root holding one directory per workflow artifact")
