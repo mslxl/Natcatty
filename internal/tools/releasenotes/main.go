@@ -1,8 +1,8 @@
 // Command releasenotes generates RELEASE_NOTES.md for one version from the
 // repository's Keep a Changelog file. It is checked release tooling: the
-// release workflow runs it after the tag matches mygo.json and uploads the
-// result as a workflow artifact. It never creates or publishes a GitHub
-// release.
+// release workflow runs it after the tag matches mygo.json, uploads the result
+// as a workflow artifact, and uses it as the body of the GitHub release that a
+// tag push publishes.
 //
 //	go run ./internal/tools/releasenotes -version 0.1.0 -changelog CHANGELOG.md -out RELEASE_NOTES.md
 package main

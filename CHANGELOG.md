@@ -14,6 +14,10 @@ do not maintain them by hand.
 - Session restore is opt-in. A fresh profile lands on the Vault and opens no
   Tabs; the previous Tabs and layout are restored only after enabling Restore
   the previous session in Settings → Layout & Tabs.
+- Release tags now publish a GitHub Release page with the platform installers
+  (the macOS disk image, the Windows Setup, the Linux tar.gz and .deb packages
+  for amd64 and arm64, and `install.sh`) and the checksum manifest. A manually
+  dispatched workflow run still only validates and builds.
 
 ## [0.1.0] - 2026-10-28
 
