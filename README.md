@@ -40,3 +40,26 @@ visible glyphs. Install a CJK font such as `fonts-noto-cjk` before running the
 app; the `.deb` does not declare a CJK font dependency. The CI images install
 `fonts-noto-cjk` for the same reason.
 
+## Nix development and installation
+
+The flake supports `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`:
+
+```sh
+nix develop
+nix build .#natcatty
+```
+
+The Nix package keeps `mygo.json`, `CHANGELOG.md`, and the `resources/`
+directory beside the executable so bundled runtime resources can be resolved
+from a Nix store path. On NixOS or nix-darwin, import the matching module and
+enable the program:
+
+```nix
+{
+  # In a NixOS module, with `natcatty` bound to the flake input:
+  imports = [ natcatty.nixosModules.default ];
+  programs.natcatty.enable = true;
+
+  # nix-darwin uses `natcatty.darwinModules.default` instead.
+}
+```
