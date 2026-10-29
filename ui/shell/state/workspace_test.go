@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
@@ -680,6 +681,82 @@ func TestRestoreReopensATelnetPane(t *testing.T) {
 	}
 	if spec.Reconnect == nil {
 		t.Fatal("a restored Telnet Pane has no manual reconnect policy")
+	}
+}
+
+func TestRetryFailedPaneReopensTheSameDescriptor(t *testing.T) {
+	payload := domainworkspace.Payload{
+		Version:   domainworkspace.PayloadVersion,
+		ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-telnet", Number: 1, Root: domainworkspace.NewPaneNode("pane-telnet"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-telnet",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionTelnet, HostID: "host-telnet",
+				Hostname: "127.0.0.1", Port: 2323, Label: "telnet-fake",
+			},
+		}},
+	}
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-telnet"] = domainvault.Host{
+		ID: "host-telnet", Hostname: "127.0.0.1", Port: 2323,
+		Protocol: domainvault.ProtocolTelnet,
+	}
+	var attempts int
+	graph.factory.fail = func(appsession.StartSpec) error {
+		attempts++
+		if attempts == 1 {
+			return &appconnection.Error{Kind: appconnection.KindNetwork}
+		}
+		return nil
+	}
+	graph.repo.payload = payload
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the failed Telnet open", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-telnet")
+		return ok && !info.Pending && info.Err != nil
+	})
+	tabID, ok := graph.state.TabID(0)
+	if !ok {
+		t.Fatal("the restored Tab has no identity")
+	}
+
+	if !graph.state.RetryPane(tabID, "pane-telnet") {
+		t.Fatal("RetryPane refused the failed Pane")
+	}
+	if info, _ := graph.state.PaneInfoAt(0, "pane-telnet"); !info.Pending || info.Err != nil {
+		t.Fatalf("Pane after RetryPane = %+v, want a pending reconnect", info)
+	}
+	if graph.state.RetryPane(tabID, "pane-telnet") {
+		t.Fatal("a second RetryPane while pending returned true")
+	}
+
+	graph.flushUntil(t, "the retried surface", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-telnet")
+		return ok && info.Surface != nil && info.Err == nil
+	})
+	graph.factory.mu.Lock()
+	specs := append([]appsession.StartSpec(nil), graph.factory.specs...)
+	graph.factory.mu.Unlock()
+	if len(specs) != 2 {
+		t.Fatalf("Session opens = %d, want the failed attempt and the retry", len(specs))
+	}
+	for index, spec := range specs {
+		if spec.Kind != appsession.KindTelnet || spec.Telnet == nil ||
+			spec.Telnet.Hostname != "127.0.0.1" || spec.Telnet.Port != 2323 {
+			t.Fatalf("open %d spec = %+v, want the same Telnet endpoint", index, spec)
+		}
+	}
+	if graph.state.RetryPane(tabID, "pane-telnet") {
+		t.Fatal("RetryPane retried a live Pane")
+	}
+	if graph.state.RetryPane("no-such-tab", "pane-telnet") {
+		t.Fatal("RetryPane accepted an unknown Tab")
+	}
+	if graph.state.RetryPane(tabID, "no-such-pane") {
+		t.Fatal("RetryPane accepted an unknown Pane")
 	}
 }
 

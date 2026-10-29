@@ -1346,6 +1346,38 @@ func (s *State) requestPaneOpen(tabID model.TabID, paneID model.PaneID,
 	}()
 }
 
+// RetryPane reopens a failed Pane's Session from the Pane's own descriptor. It
+// reports false when the Pane does not exist, is still opening, is already
+// live, or the shell has no Session service. The retry keeps restore semantics
+// so an SSH Pane replays its last known working directory.
+func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
+	if s.sessions == nil || s.surfaces == nil {
+		return false
+	}
+	tab, _ := s.tabByAnyID(tabID)
+	if tab == nil {
+		return false
+	}
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	// Only a failed Pane retries: a pending or live one already owns a Session
+	// or a dial, and retrying it would duplicate both.
+	if value.err == nil || value.pending || value.surface != nil {
+		return false
+	}
+	if value.session != nil {
+		closePane(value)
+		value.session = nil
+	}
+	value.pending = true
+	value.err = nil
+	s.requestPaneOpen(tab.ID, paneID, value.descriptor, true)
+	s.RequestRedraw()
+	return true
+}
+
 func (s *State) applyPaneOutcome(outcome paneOutcome) {
 	tab, _ := s.tabByAnyID(outcome.tabID)
 	if tab == nil {
