@@ -71,24 +71,40 @@ func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	if !domainpreferences.Equal(settings, domainpreferences.Defaults()) {
 		t.Fatalf("missing file = %+v", settings)
 	}
+	if settings.Layout.RestorePreviousSession {
+		t.Error("a missing preferences file enabled session restore")
+	}
+
+	loadDocument := func(document string) domainpreferences.Settings {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		settings, err := store.Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return settings
+	}
 
 	// An older or hand-edited document must keep the defaults for every
 	// field it does not mention.
-	if err := os.WriteFile(path, []byte(`{"version":1,"layout":{"showSftpTab":false}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	settings, err = store.Load(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	settings = loadDocument(`{"version":1,"layout":{"showSftpTab":false}}`)
 	if settings.Layout.ShowSFTPTab {
 		t.Error("showSftpTab override was not loaded")
 	}
-	if !settings.Layout.ShowHostTreeSidebar || !settings.Layout.RestorePreviousSession {
+	if !settings.Layout.ShowHostTreeSidebar || settings.Layout.RestorePreviousSession {
 		t.Errorf("absent booleans lost their defaults: %+v", settings.Layout)
 	}
 	if settings.Appearance.TerminalFontSize != domainpreferences.DefaultTerminalFontSize {
 		t.Errorf("absent appearance lost its default: %+v", settings.Appearance)
+	}
+
+	// Restore is opt-in: an explicit true in the file is honored, and a file
+	// that omits the field keeps the off default (asserted above).
+	settings = loadDocument(`{"version":1,"layout":{"restorePreviousSession":true}}`)
+	if !settings.Layout.RestorePreviousSession {
+		t.Error("explicit restorePreviousSession true was not loaded")
 	}
 
 	if err := store.Save(context.Background(), domainpreferences.Defaults()); err != nil {
