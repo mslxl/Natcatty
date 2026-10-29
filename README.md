@@ -30,8 +30,9 @@ A release produces a macOS universal `.app` and DMG, a Windows amd64 NSIS Setup
 `.exe`, and Linux amd64/arm64 `.tar.gz` archives with `install.sh` plus `.deb`
 packages. The macOS app is **ad hoc signed only**; nothing is Developer ID
 signed, notarized, or Authenticode signed. The app ships no self-updater and no
-update metadata. Release artifacts are uploaded as CI workflow artifacts, not
-published as a GitHub release.
+update metadata. Pushing a strict SemVer release tag publishes a GitHub release
+page with those installers and the checksum manifest; a manually dispatched
+workflow run only validates and builds.
 
 The interface uses the operating system's fonts. On Linux, a system without a
 CJK font (for example a minimal container) renders Chinese text with no
