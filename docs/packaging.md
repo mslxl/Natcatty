@@ -58,9 +58,9 @@ tag or on a pushed `v*` tag.
    strict SemVer (`vMAJOR.MINOR.PATCH[-pre]`) exactly matching `mygo.json`
    `version`, rejects signing/notarization/update configuration, refuses
    updater or signing environment variables, and generates `RELEASE_NOTES.md`
-   from `CHANGELOG.md` for that version and uploads it as the
-   `natcatty-release-notes` workflow artifact. A missing changelog entry, a
-   duplicate version, or an empty section fails validation.
+   from `CHANGELOG.md` for that version and uploads it as the `release-notes`
+   workflow artifact. A missing changelog entry, a duplicate version, or an
+   empty section fails validation.
 2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
    builds with MyGo, and verifies the artifact itself:
    - macOS: `hdiutil verify`, mounts the DMG, checks `Info.plist`, the version,
@@ -73,18 +73,15 @@ tag or on a pushed `v*` tag.
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
      (including `CHANGELOG.md`), and platform transport clients; the extracted
      executable must embed all five catalogs.
-   Every job also runs `releasecheck assert-no-updates`, then generates and
-   verifies a per-platform `SHA256SUMS`.
-3. **checksums** downloads every `natcatty-*` workflow artifact, including
-   `natcatty-release-notes`, then runs `scripts/verify-downloads.sh`, which
-   asks `releasecheck classify` which directories are platform artifact sets
-   and which is the release notes. It verifies each platform's list again
-   after transfer, skips the notes directory (it has no `SHA256SUMS` and is
-   not a release artifact), flattens the release set, and generates one
-   aggregate `SHA256SUMS` with relative names. It also asserts the exact
-   seven-file set. Both the platform artifacts and the aggregate checksum
-   file are uploaded as workflow artifacts. **No GitHub release is created or
-   published.**
+   Every job also runs `releasecheck assert-no-updates`, then writes and
+   verifies a checksum manifest for its own artifacts.
+3. **checksums** downloads the platform artifacts, re-verifies each one after
+   transfer, flattens the release set, and generates one aggregate checksum
+   manifest with relative names. `releasecheck` names each downloaded
+   directory and fails closed on anything unexpected. It also asserts the
+   exact seven-file set. Both the platform artifacts and the aggregate
+   manifest are uploaded as workflow artifacts. **No GitHub release is created
+   or published.**
 
 `releasecheck` is checked Go tooling in `internal/tools/releasecheck`; its
 rules live in `internal/release`. Run it locally with:
@@ -95,9 +92,8 @@ go run ./internal/tools/releasecheck generate-sums -dir dist
 go run ./internal/tools/releasecheck verify-sums -dir dist
 ```
 
-`SHA256SUMS` is compatible with `sha256sum -c` when run from the directory the
-names are relative to. The aggregate file is flat, so run it from the directory
-holding the collected artifacts.
+The aggregate manifest uses names relative to the collected artifact
+directory, so verify it from that directory.
 
 ## Release notes
 
@@ -153,5 +149,6 @@ inputs, and toolchain; two local Linux builds produced identical `natcatty`
 binaries and identical `install.sh` scripts. The tarballs and `.deb` packages
 are not byte-reproducible because MyGo embeds build timestamps in their
 archives, so two builds differ in those container files even when every payload
-is identical. Treat `SHA256SUMS` as identifying the artifacts of one workflow
-run, not as a promise that rebuilding later gives the same container bytes.
+is identical. Treat the aggregate checksum manifest as identifying the
+artifacts of one workflow run, not as a promise that rebuilding later gives the
+same container bytes.

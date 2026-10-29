@@ -14,8 +14,7 @@ import (
 // bundle are carried with them but are not installers of their own.
 //
 // This is the one rule for what a release contains: SHA256SUMS generation,
-// verification, collection, and workflow-artifact directory classification all
-// use it.
+// verification, and collection all use it.
 func IsArtifact(name string) bool {
 	base := path.Base(name)
 	switch {
@@ -38,10 +37,6 @@ const (
 	// ArtifactPlatform is a build job's directory: release artifacts and the
 	// SHA256SUMS that list them.
 	ArtifactPlatform ArtifactKind = "platform"
-	// ArtifactReleaseNotes is the validate job's directory: the generated
-	// RELEASE_NOTES.md and nothing else. It has no SHA256SUMS because notes are
-	// not a release artifact.
-	ArtifactReleaseNotes ArtifactKind = "notes"
 )
 
 // ArtifactDir is one directory under a download root, classified.
@@ -50,19 +45,15 @@ type ArtifactDir struct {
 	Kind ArtifactKind
 }
 
-const (
-	sumsName  = "SHA256SUMS"
-	notesName = "RELEASE_NOTES.md"
-)
+const sumsName = "SHA256SUMS"
 
 // ClassifyArtifactDirs classifies every immediate subdirectory of root. The
-// release workflow downloads `natcatty-*` artifacts and must verify exactly
-// the platform directories, skip the release-notes directory, and fail on
-// anything else; this is the one place that decides which is which.
+// release workflow downloads the `natcatty-*` artifacts, which are exactly the
+// platform build directories; the notes and aggregate checksum artifacts are
+// named outside that pattern. This is the one place that decides what counts.
 //
-// It fails closed: a file where a directory belongs, a directory that is
-// neither a platform nor the notes, a missing or empty RELEASE_NOTES.md, and
-// an empty root are all errors.
+// It fails closed: a file where a directory belongs, a directory that is not a
+// platform artifact set, and an empty or missing root are all errors.
 func ClassifyArtifactDirs(root string) ([]ArtifactDir, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -87,46 +78,22 @@ func ClassifyArtifactDirs(root string) ([]ArtifactDir, error) {
 	return dirs, nil
 }
 
-// ClassifyArtifactDir classifies one downloaded workflow-artifact directory as
-// a platform directory when it carries SHA256SUMS, or as the release-notes
-// directory when it carries only a non-empty RELEASE_NOTES.md. Anything else
-// is an error, so a new upload cannot slip past the checksums job unnamed.
+// ClassifyArtifactDir classifies one downloaded workflow-artifact directory.
+// A directory is a platform artifact set only when it holds a regular
+// SHA256SUMS; anything else is an error, so a notes-only directory, a stray
+// file, an empty directory, or a missing checksum list cannot slip past the
+// checksums job unnamed.
 func ClassifyArtifactDir(dir string) (ArtifactKind, error) {
 	sumsPath := filepath.Join(dir, sumsName)
-	if info, err := os.Stat(sumsPath); err == nil {
-		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("%s is not a regular file", sumsPath)
-		}
-		return ArtifactPlatform, nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	entries, err := os.ReadDir(dir)
+	info, err := os.Stat(sumsPath)
 	if err != nil {
-		return "", err
-	}
-	notesPath := filepath.Join(dir, notesName)
-	notesFound := false
-	for _, entry := range entries {
-		if entry.Name() != notesName {
-			return "", fmt.Errorf("%s holds %s, which is neither a platform artifact nor the release notes",
-				dir, entry.Name())
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%s is not a platform artifact set: it holds no regular %s", dir, sumsName)
 		}
-		notesFound = true
-	}
-	if !notesFound {
-		return "", fmt.Errorf("%s holds neither %s nor %s", dir, sumsName, notesName)
-	}
-	info, err := os.Stat(notesPath)
-	if err != nil {
 		return "", err
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", notesPath)
+		return "", fmt.Errorf("%s is not a regular file", sumsPath)
 	}
-	if info.Size() == 0 {
-		return "", fmt.Errorf("%s is empty", notesPath)
-	}
-	return ArtifactReleaseNotes, nil
+	return ArtifactPlatform, nil
 }
