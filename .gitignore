@@ -4,6 +4,9 @@
 # Build output
 build/
 
+# Runtime log written by the app when it is launched from a checkout
+myeasylog.log
+
 # Transport client binaries are fetched per packaging target. The host target's
 # Windows x64 bundle is committed for reproducible local acceptance; other
 # targets are downloaded by internal/tools/fetchtransportbins.
