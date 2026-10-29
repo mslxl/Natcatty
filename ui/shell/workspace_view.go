@@ -7,6 +7,7 @@ import (
 
 	"github.com/mslxl/natcatty/domain/model"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -29,6 +30,7 @@ type tabRef struct {
 	closeFocused func() bool
 	detach       func(model.PaneID) bool
 	rename       func(string) bool
+	retry        func(model.PaneID) bool
 }
 
 func mainTabRef(s *state.State, tabIndex int) tabRef {
@@ -46,6 +48,7 @@ func mainTabRef(s *state.State, tabIndex int) tabRef {
 		},
 		detach: func(paneID model.PaneID) bool { return s.DetachPane(tabIndex, paneID) },
 		rename: func(title string) bool { return s.RenameTab(tabIndex, title) },
+		retry:  func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
 	}
 }
 
@@ -56,6 +59,7 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 		setRatio: func(id model.SplitID, ratio float32) bool { return s.SetDetachedSplitRatio(tabID, id, ratio) },
 		focus:    func(id model.PaneID) bool { return s.FocusDetachedPaneID(tabID, id) },
 		rename:   func(title string) bool { return s.RenameDetachedTab(tabID, title) },
+		retry:    func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
 	}
 }
 
@@ -336,7 +340,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			}
 			pane.Children(func() {
 				paneHeader(c, s, m, t, ref, info)
-				paneContent(c, s, m, t, info)
+				paneContent(c, s, m, t, ref, info)
 			})
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideRight, false)
@@ -443,15 +447,35 @@ func paneTitle(m locales.Messages, info state.PaneInfo) string {
 	return m.LocalSessionTab(info.Number)
 }
 
-func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, info state.PaneInfo) {
+func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	ref tabRef, info state.PaneInfo) {
 	switch {
 	case info.Err != nil:
+		// A missing Host cannot come back by retrying, so it keeps the shell's
+		// own text and offers no control. Every other failure is localized from
+		// its typed connection error and can be retried in place.
 		message := m.PaneOpenFailed()
+		retryable := true
 		if errors.Is(info.Err, state.ErrHostUnavailable) {
 			message = m.PaneHostMissing()
+			retryable = false
+		} else if problem := uiconnection.ProblemTextFor(m, info.Err); problem != "" {
+			message = problem
 		}
 		ui.Column(c).Fill().Padding(12).Children(func() {
 			ui.Text(c, message).TextColor(uitheme.DangerText(t)).FontSize(12)
+			if !retryable {
+				return
+			}
+			retry := ui.Button(c, m.SessionMenuReconnect())
+			// The focused Pane owns the keyboard, so Enter and Space reconnect
+			// it. A Pane that is not focused must not steal the keyboard.
+			if info.Focused {
+				retry.AutoFocus()
+			}
+			if retry.Clicked() && ref.retry != nil && ref.retry(info.ID) {
+				c.Invalidate()
+			}
 		})
 	case info.Surface != nil:
 		// The focused Pane's terminal takes the keyboard; every other Pane

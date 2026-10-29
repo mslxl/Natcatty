@@ -1831,9 +1831,12 @@
     - ui/shell/state.TestRestoreDegradesMissingHostAndInvalidWorkingDirectory
     - ui/shell/state.TestRestoreKeepsNumbersActiveTabAndFocus
     - ui/shell/state.TestOpenHostPersistsItsRestoreDescriptor
+    - ui/shell/state.TestRetryFailedPaneReopensTheSameDescriptor
+    - ui/shell.TestRestoredPaneShowsTheConnectionFailureAndReconnects
+    - ui/shell.TestMissingHostPaneShowsNoReconnect
     - domain/workspace.TestSanitizePayloadMapsActiveTabPastDroppedTabs
   status: verified
-  notes: "Payload version 1 stores only layout and non-secret Session descriptors; terminal output and scrollback are deliberately absent. A missing Host renders an error Pane in place, and an invalid local directory is cleared. Dropped Tabs remap the active Tab instead of shifting it by index. A corrupt row restores an empty Workspace."
+  notes: "Payload version 1 stores only layout and non-secret Session descriptors; terminal output and scrollback are deliberately absent. A missing Host renders an error Pane in place, and an invalid local directory is cleared. Dropped Tabs remap the active Tab instead of shifting it by index. A corrupt row restores an empty Workspace. A restored Pane that fails to open shows the localized failure and offers Reconnect, which retries the same descriptor; a missing Host still renders PaneHostMissing with no retry."
 
 - id: workspace.cwd-restore
   area: terminal
