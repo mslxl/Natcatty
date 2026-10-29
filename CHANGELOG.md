@@ -61,7 +61,7 @@ do not maintain them by hand.
 - Packaging for macOS (universal DMG), Windows amd64 (NSIS Setup), and Linux
   amd64/arm64 (tar.gz, deb, and `install.sh`) with bundled mosh and
   EternalTerminal clients, license notices, and SHA-256 checksums.
-- Strict SemVer release validation, per-platform and aggregate `SHA256SUMS`,
+- Strict SemVer release validation, per-platform and aggregate checksum manifests,
   release notes generated from this changelog, and a parity matrix gate that
   requires every in-scope row to be verified or explicitly excluded.
 
