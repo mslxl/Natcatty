@@ -30,22 +30,19 @@ func newVaultTester(t *testing.T, width, height int) (*ui.Tester, *vaultstate.St
 	return tester, vault
 }
 
-// TestVaultHeaderFitsAtMinimumSize is the ticket-28 D1 regression: at the
-// 720x480 minimum the host list title stays on one line and every header
-// action (Import Hosts, Export Vault, Backups, New Host) stays inside the
-// content column in all five locales. At 8c4ce36 the non-wrapping header row
-// squeezed "Hosts (0)" onto two lines and pushed New Host past the content's
-// right edge, where the window clipped it.
-func TestVaultHeaderFitsAtMinimumSize(t *testing.T) {
+// TestVaultToolbarFitsAtMinimumSize is the ticket-28 D1 regression for the
+// Hosts toolbar: at the 720x480 minimum the host list title stays on one line
+// and every toolbar control (the search field, New Host, and its More actions
+// menu) stays inside the content in all five locales, without overlapping.
+// At 8c4ce36 a non-wrapping header squeezed "Hosts (0)" onto two lines and
+// pushed New Host past the content's right edge, where the window clipped it.
+func TestVaultToolbarFitsAtMinimumSize(t *testing.T) {
 	const epsilon = 0.5
-	// contentInset mirrors the content column's 16 DIP padding. It is spelled
-	// here rather than imported so the test also compiles against 8c4ce36,
-	// where the header regression lived.
-	const contentInset float32 = 16
 	for _, tag := range locales.Tags() {
 		m := locales.In(tag)
 		for _, size := range [][2]int{{720, 480}, {1100, 720}} {
 			width, height := float32(size[0]), float32(size[1])
+			content := homeContent(width, height)
 			tester, _ := newVaultTester(t, size[0], size[1])
 			tester.SetLocale(tag)
 			tester.Frame()
@@ -54,33 +51,28 @@ func TestVaultHeaderFitsAtMinimumSize(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s %dx%d does not show %q: %v", tag, size[0], size[1], m.VaultHostListTitle(0), tester.Texts())
 			}
-			// A 20 DIP label is about 27 DIPs tall; two lines are about 53.
-			if title.H > 34 {
+			// The 13 DIP heading with its padding is about 29 DIPs tall; two
+			// lines are about 46.
+			if title.H > 36 {
 				t.Fatalf("%s %dx%d wraps the host list title onto two lines: %+v", tag, size[0], size[1], title)
 			}
 
-			actions := []string{
-				m.VaultImportTitle(),
-				m.VaultExportTitle(),
-				m.VaultBackupOpen(),
-				m.VaultHostNew(),
-			}
+			actions := []string{m.VaultSearchPlaceholder(), m.VaultHostNew(), m.VaultMoreActions()}
 			rects := make([]ui.Rect, 0, len(actions))
 			for _, action := range actions {
 				rect, ok := tester.Find(action)
 				if !ok {
 					t.Fatalf("%s %dx%d does not show %q: %v", tag, size[0], size[1], action, tester.Texts())
 				}
-				if rect.X < sidebarWidth+contentInset-epsilon ||
-					rect.X+rect.W > width-contentInset+epsilon ||
-					rect.Y < -epsilon || rect.Y+rect.H > height+epsilon {
-					t.Fatalf("%s %dx%d clips %q: box %+v, content column is x=%.1f..%.1f",
-						tag, size[0], size[1], action, rect, sidebarWidth, width-contentInset)
+				if rect.X < content.X-epsilon || rect.X+rect.W > content.X+content.W+epsilon ||
+					rect.Y < content.Y-epsilon || rect.Y+rect.H > height+epsilon {
+					t.Fatalf("%s %dx%d clips %q: box %+v, content %+v",
+						tag, size[0], size[1], action, rect, content)
 				}
 				rects = append(rects, rect)
 			}
 
-			// Wrapped actions move to the next line; nothing may overlap.
+			// Wrapped controls move to the next line; nothing may overlap.
 			for i := range rects {
 				if overlaps(rects[i], title) {
 					t.Fatalf("%s %dx%d: %q overlaps the title: %+v, %+v",
@@ -97,36 +89,50 @@ func TestVaultHeaderFitsAtMinimumSize(t *testing.T) {
 	}
 }
 
-// TestVaultHeaderActionsAreClickableAtMinimumSize proves every header action
-// is reachable at 720x480, not merely painted: a click at its center hits it
-// and opens its surface. A clipped or overlapping action would not receive the
-// pointer event.
-func TestVaultHeaderActionsAreClickableAtMinimumSize(t *testing.T) {
+// TestVaultToolbarActionsAreReachableAtMinimumSize proves every Vault-wide
+// action is reachable at 720x480, not merely painted: New Host is clicked at
+// its center, and the others are chosen from the More actions menu beside it.
+// A clipped or overlapping control would not receive the pointer event.
+func TestVaultToolbarActionsAreReachableAtMinimumSize(t *testing.T) {
 	m := locales.In("en")
 	cases := []struct {
 		action string
 		opened func(*vaultstate.State) bool
 	}{
+		{m.VaultGroupNew(), func(s *vaultstate.State) bool { return s.EditingGroup() }},
 		{m.VaultImportTitle(), func(s *vaultstate.State) bool { return s.ImportOpen() }},
 		{m.VaultExportTitle(), func(s *vaultstate.State) bool { return s.ExportOpen() }},
 		// The empty test state has no backup service, so opening the panel
 		// records the unavailable problem instead of the open flag; either
-		// proves the click reached Backups.
+		// proves the menu reached Backups.
 		{m.VaultBackupOpen(), func(s *vaultstate.State) bool {
 			return s.BackupsOpen() || s.BackupProblem() != vaultstate.ProblemNone
 		}},
-		{m.VaultHostNew(), func(s *vaultstate.State) bool { return s.Editing() }},
 	}
 	for _, test := range cases {
 		tester, vault := newVaultTester(t, 720, 480)
 		tester.SetLocale("en")
 		tester.Frame()
-		if err := tester.Click(test.action); err != nil {
-			t.Fatalf("click %q at 720x480: %v", test.action, err)
+		if err := tester.Click(m.VaultMoreActions()); err != nil {
+			t.Fatalf("click More actions at 720x480: %v", err)
+		}
+		if err := tester.ChooseMenuItem(test.action); err != nil {
+			t.Fatalf("choose %q at 720x480: %v", test.action, err)
 		}
 		tester.Frame()
 		if !test.opened(vault) {
-			t.Fatalf("clicking %q at 720x480 did not open it", test.action)
+			t.Fatalf("choosing %q at 720x480 did not open it", test.action)
 		}
+	}
+
+	tester, vault := newVaultTester(t, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	if err := tester.Click(m.VaultHostNew()); err != nil {
+		t.Fatalf("click New Host at 720x480: %v", err)
+	}
+	tester.Frame()
+	if !vault.Editing() {
+		t.Fatal("clicking New Host at 720x480 did not open the editor")
 	}
 }

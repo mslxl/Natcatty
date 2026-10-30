@@ -107,10 +107,6 @@ func (t *fakeTerminal) SetKeywordHighlightRules(rules []domainterminal.KeywordHi
 	return t.update(func(settings *domainterminal.Settings) { settings.KeywordHighlightRules = rules })
 }
 
-func (t *fakeTerminal) SetShowSessionStats(show bool) error {
-	return t.update(func(settings *domainterminal.Settings) { settings.ShowSessionStats = show })
-}
-
 func (t *fakeTerminal) SetConnectionLogRetention(count, days int) error {
 	return t.update(func(settings *domainterminal.Settings) {
 		settings.ConnectionLogRetentionCount = count
@@ -196,9 +192,6 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.KeywordHighlightRules[1].Enabled {
 		t.Fatal("the warning rule was not disabled")
 	}
-	if !state.SetShowSessionStats(false) || fake.settings.ShowSessionStats {
-		t.Fatal("session statistics were not disabled")
-	}
 	if !state.SetConnectionLogRetention(25, 7) ||
 		fake.settings.ConnectionLogRetentionCount != 25 ||
 		fake.settings.ConnectionLogRetentionDays != 7 {
@@ -209,7 +202,7 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.HistoryRetentionDays != 30 {
 		t.Fatal("history retention was not stored")
 	}
-	if state.Problem() || redraws != 22 {
+	if state.Problem() || redraws != 21 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 
@@ -382,7 +375,6 @@ func TestTerminalSettingsShowThePowerUxControls(t *testing.T) {
 			m.SettingsKeywordHighlightEnabled(),
 			m.SettingsKeywordHighlightPatterns(),
 			"Error",
-			m.SettingsShowSessionStats(),
 		} {
 			if !tester.HasText(text) {
 				t.Fatalf("%dx%d does not show %q: %v", size[0], size[1], text, tester.Texts())

@@ -638,14 +638,24 @@ func (t *selftest61) sidebarStep(*ui.Context) selftest.Outcome {
 	tester := ui.NewTester(uishell.View(shell), width, height)
 	tester.SetLocale("en")
 	tester.Frame()
+	// The sidebar names the current language on a picker that opens a menu of
+	// all five; the picker must stay inside the client and offer every one.
+	picker := locales.In("en").NavLanguage()
+	if _, err := selftest61Inside(tester, width, height, picker); err != nil {
+		return selftest.Failed(err)
+	}
 	for _, tag := range locales.Tags() {
 		autonym := i18n.Autonym(tag)
-		if _, err := selftest61Inside(tester, width, height, autonym); err != nil {
-			return selftest.Failed(err)
+		if err := tester.Click(picker); err != nil {
+			return selftest.Failed(fmt.Errorf("open the language picker: %w", err))
 		}
+		if err := tester.ChooseMenuItem(autonym); err != nil {
+			return selftest.Failed(fmt.Errorf("the picker does not offer %q: %w", autonym, err))
+		}
+		tester.Frame()
 	}
 	return selftest.Passed(
-		"all five language options stay inside the 704x421 client",
+		"the language picker stays inside the 704x421 client and offers all five languages",
 		"ui/shell.View + ui.Tester")
 }
 

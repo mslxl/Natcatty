@@ -65,7 +65,7 @@ func TestSaveScreenWritesAndDismissesItsBanner(t *testing.T) {
 	surface.SetPaneActions(PaneActions{
 		Title: "Local Session 1", MenuLabel: m.SessionMenuFor(1),
 	})
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 
@@ -100,7 +100,7 @@ func TestRenameMenuOpensTheDialogAndAppliesTheTitle(t *testing.T) {
 		Title: "Local Session 1", MenuLabel: m.SessionMenuFor(1),
 		Rename: func(title string) { renamed = title },
 	})
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 

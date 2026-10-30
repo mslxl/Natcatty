@@ -302,13 +302,6 @@ func (s *Service) SetKeywordHighlightRules(rules []domainterminal.KeywordHighlig
 	})
 }
 
-// SetShowSessionStats shows or hides the Session counters in the status bar.
-func (s *Service) SetShowSessionStats(show bool) error {
-	return s.Update(func(settings *domainterminal.Settings) {
-		settings.ShowSessionStats = show
-	})
-}
-
 // Reset restores every terminal behavior setting to its original default.
 func (s *Service) Reset() error {
 	return s.Update(func(settings *domainterminal.Settings) {

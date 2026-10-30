@@ -32,3 +32,19 @@ func TestSFTPIsAPeerRootSurface(t *testing.T) {
 		t.Fatalf("sftp=%v logs=%v after ShowLogs", state.SFTPVisible(), state.LogsVisible())
 	}
 }
+
+func TestHiddenSFTPTabCannotBeShown(t *testing.T) {
+	shown := true
+	state := NewState(WithSFTP(func(c *ui.Context) {}), WithSFTPTabShown(func() bool { return shown }))
+	if !state.SFTPTabShown() {
+		t.Fatal("the SFTP Tab is hidden while the setting shows it")
+	}
+	shown = false
+	state.ShowSFTP()
+	if state.SFTPTabShown() || state.SFTPVisible() {
+		t.Fatalf("shown=%v visible=%v with the Tab hidden", state.SFTPTabShown(), state.SFTPVisible())
+	}
+	if !NewState().SFTPTabShown() {
+		t.Fatal("without the setting the SFTP Tab is hidden")
+	}
+}

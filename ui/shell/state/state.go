@@ -26,6 +26,7 @@ import (
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
+	"github.com/mslxl/natcatty/ui/vault/section"
 )
 
 // ErrNoSessions reports a shell that was not given a Session service, so it
@@ -124,11 +125,25 @@ type State struct {
 	active        int
 	nextTabNumber int
 	vaultVisible  bool
-	vaultView     func(*ui.Context)
-	logsVisible   bool
-	logsView      func(*ui.Context)
-	sftpVisible   bool
-	sftpView      func(*ui.Context)
+	// vaultSection is the Vault page the sidebar chose.
+	vaultSection section.Section
+	// home is the page of the home Tab shown last: the Vault, Logs,
+	// monitoring, or System manager. Choosing the home Tab returns to it.
+	home        HomePage
+	vaultView   func(*ui.Context)
+	logsVisible bool
+	logsView    func(*ui.Context)
+	sftpVisible bool
+	sftpView    func(*ui.Context)
+	// sftpTabShown is the Layout setting that hides the top bar's SFTP Tab.
+	sftpTabShown func() bool
+	// filesPanel is the SFTP panel Session Tabs open beside their terminal;
+	// filesOpen holds what each Tab's open panel browses, and filesShown the
+	// target the panel was last pointed at.
+	filesPanel *FilesPanel
+	filesOpen  map[model.TabID]filesTarget
+	filesShown *filesTarget
+	filesRatio float32
 	// monitorVisible shows the Host monitoring surface. activate starts the
 	// active panel and deactivate stops sampling when another surface shows.
 	monitorVisible    bool
@@ -279,6 +294,12 @@ func WithSFTP(view func(*ui.Context)) Option {
 	return func(s *State) { s.sftpView = view }
 }
 
+// WithSFTPTabShown supplies the live "Show SFTP tab" setting. Without it the
+// Tab is shown.
+func WithSFTPTabShown(shown func() bool) Option {
+	return func(s *State) { s.sftpTabShown = shown }
+}
+
 // WithMonitor gives the shell the Host monitoring surface. activate starts
 // the active panel's sampling; deactivate stops it when the surface is left,
 // so hiding monitoring never leaves metric commands running.
@@ -387,7 +408,7 @@ func WithDetachedCloseRequest(fn func(model.TabID)) Option {
 func NewState(opts ...Option) *State {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &State{
-		active: -1, nextTabNumber: 1, vaultVisible: true, ctx: ctx, cancel: cancel,
+		active: -1, nextTabNumber: 1, vaultVisible: true, vaultSection: section.Hosts, ctx: ctx, cancel: cancel,
 		broadcastTargets:  make(map[model.SessionID]bool),
 		broadcastSessions: make(map[model.SessionID]bool),
 		composeLineMode:   appsession.ComposePaste,
@@ -471,8 +492,54 @@ func (s *State) VaultVisible() bool { return s.vaultVisible }
 // VaultView returns the Vault surface the app supplied, or nil.
 func (s *State) VaultView() func(*ui.Context) { return s.vaultView }
 
+// VaultSection returns the Vault page the sidebar chose. The Vault surface
+// draws it.
+func (s *State) VaultSection() section.Section { return s.vaultSection }
+
+// ShowVaultSection shows the Vault at page.
+func (s *State) ShowVaultSection(page section.Section) {
+	s.vaultSection = page
+	s.ShowVault()
+}
+
+// HomePage is one page of the home Tab. The Vault's sidebar lists them beside
+// the Vault's own pages.
+type HomePage int
+
+const (
+	// HomeVault is the Vault at its chosen section.
+	HomeVault HomePage = iota
+	// HomeLogs is Logs and History.
+	HomeLogs
+	// HomeMonitor is Host monitoring.
+	HomeMonitor
+	// HomeSystem is System manager.
+	HomeSystem
+)
+
+// HomeVisible reports whether the home Tab is the visible one: the Vault or
+// one of the pages its sidebar lists.
+func (s *State) HomeVisible() bool {
+	return s.vaultVisible || s.logsVisible || s.monitorVisible || s.sysManagerVisible
+}
+
+// ShowHome shows the home Tab at the page it showed last.
+func (s *State) ShowHome() {
+	switch s.home {
+	case HomeLogs:
+		s.ShowLogs()
+	case HomeMonitor:
+		s.ShowMonitor()
+	case HomeSystem:
+		s.ShowSystemManager()
+	default:
+		s.ShowVault()
+	}
+}
+
 // ShowVault makes the Vault the visible surface.
 func (s *State) ShowVault() {
+	s.home = HomeVault
 	s.leaveMonitor()
 	s.leaveSystemManager()
 	s.vaultVisible = true
@@ -492,6 +559,7 @@ func (s *State) LogsView() func(*ui.Context) { return s.logsView }
 // stays over it, so a user can return to a Session without leaving Logs
 // first.
 func (s *State) ShowLogs() {
+	s.home = HomeLogs
 	s.leaveMonitor()
 	s.leaveSystemManager()
 	s.logsVisible = true
@@ -506,9 +574,18 @@ func (s *State) SFTPVisible() bool { return s.sftpVisible }
 // SFTPView returns the SFTP surface the app supplied, or nil.
 func (s *State) SFTPView() func(*ui.Context) { return s.sftpView }
 
+// SFTPTabShown reports whether the top bar shows the SFTP Tab. It is shown
+// unless the Layout setting hides it, as the original's.
+func (s *State) SFTPTabShown() bool {
+	return s.sftpTabShown == nil || s.sftpTabShown()
+}
+
 // ShowSFTP makes the SFTP surface visible. The terminal work Tab strip stays
 // over it, so a user can return to a Session without leaving SFTP first.
 func (s *State) ShowSFTP() {
+	if !s.SFTPTabShown() {
+		return
+	}
 	s.leaveMonitor()
 	s.leaveSystemManager()
 	s.sftpVisible = true
@@ -526,6 +603,7 @@ func (s *State) MonitorView() func(*ui.Context) { return s.monitorView }
 // ShowMonitor makes the Host monitoring surface visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowMonitor() {
+	s.home = HomeMonitor
 	s.leaveSystemManager()
 	s.monitorVisible = true
 	s.vaultVisible = false
@@ -558,6 +636,7 @@ func (s *State) SysManagerView() func(*ui.Context) { return s.sysManagerView }
 // ShowSystemManager makes the System manager visible and asks it to start
 // sampling. The work Tab strip stays over it like Logs and SFTP.
 func (s *State) ShowSystemManager() {
+	s.home = HomeSystem
 	s.leaveMonitor()
 	s.sysManagerVisible = true
 	s.vaultVisible = false

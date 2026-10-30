@@ -293,6 +293,28 @@ func TestAssignHostGroupAcceptsAnImplicitGroupPath(t *testing.T) {
 	}
 }
 
+// TestAssignHostGroupAcceptsALevelAboveASavedGroup covers the card the Vault
+// lists for prod when only prod/web is saved: dropping a Host on it moves the
+// Host there, while a path nothing leads to stays invalid.
+func TestAssignHostGroupAcceptsALevelAboveASavedGroup(t *testing.T) {
+	repo := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{{Path: "prod/web"}}}
+	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
+
+	if err := service.AssignHostGroup(context.Background(), "host-1", "prod"); err != nil {
+		t.Fatalf("AssignHostGroup to the level above a saved group: %v", err)
+	}
+	if repo.hosts[0].Group != "prod" {
+		t.Fatalf("Group = %q, want prod", repo.hosts[0].Group)
+	}
+	if err := service.AssignHostGroup(context.Background(), "host-1", "staging"); err == nil {
+		t.Fatal("AssignHostGroup to a path nothing leads to succeeded")
+	}
+}
+
 func TestGroupDefaultsApplyToAnEffectiveHostAndHostWins(t *testing.T) {
 	repo := &fakeHosts{hosts: []domainvault.Host{
 		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,

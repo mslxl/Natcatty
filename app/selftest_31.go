@@ -785,12 +785,15 @@ func (t *selftest31) viewStep(*ui.Context) selftest.Outcome {
 	tester := ui.NewTester(transferui.View(t.state), 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
-	if err := tester.Click(m.SftpTransferCenterButton()); err != nil {
-		return selftest.Failed(fmt.Errorf("the Transfers button has no accessible label: %v", err))
+	if err := tester.Click(m.SftpMore()); err != nil {
+		return selftest.Failed(fmt.Errorf("the More button has no accessible label: %v", err))
+	}
+	if err := tester.ChooseMenuItem(m.SftpTransferCenter()); err != nil {
+		return selftest.Failed(fmt.Errorf("the More menu has no Transfer center: %v", err))
 	}
 	tester.Frame()
 	if !t.state.CenterOpen() {
-		return selftest.Failed(fmt.Errorf("the header button did not open the Transfer center"))
+		return selftest.Failed(fmt.Errorf("the More menu did not open the Transfer center"))
 	}
 	// The modal suppresses the window shortcut that opened the center, so the
 	// overlay must honor the effective toggle chord itself.

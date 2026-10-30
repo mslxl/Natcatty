@@ -14,9 +14,6 @@ func TestPowerUxDefaultsMatchTheOriginal(t *testing.T) {
 		t.Fatalf("keyword highlight defaults = enabled %t, rules %d",
 			settings.KeywordHighlightEnabled, len(settings.KeywordHighlightRules))
 	}
-	if !settings.ShowSessionStats {
-		t.Fatal("session statistics are hidden by default")
-	}
 }
 
 func TestNormalizeClampsAutocompleteAndFallsBackForUnknownValues(t *testing.T) {
@@ -47,7 +44,7 @@ func TestNormalizeClampsAutocompleteAndFallsBackForUnknownValues(t *testing.T) {
 	}
 }
 
-func TestNormalizeKeepsAutocompleteAndStatisticsValues(t *testing.T) {
+func TestNormalizeKeepsAutocompleteValues(t *testing.T) {
 	input := Settings{
 		AutocompleteEnabled:        false,
 		AutocompleteGhostText:      true,
@@ -57,7 +54,6 @@ func TestNormalizeKeepsAutocompleteAndStatisticsValues(t *testing.T) {
 		AutocompleteMaxSuggestions: 20,
 		AutocompleteHistoryScope:   AutocompleteHistoryGlobal,
 		KeywordHighlightEnabled:    false,
-		ShowSessionStats:           false,
 	}
 	got := Normalize(input)
 	if got.AutocompleteEnabled != input.AutocompleteEnabled ||
@@ -67,8 +63,7 @@ func TestNormalizeKeepsAutocompleteAndStatisticsValues(t *testing.T) {
 		got.AutocompleteMinChars != input.AutocompleteMinChars ||
 		got.AutocompleteMaxSuggestions != input.AutocompleteMaxSuggestions ||
 		got.AutocompleteHistoryScope != input.AutocompleteHistoryScope ||
-		got.KeywordHighlightEnabled != input.KeywordHighlightEnabled ||
-		got.ShowSessionStats != input.ShowSessionStats {
+		got.KeywordHighlightEnabled != input.KeywordHighlightEnabled {
 		t.Fatalf("normalize changed a valid value: %+v", got)
 	}
 }

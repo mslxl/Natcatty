@@ -40,8 +40,6 @@ type SelftestInteractionModel struct {
 	ShowAutocomplete bool
 	ShowGhost        bool
 	GhostText        string
-	ShowStats        bool
-	Stats            appsession.Stats
 	Hibernated       bool
 }
 
@@ -117,7 +115,7 @@ func RenderSelftestInteraction(c *ui.Context, model SelftestInteractionModel,
 	if !validLogFormat(format) {
 		format = domainterminal.LogFormatText
 	}
-	renderChrome(c, chromeModel{
+	selftestFrame(c, chromeModel{
 		Command:          model.Command,
 		Busy:             model.Busy,
 		Transfer:         model.Transfer,
@@ -142,8 +140,6 @@ func RenderSelftestInteraction(c *ui.Context, model SelftestInteractionModel,
 		ShowAutocomplete: model.ShowAutocomplete,
 		ShowGhost:        model.ShowGhost,
 		GhostText:        model.GhostText,
-		ShowStats:        model.ShowStats,
-		Stats:            model.Stats,
 		Hibernated:       model.Hibernated,
 	}, locales.In(c.Locale()), c.Theme(), chromeActions{
 		Copy:             actions.Copy,
@@ -186,7 +182,7 @@ func RenderSelftestChrome(c *ui.Context, snapshot appsession.Snapshot,
 	if !validLogFormat(format) {
 		format = domainterminal.LogFormatText
 	}
-	renderChrome(c, chromeModel{
+	selftestFrame(c, chromeModel{
 		Command:          snapshot.Command,
 		Busy:             snapshot.Busy,
 		Transfer:         snapshot.Transfer,
@@ -195,4 +191,28 @@ func RenderSelftestChrome(c *ui.Context, snapshot appsession.Snapshot,
 		LogFormat:        format,
 		LogDirectory:     directory,
 	}, locales.In(c.Locale()), c.Theme(), chromeActions{})
+}
+
+// selftestFrame draws the chrome under the Pane toolbar that holds the
+// Session menu, as a Pane header and its Session do in the shell.
+func selftestFrame(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Column(c).Grow(1)
+			toolbar(c, model, m, t, actions)
+		})
+		renderChrome(c, model, m, t, actions)
+	})
+}
+
+// SelftestFrame renders a Surface under its Pane toolbar, as the shell's Pane
+// header and content do. It is built only under the selftest tag.
+func SelftestFrame(c *ui.Context, surface *Surface) {
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Column(c).Grow(1)
+			surface.Toolbar(c)
+		})
+		ui.Column(c).Grow(1).FillWidth().MinHeight(0).Children(func() { surface.View(c) })
+	})
 }

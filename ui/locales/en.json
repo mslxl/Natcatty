@@ -34,6 +34,19 @@
   "navMonitor": "Monitoring",
   "navSettings": "Settings",
   "navLanguage": "Language",
+  "navHosts": "Hosts",
+  "navKeychain": "Keychain",
+  "navProxies": "Proxies",
+  "navForwarding": "Port Forwarding",
+  "navSnippets": "Snippets",
+  "navNotes": "Notes",
+  "navKnownHosts": "Known Hosts",
+  "vaultLocalTerminal": "Terminal",
+  "vaultSerial": "Serial",
+  "vaultAllHosts": "All hosts",
+  "vaultGroupOpen": "Open",
+  "vaultMoreActions": "More actions",
+  "vaultItemActions": "Actions for {name}",
   "vaultPlaceholder": "Your Hosts, keys, and notes will appear here.",
   "settingsPlaceholder": "Settings will appear here.",
   "menuFile": "File",
@@ -1104,7 +1117,6 @@
   "sessionLogFormatHTML": "HTML",
   "sessionTransferActive": "{kind} transfer detected. Protocol data is gated.",
   "sessionStatsLabel": "Session statistics",
-  "sessionStatsSummary": "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications} · transfers {transfers}",
   "sessionAutocompleteLabel": "Command suggestions",
   "sessionAutocompleteHint": "Tab to accept · Esc to dismiss",
   "sessionAutocompleteHistory": "History",
@@ -1149,7 +1161,6 @@
   "settingsKeywordHighlightDescription": "Color configured words in terminal output.",
   "settingsKeywordHighlightEnabled": "Highlight keywords",
   "settingsKeywordHighlightPatterns": "Patterns (one per line)",
-  "settingsShowSessionStats": "Show Session statistics",
   "settingsKeywordHighlightRuleError": "Error",
   "settingsKeywordHighlightRuleWarning": "Warning",
   "settingsKeywordHighlightRuleOK": "OK",
@@ -1195,39 +1206,6 @@
       "kind": {
         "type": "String",
         "example": "ZMODEM"
-      }
-    }
-  },
-  "@sessionStatsSummary": {
-    "description": "Compact Session counters: input bytes, output bytes, commands, failed commands, bells, notifications, and transfers.",
-    "placeholders": {
-      "input": {
-        "type": "int",
-        "example": "120"
-      },
-      "output": {
-        "type": "int",
-        "example": "4096"
-      },
-      "commands": {
-        "type": "int",
-        "example": "3"
-      },
-      "failed": {
-        "type": "int",
-        "example": "1"
-      },
-      "bells": {
-        "type": "int",
-        "example": "0"
-      },
-      "notifications": {
-        "type": "int",
-        "example": "0"
-      },
-      "transfers": {
-        "type": "int",
-        "example": "0"
       }
     }
   },
@@ -1354,6 +1332,8 @@
     }
   },
   "sessionMenuLabel": "Session menu",
+  "sessionFilesPanel": "Files (SFTP)",
+  "sessionFilesClose": "Close files",
   "sessionMenuPaste": "Paste",
   "sessionMenuClearBuffer": "Clear Buffer",
   "sessionMenuSplitRight": "Split Right",
@@ -1420,6 +1400,15 @@
       "count": {
         "type": "int",
         "example": "2"
+      }
+    }
+  },
+  "@vaultItemActions": {
+    "description": "The accessible name of a Host or group card's action menu, naming the card.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "web-1"
       }
     }
   },
@@ -2610,6 +2599,55 @@
   "@navSftp": {
     "description": "The sidebar entry that opens the SFTP surface."
   },
+  "sftpSelectHostTitle": "Select a host to start",
+  "sftpSelectHostSubtitle": "Choose a local or remote filesystem to browse",
+  "sftpSelectHost": "Select host",
+  "sftpAddTab": "Add new tab",
+  "sftpGoHome": "Go to home",
+  "sftpGoRoot": "Go to root",
+  "sftpEditPathHint": "Double-click to edit path",
+  "sftpCopyPath": "Copy current path",
+  "sftpCopyFilePath": "Copy file path",
+  "sftpFilter": "Filter",
+  "sftpFilterPlaceholder": "Filter by filename...",
+  "sftpFilterClear": "Clear filter",
+  "sftpFilterClose": "Close filter",
+  "sftpCompactList": "Switch to compact list",
+  "sftpComfortableList": "Switch to comfortable list",
+  "sftpShowHiddenFiles": "Show hidden files",
+  "sftpColumnName": "Name",
+  "sftpColumnModified": "Modified",
+  "sftpColumnSize": "Size",
+  "sftpColumnKind": "Kind",
+  "sftpColumnOwner": "Owner",
+  "sftpKindFolder": "folder",
+  "sftpKindLink": "link",
+  "sftpKindFile": "file",
+  "sftpEmptyDirectory": "Empty directory",
+  "sftpOpen": "Open",
+  "sftpCopyToOtherPane": "Copy to other pane",
+  "sftpMoveToOtherPane": "Move to other pane",
+  "sftpRetry": "Retry",
+  "sftpSearchHosts": "Search hosts...",
+  "sftpPickerLocal": "Local",
+  "sftpPickerHosts": "Hosts",
+  "sftpLocalFilesystem": "Local filesystem",
+  "sftpBrowseLocal": "Browse local files",
+  "sftpNoMatchingHosts": "No matching hosts",
+  "sftpPaneLeft": "Left",
+  "sftpPaneRight": "Right",
+  "sftpMore": "More",
+  "sftpTransfers": "Transfers",
+  "sftpClearCompleted": "Clear completed",
+  "sftpTransferCenterOpen": "Open the Transfer center",
+  "sftpPermissionsOwner": "Owner",
+  "sftpPermissionsGroup": "Group",
+  "sftpPermissionsOthers": "Others",
+  "sftpPermissionsRead": "Read",
+  "sftpPermissionsWrite": "Write",
+  "sftpPermissionsExecute": "Execute",
+  "sftpPermissionsOctal": "Octal",
+  "sftpPermissionsSymbolic": "Symbolic",
   "sftpTitle": "SFTP",
   "@sftpTitle": {
     "description": "The SFTP surface's title."

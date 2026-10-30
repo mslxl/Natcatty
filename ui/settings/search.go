@@ -169,7 +169,6 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsKeywordHighlightTitle(), "keyword highlight rules terminal")
 	add(AreaTerminal, "", m.SettingsKeywordHighlightEnabled(), "keyword highlight enabled")
 	add(AreaTerminal, "", m.SettingsKeywordHighlightPatterns(), "keyword highlight patterns regex")
-	add(AreaTerminal, "", m.SettingsShowSessionStats(), "session statistics stats cpu memory")
 	add(AreaTerminal, "", m.SettingsRetentionTitle(), "retention history logs cleanup")
 	add(AreaTerminal, "", m.SettingsConnectionLogRetentionCount(), "connection log retention count")
 	add(AreaTerminal, "", m.SettingsConnectionLogRetentionDays(), "connection log retention days")

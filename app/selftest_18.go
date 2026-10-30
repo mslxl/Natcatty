@@ -225,14 +225,13 @@ func (t *selftest18) autocompleteStep(*ui.Context) selftest.Outcome {
 		surface, err := sessionui.New(a.session,
 			sessionui.WithRedraw(func() {}),
 			sessionui.WithSuggestions(a.auto.Suggestions, func() (bool, bool) { return true, false }),
-			sessionui.WithSessionStats(func() bool { return true }),
 		)
 		if err != nil {
 			return t.finishAutocompleteWith(
 				selftest.Failed(fmt.Errorf("build the Session surface: %w", err)))
 		}
 		a.surface = surface
-		a.tester = ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+		a.tester = ui.NewTester(func(c *ui.Context) { sessionui.SelftestFrame(c, surface) }, 720, 480)
 		a.tester.SetLocale("en")
 		a.tester.Frame()
 		a.tester.ClickAt(360, 420)
@@ -519,28 +518,11 @@ func (t *selftest18) statsStep(*ui.Context) selftest.Outcome {
 			"transfers = %d without a transfer", stats.Transfers)))
 	}
 
-	m := locales.In("en")
-	tester := ui.NewTester(func(c *ui.Context) {
-		sessionui.RenderSelftestInteraction(c, sessionui.SelftestInteractionModel{
-			LogFormat: domainterminal.LogFormatText,
-			ShowStats: true,
-			Stats:     stats,
-		}, sessionui.SelftestInteractionActions{})
-	}, 720, 480)
-	tester.SetLocale("en")
-	tester.Frame()
-	summary := m.SessionStatsSummary(
-		int(stats.InputBytes), int(stats.OutputBytes), int(stats.Commands),
-		int(stats.FailedCommands), int(stats.Bells), int(stats.Notifications), 0)
-	if !tester.HasText(summary) {
-		return t.finishStatsWith(selftest.Failed(fmt.Errorf(
-			"the statistics row is missing %q: %v", summary, tester.Texts())))
-	}
 	return t.finishStatsWith(selftest.Passed(
-		fmt.Sprintf("typed input, output, a submitted command, a failed exit code, a BEL, and an OSC 777 notification produced the expected counters (input %d, output %d, commands %d, failed %d, bells %d, notifications %d); the row rendered them",
+		fmt.Sprintf("typed input, output, a submitted command, a failed exit code, a BEL, and an OSC 777 notification produced the expected counters (input %d, output %d, commands %d, failed %d, bells %d, notifications %d)",
 			stats.InputBytes, stats.OutputBytes, stats.Commands,
 			stats.FailedCommands, stats.Bells, stats.Notifications),
-		"appsession.Stats + sessionui.RenderSelftestInteraction"))
+		"appsession.Stats"))
 }
 
 func (t *selftest18) finishStatsWith(outcome selftest.Outcome) selftest.Outcome {
@@ -661,10 +643,6 @@ func (t *selftest18) finishBell() {
 
 func (t *selftest18) layoutStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
-	stats := appsession.Stats{
-		InputBytes: 120, OutputBytes: 4096, Commands: 3,
-		FailedCommands: 1, Bells: 2, Notifications: 4, Transfers: 5,
-	}
 	suggestions := []autocomplete.Suggestion{
 		{Text: "git status", Display: "git status", Source: "history", Frequency: 3},
 		{Text: "git stash", Display: "git stash", Source: "shell-history"},
@@ -684,8 +662,6 @@ func (t *selftest18) layoutStep(*ui.Context) selftest.Outcome {
 			ShowAutocomplete: true,
 			ShowGhost:        true,
 			GhostText:        "git status",
-			ShowStats:        true,
-			Stats:            stats,
 		}
 		tester := ui.NewTester(func(c *ui.Context) {
 			sessionui.RenderSelftestInteraction(c, model, sessionui.SelftestInteractionActions{})
@@ -693,10 +669,8 @@ func (t *selftest18) layoutStep(*ui.Context) selftest.Outcome {
 		tester.SetLocale("en")
 		tester.Frame()
 
-		summary := m.SessionStatsSummary(120, 4096, 3, 1, 2, 4, 5)
 		for _, text := range []string{
 			m.SessionMenuLabel(),
-			summary,
 			m.SessionAutocompleteLabel(),
 			m.SessionAutocompleteHint(),
 			m.SessionAutocompleteGhost("git status"),
@@ -718,16 +692,15 @@ func (t *selftest18) layoutStep(*ui.Context) selftest.Outcome {
 			return selftest.Failed(fmt.Errorf("%dx%d rendered more than six suggestions",
 				size[0], size[1]))
 		}
-		status, _ := tester.Find(m.SessionActivityBusy())
-		statsRow, _ := tester.Find(summary)
+		menu, _ := tester.Find(m.SessionMenuLabel())
 		popup, _ := tester.Find(m.SessionAutocompleteLabel())
-		if !(status.Y < statsRow.Y && statsRow.Y < popup.Y) {
-			return selftest.Failed(fmt.Errorf("%dx%d rows are out of order: %+v %+v %+v",
-				size[0], size[1], status, statsRow, popup))
+		if !(menu.Y < popup.Y) {
+			return selftest.Failed(fmt.Errorf("%dx%d rows are out of order: %+v %+v",
+				size[0], size[1], menu, popup))
 		}
 	}
 	return selftest.Passed(
-		"the statistics row, autocomplete popup (bounded to six rows), and ghost hint stayed inside 1100x720 and 720x480 in the production chrome",
+		"the autocomplete popup (bounded to six rows) and ghost hint stayed inside 1100x720 and 720x480 in the production chrome",
 		"sessionui.RenderSelftestInteraction + ui.Tester")
 }
 
@@ -753,6 +726,6 @@ func (t *selftest18) demoStep(*ui.Context) selftest.Outcome {
 			"sessionui.Surface + settings providers")
 	}
 	return selftest.Passed(
-		"the headless wiring uses a fake SurfaceFactory; the autocomplete, statistics, layout, and real-surface steps cover the production path",
+		"the headless wiring uses a fake SurfaceFactory; the autocomplete, counter, layout, and real-surface steps cover the production path",
 		"state.SurfaceFactory")
 }

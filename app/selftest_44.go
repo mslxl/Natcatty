@@ -213,8 +213,8 @@ func (t *selftest44) metrics(deadline time.Time) selftest.Outcome {
 		"application/monitor.Service fake SSH command runner")
 }
 
-// renderStep renders the surface inside the real shell, with the 232-DIP
-// sidebar taking space, at both supported sizes and in both languages. A
+// renderStep renders the surface inside the real shell, with the Tab bar and
+// the Vault's 220-DIP sidebar taking space, at both supported sizes and in both languages. A
 // standalone monitoring view at 720 DIPs has about 300 DIPs more width and
 // cannot see the clipping the fixed layout had at 720x480.
 func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
@@ -432,15 +432,31 @@ func inside(tester *ui.Tester, text string, width, height int) bool {
 		rect.X+rect.W <= float32(width) && rect.Y+rect.H <= float32(height)
 }
 
-// insideShell is inside plus the shell's 232-DIP sidebar: a control must sit
-// in the content column, not over the navigation.
+// The shell's chrome: the window's 40-DIP Tab bar, and the 220-DIP sidebar
+// the Vault Tab alone shows beside its pages.
+const (
+	shellTabBar  = 40
+	shellSidebar = 220
+)
+
+// insideShell is inside plus the Vault Tab's chrome: a control must sit in
+// the content column, not over the Tab bar or the navigation.
 func insideShell(tester *ui.Tester, text string, width, height int) bool {
+	return insideChrome(tester, text, shellSidebar, width, height)
+}
+
+// insideTab is inside plus the Tab bar: a Session Tab has no sidebar, so its
+// content spans the window under the bar.
+func insideTab(tester *ui.Tester, text string, width, height int) bool {
+	return insideChrome(tester, text, 0, width, height)
+}
+
+func insideChrome(tester *ui.Tester, text string, left float32, width, height int) bool {
 	rect, ok := tester.Find(text)
 	if !ok || rect.W <= 0 || rect.H <= 0 {
 		return false
 	}
-	const sidebar = 232
-	return rect.X >= sidebar && rect.Y >= 0 &&
+	return rect.X >= left && rect.Y >= shellTabBar &&
 		rect.X+rect.W <= float32(width) && rect.Y+rect.H <= float32(height)
 }
 

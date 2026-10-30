@@ -684,10 +684,9 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 	tester.SetLocale("en")
 	tester.Frame()
 	for _, label := range []string{
-		m.SftpTitle(), m.SftpLocal(), "Loopback", m.SftpUp(), m.SftpRefresh(),
-		m.SftpNewFolder(), m.SftpNewFile(), m.SftpRename(), m.SftpPermissions(),
-		m.SftpDelete(), m.SftpCopyTo(), m.SftpMoveTo(), m.SftpSort(), m.SftpShowHidden(),
-		m.SftpBookmarks(),
+		m.SftpLocal(), "Loopback", m.SftpGoHome(), m.SftpBookmarks(), m.SftpCopyPath(),
+		m.SftpFilter(), m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(),
+		m.SftpRefresh(), m.SftpMore(), m.SftpColumnName(), m.SftpColumnSize(),
 	} {
 		rect, ok := tester.Find(label)
 		if !ok || rect.W <= 0 || rect.H <= 0 || rect.X < 0 || rect.Y < 0 ||
@@ -705,10 +704,9 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 	small.Frame()
 	zh := locales.In("zh-CN")
 	for _, label := range []string{
-		zh.SftpTitle(), zh.SftpLocal(), zh.SftpUp(), zh.SftpRefresh(),
-		zh.SftpNewFolder(), zh.SftpNewFile(), zh.SftpRename(), zh.SftpPermissions(),
-		zh.SftpDelete(), zh.SftpCopyTo(), zh.SftpMoveTo(), zh.SftpUpload(),
-		zh.SftpSort(), zh.SftpShowHidden(), zh.SftpBookmarks(),
+		zh.SftpLocal(), zh.SftpGoHome(), zh.SftpBookmarks(), zh.SftpCopyPath(),
+		zh.SftpFilter(), zh.SftpNewFolder(), zh.SftpNewFile(), zh.SftpShowHiddenFiles(),
+		zh.SftpRefresh(), zh.SftpMore(), zh.SftpColumnName(),
 	} {
 		rect, ok := small.Find(label)
 		if !ok || rect.W <= 0 || rect.H <= 0 || rect.X < 0 || rect.Y < 0 ||
@@ -718,13 +716,16 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 		}
 	}
 
-	// The delete button asks first; Cancel leaves the file in place.
-	if err := tester.Click(m.SftpDelete()); err != nil {
-		return selftest.Failed(fmt.Errorf("the delete button has no accessible label: %v", err))
+	// The row menu's Delete asks first; Cancel leaves the file in place.
+	if err := tester.RightClick("beta.bin"); err != nil {
+		return selftest.Failed(fmt.Errorf("the file row has no accessible label: %v", err))
+	}
+	if err := tester.ChooseMenuItem(m.SftpDelete()); err != nil {
+		return selftest.Failed(fmt.Errorf("the row menu has no Delete: %v", err))
 	}
 	tester.Frame()
 	if t.state.Dialog() == nil || t.state.Dialog().Kind != transferstate.DialogDelete {
-		return selftest.Failed(fmt.Errorf("the toolbar did not open the delete confirmation"))
+		return selftest.Failed(fmt.Errorf("the row menu did not open the delete confirmation"))
 	}
 	if !tester.HasText(m.SftpDeleteTitle()) {
 		return selftest.Failed(fmt.Errorf("the confirmation does not explain the deletion"))
@@ -741,7 +742,7 @@ func (t *selftest30) viewStep(*ui.Context) selftest.Outcome {
 	}
 
 	before := t.state.Tab(transferstate.Left).ShowHidden
-	if err := tester.Click(m.SftpShowHidden()); err != nil {
+	if err := tester.Click(m.SftpShowHiddenFiles()); err != nil {
 		return selftest.Failed(err)
 	}
 	tester.Frame()

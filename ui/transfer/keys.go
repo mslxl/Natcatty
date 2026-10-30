@@ -32,6 +32,16 @@ func installShortcuts(root ui.Element, s *transferstate.State) {
 			s.Run(act)
 		})
 	}
+	// The arrows move the focused pane's selection, as the original's list;
+	// Shift extends it.
+	for _, arrow := range []struct {
+		key   ui.Key
+		delta int
+	}{{ui.KeyUp, -1}, {ui.KeyDown, 1}} {
+		delta := arrow.delta
+		root.OnShortcut(0, arrow.key, func() { s.MoveSelection(s.Focused(), delta, false) })
+		root.OnShortcut(ui.Shift, arrow.key, func() { s.MoveSelection(s.Focused(), delta, true) })
+	}
 }
 
 func shortcutMods(chord domainkeybindings.Chord) ui.Modifiers {

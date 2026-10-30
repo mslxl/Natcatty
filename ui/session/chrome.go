@@ -9,6 +9,8 @@ import (
 	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -61,11 +63,10 @@ type chromeModel struct {
 	// its text.
 	ShowGhost bool
 	GhostText string
-	// ShowStats draws the Session counters. Stats is the source.
-	ShowStats bool
-	Stats     appsession.Stats
 	// Hibernated reports that the Session has no live screen.
 	Hibernated bool
+	// FilesOpen reports that the Tab's SFTP panel is open.
+	FilesOpen bool
 }
 
 // ScreenNotice is the result of saving the terminal screen. It is a code, not
@@ -110,13 +111,16 @@ type chromeActions struct {
 	Resume           func()
 	Observe          func()
 	AcceptSuggestion func(index int)
+	// ToggleFiles opens or closes the SFTP panel beside the terminal. Nil
+	// hides the control: the Session has no file system to browse.
+	ToggleFiles func()
 }
 
+// renderChrome draws what the Session needs to say above its terminal: the
+// counters when Settings asks for them, autocomplete, and the banners of a
+// pending decision. The controls are in the Pane header (see toolbar), so with
+// nothing to say the terminal starts right under it.
 func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
-	statusBar(c, model, m, t, actions)
-	if model.ShowStats {
-		statsBar(c, model, m, t)
-	}
 	if model.ShowAutocomplete && len(model.Suggestions) > 0 {
 		autocompletePopup(c, model, m, t, actions)
 	}
@@ -132,7 +136,7 @@ func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 	if model.DropActive || model.DropNotice != DropNoticeNone {
 		dropBanner(c, model, m, t, actions)
 	}
-	if model.Logging.Active || model.LogProblem || model.LogDirectory == "" {
+	if model.Logging.Active || model.LogProblem {
 		logDetail(c, model, m, t)
 	}
 	if model.ScreenNotice != ScreenNoticeNone {
@@ -161,33 +165,36 @@ func screenBanner(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Th
 	})
 }
 
-// statusBar keeps only the activity dot, the command, and the Session menu.
-// The logging selector, its Start/Stop button, and the encoding selector live
-// in the menu: at the minimum window width a split Pane can be narrower than
-// those controls combined, and a Row draws what does not fit outside the Pane.
-// The Session menu is the one control that must always stay reachable, so it
-// is the only fixed-width item at the right edge and the command takes the
-// remaining width.
-func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
-	ui.Row(c).Height(28).Padding(0, 6).Gap(8).Background(t.Surface).AlignItems(ui.Center).Children(func() {
-		dotColor := t.TextMuted
-		label := m.SessionActivityIdle()
-		if model.Busy {
-			dotColor = t.Success
-			label = m.SessionActivityBusy()
+// toolbar is the Session's controls in its Pane's header, as the original's
+// terminal toolbar: SFTP beside the terminal, the two splits, and the Session
+// menu, which holds every other command (encoding, logging, YMODEM, the
+// browser, rename, and the Pane's lifetime). The header already names the
+// Pane, so nothing here repeats the title, the running command, or the
+// counters. Each control is a fixed-size icon, so a narrow split Pane keeps
+// them all inside its header.
+func toolbar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	if actions.ToggleFiles != nil {
+		files := toolbarButton(c, icons.FolderOpen, m.SessionFilesPanel())
+		if model.FilesOpen {
+			files.Background(kit.Strong(t)).TextColor(t.Text)
 		}
-		ui.Text(c, "●").FontSize(9).TextColor(dotColor).Label(label)
-
-		ui.Text(c, commandText(m, model.Command)).FontSize(11).
-			SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
-
-		encoding := domainterminal.NormalizeEncoding(model.Encoding)
-		menuLabel := model.MenuLabel
-		if menuLabel == "" {
-			menuLabel = m.SessionMenuLabel()
+		if files.Clicked() {
+			actions.ToggleFiles()
 		}
-		sessionMenuButton(c, sessionMenuModel{
-			Encoding:     encoding,
+	}
+	if actions.SplitRight != nil && toolbarButton(c, icons.Columns, m.PaneSplitRight()).Clicked() {
+		actions.SplitRight()
+	}
+	if actions.SplitDown != nil && toolbarButton(c, icons.Rows, m.PaneSplitDown()).Clicked() {
+		actions.SplitDown()
+	}
+	menuLabel := model.MenuLabel
+	if menuLabel == "" {
+		menuLabel = m.SessionMenuLabel()
+	}
+	toolbarButton(c, icons.EllipsisVertical, menuLabel).Menu(func(menu *ui.Menu) {
+		buildSessionMenu(menu, sessionMenuModel{
+			Encoding:     domainterminal.NormalizeEncoding(model.Encoding),
 			Logging:      model.Logging.Active,
 			LogFormat:    model.LogFormat,
 			LogDirectory: model.LogDirectory,
@@ -200,7 +207,7 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 			CanDetach:    actions.Detach != nil,
 			CanClosePane: actions.ClosePane != nil,
 			Hibernated:   model.Hibernated,
-		}, menuLabel, m, t, sessionMenuActions{
+		}, m, sessionMenuActions{
 			Copy:           actions.Copy,
 			Paste:          actions.Paste,
 			PasteSelection: actions.PasteSelection,
@@ -226,18 +233,20 @@ func statusBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme
 	})
 }
 
-// statsBar is a compact, single-line summary of the Session counters. It sits
-// under the status bar so all seven counters fit at 720x480 without squeezing
-// the command indicator.
-func statsBar(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Height(18).Padding(0, 6).Background(t.Surface).Children(func() {
-		ui.Text(c, m.SessionStatsSummary(
-			int(model.Stats.InputBytes), int(model.Stats.OutputBytes),
-			int(model.Stats.Commands), int(model.Stats.FailedCommands),
-			int(model.Stats.Bells), int(model.Stats.Notifications),
-			int(model.Stats.Transfers),
-		)).FontSize(9).SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
-	})
+// toolbarButton is a small icon button in the Pane header, matching the
+// shell's own header controls. label names it and shows as its tooltip.
+func toolbarButton(c *ui.Context, icon, label string) ui.Element {
+	theme := c.Theme()
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).
+		Justify(ui.Center).AlignItems(ui.Center).TextColor(theme.TextMuted).Shrink(0)
+	switch {
+	case button.Pressed():
+		button.Background(kit.Strong(theme)).TextColor(theme.Text)
+	case button.Hovered():
+		button.Background(kit.Subtle(theme)).TextColor(theme.Text)
+	}
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	return button
 }
 
 // autocompletePopup lists the matching commands above the terminal. It shows
@@ -405,22 +414,6 @@ func dropActionLabel(action domainterminal.DropAction, m locales.Messages) strin
 		return m.SessionDropUploadAction()
 	}
 	return m.SessionDropInsertAction()
-}
-
-func commandText(m locales.Messages, command appsession.CommandState) string {
-	switch {
-	case command.Running:
-		if command.Text == "" {
-			return m.SessionCommandRunning(m.SessionCommandIdle())
-		}
-		return m.SessionCommandRunning(command.Text)
-	case command.Text != "" && command.HasExitCode:
-		return m.SessionCommandExited(command.Text, command.ExitCode)
-	case command.Text != "":
-		return m.SessionCommandFinished(command.Text)
-	default:
-		return m.SessionCommandIdle()
-	}
 }
 
 func logDetail(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme) {

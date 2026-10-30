@@ -1,27 +1,26 @@
-// Package transfer renders the SFTP surface: the two independent panes, their
-// Tabs, bookmarks, sorting, hidden-file control, file operations, and the
-// host picker. It imports only the application, domain, and MyGo UI layers.
+// Package transfer renders the SFTP surface as the original's: two
+// independent panes, each with its own Tabs, a breadcrumb and icon toolbar, a
+// sortable file list, and a footer, over the queue of running Transfers. It
+// imports only the application, domain, and MyGo UI layers.
 package transfer
 
 import (
-	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
-	domainsftp "github.com/mslxl/natcatty/domain/transfer"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 )
 
-// surfaceGutter is the SFTP surface's own inset from the shell's content
-// column. The shell already pads the column against the window, but the
-// surface is embedded in a 456-DIP column at a 720x480 window, so without its
-// own inset its right-aligned controls (the header's Connect button, the
-// operation bar) and the right pane's column sit flush against the surface's
-// edge: an overlay (a dialog's edge) or the window frame then appears to cut
-// them. The gutter matches the shell's own padding, so every SFTP control keeps
-// the same distance from the window frame at both supported sizes.
-const surfaceGutter float32 = 16
+// sideBySideWidth is the narrowest window that shows the panes side by side;
+// a narrower one stacks them. The original stacks below 1024, but this app's
+// smallest window is 720 wide, and stacking there leaves each list a few rows.
+const sideBySideWidth float32 = 640
+
+// focusMark is the small triangle in the focused pane's top-left corner.
+var focusMark = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M0 0H12L0 12Z" fill="currentColor"/></svg>`))
 
 // View renders the main window's SFTP surface.
 func View(s *transferstate.State) func(*ui.Context) {
@@ -33,15 +32,31 @@ func View(s *transferstate.State) func(*ui.Context) {
 
 		m := locales.In(c.Locale())
 		t := c.Theme()
+		width, _ := c.Size()
+		sideBySide := width >= sideBySideWidth
+		paneWidth := width
+		if sideBySide {
+			paneWidth = width / 2
+		}
 
-		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Gap(8).
-			PaddingX(surfaceGutter).Focusable().AutoFocus()
+		root := ui.Column(c).Grow(1).FillHeight().MinWidth(0).Background(t.Background).
+			BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Focusable().AutoFocus()
 		root.Children(func() {
-			header(c, s, m, t)
-			toolbar(c, s, m, t)
+			split := ui.Row(c)
+			if !sideBySide {
+				split = ui.Column(c)
+			}
+			split.Grow(1).FillWidth().MinHeight(0).MinWidth(0).Children(func() {
+				pane(c, s, transferstate.Left, paneWidth, sideBySide, m, t)
+				pane(c, s, transferstate.Right, paneWidth, sideBySide, m, t)
+			})
 			operationBar(c, s, m, t)
-			panes(c, s, m, t)
 			status(c, s, m, t)
+			// The open center lists the same Transfers; the strip would only
+			// repeat them behind it.
+			if !s.CenterOpen() {
+				queueStrip(c, s, m, t)
+			}
 		})
 		if s.Dialog() == nil && !s.CenterOpen() {
 			installShortcuts(root, s)
@@ -51,102 +66,42 @@ func View(s *transferstate.State) func(*ui.Context) {
 	}
 }
 
-func header(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
-	// The header wraps: the surface is only 456 DIPs wide at the minimum
-	// window, so a longer localized title cannot be allowed to push the two
-	// right-aligned buttons off the surface. They move to a second line
-	// instead.
-	ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.SftpTitle()).FontSize(20).Bold().SingleLine().MinWidth(0).TextColor(t.Text)
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.SftpTransferCenterButton()).Clicked() {
-			s.OpenCenter()
-		}
-		connect := ui.Button(c, m.SftpConnect())
-		connect.Disabled(!s.RemoteAvailable())
-		if connect.Clicked() {
-			s.RequestHostPicker(s.Focused())
-		}
-	})
-}
-
-// toolbar holds the file actions for the focused pane. It wraps, so the
-// 720-DIP window shows two rows and the 1100-DIP window shows one.
-func toolbar(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
-	side := s.Focused()
+// pane is one side: its Tab bar, then the Tab's browser or the empty state.
+// The left (or top) pane draws the divider on its trailing edge.
+func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, width float32,
+	sideBySide bool, m locales.Messages, t *ui.Theme) {
 	tab := s.Tab(side)
-	other := s.Tab(side.Other())
-	ready := tab != nil && tab.FS != nil
-	otherReady := other != nil && other.FS != nil
-	selected := ready && len(tab.SelectedPaths()) > 0
-	one := ready && len(tab.SelectedPaths()) == 1
-
-	ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
-		actionButton(c, m.SftpUp(), ready, func() { s.GoParent(side) })
-		actionButton(c, m.SftpRefresh(), ready, func() { s.Refresh(side) })
-		actionButton(c, m.SftpNewFolder(), ready, func() { s.RequestNewFolder(side) })
-		actionButton(c, m.SftpNewFile(), ready, func() { s.RequestNewFile(side) })
-		actionButton(c, m.SftpRename(), one, func() { s.RequestRename(side) })
-		actionButton(c, m.SftpPermissions(), one, func() { s.RequestChmod(side) })
-		actionButton(c, m.SftpDelete(), selected, func() { s.RequestDelete(side) })
-		actionButton(c, m.SftpCopyTo(), selected && otherReady, func() { s.Transfer(side) })
-		actionButton(c, m.SftpMoveTo(), selected && otherReady, func() { s.MoveToOther(side) })
-
-		// The same action is an upload from a local pane and a download from a
-		// remote one, so its label names the direction the user sees.
-		label := m.SftpUpload()
-		if tab != nil && tab.Kind == transferstate.KindRemote {
-			label = m.SftpDownload()
+	el := ui.Column(c).Grow(1).Basis(0).MinWidth(0).MinHeight(0).Clip().Focusable()
+	// The pane fills the split's cross axis; otherwise it takes its list's
+	// height and the split centres it, pushing the toolbar out of view.
+	if sideBySide {
+		el.FillHeight()
+	} else {
+		el.FillWidth()
+	}
+	if side == transferstate.Left {
+		if sideBySide {
+			el.BorderWidth(0, 1, 0, 0)
+		} else {
+			el.BorderWidth(0, 0, 1, 0)
 		}
-		actionButton(c, label, selected && otherReady, func() { s.Transfer(side) })
-	})
-}
-
-// actionButton renders a small toolbar button that is disabled when the
-// focused pane cannot run the action.
-func actionButton(c *ui.Context, label string, enabled bool, run func()) {
-	button := ui.Button(c, label)
-	button.FontSize(12)
-	button.Disabled(!enabled)
-	if button.Clicked() {
-		run()
+		el.BorderColor(t.Border)
 	}
-}
-
-// panes renders the two independent panes side by side. The width is shared
-// equally; each pane keeps its own Tabs and browsing state.
-func panes(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Grow(1).FillWidth().MinHeight(0).MinWidth(0).Gap(8).Children(func() {
-		pane(c, s, transferstate.Left, m, t)
-		pane(c, s, transferstate.Right, m, t)
-	})
-}
-
-func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
-	tab := s.Tab(side)
-	focused := s.Focused() == side
-	border := t.Border
-	if focused {
-		border = t.Accent
-	}
-	el := ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Gap(6).Padding(8).
-		Background(t.Surface).Radius(t.Radius).Border(1, border).Focusable()
 	el.Children(func() {
-		tabStrip(c, s, side, m, t)
+		if len(s.Pane(side).Tabs) > 0 {
+			tabBar(c, s, side, m, t)
+		}
 		if tab == nil {
 			emptyPane(c, s, side, m, t)
-			return
+		} else {
+			browser(c, s, side, tab, width, m, t)
 		}
-		pathRow(c, s, side, tab, m, t)
-		if tab.Problem != nil {
-			ui.Text(c, errorText(m, tab.Problem)).FontSize(11).TextColor(uitheme.DangerText(t)).
-				SingleLine().MinWidth(0)
+		if s.Focused() == side {
+			ui.Icon(c, focusMark).Size(12, 12).TextColor(t.Accent).
+				Absolute().Left(0).Top(0)
 		}
-		viewRow(c, s, side, tab, m, t)
-		fileList(c, s, side, tab, m, t)
-		footer(c, s, side, tab, m, t)
 	})
-	if el.Clicked() {
+	if el.Clicked() || el.RightClicked() {
 		s.Focus(side)
 	}
 	if tab == nil || tab.FS == nil {
@@ -161,285 +116,142 @@ func pane(c *ui.Context, s *transferstate.State, side transferstate.Side, m loca
 		s.DropPane(side, tab.Path, payload)
 	}
 	if el.FileDragOver() {
-		el.Border(1, t.Accent)
+		el.Border(2, t.Accent)
 	}
 }
 
-func tabStrip(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
+// browser is a connected Tab: the toolbar, the filter bar when open, the
+// list with its column header, and the footer.
+func browser(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
+	width float32, m locales.Messages, t *ui.Theme) {
+	toolbar(c, s, side, tab, m, t)
+	if tab.FilterOpen {
+		filterBar(c, s, side, tab, m, t)
+	}
+	if tab.Problem != nil {
+		problemBanner(c, s, side, tab, m, t)
+	}
+	columns := columnsFor(width)
+	listHeader(c, s, side, tab, columns, m, t)
+	fileList(c, s, side, tab, columns, m, t)
+	footer(c, s, side, tab, m, t)
+}
+
+// tabBar lists the pane's Tabs: a local or remote glyph, the title, and a
+// close button, with the active Tab underlined. "+" picks a Host for a new
+// Tab.
+func tabBar(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
 	pane := s.Pane(side)
-	ui.Row(c).FillWidth().Wrap().Gap(4).AlignItems(ui.Center).Children(func() {
-		for index, item := range pane.Tabs {
-			index, item := index, item
-			label := paneTitle(m, item)
-			var button ui.Element
-			if index == pane.Active {
-				button = ui.PrimaryButton(c, label)
-			} else {
-				button = ui.Button(c, label)
-			}
-			button.FontSize(11)
-			if button.Clicked() {
-				s.SelectTab(side, index)
-			}
-		}
-		menu := ui.MenuButton(c, "+", func(menu *ui.Menu) {
-			local := menu.Item(m.SftpOpenLocal())
-			local.Disabled(!s.LocalAvailable())
-			if local.Chosen() {
-				s.OpenLocal(side)
-			}
-			connect := menu.Item(m.SftpConnect())
-			connect.Disabled(!s.RemoteAvailable())
-			if connect.Chosen() {
-				s.RequestHostPicker(side)
-			}
-			menu.Separator()
-			duplicate := menu.Item(m.SftpDuplicateTab())
-			duplicate.Disabled(pane.Tab() == nil)
-			if duplicate.Chosen() {
-				s.Duplicate(side)
-			}
-			closeTab := menu.Item(m.SftpCloseTab())
-			closeTab.Disabled(pane.Tab() == nil)
-			if closeTab.Chosen() {
-				s.CloseTab(side)
-			}
-		})
-		menu.FontSize(11)
-	})
-}
-
-func emptyPane(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Grow(1).FillWidth().AlignItems(ui.Center).Justify(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, m.SftpNoTab()).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-		ui.Row(c).Gap(6).Children(func() {
-			local := ui.Button(c, m.SftpOpenLocal())
-			local.Disabled(!s.LocalAvailable())
-			if local.Clicked() {
-				s.OpenLocal(side)
-			}
-			remote := ui.Button(c, m.SftpConnect())
-			remote.Disabled(!s.RemoteAvailable())
-			if remote.Clicked() {
-				s.RequestHostPicker(side)
-			}
-		})
-	})
-}
-
-func pathRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
-		up := ui.Button(c, "↑")
-		up.FontSize(12)
-		up.Width(28)
-		if up.Clicked() {
-			s.GoParent(side)
-		}
-		input := ui.TextInput(c, &tab.Draft)
-		input.Placeholder(m.SftpPathPlaceholder())
-		input.FontSize(12)
-		input.Grow(1)
-		input.MinWidth(0)
-		if input.Submitted() {
-			s.NavigateDraft(side)
-		}
-		refresh := ui.Button(c, "⟳")
-		refresh.FontSize(12)
-		refresh.Width(28)
-		if refresh.Clicked() {
-			s.Refresh(side)
-		}
-	})
-}
-
-func viewRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Wrap().Gap(4).AlignItems(ui.Center).Children(func() {
-		sort := ui.MenuButton(c, m.SftpSort(), func(menu *ui.Menu) {
-			sortMenu(menu, s, side, tab, m)
-		})
-		sort.FontSize(11)
-		ui.Text(c, sortSummary(m, tab.Sort)).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-
-		hidden := ui.Button(c, m.SftpShowHidden())
-		hidden.FontSize(11)
-		if tab.ShowHidden {
-			hidden.Background(t.Accent).TextColor(t.AccentText)
-		}
-		if hidden.Clicked() {
-			s.ToggleHidden(side)
-		}
-
-		star := ui.Button(c, "★")
-		star.FontSize(12)
-		star.Width(28)
-		if s.Bookmarked(side) {
-			star.Background(t.Accent).TextColor(t.AccentText)
-		}
-		if star.Clicked() {
-			s.ToggleBookmark(side)
-		}
-
-		saved := ui.MenuButton(c, m.SftpBookmarks(), func(menu *ui.Menu) {
-			bookmarksMenu(menu, s, side, tab, m)
-		})
-		saved.FontSize(11)
-	})
-}
-
-func sortMenu(menu *ui.Menu, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages) {
-	fields := []struct {
-		field domainsftp.SortField
-		label string
-	}{
-		{domainsftp.SortName, m.SftpSortName()},
-		{domainsftp.SortSize, m.SftpSortSize()},
-		{domainsftp.SortModified, m.SftpSortModified()},
-		{domainsftp.SortType, m.SftpSortType()},
-		{domainsftp.SortOwner, m.SftpSortOwner()},
-	}
-	for _, field := range fields {
-		field := field
-		item := menu.Item(field.label).Checked(tab.Sort.Field == field.field)
-		if item.Chosen() {
-			s.ToggleSort(side, field.field)
-		}
-	}
-	menu.Separator()
-	descending := menu.Item(m.SftpSortDescending()).Checked(tab.Sort.Descending)
-	if descending.Chosen() {
-		s.SetSort(side, domainsftp.Sort{Field: tab.Sort.Field, Descending: !tab.Sort.Descending, MixKinds: tab.Sort.MixKinds})
-	}
-	folders := menu.Item(m.SftpSortFoldersFirst()).Checked(!tab.Sort.MixKinds)
-	if folders.Chosen() {
-		s.ToggleFoldersFirst(side)
-	}
-}
-
-func bookmarksMenu(menu *ui.Menu, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages) {
-	items := s.Bookmarks(side)
-	label := m.SftpBookmark()
-	if s.Bookmarked(side) {
-		label = m.SftpBookmarkRemove()
-	}
-	if menu.Item(label).Chosen() {
-		s.ToggleBookmark(side)
-	}
-	if len(items) == 0 {
-		menu.Separator()
-		menu.Item(m.SftpBookmarksEmpty()).Disabled(true)
-	} else {
-		menu.Separator()
-		for _, bookmark := range items {
-			bookmark := bookmark
-			item := menu.Item(bookmark.Label)
-			if item.Chosen() {
-				s.GoBookmark(side, bookmark)
-			}
-		}
-		menu.Separator()
-		menu.Submenu(m.SftpBookmarksRemoveMenu(), func(remove *ui.Menu) {
-			for _, bookmark := range items {
-				bookmark := bookmark
-				item := remove.Item(bookmark.Label)
-				if item.Chosen() {
-					s.RemoveBookmark(side, bookmark.Key())
+	ui.Row(c).FillWidth().Height(32).Shrink(0).Background(kit.Muted(t)).
+		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(32).Children(func() {
+			ui.Row(c).Height(32).Children(func() {
+				for index, item := range pane.Tabs {
+					paneTab(c, s, side, index, item, index == pane.Active, m, t)
 				}
-			}
+			})
 		})
-	}
-	if tab != nil && tab.Kind == transferstate.KindLocal {
-		menu.Separator()
-		menu.Item(m.SftpBookmarksLocalHint()).Disabled(true)
-	}
-}
-
-func fileList(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages, t *ui.Theme) {
-	ui.Scroll(c).Grow(1).FillWidth().MinHeight(0).TrackScroll(&tab.Scroll).Children(func() {
-		ui.Column(c).FillWidth().MinWidth(0).Children(func() {
-			rows := tab.Visible()
-			if len(rows) == 0 {
-				ui.Text(c, m.SftpEmpty()).FontSize(12).TextColor(t.TextMuted).Padding(8)
-				return
-			}
-			for _, entry := range rows {
-				fileRow(c, s, side, tab, entry, m, t)
-			}
-		})
+		add := ui.ButtonBase(c).Label(m.SftpAddTab()).Tooltip(m.SftpAddTab()).
+			Width(32).FillHeight().Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
+			BorderWidth(0, 0, 0, 1).BorderColor(t.Border).TextColor(t.TextMuted)
+		if add.Hovered() {
+			add.Background(kit.Subtle(t)).TextColor(t.Text)
+		}
+		add.Children(func() { ui.Icon(c, icons.Lucide(icons.Plus)).Size(14, 14) })
+		if add.Clicked() {
+			s.RequestHostPicker(side)
+		}
 	})
 }
 
-func fileRow(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, entry domainsftp.Entry, m locales.Messages, t *ui.Theme) {
-	selected := tab.Selection[entry.Path]
-	row := ui.Row(c).FillWidth().MinWidth(0).Gap(6).Padding(3, 4).AlignItems(ui.Center).
-		Radius(4).Cursor(ui.CursorPointer)
-	if selected {
-		row.Background(t.Selection)
-	} else if row.Hovered() {
-		row.Background(t.SurfaceHover)
+func paneTab(c *ui.Context, s *transferstate.State, side transferstate.Side, index int,
+	tab *transferstate.Tab, active bool, m locales.Messages, t *ui.Theme) {
+	title := paneTitle(m, tab)
+	el := ui.Row(c).Height(32).MinWidth(100).MaxWidth(180).Padding(0, 6, 0, 12).Gap(6).
+		AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).
+		Cursor(ui.CursorPointer).Label(title)
+	text, glyph := t.TextMuted, t.TextMuted
+	switch {
+	case active:
+		el.Background(t.Background)
+		text, glyph = t.Text, t.Accent
+	case el.Hovered():
+		el.Background(kit.Subtle(t))
+		text = t.Text
 	}
-	row.Children(func() {
-		name := ui.Text(c, displayName(entry)).FontSize(12).SingleLine().MinWidth(0).Grow(1).TextColor(t.Text)
-		if entry.IsDir() {
-			name.Bold()
+	el.Children(func() {
+		icon := icons.HardDrive
+		if tab.Kind == transferstate.KindLocal {
+			icon = icons.Monitor
 		}
-		if entry.Symlink {
-			name.TextColor(t.TextMuted)
+		ui.Icon(c, icons.Lucide(icon)).Size(12, 12).TextColor(glyph).Shrink(0)
+		ui.Text(c, title).FontSize(12).FontWeight(500).SingleLine().MinWidth(0).Grow(1).TextColor(text)
+		closer := ui.ButtonBase(c).Label(m.SftpCloseTab()).Tooltip(m.SftpCloseTab()).
+			Size(18, 18).Radius(4).Justify(ui.Center).AlignItems(ui.Center).Shrink(0).
+			TextColor(t.TextMuted)
+		if closer.Hovered() {
+			closer.Background(kit.Strong(t)).TextColor(uitheme.DangerText(t))
 		}
-		if detail := secondaryText(entry); detail != "" {
-			ui.Text(c, detail).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+		closer.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(12, 12) })
+		if closer.Clicked() {
+			s.CloseTabAt(side, index)
+		}
+		if active {
+			ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2).Background(t.Accent)
 		}
 	})
-
-	clicks := row.Clicks()
-	double := row.DoubleClicked()
-	if clicks > 0 || double {
-		s.Click(side, entry, row.ClickModifiers(), double)
+	if el.Clicked() {
+		s.SelectTab(side, index)
 	}
-	if entry.Name != ".." {
-		if payload := s.DragFor(side, entry); payload != nil {
-			row.Drag(payload)
-			if tab.Kind == transferstate.KindLocal {
-				paths := payload.Paths
-				row.DragDataFrom(func() transfer.Data {
-					data, err := transfer.FileData(paths...)
-					if err != nil {
-						return transfer.Data{}
-					}
-					return data
-				})
+	el.ContextMenu(func(menu *ui.Menu) {
+		if menu.Item(m.SftpDuplicateTab()).Chosen() {
+			s.SelectTab(side, index)
+			s.Duplicate(side)
+		}
+		if menu.Item(m.SftpCloseTab()).Chosen() {
+			s.CloseTabAt(side, index)
+		}
+	})
+}
+
+// emptyPane invites the user to pick what the pane browses.
+func emptyPane(c *ui.Context, s *transferstate.State, side transferstate.Side, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).Grow(1).FillWidth().MinHeight(0).AlignItems(ui.Center).Justify(ui.Center).
+		Gap(12).Padding(24).Children(func() {
+		icon := icons.HardDrive
+		if side == transferstate.Left {
+			icon = icons.Monitor
+		}
+		ui.Column(c).Size(56, 56).Radius(12).Background(kit.Muted(t)).
+			Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.Lucide(icon)).Size(24, 24).TextColor(t.Accent)
+		})
+		ui.Column(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SftpSelectHostTitle()).FontSize(14).FontWeight(600).TextColor(t.Text)
+			ui.Text(c, m.SftpSelectHostSubtitle()).FontSize(12).TextColor(t.TextMuted)
+		})
+		pick := kit.PrimaryButton(c, icons.Plus, m.SftpSelectHost())
+		if pick.Clicked() {
+			s.RequestHostPicker(side)
+		}
+	})
+}
+
+// problemBanner reports why the listing failed, with Retry.
+func problemBanner(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab,
+	m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Gap(8).Padding(6, 12).AlignItems(ui.Center).Shrink(0).
+		Background(t.Background.Mix(t.Danger, 0.1)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
+		Children(func() {
+			ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(14, 14).TextColor(uitheme.DangerText(t)).Shrink(0)
+			ui.Text(c, errorText(m, tab.Problem)).FontSize(12).TextColor(uitheme.DangerText(t)).
+				Grow(1).MinWidth(0).SingleLine()
+			retry := kit.GhostButton(c, icons.RefreshCw, m.SftpRetry())
+			retry.Height(24).FontSize(12)
+			if retry.Clicked() {
+				s.Refresh(side)
 			}
-		}
-	}
-	if entry.IsDir() {
-		if files := row.DroppedFiles(); len(files) > 0 {
-			s.DropFiles(side, entry.Path, files)
-		}
-		if payload, ok := ui.Drop[*transferstate.DragPayload](row); ok {
-			s.DropPane(side, entry.Path, payload)
-		}
-	}
-}
-
-func footer(c *ui.Context, s *transferstate.State, side transferstate.Side, tab *transferstate.Tab, m locales.Messages, t *ui.Theme) {
-	text := ""
-	if selected := tab.SelectedPaths(); len(selected) > 0 {
-		text = m.SftpSelected(len(selected))
-	} else if tab.Loading {
-		text = m.SftpLoading()
-	} else {
-		text = m.SftpItemCount(visibleCount(tab))
-	}
-	ui.Text(c, text).FontSize(10).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-}
-
-func visibleCount(tab *transferstate.Tab) int {
-	count := 0
-	for _, entry := range tab.Visible() {
-		if entry.Name != ".." {
-			count++
-		}
-	}
-	return count
+		})
 }
 
 func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
@@ -447,19 +259,15 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 	if op == nil {
 		return
 	}
-	// Wraps like the toolbar: the progress bar and the Cancel button are
-	// fixed-width, so at the minimum surface width a long operation label
-	// must move them to a second line rather than pushing Cancel off the
-	// surface's right edge.
-	ui.Row(c).FillWidth().Wrap().Gap(8).Padding(6, 8).AlignItems(ui.Center).
-		Background(t.SurfaceHover).Radius(t.Radius).Children(func() {
+	ui.Row(c).FillWidth().Gap(8).Padding(6, 12).AlignItems(ui.Center).Shrink(0).
+		Background(kit.Muted(t)).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 		text := operationLabel(m, op)
-		if op.Err != nil {
-			text = errorText(m, op.Err)
-		}
 		color := t.Text
 		if op.Err != nil {
-			color = uitheme.DangerText(t)
+			text, color = errorText(m, op.Err), uitheme.DangerText(t)
+		}
+		if op.Running {
+			ui.Icon(c, icons.Lucide(icons.Loader)).Size(14, 14).TextColor(t.Accent).Shrink(0)
 		}
 		ui.Text(c, text).FontSize(12).Grow(1).MinWidth(0).SingleLine().TextColor(color)
 		if op.Status != "" {
@@ -467,28 +275,34 @@ func operationBar(c *ui.Context, s *transferstate.State, m locales.Messages, t *
 			// uses, so progress is visible without opening the center.
 			ui.Progress(c, float64(op.Percent())/100).Width(140)
 		}
+		label := m.SftpDismiss()
 		if op.Running {
-			if ui.Button(c, m.SftpCancel()).Clicked() {
-				s.CancelOperation()
-			}
-			return
+			label = m.SftpCancel()
 		}
-		if ui.Button(c, m.SftpDismiss()).Clicked() {
-			s.DismissOperation()
+		button := kit.GhostButton(c, "", label)
+		button.Height(24).FontSize(12)
+		if button.Clicked() {
+			if op.Running {
+				s.CancelOperation()
+			} else {
+				s.DismissOperation()
+			}
 		}
 	})
 }
 
 func status(c *ui.Context, s *transferstate.State, m locales.Messages, t *ui.Theme) {
+	text, color := "", t.TextMuted
 	if problem := s.Problem(); problem != nil {
-		ui.Text(c, errorText(m, problem)).FontSize(11).TextColor(uitheme.DangerText(t)).
-			SingleLine().MinWidth(0)
+		text, color = errorText(m, problem), uitheme.DangerText(t)
+	} else if s.Snapshot() == nil {
+		text = noticeText(m, s.Notice())
+	}
+	if text == "" {
 		return
 	}
-	if s.Snapshot() != nil {
-		return
-	}
-	if notice := noticeText(m, s.Notice()); notice != "" {
-		ui.Text(c, notice).FontSize(11).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-	}
+	ui.Row(c).FillWidth().Padding(4, 12).Shrink(0).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).
+		Children(func() {
+			ui.Text(c, text).FontSize(11).TextColor(color).SingleLine().MinWidth(0)
+		})
 }

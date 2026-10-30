@@ -74,11 +74,18 @@ func actionBar(c *ui.Context, body func()) {
 
 func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 	state := s.TabState(s.Tab())
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, m.SysManagerTitle()).FontSize(20).Bold()
-		ui.Column(c).Grow(1)
-		text, color := statusText(m, state, t)
-		ui.Text(c, text).FontSize(12).TextColor(color).NoWrap()
+	// The title shares its row with the refresh controls, which wraps below
+	// it where the content is narrow: below the window's Tab bar, a row
+	// apiece left the minimum window three of a tab's four list rows.
+	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(1).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.SysManagerTitle()).FontSize(18).Bold().SingleLine()
+			text, color := statusText(m, state, t)
+			ui.Text(c, text).FontSize(12).TextColor(color).NoWrap()
+		})
+		if len(s.Hosts()) > 0 {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() { refreshControls(c, s, m) })
+		}
 	})
 
 	if len(s.Hosts()) == 0 {
@@ -121,37 +128,38 @@ func header(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		}
 	})
 
-	ui.Row(c).FillWidth().Gap(8).Children(func() {
-		choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
-		for _, seconds := range domainpreferences.SysManagerIntervalChoices {
-			choices = append(choices, m.SysManagerSeconds(seconds))
-		}
-		current := m.SysManagerSeconds(s.Interval())
-		chosen := current
-		ui.Select(c, &chosen, choices).Width(84).Label(m.SysManagerRefresh())
-		if chosen != current {
-			for index, label := range choices {
-				if label == chosen {
-					s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
-					break
-				}
-			}
-			c.Invalidate()
-		}
-		if ui.Button(c, m.SysManagerRefreshNow()).Key("sysmanager-refresh").Clicked() {
-			s.Refresh()
-			c.Invalidate()
-		}
-		tabsMenu(c, s, m)
-		ui.Column(c).Grow(1)
-	})
-
 	if problem := problemText(m, s.Problem()); problem != "" {
 		ui.Text(c, problem).FontSize(12).TextColor(uitheme.DangerText(t))
 	}
 	if notice := actionNotice(s, m); notice != "" {
 		ui.Text(c, notice).FontSize(12).TextColor(actionNoticeColor(s, t))
 	}
+}
+
+// refreshControls are the refresh interval, Refresh now, and the tab-layout
+// menu.
+func refreshControls(c *ui.Context, s *State, m locales.Messages) {
+	choices := make([]string, 0, len(domainpreferences.SysManagerIntervalChoices))
+	for _, seconds := range domainpreferences.SysManagerIntervalChoices {
+		choices = append(choices, m.SysManagerSeconds(seconds))
+	}
+	current := m.SysManagerSeconds(s.Interval())
+	chosen := current
+	ui.Select(c, &chosen, choices).Width(84).MinWidth(84).Label(m.SysManagerRefresh())
+	if chosen != current {
+		for index, label := range choices {
+			if label == chosen {
+				s.SetInterval(domainpreferences.SysManagerIntervalChoices[index])
+				break
+			}
+		}
+		c.Invalidate()
+	}
+	if ui.Button(c, m.SysManagerRefreshNow()).Key("sysmanager-refresh").Clicked() {
+		s.Refresh()
+		c.Invalidate()
+	}
+	tabsMenu(c, s, m)
 }
 
 // tabsMenu exposes the persisted tab layout: show or hide a tab, and move the

@@ -500,11 +500,11 @@ func selectedBarLabel(t *testing.T, m locales.Messages, manager *uisysmanager.St
 }
 
 // sysManagerContentBounds returns the content column's left and right edges in
-// tester coordinates at width: the sidebar and the content column's 16-DIP
-// padding insets. In the real 720x480 window the same edges are 276..716 on
-// screen; the window's own origin is 28 DIPs in.
+// tester coordinates at width: inside the content card, right of the home
+// sidebar.
 func sysManagerContentBounds(width int) (left, right float32) {
-	return sidebarWidth + shellPadding, float32(width) - shellPadding
+	content := homeContent(float32(width), 0)
+	return content.X, content.X + content.W
 }
 
 // sysManagerTabLabels names every visible tab in a locale.

@@ -209,12 +209,6 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 		})
 	}
 
-	showStats := settings.ShowSessionStats
-	if ui.Checkbox(c, &showStats, m.SettingsShowSessionStats()).Changed() {
-		state.SetShowSessionStats(showStats)
-		c.Invalidate()
-	}
-
 }
 
 // renderRetentionSection draws the connection log and command history

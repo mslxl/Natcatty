@@ -63,7 +63,7 @@ func exportView(t *testing.T) (*vaultstate.State, *ui.Tester, *fakeExportWriter)
 func TestExportEntryOpensThePanel(t *testing.T) {
 	state, tester, _ := exportView(t)
 	m := locales.In("en")
-	if err := tester.Click(m.VaultExportTitle()); err != nil {
+	if err := chooseVaultAction(tester, m, m.VaultExportTitle()); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()

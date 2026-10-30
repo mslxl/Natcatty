@@ -211,9 +211,6 @@ type Settings struct {
 	KeywordHighlightEnabled bool
 	// KeywordHighlightRules are the configured regular expressions and colors.
 	KeywordHighlightRules []KeywordHighlightRule
-	// ShowSessionStats draws the Session's byte, command, bell, and
-	// notification counters in the status bar.
-	ShowSessionStats bool
 	// ConnectionLogRetentionCount is how many connection logs are kept. Zero
 	// keeps every log.
 	ConnectionLogRetentionCount int
@@ -264,7 +261,6 @@ func Defaults() Settings {
 		AutocompleteHistoryScope:   AutocompleteHistoryHost,
 		KeywordHighlightEnabled:    true,
 		KeywordHighlightRules:      DefaultKeywordHighlightRules(),
-		ShowSessionStats:           true,
 
 		ConnectionLogRetentionCount: DefaultConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  0,

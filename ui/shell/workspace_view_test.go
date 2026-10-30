@@ -82,8 +82,10 @@ func TestShellRendersRecursiveSplitPanes(t *testing.T) {
 	if got := countText(tt.Texts(), "terminal-surface"); got != 2 {
 		t.Fatalf("terminal surfaces = %d, want 2; texts %q", got, tt.Texts())
 	}
-	if tt.HasText("Split Right") {
-		t.Fatal("split menu items are visible before opening a menu")
+	// Split Right and Split Down are header buttons too; Detach Session is
+	// only ever a menu item.
+	if tt.HasText(locales.In("en").PaneDetach()) {
+		t.Fatal("Pane menu items are visible before opening a menu")
 	}
 }
 
