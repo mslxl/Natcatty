@@ -2,116 +2,78 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
 // ListProxyProfiles returns every Proxy Profile in display order.
 func (s *Store) ListProxyProfiles(ctx context.Context) ([]domainvault.ProxyProfile, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM proxy_profiles
-		ORDER BY order_key ASC, label COLLATE NOCASE ASC, id ASC`)
-	if err != nil {
+	var data []string
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, err = loadDataRows(tx, &proxyProfileSchema{}, "order_key ASC", "label COLLATE NOCASE ASC", "id ASC")
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("store: list Proxy Profiles: %w", err)
 	}
-
-	profiles := make([]domainvault.ProxyProfile, 0, len(rows.Values))
-	for _, row := range rows.Values {
-		if len(row) == 0 {
-			continue
-		}
-		data, ok := row[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("store: Proxy Profile data is %T", row[0])
-		}
-		var profile domainvault.ProxyProfile
-		if err := json.Unmarshal([]byte(data), &profile); err != nil {
-			return nil, fmt.Errorf("store: decode Proxy Profile: %w", err)
-		}
-		profiles = append(profiles, profile)
+	profiles, err := decodeDataList[domainvault.ProxyProfile](data, "Proxy Profile")
+	if err != nil {
+		return nil, err
 	}
 	return profiles, nil
 }
 
 // GetProxyProfile returns one Proxy Profile by id.
 func (s *Store) GetProxyProfile(ctx context.Context, id string) (domainvault.ProxyProfile, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM proxy_profiles WHERE id = ?`, id)
-	if err != nil {
+	var data string
+	var found bool
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, found, err = loadDataRow(tx, &proxyProfileSchema{}, &proxyProfileSchema{ID: id})
+		return err
+	}); err != nil {
 		return domainvault.ProxyProfile{}, fmt.Errorf("store: get Proxy Profile: %w", err)
 	}
-	if len(rows.Values) == 0 {
+	if !found {
 		return domainvault.ProxyProfile{}, appvault.ErrNotFound
 	}
-	data, ok := rows.Values[0][0].(string)
-	if !ok {
-		return domainvault.ProxyProfile{}, fmt.Errorf("store: Proxy Profile data is %T", rows.Values[0][0])
-	}
 	var profile domainvault.ProxyProfile
-	if err := json.Unmarshal([]byte(data), &profile); err != nil {
-		return domainvault.ProxyProfile{}, fmt.Errorf("store: decode Proxy Profile: %w", err)
+	if err := decodeData(data, "Proxy Profile", &profile); err != nil {
+		return domainvault.ProxyProfile{}, err
 	}
 	return profile, nil
 }
 
 // SaveProxyProfile inserts or replaces one Proxy Profile.
 func (s *Store) SaveProxyProfile(ctx context.Context, profile domainvault.ProxyProfile) error {
-	statement, err := proxyProfileSaveStatement(profile)
+	model, err := proxyProfileModel(profile)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &model, "id", "label", "type", "host", "port", "order_key", "updated_at", "data")
+	}); err != nil {
 		return fmt.Errorf("store: save Proxy Profile: %w", err)
 	}
 	s.vaultChanged()
 	return nil
 }
 
-func proxyProfileSaveStatement(profile domainvault.ProxyProfile) (platformsqlite.Statement, error) {
-	if profile.ID == "" {
-		return platformsqlite.Statement{}, fmt.Errorf("store: Proxy Profile has no id")
-	}
-	data, err := json.Marshal(profile)
-	if err != nil {
-		return platformsqlite.Statement{}, fmt.Errorf("store: encode Proxy Profile: %w", err)
-	}
-	return platformsqlite.Statement{
-		SQL: `INSERT INTO proxy_profiles (
-				id, label, type, host, port, order_key, created_at, updated_at, data
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				label = excluded.label,
-				type = excluded.type,
-				host = excluded.host,
-				port = excluded.port,
-				order_key = excluded.order_key,
-				updated_at = excluded.updated_at,
-				data = excluded.data`,
-		Args: []any{
-			profile.ID,
-			profile.Label,
-			string(profile.Config.Type),
-			profile.Config.Host,
-			profile.Config.Port,
-			profile.OrderKey,
-			profile.CreatedAt.UnixMilli(),
-			profile.UpdatedAt.UnixMilli(),
-			string(data),
-		},
-	}, nil
-}
-
-// DeleteProxyProfile removes one Proxy Profile. Host and Host Group references
-// are cleared by the Vault service, which owns the non-cascading rule; the
-// adapter never touches another table.
+// DeleteProxyProfile removes one Proxy Profile. References are cleared by the
+// Vault service, which owns that non-cascading rule.
 func (s *Store) DeleteProxyProfile(ctx context.Context, id string) error {
-	result, err := s.db.Execute(ctx, `DELETE FROM proxy_profiles WHERE id = ?`, id)
-	if err != nil {
+	var changed int64
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		changed, err = deleteModel(tx, &proxyProfileSchema{}, &proxyProfileSchema{ID: id})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: delete Proxy Profile: %w", err)
 	}
-	if result.Changes == 0 {
+	if changed == 0 {
 		return appvault.ErrNotFound
 	}
 	s.vaultChanged()
