@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
-
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -25,22 +23,22 @@ func openTestStore(t *testing.T) (*Store, string) {
 	return store, path
 }
 
-func TestOpenCreatesAndWritesASchemaVersion(t *testing.T) {
+func TestOpenAutoMigratesTheSchema(t *testing.T) {
 	store, _ := openTestStore(t)
 
 	version, err := store.SchemaVersion(context.Background())
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if version != latestMigrationVersion() {
-		t.Fatalf("schema version = %d, want %d", version, latestMigrationVersion())
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
-	rows, err := store.db.Query(context.Background(), `PRAGMA user_version`)
+	rows, err := store.db.Query(context.Background(), `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`)
 	if err != nil {
-		t.Fatalf("user_version: %v", err)
+		t.Fatalf("schema_migrations: %v", err)
 	}
-	if got := rows.Values[0][0].(int64); got != int64(latestMigrationVersion()) {
-		t.Fatalf("user_version = %d, want %d", got, latestMigrationVersion())
+	if got := rows.Values[0][0].(int64); got != 0 {
+		t.Fatalf("schema_migrations table exists")
 	}
 
 	mode, err := store.journalMode(context.Background())
@@ -52,7 +50,7 @@ func TestOpenCreatesAndWritesASchemaVersion(t *testing.T) {
 	}
 }
 
-func TestOpeningAnExistingDatabaseDoesNotReapplyMigrations(t *testing.T) {
+func TestOpeningAnExistingDatabaseReappliesAutoMigrateSafely(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "natcatty.db")
 	first, err := Open(context.Background(), path)
 	if err != nil {
@@ -72,55 +70,8 @@ func TestOpeningAnExistingDatabaseDoesNotReapplyMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != latestMigrationVersion() {
-		t.Fatalf("schema version = %d, want %d", version, latestMigrationVersion())
-	}
-	rows, err := second.db.Query(context.Background(), `SELECT COUNT(*) FROM schema_migrations`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := rows.Values[0][0].(int64); got != int64(latestMigrationVersion()) {
-		t.Fatalf("migration rows = %d, want %d", got, latestMigrationVersion())
-	}
-}
-
-func TestFailedMigrationRollsBackItsBatch(t *testing.T) {
-	db, err := platformsqlite.Open(context.Background(), ":memory:", platformsqlite.OpenOptions{})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer db.Close()
-
-	migrations := []migration{
-		{Version: 1, Statements: []string{"CREATE TABLE applied (id TEXT);"}},
-		{Version: 2, Statements: []string{
-			"CREATE TABLE partial (id TEXT);",
-			"INSERT INTO missing_table (id) VALUES ('x');",
-		}},
-	}
-	if err := migrate(context.Background(), db, migrations); err == nil {
-		t.Fatal("migrate succeeded, want the broken batch to fail")
-	}
-
-	rows, err := db.Query(context.Background(), `SELECT MAX(version) FROM schema_migrations`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := rows.Values[0][0].(int64); got != 1 {
-		t.Fatalf("migration version = %d, want 1", got)
-	}
-	if _, err := db.Query(context.Background(), `SELECT * FROM applied`); err != nil {
-		t.Fatalf("migration 1 was rolled back: %v", err)
-	}
-	if _, err := db.Query(context.Background(), `SELECT * FROM partial`); err == nil {
-		t.Fatal("migration 2's first statement survived the rollback")
-	}
-	version, err := db.Query(context.Background(), `PRAGMA user_version`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := version.Values[0][0].(int64); got != 1 {
-		t.Fatalf("user_version = %d, want 1", got)
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 }
 

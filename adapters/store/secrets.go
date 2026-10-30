@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/argon2"
+	"gorm.io/gorm"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	platformsecrets "github.com/mslxl/natcatty/platform/secrets"
@@ -532,159 +533,86 @@ func (s *Store) saveSecretValue(ctx context.Context, row secretValueRow) error {
 	if row.UpdatedAt.IsZero() {
 		row.UpdatedAt = time.Now()
 	}
-	_, err := s.db.Execute(ctx, `INSERT INTO secret_values (
-			entity_type, entity_id, field, alg, key_version, nonce, ciphertext, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(entity_type, entity_id, field) DO UPDATE SET
-			alg = excluded.alg,
-			key_version = excluded.key_version,
-			nonce = excluded.nonce,
-			ciphertext = excluded.ciphertext,
-			updated_at = excluded.updated_at`,
-		row.Ref.EntityType, row.Ref.EntityID, row.Ref.Field, row.Alg,
-		row.KeyVersion, row.Nonce, row.Ciphertext, row.UpdatedAt.UnixMilli(),
-	)
-	if err != nil {
+	model := secretValueSchema{
+		EntityType: row.Ref.EntityType, EntityID: row.Ref.EntityID, Field: row.Ref.Field,
+		Alg: row.Alg, KeyVersion: int64(row.KeyVersion), Nonce: row.Nonce,
+		Ciphertext: row.Ciphertext, UpdatedAt: row.UpdatedAt.UnixMilli(),
+	}
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModelWithConflicts(tx, &model, []string{"entity_type", "entity_id", "field"}, "alg", "key_version", "nonce", "ciphertext", "updated_at")
+	}); err != nil {
 		return fmt.Errorf("store: save secret: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) loadSecretValue(ctx context.Context, ref appvault.SecretRef) (secretValueRow, bool, error) {
-	rows, err := s.db.Query(ctx, `SELECT alg, key_version, nonce, ciphertext, updated_at
-		FROM secret_values WHERE entity_type = ? AND entity_id = ? AND field = ?`,
-		ref.EntityType, ref.EntityID, ref.Field)
-	if err != nil {
+	var model secretValueSchema
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return tx.Where(&secretValueSchema{EntityType: ref.EntityType, EntityID: ref.EntityID, Field: ref.Field}).First(&model).Error
+	}); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return secretValueRow{}, false, nil
+		}
 		return secretValueRow{}, false, fmt.Errorf("store: read secret: %w", err)
 	}
-	if len(rows.Values) == 0 {
-		return secretValueRow{}, false, nil
-	}
-	values := rows.Values[0]
-	if len(values) != 5 {
-		return secretValueRow{}, false, fmt.Errorf("store: secret row has %d columns", len(values))
-	}
-	alg, ok := values[0].(string)
-	if !ok {
-		return secretValueRow{}, false, fmt.Errorf("store: secret alg is %T", values[0])
-	}
-	keyVersion, ok := values[1].(int64)
-	if !ok {
-		return secretValueRow{}, false, fmt.Errorf("store: secret key version is %T", values[1])
-	}
-	nonce, ok := values[2].([]byte)
-	if !ok {
-		return secretValueRow{}, false, fmt.Errorf("store: secret nonce is %T", values[2])
-	}
-	ciphertext, ok := values[3].([]byte)
-	if !ok {
-		return secretValueRow{}, false, fmt.Errorf("store: secret ciphertext is %T", values[3])
-	}
-	updatedAt, ok := values[4].(int64)
-	if !ok {
-		return secretValueRow{}, false, fmt.Errorf("store: secret timestamp is %T", values[4])
-	}
 	return secretValueRow{
-		Ref:        ref,
-		Alg:        alg,
-		KeyVersion: int(keyVersion),
-		Nonce:      nonce,
-		Ciphertext: ciphertext,
-		UpdatedAt:  time.UnixMilli(updatedAt),
+		Ref: ref, Alg: model.Alg, KeyVersion: int(model.KeyVersion), Nonce: model.Nonce,
+		Ciphertext: model.Ciphertext, UpdatedAt: time.UnixMilli(model.UpdatedAt),
 	}, true, nil
 }
 
 func (s *Store) deleteSecretValue(ctx context.Context, ref appvault.SecretRef) error {
-	_, err := s.db.Execute(ctx, `DELETE FROM secret_values
-		WHERE entity_type = ? AND entity_id = ? AND field = ?`,
-		ref.EntityType, ref.EntityID, ref.Field)
-	if err != nil {
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		_, err := deleteModel(tx, &secretValueSchema{}, &secretValueSchema{EntityType: ref.EntityType, EntityID: ref.EntityID, Field: ref.Field})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: delete secret: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) saveCryptoKey(ctx context.Context, row cryptoKeyRow) error {
-	_, err := s.db.Execute(ctx, `INSERT INTO crypto_keys (
-			version, purpose, created_at, wrapped_key, wrap_nonce, wrap_kdf,
-			wrap_salt, wrap_time, wrap_memory, wrap_parallelism
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(version) DO UPDATE SET
-			purpose = excluded.purpose,
-			created_at = excluded.created_at,
-			wrapped_key = excluded.wrapped_key,
-			wrap_nonce = excluded.wrap_nonce,
-			wrap_kdf = excluded.wrap_kdf,
-			wrap_salt = excluded.wrap_salt,
-			wrap_time = excluded.wrap_time,
-			wrap_memory = excluded.wrap_memory,
-			wrap_parallelism = excluded.wrap_parallelism`,
-		row.Version, row.Purpose, row.CreatedAt.UnixMilli(), row.WrappedKey,
-		row.WrapNonce, row.WrapKDF, row.WrapSalt, row.WrapTime, row.WrapMemory,
-		row.WrapParallelism,
-	)
-	if err != nil {
+	model := cryptoKeySchema{
+		Version: int64(row.Version), Purpose: row.Purpose, CreatedAt: row.CreatedAt.UnixMilli(),
+		WrappedKey: row.WrappedKey, WrapNonce: row.WrapNonce, WrapKDF: row.WrapKDF,
+		WrapSalt: row.WrapSalt, WrapTime: int64Ptr(row.WrapTime), WrapMemory: int64Ptr(row.WrapMemory),
+		WrapParallelism: int64Ptr(row.WrapParallelism),
+	}
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &model, "version", "purpose", "created_at", "wrapped_key", "wrap_nonce", "wrap_kdf", "wrap_salt", "wrap_time", "wrap_memory", "wrap_parallelism")
+	}); err != nil {
 		return fmt.Errorf("store: save crypto key: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) loadCryptoKey(ctx context.Context, purpose string) (cryptoKeyRow, bool, error) {
-	rows, err := s.db.Query(ctx, `SELECT version, purpose, created_at, wrapped_key,
-			wrap_nonce, wrap_kdf, wrap_salt, wrap_time, wrap_memory, wrap_parallelism
-		FROM crypto_keys WHERE purpose = ? ORDER BY version DESC LIMIT 1`, purpose)
-	if err != nil {
+	var model cryptoKeySchema
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return tx.Where(&cryptoKeySchema{Purpose: purpose}).Order("version DESC").First(&model).Error
+	}); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return cryptoKeyRow{}, false, nil
+		}
 		return cryptoKeyRow{}, false, fmt.Errorf("store: read crypto key: %w", err)
 	}
-	if len(rows.Values) == 0 {
-		return cryptoKeyRow{}, false, nil
-	}
-	values := rows.Values[0]
-	if len(values) != 10 {
-		return cryptoKeyRow{}, false, fmt.Errorf("store: crypto key row has %d columns", len(values))
-	}
-	version, ok := values[0].(int64)
-	if !ok {
-		return cryptoKeyRow{}, false, fmt.Errorf("store: crypto key version is %T", values[0])
-	}
-	rowPurpose, ok := values[1].(string)
-	if !ok {
-		return cryptoKeyRow{}, false, fmt.Errorf("store: crypto key purpose is %T", values[1])
-	}
-	createdAt, ok := values[2].(int64)
-	if !ok {
-		return cryptoKeyRow{}, false, fmt.Errorf("store: crypto key timestamp is %T", values[2])
-	}
-	numbers := make([]int64, 0, 3)
-	for _, index := range []int{7, 8, 9} {
-		number, ok := values[index].(int64)
-		if !ok {
-			return cryptoKeyRow{}, false, fmt.Errorf("store: crypto key wrap parameter %d is %T", index, values[index])
-		}
-		numbers = append(numbers, number)
-	}
 	return cryptoKeyRow{
-		Version:         int(version),
-		Purpose:         rowPurpose,
-		CreatedAt:       time.UnixMilli(createdAt),
-		WrappedKey:      bytesValue(values[3]),
-		WrapNonce:       bytesValue(values[4]),
-		WrapKDF:         stringValue(values[5]),
-		WrapSalt:        bytesValue(values[6]),
-		WrapTime:        int(numbers[0]),
-		WrapMemory:      int(numbers[1]),
-		WrapParallelism: int(numbers[2]),
+		Version: int(model.Version), Purpose: model.Purpose, CreatedAt: time.UnixMilli(model.CreatedAt),
+		WrappedKey: model.WrappedKey, WrapNonce: model.WrapNonce, WrapKDF: model.WrapKDF,
+		WrapSalt: model.WrapSalt, WrapTime: intPtr(model.WrapTime), WrapMemory: intPtr(model.WrapMemory),
+		WrapParallelism: intPtr(model.WrapParallelism),
 	}, true, nil
 }
 
-// bytesValue keeps an optional BLOB nullable. A non-nil value of another type
-// is corruption the caller detects through the unwrap checks.
-func bytesValue(value any) []byte {
-	data, _ := value.([]byte)
-	return data
+func int64Ptr(value int) *int64 {
+	converted := int64(value)
+	return &converted
 }
 
-func stringValue(value any) string {
-	text, _ := value.(string)
-	return text
+func intPtr(value *int64) int {
+	if value == nil {
+		return 0
+	}
+	return int(*value)
 }

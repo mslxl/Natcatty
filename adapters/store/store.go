@@ -1,12 +1,10 @@
-// Package store is the SQLite adapter for the Vault. One database lives in
-// MyGo's user-data directory; this package owns its schema, migrations, and
-// Host repository.
+// Package store is the SQLite adapter for the Vault. One database lives in the
+// app's user-data directory; this package owns its schema and repositories.
 package store
 
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +13,8 @@ import (
 )
 
 // Store is the app's single SQLite connection. Its methods are safe from any
-// goroutine; MyGo serializes operations on the connection.
+// goroutine; the platform database seam serializes operations on the
+// connection.
 type Store struct {
 	db *platformsqlite.DB
 
@@ -51,7 +50,13 @@ var (
 	_ appvault.SnippetRepository      = (*Store)(nil)
 )
 
-// Open opens path, configures the connection, and applies missing migrations.
+// schemaVersion identifies the AutoMigrate schema used by this build. It is
+// kept in backup metadata even though the schema is no longer migration-file
+// driven.
+const schemaVersion = 1
+
+// Open opens path, configures the connection, and applies the schema declared
+// by the GORM models.
 // The caller closes the Store at app shutdown.
 func Open(ctx context.Context, path string) (*Store, error) {
 	db, err := platformsqlite.Open(ctx, path, platformsqlite.OpenOptions{BusyTimeout: 5 * time.Second})
@@ -60,81 +65,31 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 
 	store := &Store{db: db}
-	if err := store.configure(ctx); err != nil {
+	if err := db.Configure(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := migrate(ctx, db, migrations); err != nil {
+	if err := db.AutoMigrate(ctx, schemaModels...); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: auto-migrate schema: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
 }
 
-// configure sets the pragmas the single-writer contract depends on. WAL is
-// preferred; if the platform refuses it, the connection falls back to the
-// rollback journal with the same serialized access.
-func (s *Store) configure(ctx context.Context) error {
-	// busy_timeout first, so a competing writer does not fail immediately.
-	pragmas := []string{
-		`PRAGMA busy_timeout = 5000`,
-		`PRAGMA synchronous = NORMAL`,
-		`PRAGMA temp_store = MEMORY`,
+// SchemaVersion reports the AutoMigrate schema version carried in backups.
+func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
-	for _, pragma := range pragmas {
-		if _, err := s.db.Execute(ctx, pragma); err != nil {
-			return fmt.Errorf("store: %s: %w", pragma, err)
-		}
-	}
-
-	mode, err := s.journalMode(ctx)
-	if err != nil {
-		return err
-	}
-	if mode != "wal" {
-		if _, err := s.db.Execute(ctx, `PRAGMA journal_mode = DELETE`); err != nil {
-			return fmt.Errorf("store: enable rollback journal: %w", err)
-		}
-	}
-	return nil
+	return schemaVersion, nil
 }
 
 func (s *Store) journalMode(ctx context.Context) (string, error) {
-	rows, err := s.db.Query(ctx, `PRAGMA journal_mode = WAL`)
-	if err != nil {
-		return "", fmt.Errorf("store: enable WAL: %w", err)
-	}
-	if len(rows.Values) == 0 || len(rows.Values[0]) == 0 {
-		return "", fmt.Errorf("store: WAL pragma returned no mode")
-	}
-	mode, ok := rows.Values[0][0].(string)
-	if !ok {
-		return "", fmt.Errorf("store: WAL pragma returned %T", rows.Values[0][0])
-	}
-	return strings.ToLower(mode), nil
-}
-
-// SchemaVersion reports the applied migration version. schema_migrations is
-// the authority; PRAGMA user_version is only a diagnostic mirror.
-func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
-	return readSchemaVersion(ctx, s.db.Query)
-}
-
-// readSchemaVersion takes the query function so a Consistent snapshot can
-// read the version without re-entering the connection gate.
-func readSchemaVersion(ctx context.Context, query platformsqlite.QueryFunc) (int, error) {
-	rows, err := query(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`)
-	if err != nil {
-		return 0, fmt.Errorf("store: read schema version: %w", err)
-	}
-	if len(rows.Values) == 0 || len(rows.Values[0]) == 0 {
-		return 0, nil
-	}
-	version, ok := rows.Values[0][0].(int64)
-	if !ok {
-		return 0, fmt.Errorf("store: schema version is %T", rows.Values[0][0])
-	}
-	return int(version), nil
+	return s.db.JournalMode(ctx)
 }
 
 // Close closes the database connection.
