@@ -2,118 +2,78 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
 // ListIdentities returns every Identity in display order.
 func (s *Store) ListIdentities(ctx context.Context) ([]domainvault.Identity, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM identities
-		ORDER BY order_key ASC, label COLLATE NOCASE ASC, id ASC`)
-	if err != nil {
+	var data []string
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, err = loadDataRows(tx, &identitySchema{}, "order_key ASC", "label COLLATE NOCASE ASC", "id ASC")
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("store: list Identities: %w", err)
 	}
-	identities := make([]domainvault.Identity, 0, len(rows.Values))
-	for _, row := range rows.Values {
-		if len(row) == 0 {
-			continue
-		}
-		data, ok := row[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("store: Identity data is %T", row[0])
-		}
-		var identity domainvault.Identity
-		if err := json.Unmarshal([]byte(data), &identity); err != nil {
-			return nil, fmt.Errorf("store: decode Identity: %w", err)
-		}
-		identities = append(identities, identity)
+	identities, err := decodeDataList[domainvault.Identity](data, "Identity")
+	if err != nil {
+		return nil, err
 	}
 	return identities, nil
 }
 
 // GetIdentity returns one Identity.
 func (s *Store) GetIdentity(ctx context.Context, id model.IdentityID) (domainvault.Identity, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM identities WHERE id = ?`, string(id))
-	if err != nil {
+	var data string
+	var found bool
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, found, err = loadDataRow(tx, &identitySchema{}, &identitySchema{ID: string(id)})
+		return err
+	}); err != nil {
 		return domainvault.Identity{}, fmt.Errorf("store: get Identity: %w", err)
 	}
-	if len(rows.Values) == 0 {
+	if !found {
 		return domainvault.Identity{}, appvault.ErrNotFound
 	}
-	data, ok := rows.Values[0][0].(string)
-	if !ok {
-		return domainvault.Identity{}, fmt.Errorf("store: Identity data is %T", rows.Values[0][0])
-	}
 	var identity domainvault.Identity
-	if err := json.Unmarshal([]byte(data), &identity); err != nil {
-		return domainvault.Identity{}, fmt.Errorf("store: decode Identity: %w", err)
+	if err := decodeData(data, "Identity", &identity); err != nil {
+		return domainvault.Identity{}, err
 	}
 	return identity, nil
 }
 
-// SaveIdentity inserts or replaces one Identity aggregate. Password ciphertext
-// is stored separately and is never part of this record.
+// SaveIdentity inserts or replaces one Identity aggregate.
 func (s *Store) SaveIdentity(ctx context.Context, identity domainvault.Identity) error {
-	statement, err := identitySaveStatement(identity)
+	model, err := identityModel(identity)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &model, "id", "label", "username", "auth_method", "key_id", "order_key", "updated_at", "data")
+	}); err != nil {
 		return fmt.Errorf("store: save Identity: %w", err)
 	}
 	s.vaultChanged()
 	return nil
 }
 
-// identitySaveStatement builds the insert-or-replace statement for one
-// Identity.
-func identitySaveStatement(identity domainvault.Identity) (platformsqlite.Statement, error) {
-	if identity.ID == "" || identity.Label == "" {
-		return platformsqlite.Statement{}, fmt.Errorf("store: save Identity: missing identity")
-	}
-	data, err := json.Marshal(identity)
-	if err != nil {
-		return platformsqlite.Statement{}, fmt.Errorf("store: encode Identity: %w", err)
-	}
-	return platformsqlite.Statement{
-		SQL: `INSERT INTO identities (
-				id, label, username, auth_method, key_id, order_key,
-				created_at, updated_at, data
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				label = excluded.label,
-				username = excluded.username,
-				auth_method = excluded.auth_method,
-				key_id = excluded.key_id,
-				order_key = excluded.order_key,
-				updated_at = excluded.updated_at,
-				data = excluded.data`,
-		Args: []any{
-			string(identity.ID),
-			identity.Label,
-			identity.Username,
-			string(identity.AuthMethod),
-			string(identity.KeyID),
-			identity.OrderKey,
-			identity.CreatedAt.UnixMilli(),
-			identity.UpdatedAt.UnixMilli(),
-			string(data),
-		},
-	}, nil
-}
-
 // DeleteIdentity removes one Identity and nothing else.
 func (s *Store) DeleteIdentity(ctx context.Context, id model.IdentityID) error {
-	result, err := s.db.Execute(ctx, `DELETE FROM identities WHERE id = ?`, string(id))
-	if err != nil {
+	var changed int64
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		changed, err = deleteModel(tx, &identitySchema{}, &identitySchema{ID: string(id)})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: delete Identity: %w", err)
 	}
-	if result.Changes == 0 {
+	if changed == 0 {
 		return appvault.ErrNotFound
 	}
 	s.vaultChanged()

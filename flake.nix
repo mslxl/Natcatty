@@ -25,7 +25,7 @@
           version = "0.1.0";
           src = ./.;
 
-          vendorHash = "sha256-5X7ktFPpRHJLXVAZQrXgubI1j4cRDOALq6Np3RAE6PI=";
+          vendorHash = "sha256-gneMnxYUjfOZd4doKA+NZ7NK+fM7GOKv5kNSqHSPBoI=";
           subPackages = [ "." ];
           env.CGO_ENABLED = "0";
           ldflags = [
