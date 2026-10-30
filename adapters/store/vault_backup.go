@@ -3,18 +3,17 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	appbackup "github.com/mslxl/natcatty/application/vaultbackup"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
 var _ appbackup.Snapshotter = (*Store)(nil)
 
 // vaultColumns is the fixed column whitelist for every Vault table a backup
-// carries. A restore builds its INSERT statements only from these names, so a
-// tampered snapshot can never reach a column this build does not know about.
+// carries. A restore writes only these names, so a tampered snapshot cannot
+// reach a column this build does not know about.
 var vaultColumns = map[string][]string{
 	domainbackup.TableHosts: {
 		"id", "label", "hostname", "port", "username", "protocol",
@@ -67,50 +66,31 @@ var vaultColumns = map[string][]string{
 	},
 }
 
-func quoteIdent(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
-
-func selectSQL(table string) string {
-	quoted := make([]string, len(vaultColumns[table]))
-	for index, column := range vaultColumns[table] {
-		quoted[index] = quoteIdent(column)
-	}
-	return "SELECT " + strings.Join(quoted, ", ") + " FROM " + quoteIdent(table) + " ORDER BY rowid"
-}
-
-// Snapshot reads every Vault table as one point-in-time image. A Consistent
-// gate excludes writes for the whole sequence, so a mutation cannot land
-// between two tables and produce a backup that never existed as a state.
+// Snapshot reads every Vault table as one point-in-time image. GORM's query
+// builder loads the whitelisted physical columns while the platform gate keeps
+// the sequence consistent across tables.
 func (s *Store) Snapshot(ctx context.Context) (domainbackup.Snapshot, error) {
 	var snapshot domainbackup.Snapshot
-	err := s.db.Consistent(ctx, func(ctx context.Context, query platformsqlite.QueryFunc) error {
-		version, err := readSchemaVersion(ctx, query)
-		if err != nil {
-			return err
-		}
+	err := s.db.ORMConsistent(ctx, func(tx *gorm.DB) error {
 		snapshot = domainbackup.Snapshot{
-			SchemaVersion: version,
+			SchemaVersion: schemaVersion,
 			Tables:        make([]domainbackup.Table, 0, len(domainbackup.Tables)),
 		}
 		for _, table := range domainbackup.Tables {
-			rows, err := query(ctx, selectSQL(table))
-			if err != nil {
+			columns := vaultColumns[table]
+			var rows []map[string]any
+			if err := tx.Table(table).Select(columns).Order("rowid").Find(&rows).Error; err != nil {
 				return fmt.Errorf("store: snapshot %s: %w", table, err)
 			}
-			columns := vaultColumns[table]
-			tableRows := make([]domainbackup.Row, 0, len(rows.Values))
-			for _, values := range rows.Values {
-				if len(values) != len(columns) {
-					return fmt.Errorf(
-						"store: snapshot %s returned %d columns, want %d", table, len(values), len(columns))
-				}
+			tableRows := make([]domainbackup.Row, 0, len(rows))
+			for _, values := range rows {
 				row := make(domainbackup.Row, len(columns))
-				for index, value := range values {
-					converted, err := snapshotValue(value)
+				for _, column := range columns {
+					converted, err := snapshotValue(values[column])
 					if err != nil {
-						return fmt.Errorf(
-							"store: snapshot %s.%s: %w", table, columns[index], err)
+						return fmt.Errorf("store: snapshot %s.%s: %w", table, column, err)
 					}
-					row[columns[index]] = converted
+					row[column] = converted
 				}
 				tableRows = append(tableRows, row)
 			}
@@ -135,7 +115,6 @@ func snapshotValue(value any) (domainbackup.Value, error) {
 	case string:
 		return domainbackup.Text(typed), nil
 	case []byte:
-		// Copy: the driver may reuse its buffer after the next query.
 		blob := make([]byte, len(typed))
 		copy(blob, typed)
 		return domainbackup.Blob(blob), nil
@@ -145,16 +124,14 @@ func snapshotValue(value any) (domainbackup.Value, error) {
 }
 
 // Validate rejects a snapshot this build cannot restore. It requires every
-// Vault table, because a missing table would otherwise survive a restore
-// unchanged instead of being replaced by the backup.
+// Vault table, because a missing table would otherwise survive a restore.
 func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) error {
 	version, err := s.SchemaVersion(ctx)
 	if err != nil {
 		return err
 	}
 	if snapshot.SchemaVersion != version {
-		return fmt.Errorf("store: snapshot schema %d, database schema %d",
-			snapshot.SchemaVersion, version)
+		return fmt.Errorf("store: snapshot schema %d, database schema %d", snapshot.SchemaVersion, version)
 	}
 	if err := domainbackup.Validate(snapshot); err != nil {
 		return err
@@ -169,8 +146,7 @@ func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) er
 		}
 		for _, row := range table.Rows {
 			if len(row) != len(columns) {
-				return fmt.Errorf("store: snapshot %s row has %d columns, want %d",
-					table.Name, len(row), len(columns))
+				return fmt.Errorf("store: snapshot %s row has %d columns, want %d", table.Name, len(row), len(columns))
 			}
 			for column := range row {
 				if !allowed[column] {
@@ -187,9 +163,8 @@ func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) er
 	return nil
 }
 
-// Restore replaces every Vault table in one BEGIN IMMEDIATE transaction. A
-// constraint or encoding failure anywhere rolls the whole transaction back, so
-// the Vault keeps its previous bytes and stays usable.
+// Restore replaces every Vault table in one ORM transaction. A constraint or
+// encoding failure rolls the whole transaction back.
 func (s *Store) Restore(ctx context.Context, snapshot domainbackup.Snapshot) error {
 	if err := s.Validate(ctx, snapshot); err != nil {
 		return fmt.Errorf("%w: %v", appbackup.ErrIncompatibleSnapshot, err)
@@ -198,40 +173,60 @@ func (s *Store) Restore(ctx context.Context, snapshot domainbackup.Snapshot) err
 	for _, table := range snapshot.Tables {
 		tables[table.Name] = table
 	}
-	// Deletes and inserts share one transaction, so a failure after any delete
-	// still restores the pre-restore image.
-	statements := make([]platformsqlite.Statement, 0, 16)
-	for _, table := range domainbackup.Tables {
-		statements = append(statements, platformsqlite.Statement{
-			SQL: "DELETE FROM " + quoteIdent(table),
-		})
-	}
-	for _, table := range domainbackup.Tables {
-		columns := vaultColumns[table]
-		placeholders := make([]string, len(columns))
-		for index := range columns {
-			placeholders[index] = "?"
-		}
-		insertPrefix := "INSERT INTO " + quoteIdent(table) + " (" +
-			joinQuoted(columns) + ") VALUES (" + strings.Join(placeholders, ", ") + ")"
-		for _, row := range tables[table].Rows {
-			args := make([]any, len(columns))
-			for index, column := range columns {
-				args[index] = row[column].Any()
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for _, table := range domainbackup.Tables {
+			if err := deleteAll(tx, backupTableModel(table)); err != nil {
+				return err
 			}
-			statements = append(statements, platformsqlite.Statement{SQL: insertPrefix, Args: args})
 		}
-	}
-	if _, err := s.db.Transaction(ctx, statements); err != nil {
+		for _, table := range domainbackup.Tables {
+			columns := vaultColumns[table]
+			for _, row := range tables[table].Rows {
+				values := make(map[string]any, len(columns))
+				for _, column := range columns {
+					values[column] = row[column].Any()
+				}
+				if err := tx.Table(table).Create(values).Error; err != nil {
+					return fmt.Errorf("restore %s: %w", table, err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("store: restore snapshot: %w", err)
 	}
 	return nil
 }
 
-func joinQuoted(columns []string) string {
-	quoted := make([]string, len(columns))
-	for index, column := range columns {
-		quoted[index] = quoteIdent(column)
+func backupTableModel(table string) any {
+	switch table {
+	case domainbackup.TableHosts:
+		return &hostSchema{}
+	case domainbackup.TableGroups:
+		return &hostGroupSchema{}
+	case domainbackup.TableKeys:
+		return &sshKeySchema{}
+	case domainbackup.TableIdentities:
+		return &identitySchema{}
+	case domainbackup.TableProxyProfiles:
+		return &proxyProfileSchema{}
+	case domainbackup.TableKnownHosts:
+		return &knownHostSchema{}
+	case domainbackup.TableForwardingRules:
+		return &forwardingRuleSchema{}
+	case domainbackup.TableSnippets:
+		return &snippetSchema{}
+	case domainbackup.TableSnippetPackages:
+		return &snippetPackageSchema{}
+	case domainbackup.TableNotes:
+		return &noteSchema{}
+	case domainbackup.TableNoteGroups:
+		return &noteGroupSchema{}
+	case domainbackup.TableSecrets:
+		return &secretValueSchema{}
+	case domainbackup.TableCryptoKeys:
+		return &cryptoKeySchema{}
+	default:
+		panic("store: unknown backup table " + table)
 	}
-	return strings.Join(quoted, ", ")
 }

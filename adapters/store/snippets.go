@@ -2,109 +2,77 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
 // ListSnippets returns every Snippet in display order.
 func (s *Store) ListSnippets(ctx context.Context) ([]domainvault.Snippet, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM snippets
-		ORDER BY order_key ASC, label COLLATE NOCASE ASC, id ASC`)
-	if err != nil {
+	var data []string
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, err = loadDataRows(tx, &snippetSchema{}, "order_key ASC", "label COLLATE NOCASE ASC", "id ASC")
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("store: list Snippets: %w", err)
 	}
-	snippets := make([]domainvault.Snippet, 0, len(rows.Values))
-	for _, row := range rows.Values {
-		if len(row) == 0 {
-			continue
-		}
-		data, ok := row[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("store: Snippet data is %T", row[0])
-		}
-		var snippet domainvault.Snippet
-		if err := json.Unmarshal([]byte(data), &snippet); err != nil {
-			return nil, fmt.Errorf("store: decode Snippet: %w", err)
-		}
-		snippets = append(snippets, snippet)
+	snippets, err := decodeDataList[domainvault.Snippet](data, "Snippet")
+	if err != nil {
+		return nil, err
 	}
 	return snippets, nil
 }
 
 // GetSnippet returns one Snippet by id.
 func (s *Store) GetSnippet(ctx context.Context, id string) (domainvault.Snippet, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM snippets WHERE id = ?`, id)
-	if err != nil {
+	var data string
+	var found bool
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, found, err = loadDataRow(tx, &snippetSchema{}, &snippetSchema{ID: id})
+		return err
+	}); err != nil {
 		return domainvault.Snippet{}, fmt.Errorf("store: get Snippet: %w", err)
 	}
-	if len(rows.Values) == 0 {
+	if !found {
 		return domainvault.Snippet{}, appvault.ErrNotFound
 	}
-	data, ok := rows.Values[0][0].(string)
-	if !ok {
-		return domainvault.Snippet{}, fmt.Errorf("store: Snippet data is %T", rows.Values[0][0])
-	}
 	var snippet domainvault.Snippet
-	if err := json.Unmarshal([]byte(data), &snippet); err != nil {
-		return domainvault.Snippet{}, fmt.Errorf("store: decode Snippet: %w", err)
+	if err := decodeData(data, "Snippet", &snippet); err != nil {
+		return domainvault.Snippet{}, err
 	}
 	return snippet, nil
 }
 
 // SaveSnippet inserts or replaces one Snippet.
 func (s *Store) SaveSnippet(ctx context.Context, snippet domainvault.Snippet) error {
-	statement, err := snippetSaveStatement(snippet)
+	model, err := snippetModel(snippet)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &model, "id", "label", "package_path", "order_key", "updated_at", "data")
+	}); err != nil {
 		return fmt.Errorf("store: save Snippet: %w", err)
 	}
 	s.vaultChanged()
 	return nil
 }
 
-func snippetSaveStatement(snippet domainvault.Snippet) (platformsqlite.Statement, error) {
-	if snippet.ID == "" {
-		return platformsqlite.Statement{}, fmt.Errorf("store: Snippet has no id")
-	}
-	data, err := json.Marshal(snippet)
-	if err != nil {
-		return platformsqlite.Statement{}, fmt.Errorf("store: encode Snippet: %w", err)
-	}
-	return platformsqlite.Statement{
-		SQL: `INSERT INTO snippets (
-				id, label, package_path, order_key, created_at, updated_at, data
-			) VALUES (?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				label = excluded.label,
-				package_path = excluded.package_path,
-				order_key = excluded.order_key,
-				updated_at = excluded.updated_at,
-				data = excluded.data`,
-		Args: []any{
-			snippet.ID,
-			snippet.Label,
-			snippet.Package,
-			snippet.OrderKey,
-			snippet.CreatedAt.UnixMilli(),
-			snippet.UpdatedAt.UnixMilli(),
-			string(data),
-		},
-	}, nil
-}
-
 // DeleteSnippet removes one Snippet.
 func (s *Store) DeleteSnippet(ctx context.Context, id string) error {
-	result, err := s.db.Execute(ctx, `DELETE FROM snippets WHERE id = ?`, id)
-	if err != nil {
+	var changed int64
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		changed, err = deleteModel(tx, &snippetSchema{}, &snippetSchema{ID: id})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: delete Snippet: %w", err)
 	}
-	if result.Changes == 0 {
+	if changed == 0 {
 		return appvault.ErrNotFound
 	}
 	s.vaultChanged()
@@ -113,97 +81,69 @@ func (s *Store) DeleteSnippet(ctx context.Context, id string) error {
 
 // ListSnippetPackages returns every saved package in display order.
 func (s *Store) ListSnippetPackages(ctx context.Context) ([]domainvault.SnippetPackage, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM snippet_packages
-		ORDER BY order_key ASC, path COLLATE NOCASE ASC`)
-	if err != nil {
+	var data []string
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, err = loadDataRows(tx, &snippetPackageSchema{}, "order_key ASC", "path COLLATE NOCASE ASC")
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("store: list Snippet packages: %w", err)
 	}
-	packages := make([]domainvault.SnippetPackage, 0, len(rows.Values))
-	for _, row := range rows.Values {
-		if len(row) == 0 {
-			continue
-		}
-		data, ok := row[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("store: Snippet package data is %T", row[0])
-		}
-		var pkg domainvault.SnippetPackage
-		if err := json.Unmarshal([]byte(data), &pkg); err != nil {
-			return nil, fmt.Errorf("store: decode Snippet package: %w", err)
-		}
-		packages = append(packages, pkg)
+	packages, err := decodeDataList[domainvault.SnippetPackage](data, "Snippet package")
+	if err != nil {
+		return nil, err
 	}
 	return packages, nil
 }
 
 // GetSnippetPackage returns one saved package by path.
 func (s *Store) GetSnippetPackage(ctx context.Context, path string) (domainvault.SnippetPackage, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM snippet_packages WHERE path = ?`, path)
-	if err != nil {
+	var data string
+	var found bool
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		data, found, err = loadDataRow(tx, &snippetPackageSchema{}, &snippetPackageSchema{Path: path})
+		return err
+	}); err != nil {
 		return domainvault.SnippetPackage{}, fmt.Errorf("store: get Snippet package: %w", err)
 	}
-	if len(rows.Values) == 0 {
+	if !found {
 		return domainvault.SnippetPackage{}, appvault.ErrNotFound
 	}
-	data, ok := rows.Values[0][0].(string)
-	if !ok {
-		return domainvault.SnippetPackage{}, fmt.Errorf("store: Snippet package data is %T", rows.Values[0][0])
-	}
 	var pkg domainvault.SnippetPackage
-	if err := json.Unmarshal([]byte(data), &pkg); err != nil {
-		return domainvault.SnippetPackage{}, fmt.Errorf("store: decode Snippet package: %w", err)
+	if err := decodeData(data, "Snippet package", &pkg); err != nil {
+		return domainvault.SnippetPackage{}, err
 	}
 	return pkg, nil
 }
 
 // SaveSnippetPackage inserts or replaces one package.
 func (s *Store) SaveSnippetPackage(ctx context.Context, pkg domainvault.SnippetPackage) error {
-	statement, err := snippetPackageSaveStatement(pkg)
+	model, err := snippetPackageModel(pkg)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Execute(ctx, statement.SQL, statement.Args...); err != nil {
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &model, "path", "order_key", "updated_at", "data")
+	}); err != nil {
 		return fmt.Errorf("store: save Snippet package: %w", err)
 	}
 	s.vaultChanged()
 	return nil
 }
 
-func snippetPackageSaveStatement(pkg domainvault.SnippetPackage) (platformsqlite.Statement, error) {
-	if pkg.Path == "" {
-		return platformsqlite.Statement{}, fmt.Errorf("store: Snippet package has no path")
-	}
-	data, err := json.Marshal(pkg)
-	if err != nil {
-		return platformsqlite.Statement{}, fmt.Errorf("store: encode Snippet package: %w", err)
-	}
-	return platformsqlite.Statement{
-		SQL: `INSERT INTO snippet_packages (
-				path, order_key, created_at, updated_at, data
-			) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(path) DO UPDATE SET
-				order_key = excluded.order_key,
-				updated_at = excluded.updated_at,
-				data = excluded.data`,
-		Args: []any{
-			pkg.Path,
-			pkg.OrderKey,
-			pkg.CreatedAt.UnixMilli(),
-			pkg.UpdatedAt.UnixMilli(),
-			string(data),
-		},
-	}, nil
-}
-
 // DeleteSnippetPackage removes one package. Snippet references are cleared by
-// the Vault service, which owns the non-cascading rule; the adapter never
-// touches another table.
+// the Vault service.
 func (s *Store) DeleteSnippetPackage(ctx context.Context, path string) error {
-	result, err := s.db.Execute(ctx, `DELETE FROM snippet_packages WHERE path = ?`, path)
-	if err != nil {
+	var changed int64
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		changed, err = deleteModel(tx, &snippetPackageSchema{}, &snippetPackageSchema{Path: path})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: delete Snippet package: %w", err)
 	}
-	if result.Changes == 0 {
+	if changed == 0 {
 		return appvault.ErrNotFound
 	}
 	s.vaultChanged()

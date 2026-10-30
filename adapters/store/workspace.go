@@ -2,43 +2,35 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
-// WorkspaceRepository is the Workspace persistence view of the Store. It is a
-// separate type because Store already has a vault-oriented Save method.
-type WorkspaceRepository struct {
-	db *platformsqlite.DB
-}
+// WorkspaceRepository is the Workspace persistence view of the Store.
+type WorkspaceRepository struct{ db *Store }
 
 var _ appworkspace.Repository = (*WorkspaceRepository)(nil)
 
 // Workspace returns the Workspace repository backed by the same connection.
-func (s *Store) Workspace() *WorkspaceRepository { return &WorkspaceRepository{db: s.db} }
+func (s *Store) Workspace() *WorkspaceRepository { return &WorkspaceRepository{db: s} }
 
-// Load returns the stored Workspace restore payload. A missing row is the
-// empty Workspace. A row that cannot be decoded is also treated as empty:
-// a corrupt layout must not prevent the app from starting.
+// Load returns the stored Workspace restore payload. Corrupt data is empty.
 func (s *WorkspaceRepository) Load(ctx context.Context) (domainworkspace.Payload, error) {
-	rows, err := s.db.Query(ctx, `SELECT data FROM workspace_layout WHERE id = 1`)
-	if err != nil {
+	var row workspaceLayoutSchema
+	if err := s.db.db.ORM(ctx, func(tx *gorm.DB) error {
+		return tx.Where(&workspaceLayoutSchema{ID: 1}).First(&row).Error
+	}); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return domainworkspace.EmptyPayload(), nil
+		}
 		return domainworkspace.EmptyPayload(), fmt.Errorf("store: load Workspace: %w", err)
 	}
-	if len(rows.Values) == 0 || len(rows.Values[0]) == 0 {
-		return domainworkspace.EmptyPayload(), nil
-	}
-	data, ok := rows.Values[0][0].(string)
-	if !ok {
-		return domainworkspace.EmptyPayload(), nil
-	}
 	var payload domainworkspace.Payload
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+	if err := decodeData(row.Data, "Workspace", &payload); err != nil {
 		return domainworkspace.EmptyPayload(), nil
 	}
 	return domainworkspace.SanitizePayload(payload), nil
@@ -46,21 +38,14 @@ func (s *WorkspaceRepository) Load(ctx context.Context) (domainworkspace.Payload
 
 // Save replaces the single Workspace row.
 func (s *WorkspaceRepository) Save(ctx context.Context, payload domainworkspace.Payload) error {
-	data, err := json.Marshal(payload)
+	data, err := marshalData(payload, "Workspace")
 	if err != nil {
-		return fmt.Errorf("store: encode Workspace: %w", err)
+		return err
 	}
-	_, err = s.db.Execute(ctx, `INSERT INTO workspace_layout (id, version, data, updated_at)
-		VALUES (1, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			version = excluded.version,
-			data = excluded.data,
-			updated_at = excluded.updated_at`,
-		payload.Version,
-		string(data),
-		time.Now().UnixMilli(),
-	)
-	if err != nil {
+	row := workspaceLayoutSchema{ID: 1, Version: int64(payload.Version), Data: data, UpdatedAt: time.Now().UnixMilli()}
+	if err := s.db.db.ORM(ctx, func(tx *gorm.DB) error {
+		return upsertModel(tx, &row, "id", "version", "data", "updated_at")
+	}); err != nil {
 		return fmt.Errorf("store: save Workspace: %w", err)
 	}
 	return nil
@@ -68,7 +53,10 @@ func (s *WorkspaceRepository) Save(ctx context.Context, payload domainworkspace.
 
 // Clear removes the stored Workspace.
 func (s *WorkspaceRepository) Clear(ctx context.Context) error {
-	if _, err := s.db.Execute(ctx, `DELETE FROM workspace_layout WHERE id = 1`); err != nil {
+	if err := s.db.db.ORM(ctx, func(tx *gorm.DB) error {
+		_, err := deleteModel(tx, &workspaceLayoutSchema{}, &workspaceLayoutSchema{ID: 1})
+		return err
+	}); err != nil {
 		return fmt.Errorf("store: clear Workspace: %w", err)
 	}
 	return nil
