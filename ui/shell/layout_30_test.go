@@ -226,7 +226,7 @@ func waitForSFTPFrame(t *testing.T, tester *ui.Tester, what string, cond func() 
 // DIPs wide at a 720x480 window. The surface's older layout checks rendered it
 // at the full window width, so they could not see a control reaching the
 // column's right edge. Every control the surface shows - both panes' tabs,
-// path fields, view rows, footers, the toolbar, the operation bar, and the
+// breadcrumbs, icon toolbars, list headers, footers, the operation bar, and the
 // conflict dialog - must stay inside the column and keep
 // sftpSurfaceEdgeGutter from its edges, at both supported sizes and in all
 // five shipping locales. English and Simplified Chinese are the acceptance
@@ -239,43 +239,46 @@ func TestSFTPSurfaceStaysInsideTheShellContentColumn(t *testing.T) {
 			width, height := float32(size[0]), float32(size[1])
 			t.Run(layoutName(size[0], size[1], "sftp-"+tag), func(t *testing.T) {
 				ts, tester := newSFTPLayoutShell(t, size[0], size[1], tag)
-				surface := ui.Rect{
-					X: sidebarWidth + shellPadding,
-					Y: shellPadding,
-					W: width - sidebarWidth - 2*shellPadding,
-					H: height - 2*shellPadding,
-				}
+				surface := wideContent(width, height)
 				surfaceRight := surface.X + surface.W
 
 				// The surface title is skipped: the sidebar's own SFTP entry
 				// carries the same label, so a lookup by text cannot say which
 				// one it found, and the sidebar entry is deliberately outside
 				// the content column.
-				labels := []string{
-					m.SftpTransferCenterButton(), m.SftpConnect(),
-					m.SftpLocal(), "Test",
-					m.SftpUp(), m.SftpRefresh(), m.SftpNewFolder(), m.SftpNewFile(),
-					m.SftpRename(), m.SftpPermissions(), m.SftpDelete(), m.SftpCopyTo(),
-					m.SftpMoveTo(), m.SftpUpload(),
-					m.SftpSort(), m.SftpShowHidden(), "★", m.SftpBookmarks(),
+				// The Tab bar, the toolbars, and the rows' highlight run edge to
+				// edge, as the original's, so they only have to stay inside the
+				// surface; the footers' text keeps the gutter from its sides.
+				// The pane's "+" is skipped for the title's reason: some
+				// locales give it the same words as the shell's New Tab.
+				chrome := []string{
+					m.SftpLocal(), "Test", m.SftpGoHome(),
+					m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
+					m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
+					m.SftpMore(), m.SftpColumnName(), m.SftpColumnSize(),
 					"alpha.txt", "beta.bin", "remote.txt",
-					m.SftpItemCount(3), m.SftpItemCount(2),
 				}
-				for _, label := range labels {
-					rect, ok := tester.Find(label)
-					if !ok {
-						t.Fatalf("%dx%d %s does not show %q; texts: %v",
-							size[0], size[1], tag, label, tester.Texts())
+				content := []string{m.SftpItemCount(3), m.SftpItemCount(2)}
+				for _, group := range []struct {
+					labels []string
+					gutter float32
+				}{{chrome, 0}, {content, sftpSurfaceEdgeGutter}} {
+					for _, label := range group.labels {
+						rect, ok := tester.Find(label)
+						if !ok {
+							t.Fatalf("%dx%d %s does not show %q; texts: %v",
+								size[0], size[1], tag, label, tester.Texts())
+						}
+						assertInsideSFTPFrame(t, size, surface, label, rect, group.gutter)
 					}
-					assertInsideSFTPFrame(t, size, surface, label, rect, sftpSurfaceEdgeGutter)
 				}
 
-				// The toolbar wraps instead of running off the surface; its
-				// buttons must therefore never share a cell.
+				// The icon toolbar is one row; its buttons must never share a
+				// cell.
 				toolbar := []string{
-					m.SftpUp(), m.SftpRefresh(), m.SftpNewFolder(), m.SftpNewFile(),
-					m.SftpRename(), m.SftpPermissions(), m.SftpDelete(), m.SftpCopyTo(),
-					m.SftpMoveTo(), m.SftpUpload(),
+					m.SftpBookmarks(), m.SftpCopyPath(), m.SftpCompactList(), m.SftpFilter(),
+					m.SftpNewFolder(), m.SftpNewFile(), m.SftpShowHiddenFiles(), m.SftpRefresh(),
+					m.SftpMore(),
 				}
 				for i, first := range toolbar {
 					a, _ := tester.Find(first)

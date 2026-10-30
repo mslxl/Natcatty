@@ -5,9 +5,13 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
+
 	"github.com/mslxl/natcatty/domain/model"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
@@ -31,6 +35,12 @@ type tabRef struct {
 	detach       func(model.PaneID) bool
 	rename       func(string) bool
 	retry        func(model.PaneID) bool
+	// split marks a Tab with more than one Pane: only then does the focused
+	// Pane need an outline to tell it apart.
+	split bool
+	// status is the focused Pane's Session status, shown in its header while
+	// it is not settled.
+	status paneStatus
 }
 
 func mainTabRef(s *state.State, tabIndex int) tabRef {
@@ -75,16 +85,12 @@ type workTabReveal struct {
 
 func newWorkTabReveal() *workTabReveal { return &workTabReveal{} }
 
-// workTabs renders the ordered Tab strip. Each Tab is a drag source; the thin
-// strips on either side of it are the insertion targets that show where a
-// dropped Tab will land. A drop directly on a Tab inserts before it.
+// workTabs renders the window's Tab bar, as the original's: the home Tab and
+// SFTP first, then the ordered terminal Tabs and the button that opens a new
+// one, and at the right the language menu and Settings. Each terminal Tab is a drag source; the
+// thin gaps on either side of it are the insertion targets that light up
+// where a dropped Tab will land. A drop directly on a Tab inserts before it.
 func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
-	// The strip scrolls sideways at the minimum window width. Tabs keep a
-	// readable title width instead of shrinking or clipping the last Tab;
-	// every Tab stays reachable with the wheel, trackpad or keyboard.
-	// The strip keeps its 30 DIPs when the panels below need room. Without
-	// Shrink(0) a Column under height pressure shrinks the first flexible
-	// child to nothing, hiding every Tab at the minimum window size.
 	if reveal == nil {
 		reveal = newWorkTabReveal()
 	}
@@ -103,27 +109,95 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	}
 	revealActive := reveal.reveal
 	reveal.reveal = false
+	terminal := terminalVisible(s)
 
-	ui.ScrollHorizontal(c).FillWidth().Height(30).Shrink(0).Label(m.WorkTabsLabel()).
-		Children(func() {
-			ui.Row(c).Gap(2).Children(func() {
-				for index := 0; index < s.TabCount(); index++ {
-					info, ok := s.TabInfo(index)
-					if !ok {
-						continue
+	// The bar keeps its height when the surface below needs room. Without
+	// Shrink(0) a Column under height pressure shrinks the first flexible
+	// child to nothing, hiding every Tab at the minimum window size.
+	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8).Gap(4).AlignItems(ui.Center).Children(func() {
+		if fixedTab(c, "tab-home", icons.LayoutGrid, m.NavVault(), homeVisible(s)).Clicked() {
+			s.ShowHome()
+			c.Invalidate()
+		}
+		if s.SFTPTabShown() {
+			if fixedTab(c, "tab-sftp", icons.FolderOpen, m.NavSftp(), s.SFTPVisible()).Clicked() {
+				s.ShowSFTP()
+				c.Invalidate()
+			}
+		} else if s.SFTPVisible() {
+			// Hiding the Tab while it is shown leaves for the Vault, as the
+			// original's; the Session panel still browses files.
+			s.ShowHome()
+			c.Invalidate()
+		}
+		ui.Box(c).Size(1, 18).Margin(0, 4).Background(t.Border).Shrink(0)
+		// The strip scrolls sideways at the minimum window width. Tabs keep a
+		// readable title width instead of shrinking or clipping the last Tab;
+		// every Tab stays reachable with the wheel, trackpad or keyboard.
+		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(topBarHeight).Label(m.WorkTabsLabel()).
+			Children(func() {
+				ui.Row(c).Height(topBarHeight).AlignItems(ui.Center).Children(func() {
+					for index := 0; index < s.TabCount(); index++ {
+						info, ok := s.TabInfo(index)
+						if !ok {
+							continue
+						}
+						if !terminal {
+							info.Active = false
+						}
+						tabInsertionStrip(c, s, t, info.ID, false)
+						tabBody(c, s, m, t, index, info, revealActive && terminal)
+						tabInsertionStrip(c, s, t, info.ID, true)
 					}
-					tabInsertionStrip(c, s, t, info.ID, false)
-					tabBody(c, s, m, t, index, info, revealActive)
-					tabInsertionStrip(c, s, t, info.ID, true)
-				}
+					for _, label := range s.PendingConnections() {
+						pendingTab(c, m, t, label)
+					}
+					if tabControl(c, icons.Plus, m.MenuNewTab()).Margin(0, 0, 0, 4).Clicked() {
+						_ = s.NewTab()
+						c.Invalidate()
+					}
+				})
 			})
-		})
+		languageMenu(c, s, m)
+		if barButton(c, "bar-settings", icons.Settings, m.NavSettings()).Clicked() {
+			s.RequestSettings()
+		}
+	})
+}
+
+// fixedTab is one of the Tabs every window has, the home Tab and SFTP: an
+// icon and a label, raised while it is the chosen one.
+func fixedTab(c *ui.Context, key, icon, label string, active bool) ui.Element {
+	t := c.Theme()
+	tab := ui.ButtonBase(c).Key(key).Label(label).Height(30).Padding(0, 12).Gap(8).
+		Radius(kit.RadiusControl).AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
+	switch {
+	case active:
+		tab.Background(t.Surface).Border(1, t.Border).Shadow(0, 1, 2, 0, kit.CardShadow(t)).TextColor(t.Text)
+	case tab.Pressed():
+		tab.Background(kit.Strong(t)).TextColor(t.Text)
+	case tab.Hovered():
+		tab.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	tab.Children(func() {
+		ui.Icon(c, icons.Lucide(icon)).Size(15, 15)
+		text := ui.Text(c, label).FontSize(13).SingleLine()
+		if active {
+			text.FontWeight(500)
+		}
+	})
+	return tab
+}
+
+// terminalVisible reports whether the active Tab's Panes are the visible
+// surface rather than one of the root surfaces.
+func terminalVisible(s *state.State) bool {
+	return s.TabCount() > 0 && !s.VaultVisible() && !s.LogsVisible() &&
+		!s.MonitorVisible() && !s.SysManagerVisible() && !s.SFTPVisible()
 }
 
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
-	// FillHeight, not Fill: Fill would make this 5-DIP insertion strip claim
-	// the whole tab strip width and push the Tab bodies apart.
-	strip := ui.Column(c).Width(5).FillHeight().Background(t.Border)
+	strip := ui.Column(c).Width(4).Height(24).Radius(2)
 	if drag, over := ui.DragOver[state.DragItem](strip); over &&
 		drag.Kind == state.DragKindTab && drag.TabID != target {
 		strip.Background(t.Accent)
@@ -137,12 +211,16 @@ func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.
 }
 
 func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo, reveal bool) {
-	background := t.Background
-	if info.Active {
-		background = t.Surface
+	title := tabTitle(m, info)
+	body := ui.Row(c).Height(30).MinWidth(150).MaxWidth(240).Padding(0, 4, 0, 10).Gap(8).
+		Radius(kit.RadiusControl).AlignItems(ui.Center).Tooltip(title)
+	hovered := body.Hovered()
+	switch {
+	case info.Active:
+		body.Background(t.Surface).Border(1, t.Border).Shadow(0, 1, 2, 0, kit.CardShadow(t))
+	case hovered:
+		body.Background(kit.Subtle(t))
 	}
-	body := ui.Row(c).Height(30).Padding(2, 8).Gap(6).Radius(t.Radius).
-		Background(background).AlignItems(ui.Center)
 	body.Drag(state.TabDrag(info.ID))
 	if body.Clicked() {
 		s.SelectTab(index)
@@ -163,51 +241,56 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 			c.Invalidate()
 		}
 	}
+	tabMenu := func(menu *ui.Menu) {
+		if menu.Item(m.MenuCloseTab()).Chosen() {
+			s.CloseTab(index)
+			c.Invalidate()
+		}
+		if menu.Item(m.TabCloseOthers()).Disabled(s.TabCount() <= 1).Chosen() {
+			s.CloseOtherTabs(index)
+			c.Invalidate()
+		}
+		if menu.Item(m.TabCloseRight()).Disabled(index >= s.TabCount()-1).Chosen() {
+			s.CloseTabsRight(index)
+			c.Invalidate()
+		}
+		menu.Separator()
+		if menu.Item(m.TabDuplicate()).Chosen() {
+			_ = s.DuplicateTab(index)
+			c.Invalidate()
+		}
+		if menu.Item(m.TabCopyToNewWindow()).Chosen() {
+			_ = s.DuplicateTabToWindow(index)
+			c.Invalidate()
+		}
+		if menu.Item(m.TabDetach()).Chosen() {
+			s.DetachTab(index)
+			c.Invalidate()
+		}
+	}
+	body.ContextMenu(tabMenu)
 	body.Children(func() {
+		snapshot, ok := s.TabSnapshot(index)
+		kit.StatusDot(c, sessionTone(t, snapshot, ok))
 		// SingleLine text can shrink to nothing in a flex row; give the title
-		// a readable minimum so it is not squeezed out beside the menu and
-		// close controls.
-		title := ui.Text(c, tabTitle(m, info)).FontSize(12).SingleLine().MinWidth(96)
+		// a readable minimum so it is not squeezed out beside the controls.
+		titleText := ui.Text(c, title).FontSize(13).SingleLine().MinWidth(72).Grow(1)
 		if info.Active {
-			title.Bold()
+			titleText.FontWeight(500).TextColor(t.Text)
+		} else {
+			titleText.TextColor(t.TextMuted)
 		}
 		if info.Dirty {
-			ui.Text(c, m.TabDirtyMarker()).FontSize(10).TextColor(uitheme.WarningText(t))
+			ui.Text(c, m.TabDirtyMarker()).FontSize(9).TextColor(t.Accent)
 		}
-		ui.Column(c).Grow(1)
-		ui.MenuButton(c, m.TabMenuGlyph(), func(menu *ui.Menu) {
-			if menu.Item(m.MenuCloseTab()).Chosen() {
+		// The menu and close controls show on the active and the hovered Tab,
+		// as the original's; a right-click opens the same menu on any Tab.
+		if info.Active || hovered {
+			tabControl(c, icons.Ellipsis, m.TabMenuGlyph()).Menu(tabMenu)
+			if tabControl(c, icons.X, m.CloseGlyph()).Clicked() {
 				s.CloseTab(index)
 				c.Invalidate()
 			}
-			if menu.Item(m.TabCloseOthers()).Disabled(s.TabCount() <= 1).Chosen() {
-				s.CloseOtherTabs(index)
-				c.Invalidate()
-			}
-			if menu.Item(m.TabCloseRight()).Disabled(index >= s.TabCount()-1).Chosen() {
-				s.CloseTabsRight(index)
-				c.Invalidate()
-			}
-			menu.Separator()
-			if menu.Item(m.TabDuplicate()).Chosen() {
-				if err := s.DuplicateTab(index); err != nil {
-					_ = err
-				}
-				c.Invalidate()
-			}
-			if menu.Item(m.TabCopyToNewWindow()).Chosen() {
-				_ = s.DuplicateTabToWindow(index)
-				c.Invalidate()
-			}
-			if menu.Item(m.TabDetach()).Chosen() {
-				s.DetachTab(index)
-				c.Invalidate()
-			}
-		})
-		closeButton := ui.Text(c, m.CloseGlyph()).FontSize(14).TextColor(t.TextMuted).Padding(0, 2)
-		if closeButton.Clicked() {
-			s.CloseTab(index)
-			c.Invalidate()
 		}
 	})
 	if info.Active && reveal {
@@ -215,6 +298,30 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		// opened or selected while the strip is scrolled, and after a resize.
 		body.ScrollIntoView()
 	}
+}
+
+// tabControl is a small icon button inside a Tab or a Pane header.
+func tabControl(c *ui.Context, icon, label string) ui.Element {
+	t := c.Theme()
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).
+		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
+	switch {
+	case button.Pressed():
+		button.Background(kit.Strong(t)).TextColor(t.Text)
+	case button.Hovered():
+		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	return button
+}
+
+// pendingTab is a connection still opening, shown after the Tabs.
+func pendingTab(c *ui.Context, m locales.Messages, t *ui.Theme, label string) {
+	ui.Row(c).Height(30).Padding(0, 10).Gap(8).Margin(0, 0, 0, 4).Radius(kit.RadiusControl).
+		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
+		ui.Icon(c, icons.Lucide(icons.Loader)).Size(14, 14).TextColor(t.Warning)
+		ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).SingleLine()
+	})
 }
 
 func tabTitle(m locales.Messages, info state.TabInfo) string {
@@ -317,11 +424,20 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 					c.Invalidate()
 				}
 			}
+			if host, ok := paneFiles(s, info); ok {
+				tabID := ref.id
+				actions.FilesOpen = s.FilesOpen(tabID)
+				actions.ToggleFiles = func() {
+					ref.focus(info.ID)
+					s.ToggleFiles(tabID, host, info.Label)
+					c.Invalidate()
+				}
+			}
 		}
 		aware.SetPaneActions(actions)
 	}
 	tabID := ref.id
-	column := ui.Column(c).Fill().Background(t.Background)
+	column := ui.Column(c).Fill()
 	column.Children(func() {
 		if ref.managesPanes {
 			paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideTop, true)
@@ -330,13 +446,17 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			if ref.managesPanes {
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}
-			pane := ui.Column(c).Grow(1).FillHeight().Background(t.Background)
+			pane := ui.Column(c).Grow(1).FillHeight().MinWidth(0).
+				Background(t.Surface).Clip()
 			// Naming the Pane region gives assistive technology and the
 			// layout tests the Pane's exact box. Several Panes in one window
 			// must be distinguishable by their titles.
 			pane.Label(m.PaneRegion(paneNumber))
-			if info.Focused {
-				pane.Border(1, t.Accent)
+			if ref.split {
+				pane.Border(1, t.Border)
+				if info.Focused {
+					pane.Border(1, t.Accent.Alpha(0.7))
+				}
 			}
 			pane.Children(func() {
 				paneHeader(c, s, m, t, ref, info)
@@ -352,17 +472,18 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	})
 }
 
-// paneDropZone is one side target for moving a Pane. A drag of the Pane
-// itself never lights it: a Pane cannot be dropped on itself.
+// paneDropZone is one side target for moving a Pane: a thin gutter that
+// lights while a Pane is dragged over it. A drag of the Pane itself never
+// lights it: a Pane cannot be dropped on itself.
 func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 	tabID model.TabID, paneID model.PaneID, side domainworkspace.Side, horizontal bool) {
 	var zone ui.Element
 	if horizontal {
-		zone = ui.Column(c).Height(6).FillWidth().Background(t.Border)
+		zone = ui.Column(c).Height(4).FillWidth().Radius(2)
 	} else {
-		// FillHeight, not Fill: a side zone is 6 DIPs wide, and Fill would
-		// claim the row's whole width and squeeze the Pane beside it.
-		zone = ui.Column(c).Width(6).FillHeight().Background(t.Border)
+		// FillHeight, not Fill: a side zone is a few DIPs wide, and Fill
+		// would claim the row's whole width and squeeze the Pane beside it.
+		zone = ui.Column(c).Width(4).FillHeight().Radius(2)
 	}
 	if drag, over := ui.DragOver[state.DragItem](zone); over &&
 		drag.Kind == state.DragKindPane && drag.PaneID != paneID {
@@ -376,19 +497,27 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 	}
 }
 
+// paneHeader is the Pane's one header row, as the original's terminal
+// toolbar: the drag grip of a split Tab, the title, a status only while the
+// Session is not simply connected, and at the right the Session's controls
+// (Files, the splits, its menu), the window's broadcast and compose toggles
+// on the focused Pane, and Close.
 func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
-	header := ui.Row(c).Height(24).Padding(1, 6).Gap(6).
-		Background(t.Surface).AlignItems(ui.Center)
+	header := ui.Row(c).FillWidth().Height(30).Padding(0, 4, 0, 8).Gap(4).Shrink(0).
+		Background(kit.Muted(t)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center)
 	header.Children(func() {
-		handle := ui.Text(c, m.PaneDragHandle()).FontSize(11).TextColor(t.TextMuted)
-		if ref.managesPanes {
+		// The grip shows where a drop can land: another Pane of a split Tab,
+		// or another Tab.
+		if ref.managesPanes && (ref.split || s.TabCount() > 1) {
+			handle := ui.Box(c).Label(m.PaneDragHandle()).Size(16, 22).Center().TextColor(t.TextMuted).
+				Children(func() { ui.Icon(c, icons.Lucide(icons.GripVertical)).Size(14, 14) })
 			handle.Drag(state.PaneDrag(ref.id, info.ID))
 		}
 
-		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11)
+		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(12).SingleLine().MinWidth(0).Shrink(1)
 		if info.Focused {
-			titleElement.Bold().TextColor(t.Text)
+			titleElement.FontWeight(500).TextColor(t.Text)
 		} else {
 			titleElement.TextColor(t.TextMuted)
 		}
@@ -397,44 +526,93 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 				c.Invalidate()
 			}
 		}
-		if info.Pending {
-			ui.Text(c, m.PaneConnecting()).FontSize(10).TextColor(t.TextMuted)
+		switch {
+		case info.Pending:
+			statusPill(c, t.Warning, m.PaneConnecting())
+		case info.Focused && ref.status.text != "" && !ref.status.settled:
+			statusPill(c, ref.status.tone, ref.status.text)
 		}
 
-		ui.Column(c).Grow(1)
+		ui.Column(c).Grow(1).MinWidth(0)
 
-		if ref.managesPanes {
-			ui.MenuButton(c, m.PaneMenuGlyph(), func(menu *ui.Menu) {
-				if menu.Item(m.PaneSplitRight()).Chosen() {
-					ref.focus(info.ID)
-					_ = ref.splitRight()
-					c.Invalidate()
-				}
-				if menu.Item(m.PaneSplitDown()).Chosen() {
-					ref.focus(info.ID)
-					_ = ref.splitDown()
-					c.Invalidate()
-				}
-				menu.Separator()
-				if menu.Item(m.PaneDetach()).Chosen() {
-					if ref.detach(info.ID) {
-						c.Invalidate()
-					}
-				}
-				menu.Separator()
-				if menu.Item(m.PaneClose()).Chosen() {
-					ref.focus(info.ID)
-					ref.closeFocused()
-					c.Invalidate()
-				}
-			})
-			closeButton := ui.Text(c, m.CloseGlyph()).FontSize(13).TextColor(t.TextMuted).Padding(0, 2)
-			if closeButton.Clicked() {
-				ref.focus(info.ID)
-				ref.closeFocused()
+		if !ref.managesPanes {
+			return
+		}
+		if info.Focused {
+			terminalToolbar(c, s, m, t)
+		}
+		if bar, ok := info.Surface.(interface{ Toolbar(*ui.Context) }); ok && info.Err == nil {
+			bar.Toolbar(c)
+		} else {
+			paneMenu(c, m, ref, info)
+		}
+		if tabControl(c, icons.X, m.CloseGlyph()).Clicked() {
+			ref.focus(info.ID)
+			ref.closeFocused()
+			c.Invalidate()
+		}
+	})
+}
+
+// paneMenu is the Pane commands of a Pane with no Session to hold them: one
+// that failed to open or is still connecting.
+func paneMenu(c *ui.Context, m locales.Messages, ref tabRef, info state.PaneInfo) {
+	tabControl(c, icons.EllipsisVertical, m.PaneMenuGlyph()).Menu(func(menu *ui.Menu) {
+		if menu.Item(m.PaneSplitRight()).Chosen() {
+			ref.focus(info.ID)
+			_ = ref.splitRight()
+			c.Invalidate()
+		}
+		if menu.Item(m.PaneSplitDown()).Chosen() {
+			ref.focus(info.ID)
+			_ = ref.splitDown()
+			c.Invalidate()
+		}
+		menu.Separator()
+		if menu.Item(m.PaneDetach()).Chosen() {
+			if ref.detach(info.ID) {
 				c.Invalidate()
 			}
 		}
+		menu.Separator()
+		if menu.Item(m.PaneClose()).Chosen() {
+			ref.focus(info.ID)
+			ref.closeFocused()
+			c.Invalidate()
+		}
+	})
+}
+
+// paneFiles reports what the Pane's Files button browses: its Host for an SSH
+// Session, this computer (an empty Host) for a local one. Other Sessions,
+// such as serial and Telnet, have no file system to show.
+func paneFiles(s *state.State, info state.PaneInfo) (model.HostID, bool) {
+	if !s.FilesAvailable() {
+		return "", false
+	}
+	owner, ok := info.Surface.(interface{ Session() *appsession.Session })
+	if !ok || owner.Session() == nil {
+		return "", false
+	}
+	session := owner.Session()
+	switch session.Snapshot().Kind {
+	case appsession.KindSSH:
+		if session.HostID() == "" {
+			return "", false
+		}
+		return session.HostID(), true
+	case appsession.KindLocal:
+		return "", true
+	}
+	return "", false
+}
+
+// statusPill is a Session status: a dot in tone and its text.
+func statusPill(c *ui.Context, tone ui.Color, text string) {
+	ui.Row(c).Height(20).Padding(0, 8).Gap(6).Radius(10).Background(tone.Alpha(0.12)).
+		AlignItems(ui.Center).Shrink(0).Children(func() {
+		ui.Box(c).Size(6, 6).Radius(3).Background(tone)
+		ui.Text(c, text).FontSize(11).SingleLine().TextColor(c.Theme().Text)
 	})
 }
 
@@ -462,12 +640,14 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		} else if problem := uiconnection.ProblemTextFor(m, info.Err); problem != "" {
 			message = problem
 		}
-		ui.Column(c).Fill().Padding(12).Children(func() {
-			ui.Text(c, message).TextColor(uitheme.DangerText(t)).FontSize(12)
+		ui.Column(c).Fill().Padding(24).Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(44, 44).Radius(12).Background(t.Danger.Alpha(0.1)).Center().TextColor(t.Danger).
+				Children(func() { ui.Icon(c, icons.Lucide(icons.TriangleAlert)).Size(20, 20) })
+			ui.Text(c, message).FontSize(13).MaxWidth(420).TextColor(uitheme.DangerText(t))
 			if !retryable {
 				return
 			}
-			retry := ui.Button(c, m.SessionMenuReconnect())
+			retry := kit.PrimaryButton(c, icons.RefreshCw, m.SessionMenuReconnect())
 			// The focused Pane owns the keyboard, so Enter and Space reconnect
 			// it. A Pane that is not focused must not steal the keyboard.
 			if info.Focused {
@@ -486,8 +666,9 @@ func paneContent(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		}
 		info.Surface.View(c)
 	default:
-		ui.Column(c).Fill().Padding(12).Children(func() {
-			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(12)
+		ui.Column(c).Fill().Gap(10).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.Lucide(icons.Loader)).Size(22, 22).TextColor(t.TextMuted)
+			ui.Text(c, m.PaneConnecting()).TextColor(t.TextMuted).FontSize(13)
 		})
 	}
 }

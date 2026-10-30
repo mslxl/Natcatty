@@ -36,14 +36,12 @@ func TestChromeFitsAtDefaultAndMinimumSizes(t *testing.T) {
 			LogDirectory:     `C:\Users\example\logs`,
 		}
 		tester := ui.NewTester(func(c *ui.Context) {
-			renderChrome(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
+			chromeFrame(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
 		}, size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
 		wanted := []string{
-			m.SessionActivityBusy(),
-			m.SessionCommandRunning("make test"),
 			m.SessionMenuLabel(),
 			m.SessionLoggingPath(model.Logging.Path),
 			m.SessionTransferActive("ZMODEM"),
@@ -67,28 +65,15 @@ func TestChromeFitsAtDefaultAndMinimumSizes(t *testing.T) {
 			rects[text] = rect
 		}
 
-		// The status bar, log detail, transfer banner, and clipboard banner
-		// are four stacked rows; each row starts after the previous one.
-		status := rects[m.SessionActivityBusy()]
+		// The toolbar, log detail, transfer banner, and clipboard banner are
+		// four stacked rows; each row starts after the previous one.
+		menu := rects[m.SessionMenuLabel()]
 		detail := rects[m.SessionLoggingPath(model.Logging.Path)]
 		transfer := rects[m.SessionTransferActive("ZMODEM")]
 		clipboard := rects[m.SessionClipboardRequest()]
-		if !(status.Y < detail.Y && detail.Y < transfer.Y && transfer.Y < clipboard.Y) {
-			t.Fatalf("%dx%d row order = status %+v detail %+v transfer %+v clipboard %+v",
-				size[0], size[1], status, detail, transfer, clipboard)
-		}
-
-		// Within the status bar, the activity dot, command text, and Session
-		// menu do not overlap. The menu is the only fixed control at the right
-		// edge, so it stays inside the Pane at every width.
-		command := rects[m.SessionCommandRunning("make test")]
-		if status.X+status.W > command.X+epsilon {
-			t.Fatalf("%dx%d activity dot overlaps the command text", size[0], size[1])
-		}
-		menu := rects[m.SessionMenuLabel()]
-		if command.X+command.W > menu.X+epsilon {
-			t.Fatalf("%dx%d command text overlaps the Session menu: command %+v menu %+v",
-				size[0], size[1], command, menu)
+		if !(menu.Y < detail.Y && detail.Y < transfer.Y && transfer.Y < clipboard.Y) {
+			t.Fatalf("%dx%d row order = menu %+v detail %+v transfer %+v clipboard %+v",
+				size[0], size[1], menu, detail, transfer, clipboard)
 		}
 		allow := rects[m.SessionClipboardAllow()]
 		deny := rects[m.SessionClipboardDeny()]
@@ -98,12 +83,13 @@ func TestChromeFitsAtDefaultAndMinimumSizes(t *testing.T) {
 	}
 }
 
-// TestChromeExplainsMissingLogDirectory shows why Start is disabled when
-// Settings has no directory yet.
-func TestChromeExplainsMissingLogDirectory(t *testing.T) {
+// TestChromeRefusesLoggingWithoutADirectory keeps Start visible but refused
+// when Settings has no directory yet, without a standing hint above the
+// terminal of a user who never logs.
+func TestChromeRefusesLoggingWithoutADirectory(t *testing.T) {
 	m := locales.In("en")
 	tester := ui.NewTester(func(c *ui.Context) {
-		renderChrome(c, chromeModel{
+		chromeFrame(c, chromeModel{
 			Command:   appsession.CommandState{},
 			LogFormat: domainterminal.LogFormatText,
 		}, locales.In(c.Locale()), c.Theme(), chromeActions{})
@@ -111,11 +97,9 @@ func TestChromeExplainsMissingLogDirectory(t *testing.T) {
 	tester.SetLocale("en")
 	tester.Frame()
 
-	if !tester.HasText(m.SessionLoggingNoDirectory()) {
-		t.Fatalf("missing directory is not explained: %v", tester.Texts())
+	if tester.HasText(m.SessionLoggingNoDirectory()) {
+		t.Fatalf("the missing directory shows as a standing hint: %v", tester.Texts())
 	}
-	// Start is in the Session menu now; with no directory it must be visible
-	// but refused.
 	if err := tester.Click(m.SessionMenuLabel()); err != nil {
 		t.Fatalf("open the Session menu: %v", err)
 	}
@@ -127,11 +111,10 @@ func TestChromeExplainsMissingLogDirectory(t *testing.T) {
 	}
 }
 
-// TestChromeKeepsTheCommandReadableAtTheMinimumWidth keeps the missing-folder
-// sentence in the detail row so the command indicator still has room at
-// 720x480. Before this, the sentence shared the status bar and squeezed the
-// command down to its ellipsis.
-func TestChromeKeepsTheCommandReadableAtTheMinimumWidth(t *testing.T) {
+// TestChromeSaysNothingWhenTheSessionHasNothingToSay keeps the terminal
+// right under the Pane header: an idle Session with no log folder shows no
+// status line, no "No command", and no hint to choose a folder.
+func TestChromeSaysNothingWhenTheSessionHasNothingToSay(t *testing.T) {
 	m := locales.In("en")
 	tester := ui.NewTester(func(c *ui.Context) {
 		renderChrome(c, chromeModel{
@@ -141,19 +124,15 @@ func TestChromeKeepsTheCommandReadableAtTheMinimumWidth(t *testing.T) {
 	tester.SetLocale("en")
 	tester.Frame()
 
-	command, ok := tester.Find(m.SessionCommandIdle())
-	if !ok {
-		t.Fatalf("the command indicator is missing: %v", tester.Texts())
+	for _, unwanted := range []string{
+		m.SessionCommandIdle(), m.SessionLoggingNoDirectory(), m.SessionMenuLabel(),
+	} {
+		if tester.HasText(unwanted) {
+			t.Fatalf("an idle Session shows %q: %v", unwanted, tester.Texts())
+		}
 	}
-	if command.W < 120 {
-		t.Fatalf("the command indicator is squeezed to %.1f DIPs: %+v", command.W, command)
-	}
-	hint, ok := tester.Find(m.SessionLoggingNoDirectory())
-	if !ok {
-		t.Fatalf("the missing directory is not explained: %v", tester.Texts())
-	}
-	if hint.Y < command.Y+command.H {
-		t.Fatalf("the missing-directory hint shares the status bar: command %+v hint %+v", command, hint)
+	if texts := tester.Texts(); len(texts) != 0 {
+		t.Fatalf("an idle Session's chrome shows %v, want nothing", texts)
 	}
 }
 
@@ -163,7 +142,7 @@ func TestChromeShowsLogFailure(t *testing.T) {
 	m := locales.In("en")
 	for _, size := range [][2]int{{1100, 720}, {720, 480}} {
 		tester := ui.NewTester(func(c *ui.Context) {
-			renderChrome(c, chromeModel{
+			chromeFrame(c, chromeModel{
 				LogFormat:    domainterminal.LogFormatHTML,
 				LogDirectory: `C:\logs`,
 				LogProblem:   true,
@@ -180,12 +159,8 @@ func TestChromeShowsLogFailure(t *testing.T) {
 	}
 }
 
-func TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes(t *testing.T) {
+func TestChromeAutocompleteFitsAtDefaultAndMinimumSizes(t *testing.T) {
 	m := locales.In("en")
-	stats := appsession.Stats{
-		InputBytes: 120, OutputBytes: 4096, Commands: 3,
-		FailedCommands: 1, Bells: 2, Notifications: 4, Transfers: 5,
-	}
 	suggestions := []autocomplete.Suggestion{
 		{Text: "git status", Display: "git status", Source: "history", Frequency: 3},
 		{Text: "git stash", Display: "git stash", Source: "shell-history"},
@@ -207,21 +182,15 @@ func TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes(t *testing.T) {
 			ShowAutocomplete: true,
 			ShowGhost:        true,
 			GhostText:        "git status",
-			ShowStats:        true,
-			Stats:            stats,
 		}
 		tester := ui.NewTester(func(c *ui.Context) {
-			renderChrome(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
+			chromeFrame(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
 		}, size[0], size[1])
 		tester.SetLocale("en")
 		tester.Frame()
 
-		summary := m.SessionStatsSummary(120, 4096, 3, 1, 2, 4, 5)
 		wanted := []string{
-			m.SessionActivityBusy(),
-			m.SessionCommandRunning("git"),
 			m.SessionMenuLabel(),
-			summary,
 			m.SessionAutocompleteLabel(),
 			m.SessionAutocompleteHint(),
 			m.SessionAutocompleteGhost("git status"),
@@ -247,10 +216,9 @@ func TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes(t *testing.T) {
 		if tester.HasText(suggestions[6].Display) {
 			t.Fatalf("%dx%d rendered more than six suggestions", size[0], size[1])
 		}
-		if !(rects[m.SessionActivityBusy()].Y < rects[summary].Y &&
-			rects[summary].Y < rects[m.SessionAutocompleteLabel()].Y) {
-			t.Fatalf("%dx%d rows are out of order: status %+v stats %+v popup %+v",
-				size[0], size[1], rects[m.SessionActivityBusy()], rects[summary],
+		if !(rects[m.SessionMenuLabel()].Y < rects[m.SessionAutocompleteLabel()].Y) {
+			t.Fatalf("%dx%d rows are out of order: menu %+v popup %+v",
+				size[0], size[1], rects[m.SessionMenuLabel()],
 				rects[m.SessionAutocompleteLabel()])
 		}
 	}
@@ -266,30 +234,6 @@ func TestSuggestionSourceLabels(t *testing.T) {
 	}
 	if got := suggestionSourceLabel("plugin", m); got != "plugin" {
 		t.Fatalf("unknown label = %q", got)
-	}
-}
-
-func TestCommandTextCoversEveryCommandState(t *testing.T) {
-	m := locales.In("en")
-	cases := []struct {
-		name    string
-		command appsession.CommandState
-		want    string
-	}{
-		{"idle", appsession.CommandState{}, m.SessionCommandIdle()},
-		{"running with text", appsession.CommandState{Text: "go test", Running: true},
-			m.SessionCommandRunning("go test")},
-		{"running without text", appsession.CommandState{Running: true},
-			m.SessionCommandRunning(m.SessionCommandIdle())},
-		{"finished", appsession.CommandState{Text: "go test"},
-			m.SessionCommandFinished("go test")},
-		{"exited", appsession.CommandState{Text: "false", HasExitCode: true, ExitCode: 1},
-			m.SessionCommandExited("false", 1)},
-	}
-	for _, test := range cases {
-		if got := commandText(m, test.command); got != test.want {
-			t.Fatalf("%s text = %q, want %q", test.name, got, test.want)
-		}
 	}
 }
 
@@ -312,4 +256,33 @@ func TestChromeFormatsRoundTrip(t *testing.T) {
 		formatAtIndex(99) != domainterminal.LogFormatText {
 		t.Fatal("out-of-range format did not fall back to text")
 	}
+}
+
+// chromeFrame draws the chrome under the Pane toolbar, as a Pane header and
+// its Session do in the shell.
+func chromeFrame(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Column(c).Grow(1)
+			toolbar(c, model, m, t, actions)
+		})
+		renderChrome(c, model, m, t, actions)
+	})
+}
+
+// surfaceFrame draws a Surface under its toolbar, as the shell's Pane does.
+func surfaceFrame(c *ui.Context, surface *Surface, focused bool) {
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Column(c).Grow(1)
+			surface.Toolbar(c)
+		})
+		ui.Column(c).Grow(1).FillWidth().MinHeight(0).Children(func() {
+			if focused {
+				surface.ViewFocused(c, true)
+			} else {
+				surface.View(c)
+			}
+		})
+	})
 }

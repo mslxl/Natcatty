@@ -128,7 +128,8 @@ func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 		// scrolling must bring it fully above the pinned Send row, and the
 		// row itself must not move.
 		if rect, ok := tester.Find(m.ComposePreview()); !ok || rect.H < 11 {
-			tester.Scroll(352, 330, 0, 400)
+			body := rects[m.ComposeTitle()]
+			tester.Scroll(body.X+body.W/2, body.Y+body.H/2, 0, 400)
 			tester.Frame()
 		}
 		preview := assertInputInside(t, tester, size[0], size[1], m.ComposePreview())

@@ -96,7 +96,7 @@ func TestSearchFiltersAcrossAreasAndKeyboardOnlyOpensTheMatch(t *testing.T) {
 func TestSearchIndexesEveryTerminalSetting(t *testing.T) {
 	hits := SearchIndex(locales.In("en"))
 	for _, query := range []string{"osc", "paste protection", "autocomplete",
-		"retention", "encoding", "session statistics"} {
+		"retention", "encoding"} {
 		found := false
 		for _, hit := range FilterHits(hits, query) {
 			if hit.Area == AreaTerminal {

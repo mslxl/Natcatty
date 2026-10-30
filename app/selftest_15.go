@@ -616,8 +616,6 @@ func (t *selftest15) layoutStep(*ui.Context) selftest.Outcome {
 		tester.SetLocale("en")
 		tester.Frame()
 		for _, text := range []string{
-			m.SessionActivityBusy(),
-			m.SessionCommandRunning("go test ./..."),
 			m.SessionMenuLabel(),
 			m.SessionTransferActive("ZMODEM"),
 			m.SessionTransferCancel(),

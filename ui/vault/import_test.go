@@ -136,7 +136,7 @@ func TestImportPanelPreviewsRowsAndIssuesAtBothSizes(t *testing.T) {
 		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
 			state, _, tt := newImportView(t, size.width, size.height)
 
-			if err := tt.Click(m.VaultImportTitle()); err != nil {
+			if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 				t.Fatalf("click Import: %v", err)
 			}
 			tt.Frame()
@@ -197,7 +197,7 @@ func TestImportMasterPasswordClearsTheScrollbar(t *testing.T) {
 				state, _, tt := newImportView(t, size.width, size.height)
 				tt.SetLocale(locale)
 
-				if err := tt.Click(m.VaultImportTitle()); err != nil {
+				if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 					t.Fatalf("click Import: %v", err)
 				}
 				tt.Frame()
@@ -267,7 +267,7 @@ func watchImportLayout(fn func(importFieldLayout)) (restore func()) {
 func TestImportPanelWritesSelectedRowsAndShowsSummary(t *testing.T) {
 	m := locales.In("en")
 	state, imports, tt := newImportView(t, 1100, 720)
-	if err := tt.Click(m.VaultImportTitle()); err != nil {
+	if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -368,7 +368,7 @@ func TestFamilyOnlyImportCountsRestoredRowsAndNamesIssues(t *testing.T) {
 		t.Fatalf("Reload: %v", err)
 	}
 	tt := newProductionTester(t, state, 1100, 720)
-	if err := tt.Click(m.VaultImportTitle()); err != nil {
+	if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 		t.Fatalf("click Import: %v", err)
 	}
 	tt.Frame()
@@ -414,7 +414,7 @@ func TestImportPanelReportsFileFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt := newProductionTester(t, state, 720, 480)
-	if err := tt.Click(m.VaultImportTitle()); err != nil {
+	if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -485,7 +485,7 @@ func TestImportPanelAcceptsFamilyDocumentsAtBothSizes(t *testing.T) {
 				t.Fatal(err)
 			}
 			tt := newProductionTester(t, state, size.width, size.height)
-			if err := tt.Click(m.VaultImportTitle()); err != nil {
+			if err := chooseVaultAction(tt, m, m.VaultImportTitle()); err != nil {
 				t.Fatalf("click Import: %v", err)
 			}
 			tt.Frame()

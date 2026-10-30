@@ -109,7 +109,7 @@ func newScriptedSurface(t *testing.T) (*Surface, *scriptedTransport) {
 }
 
 func surfaceTester(surface *Surface) *ui.Tester {
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 900, 600)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 900, 600)
 	tester.SetLocale("en")
 	return tester
 }
@@ -246,7 +246,7 @@ func TestHibernateAndResumeKeepTheScreenAndSessionState(t *testing.T) {
 // one asking for the keyboard.
 func TestResumedTerminalTakesTheKeyboardWithoutAClick(t *testing.T) {
 	surface, transport := newScriptedSurface(t)
-	tester := ui.NewTester(func(c *ui.Context) { surface.ViewFocused(c, true) }, 900, 600)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, true) }, 900, 600)
 	tester.SetLocale("en")
 	tester.Frame()
 
@@ -403,7 +403,7 @@ func TestHibernateAndObserverEntryPointsFitTheMinimumWindow(t *testing.T) {
 		t.Run(strconv.Itoa(size.width)+"x"+strconv.Itoa(size.height), func(t *testing.T) {
 			surface, transport := newScriptedSurface(t)
 			transport.emit("layout screen\r\n")
-			tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, size.width, size.height)
+			tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, size.width, size.height)
 			tester.SetLocale("en")
 			tester.Frame()
 			waitScreenContains(t, surface, "layout screen")

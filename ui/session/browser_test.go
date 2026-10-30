@@ -32,7 +32,7 @@ func TestSessionMenuOpensTheBrowserAndItsCloseReturnsTheTerminal(t *testing.T) {
 		return panel, nil
 	}))
 	surface.SetPaneActions(PaneActions{Title: "web-1", MenuLabel: m.SessionMenuFor(1)})
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 
@@ -90,7 +90,7 @@ func TestBrowserOpenFailureIsVisibleAndDismissible(t *testing.T) {
 		return nil, errors.New("no saved Host")
 	}))
 	surface.SetPaneActions(PaneActions{Title: "web-1", MenuLabel: m.SessionMenuFor(1)})
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 

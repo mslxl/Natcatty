@@ -66,13 +66,12 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 				{Text: "git stash", Display: "git stash", Source: "shell-history"},
 			}
 		}, func() (bool, bool) { return true, false }),
-		WithSessionStats(func() bool { return true }),
 	)
 	if err != nil {
 		t.Fatalf("New surface: %v", err)
 	}
 	t.Cleanup(surface.Close)
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 
@@ -138,7 +137,7 @@ func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(surface.Close)
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 	tester.ClickAt(360, 420)
@@ -217,7 +216,7 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(surface.Close)
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
 	tester.SetLocale("en")
 	tester.Frame()
 	tester.ClickAt(360, 420)
@@ -256,33 +255,6 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 	mu.Unlock()
 	if afterRunning == 0 {
 		t.Fatal("the provider was never called")
-	}
-}
-
-func TestSurfaceSessionStatsSettingHidesAndShowsTheCounters(t *testing.T) {
-	transport := newRecordingTransport()
-	service := appsession.NewService(recordingFactory{transport: transport})
-	t.Cleanup(service.CloseAll)
-	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
-	if err != nil {
-		t.Fatal(err)
-	}
-	show := false
-	surface, err := New(session, WithRedraw(func() {}), WithSessionStats(func() bool { return show }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(surface.Close)
-	tester := ui.NewTester(func(c *ui.Context) { surface.View(c) }, 720, 480)
-	tester.SetLocale("en")
-	tester.Frame()
-	if tester.HasText("commands 0") {
-		t.Fatalf("statistics shown while disabled: %v", tester.Texts())
-	}
-	show = true
-	tester.Frame()
-	if !tester.HasText("commands 0") {
-		t.Fatalf("statistics hidden while enabled: %v", tester.Texts())
 	}
 }
 

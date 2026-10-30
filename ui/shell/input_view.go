@@ -4,6 +4,8 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -32,46 +34,69 @@ func inputCheckbox(c *ui.Context, value *bool, label string) ui.Element {
 	return ui.Checkbox(c, value, label).FixedLineHeight(inputLineHeight)
 }
 
-// terminalInputs renders the broadcast and compose controls above the active
-// Tab. Broadcast is explicit: the toolbar states whether it is active, the
-// panel selects exactly which Sessions receive input, and every delivery is
-// reported per Session. Compose edits a draft, previews the original
-// transformations, and sends to the focused Session or the broadcast set.
-func terminalInputs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Gap(6).Children(func() {
-		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			broadcastLabel := m.BroadcastButton()
-			if s.Broadcasting() {
-				broadcastLabel = m.BroadcastButtonActive(s.BroadcastTargetCount())
-			}
-			broadcastButton := inputButton(c, broadcastLabel)
-			if s.Broadcasting() {
-				broadcastButton.TextColor(t.Accent).Bold()
-			}
-			if broadcastButton.Clicked() {
-				s.ToggleBroadcastPanel()
-				c.Invalidate()
-			}
-			if s.Broadcasting() {
-				if inputPrimaryButton(c, m.BroadcastStop()).Clicked() {
-					s.StopBroadcast()
-					c.Invalidate()
-				}
-			}
-			composeButton := inputButton(c, m.ComposeButton())
-			if composeButton.Clicked() {
-				if s.ComposeOpen() {
-					s.CloseCompose()
-				} else {
-					s.OpenCompose()
-				}
-				c.Invalidate()
-			}
-			ui.Column(c).Grow(1)
-			if s.ComposeOpen() && s.ComposeSending() {
-				ui.Text(c, m.ComposeSending()).FontSize(11).TextColor(t.TextMuted)
-			}
-		})
+// terminalToolbar renders the broadcast and compose toggles in the focused
+// Pane's header, beside the Session's own controls. Broadcast is explicit: the toggle
+// states whether it is active, the panel selects exactly which Sessions
+// receive input, and every delivery is reported per Session. Compose edits a
+// draft, previews the original transformations, and sends to the focused
+// Session or the broadcast set.
+func terminalToolbar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	if s.ComposeOpen() && s.ComposeSending() {
+		ui.Text(c, m.ComposeSending()).FontSize(11).TextColor(t.TextMuted).SingleLine()
+	}
+	broadcastLabel := m.BroadcastButton()
+	if s.Broadcasting() {
+		broadcastLabel = m.BroadcastButtonActive(s.BroadcastTargetCount())
+	}
+	broadcastButton := toolbarToggle(c, icons.Radio, broadcastLabel, s.BroadcastPanelOpen())
+	if s.Broadcasting() {
+		broadcastButton.Background(t.Accent.Alpha(0.14)).TextColor(t.Accent)
+	}
+	if broadcastButton.Clicked() {
+		s.ToggleBroadcastPanel()
+		c.Invalidate()
+	}
+	if s.Broadcasting() {
+		stop := toolbarToggle(c, icons.CircleX, m.BroadcastStop(), false).TextColor(t.Danger)
+		if stop.Clicked() {
+			s.StopBroadcast()
+			c.Invalidate()
+		}
+	}
+	if toolbarToggle(c, icons.NotebookPen, m.ComposeButton(), s.ComposeOpen()).Clicked() {
+		if s.ComposeOpen() {
+			s.CloseCompose()
+		} else {
+			s.OpenCompose()
+		}
+		c.Invalidate()
+	}
+}
+
+// toolbarToggle is a square ghost button showing an icon, filled while what
+// it toggles is open. label names it and shows as its tooltip: the strip
+// beside it needs the room for its Tabs at the minimum window.
+func toolbarToggle(c *ui.Context, icon, label string, on bool) ui.Element {
+	t := c.Theme()
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).
+		Radius(5).Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
+	switch {
+	case on || button.Pressed():
+		button.Background(kit.Strong(t)).TextColor(t.Text)
+	case button.Hovered():
+		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	return button
+}
+
+// terminalPanels renders the open broadcast and compose panels above the
+// active Tab's Panes.
+func terminalPanels(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	if !s.BroadcastPanelOpen() && !s.ComposeOpen() {
+		return
+	}
+	ui.Column(c).FillWidth().Padding(8, 8, 0, 8).Gap(6).Children(func() {
 		if s.BroadcastPanelOpen() {
 			broadcastPanel(c, s, m, t)
 		}

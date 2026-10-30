@@ -20,6 +20,9 @@ func RenderSelftestInputs(c *ui.Context, s *state.State) {
 			ui.Text(c, m.TrayNoSessions()).TextColor(t.TextMuted)
 			return
 		}
-		terminalInputs(c, s, m, t)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			terminalToolbar(c, s, m, t)
+		})
+		terminalPanels(c, s, m, t)
 	})
 }

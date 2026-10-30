@@ -15,7 +15,7 @@ func newInteractionTester(t *testing.T, model chromeModel, actions chromeActions
 	width, height int) *ui.Tester {
 	t.Helper()
 	tester := ui.NewTester(func(c *ui.Context) {
-		renderChrome(c, model, locales.In(c.Locale()), c.Theme(), actions)
+		chromeFrame(c, model, locales.In(c.Locale()), c.Theme(), actions)
 	}, width, height)
 	tester.SetLocale("en")
 	tester.Frame()
@@ -322,7 +322,7 @@ func TestDropNoticeDismissIsHitTestableAndClearsTheBanner(t *testing.T) {
 	model := chromeModel{DropNotice: DropNoticeInserted, DropCount: 2}
 	dismissed := 0
 	tester := ui.NewTester(func(c *ui.Context) {
-		renderChrome(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{
+		chromeFrame(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{
 			DismissDrop: func() {
 				dismissed++
 				model.DropNotice = DropNoticeNone

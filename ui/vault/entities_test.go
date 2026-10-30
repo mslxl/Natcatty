@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -426,6 +427,26 @@ func newProductionEntityView(t *testing.T, width, height int) (*vaultstate.State
 	return state, hosts, groups, proxies, known, tt
 }
 
+// dragOnto drags the card showing from onto the one showing to, which may
+// appear only once the drag starts, as the root target does.
+func dragOnto(t *testing.T, tt *ui.Tester, from, to string) {
+	t.Helper()
+	target := dragTo(t, tt, from, to)
+	tt.Release(target.X+target.W/2, target.Y+target.H/2)
+	tt.Frame()
+}
+
+// showsExactly reports whether some text or label is exactly want, where
+// HasText would also match a longer one, as "web" in "web-1".
+func showsExactly(tt *ui.Tester, want string) bool {
+	for _, text := range tt.Texts() {
+		if text == want {
+			return true
+		}
+	}
+	return false
+}
+
 func textsContain(tt *ui.Tester, want string) bool {
 	for _, text := range tt.Texts() {
 		if strings.Contains(text, want) {
@@ -439,52 +460,55 @@ func TestVaultViewCreatesAEditsAndDeletesAGroupWithoutDeletingItsHosts(t *testin
 	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newEntityView(t)
 
-	if err := tt.Click(m.VaultGroupNew()); err != nil {
+	if err := chooseVaultAction(tt, m, m.VaultGroupNew()); err != nil {
 		t.Fatalf("click New Group: %v", err)
 	}
 	tt.Frame()
 	if !tt.HasText(m.VaultGroupFormCreateTitle()) {
 		t.Fatalf("group editor is not open, texts %q", tt.Texts())
 	}
-	state.GroupForm().Path = "prod/web"
+	state.GroupForm().Path = "prod"
 	state.GroupForm().Username = "deploy"
 	if err := state.SaveGroup(); err != nil {
 		t.Fatalf("SaveGroup: %v", err)
 	}
 	tt.Frame()
 
-	if len(groups.items) != 1 || groups.items[0].Path != "prod/web" {
+	if len(groups.items) != 1 || groups.items[0].Path != "prod" {
 		t.Fatalf("groups = %+v", groups.items)
 	}
-	if !textsContain(tt, "Host Groups (1)") || !textsContain(tt, "prod/web") {
-		t.Fatalf("view does not list the group, texts %q", tt.Texts())
+	if !textsContain(tt, "Host Groups (1)") || !tt.HasText("prod") {
+		t.Fatalf("view does not list the group card, texts %q", tt.Texts())
 	}
-	// The Host has no username; the group default is the effective value.
-	if !textsContain(tt, "deploy") {
+
+	// Drag the Host card onto the group card. The drop handler calls
+	// MoveHostToGroup through the same drag payload the view builds.
+	dragOnto(t, tt, "web-1", "prod")
+	if hosts.items[0].Group != "prod" {
+		t.Fatalf("Host Group after drop = %q, want prod", hosts.items[0].Group)
+	}
+
+	// Opening the group lists its member, whose missing username is the
+	// group's default.
+	if err := tt.Click("prod"); err != nil {
+		t.Fatalf("open the group: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("deploy@10.0.0.1") {
 		t.Fatalf("group default is not shown on the member Host, texts %q", tt.Texts())
 	}
-
-	// Drag the Host row onto the group row. The drop handler calls
-	// MoveHostToGroup through the same drag payload the view builds.
-	hostRect, ok := tt.Find("web-1")
-	if !ok {
-		t.Fatalf("Host row not found, texts %q", tt.Texts())
+	if err := tt.Click(m.VaultAllHosts()); err != nil {
+		t.Fatalf("back to every Host: %v", err)
 	}
-	groupRect, ok := tt.Find("prod/web")
-	if !ok {
-		t.Fatalf("group row not found, texts %q", tt.Texts())
-	}
-	tt.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
-	tt.Move(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
-	tt.Release(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
 	tt.Frame()
-	if hosts.items[0].Group != "prod/web" {
-		t.Fatalf("Host Group after drop = %q, want prod/web", hosts.items[0].Group)
-	}
 
-	// Delete the group; the Host survives and returns to the root.
-	if err := tt.Click(m.VaultHostDelete()); err != nil {
-		t.Fatalf("click group Delete: %v", err)
+	// Delete the group from its card's menu; the Host survives and returns
+	// to the root.
+	if err := tt.Click(m.VaultItemActions("prod")); err != nil {
+		t.Fatalf("open the group menu: %v", err)
+	}
+	if err := tt.ChooseMenuItem(m.VaultHostDelete()); err != nil {
+		t.Fatalf("choose group Delete: %v", err)
 	}
 	tt.Frame()
 	if !textsContain(tt, "Delete Host Group") {
@@ -664,7 +688,9 @@ func scrollToEnd(tt *ui.Tester, width, height int) {
 	tt.Frame()
 }
 
-func assertVisible(t *testing.T, tt *ui.Tester, text string, width, height int) {
+// assertVisible fails unless text is laid out inside the window, and returns
+// where it is.
+func assertVisible(t *testing.T, tt *ui.Tester, text string, width, height int) ui.Rect {
 	t.Helper()
 	rect, ok := tt.Find(text)
 	if !ok {
@@ -674,6 +700,7 @@ func assertVisible(t *testing.T, tt *ui.Tester, text string, width, height int) 
 		rect.X < -0.5 || rect.X+rect.W > float32(width)+0.5 {
 		t.Fatalf("%q is outside the %dx%d window: %+v", text, width, height, rect)
 	}
+	return rect
 }
 
 // summaryLineCount reports how many visual lines the given summary tokens
@@ -1111,7 +1138,7 @@ func TestKnownHostsRefreshWhenATrustDecisionIsPersisted(t *testing.T) {
 	}
 }
 
-func TestHostsAreDisplayedUnderTheirGroupAt720x480(t *testing.T) {
+func TestOpeningAGroupShowsOnlyItsHostsAt720x480(t *testing.T) {
 	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items = []domainvault.Host{
@@ -1126,56 +1153,40 @@ func TestHostsAreDisplayedUnderTheirGroupAt720x480(t *testing.T) {
 	}
 	tt.Frame()
 
-	groupRect, ok := tt.Find("prod2")
-	if !ok {
-		t.Fatalf("group row missing, texts %q", tt.Texts())
+	// The top lists the group card with its member count, and every Host.
+	assertVisible(t, tt, "prod2", 720, 480)
+	if !tt.HasText(m.VaultGroupMemberCount(1)) {
+		t.Fatalf("the group card does not show its member count, texts %q", tt.Texts())
 	}
-	groupedRect, ok := tt.Find("grouped-1")
-	if !ok {
-		t.Fatalf("grouped Host row missing, texts %q", tt.Texts())
+	assertVisible(t, tt, "grouped-1", 720, 480)
+	assertVisible(t, tt, "loose-1", 720, 480)
+
+	// Opening the group lists only its Host, under a way back.
+	if err := tt.Click("prod2"); err != nil {
+		t.Fatalf("open the group: %v", err)
 	}
-	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
-	if !ok {
-		t.Fatalf("Vault root row missing, texts %q", tt.Texts())
+	tt.Frame()
+	assertVisible(t, tt, m.VaultAllHosts(), 720, 480)
+	assertVisible(t, tt, "grouped-1", 720, 480)
+	if tt.HasText("loose-1") {
+		t.Fatalf("a Host outside the group is listed in it, texts %q", tt.Texts())
 	}
-	looseRect, ok := tt.Find("loose-1")
-	if !ok {
-		t.Fatalf("ungrouped Host row missing, texts %q", tt.Texts())
+	assertNoHorizontalOverflow(t, tt, 720, 480)
+
+	if err := tt.Click(m.VaultAllHosts()); err != nil {
+		t.Fatalf("back to every Host: %v", err)
 	}
-	if groupedRect.Y <= groupRect.Y {
-		t.Fatalf("grouped Host is not below its group: group %+v, Host %+v", groupRect, groupedRect)
-	}
-	if groupedRect.Y >= rootRect.Y {
-		t.Fatalf("grouped Host is not kept out of the root section: Host %+v, root %+v",
-			groupedRect, rootRect)
-	}
-	if looseRect.Y <= rootRect.Y {
-		t.Fatalf("ungrouped Host is not under the root: root %+v, Host %+v", rootRect, looseRect)
-	}
-	if groupedRect.X <= groupRect.X {
-		t.Fatalf("grouped Host is not indented under its group: group %+v, Host %+v",
-			groupRect, groupedRect)
-	}
-	if !textsContain(tt, m.VaultGroupMemberCount(1)) {
-		t.Fatalf("the group row does not show its member count, texts %q", tt.Texts())
-	}
-	counts := 0
-	for _, text := range tt.Texts() {
-		if text == m.VaultGroupMemberCount(1) {
-			counts++
-		}
-	}
-	if counts < 2 {
-		t.Fatalf("the root row does not show its member count, texts %q", tt.Texts())
+	tt.Frame()
+	if !tt.HasText("loose-1") || tt.HasText(m.VaultAllHosts()) {
+		t.Fatalf("the breadcrumb did not return to every Host, texts %q", tt.Texts())
 	}
 }
 
-// TestHostSummariesStayAtTwoLinesInProductionChrome renders the Vault inside
-// the real sidebar and work Tab strip at the minimum window size. The content
-// column is then about 456 DIPs wide, not the window's 720: the width where
-// the summary used to wrap to three lines.
-func TestHostSummariesStayAtTwoLinesInProductionChrome(t *testing.T) {
-	m := locales.In("en")
+// TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome renders the
+// Vault inside the real sidebar and Tab bar at the minimum window size, where
+// the content is far narrower than the window: each card still shows its
+// user@host on the line under its label, inside the window.
+func TestHostCardsShowTheirAddressUnderTheLabelInProductionChrome(t *testing.T) {
 	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items = []domainvault.Host{
 		{
@@ -1194,15 +1205,16 @@ func TestHostSummariesStayAtTwoLinesInProductionChrome(t *testing.T) {
 	}
 	tt.Frame()
 
-	if lines := summaryLineCount(t, tt, []string{
-		"127.0.0.1:2200", "deploy", m.VaultAuthSummaryPassword(),
-	}); lines > 2 {
-		t.Fatalf("password Host summary uses %d lines, want at most 2", lines)
-	}
-	if lines := summaryLineCount(t, tt, []string{
-		"127.0.0.2:22", "ops", m.VaultAuthSummaryKeyboard(),
-	}); lines > 2 {
-		t.Fatalf("keyboard-interactive Host summary uses %d lines, want at most 2", lines)
+	for _, card := range []struct{ label, address string }{
+		{"alpha", "deploy@127.0.0.1:2200"},
+		{"beta", "ops@127.0.0.2"},
+	} {
+		label := assertVisible(t, tt, card.label, 720, 480)
+		address := assertVisible(t, tt, card.address, 720, 480)
+		if address.Y <= label.Y || address.Y > label.Y+label.H+8 {
+			t.Fatalf("%s: the address is not on the line under the label: label %+v, address %+v",
+				card.label, label, address)
+		}
 	}
 	assertNoHorizontalOverflow(t, tt, 720, 480)
 }
@@ -1285,17 +1297,22 @@ func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(*entityGroups, *entityProxies)
+		// labels are the row's controls; a group card keeps Edit and
+		// Delete in its menu.
+		labels []string
 	}{
 		{
-			name: "group",
+			name:   "group",
+			labels: []string{m.VaultItemActions("production")},
 			setup: func(groups *entityGroups, _ *entityProxies) {
 				groups.items = []domainvault.Group{{
-					Path: "production/web/frontend", Username: "deploy", Port: 2222,
+					Path: "production", Username: "deploy", Port: 2222,
 				}}
 			},
 		},
 		{
-			name: "proxy",
+			name:   "proxy",
+			labels: []string{m.VaultHostEdit(), m.VaultHostDelete()},
 			setup: func(_ *entityGroups, proxies *entityProxies) {
 				proxies.items = []domainvault.ProxyProfile{{
 					ID: "proxy-1", Label: "office",
@@ -1318,7 +1335,7 @@ func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
 			tt.Frame()
 
 			wide := newProductionTester(t, state, 1100, 720)
-			for _, label := range []string{m.VaultHostEdit(), m.VaultHostDelete()} {
+			for _, label := range tc.labels {
 				narrow, ok := tt.Find(label)
 				if !ok || narrow.W <= 0 {
 					t.Fatalf("%s action %q is not laid out at 720x480, texts %q",
@@ -1337,6 +1354,18 @@ func TestGroupAndProxyActionsAreNotClipped(t *testing.T) {
 				if narrow.W < roomy.W-0.5 || narrow.H > roomy.H+0.5 {
 					t.Fatalf("%s action %q is squeezed at 720x480: %+v, want %+v",
 						tc.name, label, narrow, roomy)
+				}
+			}
+			if tc.name != "group" {
+				return
+			}
+			if err := tt.Click(m.VaultItemActions("production")); err != nil {
+				t.Fatalf("open the group menu: %v", err)
+			}
+			menu := strings.Join(tt.Menu(), "|")
+			for _, want := range []string{m.VaultGroupOpen(), m.VaultHostEdit(), m.VaultHostDelete()} {
+				if !strings.Contains(menu, want) {
+					t.Fatalf("the group menu %q has no %q", menu, want)
 				}
 			}
 		})
@@ -1427,7 +1456,8 @@ func TestEditorsOpenAtTheTopInProductionChrome(t *testing.T) {
 	}
 }
 
-func TestNestedGroupsIndentTheirMembers(t *testing.T) {
+func TestNestedGroupsOpenOneLevelAtATime(t *testing.T) {
+	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items = []domainvault.Host{
 		{ID: "deep", Label: "deep-1", Hostname: "10.0.0.1", Port: 22,
@@ -1439,30 +1469,36 @@ func TestNestedGroupsIndentTheirMembers(t *testing.T) {
 	}
 	tt.Frame()
 
-	parent, ok := tt.Find("prod")
-	if !ok {
-		t.Fatalf("parent group row missing, texts %q", tt.Texts())
+	if !showsExactly(tt, "prod") || showsExactly(tt, "web") {
+		t.Fatalf("the top lists other than its own groups, texts %q", tt.Texts())
 	}
-	child, ok := tt.Find("prod/web")
-	if !ok {
-		t.Fatalf("child group row missing, texts %q", tt.Texts())
+	if err := tt.Click("prod"); err != nil {
+		t.Fatalf("open prod: %v", err)
 	}
-	host, ok := tt.Find("deep-1")
-	if !ok {
-		t.Fatalf("Host row missing, texts %q", tt.Texts())
+	tt.Frame()
+	if !showsExactly(tt, "web") || !tt.HasText("deep-1") {
+		t.Fatalf("prod does not list its subgroup and the Host below it, texts %q", tt.Texts())
 	}
-	if child.X <= parent.X {
-		t.Fatalf("child group is not indented: parent %+v, child %+v", parent, child)
+	if err := tt.Click("web"); err != nil {
+		t.Fatalf("open prod/web: %v", err)
 	}
-	if host.X <= child.X {
-		t.Fatalf("Host is not indented under its child group: child %+v, Host %+v", child, host)
+	tt.Frame()
+	for _, want := range []string{m.VaultAllHosts(), "prod", "web", "deep-1"} {
+		if !showsExactly(tt, want) {
+			t.Fatalf("prod/web is missing %q, texts %q", want, tt.Texts())
+		}
 	}
-	if host.Y <= child.Y {
-		t.Fatalf("Host is not below its group row: child %+v, Host %+v", child, host)
+	// The breadcrumb's middle step goes back one level.
+	if err := tt.Click("prod"); err != nil {
+		t.Fatalf("back to prod: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText(m.VaultItemActions("web")) {
+		t.Fatalf("the breadcrumb did not return to prod, texts %q", tt.Texts())
 	}
 }
 
-func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
+func TestAnImplicitGroupIsListedInItsParentAndAcceptsDrops(t *testing.T) {
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items = []domainvault.Host{
 		{ID: "web", Label: "web-1", Hostname: "10.0.0.1", Port: 22,
@@ -1470,7 +1506,7 @@ func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
 		{ID: "db", Label: "db-1", Hostname: "10.0.0.2", Port: 22,
 			Protocol: domainvault.ProtocolSSH, Group: "prod/web/db"},
 		{ID: "loose", Label: "loose-1", Hostname: "10.0.0.3", Port: 22,
-			Protocol: domainvault.ProtocolSSH},
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
 	}
 	groups.items = []domainvault.Group{{Path: "prod"}, {Path: "other"}}
 	if err := state.Reload(); err != nil {
@@ -1478,47 +1514,24 @@ func TestAnImplicitGroupStaysInsideItsParentAndAcceptsDrops(t *testing.T) {
 	}
 	tt.Frame()
 
-	prod, ok := tt.Find("prod")
-	if !ok {
-		t.Fatalf("parent group row missing, texts %q", tt.Texts())
+	if showsExactly(tt, "web") || !showsExactly(tt, "other") {
+		t.Fatalf("the top lists other than its own groups, texts %q", tt.Texts())
 	}
-	implicit, ok := tt.Find("prod/web")
-	if !ok {
-		t.Fatalf("implicit group row missing, texts %q", tt.Texts())
+	if err := tt.Click("prod"); err != nil {
+		t.Fatalf("open prod: %v", err)
 	}
-	other, ok := tt.Find("other")
-	if !ok {
-		t.Fatalf("unrelated group row missing, texts %q", tt.Texts())
+	tt.Frame()
+	// prod/web has no record, yet it is a card in prod, and it counts its
+	// descendants as a stored group does: web-1, and db-1 in prod/web/db.
+	if !showsExactly(tt, "web") || showsExactly(tt, "other") {
+		t.Fatalf("prod does not list exactly its implicit subgroup, texts %q", tt.Texts())
 	}
-	if implicit.Y <= prod.Y || implicit.Y >= other.Y {
-		t.Fatalf("implicit group is outside its parent's subtree: prod %+v, implicit %+v, other %+v",
-			prod, implicit, other)
-	}
-	if implicit.X <= prod.X {
-		t.Fatalf("implicit group is not indented: parent %+v, implicit %+v", prod, implicit)
-	}
-	// The implicit row counts descendants just like a stored row: prod/web
-	// directly holds web-1 and contains db-1's prod/web/db.
-	counts := 0
-	for _, text := range tt.Texts() {
-		if text == "2 Hosts" {
-			counts++
-		}
-	}
-	if counts < 2 {
-		t.Fatalf("implicit group does not report its recursive member count, texts %q", tt.Texts())
+	if !tt.HasText("2 Hosts") {
+		t.Fatalf("the implicit group does not report its recursive member count, texts %q", tt.Texts())
 	}
 
-	// A visible group row must also accept a drop, whether or not a record
-	// exists for it.
-	loose, ok := tt.Find("loose-1")
-	if !ok {
-		t.Fatalf("ungrouped Host missing, texts %q", tt.Texts())
-	}
-	tt.Press(loose.X+loose.W/2, loose.Y+loose.H/2)
-	tt.Move(implicit.X+implicit.W/2, implicit.Y+implicit.H/2)
-	tt.Release(implicit.X+implicit.W/2, implicit.Y+implicit.H/2)
-	tt.Frame()
+	// A group card takes a drop whether or not a record exists for it.
+	dragOnto(t, tt, "loose-1", "web")
 	if hosts.items[2].Group != "prod/web" {
 		t.Fatalf("Host Group after dropping on an implicit group = %q, want prod/web",
 			hosts.items[2].Group)
@@ -1534,36 +1547,30 @@ func TestTheDragGhostLeavesTheDropTargetLabelsVisibleAt720x480(t *testing.T) {
 	}
 	tt.Frame()
 
-	// Drag onto the group row's middle, not its label, and prove both the
-	// target name and the other drop target stay laid out during the drag.
+	// Drag onto the group card and prove both the
+	// target name and the root target, shown while a Host drags, stay laid
+	// out during the drag.
 	groupRect := dragTo(t, tt, "web-1", "prod2")
 	if !tt.HasText("prod2") || !tt.HasText(m.VaultGroupUngrouped()) {
 		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
 	}
-	tt.Release(float32(720)/2, groupRect.Y+groupRect.H/2)
+	tt.Release(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
 	tt.Frame()
 	if hosts.items[0].Group != "prod2" {
 		t.Fatalf("Host Group after dropping on the group = %q, want prod2",
 			hosts.items[0].Group)
 	}
+	if tt.HasText(m.VaultGroupUngrouped()) {
+		t.Fatalf("the root target stays after the drag, texts %q", tt.Texts())
+	}
 
 	// Drag back out; the root label stays visible during the drag and the
 	// Host returns to the root.
-	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
-	if !ok {
-		t.Fatalf("root row missing, texts %q", tt.Texts())
-	}
-	hostRect, ok := tt.Find("web-1")
-	if !ok {
-		t.Fatalf("grouped Host row missing, texts %q", tt.Texts())
-	}
-	tt.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
-	tt.Move(float32(720)/2, rootRect.Y+rootRect.H/2)
-	tt.Frame()
+	rootRect := dragTo(t, tt, "web-1", m.VaultGroupUngrouped())
 	if !tt.HasText(m.VaultGroupUngrouped()) || !tt.HasText("prod2") {
 		t.Fatalf("a drop target label disappeared during the drag, texts %q", tt.Texts())
 	}
-	tt.Release(float32(720)/2, rootRect.Y+rootRect.H/2)
+	tt.Release(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
 	tt.Frame()
 	if hosts.items[0].Group != "" {
 		t.Fatalf("Host Group after dropping on the root = %q, want root",
@@ -1571,26 +1578,32 @@ func TestTheDragGhostLeavesTheDropTargetLabelsVisibleAt720x480(t *testing.T) {
 	}
 }
 
-// dragTo presses a Host label and moves the pointer to the target row's
-// middle without releasing, leaving a drag active.
+// dragTo presses a Host card's label and starts dragging it, then moves the
+// pointer to the middle of the target, which may appear only once the drag
+// starts, without releasing, leaving a drag active.
 func dragTo(t *testing.T, tt *ui.Tester, hostText, targetText string) ui.Rect {
 	t.Helper()
 	host, ok := tt.Find(hostText)
 	if !ok {
 		t.Fatalf("%q missing, texts %q", hostText, tt.Texts())
 	}
-	target, ok := tt.Find(targetText)
-	if !ok {
-		t.Fatalf("%q missing, texts %q", targetText, tt.Texts())
-	}
+	// Let a previous press age out, so this one is no double-click, which
+	// would connect the Host.
+	tt.Advance(time.Second)
 	tt.Press(host.X+host.W/2, host.Y+host.H/2)
 	tt.Frame()
-	tt.Move(float32(720)/2, target.Y+target.H/2)
+	tt.Move(host.X+host.W/2+8, host.Y+host.H/2+8)
+	tt.Frame()
+	target, ok := tt.Find(targetText)
+	if !ok {
+		t.Fatalf("%q missing during the drag, texts %q", targetText, tt.Texts())
+	}
+	tt.Move(target.X+target.W/2, target.Y+target.H/2)
 	tt.Frame()
 	return target
 }
 
-func TestDraggingAHostBackToTheRootUsesTheVisibleRootTarget(t *testing.T) {
+func TestDraggingAHostOutOfItsGroupUsesTheRootTargetOrTheBreadcrumb(t *testing.T) {
 	m := locales.In("en")
 	state, hosts, groups, _, _, tt := newProductionEntityView(t, 1100, 720)
 	hosts.items[0].Group = "prod2"
@@ -1600,24 +1613,31 @@ func TestDraggingAHostBackToTheRootUsesTheVisibleRootTarget(t *testing.T) {
 	}
 	tt.Frame()
 
-	hostRect, ok := tt.Find("web-1")
-	if !ok {
-		t.Fatalf("Host row not found, texts %q", tt.Texts())
+	// The root target is not shown until a Host drags.
+	if tt.HasText(m.VaultGroupUngrouped()) {
+		t.Fatalf("the root target is shown with no drag, texts %q", tt.Texts())
 	}
-	rootRect, ok := tt.Find(m.VaultGroupUngrouped())
-	if !ok {
-		t.Fatalf("root drop target not found, texts %q", tt.Texts())
-	}
-	tt.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
-	tt.Move(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
-	tt.Release(rootRect.X+rootRect.W/2, rootRect.Y+rootRect.H/2)
-	tt.Frame()
+	dragOnto(t, tt, "web-1", m.VaultGroupUngrouped())
 	if hosts.items[0].Group != "" {
 		t.Fatalf("Host Group after dropping on the root = %q, want root", hosts.items[0].Group)
 	}
+
+	// Inside a group, the breadcrumb takes a Host out of every group.
+	dragOnto(t, tt, "web-1", "prod2")
+	if hosts.items[0].Group != "prod2" {
+		t.Fatalf("Host Group after dropping on the group = %q, want prod2", hosts.items[0].Group)
+	}
+	if err := tt.Click("prod2"); err != nil {
+		t.Fatalf("open the group: %v", err)
+	}
+	tt.Frame()
+	dragOnto(t, tt, "web-1", m.VaultAllHosts())
+	if hosts.items[0].Group != "" {
+		t.Fatalf("Host Group after dropping on the breadcrumb = %q, want root", hosts.items[0].Group)
+	}
 }
 
-func TestHostSummaryHasNoOrphanSeparatorsAt720x480(t *testing.T) {
+func TestHostCardDetailHasNoOrphanSeparatorsAt720x480(t *testing.T) {
 	state, hosts, _, _, _, tt := newProductionEntityView(t, 720, 480)
 	hosts.items[0].Tags = []string{"production", "web", "internal"}
 	hosts.items[0].Username = "deploy"
@@ -1626,26 +1646,14 @@ func TestHostSummaryHasNoOrphanSeparatorsAt720x480(t *testing.T) {
 	}
 	tt.Frame()
 
-	label, ok := tt.Find("web-1")
-	if !ok {
-		t.Fatalf("Host row not found, texts %q", tt.Texts())
-	}
+	label := assertVisible(t, tt, "web-1", 720, 480)
 	for _, text := range tt.Texts() {
-		if text == "·" || strings.HasPrefix(text, "·") {
-			t.Fatalf("summary has an orphan separator %q: %q", text, tt.Texts())
+		if text == "·" || strings.HasPrefix(text, "·") || strings.HasSuffix(text, "·") {
+			t.Fatalf("the card has an orphan separator %q: %q", text, tt.Texts())
 		}
 	}
-	for _, token := range []string{"10.0.0.1:22", "deploy", "production, web, internal"} {
-		rect, ok := tt.Find(token)
-		if !ok {
-			t.Fatalf("summary token %q is missing, texts %q", token, tt.Texts())
-		}
-		// At the minimum size the action strip wraps onto its own line below
-		// the label, so the summary starts lower than it did when the buttons
-		// shared the label line. It must still stay inside this Host row.
-		if rect.Y > label.Y+80 {
-			t.Fatalf("summary token %q is more than two lines below the label: label %+v, token %+v",
-				token, label, rect)
-		}
+	detail := assertVisible(t, tt, "deploy@10.0.0.1", 720, 480)
+	if detail.Y > label.Y+label.H+8 {
+		t.Fatalf("the address is not on the line under the label: label %+v, address %+v", label, detail)
 	}
 }

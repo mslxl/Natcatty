@@ -17,6 +17,7 @@ import (
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
+	"github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -149,8 +150,8 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		shellState.ShowVault()
 		tt.Frame()
 
-		// The tab strip stays in the content column and the title is readable.
-		title := assertContentInside(t, tt, size[0], size[1], "Local Session 1")
+		// The Tab sits in the window's Tab bar and its title is readable.
+		title := assertInTabBar(t, tt, size[0], "Local Session 1")
 		if title.W < 60 {
 			t.Fatalf("%dx%d tab title is squeezed to %.1f DIPs: %+v",
 				size[0], size[1], title.W, title)
@@ -159,8 +160,10 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 
 		shellState.SelectTab(0)
 		tt.Frame()
+		// A terminal Tab has no sidebar: its Pane takes nearly the window's
+		// width.
 		pane := assertContentInside(t, tt, size[0], size[1], "terminal-surface")
-		if pane.W < (float32(size[0])-sidebarWidth)*0.5 {
+		if pane.W < float32(size[0])*0.9 {
 			t.Fatalf("%dx%d terminal Pane is squeezed to %.1f DIPs: %+v",
 				size[0], size[1], pane.W, pane)
 		}
@@ -215,7 +218,23 @@ func overlaps(a, b ui.Rect) bool {
 		a.Y < b.Y+b.H-epsilon && b.Y < a.Y+a.H-epsilon
 }
 
-// assertContentInside finds text and asserts its box is right of the sidebar
+// assertInTabBar finds text and asserts its box is inside the window's Tab
+// bar.
+func assertInTabBar(t *testing.T, tester *ui.Tester, width int, text string) ui.Rect {
+	t.Helper()
+	rect, ok := tester.Find(text)
+	if !ok {
+		t.Fatalf("%d wide does not show %q: %v", width, text, tester.Texts())
+	}
+	const epsilon = 0.5
+	if rect.X < -epsilon || rect.Y < -epsilon ||
+		rect.X+rect.W > float32(width)+epsilon || rect.Y+rect.H > topBarHeight+epsilon {
+		t.Fatalf("%q is outside the Tab bar at %d wide: box %+v", text, width, rect)
+	}
+	return rect
+}
+
+// assertContentInside finds text and asserts its box is below the Tab bar
 // and inside the window.
 func assertContentInside(t *testing.T, tester *ui.Tester, width, height int, text string) ui.Rect {
 	t.Helper()
@@ -224,7 +243,7 @@ func assertContentInside(t *testing.T, tester *ui.Tester, width, height int, tex
 		t.Fatalf("%dx%d does not show %q: %v", width, height, text, tester.Texts())
 	}
 	const epsilon = 0.5
-	if rect.X < sidebarWidth-epsilon || rect.Y < -epsilon ||
+	if rect.X < -epsilon || rect.Y < topBarHeight-epsilon ||
 		rect.X+rect.W > float32(width)+epsilon || rect.Y+rect.H > float32(height)+epsilon {
 		t.Fatalf("%q is clipped at %dx%d: box %+v", text, width, height, rect)
 	}
@@ -312,10 +331,14 @@ func TestShellShowsOpenLocalSessionTabsAndTheirTerminal(t *testing.T) {
 	}
 	tt.Frame()
 
-	for _, want := range []string{"Local Session 1", "Local Session 2", "Active", "terminal-surface"} {
+	for _, want := range []string{"Local Session 1", "Local Session 2", "terminal-surface"} {
 		if !tt.HasText(want) {
 			t.Errorf("shell does not show %q, texts %q", want, tt.Texts())
 		}
+	}
+	// A connected Session needs no status: the live terminal says so.
+	if tt.HasText("Active") {
+		t.Errorf("shell labels a connected Session Active, texts %q", tt.Texts())
 	}
 
 	if !graph.state.CloseActiveTab() {
@@ -337,8 +360,8 @@ func TestShellShowsExitStatusAndCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tt.HasText("Active") {
-		t.Fatalf("shell does not show the active connection status, texts %q", tt.Texts())
+	if tt.HasText("Active") {
+		t.Fatalf("shell labels a connected Session Active, texts %q", tt.Texts())
 	}
 
 	graph.transport.end()
@@ -382,12 +405,50 @@ func TestShellShowsTheVaultSurfaceAndReturnsToIt(t *testing.T) {
 		t.Fatalf("shell still shows the Vault after opening a Tab, texts %q", tt.Texts())
 	}
 
-	if err := tt.Click("Vault"); err != nil {
+	// The Vault Tab, first in the Tab bar, returns to it.
+	if err := tt.Click(locales.In("en").NavVault()); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if !tt.HasText("vault-surface") {
-		t.Fatalf("clicking Vault did not show the Vault, texts %q", tt.Texts())
+		t.Fatalf("clicking the Vault Tab did not show the Vault, texts %q", tt.Texts())
+	}
+}
+
+// TestShellSidebarChoosesTheVaultPage proves each Vault page in the sidebar
+// shows the Vault at that page, which the Vault surface reads to draw it.
+func TestShellSidebarChoosesTheVaultPage(t *testing.T) {
+	m := locales.In("en")
+	shellState := state.NewState(state.WithVault(func(c *ui.Context) {
+		ui.Text(c, "vault-surface")
+	}))
+	tt := ui.NewTester(View(shellState), 1100, 720)
+	tt.SetLocale("en")
+	if shellState.VaultSection() != section.Hosts {
+		t.Fatalf("initial Vault page = %q, want Hosts", shellState.VaultSection())
+	}
+	shellState.ShowLogs()
+	tt.Frame()
+	for _, page := range []struct {
+		label string
+		want  section.Section
+	}{
+		{m.NavKeychain(), section.Keychain},
+		{m.NavProxies(), section.Proxies},
+		{m.NavForwarding(), section.Forwarding},
+		{m.NavSnippets(), section.Snippets},
+		{m.NavNotes(), section.Notes},
+		{m.NavKnownHosts(), section.KnownHosts},
+		{m.NavHosts(), section.Hosts},
+	} {
+		if err := tt.Click(page.label); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		if got := shellState.VaultSection(); got != page.want || !shellState.VaultVisible() {
+			t.Fatalf("clicking %s: page = %q visible = %v, want %q shown",
+				page.label, got, shellState.VaultVisible(), page.want)
+		}
 	}
 }
 
@@ -398,9 +459,13 @@ func TestShellLanguageControlRequestsLocale(t *testing.T) {
 	}))
 	tt := ui.NewTester(View(shellState), 900, 600)
 
-	if err := tt.Click("español"); err != nil {
+	if err := tt.Click(locales.In("en").NavLanguage()); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.ChooseMenuItem("español"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if len(requested) != 1 || requested[0] != "es" {
 		t.Fatalf("requested locales = %v, want [es]", requested)
 	}
@@ -512,5 +577,30 @@ func TestTabTitleNamesASummaryLikeTheTabStrip(t *testing.T) {
 	if got, want := TabTitle(m, state.TabSummary{Label: "prod-db", Copy: 1}),
 		m.TabCopyTitle("prod-db", 1); got != want {
 		t.Fatalf("copied Tab = %q, want %q", got, want)
+	}
+}
+
+func TestTopBarFollowsTheShowSFTPTabSetting(t *testing.T) {
+	m := locales.In("en")
+	shown := true
+	s := state.NewState(
+		state.WithSFTP(func(c *ui.Context) { ui.Text(c, "sftp surface") }),
+		state.WithSFTPTabShown(func() bool { return shown }),
+	)
+	tester := ui.NewTester(View(s), 1100, 720)
+	tester.SetLocale("en")
+	if err := tester.Click(m.NavSftp()); err != nil {
+		t.Fatalf("the SFTP Tab is missing by default: %v", err)
+	}
+	tester.Frame()
+	if !s.SFTPVisible() || !tester.HasText("sftp surface") {
+		t.Fatalf("the SFTP Tab did not open SFTP: %v", tester.Texts())
+	}
+
+	shown = false
+	tester.Frame()
+	tester.Frame()
+	if s.SFTPVisible() || tester.HasText(m.NavSftp()) || tester.HasText("sftp surface") {
+		t.Fatalf("hiding the SFTP Tab kept it or its surface: %v", tester.Texts())
 	}
 }

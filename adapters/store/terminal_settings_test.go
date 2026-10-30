@@ -37,7 +37,6 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 		KeywordHighlightRules: []domainterminal.KeywordHighlightRule{
 			{ID: "custom", Patterns: []string{`boom`}, Color: "#123456", Enabled: true},
 		},
-		ShowSessionStats: false,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatal(err)
@@ -73,8 +72,7 @@ func TestTerminalSettingsVersion2GetsThePowerUxDefaults(t *testing.T) {
 	}
 	if !got.AutocompleteEnabled || !got.AutocompletePopupMenu ||
 		got.AutocompleteHistoryScope != domainterminal.AutocompleteHistoryHost ||
-		!got.KeywordHighlightEnabled || len(got.KeywordHighlightRules) != 7 ||
-		!got.ShowSessionStats {
+		!got.KeywordHighlightEnabled || len(got.KeywordHighlightRules) != 7 {
 		t.Fatalf("version 2 settings = %+v, want the power-UX defaults", got)
 	}
 }

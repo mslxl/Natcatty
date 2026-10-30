@@ -2,9 +2,9 @@ package browser
 
 // This file mounts the real browser panel inside the real shell at the
 // minimum window's client area. The panel's own tests render it alone; only
-// the shell supplies the 232-DIP sidebar and the 16-DIP padding that make the
-// content column 440 DIPs wide at 704x421, which is where independent
-// acceptance at 960f22b1 measured the clipped tab strip.
+// the shell supplies the Tab bar and the content card around a Session Tab,
+// whose padding makes the content column 670 DIPs wide at 704x421. Independent
+// acceptance at 960f22b1 measured the clipped tab strip in the shell.
 
 import (
 	"context"
@@ -27,18 +27,18 @@ import (
 	shellstate "github.com/mslxl/natcatty/ui/shell/state"
 )
 
-// The shell's fixed geometry at the enforced 720x480 window: a 704x421 client,
-// a 232-DIP sidebar, and 16-DIP padding around the content column.
+// The shell's fixed geometry at the enforced 720x480 window: a 704x421 client
+// and a 40-DIP Tab bar. A Session Tab has no sidebar; its content card sits
+// 8 DIPs from the window's edges with a 1-DIP outline and 8 DIPs of padding.
 const (
 	shellMinimumWidth   = 704
 	shellMinimumHeight  = 421
-	shellSidebarWidth   = 232
-	shellContentPadding = 16
+	shellTabBarHeight   = 40
+	shellContentPadding = 8 + 1 + 8
 )
 
 func shellContentColumn() (left, right float32) {
-	return shellSidebarWidth + shellContentPadding,
-		shellMinimumWidth - shellContentPadding
+	return shellContentPadding, shellMinimumWidth - shellContentPadding
 }
 
 // browserShellTransport is a quiet in-process terminal transport: no bytes
@@ -278,13 +278,14 @@ func (h *browserShellHarness) waitShellTabRevealed(t *testing.T, tabID string) (
 
 func shellColumnBox() ui.Rect {
 	left, right := shellContentColumn()
-	return ui.Rect{X: left, Y: 0, W: right - left, H: shellMinimumHeight}
+	top := float32(shellTabBarHeight + shellContentPadding)
+	return ui.Rect{X: left, Y: top, W: right - left, H: shellMinimumHeight - shellContentPadding - top}
 }
 
 // TestBrowserTabStripFitsTheShellContentColumnAtTheMinimumWindow is the
 // acceptance regression rendered in the real shell: at 704x421 with five
 // tabs, each activated tab's whole item and close control stay inside the
-// content column (248..688), and New tab stays inside it and clickable. It
+// content column (17..687), and New tab stays inside it and clickable. It
 // runs in English and zh-CN.
 func TestBrowserTabStripFitsTheShellContentColumnAtTheMinimumWindow(t *testing.T) {
 	left, right := shellContentColumn()
@@ -320,7 +321,7 @@ func TestBrowserTabStripFitsTheShellContentColumnAtTheMinimumWindow(t *testing.T
 					closing.X, closing.Y, closing.W, closing.H, view.X, view.X+view.W)
 			}
 
-			// Five fixed items overflow the 374-DIP viewport, so the last
+			// Five fixed items overflow the 632-DIP viewport, so the last
 			// activation above needed a real scroll.
 			lastItem, _, view, _ := h.shellTabBox(tabs[len(tabs)-1].ID)
 			if view.W >= lastItem.W*float32(len(tabs)) {

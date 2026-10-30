@@ -384,6 +384,142 @@ func (msgs Messages) NavLanguage() string {
 	return Catalog.Format(msgs.locale, "navLanguage", nil)
 }
 
+// NavHosts says "Hosts"
+// in the language the app shows.
+func NavHosts() string { return In(i18n.Locale()).NavHosts() }
+
+// NavHosts says "Hosts"
+// in the language of msgs.
+func (msgs Messages) NavHosts() string {
+	return Catalog.Format(msgs.locale, "navHosts", nil)
+}
+
+// NavKeychain says "Keychain"
+// in the language the app shows.
+func NavKeychain() string { return In(i18n.Locale()).NavKeychain() }
+
+// NavKeychain says "Keychain"
+// in the language of msgs.
+func (msgs Messages) NavKeychain() string {
+	return Catalog.Format(msgs.locale, "navKeychain", nil)
+}
+
+// NavProxies says "Proxies"
+// in the language the app shows.
+func NavProxies() string { return In(i18n.Locale()).NavProxies() }
+
+// NavProxies says "Proxies"
+// in the language of msgs.
+func (msgs Messages) NavProxies() string {
+	return Catalog.Format(msgs.locale, "navProxies", nil)
+}
+
+// NavForwarding says "Port Forwarding"
+// in the language the app shows.
+func NavForwarding() string { return In(i18n.Locale()).NavForwarding() }
+
+// NavForwarding says "Port Forwarding"
+// in the language of msgs.
+func (msgs Messages) NavForwarding() string {
+	return Catalog.Format(msgs.locale, "navForwarding", nil)
+}
+
+// NavSnippets says "Snippets"
+// in the language the app shows.
+func NavSnippets() string { return In(i18n.Locale()).NavSnippets() }
+
+// NavSnippets says "Snippets"
+// in the language of msgs.
+func (msgs Messages) NavSnippets() string {
+	return Catalog.Format(msgs.locale, "navSnippets", nil)
+}
+
+// NavNotes says "Notes"
+// in the language the app shows.
+func NavNotes() string { return In(i18n.Locale()).NavNotes() }
+
+// NavNotes says "Notes"
+// in the language of msgs.
+func (msgs Messages) NavNotes() string {
+	return Catalog.Format(msgs.locale, "navNotes", nil)
+}
+
+// NavKnownHosts says "Known Hosts"
+// in the language the app shows.
+func NavKnownHosts() string { return In(i18n.Locale()).NavKnownHosts() }
+
+// NavKnownHosts says "Known Hosts"
+// in the language of msgs.
+func (msgs Messages) NavKnownHosts() string {
+	return Catalog.Format(msgs.locale, "navKnownHosts", nil)
+}
+
+// VaultLocalTerminal says "Terminal"
+// in the language the app shows.
+func VaultLocalTerminal() string { return In(i18n.Locale()).VaultLocalTerminal() }
+
+// VaultLocalTerminal says "Terminal"
+// in the language of msgs.
+func (msgs Messages) VaultLocalTerminal() string {
+	return Catalog.Format(msgs.locale, "vaultLocalTerminal", nil)
+}
+
+// VaultSerial says "Serial"
+// in the language the app shows.
+func VaultSerial() string { return In(i18n.Locale()).VaultSerial() }
+
+// VaultSerial says "Serial"
+// in the language of msgs.
+func (msgs Messages) VaultSerial() string {
+	return Catalog.Format(msgs.locale, "vaultSerial", nil)
+}
+
+// VaultAllHosts says "All hosts"
+// in the language the app shows.
+func VaultAllHosts() string { return In(i18n.Locale()).VaultAllHosts() }
+
+// VaultAllHosts says "All hosts"
+// in the language of msgs.
+func (msgs Messages) VaultAllHosts() string {
+	return Catalog.Format(msgs.locale, "vaultAllHosts", nil)
+}
+
+// VaultGroupOpen says "Open"
+// in the language the app shows.
+func VaultGroupOpen() string { return In(i18n.Locale()).VaultGroupOpen() }
+
+// VaultGroupOpen says "Open"
+// in the language of msgs.
+func (msgs Messages) VaultGroupOpen() string {
+	return Catalog.Format(msgs.locale, "vaultGroupOpen", nil)
+}
+
+// VaultMoreActions says "More actions"
+// in the language the app shows.
+func VaultMoreActions() string { return In(i18n.Locale()).VaultMoreActions() }
+
+// VaultMoreActions says "More actions"
+// in the language of msgs.
+func (msgs Messages) VaultMoreActions() string {
+	return Catalog.Format(msgs.locale, "vaultMoreActions", nil)
+}
+
+// VaultItemActions says "Actions for {name}"
+// in the language the app shows.
+//
+// The accessible name of a Host or group card's action menu, naming the
+// card.
+func VaultItemActions(name string) string { return In(i18n.Locale()).VaultItemActions(name) }
+
+// VaultItemActions says "Actions for {name}"
+// in the language of msgs.
+//
+// The accessible name of a Host or group card's action menu, naming the
+// card.
+func (msgs Messages) VaultItemActions(name string) string {
+	return Catalog.Format(msgs.locale, "vaultItemActions", map[string]any{"name": name})
+}
+
 // VaultPlaceholder says "Your Hosts, keys, and notes will appear here."
 // in the language the app shows.
 func VaultPlaceholder() string { return In(i18n.Locale()).VaultPlaceholder() }
@@ -6026,24 +6162,6 @@ func (msgs Messages) SessionStatsLabel() string {
 	return Catalog.Format(msgs.locale, "sessionStatsLabel", nil)
 }
 
-// SessionStatsSummary says "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications…"
-// in the language the app shows.
-//
-// Compact Session counters: input bytes, output bytes, commands, failed
-// commands, bells, notifications, and transfers.
-func SessionStatsSummary(input int, output int, commands int, failed int, bells int, notifications int, transfers int) string {
-	return In(i18n.Locale()).SessionStatsSummary(input, output, commands, failed, bells, notifications, transfers)
-}
-
-// SessionStatsSummary says "in {input} · out {output} · commands {commands} · failed {failed} · bells {bells} · notifications {notifications…"
-// in the language of msgs.
-//
-// Compact Session counters: input bytes, output bytes, commands, failed
-// commands, bells, notifications, and transfers.
-func (msgs Messages) SessionStatsSummary(input int, output int, commands int, failed int, bells int, notifications int, transfers int) string {
-	return Catalog.Format(msgs.locale, "sessionStatsSummary", map[string]any{"input": input, "output": output, "commands": commands, "failed": failed, "bells": bells, "notifications": notifications, "transfers": transfers})
-}
-
 // SessionAutocompleteLabel says "Command suggestions"
 // in the language the app shows.
 func SessionAutocompleteLabel() string { return In(i18n.Locale()).SessionAutocompleteLabel() }
@@ -6518,16 +6636,6 @@ func SettingsKeywordHighlightPatterns() string {
 // in the language of msgs.
 func (msgs Messages) SettingsKeywordHighlightPatterns() string {
 	return Catalog.Format(msgs.locale, "settingsKeywordHighlightPatterns", nil)
-}
-
-// SettingsShowSessionStats says "Show Session statistics"
-// in the language the app shows.
-func SettingsShowSessionStats() string { return In(i18n.Locale()).SettingsShowSessionStats() }
-
-// SettingsShowSessionStats says "Show Session statistics"
-// in the language of msgs.
-func (msgs Messages) SettingsShowSessionStats() string {
-	return Catalog.Format(msgs.locale, "settingsShowSessionStats", nil)
 }
 
 // SettingsKeywordHighlightRuleError says "Error"
@@ -7036,6 +7144,26 @@ func SessionMenuLabel() string { return In(i18n.Locale()).SessionMenuLabel() }
 // in the language of msgs.
 func (msgs Messages) SessionMenuLabel() string {
 	return Catalog.Format(msgs.locale, "sessionMenuLabel", nil)
+}
+
+// SessionFilesPanel says "Files (SFTP)"
+// in the language the app shows.
+func SessionFilesPanel() string { return In(i18n.Locale()).SessionFilesPanel() }
+
+// SessionFilesPanel says "Files (SFTP)"
+// in the language of msgs.
+func (msgs Messages) SessionFilesPanel() string {
+	return Catalog.Format(msgs.locale, "sessionFilesPanel", nil)
+}
+
+// SessionFilesClose says "Close files"
+// in the language the app shows.
+func SessionFilesClose() string { return In(i18n.Locale()).SessionFilesClose() }
+
+// SessionFilesClose says "Close files"
+// in the language of msgs.
+func (msgs Messages) SessionFilesClose() string {
+	return Catalog.Format(msgs.locale, "sessionFilesClose", nil)
 }
 
 // SessionMenuPaste says "Paste"
@@ -13936,6 +14064,496 @@ func NavSftp() string { return In(i18n.Locale()).NavSftp() }
 // The sidebar entry that opens the SFTP surface.
 func (msgs Messages) NavSftp() string {
 	return Catalog.Format(msgs.locale, "navSftp", nil)
+}
+
+// SftpSelectHostTitle says "Select a host to start"
+// in the language the app shows.
+func SftpSelectHostTitle() string { return In(i18n.Locale()).SftpSelectHostTitle() }
+
+// SftpSelectHostTitle says "Select a host to start"
+// in the language of msgs.
+func (msgs Messages) SftpSelectHostTitle() string {
+	return Catalog.Format(msgs.locale, "sftpSelectHostTitle", nil)
+}
+
+// SftpSelectHostSubtitle says "Choose a local or remote filesystem to browse"
+// in the language the app shows.
+func SftpSelectHostSubtitle() string { return In(i18n.Locale()).SftpSelectHostSubtitle() }
+
+// SftpSelectHostSubtitle says "Choose a local or remote filesystem to browse"
+// in the language of msgs.
+func (msgs Messages) SftpSelectHostSubtitle() string {
+	return Catalog.Format(msgs.locale, "sftpSelectHostSubtitle", nil)
+}
+
+// SftpSelectHost says "Select host"
+// in the language the app shows.
+func SftpSelectHost() string { return In(i18n.Locale()).SftpSelectHost() }
+
+// SftpSelectHost says "Select host"
+// in the language of msgs.
+func (msgs Messages) SftpSelectHost() string {
+	return Catalog.Format(msgs.locale, "sftpSelectHost", nil)
+}
+
+// SftpAddTab says "Add new tab"
+// in the language the app shows.
+func SftpAddTab() string { return In(i18n.Locale()).SftpAddTab() }
+
+// SftpAddTab says "Add new tab"
+// in the language of msgs.
+func (msgs Messages) SftpAddTab() string {
+	return Catalog.Format(msgs.locale, "sftpAddTab", nil)
+}
+
+// SftpGoHome says "Go to home"
+// in the language the app shows.
+func SftpGoHome() string { return In(i18n.Locale()).SftpGoHome() }
+
+// SftpGoHome says "Go to home"
+// in the language of msgs.
+func (msgs Messages) SftpGoHome() string {
+	return Catalog.Format(msgs.locale, "sftpGoHome", nil)
+}
+
+// SftpGoRoot says "Go to root"
+// in the language the app shows.
+func SftpGoRoot() string { return In(i18n.Locale()).SftpGoRoot() }
+
+// SftpGoRoot says "Go to root"
+// in the language of msgs.
+func (msgs Messages) SftpGoRoot() string {
+	return Catalog.Format(msgs.locale, "sftpGoRoot", nil)
+}
+
+// SftpEditPathHint says "Double-click to edit path"
+// in the language the app shows.
+func SftpEditPathHint() string { return In(i18n.Locale()).SftpEditPathHint() }
+
+// SftpEditPathHint says "Double-click to edit path"
+// in the language of msgs.
+func (msgs Messages) SftpEditPathHint() string {
+	return Catalog.Format(msgs.locale, "sftpEditPathHint", nil)
+}
+
+// SftpCopyPath says "Copy current path"
+// in the language the app shows.
+func SftpCopyPath() string { return In(i18n.Locale()).SftpCopyPath() }
+
+// SftpCopyPath says "Copy current path"
+// in the language of msgs.
+func (msgs Messages) SftpCopyPath() string {
+	return Catalog.Format(msgs.locale, "sftpCopyPath", nil)
+}
+
+// SftpCopyFilePath says "Copy file path"
+// in the language the app shows.
+func SftpCopyFilePath() string { return In(i18n.Locale()).SftpCopyFilePath() }
+
+// SftpCopyFilePath says "Copy file path"
+// in the language of msgs.
+func (msgs Messages) SftpCopyFilePath() string {
+	return Catalog.Format(msgs.locale, "sftpCopyFilePath", nil)
+}
+
+// SftpFilter says "Filter"
+// in the language the app shows.
+func SftpFilter() string { return In(i18n.Locale()).SftpFilter() }
+
+// SftpFilter says "Filter"
+// in the language of msgs.
+func (msgs Messages) SftpFilter() string {
+	return Catalog.Format(msgs.locale, "sftpFilter", nil)
+}
+
+// SftpFilterPlaceholder says "Filter by filename..."
+// in the language the app shows.
+func SftpFilterPlaceholder() string { return In(i18n.Locale()).SftpFilterPlaceholder() }
+
+// SftpFilterPlaceholder says "Filter by filename..."
+// in the language of msgs.
+func (msgs Messages) SftpFilterPlaceholder() string {
+	return Catalog.Format(msgs.locale, "sftpFilterPlaceholder", nil)
+}
+
+// SftpFilterClear says "Clear filter"
+// in the language the app shows.
+func SftpFilterClear() string { return In(i18n.Locale()).SftpFilterClear() }
+
+// SftpFilterClear says "Clear filter"
+// in the language of msgs.
+func (msgs Messages) SftpFilterClear() string {
+	return Catalog.Format(msgs.locale, "sftpFilterClear", nil)
+}
+
+// SftpFilterClose says "Close filter"
+// in the language the app shows.
+func SftpFilterClose() string { return In(i18n.Locale()).SftpFilterClose() }
+
+// SftpFilterClose says "Close filter"
+// in the language of msgs.
+func (msgs Messages) SftpFilterClose() string {
+	return Catalog.Format(msgs.locale, "sftpFilterClose", nil)
+}
+
+// SftpCompactList says "Switch to compact list"
+// in the language the app shows.
+func SftpCompactList() string { return In(i18n.Locale()).SftpCompactList() }
+
+// SftpCompactList says "Switch to compact list"
+// in the language of msgs.
+func (msgs Messages) SftpCompactList() string {
+	return Catalog.Format(msgs.locale, "sftpCompactList", nil)
+}
+
+// SftpComfortableList says "Switch to comfortable list"
+// in the language the app shows.
+func SftpComfortableList() string { return In(i18n.Locale()).SftpComfortableList() }
+
+// SftpComfortableList says "Switch to comfortable list"
+// in the language of msgs.
+func (msgs Messages) SftpComfortableList() string {
+	return Catalog.Format(msgs.locale, "sftpComfortableList", nil)
+}
+
+// SftpShowHiddenFiles says "Show hidden files"
+// in the language the app shows.
+func SftpShowHiddenFiles() string { return In(i18n.Locale()).SftpShowHiddenFiles() }
+
+// SftpShowHiddenFiles says "Show hidden files"
+// in the language of msgs.
+func (msgs Messages) SftpShowHiddenFiles() string {
+	return Catalog.Format(msgs.locale, "sftpShowHiddenFiles", nil)
+}
+
+// SftpColumnName says "Name"
+// in the language the app shows.
+func SftpColumnName() string { return In(i18n.Locale()).SftpColumnName() }
+
+// SftpColumnName says "Name"
+// in the language of msgs.
+func (msgs Messages) SftpColumnName() string {
+	return Catalog.Format(msgs.locale, "sftpColumnName", nil)
+}
+
+// SftpColumnModified says "Modified"
+// in the language the app shows.
+func SftpColumnModified() string { return In(i18n.Locale()).SftpColumnModified() }
+
+// SftpColumnModified says "Modified"
+// in the language of msgs.
+func (msgs Messages) SftpColumnModified() string {
+	return Catalog.Format(msgs.locale, "sftpColumnModified", nil)
+}
+
+// SftpColumnSize says "Size"
+// in the language the app shows.
+func SftpColumnSize() string { return In(i18n.Locale()).SftpColumnSize() }
+
+// SftpColumnSize says "Size"
+// in the language of msgs.
+func (msgs Messages) SftpColumnSize() string {
+	return Catalog.Format(msgs.locale, "sftpColumnSize", nil)
+}
+
+// SftpColumnKind says "Kind"
+// in the language the app shows.
+func SftpColumnKind() string { return In(i18n.Locale()).SftpColumnKind() }
+
+// SftpColumnKind says "Kind"
+// in the language of msgs.
+func (msgs Messages) SftpColumnKind() string {
+	return Catalog.Format(msgs.locale, "sftpColumnKind", nil)
+}
+
+// SftpColumnOwner says "Owner"
+// in the language the app shows.
+func SftpColumnOwner() string { return In(i18n.Locale()).SftpColumnOwner() }
+
+// SftpColumnOwner says "Owner"
+// in the language of msgs.
+func (msgs Messages) SftpColumnOwner() string {
+	return Catalog.Format(msgs.locale, "sftpColumnOwner", nil)
+}
+
+// SftpKindFolder says "folder"
+// in the language the app shows.
+func SftpKindFolder() string { return In(i18n.Locale()).SftpKindFolder() }
+
+// SftpKindFolder says "folder"
+// in the language of msgs.
+func (msgs Messages) SftpKindFolder() string {
+	return Catalog.Format(msgs.locale, "sftpKindFolder", nil)
+}
+
+// SftpKindLink says "link"
+// in the language the app shows.
+func SftpKindLink() string { return In(i18n.Locale()).SftpKindLink() }
+
+// SftpKindLink says "link"
+// in the language of msgs.
+func (msgs Messages) SftpKindLink() string {
+	return Catalog.Format(msgs.locale, "sftpKindLink", nil)
+}
+
+// SftpKindFile says "file"
+// in the language the app shows.
+func SftpKindFile() string { return In(i18n.Locale()).SftpKindFile() }
+
+// SftpKindFile says "file"
+// in the language of msgs.
+func (msgs Messages) SftpKindFile() string {
+	return Catalog.Format(msgs.locale, "sftpKindFile", nil)
+}
+
+// SftpEmptyDirectory says "Empty directory"
+// in the language the app shows.
+func SftpEmptyDirectory() string { return In(i18n.Locale()).SftpEmptyDirectory() }
+
+// SftpEmptyDirectory says "Empty directory"
+// in the language of msgs.
+func (msgs Messages) SftpEmptyDirectory() string {
+	return Catalog.Format(msgs.locale, "sftpEmptyDirectory", nil)
+}
+
+// SftpOpen says "Open"
+// in the language the app shows.
+func SftpOpen() string { return In(i18n.Locale()).SftpOpen() }
+
+// SftpOpen says "Open"
+// in the language of msgs.
+func (msgs Messages) SftpOpen() string {
+	return Catalog.Format(msgs.locale, "sftpOpen", nil)
+}
+
+// SftpCopyToOtherPane says "Copy to other pane"
+// in the language the app shows.
+func SftpCopyToOtherPane() string { return In(i18n.Locale()).SftpCopyToOtherPane() }
+
+// SftpCopyToOtherPane says "Copy to other pane"
+// in the language of msgs.
+func (msgs Messages) SftpCopyToOtherPane() string {
+	return Catalog.Format(msgs.locale, "sftpCopyToOtherPane", nil)
+}
+
+// SftpMoveToOtherPane says "Move to other pane"
+// in the language the app shows.
+func SftpMoveToOtherPane() string { return In(i18n.Locale()).SftpMoveToOtherPane() }
+
+// SftpMoveToOtherPane says "Move to other pane"
+// in the language of msgs.
+func (msgs Messages) SftpMoveToOtherPane() string {
+	return Catalog.Format(msgs.locale, "sftpMoveToOtherPane", nil)
+}
+
+// SftpRetry says "Retry"
+// in the language the app shows.
+func SftpRetry() string { return In(i18n.Locale()).SftpRetry() }
+
+// SftpRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) SftpRetry() string {
+	return Catalog.Format(msgs.locale, "sftpRetry", nil)
+}
+
+// SftpSearchHosts says "Search hosts..."
+// in the language the app shows.
+func SftpSearchHosts() string { return In(i18n.Locale()).SftpSearchHosts() }
+
+// SftpSearchHosts says "Search hosts..."
+// in the language of msgs.
+func (msgs Messages) SftpSearchHosts() string {
+	return Catalog.Format(msgs.locale, "sftpSearchHosts", nil)
+}
+
+// SftpPickerLocal says "Local"
+// in the language the app shows.
+func SftpPickerLocal() string { return In(i18n.Locale()).SftpPickerLocal() }
+
+// SftpPickerLocal says "Local"
+// in the language of msgs.
+func (msgs Messages) SftpPickerLocal() string {
+	return Catalog.Format(msgs.locale, "sftpPickerLocal", nil)
+}
+
+// SftpPickerHosts says "Hosts"
+// in the language the app shows.
+func SftpPickerHosts() string { return In(i18n.Locale()).SftpPickerHosts() }
+
+// SftpPickerHosts says "Hosts"
+// in the language of msgs.
+func (msgs Messages) SftpPickerHosts() string {
+	return Catalog.Format(msgs.locale, "sftpPickerHosts", nil)
+}
+
+// SftpLocalFilesystem says "Local filesystem"
+// in the language the app shows.
+func SftpLocalFilesystem() string { return In(i18n.Locale()).SftpLocalFilesystem() }
+
+// SftpLocalFilesystem says "Local filesystem"
+// in the language of msgs.
+func (msgs Messages) SftpLocalFilesystem() string {
+	return Catalog.Format(msgs.locale, "sftpLocalFilesystem", nil)
+}
+
+// SftpBrowseLocal says "Browse local files"
+// in the language the app shows.
+func SftpBrowseLocal() string { return In(i18n.Locale()).SftpBrowseLocal() }
+
+// SftpBrowseLocal says "Browse local files"
+// in the language of msgs.
+func (msgs Messages) SftpBrowseLocal() string {
+	return Catalog.Format(msgs.locale, "sftpBrowseLocal", nil)
+}
+
+// SftpNoMatchingHosts says "No matching hosts"
+// in the language the app shows.
+func SftpNoMatchingHosts() string { return In(i18n.Locale()).SftpNoMatchingHosts() }
+
+// SftpNoMatchingHosts says "No matching hosts"
+// in the language of msgs.
+func (msgs Messages) SftpNoMatchingHosts() string {
+	return Catalog.Format(msgs.locale, "sftpNoMatchingHosts", nil)
+}
+
+// SftpPaneLeft says "Left"
+// in the language the app shows.
+func SftpPaneLeft() string { return In(i18n.Locale()).SftpPaneLeft() }
+
+// SftpPaneLeft says "Left"
+// in the language of msgs.
+func (msgs Messages) SftpPaneLeft() string {
+	return Catalog.Format(msgs.locale, "sftpPaneLeft", nil)
+}
+
+// SftpPaneRight says "Right"
+// in the language the app shows.
+func SftpPaneRight() string { return In(i18n.Locale()).SftpPaneRight() }
+
+// SftpPaneRight says "Right"
+// in the language of msgs.
+func (msgs Messages) SftpPaneRight() string {
+	return Catalog.Format(msgs.locale, "sftpPaneRight", nil)
+}
+
+// SftpMore says "More"
+// in the language the app shows.
+func SftpMore() string { return In(i18n.Locale()).SftpMore() }
+
+// SftpMore says "More"
+// in the language of msgs.
+func (msgs Messages) SftpMore() string {
+	return Catalog.Format(msgs.locale, "sftpMore", nil)
+}
+
+// SftpTransfers says "Transfers"
+// in the language the app shows.
+func SftpTransfers() string { return In(i18n.Locale()).SftpTransfers() }
+
+// SftpTransfers says "Transfers"
+// in the language of msgs.
+func (msgs Messages) SftpTransfers() string {
+	return Catalog.Format(msgs.locale, "sftpTransfers", nil)
+}
+
+// SftpClearCompleted says "Clear completed"
+// in the language the app shows.
+func SftpClearCompleted() string { return In(i18n.Locale()).SftpClearCompleted() }
+
+// SftpClearCompleted says "Clear completed"
+// in the language of msgs.
+func (msgs Messages) SftpClearCompleted() string {
+	return Catalog.Format(msgs.locale, "sftpClearCompleted", nil)
+}
+
+// SftpTransferCenterOpen says "Open the Transfer center"
+// in the language the app shows.
+func SftpTransferCenterOpen() string { return In(i18n.Locale()).SftpTransferCenterOpen() }
+
+// SftpTransferCenterOpen says "Open the Transfer center"
+// in the language of msgs.
+func (msgs Messages) SftpTransferCenterOpen() string {
+	return Catalog.Format(msgs.locale, "sftpTransferCenterOpen", nil)
+}
+
+// SftpPermissionsOwner says "Owner"
+// in the language the app shows.
+func SftpPermissionsOwner() string { return In(i18n.Locale()).SftpPermissionsOwner() }
+
+// SftpPermissionsOwner says "Owner"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsOwner() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsOwner", nil)
+}
+
+// SftpPermissionsGroup says "Group"
+// in the language the app shows.
+func SftpPermissionsGroup() string { return In(i18n.Locale()).SftpPermissionsGroup() }
+
+// SftpPermissionsGroup says "Group"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsGroup() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsGroup", nil)
+}
+
+// SftpPermissionsOthers says "Others"
+// in the language the app shows.
+func SftpPermissionsOthers() string { return In(i18n.Locale()).SftpPermissionsOthers() }
+
+// SftpPermissionsOthers says "Others"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsOthers() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsOthers", nil)
+}
+
+// SftpPermissionsRead says "Read"
+// in the language the app shows.
+func SftpPermissionsRead() string { return In(i18n.Locale()).SftpPermissionsRead() }
+
+// SftpPermissionsRead says "Read"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsRead() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsRead", nil)
+}
+
+// SftpPermissionsWrite says "Write"
+// in the language the app shows.
+func SftpPermissionsWrite() string { return In(i18n.Locale()).SftpPermissionsWrite() }
+
+// SftpPermissionsWrite says "Write"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsWrite() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsWrite", nil)
+}
+
+// SftpPermissionsExecute says "Execute"
+// in the language the app shows.
+func SftpPermissionsExecute() string { return In(i18n.Locale()).SftpPermissionsExecute() }
+
+// SftpPermissionsExecute says "Execute"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsExecute() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsExecute", nil)
+}
+
+// SftpPermissionsOctal says "Octal"
+// in the language the app shows.
+func SftpPermissionsOctal() string { return In(i18n.Locale()).SftpPermissionsOctal() }
+
+// SftpPermissionsOctal says "Octal"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsOctal() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsOctal", nil)
+}
+
+// SftpPermissionsSymbolic says "Symbolic"
+// in the language the app shows.
+func SftpPermissionsSymbolic() string { return In(i18n.Locale()).SftpPermissionsSymbolic() }
+
+// SftpPermissionsSymbolic says "Symbolic"
+// in the language of msgs.
+func (msgs Messages) SftpPermissionsSymbolic() string {
+	return Catalog.Format(msgs.locale, "sftpPermissionsSymbolic", nil)
 }
 
 // SftpTitle says "SFTP"

@@ -75,6 +75,16 @@ type Tab struct {
 	Problem    error
 	// Scroll is the list's persistent vertical offset.
 	Scroll ui.ScrollState
+	// Home is the first folder the Tab listed: the Host's login folder, or
+	// the user's folder on this computer. The breadcrumb's Home goes there.
+	Home string
+	// Filter narrows the listing to names containing it; FilterOpen shows
+	// the field. EditingPath swaps the breadcrumb for the path field, and
+	// Compact draws the list's rows at the denser height.
+	Filter      string
+	FilterOpen  bool
+	EditingPath bool
+	Compact     bool
 
 	back    []string
 	forward []string
@@ -130,7 +140,7 @@ func (t *Tab) Visible() []domainsftp.Entry {
 			parent = &copied
 			continue
 		}
-		if domainsftp.Visible(entry, t.ShowHidden) {
+		if domainsftp.Visible(entry, t.ShowHidden) && t.matchesFilter(entry) {
 			rest = append(rest, entry)
 		}
 	}
@@ -217,6 +227,10 @@ type State struct {
 	// its Tab closes. Without it, the session outlives the Tab until the file
 	// service shuts down.
 	closeFileSession func(appfileopen.EditID)
+
+	// clearedTasks are finished Transfers the user cleared from the queue
+	// strip. The queue keeps them; only the strip stops listing them.
+	clearedTasks map[domainsftp.TaskID]bool
 
 	panes   [2]*Pane
 	focused Side
@@ -518,6 +532,30 @@ func (s *State) OpenRemote(side Side, hostID model.HostID, label string) {
 	tab.link = s.newRemoteLink(tab)
 	s.addTab(side, tab)
 	s.openRemote(tab)
+}
+
+// ShowRemote makes the pane's Tab for a Host active, opening one when the
+// pane has none. Unlike OpenRemote it leaves a connected Tab alone, so the
+// Session panel can follow the Session Tab the user switches to without
+// dropping the listing it already has.
+func (s *State) ShowRemote(side Side, hostID model.HostID, label string) {
+	if existing := s.remoteTab(side, hostID); existing != nil {
+		s.activateTab(side, existing)
+		return
+	}
+	s.OpenRemote(side, hostID, label)
+}
+
+// ShowLocal makes the pane's first local Tab active, opening one when the
+// pane has none.
+func (s *State) ShowLocal(side Side) {
+	for _, tab := range s.panes[side].Tabs {
+		if tab != nil && !tab.closed && tab.Kind == KindLocal {
+			s.activateTab(side, tab)
+			return
+		}
+	}
+	s.OpenLocal(side)
 }
 
 // remoteTab returns the pane's Tab for a Host, if it already has one.
@@ -912,8 +950,12 @@ func (s *State) loadAtNavigation(tab *Tab, dir string, remember, mirror bool) {
 				return
 			}
 			tab.Problem = nil
+			if tab.Home == "" {
+				tab.Home = dir
+			}
 			tab.Path = dir
 			tab.Draft = dir
+			tab.EditingPath = false
 			tab.Entries = entries
 			tab.Selection = map[string]bool{}
 			tab.Anchor = ""

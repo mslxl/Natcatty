@@ -6,22 +6,42 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
-	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/vault/section"
 )
 
-// sidebarWidth is the fixed width of the Vault navigation column. The content
-// column takes the rest of the window.
-const sidebarWidth float32 = 232
+// sidebarWidth is the fixed width of the home Tab's navigation column. Only
+// the home Tab has one: SFTP and the terminal Tabs take the window's width.
+const sidebarWidth float32 = 220
 
-// shellPadding insets the window's sidebar and content column.
+// topBarHeight is the height of the window's Tab bar.
+const topBarHeight float32 = 40
+
+// shellPadding is the distance from the body's edges to a surface's content:
+// the gap around the content card plus the card's own padding.
 const shellPadding float32 = 16
 
-// View returns the main window's shell: the fixed Vault navigation, the
-// Settings entry point, the five-language selector, and the ordered work tabs.
+// cardGap is the room between the window's edges and the content card.
+// cardPadding insets a surface inside the card, so the two add up to
+// shellPadding.
+const (
+	cardGap     float32 = 8
+	cardPadding         = shellPadding - cardGap
+)
+
+// cardBorder is the width of the content card's outline.
+const cardBorder float32 = 1
+
+// View returns the main window's shell, laid out as the original's: one Tab
+// bar across the window holding the home Tab (the Vault and the pages its
+// sidebar lists), SFTP, and the terminal Tabs; below it the chosen Tab's
+// surface. Only the home Tab has a sidebar, so a terminal gets the whole
+// window.
 func View(s *state.State) func(*ui.Context) {
 	// The work Tab strip scrolls sideways at the minimum window. This tracker
 	// belongs to this window's content function, so the active Tab is revealed
@@ -35,9 +55,9 @@ func View(s *state.State) func(*ui.Context) {
 		m := locales.In(c.Locale())
 		t := c.Theme()
 
-		ui.Row(c).Fill().Children(func() {
-			sidebar(c, s, m, t)
-			content(c, s, m, t, reveal)
+		ui.Column(c).Fill().Background(t.Background).Children(func() {
+			workTabs(c, s, m, t, reveal)
+			body(c, s, m, t)
 		})
 
 		if prompt := s.TrustPrompt(); prompt != nil {
@@ -62,149 +82,310 @@ func View(s *state.State) func(*ui.Context) {
 	}
 }
 
-func sidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
-	// FillHeight, not Fill: the sidebar shares the window's row with the
-	// content, and Fill would set its width to the whole window and push the
-	// content past the right edge.
-	ui.Column(c).Width(sidebarWidth).FillHeight().Padding(shellPadding).Gap(8).Background(t.Surface).Children(func() {
-		ui.Text(c, m.AppName()).FontSize(20).Bold()
+// homeVisible reports whether the home Tab is the chosen one. With no work
+// Tab and no other surface shown, the window falls back to it.
+func homeVisible(s *state.State) bool {
+	return !terminalVisible(s) && !s.SFTPVisible()
+}
 
-		// The root surfaces are peers: the active one is drawn as the primary
-		// button, so a user always sees where they are.
-		navButton(c, "nav-vault", m.NavVault(), s.VaultVisible(), s.ShowVault)
-		navButton(c, "nav-monitor", m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
-		navButton(c, "nav-sysmanager", m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
-		navButton(c, "nav-sftp", m.NavSftp(), s.SFTPVisible(), s.ShowSFTP)
-		navButton(c, "nav-logs", m.NavLogs(), s.LogsVisible(), s.ShowLogs)
-		navButton(c, "nav-settings", m.NavSettings(), false, s.RequestSettings)
-
-		ui.Column(c).Grow(1)
-
-		ui.Text(c, m.NavLanguage()).FontSize(12).TextColor(t.TextMuted)
-		current := c.Locale()
-		// Wrapping keeps all five language options inside the 704x421 client
-		// area at the enforced 720x480 minimum window, where a single column
-		// ran 28 DIPs past the bottom. Ticket 61 tracks the cross-cutting
-		// minimum-window shell defect.
-		ui.RadioGroup(c, func() {
-			for _, tag := range locales.Tags() {
-				ui.Radio(c.Key("locale-"+tag), &current, tag, i18n.Autonym(tag))
-			}
-		}).Row().Wrap()
-		if current != c.Locale() {
-			s.RequestLocale(current)
-			c.Invalidate()
+// body draws the chosen Tab's surface below the Tab bar.
+func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	// MinHeight(0) and MinWidth(0) keep the body at the window's size when a
+	// surface's content is larger; it scrolls or clips inside instead.
+	ui.Row(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Children(func() {
+		switch {
+		case terminalVisible(s):
+			ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(0, 6, 6, 6).Children(func() {
+				notices(c, s, m, t)
+				activeTab(c, s, m, t)
+			})
+		case s.SFTPVisible():
+			contentCard(c, s, m, t, cardGap, func() {
+				if view := s.SFTPView(); view != nil {
+					view(c)
+					return
+				}
+				placeholder(c, icons.FolderOpen, m.NavSftp(), "")
+			})
+		default:
+			homeSidebar(c, s, m, t)
+			contentCard(c, s, m, t, 0, func() { homeSurface(c, s, m, t) })
 		}
 	})
 }
 
-// navButton renders one sidebar surface entry. The active surface is the
-// primary button; Settings is a window rather than a surface, so it is never
-// active here.
-func navButton(c *ui.Context, key, label string, active bool, show func()) {
-	var button ui.Element
-	if active {
-		button = ui.PrimaryButton(c, label)
-	} else {
-		button = ui.Button(c, label)
+// contentCard is the raised, rounded card a home page or SFTP draws in.
+// start is the gap at its left: none beside the home sidebar, which already
+// leaves room, and cardGap when it spans the window.
+func contentCard(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, start float32, page func()) {
+	ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(0, cardGap, cardGap, start).Gap(cardGap).Children(func() {
+		notices(c, s, m, t)
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Padding(cardPadding).
+			Background(t.Surface).Border(cardBorder, t.Border).Radius(kit.RadiusCard).
+			Shadow(0, 1, 3, 0, kit.CardShadow(t)).Clip().Children(page)
+	})
+}
+
+// notices shows the window's desktop and connection problems above the
+// surface.
+func notices(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	if notice := desktopNoticeText(m, s.DesktopNotice()); notice != "" {
+		kit.Notice(c, icons.TriangleAlert, t.Danger, notice, nil)
 	}
-	button.Key(key).Width(200)
-	if button.Clicked() {
+	if problem := uiconnection.ProblemTextFor(m, s.ProblemError()); problem != "" {
+		kit.Notice(c, icons.CircleX, t.Danger, problem, nil)
+	}
+}
+
+func placeholder(c *ui.Context, icon, title, description string) {
+	ui.Column(c).Fill().Justify(ui.Center).Children(func() {
+		kit.EmptyState(c, icon, title, description, nil)
+	})
+}
+
+// homeSidebar is the home Tab's navigation, as the original's Vault sidebar:
+// the brand, the Vault's pages with monitoring, System manager, and Logs among
+// them, and Settings at the foot.
+func homeSidebar(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	// FillHeight, not Fill: the sidebar shares the body's row with the
+	// content, and Fill would set its width to the whole window and push the
+	// content past the right edge.
+	ui.Column(c).Width(sidebarWidth).FillHeight().Shrink(0).Padding(4, 8, 8, 8).Gap(2).Children(func() {
+		ui.Row(c).FillWidth().Height(40).Padding(0, 8).Gap(10).AlignItems(ui.Center).Margin(0, 0, 8, 0).Children(func() {
+			ui.Box(c).Size(28, 28).Radius(8).Background(t.Accent).Center().TextColor(t.AccentText).
+				Children(func() { ui.Icon(c, icons.Lucide(icons.SquareTerminal)).Size(16, 16) })
+			ui.Text(c, m.AppName()).FontSize(16).FontWeight(700).SingleLine()
+		})
+
+		// The list scrolls when the window is too short for every entry.
+		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Gap(2).Children(func() {
+				vaultPage := func(page section.Section) {
+					navItem(c, "nav-vault-"+string(page), vaultPageIcon(page), vaultPageLabel(m, page),
+						s.VaultVisible() && s.VaultSection() == page,
+						func() { s.ShowVaultSection(page) })
+				}
+				vaultPage(section.Hosts)
+				navItem(c, "nav-monitor", icons.Gauge, m.NavMonitor(), s.MonitorVisible(), s.ShowMonitor)
+				navItem(c, "nav-sysmanager", icons.MonitorCog, m.NavSysManager(), s.SysManagerVisible(), s.ShowSystemManager)
+				for _, page := range section.Pages() {
+					if page != section.Hosts {
+						vaultPage(page)
+					}
+				}
+				navItem(c, "nav-logs", icons.Activity, m.NavLogs(), s.LogsVisible(), s.ShowLogs)
+			})
+		})
+
+		// Settings is a window rather than a surface, so it is never active.
+		navItem(c, "nav-settings", icons.Settings, m.NavSettings(), false, s.RequestSettings)
+	})
+}
+
+// homeSurface draws the home Tab's chosen page.
+func homeSurface(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	switch {
+	case s.LogsVisible():
+		if view := s.LogsView(); view != nil {
+			view(c)
+			return
+		}
+		placeholder(c, icons.Activity, m.NavLogs(), "")
+	case s.MonitorVisible():
+		if view := s.MonitorView(); view != nil {
+			view(c)
+			return
+		}
+		placeholder(c, icons.Gauge, m.NavMonitor(), "")
+	case s.SysManagerVisible():
+		if view := s.SysManagerView(); view != nil {
+			view(c)
+			return
+		}
+		placeholder(c, icons.MonitorCog, m.NavSysManager(), "")
+	default:
+		if view := s.VaultView(); view != nil {
+			view(c)
+			return
+		}
+		placeholder(c, icons.LayoutGrid, m.NavVault(), m.VaultPlaceholder())
+	}
+}
+
+// vaultPageIcon and vaultPageLabel are a Vault page's sidebar entry, as the
+// original's Vault sidebar drew them.
+func vaultPageIcon(page section.Section) string {
+	switch page {
+	case section.Keychain:
+		return icons.KeyRound
+	case section.Proxies:
+		return icons.Globe
+	case section.Forwarding:
+		return icons.Plug
+	case section.Snippets:
+		return icons.FileCode
+	case section.Notes:
+		return icons.NotebookPen
+	case section.KnownHosts:
+		return icons.BookMarked
+	default:
+		return icons.LayoutGrid
+	}
+}
+
+func vaultPageLabel(m locales.Messages, page section.Section) string {
+	switch page {
+	case section.Keychain:
+		return m.NavKeychain()
+	case section.Proxies:
+		return m.NavProxies()
+	case section.Forwarding:
+		return m.NavForwarding()
+	case section.Snippets:
+		return m.NavSnippets()
+	case section.Notes:
+		return m.NavNotes()
+	case section.KnownHosts:
+		return m.NavKnownHosts()
+	default:
+		return m.NavHosts()
+	}
+}
+
+// navItem renders one sidebar entry: an icon and a label, filled while its
+// page is the visible one.
+func navItem(c *ui.Context, key, icon, label string, active bool, show func()) {
+	t := c.Theme()
+	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().Height(36).Padding(0, 12).Gap(12).
+		Radius(8).AlignItems(ui.Center).TextColor(t.TextMuted)
+	switch {
+	case active:
+		item.Background(kit.Strong(t)).TextColor(t.Text)
+	case item.Pressed():
+		item.Background(kit.Strong(t)).TextColor(t.Text)
+	case item.Hovered():
+		item.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	item.Children(func() {
+		kit.Icon(c, icon)
+		text := ui.Text(c, label).SingleLine().Grow(1).MinWidth(0)
+		if active {
+			text.FontWeight(500)
+		}
+	})
+	if item.Clicked() {
 		show()
 	}
 }
 
-func content(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
-	// Grow takes the width the sidebar leaves; Fill would ask for the whole
-	// window again and clip the tab strip and Panes at the right edge.
-	// MinWidth(0) keeps the content column at the window's width when the
-	// ordered tab strip is wider than the window. Without it the strip's
-	// min-content width stretches the column, and a Pane's right-aligned
-	// chrome is laid out beyond the window's edge.
-	ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(shellPadding).Gap(12).Children(func() {
-		for _, label := range s.PendingConnections() {
-			ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).TextColor(t.TextMuted)
-		}
-		if notice := desktopNoticeText(m, s.DesktopNotice()); notice != "" {
-			ui.Text(c, notice).FontSize(12).TextColor(uitheme.DangerText(t))
-		}
-		if problem := uiconnection.ProblemTextFor(m, s.ProblemError()); problem != "" {
-			ui.Text(c, problem).TextColor(uitheme.DangerText(t))
-		}
-		// The ordered work Tabs stay visible over the Vault so a user who
-		// returned to the Vault can select a Session again.
-		if s.TabCount() > 0 {
-			workTabs(c, s, m, t, reveal)
-		}
-		if s.VaultVisible() {
-			if view := s.VaultView(); view != nil {
-				view(c)
-				return
+// languageMenu is the Tab bar's language picker: a quiet icon button opening
+// a menu of the five languages the app ships, the current one checked.
+func languageMenu(c *ui.Context, s *state.State, m locales.Messages) {
+	current := c.Locale()
+	if current == "" {
+		current = locales.Tags()[0]
+	}
+	barButton(c, "nav-language", icons.Languages, m.NavLanguage()).Menu(func(menu *ui.Menu) {
+		for _, tag := range locales.Tags() {
+			if menu.Item(i18n.Autonym(tag)).Checked(tag == current).Chosen() && tag != current {
+				s.RequestLocale(tag)
+				c.Invalidate()
 			}
-			ui.Text(c, m.NavVault()).FontSize(24).Bold()
-			ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
-			return
 		}
-		if s.LogsVisible() {
-			if view := s.LogsView(); view != nil {
-				view(c)
-				return
-			}
-			ui.Text(c, m.NavLogs()).FontSize(24).Bold()
-			return
-		}
-		if s.MonitorVisible() {
-			if view := s.MonitorView(); view != nil {
-				view(c)
-				return
-			}
-			ui.Text(c, m.NavMonitor()).FontSize(24).Bold()
-			return
-		}
-		if s.SysManagerVisible() {
-			if view := s.SysManagerView(); view != nil {
-				view(c)
-				return
-			}
-			ui.Text(c, m.NavSysManager()).FontSize(24).Bold()
-			return
-		}
-		if s.SFTPVisible() {
-			if view := s.SFTPView(); view != nil {
-				view(c)
-				return
-			}
-			ui.Text(c, m.NavSftp()).FontSize(24).Bold()
-			return
-		}
-		if s.TabCount() > 0 {
-			terminalInputs(c, s, m, t)
-			activeTab(c, s, m, t)
-			return
-		}
-
-		ui.Text(c, m.NavVault()).FontSize(24).Bold()
-		ui.Text(c, m.VaultPlaceholder()).TextColor(t.TextMuted)
 	})
 }
 
+// barButton is an icon-only control at the right of the Tab bar.
+func barButton(c *ui.Context, key, icon, label string) ui.Element {
+	t := c.Theme()
+	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(30, 30).Radius(kit.RadiusControl).
+		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
+	switch {
+	case button.Pressed():
+		button.Background(kit.Strong(t)).TextColor(t.Text)
+	case button.Hovered():
+		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(16, 16) })
+	return button
+}
+
 func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
+	terminalPanels(c, s, m, t)
 	if snapshot, ok := s.ActiveSnapshot(); ok {
-		if status := statusText(m, snapshot); status != "" {
-			ui.Text(c, status).FontSize(12).TextColor(t.TextMuted)
-		}
 		if notice := noticeText(m, snapshot.Notice); notice != "" {
-			ui.Text(c, notice).FontSize(12).TextColor(uitheme.DangerText(t))
+			ui.Box(c).FillWidth().Padding(0, 0, 6, 0).Children(func() {
+				kit.Notice(c, icons.TriangleAlert, t.Warning, notice, nil)
+			})
 		}
 	}
 	if root, focus, ok := s.TabTree(s.ActiveTab()); ok {
 		ordinal := 0
-		paneTree(c, s, m, t, mainTabRef(s, s.ActiveTab()), root, focus, &ordinal)
+		ref := mainTabRef(s, s.ActiveTab())
+		ref.split = !root.IsPane()
+		ref.status = activeStatus(s, m, t)
+		panes := func() {
+			ui.Column(c).Fill().MinWidth(0).Children(func() {
+				paneTree(c, s, m, t, ref, root, focus, &ordinal)
+			})
+		}
+		files := s.FilesView(ref.id)
+		if files == nil {
+			ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(panes)
+			return
+		}
+		// The SFTP panel sits at the Tab's right edge, as the original's, and
+		// the divider between it and the terminal keeps the width the user
+		// drags it to.
+		ui.SplitPercent(c, s.FilesRatio(), panes, func() {
+			// The Panes keep a 4-DIP drop gutter on every side; the panel
+			// keeps the same inset so the two headers line up.
+			ui.Column(c).Fill().MinWidth(0).Padding(4, 4, 4, 0).Children(func() { files(c) })
+		}).FillWidth().Grow(1).MinHeight(0)
 	}
 }
 
-// noticeText localizes a non-fatal Session notice. Unknown codes render
-// nothing, so the UI never shows an untranslated token.
+// sessionTone is the color of a Session's status dot: green while it runs
+// connected, amber while it connects, red once it failed or stopped.
+func sessionTone(t *ui.Theme, snapshot appsession.Snapshot, ok bool) ui.Color {
+	if !ok {
+		return t.TextMuted
+	}
+	if snapshot.Connection == appsession.ConnectionStatusError {
+		return t.Danger
+	}
+	switch snapshot.Status {
+	case appsession.StatusRunning:
+		switch snapshot.Connection {
+		case appsession.ConnectionStatusConnecting, appsession.ConnectionStatusReconnecting:
+			return t.Warning
+		}
+		return t.Success
+	case appsession.StatusExited, appsession.StatusClosed:
+		return t.Danger
+	}
+	return t.TextMuted
+}
+
+// paneStatus is the focused Pane's localized Session status and its tone.
+// settled marks a running, connected Session: the header says nothing then,
+// as the terminal itself shows the Session is live.
+type paneStatus struct {
+	text    string
+	tone    ui.Color
+	settled bool
+}
+
+func activeStatus(s *state.State, m locales.Messages, t *ui.Theme) paneStatus {
+	snapshot, ok := s.ActiveSnapshot()
+	if !ok {
+		return paneStatus{}
+	}
+	settled := snapshot.Status == appsession.StatusRunning &&
+		(snapshot.Connection == appsession.ConnectionStatusActive || snapshot.Connection == "")
+	return paneStatus{text: statusText(m, snapshot), tone: sessionTone(t, snapshot, true), settled: settled}
+}
+
 // desktopNoticeText localizes a desktop target failure. Unknown codes render
 // nothing, so the UI never shows an untranslated token.
 func desktopNoticeText(m locales.Messages, notice state.DesktopNotice) string {
@@ -217,6 +398,8 @@ func desktopNoticeText(m locales.Messages, notice state.DesktopNotice) string {
 	return ""
 }
 
+// noticeText localizes a non-fatal Session notice. Unknown codes render
+// nothing, so the UI never shows an untranslated token.
 func noticeText(m locales.Messages, notice *appsession.Notice) string {
 	if notice == nil {
 		return ""

@@ -52,20 +52,6 @@ type sessionMenuActions struct {
 	Observe        func()
 }
 
-// sessionMenuButton renders the Session menu in the status bar. MyGo's terminal
-// owns its own right-click menu (Copy, Paste, Select All, Clear Scrollback),
-// so the Session commands live here where they are always reachable and
-// testable. The visible label, rather than a bare glyph, keeps the control
-// discoverable when a Pane is only a few hundred DIPs wide.
-func sessionMenuButton(c *ui.Context, model sessionMenuModel, label string,
-	m locales.Messages, t *ui.Theme, actions sessionMenuActions) {
-	button := ui.MenuButton(c, m.SessionMenuLabel(), func(menu *ui.Menu) {
-		buildSessionMenu(menu, model, m, actions)
-	})
-	button.Label(label)
-	button.TextColor(t.TextMuted)
-}
-
 // buildSessionMenu fills the Session menu in the original's order: selection,
 // browser, reconnect, YMODEM, splits, screen, identity, and lifetime. Encoding
 // and logging sit after the screen commands because the original exposed them
@@ -163,6 +149,11 @@ func buildSessionMenu(menu *ui.Menu, model sessionMenuModel, m locales.Messages,
 			(!model.Logging && model.LogDirectory == ""))
 		if toggle.Chosen() && actions.ToggleLog != nil {
 			actions.ToggleLog()
+		}
+		// The reason Start is refused shows where the user looks for it,
+		// not as a standing line above every terminal.
+		if !model.Logging && model.LogDirectory == "" {
+			sub.Item(m.SessionLoggingNoDirectory()).Disabled(true)
 		}
 		sub.Submenu(m.SessionMenuLogFormat(), func(formats *ui.Menu) {
 			for index, format := range chromeFormats {

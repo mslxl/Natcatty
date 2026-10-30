@@ -275,14 +275,14 @@ func TestTransferCenterShowsProgressAndControls(t *testing.T) {
 	const width, height = 1100, 720
 	state, tester := newCenterFixture(t, "en", width, height, centerSeed(time.Now()))
 	if !tester.HasText("Transfers") {
-		t.Fatalf("the header has no Transfers button; texts %q", tester.Texts())
+		t.Fatalf("the queue strip is missing; texts %q", tester.Texts())
 	}
-	if err := tester.Click("Transfers"); err != nil {
+	if err := tester.Click("Open the Transfer center"); err != nil {
 		t.Fatalf("open the center: %v", err)
 	}
 	tester.Frame()
 	if !state.CenterOpen() {
-		t.Fatal("the header button did not open the center")
+		t.Fatal("the strip's button did not open the center")
 	}
 	for _, want := range []string{
 		"Transfer center", "alpha.txt", "Interrupted", "Retry", "Resume",

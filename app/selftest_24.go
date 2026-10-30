@@ -542,7 +542,7 @@ func (t *selftest24) layoutStep(*ui.Context) selftest.Outcome {
 		list := ui.NewTester(vaultui.View(t.state), size.width, size.height)
 		list.SetLocale("en")
 		list.Frame()
-		if !list.HasText(m.VaultImportTitle()) || !list.HasText(m.VaultHostConnect()) {
+		if !list.HasText(m.VaultMoreActions()) || !list.HasText(m.VaultItemActions("layout-00")) {
 			return t.fail(fmt.Errorf("%dx%d: the Vault list is not rendered: %v",
 				size.width, size.height, list.Texts()))
 		}

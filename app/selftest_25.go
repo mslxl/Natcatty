@@ -581,7 +581,7 @@ func (t *selftest25) layoutStep(*ui.Context) selftest.Outcome {
 		list := ui.NewTester(vaultui.View(t.state), size.width, size.height)
 		list.SetLocale("en")
 		list.Frame()
-		if !list.HasText(m.VaultExportTitle()) {
+		if !list.HasText(m.VaultMoreActions()) {
 			return t.fail(fmt.Errorf("%dx%d: the Export entry is not rendered: %v",
 				size.width, size.height, list.Texts()))
 		}
