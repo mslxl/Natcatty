@@ -5,34 +5,51 @@ import (
 	"fmt"
 
 	appvault "github.com/mslxl/natcatty/application/vault"
-	platformsqlite "github.com/mslxl/natcatty/platform/sqlite"
+	"gorm.io/gorm"
 )
 
 var _ appvault.ImportStore = (*Store)(nil)
 
-// SaveImportBatch writes Host Groups and Hosts in one transaction. Building
-// every statement before opening it means an invalid record fails the chunk
-// without touching the database; any SQL error rolls the whole chunk back.
+// SaveImportBatch writes Host Groups and Hosts in one ORM transaction. Models
+// are built before the transaction so invalid records leave the database untouched.
 func (s *Store) SaveImportBatch(ctx context.Context, batch appvault.ImportBatch) error {
 	if len(batch.Groups) == 0 && len(batch.Hosts) == 0 {
 		return nil
 	}
-	statements := make([]platformsqlite.Statement, 0, len(batch.Groups)+len(batch.Hosts))
+	groups := make([]hostGroupSchema, 0, len(batch.Groups))
 	for _, group := range batch.Groups {
-		statement, err := groupSaveStatement(group)
+		model, err := groupModel(group)
 		if err != nil {
 			return err
 		}
-		statements = append(statements, statement)
+		groups = append(groups, model)
 	}
+	hosts := make([]hostSchema, 0, len(batch.Hosts))
 	for _, host := range batch.Hosts {
-		statement, err := hostSaveStatement(host)
+		model, err := hostModel(host)
 		if err != nil {
 			return err
 		}
-		statements = append(statements, statement)
+		hosts = append(hosts, model)
 	}
-	if _, err := s.db.Transaction(ctx, statements); err != nil {
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for index := range groups {
+			if err := upsertModel(tx, &groups[index], "path",
+				"notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id",
+				"use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key",
+				"proxy_profile_id", "order_key", "updated_at", "data"); err != nil {
+				return err
+			}
+		}
+		for index := range hosts {
+			if err := upsertModel(tx, &hosts[index], "id",
+				"label", "hostname", "port", "username", "protocol", "group_path",
+				"pinned", "order_key", "updated_at", "data"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("store: save import batch: %w", err)
 	}
 	s.vaultChanged()

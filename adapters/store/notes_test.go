@@ -9,13 +9,10 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
-func TestNotesMigrationCreatesTablesWithoutForeignKeys(t *testing.T) {
+func TestAutoMigrateCreatesNotesTablesWithoutForeignKeys(t *testing.T) {
 	store, _ := openTestStore(t)
 	ctx := context.Background()
 
-	if latestMigrationVersion() < 9 {
-		t.Fatalf("latest migration = %d, want at least 9", latestMigrationVersion())
-	}
 	for _, table := range []string{"vault_notes", "note_groups"} {
 		rows, err := store.db.Query(ctx, `PRAGMA foreign_key_list(`+table+`)`)
 		if err != nil {
@@ -29,8 +26,8 @@ func TestNotesMigrationCreatesTablesWithoutForeignKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if version != latestMigrationVersion() {
-		t.Fatalf("schema version = %d, want %d", version, latestMigrationVersion())
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 }
 
