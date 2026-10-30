@@ -190,9 +190,11 @@ func assertMenuInsidePane(t *testing.T, tt *ui.Tester, m locales.Messages, pane 
 		t.Fatalf("%dx%d Pane %d menu is outside the window: %+v",
 			size[0], size[1], pane, menu)
 	}
-	if menu.W < 60 {
-		t.Fatalf("%dx%d Pane %d menu is a %.1f-DIP sliver: %+v",
-			size[0], size[1], pane, menu.W, menu)
+	// The menu is the header's 22-DIP icon button; anything smaller is a
+	// control the header squeezed.
+	if menu.W < 22-epsilon || menu.H < 22-epsilon {
+		t.Fatalf("%dx%d Pane %d menu is squeezed to %.1fx%.1f DIPs: %+v",
+			size[0], size[1], pane, menu.W, menu.H, menu)
 	}
 	return menu
 }

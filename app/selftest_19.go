@@ -390,7 +390,7 @@ func (t *selftest19) startShell() selftest.Outcome {
 	t.surface.SetPaneActions(sessionui.PaneActions{
 		Title: "selftest-19", MenuLabel: locales.In("en").SessionMenuFor(1),
 	})
-	t.tester = ui.NewTester(func(c *ui.Context) { surface.View(c) }, 900, 620)
+	t.tester = ui.NewTester(func(c *ui.Context) { sessionui.SelftestFrame(c, surface) }, 900, 620)
 	t.tester.SetLocale("en")
 	t.tester.Frame()
 	t.tester.ClickAt(450, 560)

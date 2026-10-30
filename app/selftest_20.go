@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -70,7 +71,7 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 	}
 	m := locales.In("en")
 
-	if err := t.tester.Click(m.VaultGroupNew()); err != nil {
+	if err := chooseVaultAction(t.tester, m, m.VaultGroupNew()); err != nil {
 		return t.fail(fmt.Errorf("open the Host Group editor: %w", err))
 	}
 	t.tester.Frame()
@@ -103,20 +104,19 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 			stored.Port))
 	}
 
-	// Drag the Host row onto the group row: this exercises the view's drag
-	// payload and drop target, not just the state method they call.
-	hostRect, ok := t.tester.Find("web-1")
-	if !ok {
-		return t.fail(fmt.Errorf("Host row not found: %v", t.tester.Texts()))
+	// Drag the Host card onto the prod card, open prod, which lists prod/web
+	// as a card, and drag it onto that: this exercises the view's drag
+	// payload and drop targets, not just the state method they call.
+	if err := t.dragHost("web-1", "prod"); err != nil {
+		return t.fail(err)
 	}
-	groupRect, ok := t.tester.Find("prod/web")
-	if !ok {
-		return t.fail(fmt.Errorf("group row not found: %v", t.tester.Texts()))
+	if err := t.tester.Click("prod"); err != nil {
+		return t.fail(fmt.Errorf("open the prod group: %w", err))
 	}
-	t.tester.Press(hostRect.X+hostRect.W/2, hostRect.Y+hostRect.H/2)
-	t.tester.Move(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
-	t.tester.Release(groupRect.X+groupRect.W/2, groupRect.Y+groupRect.H/2)
 	t.tester.Frame()
+	if err := t.dragHost("web-1", "web"); err != nil {
+		return t.fail(err)
+	}
 
 	raw, err := t.service.List(context.Background())
 	if err != nil {
@@ -155,6 +155,30 @@ func (t *selftest20) groupStep(*ui.Context) selftest.Outcome {
 	return selftest.Passed(
 		"real store: group create, Host create, drag/drop membership, inherited username and port",
 		"appvault.Service + store.Store + vaultui.View + ui.Tester")
+}
+
+// dragHost drags the card labeled host onto the card labeled target. The
+// press comes well after any click, so it is not a double-click, and the
+// pointer moves before it reaches the target so a drag starts.
+func (t *selftest20) dragHost(host, target string) error {
+	from, ok := t.tester.Find(host)
+	if !ok {
+		return fmt.Errorf("Host card %q not found: %v", host, t.tester.Texts())
+	}
+	to, ok := t.tester.Find(target)
+	if !ok {
+		return fmt.Errorf("group card %q not found: %v", target, t.tester.Texts())
+	}
+	t.tester.Advance(time.Second)
+	t.tester.Press(from.X+from.W/2, from.Y+from.H/2)
+	t.tester.Frame()
+	t.tester.Move(from.X+from.W/2+8, from.Y+from.H/2+8)
+	t.tester.Frame()
+	t.tester.Move(to.X+to.W/2, to.Y+to.H/2)
+	t.tester.Frame()
+	t.tester.Release(to.X+to.W/2, to.Y+to.H/2)
+	t.tester.Frame()
+	return nil
 }
 
 func (t *selftest20) proxyStep(*ui.Context) selftest.Outcome {
@@ -323,8 +347,12 @@ func (selftest20Auth) AuthPlan(context.Context, appconnection.Request) (appconne
 
 func (t *selftest20) deleteGroupStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
-	if err := t.tester.Click(m.VaultHostDelete()); err != nil {
-		return t.fail(fmt.Errorf("click group Delete: %w", err))
+	// prod is still open, listing the prod/web card; Delete is in its menu.
+	if err := t.tester.Click(m.VaultItemActions("web")); err != nil {
+		return t.fail(fmt.Errorf("open the group menu: %w", err))
+	}
+	if err := t.tester.ChooseMenuItem(m.VaultHostDelete()); err != nil {
+		return t.fail(fmt.Errorf("choose group Delete: %w", err))
 	}
 	t.tester.Frame()
 	if !textsContained(t.tester.Texts(), "Delete Host Group") {
@@ -358,8 +386,8 @@ func (t *selftest20) deleteGroupStep(*ui.Context) selftest.Outcome {
 func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 	m := locales.In("en")
 	// The Host lost its group above, so give it a username and tags of its
-	// own: the summary then has the same token count as the reported
-	// three-line case instead of only an endpoint and an auth method.
+	// own: its card then names the user on the address line, and the tags
+	// must not push that line off the card.
 	host := t.state.Items()[0]
 	t.state.BeginEdit(host.ID)
 	t.state.Form().Username = "deploy"
@@ -371,15 +399,16 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 	if !ok {
 		return t.fail(fmt.Errorf("Host %q is missing after the edit", host.Label))
 	}
-	summary := []string{
-		fmt.Sprintf("%s:%d", effective.Hostname, effective.Port),
-		"deploy", m.VaultAuthSummaryKeyboard(), "prod, web",
+	address := effective.Hostname
+	if effective.Port != 0 && effective.Port != 22 {
+		address = fmt.Sprintf("%s:%d", effective.Hostname, effective.Port)
 	}
+	summary := []string{effective.Label, "deploy@" + address}
 
 	// Render through the real shell, including a work Tab, so the Vault gets
-	// the production content width and height: the window minus the fixed
-	// sidebar, content padding, and tab strip. Rendering the surface alone at
-	// 720 hid the layout bugs the real window showed.
+	// the production content width and height: the window minus the Tab bar,
+	// the Vault's sidebar, and the content card. Rendering the surface alone
+	// at 720 hid the layout bugs the real window showed.
 	service := appsession.NewService(selftest20Factory{})
 	defer service.CloseAll()
 	shell := shellstate.NewState(
@@ -402,11 +431,7 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 		tester.Frame()
 
 		for _, want := range []string{
-			m.VaultHostNew(), m.VaultGroupNew(), m.VaultProxyNew(),
-			m.VaultKnownHostsTitle(t.state.KnownHostCount()),
-			m.VaultKeyListTitle(t.state.KeyCount()),
-			m.VaultIdentityListTitle(t.state.IdentityCount()),
-			"web-1",
+			m.VaultHostNew(), m.VaultMoreActions(), m.VaultItemActions("web-1"), "web-1",
 		} {
 			if !tester.HasText(want) {
 				return t.fail(fmt.Errorf("%dx%d: %q is not rendered: %v",
@@ -418,7 +443,7 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 			return t.fail(fmt.Errorf("%dx%d: %w", size.width, size.height, err))
 		}
 		if lines > 2 {
-			return t.fail(fmt.Errorf("%dx%d: the Host summary uses %d lines, want at most 2",
+			return t.fail(fmt.Errorf("%dx%d: the Host card uses %d lines, want at most 2",
 				size.width, size.height, lines))
 		}
 		// Every laid-out text must stay inside the window. Texts the Scroll
@@ -436,8 +461,8 @@ func (t *selftest20) layoutStep(*ui.Context) selftest.Outcome {
 	}
 	t.cleanup()
 	return selftest.Passed(
-		"the Vault renders inside the production shell and tab strip at 1100x720 "+
-			"and 720x480 with a two-line Host summary and no horizontal overflow",
+		"the Vault renders inside the production shell and Tab bar at 1100x720 "+
+			"and 720x480 with a two-line Host card and no horizontal overflow",
 		"shellui.View + vaultui.View + ui.Tester")
 }
 
@@ -585,4 +610,13 @@ func textsContained(texts []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// chooseVaultAction opens the Hosts toolbar's More actions menu and chooses
+// item, as a user reaches New Group, Import, Export, and Backups.
+func chooseVaultAction(tester *ui.Tester, m locales.Messages, item string) error {
+	if err := tester.Click(m.VaultMoreActions()); err != nil {
+		return err
+	}
+	return tester.ChooseMenuItem(item)
 }

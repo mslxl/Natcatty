@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -120,15 +121,26 @@ func TestVaultViewListsHostDetails(t *testing.T) {
 		},
 	}}
 	_, tt := newView(t, repo)
+	m := locales.In("en")
 
+	// A card shows its Host's label and where it connects; the group is a
+	// card of its own.
 	for _, want := range []string{
-		"web", "example.com:22", "root", "prod/web", "★",
-		"My shell", locales.In("en").VaultHostLocal(),
-		locales.In("en").VaultHostEdit(),
-		locales.In("en").VaultHostDelete(),
+		"web", "root@example.com", "prod", m.VaultGroupMemberCount(1),
+		"My shell", m.VaultHostLocal(),
 	} {
 		if !tt.HasText(want) {
 			t.Errorf("Vault does not show %q, texts %q", want, tt.Texts())
+		}
+	}
+	// Its menu holds the actions, a pinned Host's offering Unpin.
+	if err := tt.Click(m.VaultItemActions("web")); err != nil {
+		t.Fatalf("open the card menu: %v", err)
+	}
+	menu := strings.Join(tt.Menu(), "|")
+	for _, want := range []string{m.VaultHostConnect(), m.VaultHostEdit(), m.VaultHostUnpin(), m.VaultHostDelete()} {
+		if !strings.Contains(menu, want) {
+			t.Errorf("the card menu %q has no %q", menu, want)
 		}
 	}
 }

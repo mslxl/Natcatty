@@ -88,6 +88,7 @@ import (
 	transferui "github.com/mslxl/natcatty/ui/transfer"
 	transferstate "github.com/mslxl/natcatty/ui/transfer/state"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
+	vaultsection "github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -119,6 +120,7 @@ func run(afterReady func(hostWindow)) error {
 	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
 	var transferState *transferstate.State
+	var filesState *transferstate.State
 	var fileOpenService *appfileopen.Service
 	var editorState *editorui.State
 	var associationsState *settings.AssociationsState
@@ -545,8 +547,7 @@ func run(afterReady func(hostWindow)) error {
 	if err := transferQueue.Start(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, "natcatty: transfer history:", err)
 	}
-	transferState = transferstate.NewState(
-		transferService,
+	transferOptions := []transferstate.Option{
 		transferstate.WithQueue(transferQueue),
 		transferstate.WithRedrawRequest(invalidate),
 		transferstate.WithKeybindings(keybindingService),
@@ -565,7 +566,11 @@ func run(afterReady func(hostWindow)) error {
 		// An external application's edit is watched through its pane's Tab, so
 		// closing the Tab releases the session and its materialized copy.
 		transferstate.WithFileSessionCloser(fileOpenService.Close),
-	)
+	}
+	transferState = transferstate.NewState(transferService, transferOptions...)
+	// A Session Tab's SFTP panel browses its Host on a state of its own, so
+	// the SFTP Tab's two panes keep what the user chose there.
+	filesState = transferstate.NewState(transferService, transferOptions...)
 
 	// Port Forwarding Rules reuse the same Vault routes and connection pool as
 	// a Session. Runtime state is owned by this manager and never persisted.
@@ -901,9 +906,6 @@ func run(afterReady func(hostWindow)) error {
 				sessionui.WithAutocompleteDelay(func() int {
 					return terminalService.Settings().AutocompleteDebounceMs
 				}),
-				sessionui.WithSessionStats(func() bool {
-					return terminalService.Settings().ShowSessionStats
-				}),
 				// The terminal font and its catalog bindings are read when a
 				// terminal is created; an Appearance change restyles open
 				// terminals through State.SetTerminalFont.
@@ -937,13 +939,39 @@ func run(afterReady func(hostWindow)) error {
 			}
 			return sessionui.New(s, options...)
 		}),
-		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState))),
+		state.WithVault(vaultui.View(vaultState, vaultui.WithForwarding(forwardingState),
+			vaultui.WithSection(func() vaultsection.Section {
+				if shellState == nil {
+					return vaultsection.Hosts
+				}
+				return shellState.VaultSection()
+			}),
+			vaultui.WithLocalTerminal(func() {
+				if shellState != nil {
+					_ = shellState.NewTab()
+				}
+			}),
+			vaultui.WithSerial(func() {
+				if shellState != nil {
+					shellState.RequestSerial()
+				}
+			}))),
 		state.WithMonitor(uimonitoring.View(monitorState),
 			monitorState.Activate, monitorState.Deactivate),
 		state.WithSystemManager(uisysmanager.View(sysManagerState),
 			sysManagerState.Activate, sysManagerState.Deactivate),
 		state.WithLogs(logsui.View(logsState)),
 		state.WithSFTP(transferui.View(transferState)),
+		state.WithSFTPTabShown(func() bool {
+			return preferenceService.Settings().Layout.ShowSFTPTab
+		}),
+		state.WithFilesPanel(state.FilesPanel{
+			View: func(close func()) func(*ui.Context) { return transferui.SidePanel(filesState, close) },
+			ShowRemote: func(hostID model.HostID, label string) {
+				filesState.ShowRemote(transferstate.Left, hostID, label)
+			},
+			ShowLocal: func() { filesState.ShowLocal(transferstate.Left) },
+		}),
 		state.WithEditor(editorui.View(editorState)),
 		state.WithSearch(overlayState),
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
@@ -1136,6 +1164,7 @@ func run(afterReady func(hostWindow)) error {
 		// rows are still reading and writing.
 		transferQueue.Shutdown()
 		transferState.Shutdown()
+		filesState.Shutdown()
 		editorState.Shutdown()
 		// Close every editing session before the surface's connections go
 		// away, then remove any materialized copy still on disk.
@@ -1201,6 +1230,7 @@ func run(afterReady func(hostWindow)) error {
 			// Session's Host has a pane; reporting here costs nothing when it
 			// is off.
 			forwardTerminalCwd(sessions, transferState, snapshot)
+			forwardTerminalCwd(sessions, filesState, snapshot)
 			// A Session replaced under the same Host (host re-open, tab
 			// replacement) advances the external scope's ownership generation,
 			// invalidating prior grants and pending approvals. The hook runs for

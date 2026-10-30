@@ -59,8 +59,6 @@ type Options struct {
 	// AutocompleteDelay is the debounce in milliseconds before suggestions are
 	// recomputed. Nil means immediately.
 	AutocompleteDelay func() int
-	// ShowStats reports whether the Session counters are drawn.
-	ShowStats func() bool
 	// Font reads the live terminal font. The app applies a Settings change to
 	// open terminals through SetTerminalFont; this is what a new terminal uses.
 	Font func() terminal.Font
@@ -105,6 +103,10 @@ type PaneActions struct {
 	Close      func()
 	// Rename sets the Pane's Tab title to the trimmed, non-empty argument.
 	Rename func(title string)
+	// ToggleFiles opens or closes the Tab's SFTP panel on this Pane's Host;
+	// FilesOpen reports that it is open. Nil hides the toolbar's Files button.
+	ToggleFiles func()
+	FilesOpen   bool
 	// Title is the Pane's current title. MenuLabel is the accessible name of
 	// this Pane's Session menu, unique among the Panes of one window.
 	Title     string
@@ -184,11 +186,6 @@ func WithSuggestions(suggest func(input, scope string) []autocomplete.Suggestion
 // changes.
 func WithAutocompleteDelay(fn func() int) Option {
 	return func(options *Options) { options.AutocompleteDelay = fn }
-}
-
-// WithSessionStats supplies the live statistics visibility setting.
-func WithSessionStats(show func() bool) Option {
-	return func(options *Options) { options.ShowStats = show }
 }
 
 // WithTerminalFont supplies the live terminal font a new terminal uses.
@@ -465,6 +462,39 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
+	s.refreshSuggestions(snapshot.Input, snapshot.Command.Running)
+	model, actions := s.chrome(c, snapshot)
+
+	return ui.Column(c).Fill().Children(func() {
+		if s.browserErr != nil {
+			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
+				Background(t.Surface).Children(func() {
+				ui.Text(c, m.BrowserOpenFailed()).FontSize(11).Grow(1).
+					MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
+				if ui.Button(c, m.SessionDismiss()).Clicked() {
+					s.browserErr = nil
+					s.redraw()
+				}
+			})
+		}
+		renderChrome(c, model, m, t, actions)
+		switch {
+		case s.observing && s.observer != nil:
+			s.observerView(c, m, t)
+		case model.Hibernated || s.terminal == nil:
+			s.hibernatedView(c, m, t)
+		default:
+			s.terminalView(c)
+		}
+		if s.renaming {
+			s.renameDialog(c, m, t)
+		}
+	})
+}
+
+// chrome builds what the Session's chrome and its Pane toolbar show from one
+// snapshot, so the header's menu and the banners under it agree.
+func (s *Surface) chrome(c *ui.Context, snapshot appsession.Snapshot) (chromeModel, chromeActions) {
 	if snapshot.Logging.Active && validLogFormat(snapshot.Logging.Format) {
 		s.logFormat = snapshot.Logging.Format
 	}
@@ -494,8 +524,6 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 	if canReconnect && s.options.Reconnectable != nil {
 		canReconnect = s.options.Reconnectable()
 	}
-	s.refreshSuggestions(snapshot.Input, snapshot.Command.Running)
-	showStats := s.options.ShowStats != nil && s.options.ShowStats()
 	ghostText := ""
 	if s.showGhost && len(s.suggestions) > 0 {
 		ghostText = s.suggestions[0].Text
@@ -530,9 +558,8 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		ShowAutocomplete: s.showAutocomplete,
 		ShowGhost:        s.showGhost,
 		GhostText:        ghostText,
-		ShowStats:        showStats,
-		Stats:            snapshot.Stats,
 		Hibernated:       hibernated,
+		FilesOpen:        s.paneActions.FilesOpen,
 	}
 	var saveScreen, clearBuffer func()
 	if !hibernated && s.terminal != nil {
@@ -586,33 +613,18 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		AcceptSuggestion: func(index int) {
 			s.acceptSuggestion(index)
 		},
+		ToggleFiles: s.paneActions.ToggleFiles,
 	}
+	return model, actions
 
-	return ui.Column(c).Fill().Children(func() {
-		if s.browserErr != nil {
-			ui.Row(c).FillWidth().Padding(6, 8).Gap(8).AlignItems(ui.Center).
-				Background(t.Surface).Children(func() {
-				ui.Text(c, m.BrowserOpenFailed()).FontSize(11).Grow(1).
-					MinWidth(0).SingleLine().TextColor(uitheme.DangerText(t))
-				if ui.Button(c, m.SessionDismiss()).Clicked() {
-					s.browserErr = nil
-					s.redraw()
-				}
-			})
-		}
-		renderChrome(c, model, m, t, actions)
-		switch {
-		case s.observing && s.observer != nil:
-			s.observerView(c, m, t)
-		case hibernated || s.terminal == nil:
-			s.hibernatedView(c, m, t)
-		default:
-			s.terminalView(c)
-		}
-		if s.renaming {
-			s.renameDialog(c, m, t)
-		}
-	})
+}
+
+// Toolbar renders the Session's controls for its Pane header: Files (SFTP),
+// the two splits, and the Session menu. The shell places it at the header's
+// right edge, so the terminal itself starts right under the header.
+func (s *Surface) Toolbar(c *ui.Context) {
+	model, actions := s.chrome(c, s.session.Snapshot())
+	toolbar(c, model, locales.In(c.Locale()), c.Theme(), actions)
 }
 
 // terminalView shows the live terminal. It is the Session's one live view.

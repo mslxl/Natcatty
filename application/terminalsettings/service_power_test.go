@@ -32,8 +32,6 @@ func TestPowerUxSettersPersist(t *testing.T) {
 			}},
 		{"highlight off", func() error { return service.SetKeywordHighlightEnabled(false) },
 			func(s domainterminal.Settings) bool { return !s.KeywordHighlightEnabled }},
-		{"stats off", func() error { return service.SetShowSessionStats(false) },
-			func(s domainterminal.Settings) bool { return !s.ShowSessionStats }},
 	}
 	for _, step := range steps {
 		if err := step.apply(); err != nil {

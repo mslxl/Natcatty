@@ -13,9 +13,11 @@ import (
 // TestSidebarLanguageOptionsFitAtMinimumClient is the ticket-43 regression for
 // the shell sidebar at the app's enforced minimum window: a 720x480 window has
 // a 704x421 client area. At 0fd22027 the Language group ended at y=540, 28 DIPs
-// below the client, so the last language option was unreachable. Ticket 61
-// tracks this cross-cutting shell defect; this test keeps it fixed for 43.
-func TestSidebarLanguageOptionsFitAtMinimumClient(t *testing.T) {
+// below the client, so the last language option was unreachable. The picker
+// is now a button in the window's Tab bar opening a menu of every language;
+// the button must stay inside the bar and every language must be choosable
+// from it.
+func TestLanguagePickerFitsAtMinimumClient(t *testing.T) {
 	const width, height = 704, 421
 	var requested []string
 	shellState := state.NewState(state.WithLocaleRequest(func(tag string) {
@@ -24,23 +26,26 @@ func TestSidebarLanguageOptionsFitAtMinimumClient(t *testing.T) {
 	tester := ui.NewTester(View(shellState), width, height)
 	tester.SetLocale("en")
 	tester.Frame()
+	picker := locales.In("en").NavLanguage()
+	rect, ok := tester.Find(picker)
+	if !ok || rect.W <= 0 || rect.H <= 0 {
+		t.Fatalf("the Tab bar lost the language picker: %+v present=%v: %v",
+			rect, ok, tester.Texts())
+	}
+	// The picker must stay in the Tab bar's own box, not merely somewhere
+	// inside the client.
+	if rect.X < -0.5 || rect.X+rect.W > width+0.5 ||
+		rect.Y < -0.5 || rect.Y+rect.H > topBarHeight+0.5 {
+		t.Fatalf("the language picker is clipped in the Tab bar at %dx%d: %+v",
+			width, height, rect)
+	}
 	for _, tag := range locales.Tags() {
 		label := i18n.Autonym(tag)
-		rect, ok := tester.Find(label)
-		if !ok || rect.W <= 0 || rect.H <= 0 {
-			t.Fatalf("the sidebar lost the %s language option: %+v present=%v: %v",
-				label, rect, ok, tester.Texts())
+		if err := tester.Click(picker); err != nil {
+			t.Fatalf("the language picker is not clickable: %v", err)
 		}
-		// The options must stay in the sidebar's own content box, not merely
-		// somewhere inside the client: wrapping into the content pane would
-		// still be unreachable as a language control.
-		if rect.X < shellPadding-0.5 || rect.X+rect.W > sidebarWidth+0.5 ||
-			rect.Y < -0.5 || rect.Y+rect.H > height+0.5 {
-			t.Fatalf("the %s language option is clipped in the sidebar at %dx%d: %+v",
-				label, width, height, rect)
-		}
-		if err := tester.Click(label); err != nil {
-			t.Fatalf("the %s language option is not clickable: %v", label, err)
+		if err := tester.ChooseMenuItem(label); err != nil {
+			t.Fatalf("the %s language is not in the picker's menu: %v", label, err)
 		}
 		tester.Frame()
 	}

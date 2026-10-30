@@ -45,7 +45,6 @@ type terminalSettingsRecord struct {
 	AutocompleteHistoryScope   domainterminal.AutocompleteHistoryScope `json:"autocompleteHistoryScope"`
 	KeywordHighlightEnabled    bool                                    `json:"keywordHighlightEnabled"`
 	KeywordHighlightRules      []domainterminal.KeywordHighlightRule   `json:"keywordHighlightRules,omitempty"`
-	ShowSessionStats           bool                                    `json:"showSessionStats"`
 
 	ConnectionLogRetentionCount int `json:"connectionLogRetentionCount"`
 	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
@@ -88,7 +87,7 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	settings.DropAction = record.DropAction
 	if record.Version >= 3 {
 		// Version 2 files have no power-UX group. Leaving the defaults in
-		// place keeps autocomplete, highlighting, and statistics on for them.
+		// place keeps autocomplete and highlighting on for them.
 		settings.AutocompleteEnabled = record.AutocompleteEnabled
 		settings.AutocompleteGhostText = record.AutocompleteGhostText
 		settings.AutocompletePopupMenu = record.AutocompletePopupMenu
@@ -98,7 +97,6 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 		settings.AutocompleteHistoryScope = record.AutocompleteHistoryScope
 		settings.KeywordHighlightEnabled = record.KeywordHighlightEnabled
 		settings.KeywordHighlightRules = record.KeywordHighlightRules
-		settings.ShowSessionStats = record.ShowSessionStats
 	}
 	if record.Version >= 4 {
 		settings.ConnectionLogRetentionCount = record.ConnectionLogRetentionCount
@@ -135,7 +133,6 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 		AutocompleteHistoryScope:   settings.AutocompleteHistoryScope,
 		KeywordHighlightEnabled:    settings.KeywordHighlightEnabled,
 		KeywordHighlightRules:      settings.KeywordHighlightRules,
-		ShowSessionStats:           settings.ShowSessionStats,
 
 		ConnectionLogRetentionCount: settings.ConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,

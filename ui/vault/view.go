@@ -14,11 +14,13 @@ import (
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
-	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
+	"github.com/mslxl/natcatty/ui/icons"
+	"github.com/mslxl/natcatty/ui/kit"
 	"github.com/mslxl/natcatty/ui/locales"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
@@ -28,11 +30,33 @@ type Option func(*options)
 type options struct {
 	forwarding *uiforwarding.State
 	search     *uisearch.State
+	section    func() section.Section
+	// localTerminal and serial open a local terminal and the serial dialog
+	// from the Hosts page's toolbar, as the original's Terminal and Serial.
+	localTerminal func()
+	serial        func()
+}
+
+// WithLocalTerminal puts a Terminal button on the Hosts page that calls open.
+func WithLocalTerminal(open func()) Option {
+	return func(o *options) { o.localTerminal = open }
+}
+
+// WithSerial puts a Serial button on the Hosts page that calls open.
+func WithSerial(open func()) Option {
+	return func(o *options) { o.serial = open }
 }
 
 // WithForwarding embeds the Port Forwarding Rule list and editor in the Vault.
 func WithForwarding(s *uiforwarding.State) Option {
 	return func(o *options) { o.forwarding = s }
+}
+
+// WithSection draws only the Vault page page returns each frame, as the
+// shell's sidebar chooses it. Without it the Vault draws every family on one
+// page.
+func WithSection(page func() section.Section) Option {
+	return func(o *options) { o.section = page }
 }
 
 // withSearch injects the search state. In-package tests use it to type into
@@ -137,6 +161,7 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 		opt(&configured)
 	}
 	var positions scrolls
+	var at browse
 	// The Vault's inline search survives frames with the view; its records
 	// read the live Vault state each build.
 	search := configured.search
@@ -200,39 +225,29 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 			case surfaceBackups:
 				backupPanel(c, s, m, t, &positions.editor)
 			default:
-				list(c, s, configured.forwarding, search, m, t, &positions.list)
+				page := section.All
+				if configured.section != nil {
+					page = configured.section()
+				}
+				list(c, s, configured, search, page, &at, m, t, &positions.list)
 			}
 		})
 	}
 }
 
-func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State,
-	search *uisearch.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
-	// Wrap, so the title keeps one line and every action stays inside the
-	// content column at the 720x480 minimum: the actions move to the next
-	// line instead of being squeezed or clipped at the right edge.
-	ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-		ui.Text(c, m.VaultHostListTitle(s.HostCount())).FontSize(20).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultImportTitle()).Clicked() {
-			s.BeginImport()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultExportTitle()).Clicked() {
-			s.BeginExport()
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultBackupOpen()).Clicked() {
-			s.BeginBackups()
-			c.Invalidate()
-		}
-		if ui.PrimaryButton(c, m.VaultHostNew()).Clicked() {
-			s.BeginCreate()
-			c.Invalidate()
-		}
-	})
-
-	searchBar(c, search, m)
+func list(c *ui.Context, s *vaultstate.State, opts options,
+	search *uisearch.State, page section.Section, at *browse, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
+	forwarding := opts.forwarding
+	field := func() { searchBar(c, search, m) }
+	if page.Shows(section.Hosts) {
+		hostsToolbar(c, s, field, opts, at, m, t)
+	} else {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(2, 4, 0, 4).Children(func() {
+			ui.Text(c, pageTitle(s, page, m)).FontSize(20).FontWeight(600).SingleLine()
+			ui.Column(c).Grow(1)
+		})
+		field()
+	}
 
 	problem(c, s, t)
 	secretBanner(c, s, m, t)
@@ -245,13 +260,12 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State,
 				break
 			}
 		}
-		ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-			ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
-			if ui.Button(c, m.VaultHostCancel()).Clicked() {
+		kit.Notice(c, icons.Trash, t.Danger, message, func() {
+			if kit.GhostButton(c, "", m.VaultHostCancel()).Clicked() {
 				s.CancelDelete()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.VaultHostDelete()).Clicked() {
+			if kit.DangerButton(c, icons.Trash, m.VaultHostDelete()).Clicked() {
 				_ = s.ConfirmDelete()
 				c.Invalidate()
 			}
@@ -278,17 +292,49 @@ func list(c *ui.Context, s *vaultstate.State, forwarding *uiforwarding.State,
 			vaultSearchResults(c, search, m, t)
 			return
 		}
-		hostSections(c, s, m, t)
-		keySection(c, s, m, t)
-		identitySection(c, s, m, t)
-		proxySection(c, s, m, t)
-		knownHostSection(c, s, m, t)
-		snippetSection(c, s, m, t)
-		notesSection(c, s, m, t)
-		if forwarding != nil {
+		if page.Shows(section.Hosts) {
+			hostsPage(c, s, at, m, t)
+		}
+		if page.Shows(section.Keychain) {
+			keySection(c, s, m, t)
+			identitySection(c, s, m, t)
+		}
+		if page.Shows(section.Proxies) {
+			proxySection(c, s, m, t)
+		}
+		if page.Shows(section.KnownHosts) {
+			knownHostSection(c, s, m, t)
+		}
+		if page.Shows(section.Snippets) {
+			snippetSection(c, s, m, t)
+		}
+		if page.Shows(section.Notes) {
+			notesSection(c, s, m, t)
+		}
+		if forwarding != nil && page.Shows(section.Forwarding) {
 			uiforwarding.Section(c, forwarding)
 		}
 	})
+}
+
+// pageTitle names the Vault page in its header. The Hosts page, and the single
+// page of a Vault with no sidebar, count the Hosts.
+func pageTitle(s *vaultstate.State, page section.Section, m locales.Messages) string {
+	switch page {
+	case section.Keychain:
+		return m.NavKeychain()
+	case section.Proxies:
+		return m.NavProxies()
+	case section.Forwarding:
+		return m.NavForwarding()
+	case section.Snippets:
+		return m.NavSnippets()
+	case section.Notes:
+		return m.NavNotes()
+	case section.KnownHosts:
+		return m.NavKnownHosts()
+	}
+	return m.VaultHostListTitle(s.HostCount())
 }
 
 // scrollbarGutter is the width of the overlay scroll bar's track for theme t:
@@ -311,42 +357,6 @@ type hostGroupSection struct {
 	stored bool
 	depth  int
 	hosts  []domainvault.Host
-}
-
-func hostSections(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().Gap(8).Padding(0, 8).Children(func() {
-		ui.Text(c, m.VaultGroupListTitle(s.GroupCount())).FontSize(16).Bold()
-		ui.Column(c).Grow(1)
-		if ui.Button(c, m.VaultGroupNew()).Clicked() {
-			s.BeginCreateGroup()
-			c.Invalidate()
-		}
-	})
-	if s.GroupCount() == 0 {
-		ui.Text(c, m.VaultGroupEmpty()).FontSize(12).TextColor(t.TextMuted)
-	}
-
-	sections, rootHosts := groupSections(s)
-	for _, section := range sections {
-		if section.stored {
-			groupRow(c, s, section, m, t)
-		} else {
-			implicitGroupRow(c, s, section, m, t)
-		}
-		for _, host := range section.hosts {
-			hostRow(c, s, host, m, t, section.depth+1)
-		}
-	}
-
-	// The Vault root is always a drop target, even with no ungrouped Host, so
-	// every Host can be moved out of a group.
-	rootDropTarget(c, s, m, t)
-	for _, host := range rootHosts {
-		hostRow(c, s, host, m, t, 0)
-	}
-	if s.HostCount() == 0 {
-		ui.Text(c, m.VaultHostEmpty()).TextColor(t.TextMuted)
-	}
 }
 
 // groupSections arranges the listed Hosts under their Host Group. A group a
@@ -416,55 +426,6 @@ func groupIndent(depth int) float32 {
 	return 8 + float32(depth)*16
 }
 
-func groupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, m locales.Messages, t *ui.Theme) {
-	group := section.group
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(section.depth)).
-		Background(t.Surface)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
-		row.Border(1, t.Accent)
-	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, group.Path)
-		c.Invalidate()
-	}
-	row.Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, group.Path).Bold()
-			tokenRow(c, groupSummary(s, group, m), t)
-		})
-		if ui.Button(c, m.VaultHostEdit()).Clicked() {
-			s.BeginEditGroup(group.Path)
-			c.Invalidate()
-		}
-		if ui.Button(c, m.VaultHostDelete()).Clicked() {
-			s.RequestDeleteGroup(group.Path)
-			c.Invalidate()
-		}
-	})
-}
-
-// implicitGroupRow shows a group path only Hosts reference. It has no stored
-// defaults to edit, so it carries no edit or delete action, but it is still a
-// drop target like every other visible group row.
-func implicitGroupRow(c *ui.Context, s *vaultstate.State, section hostGroupSection, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(section.depth)).
-		Background(t.Surface)
-	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
-		row.Border(1, t.Accent)
-	}
-	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
-		s.MoveHostToGroup(drag.HostID, section.path)
-		c.Invalidate()
-	}
-	row.Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, section.path).Bold()
-			ui.Text(c, m.VaultGroupMemberCount(s.GroupMemberCount(section.path))).
-				FontSize(12).TextColor(t.TextMuted)
-		})
-	})
-}
-
 func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messages) []string {
 	parts := make([]string, 0, 5)
 	parts = append(parts, m.VaultGroupMemberCount(s.GroupMemberCount(group.Path)))
@@ -484,20 +445,19 @@ func groupSummary(s *vaultstate.State, group domainvault.Group, m locales.Messag
 // stays visible with no groups so a Host can always return to the root, and it
 // is tall enough that a dragged row does not hide its label.
 func rootDropTarget(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).Radius(t.Radius).Border(1, t.Border)
+	row := ui.Row(c).FillWidth().Gap(10).Padding(8, 10).Margin(8, 0, 0, 0).Radius(kit.RadiusControl).
+		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted)
 	if _, over := ui.DragOver[vaultstate.DragItem](row); over {
-		row.Background(t.Surface).Border(2, t.Accent)
+		row.Background(t.Accent.Alpha(0.08)).Border(2, t.Accent)
 	}
 	if drag, dropped := ui.Drop[vaultstate.DragItem](row); dropped && drag.HostID != "" {
 		s.MoveHostToGroup(drag.HostID, "")
 		c.Invalidate()
 	}
 	row.Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).TextColor(t.TextMuted)
-			ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).
-				FontSize(12).TextColor(t.TextMuted)
-		})
+		ui.Icon(c, icons.Lucide(icons.LayoutGrid)).Size(16, 16)
+		ui.Text(c, m.VaultGroupUngrouped()).FontSize(12).Grow(1).MinWidth(0)
+		ui.Text(c, m.VaultGroupMemberCount(s.RootHostCount())).FontSize(12)
 	})
 }
 
@@ -1190,72 +1150,15 @@ func secretProblem(c *ui.Context, s *vaultstate.State, t *ui.Theme) {
 	ui.Text(c, message).TextColor(uitheme.DangerText(t))
 }
 
-func hostRow(c *ui.Context, s *vaultstate.State, host domainvault.Host, m locales.Messages, t *ui.Theme, indent int) {
-	row := ui.Row(c).FillWidth().Gap(8).Padding(8).PaddingStart(groupIndent(indent)).
-		Background(t.Surface)
-	row.Children(func() {
-		// The summary gets the column's full width below the label and actions,
-		// so it stays at one or two lines at the minimum window size instead of
-		// being squeezed into a narrow column beside five action buttons.
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				// Only the label drags, so the drag ghost stays a small copy of
-				// the label instead of a full row that hides the drop target.
-				ui.Text(c, host.Label).Bold().Drag(vaultstate.HostDrag(host.ID))
-				ui.Column(c).Grow(1)
-			})
-			// The actions get their own wrapping line: at the minimum window
-			// size a long label can no longer squeeze Delete to zero width, and
-			// at the default size all five still share one line.
-			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
-				if host.Protocol == domainvault.ProtocolSSH ||
-					host.Protocol == domainvault.ProtocolMosh ||
-					host.Protocol == domainvault.ProtocolET {
-					testLabel := m.VaultHostTest()
-					if s.Testing(host.ID) {
-						testLabel = m.VaultHostTesting()
-					}
-					if ui.Button(c, testLabel).Clicked() {
-						s.Test(host.ID)
-						c.Invalidate()
-					}
-					if ui.PrimaryButton(c, m.VaultHostConnect()).Clicked() {
-						s.Connect(host.ID)
-						c.Invalidate()
-					}
-				}
-				if ui.Button(c, m.VaultHostEdit()).Clicked() {
-					s.BeginEdit(host.ID)
-					c.Invalidate()
-				}
-				pin := m.VaultHostPin()
-				if host.Pinned {
-					pin = m.VaultHostUnpin()
-				}
-				if ui.Button(c, pin).Clicked() {
-					_ = s.TogglePinned(host.ID)
-					c.Invalidate()
-				}
-				if ui.Button(c, m.VaultHostDelete()).Clicked() {
-					s.RequestDelete(host.ID)
-					c.Invalidate()
-				}
-			})
-
-			summaryRow(c, s, host, m, t)
-			if err := s.TestProblemError(host.ID); err != nil {
-				if text := uiconnection.ProblemTextFor(m, err); text != "" {
-					ui.Text(c, text).FontSize(12).TextColor(uitheme.DangerText(t))
-				}
-			} else if problem := s.TestProblem(host.ID); problem != "" {
-				if text := uiconnection.ProblemText(m, problem); text != "" {
-					ui.Text(c, text).FontSize(12).TextColor(uitheme.DangerText(t))
-				}
-			} else if s.TestSucceeded(host.ID) {
-				ui.Text(c, m.VaultHostTestSuccess()).FontSize(12).TextColor(t.TextMuted)
-			}
-		})
-	})
+// hostAvatarKind picks the avatar glyph for a Host's protocol.
+func hostAvatarKind(protocol domainvault.Protocol) kit.AvatarKind {
+	switch protocol {
+	case domainvault.ProtocolLocal:
+		return kit.AvatarLocal
+	case domainvault.ProtocolTelnet:
+		return kit.AvatarTelnet
+	}
+	return kit.AvatarServer
 }
 
 // securityKeyStatus reports the system OpenSSH agent's hardware identity state

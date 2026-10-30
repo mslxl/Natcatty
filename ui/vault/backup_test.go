@@ -89,7 +89,7 @@ func openBackupPanel(t *testing.T, state *vaultstate.State, tt *ui.Tester, local
 	m := locales.In(locale)
 	tt.SetLocale(locale)
 	tt.Frame()
-	if err := tt.Click(m.VaultBackupOpen()); err != nil {
+	if err := chooseVaultAction(tt, m, m.VaultBackupOpen()); err != nil {
 		t.Fatalf("%s: click Backups: %v", locale, err)
 	}
 	tt.Frame()

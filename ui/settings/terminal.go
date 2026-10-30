@@ -29,7 +29,6 @@ type Terminal interface {
 	SetAutocompleteHistoryScope(domainterminal.AutocompleteHistoryScope) error
 	SetKeywordHighlightEnabled(bool) error
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
-	SetShowSessionStats(bool) error
 	SetConnectionLogRetention(count, days int) error
 	SetHistoryRetention(count, days int) error
 }
@@ -258,11 +257,6 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 		}
 	}
 	return s.SetKeywordHighlightRules(rules)
-}
-
-// SetShowSessionStats shows or hides the counter row.
-func (s *TerminalState) SetShowSessionStats(show bool) bool {
-	return s.apply(func() error { return s.terminal.SetShowSessionStats(show) })
 }
 
 // SetConnectionLogRetention stores how many connection logs are kept and for

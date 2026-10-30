@@ -36,23 +36,22 @@ func TestDualPanesFitAtBothWindowSizes(t *testing.T) {
 			width, height := float32(size[0]), float32(size[1])
 			f := newViewFixture(t, size[0], size[1], tag)
 
+			// The left pane's Tab, breadcrumb, and toolbar; the right pane's
+			// Tab. Each label's first match is the left pane's.
 			labels := []string{
-				m.SftpTitle(),
 				m.SftpLocal(),
 				"Test",
-				m.SftpUp(),
-				m.SftpRefresh(),
+				m.SftpGoHome(),
+				m.SftpBookmarks(),
+				m.SftpCopyPath(),
+				m.SftpCompactList(),
+				m.SftpFilter(),
 				m.SftpNewFolder(),
 				m.SftpNewFile(),
-				m.SftpRename(),
-				m.SftpPermissions(),
-				m.SftpDelete(),
-				m.SftpCopyTo(),
-				m.SftpMoveTo(),
-				m.SftpUpload(),
-				m.SftpSort(),
-				m.SftpShowHidden(),
-				m.SftpBookmarks(),
+				m.SftpShowHiddenFiles(),
+				m.SftpRefresh(),
+				m.SftpMore(),
+				m.SftpColumnName(),
 			}
 			rects := make([]ui.Rect, 0, len(labels))
 			for _, label := range labels {
@@ -106,7 +105,7 @@ func TestHiddenAndSortControlsAffectOnlyTheirPane(t *testing.T) {
 	if f.tester.HasText(".secret") {
 		t.Fatal("a dotfile shows by default")
 	}
-	if err := f.tester.Click(m.SftpShowHidden()); err != nil {
+	if err := f.tester.Click(m.SftpShowHiddenFiles()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
@@ -119,7 +118,7 @@ func TestHiddenAndSortControlsAffectOnlyTheirPane(t *testing.T) {
 	if !f.tester.HasText(".secret") {
 		t.Fatalf("the hidden file did not render: %v", f.tester.Texts())
 	}
-	if err := f.tester.Click(m.SftpShowHidden()); err != nil {
+	if err := f.tester.Click(m.SftpShowHiddenFiles()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
@@ -127,14 +126,8 @@ func TestHiddenAndSortControlsAffectOnlyTheirPane(t *testing.T) {
 		t.Fatal("the hidden file stayed visible after the second click")
 	}
 
-	if err := f.tester.Click(m.SftpSort()); err != nil {
-		t.Fatal(err)
-	}
-	menu := f.tester.Menu()
-	if len(menu) == 0 {
-		t.Fatal("the sort menu did not open")
-	}
-	if err := f.tester.ChooseMenuItem(m.SftpSortSize()); err != nil {
+	// A click on a column header sorts by it; a second click reverses it.
+	if err := f.tester.Click(m.SftpColumnSize()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
@@ -154,10 +147,7 @@ func TestHiddenAndSortControlsAffectOnlyTheirPane(t *testing.T) {
 		t.Fatalf("ascending size order is %v", names)
 	}
 
-	if err := f.tester.Click(m.SftpSort()); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.tester.ChooseMenuItem(m.SftpSortDescending()); err != nil {
+	if err := f.tester.Click(m.SftpColumnSize()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
@@ -184,10 +174,11 @@ func TestTabsBookmarksAndStarControls(t *testing.T) {
 	m := locales.In("en")
 	f := newViewFixture(t, 1100, 720, "en")
 
-	if err := f.tester.Click("+"); err != nil {
+	if err := f.tester.Click(m.SftpAddTab()); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.tester.ChooseMenuItem(m.SftpOpenLocal()); err != nil {
+	f.tester.Frame()
+	if err := f.tester.Click(m.SftpLocalFilesystem()); err != nil {
 		t.Fatal(err)
 	}
 	frameUntil(t, f.tester, "the second local Tab", func() bool {
@@ -199,7 +190,7 @@ func TestTabsBookmarksAndStarControls(t *testing.T) {
 		t.Fatalf("the new Tab started in %q", got)
 	}
 
-	if err := f.tester.Click("+"); err != nil {
+	if err := f.tester.Click(m.SftpMore()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.tester.ChooseMenuItem(m.SftpDuplicateTab()); err != nil {
@@ -213,7 +204,7 @@ func TestTabsBookmarksAndStarControls(t *testing.T) {
 		t.Fatalf("the duplicated Tab is at %q", got)
 	}
 
-	if err := f.tester.Click("+"); err != nil {
+	if err := f.tester.Click(m.SftpMore()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.tester.ChooseMenuItem(m.SftpCloseTab()); err != nil {
@@ -224,7 +215,10 @@ func TestTabsBookmarksAndStarControls(t *testing.T) {
 		t.Fatalf("close left %d Tabs", got)
 	}
 
-	if err := f.tester.Click("★"); err != nil {
+	if err := f.tester.Click(m.SftpBookmarks()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tester.ChooseMenuItem(m.SftpBookmark()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
@@ -299,7 +293,7 @@ func containsText(items []string, want string) bool {
 	return false
 }
 
-func TestCopyRunsFromTheToolbarAndReportsProgress(t *testing.T) {
+func TestCopyRunsFromTheRowMenuAndReportsProgress(t *testing.T) {
 	m := locales.In("en")
 	f := newViewFixture(t, 1100, 720, "en")
 	if err := f.tester.Click("alpha.txt"); err != nil {
@@ -310,7 +304,10 @@ func TestCopyRunsFromTheToolbarAndReportsProgress(t *testing.T) {
 		t.Fatalf("clicking the row selected %v", f.state.Tab(transferstate.Left).Selection)
 	}
 
-	if err := f.tester.Click(m.SftpCopyTo()); err != nil {
+	if err := f.tester.RightClick("alpha.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tester.ChooseMenuItem(m.SftpCopyToOtherPane()); err != nil {
 		t.Fatal(err)
 	}
 	frameUntil(t, f.tester, "the copy to finish", func() bool {
@@ -382,7 +379,7 @@ func TestEveryMetadataOperationKindShowsCompletion(t *testing.T) {
 
 func TestDoubleClickOpensAnUnselectedFolder(t *testing.T) {
 	f := newViewFixture(t, 1100, 720, "en")
-	rect, ok := f.tester.Find("folder/")
+	rect, ok := f.tester.Find("folder")
 	if !ok {
 		t.Fatalf("the folder row is missing: %v", f.tester.Texts())
 	}
@@ -409,12 +406,15 @@ func TestDeleteAsksBeforeRemoving(t *testing.T) {
 	}
 	f.tester.Frame()
 
-	if err := f.tester.Click(m.SftpDelete()); err != nil {
+	if err := f.tester.RightClick("alpha.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tester.ChooseMenuItem(m.SftpDelete()); err != nil {
 		t.Fatal(err)
 	}
 	f.tester.Frame()
 	if dialog := f.state.Dialog(); dialog == nil || dialog.Kind != transferstate.DialogDelete {
-		t.Fatalf("the toolbar did not ask for confirmation: %+v", dialog)
+		t.Fatalf("the row menu did not ask for confirmation: %+v", dialog)
 	}
 	if !f.tester.HasText(m.SftpDeleteTitle()) {
 		t.Fatalf("the confirmation does not explain the deletion: %v", f.tester.Texts())
@@ -464,7 +464,7 @@ func TestNewFolderValidationIsShownWithoutCreating(t *testing.T) {
 func TestHostPickerListsAndOpensAHost(t *testing.T) {
 	m := locales.In("en")
 	f := newViewFixture(t, 720, 480, "en")
-	if err := f.tester.Click(m.SftpConnect()); err != nil {
+	if err := f.tester.Click(m.SftpAddTab()); err != nil {
 		t.Fatal(err)
 	}
 	frameUntil(t, f.tester, "the host list", func() bool {
@@ -500,10 +500,10 @@ func TestEmptyRightPaneOffersBothStarts(t *testing.T) {
 		tab := state.Tab(transferstate.Left)
 		return tab != nil && tab.FS != nil && !tab.Loading
 	})
-	if !tester.HasText(m.SftpNoTab()) {
+	if !tester.HasText(m.SftpSelectHostTitle()) {
 		t.Fatalf("the empty pane does not say so: %v", tester.Texts())
 	}
-	if !tester.HasText(m.SftpOpenLocal()) || !tester.HasText(m.SftpConnect()) {
+	if !tester.HasText(m.SftpSelectHost()) {
 		t.Fatalf("the empty pane does not offer its starting actions: %v", tester.Texts())
 	}
 }

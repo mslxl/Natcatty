@@ -343,6 +343,7 @@ func (s *State) SelectTab(index int) {
 	s.active = index
 	s.tabs[index].Dirty = false
 	s.leaveMonitor()
+	s.leaveSystemManager()
 	s.vaultVisible = false
 	s.logsVisible = false
 	s.sftpVisible = false
@@ -371,6 +372,20 @@ func (s *State) ActiveSnapshot() (appsession.Snapshot, bool) {
 		return appsession.Snapshot{}, false
 	}
 	value, _ := tab.focusedPane()
+	if value == nil || value.session == nil {
+		return appsession.Snapshot{}, false
+	}
+	return value.session.Snapshot(), true
+}
+
+// TabSnapshot returns the Session snapshot of the focused Pane in the Tab at
+// index, for the tab strip's status dot. It reports false when the Tab has no
+// live Session.
+func (s *State) TabSnapshot(index int) (appsession.Snapshot, bool) {
+	if index < 0 || index >= len(s.tabs) {
+		return appsession.Snapshot{}, false
+	}
+	value, _ := s.tabs[index].focusedPane()
 	if value == nil || value.session == nil {
 		return appsession.Snapshot{}, false
 	}

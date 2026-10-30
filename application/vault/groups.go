@@ -209,11 +209,12 @@ func (s *Service) AssignHostGroup(ctx context.Context, id model.HostID, groupPat
 		if err != nil {
 			return internal(err)
 		}
-		if _, ok := findGroup(groups, path); !ok {
-			// A path that only Hosts reference is an implicit group: it has
-			// no saved defaults yet, but the Vault already displays it and the
-			// editor lets a Host use it. Accepting it here keeps the visible
-			// drop target and the saved membership in agreement.
+		if !groupsAtOrBelow(groups, path) {
+			// A path that only Hosts reference, or that only leads to a saved
+			// group, is an implicit group: it has no saved defaults yet, but
+			// the Vault already displays it and the editor lets a Host use
+			// it. Accepting it here keeps the visible drop target and the
+			// saved membership in agreement.
 			hosts, listErr := s.repo.List(ctx)
 			if listErr != nil {
 				return internal(listErr)
@@ -374,6 +375,17 @@ func findGroup(groups []domainvault.Group, path string) (domainvault.Group, bool
 		}
 	}
 	return domainvault.Group{}, false
+}
+
+// groupsAtOrBelow reports whether a saved group is path or lies below it,
+// which makes path one of its levels.
+func groupsAtOrBelow(groups []domainvault.Group, path string) bool {
+	for _, group := range groups {
+		if domainvault.IsGroupAtOrBelow(group.Path, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostsReferenceGroup(hosts []domainvault.Host, path string) bool {

@@ -58,6 +58,8 @@ type Dialog struct {
 	TaskID domainsftp.TaskID
 	// ApplyToAll is the conflict prompt's checkbox state.
 	ApplyToAll bool
+	// Cursor is the Host picker's highlighted row among its matches.
+	Cursor int
 
 	// resolve answers a conflict prompt. It is called once, after the dialog
 	// closes, with the action the user chose and whether it covers the batch.

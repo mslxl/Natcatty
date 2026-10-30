@@ -69,7 +69,7 @@ func TestTicket18CheckRunsThroughTheKeyboard(t *testing.T) {
 	for _, want := range []string{
 		"autocomplete.Service + histfile.Source + sessionui.Surface",
 		"appsession.Service.SetHighlightPolicy + domainterminal.Highlighter",
-		"appsession.Stats + sessionui.RenderSelftestInteraction",
+		"appsession.Stats",
 		"appsession Session hooks + notificationAllowed",
 		"sessionui.RenderSelftestInteraction + ui.Tester",
 		"state.SurfaceFactory",
