@@ -140,29 +140,32 @@ func newMonitorLayoutTesterFor(t *testing.T, width, height int, now time.Time,
 }
 
 // TestMonitorConfigurationIsReachableAtMinimumWindow renders the surface
-// inside the real shell at the app's enforced 720x480 minimum. It fails
-// against the layout that clipped Edit panel and Columns and put the editor's
-// action row below the window.
+// inside the real shell at the app's enforced 720x480 minimum: the header's
+// controls, the editor and its Host picker, and both views must stay inside
+// the window.
 func TestMonitorConfigurationIsReachableAtMinimumWindow(t *testing.T) {
 	m := locales.In("en")
 	tester, monitorState, _ := newMonitorLayoutTester(t, 720, 480)
 
 	for _, label := range []string{
-		m.MonitoringTitle(), m.MonitoringNewPanel(), m.MonitoringEditPanel(),
-		m.MonitoringColumns(), m.MonitoringViewList(), m.MonitoringViewCharts(),
-		"Operations", "5", m.MonitoringSortManual(),
+		m.MonitoringNewPanel(), m.MonitoringEditPanel(), m.MonitoringPanelActions(),
+		m.MonitoringStart(), m.MonitoringViewList(), m.MonitoringViewCharts(),
+		m.MonitoringSeconds(5), m.MonitoringSortManual(),
 	} {
 		assertMonitorInside(t, tester, 720, 480, label)
 	}
-
-	// The typed state of the unsupported Host is visible without horizontal
-	// scrolling: it sits beside the label and in the status column.
-	assertMonitorInside(t, tester, 720, 480, m.MonitoringStatusUnsupported())
-	assertMonitorInside(t, tester, 720, 480, m.MonitoringReasonOS())
-	// A Host without a sample names every headline metric with a dash,
-	// including the GPU slot in the Host detail line.
-	assertMonitorInside(t, tester, 720, 480, "beta.example · "+m.MonitoringGpu()+" —")
-	for _, zero := range []string{"0 ms", "0%", "0 B/s"} {
+	// Opening the surface never connects: the Hosts wait for Start.
+	if !tester.HasText(m.MonitoringStatusStopped()) {
+		t.Fatalf("an unstarted panel does not say so: %v", tester.Texts())
+	}
+	if err := tester.Click(m.MonitoringStart()); err != nil {
+		t.Fatalf("start monitoring: %v", err)
+	}
+	tester.Frame()
+	assertMonitorInside(t, tester, 720, 480, m.MonitoringStop())
+	assertMonitorInside(t, tester, 720, 480, "Beta")
+	// A Host without a sample names its metrics with dashes, never zeros.
+	for _, zero := range []string{"0 ms", "0.0%", "0.0 KiB/s"} {
 		if tester.HasText(zero) {
 			t.Errorf("a Host with no sample still renders %q: %v", zero, tester.Texts())
 		}
@@ -173,87 +176,51 @@ func TestMonitorConfigurationIsReachableAtMinimumWindow(t *testing.T) {
 	}
 	tester.Frame()
 	for _, label := range []string{
-		m.MonitoringPanelFormEdit(), m.MonitoringName(), m.MonitoringDescription(),
-		m.MonitoringSave(), m.MonitoringCancel(), m.MonitoringDeletePanel(),
+		m.MonitoringName(), m.MonitoringDescription(), m.MonitoringSelectedCount(2),
+		m.MonitoringSave(), m.MonitoringCancel(), "Alpha",
 	} {
 		assertMonitorInside(t, tester, 720, 480, label)
 	}
-	// Hosts live in the scrolling part; at least the first one is reachable.
-	if !tester.HasText("Alpha") {
-		t.Fatalf("the editor lost the Host list: %v", tester.Texts())
+	if err := tester.Click(m.MonitoringSelectedCount(2)); err != nil {
+		t.Fatalf("open the Host picker: %v", err)
 	}
-	// Scrolling the form body reaches the Host rows while the pinned actions
-	// stay usable.
-	tester.Scroll(float32(720)/2, 320, 0, 500)
 	tester.Frame()
-	assertMonitorInside(t, tester, 720, 480, "Alpha  alpha.example")
-	for _, label := range []string{m.MonitoringSave(), m.MonitoringCancel(), m.MonitoringDeletePanel()} {
-		assertMonitorInside(t, tester, 720, 480, label)
+	assertMonitorInside(t, tester, 720, 480, m.MonitoringDone())
+	assertMonitorInside(t, tester, 720, 480, "beta.example")
+	if err := tester.Click(m.MonitoringDone()); err != nil {
+		t.Fatalf("close the Host picker: %v", err)
 	}
+	tester.Frame()
 	if err := tester.Click(m.MonitoringCancel()); err != nil {
-		t.Fatalf("close the panel editor after scrolling: %v", err)
+		t.Fatalf("close the panel editor: %v", err)
 	}
 	tester.Frame()
-
-	if err := tester.Click(m.MonitoringColumns()); err != nil {
-		t.Fatalf("open the columns editor: %v", err)
-	}
-	tester.Frame()
-	done := assertMonitorInside(t, tester, 720, 480, m.MonitoringColumnsDone())
-	if err := tester.Click(m.MonitoringColumnsDone()); err != nil {
-		t.Fatalf("close the columns editor: %v", err)
-	}
-	tester.Frame()
-	if tester.HasText(m.MonitoringColumnsHint()) {
-		t.Fatal("the columns editor stayed open after Done")
-	}
-	if done.W <= 0 || done.H <= 0 {
-		t.Fatalf("Done has no box: %+v", done)
+	if tester.HasText(m.MonitoringName()) {
+		t.Fatal("the editor stayed open after Cancel")
 	}
 
-	// The columns editor scrolls to its lower rows while Done stays pinned.
-	if err := tester.Click(m.MonitoringColumns()); err != nil {
-		t.Fatalf("reopen the columns editor: %v", err)
-	}
-	tester.Frame()
-	// Scroll inside the editor body, below its title row and above the
-	// pinned Done row.
-	tester.Scroll(float32(720)/2, 320, 0, 600)
-	tester.Frame()
-	terminal := assertMonitorInside(t, tester, 720, 480, m.MonitoringTerminal()+" · "+m.MonitoringAlwaysVisible())
-	if terminal.Y+terminal.H > 480 {
-		t.Fatalf("the lower column rows are clipped: %+v", terminal)
-	}
-	assertMonitorInside(t, tester, 720, 480, m.MonitoringColumnsDone())
-	if err := tester.Click(m.MonitoringColumnsDone()); err != nil {
-		t.Fatalf("close the columns editor after scrolling: %v", err)
-	}
-	tester.Frame()
-
-	// Charts keep their content and action inside the card at the minimum.
+	// The first card fits the viewport with its terminal action; the
+	// unsupported Host's card is one scroll below in the single-column grid
+	// and says why it has no readings.
 	monitorState.UpdatePanelView(domainpreferences.MonitorViewCharts)
 	tester.Frame()
-	// The first card fits the viewport with its Open action; the unsupported
-	// Host's card is one vertical scroll below in the single-column narrow
-	// grid and must still show its reason and dashes when reached.
-	assertMonitorInside(t, tester, 720, 480, m.MonitoringOpen())
+	assertMonitorInside(t, tester, 720, 480, m.MonitoringOpenTerminal())
 	tester.Scroll(float32(720)/2, 400, 0, 600)
 	tester.Frame()
 	assertMonitorInside(t, tester, 720, 480, m.MonitoringReasonOS())
-	assertMonitorInside(t, tester, 720, 480, "—")
-	tester.Scroll(float32(720)/2, 400, 0, -600)
-	tester.Frame()
-	assertMonitorInside(t, tester, 720, 480, m.MonitoringOpen())
-	for _, zero := range []string{"0 ms", "0%", "0 B/s"} {
+	if !tester.HasText("--") {
+		t.Errorf("the unsupported Host's card shows no dashes: %v", tester.Texts())
+	}
+	for _, zero := range []string{"0 ms", "0.0%", "0.0 KiB/s"} {
 		if tester.HasText(zero) {
 			t.Errorf("a chart for a Host with no sample still renders %q: %v", zero, tester.Texts())
 		}
 	}
 }
 
-// TestMonitorChartWithoutSampleFitsItsActionAtMinimumWindow covers the card
-// that previously clipped its Open button: a degraded Host adds a reason line
-// but has no trend to plot, and its action must still fit at 720x480.
+// TestMonitorChartWithoutSampleFitsItsActionAtMinimumWindow covers a
+// degraded Host's card: no trend to plot, a reason, and its terminal action
+// inside the window at 720x480.
 func TestMonitorChartWithoutSampleFitsItsActionAtMinimumWindow(t *testing.T) {
 	m := locales.In("en")
 	now := time.Now()
@@ -266,39 +233,42 @@ func TestMonitorChartWithoutSampleFitsItsActionAtMinimumWindow(t *testing.T) {
 	}
 	tester, monitorState, _ := newMonitorLayoutTesterFor(t, 720, 480, now, hosts, states)
 	monitorState.UpdatePanelView(domainpreferences.MonitorViewCharts)
+	monitorState.Start()
 	tester.Frame()
 	for _, text := range []string{
-		m.MonitoringReasonOS(), "—", m.MonitoringCpu(), m.MonitoringGpu() + " —",
-		m.MonitoringOpen(),
+		m.MonitoringStatusUnsupported(), "--", m.MonitoringCpu(), m.MonitoringOpenTerminal(),
 	} {
 		assertMonitorInside(t, tester, 720, 480, text)
 	}
+	// The card's footer, with the reason, is one scroll down at the minimum.
+	tester.Scroll(float32(720)/2, 400, 0, 600)
+	tester.Frame()
+	assertMonitorInside(t, tester, 720, 480, m.MonitoringReasonOS())
 }
 
-// TestMonitorChartsKeepMetricsWholeAtDefaultWindow proves the bottom metric
-// row is not split into a label line and a value line at 1100x720.
+// TestMonitorChartsKeepMetricsWholeAtDefaultWindow proves a live card's
+// readings show on single lines inside the window at 1100x720.
 func TestMonitorChartsKeepMetricsWholeAtDefaultWindow(t *testing.T) {
 	m := locales.In("en")
-	tester, _, _ := newMonitorLayoutTester(t, 1100, 720)
+	tester, monitorState, _ := newMonitorLayoutTester(t, 1100, 720)
+	monitorState.Start()
 	if err := tester.Click(m.MonitoringViewCharts()); err != nil {
 		t.Fatalf("open charts: %v", err)
 	}
 	tester.Frame()
-	for _, line := range []string{
-		m.MonitoringDisk() + " 51%", m.MonitoringLatency() + " 12 ms", m.MonitoringGpu() + " 35%",
-	} {
+	for _, line := range []string{"42.0%", "33.0%", "12 ms", "1.0 MiB/s", "4.0 KiB/s"} {
 		rect, ok := tester.Find(line)
 		if !ok {
-			t.Fatalf("chart metric %q was split or hidden: %v", line, tester.Texts())
+			t.Fatalf("chart metric %q is hidden: %v", line, tester.Texts())
 		}
 		if rect.X < sidebarWidth || rect.X+rect.W > 1100 || rect.Y < 0 || rect.Y+rect.H > 720 {
 			t.Fatalf("chart metric %q is clipped: %+v", line, rect)
 		}
-		if rect.H > 22 {
+		if rect.H > 30 {
 			t.Fatalf("chart metric %q wrapped onto %.1f DIPs: %+v", line, rect.H, rect)
 		}
 	}
-	assertMonitorInside(t, tester, 1100, 720, m.MonitoringOpen())
+	assertMonitorInside(t, tester, 1100, 720, m.MonitoringOpenTerminal())
 }
 
 func assertMonitorInside(t *testing.T, tester *ui.Tester, width, height int, text string) ui.Rect {

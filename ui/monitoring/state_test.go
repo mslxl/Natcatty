@@ -194,6 +194,10 @@ func TestStateLoadsPanelsSearchSortAndPersistsColumns(t *testing.T) {
 	if len(order) != 2 || string(order[0].ID) != "h2" || string(order[1].ID) != "h1" {
 		t.Fatalf("manual order = %v, want [h2 h1]", hostIDs(order))
 	}
+	if len(service.starts) != 0 {
+		t.Fatal("opening the surface connected before Start, unlike the original")
+	}
+	state.Start()
 	start := service.lastStart(t)
 	if start.panel != "ops" || start.interval != 10*time.Second || len(start.hosts) != 2 {
 		t.Fatalf("start = %+v, want panel ops at 10s with two Hosts", start)
@@ -216,8 +220,8 @@ func TestStateLoadsPanelsSearchSortAndPersistsColumns(t *testing.T) {
 	if got := hostIDs(state.DisplayHosts()); len(got) != 2 || got[0] != "h1" || got[1] != "h2" {
 		t.Fatalf("name order = %v, want [h1 h2]", got)
 	}
-	state.ToggleColumn("cpu")
-	state.AdjustColumnWidth("host", 20)
+	state.SetColumnVisible("cpu", false)
+	state.SetColumnWidth("host", state.Width("host")+20)
 
 	stored := prefs.Settings().Monitor
 	if len(stored.Panels) != 1 || stored.Panels[0].Sort != domainpreferences.MonitorSortName {
@@ -299,6 +303,10 @@ func TestStateCreatesPanelValidatesAndOpensTerminal(t *testing.T) {
 	if len(panel.HostIDs) != 2 || panel.HostIDs[0] != "h2" || panel.HostIDs[1] != "h1" {
 		t.Fatalf("saved Host order = %v, want [h2 h1]", panel.HostIDs)
 	}
+	if len(service.starts) != 0 {
+		t.Fatal("saving a panel connected before Start, unlike the original")
+	}
+	state.Start()
 	start := service.lastStart(t)
 	if start.panel != "panel-lab" || start.interval != 10*time.Second {
 		t.Fatalf("start = %+v, want panel-lab at 10s", start)
@@ -310,6 +318,7 @@ func TestStateCreatesPanelValidatesAndOpensTerminal(t *testing.T) {
 	state.BeginCreatePanel()
 	state.Form().ID = "panel-other"
 	state.Form().Name = "lab"
+	state.ToggleFormHost("h1")
 	state.SavePanel()
 	if state.Problem() != ProblemDuplicateName {
 		t.Fatalf("duplicate name problem = %q, want duplicate_name", state.Problem())
@@ -342,6 +351,7 @@ func TestStateReportsTooManyHostsAndStopsOnDeactivate(t *testing.T) {
 	}}, prefs, nil, WithClock(func() time.Time { return now }))
 	defer state.Close()
 	state.Activate()
+	state.Start()
 	if state.Problem() != ProblemTooManyHosts {
 		t.Fatalf("problem = %q, want too_many_hosts", state.Problem())
 	}
@@ -350,7 +360,7 @@ func TestStateReportsTooManyHostsAndStopsOnDeactivate(t *testing.T) {
 	}
 
 	service.startErr = nil
-	state.Activate()
+	state.Start()
 	if !state.Running() {
 		t.Fatal("the panel did not start after the cap cleared")
 	}
@@ -393,48 +403,39 @@ func TestViewRendersListChartsEditorAndNarrowWindow(t *testing.T) {
 	tester := ui.NewTester(View(state), 1100, 720)
 	tester.SetLocale("en")
 	tester.Frame()
+	if tester.HasText(m.MonitoringStop()) || !tester.HasText(m.MonitoringStatusStopped()) {
+		t.Fatalf("a panel that was never started shows as running: %v", tester.Texts())
+	}
+	state.Start()
+	tester.Frame()
 	for _, want := range []string{
-		m.MonitoringTitle(), "Alpha", "alpha.example", m.MonitoringCpu(),
-		m.MonitoringMemory(), m.MonitoringStatusLive(), m.MonitoringOpen(),
-		"42%", "12 ms",
+		"Alpha", "alpha.example", m.MonitoringCpu(), m.MonitoringMemory(),
+		m.MonitoringStatusLive(), m.MonitoringOpenTerminal(), "42.0%", "12 ms",
 	} {
 		if !tester.HasText(want) {
 			t.Errorf("list view does not show %q; texts: %v", want, tester.Texts())
 		}
 	}
 
-	// Every header control stays inside the window at both supported sizes
-	// and in both writing systems; a Grow child must not push the last
-	// button past the right edge.
-	localesToCheck := []struct {
-		locale  string
-		columns string
-		title   string
-	}{
-		{"en", m.MonitoringColumns(), m.MonitoringTitle()},
-		{"zh-CN", locales.In("zh-CN").MonitoringColumns(), locales.In("zh-CN").MonitoringTitle()},
-	}
+	// The header's controls stay inside the window at both supported sizes
+	// and in both writing systems.
 	for _, size := range []struct{ width, height int }{{1100, 720}, {720, 480}} {
-		for _, check := range localesToCheck {
+		for _, locale := range []string{"en", "zh-CN"} {
+			lm := locales.In(locale)
 			tester.SetSize(size.width, size.height)
-			tester.SetLocale(check.locale)
+			tester.SetLocale(locale)
 			tester.Frame()
-			for _, label := range []string{
-				check.title,
-				locales.In(check.locale).MonitoringNewPanel(),
-				locales.In(check.locale).MonitoringEditPanel(),
-				check.columns,
-			} {
+			for _, label := range []string{lm.MonitoringNewPanel(), lm.MonitoringEditPanel(), lm.MonitoringStop()} {
 				rect, ok := tester.Find(label)
 				if !ok || rect.W <= 0 || rect.H <= 0 {
 					t.Fatalf("%dx%d %s: header control %q is missing: %v",
-						size.width, size.height, check.locale, label, tester.Texts())
+						size.width, size.height, locale, label, tester.Texts())
 				}
 				if rect.X < 0 || rect.Y < 0 ||
 					rect.X+rect.W > float32(size.width) ||
 					rect.Y+rect.H > float32(size.height) {
 					t.Fatalf("%dx%d %s: header control %q is clipped: %+v",
-						size.width, size.height, check.locale, label, rect)
+						size.width, size.height, locale, label, rect)
 				}
 			}
 		}
@@ -445,34 +446,44 @@ func TestViewRendersListChartsEditorAndNarrowWindow(t *testing.T) {
 
 	state.UpdatePanelView(domainpreferences.MonitorViewCharts)
 	tester.Frame()
-	for _, want := range []string{"Alpha", "Beta", m.MonitoringCpu(), m.MonitoringNetwork()} {
+	for _, want := range []string{"Alpha", "Beta", m.MonitoringCpu(), m.MonitoringPartitions(), "1.0 MiB/s"} {
 		if !tester.HasText(want) {
-			t.Errorf("charts view does not show %q", want)
+			t.Errorf("charts view does not show %q; texts: %v", want, tester.Texts())
 		}
 	}
+
+	state.OpenDetail("h1")
+	tester.Frame()
+	if !tester.HasText(m.MonitoringSystem()) || !tester.HasText(m.MonitoringDownload()) {
+		t.Errorf("the detail panel is missing; texts: %v", tester.Texts())
+	}
+	state.CloseDetail()
 
 	state.BeginCreatePanel()
 	state.Form().Name = "Staging"
 	tester.Frame()
-	if !tester.HasText(m.MonitoringPanelFormCreate()) || !tester.HasText(m.MonitoringSave()) {
+	if !tester.HasText(m.MonitoringSave()) || !tester.HasText(m.MonitoringSelectedCount(0)) {
 		t.Errorf("editor missing; texts: %v", tester.Texts())
 	}
-	if !tester.HasText("Beta") {
-		t.Error("the editor does not list the Vault Hosts")
+	state.BeginPickHosts()
+	tester.Frame()
+	if !tester.HasText("Beta") || !tester.HasText(m.MonitoringDone()) {
+		t.Errorf("the picker does not list the Vault Hosts; texts: %v", tester.Texts())
 	}
 	state.CancelEdit()
 
-	tester.SetSize(720, 480)
+	state.RequestDeletePanel()
 	tester.Frame()
-	if !tester.HasText(m.MonitoringTitle()) {
-		t.Error("the narrow window lost the surface title")
+	if !tester.HasText(m.MonitoringDeleteConfirm("Operations")) {
+		t.Errorf("delete asks for no confirmation; texts: %v", tester.Texts())
 	}
+	state.CancelDeletePanel()
 
 	tester.SetLocale("zh-CN")
 	state.UpdatePanelView(domainpreferences.MonitorViewList)
 	tester.Frame()
-	if !tester.HasText(locales.In("zh-CN").MonitoringTitle()) {
-		t.Errorf("zh-CN title missing; texts: %v", tester.Texts())
+	if !tester.HasText(locales.In("zh-CN").MonitoringStatusLive()) {
+		t.Errorf("zh-CN list missing; texts: %v", tester.Texts())
 	}
 }
 

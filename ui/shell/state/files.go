@@ -3,6 +3,7 @@ package state
 import (
 	"github.com/egoist/mygo/ui"
 
+	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 )
 
@@ -10,12 +11,37 @@ import (
 // app wires one panel state for the window; the shell shows it for the Tab
 // that opened it and points it at that Tab's Host.
 type FilesPanel struct {
-	View func(close func()) func(*ui.Context)
+	// View renders the panel's SFTP tool about width DIPs wide.
+	View func(width float32) func(*ui.Context)
 	// ShowRemote browses a Host, keeping a listing it already has.
 	ShowRemote func(hostID model.HostID, label string)
 	// ShowLocal browses this computer, for a local Session.
 	ShowLocal func()
+	// Dock reads the "Side panel position" setting and SetDock changes it.
+	// Without them the panel stays at DockLeft, the original's default.
+	Dock    func() PanelDock
+	SetDock func(PanelDock)
 }
+
+// PanelDock is the edge of the Tab the side panel sits at.
+type PanelDock string
+
+const (
+	DockLeft   PanelDock = "left"
+	DockRight  PanelDock = "right"
+	DockBottom PanelDock = "bottom"
+)
+
+// The side panel's size, as the original's: 420 DIPs wide by default, between
+// 280 and 1200, and the terminal always keeps 320 beside it. Docked at the
+// bottom it takes a share of the Tab's height instead.
+const (
+	filesDefaultWidth  float32 = 420
+	filesMinWidth      float32 = 280
+	filesMaxWidth      float32 = 1200
+	filesTerminalWidth float32 = 320
+	filesDefaultRatio  float32 = 62
+)
 
 // filesTarget is what a Tab's panel browses: a Host, or this computer when
 // host is empty.
@@ -66,19 +92,83 @@ func (s *State) CloseFiles(tab model.TabID) {
 	s.redraw()
 }
 
-// FilesRatio is the share of the Tab's width the terminal keeps beside an
-// open panel, shared by every Tab so the panel keeps the width the user gave
-// it.
+// ToggleActiveFiles is the "Toggle side panel" shortcut: it opens the active
+// Tab's panel on the focused Session's Host, or closes it when it is open.
+// It reports false when the focused Pane has no file system to show.
+func (s *State) ToggleActiveFiles() bool {
+	tab, _ := s.activeTab()
+	if tab == nil || !s.FilesAvailable() {
+		return false
+	}
+	if s.FilesOpen(tab.ID) {
+		s.CloseFiles(tab.ID)
+		return true
+	}
+	value, _ := tab.focusedPane()
+	if value == nil || value.session == nil {
+		return false
+	}
+	session := value.session
+	switch session.Snapshot().Kind {
+	case appsession.KindSSH:
+		if session.HostID() == "" {
+			return false
+		}
+		s.ToggleFiles(tab.ID, session.HostID(), value.descriptor.Label)
+	case appsession.KindLocal:
+		s.ToggleFiles(tab.ID, "", "")
+	default:
+		return false
+	}
+	return true
+}
+
+// FilesDock is the edge the side panel sits at.
+func (s *State) FilesDock() PanelDock {
+	if s.filesPanel != nil && s.filesPanel.Dock != nil {
+		switch dock := s.filesPanel.Dock(); dock {
+		case DockLeft, DockRight, DockBottom:
+			return dock
+		}
+	}
+	return DockLeft
+}
+
+// SetFilesDock moves the side panel to an edge of the Tab.
+func (s *State) SetFilesDock(dock PanelDock) {
+	if s.filesPanel != nil && s.filesPanel.SetDock != nil {
+		s.filesPanel.SetDock(dock)
+	}
+	s.redraw()
+}
+
+// FilesWidth is the docked-left or docked-right panel's width in DIPs,
+// shared by every Tab so the panel keeps the width the user dragged it to.
+// within is the Tab's width; the terminal keeps filesTerminalWidth of it.
+func (s *State) FilesWidth(within float32) *float32 {
+	if s.filesWidth <= 0 {
+		s.filesWidth = filesDefaultWidth
+	}
+	limit := filesMaxWidth
+	if within > 0 {
+		limit = min(limit, within-filesTerminalWidth)
+	}
+	s.filesWidth = min(max(s.filesWidth, filesMinWidth), max(limit, filesMinWidth))
+	return &s.filesWidth
+}
+
+// FilesRatio is the share of the Tab's height the terminal keeps above a
+// panel docked at the bottom.
 func (s *State) FilesRatio() *float32 {
 	if s.filesRatio <= 0 || s.filesRatio >= 100 {
-		s.filesRatio = 68
+		s.filesRatio = filesDefaultRatio
 	}
 	return &s.filesRatio
 }
 
-// FilesView returns the panel's view for the Tab, pointed at the Tab's
-// target, or nil when the Tab's panel is closed.
-func (s *State) FilesView(tab model.TabID) func(*ui.Context) {
+// FilesView returns the panel's SFTP tool for the Tab, about width DIPs wide
+// and pointed at the Tab's target, or nil when the Tab's panel is closed.
+func (s *State) FilesView(tab model.TabID, width float32) func(*ui.Context) {
 	target, open := s.filesOpen[tab]
 	if !open || !s.FilesAvailable() {
 		return nil
@@ -94,7 +184,7 @@ func (s *State) FilesView(tab model.TabID) func(*ui.Context) {
 			s.filesPanel.ShowRemote(target.host, target.label)
 		}
 	}
-	return s.filesPanel.View(func() { s.CloseFiles(tab) })
+	return s.filesPanel.View(width)
 }
 
 func (s *State) redraw() {

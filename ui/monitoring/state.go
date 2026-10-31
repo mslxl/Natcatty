@@ -1,6 +1,7 @@
 // Package monitoring renders and drives the Host monitoring surface. State
-// owns panel demand, search, ordering, and column configuration; the view
-// localizes every message through the catalogs.
+// owns panel demand, search, ordering, the editor and detail panels, and the
+// list's column configuration; the view localizes every message through the
+// catalogs.
 package monitoring
 
 import (
@@ -51,6 +52,7 @@ type Problem string
 const (
 	ProblemNone          Problem = ""
 	ProblemNameRequired  Problem = "name_required"
+	ProblemHostRequired  Problem = "host_required"
 	ProblemDuplicateName Problem = "duplicate_name"
 	ProblemSave          Problem = "save"
 	ProblemLoad          Problem = "load"
@@ -60,8 +62,37 @@ const (
 	ProblemInternal      Problem = "internal"
 )
 
-// Form is the panel editor's text. Interval and Range stay strings so a
-// hand-edited value produces a localized problem instead of a zero.
+// The surface's own Host states, beside the runtime's: a Host of a panel that
+// is not sampling, and a live Host whose last sample is too old.
+const (
+	StatusStopped domainmonitor.Status = "stopped"
+	StatusStale   domainmonitor.Status = "stale"
+)
+
+// ColumnKeys is the list's column order, as the original's table: the Host,
+// its metadata, its metrics, then its state and the terminal action.
+var ColumnKeys = []string{
+	"host", "latency", "tags", "notes", "cpu", "memory", "disks",
+	"network", "updated", "status", "terminal",
+}
+
+// RangeChoices are the trend windows the toolbar offers, in minutes.
+var RangeChoices = []int{5, 15, 30}
+
+// IntervalChoices are the refresh cadences the toolbar offers: the
+// original hides the sub-three-second ones.
+func IntervalChoices() []int {
+	out := make([]int, 0, len(domainpreferences.MonitorIntervalChoices))
+	for _, choice := range domainpreferences.MonitorIntervalChoices {
+		if choice >= 3 {
+			out = append(out, choice)
+		}
+	}
+	return out
+}
+
+// Form is the panel editor's draft. Interval, Range, and Sort are carried
+// from the edited panel: the toolbar changes them, the editor does not.
 type Form struct {
 	ID          string
 	Name        string
@@ -88,22 +119,28 @@ type State struct {
 	panels    []domainpreferences.MonitorPanel
 	hidden    map[string]bool
 	widths    map[string]int
+	dragging  map[string]float32
 	activeID  string
 	search    string
 	problem   Problem
 	loadErr   error
 
-	editing       bool
-	form          Form
-	formHosts     map[string]bool
-	columnsOpen   bool
-	pendingDelete bool
+	editing      bool
+	creating     bool
+	form         Form
+	formHosts    map[string]bool
+	picking      bool
+	pickerSearch string
+	deleteID     string
+	detailID     string
 
+	// started is the panels the user started. Only the displayed one samples;
+	// leaving the surface pauses it and coming back resumes it.
+	started      map[string]bool
 	runningPanel string
 	snapshot     domainmonitor.Snapshot
 
-	table ui.ListState
-	grid  ui.GridState
+	grid ui.GridState
 
 	mu          sync.Mutex
 	unsubscribe func()
@@ -133,7 +170,9 @@ func NewState(service Service, hosts Hosts, prefs Preferences, open OpenTerminal
 		hostByID:     make(map[string]domainvault.Host),
 		hidden:       make(map[string]bool),
 		widths:       make(map[string]int),
+		dragging:     make(map[string]float32),
 		formHosts:    make(map[string]bool),
+		started:      make(map[string]bool),
 		snapshot: domainmonitor.Snapshot{
 			Hosts:     make(map[string]domainmonitor.HostState),
 			Running:   make(map[string]bool),
@@ -144,21 +183,6 @@ func NewState(service Service, hosts Hosts, prefs Preferences, open OpenTerminal
 		opt(s)
 	}
 	s.reloadConfiguration()
-	s.table.Key = func(row int) any {
-		hosts := s.DisplayHosts()
-		if row >= 0 && row < len(hosts) {
-			return string(hosts[row].ID)
-		}
-		return row
-	}
-	s.table.Label = func(row int) string {
-		hosts := s.DisplayHosts()
-		if row >= 0 && row < len(hosts) {
-			return s.HostLabel(hosts[row])
-		}
-		return ""
-	}
-	s.table.Columns.Widths = s.tableWidths()
 	s.grid.Key = func(item int) any {
 		hosts := s.DisplayHosts()
 		if item >= 0 && item < len(hosts) {
@@ -166,7 +190,13 @@ func NewState(service Service, hosts Hosts, prefs Preferences, open OpenTerminal
 		}
 		return item
 	}
-	s.grid.Label = s.table.Label
+	s.grid.Label = func(item int) string {
+		hosts := s.DisplayHosts()
+		if item >= 0 && item < len(hosts) {
+			return s.HostLabel(hosts[item])
+		}
+		return ""
+	}
 	if service != nil {
 		s.unsubscribe = service.Subscribe(func() { s.requestRedraw() })
 	}
@@ -189,8 +219,10 @@ func (s *State) Close() {
 	s.runningPanel = ""
 }
 
-// Activate reloads Vault Hosts and the persisted configuration, then starts
-// the active panel. The shell calls it when the surface becomes visible.
+// Activate reloads Vault Hosts and the persisted configuration, then resumes
+// the displayed panel if the user started it. The shell calls it when the
+// surface becomes visible. Saving or opening a panel never connects by
+// itself: sampling starts with Start, as in the original.
 func (s *State) Activate() {
 	s.reloadConfiguration()
 	if s.hosts != nil {
@@ -205,11 +237,14 @@ func (s *State) Activate() {
 			s.problem = ProblemLoad
 		}
 	}
-	s.startActive()
+	if s.started[s.activeID] {
+		s.startActive()
+	}
 	s.requestRedraw()
 }
 
-// Deactivate stops sampling. The shell calls it when another surface shows.
+// Deactivate pauses sampling. The shell calls it when another surface shows;
+// the started panel resumes on the next Activate.
 func (s *State) Deactivate() {
 	s.stopActive()
 	s.requestRedraw()
@@ -225,10 +260,7 @@ func (s *State) reloadConfiguration() {
 	for _, key := range monitor.HiddenColumns {
 		s.hidden[key] = true
 	}
-	s.widths = make(map[string]int, len(monitor.ColumnWidths))
-	for key, width := range monitor.ColumnWidths {
-		s.widths[key] = width
-	}
+	s.widths = cloneWidths(monitor.ColumnWidths)
 	if _, ok := s.findPanel(s.activeID); !ok {
 		s.activeID = ""
 		if len(s.panels) > 0 {
@@ -239,11 +271,14 @@ func (s *State) reloadConfiguration() {
 
 // Flush copies the service's runtime snapshot. The view calls it every frame;
 // an event only wakes the UI, so a coalesced event cannot leave stale metrics.
+// A detail panel closes once its Host is no longer live.
 func (s *State) Flush() {
-	if s.service == nil {
-		return
+	if s.service != nil {
+		s.snapshot = s.service.Snapshot()
 	}
-	s.snapshot = s.service.Snapshot()
+	if s.detailID != "" && s.DisplayStatus(s.detailID) != domainmonitor.StatusLive {
+		s.detailID = ""
+	}
 }
 
 // Snapshot returns the latest runtime snapshot.
@@ -251,6 +286,12 @@ func (s *State) Snapshot() domainmonitor.Snapshot { return s.snapshot }
 
 // Hosts returns the Vault Hosts the surface knows.
 func (s *State) Hosts() []domainvault.Host { return s.hostItems }
+
+// Host returns a known Vault Host by id.
+func (s *State) Host(id string) (domainvault.Host, bool) {
+	host, ok := s.hostByID[id]
+	return host, ok
+}
 
 // Panels returns the configured panels.
 func (s *State) Panels() []domainpreferences.MonitorPanel {
@@ -262,14 +303,19 @@ func (s *State) ActivePanel() (domainpreferences.MonitorPanel, bool) {
 	return s.findPanel(s.activeID)
 }
 
-// SetPanel displays another panel and re-targets sampling.
+// SetPanel displays another panel. The previous one pauses; the new one
+// samples only if the user started it.
 func (s *State) SetPanel(id string) {
 	if _, ok := s.findPanel(id); !ok || id == s.activeID {
 		return
 	}
 	s.stopActive()
 	s.activeID = id
-	s.startActive()
+	s.detailID = ""
+	s.closeEditor()
+	if s.started[id] {
+		s.startActive()
+	}
 	s.requestRedraw()
 }
 
@@ -326,13 +372,38 @@ func (s *State) HostLabel(host domainvault.Host) string {
 	return string(host.ID)
 }
 
-// HostState returns a Host's runtime state.
+// HostState returns a Host's runtime state for the displayed panel. While
+// the panel is not sampling it is an empty, stopped state, so a previous
+// run's readings never pass for current ones.
 func (s *State) HostState(id string) domainmonitor.HostState {
+	if !s.Running() {
+		return domainmonitor.HostState{HostID: id, Status: StatusStopped}
+	}
 	if state, ok := s.snapshot.Hosts[id]; ok {
 		return state
 	}
 	return domainmonitor.HostState{HostID: id, Status: domainmonitor.StatusQueued}
 }
+
+// DisplayStatus is the state a Host's badge shows: the runtime status, or
+// stopped while the panel is not sampling, or stale for a live Host whose
+// last sample is older than the freshness window.
+func (s *State) DisplayStatus(id string) domainmonitor.Status {
+	state := s.HostState(id)
+	if state.Status == domainmonitor.StatusLive {
+		interval := domainpreferences.DefaultMonitorInterval
+		if panel, ok := s.findPanel(s.activeID); ok {
+			interval = panel.Interval
+		}
+		if domainmonitor.IsStale(state, time.Duration(interval)*time.Second, s.now()) {
+			return StatusStale
+		}
+	}
+	return state.Status
+}
+
+// Now returns the surface's clock.
+func (s *State) Now() time.Time { return s.now() }
 
 // Search returns the current filter text.
 func (s *State) Search() string { return s.search }
@@ -358,6 +429,46 @@ func (s *State) Running() bool {
 	return ok && s.runningPanel == panel.ID
 }
 
+// Started reports whether the user started the displayed panel.
+func (s *State) Started() bool { return s.started[s.activeID] }
+
+// AnyStarted reports whether any panel was started, for Stop all.
+func (s *State) AnyStarted() bool { return len(s.started) > 0 || s.runningPanel != "" }
+
+// Start begins sampling the displayed panel.
+func (s *State) Start() {
+	if _, ok := s.findPanel(s.activeID); !ok {
+		s.problem = ProblemNoPanel
+		s.requestRedraw()
+		return
+	}
+	s.started[s.activeID] = true
+	s.startActive()
+	if !s.Running() {
+		delete(s.started, s.activeID)
+	}
+	s.requestRedraw()
+}
+
+// Stop ends sampling of the displayed panel.
+func (s *State) Stop() {
+	delete(s.started, s.activeID)
+	s.stopActive()
+	s.detailID = ""
+	s.requestRedraw()
+}
+
+// StopAll ends sampling of every panel.
+func (s *State) StopAll() {
+	s.started = make(map[string]bool)
+	if s.service != nil {
+		s.service.StopAll()
+	}
+	s.runningPanel = ""
+	s.detailID = ""
+	s.requestRedraw()
+}
+
 // StartedAt returns when the running panel began sampling.
 func (s *State) StartedAt() time.Time {
 	panel, ok := s.findPanel(s.activeID)
@@ -370,22 +481,22 @@ func (s *State) StartedAt() time.Time {
 // Hidden reports whether an optional column is hidden.
 func (s *State) Hidden(key string) bool { return s.hidden[key] }
 
-// ToggleColumn hides or shows an optional column and persists the change.
-func (s *State) ToggleColumn(key string) {
-	if key == "host" || key == "terminal" {
+// SetColumnVisible shows or hides an optional column and persists it. Host
+// and terminal are always shown.
+func (s *State) SetColumnVisible(key string, visible bool) {
+	if key == "host" || key == "terminal" || s.hidden[key] == !visible {
 		return
 	}
-	next := !s.hidden[key]
-	if next {
-		s.hidden[key] = true
-	} else {
+	if visible {
 		delete(s.hidden, key)
+	} else {
+		s.hidden[key] = true
 	}
 	if err := s.saveConfiguration(); err != nil {
-		if next {
-			delete(s.hidden, key)
-		} else {
+		if visible {
 			s.hidden[key] = true
+		} else {
+			delete(s.hidden, key)
 		}
 		s.problem = ProblemSave
 	}
@@ -400,55 +511,78 @@ func (s *State) Width(key string) int {
 	return domainpreferences.MonitorColumnDefaults[key]
 }
 
-// TableWidths returns the saved widths as the table's layout.
-func (s *State) TableWidths() map[string]float32 {
-	out := make(map[string]float32, len(s.widths))
-	for key, width := range s.widths {
-		out[key] = float32(width)
+// ColumnWidth is the width a column draws at: the saved width, or the width
+// a header drag in progress has reached.
+func (s *State) ColumnWidth(key string) float32 {
+	if width, ok := s.dragging[key]; ok {
+		return width
 	}
-	return out
+	return float32(s.Width(key))
 }
 
-// SyncColumnWidths persists widths the user changed by dragging a table
-// header. It is a no-op while nothing changed.
-func (s *State) SyncColumnWidths() {
-	changed := false
-	for key, width := range s.table.Columns.Widths {
-		rounded := int(width + 0.5)
-		if rounded <= 0 || rounded == s.widths[key] {
-			continue
-		}
-		s.widths[key] = rounded
-		changed = true
-	}
-	if !changed {
+// DragColumn widens or narrows a column by dx while its header edge drags.
+// Nothing is saved until EndColumnDrag.
+func (s *State) DragColumn(key string, dx float32) {
+	if _, ok := domainpreferences.MonitorColumnDefaults[key]; !ok || dx == 0 {
 		return
 	}
+	width := s.ColumnWidth(key) + dx
+	if width < 40 {
+		width = 40
+	}
+	s.dragging[key] = width
+	s.requestRedraw()
+}
+
+// EndColumnDrag persists the width a header drag reached, clamped by the
+// settings store's rules so the width shown is the width a reload restores.
+func (s *State) EndColumnDrag(key string) {
+	width, ok := s.dragging[key]
+	if !ok {
+		return
+	}
+	delete(s.dragging, key)
+	s.SetColumnWidth(key, int(width+0.5))
+}
+
+// ResetColumnWidth restores a column's default width.
+func (s *State) ResetColumnWidth(key string) {
+	delete(s.dragging, key)
+	s.SetColumnWidth(key, domainpreferences.MonitorColumnDefaults[key])
+}
+
+// SetColumnWidth saves a column's width, clamped as the settings store
+// clamps it.
+func (s *State) SetColumnWidth(key string, width int) {
+	if _, ok := domainpreferences.MonitorColumnDefaults[key]; !ok {
+		return
+	}
+	normalized := domainpreferences.NormalizeMonitor(domainpreferences.Monitor{
+		ColumnWidths: map[string]int{key: width},
+	})
+	width = normalized.ColumnWidths[key]
+	if width == s.Width(key) {
+		s.requestRedraw()
+		return
+	}
+	previous, had := s.widths[key]
+	s.widths[key] = width
 	if err := s.saveConfiguration(); err != nil {
+		if had {
+			s.widths[key] = previous
+		} else {
+			delete(s.widths, key)
+		}
 		s.problem = ProblemSave
 	}
-}
-
-func (s *State) tableWidths() map[string]float32 {
-	out := make(map[string]float32, len(domainpreferences.MonitorColumnKeys))
-	for _, key := range domainpreferences.MonitorColumnKeys {
-		out[key] = float32(s.Width(key))
-	}
-	return out
-}
-
-// ColumnsOpen reports whether the column editor is open.
-func (s *State) ColumnsOpen() bool { return s.columnsOpen }
-
-// ToggleColumns opens or closes the column editor.
-func (s *State) ToggleColumns() {
-	s.columnsOpen = !s.columnsOpen
-	s.problem = ProblemNone
 	s.requestRedraw()
 }
 
 // Editing reports whether the panel editor is open.
 func (s *State) Editing() bool { return s.editing }
+
+// Creating reports whether the open editor makes a new panel.
+func (s *State) Creating() bool { return s.editing && s.creating }
 
 // Form returns the panel editor's form. It is valid while Editing.
 func (s *State) Form() *Form { return &s.form }
@@ -459,20 +593,27 @@ func (s *State) FormHostSelected(id string) bool { return s.formHosts[id] }
 // ToggleFormHost selects or deselects a Host in the editor.
 func (s *State) ToggleFormHost(id string) {
 	if s.formHosts[id] {
-		delete(s.formHosts, id)
-		for index, existing := range s.form.HostIDs {
-			if existing == id {
-				s.form.HostIDs = append(s.form.HostIDs[:index], s.form.HostIDs[index+1:]...)
-				break
-			}
-		}
+		s.RemoveFormHost(id)
 		return
 	}
 	s.formHosts[id] = true
 	s.form.HostIDs = append(s.form.HostIDs, id)
+	s.clearHostProblem()
 }
 
-// MoveFormHost moves a selected Host within the manual order.
+// RemoveFormHost removes a Host from the editor's selection.
+func (s *State) RemoveFormHost(id string) {
+	delete(s.formHosts, id)
+	for index, existing := range s.form.HostIDs {
+		if existing == id {
+			s.form.HostIDs = append(s.form.HostIDs[:index], s.form.HostIDs[index+1:]...)
+			break
+		}
+	}
+	s.requestRedraw()
+}
+
+// MoveFormHost moves a selected Host within the saved order.
 func (s *State) MoveFormHost(id string, delta int) {
 	for index, existing := range s.form.HostIDs {
 		if existing != id {
@@ -483,20 +624,61 @@ func (s *State) MoveFormHost(id string, delta int) {
 			return
 		}
 		s.form.HostIDs[index], s.form.HostIDs[next] = s.form.HostIDs[next], s.form.HostIDs[index]
+		s.requestRedraw()
 		return
 	}
 }
 
+func (s *State) clearHostProblem() {
+	if s.problem == ProblemHostRequired {
+		s.problem = ProblemNone
+	}
+}
+
+// Picking reports whether the editor's Host picker is open.
+func (s *State) Picking() bool { return s.editing && s.picking }
+
+// BeginPickHosts opens the Host picker over the editor.
+func (s *State) BeginPickHosts() {
+	if !s.editing {
+		return
+	}
+	s.picking = true
+	s.pickerSearch = ""
+	s.requestRedraw()
+}
+
+// EndPickHosts returns from the Host picker to the editor.
+func (s *State) EndPickHosts() {
+	s.picking = false
+	s.requestRedraw()
+}
+
+// PickerHosts returns the Vault Hosts the picker lists, filtered by its
+// search as the surface's search filters a panel.
+func (s *State) PickerHosts() []domainvault.Host {
+	query := strings.ToLower(strings.TrimSpace(s.pickerSearch))
+	out := make([]domainvault.Host, 0, len(s.hostItems))
+	for _, host := range s.hostItems {
+		if query == "" || hostMatches(host, query) {
+			out = append(out, host)
+		}
+	}
+	return out
+}
+
 // BeginCreatePanel opens the editor with a new panel.
 func (s *State) BeginCreatePanel() {
+	s.detailID = ""
 	s.editing = true
-	s.pendingDelete = false
+	s.creating = true
+	s.picking = false
 	s.problem = ProblemNone
 	s.form = Form{
 		ID:       s.newPanelID(),
-		View:     domainpreferences.MonitorViewList,
+		View:     domainpreferences.MonitorViewCharts,
 		Interval: strconv.Itoa(domainpreferences.DefaultMonitorInterval),
-		Range:    strconv.Itoa(domainpreferences.DefaultMonitorRange),
+		Range:    strconv.Itoa(15),
 		Sort:     domainpreferences.MonitorSortManual,
 	}
 	s.formHosts = make(map[string]bool)
@@ -511,8 +693,10 @@ func (s *State) BeginEditPanel() {
 		s.requestRedraw()
 		return
 	}
+	s.detailID = ""
 	s.editing = true
-	s.pendingDelete = false
+	s.creating = false
+	s.picking = false
 	s.problem = ProblemNone
 	s.form = Form{
 		ID:          panel.ID,
@@ -533,20 +717,31 @@ func (s *State) BeginEditPanel() {
 
 // CancelEdit closes the editor without saving.
 func (s *State) CancelEdit() {
-	s.editing = false
-	s.pendingDelete = false
+	s.closeEditor()
 	s.problem = ProblemNone
-	s.form = Form{}
-	s.formHosts = make(map[string]bool)
 	s.requestRedraw()
 }
 
-// SavePanel validates the form, persists it through the settings store, and
-// re-targets sampling.
+func (s *State) closeEditor() {
+	s.editing = false
+	s.creating = false
+	s.picking = false
+	s.form = Form{}
+	s.formHosts = make(map[string]bool)
+}
+
+// SavePanel validates the form and persists it through the settings store.
+// Saving keeps configuration only: a started panel resamples its new Hosts,
+// and a new panel waits for Start.
 func (s *State) SavePanel() {
 	name := strings.TrimSpace(s.form.Name)
 	if name == "" {
 		s.problem = ProblemNameRequired
+		s.requestRedraw()
+		return
+	}
+	if len(s.form.HostIDs) == 0 {
+		s.problem = ProblemHostRequired
 		s.requestRedraw()
 		return
 	}
@@ -587,44 +782,101 @@ func (s *State) SavePanel() {
 	if !replaced {
 		next = append(next, panel)
 	}
+	if !s.commitPanels(next, panel.ID) {
+		return
+	}
+	s.closeEditor()
+	s.problem = ProblemNone
+	s.restartActive()
+	s.requestRedraw()
+}
+
+// DuplicatePanel saves a copy of the active panel named by copyName, with a
+// number appended while the name is taken, and displays it. The copy starts
+// stopped.
+func (s *State) DuplicatePanel(copyName func(name string) string) {
+	panel, ok := s.findPanel(s.activeID)
+	if !ok {
+		s.problem = ProblemNoPanel
+		s.requestRedraw()
+		return
+	}
+	base := copyName(panel.Name)
+	name := base
+	for suffix := 2; s.nameTaken(name); suffix++ {
+		name = base + " " + strconv.Itoa(suffix)
+	}
+	copied := panel
+	copied.ID = s.newPanelID()
+	copied.Name = name
+	copied.HostIDs = append([]string(nil), panel.HostIDs...)
+	next := append(append([]domainpreferences.MonitorPanel(nil), s.panels...), copied)
+	if !s.commitPanels(next, copied.ID) {
+		return
+	}
+	s.closeEditor()
+	s.detailID = ""
+	s.problem = ProblemNone
+	s.requestRedraw()
+}
+
+func (s *State) nameTaken(name string) bool {
+	for _, panel := range s.panels {
+		if strings.EqualFold(strings.TrimSpace(panel.Name), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// commitPanels persists next and displays active, pausing the previous
+// panel. It restores the previous configuration when the store fails.
+func (s *State) commitPanels(next []domainpreferences.MonitorPanel, active string) bool {
 	previous := append([]domainpreferences.MonitorPanel(nil), s.panels...)
 	previousActive := s.activeID
 	s.panels = next
-	s.activeID = panel.ID
+	s.activeID = active
 	if err := s.saveConfiguration(); err != nil {
 		s.panels = previous
 		s.activeID = previousActive
 		s.problem = ProblemSave
 		s.requestRedraw()
-		return
+		return false
 	}
-	s.editing = false
-	s.pendingDelete = false
-	s.form = Form{}
-	s.formHosts = make(map[string]bool)
-	s.problem = ProblemNone
-	s.stopActive()
-	s.startActive()
-	s.requestRedraw()
+	if previousActive != active {
+		s.stopRunning()
+	}
+	return true
 }
 
-// RequestDeletePanel opens the delete confirmation.
+// PendingDelete returns the panel awaiting delete confirmation.
+func (s *State) PendingDelete() (domainpreferences.MonitorPanel, bool) {
+	return s.findPanel(s.deleteID)
+}
+
+// RequestDeletePanel asks to confirm deleting the active panel.
 func (s *State) RequestDeletePanel() {
-	s.pendingDelete = true
+	if _, ok := s.findPanel(s.activeID); !ok {
+		s.problem = ProblemNoPanel
+		s.requestRedraw()
+		return
+	}
+	s.deleteID = s.activeID
 	s.requestRedraw()
 }
 
 // CancelDeletePanel closes the delete confirmation.
 func (s *State) CancelDeletePanel() {
-	s.pendingDelete = false
+	s.deleteID = ""
 	s.requestRedraw()
 }
 
-// ConfirmDeletePanel deletes the edited panel.
+// ConfirmDeletePanel deletes the panel awaiting confirmation and stops its
+// sampling.
 func (s *State) ConfirmDeletePanel() {
-	panel, ok := s.findPanel(s.form.ID)
+	panel, ok := s.findPanel(s.deleteID)
+	s.deleteID = ""
 	if !ok {
-		s.pendingDelete = false
 		s.problem = ProblemNoPanel
 		s.requestRedraw()
 		return
@@ -635,34 +887,34 @@ func (s *State) ConfirmDeletePanel() {
 			next = append(next, existing)
 		}
 	}
-	previous := append([]domainpreferences.MonitorPanel(nil), s.panels...)
-	previousActive := s.activeID
-	s.panels = next
-	if len(next) > 0 {
-		s.activeID = next[0].ID
-	} else {
-		s.activeID = ""
+	active := s.activeID
+	if active == panel.ID {
+		active = ""
+		if len(next) > 0 {
+			active = next[0].ID
+		}
 	}
-	if err := s.saveConfiguration(); err != nil {
-		s.panels = previous
-		s.activeID = previousActive
-		s.problem = ProblemSave
-		s.pendingDelete = false
-		s.requestRedraw()
+	if panel.ID == s.runningPanel {
+		s.stopRunning()
+	}
+	if !s.commitPanels(next, active) {
 		return
 	}
-	s.editing = false
-	s.pendingDelete = false
-	s.form = Form{}
-	s.formHosts = make(map[string]bool)
+	delete(s.started, panel.ID)
+	if s.service != nil {
+		s.service.Stop(panel.ID)
+	}
+	s.closeEditor()
+	s.detailID = ""
 	s.problem = ProblemNone
-	s.stopActive()
-	s.startActive()
+	if s.started[s.activeID] && !s.Running() {
+		s.startActive()
+	}
 	s.requestRedraw()
 }
 
-// UpdatePanelInterval changes the active panel's refresh cadence and
-// persists it.
+// UpdatePanelInterval changes the active panel's refresh cadence, persists
+// it, and resamples a running panel at the new cadence.
 func (s *State) UpdatePanelInterval(seconds int) {
 	panel, ok := s.findPanel(s.activeID)
 	if !ok || panel.Interval == seconds {
@@ -671,6 +923,17 @@ func (s *State) UpdatePanelInterval(seconds int) {
 	panel.Interval = seconds
 	s.applyPanelChange(panel)
 	s.restartActive()
+	s.requestRedraw()
+}
+
+// UpdatePanelRange changes the active panel's trend window and persists it.
+func (s *State) UpdatePanelRange(minutes int) {
+	panel, ok := s.findPanel(s.activeID)
+	if !ok || panel.Range == minutes {
+		return
+	}
+	panel.Range = minutes
+	s.applyPanelChange(panel)
 	s.requestRedraw()
 }
 
@@ -696,30 +959,6 @@ func (s *State) UpdatePanelSort(order domainpreferences.MonitorSort) {
 	s.requestRedraw()
 }
 
-// AdjustColumnWidth widens or narrows a column by delta and persists it. The
-// value is clamped by the same rules the settings store applies, so a width
-// shown in the surface is always the width that survives a reload.
-func (s *State) AdjustColumnWidth(key string, delta int) {
-	if _, ok := domainpreferences.MonitorColumnDefaults[key]; !ok {
-		return
-	}
-	width := s.Width(key) + delta
-	normalized := domainpreferences.NormalizeMonitor(domainpreferences.Monitor{
-		ColumnWidths: map[string]int{key: width},
-	})
-	width = normalized.ColumnWidths[key]
-	if width == s.Width(key) {
-		return
-	}
-	previous := s.widths[key]
-	s.widths[key] = width
-	if err := s.saveConfiguration(); err != nil {
-		s.widths[key] = previous
-		s.problem = ProblemSave
-	}
-	s.requestRedraw()
-}
-
 func (s *State) applyPanelChange(panel domainpreferences.MonitorPanel) {
 	previous := append([]domainpreferences.MonitorPanel(nil), s.panels...)
 	s.panels = s.replacePanel(panel)
@@ -729,15 +968,30 @@ func (s *State) applyPanelChange(panel domainpreferences.MonitorPanel) {
 	}
 }
 
+// DetailID returns the Host whose detail panel is open, or "".
+func (s *State) DetailID() string { return s.detailID }
+
+// OpenDetail opens a live Host's detail panel. A Host that is not live has
+// nothing to detail, as in the original.
+func (s *State) OpenDetail(id string) {
+	if s.DisplayStatus(id) != domainmonitor.StatusLive {
+		return
+	}
+	s.closeEditor()
+	s.detailID = id
+	s.requestRedraw()
+}
+
+// CloseDetail closes the detail panel.
+func (s *State) CloseDetail() {
+	s.detailID = ""
+	s.requestRedraw()
+}
+
 // OpenHost opens a Host's Session.
 func (s *State) OpenHost(id string) {
 	host, ok := s.hostByID[id]
-	if !ok {
-		s.problem = ProblemOpenTerminal
-		s.requestRedraw()
-		return
-	}
-	if s.openTerminal == nil {
+	if !ok || s.openTerminal == nil {
 		s.problem = ProblemOpenTerminal
 		s.requestRedraw()
 		return
@@ -745,6 +999,12 @@ func (s *State) OpenHost(id string) {
 	if err := s.openTerminal(host); err != nil {
 		s.problem = ProblemOpenTerminal
 	}
+	s.requestRedraw()
+}
+
+// DismissProblem clears the current failure.
+func (s *State) DismissProblem() {
+	s.problem = ProblemNone
 	s.requestRedraw()
 }
 
@@ -791,16 +1051,23 @@ func (s *State) startActive() {
 	s.runningPanel = panel.ID
 }
 
-func (s *State) stopActive() {
+func (s *State) stopActive() { s.stopRunning() }
+
+// stopRunning ends whichever panel samples, the displayed one or one just
+// replaced by another.
+func (s *State) stopRunning() {
 	if s.service != nil && s.runningPanel != "" {
 		s.service.Stop(s.runningPanel)
 	}
 	s.runningPanel = ""
 }
 
+// restartActive resamples the displayed panel when the user started it.
 func (s *State) restartActive() {
-	s.stopActive()
-	s.startActive()
+	s.stopRunning()
+	if s.started[s.activeID] {
+		s.startActive()
+	}
 }
 
 func (s *State) findPanel(id string) (domainpreferences.MonitorPanel, bool) {
@@ -838,7 +1105,6 @@ func (s *State) saveConfiguration() error {
 		s.hidden[key] = true
 	}
 	s.widths = cloneWidths(stored.ColumnWidths)
-	s.table.Columns.Widths = s.tableWidths()
 	return nil
 }
 

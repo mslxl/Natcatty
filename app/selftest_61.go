@@ -734,6 +734,8 @@ func (t *selftest61) pluralsAndDashStep(*ui.Context) selftest.Outcome {
 		uimonitoring.WithClock(func() time.Time { return now }))
 	defer monitor.Close()
 	monitor.Activate()
+	monitor.Start()
+	monitor.UpdatePanelView(domainpreferences.MonitorViewCharts)
 	defer monitor.Deactivate()
 	shell := shellstate.NewState(shellstate.WithMonitor(uimonitoring.View(monitor), nil, nil))
 	shell.ShowMonitor()
@@ -747,7 +749,7 @@ func (t *selftest61) pluralsAndDashStep(*ui.Context) selftest.Outcome {
 		tester.SetLocale("en")
 		tester.Frame()
 		for _, text := range []string{
-			m.MonitoringTitle(), m.MonitoringStatusUnsupported(), m.MonitoringReasonOS(),
+			m.MonitoringStatusUnsupported(), m.MonitoringCpu(),
 		} {
 			if _, err := selftest61Inside(tester, size[0], size[1], text); err != nil {
 				return selftest.Failed(err)
@@ -761,14 +763,13 @@ func (t *selftest61) pluralsAndDashStep(*ui.Context) selftest.Outcome {
 		metrics.SetLocale("en")
 		metrics.Frame()
 		for _, text := range []string{
-			m.MonitoringCpu(),
-			hosts.items[0].Hostname + " · " + m.MonitoringGpu() + " —",
+			m.MonitoringCpu(), hosts.items[0].Hostname,
 		} {
 			if _, err := selftest61Inside(metrics, size[0], size[1], text); err != nil {
 				return selftest.Failed(err)
 			}
 		}
-		for _, zero := range []string{"0%", "0 ms", "0 B/s"} {
+		for _, zero := range []string{"0.0%", "0 ms", "0.0 KiB/s"} {
 			if metrics.HasText(zero) {
 				return selftest.Failed(fmt.Errorf("%dx%d renders %q for a Host with no sample: %q",
 					size[0], size[1], zero, metrics.Texts()))

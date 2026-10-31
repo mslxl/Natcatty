@@ -69,7 +69,7 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 		t.Errorf("appearance theme enums = %+v", got.Appearance)
 	}
 	if got.Layout.TabBarPosition != TabBarTop || got.Layout.StartupLanding != StartupVault ||
-		got.Layout.SidePanelDock != DockRight {
+		got.Layout.SidePanelDock != DockLeft {
 		t.Errorf("layout enums = %+v", got.Layout)
 	}
 	if got.SFTPEditor.DoubleClickBehavior != DoubleClickOpen || got.SFTPEditor.DefaultViewMode != ViewList ||

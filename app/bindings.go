@@ -22,12 +22,11 @@ import (
 var unavailableBindings = map[string]bool{
 	"toggle-pane-zoom": true,
 
-	"port-forwarding":   true,
-	"new-workspace":     true,
-	"snippets":          true,
-	"toggle-side-panel": true,
-	"paste-selection":   true,
-	"search-terminal":   true,
+	"port-forwarding": true,
+	"new-workspace":   true,
+	"snippets":        true,
+	"paste-selection": true,
+	"search-terminal": true,
 }
 
 // catalogBindingAvailable reports whether this build can run a catalog
@@ -344,6 +343,8 @@ func (d *bindingDispatcher) action(id string) (func(int), bool) {
 			d.transfer.EnsureStarted()
 			d.transfer.OpenCenter()
 		}, true
+	case "toggle-side-panel":
+		return func(int) { d.shell.ToggleActiveFiles() }, true
 	case "open-local":
 		return func(int) { _ = d.shell.NewTab() }, true
 	case "broadcast":
