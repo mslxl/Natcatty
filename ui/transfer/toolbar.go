@@ -175,6 +175,13 @@ func actions(c *ui.Context, s *transferstate.State, side transferstate.Side, tab
 		bookmark.TextColor(uiYellow)
 	}
 	bookmark.Menu(func(menu *ui.Menu) { bookmarksMenu(menu, s, side, tab, m) })
+	// The last directory a terminal on this file system reported, as the
+	// original's "go to terminal directory"; it is gone until one reports.
+	if cwd := s.TerminalCwd(side); cwd != "" && ready {
+		if toolButton(c, icons.SquareTerminal, m.SftpGoTerminalCwd(), false).Tooltip(m.SftpGoTerminalCwd() + " · " + cwd).Clicked() {
+			s.GoTerminalCwd(side)
+		}
+	}
 	if toolButton(c, icons.ClipboardCopy, m.SftpCopyPath(), false).Disabled(tab.Path == "").Clicked() {
 		mygo.Clipboard.WriteText(tab.Path)
 	}

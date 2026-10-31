@@ -3396,109 +3396,21 @@
       }
     }
   },
-  "monitoringTitle": "Host monitoring",
-  "monitoringSummary": "{live} of {total} live",
-  "@monitoringSummary": {
-    "description": "The share of sampled Hosts that are live.",
-    "placeholders": {
-      "live": {
-        "type": "int",
-        "example": "3"
-      },
-      "total": {
-        "type": "int",
-        "example": "5"
-      }
-    }
-  },
-  "monitoringNoPanelsTitle": "No monitoring panels yet",
-  "monitoringNoPanelsBody": "Create a panel to choose which Hosts to monitor and how often.",
   "monitoringNewPanel": "New panel",
   "monitoringEditPanel": "Edit panel",
-  "monitoringColumns": "Columns",
-  "monitoringColumnsHint": "Drag a column edge to resize; widths save automatically.",
-  "monitoringColumnsDone": "Done",
-  "monitoringAlwaysVisible": "Always visible",
-  "monitoringRefresh": "Refresh",
-  "monitoringSort": "Sort",
-  "monitoringSortManual": "Manual",
-  "monitoringSortName": "Name",
-  "monitoringViewList": "List",
-  "monitoringViewCharts": "Charts",
-  "monitoringEmptyPanel": "This panel has no Hosts. Edit the panel to add some.",
-  "monitoringSearch": "Search Hosts",
-  "monitoringNoMatches": "No Hosts match the search.",
-  "monitoringOpen": "Open",
-  "monitoringHost": "Host",
-  "monitoringLatency": "Latency",
-  "monitoringTags": "Tags",
-  "monitoringNotes": "Notes",
-  "monitoringCpu": "CPU",
-  "monitoringMemory": "Memory",
-  "monitoringDisk": "Disk",
-  "monitoringNetwork": "Network",
-  "monitoringGpu": "GPU",
-  "monitoringUpdated": "Updated",
-  "monitoringStatus": "Status",
-  "monitoringTerminal": "Terminal",
-  "monitoringStatusQueued": "Queued",
-  "monitoringStatusConnecting": "Connecting",
-  "monitoringStatusLive": "Live",
-  "monitoringStatusLogin": "Sign in",
-  "monitoringStatusError": "Error",
-  "monitoringStatusUnsupported": "Unsupported",
-  "monitoringStatusDisconnected": "Disconnected",
-  "monitoringStatusUnavailable": "Unavailable",
-  "monitoringStatusLimit": "Limit reached",
-  "monitoringStale": "Stale",
-  "monitoringReasonHostKey": "Host key not trusted",
-  "monitoringReasonAuth": "Authentication failed",
-  "monitoringReasonNetwork": "Network unavailable",
-  "monitoringReasonTimeout": "Timed out",
-  "monitoringReasonUnsupported": "Metrics unsupported",
-  "monitoringReasonCancelled": "Cancelled",
-  "monitoringReasonInternal": "Monitoring error",
-  "monitoringReasonOS": "Operating system unsupported",
-  "monitoringUnknown": "—",
-  "monitoringUpdatedNow": "just now",
-  "monitoringUpdatedSeconds": "{seconds}s ago",
-  "@monitoringUpdatedSeconds": {
-    "description": "How long ago the latest sample arrived, in seconds.",
+  "monitoringDuplicatePanel": "Duplicate panel",
+  "monitoringCopyName": "{name} copy",
+  "@monitoringCopyName": {
+    "description": "The name of a duplicated monitoring panel.",
     "placeholders": {
-      "seconds": {
-        "type": "int",
-        "example": "12"
+      "name": {
+        "type": "String",
+        "example": "Production"
       }
     }
   },
-  "monitoringUpdatedMinutes": "{minutes}m ago",
-  "@monitoringUpdatedMinutes": {
-    "description": "How long ago the latest sample arrived, in minutes.",
-    "placeholders": {
-      "minutes": {
-        "type": "int",
-        "example": "3"
-      }
-    }
-  },
-  "monitoringName": "Name",
-  "monitoringDescription": "Description",
-  "monitoringPanelHosts": "Hosts",
-  "monitoringSelectedCount": "{count, plural, one {# selected} other {# selected}}",
-  "@monitoringSelectedCount": {
-    "description": "The number of Hosts selected in the panel editor.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "4"
-      }
-    }
-  },
-  "monitoringNoHostsAvailable": "No Hosts in the Vault.",
-  "monitoringSave": "Save",
-  "monitoringCancel": "Cancel",
   "monitoringDeletePanel": "Delete panel",
-  "monitoringDeleteConfirm": "Delete “{name}”?",
+  "monitoringDeleteConfirm": "Delete “{name}”? Its monitoring will stop. Saved hosts and other panels are kept.",
   "@monitoringDeleteConfirm": {
     "description": "Asks before deleting a monitoring panel.",
     "placeholders": {
@@ -3508,21 +3420,150 @@
       }
     }
   },
-  "monitoringProblemNameRequired": "Give the panel a name.",
-  "monitoringProblemDuplicateName": "Another panel already has that name.",
+  "monitoringPanelActions": "Panel actions",
+  "monitoringChoosePanel": "Choose a panel",
+  "monitoringStart": "Start monitoring",
+  "monitoringStop": "Stop",
+  "monitoringStopAll": "Stop all",
+  "monitoringEmptyTitle": "Your hosts, at a glance",
+  "monitoringEmptyBody": "Choose saved hosts from any group. Start monitoring when you are ready.",
+  "monitoringCreateFirst": "Create your first panel",
+  "monitoringViewList": "List",
+  "monitoringViewCharts": "Charts",
+  "monitoringSearch": "Search hosts, groups, tags or notes",
+  "monitoringInterval": "Update interval",
+  "monitoringRange": "Trend range",
+  "monitoringSeconds": "Every {count}s",
+  "@monitoringSeconds": {
+    "description": "A monitoring refresh interval choice, in seconds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringMinutes": "Last {count} min",
+  "@monitoringMinutes": {
+    "description": "A monitoring trend range choice, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "monitoringSort": "Sort hosts",
+  "monitoringSortManual": "Saved order",
+  "monitoringSortName": "Name",
+  "monitoringNoMatches": "No matching hosts",
+  "monitoringVisibleColumns": "Visible columns",
+  "monitoringHost": "Host",
+  "monitoringLatency": "Latency",
+  "monitoringTags": "Tags",
+  "monitoringNotes": "Notes",
+  "monitoringCpu": "CPU",
+  "monitoringCores": "Cores: {count}",
+  "@monitoringCores": {
+    "description": "A Host's logical CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "monitoringMemory": "Memory",
+  "monitoringPartitions": "Partitions",
+  "monitoringDiskCapacity": "{used} used / {total} total",
+  "@monitoringDiskCapacity": {
+    "description": "A partition's used and total capacity.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "12.0 GiB"
+      },
+      "total": {
+        "type": "String",
+        "example": "50.0 GiB"
+      }
+    }
+  },
+  "monitoringDiskCapacityUnknown": "Capacity unavailable",
+  "monitoringNetwork": "Network",
+  "monitoringDownload": "Download",
+  "monitoringUpload": "Upload",
+  "monitoringGpu": "GPU",
+  "monitoringGpuUtil": "Utilization",
+  "monitoringGpuMemory": "Video memory",
+  "monitoringUpdated": "Updated",
+  "monitoringStatus": "Status",
+  "monitoringTerminal": "Terminal",
+  "monitoringWaiting": "Waiting for the first reading",
+  "monitoringOpenTerminal": "Open terminal",
+  "monitoringStatusStopped": "Not started",
+  "monitoringStatusQueued": "Queued",
+  "monitoringStatusConnecting": "Connecting",
+  "monitoringStatusLive": "Up to date",
+  "monitoringStatusLogin": "Sign-in needed",
+  "monitoringStatusError": "Collection failed",
+  "monitoringStatusUnsupported": "Not supported",
+  "monitoringStatusDisconnected": "Disconnected",
+  "monitoringStatusUnavailable": "Unavailable",
+  "monitoringStatusLimit": "Limit reached",
+  "monitoringStale": "Out of date",
+  "monitoringReasonHostKey": "Host key not trusted",
+  "monitoringReasonAuth": "Authentication failed",
+  "monitoringReasonNetwork": "Network unavailable",
+  "monitoringReasonTimeout": "Timed out",
+  "monitoringReasonUnsupported": "Metrics unsupported",
+  "monitoringReasonCancelled": "Cancelled",
+  "monitoringReasonInternal": "Monitoring error",
+  "monitoringReasonOS": "Operating system unsupported",
+  "monitoringName": "Panel name",
+  "monitoringDescription": "Description (optional)",
+  "monitoringPanelHosts": "Hosts",
+  "monitoringSelectedCount": "Selected hosts: {count}",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringChooseHosts": "Choose hosts",
+  "monitoringSelectionHint": "Choose across groups. Unsupported connections are shown with a clear status when started.",
+  "monitoringDefaultView": "Default view",
+  "monitoringSaveHint": "Saving keeps configuration only and does not connect. Copies start stopped too.",
+  "monitoringMoveUp": "Move host up",
+  "monitoringRemoveHost": "Remove from panel",
+  "monitoringNoHostsAvailable": "No Hosts in the Vault.",
+  "monitoringSave": "Save",
+  "monitoringCancel": "Cancel",
+  "monitoringDone": "Done",
+  "monitoringClose": "Close",
+  "monitoringObserved": "Observed for {count} min this run",
+  "@monitoringObserved": {
+    "description": "How long the Host has been observed in this monitoring run.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringSystem": "System information",
+  "monitoringProblemNameRequired": "Enter a panel name.",
+  "monitoringProblemHostRequired": "Select at least one host.",
+  "monitoringProblemDuplicateName": "A panel already uses this name.",
   "monitoringProblemSave": "Could not save the monitoring configuration.",
   "monitoringProblemLoad": "Could not read the Host list.",
   "monitoringProblemTooManyHosts": "A panel can sample at most 256 Hosts.",
   "monitoringProblemNoPanel": "No panel is selected.",
   "monitoringProblemOpenTerminal": "Could not open the Host Session.",
   "monitoringProblemInternal": "Monitoring failed.",
-  "monitoringPanelFormCreate": "New monitoring panel",
-  "monitoringPanelFormEdit": "Edit monitoring panel",
-  "monitoringPanelFormView": "View",
-  "monitoringPanelFormInterval": "Refresh interval (seconds)",
-  "monitoringPanelFormRange": "History range (minutes)",
-  "monitoringPanelFormSort": "Host order",
-  "monitoringPanelFormHostsHint": "Choose the Hosts to monitor. This order applies in Manual sort.",
   "navSysManager": "System",
   "sysManagerTitle": "System manager",
   "sysManagerHost": "Host",
@@ -4294,5 +4335,7 @@
   "settingsMCPProblemStale": "An ownership change invalidated the approval.",
   "settingsMCPProblemInvalid": "The approval was already used or is no longer pending.",
   "settingsMCPProblemMode": "The permission mode could not be changed.",
-  "settingsMCPProblemSharing": "The Session sharing setting could not be saved."
+  "settingsMCPProblemSharing": "The Session sharing setting could not be saved.",
+  "sftpGoTerminalCwd": "Go to terminal directory",
+  "sidePanelClose": "Close panel"
 }

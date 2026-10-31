@@ -219,7 +219,7 @@ func Defaults() Settings {
 			// of reopening a stale Workspace and its connections.
 			RestorePreviousSession: false,
 			StartupLanding:         StartupVault,
-			SidePanelDock:          DockRight,
+			SidePanelDock:          DockLeft,
 		},
 		SFTPEditor: SFTPEditor{
 			DoubleClickBehavior: DoubleClickOpen,

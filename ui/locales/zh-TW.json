@@ -2170,109 +2170,21 @@
       }
     }
   },
-  "monitoringTitle": "主機監控",
-  "monitoringSummary": "{live} / {total} 台上線",
-  "@monitoringSummary": {
-    "description": "The share of sampled Hosts that are live.",
-    "placeholders": {
-      "live": {
-        "type": "int",
-        "example": "3"
-      },
-      "total": {
-        "type": "int",
-        "example": "5"
-      }
-    }
-  },
-  "monitoringNoPanelsTitle": "尚無監控面板",
-  "monitoringNoPanelsBody": "建立面板以選擇要監控的主機與重新整理頻率。",
   "monitoringNewPanel": "新增面板",
   "monitoringEditPanel": "編輯面板",
-  "monitoringColumns": "欄位",
-  "monitoringColumnsHint": "拖曳欄位邊緣可調整寬度；寬度會自動儲存。",
-  "monitoringColumnsDone": "完成",
-  "monitoringAlwaysVisible": "永遠顯示",
-  "monitoringRefresh": "重新整理",
-  "monitoringSort": "排序",
-  "monitoringSortManual": "手動",
-  "monitoringSortName": "名稱",
-  "monitoringViewList": "清單",
-  "monitoringViewCharts": "圖表",
-  "monitoringEmptyPanel": "此面板沒有主機。編輯面板以新增主機。",
-  "monitoringSearch": "搜尋主機",
-  "monitoringNoMatches": "沒有符合搜尋的主機。",
-  "monitoringOpen": "開啟",
-  "monitoringHost": "主機",
-  "monitoringLatency": "延遲",
-  "monitoringTags": "標籤",
-  "monitoringNotes": "備註",
-  "monitoringCpu": "CPU",
-  "monitoringMemory": "記憶體",
-  "monitoringDisk": "磁碟",
-  "monitoringNetwork": "網路",
-  "monitoringGpu": "GPU",
-  "monitoringUpdated": "更新時間",
-  "monitoringStatus": "狀態",
-  "monitoringTerminal": "終端機",
-  "monitoringStatusQueued": "排隊中",
-  "monitoringStatusConnecting": "連線中",
-  "monitoringStatusLive": "上線",
-  "monitoringStatusLogin": "請登入",
-  "monitoringStatusError": "錯誤",
-  "monitoringStatusUnsupported": "不支援",
-  "monitoringStatusDisconnected": "已中斷",
-  "monitoringStatusUnavailable": "無法使用",
-  "monitoringStatusLimit": "已達上限",
-  "monitoringStale": "資料過期",
-  "monitoringReasonHostKey": "主機金鑰未受信任",
-  "monitoringReasonAuth": "驗證失敗",
-  "monitoringReasonNetwork": "網路無法使用",
-  "monitoringReasonTimeout": "逾時",
-  "monitoringReasonUnsupported": "不支援指標收集",
-  "monitoringReasonCancelled": "已取消",
-  "monitoringReasonInternal": "監控錯誤",
-  "monitoringReasonOS": "不支援的作業系統",
-  "monitoringUnknown": "—",
-  "monitoringUpdatedNow": "剛剛",
-  "monitoringUpdatedSeconds": "{seconds} 秒前",
-  "@monitoringUpdatedSeconds": {
-    "description": "How long ago the latest sample arrived, in seconds.",
+  "monitoringDuplicatePanel": "複製面板",
+  "monitoringCopyName": "{name} 副本",
+  "@monitoringCopyName": {
+    "description": "The name of a duplicated monitoring panel.",
     "placeholders": {
-      "seconds": {
-        "type": "int",
-        "example": "12"
+      "name": {
+        "type": "String",
+        "example": "Production"
       }
     }
   },
-  "monitoringUpdatedMinutes": "{minutes} 分鐘前",
-  "@monitoringUpdatedMinutes": {
-    "description": "How long ago the latest sample arrived, in minutes.",
-    "placeholders": {
-      "minutes": {
-        "type": "int",
-        "example": "3"
-      }
-    }
-  },
-  "monitoringName": "名稱",
-  "monitoringDescription": "描述",
-  "monitoringPanelHosts": "主機",
-  "monitoringSelectedCount": "{count, plural, other {已選擇 # 台}}",
-  "@monitoringSelectedCount": {
-    "description": "The number of Hosts selected in the panel editor.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "4"
-      }
-    }
-  },
-  "monitoringNoHostsAvailable": "儲存庫中沒有主機。",
-  "monitoringSave": "儲存",
-  "monitoringCancel": "取消",
   "monitoringDeletePanel": "刪除面板",
-  "monitoringDeleteConfirm": "刪除「{name}」？",
+  "monitoringDeleteConfirm": "刪除「{name}」？此面板將停止監控，現有主機和其他面板會保留。",
   "@monitoringDeleteConfirm": {
     "description": "Asks before deleting a monitoring panel.",
     "placeholders": {
@@ -2282,21 +2194,150 @@
       }
     }
   },
-  "monitoringProblemNameRequired": "請為面板填寫名稱。",
-  "monitoringProblemDuplicateName": "已有其他面板使用此名稱。",
+  "monitoringPanelActions": "面板操作",
+  "monitoringChoosePanel": "選擇面板",
+  "monitoringStart": "開始監控",
+  "monitoringStop": "停止",
+  "monitoringStopAll": "全部停止",
+  "monitoringEmptyTitle": "一眼查看多台主機",
+  "monitoringEmptyBody": "跨群組選擇現有主機，準備好後再開始監控。",
+  "monitoringCreateFirst": "建立第一個監控面板",
+  "monitoringViewList": "列表",
+  "monitoringViewCharts": "圖表",
+  "monitoringSearch": "搜尋主機、群組、標籤或備註",
+  "monitoringInterval": "更新頻率",
+  "monitoringRange": "趨勢範圍",
+  "monitoringSeconds": "每 {count} 秒",
+  "@monitoringSeconds": {
+    "description": "A monitoring refresh interval choice, in seconds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringMinutes": "最近 {count} 分鐘",
+  "@monitoringMinutes": {
+    "description": "A monitoring trend range choice, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "monitoringSort": "主機排序",
+  "monitoringSortManual": "儲存的順序",
+  "monitoringSortName": "名稱",
+  "monitoringNoMatches": "沒有符合條件的主機",
+  "monitoringVisibleColumns": "顯示的欄位",
+  "monitoringHost": "主機",
+  "monitoringLatency": "延遲",
+  "monitoringTags": "標籤",
+  "monitoringNotes": "備註",
+  "monitoringCpu": "CPU",
+  "monitoringCores": "{count} 核心",
+  "@monitoringCores": {
+    "description": "A Host's logical CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "monitoringMemory": "記憶體",
+  "monitoringPartitions": "磁碟分割區",
+  "monitoringDiskCapacity": "已用 {used} / 總容量 {total}",
+  "@monitoringDiskCapacity": {
+    "description": "A partition's used and total capacity.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "12.0 GiB"
+      },
+      "total": {
+        "type": "String",
+        "example": "50.0 GiB"
+      }
+    }
+  },
+  "monitoringDiskCapacityUnknown": "暫無容量讀數",
+  "monitoringNetwork": "網路",
+  "monitoringDownload": "下載",
+  "monitoringUpload": "上傳",
+  "monitoringGpu": "GPU",
+  "monitoringGpuUtil": "使用率",
+  "monitoringGpuMemory": "顯示記憶體",
+  "monitoringUpdated": "更新時間",
+  "monitoringStatus": "狀態",
+  "monitoringTerminal": "終端",
+  "monitoringWaiting": "等待第一次讀數",
+  "monitoringOpenTerminal": "開啟終端機",
+  "monitoringStatusStopped": "未開始",
+  "monitoringStatusQueued": "排程中",
+  "monitoringStatusConnecting": "連線中",
+  "monitoringStatusLive": "已更新",
+  "monitoringStatusLogin": "需要登入",
+  "monitoringStatusError": "採集失敗",
+  "monitoringStatusUnsupported": "不支援",
+  "monitoringStatusDisconnected": "已中斷",
+  "monitoringStatusUnavailable": "無法使用",
+  "monitoringStatusLimit": "已達上限",
+  "monitoringStale": "讀數過期",
+  "monitoringReasonHostKey": "主機金鑰未受信任",
+  "monitoringReasonAuth": "驗證失敗",
+  "monitoringReasonNetwork": "網路無法使用",
+  "monitoringReasonTimeout": "逾時",
+  "monitoringReasonUnsupported": "不支援指標收集",
+  "monitoringReasonCancelled": "已取消",
+  "monitoringReasonInternal": "監控錯誤",
+  "monitoringReasonOS": "不支援的作業系統",
+  "monitoringName": "面板名稱",
+  "monitoringDescription": "說明（選填）",
+  "monitoringPanelHosts": "主機",
+  "monitoringSelectedCount": "已選 {count} 台主機",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringChooseHosts": "選擇主機",
+  "monitoringSelectionHint": "可跨群組選擇。開始後會明確標示不支援的連線。",
+  "monitoringDefaultView": "預設檢視",
+  "monitoringSaveHint": "儲存僅保留設定，不會連線。複製的面板也不會自動開始。",
+  "monitoringMoveUp": "主機上移",
+  "monitoringRemoveHost": "從面板移除",
+  "monitoringNoHostsAvailable": "儲存庫中沒有主機。",
+  "monitoringSave": "儲存",
+  "monitoringCancel": "取消",
+  "monitoringDone": "完成",
+  "monitoringClose": "關閉",
+  "monitoringObserved": "本次已觀察 {count} 分鐘",
+  "@monitoringObserved": {
+    "description": "How long the Host has been observed in this monitoring run.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringSystem": "系統資訊",
+  "monitoringProblemNameRequired": "請輸入面板名稱。",
+  "monitoringProblemHostRequired": "請至少選擇一台主機。",
+  "monitoringProblemDuplicateName": "已有同名面板，請換個名稱。",
   "monitoringProblemSave": "無法儲存監控設定。",
   "monitoringProblemLoad": "無法讀取主機清單。",
   "monitoringProblemTooManyHosts": "每個面板最多監控 256 台主機。",
   "monitoringProblemNoPanel": "未選擇面板。",
   "monitoringProblemOpenTerminal": "無法開啟主機會話。",
   "monitoringProblemInternal": "監控失敗。",
-  "monitoringPanelFormCreate": "新增監控面板",
-  "monitoringPanelFormEdit": "編輯監控面板",
-  "monitoringPanelFormView": "檢視",
-  "monitoringPanelFormInterval": "重新整理間隔（秒）",
-  "monitoringPanelFormRange": "歷史範圍（分鐘）",
-  "monitoringPanelFormSort": "主機順序",
-  "monitoringPanelFormHostsHint": "選擇要監控的主機。手動排序時使用此順序。",
   "navSysManager": "系統",
   "sysManagerTitle": "系統管理員",
   "sysManagerHost": "主機",
@@ -3068,5 +3109,7 @@
   "settingsMCPProblemStale": "所有權變更使審批失效。",
   "settingsMCPProblemInvalid": "審批已被使用或不再等待。",
   "settingsMCPProblemMode": "無法變更權限模式。",
-  "settingsMCPProblemSharing": "無法儲存工作階段共用設定。"
+  "settingsMCPProblemSharing": "無法儲存工作階段共用設定。",
+  "sftpGoTerminalCwd": "前往終端機目錄",
+  "sidePanelClose": "關閉面板"
 }

@@ -2170,109 +2170,21 @@
       }
     }
   },
-  "monitoringTitle": "主机监控",
-  "monitoringSummary": "{live} / {total} 台在线",
-  "@monitoringSummary": {
-    "description": "The share of sampled Hosts that are live.",
-    "placeholders": {
-      "live": {
-        "type": "int",
-        "example": "3"
-      },
-      "total": {
-        "type": "int",
-        "example": "5"
-      }
-    }
-  },
-  "monitoringNoPanelsTitle": "还没有监控面板",
-  "monitoringNoPanelsBody": "创建面板以选择要监控的主机和刷新频率。",
   "monitoringNewPanel": "新建面板",
   "monitoringEditPanel": "编辑面板",
-  "monitoringColumns": "列",
-  "monitoringColumnsHint": "拖动列边缘可调整宽度；宽度会自动保存。",
-  "monitoringColumnsDone": "完成",
-  "monitoringAlwaysVisible": "始终显示",
-  "monitoringRefresh": "刷新",
-  "monitoringSort": "排序",
-  "monitoringSortManual": "手动",
-  "monitoringSortName": "名称",
-  "monitoringViewList": "列表",
-  "monitoringViewCharts": "图表",
-  "monitoringEmptyPanel": "此面板没有主机。编辑面板以添加主机。",
-  "monitoringSearch": "搜索主机",
-  "monitoringNoMatches": "没有匹配搜索的主机。",
-  "monitoringOpen": "打开",
-  "monitoringHost": "主机",
-  "monitoringLatency": "延迟",
-  "monitoringTags": "标签",
-  "monitoringNotes": "备注",
-  "monitoringCpu": "CPU",
-  "monitoringMemory": "内存",
-  "monitoringDisk": "磁盘",
-  "monitoringNetwork": "网络",
-  "monitoringGpu": "GPU",
-  "monitoringUpdated": "更新时间",
-  "monitoringStatus": "状态",
-  "monitoringTerminal": "终端",
-  "monitoringStatusQueued": "排队中",
-  "monitoringStatusConnecting": "连接中",
-  "monitoringStatusLive": "在线",
-  "monitoringStatusLogin": "请登录",
-  "monitoringStatusError": "错误",
-  "monitoringStatusUnsupported": "不支持",
-  "monitoringStatusDisconnected": "已断开",
-  "monitoringStatusUnavailable": "不可用",
-  "monitoringStatusLimit": "已达上限",
-  "monitoringStale": "数据过期",
-  "monitoringReasonHostKey": "主机密钥未信任",
-  "monitoringReasonAuth": "认证失败",
-  "monitoringReasonNetwork": "网络不可用",
-  "monitoringReasonTimeout": "超时",
-  "monitoringReasonUnsupported": "不支持指标采集",
-  "monitoringReasonCancelled": "已取消",
-  "monitoringReasonInternal": "监控错误",
-  "monitoringReasonOS": "不支持的操作系统",
-  "monitoringUnknown": "—",
-  "monitoringUpdatedNow": "刚刚",
-  "monitoringUpdatedSeconds": "{seconds} 秒前",
-  "@monitoringUpdatedSeconds": {
-    "description": "How long ago the latest sample arrived, in seconds.",
+  "monitoringDuplicatePanel": "复制面板",
+  "monitoringCopyName": "{name} 副本",
+  "@monitoringCopyName": {
+    "description": "The name of a duplicated monitoring panel.",
     "placeholders": {
-      "seconds": {
-        "type": "int",
-        "example": "12"
+      "name": {
+        "type": "String",
+        "example": "Production"
       }
     }
   },
-  "monitoringUpdatedMinutes": "{minutes} 分钟前",
-  "@monitoringUpdatedMinutes": {
-    "description": "How long ago the latest sample arrived, in minutes.",
-    "placeholders": {
-      "minutes": {
-        "type": "int",
-        "example": "3"
-      }
-    }
-  },
-  "monitoringName": "名称",
-  "monitoringDescription": "描述",
-  "monitoringPanelHosts": "主机",
-  "monitoringSelectedCount": "{count, plural, other {已选择 # 台}}",
-  "@monitoringSelectedCount": {
-    "description": "The number of Hosts selected in the panel editor.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "4"
-      }
-    }
-  },
-  "monitoringNoHostsAvailable": "存储库中没有主机。",
-  "monitoringSave": "保存",
-  "monitoringCancel": "取消",
   "monitoringDeletePanel": "删除面板",
-  "monitoringDeleteConfirm": "删除“{name}”？",
+  "monitoringDeleteConfirm": "删除“{name}”？该面板将停止监控，已有主机和其他面板会保留。",
   "@monitoringDeleteConfirm": {
     "description": "Asks before deleting a monitoring panel.",
     "placeholders": {
@@ -2282,21 +2194,150 @@
       }
     }
   },
-  "monitoringProblemNameRequired": "请为面板填写名称。",
-  "monitoringProblemDuplicateName": "已有其他面板使用该名称。",
+  "monitoringPanelActions": "面板操作",
+  "monitoringChoosePanel": "选择面板",
+  "monitoringStart": "开始监控",
+  "monitoringStop": "停止",
+  "monitoringStopAll": "全部停止",
+  "monitoringEmptyTitle": "一眼查看多台主机",
+  "monitoringEmptyBody": "跨分组选择已有主机，准备好后再开始监控。",
+  "monitoringCreateFirst": "创建第一个监控面板",
+  "monitoringViewList": "列表",
+  "monitoringViewCharts": "图表",
+  "monitoringSearch": "搜索主机、分组、标签或备注",
+  "monitoringInterval": "更新频率",
+  "monitoringRange": "趋势范围",
+  "monitoringSeconds": "每 {count} 秒",
+  "@monitoringSeconds": {
+    "description": "A monitoring refresh interval choice, in seconds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringMinutes": "最近 {count} 分钟",
+  "@monitoringMinutes": {
+    "description": "A monitoring trend range choice, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "monitoringSort": "主机排序",
+  "monitoringSortManual": "保存的顺序",
+  "monitoringSortName": "名称",
+  "monitoringNoMatches": "没有符合条件的主机",
+  "monitoringVisibleColumns": "显示的列",
+  "monitoringHost": "主机",
+  "monitoringLatency": "延迟",
+  "monitoringTags": "标签",
+  "monitoringNotes": "备注",
+  "monitoringCpu": "CPU",
+  "monitoringCores": "{count} 核",
+  "@monitoringCores": {
+    "description": "A Host's logical CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "monitoringMemory": "内存",
+  "monitoringPartitions": "磁盘分区",
+  "monitoringDiskCapacity": "已用 {used} / 总容量 {total}",
+  "@monitoringDiskCapacity": {
+    "description": "A partition's used and total capacity.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "12.0 GiB"
+      },
+      "total": {
+        "type": "String",
+        "example": "50.0 GiB"
+      }
+    }
+  },
+  "monitoringDiskCapacityUnknown": "暂无容量读数",
+  "monitoringNetwork": "网络",
+  "monitoringDownload": "下载",
+  "monitoringUpload": "上传",
+  "monitoringGpu": "GPU",
+  "monitoringGpuUtil": "利用率",
+  "monitoringGpuMemory": "显存",
+  "monitoringUpdated": "更新时间",
+  "monitoringStatus": "状态",
+  "monitoringTerminal": "终端",
+  "monitoringWaiting": "等待第一次读数",
+  "monitoringOpenTerminal": "打开终端",
+  "monitoringStatusStopped": "未开始",
+  "monitoringStatusQueued": "排队中",
+  "monitoringStatusConnecting": "连接中",
+  "monitoringStatusLive": "已更新",
+  "monitoringStatusLogin": "需要登录",
+  "monitoringStatusError": "采集失败",
+  "monitoringStatusUnsupported": "不支持",
+  "monitoringStatusDisconnected": "已断开",
+  "monitoringStatusUnavailable": "不可用",
+  "monitoringStatusLimit": "已达上限",
+  "monitoringStale": "读数过期",
+  "monitoringReasonHostKey": "主机密钥未信任",
+  "monitoringReasonAuth": "认证失败",
+  "monitoringReasonNetwork": "网络不可用",
+  "monitoringReasonTimeout": "超时",
+  "monitoringReasonUnsupported": "不支持指标采集",
+  "monitoringReasonCancelled": "已取消",
+  "monitoringReasonInternal": "监控错误",
+  "monitoringReasonOS": "不支持的操作系统",
+  "monitoringName": "面板名称",
+  "monitoringDescription": "说明（可选）",
+  "monitoringPanelHosts": "主机",
+  "monitoringSelectedCount": "已选 {count} 台主机",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringChooseHosts": "选择主机",
+  "monitoringSelectionHint": "可跨分组选择。开始后会明确标出不支持的连接。",
+  "monitoringDefaultView": "默认展示",
+  "monitoringSaveHint": "保存仅保留配置，不会连接。复制的面板也不会自动开始。",
+  "monitoringMoveUp": "主机上移",
+  "monitoringRemoveHost": "从面板移除",
+  "monitoringNoHostsAvailable": "存储库中没有主机。",
+  "monitoringSave": "保存",
+  "monitoringCancel": "取消",
+  "monitoringDone": "完成",
+  "monitoringClose": "关闭",
+  "monitoringObserved": "本次已观察 {count} 分钟",
+  "@monitoringObserved": {
+    "description": "How long the Host has been observed in this monitoring run.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringSystem": "系统信息",
+  "monitoringProblemNameRequired": "请输入面板名称。",
+  "monitoringProblemHostRequired": "请至少选择一台主机。",
+  "monitoringProblemDuplicateName": "已有同名面板，请换个名称。",
   "monitoringProblemSave": "无法保存监控配置。",
   "monitoringProblemLoad": "无法读取主机列表。",
   "monitoringProblemTooManyHosts": "每个面板最多监控 256 台主机。",
   "monitoringProblemNoPanel": "未选择面板。",
   "monitoringProblemOpenTerminal": "无法打开主机会话。",
   "monitoringProblemInternal": "监控失败。",
-  "monitoringPanelFormCreate": "新建监控面板",
-  "monitoringPanelFormEdit": "编辑监控面板",
-  "monitoringPanelFormView": "视图",
-  "monitoringPanelFormInterval": "刷新间隔（秒）",
-  "monitoringPanelFormRange": "历史范围（分钟）",
-  "monitoringPanelFormSort": "主机顺序",
-  "monitoringPanelFormHostsHint": "选择要监控的主机。手动排序时使用此顺序。",
   "navSysManager": "系统",
   "sysManagerTitle": "系统管理器",
   "sysManagerHost": "主机",
@@ -3068,5 +3109,7 @@
   "settingsMCPProblemStale": "所有权变更使审批失效。",
   "settingsMCPProblemInvalid": "审批已被使用或不再等待。",
   "settingsMCPProblemMode": "无法更改权限模式。",
-  "settingsMCPProblemSharing": "无法保存会话共享设置。"
+  "settingsMCPProblemSharing": "无法保存会话共享设置。",
+  "sftpGoTerminalCwd": "转到终端目录",
+  "sidePanelClose": "关闭面板"
 }

@@ -2170,59 +2170,120 @@
       }
     }
   },
-  "monitoringTitle": "Мониторинг хостов",
-  "monitoringSummary": "{live} из {total} активны",
-  "@monitoringSummary": {
-    "description": "The share of sampled Hosts that are live.",
+  "monitoringNewPanel": "Новая панель",
+  "monitoringEditPanel": "Изменить панель",
+  "monitoringDuplicatePanel": "Дублировать панель",
+  "monitoringCopyName": "Копия {name}",
+  "@monitoringCopyName": {
+    "description": "The name of a duplicated monitoring panel.",
     "placeholders": {
-      "live": {
-        "type": "int",
-        "example": "3"
-      },
-      "total": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringDeletePanel": "Удалить панель",
+  "monitoringDeleteConfirm": "Удалить «{name}»? Мониторинг этой панели остановится. Серверы и другие панели сохранятся.",
+  "@monitoringDeleteConfirm": {
+    "description": "Asks before deleting a monitoring panel.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Production"
+      }
+    }
+  },
+  "monitoringPanelActions": "Действия панели",
+  "monitoringChoosePanel": "Выбрать панель",
+  "monitoringStart": "Начать мониторинг",
+  "monitoringStop": "Остановить",
+  "monitoringStopAll": "Остановить всё",
+  "monitoringEmptyTitle": "Все серверы перед глазами",
+  "monitoringEmptyBody": "Выберите сохранённые серверы из любых групп и запустите мониторинг.",
+  "monitoringCreateFirst": "Создать первую панель",
+  "monitoringViewList": "Список",
+  "monitoringViewCharts": "Графики",
+  "monitoringSearch": "Поиск узлов, групп, тегов и заметок",
+  "monitoringInterval": "Интервал обновления",
+  "monitoringRange": "Период графика",
+  "monitoringSeconds": "Каждые {count} с",
+  "@monitoringSeconds": {
+    "description": "A monitoring refresh interval choice, in seconds.",
+    "placeholders": {
+      "count": {
         "type": "int",
         "example": "5"
       }
     }
   },
-  "monitoringNoPanelsTitle": "Панелей мониторинга пока нет",
-  "monitoringNoPanelsBody": "Создайте панель, чтобы выбрать хосты для мониторинга и частоту обновления.",
-  "monitoringNewPanel": "Новая панель",
-  "monitoringEditPanel": "Изменить панель",
-  "monitoringColumns": "Столбцы",
-  "monitoringColumnsHint": "Перетащите край столбца, чтобы изменить ширину; ширины сохраняются автоматически.",
-  "monitoringColumnsDone": "Готово",
-  "monitoringAlwaysVisible": "Всегда виден",
-  "monitoringRefresh": "Обновление",
-  "monitoringSort": "Сортировка",
-  "monitoringSortManual": "Вручную",
+  "monitoringMinutes": "Последние {count} мин",
+  "@monitoringMinutes": {
+    "description": "A monitoring trend range choice, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "monitoringSort": "Сортировка серверов",
+  "monitoringSortManual": "Сохранённый порядок",
   "monitoringSortName": "Имя",
-  "monitoringViewList": "Список",
-  "monitoringViewCharts": "Графики",
-  "monitoringEmptyPanel": "В этой панели нет хостов. Измените панель, чтобы добавить их.",
-  "monitoringSearch": "Поиск хостов",
-  "monitoringNoMatches": "Нет хостов, подходящих под поиск.",
-  "monitoringOpen": "Открыть",
-  "monitoringHost": "Хост",
+  "monitoringNoMatches": "Нет подходящих серверов",
+  "monitoringVisibleColumns": "Видимые столбцы",
+  "monitoringHost": "Сервер",
   "monitoringLatency": "Задержка",
-  "monitoringTags": "Метки",
+  "monitoringTags": "Теги",
   "monitoringNotes": "Заметки",
-  "monitoringCpu": "ЦП",
+  "monitoringCpu": "CPU",
+  "monitoringCores": "Ядер: {count}",
+  "@monitoringCores": {
+    "description": "A Host's logical CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
   "monitoringMemory": "Память",
-  "monitoringDisk": "Диск",
+  "monitoringPartitions": "Разделы дисков",
+  "monitoringDiskCapacity": "Использовано {used} / всего {total}",
+  "@monitoringDiskCapacity": {
+    "description": "A partition's used and total capacity.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "12.0 GiB"
+      },
+      "total": {
+        "type": "String",
+        "example": "50.0 GiB"
+      }
+    }
+  },
+  "monitoringDiskCapacityUnknown": "Данные об объёме недоступны",
   "monitoringNetwork": "Сеть",
-  "monitoringGpu": "ГП",
+  "monitoringDownload": "Загрузка",
+  "monitoringUpload": "Отправка",
+  "monitoringGpu": "GPU",
+  "monitoringGpuUtil": "Загрузка",
+  "monitoringGpuMemory": "Видеопамять",
   "monitoringUpdated": "Обновлено",
-  "monitoringStatus": "Состояние",
+  "monitoringStatus": "Статус",
   "monitoringTerminal": "Терминал",
+  "monitoringWaiting": "Ожидание первого измерения",
+  "monitoringOpenTerminal": "Открыть терминал",
+  "monitoringStatusStopped": "Не запущено",
   "monitoringStatusQueued": "В очереди",
   "monitoringStatusConnecting": "Подключение",
-  "monitoringStatusLive": "Активен",
-  "monitoringStatusLogin": "Войти",
-  "monitoringStatusError": "Ошибка",
+  "monitoringStatusLive": "Актуально",
+  "monitoringStatusLogin": "Нужен вход",
+  "monitoringStatusError": "Ошибка сбора",
   "monitoringStatusUnsupported": "Не поддерживается",
-  "monitoringStatusDisconnected": "Отключён",
-  "monitoringStatusUnavailable": "Недоступен",
+  "monitoringStatusDisconnected": "Отключено",
+  "monitoringStatusUnavailable": "Недоступно",
   "monitoringStatusLimit": "Достигнут предел",
   "monitoringStale": "Устарело",
   "monitoringReasonHostKey": "Ключ хоста не доверен",
@@ -2233,32 +2294,10 @@
   "monitoringReasonCancelled": "Отменено",
   "monitoringReasonInternal": "Ошибка мониторинга",
   "monitoringReasonOS": "ОС не поддерживается",
-  "monitoringUnknown": "—",
-  "monitoringUpdatedNow": "только что",
-  "monitoringUpdatedSeconds": "{seconds} с назад",
-  "@monitoringUpdatedSeconds": {
-    "description": "How long ago the latest sample arrived, in seconds.",
-    "placeholders": {
-      "seconds": {
-        "type": "int",
-        "example": "12"
-      }
-    }
-  },
-  "monitoringUpdatedMinutes": "{minutes} мин назад",
-  "@monitoringUpdatedMinutes": {
-    "description": "How long ago the latest sample arrived, in minutes.",
-    "placeholders": {
-      "minutes": {
-        "type": "int",
-        "example": "3"
-      }
-    }
-  },
-  "monitoringName": "Имя",
-  "monitoringDescription": "Описание",
-  "monitoringPanelHosts": "Хосты",
-  "monitoringSelectedCount": "{count, plural, one {Выбран #} few {Выбрано #} many {Выбрано #} other {Выбрано #}}",
+  "monitoringName": "Название панели",
+  "monitoringDescription": "Описание (необязательно)",
+  "monitoringPanelHosts": "Серверы",
+  "monitoringSelectedCount": "Выбрано серверов: {count}",
   "@monitoringSelectedCount": {
     "description": "The number of Hosts selected in the panel editor.",
     "placeholders": {
@@ -2268,35 +2307,37 @@
       }
     }
   },
+  "monitoringChooseHosts": "Выбрать серверы",
+  "monitoringSelectionHint": "Можно выбирать из разных групп. Неподдерживаемые подключения будут отмечены при запуске.",
+  "monitoringDefaultView": "Вид по умолчанию",
+  "monitoringSaveHint": "Сохранение не подключает серверы. Копии также создаются остановленными.",
+  "monitoringMoveUp": "Переместить выше",
+  "monitoringRemoveHost": "Убрать из панели",
   "monitoringNoHostsAvailable": "В хранилище нет хостов.",
   "monitoringSave": "Сохранить",
   "monitoringCancel": "Отмена",
-  "monitoringDeletePanel": "Удалить панель",
-  "monitoringDeleteConfirm": "Удалить «{name}»?",
-  "@monitoringDeleteConfirm": {
-    "description": "Asks before deleting a monitoring panel.",
+  "monitoringDone": "Готово",
+  "monitoringClose": "Закрыть",
+  "monitoringObserved": "Наблюдение: {count} мин",
+  "@monitoringObserved": {
+    "description": "How long the Host has been observed in this monitoring run.",
     "placeholders": {
-      "name": {
-        "type": "String",
-        "example": "Production"
+      "count": {
+        "type": "int",
+        "example": "12"
       }
     }
   },
-  "monitoringProblemNameRequired": "Укажите имя панели.",
-  "monitoringProblemDuplicateName": "Другая панель уже использует это имя.",
+  "monitoringSystem": "Информация о системе",
+  "monitoringProblemNameRequired": "Введите название панели.",
+  "monitoringProblemHostRequired": "Выберите хотя бы один сервер.",
+  "monitoringProblemDuplicateName": "Панель с таким названием уже существует.",
   "monitoringProblemSave": "Не удалось сохранить настройки мониторинга.",
   "monitoringProblemLoad": "Не удалось прочитать список хостов.",
   "monitoringProblemTooManyHosts": "Панель может опрашивать не более 256 хостов.",
   "monitoringProblemNoPanel": "Панель не выбрана.",
   "monitoringProblemOpenTerminal": "Не удалось открыть сеанс хоста.",
   "monitoringProblemInternal": "Сбой мониторинга.",
-  "monitoringPanelFormCreate": "Новая панель мониторинга",
-  "monitoringPanelFormEdit": "Изменение панели мониторинга",
-  "monitoringPanelFormView": "Вид",
-  "monitoringPanelFormInterval": "Интервал обновления (секунды)",
-  "monitoringPanelFormRange": "Диапазон истории (минуты)",
-  "monitoringPanelFormSort": "Порядок хостов",
-  "monitoringPanelFormHostsHint": "Выберите хосты для мониторинга. Этот порядок действует при ручной сортировке.",
   "navSysManager": "Система",
   "sysManagerTitle": "Системный менеджер",
   "sysManagerHost": "Хост",
@@ -3068,5 +3109,7 @@
   "settingsMCPProblemStale": "Изменение владения аннулировало подтверждение.",
   "settingsMCPProblemInvalid": "Подтверждение уже использовано или больше не ожидает.",
   "settingsMCPProblemMode": "Не удалось изменить режим разрешений.",
-  "settingsMCPProblemSharing": "Не удалось сохранить настройку общего доступа к сеансам."
+  "settingsMCPProblemSharing": "Не удалось сохранить настройку общего доступа к сеансам.",
+  "sftpGoTerminalCwd": "Перейти в каталог терминала",
+  "sidePanelClose": "Закрыть панель"
 }
