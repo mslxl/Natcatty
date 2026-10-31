@@ -162,8 +162,12 @@ func (t *selftest44) configureStep(*ui.Context) selftest.Outcome {
 			len(stored.Panels[0].HostIDs) != 2 {
 			return selftest.Failed(fmt.Errorf("persisted monitor configuration = %+v", stored))
 		}
+		if t.state.Running() {
+			return selftest.Failed(errors.New("saving the panel connected before Start"))
+		}
+		t.state.Start()
 		if !t.state.Running() {
-			return selftest.Failed(errors.New("the saved panel did not start sampling"))
+			return selftest.Failed(errors.New("Start did not begin sampling the saved panel"))
 		}
 		t.configured = true
 	}
@@ -250,8 +254,7 @@ func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 		t.state.UpdatePanelView(domainpreferences.MonitorViewList)
 		tester.Frame()
 		for _, text := range []string{
-			m.MonitoringTitle(), m.MonitoringNewPanel(), m.MonitoringEditPanel(),
-			m.MonitoringColumns(), "Alpha", m.MonitoringStatusLive(),
+			m.MonitoringNewPanel(), m.MonitoringEditPanel(), m.MonitoringStop(), "Alpha",
 		} {
 			if !insideShell(tester, text, variant.width, variant.height) {
 				shellState.Shutdown()
@@ -265,13 +268,12 @@ func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 		}
 		captured++
 
-		// Panel editor: Save, Cancel, and Delete stay pinned inside the
-		// window while the fields and Host list scroll.
+		// Panel editor: its fields and Save and Cancel are inside the window.
 		t.state.BeginEditPanel()
 		tester.Frame()
 		for _, text := range []string{
-			m.MonitoringPanelFormEdit(), m.MonitoringName(), m.MonitoringDescription(),
-			m.MonitoringSave(), m.MonitoringCancel(), m.MonitoringDeletePanel(),
+			m.MonitoringName(), m.MonitoringDescription(),
+			m.MonitoringSave(), m.MonitoringCancel(), "Alpha",
 		} {
 			if !insideShell(tester, text, variant.width, variant.height) {
 				t.state.CancelEdit()
@@ -280,13 +282,23 @@ func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 					prefix, text, tester.Texts()))
 			}
 		}
-		if !tester.HasText("Alpha") {
+		if err := capture(tester, filepath.Join(directory, prefix+"-editor.png")); err != nil {
 			t.state.CancelEdit()
 			shellState.Shutdown()
-			return selftest.Failed(fmt.Errorf("%s editor: the Host list is missing: %v",
+			return selftest.Failed(err)
+		}
+		captured++
+
+		// Host picker: Done is inside the window.
+		t.state.BeginPickHosts()
+		tester.Frame()
+		if !insideShell(tester, m.MonitoringDone(), variant.width, variant.height) {
+			t.state.CancelEdit()
+			shellState.Shutdown()
+			return selftest.Failed(fmt.Errorf("%s picker: Done is missing or clipped: %v",
 				prefix, tester.Texts()))
 		}
-		if err := capture(tester, filepath.Join(directory, prefix+"-editor.png")); err != nil {
+		if err := capture(tester, filepath.Join(directory, prefix+"-picker.png")); err != nil {
 			t.state.CancelEdit()
 			shellState.Shutdown()
 			return selftest.Failed(err)
@@ -295,48 +307,11 @@ func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 		t.state.CancelEdit()
 		tester.Frame()
 
-		// Columns editor: Done is inside the window. At 720x480 the lower
-		// rows are reached by scrolling the editor body, not the window.
-		t.state.ToggleColumns()
-		tester.Frame()
-		if !insideShell(tester, m.MonitoringColumnsDone(), variant.width, variant.height) {
-			t.state.ToggleColumns()
-			shellState.Shutdown()
-			return selftest.Failed(fmt.Errorf("%s columns: Done is missing or clipped: %v",
-				prefix, tester.Texts()))
-		}
-		if err := capture(tester, filepath.Join(directory, prefix+"-columns.png")); err != nil {
-			t.state.ToggleColumns()
-			shellState.Shutdown()
-			return selftest.Failed(err)
-		}
-		captured++
-		if variant.height < 600 {
-			// Scroll the editor body, below its title and above Done.
-			tester.Scroll(float32(variant.width)/2, float32(variant.height)*0.65, 0, 600)
-			tester.Frame()
-			if !insideShell(tester, m.MonitoringTerminal()+" · "+m.MonitoringAlwaysVisible(),
-				variant.width, variant.height) {
-				t.state.ToggleColumns()
-				shellState.Shutdown()
-				return selftest.Failed(fmt.Errorf(
-					"%s columns: the lower rows are unreachable: %v", prefix, tester.Texts()))
-			}
-			if !insideShell(tester, m.MonitoringColumnsDone(), variant.width, variant.height) {
-				t.state.ToggleColumns()
-				shellState.Shutdown()
-				return selftest.Failed(fmt.Errorf(
-					"%s columns: Done scrolled out of the card", prefix))
-			}
-		}
-		t.state.ToggleColumns()
-		tester.Frame()
-
-		// Charts: each card keeps its metric row and Open action inside the
-		// card; at 720x480 the first card fits without a clipped action.
+		// Charts: the first card keeps its metrics and terminal action
+		// inside the window.
 		t.state.UpdatePanelView(domainpreferences.MonitorViewCharts)
 		tester.Frame()
-		for _, text := range []string{m.MonitoringCpu(), m.MonitoringOpen()} {
+		for _, text := range []string{m.MonitoringCpu(), m.MonitoringOpenTerminal(), m.MonitoringStatusLive()} {
 			if !insideShell(tester, text, variant.width, variant.height) {
 				shellState.Shutdown()
 				return selftest.Failed(fmt.Errorf("%s charts: %q is missing or clipped: %v",
@@ -352,7 +327,7 @@ func (t *selftest44) renderStep(*ui.Context) selftest.Outcome {
 	}
 	t.state.UpdatePanelView(domainpreferences.MonitorViewList)
 	return selftest.Passed(fmt.Sprintf(
-		"list, panel editor, columns editor, and charts rendered inside the real shell with no clipped control at 720x480 and 1100x720 in en and zh-CN; %d frames captured",
+		"list, panel editor, Host picker, and charts rendered inside the real shell with no clipped control at 720x480 and 1100x720 in en and zh-CN; %d frames captured",
 		captured),
 		"ui/shell.View + uimonitoring.View + ui.Tester")
 }

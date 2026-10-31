@@ -76,9 +76,12 @@ func TestTicket44CheckRunsThroughTheKeyboard(t *testing.T) {
 	if len(entries) != 16 {
 		t.Fatalf("screenshots = %d, want 16", len(entries))
 	}
+	if keep := os.Getenv("NATCATTY_KEEP_SHOTS"); keep != "" {
+		_ = os.CopyFS(keep, os.DirFS(shots))
+	}
 	var names []string
 	for _, variant := range []string{"1100x720-en", "1100x720-zh-CN", "720x480-en", "720x480-zh-CN"} {
-		for _, kind := range []string{"list", "editor", "columns", "charts"} {
+		for _, kind := range []string{"list", "editor", "picker", "charts"} {
 			names = append(names, "monitor-"+variant+"-"+kind+".png")
 		}
 	}

@@ -144,6 +144,7 @@ type State struct {
 	filesOpen  map[model.TabID]filesTarget
 	filesShown *filesTarget
 	filesRatio float32
+	filesWidth float32
 	// monitorVisible shows the Host monitoring surface. activate starts the
 	// active panel and deactivate stops sampling when another surface shows.
 	monitorVisible    bool

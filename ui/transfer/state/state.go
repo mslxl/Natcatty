@@ -219,6 +219,12 @@ type State struct {
 	// background Session's prompt does not steer an SFTP pane. It is read on
 	// the UI thread.
 	focusedSession func() model.SessionID
+	// terminalCwds is the last working directory each Host's Sessions
+	// reported with OSC 7, keyed by cwdKey. A new Tab for the Host opens
+	// there, and "Go to terminal directory" returns to it. Reports arrive
+	// off the UI thread, so cwdMu guards it.
+	cwdMu        sync.Mutex
+	terminalCwds map[string]string
 	// openFile opens a file through the configured association. The app wires
 	// the application service; a surface without one reports that opening is
 	// unavailable.
@@ -377,13 +383,18 @@ func (s *State) Shutdown() {
 }
 
 // EnsureStarted opens the initial local Tab once. The view calls it on its
-// first frame; tests may call it directly.
+// first frame; tests may call it directly. A left pane that already has a Tab
+// keeps it: the Session panel points its state at the Session's Host before
+// the panel's first frame, and a local Tab opened over it would show this
+// computer's files beside a remote terminal.
 func (s *State) EnsureStarted() {
 	if s.started {
 		return
 	}
 	s.started = true
-	s.OpenLocal(Left)
+	if len(s.panes[Left].Tabs) == 0 {
+		s.OpenLocal(Left)
+	}
 	// Load both persisted bookmark sets once, off the UI thread. A malformed
 	// file is reported rather than silently treated as an empty list.
 	go func() {
@@ -507,7 +518,7 @@ func (s *State) OpenLocal(side Side) {
 	}
 	s.nextID++
 	s.addTab(side, tab)
-	s.load(tab, "")
+	s.load(tab, s.rememberedCwd("", true))
 }
 
 // OpenRemote adds a remote Tab for a Host and makes it active. Choosing a
@@ -806,7 +817,11 @@ func (s *State) openRemote(tab *Tab) {
 				return
 			}
 			tab.FS = files
-			s.loadAt(tab, root, false)
+			start := root
+			if cwd := s.rememberedCwd(tab.HostID, false); cwd != "" {
+				start = files.Canonical(cwd)
+			}
+			s.loadAt(tab, start, false)
 			// Reconnecting a Host in the SFTP pane is the product's reconnect
 			// path: bind this live filesystem to its interrupted Transfers so
 			// the center's Resume continues instead of refusing.
@@ -1054,11 +1069,22 @@ func (s *State) sideOf(tab *Tab) (Side, bool) {
 // from the last followed directory is not pulled back by a repeated report,
 // and a path that is not a directory is not retried on every prompt.
 func (s *State) NoteTerminalCwd(sessionID model.SessionID, hostID model.HostID, local bool, cwd string) {
-	// Checking here rather than only inside the posted closure keeps a shell
-	// prompt from queueing work when follow-cwd is off. Settings() is safe off
-	// the UI thread, and the closure checks again because it may change before
-	// the frame that drains the queue.
-	if cwd == "" || !s.sftpSettings().FollowTerminalCwd {
+	if cwd == "" {
+		return
+	}
+	// The directory is remembered whether or not panes follow it, so a new
+	// Tab and "Go to terminal directory" can use it. Remembering it here,
+	// rather than in a posted closure, keeps a shell prompt from queueing
+	// work when follow-cwd is off and the view is not there to drain it.
+	s.cwdMu.Lock()
+	if s.terminalCwds == nil {
+		s.terminalCwds = map[string]string{}
+	}
+	s.terminalCwds[cwdKey(hostID, local)] = cwd
+	s.cwdMu.Unlock()
+	// Settings() is safe off the UI thread, and the closure checks again
+	// because it may change before the frame that drains the queue.
+	if !s.sftpSettings().FollowTerminalCwd {
 		return
 	}
 	s.post(func() {
@@ -1100,6 +1126,41 @@ func (s *State) NoteTerminalCwd(sessionID model.SessionID, hostID model.HostID, 
 			})
 		}()
 	})
+}
+
+// rememberedCwd is the last directory reported for a file system.
+func (s *State) rememberedCwd(hostID model.HostID, local bool) string {
+	s.cwdMu.Lock()
+	defer s.cwdMu.Unlock()
+	return s.terminalCwds[cwdKey(hostID, local)]
+}
+
+// cwdKey names the file system a Session's working directory belongs to.
+func cwdKey(hostID model.HostID, local bool) string {
+	if local {
+		return "local"
+	}
+	return "host:" + string(hostID)
+}
+
+// TerminalCwd is the last working directory a Session on the side's file
+// system reported, or "" when none has.
+func (s *State) TerminalCwd(side Side) string {
+	tab := s.Tab(side)
+	if tab == nil {
+		return ""
+	}
+	return s.rememberedCwd(tab.HostID, tab.Kind == KindLocal)
+}
+
+// GoTerminalCwd opens the side's last reported terminal directory.
+func (s *State) GoTerminalCwd(side Side) {
+	tab := s.Tab(side)
+	cwd := s.TerminalCwd(side)
+	if tab == nil || tab.FS == nil || cwd == "" {
+		return
+	}
+	s.loadAtUser(tab, tab.FS.Canonical(cwd), true)
 }
 
 // followTab picks the pane that represents a Session's Host. The focused

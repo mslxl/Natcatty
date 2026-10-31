@@ -966,11 +966,19 @@ func run(afterReady func(hostWindow)) error {
 			return preferenceService.Settings().Layout.ShowSFTPTab
 		}),
 		state.WithFilesPanel(state.FilesPanel{
-			View: func(close func()) func(*ui.Context) { return transferui.SidePanel(filesState, close) },
+			View: func(width float32) func(*ui.Context) { return transferui.SidePanel(filesState, width) },
 			ShowRemote: func(hostID model.HostID, label string) {
 				filesState.ShowRemote(transferstate.Left, hostID, label)
 			},
 			ShowLocal: func() { filesState.ShowLocal(transferstate.Left) },
+			Dock: func() state.PanelDock {
+				return state.PanelDock(preferenceService.Settings().Layout.SidePanelDock)
+			},
+			SetDock: func(dock state.PanelDock) {
+				_ = preferenceService.Update(func(next *domainpreferences.Settings) {
+					next.Layout.SidePanelDock = domainpreferences.SidePanelDock(dock)
+				})
+			},
 		}),
 		state.WithEditor(editorui.View(editorState)),
 		state.WithSearch(overlayState),

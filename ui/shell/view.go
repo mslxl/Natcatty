@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/domain/model"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/kit"
@@ -329,20 +330,98 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 				paneTree(c, s, m, t, ref, root, focus, &ordinal)
 			})
 		}
-		files := s.FilesView(ref.id)
+		dock := s.FilesDock()
+		window, _ := c.Size()
+		width := window
+		if dock != state.DockBottom {
+			width = *s.FilesWidth(window)
+		}
+		files := s.FilesView(ref.id, width)
 		if files == nil {
 			ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(panes)
 			return
 		}
-		// The SFTP panel sits at the Tab's right edge, as the original's, and
-		// the divider between it and the terminal keeps the width the user
+		tabID := ref.id
+		panel := func() { sidePanel(c, s, m, t, tabID, dock, files) }
+		// The side panel docks at the Tab's left edge by default, as the
+		// original's, flush with the terminal: the split's own one-DIP line
+		// is the only separator, and the divider keeps the width the user
 		// drags it to.
-		ui.SplitPercent(c, s.FilesRatio(), panes, func() {
-			// The Panes keep a 4-DIP drop gutter on every side; the panel
-			// keeps the same inset so the two headers line up.
-			ui.Column(c).Fill().MinWidth(0).Padding(4, 4, 4, 0).Children(func() { files(c) })
-		}).FillWidth().Grow(1).MinHeight(0)
+		switch dock {
+		case state.DockBottom:
+			ui.SplitVerticalPercent(c, s.FilesRatio(), panes, panel).FillWidth().Grow(1).MinHeight(0)
+		case state.DockRight:
+			// Split puts its first child, the panel and its width, at the
+			// leading edge; a right-to-left box makes that the right one, and
+			// each side turns back to left to right inside.
+			ui.Row(c).Direction(ui.RightToLeft).FillWidth().Grow(1).MinHeight(0).Children(func() {
+				ui.Split(c, s.FilesWidth(window), func() {
+					ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panel)
+				}, func() {
+					ui.Column(c).Direction(ui.LeftToRight).Fill().MinWidth(0).Children(panes)
+				}).Fill()
+			})
+		default:
+			ui.Split(c, s.FilesWidth(window), panel, panes).FillWidth().Grow(1).MinHeight(0)
+		}
 	}
+}
+
+// sidePanel is a Session Tab's side panel, as the original's: a strip of
+// tools along the top, the panel's dock and close at its end, and the
+// chosen tool below. SFTP is the one tool this build has.
+func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
+	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
+	ui.Column(c).Fill().MinWidth(0).Background(t.Surface).Children(func() {
+		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
+			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+			sidePanelButton(c, icons.FolderTree, "SFTP", true)
+			ui.Column(c).Grow(1)
+			icon := icons.PanelLeft
+			switch dock {
+			case state.DockRight:
+				icon = icons.PanelRight
+			case state.DockBottom:
+				icon = icons.PanelBottom
+			}
+			sidePanelButton(c, icon, m.SettingsSidePanelDock(), false).Menu(func(menu *ui.Menu) {
+				for _, option := range []struct {
+					dock  state.PanelDock
+					label string
+				}{
+					{state.DockLeft, m.SettingsDockLeft()},
+					{state.DockRight, m.SettingsDockRight()},
+					{state.DockBottom, m.SettingsDockBottom()},
+				} {
+					if menu.Item(option.label).Checked(dock == option.dock).Chosen() {
+						s.SetFilesDock(option.dock)
+					}
+				}
+			})
+			if sidePanelButton(c, icons.X, m.SidePanelClose(), false).Clicked() {
+				s.CloseFiles(tab)
+			}
+		})
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
+	})
+}
+
+// sidePanelButton is one of the strip's 28-DIP icon buttons; the active
+// tool is tinted with the accent.
+func sidePanelButton(c *ui.Context, icon, label string, active bool) ui.Element {
+	t := c.Theme()
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(28, 28).Radius(kit.RadiusControl).
+		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
+	switch {
+	case active:
+		button.Background(t.Accent.Alpha(0.24)).TextColor(t.Text)
+	case button.Pressed():
+		button.Background(kit.Strong(t)).TextColor(t.Text)
+	case button.Hovered():
+		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	}
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(15, 15) })
+	return button
 }
 
 // sessionTone is the color of a Session's status dot: green while it runs

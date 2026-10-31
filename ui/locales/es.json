@@ -2170,109 +2170,21 @@
       }
     }
   },
-  "monitoringTitle": "Supervisión de Hosts",
-  "monitoringSummary": "{live} de {total} activos",
-  "@monitoringSummary": {
-    "description": "The share of sampled Hosts that are live.",
-    "placeholders": {
-      "live": {
-        "type": "int",
-        "example": "3"
-      },
-      "total": {
-        "type": "int",
-        "example": "5"
-      }
-    }
-  },
-  "monitoringNoPanelsTitle": "Aún no hay paneles de supervisión",
-  "monitoringNoPanelsBody": "Crea un panel para elegir qué Hosts supervisar y con qué frecuencia.",
   "monitoringNewPanel": "Nuevo panel",
   "monitoringEditPanel": "Editar panel",
-  "monitoringColumns": "Columnas",
-  "monitoringColumnsHint": "Arrastra el borde de una columna para cambiar su ancho; los anchos se guardan automáticamente.",
-  "monitoringColumnsDone": "Listo",
-  "monitoringAlwaysVisible": "Siempre visible",
-  "monitoringRefresh": "Actualizar",
-  "monitoringSort": "Ordenar",
-  "monitoringSortManual": "Manual",
-  "monitoringSortName": "Nombre",
-  "monitoringViewList": "Lista",
-  "monitoringViewCharts": "Gráficas",
-  "monitoringEmptyPanel": "Este panel no tiene Hosts. Edita el panel para añadir algunos.",
-  "monitoringSearch": "Buscar hosts",
-  "monitoringNoMatches": "Ningún Host coincide con la búsqueda.",
-  "monitoringOpen": "Abrir",
-  "monitoringHost": "Host",
-  "monitoringLatency": "Latencia",
-  "monitoringTags": "Etiquetas",
-  "monitoringNotes": "Notas",
-  "monitoringCpu": "CPU",
-  "monitoringMemory": "Memoria",
-  "monitoringDisk": "Disco",
-  "monitoringNetwork": "Red",
-  "monitoringGpu": "GPU",
-  "monitoringUpdated": "Actualizado",
-  "monitoringStatus": "Estado",
-  "monitoringTerminal": "Terminal",
-  "monitoringStatusQueued": "En cola",
-  "monitoringStatusConnecting": "Conectando",
-  "monitoringStatusLive": "Activo",
-  "monitoringStatusLogin": "Iniciar sesión",
-  "monitoringStatusError": "Error",
-  "monitoringStatusUnsupported": "No compatible",
-  "monitoringStatusDisconnected": "Desconectado",
-  "monitoringStatusUnavailable": "No disponible",
-  "monitoringStatusLimit": "Límite alcanzado",
-  "monitoringStale": "Obsoleto",
-  "monitoringReasonHostKey": "Clave del Host no confiable",
-  "monitoringReasonAuth": "Fallo de autenticación",
-  "monitoringReasonNetwork": "Red no disponible",
-  "monitoringReasonTimeout": "Tiempo agotado",
-  "monitoringReasonUnsupported": "Métricas no compatibles",
-  "monitoringReasonCancelled": "Cancelado",
-  "monitoringReasonInternal": "Error de supervisión",
-  "monitoringReasonOS": "Sistema operativo no compatible",
-  "monitoringUnknown": "—",
-  "monitoringUpdatedNow": "ahora mismo",
-  "monitoringUpdatedSeconds": "hace {seconds} s",
-  "@monitoringUpdatedSeconds": {
-    "description": "How long ago the latest sample arrived, in seconds.",
+  "monitoringDuplicatePanel": "Duplicar panel",
+  "monitoringCopyName": "Copia de {name}",
+  "@monitoringCopyName": {
+    "description": "The name of a duplicated monitoring panel.",
     "placeholders": {
-      "seconds": {
-        "type": "int",
-        "example": "12"
+      "name": {
+        "type": "String",
+        "example": "Production"
       }
     }
   },
-  "monitoringUpdatedMinutes": "hace {minutes} min",
-  "@monitoringUpdatedMinutes": {
-    "description": "How long ago the latest sample arrived, in minutes.",
-    "placeholders": {
-      "minutes": {
-        "type": "int",
-        "example": "3"
-      }
-    }
-  },
-  "monitoringName": "Nombre",
-  "monitoringDescription": "Descripción",
-  "monitoringPanelHosts": "Hosts",
-  "monitoringSelectedCount": "{count, plural, one {# seleccionado} many {# seleccionados} other {# seleccionados}}",
-  "@monitoringSelectedCount": {
-    "description": "The number of Hosts selected in the panel editor.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "4"
-      }
-    }
-  },
-  "monitoringNoHostsAvailable": "No hay Hosts en la Bóveda.",
-  "monitoringSave": "Guardar",
-  "monitoringCancel": "Cancelar",
   "monitoringDeletePanel": "Eliminar panel",
-  "monitoringDeleteConfirm": "¿Eliminar «{name}»?",
+  "monitoringDeleteConfirm": "¿Eliminar «{name}»? Se detendrá su monitorización. Se conservarán los equipos y otros paneles.",
   "@monitoringDeleteConfirm": {
     "description": "Asks before deleting a monitoring panel.",
     "placeholders": {
@@ -2282,21 +2194,150 @@
       }
     }
   },
-  "monitoringProblemNameRequired": "Ponle un nombre al panel.",
-  "monitoringProblemDuplicateName": "Otro panel ya tiene ese nombre.",
+  "monitoringPanelActions": "Acciones del panel",
+  "monitoringChoosePanel": "Elegir panel",
+  "monitoringStart": "Iniciar monitorización",
+  "monitoringStop": "Detener",
+  "monitoringStopAll": "Detener todo",
+  "monitoringEmptyTitle": "Tus equipos de un vistazo",
+  "monitoringEmptyBody": "Elige equipos guardados de cualquier grupo e inicia cuando quieras.",
+  "monitoringCreateFirst": "Crear el primer panel",
+  "monitoringViewList": "Lista",
+  "monitoringViewCharts": "Gráficos",
+  "monitoringSearch": "Buscar hosts, grupos, etiquetas o notas",
+  "monitoringInterval": "Intervalo de actualización",
+  "monitoringRange": "Rango de tendencias",
+  "monitoringSeconds": "Cada {count} s",
+  "@monitoringSeconds": {
+    "description": "A monitoring refresh interval choice, in seconds.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "monitoringMinutes": "Últimos {count} min",
+  "@monitoringMinutes": {
+    "description": "A monitoring trend range choice, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "monitoringSort": "Ordenar equipos",
+  "monitoringSortManual": "Orden guardado",
+  "monitoringSortName": "Nombre",
+  "monitoringNoMatches": "No hay equipos coincidentes",
+  "monitoringVisibleColumns": "Columnas visibles",
+  "monitoringHost": "Equipo",
+  "monitoringLatency": "Latencia",
+  "monitoringTags": "Etiquetas",
+  "monitoringNotes": "Notas",
+  "monitoringCpu": "CPU",
+  "monitoringCores": "Núcleos: {count}",
+  "@monitoringCores": {
+    "description": "A Host's logical CPU core count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "monitoringMemory": "Memoria",
+  "monitoringPartitions": "Particiones",
+  "monitoringDiskCapacity": "{used} usados / {total} en total",
+  "@monitoringDiskCapacity": {
+    "description": "A partition's used and total capacity.",
+    "placeholders": {
+      "used": {
+        "type": "String",
+        "example": "12.0 GiB"
+      },
+      "total": {
+        "type": "String",
+        "example": "50.0 GiB"
+      }
+    }
+  },
+  "monitoringDiskCapacityUnknown": "Capacidad no disponible",
+  "monitoringNetwork": "Red",
+  "monitoringDownload": "Descarga",
+  "monitoringUpload": "Subida",
+  "monitoringGpu": "GPU",
+  "monitoringGpuUtil": "Uso",
+  "monitoringGpuMemory": "Memoria de vídeo",
+  "monitoringUpdated": "Actualizado",
+  "monitoringStatus": "Estado",
+  "monitoringTerminal": "Terminal",
+  "monitoringWaiting": "Esperando la primera lectura",
+  "monitoringOpenTerminal": "Abrir terminal",
+  "monitoringStatusStopped": "Sin iniciar",
+  "monitoringStatusQueued": "En cola",
+  "monitoringStatusConnecting": "Conectando",
+  "monitoringStatusLive": "Actualizado",
+  "monitoringStatusLogin": "Requiere acceso",
+  "monitoringStatusError": "Error de lectura",
+  "monitoringStatusUnsupported": "No compatible",
+  "monitoringStatusDisconnected": "Desconectado",
+  "monitoringStatusUnavailable": "No disponible",
+  "monitoringStatusLimit": "Límite alcanzado",
+  "monitoringStale": "Sin actualizar",
+  "monitoringReasonHostKey": "Clave del Host no confiable",
+  "monitoringReasonAuth": "Fallo de autenticación",
+  "monitoringReasonNetwork": "Red no disponible",
+  "monitoringReasonTimeout": "Tiempo agotado",
+  "monitoringReasonUnsupported": "Métricas no compatibles",
+  "monitoringReasonCancelled": "Cancelado",
+  "monitoringReasonInternal": "Error de supervisión",
+  "monitoringReasonOS": "Sistema operativo no compatible",
+  "monitoringName": "Nombre del panel",
+  "monitoringDescription": "Descripción (opcional)",
+  "monitoringPanelHosts": "Equipos",
+  "monitoringSelectedCount": "Equipos seleccionados: {count}",
+  "@monitoringSelectedCount": {
+    "description": "The number of Hosts selected in the panel editor.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "monitoringChooseHosts": "Elegir equipos",
+  "monitoringSelectionHint": "Selecciona entre grupos. Las conexiones no compatibles se indicarán al iniciar.",
+  "monitoringDefaultView": "Vista predeterminada",
+  "monitoringSaveHint": "Guardar conserva la configuración sin conectar. Las copias también empiezan detenidas.",
+  "monitoringMoveUp": "Subir equipo",
+  "monitoringRemoveHost": "Quitar del panel",
+  "monitoringNoHostsAvailable": "No hay Hosts en la Bóveda.",
+  "monitoringSave": "Guardar",
+  "monitoringCancel": "Cancelar",
+  "monitoringDone": "Listo",
+  "monitoringClose": "Cerrar",
+  "monitoringObserved": "Observado durante {count} min",
+  "@monitoringObserved": {
+    "description": "How long the Host has been observed in this monitoring run.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "monitoringSystem": "Información del sistema",
+  "monitoringProblemNameRequired": "Escribe un nombre para el panel.",
+  "monitoringProblemHostRequired": "Selecciona al menos un equipo.",
+  "monitoringProblemDuplicateName": "Ya existe un panel con ese nombre.",
   "monitoringProblemSave": "No se pudo guardar la configuración de supervisión.",
   "monitoringProblemLoad": "No se pudo leer la lista de Hosts.",
   "monitoringProblemTooManyHosts": "Un panel puede muestrear como máximo 256 Hosts.",
   "monitoringProblemNoPanel": "No hay ningún panel seleccionado.",
   "monitoringProblemOpenTerminal": "No se pudo abrir la sesión del Host.",
   "monitoringProblemInternal": "La supervisión falló.",
-  "monitoringPanelFormCreate": "Nuevo panel de supervisión",
-  "monitoringPanelFormEdit": "Editar panel de supervisión",
-  "monitoringPanelFormView": "Vista",
-  "monitoringPanelFormInterval": "Intervalo de actualización (segundos)",
-  "monitoringPanelFormRange": "Rango del historial (minutos)",
-  "monitoringPanelFormSort": "Orden de los Hosts",
-  "monitoringPanelFormHostsHint": "Elige los Hosts que supervisar. Este orden se usa con el orden Manual.",
   "navSysManager": "Sistema",
   "sysManagerTitle": "Administrador del sistema",
   "sysManagerHost": "Host",
@@ -3068,5 +3109,7 @@
   "settingsMCPProblemStale": "Un cambio de propiedad invalidó la aprobación.",
   "settingsMCPProblemInvalid": "La aprobación ya se usó o ya no está pendiente.",
   "settingsMCPProblemMode": "No se pudo cambiar el modo de permiso.",
-  "settingsMCPProblemSharing": "No se pudo guardar la configuración para compartir sesiones."
+  "settingsMCPProblemSharing": "No se pudo guardar la configuración para compartir sesiones.",
+  "sftpGoTerminalCwd": "Ir al directorio de la terminal",
+  "sidePanelClose": "Cerrar panel"
 }
