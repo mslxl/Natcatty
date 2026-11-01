@@ -144,8 +144,7 @@ func run(afterReady func(hostWindow)) error {
 	// A later launch hands its command line to the running instance and exits.
 	// Focus the existing main window and open any Host target it carried; a
 	// URL is delivered separately to OnOpenURL. If readiness has not run yet,
-	// the target is queued. The selftest build invokes this same callback to
-	// prove the production second-instance path raises main.
+	// the target is queued.
 	secondInstance := func(args []string, _ string) {
 		if !ready {
 			focusRequested = true
@@ -826,7 +825,6 @@ func run(afterReady func(hostWindow)) error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
 	}
-	runningExternalMCP = externalMCPServer
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
 	workspaceService := appworkspace.NewService(database.Workspace())
@@ -1129,10 +1127,6 @@ func run(afterReady func(hostWindow)) error {
 			})
 		},
 	}
-
-	// The selftest build installs the F11 keyboard facility here; the normal
-	// build's installer is a no-op.
-	installSelftest(windows, shellState, desktopCtl, secondInstance)
 
 	// MyGo's native surface has no TranslateAccelerator path: a menu label's
 	// shortcut only works if the app dispatches it. Build the table from the

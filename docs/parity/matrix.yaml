@@ -201,8 +201,6 @@
     - ui/session.TestObserverSnapshotsAHibernatedSessionWithoutAttachingAView
     - ui/session.TestSessionMenuLifetimeSlotOffersResumeWhileHibernated
     - ui/session.TestHibernateAndObserverEntryPointsFitTheMinimumWindow
-    - app.TestTicket19CheckRunsThroughTheKeyboard
-    - app.TestTicket19CheckPassesTwiceInOneProcess
   status: verified
   notes: "Hibernate releases the Session's one live view; the transport, command loop, statistics, logging, and a bounded replay (3000 lines / 512 KiB, the original snapshot bounds) stay alive. Output produced while hibernated is retained and replayed on Resume before live output; Resume reattaches exactly one view. The Session menu owns the lifetime slot, which turns into Resume while hibernated, and the hibernated placeholder offers Resume and Observer snapshot. The original auto-hibernated hidden tabs only for non-local protocols; the rewrite allows manual hibernation of app-owned local Sessions because the application owns the PTY, so detaching the view cannot orphan a remote session. Hide-triggered auto-hibernation is not wired."
 
@@ -221,7 +219,6 @@
     - ui/session.TestObserverRendersTheOwningScreensSnapshotAndFeed
     - ui/session.TestObserverSnapshotsAHibernatedSessionWithoutAttachingAView
     - ui/session.TestHibernateAndObserverEntryPointsFitTheMinimumWindow
-    - app.TestTicket19CheckRunsThroughTheKeyboard
   status: verified
   notes: "Observe atomically captures the owning Session's bounded rendered output and subscribes to a bounded blocking feed. The UI feeds that stream to a shadow MyGo terminal in the same Pane; it never reads or writes the live TerminalConn, so an observer cannot consume, backpressure, resize, or type into the owning Session. Write returns ErrObserverReadOnly and Resize is ignored. LiveViews stays at zero or one: observers do not claim the Session's single live view, and AttachView refuses a second one with ErrViewAttached. The original had no separate observer surface; the rewrite and native spec User Story 29 define this read-only view as the replacement for a second live view. An observation ends with io.EOF when its Session ends, and Clear buffer runs through the same output path so later snapshots cannot resurrect cleared scrollback."
 
@@ -613,8 +610,6 @@
     - adapters/ssh.TestParseSecurityKeySignatureRejectsBrokenFraming
     - adapters/ssh.TestDialAuthenticatesWithTheSecurityKeyAgent
     - adapters/ssh.TestDialSecurityKeyDeviceDeadlineIsTypedTimeout
-    - app.TestTicket42CheckRunsThroughTheKeyboard
-    - app.TestTicket42CheckPassesTwiceInOneProcess
   status: verified
   notes: "The agent path is verified end-to-end against an in-process fake agent that speaks SSH_AGENTC_REQUEST_IDENTITIES, SSH_AGENTC_SIGN_REQUEST, and the OpenSSH PROTOCOL.u2f signature framing; x/crypto's own SK verifier accepts the signatures, which proves the application string, user-presence flag, and counter are intact. No physical FIDO device is available on this machine, so real-hardware touch and PIN behavior remains unverified; see connections.fido-sk-hardware-validation. SK keys never leave the OpenSSH agent and are never software-signed. The 30-second deadline is the production default and is exercised for real by the ticket self-test."
 
@@ -1148,7 +1143,6 @@
     - application/session.TestSafePathSegmentRejectsTraversalAndReservedNames
     - application/session.TestSessionAutoLoggingCapturesFirstOutputAndStopsOnExit
     - application/session.TestLogOutputStripsClipboardPayloadsButKeepsScreenText
-    - app.TestTicket15CheckRunsThroughTheKeyboard
   status: verified
   notes: "Logging is per Session and off by default. Raw logs stream the filtered output bytes; text and HTML logs render the screen and are rewritten atomically every 500 ms and on stop. Files use <directory>/<safe Host label>/<local start time>.<ext> with the original .log/.txt/.html extensions. OSC 52 payloads and app-owned notification sequences are removed before a log, so clipboard secrets are never persisted. The original renderer bridge protected sensitive paths with an opaque selection token because web content supplied paths; the native Settings window owns the directory directly, and safePathSegment reproduces the original filename hardening (unsafe characters, control characters, traversal names, and Windows device names)."
 
@@ -1207,11 +1201,8 @@
     - application/session.TestTapCommandBackspaceRemovesOneMultibyteRune
     - application/session.TestTapActivityTracksOutput
     - application/session.TestSessionTracksOSC7AndOSC133
-    - ui/session.TestCommandTextCoversEveryCommandState
     - ui/session.TestChromeFitsAtDefaultAndMinimumSizes
-    - ui/session.TestChromeKeepsTheCommandReadableAtTheMinimumWidth
     - ui/shell.TestShellPaneStaysWithinTheWindowWithManyTabs
-    - app.TestTicket15CheckRunsThroughTheKeyboard
   status: verified
   notes: "Typed input records the current command; the shell's OSC 133 D mark supplies the exit code, and a prompt-looking output line is the fallback. Activity stays lit for two seconds after output and while a command or transfer runs. The Tab chrome shows the command text, exit status, and activity dot."
 
@@ -1247,7 +1238,6 @@
     - application/session.TestTapTransferInputGateAndCtrlC
     - application/session.TestTapCancelTransferFromUI
     - application/session.TestSessionGateSuppressesTransferBytesAndInput
-    - app.TestTicket15CheckRunsThroughTheKeyboard
   status: verified
   notes: "Detection recognizes the ZMODEM ** CAN B prefix and YMODEM block-0 headers across chunks. The gate strips protocol bytes before the terminal and log, keeps the activity indicator lit, drops normal input, and turns Ctrl+C into the original five-CAN abort. There is no transfer engine: CancelTransfer and CompleteTransfer are seams for a later engine, so the gate is verified against the protocol-detection corpus but a real end-to-end ZMODEM/YMODEM transfer is not claimed. Without an engine the end marker is a heuristic, and a stray YMODEM EOT byte can close the gate early."
 
@@ -1270,8 +1260,6 @@
     - ui/shell/state.TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim
     - ui/shell.TestBroadcastAndComposeFitAtDefaultAndMinimumSizes
     - ui/shell.TestBroadcastControlsShowStoppedState
-    - app.TestTicket16CheckRunsThroughTheKeyboard
-    - app.TestTicket16CheckPassesTwiceInOneProcess
   status: verified
   notes: "The target panel lists running Sessions in Tab and Pane order and defaults to every other Session, matching the original workspace broadcast. Typed input that passed the source's tap is fanned out without re-entering the input hook, so it cannot recurse. Deliveries are queued per Session without blocking the others; closed, gated, missing, and saturated targets are reported individually and never corrupt the terminal or log. Stop clears the active flag synchronously, so later typing reaches only the focused Session."
 
@@ -1299,7 +1287,6 @@
     - ui/shell/state.TestComposeTransformsTheDraftAndSendsToTheFocusedSession
     - ui/shell/state.TestComposeSendsToTheBroadcastSetAndAppliesEscapesAndTrim
     - ui/shell.TestComposeFocusedTargetIndication
-    - app.TestTicket16CheckRunsThroughTheKeyboard
   status: verified
   notes: "The bar previews the exact transformed payload. Sanitizing removes IME zero-width characters while preserving ZWNJ and ZWJ; escape decoding runs before CRLF/CR normalization, and trimming is optional. Paste is the default and appends one submit carriage return; line-by-line trims the final newline and submits each line with the original 250 ms delay. Empty drafts are not sent. Send targets the focused Session, or the active broadcast set, and clears the draft only after at least one target accepted it; Cancel discards it."
 
@@ -1322,7 +1309,6 @@
     - ui/locales.TestEncodingLabelsPreserveTheOriginalNames
     - application/session.TestSessionRoutesOutputAndInputThroughTheCodec
     - application/session.TestSessionEncodingResolverUsesTheHostScope
-    - app.TestTicket17CheckRunsThroughTheKeyboard
   status: verified
   notes: "The Session codec decodes transport output before the tap, log, and terminal, so a GB18030, Shift_JIS, or ISO-8859-1 sequence split across reads becomes one UTF-8 character. Input is encoded after the tap and broadcast hook, so command tracking and fan-out always see UTF-8 while the wire receives the selected bytes. The Session menu switches encoding live; the status bar deliberately keeps only the activity dot, the command, and that menu, so a narrow split Pane cannot clip the selector. The choice persists in terminal-settings.json under the Host scope (or local) and a reopened Host inherits it. UTF-8 and GB18030 keep the original labels and order; Shift_JIS and ISO-8859-1 extend the selector for legacy hosts."
 
@@ -1345,7 +1331,6 @@
     - ui/session.TestRenameMenuOpensTheDialogAndAppliesTheTitle
     - application/session.TestReconnectNowDialsImmediately
     - ui/shell.TestSessionMenuStaysReachableInRealWindowLayouts
-    - app.TestTicket17CheckRunsThroughTheKeyboard
   status: verified
   notes: "MyGo v0.5.5's terminal installs its own right-click menu and the engine routes the click to the innermost menu, so a wrapper cannot replace it. The Session menu in the status bar is the functional equivalent and follows the original order: Copy, Paste, Paste Selection, Select All, Open Browser, Reconnect, Send/Receive with YMODEM, Split Horizontal, Split Vertical, Save current screen, Clear Buffer, Encoding, Logging, Rename, Detach from workspace, Close terminal. Paste is enabled only while the clipboard holds text and goes through the multiline gate. Reconnect immediately opens a replacement transport and is available only while the Session is running with a reconnect policy. Save current screen writes the terminal text to Downloads (or the temporary directory) and reports a dismissible result; Rename edits the Tab title; both splits, Detach, and Close use the shell's real Pane commands. Copy, Paste Selection, and Select All stay visible but disabled because MyGo exposes no selection or select-all API and its native menu already provides all three with correct selection state. Open Browser opens the host-routed browser panel for an SSH Session with a saved Host (ticket 47) and stays disabled for a Session with no such route, including a local Session. The YMODEM items are disabled seams until a transfer engine exists. Plugin menus, Upload clipboard image, and Add to Conversation remain out of scope as the ticket permits. The menu control itself is the only fixed-width status item and the layout test proves it sits inside its Pane and is clickable in single, left/right, and stacked Panes at 720x480 and 1100x720, including a 240-DIP split Pane. Search, selection export, and cursor-geometry overlays remain excluded under their own MyGo limitation rows."
 
@@ -1365,7 +1350,6 @@
     - ui/session.TestDropHandlerUploadFailureIsReportedWithoutInserting
     - ui/session.TestDropBannerShowsDragAndOutcomeStates
     - ui/session.TestDropNoticeDismissIsHitTestableAndClearsTheBanner
-    - app.TestTicket17CheckRunsThroughTheKeyboard
   status: verified
   notes: "The terminal element is the drop target and shows a banner while files are over it and after a drop. Multiple paths are joined and every path is quoted: a Windows local Session uses double quotes (accepted by both cmd.exe and PowerShell; Windows names cannot contain a double quote), and a POSIX Session single-quotes with the '\"'\"' close-escape-reopen form. The default action inserts the quoted paths without running anything. Upload is a configured seam (sessionui.UploadFunc); because no SFTP/ZMODEM upload transport exists yet, choosing Upload with no seam changes nothing and reports that upload is unavailable, never silently inserting a path. Directories, spaces, and quotes pass through the same quoting. Original raw-path insertion is superseded by quoting as the ticket requires. A completed drop's result banner carries a real Cancel control; it is hit-testable and clears the notice and its text, rather than leaving the banner painted."
 
@@ -1390,8 +1374,6 @@
     - ui/session.TestPasteGateNormalizesEveryLineEndingOnce
     - ui/session.TestPasteGateNormalizesTheWaitingTextBeforeAccept
     - ui/session.TestPastePromptShowsCountsAndCallsExactlyOneAction
-    - app.TestTicket17CheckRunsThroughTheKeyboard
-    - app.TestSelftest61PassesTwiceInOneProcess
   status: verified
   notes: "The original defaults are preserved: protection is off, the threshold is 2 lines (range 1..1000), CRLF and lone CR normalize to LF, and one trailing newline is not an extra line. CRLF and lone-CR normalization happens exactly once at the shared paste gate, before the policy, preview, or send, so every paste path and every Session kind (SSH, serial, Telnet) stores and sends one LF per line. MyGo's vt.EncodePaste runs after that boundary and turns each LF into the carriage return the wire expects; it never sees a CRLF, so the old CR CR blank-line defect cannot recur. With protection on, every terminal paste path (Ctrl+Shift+V, the native menu, and the Session menu) is consumed by the gate, and a banner shows the line count, character count, and a bounded preview. Send delivers the exact stored text once through the terminal's bracketed paste; Cancel sends no bytes. A newer paste replaces the waiting one, and the old text is never sent. With protection off, the same text is delivered immediately."
 
@@ -1419,7 +1401,6 @@
     - ui/settings.TestThemesStateImportFailuresDoNotSelect
     - ui/session.TestTerminalThemeOptionMapsTheSelectedScheme
     - ui/shell/state.TestTerminalAppearanceReachesOpenSurfaces
-    - app.TestTicket28CheckRunsThroughTheKeyboard
   status: verified
   notes: "The 184 visible built-in schemes and 14 hidden UI-matched schemes are compiled from the original catalogs; the domain parser also reproduces the original's defaults for missing ANSI colors, cursor, and selection. The preference stores only a scheme ID, so themes.json keeps the imported documents and a restart finds them again. An import is parsed, validated, saved atomically, and only then published; a malformed file, a save failure, or a failing selection leaves both the catalog and the selected scheme unchanged. A successful import is selected immediately and the App applies it to every open terminal and observer without recreating a Session; a new terminal reads the same scheme at construction. Differences from the Electron renderer: the terminal scheme has no bold color, so the file's Bold Color is ignored, and imported schemes are listed in the same picker as the built-ins."
 
@@ -1437,7 +1418,6 @@
     - application/terminalsettings.TestUpdatePersistsAndPublishes
     - ui/settings.TestTerminalStateSavesEachSettingAndReportsFailure
     - ui/settings.TestTerminalSettingsFitAtDefaultAndMinimumSizes
-    - app.TestTicket17CheckRunsThroughTheKeyboard
   status: verified
   notes: "terminal-settings.json version 2 adds the default encoding, the per-scope encoding memory, the paste guard and threshold, and the drop action. Version 1 files load with the original defaults. A live encoding choice is written through the Settings service so the next Session for that Host inherits it."
 
@@ -1474,7 +1454,6 @@
     - ui/settings.TestSearchIndexCoversEveryArea
     - ui/settings.TestSearchIndexesEveryTerminalSetting
     - ui/settings.TestSettingsScreenshotsAndClipping
-    - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
   notes: "The whole-tree search filters every area, the typed preference fields, the Terminal controls, and all 43 shortcut rows by localized label, stable identifier, and English keywords. Arrow keys move the highlight, Enter opens the matching area, and Escape clears the query. The window is verified at 1100x720 and 720x480 in English and Simplified Chinese without clipping."
 
@@ -1493,7 +1472,6 @@
     - adapters/store.TestPreferencesStoreOverlaysPartialFilesOnDefaults
     - ui/settings.TestPreferenceChangesApplyLiveAndResetIndividually
     - ui/settings.TestResetAllAsksBeforeRestoringEverything
-    - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
   notes: "Every typed group is saved atomically in preferences.json before it is published, so the window never shows a value the app is not using. A field reset restores only that field; a group and the all-at-once reset use a localized confirmation. Window opacity, terminal font, close confirmation, and startup landing are applied without a restart. The theme catalog, accent, icon, and terminal-scheme picker are ticket 28."
 
@@ -1518,12 +1496,11 @@
     - ui/theme.TestUIMapsPresetTokens
     - ui/theme.TestUICustomAccentAndContrast
     - ui/settings.TestAppearanceAreaRendersAndDrivesTheCatalog
+    - ui/shell.TestVaultToolbarFitsAtMinimumSize
+    - ui/shell.TestVaultToolbarActionsAreReachableAtMinimumSize
     - app.TestResolveUIThemeFollowsModePresetAndAccent
     - app.TestIconVariantsDecodeAndTrayIconIsSmall
     - app.TestWindowManagerAppliesThemeAndIconToOpenAndFutureWindows
-    - ui/shell.TestVaultHeaderFitsAtMinimumSize
-    - ui/shell.TestVaultHeaderActionsAreClickableAtMinimumSize
-    - app.TestTicket28CheckRunsThroughTheKeyboard
   status: verified
   notes: "The original's 124 UI presets (62 light, 62 dark), 18 accent presets, and 12 app-icon variants are compiled into domain/model/theme. The Settings Appearance area selects an independent light and dark preset, System mode follows the desktop's live appearance, a custom accent overrides the preset's accent token, and the opacity slider and 100/85/70 quick choices apply to every open window without a restart. The window theme is installed at each window's root, so the main window, Settings, and detached windows all paint from the same preset and accent. Icon changes update every open window, the tray, and the macOS Dock. Preferences are saved atomically before they are published; a restart over the same file restores the mode, presets, accent, icon, opacity, and terminal scheme. At the 720x480 minimum the Vault's host-list header wraps its actions, so the localized title keeps one line and Import Hosts, Export Vault, Backups, and New Host stay inside the content column in all five catalogs; the list viewport also reserves the overlay scroll bar's gutter. On Windows the Settings caption is set with SetWindowTextW: GetWindowTextW returns 设置 (U+8BBE U+7F6E), while an ANSI GetWindowTextA read returns \"??\" because the CJK characters are not in the ANSI code page, so a \"??\" caption reports an ANSI-reading probe rather than an app or MyGo v0.5.5 encoding defect. The AMOLED-style, custom-CSS, plugin-theme, and per-surface chrome overrides the Electron build also offered remain out of scope for this ticket."
 
@@ -1547,7 +1524,6 @@
     - adapters/store.TestKeyBindingsStoreRoundTripsAndToleratesBadFiles
     - ui/settings.TestShortcutSchemeSwitchAndDisabledScheme
     - ui/settings.TestEveryBindingHasALocalizedLabel
-    - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
   notes: "IDs, actions, labels, categories, mac/PC defaults, and Disabled match the original catalog. The original English labels live in the five UI catalogs, so the domain catalog holds no display strings (ADR-0009). The PC scheme is the Windows default; mac and PC remain selectable on every platform, and Disabled turns every application binding off. Overrides persist per binding and scheme in keybindings.json and are localized in Settings."
 
@@ -1576,7 +1552,6 @@
     - app.TestDispatcherRunsRealActionsAndLeavesTerminalChordsAlone
     - app.TestTerminalKeybindsFollowOverridesAndClearOldDefaults
     - app.TestMenuSettingsAcceleratorOpensSettingsThroughTheAcceleratorEngine
-    - app.TestTicket27CheckRunsThroughTheKeyboard
   status: verified
   notes: "A duplicate chord in the active scheme, or a collision with a foreign menu accelerator, is reported with the binding and action; nothing is saved until the user chooses Replace or Cancel. Terminal-vs-SFTP default collisions are intentional because those surfaces never coexist; a global binding that takes a terminal chord is a conflict, because the terminal would silently keep the key. Terminal-owned chords, including Ctrl+C SIGINT, are never registered as global or menu shortcuts; terminal copy/paste/font size are applied through MyGo keybinds. The Settings window binds no global shortcut table, so its search field and shortcut recorder receive every chord before any application action. Features this build lacks keep a catalog row marked unavailable and never fire. A binding override on an open terminal applies when the next terminal is created, because MyGo applies keybinds at construction; font changes apply live."
 
@@ -1617,7 +1592,6 @@
     - ui/vault.TestVaultSearchEmptyQueryListsTheWholeVault
     - ui/vault.TestVaultSearchFieldFiltersAndOpensTheMatch
     - ui/vault.TestVaultSearchNoResultsAndEscapeClear
-    - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
   notes: "One field searches the whole Vault and groups results by kind in the list's order: Hosts (label, address, group, tags, username, notes), Host Groups, SSH Keys, Identities, Snippets, Snippet Packages, Vault Notes, Note Groups, Proxy Profiles, and Knowledge. Knowledge is a Vault Note whose body matches while its title does not, so each Note appears once. Ranking keeps the original field weights as its last tie-break (label 500, hostname 380, group 280, tag 220) and orders by four levels first: an identity-field hit outranks a prose-only hit in the same section, a literal hit outranks a compact one across every record, match quality (exact > prefix > word-start > substring) outranks field weight, and equal scores break on lowercased title, kind, and ID. Every whitespace segment must match, and a dotted IPv4 query only matches contiguously inside one field. Unicode dashes fold to '-', and CJK matches literally. Pinyin transliteration is absent because the domain layer may not import golang.org/x/text; a Latin query still finds CJK text through the compact form. Arrow keys move, Enter opens the editor or viewer, Escape clears, and the empty and no-result states are localized in all five catalogs."
 
@@ -1649,7 +1623,6 @@
     - ui/shell.TestTabTitleNamesASummaryLikeTheTabStrip
     - app.TestSwitcherListsHostsWithTheirSearchableFields
     - app.TestSwitcherRanksExactHostLabelFirst
-    - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
   notes: "Ctrl+J (Cmd+J on macOS) toggles the Quick Switcher from any surface; the empty query keeps the Vault's Host order and then the open Sessions, and typing ranks inside each section without reordering the sections. Hosts match exactly the original Quick Switcher's fields (label, hostname, group, tags), not the Vault list's extra username and notes. A Host opens a new Session; a Session focuses its existing Tab. Up and Down clamp at both ends and never wrap, Enter opens, Escape or a click outside closes and clears the query, and the highlight scrolls into view only when it moves. The panel is top-anchored at the original's 672 DIP width and is verified at 1100x720 and 720x480 in English and Simplified Chinese."
 
@@ -1670,7 +1643,6 @@
     - app.TestPaletteGroupsCommandsByCategory
     - app.TestPaletteDispatchesTheChosenCommand
     - app.TestPaletteOrderingStaysDeterministic
-    - app.TestTicket29CheckRunsThroughTheKeyboard
   status: verified
   notes: "Ctrl+K (Cmd+K on macOS) opens the palette in the same overlay as the Quick Switcher. Every command the app registers with a user-visible presentation appears, grouped into Application, Tabs, Panes, and Vault; the synthetic locale commands stay out, and a newly registered command without a label is hidden rather than shown as its ID. Titles come from the same localized labels the native menu uses, so they follow a language change, while the raw command ID and English keywords keep a command findable in every catalog. The effective chord of a binding is shown beside its command (New Tab, Close Tab, Split, Close Pane, Settings) and follows a user override. Enter dispatches through the same registry the menu and keyboard shortcuts use. The original Electron build had no built-in command registry; this surface is the native equivalent of its plugin command-palette menus applied to the app's own commands."
 
@@ -1961,7 +1933,7 @@
     - adapters/store.TestCommandHistoryRoundTrip
     - ui/session.TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts
     - ui/session.TestSurfaceAutocompleteKeysDismissSelectAndAccept
-    - app.TestTicket18CheckRunsThroughTheKeyboard
+    - ui/session.TestChromeAutocompleteFitsAtDefaultAndMinimumSizes
   status: verified
   notes: "Recorded commands and the zsh, bash, and fish history files share one bounded, deduplicated ranking. The scope selects this Host only or every Host. Typing opens a six-row popup and an optional inline hint; Tab or a click replaces the line with Ctrl+U and the command, so the shell sees the same input path as typing. Settings control the feature, popup, hint, minimum prefix, result cap, delay, and scope."
 
@@ -1984,7 +1956,6 @@
     - domain/terminal.TestHighlighterLeavesIncompleteTrailingEscapeAlone
     - application/session.TestSessionHighlightRewritesOutputButNotTheLog
     - application/session.TestSessionHighlightPolicyAppliesToLiveSessions
-    - app.TestTicket18CheckRunsThroughTheKeyboard
   status: verified
   notes: "The seven original rules ship enabled. Highlighting runs in the Session read path after raw logging, so a log keeps the program's exact bytes. Matches use 24-bit SGR and restore the default foreground, and existing escape sequences are never split. Invalid patterns stay editable but are ignored at match time, as the original did."
 
@@ -2002,9 +1973,6 @@
     - application/session.TestSessionStatisticsCountFailedCommands
     - application/session.TestSessionStatisticsCountNotificationsAndTransfers
     - application/session.TestSessionBellInATitleSequenceIsNotCounted
-    - ui/session.TestSurfaceSessionStatsSettingHidesAndShowsTheCounters
-    - ui/session.TestChromeStatsAndAutocompleteFitAtDefaultAndMinimumSizes
-    - app.TestTicket18CheckRunsThroughTheKeyboard
   status: verified
   notes: "Counters are per Session and reset when it closes. Output counts post-filter bytes, input counts bytes accepted by the transport queue, commands count submitted lines, and failures come from a non-zero OSC 133;D exit code. A plain BEL counts, a BEL used as an OSC terminator does not. A compact row shows all seven counters when the setting is on."
 
@@ -2022,7 +1990,6 @@
     - application/session.TestSessionNotificationHookReceivesOSC99
     - application/session.TestTapOSC9And777Notifications
     - app.TestNotificationModePolicy
-    - app.TestTicket18CheckRunsThroughTheKeyboard
   status: verified
   notes: "The Session's bell hook marks that Session active, which the shell shows as the Tab activity marker. As in the original there is no separate bell toggle; the settings that take effect are the notification modes. Program notifications reach the app's notification hook, and the composition root applies the configured mode: off suppresses all, unfocused suppresses while the main window is visible and focused, and always shows."
 
@@ -2053,7 +2020,6 @@
     - adapters/store.TestDeletingAGroupDoesNotDeleteItsHosts
     - ui/vault.TestVaultViewCreatesAEditsAndDeletesAGroupWithoutDeletingItsHosts
     - ui/vault.TestDeletingAGroupDoesNotDeleteHostsWhenTheGroupIsNested
-    - app.TestTicket20CheckRunsThroughTheKeyboard
   status: verified
   notes: "A group's identity is its normalized path, so a rename remaps member Hosts and descendant groups in one operation. Deleting a group also deletes its descendants, clears the member Hosts' group reference, and never deletes a Host; nested deletion behaves the same way. Membership also moves through the Vault list's drag-and-drop target, which accepts a Host on a saved group row or on the Vault root."
 
@@ -2074,7 +2040,6 @@
     - application/vault.TestGroupDefaultsApplyToAnEffectiveHostAndHostWins
     - ui/vault/state.TestConnectAndTestCarryTheEffectiveHost
     - ui/vault.TestVaultViewCreatesAEditsAndDeletesAGroupWithoutDeletingItsHosts
-    - app.TestTicket20CheckRunsThroughTheKeyboard
   status: verified
   notes: "Defaults merge from the root toward the group, a child group overrides an ancestor, and a non-zero value on the Host itself wins. SSH credentials move as one bundle: a group Identity replaces inherited manual credentials and a group's manual credentials replace an inherited Identity, so a Host or group never resolves to a mixed method. Effective values are computed on read for the Vault list and for the Connect and Test connection actions, so a group-only username or port is what the connection dials; they are never written back to the Host record. Boolean preferences are true-only defaults because the stored Host cannot distinguish an explicit false from unset, so an explicit off does not suppress a group's on."
 
@@ -2096,7 +2061,6 @@
     - ui/vault.TestVaultProxyRowSummarizesTheEndpointWithoutCredentials
     - ui/vault.TestVaultHostEditorSelectsAProxyProfile
     - ui/vault/state.TestConnectAndTestCarryTheEffectiveHost
-    - app.TestTicket20CheckRunsThroughTheKeyboard
   status: verified
   notes: "A profile stores a SOCKS5, HTTP CONNECT, or ProxyCommand configuration, and its summary never echoes credentials. A Host stores only the profile ID; the effective Host materializes the profile into the connection proxy, so the resolved route is the selected profile, while a manual proxy on the Host still wins. Deleting a profile clears Host and Group references instead of leaving a dangling selection."
 
@@ -2113,7 +2077,6 @@
     - application/vault.TestKnownHostsListAndDelete
     - adapters/store.TestDeleteKnownHostRevokesOneTrustRecord
     - ui/vault.TestVaultViewListsTrustedKnownHostsAndRemovesTrust
-    - app.TestTicket20CheckRunsThroughTheKeyboard
   status: verified
   notes: "The Vault lists every stored host key with its endpoint, key type, fingerprint, and trusted state. Removing trust deletes only that record; Hosts and other Known Hosts are untouched, and the next connection prompts again."
 
@@ -2146,8 +2109,6 @@
     - ui/vault.TestVaultViewCreatesASnippetPackageThroughTheEditor
     - ui/vault.TestSnippetEditorScrollsToItsActionsAtBothSizes
     - ui/vault.TestSnippetListFitsAt720x480
-    - app.TestTicket21CheckRunsThroughTheKeyboard
-    - app.TestTicket21CheckPassesTwiceInOneProcess
   status: verified
   notes: "A Snippet stores its command, package path, tags, run mode, NoAutoRun flag, targets, and remembered variable values. Package paths are normalized and infer their ancestors for display. Renaming a package rewrites the path of every member Snippet, while deleting a package never deletes its Snippets, matching the original non-cascading behavior. Snippet and package editors use the Vault's scrollable form with a fixed Save and Cancel bar, so both fit at 720x480 under the real shell."
 
@@ -2176,7 +2137,6 @@
     - ui/vault/state.TestSnippetRunNamesEveryMissingVariableAndSendsNothing
     - ui/vault.TestVaultViewRunPanelSubstitutesAndShowsThePreview
     - ui/vault.TestVaultViewRunPanelShowsMissingVariablesAndSendsNothing
-    - app.TestTicket21CheckRunsThroughTheKeyboard
   status: verified
   notes: "Variables use the original double-curly syntax, with an optional colon default and Unicode names, in first-occurrence order. Docker and Go template actions such as {{.Names}} are deliberately left alone, including when they sit beside a real variable. Supplied values win over defaults; an unresolved required variable aborts the run with the localized missing-variable message naming every affected variable, keeps the run form open with its values, and sends no bytes. Successful values are remembered per Snippet."
 
@@ -2203,7 +2163,6 @@
     - ui/shell/state.TestOpenHostWithStartupSendsTheExactChunksAfterAttaching
     - ui/shell/state.TestFocusedHostIDReportsOnlySSHSessions
     - ui/vault.TestVaultViewRunOnTargetsUsesTheResolvedHosts
-    - app.TestTicket21CheckRunsThroughTheKeyboard
   status: verified
   notes: "Targets may be no Hosts (anywhere), explicit Host IDs, Host Group paths, or all Hosts; group paths follow group renames and deletions. Run here sends to the focused Session only when the Snippet's scope admits that Host, and a local shell is out of scope for a targeted Snippet. Run on targets opens one focused Tab per selected Host and delivers the command after the Tab attaches, rather than reusing an unrelated Session. With no variables the run happens immediately; with variables the ordered form previews the exact payload. Paste is the default, line-delay mode sends one chunk per line with the original 250 ms pause, and NoAutoRun omits the final carriage return. Empty target selections and a missing focused Session produce localized errors, and a transport failure keeps the form open and sends nothing further."
 
@@ -2229,8 +2188,6 @@
     - ui/logs.TestFiltersNarrowByHostStatusTextAndDate
     - ui/logs.TestLogsSurfaceIsReadableAndScrollableAtBothSizes
     - ui/logs.TestConnectionRowActionReportsAMissingHost
-    - app.TestTicket23CheckRunsThroughTheKeyboard
-    - app.TestTicket23CheckPassesTwiceInOneProcess
   status: verified
   notes: "Every connect attempt reaches the Session connection hook, so success, failure, and local Sessions record the Host, kind, status, error, and timestamps without a second code path. Rows live in SQLite with indexed columns beside the JSON record, list newest first, and narrow by Host, status, text, and an inclusive from/to date range; a malformed date reports a localized problem and matches nothing. Age retention removes old rows first, then the newest configured count is kept; zero disables that bound, and pruning never removes more than the configured limit."
 
@@ -2266,8 +2223,6 @@
     - ui/shell/state.TestOpenHistoryTargetOpensALocalTerminal
     - ui/shell/state.TestOpenHistoryTargetReportsAMissingHost
     - ui/settings.TestTerminalStateSavesEachSettingAndReportsFailure
-    - app.TestTicket23CheckRunsThroughTheKeyboard
-    - app.TestTicket23CheckPassesTwiceInOneProcess
   status: verified
   notes: "The command hook records one row per execution with the Session, Host, command, source, and timestamp. Autocomplete aggregates those same rows through a journal instead of keeping a forked store, so clearing or deleting history updates suggestions immediately. The History tab filters by text, Host, source, and date and pages through long lists. Open terminal focuses a live Session (reattaching a detached Tab), reuses a live Session for the same Host, opens the local shell for a local row, or dials the Host; a deleted Host shows a localized error instead of inventing a Tab. Retention is configured in Settings and applied on record, on a Settings change, and once at startup."
 
@@ -2294,8 +2249,6 @@
     - ui/vault.TestVaultNoteViewerAlignsListMarkersWithFirstLines
     - ui/vault.TestVaultNoteEditorOpensAtTheSourceStart
     - ui/vault.TestVaultNoteSearchAndGroupDeleteInTheView
-    - app.TestTicket22CheckRunsThroughTheKeyboard
-    - app.TestTicket22CheckPassesTwiceInOneProcess
   status: verified
   notes: "Vault Notes are created, edited, renamed, searched, and deleted; Note Groups are hierarchical and deleting a group moves its Notes to the Vault root rather than deleting them. The Markdown viewer renders headings, lists, code, and links with list markers aligned to the first text line, and the source editor opens at the start of the note. Note export produces Markdown, self-contained HTML, and a Markdown ZIP that round-trips group paths and entry bytes; unknown formats and unavailable storage fail without writing. The Notes list and search field work at both window sizes and in all five catalogs. Residual from ticket 22 acceptance: the es/ru Notes search placeholder is framework-supplied English, a note row's Delete control wraps at 720 while staying visible and hit-testable, and other Vault multi-line editors can still open at the end (out of ticket 22 scope)."
 
@@ -2340,8 +2293,6 @@
     - ui/vault.TestImportPanelPreviewsRowsAndIssuesAtBothSizes
     - ui/vault.TestImportPanelWritesSelectedRowsAndShowsSummary
     - ui/vault.TestImportPanelReportsFileFailures
-    - app.TestTicket24CheckRunsThroughTheKeyboard
-    - app.TestTicket24CheckPassesTwiceInOneProcess
   status: verified
   notes: "Pure parsers in domain/vaultimport detect or accept each format and return neutral records. The application layer validates every record, compares its Host merge key (protocol, hostname, port, username, group) with the current Vault, and reports conflicts, in-file duplicates, and invalid source rows by row number before writing anything. The user selects rows and chooses Skip or Overwrite; there is no implicit overwrite. New Hosts and their missing ancestor Groups are saved in one SQLite transaction per 50-row chunk, and Next/Offset resumes a retried chunk without duplicate Hosts. Passwords, proxy passwords, and referenced IdentityFiles go through the field-secret store and Key inspector, so plaintext never enters a Host record or the database. Imported Hosts retain tags, notes, proxy settings, Key references, the SSH agent preference, and ProxyJump chains, and the preview exposes no credential material. Local-shell configuration has no native Host field, so a non-empty LocalShell cell is reported as an unsupported entry instead of being dropped silently."
 
@@ -2363,7 +2314,6 @@
     - domain/vaultimport.TestParseCSVMissingHostnameColumn
     - domain/vaultimport.TestParseCSVAcceptsTabSeparated
     - application/vault.TestPreviewImportReportsConflictsDuplicatesAndInvalidRows
-    - app.TestTicket24CheckRunsThroughTheKeyboard
   status: verified
   notes: "CSV follows RFC 4180 quoting, accepts a UTF-8 BOM, CRLF or LF row endings, and tab-separated files with the same headers. Header matching is case- and punctuation-insensitive, additional columns are ignored, and a missing hostname column is an error. Key paths, passphrases, and proxy URLs use versioned marked fields with percent encoding so a value that starts with a formula character stays unambiguous. Formula characters in exported free text are guarded with a leading apostrophe and the guard is removed on import; formulas are never evaluated, and credential cells stay byte-exact. A duplicate merge key inside one file is reported and left unselected. A LocalShell marked field is recognized but reported as unsupported because the native Host model does not store local-shell configuration. The export writer is covered by vault.export."
 
@@ -2388,8 +2338,6 @@
     - application/vault.TestJSONExportRoundTripsThroughImport
     - ui/vault.TestExportPanelWarnsAndConfirmsPlaintextSecrets
     - ui/vault.TestExportPanelRendersAndScrollsAtBothWindowSizes
-    - app.TestTicket25CheckRunsThroughTheKeyboard
-    - app.TestTicket25CheckPassesTwiceInOneProcess
   status: verified
   notes: "Ten formats are produced deterministically in the original conventions: versioned Netcatty JSON and CSV with the ticket-24 header, marked fields, formula guard, and CRLF; Snippets JSON with Host target IDs stripped; Notes Markdown, HTML, and a byte-identical Markdown ZIP; SSH Keys JSON with authorized_keys lines; Themes JSON; Logs JSON and CSV. Passwords, passphrases, private key material, and proxy passwords are omitted by default; the destructive option writes them in plaintext and the UI requires an explicit confirmation after the warning. Keys are public by default and include material only under that option. CSV and JSON exports re-import through the ticket-24 importer and preserve Hosts, Groups, credentials, and Keys; Snippets, Notes, and Keys have family importers. JSON JumpRefs index the parsed records, not the source document, so skipped invalid Hosts do not shift a jump chain. The export panel scrolls inside a reserved scroll-bar gutter and is tested at 1100x720 and 720x480 in all five catalogs."
 
@@ -2418,8 +2366,6 @@
     - ui/vault.TestBackupClearReportsTheDeletedCountOnce
     - ui/locales.TestBackupRestoreWordingCoversTheIdenticalProtectiveBackup
     - ui/vault/state.TestRestoreConfirmationReloadsTheVault
-    - app.TestTicket26CheckRunsThroughTheKeyboard
-    - app.TestTicket26CheckPassesTwiceInOneProcess
   status: verified
   notes: "Backups live under vault-backups/ as format-version-1 records whose metadata is cleartext and whose canonical snapshot payload is AES-256-GCM ciphertext under a keychain-held key. Writes go to a synced sibling file and rename into place, a 25 MiB plaintext cap is checked before any write, retention clamps to 1-100 (default 20) and prunes immediately, and a fingerprint match against the newest record keeps that record instead of writing a duplicate. Committed Vault writes notify a coalescing worker through the store hook; imports take a protective backup before their first chunk, and every restore reads and validates the payload, takes a mandatory before_restore backup, and applies all tables in one transaction. A failed apply or verification leaves the Vault byte-for-byte unchanged. The panel lists reason, local time, size, record count, and a shortened fingerprint, requires confirmation for restore and clear, shows skipped-too-large and pruned counts, and fits 1100x720 and 720x480 in all five catalogs with the scroll-bar gutter reserved. The clear banner reports the deleted count once, keeping retention pruning in a separate status field, and the restore confirmation and success banner say the current Vault is protected by a backup that may be new or already identical."
 
@@ -2441,8 +2387,6 @@
     - domain/sync.TestEncryptPayloadRoundTripsAndUsesFreshMaterial
     - domain/sync.TestDecryptRejectsWrongPasswordAndTampering
     - application/sync.TestNewerSyncSchemaFailsClosed
-    - app.TestTicket49CheckRunsThroughTheKeyboard
-    - app.TestTicket49CheckPassesTwiceInOneProcess
   status: verified
   notes: "The fixture was produced with the original Electron/WebCrypto primitives and constants (PBKDF2-HMAC-SHA-256, 600000 iterations, 32-byte salt, AES-256-GCM, 12-byte IV, 16-byte tag, standard base64), fixed salt/IV/metadata, and the original writer's top-level payload order for the families this build implements. The Go implementation decrypts it, re-encrypts the same plaintext with the same material, and requires byte-identical output: compact JSON.stringify encoding, no HTML escaping, raw U+2028/U+2029, and the original meta order. The ticket-49 self-test repeats this check in the running app. A cloud file whose meta carries syncSchemaVersion 2 (the CRDT payload owned by ticket 54) is refused before decryption, so this v1 build cannot overwrite a copy it does not understand."
 
@@ -2466,7 +2410,6 @@
     - adapters/syncstore.TestCorruptTokenIsTreatedAsMissing
     - ui/settings.TestSyncSectionShowsTheDeviceCodeBeforeConnecting
     - ui/settings.TestSyncSectionLocalizesWorkerErrors
-    - app.TestTicket49CheckRunsThroughTheKeyboard
   status: verified
   notes: "The device grant posts client_id and scope gist read:user, polls the token endpoint, and maps authorization_pending, slow_down, access_denied, and expired_token to typed application errors. The token lives in the OS credential store, never in cloud-sync.json. Both base URLs are injectable: NATCATTY_GITHUB_API_BASE and NATCATTY_GITHUB_AUTH_BASE (the auth base falls back to the API base) plus NATCATTY_GITHUB_CLIENT_ID let acceptance run against a local fake; defaults remain https://api.github.com and https://github.com. Tests use httptest and require no real network."
 
@@ -2494,7 +2437,6 @@
     - application/sync.TestManualSyncUploadsTheFirstCopy
     - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
     - application/sync.TestAfterDownloadTheNextSyncIsANoOp
-    - app.TestTicket49CheckRunsThroughTheKeyboard
   status: verified
   notes: "The cloud file keeps the original description and netcatty-vault.json name under a private Gist. Reads prefer the Gist ETag (304 reuses the cached bytes) and fetch truncated content from raw_url. Writes create or conditionally PATCH with If-Match. The plaintext payload keeps the original top-level family names and adds a secrets array inside the ciphertext, because this build stores field credentials outside entity records; Known Hosts stay local as in the original. Applying a payload replaces only the synced families in one transaction, re-encrypts secrets under the receiving device's field key, and clears credentials the payload no longer advertises. Non-secret settings live in cloud-sync.json; the token and master password never do."
 
@@ -2510,7 +2452,6 @@
     - application/sync.TestAutoSyncDoesNothingWhenDisabled
     - application/sync.TestAutomaticSyncCoalescesEditsIntoOneTimer
     - application/sync.TestAutomaticSyncRunsAPendingPassAfterAnInFlightSync
-    - app.TestTicket49CheckRunsThroughTheKeyboard
     - ui/settings.TestSyncStatePersistsAutoSyncAndStrategy
   status: verified
   notes: "The Vault store change hook calls NotifyLocalChange after a committed write. Automatic sync coalesces edits behind one timer, never blocks the writer, and runs a pending pass after an in-flight sync finishes. The interval defaults to three seconds; tests and the ticket self-test shorten it. Turning automatic sync on schedules a pass so an edit made while it was off is not lost."
@@ -2532,8 +2473,6 @@
     - application/sync.TestAfterConflictRemoteResolutionTheNextSyncIsANoOp
     - application/sync.TestPreferCloudAppliesTheCloudCopyOnATwoSidedChange
     - application/sync.TestPreferLocalUploadsTheLocalCopyOnATwoSidedChange
-    - app.TestTicket49CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckRunsThroughTheKeyboard
   status: verified
   notes: "A lost conditional write (HTTP 412, 409, or a page-token miss) never forces the local bytes. Ticket 49's silent newest-wins re-decision was replaced in ticket 54: smartMerge and smartMergePreserve persist a durable conflict with per-item detail, and the UI resolves it with local, remote, or merge while taking a protective backup of both sides first. preferCloud and preferLocal still pin one side, now through the same durable conflict state rather than an implicit timestamp race. A resolved download records the applied snapshot's signature, so the next sync is a no-op instead of echoing the download back."
 
@@ -2553,8 +2492,6 @@
     - application/sync.TestShrinkGuardBlocksLargeAbsoluteLoss
     - application/sync.TestConflictWithAnEmptyCloudCopyForcesUpload
     - adapters/syncvault.TestSnapshotCarriesPlaintextSecretsAndNewestTimestamp
-    - app.TestTicket49CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckRunsThroughTheKeyboard
   status: verified
   notes: "The guard runs before any remote write on every provider path, for manual and automatic triggers. Ticket 49's empty-payload stop is now the ticket 54 tombstone guard plus the original shrink thresholds: block at 10 or more lost records, or at 3 or more lost while at least half the reference is removed. A payload with no synced family is empty even if it carries secrets; Known Hosts do not make a Vault meaningful. Guards offer Restore the last good copy as the safe default and an explicitly confirmed force push that is never preselected or reached from background sync. Conversely, an empty cloud payload is still forced to upload rather than erase a populated local Vault."
 
@@ -2598,8 +2535,6 @@
     - ui/settings.TestSyncConvergentVerificationRoundsAreSurfaced
     - ui/settings.TestSyncConvergentMigrationRefusalIsFailClosed
     - ui/settings.TestSyncConvergentDivergenceOffersOnlySafeActions
-    - app.TestTicket55CheckRunsThroughTheKeyboard
-    - app.TestTicket55CheckPassesTwiceInOneProcess
   status: verified
   notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Settings and credentials remain device-local and outside the CRDT. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not compared byte-for-byte against an original CRDT fixture; the convergence, migration, verification, and divergence behavior is verified by the listed tests. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
 
@@ -2625,8 +2560,6 @@
     - adapters/gdrive.TestAuthorizeReportsAnUnavailableBrowser
     - adapters/gdrive.TestAuthorizeRequiresAClientID
     - application/sync.TestBrowserAuthorizationConnectsAndStoresTheProvider
-    - app.TestTicket50CheckRunsThroughTheKeyboard
-    - app.TestTicket50CheckPassesTwiceInOneProcess
   status: verified
   notes: "The flow generates a 32-byte PKCE verifier, its S256 challenge, and a 16-byte state, opens the authorize URL through the app's system-browser opener (MyGo Shell.OpenExternal, never a WebView), listens on an ephemeral 127.0.0.1 port at /oauth/callback, validates the state, and exchanges the code with the verifier and no client secret. Denial, state mismatch, timeout, and an unavailable browser are typed and localized. NATCATTY_GDRIVE_AUTH_BASE, NATCATTY_GDRIVE_TOKEN_BASE, NATCATTY_GDRIVE_API_BASE, NATCATTY_GDRIVE_UPLOAD_BASE, and NATCATTY_GDRIVE_CLIENT_ID point the app at the local fake; defaults are the original Electron Google endpoints. The self-test proves the fake accepted the S256 verifier and never saw a client secret."
 
@@ -2649,7 +2582,6 @@
     - adapters/gdrive.TestOptionsFromEnvReadsTheFakeOverrides
     - application/sync.TestManualSyncUploadsTheFirstCopy
     - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
-    - app.TestTicket50CheckRunsThroughTheKeyboard
   status: verified
   notes: "Reads list only spaces=appDataFolder with the original netcatty-vault.json name, follow nextPageToken, and treat an empty account or a file deleted before download as no copy. Creates use multipart/related with parents=[appDataFolder]; updates replace media on the existing file. Access tokens are bearer credentials, 401/403/404/409/412/429/5xx map onto the sync taxonomy, and each Google account has an isolated appDataFolder in the fake. Drive has no conditional media update, so concurrent-change detection compares modifiedTime before writing and re-observes after a 404 or conflict instead of forcing bytes; the ticket records this divergence from GitHub's If-Match."
 
@@ -2672,8 +2604,6 @@
     - adapters/gdrive.TestRefreshKeepsTheOriginalRefreshTokenWhenGoogleOmitsIt
     - adapters/gdrive.TestRefreshRotationAndInvalidGrant
     - adapters/gdrive.TestRefreshWithoutARefreshTokenRequiresReauthorization
-    - app.TestTicket50CheckRunsThroughTheKeyboard
-    - app.TestTicket50CheckPassesTwiceInOneProcess
   status: verified
   notes: "The service refreshes before an operation whose access token is within 60 seconds of expiry, and once more after a 401, then retries the same read or write. A mutex makes concurrent refreshes single-flight: waiters reuse the token another caller persisted. Rotated refresh tokens are persisted; when Google omits refresh_token the old one is retained. invalid_grant maps to ErrReauthorizationRequired, starts a fresh system-browser authorization, applies the returned grant, and resumes the interrupted sync. If that flow cannot finish, ProblemReauthorization is stored and the UI shows Reconnect instead of a generic failure. A stored token is tagged with its provider so it can never cross to another provider."
 
@@ -2690,7 +2620,6 @@
     - application/sync.TestDifferentAccountClearsTheMergeAnchor
     - application/sync.TestSameAccountKeepsTheMergeAnchor
     - application/sync.TestSetProviderResetsTheConnectionAndAnchor
-    - app.TestTicket50CheckRunsThroughTheKeyboard
   status: verified
   notes: "The profile stores AccountID (the Google userinfo id, falling back to the email) beside Login. Reauthorization compares the new identity with the stored one: a different account clears LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt before the next sync, while the same account keeps the baseline so the merge decision continues from the same cloud copy. The self-test switches from one@example.test to two@example.test, proves the anchor is empty, syncs into the second account's appDataFolder, and proves the first account's copy is untouched; reconnecting the second account keeps its anchor. Switching providers also clears the token and anchor."
 
@@ -2715,8 +2644,6 @@
     - adapters/onedrive.TestAuthorizeReportsAnUnavailableBrowser
     - adapters/onedrive.TestAuthorizeRequiresAClientID
     - application/sync.TestOneDriveAuthorizationConnectsAndStoresTheProvider
-    - app.TestTicket51CheckRunsThroughTheKeyboard
-    - app.TestTicket51CheckPassesTwiceInOneProcess
   status: verified
   notes: "The flow reuses the provider-neutral adapters/oauthloopback implementation shared with Google Drive: a 32-byte PKCE verifier, its S256 challenge, and a 16-byte state; the authorize URL opens through the app's system-browser opener (MyGo Shell.OpenExternal, never a WebView), the listener binds an ephemeral 127.0.0.1 port at /oauth/callback, the state is validated, and the code is exchanged with the verifier and no client secret. Microsoft's consumers tenant, app-folder scope, response_mode=query, and prompt=consent stay in the adapter. Denial, state mismatch, timeout, and an unavailable browser are typed and localized. NATCATTY_ONEDRIVE_AUTH_BASE, NATCATTY_ONEDRIVE_TOKEN_BASE, NATCATTY_ONEDRIVE_GRAPH_BASE, and NATCATTY_ONEDRIVE_CLIENT_ID point the app at the local fake; defaults are the original Electron Microsoft endpoints. The self-test proves the fake accepted S256 and never saw a client secret."
 
@@ -2742,7 +2669,6 @@
     - adapters/onedrive.TestOptionsFromEnvReadsTheFakeOverrides
     - application/sync.TestManualSyncUploadsTheFirstCopy
     - application/sync.TestManualSyncDownloadsTheNewerRemoteCopyWithPreferCloud
-    - app.TestTicket51CheckRunsThroughTheKeyboard
   status: verified
   notes: "Reads locate netcatty-vault.json inside the approot special folder by path. Graph can briefly 404 a file a peer uploaded seconds ago, so both the metadata read and the download retry twice with a 1.5s-then-3s backoff (the original adapter's #779 window) before a 404 is accepted as no copy; the fake can inject transient misses. Downloads follow @microsoft.graph.downloadUrl without attaching the bearer token, falling back to /me/drive/items/{id}/content. Payloads are small, so writes use the simple PUT upload: creation is path-addressed with If-None-Match: *, and updates target the item id with If-Match: eTag. An update without an eTag is refused as ErrConflict rather than becoming unconditional. 412/409/423 become ErrConflict so the service re-observes; 401/403/404/429/5xx map onto the sync taxonomy. Each Microsoft account has an isolated approot in the fake. Unlike Google's Drive media update, Graph supports a real conditional update, so concurrent changes are detected without the original adapter's timestamp workaround."
 
@@ -2764,8 +2690,6 @@
     - adapters/onedrive.TestRefreshKeepsThePresentedTokenWhenMicrosoftOmitsIt
     - adapters/onedrive.TestRefreshInvalidGrantRequiresReauthorization
     - adapters/onedrive.TestRefreshWithoutARefreshTokenRequiresReauthorization
-    - app.TestTicket51CheckRunsThroughTheKeyboard
-    - app.TestTicket51CheckPassesTwiceInOneProcess
   status: verified
   notes: "The service refreshes within 60 seconds of expiry and once after a 401, single-flight across concurrent callers, persists rotated refresh tokens, and carries the presented token forward when Microsoft omits a replacement. invalid_grant, interaction_required, consent_required, and login_required map to ErrReauthorizationRequired, which starts a fresh system-browser authorization, applies the grant, persists the new credential, and resumes the interrupted sync. A second 401 after the retry is reported without another refresh, so the retry cannot loop. A failure stores ProblemReauthorization for the actionable Reconnect state. Tokens remain provider-tagged in the secure store."
 
@@ -2785,7 +2709,6 @@
     - application/sync.TestOneDriveReauthorizationOfADifferentAccountClearsTheAnchor
     - application/sync.TestOneDriveFailedReauthorizationPreservesTheAnchorAndCredential
     - application/sync.TestSetProviderResetsTheConnectionAndAnchor
-    - app.TestTicket51CheckRunsThroughTheKeyboard
   status: verified
   notes: "AccountID is the immutable Graph user id; Login is mail (falling back to userPrincipalName, then displayName) and is display-only. The same id keeps LocalSignature, RemoteID, RemoteETag, RemoteUpdatedAt, and LastSyncedAt across reauthorization even when the display name changes; a different id clears them before the next sync. Denied or timed-out reauthorization leaves the stored credential and the anchor untouched, so the existing remote copy is neither overwritten nor forgotten. The self-test covers same, different, and failed/cancelled cases against the fake."
 
@@ -2810,8 +2733,6 @@
     - adapters/webdav.TestDigestChallengeParsingHandlesMultipleChallenges
     - adapters/webdav.TestUserIdentitySeparatesCollectionsAndCredentials
     - adapters/webdav/fake.TestFakeDigestChallengeUsesARealNonce
-    - app.TestTicket52CheckRunsThroughTheKeyboard
-    - app.TestTicket52CheckPassesTwiceInOneProcess
   status: verified
   notes: "Basic sends RFC 7617 credentials as UTF-8, Digest implements RFC 7616 challenge-response in-house (the project's no-new-dependency rule excludes golang.org/x/net/webdav), and Bearer sends the token directly. Digest supports MD5, MD5-sess, SHA-256, and SHA-256-sess with qop=auth (selected even when a server also offers auth-int), random cnonce, nc=00000001, opaque, and one stale-nonce retry; a wrong password returns a typed credential rejection exactly once, so it cannot loop. The fake verifies the response with its own parser rather than sharing the adapter's, and the self-test proves all three modes against it. Credentials are tagged with the webdav provider in the OS credential store; two collections or two usernames on one host have separate merge identities."
 
@@ -2840,7 +2761,6 @@
     - adapters/webdav.TestRedirectPolicyRefusesDowngradeAndForeignHost
     - adapters/webdav/fake.TestFakeSupportsOptionsMKCOLAndConditionalWrites
     - adapters/webdav.TestWebDAVEndToEndThroughTheRealAdapter
-    - app.TestTicket52CheckRunsThroughTheKeyboard
   status: verified
   notes: "The endpoint is normalized to http or https with a cleaned path and no userinfo, query, or fragment. GET returns 404 as the empty state; PUT creates with If-None-Match: * and updates with If-Match on the observed ETag. A lost condition is ErrConflict so the service re-observes, and a server that omits ETags gets a fresh read-and-compare before the write. 409 or 404 on creation means the collection does not exist and is ErrInvalidEndpoint; the adapter does not auto-create it with MKCOL, matching the original's unconditional PUT behavior while adding the conditional checks the original lacked. TLS verification is always on: a self-signed certificate is ErrTLS and no request is served. Redirects are followed only within the same host, never from HTTPS to HTTP, and loops stop at five; a redirect that would rewrite the method (301/302/303 on PUT) is refused so an upload cannot silently become a body-less GET. All three auth modes round-trip arbitrary bytes exactly."
 
@@ -2864,8 +2784,6 @@
     - application/sync.TestWebDAVProfileNormalizationAndRemoteSelection
     - application/sync.TestWebDAVAnchorKeepsTheSameAccountAndClearsAChangedOne
     - application/sync.TestBrowserBearerWebDAVUsesTheTokenMode
-    - app.TestTicket52CheckRunsThroughTheKeyboard
-    - app.TestTicket52CheckPassesTwiceInOneProcess
   status: verified
   notes: "A normalized http endpoint is refused before the credential reaches the token store or the network, and the service records ProblemInsecureEndpoint. The UI shows a localized warning naming the plain-HTTP risk before Connect is actionable; confirmation is explicit, per connect, and never persisted. Automatic sync is always refused for plain HTTP, while a manual sync requires a confirmation made in the current process, so a restored profile cannot silently send its password. HTTPS never warns. The full credential (endpoint, auth type, username, password or bearer token) lives in the OS credential store; cloud-sync.json and the snapshot carry only non-secret fields, and the fake records redacted Authorization traces. 401 becomes a reconfiguration prompt with no refresh loop and 403 is a distinct forbidden state."
 
@@ -2887,7 +2805,6 @@
     - ui/settings.TestSyncSectionShowsTheInsecureSyncPromptInsteadOfSyncNow
     - ui/settings.TestSyncSectionShowsReconfigureForARejectedCredential
     - ui/settings.TestSyncSectionDoesNotWarnForHTTPS
-    - app.TestTicket52CheckRunsThroughTheKeyboard
   status: verified
   notes: "The provider selector offers WebDAV, and the setup form collects URL, Basic/Digest/Bearer mode, then username/password or a token. A plain-HTTP URL renders an inline warning; Connect first asks the service without confirmation and opens the explicit confirm/cancel prompt only when the endpoint is insecure. A restored insecure profile replaces Sync now with the warning and per-process confirmation. ProblemCredentials shows Reconfigure, which prefills the non-secret fields and keeps the existing profile until a replacement connects. Labels and problem messages are localized in en, es, ru, zh-CN, and zh-TW."
 
@@ -2926,7 +2843,6 @@
     - adapters/s3.TestGrantIdentityIncludesBucketAndPrefix
     - adapters/s3/fake.TestFakeVerifiesSigV4ServerSide
     - adapters/s3/fake.TestFakeRejectsTampering
-    - app.TestTicket53CheckRunsThroughTheKeyboard
   status: verified
   notes: "The signer is implemented in-house with no AWS SDK: canonical request, string-to-sign, SHA-256 payload hash, HMAC-SHA256 key derivation, x-amz-date, x-amz-content-sha256, and x-amz-security-token when a session token is present. URI encoding is S3's single-encoding form with no path normalization, and the canonical query is sorted and encoded. Four published AWS S3 examples pin the exact signatures (GET object, PUT object with a '$' in the key, a subresource query, and a sorted/encoded query); a separate test pins x-amz-security-token as a signed header, and the local fake recomputes the canonical request and signature with independent code, so a shared-canonicalization bug cannot hide. Requests are always path-style: endpoint scheme, host, port, and base path are honored, and the object key is the slash-normalized prefix plus netcatty-vault.json. x-amz-* headers must be signed, and the server rejects a tampered body, header, signature, or session token."
 
@@ -2952,7 +2868,6 @@
     - adapters/s3.TestFailuresNeverCarryTheSecret
     - adapters/s3.TestReadDoesNotTreatAMissingBucketAsAnEmptyAccount
     - adapters/s3.TestClientNeverFollowsARedirect
-    - app.TestTicket53CheckRunsThroughTheKeyboard
   status: verified
   notes: "GET returns 404 or NoSuchKey as the empty state, while NoSuchBucket is ErrInvalidEndpoint rather than an empty account. PUT creates with If-None-Match: * and updates with If-Match on the observed ETag; a lost condition is ErrConflict so the service re-observes. A server that omits ETags entirely falls back to re-read-and-compare immediately before the PUT, which is best-effort rather than atomic; real S3 always returns ETags, so the conditional path is the normal one. HeadObject is the connect probe and the post-PUT ETag fallback; the payload envelope supplies UpdatedAt. The fake verifies SigV4 on every request and enforces the configured session token, path-style routing, region, and bucket. A wrong-region 301/PermanentRedirect is reported as ErrWrongRegion with the bucket region, never followed, and retried nowhere; 401, SignatureDoesNotMatch, InvalidAccessKeyId, and InvalidToken are ErrCredentialsRejected with actionable reconfiguration and no refresh loop; a 403 AccessDenied document is ErrForbidden (a separate actionable permissions state); a bodyless HEAD 403 cannot be distinguished and is reported as a credential problem; 412 is ErrConflict, 429 is ErrRateLimited, and 5xx is ErrNetwork. TLS verification is always on. This is stricter than the original's unconditional PUT and its silent allowInsecure TLS bypass."
 
@@ -2977,8 +2892,6 @@
     - application/sync.TestS3ProfileRestoresNonSecretFieldsOnLoad
     - application/sync.TestS3AnchorKeepsTheSameAccountAndClearsAChangedOne
     - application/sync.TestDisconnectAndSetProviderClearS3FormState
-    - app.TestTicket53CheckRunsThroughTheKeyboard
-    - app.TestTicket53CheckPassesTwiceInOneProcess
   status: verified
   notes: "The access key id, secret access key, optional session token, endpoint, region, bucket, and prefix live together in the existing OS credential store as domain/sync.Token.S3; cloud-sync.json carries no S3 fields at all, and the in-memory snapshot carries only endpoint, region, bucket, and prefix. A normalized plain-HTTP endpoint is refused before the token store is written or a request is sent, and the service records ProblemInsecureEndpoint. Confirmation is explicit and per connect; automatic sync is always refused for plain HTTP, and a restored profile requires a fresh in-process confirmation for manual sync. HTTPS never warns, and TLS certificate verification is never disabled (unlike the original's allowInsecure option). A rejected credential is a reconfiguration prompt with no refresh or retry loop. The account identity includes bucket and prefix, so changing either rotates the merge anchor. The fake's traces redact Authorization and x-amz-security-token, and the self-test scans the config, snapshot, credential store, and traces for the signing material and reports zero secret violations."
 
@@ -3000,7 +2913,6 @@
     - ui/settings.TestSyncSectionS3HTTPSDoesNotWarn
     - ui/settings.TestSyncSectionShowsS3ProblemsAndReconfigure
     - ui/settings.TestSyncSectionS3InsecurePromptUsesS3Wording
-    - app.TestTicket53CheckRunsThroughTheKeyboard
   status: verified
   notes: "The provider selector offers S3, and the setup form collects endpoint, region, bucket, prefix, access key id, secret access key, and an optional session token. The secret and session-token inputs are masked; an http endpoint renders an inline warning before Connect, which then opens the explicit confirmation prompt. Reconfigure prefills only endpoint, region, bucket, and prefix, never the access key, secret, or token, and keeps the existing profile until a replacement connects. Wrong-region, credentials, forbidden, and insecure-endpoint states use S3-specific localized wording and a Reconfigure action. Labels and messages are localized in en, es, ru, zh-CN, and zh-TW."
 
@@ -3035,8 +2947,6 @@
     - application/sync.TestSmartMergeSameFieldClashUsesLocalWithoutAPendingConflict
     - application/sync.TestPreferCloudAppliesTheCloudCopyOnATwoSidedChange
     - application/sync.TestPreferLocalUploadsTheLocalCopyOnATwoSidedChange
-    - app.TestTicket54CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckPassesTwiceInOneProcess
   status: verified
   notes: "smartMerge combines both sides with a three-way field merge and deletes a record only when the deletion is one-sided and the other side did not modify it. smartMergePreserve uses the same merge but carries a one-sided record forward, so an entry disappears only after every device deletes it. preferCloud applies the cloud copy without a provider write, and preferLocal publishes this device and ignores the cloud edit; both still keep the encrypted anchor current. The selected strategy is persisted in cloud-sync.json. The GUI offers all four with localized names and descriptions; an external GUI acceptance run recorded under the ticket (not a committed test) exercised each strategy against a local fake WebDAV server through the real WebDAV adapter. Divergence from the original: the original field-merges only monitorPanels on a both-modified record; this build applies the same deterministic top-level field merge to every synced family and reports a same-field clash in the merge result. The smartMerge strategies still resolve that clash locally, as the original does; only a lost conditional write creates the durable, user-resolved conflict described in sync.conflict-backups."
 
@@ -3069,8 +2979,6 @@
     - application/sync.TestMergeTombstonesPreventResurrectionWithoutBase
     - application/sync.TestSmartMergeCarriesSettingsThroughTheService
     - application/sync.TestAnchorPersistsOnlyCiphertext
-    - app.TestTicket54CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckPassesTwiceInOneProcess
   status: verified
   notes: "The anchor is the last successfully synced plaintext payload sealed with the master password under AES-256-GCM and stored as base64 in SyncBase, with format version 3 and a SHA-256 BaseSignature; cloud-sync.json contains no plaintext entity, hostname, credential, or master password. A corrupt or unknown anchor falls back to a base-less set union. The field merge is keyed by record id (path for configuration families) and covers add/add, update/update, delete/update, delete/delete, one-sided changes, empty base, tombstones, and secret values. A field deleted locally while the other side edits a different field stays from the remote copy, matching the original local-key iteration; this is covered by TestMergeFieldDeletedLocallyStaysFromRemote. Settings merge recursively and is exercised both as a pure function and through the service: nested maps merge, unknown keys on both sides survive, id-keyed arrays merge by id, an explicit empty object resets a map, a first merge with no base prefers cloud on a same-field clash, both sides deleting the same key is agreement rather than a conflict, and terminalSettings.autoCloseOnExit keeps its original migration. The real SyncVault adapter deliberately omits device-local settings from its payload (ticket 49 and the Cloud sync spec), so production sync does not publish this build's app settings."
 
@@ -3096,8 +3004,6 @@
     - application/sync.TestTombstoneGuardFallsBackToTheRemoteWhenTheAnchorIsEmpty
     - application/sync.TestTombstoneGuardProtectsACloudCopyRepopulatedAfterAnEmptyForcePush
     - ui/settings.TestSyncSurfaceLocalizesEntityFamilies
-    - app.TestTicket54CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckPassesTwiceInOneProcess
   status: verified
   notes: "The original thresholds are preserved: block when at least 10 records would be lost, or when at least 3 records and at least half of the reference would be lost, with the group-config special case. The reference is the stored anchor, falling back to the current cloud copy when the anchor is missing or empty (including after an explicit empty force push); a repopulated cloud is therefore still protected from a later empty local sync. Ticket 54 adds a whole-Vault tombstone guard for an empty outgoing payload. Guards run before any remote write on every provider path and never upload. Restore is the safe default and restores the last good anchor/backup without a cloud write; force push requires a second explicit confirmation, is never preselected, and writes a cloud-copy backup first. Background sync can block but cannot force or silently discard data. The explanation, confirmation, and entity-family names are localized in all five catalogs. Service tests cover block, restore, force, and backup retention; an external GUI acceptance run recorded under the ticket (not a committed test) exercised the same flows against the local fake provider."
 
@@ -3118,8 +3024,6 @@
     - application/sync.TestAfterConflictRemoteResolutionTheNextSyncIsANoOp
     - application/sync.TestBackupListAndRestoreLocalAndRemote
     - application/sync.TestLoadBackupsReportsALocalListFailure
-    - app.TestTicket54CheckRunsThroughTheKeyboard
-    - app.TestTicket54CheckPassesTwiceInOneProcess
   status: verified
   notes: "A lost conditional write is persisted with per-family/per-item kind, the remote device identity, and the encrypted cloud copy, so the conflict survives a process restart and resolution is idempotent. This is the original conflict state machine: a smartMerge same-field clash is resolved by the selected strategy rather than surfaced, because the user already chose that strategy and no complete copy is at risk. The UI lists each item with a localized family name and offers Keep this device, Keep the cloud copy, and Merge both; Merge is offered only by smartMerge and smartMergePreserve. Before either side is overwritten the service takes a protective local backup and retains the replaced cloud envelope in RemoteBackups (five newest), both timestamped with source and reason and restorable from the Backups panel without a provider write. Ordinary sync works without a backup port, but conflict resolution refuses to proceed without one. Backup records contain the same encrypted Vault data as the normal local backup subsystem and no new secrets. Service tests cover a real concurrent conditional-write loss, both choices, idempotent restart, and backup restore. An external GUI acceptance run recorded under the ticket (not a committed test) exercised both choices, backup rows, and final cloud contents through the local fake provider."
 
@@ -3178,8 +3082,6 @@
     - app.TestMCPPolicyModeChangesApplyToTheNextCall
     - app.TestExternalMCPPolicyEndToEndThroughStdio
     - app.TestMCPPolicyDiscoveryModeRoundTrip
-    - app.TestTicket57CheckRunsThroughTheKeyboard
-    - app.TestTicket57CheckPassesTwiceInOneProcess
   status: verified
   notes: "Every external call is forced into __external_mcp__ and the effective scope is the intersection of that forced chat scope and the session scope: in the shipped app (ticket 58) the session scope is every live Session while External MCP sharing is on, narrowed by NETCATTY_MCP_SESSION_IDS when that variable is present, and these ticket-57 policy fixtures exercise the static allowlist directly: an omitted list inherits the allowlist, a requested list must be a deduplicated subset, an explicit empty list exposes no Session, and an empty allowlist is no access rather than a wildcard. A requested chat scope other than the forced one is mcp_scope_mismatch, a Session outside the effective scope is mcp_session_out_of_scope, and both are rejected before a prompt or an action. The mode is re-read from discovery for every write, so a Settings change applies to the next call; observer denies all 41 non-bypass writes with mcp_permission_denied naming the tool, confirm creates one prompt per non-bypass write, and auto allows all 43 writes with no prompt. Exactly session_close and terminal_stop bypass approval and the observer block. session_close still obeys scope, allowlist, and ownership. terminal_stop uses the catalog's real jobId input; production resolves it through the background-job manager, and a policy-only resolver seam lets a test/selftest mapping prove an out-of-scope job is mcp_session_out_of_scope and a job from a superseded generation is mcp_stale_generation without a prompt; with no live job the call honestly returns Background job not found. Approvals are single-use with an absolute 110 s deadline from creation: a 109.9 s approval succeeds, exactly 110.0 s expires, the waiting call receives mcp_approval_expired, an approved id replays as mcp_approval_invalid, and an expired id cannot be replayed. Snapshot reconciles the deadline itself, so the UI never reports an overdue prompt as pending even before its timer fires. getContext filters both hosts and active port-forward tunnels to the effective scope, so a Host with no scoped Session cannot leak its tunnel. Reads never prompt, and the prompt summary redacts secret-named arguments. Ownership generation starts at 1; observing a replacement Session for an owned Host or invalidating ownership advances it, resolves pending approvals and old grants as mcp_stale_generation, and requires a fresh grant before session_close or terminal_stop can act. Divergences from the original: the original's persistent Always allow / Allow host grants and socket-scoped Allow session cache are deliberately replaced by single-use approvals as ticket 57 requires; the original's sensitive-read confirm rule and per-session approval lock are not ported because this ticket's reads never prompt. Ticket 58 adds write execution, the command blocklist, background jobs, and output bounds (see mcp.write-execution-blocklist-bounds): in production host_open opens or reuses a real Host Session through the write executor, terminal_stop resolves real background jobs, and every executable write reaches its application service. The handler's policy-only fallback still returns the explicit not-available result when no write executor is attached, which is how these policy tests exercise it. The original also required chatSessionId on builtin writes; this bridge makes the forced scope implicit and validates any requested value against it."
 
@@ -3206,8 +3108,6 @@
     - ui/settings.TestMCPExpiredStateScreenshots
     - ui/settings.TestMCPBodyWarningDangerContrastIsAccessible
     - ui/settings.TestMCPPromptUsesTheAccessibleTextColors
-    - app.TestTicket57CheckRunsThroughTheKeyboard
-    - app.TestTicket57CheckPassesTwiceInOneProcess
   status: verified
   notes: "The Settings External MCP area shows the selected observer/confirm/auto mode and its localized description, the forced __external_mcp__ scope, the shared-Session allowlist (or the explicit no-Sessions state), the ownership generation, and the bypass hint. The oldest pending approval is current: its card shows the client identity (an empty forwarded identity renders a localized Unknown client), tool, target label, scope, redacted argument summary, and remaining time rounded up from the policy clock; the more-pending line uses an ICU plural count, and Approve/Deny sit in a pinned sibling bar below the scrolling content. A recently expired prompt shows the danger-styled expired state and explanation with only Dismiss available. Because only one prompt is current, the action row fits at the real 720x480 client (704x421 content) and at 1100x720 (1084x661), is inside the client, does not move while the body scrolls, and never clips; the pending and expired states were rendered in all five locales and the PNGs were inspected at 100%. Body, warning, and danger text clear 4.5:1 on every light and dark preset using the shared WCAG helpers, with a ticket-local fallback for custom presets whose fill makes the shared token too low. The controller calls the same application/mcp Service, so a mode change persists to discovery and applies to the next call; Approve, Deny, Dismiss, and typed expired/stale/invalid outcomes are localized rather than rendering Go error text. Divergences from the original: the prompt lives in a dedicated Settings → External MCP area rather than the AI settings tab and the approval host's grant choices; original Always allow / Allow session / Allow host options are absent because approvals here are single-use, and an expired card stays dismissable instead of being cleared automatically."
 
@@ -3275,9 +3175,6 @@
     - application/session.TestCommandProbesAfterAnInterruptAndRetriesADiscardedWrapper
     - application/session.TestCommandReadinessProbesStayInsideTheOverallTimeout
     - application/session.TestCommandCompletesWhenTerminalControlsFollowTheEndMarker
-    - app.TestTicket58CheckRunsThroughTheKeyboard
-    - app.TestTicket58CheckPassesTwiceInOneProcess
-    - app.TestTicket58CheckPassesTwiceAfterACommandTimeout
   status: verified
   notes: "All 43 catalog writes still pass the ticket-57 Authorize path, and exactly session_close and terminal_stop bypass approval. Nine script and script-binding tools (scripts_create, scripts_update, scripts_delete, scripts_run, scripts_run_stop, scripts_run_pause, scripts_run_resume, scripts_targets_set, and host_connect_scripts_set) return the typed mcp_tool_unavailable result because this build has no script runtime; the other 34 writes execute their application behavior through real transports. A compiled natcatty-mcp stdio client against a shipped-style app graph with no static allowlist exercises every executable write against a real in-process SSH/SFTP fixture (real bash shell, real pkg/sftp server rooted in a temporary directory) and the real Vault, session, transfer, and forwarding services: terminal execute/start/poll/stop, all seven SFTP operations against the real filesystem, host_open newTab/reuse ownership (reuse does not grant session_close), session_close, Vault Host/Note/Group/Snippet writes and imports, host notes, snippet run, and port-forward rule and tunnel operations, with no missing executable tool. The nine unavailable tools are typed-unavailable and leave snippet and host-connect state unchanged. The external scope is no longer a launch-time-only allowlist: an application port supplies every live Session (id, host, label) while Settings sharing is on, the effective allowlist is the dynamic set intersected with NETCATTY_MCP_SESSION_IDS when that variable is present (an explicitly empty value stays no access, an omitted value leaves the dynamic set), explicit scopedSessionIds and [] semantics are unchanged, and the policy re-reads the source on every call so a created, closed, or reconnected Session never leaves a stale ID. Sharing defaults on for a fresh install, persists to external-mcp/external-mcp-sharing.json, and Settings shows the localized exposed count and rows plus the sharing toggle and a refresh control. The blocklist is 26 first-match rules: the original 21 (common 2, posixNative 8, posix 5, powershell 6), the fail-closed common.unresolvable-command rule, and four second-rework rules: common.force-delete (del/erase with /f and rd/rmdir with /s), posixNative.pipe-to-shell (any command piped into sh, bash, zsh, dash, fish, ksh, cmd, powershell, or pwsh, not only base64, including through sudo/doas/env/command/exec/nohup/nice/time/setsid/xargs prefixes and their options), posix.find-delete (find -delete), and powershell.alias-to-blocked-command (an alias defined to a blocked target). The fail-closed rule judges command positions after wrappers (command, env, sudo, exec, nohup, time, nice), shell scripts (-c), eval, subshells, if and loop bodies, find -exec, ssh, timeout, and chroot while leaving a separator inside a quoted argument as data; a cmd /k, cmd /r, or glued cmd /c payload is judged the same way. Each shell family has a canonical reading (POSIX bounded brace expansion of every comma group including nested groups and a variable path, quote removal, backslash-newline joins, $IFS/${IFS}, simple NAME=value assignment expansion and $NAME/${NAME} substitution, $'...' decoding; PowerShell constant folding of adjacent string literals inside the call operator, backtick escapes including backtick-newline, quote removal, alias resolution for Set-Alias/New-Alias/sal/alias name=target, and $env:ComSpec expansion; cmd caret escapes, quotes, %ComSpec% expansion, /k and /r as well as /c, the glued /c\"payload\" spelling, and a nested cmd payload recursed with cmd's own reading); every table rule matches the original text and the canonical text (the strict union of all three readings for an unknown shell), first match is preserved, the fail-closed rule lexes the original text quote-aware so a separator inside a quoted argument stays data, and ordinary arguments that merely contain $, a backtick, or %NAME% stay allowed because only a command position is judged. A bare PowerShell variable expression ($env:PATH), a one-word PowerShell assignment ($D = 'C:/Temp/x' or $D = $env:PATH), Get-ChildItem, cmd /c echo %PATH%, git status, sudo systemctl status nginx, and npm test stay allowed. The measured bypasses (double- and single-quoted rm, r''m, rm$IFS-rf, x=rm; $x -rf, PowerShell backtick-escaped Remove-Item, backtick-newline splits) and the second-rework forms (POSIX brace groups including a later group, nested groups, and a variable path, printf-decoded and any other command piped to a shell or the absolute /bin/sh including through sudo, env, or command prefixes, find -delete, PowerShell constant-built and aliased command names, cmd %ComSpec% del /f, cmd /c r^m, and the /k, /r, and glued /c spellings) plus the neighbours ${IFS}, \\rm, \"r\"m, $'r'm, ${PATH:+rm}, ${x:-rm}, command rm, env rm, bash -c '\"rm\" -rf x', & 'Remove-Item', & (Get-Command Remove-Item), Invoke-Expression, and a foreach or stored variable command all return mcp_command_blocked naming a rule, and a disposable-directory marker survives every POSIX and PowerShell form plus the cmd forms on Windows. The blocklist is a textual safety net, not a sandbox: arbitrary computed command construction (for example a command word decoded by an interpreter from data the guard cannot see) is out of scope in mcp.blocklist-threat-model, while the whole in-model corpus above is enforced and tested; no OS sandbox or capability drop is claimed. Serial and network-device raw Sessions intentionally skip the blocklist, as in the original. Per-call bounds still match the original catalog: a 60 s foreground/tool deadline, 30 s job-start timeout, 60 min job lifetime, 256 KiB rolling job output, 30 s recommended poll cadence, 10 min job retention, 1 MiB foreground capture, 512 KiB raw serial/network-device capture, 10 MiB SFTP read, 5000-entry SFTP listing, and a 16 MiB stdio tool-result ceiling. Exactly-at-limit output is not truncated and one byte over is, and a timeout returns mcp_command_timeout with partial stdout and releases the Session for the next call, proven against the real SSH shell over stdio, with readiness probes (including after an interrupt) charged against that same deadline rather than added before it; a completed command is detected even when the SSH PTY emits terminal control sequences (bracketed-paste re-enable, cursor and color) directly after the exit code instead of a newline, so a ForceCommand bash -i first command returns in under a second rather than waiting for its 60 s deadline; truncation over 1 MiB reports outputTruncated, outputBaseOffset, and totalOutputChars. Secrets and AI are never exposed: the catalog has no secret-store or AI capability, nested secret-named fields are recursively redacted from approval summaries, and the prompt, write result, and later reads carry neither the submitted password nor a password field. Settings keeps the localized last-activity strip first in the area so the zh-CN status is above the fold at 704x421 without scrolling, with the pinned Approve/Deny bar inside the client and stable while the body scrolls and the accessible body/warning/danger colors. In the running product, with a live shared Session opened by Ctrl+T, the real client produced blocked, succeeded, failed, truncated, and timed-out activity at 704x421 and 1084x661 in en and zh-CN; screenshots and UIA captures are recorded. The MyGo native Select popup omits its option rows from the accessibility tree; that widget limitation is recorded in settings.mcp-mode-popup-accessibility. Divergences from the original: the original Electron lookahead regex is replaced by equivalent RE2 rules that preserve its deliberately over-blocking behavior, approval prompts are used as ticket 57 requires, and the AI harness tools remain excluded."
 
@@ -3504,8 +3401,6 @@
     - ui/browser.TestBookmarkPaneReachableAtBothSizes
     - ui/browser.TestDownloadPaneShowsProgressAndCompletion
     - ui/browser.TestDownloadNavigationKeepsTheShownPage
-    - app.TestTicket47CheckRunsThroughTheKeyboard
-    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: verified
   notes: "Opened from the Session menu of an SSH Session. Back, forward, reload, stop, address bar, new/close/activate tab, and a full-panel disconnect state with Retry. Stop clears the loading state itself because WebView2 reports a stopped load as an aborted navigation with no finish event. The panel replaces the Session's chrome and terminal while open because the terminal transport keeps running and a native WebView must not sit under trusted chrome; closing returns the terminal. Ctrl+L focuses and selects the address while Natcatty's chrome has keyboard focus; a focused native page owns the OS keyboard (WebView2 forwards only Tab out), so users click the address bar after typing in a page. Ticket 48 adds in-panel bookmarks and downloads panes; page-created popups and side-panel resizing remain out."
 
@@ -3534,7 +3429,6 @@
     - ui/browser.TestBookmarkPaneAddEditDelete
     - ui/browser.TestBookmarkPaneLongListScrolls
     - ui/browser.TestBookmarkPaneLongListStaysInsideTheShellAtBothSizes
-    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: verified
   notes: "A Host bookmark is visible only to its owning Host; an all-Host bookmark is visible everywhere. The owner Host alone may edit or delete a Host bookmark. Limits follow the original: 1000 items, 120-character title, 4-character glyph, #rrggbb color, ids at most 128 characters, and Host ids at most 256. Metadata is written atomically to browser-bookmarks.json beside app preferences and reloads across restart. Bookmark metadata is not synced through ticket 49's payload because that ticket did not include a bookmark entity; bookmark files remain local for now. The editor does not expose the original custom text/image icon and color pickers or quick search; it keeps site icons automatically. The long list stays in a bounded scroll viewport inside the shell's Pane at 720x480 and 1100x720 in English and zh-CN, and the wheel, End, and Tab focus reveal reach the last row whole above the pinned action bar."
 
@@ -3555,7 +3449,6 @@
     - application/browser.TestSiteIconsLimitAndPersistence
     - adapters/store.TestBrowserSiteIconStoreRoundTrip
     - ui/browser.TestBookmarkPaneReachableAtBothSizes
-    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: verified
   notes: "The favicon is fetched through the same dedicated Host tunnel and gateway as the page, with a 5-second timeout and a 64 KiB cap, sniffed as PNG, JPEG, GIF, or WebP, and cached by Host and origin in browser-site-icons.json. The tab strip and bookmark rows render it; a missing or undecodable icon keeps a glyph fallback. MyGo v0.5.5 exposes no page-declared favicon event, so this app requests only /favicon.ico rather than the page's <link rel=icon> list. ICO bytes are recognized but not stored because MyGo's native image decoder has no ICO support. Custom icon overrides exist in the service but the ticket-48 UI exposes automatic site icons only."
 
@@ -3580,7 +3473,6 @@
     - application/browser.TestPanelDownloadCancelFromPanel
     - ui/browser.TestDownloadPaneShowsProgressAndCompletion
     - app.TestAbortedBrowserNavigationsAreNotPageFailures
-    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: verified
   notes: "MyGo exposes OnWillDownload but no download progress or cancel API, and its own save path is outside the route policy. The panel therefore prevents the engine download and fetches the same gateway URL with the panel's tunnel transport, Cookie header, redirect limit, and a 256 MiB cap. Bytes stream to a reserved 0600 .part file in the app Downloads directory; success syncs and renames atomically, while cancel or failure removes the .part. Off-route URLs are refused before any file is reserved, and filenames are basenames with traversal and Windows-invalid characters removed. Unlike the original there is no Save-as dialog, open-folder/reveal action, or persisted download history: records live for the panel session, and finished files stay in Downloads."
 
@@ -3598,7 +3490,6 @@
     - application/browser.TestGatewayErrorResponsesCarryNoProductCopyAndCannotRunScript
     - application/browser.TestGatewaySandboxPolicyAndUntrustedLoopbackAddress
     - app.TestBrowserPageCannotCallProductAPIs
-    - app.TestTicket48CheckRunsThroughTheKeyboard
   status: verified
   notes: "Host content is loaded only from a loopback gateway that prefers 127.0.0.2, which is loopback but outside the localhost/127.0.0.1/::1 hosts MyGo's development build auto-trusts for its typed bridge; macOS assigns only 127.0.0.1, so the gateway there uses that documented fallback and relies on the app registering no MyGo bindings and denying page permissions. The page gets no preload script and no TrustedOrigins, the app registers no MyGo bindings, permissions are denied, and window.open returns no window. The gateway replaces the page's CSP with default/connect/frame/worker/form restricted to 'self', object-src 'none', frame-ancestors 'none', no unsafe-eval, and script-src 'none' for non-HTML documents; it strips the page's meta CSP and refresh. Cross-origin fetch, image beacons, foreign frames/objects/forms, window.open, eval, and bridge calls are blocked. The ticket 48 GUI acceptance run loaded the hostile page in the real WebView: the page reported every attempt blocked (including a denied window.mygo call) and the fixture recorded zero requests to the foreign origin. A page-created popup that the original would open as a new tab is refused because MyGo cannot attach such a page to the panel's isolated route."
 
@@ -3693,8 +3584,6 @@
     - cmd/natcatty-mcp.TestRunExplainsAMissingDiscoveryFile
     - cmd/natcatty-mcp.TestBridgeCallerDecodesAppResults
     - app.TestExternalMCPAuthenticatesAndAnswersReadTools
-    - app.TestTicket56CheckRunsThroughTheKeyboard
-    - app.TestTicket56CheckPassesTwiceInOneProcess
   status: verified
   notes: "cmd/natcatty-mcp speaks newline-delimited JSON-RPC 2.0 on stdio and reaches the app only through the authenticated loopback transport. It resolves the discovery file from NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE or <userData>/external-mcp/discovery.json (mode 0600, host 127.0.0.1, ephemeral port, 32-byte token), verifies the token as its first message, and reuses the original netcatty-remote-hosts identity and instructions. The app starts the listener before it writes discovery, so a client that reads the file can always connect; the discovery file is removed on quit only when it still names this listener."
 
@@ -3718,7 +3607,6 @@
     - internal/mcp.TestLoaderAllExposesSeventyTools
     - internal/mcp.TestLoaderRejectsAnUnknownToolset
     - internal/mcp.TestHiddenToolCannotBeCalledBeforeLoading
-    - app.TestTicket56CheckRunsThroughTheKeyboard
   status: verified
   notes: "The catalog is a literal port of the extracted original snapshot: 69 capability tools across the original seven toolsets, plus load_netcatty_tools. A session starts with the 14 core tools and the loader visible (15); loading sftp_advanced exposes 21; loading all exposes all 70. Each load emits notifications/tools/list_changed before the loader response, repeated loads report alreadyLoaded, hidden tools are rejected until loaded, and an unknown toolset is a JSON-RPC invalid-params error. The selftest drives these counts through the real stdio binary."
 
@@ -3747,7 +3635,6 @@
     - application/vault.TestReadNoteExcerptLiteralSearchKeepsMatchOffsets
     - application/vault.TestReadNoteExcerptCapsTheExcerptAndTruncatesTheTitle
     - application/session.TestResolveTerminalLineWindowMatchesTheOriginal
-    - app.TestTicket56CheckRunsThroughTheKeyboard
   status: verified
   notes: "Read tools project the original result shapes from application services without UI coupling: environment and terminal context, Vault hosts/notes/identities/proxy profiles/groups/snippets, SFTP list/read/stat/home, and Port Forwarding rules/tunnels. Bounds match the original where it has them: note excerpts use UTF-16 offsets capped at 6000 units with a 120-code-point title and a 200-character query, terminal context defaults to 80 lines and caps at 300, and in-memory SFTP reads follow the original 10 MB ceiling, refusing larger files with the original guidance instead of truncating them. SFTP listings stop at 5000 entries with a truncated marker, and the stdio layer caps one tool result at 16 MiB, above the 10 MB read ceiling to leave room for JSON escaping. An unmatched note query reports matchOffset null, as the original does. The environment description is shorter than the original's generated tool guidance; the host, count, and tunnel fields are projected from live sessions. Write tools and subsystems the native build does not have return explicit bounded errors; they are never silently executed."
 
@@ -3805,8 +3692,6 @@
     - internal/releasenotes.TestGenerateReleaseNotesForTheRealChangelog
     - internal/tools/releasenotes.TestGenerateWritesReleaseNotes
     - internal/tools/releasenotes.TestMissingAndDuplicateVersionsFail
-    - app.TestTicket59CheckPassesTwiceInOneProcess
-    - app.TestTicket59CheckRunsThroughTheKeyboard
   status: verified
   notes: "MyGo builds the macOS universal .app and DMG, the Windows amd64 NSIS Setup exe, and the Linux amd64/arm64 tar.gz plus deb (with install.sh) from mygo.json. The release workflow validates a strict SemVer tag against mygo.json in internal/release, refuses update, signing, and notarization configuration and environment, builds on macOS, Windows, and Linux runners, and inspects each artifact itself: hdiutil verify plus a mounted-DMG plist/resource/codesign check, a 7z NSIS listing plus extracted-binary check, and dpkg-deb/tar listings plus extracted-binary checks. It verifies all five embedded locale catalogs by searching the packaged executables, requires the et/mosh provenance, licenses, and platform transport clients in the artifact, and rejects update-*.json, latest*.yml, appcast, delta, and certificate files. Per-platform and aggregate checksum manifests are generated and verified from a clean flattened set; a pushed release tag publishes a GitHub release titled with the version, carrying the seven installers and the checksum manifest, while a manually dispatched run only validates and builds. The macOS signature is ad hoc, not Developer ID. The ticket 59 self-test proves the running packaged version and name match the shipped mygo.json, the five catalogs and seven bundled resources, and disabled updates, twice in one F11,5,9 process. Ticket 60 generates the release notes from CHANGELOG.md with internal/tools/releasenotes for the validated version, tests missing and duplicate version errors, and uploads RELEASE_NOTES.md as a release-workflow artifact. The NSIS-extracted Windows artifact was launched locally; the default CI launch-smoke job covers the real app on Linux, macOS, and Windows."
 
@@ -3898,7 +3783,6 @@
     - ui/settings.TestAssociationFormValidatesAndReportsSaveFailures
     - ui/settings.TestAssociationsViewAddsEditsAndRemovesThroughTheControls
     - ui/settings.TestAssociationsViewShowsValidationProblems
-    - app.TestTicket37CheckRunsThroughTheKeyboard
   status: verified
   notes: "Extensions normalize to lowercase without a leading dot, and saving a renamed extension replaces the old entry. The ticket 37 self-test drives the real Settings controls through the application picker seam and the real preferences file."
 
@@ -3918,7 +3802,6 @@
     - ui/settings.TestSelectingTheDefaultOpenerPersistsEachKind
     - ui/settings.TestSelectingExternalWithoutAnApplicationLeavesTheDefaultAlone
     - ui/settings.TestAssociationsViewChoosesAnExternalApplicationAndResetsTheDefault
-    - app.TestTicket37CheckRunsThroughTheKeyboard
   status: verified
   notes: "The original also offered an always-ask choice; the ticket's three kinds make the shipped default the system editor, and selecting the external kind requires an application. Ticket 38 supplies the internal editor surface, so all three kinds now open a file."
 
@@ -3944,7 +3827,6 @@
     - ui/transfer/state.TestOpenFileUsesTheConfiguredAssociationForLocalFiles
     - ui/transfer/state.TestOpenFileHandsRemoteFilesToTheOpenerAsASource
     - ui/transfer/state.TestOpenFailureKindMapping
-    - app.TestTicket37CheckRunsThroughTheKeyboard
   status: verified
   notes: "A remote file is streamed into a fresh temp directory under a sanitized name before the association's application starts; launch, download, and source failures produce distinct status-line notices."
 
@@ -3962,8 +3844,6 @@
     - application/fileopen.TestUnknownExtensionUsesTheDefaultOpener
     - application/fileopen.TestInternalOpenerWithoutAnEditorIsReportedBeforeDownloading
     - ui/transfer/state.TestOpenFailureReachesTheStatusLine
-    - app.TestTicket37CheckRunsThroughTheKeyboard
-    - app.TestTicket37CheckPassesTwiceInOneProcess
   status: verified
   notes: "A name with no dot, a leading-dot name, or a trailing dot has no extension and takes the default opener; the ticket 37 self-test opens an unlisted extension and an extensionless file, then reads both settings back through a fresh preferences service."
 
@@ -3995,7 +3875,6 @@
     - ui/editor.TestOpenLoadsTheDocumentAndSavesBack
     - ui/editor.TestSecondOpenIsRefusedWhileADocumentIsActive
     - ui/editor.TestOversizedFileIsRefused
-    - app.TestTicket38CheckRunsThroughTheKeyboard
   status: verified
   notes: "The editor refuses files above 10 MB before downloading them. A save writes through the pane's own transport using the ADR-0012 replacement transaction: the old destination is backed up, the buffer is staged and verified, promoted by rename, and the backup is removed; any earlier failure restores the backup. The destination keeps its mode, and a save through a closed or replaced pane uses the live transport or fails without writing."
 
@@ -4011,8 +3890,6 @@
     - application/fileopen.TestExternalEditUploadsAfterTheDebounce
     - application/fileopen.TestExternalLostConnectionKeepsTheLocalCopyForRetry
     - ui/editor.TestExternalFailureRetries
-    - app.TestTicket38CheckRunsThroughTheKeyboard
-    - app.TestTicket38CheckPassesTwiceInOneProcess
   status: verified
   notes: "The watcher polls the materialized copy once a second and waits 500 ms for the save to settle, matching the original; two rapid saves upload once. A failed upload keeps the local copy so Retry loses no edits."
 
@@ -4029,7 +3906,6 @@
     - application/fileopen.TestExternalConflictDoesNotOverwriteUntilApproved
     - ui/editor.TestConflictPromptsAndOverwriteRetries
     - ui/editor.TestExternalConflictEventOpensThePrompt
-    - app.TestTicket38CheckRunsThroughTheKeyboard
   status: verified
   notes: "Both an internal save and an external upload compare the remote size, modification time, and SHA-256 content digest with the version the session read; a same-size edit is still a change. Nothing is written until the user chooses Overwrite, and a pending conflict blocks further silent uploads."
 
@@ -4048,7 +3924,6 @@
     - ui/transfer/state.TestClosingATabReleasesItsExternalEditSessions
     - ui/transfer/state.TestAnInternalEditSessionOutlivesItsTab
     - ui/transfer/state.TestAnOpenThatOutlivesItsTabReleasesItsSession
-    - app.TestTicket38CheckRunsThroughTheKeyboard
   status: verified
   notes: "Sessions own their natcatty-open-* directory; startup and shutdown sweep only directories no live session owns, Close removes its own immediately, closing a pane Tab releases the external sessions that Tab opened, and a crash leaves the next start to remove the orphan. An internal document's session is owned by the editor overlay, which outlives the Tab."
 
@@ -4068,7 +3943,6 @@
     - application/transfer.TestCopyCancelledMidFileLeavesNoStagedFile
     - ui/transfer/state.TestUploadCopiesTheSelectionToTheRemotePane
     - ui/transfer/state.TestDownloadCopiesFromRemoteToLocal
-    - ui/transfer.TestCopyRunsFromTheToolbarAndReportsProgress
   status: verified
   notes: "A 32 KiB staged stream checks cancellation between chunks and never leaves a partial destination name."
 
@@ -4100,6 +3974,7 @@
     - ui/transfer/state.TestQueueTaskControlsReportUnavailableAfterRestart
     - ui/transfer/state.TestTransferWhileBusyEnqueuesASecondTask
     - ui/transfer/state.TestTransportFailureRetryRequiresReconnect
+    - ui/transfer.TestCopyRunsFromTheRowMenuAndReportsProgress
     - ui/transfer.TestTransferCenterShowsProgressAndControls
     - ui/transfer.TestTransferCenterRetryReportsAReconnect
     - ui/transfer.TestTransferCenterBackdropClosesAndPanelDoesNot
@@ -4275,8 +4150,6 @@
     - application/transfer.TestReplaceRemovesTheBackupAfterSuccess
     - application/transfer.TestCopyCancelDuringReplaceRestoresTheOriginal
     - application/transfer.TestQueueOrdinaryFailureRestoresTheOriginalAndDropsTheCheckpoint
-    - app.TestTicket34CheckRunsThroughTheKeyboard
-    - app.TestTicket34CheckPassesTwiceInOneProcess
   status: verified
   notes: "A Replace copies each file into the ADR-0012 staging sibling, reads the staged entry back, and requires the source size the plan observed; a single-file replacement also applies the destination's original mode to the stage, fails if chmod is refused, and requires that mode back before promotion, and a file inside a replaced tree is mode-checked against its source where the destination is POSIX. Only then does rename take the destination name. The original is renamed to its stable sibling backup before the first staged file is promoted, so an ordinary failure removes the partial tree and renames the backup back; a pause or a lost transport keeps the partial tree and backup for the resume instead, matching the ticket-32 contract. A backup left beside a live file destination is stale and removed, while a backup beside a missing destination is the only known-good copy and is restored before the new transaction starts; a backup beside an existing directory root is always restored over it, because an attempt that died before its checkpoint may have created an empty root. A committed replacement removes both artifacts; if the backup cannot be removed, the destination stays promoted, the backup stays recoverable, and the operation reports the cleanup failure. Unlike the original's whole-directory staged tree, this build keeps the accepted ticket-32 in-place tree replacement per file, so a folder replacement is transactionally covered by its backup and rollback rather than one directory rename."
 
@@ -4329,8 +4202,6 @@
     - ui/transfer/state.TestReservedRetryKeepsItsSpecificCenterNotice
     - ui/transfer.TestReservedFailureNoticeKeepsTheDedicatedString
     - ui/transfer.TestFailureNoticeKeepsEachTypedMessage
-    - app.TestTicket33CheckRunsThroughTheKeyboard
-    - app.TestTicket33CheckPassesTwiceInOneProcess
   status: verified
   notes: "Stop cancels the batch, Skip leaves the destination and counts it, Replace writes the source over it through the ADR-0012 staging path, Duplicate writes beside it as \"(copy)\" then \"(copy 2)\", and Merge keeps destination-only folder content. An apply-to-all answer is scoped to one batch and conflict type and covers the remaining conflicts without a second prompt; without it only the row that asked is answered. The prompt's count names only the same-type conflicts that will actually follow, and the choice is offered only when at least one exists, so a new sibling is not counted as a conflict. Duplicate names and top-level destination paths, including whole directory subtrees, are reserved at enqueue or plan time, so two concurrent Transfers cannot stage into one path; a duplicate reserves only the name it chose, and a paused row keeps that name, as does a retried row reclaiming its destination. A Transfer refused because another one owns the destination reports the reserved message rather than the generic operation failure. A merge compares size and whole-second mtime and leaves an unchanged destination untouched, counting it as skipped. A file that meets a destination directory during a merge fails as a type mismatch instead of deleting the directory's subtree."
 
@@ -4383,8 +4254,6 @@
     - adapters/sftp.TestSCPManagesDirectoriesAndModes
     - adapters/sftp.TestSCPProbeRefusesAServerWithoutSCP
     - adapters/sftp.TestSCPCloseReleasesOnce
-    - app.TestTicket35CheckRunsThroughTheKeyboard
-    - app.TestTicket35CheckPassesTwiceInOneProcess
   status: verified
   notes: "Listing runs a structured shell loop and falls back to ls -la, and every path is shell-quoted before it reaches a command. Downloads speak scp -f and uploads speak scp -t; an upload streams through CreateSized because the SCP control line declares the byte count before the data, and it waits for the remote process after the final ACK so the fixture's write completes before Close returns. The probe checks both a working shell (HOME) and the scp binary, with a missing scp typed as ErrSCPMissing. The in-process SCP-only fixture exercises the real command builders and wire protocol without an sshd."
 
@@ -4433,8 +4302,6 @@
     - application/transfer.TestNormalizeFileProtocol
     - domain/vault.TestNormalizeDraftDefaultsAndValidatesTheFileProtocol
     - ui/vault/state.TestHostFormSubmitsAndRestoresTheFileProtocol
-    - app.TestTicket35CheckRunsThroughTheKeyboard
-    - app.TestTicket35CheckPassesTwiceInOneProcess
   status: verified
   notes: "Explicit SCP probes and never tries SFTP; explicit SFTP reports its failure and never falls back; auto tries SFTP once and may probe SCP after a failure. A reused single-channel transport is refused before any channel opens, and auto does not fall back on a fresh single-channel host because the fallback would need a second channel. Sudo is never downgraded: it opens only the elevated SFTP, and a contradictory sudo+SCP Host is rejected before connecting. Empty or unknown persisted values normalize to auto; the Vault editor offers Auto, SFTP only, and SCP mode and rejects SCP with sudo."
 
@@ -4474,8 +4341,6 @@
     - adapters/ssh.TestOpenExecHalfClosesStdinAndKeepsTheExitStatus
     - ui/transfer/state.TestCompressedUploadSettingReachesTheCopyEngine
     - ui/transfer/state.TestCompressedUploadOffCopiesFileByFile
-    - app.TestTicket36CheckRunsThroughTheKeyboard
-    - app.TestTicket36CheckPassesTwiceInOneProcess
   status: verified
   notes: "Default-on and only for an upload of plain directories and regular files with free targets. The original wrote a local temp archive, uploaded it, then ran a staged extract with backup and rollback; this stream packs tar.gz into the remote tar over the same connection's exec channel, extracts into a sibling .netcatty-extract-* directory, and promotes each target by rename. Every extracted entry is read back before promotion: a directory must be a directory and a file's size must equal the plan (ADR-0012). Any preflight refusal, unsafe name, symlink, special file, move, conflict, resume row, extraction failure, short extraction, or cancellation never publishes partial data; a failed extraction is removed and the ordinary per-file copy runs instead. The packer reads one byte past each planned size so a source that grew is refused instead of publishing a prefix. An exec transport that cannot half-close is refused before any byte is written rather than risking a killed tar."
 
@@ -4493,8 +4358,6 @@
     - ui/transfer/state.TestAutoSyncFollowsOneStepBetweenDifferentTrees
     - ui/transfer/state.TestAutoSyncOffLeavesTheOtherPaneAlone
     - ui/transfer/state.TestAutoSyncDoesNotMirrorAnUnalignedPane
-    - app.TestTicket36CheckRunsThroughTheKeyboard
-    - app.TestTicket36CheckPassesTwiceInOneProcess
   status: verified
   notes: "Off by default. Two panes on one Backing mirror the destination path; panes over different trees move one child or parent step together only while both name the same directory level, so a local tree and a remote tree stay aligned without guessing an unrelated absolute path. Only a successful user navigation mirrors, and the mirror is a non-user load, so it cannot loop or drag a pane along after a failed listing. Bookmarks, the path field, and a deferred navigation count as user navigations; a refresh and a follow-cwd load do not. The original's settings.sftp.autoSync uploaded external-editor saves; this rewrite uses the same setting for pane alignment as issue 36 and the spec require, and the settings label reads 'Sync directories automatically'."
 
@@ -4517,8 +4380,6 @@
     - ui/transfer/state.TestFollowCwdMatchesTheHostAndTheFocusedSession
     - ui/transfer/state.TestFollowCwdIgnoresAMissingDirectory
     - ui/transfer/state.TestFollowCwdOffDoesNotQueueAReport
-    - app.TestTicket36CheckRunsThroughTheKeyboard
-    - app.TestTicket36CheckPassesTwiceInOneProcess
   status: verified
   notes: "Off by default. The real Session tap parses OSC 7 and the app forwards each reported directory to the surface, which steers the focused pane for that Session's Host or a local pane. A report that repeats the directory the user has already left is ignored, a missing directory is not retried on every prompt, and a background Session does not steer a pane while another Session is focused. With the setting off the report returns before queueing any UI work. Deliberate divergences from the original: one global setting instead of a per-Host toggle, and a pane opened after the shell's last OSC 7 waits for the next report instead of running an initial sync."
 
@@ -4538,8 +4399,6 @@
     - adapters/serial.TestFactoryRejectsAnUnsupportedPlatformAndEnumerationAsTypedErrors
     - ui/serial.TestShowEnumeratesPortsAndSelectsTheFirst
     - ui/serial.TestViewShowsTheFormAndDetectedPorts
-    - app.TestTicket39CheckRunsThroughTheKeyboard
-    - app.TestTicket39CheckPassesTwiceInOneProcess
   status: verified
   notes: "Windows reads HARDWARE\\DEVICEMAP\\SERIALCOMM; Linux scans /sys/class/tty and falls back to the common ttyUSB/ttyACM/ttyAMA/ttyS paths; macOS lists /dev/cu.* and /dev/tty.*. Paths are deduplicated and sorted, and sysfs USB metadata supplies manufacturer and IDs where available. Enumeration needs no device: the platform call is allowed to return an empty list, and the dialog also accepts a typed path for a device the OS has not surfaced. A platform without a backend returns a typed unsupported error instead of an empty list."
 
@@ -4562,8 +4421,6 @@
     - ui/serial.TestConfigCoversEveryFramingAndFlowCombination
     - ui/serial.TestViewSelectsFlowControlAndParity
     - ui/serial.TestViewSelectsStopBitsAndWarnsAboutOneAndAHalf
-    - app.TestTicket39CheckRunsThroughTheKeyboard
-    - app.TestTicket39CheckPassesTwiceInOneProcess
   status: verified
   notes: "Defaults match the original: 115200 baud, 8 data bits, 1 stop bit, no parity, no flow control. Data bits 5-8, stop bits 1/1.5/2, parity none/even/odd/mark/space, and flow none/XON-XOFF/RTS-CTS are persisted as the original tokens; the parser also accepts hyphen forms. The POSIX backend sets raw mode with VMIN=1 and VTIME=0, maps data bits to CS5-CS8, stop bits to CSTOPB, mark/space parity to CMSPAR, and flow to CRTSCTS or IXON|IXOFF|IXANY. Windows sets the same fields in the DCB. Per-platform differences are explicit: 1.5 stop bits is unavailable on Linux and macOS, mark/space parity is unavailable on macOS, custom rates are arbitrary only on Windows, and macOS caps the catalog at 230400. The dialog offers the original warning below the stop-bit selector when 1.5 is chosen."
 
@@ -4585,8 +4442,6 @@
     - domain/workspace.TestSerialDescriptorRequiresAValidConfig
     - ui/serial.TestConnectPassesTheNormalizedConfigAndCloses
     - ui/serial.TestViewConnectOpensTheSessionAndCloses
-    - app.TestTicket39CheckRunsThroughTheKeyboard
-    - app.TestTicket39CheckPassesTwiceInOneProcess
   status: verified
   notes: "Opening goes through the same Session service as local and SSH: the shell validates the form, opens off the UI thread, and creates an ordered Tab with a Serial: <port> label. A restored Pane carries the non-secret port and framing descriptor and reopens it; no output, scrollback, credentials, or local echo/line-mode state is stored. Close ends as exit 0 with reason closed, matching the original; a device read failure ends as exit 1 with reason error and Close preserves that first classification. Tests use an in-process fake port with channels/bytes, never physical hardware. The dialog was chosen over persisting serial Hosts in the Vault because this ticket only requires selecting a port and parameters and opening a Session; saving serial configurations remains a later Vault ticket."
 
@@ -4606,8 +4461,6 @@
     - adapters/serial.TestFactoryRejectsAnUnsupportedPlatformAndEnumerationAsTypedErrors
     - ui/serial.TestConnectFailureKeepsTheDialogAndTheTypedError
     - ui/serial.TestProblemTextLocalizesEachErrorKind
-    - app.TestTicket39CheckRunsThroughTheKeyboard
-    - app.TestTicket39CheckPassesTwiceInOneProcess
   status: verified
   notes: "A capability table per GOOS is checked before the platform opener, so an unsupported setting never reaches a device and returns serial.UnsupportedError (errors.Is serial.ErrUnsupported) naming the platform, setting, and value. An unknown GOOS is unsupported for both opening and enumeration, and the no-backend build file returns the same typed error rather than panicking. Invalid form values are serial.ValidationError (errors.Is serial.ErrInvalidConfig) with the field and value. The dialog localizes both classes and never prints a raw driver error."
 
@@ -4639,8 +4492,6 @@
     - adapters/telnet.TestNegotiationActivatesLazilyAndLeavesRawDataAlone
     - adapters/telnet.TestTransportAnswersNawsTerminalTypeEchoAndRefusals
     - adapters/telnet.TestTransportReassemblesCommandsSplitAcrossReads
-    - app.TestTicket40CheckRunsThroughTheKeyboard
-    - app.TestTicket40CheckPassesTwiceInOneProcess
   status: verified
   notes: "Until the peer sends the first IAC byte the stream is raw passthrough, so a legacy TCP service on port 23 is not corrupted; the first IAC activates the canonical handshake DO SUPPRESS-GO-AHEAD, WILL TERMINAL-TYPE, WILL NAWS. WILL/WONT/DO/DONT are answered direction-aware, unknown options are refused with WONT/DONT, NAWS is sent only after DO NAWS, and TERMINAL-TYPE SEND is answered with IS XTERM-256COLOR. The parser preserves a lone IAC, half an option command, and an unterminated subnegotiation across TCP reads, unescapes IAC IAC in data and subnegotiation payloads, and never leaks buffered subnegotiation bytes into terminal output. Commands and data arriving in one read are handled in order. Echo state is tracked in both directions and exposed on the transport, but this ticket does not add the original's renderer-side local-echo widget."
 
@@ -4656,8 +4507,6 @@
     - domain/model/telnet.TestNormalizeNewlinesUsesNVTForm
     - domain/model/telnet.TestEscapeIACDoublesLiteralsAndKeepsCleanData
     - adapters/telnet.TestTransportNormalizesNewlinesAndEscapesIAC
-    - app.TestTicket40CheckRunsThroughTheKeyboard
-    - app.TestTicket40CheckPassesTwiceInOneProcess
   status: verified
   notes: "Enter (a lone CR) and a lone LF both become CR LF, matching the original terminal-input normalization; an existing CR LF or CR NUL pair is preserved rather than expanded twice. After negotiation activates, every literal 0xFF typed by the user is doubled on the wire; before activation input passes through untouched. Incoming IAC IAC becomes a single 0xFF of terminal output."
 
@@ -4684,8 +4533,6 @@
     - ui/shell/state.TestOpenHostOpensATelnetHostWithTheTelnetTransport
     - ui/shell/state.TestOpenHostPersistsATelnetRestoreDescriptor
     - ui/shell/state.TestRestoreReopensATelnetPane
-    - app.TestTicket40CheckRunsThroughTheKeyboard
-    - app.TestTicket40CheckPassesTwiceInOneProcess
   status: verified
   notes: "The Vault Host protocol selector already offered Telnet and defaults its port to 23; a saved Telnet Host now reaches the Telnet transport instead of the SSH path, with no X11 preference and the Host's terminal encoding scope. Read is terminal output, Write is input, and Resize updates the window size; a clean peer close ends as reason closed with exit 0, a socket failure ends as reason error with exit 1, and Close preserves the first classification. A restored Pane carries the non-secret Host address and reopens the Telnet endpoint. Opening is manual reconnect only; the original's Telnet auto-login automation (telnetAutoLogin.cjs) and renderer local-echo widget are out of scope for this ticket."
 
@@ -4702,8 +4549,6 @@
     - application/session.TestTelnetManualReconnectDialsTheSameEndpoint
     - application/session.TestTelnetDropDoesNotReconnectAutomatically
     - ui/shell/state.TestOpenHostOpensATelnetHostWithTheTelnetTransport
-    - app.TestTicket40CheckRunsThroughTheKeyboard
-    - app.TestTicket40CheckPassesTwiceInOneProcess
   status: verified
   notes: "The dial uses the original ten-second connect timeout and classifies a deadline as connection.KindTimeout wrapping ErrDialTimeout, a refused or unreachable endpoint as KindNetwork, and a cancelled caller as KindCancelled, so the shell localizes the failure instead of printing a socket error. A dropped Telnet transport does not reconnect automatically; the Session carries a policy whose retry predicate is always false, which still enables the Session menu's Reconnect action, and a manual reconnect dials the same Hostname and port again."
 
@@ -4725,8 +4570,6 @@
     - application/session.TestRawExecRejectsAnEmptyCommand
     - application/session.TestRawExecIsUnavailableOnAShellSession
     - application/session.TestSerialSessionSupportsRawExec
-    - app.TestTicket41CheckRunsThroughTheKeyboard
-    - app.TestTicket41CheckPassesTwiceInOneProcess
   status: verified
   notes: "The command is written to the Session's existing interactive PTY as the bare text followed by CR, matching portable vendor CLIs; there is no shell wrapper, no completion marker, and no second channel, so single-channel devices work. Programmatic input bypasses the tap, so it never enters command history, autocomplete, or command tracking. Device CLIs expose no exit status, so HasExitCode is always false and callers must judge success from the output; the original's null exitCode is preserved. Output strips OSC and CSI sequences, removes carriage returns, drops an echoed first line, and trims, as the original's stripAnsi and post-processing did. Raw execution is available only to an SSH Host marked as a network device and to serial Sessions; a POSIX shell Session refuses it with a typed error. The original's English no-response hint string became the NoResponse flag, because the application layer holds no user-visible text."
 
@@ -4744,8 +4587,6 @@
     - application/session.TestRawExecOverallTimeoutInterruptsTheCommand
     - application/session.TestRawExecCancellationInterruptsTheCommand
     - application/session.TestRawExecCapsTheOutputAndMarksItTruncated
-    - app.TestTicket41CheckRunsThroughTheKeyboard
-    - app.TestTicket41CheckPassesTwiceInOneProcess
   status: verified
   notes: "Completion is inferred, not marked: the command finishes after three seconds of silence by default, with the first two chunks getting a doubled idle window so a paging command is not cut short after its echo. A device that answers nothing resolves after min(idle*4, timeout/4) with NoResponse set rather than waiting for silence that never starts, matching the original fallback. An overall timeout sends Ctrl+C and fails with a typed timeout, and cancellation does the same; partial output is returned with either. Output is capped at 512 KiB by default; after the cap is reached the idle timer is armed once and never reset, so a noisy device cannot hold the command open until the overall limit. This differs from the original only in truncating exactly at the cap instead of letting the last chunk overshoot, and in reporting Truncated/NoResponse flags instead of English hint text."
 
@@ -4761,8 +4602,6 @@
     - adapters/ssh.TestNetworkDeviceBannerUsesTheOneSessionChannel
     - application/connection.TestRemoteRequiresSingleChannelMatchesOnlySoftwareTokens
     - application/connection.TestLeaseReportsSingleChannelAndReuse
-    - app.TestTicket41CheckRunsThroughTheKeyboard
-    - app.TestTicket41CheckPassesTwiceInOneProcess
   status: verified
   notes: "The SSH version recorder already captures the server identification line, and RemoteRequiresSingleChannel recognizes the BHostSSH, TERM-SSHD, CLOUDBILITY, and CLOUDLINKER software tokens; a lease for such a peer is marked single-channel and is never parked for reuse. Network-device raw mode needs no extra channel at all: the command is typed into the same PTY that was opened for the shell, so exactly one session channel is created and no exec or subsystem request is sent. The fixture extends fakessh with a scripted shell, a configurable server version, and a session-channel counter so the adapter test and self-test assert the wire behavior."
 
@@ -4783,8 +4622,6 @@
     - ui/vault.TestVaultViewOffersNetworkDeviceModeOnlyForSSH
     - ui/shell/state.TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH
     - ui/shell/state.TestRestoreReopensANetworkDevicePaneFromTheHostRecord
-    - app.TestTicket41CheckRunsThroughTheKeyboard
-    - app.TestTicket41CheckPassesTwiceInOneProcess
   status: verified
   notes: "Host Details gains a Network device mode checkbox with an explanation, shown only for SSH, and all five locales carry the label and hint. The value persists in the Host JSON as deviceType, so no storage migration was needed; Vault JSON export and import round-trip it, and a restored Pane reads the current Host record. NormalizeDraft drops the mode for any other protocol, and IsNetworkDevice additionally requires SSH, so a hand-edited or stale record cannot put another transport into raw execution. The checkbox label is localized; the mode is an advanced Host option, not a new window. Deliberate divergence: group-level deviceType defaults are not inherited, so only the Host's own setting selects raw execution, and the original's separate warning panel is folded into the hint below the checkbox."
 
@@ -4817,8 +4654,6 @@
     - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
     - internal/tools/fetchtransportbins.TestExtractBinary
     - internal/tools/fetchtransportbins.TestExtractBinaryRejectsTraversal
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "The MoshCatty moshcatty-0.1.8 release is pinned in adapters/bundle with archive and extracted-binary SHA-256 plus byte size for win32-x64, linux-x64, linux-arm64, and darwin-universal. The fetch tool verifies the archive digest before extraction, refuses traversal entries, and re-verifies the extracted binary. The app re-hashes the binary before every launch, so a replaced file is never executed; a missing, malformed, or unsupported bundle returns a typed error instead of looking for a system mosh-client, and the self-test proves a planted mosh-client.exe on PATH is found by exec.LookPath while the transport still refuses. The win32-x64 binary in resources is committed and verified (sha256 e44616a22038f1742f765c7de553796ba4d1698f2c1f7a7cfb0dafd33ecdc78a, 545280 bytes); the other targets are fetched into the same layout by internal/tools/fetchtransportbins. Windows arm64 has no upstream asset and returns the typed unsupported-platform error, matching the original's Windows arm64 exclusion."
 
@@ -4857,8 +4692,6 @@
     - adapters/mosh.TestCheckRoute
     - app.TestMoshRejectsAJumpChainBeforeOpeningAnything
     - app.TestMoshRejectsAProxyBeforeOpeningAnything
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "The bootstrap runs `sh -c` with a quoted mosh-server new -s -c 256 command (plus -l for an explicit address), tolerates ANSI and OSC noise, a split announcement, and a missing trailing newline, and hides the MOSH CONNECT line from terminal output. The adapter then clears the handshake screen with an ESC[2J ESC[H reset, starts the verified mosh-client on a PTY with MOSH_KEY, TERM=xterm-256color, MOSH_NO_TERM_INIT=1, the original port/key arguments, and the Session's initial size, and forwards input and resizes. The in-process fixture pairs a fake SSH bootstrap with a UDP server and a fake client PTY, asserts the key never reaches the terminal, the datagram arrives, input and resize reach the child, and the child is reaped by Close; a failed handshake, timeout, and canceled open are typed and leave no process. Deliberate divergence: the bootstrap exec goes through the app's Connection Manager instead of the original's system ssh, so saved passwords, Keys, MFA, and known-host trust are reused. Mosh cannot carry a jump chain or proxy, so both fail with typed errors before any channel opens."
 
@@ -4883,8 +4716,6 @@
     - ui/shell/state.TestOpenHostOpensAnETHostWithTheETTransport
     - ui/shell/state.TestRestoreReopensMoshAndETPanesFromTheSavedHost
     - ui/connection.TestProblemTextForNamesMoshAndETFailures
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "The Vault protocol selector now offers mosh and et alongside ssh, telnet, and local. A Mosh Host stores an optional remote mosh-server path; an ET Host stores a server port that defaults to 2022. NormalizeDraft keeps each value only for its protocol, clears it on any other protocol, and rejects a non-numeric or out-of-range ET port as a typed field error, which the editor localizes in all five catalogs. Connect and Test actions appear for both protocols. A restored Pane reopens the current Host record rather than the stale descriptor address, so edits to the Host take effect; no credentials are stored in the descriptor. Mosh and ET route restrictions (no proxy, no Mosh jump, at most one ET jump) are typed and localized. The ET port field uses the original 2022 placeholder while an unset Host keeps the field blank and the domain default."
 
@@ -4909,8 +4740,6 @@
     - adapters/et.TestBundleFailuresAreTypedAndNoPathFallback
     - adapters/et.TestSpawnFailureCleansArtifacts
     - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "et-bin-6.2.10-1 (upstream MisterTea/EternalTerminal at et-v6.2.10, commit f9a584ac06b2f1730b5bdf0a27150f28478368fb, telemetry disabled) is pinned for win32-x64, linux-x64, linux-arm64, and darwin-universal with archive and binary SHA-256 plus size. The committed win32-x64 et.exe verifies (sha256 6212e2c089cd55aa9455dc2a9de22ac83d0bc6c8af76ce9ad096668931ee5a25, 13654528 bytes); other targets are fetched by internal/tools/fetchtransportbins into the same layout. A missing or tampered bundle returns the typed adapter error and the self-test plants et.exe on PATH to prove it is never selected. A spawn failure removes the temporary HOME and askpass artifacts."
 
@@ -4944,8 +4773,6 @@
     - adapters/et.TestOpenCloseReapsAndCleans
     - adapters/et.TestAskpassUnreadableMapAndMissingSecret
     - adapters/et.TestIsAskpassInvocation
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "Each ET Session gets a private temporary HOME with .ssh/config, key and certificate files, a private known_hosts snapshot, a password/passphrase map, and an SSH_ASKPASS wrapper that re-invokes the app with --natcatty-et-askpass; SSH_ASKPASS_REQUIRE=force and DISPLAY=netcatty:0 make OpenSSH use it. The wrapper answers the first matching password, passphrase, or jump password prompt and fails on a missing or unreadable map rather than hanging. Saved legacy-algorithm and certificate preferences are preserved; TERM and ET_NO_TELEMETRY=1 are set. The documented system user and system ssh_config are included under Match all, while UserKnownHostsFile and GlobalKnownHostsFile point only at the Vault snapshot and StrictHostKeyChecking=accept-new applies. The PTY is resized and reaped on Close, and the temporary HOME is removed. ET still uses the system OpenSSH internally for its own bootstrap, which is the upstream design; no system et binary is ever used."
 
@@ -4967,8 +4794,6 @@
     - adapters/et.TestOpenCloseReapsAndCleans
     - ui/shell/state.TestOpenHostOpensAnETHostWithTheETTransport
     - ui/shell/state.TestRestoreReopensMoshAndETPanesFromTheSavedHost
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "The app resolves the Host's auth selection, password, Key, certificate, passphrase, agent, and MFA exactly as the SSH path does, and a dangling Key reference fails closed with a typed auth error instead of silently using a password. The saved Host owns the ET server port even for an older restored descriptor. The Vault's known hosts become one authoritative snapshot for both the target and the jump, and a hostname with only a fingerprint is omitted rather than emitting an unusable line. One jump Host contributes its own ET port, resolved username, credentials, and legacy-algorithm preference; a proxy or a second jump is rejected before any process starts. The jump chain is passed as --jumphost/--jport, matching the original's single-hop support. No password, key material, or known-hosts content is written to the restore payload."
 
@@ -4985,8 +4810,6 @@
     - adapters/bundle.TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries
     - adapters/bundle.TestManifestsComplete
     - internal/tools/fetchtransportbins.TestManifestHasEveryTarget
-    - app.TestTicket43CheckRunsThroughTheKeyboard
-    - app.TestTicket43CheckPassesTwiceInOneProcess
   status: verified
   notes: "resources/THIRD-PARTY-NOTICES.md names both components, their upstream repositories, and their licenses. resources/mosh carries the full GPL-3.0 text plus BUILD-PROVENANCE.json and README.md with the MoshCatty source link and per-target checksums; resources/et carries the Apache-2.0 text plus BUILD-PROVENANCE.json (upstream ref, commit, Netcatty build workflow run, archive and binary digests) and README.md. The test reads the committed notices and provenance and verifies the committed Windows binaries against the compiled-in manifest. MyGo packages the resources tree next to the executable, so the same verification applies to a packaged build; a platform without a bundle shows the localized unavailable error instead of running a system copy."
 
@@ -5017,7 +4840,6 @@
     - domain/monitor.TestAggregateDisksCountsPhysicalCapacityOnceAndSkipsNetwork
     - domain/monitor.TestAggregateDisksSkipsFuseSourcesEvenWhenTypeIsMissing
     - ui/monitoring.TestViewRendersListChartsEditorAndNarrowWindow
-    - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "The original Linux stats command reads /proc/stat, /proc/meminfo, /proc/net/dev, /proc/uptime, /proc/loadavg, hostname, and /etc/os-release, and the native implementation keeps the same labels and delta math: overall and per-core CPU are derived from the first and second raw counters, memory is total minus free, buffers, and cached, and network rates come from byte counters. Linux disks are a separate exec because a large combined request is rejected by Dropbear; the awk parser excludes network and FUSE capacity and counts a shared APFS capacity once. macOS keeps its sysctl/vm_stat/ps/netstat command and direct CPU percentage. GPU is best-effort through nvidia-smi and is absent rather than an error when the command is unavailable. Deliberate divergence: the GPU query runs inside the same metric exec on every sample, where the original cached a separate probe for 10-30 seconds; the two-second nvidia-smi timeout bounds the cost and every metric shares one round trip. An unknown OS is a typed unsupported state. A metric the reply does not carry is NaN (a dash), while a reply with no recognizable metric is a typed unsupported failure. Sampling runs in service goroutines through the connection layer's channel lease, never a terminal Session."
 
@@ -5040,7 +4862,6 @@
     - application/preferences.TestMonitorConfigurationPersistsThroughTheStore
     - ui/monitoring.TestStateLoadsPanelsSearchSortAndPersistsColumns
     - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
-    - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "Panels keep the original's fields (id, name, description, hostIds, list/charts view, interval, range, manual/name sort) and choices (1/2/3/5/10/30/60 seconds, 5/15/30 minutes). Columns keep the original's order, defaults, and 56-640 DIP bounds, with host and terminal always visible. Configuration rides in the existing preferences document under a monitor group, versioned and normalized on load; unlike the original's localStorage entity it also travels with the settings store. Duplicate panel names are suffixed by id so a merged file cannot make two panels indistinguishable, a hand-edited interval falls back to five seconds, and the minimum widths are enforced both on load and when the user drags or nudges a column. Refresh and view changes persist immediately and retarget the running panel. Deliberate divergences: the interval selector offers the original's 1- and 2-second choices that its toolbar filtered to at least three seconds; a new panel starts in list view over 30 minutes and may be saved with no Hosts, where the original draft opened charts over 15 minutes and required a Host; and manual ordering is arranged with the editor's move controls rather than drag-and-drop in the list."
 
@@ -5060,7 +4881,6 @@
     - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
     - ui/monitoring.TestStateReportsTooManyHostsAndStopsOnDeactivate
     - ui/monitoring.TestViewRendersListChartsEditorAndNarrowWindow
-    - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "Search matches Host label, hostname, group, notes, and tags; sort is the saved manual order or Host label, both with stable ordering. The list is a resizable table and the chart view is a card grid with CPU, memory, disk, and network sparklines over the selected history range, plus disk, latency, and GPU footer values. Open terminal calls the shell's OpenHost, so it uses the same Tab, trust, and transport path as the Vault. A Host without metrics shows a dash and an unknown tone instead of zero, a live sample older than max(5s, 2.5 intervals) is Stale, and thresholds are the original's above-60 warning and above-85 danger for percentages and 100/300 ms for latency. Every label, problem, status, and reason is localized in en, es, ru, zh-CN, and zh-TW. Deliberate divergence: the native monitoring surface is a root sidebar surface rather than a Vault subview, because the shell's existing Logs and SFTP roots share that navigation shape; it still starts from the Vault Host list and opens Host Sessions."
 
@@ -5080,7 +4900,6 @@
     - application/monitor.TestServiceRejectsMoreThan256HostsAndDoesNotOpen
     - application/monitor.TestServiceCapIsSharedAcrossPanels
     - ui/monitoring.TestStateReportsTooManyHostsAndStopsOnDeactivate
-    - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "History keeps 30 minutes and at most 1800 points per Host, dropping old entries before appending the new one, so a fast interval cannot grow memory without bound. A panel that would push the union of all demanded Hosts past 256 is rejected before any transport opens or sampler mutates state; two panels sharing Hosts count them once. The surface turns that typed error into a localized problem and leaves the previous panel running state consistent. History is per Host and per run: the chart only draws points from the current panel run and the chosen range, matching the original's runtime store."
 
@@ -5101,7 +4920,6 @@
     - app.TestMonitorFailureMapsConnectionFailures
     - app.TestMonitorFailureKeepsAnAlreadyTypedError
     - ui/monitoring.TestStateCreatesPanelValidatesAndOpensTerminal
-    - app.TestTicket44CheckRunsThroughTheKeyboard
   status: verified
   notes: "The app's monitoring connector acquires a channel lease from the shared Connection Manager with the Host's routes, jump chain, proxy, algorithms, and config fingerprint. Acquire runs the same known-hosts lookup and trust prompt as a Session, so the first metric command can only run after the key is trusted; a rejected key maps to the monitor surface's typed login/host-key state with no Exec at all. Authentication, timeout, unsupported algorithm, network, and cancellation failures keep distinct typed reasons, and repeated recoverable failures become Unavailable rather than an error dialog or a spinner. The stub connector in the application tests proves the ordering structurally: one Open, zero metric commands on refusal. The self-test repeats that assertion with an in-process refused Host and checks that the healthy Hosts keep sampling. Deactivation cancels the sampler and releases each lease. Deliberate divergence: a Host left in login/host-key after its trust decision changes has no in-surface retry dialog; leaving and re-entering the monitoring surface restarts the panel and re-acquires the Host through the same prompt."
 
@@ -5121,7 +4939,6 @@
     - application/sysmanager.TestParseOverviewReadsLinuxAndDarwinFields
     - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
     - ui/sysmanager.TestActivateSelectsTheFirstHostAndStartsTheDefaultCadence
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "The surface selects a Host from the Host list and shows its hostname, OS, kernel, uptime, one/five/fifteen-minute load, logical cores, CPU, memory, swap, and root-disk use. Linux reads /proc and df and derives CPU from the /proc/stat busy/total delta, so the first sample has no CPU value rather than a fabricated zero; macOS reads sysctl, ps, vm_stat, and df and uses the direct CPU sum the original displayed. Sizes are decimal MB/GB, and a missing field renders a dash. The overview refreshes every three seconds by default and can be refreshed immediately; samples never run on the UI thread."
 
@@ -5141,7 +4958,6 @@
     - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
     - ui/sysmanager.TestTabSwitchStartsThatTabsCadenceAndSearchFilters
     - ui/sysmanager.TestConfirmationGatesEveryDestructiveAction
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "The list uses the original's GNU ps field order and its top, ps ww, then ps fallbacks, and also accepts the BusyBox top and ps shapes including m/g/t size suffixes. PID, PPID, user, state, CPU percent, memory percent, RSS, VSZ, elapsed time, and command are preserved; the table exposes PID, user, CPU, memory, and command columns with stable ascending and descending sort, plus search over PID, user, and command. Signals are TERM, KILL, STOP, CONT, HUP, INT, USR1, and USR2, with the original's numeric aliases normalized to names; Stop, Continue, Terminate, and Kill are offered for a selected process and each is confirmed before any command runs. The default cadence is three seconds."
 
@@ -5159,7 +4975,6 @@
     - application/sysmanager.TestParsePortsHandlesIPv6AndBSDNetstat
     - application/sysmanager.TestServiceSamplesEveryTabAndHonorsTheInterval
     - ui/sysmanager.TestConfirmationGatesEveryDestructiveAction
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "Every available collector runs and their rows merge by protocol, address, and port, as the original did because macOS netstat often lacks usable PID columns: ss -tulnp, the Linux and BSD netstat variants, and lsof TCP listeners plus lsof idle UDP sockets. IPv4, IPv6, wildcard addresses, localhost, and BSD dot-separated addresses parse; a row without an owner keeps its socket and shows an unknown process. The table exposes protocol, address, port, PID, process, and user with search and stable sort, and a selected owned port offers Terminate, which sends the original's SIGTERM after confirmation. The default cadence is three seconds."
 
@@ -5178,7 +4993,6 @@
     - application/sysmanager.TestServiceActionReportsPermissionAndRetriesWithSudo
     - application/sysmanager.TestServiceActionRejectsInvalidInputsBeforeOpening
     - ui/sysmanager.TestConfirmedServiceActionRunsOffTheUIThread
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "The command lists system and user units with --plain and falls back to the column format on older systemd, merges both scopes, and sorts failed units first. The table exposes unit, load, active, sub, and description with search and stable sort; start, stop, and restart are offered for the selected unit and each confirmation names the unit and the exact systemctl command. Unit names accept the original's systemd character set and arguments are shell-quoted; an unknown action or invalid name is rejected before a transport opens. A system-scope permission denial retries once with non-interactive sudo -n. The default cadence is five seconds. Deliberate divergence: the original could feed the Session's sudo password to sudo -S; this build has no session password prompt and reports the permission failure when sudo -n is unavailable."
 
@@ -5197,7 +5011,6 @@
     - ui/sysmanager.TestConfirmedServiceActionRunsOffTheUIThread
     - ui/sysmanager.TestCancelStopsARunningAction
     - application/sysmanager.TestSignalRunsOnlyTheConfirmedCommand
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "Requesting a signal, a port terminate, or a service start/stop/restart only stores a pending action; it runs no service call. The modal copies the target and the exact kill or systemctl command, and only acceptance starts one goroutine off the UI thread. Cancel or Escape discards a pending action without a command, and cancelling a running action cancels its context and records the cancellation. A successful action requests a fresh sample so the table shows the new state. The in-process self-test asserts the zero-command state before accepting a confirmation and that cancelling a port action still leaves the command count unchanged."
 
@@ -5219,7 +5032,6 @@
     - application/sysmanager.TestServiceRefreshRequestsAnImmediateSample
     - ui/sysmanager.TestSetIntervalPersistsPerTabAndRestartsSampling
     - ui/sysmanager.TestSetIntervalSaveFailureIsReportedAndDoesNotApply
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "Overview, Processes, and Ports start at the original's three seconds and Services at five; every tab offers 1, 2, 3, 5, 10, 30, and 60 seconds and the choice applies to that tab only. A change is saved through the existing preferences service before it retargets the running sampler; a failed save leaves the old cadence and reports a localized problem. Values outside the offered choices fall back to the tab default on load and on write, and Reset restores the defaults. The preference group travels with the settings document rather than a separate file. Deliberate divergence: the original reused one process interval for Processes, Ports, and Services and the server-stats interval for Overview; ticket 45 requires a per-tab interval, so this build persists four independent cadences."
 
@@ -5239,7 +5051,6 @@
     - application/sysmanager.TestServiceDegradesWhenRemoteCommandsAreMissing
     - application/sysmanager.TestServiceDoesNotExecBeforeTheHostKeyIsTrusted
     - application/sysmanager.TestServiceCloseCancelsSampling
-    - app.TestTicket45CheckRunsThroughTheKeyboard
   status: verified
   notes: "A capability probe runs once per Host and caches the OS and the presence of ps/top, ss, netstat, lsof, and systemctl; only line-anchored markers count, so a noisy shell echoing the probe cannot fake a command. A missing ps/top, port collector, or systemctl turns that tab into a typed unavailable state naming the missing command, while the other tabs continue sampling the same Host. The app connector acquires every sample and action through the shared Connection Manager's channel lease, which runs the same known-hosts and trust path as a Session; a rejected Host key becomes login/host_key with zero Exec calls, and auth, timeout, unsupported, network, and cancellation failures keep distinct typed reasons. Close cancels sampling and releases every lease, and an action opens a fresh short-lived lease so it cannot race a poll on the same channel. Deliberate divergence: the surface uses a root sidebar entry with an in-surface Host selector instead of the original terminal side panel, because the native shell's Logs and SFTP roots already share that navigation shape."
 
@@ -5266,7 +5077,6 @@
     - ui/sysmanager.TestTmuxCreateRunsWithoutConfirmation
     - ui/sysmanager.TestTmuxKillRequiresConfirmation
     - ui/sysmanager.TestTmuxAttachOpensATerminalWithTheAttachCommand
-    - app.TestTicket46CheckRunsThroughTheKeyboard
   status: verified
   notes: "The tab lists sessions from tmux list-sessions with the formatted name, windows, attached, and created fields, falls back to the plain list on older tmux, and ignores diagnostic lines. No tmux server is a typed empty list; a missing command is the tab's typed unavailable state. Create validates the name against tmux's character set, shell-quotes it, and runs without a confirmation because it is not destructive. Attach is offered for a selected session and opens a terminal Tab against the same Host with the original's attach command after a clear-screen sequence. Kill is destructive: it opens the shared confirmation naming the exact command and runs nothing before acceptance. The default cadence is three seconds. Deliberate divergence: the original's create dialog could send an initial command or snippet into the new session; this build creates an empty named session, and the user types or pastes commands in the attached terminal."
 
@@ -5295,7 +5105,6 @@
     - ui/sysmanager.TestDockerInspectAndLogsLoadAndCloseTheDocument
     - ui/sysmanager.TestDockerDocumentCancelsAndDropsStaleReplies
     - ui/sysmanager.TestDockerViewSwitchesListsAndClearsSelection
-    - app.TestTicket46CheckRunsThroughTheKeyboard
   status: verified
   notes: "The tab switches between containers and images. Containers come from docker ps -a and images from docker images, both as JSON lines; each docker failure is captured in its own marker section so a shell that exits zero still yields a typed reason. Start, stop, and remove are confirmed and name the exact command. Inspect and logs load into a bounded read-only document: 64 KiB with a marker on truncation, and logs clamped to 1..1000 lines with 200 by default. Loading is cancellable off the UI thread, closing cancels it, and a reply that arrives after a newer request or a close is dropped. A missing Docker command, a stopped daemon, or a permission denial degrades only inside the Docker tab; the other tabs keep sampling. The default cadence is five seconds. Deliberate divergences: start and stop also pass through the shared confirmation, as this build's ticket requires, where the original confirmed only removal; container icons and an interactive container shell from the original are not reproduced, so logs and inspect are read-only documents and an interactive shell remains a terminal-surface concern."
 
@@ -5314,7 +5123,6 @@
     - application/sysmanager.TestParseGPUReadsDevicesAndKeepsUnreportedMetricsNaN
     - application/sysmanager.TestServiceSamplesExtendedTabs
     - ui/sysmanager.TestExtendedProblemsAndReasonsAreLocalized
-    - app.TestTicket46CheckRunsThroughTheKeyboard
   status: verified
   notes: "One nvidia-smi query returns each device's index, name, vendor, utilization, memory used and total, temperature, power draw and limit, fan, and driver. Metrics the driver does not report stay NaN and render as a dash rather than a zero, and devices sort by index. A Host with no GPU, including one without nvidia-smi, renders the tab's typed empty state instead of an error banner or an unavailable tab, and the other tabs keep sampling the same Host. The tab refreshes every three seconds. Deliberate divergence: the original also probed Ascend npu-smi devices; this build reports the capability but only renders NVIDIA devices, so an NPU-only Host shows the typed empty state."
 
@@ -5331,7 +5139,6 @@
     - domain/preferences.TestSysManagerTabOrderAndVisibilityNormalize
     - domain/preferences.TestSysManagerTabLayoutReadsAndWritesOnlyTheRequestedTab
     - ui/sysmanager.TestTabVisibilityAndOrderPersist
-    - app.TestTicket46CheckRunsThroughTheKeyboard
   status: verified
   notes: "The strip holds all seven known tabs in the original's default order: overview, processes, ports, services, tmux, Docker, GPU. The header's Tabs menu shows or hides a tab and moves the active tab one place left or right. Every change is written through the settings group's SysManager TabOrder and HiddenTabs, the same settings document that holds the per-tab cadences, and a fresh surface restores it. Unknown, duplicate, and missing entries are repaired against the canonical order, and the overview stays locked visible so the panel never loses its Host summary. Deliberate divergence: the original reordered toolbar items by dragging them; this surface offers explicit move-left and move-right menu commands, which keyboard users can reach."
 
@@ -5352,6 +5159,5 @@
     - application/sysmanager.TestCommandsCoverCapabilitiesAndUnavailableMarkers
     - application/sysmanager.TestServiceDegradesExtendedTabsToTypedUnavailability
     - application/sysmanager.TestServiceDegradesDockerDaemonFailuresInsideTheTab
-    - app.TestTicket46CheckRunsThroughTheKeyboard
   status: verified
   notes: "The per-Host capability probe also records tmux, docker, nvidia-smi, and npu-smi beside the ticket 45 tools, and only line-anchored markers count. A Host without tmux or Docker turns only that tab into a typed missing_tmux or missing_docker state and still samples the other tabs; the GPU tab stays live and empty when nvidia-smi is absent. Docker's own permission denial or stopped daemon becomes a typed docker_daemon reason inside the Docker tab. The app connector keeps the same Connection Manager lease and Host-key trust path as ticket 45, an action opens its own short-lived lease, and every destructive command is confirmed before Exec. The self-test repeats this with an in-process minimal Host: typed missing states, zero tmux or Docker commands, then recovery when the rich Host is selected again."
