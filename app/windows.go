@@ -140,23 +140,13 @@ type windowManager struct {
 	// confirmPolicy asks the Security preference whether closing Sessions
 	// needs a confirmation. Nil keeps the original behavior (always ask).
 	confirmPolicy func() bool
-	// selftestBind registers the main window's self-test shortcuts at window
-	// scope, and selftestView draws its overlay around the content. Both are
-	// nil in normal builds.
-	selftestBind func(*ui.Context)
-	selftestView func(func(*ui.Context)) func(*ui.Context)
-
-	main     hostWindow
-	settings hostWindow
-	detached map[model.TabID]hostWindow
-	// detachedViews keeps the exact content function each detached window was
-	// given, so the selftest can render the live window's surface rather than
-	// a re-built copy.
-	detachedViews map[model.TabID]func(*ui.Context)
+	main          hostWindow
+	settings      hostWindow
+	detached      map[model.TabID]hostWindow
 	forceClose    map[string]bool
 	quitting      bool
-	// mainFocuses counts FocusMain calls. The selftest uses it to observe
-	// that a second launch raised the existing main window.
+	// mainFocuses counts FocusMain calls so the desktop test can observe that
+	// a second launch raised the existing main window.
 	mainFocuses int
 }
 
@@ -171,7 +161,6 @@ func newWindowManager(host windowHost, confirmer dialogConfirmer, gate *uiapploc
 		settingsContent: settingsContent,
 		locale:          locale,
 		detached:        make(map[model.TabID]hostWindow),
-		detachedViews:   make(map[model.TabID]func(*ui.Context)),
 		forceClose:      make(map[string]bool),
 	}
 }
@@ -289,9 +278,8 @@ func (m *windowManager) withAccelerators(content func(*ui.Context)) func(*ui.Con
 }
 
 // wrap puts every window's content behind the one shared App Lock gate. The
-// current gate is resolved per frame, so replacing it (as the selftest does)
-// also governs windows that already exist, and no window builds its content
-// while locked.
+// current gate is resolved per frame, so replacing it also governs windows
+// that already exist, and no window builds its content while locked.
 func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 	return func(c *ui.Context) {
 		if m.gate == nil {
@@ -303,8 +291,7 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 }
 
 // detachedContent is the content of a detached Tab's window: the Tab's view
-// behind the same shared App Lock gate as every other window. The selftest
-// reuses it to prove the gate hides detached content.
+// behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
 	return m.withTheme(m.withAccelerators(m.wrap(shell.DetachedView(m.state, tabID))))
 }
@@ -323,23 +310,14 @@ func (m *windowManager) OpenMain() hostWindow {
 		m.main.Focus()
 		return m.main
 	}
-	var build func(*ui.Context) = shell.View(m.state)
-	if m.selftestView != nil {
-		build = m.selftestView(build)
-	}
-	// The self-test overlay is inside the gate: while App Lock is closed no
-	// window, including the developer facility, builds anything.
-	gated := m.wrap(build)
+	// The content is inside the gate: while App Lock is closed no window
+	// builds anything.
+	gated := m.wrap(shell.View(m.state))
 	// withAccelerators binds at the root context, before the gate builds its
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
 	// terminal focus.
-	content := m.withTheme(m.withAccelerators(func(c *ui.Context) {
-		if m.selftestBind != nil {
-			m.selftestBind(c)
-		}
-		gated(c)
-	}))
+	content := m.withTheme(m.withAccelerators(gated))
 	m.main = m.host.Create(windowSpec{
 		Key:       "main",
 		Title:     m.messages().AppName(),
@@ -419,7 +397,6 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		return
 	}
 	content := m.detachedContent(tabID)
-	m.detachedViews[tabID] = content
 	m.detached[tabID] = m.host.Create(windowSpec{
 		Key:       "detached:" + string(tabID),
 		Title:     shell.DetachedTitle(m.messages(), info),
@@ -433,7 +410,6 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		OnCloseRequest: func() bool { return m.allowDetachedClose(tabID) },
 		OnClosed: func() {
 			delete(m.detached, tabID)
-			delete(m.detachedViews, tabID)
 			delete(m.forceClose, "detached:"+string(tabID))
 			// Idempotent: a re-attached Tab is no longer detached, so its
 			// Sessions stay alive in the main window.
@@ -574,8 +550,7 @@ func (m *windowManager) FocusMain() {
 
 // SecondInstance is what the single-instance callback does when a later
 // launch hands over: raise the existing main window, or recreate it when it
-// was closed. It returns the window it raised so the selftest can confirm the
-// production path focused the main window.
+// was closed. It returns the window it raised.
 func (m *windowManager) SecondInstance() hostWindow {
 	m.FocusMain()
 	return m.main

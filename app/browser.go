@@ -30,8 +30,7 @@ import (
 var (
 	browserBookmarks *appbrowser.Bookmarks
 	browserIcons     *appbrowser.SiteIcons
-	// browserDownloadsDir is a seam for the selftest, which must never write
-	// into the user's real Downloads directory.
+	// browserDownloadsDir resolves the directory where browser downloads land.
 	browserDownloadsDir = func() (string, error) { return mygo.App.Path(mygo.PathDownloads) }
 )
 

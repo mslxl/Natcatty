@@ -471,8 +471,8 @@ func (s *State) SetComposeLineMode(mode appsession.ComposeLineMode) {
 	s.inputMu.Unlock()
 }
 
-// SetComposeDraft replaces the draft. The selftest uses it to prove the
-// preview and send path without typing into a native text field.
+// SetComposeDraft replaces the draft. Tests use it to prove the preview and
+// send path without typing into a native text field.
 func (s *State) SetComposeDraft(draft string) {
 	s.inputMu.Lock()
 	s.composeDraft = draft

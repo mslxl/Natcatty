@@ -3,7 +3,7 @@
 // as the local shell's history file.
 //
 // The service owns no UI and no transport: ui/session reads Suggestions while
-// the user types, and app/selftest drives the same paths as production.
+// the user types, and the app tests drive the same paths as production.
 package autocomplete
 
 import (
