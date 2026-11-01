@@ -90,7 +90,6 @@ type State struct {
 	hostItems     []domainvault.Host
 	editing       bool
 	form          Form
-	editorFields  editorFieldHandles
 	problem       Problem
 	pendingDelete model.ForwardingRuleID
 	redraw        func()

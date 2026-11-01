@@ -901,11 +901,6 @@ func withMCPModeState(mode *mcpModeState) externalMCPOption {
 	return func(config *externalMCPConfig) { config.mode = mode }
 }
 
-// runningExternalMCP is the listener run() started, published so the selftest
-// build can authenticate against the production surface. It stays nil when the
-// listener failed to start and when a test builds the window graph directly.
-var runningExternalMCP *externalMCP
-
 // startExternalMCP binds loopback, serves the read bridge, and publishes the
 // discovery file. The listener is bound before the file is written, so a
 // client that reads the file can always connect.

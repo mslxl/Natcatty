@@ -13,7 +13,6 @@
 # the rest of the import fixture tree must stay byte-stable too. The JSON rule
 # above still sets eol for these paths unless it is unset here as well.
 domain/vaultimport/testdata/** -text -eol
-app/testdata/selftest24/** -text -eol
 
 *.png binary
 *.ico binary

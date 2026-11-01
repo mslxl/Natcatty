@@ -23,7 +23,7 @@ import (
 )
 
 // traySurface is the native notification-area icon the controller owns. MyGo's
-// *Tray implements it; the selftest substitutes a fake.
+// *Tray implements it; tests substitute a fake.
 type traySurface interface {
 	SetMenu(*mygo.Menu)
 	SetToolTip(string)
@@ -34,7 +34,7 @@ type traySurface interface {
 }
 
 // trayBackend creates a tray icon. MyGo needs an application that is ready;
-// the selftest supplies a fake so it can exercise the menu without one.
+// tests supply a fake so they can exercise the menu without one.
 type trayBackend interface {
 	Create(mygo.TrayOptions) (traySurface, error)
 }
@@ -504,8 +504,7 @@ func (c *desktopController) messages() locales.Messages {
 	return locales.In(c.locale())
 }
 
-// BuildTrayMenu returns the current menu template. It is exported to the
-// selftest so it can inspect the exact menu the native tray receives.
+// BuildTrayMenu returns the current menu template.
 func (c *desktopController) BuildTrayMenu() *mygo.Menu {
 	m := c.messages()
 	items := []*mygo.MenuItem{
