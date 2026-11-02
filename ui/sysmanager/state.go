@@ -126,6 +126,9 @@ type State struct {
 	hostByID  map[string]domainvault.Host
 	hostID    string
 	tab       appsysmanager.Tab
+	// sideHost is the Host the side panel last asked for, so a Session's
+	// frames do not look it up again.
+	sideHost string
 	// revealTab asks the tab strip to scroll the active tab into view on the
 	// next frame: the seven tabs need more than the content column at the
 	// minimum window, so the chosen one must not stay cut at an edge.
@@ -134,11 +137,14 @@ type State struct {
 	// window scrolls the strip again so the active tab stays whole after a
 	// resize, not only after the user picks another tab.
 	stripWidth float32
-	settings   domainpreferences.SysManager
-	search     string
-	problem    Problem
-	loadErr    error
-	active     bool
+	// compact marks the side panel's System tool, whose tables keep only the
+	// columns its narrow width holds.
+	compact  bool
+	settings domainpreferences.SysManager
+	search   string
+	problem  Problem
+	loadErr  error
+	active   bool
 
 	pending      *PendingAction
 	actionCancel context.CancelFunc

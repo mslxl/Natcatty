@@ -5,7 +5,7 @@ import "testing"
 func TestDefaultsMatchTheOriginal(t *testing.T) {
 	got := Defaults()
 	if got.Appearance.ThemeMode != ThemeSystem || got.Appearance.WindowOpacity != 1 ||
-		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != "menlo" ||
+		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != DefaultTerminalFont ||
 		got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
 		got.Appearance.AppIcon != "original" || got.Appearance.AccentMode != AccentTheme {
 		t.Errorf("appearance defaults = %+v", got.Appearance)
@@ -61,7 +61,7 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 		t.Errorf("appearance enums = %+v", got.Appearance)
 	}
 	if got.Appearance.WindowOpacity != 1 || got.Appearance.TerminalFontSize != 32 ||
-		got.Appearance.TerminalFontFamily != "menlo" {
+		got.Appearance.TerminalFontFamily != DefaultTerminalFont {
 		t.Errorf("appearance values = %+v", got.Appearance)
 	}
 	if got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||

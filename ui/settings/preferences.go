@@ -21,6 +21,9 @@ type PreferencesState struct {
 	resetAll      bool
 	drafts        map[domain.Field]*string
 	requestRedraw func()
+	// requestLocale shows the app in another language; nil hides the
+	// Language row.
+	requestLocale func(tag string)
 }
 
 // PreferencesOption customizes a PreferencesState.
@@ -29,6 +32,12 @@ type PreferencesOption func(*PreferencesState)
 // WithPreferencesRedrawRequest sets the function called after a change.
 func WithPreferencesRedrawRequest(fn func()) PreferencesOption {
 	return func(s *PreferencesState) { s.requestRedraw = fn }
+}
+
+// WithLocaleRequest sets the function the Language row calls to show the app
+// in another language.
+func WithLocaleRequest(fn func(tag string)) PreferencesOption {
+	return func(s *PreferencesState) { s.requestLocale = fn }
 }
 
 // NewPreferencesState returns the typed preference form for service.

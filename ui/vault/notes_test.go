@@ -237,7 +237,9 @@ func TestVaultNotesRenderThroughTheProductionChrome(t *testing.T) {
 				t.Fatalf("%dx%d: %q overflows horizontally: %+v",
 					size.width, size.height, text, rect)
 			}
-			if rect.H < 8 {
+			// The home sidebar's list scrolls, so its last entry may peek in
+			// at the foot; only the page's own text must be whole.
+			if rect.H < 8 && rect.X >= 220 {
 				t.Fatalf("%dx%d: %q is unreadably small: %+v",
 					size.width, size.height, text, rect)
 			}

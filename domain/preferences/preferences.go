@@ -180,7 +180,6 @@ type Settings struct {
 const (
 	DefaultAccentColor      = "221.2 83.2% 53.3%"
 	DefaultTerminalTheme    = "netcatty-dark"
-	DefaultTerminalFont     = "menlo"
 	DefaultTerminalFontSize = 13
 	DefaultEditorFontSize   = 14
 	MinTerminalFontSize     = 8

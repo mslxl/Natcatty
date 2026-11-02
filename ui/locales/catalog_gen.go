@@ -374,6 +374,16 @@ func (msgs Messages) NavSettings() string {
 	return Catalog.Format(msgs.locale, "navSettings", nil)
 }
 
+// NavControlPanel says "Control panel"
+// in the language the app shows.
+func NavControlPanel() string { return In(i18n.Locale()).NavControlPanel() }
+
+// NavControlPanel says "Control panel"
+// in the language of msgs.
+func (msgs Messages) NavControlPanel() string {
+	return Catalog.Format(msgs.locale, "navControlPanel", nil)
+}
+
 // NavLanguage says "Language"
 // in the language the app shows.
 func NavLanguage() string { return In(i18n.Locale()).NavLanguage() }
@@ -5320,16 +5330,6 @@ func DetachedMoveToMain() string { return In(i18n.Locale()).DetachedMoveToMain()
 // in the language of msgs.
 func (msgs Messages) DetachedMoveToMain() string {
 	return Catalog.Format(msgs.locale, "detachedMoveToMain", nil)
-}
-
-// DetachedCloseWindow says "Close Window"
-// in the language the app shows.
-func DetachedCloseWindow() string { return In(i18n.Locale()).DetachedCloseWindow() }
-
-// DetachedCloseWindow says "Close Window"
-// in the language of msgs.
-func (msgs Messages) DetachedCloseWindow() string {
-	return Catalog.Format(msgs.locale, "detachedCloseWindow", nil)
 }
 
 // CloseWindowTitle says "Close Window?"
@@ -21898,4 +21898,310 @@ func SidePanelClose() string { return In(i18n.Locale()).SidePanelClose() }
 // in the language of msgs.
 func (msgs Messages) SidePanelClose() string {
 	return Catalog.Format(msgs.locale, "sidePanelClose", nil)
+}
+
+// SidePanelScripts says "Scripts"
+// in the language the app shows.
+func SidePanelScripts() string { return In(i18n.Locale()).SidePanelScripts() }
+
+// SidePanelScripts says "Scripts"
+// in the language of msgs.
+func (msgs Messages) SidePanelScripts() string {
+	return Catalog.Format(msgs.locale, "sidePanelScripts", nil)
+}
+
+// SidePanelHistory says "History"
+// in the language the app shows.
+func SidePanelHistory() string { return In(i18n.Locale()).SidePanelHistory() }
+
+// SidePanelHistory says "History"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistory() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistory", nil)
+}
+
+// SidePanelTheme says "Theme"
+// in the language the app shows.
+func SidePanelTheme() string { return In(i18n.Locale()).SidePanelTheme() }
+
+// SidePanelTheme says "Theme"
+// in the language of msgs.
+func (msgs Messages) SidePanelTheme() string {
+	return Catalog.Format(msgs.locale, "sidePanelTheme", nil)
+}
+
+// SidePanelSystem says "System"
+// in the language the app shows.
+func SidePanelSystem() string { return In(i18n.Locale()).SidePanelSystem() }
+
+// SidePanelSystem says "System"
+// in the language of msgs.
+func (msgs Messages) SidePanelSystem() string {
+	return Catalog.Format(msgs.locale, "sidePanelSystem", nil)
+}
+
+// SidePanelNotes says "Notes"
+// in the language the app shows.
+func SidePanelNotes() string { return In(i18n.Locale()).SidePanelNotes() }
+
+// SidePanelNotes says "Notes"
+// in the language of msgs.
+func (msgs Messages) SidePanelNotes() string {
+	return Catalog.Format(msgs.locale, "sidePanelNotes", nil)
+}
+
+// SidePanelSearchScripts says "Search snippets"
+// in the language the app shows.
+func SidePanelSearchScripts() string { return In(i18n.Locale()).SidePanelSearchScripts() }
+
+// SidePanelSearchScripts says "Search snippets"
+// in the language of msgs.
+func (msgs Messages) SidePanelSearchScripts() string {
+	return Catalog.Format(msgs.locale, "sidePanelSearchScripts", nil)
+}
+
+// SidePanelDismiss says "Dismiss"
+// in the language the app shows.
+func SidePanelDismiss() string { return In(i18n.Locale()).SidePanelDismiss() }
+
+// SidePanelDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) SidePanelDismiss() string {
+	return Catalog.Format(msgs.locale, "sidePanelDismiss", nil)
+}
+
+// SidePanelNoMatches says "No matches"
+// in the language the app shows.
+func SidePanelNoMatches() string { return In(i18n.Locale()).SidePanelNoMatches() }
+
+// SidePanelNoMatches says "No matches"
+// in the language of msgs.
+func (msgs Messages) SidePanelNoMatches() string {
+	return Catalog.Format(msgs.locale, "sidePanelNoMatches", nil)
+}
+
+// SidePanelRunSnippet says "Run in this terminal"
+// in the language the app shows.
+func SidePanelRunSnippet() string { return In(i18n.Locale()).SidePanelRunSnippet() }
+
+// SidePanelRunSnippet says "Run in this terminal"
+// in the language of msgs.
+func (msgs Messages) SidePanelRunSnippet() string {
+	return Catalog.Format(msgs.locale, "sidePanelRunSnippet", nil)
+}
+
+// SidePanelSearchHistory says "Search commands"
+// in the language the app shows.
+func SidePanelSearchHistory() string { return In(i18n.Locale()).SidePanelSearchHistory() }
+
+// SidePanelSearchHistory says "Search commands"
+// in the language of msgs.
+func (msgs Messages) SidePanelSearchHistory() string {
+	return Catalog.Format(msgs.locale, "sidePanelSearchHistory", nil)
+}
+
+// SidePanelHistoryThisHost says "This host"
+// in the language the app shows.
+func SidePanelHistoryThisHost() string { return In(i18n.Locale()).SidePanelHistoryThisHost() }
+
+// SidePanelHistoryThisHost says "This host"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistoryThisHost() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryThisHost", nil)
+}
+
+// SidePanelHistoryAllHosts says "All hosts"
+// in the language the app shows.
+func SidePanelHistoryAllHosts() string { return In(i18n.Locale()).SidePanelHistoryAllHosts() }
+
+// SidePanelHistoryAllHosts says "All hosts"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistoryAllHosts() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryAllHosts", nil)
+}
+
+// SidePanelHistoryCount says "{count, plural, one {# command} other {# commands}}"
+// in the language the app shows.
+//
+// The number of commands the side panel's History lists.
+func SidePanelHistoryCount(count int) string { return In(i18n.Locale()).SidePanelHistoryCount(count) }
+
+// SidePanelHistoryCount says "{count, plural, one {# command} other {# commands}}"
+// in the language of msgs.
+//
+// The number of commands the side panel's History lists.
+func (msgs Messages) SidePanelHistoryCount(count int) string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryCount", map[string]any{"count": count})
+}
+
+// SidePanelHistorySendFailed says "The command could not be sent to the terminal."
+// in the language the app shows.
+func SidePanelHistorySendFailed() string { return In(i18n.Locale()).SidePanelHistorySendFailed() }
+
+// SidePanelHistorySendFailed says "The command could not be sent to the terminal."
+// in the language of msgs.
+func (msgs Messages) SidePanelHistorySendFailed() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistorySendFailed", nil)
+}
+
+// SidePanelHistoryEmpty says "No commands yet"
+// in the language the app shows.
+func SidePanelHistoryEmpty() string { return In(i18n.Locale()).SidePanelHistoryEmpty() }
+
+// SidePanelHistoryEmpty says "No commands yet"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistoryEmpty() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryEmpty", nil)
+}
+
+// SidePanelHistoryRun says "Run"
+// in the language the app shows.
+func SidePanelHistoryRun() string { return In(i18n.Locale()).SidePanelHistoryRun() }
+
+// SidePanelHistoryRun says "Run"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistoryRun() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryRun", nil)
+}
+
+// SidePanelHistoryPaste says "Paste into terminal"
+// in the language the app shows.
+func SidePanelHistoryPaste() string { return In(i18n.Locale()).SidePanelHistoryPaste() }
+
+// SidePanelHistoryPaste says "Paste into terminal"
+// in the language of msgs.
+func (msgs Messages) SidePanelHistoryPaste() string {
+	return Catalog.Format(msgs.locale, "sidePanelHistoryPaste", nil)
+}
+
+// SidePanelJustNow says "Just now"
+// in the language the app shows.
+func SidePanelJustNow() string { return In(i18n.Locale()).SidePanelJustNow() }
+
+// SidePanelJustNow says "Just now"
+// in the language of msgs.
+func (msgs Messages) SidePanelJustNow() string {
+	return Catalog.Format(msgs.locale, "sidePanelJustNow", nil)
+}
+
+// SidePanelMinutesAgo says "{count, plural, one {# minute ago} other {# minutes ago}}"
+// in the language the app shows.
+//
+// How long ago a command ran, in minutes.
+func SidePanelMinutesAgo(count int) string { return In(i18n.Locale()).SidePanelMinutesAgo(count) }
+
+// SidePanelMinutesAgo says "{count, plural, one {# minute ago} other {# minutes ago}}"
+// in the language of msgs.
+//
+// How long ago a command ran, in minutes.
+func (msgs Messages) SidePanelMinutesAgo(count int) string {
+	return Catalog.Format(msgs.locale, "sidePanelMinutesAgo", map[string]any{"count": count})
+}
+
+// SidePanelHoursAgo says "{count, plural, one {# hour ago} other {# hours ago}}"
+// in the language the app shows.
+//
+// How long ago a command ran, in hours.
+func SidePanelHoursAgo(count int) string { return In(i18n.Locale()).SidePanelHoursAgo(count) }
+
+// SidePanelHoursAgo says "{count, plural, one {# hour ago} other {# hours ago}}"
+// in the language of msgs.
+//
+// How long ago a command ran, in hours.
+func (msgs Messages) SidePanelHoursAgo(count int) string {
+	return Catalog.Format(msgs.locale, "sidePanelHoursAgo", map[string]any{"count": count})
+}
+
+// SidePanelDaysAgo says "{count, plural, one {# day ago} other {# days ago}}"
+// in the language the app shows.
+//
+// How long ago a command ran, in days.
+func SidePanelDaysAgo(count int) string { return In(i18n.Locale()).SidePanelDaysAgo(count) }
+
+// SidePanelDaysAgo says "{count, plural, one {# day ago} other {# days ago}}"
+// in the language of msgs.
+//
+// How long ago a command ran, in days.
+func (msgs Messages) SidePanelDaysAgo(count int) string {
+	return Catalog.Format(msgs.locale, "sidePanelDaysAgo", map[string]any{"count": count})
+}
+
+// SidePanelFontSmaller says "Smaller font"
+// in the language the app shows.
+func SidePanelFontSmaller() string { return In(i18n.Locale()).SidePanelFontSmaller() }
+
+// SidePanelFontSmaller says "Smaller font"
+// in the language of msgs.
+func (msgs Messages) SidePanelFontSmaller() string {
+	return Catalog.Format(msgs.locale, "sidePanelFontSmaller", nil)
+}
+
+// SidePanelFontLarger says "Larger font"
+// in the language the app shows.
+func SidePanelFontLarger() string { return In(i18n.Locale()).SidePanelFontLarger() }
+
+// SidePanelFontLarger says "Larger font"
+// in the language of msgs.
+func (msgs Messages) SidePanelFontLarger() string {
+	return Catalog.Format(msgs.locale, "sidePanelFontLarger", nil)
+}
+
+// SidePanelThemeCustom says "Custom"
+// in the language the app shows.
+func SidePanelThemeCustom() string { return In(i18n.Locale()).SidePanelThemeCustom() }
+
+// SidePanelThemeCustom says "Custom"
+// in the language of msgs.
+func (msgs Messages) SidePanelThemeCustom() string {
+	return Catalog.Format(msgs.locale, "sidePanelThemeCustom", nil)
+}
+
+// SidePanelSystemNoHost says "System information needs a saved host."
+// in the language the app shows.
+func SidePanelSystemNoHost() string { return In(i18n.Locale()).SidePanelSystemNoHost() }
+
+// SidePanelSystemNoHost says "System information needs a saved host."
+// in the language of msgs.
+func (msgs Messages) SidePanelSystemNoHost() string {
+	return Catalog.Format(msgs.locale, "sidePanelSystemNoHost", nil)
+}
+
+// WindowMinimize says "Minimize"
+// in the language the app shows.
+func WindowMinimize() string { return In(i18n.Locale()).WindowMinimize() }
+
+// WindowMinimize says "Minimize"
+// in the language of msgs.
+func (msgs Messages) WindowMinimize() string {
+	return Catalog.Format(msgs.locale, "windowMinimize", nil)
+}
+
+// WindowMaximize says "Maximize"
+// in the language the app shows.
+func WindowMaximize() string { return In(i18n.Locale()).WindowMaximize() }
+
+// WindowMaximize says "Maximize"
+// in the language of msgs.
+func (msgs Messages) WindowMaximize() string {
+	return Catalog.Format(msgs.locale, "windowMaximize", nil)
+}
+
+// WindowRestore says "Restore"
+// in the language the app shows.
+func WindowRestore() string { return In(i18n.Locale()).WindowRestore() }
+
+// WindowRestore says "Restore"
+// in the language of msgs.
+func (msgs Messages) WindowRestore() string {
+	return Catalog.Format(msgs.locale, "windowRestore", nil)
+}
+
+// WindowClose says "Close"
+// in the language the app shows.
+func WindowClose() string { return In(i18n.Locale()).WindowClose() }
+
+// WindowClose says "Close"
+// in the language of msgs.
+func (msgs Messages) WindowClose() string {
+	return Catalog.Format(msgs.locale, "windowClose", nil)
 }

@@ -634,3 +634,22 @@ func (s *State) finishCompose(seq uint64, result appsession.SendResult) {
 	s.inputMu.Unlock()
 	s.RequestRedraw()
 }
+
+// SendToFocused types text into the focused Session: run submits it with
+// Enter, otherwise it is pasted for the user to finish. The side panel's
+// History uses it. It reports false when no Session is focused or the
+// Session did not take the input.
+func (s *State) SendToFocused(text string, run bool) bool {
+	if s.sessions == nil {
+		return false
+	}
+	id, ok := s.FocusedSessionID()
+	if !ok {
+		return false
+	}
+	preview := appsession.TransformCompose(text, appsession.ComposeOptions{NoAutoRun: !run})
+	if preview.Empty() {
+		return false
+	}
+	return s.sessions.SendInput([]model.SessionID{id}, preview.Chunks[0]).Complete()
+}

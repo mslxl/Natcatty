@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -13,6 +12,8 @@ import (
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/titlebar"
 	"github.com/mslxl/natcatty/ui/vault/section"
 )
 
@@ -20,8 +21,12 @@ import (
 // the home Tab has one: SFTP and the terminal Tabs take the window's width.
 const sidebarWidth float32 = 220
 
-// topBarHeight is the height of the window's Tab bar.
-const topBarHeight float32 = 40
+// topBarHeight is the height of the window's Tab bar, and tabHeight of a Tab
+// in it, as the original's h-9 bar and h-7 Tabs.
+const (
+	topBarHeight         = titlebar.Height
+	tabHeight    float32 = 28
+)
 
 // shellPadding is the distance from the body's edges to a surface's content:
 // the gap around the content card plus the card's own padding.
@@ -54,6 +59,12 @@ func View(s *state.State) func(*ui.Context) {
 		s.Flush()
 
 		m := locales.In(c.Locale())
+		// While a terminal is shown the window takes its scheme's colors, as
+		// the original's active chrome theme, so the Tab bar, the Pane
+		// headers, and the side panel read as one surface with the terminal.
+		if preset, ok := s.TerminalTheme(); ok && terminalVisible(s) {
+			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
+		}
 		t := c.Theme()
 
 		ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -80,6 +91,9 @@ func View(s *state.State) func(*ui.Context) {
 		if search := s.SearchState(); search != nil {
 			uisearch.Overlay(search)(c)
 		}
+		// A side panel tool no longer drawn, such as System sampling a Host,
+		// stops once the frame is done.
+		s.FinishSideFrame()
 	}
 }
 
@@ -96,7 +110,8 @@ func body(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 	ui.Row(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).Children(func() {
 		switch {
 		case terminalVisible(s):
-			ui.Column(c).Grow(1).FillHeight().MinWidth(0).Padding(0, 6, 6, 6).Children(func() {
+			// The terminal reaches the window's edges, as the original's.
+			ui.Column(c).Grow(1).FillHeight().MinWidth(0).Children(func() {
 				notices(c, s, m, t)
 				activeTab(c, s, m, t)
 			})
@@ -279,35 +294,41 @@ func navItem(c *ui.Context, key, icon, label string, active bool, show func()) {
 	}
 }
 
-// languageMenu is the Tab bar's language picker: a quiet icon button opening
-// a menu of the five languages the app ships, the current one checked.
-func languageMenu(c *ui.Context, s *state.State, m locales.Messages) {
-	current := c.Locale()
-	if current == "" {
-		current = locales.Tags()[0]
+// controlPanel is the Tab bar's control panel, as the original's: a quiet
+// icon button opening the window opacity and theme. The language is in
+// Settings, as the original's.
+func controlPanel(c *ui.Context, s *state.State, m locales.Messages) {
+	content := s.QuickControls()
+	if content == nil {
+		return
 	}
-	barButton(c, "nav-language", icons.Languages, m.NavLanguage()).Menu(func(menu *ui.Menu) {
-		for _, tag := range locales.Tags() {
-			if menu.Item(i18n.Autonym(tag)).Checked(tag == current).Chosen() && tag != current {
-				s.RequestLocale(tag)
-				c.Invalidate()
-			}
-		}
+	open := s.QuickControlsOpen()
+	button := barButton(c, "bar-control-panel", icons.SlidersHorizontal, m.NavControlPanel())
+	if *open {
+		button.Background(c.Theme().Text.Alpha(0.1))
+	}
+	if button.Clicked() {
+		*open = !*open
+		c.Invalidate()
+	}
+	t := c.Theme()
+	ui.PopoverBase(c, button, open, func(panel ui.Element) {
+		panel.AttachTo(button, ui.AnchorBottomEnd, ui.AnchorTopEnd).Margin(6, 0, 0, 0).
+			Background(t.Surface).Border(1, t.Border).Radius(kit.RadiusCard).
+			Shadow(0, 8, 24, 0, kit.CardShadow(t)).Clip()
+		content(c)
 	})
 }
 
 // barButton is an icon-only control at the right of the Tab bar.
 func barButton(c *ui.Context, key, icon, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(30, 30).Radius(kit.RadiusControl).
+	button := ui.ButtonBase(c).Key(key).Label(label).Tooltip(label).Size(tabHeight, tabHeight).Radius(kit.RadiusControl).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	if button.Hovered() || button.Pressed() {
+		button.Background(t.Text.Alpha(0.1))
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(16, 16) })
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(15, 15) })
 	return button
 }
 
@@ -368,14 +389,26 @@ func activeTab(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme) {
 }
 
 // sidePanel is a Session Tab's side panel, as the original's: a strip of
-// tools along the top, the panel's dock and close at its end, and the
-// chosen tool below. SFTP is the one tool this build has.
+// tools along the top (SFTP, Scripts, History, Theme, System, Notes), the
+// panel's dock and close at its end, and the chosen tool below.
 func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	tab model.TabID, dock state.PanelDock, tool func(*ui.Context)) {
-	ui.Column(c).Fill().MinWidth(0).Background(t.Surface).Children(func() {
+	// The panel shares the terminal's background, as the original's, with a
+	// line under its strip.
+	ui.Column(c).Fill().MinWidth(0).Background(t.Background).Children(func() {
 		ui.Row(c).FillWidth().Height(36).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
 			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			sidePanelButton(c, icons.FolderTree, "SFTP", true)
+			chosen := s.SideTool(tab)
+			for _, id := range s.SideTools(tab) {
+				icon, label := sideToolFace(m, id)
+				// The strip changes with the target: a local Session has no
+				// System, so each button keeps its tool's identity.
+				c.Key("side-tool-" + string(id))
+				if sidePanelButton(c, icon, label, id == chosen).Clicked() && id != chosen {
+					s.SetSideTool(tab, id)
+					c.Invalidate()
+				}
+			}
 			ui.Column(c).Grow(1)
 			icon := icons.PanelLeft
 			switch dock {
@@ -404,6 +437,23 @@ func sidePanel(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 		})
 		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Children(func() { tool(c) })
 	})
+}
+
+// sideToolFace is a side panel tool's icon and name in the strip.
+func sideToolFace(m locales.Messages, id state.SideToolID) (string, string) {
+	switch id {
+	case state.SideScripts:
+		return icons.Zap, m.SidePanelScripts()
+	case state.SideHistory:
+		return icons.History, m.SidePanelHistory()
+	case state.SideTheme:
+		return icons.Palette, m.SidePanelTheme()
+	case state.SideSystem:
+		return icons.Activity, m.SidePanelSystem()
+	case state.SideNotes:
+		return icons.NotebookPen, m.SidePanelNotes()
+	}
+	return icons.FolderTree, "SFTP"
 }
 
 // sidePanelButton is one of the strip's 28-DIP icon buttons; the active

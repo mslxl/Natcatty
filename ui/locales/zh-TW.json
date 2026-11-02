@@ -33,6 +33,7 @@
   "navVault": "Vault",
   "navMonitor": "監控",
   "navSettings": "設定",
+  "navControlPanel": "控制面板",
   "navLanguage": "語言",
   "navHosts": "主機",
   "navKeychain": "金鑰",
@@ -741,7 +742,6 @@
     "description": "關閉分頁或窗格的按鈕。"
   },
   "detachedMoveToMain": "移到主視窗",
-  "detachedCloseWindow": "關閉視窗",
   "closeWindowTitle": "關閉視窗？",
   "closeWindowMessage": "{count, plural, other {關閉此視窗將結束 # 個使用中的工作階段。}}",
   "@closeWindowMessage": {
@@ -3111,5 +3111,70 @@
   "settingsMCPProblemMode": "無法變更權限模式。",
   "settingsMCPProblemSharing": "無法儲存工作階段共用設定。",
   "sftpGoTerminalCwd": "前往終端機目錄",
-  "sidePanelClose": "關閉面板"
+  "sidePanelClose": "關閉面板",
+  "sidePanelScripts": "腳本",
+  "sidePanelHistory": "歷史",
+  "sidePanelTheme": "主題",
+  "sidePanelSystem": "系統",
+  "sidePanelNotes": "筆記",
+  "sidePanelSearchScripts": "搜尋程式碼片段",
+  "sidePanelDismiss": "關閉提示",
+  "sidePanelNoMatches": "沒有符合項目",
+  "sidePanelRunSnippet": "在此終端機執行",
+  "sidePanelSearchHistory": "搜尋命令",
+  "sidePanelHistoryThisHost": "此主機",
+  "sidePanelHistoryAllHosts": "全部主機",
+  "sidePanelHistoryCount": "{count, plural, other {# 條命令}}",
+  "@sidePanelHistoryCount": {
+    "description": "The number of commands the side panel's History lists.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHistorySendFailed": "無法將命令傳送到終端機。",
+  "sidePanelHistoryEmpty": "還沒有命令",
+  "sidePanelHistoryRun": "執行",
+  "sidePanelHistoryPaste": "貼上到終端機",
+  "sidePanelJustNow": "剛剛",
+  "sidePanelMinutesAgo": "{count, plural, other {# 分鐘前}}",
+  "@sidePanelMinutesAgo": {
+    "description": "How long ago a command ran, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHoursAgo": "{count, plural, other {# 小時前}}",
+  "@sidePanelHoursAgo": {
+    "description": "How long ago a command ran, in hours.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelDaysAgo": "{count, plural, other {# 天前}}",
+  "@sidePanelDaysAgo": {
+    "description": "How long ago a command ran, in days.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelFontSmaller": "縮小字型",
+  "sidePanelFontLarger": "放大字型",
+  "sidePanelThemeCustom": "自訂",
+  "sidePanelSystemNoHost": "系統資訊需要已儲存的主機。",
+  "windowMinimize": "最小化",
+  "windowMaximize": "最大化",
+  "windowRestore": "還原",
+  "windowClose": "關閉"
 }

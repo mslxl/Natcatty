@@ -16,6 +16,7 @@ import (
 	sessionui "github.com/mslxl/natcatty/ui/session"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // tabRef binds the split renderer to either a main-window Tab or a detached
@@ -87,7 +88,7 @@ func newWorkTabReveal() *workTabReveal { return &workTabReveal{} }
 
 // workTabs renders the window's Tab bar, as the original's: the home Tab and
 // SFTP first, then the ordered terminal Tabs and the button that opens a new
-// one, and at the right the language menu and Settings. Each terminal Tab is a drag source; the
+// one, and at the right the control panel and Settings. Each terminal Tab is a drag source; the
 // thin gaps on either side of it are the insertion targets that light up
 // where a dropped Tab will land. A drop directly on a Tab inserts before it.
 func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, reveal *workTabReveal) {
@@ -114,7 +115,13 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	// The bar keeps its height when the surface below needs room. Without
 	// Shrink(0) a Column under height pressure shrinks the first flexible
 	// child to nothing, hiding every Tab at the minimum window size.
-	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8).Gap(4).AlignItems(ui.Center).Children(func() {
+	// As the original's, the bar is a shade off the surface below and its
+	// Tabs sit on its floor: the chosen one takes the surface's own color and
+	// opens into it. The bar is the window's title bar too: its empty room
+	// drags the window, and its right end stays clear of the window controls.
+	ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 8+titlebar.Room, 0, 12).Gap(2).AlignItems(ui.End).
+		Background(kit.Muted(t)).DragWindow().Children(func() {
+		titlebar.DragStripe(c)
 		if fixedTab(c, "tab-home", icons.LayoutGrid, m.NavVault(), homeVisible(s)).Clicked() {
 			s.ShowHome()
 			c.Invalidate()
@@ -130,13 +137,13 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 			s.ShowHome()
 			c.Invalidate()
 		}
-		ui.Box(c).Size(1, 18).Margin(0, 4).Background(t.Border).Shrink(0)
+		ui.Box(c).Size(1, 16).Margin(0, 6).Background(t.Border).Shrink(0).AlignSelf(ui.Center)
 		// The strip scrolls sideways at the minimum window width. Tabs keep a
 		// readable title width instead of shrinking or clipping the last Tab;
 		// every Tab stays reachable with the wheel, trackpad or keyboard.
 		ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(topBarHeight).Label(m.WorkTabsLabel()).
 			Children(func() {
-				ui.Row(c).Height(topBarHeight).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Height(topBarHeight).AlignItems(ui.End).Children(func() {
 					for index := 0; index < s.TabCount(); index++ {
 						info, ok := s.TabInfo(index)
 						if !ok {
@@ -152,13 +159,13 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 					for _, label := range s.PendingConnections() {
 						pendingTab(c, m, t, label)
 					}
-					if tabControl(c, icons.Plus, m.MenuNewTab()).Margin(0, 0, 0, 4).Clicked() {
+					if tabControl(c, icons.Plus, m.MenuNewTab()).Margin(0, 0, 4, 4).Clicked() {
 						_ = s.NewTab()
 						c.Invalidate()
 					}
 				})
 			})
-		languageMenu(c, s, m)
+		controlPanel(c, s, m)
 		if barButton(c, "bar-settings", icons.Settings, m.NavSettings()).Clicked() {
 			s.RequestSettings()
 		}
@@ -169,25 +176,23 @@ func workTabs(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 // icon and a label, raised while it is the chosen one.
 func fixedTab(c *ui.Context, key, icon, label string, active bool) ui.Element {
 	t := c.Theme()
-	tab := ui.ButtonBase(c).Key(key).Label(label).Height(30).Padding(0, 12).Gap(8).
-		Radius(kit.RadiusControl).AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
+	tab := ui.ButtonBase(c).Key(key).Label(label).Height(tabHeight).Padding(0, 12).Gap(8).
+		Radius(tabRadius, tabRadius, 0, 0).AlignItems(ui.Center).Shrink(0).TextColor(t.TextMuted)
 	switch {
 	case active:
-		tab.Background(t.Surface).Border(1, t.Border).Shadow(0, 1, 2, 0, kit.CardShadow(t)).TextColor(t.Text)
-	case tab.Pressed():
-		tab.Background(kit.Strong(t)).TextColor(t.Text)
+		tab.Background(t.Background).TextColor(t.Text)
 	case tab.Hovered():
-		tab.Background(kit.Subtle(t)).TextColor(t.Text)
+		tab.Background(t.Background.Alpha(0.4)).TextColor(t.Text)
 	}
 	tab.Children(func() {
-		ui.Icon(c, icons.Lucide(icon)).Size(15, 15)
-		text := ui.Text(c, label).FontSize(13).SingleLine()
-		if active {
-			text.FontWeight(500)
-		}
+		ui.Icon(c, icons.Lucide(icon)).Size(14, 14)
+		ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine()
 	})
 	return tab
 }
+
+// tabRadius rounds a Tab's top corners, as the original's rounded-t-md.
+const tabRadius float32 = 6
 
 // terminalVisible reports whether the active Tab's Panes are the visible
 // surface rather than one of the root surfaces.
@@ -197,7 +202,7 @@ func terminalVisible(s *state.State) bool {
 }
 
 func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.TabID, after bool) {
-	strip := ui.Column(c).Width(4).Height(24).Radius(2)
+	strip := ui.Column(c).Width(2).Height(22).Margin(0, 0, 3, 0).Radius(1)
 	if drag, over := ui.DragOver[state.DragItem](strip); over &&
 		drag.Kind == state.DragKindTab && drag.TabID != target {
 		strip.Background(t.Accent)
@@ -212,14 +217,14 @@ func tabInsertionStrip(c *ui.Context, s *state.State, t *ui.Theme, target model.
 
 func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, index int, info state.TabInfo, reveal bool) {
 	title := tabTitle(m, info)
-	body := ui.Row(c).Height(30).MinWidth(150).MaxWidth(240).Padding(0, 4, 0, 10).Gap(8).
-		Radius(kit.RadiusControl).AlignItems(ui.Center).Tooltip(title)
+	body := ui.Row(c).Height(tabHeight).MinWidth(140).MaxWidth(240).Padding(0, 4, 0, 12).Gap(8).
+		Radius(tabRadius, tabRadius, 0, 0).AlignItems(ui.Center).Tooltip(title)
 	hovered := body.Hovered()
 	switch {
 	case info.Active:
-		body.Background(t.Surface).Border(1, t.Border).Shadow(0, 1, 2, 0, kit.CardShadow(t))
+		body.Background(t.Background)
 	case hovered:
-		body.Background(kit.Subtle(t))
+		body.Background(t.Background.Alpha(0.4))
 	}
 	body.Drag(state.TabDrag(info.ID))
 	if body.Clicked() {
@@ -274,9 +279,9 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 		kit.StatusDot(c, sessionTone(t, snapshot, ok))
 		// SingleLine text can shrink to nothing in a flex row; give the title
 		// a readable minimum so it is not squeezed out beside the controls.
-		titleText := ui.Text(c, title).FontSize(13).SingleLine().MinWidth(72).Grow(1)
-		if info.Active {
-			titleText.FontWeight(500).TextColor(t.Text)
+		titleText := ui.Text(c, title).FontSize(12).FontWeight(600).SingleLine().MinWidth(72).Grow(1)
+		if info.Active || hovered {
+			titleText.TextColor(t.Text)
 		} else {
 			titleText.TextColor(t.TextMuted)
 		}
@@ -303,22 +308,19 @@ func tabBody(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, ind
 // tabControl is a small icon button inside a Tab or a Pane header.
 func tabControl(c *ui.Context, icon, label string) ui.Element {
 	t := c.Theme()
-	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(22, 22).Radius(5).
+	button := ui.ButtonBase(c).Label(label).Tooltip(label).Size(20, 20).Radius(4).
 		Justify(ui.Center).AlignItems(ui.Center).TextColor(t.TextMuted).Shrink(0)
-	switch {
-	case button.Pressed():
-		button.Background(kit.Strong(t)).TextColor(t.Text)
-	case button.Hovered():
-		button.Background(kit.Subtle(t)).TextColor(t.Text)
+	if button.Hovered() || button.Pressed() {
+		button.Background(t.Text.Alpha(0.1)).TextColor(t.Text)
 	}
-	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(14, 14) })
+	button.Children(func() { ui.Icon(c, icons.Lucide(icon)).Size(13, 13) })
 	return button
 }
 
 // pendingTab is a connection still opening, shown after the Tabs.
 func pendingTab(c *ui.Context, m locales.Messages, t *ui.Theme, label string) {
-	ui.Row(c).Height(30).Padding(0, 10).Gap(8).Margin(0, 0, 0, 4).Radius(kit.RadiusControl).
-		Border(1, t.Border).AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
+	ui.Row(c).Height(tabHeight).Padding(0, 12).Gap(8).Margin(0, 0, 0, 4).Radius(tabRadius, tabRadius, 0, 0).
+		AlignItems(ui.Center).TextColor(t.TextMuted).Children(func() {
 		ui.Icon(c, icons.Lucide(icons.Loader)).Size(14, 14).TextColor(t.Warning)
 		ui.Text(c, m.ConnectionConnectingTo(label)).FontSize(12).SingleLine()
 	})
@@ -447,7 +449,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 				paneDropZone(c, s, t, tabID, paneID, domainworkspace.SideLeft, false)
 			}
 			pane := ui.Column(c).Grow(1).FillHeight().MinWidth(0).
-				Background(t.Surface).Clip()
+				Background(t.Background).Clip()
 			// Naming the Pane region gives assistive technology and the
 			// layout tests the Pane's exact box. Several Panes in one window
 			// must be distinguishable by their titles.
@@ -505,7 +507,7 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
 	header := ui.Row(c).FillWidth().Height(30).Padding(0, 4, 0, 8).Gap(4).Shrink(0).
-		Background(kit.Muted(t)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center)
+		Background(t.Background).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center)
 	header.Children(func() {
 		// The grip shows where a drop can land: another Pane of a split Tab,
 		// or another Tab.
@@ -515,9 +517,9 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			handle.Drag(state.PaneDrag(ref.id, info.ID))
 		}
 
-		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(12).SingleLine().MinWidth(0).Shrink(1)
+		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
 		if info.Focused {
-			titleElement.FontWeight(500).TextColor(t.Text)
+			titleElement.TextColor(t.Text)
 		} else {
 			titleElement.TextColor(t.TextMuted)
 		}
