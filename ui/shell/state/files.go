@@ -50,14 +50,119 @@ type filesTarget struct {
 	label string
 }
 
+// SideToolID names one of the side panel's tools, in the original's terms.
+type SideToolID string
+
+const (
+	SideSFTP    SideToolID = "sftp"
+	SideScripts SideToolID = "scripts"
+	SideHistory SideToolID = "history"
+	SideTheme   SideToolID = "theme"
+	SideSystem  SideToolID = "system"
+	SideNotes   SideToolID = "notes"
+)
+
+// SideTarget is what a Tab's side panel serves: the Session's Host, or this
+// computer when Host is empty.
+type SideTarget struct {
+	Host  model.HostID
+	Label string
+}
+
+// SideTool is a side panel tool besides SFTP, such as Scripts or System.
+type SideTool struct {
+	ID SideToolID
+	// RemoteOnly keeps the tool off a local Session's panel: System reads a
+	// Host over SSH.
+	RemoteOnly bool
+	// View renders the tool for target about width DIPs wide.
+	View func(target SideTarget, width float32) func(*ui.Context)
+	// Hide, when set, is called once the tool is no longer drawn, so a tool
+	// that samples a Host can stop.
+	Hide func()
+}
+
 // WithFilesPanel gives Session Tabs their SFTP side panel. Without it the
 // Pane toolbar has no Files button.
 func WithFilesPanel(panel FilesPanel) Option {
 	return func(s *State) { s.filesPanel = &panel }
 }
 
-// FilesAvailable reports whether Session Tabs can open the SFTP panel.
-func (s *State) FilesAvailable() bool { return s.filesPanel != nil && s.filesPanel.View != nil }
+// WithSideTools adds tools to the side panel after SFTP, in the order given.
+func WithSideTools(tools ...SideTool) Option {
+	return func(s *State) {
+		for _, tool := range tools {
+			if tool.ID != "" && tool.ID != SideSFTP && tool.View != nil {
+				s.sideTools = append(s.sideTools, tool)
+			}
+		}
+	}
+}
+
+// FilesAvailable reports whether Session Tabs can open the side panel.
+func (s *State) FilesAvailable() bool { return s.sftpToolAvailable() || len(s.sideTools) > 0 }
+
+func (s *State) sftpToolAvailable() bool { return s.filesPanel != nil && s.filesPanel.View != nil }
+
+// SideTools lists the tools the Tab's open panel offers, in strip order. It
+// is empty when the panel is closed.
+func (s *State) SideTools(tab model.TabID) []SideToolID {
+	target, open := s.filesOpen[tab]
+	if !open {
+		return nil
+	}
+	var ids []SideToolID
+	if s.sftpToolAvailable() {
+		ids = append(ids, SideSFTP)
+	}
+	for _, tool := range s.sideTools {
+		if tool.RemoteOnly && target.host == "" {
+			continue
+		}
+		ids = append(ids, tool.ID)
+	}
+	return ids
+}
+
+// SideTool is the tool the Tab's panel shows: the one chosen last, or the
+// first the panel offers, SFTP when it has it, as the original's default.
+func (s *State) SideTool(tab model.TabID) SideToolID {
+	tools := s.SideTools(tab)
+	if chosen, ok := s.sideChosen[tab]; ok {
+		for _, id := range tools {
+			if id == chosen {
+				return chosen
+			}
+		}
+	}
+	if len(tools) == 0 {
+		return ""
+	}
+	return tools[0]
+}
+
+// SetSideTool shows another tool in the Tab's panel.
+func (s *State) SetSideTool(tab model.TabID, id SideToolID) {
+	if s.sideChosen == nil {
+		s.sideChosen = map[model.TabID]SideToolID{}
+	}
+	s.sideChosen[tab] = id
+	s.redraw()
+}
+
+// FinishSideFrame tells the tool drawn the frame before that it is no longer
+// drawn: its Tab closed the panel, chose another tool, or stopped showing.
+// The shell calls it once at the end of every frame.
+func (s *State) FinishSideFrame() {
+	if s.sideLast != "" && s.sideLast != s.sideDrawn {
+		for _, tool := range s.sideTools {
+			if tool.ID == s.sideLast && tool.Hide != nil {
+				tool.Hide()
+			}
+		}
+	}
+	s.sideLast, s.sideDrawn = s.sideDrawn, ""
+}
 
 // FilesOpen reports whether the Tab shows the SFTP panel.
 func (s *State) FilesOpen(tab model.TabID) bool {
@@ -166,11 +271,22 @@ func (s *State) FilesRatio() *float32 {
 	return &s.filesRatio
 }
 
-// FilesView returns the panel's SFTP tool for the Tab, about width DIPs wide
-// and pointed at the Tab's target, or nil when the Tab's panel is closed.
+// FilesView returns the tool the Tab's side panel shows, about width DIPs
+// wide and pointed at the Tab's target, or nil when the Tab's panel is
+// closed.
 func (s *State) FilesView(tab model.TabID, width float32) func(*ui.Context) {
 	target, open := s.filesOpen[tab]
 	if !open || !s.FilesAvailable() {
+		return nil
+	}
+	id := s.SideTool(tab)
+	s.sideDrawn = id
+	if id != SideSFTP {
+		for _, tool := range s.sideTools {
+			if tool.ID == id {
+				return tool.View(SideTarget{Host: target.host, Label: target.label}, width)
+			}
+		}
 		return nil
 	}
 	if s.filesShown == nil || *s.filesShown != target {

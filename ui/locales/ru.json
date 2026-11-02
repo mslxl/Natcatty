@@ -33,6 +33,7 @@
   "navVault": "Хранилище",
   "navMonitor": "Мониторинг",
   "navSettings": "Настройки",
+  "navControlPanel": "Панель управления",
   "navLanguage": "Язык",
   "navHosts": "Хосты",
   "navKeychain": "Ключи",
@@ -741,7 +742,6 @@
     "description": "Кнопка, закрывающая вкладку или панель."
   },
   "detachedMoveToMain": "Переместить в главное окно",
-  "detachedCloseWindow": "Закрыть окно",
   "closeWindowTitle": "Закрыть окно?",
   "closeWindowMessage": "{count, plural, one {# активный сеанс завершится при закрытии этого окна.} few {# активных сеанса завершатся при закрытии этого окна.} many {# активных сеансов завершатся при закрытии этого окна.} other {# активных сеансов завершатся при закрытии этого окна.}}",
   "@closeWindowMessage": {
@@ -3111,5 +3111,70 @@
   "settingsMCPProblemMode": "Не удалось изменить режим разрешений.",
   "settingsMCPProblemSharing": "Не удалось сохранить настройку общего доступа к сеансам.",
   "sftpGoTerminalCwd": "Перейти в каталог терминала",
-  "sidePanelClose": "Закрыть панель"
+  "sidePanelClose": "Закрыть панель",
+  "sidePanelScripts": "Скрипты",
+  "sidePanelHistory": "История",
+  "sidePanelTheme": "Тема",
+  "sidePanelSystem": "Система",
+  "sidePanelNotes": "Заметки",
+  "sidePanelSearchScripts": "Поиск сниппетов",
+  "sidePanelDismiss": "Скрыть",
+  "sidePanelNoMatches": "Ничего не найдено",
+  "sidePanelRunSnippet": "Выполнить в этом терминале",
+  "sidePanelSearchHistory": "Поиск команд",
+  "sidePanelHistoryThisHost": "Этот сервер",
+  "sidePanelHistoryAllHosts": "Все серверы",
+  "sidePanelHistoryCount": "{count, plural, one {# команда} few {# команды} many {# команд} other {# команды}}",
+  "@sidePanelHistoryCount": {
+    "description": "The number of commands the side panel's History lists.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHistorySendFailed": "Не удалось отправить команду в терминал.",
+  "sidePanelHistoryEmpty": "Команд пока нет",
+  "sidePanelHistoryRun": "Выполнить",
+  "sidePanelHistoryPaste": "Вставить в терминал",
+  "sidePanelJustNow": "Только что",
+  "sidePanelMinutesAgo": "{count, plural, one {# минуту назад} few {# минуты назад} many {# минут назад} other {# минуты назад}}",
+  "@sidePanelMinutesAgo": {
+    "description": "How long ago a command ran, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHoursAgo": "{count, plural, one {# час назад} few {# часа назад} many {# часов назад} other {# часа назад}}",
+  "@sidePanelHoursAgo": {
+    "description": "How long ago a command ran, in hours.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelDaysAgo": "{count, plural, one {# день назад} few {# дня назад} many {# дней назад} other {# дня назад}}",
+  "@sidePanelDaysAgo": {
+    "description": "How long ago a command ran, in days.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelFontSmaller": "Уменьшить шрифт",
+  "sidePanelFontLarger": "Увеличить шрифт",
+  "sidePanelThemeCustom": "Своя",
+  "sidePanelSystemNoHost": "Для сведений о системе нужен сохранённый сервер.",
+  "windowMinimize": "Свернуть",
+  "windowMaximize": "Развернуть",
+  "windowRestore": "Восстановить",
+  "windowClose": "Закрыть"
 }

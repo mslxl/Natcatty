@@ -33,6 +33,7 @@
   "navVault": "Vault",
   "navMonitor": "Monitoring",
   "navSettings": "Settings",
+  "navControlPanel": "Control panel",
   "navLanguage": "Language",
   "navHosts": "Hosts",
   "navKeychain": "Keychain",
@@ -994,7 +995,6 @@
     "description": "The button that closes a Tab or Pane."
   },
   "detachedMoveToMain": "Move to Main Window",
-  "detachedCloseWindow": "Close Window",
   "closeWindowTitle": "Close Window?",
   "closeWindowMessage": "{count, plural, one {# active Session will end if this window closes.} other {# active Sessions will end if this window closes.}}",
   "@closeWindowMessage": {
@@ -4337,5 +4337,70 @@
   "settingsMCPProblemMode": "The permission mode could not be changed.",
   "settingsMCPProblemSharing": "The Session sharing setting could not be saved.",
   "sftpGoTerminalCwd": "Go to terminal directory",
-  "sidePanelClose": "Close panel"
+  "sidePanelClose": "Close panel",
+  "sidePanelScripts": "Scripts",
+  "sidePanelHistory": "History",
+  "sidePanelTheme": "Theme",
+  "sidePanelSystem": "System",
+  "sidePanelNotes": "Notes",
+  "sidePanelSearchScripts": "Search snippets",
+  "sidePanelDismiss": "Dismiss",
+  "sidePanelNoMatches": "No matches",
+  "sidePanelRunSnippet": "Run in this terminal",
+  "sidePanelSearchHistory": "Search commands",
+  "sidePanelHistoryThisHost": "This host",
+  "sidePanelHistoryAllHosts": "All hosts",
+  "sidePanelHistoryCount": "{count, plural, one {# command} other {# commands}}",
+  "@sidePanelHistoryCount": {
+    "description": "The number of commands the side panel's History lists.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHistorySendFailed": "The command could not be sent to the terminal.",
+  "sidePanelHistoryEmpty": "No commands yet",
+  "sidePanelHistoryRun": "Run",
+  "sidePanelHistoryPaste": "Paste into terminal",
+  "sidePanelJustNow": "Just now",
+  "sidePanelMinutesAgo": "{count, plural, one {# minute ago} other {# minutes ago}}",
+  "@sidePanelMinutesAgo": {
+    "description": "How long ago a command ran, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHoursAgo": "{count, plural, one {# hour ago} other {# hours ago}}",
+  "@sidePanelHoursAgo": {
+    "description": "How long ago a command ran, in hours.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelDaysAgo": "{count, plural, one {# day ago} other {# days ago}}",
+  "@sidePanelDaysAgo": {
+    "description": "How long ago a command ran, in days.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelFontSmaller": "Smaller font",
+  "sidePanelFontLarger": "Larger font",
+  "sidePanelThemeCustom": "Custom",
+  "sidePanelSystemNoHost": "System information needs a saved host.",
+  "windowMinimize": "Minimize",
+  "windowMaximize": "Maximize",
+  "windowRestore": "Restore",
+  "windowClose": "Close"
 }

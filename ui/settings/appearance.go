@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
@@ -24,6 +25,8 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			return
 		}
 		settings := state.Settings()
+
+		languagePicker(c, state, m)
 
 		themeLabels := []string{m.SettingsThemeSystem(), m.SettingsThemeLight(), m.SettingsThemeDark()}
 		themeModes := []domain.ThemeMode{domain.ThemeSystem, domain.ThemeLight, domain.ThemeDark}
@@ -63,14 +66,7 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 
 		terminalPicker(c, state, themes, m, t, settings)
 
-		fieldRow(c, state, m, t, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), func() {
-			if ui.TextInput(c, state.Field(domain.FieldTerminalFontFamily)).Width(230).Changed() {
-				state.Update(func(s *domain.Settings) {
-					s.Appearance.TerminalFontFamily = state.FieldValue(domain.FieldTerminalFontFamily)
-				})
-				c.Invalidate()
-			}
-		})
+		terminalFontPicker(c, state, m, t, settings.Appearance.TerminalFontFamily)
 		size := settings.Appearance.TerminalFontSize
 		fieldRow(c, state, m, t, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), func() {
 			if ui.NumberInput(c, &size, domain.MinTerminalFontSize, domain.MaxTerminalFontSize, 1).Width(110).Changed() {
@@ -447,4 +443,63 @@ func iconGroupName(m locales.Messages, group domaintheme.IconGroup) string {
 	default:
 		return string(group)
 	}
+}
+
+// terminalFontPicker chooses the terminal font from the original's catalog of
+// monospace fonts. A family typed by hand in an older version stays listed
+// last, so opening the picker never changes it.
+func terminalFontPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme, setting string) {
+	fieldRow(c, state, m, t, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), func() {
+		fonts := domain.TerminalFonts()
+		labels := make([]string, 0, len(fonts)+1)
+		current := setting
+		for _, font := range fonts {
+			labels = append(labels, font.Name)
+			if font.ID == setting {
+				current = font.Name
+			}
+		}
+		if _, ok := domain.LookupTerminalFont(setting); !ok && setting != "" {
+			labels = append(labels, setting)
+		}
+		chosen := current
+		if ui.Select(c, &chosen, labels).Width(230).Changed() && chosen != current {
+			id := chosen
+			for _, font := range fonts {
+				if font.Name == chosen {
+					id = font.ID
+				}
+			}
+			state.Update(func(s *domain.Settings) { s.Appearance.TerminalFontFamily = id })
+			c.Invalidate()
+		}
+	})
+}
+
+// languagePicker is the app's language, first in Appearance as in the
+// original's Settings. The app keeps it, not the preferences document, so it
+// has no reset.
+func languagePicker(c *ui.Context, state *PreferencesState, m locales.Messages) {
+	if state.requestLocale == nil {
+		return
+	}
+	current := c.Locale()
+	if current == "" {
+		current = locales.Tags()[0]
+	}
+	labels := make([]string, 0, len(locales.Tags()))
+	for _, tag := range locales.Tags() {
+		labels = append(labels, i18n.Autonym(tag))
+	}
+	chosen := i18n.Autonym(current)
+	ui.Field(c, m.NavLanguage(), func() {
+		if ui.Select(c, &chosen, labels).Width(180).Changed() {
+			for index, label := range labels {
+				if label == chosen && locales.Tags()[index] != current {
+					state.requestLocale(locales.Tags()[index])
+					c.Invalidate()
+				}
+			}
+		}
+	})
 }

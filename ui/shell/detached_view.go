@@ -4,12 +4,16 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // DetachedView renders one detached Tab in its own window: the Tab's split
-// tree plus the actions that move it back or close the window. The
+// tree under a title bar that drags the window and moves the Tab back.
+// The window controls close it. The
 // composition root wraps it in the same App Lock gate as every other window.
 func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 	return func(c *ui.Context) {
@@ -25,18 +29,24 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 		}
 
 		m := locales.In(c.Locale())
+		// The window shows terminals only, so it takes their scheme's colors
+		// as the main window's chrome does.
+		if preset, ok := s.TerminalTheme(); ok {
+			c.SetTheme(uitheme.Chrome(c.Theme(), preset))
+		}
 		t := c.Theme()
 
-		ui.Column(c).Fill().Padding(8).Gap(8).Background(t.Background).Children(func() {
-			ui.Row(c).Height(28).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, DetachedTitle(m, info)).FontSize(14).Bold().SingleLine()
+		ui.Column(c).Fill().Background(t.Background).Children(func() {
+			// As the original's terminal popup, the title bar is the terminal's
+			// own background with its title dimmed, and the controls follow.
+			ui.Row(c).FillWidth().Height(topBarHeight).Shrink(0).Padding(0, 4+titlebar.PopupRoom, 0, 16).Gap(8).
+				AlignItems(ui.Center).Background(t.Background).DragWindow().Children(func() {
+				ui.Text(c, DetachedTitle(m, info)).FontSize(12).FontWeight(500).TextColor(t.Text.Alpha(0.7)).
+					SingleLine().MinWidth(0).Shrink(1)
 				ui.Column(c).Grow(1)
-				if ui.Button(c.Key("detached-move-main"), m.DetachedMoveToMain()).Clicked() {
+				if barButton(c, "detached-move-main", icons.LogIn, m.DetachedMoveToMain()).Clicked() {
 					s.ReattachDetachedTab(tabID)
 					c.Invalidate()
-				}
-				if ui.Button(c.Key("detached-close"), m.DetachedCloseWindow()).Clicked() {
-					s.RequestDetachedClose(tabID)
 				}
 			})
 

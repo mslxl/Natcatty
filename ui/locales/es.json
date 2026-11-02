@@ -33,6 +33,7 @@
   "navVault": "Vault",
   "navMonitor": "Monitoreo",
   "navSettings": "Configuración",
+  "navControlPanel": "Panel de control",
   "navLanguage": "Idioma",
   "navHosts": "Hosts",
   "navKeychain": "Llavero",
@@ -741,7 +742,6 @@
     "description": "El botón que cierra una pestaña o un panel."
   },
   "detachedMoveToMain": "Mover a la ventana principal",
-  "detachedCloseWindow": "Cerrar ventana",
   "closeWindowTitle": "¿Cerrar ventana?",
   "closeWindowMessage": "{count, plural, one {# sesión activa finalizará si se cierra esta ventana.} many {# de sesiones activas finalizarán si se cierra esta ventana.} other {# sesiones activas finalizarán si se cierra esta ventana.}}",
   "@closeWindowMessage": {
@@ -3111,5 +3111,70 @@
   "settingsMCPProblemMode": "No se pudo cambiar el modo de permiso.",
   "settingsMCPProblemSharing": "No se pudo guardar la configuración para compartir sesiones.",
   "sftpGoTerminalCwd": "Ir al directorio de la terminal",
-  "sidePanelClose": "Cerrar panel"
+  "sidePanelClose": "Cerrar panel",
+  "sidePanelScripts": "Scripts",
+  "sidePanelHistory": "Historial",
+  "sidePanelTheme": "Tema",
+  "sidePanelSystem": "Sistema",
+  "sidePanelNotes": "Notas",
+  "sidePanelSearchScripts": "Buscar fragmentos",
+  "sidePanelDismiss": "Descartar",
+  "sidePanelNoMatches": "Sin coincidencias",
+  "sidePanelRunSnippet": "Ejecutar en esta terminal",
+  "sidePanelSearchHistory": "Buscar comandos",
+  "sidePanelHistoryThisHost": "Este equipo",
+  "sidePanelHistoryAllHosts": "Todos",
+  "sidePanelHistoryCount": "{count, plural, one {# comando} many {# comandos} other {# comandos}}",
+  "@sidePanelHistoryCount": {
+    "description": "The number of commands the side panel's History lists.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHistorySendFailed": "No se pudo enviar el comando a la terminal.",
+  "sidePanelHistoryEmpty": "Aún no hay comandos",
+  "sidePanelHistoryRun": "Ejecutar",
+  "sidePanelHistoryPaste": "Pegar en la terminal",
+  "sidePanelJustNow": "Ahora",
+  "sidePanelMinutesAgo": "{count, plural, one {hace # minuto} many {hace # minutos} other {hace # minutos}}",
+  "@sidePanelMinutesAgo": {
+    "description": "How long ago a command ran, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHoursAgo": "{count, plural, one {hace # hora} many {hace # horas} other {hace # horas}}",
+  "@sidePanelHoursAgo": {
+    "description": "How long ago a command ran, in hours.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelDaysAgo": "{count, plural, one {hace # día} many {hace # días} other {hace # días}}",
+  "@sidePanelDaysAgo": {
+    "description": "How long ago a command ran, in days.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelFontSmaller": "Fuente más pequeña",
+  "sidePanelFontLarger": "Fuente más grande",
+  "sidePanelThemeCustom": "Personalizado",
+  "sidePanelSystemNoHost": "La información del sistema requiere un equipo guardado.",
+  "windowMinimize": "Minimizar",
+  "windowMaximize": "Maximizar",
+  "windowRestore": "Restaurar",
+  "windowClose": "Cerrar"
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -215,6 +216,11 @@ func hostOptions(s *State) ([]string, map[string]string) {
 // the tab padding.
 const tabStripHeight float32 = 32
 
+// tabStripBarRoom is the room under the tabs for the strip's scroll bar,
+// which shows while the pointer is over the strip and would otherwise cover
+// the labels.
+const tabStripBarRoom float32 = 10
+
 // tabs renders the tab strip. Seven tabs need more width than the 440-DIP
 // content column at the minimum window, so the strip scrolls sideways like the
 // shell's work-Tab strip and the browser panel's tab strip. The active tab is
@@ -241,7 +247,8 @@ func tabs(c *ui.Context, s *State, m locales.Messages) {
 	reveal := s.revealTab
 	s.revealTab = false
 
-	ui.ScrollHorizontal(c).FillWidth().Height(tabStripHeight).Shrink(0).Children(func() {
+	ui.ScrollHorizontal(c).FillWidth().Height(tabStripHeight+tabStripBarRoom).Padding(0, 0, tabStripBarRoom, 0).
+		Shrink(0).Children(func() {
 		t := c.Theme()
 		parts := ui.TabsBase(c, &chosen, len(labels))
 		parts.List.Gap(t.Space(1)).Children(func() {
@@ -411,7 +418,9 @@ func sessionTable(c *ui.Context, s *State, rows []appsysmanager.TmuxSession,
 		{Title: m.SysManagerAttached(), ID: "attached", Width: 96, MinWidth: 80},
 		{Title: m.SysManagerCreated(), ID: "created", MinWidth: 130},
 	}
+	columns, full := s.fitColumns(columns, "session", "attached")
 	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		col = full(col)
 		if row < 0 || row >= len(rows) {
 			return
 		}
@@ -507,7 +516,9 @@ func dockerContainers(c *ui.Context, s *State, state appsysmanager.TabState,
 			{Title: m.SysManagerStatus(), ID: "status", MinWidth: 100},
 			{Title: m.SysManagerPorts(), ID: "ports", MinWidth: 70},
 		}
+		columns, full := s.fitColumns(columns, "container", "state")
 		ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+			col = full(col)
 			if row < 0 || row >= len(rows) {
 				return
 			}
@@ -600,7 +611,9 @@ func dockerImages(c *ui.Context, s *State, state appsysmanager.TabState,
 			{Title: m.SysManagerCreated(), ID: "created", MinWidth: 120},
 			{Title: m.SysManagerID(), ID: "id", MinWidth: 80},
 		}
+		columns, full := s.fitColumns(columns, "image", "size")
 		ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+			col = full(col)
 			if row < 0 || row >= len(rows) {
 				return
 			}
@@ -861,7 +874,9 @@ func processTable(c *ui.Context, s *State, rows []appsysmanager.Process, m local
 		{Title: m.SysManagerMemory(), ID: "mem", Width: 56, MinWidth: 48, Align: ui.End, Sortable: true},
 		{Title: m.SysManagerCommand(), ID: "command", MinWidth: 120, Sortable: true},
 	}
+	columns, full := s.fitColumns(columns, "pid", "cpu", "mem", "command")
 	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		col = full(col)
 		if row < 0 || row >= len(rows) {
 			return
 		}
@@ -889,7 +904,9 @@ func portTable(c *ui.Context, s *State, rows []appsysmanager.Port, m locales.Mes
 		{Title: m.SysManagerPid(), ID: "pid", Width: 58, MinWidth: 46, Align: ui.End},
 		{Title: m.SysManagerProcess(), ID: "process", MinWidth: 80},
 	}
+	columns, full := s.fitColumns(columns, "port", "address", "process")
 	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		col = full(col)
 		if row < 0 || row >= len(rows) {
 			return
 		}
@@ -916,7 +933,9 @@ func serviceTable(c *ui.Context, s *State, rows []appsysmanager.Unit, m locales.
 		{Title: m.SysManagerActive(), ID: "active", Width: 70, MinWidth: 58},
 		{Title: m.SysManagerDescription(), ID: "description", MinWidth: 100},
 	}
+	columns, full := s.fitColumns(columns, "unit", "active")
 	ui.Table(c, &s.table, columns, len(rows), func(row, col int) {
+		col = full(col)
 		if row < 0 || row >= len(rows) {
 			return
 		}
@@ -1044,7 +1063,8 @@ func request(s *State, err error) {
 
 func overview(c *ui.Context, data appsysmanager.Overview, m locales.Messages, t *ui.Theme) {
 	ui.Scroll(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
-		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+		// The cards stack where two do not fit, as in a Session's side panel.
+		ui.Row(c).FillWidth().Gap(10).Wrap().AlignItems(ui.Start).Children(func() {
 			systemCard(c, data, m, t)
 			resourceCard(c, data, m, t)
 		})
@@ -1406,3 +1426,36 @@ func blank(value string, m locales.Messages) string {
 	}
 	return value
 }
+
+// fitColumns keeps, in the side panel, only the columns named in keep, at
+// most compactColumnWidth wide at their minimum, so the table fits the
+// panel's width without scrolling sideways. full maps a shown column back to
+// its index in columns, which the cell function switches on. The System
+// manager page shows every column.
+func (s *State) fitColumns(columns []ui.TableColumn, keep ...string) ([]ui.TableColumn, func(int) int) {
+	if !s.compact {
+		return columns, func(col int) int { return col }
+	}
+	shown := make([]ui.TableColumn, 0, len(keep))
+	index := make([]int, 0, len(keep))
+	for i, column := range columns {
+		if !slices.Contains(keep, column.ID) {
+			continue
+		}
+		column.MinWidth = min(column.MinWidth, compactColumnWidth)
+		if column.Width > 0 {
+			column.Width = min(column.Width, max(column.MinWidth, 64))
+		}
+		shown = append(shown, column)
+		index = append(index, i)
+	}
+	return shown, func(col int) int {
+		if col < 0 || col >= len(index) {
+			return -1
+		}
+		return index[col]
+	}
+}
+
+// compactColumnWidth caps a column's minimum width in the side panel.
+const compactColumnWidth float32 = 64

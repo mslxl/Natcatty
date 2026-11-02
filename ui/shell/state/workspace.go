@@ -1658,6 +1658,7 @@ func (s *State) SetTerminalFont(family string, size float32) {
 // windows. A Surface that cannot recolor live is left alone; a new Session
 // reads the setting when its terminal is created.
 func (s *State) SetTerminalTheme(preset domaintheme.TerminalTheme) {
+	s.terminalTheme, s.hasTerminalTheme = preset, true
 	apply := func(tab *Tab) {
 		if tab == nil {
 			return

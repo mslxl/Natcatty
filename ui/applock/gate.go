@@ -128,24 +128,28 @@ func (g *Gate) lockScreen(c *ui.Context) {
 	m := locales.In(c.Locale())
 	t := c.Theme()
 
-	ui.Column(c).Fill().Padding(48).Gap(12).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, m.AppLockTitle()).FontSize(24).Bold()
-		ui.Text(c, m.AppLockBody()).TextColor(t.TextMuted)
+	// The window is frameless: as the original's, the whole lock screen
+	// drags it.
+	ui.Column(c).Fill().DragWindow().Children(func() {
+		ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(48).Gap(12).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.AppLockTitle()).FontSize(24).Bold()
+			ui.Text(c, m.AppLockBody()).TextColor(t.TextMuted)
 
-		ui.Column(c).Width(320).Gap(8).Children(func() {
-			var submitted bool
-			ui.Field(c, m.AppLockPassword(), func() {
-				submitted = ui.TextInput(c, &g.password).Password().AutoFocus().Submitted()
-			}).Width(320)
-			unlock := ui.PrimaryButton(c, m.AppLockUnlock()).Width(320).Clicked()
-			if submitted || unlock {
-				g.unlock(c)
+			ui.Column(c).Width(320).Gap(8).Children(func() {
+				var submitted bool
+				ui.Field(c, m.AppLockPassword(), func() {
+					submitted = ui.TextInput(c, &g.password).Password().AutoFocus().Submitted()
+				}).Width(320)
+				unlock := ui.PrimaryButton(c, m.AppLockUnlock()).Width(320).Clicked()
+				if submitted || unlock {
+					g.unlock(c)
+				}
+			})
+
+			if message := problemText(m, g.problem); message != "" {
+				ui.Text(c, message).TextColor(uitheme.DangerText(t))
 			}
 		})
-
-		if message := problemText(m, g.problem); message != "" {
-			ui.Text(c, message).TextColor(uitheme.DangerText(t))
-		}
 	})
 }
 

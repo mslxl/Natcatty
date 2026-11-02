@@ -16,6 +16,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	uisearch "github.com/mslxl/natcatty/ui/search"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	"github.com/mslxl/natcatty/ui/titlebar"
 	vaultui "github.com/mslxl/natcatty/ui/vault"
 	"github.com/mslxl/natcatty/ui/vault/section"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -452,22 +453,11 @@ func TestShellSidebarChoosesTheVaultPage(t *testing.T) {
 	}
 }
 
-func TestShellLanguageControlRequestsLocale(t *testing.T) {
-	var requested []string
-	shellState := state.NewState(state.WithLocaleRequest(func(tag string) {
-		requested = append(requested, tag)
-	}))
-	tt := ui.NewTester(View(shellState), 900, 600)
-
-	if err := tt.Click(locales.In("en").NavLanguage()); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.ChooseMenuItem("español"); err != nil {
-		t.Fatal(err)
-	}
+func TestTabBarHasNoControlPanelWithoutContent(t *testing.T) {
+	tt := ui.NewTester(View(state.NewState()), 900, 600)
 	tt.Frame()
-	if len(requested) != 1 || requested[0] != "es" {
-		t.Fatalf("requested locales = %v, want [es]", requested)
+	if _, ok := tt.Find(locales.In("en").NavControlPanel()); ok {
+		t.Fatalf("the Tab bar shows an empty control panel: %v", tt.Texts())
 	}
 }
 
@@ -602,5 +592,21 @@ func TestTopBarFollowsTheShowSFTPTabSetting(t *testing.T) {
 	tester.Frame()
 	if s.SFTPVisible() || tester.HasText(m.NavSftp()) || tester.HasText("sftp surface") {
 		t.Fatalf("hiding the SFTP Tab kept it or its surface: %v", tester.Texts())
+	}
+}
+
+// TestTabBarLeavesTheWindowControlsTheirCorner keeps the bar's own buttons
+// out of the corner the frameless window's controls draw over.
+func TestTabBarLeavesTheWindowControlsTheirCorner(t *testing.T) {
+	const width = 900
+	tt := ui.NewTester(View(state.NewState()), width, 600)
+	tt.SetLocale("en")
+	tt.Frame()
+	rect, ok := tt.Find(locales.In("en").NavSettings())
+	if !ok {
+		t.Fatalf("no Settings button: %v", tt.Texts())
+	}
+	if rect.Y >= topBarHeight || rect.X+rect.W > width-titlebar.Room+0.5 {
+		t.Fatalf("Settings at %+v, under the window controls", rect)
 	}
 }

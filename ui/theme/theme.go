@@ -4,6 +4,8 @@
 package theme
 
 import (
+	"math"
+
 	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 
@@ -198,4 +200,97 @@ func hex(value, fallback string) ui.Color {
 		return ui.Hex(fallback)
 	}
 	return ui.Transparent
+}
+
+// TerminalSwatch returns one of a scheme's colors, for picker swatches. An
+// invalid value shows as a neutral gray.
+func TerminalSwatch(value string) ui.Color {
+	return hex(value, "#808080")
+}
+
+// Chrome is the window theme while a terminal Tab is shown, as the original's
+// active chrome theme: the Tab bar, pane headers, and side panel take the
+// terminal scheme's colors, so the window reads as one surface with the
+// terminal. Surfaces step away from the background in lightness, and the
+// cursor color is the accent. base supplies the font and the status colors.
+func Chrome(base *ui.Theme, preset domaintheme.TerminalTheme) *ui.Theme {
+	colors := preset.Colors
+	dark := preset.Dark
+	background := hexHSL(colors.Background, "#0d1117")
+	foreground := hexHSL(colors.Foreground, "#c9d1d9")
+	cursor := foreground
+	if domaintheme.ValidHex(colors.Cursor) {
+		cursor = hexHSL(colors.Cursor, colors.Foreground)
+	}
+	step := func(color domaintheme.HSL, darkDelta, lightDelta float64) domaintheme.HSL {
+		delta := lightDelta
+		if dark {
+			delta = darkDelta
+		}
+		color.L = math.Max(0, math.Min(1, color.L+delta/100))
+		return color
+	}
+	card := step(background, 4, -3)
+	secondary := step(background, 6, -5)
+	border := step(background, 12, -10)
+	muted := step(foreground, -20, 20)
+	muted.S *= 0.5
+
+	accent := color(cursor)
+	bg := color(background)
+	text := color(foreground)
+	surface := color(card)
+	theme := *base
+	theme.Dark = dark
+	theme.Background = bg
+	theme.Surface = surface
+	theme.SurfaceHover = color(secondary)
+	theme.SurfacePressed = mix(surface, text, 0.12)
+	theme.Border = color(border)
+	theme.Text = text
+	theme.TextMuted = color(muted)
+	theme.Accent = accent
+	theme.AccentHover = mix(accent, bg, 0.10)
+	theme.AccentPressed = mix(accent, bg, 0.20)
+	theme.AccentText = hsl(domaintheme.ReadableForeground(cursor.String(), "0 0% 100%"), "0 0% 100%")
+	selectionAlpha, focusAlpha := float32(0.25), float32(0.55)
+	if dark {
+		selectionAlpha, focusAlpha = 0.35, 0.65
+	}
+	theme.Selection = withAlpha(accent, selectionAlpha)
+	theme.Focus = withAlpha(accent, focusAlpha)
+	theme.Inverse = text
+	theme.InverseText = bg
+	theme.Scrollbar = withAlpha(text, 0.30)
+	return &theme
+}
+
+// hexHSL converts a scheme's hex color to HSL, as the original's hexToHsl.
+func hexHSL(value, fallback string) domaintheme.HSL {
+	c := hex(value, fallback)
+	r, g, b := float64(c.R)/255, float64(c.G)/255, float64(c.B)/255
+	high, low := math.Max(r, math.Max(g, b)), math.Min(r, math.Min(g, b))
+	result := domaintheme.HSL{L: (high + low) / 2}
+	if high == low {
+		return result
+	}
+	d := high - low
+	if result.L > 0.5 {
+		result.S = d / (2 - high - low)
+	} else {
+		result.S = d / (high + low)
+	}
+	switch high {
+	case r:
+		result.H = (g - b) / d
+		if g < b {
+			result.H += 6
+		}
+	case g:
+		result.H = (b-r)/d + 2
+	default:
+		result.H = (r-g)/d + 4
+	}
+	result.H *= 60
+	return result
 }

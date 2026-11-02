@@ -28,13 +28,13 @@ import (
 )
 
 // The shell's fixed geometry at the enforced 720x480 window: a 704x421 client
-// and a 40-DIP Tab bar. A Session Tab has no sidebar; its content card sits
-// 8 DIPs from the window's edges with a 1-DIP outline and 8 DIPs of padding.
+// and a 36-DIP Tab bar. A Session Tab has no sidebar or card: as the
+// original's, its Panes reach the window's edges.
 const (
 	shellMinimumWidth   = 704
 	shellMinimumHeight  = 421
-	shellTabBarHeight   = 40
-	shellContentPadding = 8 + 1 + 8
+	shellTabBarHeight   = 36
+	shellContentPadding = 0
 )
 
 func shellContentColumn() (left, right float32) {
@@ -285,7 +285,7 @@ func shellColumnBox() ui.Rect {
 // TestBrowserTabStripFitsTheShellContentColumnAtTheMinimumWindow is the
 // acceptance regression rendered in the real shell: at 704x421 with five
 // tabs, each activated tab's whole item and close control stay inside the
-// content column (17..687), and New tab stays inside it and clickable. It
+// content column (0..704), and New tab stays inside it and clickable. It
 // runs in English and zh-CN.
 func TestBrowserTabStripFitsTheShellContentColumnAtTheMinimumWindow(t *testing.T) {
 	left, right := shellContentColumn()

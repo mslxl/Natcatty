@@ -13,6 +13,7 @@ import (
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // Config is everything the Settings window can show. A nil state leaves its
@@ -86,59 +87,78 @@ func viewWithSettings(config Config, layout *viewLayout) func(*ui.Context) {
 		hits := FilterHits(index, *search.Query())
 		search.Clamp(len(hits))
 
-		ui.Column(c).Fill().Padding(18).Gap(12).Children(func() {
+		// The window is frameless: as the original's, its header drags it
+		// and its close button sits at the header row's end.
+		ui.Column(c).Fill().Children(func() {
 			header(c, config, search, m, t)
-			ui.TextInput(c, search.Query()).
-				Label(m.SettingsSearchPlaceholder()).
-				Placeholder(m.SettingsSearchPlaceholder()).
-				Width(360).
-				OnTextKey(func(k ui.TextKey) bool {
-					switch k.Key {
-					case ui.KeyDown:
-						if search.Move(1, len(hits)) {
-							c.Invalidate()
-						}
-						return true
-					case ui.KeyUp:
-						if search.Move(-1, len(hits)) {
-							c.Invalidate()
-						}
-						return true
-					case ui.KeyEnter:
-						if search.OpenHit(hits) {
-							c.Invalidate()
-							return true
-						}
-						return false
-					case ui.KeyEscape:
-						if search.Filtering() {
-							search.Clear()
-							c.Invalidate()
-							return true
-						}
-						return false
-					}
-					return false
-				})
-			if search.Filtering() {
-				searchResults(c, config, search, hits, m, t)
-				return
-			}
-			body(c, config, search, panes, m, t)
-			if config.Sync != nil && search.Area() == AreaSync {
-				syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
-				syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
-			}
-			if config.MCP != nil && search.Area() == AreaMCP {
-				mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
-			}
+			settingsBody(c, config, search, panes, hits, m, t)
 		})
 	}
 }
 
+func settingsBody(c *ui.Context, config Config, search *SearchState, panes *viewState, hits []SearchHit,
+	m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(18).Gap(12).Children(func() {
+		if config.Preferences != nil && config.Preferences.ResettingAll() {
+			confirmResetAll(c, config.Preferences, m, t)
+		}
+		ui.TextInput(c, search.Query()).
+			Label(m.SettingsSearchPlaceholder()).
+			Placeholder(m.SettingsSearchPlaceholder()).
+			Width(360).
+			OnTextKey(func(k ui.TextKey) bool {
+				switch k.Key {
+				case ui.KeyDown:
+					if search.Move(1, len(hits)) {
+						c.Invalidate()
+					}
+					return true
+				case ui.KeyUp:
+					if search.Move(-1, len(hits)) {
+						c.Invalidate()
+					}
+					return true
+				case ui.KeyEnter:
+					if search.OpenHit(hits) {
+						c.Invalidate()
+						return true
+					}
+					return false
+				case ui.KeyEscape:
+					if search.Filtering() {
+						search.Clear()
+						c.Invalidate()
+						return true
+					}
+					return false
+				}
+				return false
+			})
+		if search.Filtering() {
+			searchResults(c, config, search, hits, m, t)
+			return
+		}
+		body(c, config, search, panes, m, t)
+		if config.Sync != nil && search.Area() == AreaSync {
+			syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
+			syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
+		}
+		if config.MCP != nil && search.Area() == AreaMCP {
+			mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
+		}
+	})
+}
+
+// header is the Settings window's title bar, as the original's: the title and
+// the window's actions on a row under a 12-high band, the whole of it dragging
+// the window, with a line below. The row leaves the close button its end.
 func header(c *ui.Context, config Config, search *SearchState, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-		ui.Text(c, m.NavSettings()).FontSize(24).Bold()
+	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+titlebar.DialogRoom, 8, 16).
+		AlignItems(ui.Center).Justify(ui.SpaceBetween).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
+		DragWindow().Children(func() {
+		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.NavSettings()).FontSize(18).FontWeight(600)
+		})
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if search.Filtering() {
 				if ui.Button(c, m.SettingsSearchClear()).Clicked() {
@@ -154,9 +174,6 @@ func header(c *ui.Context, config Config, search *SearchState, m locales.Message
 			}
 		})
 	})
-	if config.Preferences != nil && config.Preferences.ResettingAll() {
-		confirmResetAll(c, config.Preferences, m, t)
-	}
 }
 
 func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {

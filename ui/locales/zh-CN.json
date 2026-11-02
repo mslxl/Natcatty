@@ -33,6 +33,7 @@
   "navVault": "Vault",
   "navMonitor": "监控",
   "navSettings": "设置",
+  "navControlPanel": "控制面板",
   "navLanguage": "语言",
   "navHosts": "主机",
   "navKeychain": "密钥",
@@ -741,7 +742,6 @@
     "description": "关闭标签页或窗格的按钮。"
   },
   "detachedMoveToMain": "移到主窗口",
-  "detachedCloseWindow": "关闭窗口",
   "closeWindowTitle": "关闭窗口？",
   "closeWindowMessage": "{count, plural, other {关闭此窗口将结束 # 个活动会话。}}",
   "@closeWindowMessage": {
@@ -3111,5 +3111,70 @@
   "settingsMCPProblemMode": "无法更改权限模式。",
   "settingsMCPProblemSharing": "无法保存会话共享设置。",
   "sftpGoTerminalCwd": "转到终端目录",
-  "sidePanelClose": "关闭面板"
+  "sidePanelClose": "关闭面板",
+  "sidePanelScripts": "脚本",
+  "sidePanelHistory": "历史",
+  "sidePanelTheme": "主题",
+  "sidePanelSystem": "系统",
+  "sidePanelNotes": "笔记",
+  "sidePanelSearchScripts": "搜索代码片段",
+  "sidePanelDismiss": "关闭提示",
+  "sidePanelNoMatches": "没有匹配项",
+  "sidePanelRunSnippet": "在此终端运行",
+  "sidePanelSearchHistory": "搜索命令",
+  "sidePanelHistoryThisHost": "此主机",
+  "sidePanelHistoryAllHosts": "全部主机",
+  "sidePanelHistoryCount": "{count, plural, other {# 条命令}}",
+  "@sidePanelHistoryCount": {
+    "description": "The number of commands the side panel's History lists.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHistorySendFailed": "无法将命令发送到终端。",
+  "sidePanelHistoryEmpty": "还没有命令",
+  "sidePanelHistoryRun": "运行",
+  "sidePanelHistoryPaste": "粘贴到终端",
+  "sidePanelJustNow": "刚刚",
+  "sidePanelMinutesAgo": "{count, plural, other {# 分钟前}}",
+  "@sidePanelMinutesAgo": {
+    "description": "How long ago a command ran, in minutes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelHoursAgo": "{count, plural, other {# 小时前}}",
+  "@sidePanelHoursAgo": {
+    "description": "How long ago a command ran, in hours.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelDaysAgo": "{count, plural, other {# 天前}}",
+  "@sidePanelDaysAgo": {
+    "description": "How long ago a command ran, in days.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "sidePanelFontSmaller": "缩小字号",
+  "sidePanelFontLarger": "放大字号",
+  "sidePanelThemeCustom": "自定义",
+  "sidePanelSystemNoHost": "系统信息需要已保存的主机。",
+  "windowMinimize": "最小化",
+  "windowMaximize": "最大化",
+  "windowRestore": "向下还原",
+  "windowClose": "关闭"
 }

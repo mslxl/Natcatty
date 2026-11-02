@@ -238,7 +238,8 @@ func run(afterReady func(hostWindow)) error {
 		return err
 	}
 	preferencesState = settings.NewPreferencesState(preferenceService,
-		settings.WithPreferencesRedrawRequest(invalidate))
+		settings.WithPreferencesRedrawRequest(invalidate),
+		settings.WithLocaleRequest(func(tag string) { mygo.App.SetLocale(tag) }))
 
 	// File associations and the default opener live in the same preferences
 	// document. The launch adapter is the only platform-aware piece. The
@@ -628,6 +629,25 @@ func run(afterReady func(hostWindow)) error {
 			return shellState.OpenHostWithStartup(host, state.StartupInput{Chunks: preview.Chunks})
 		}),
 	)
+	// The side panel's System tool samples the Session's own Host, so it has
+	// a sampler apart from the System manager page's, which keeps its own.
+	sideSystemService := appsysmanager.NewService(sysmanagerConnector{
+		routes:      routes,
+		connections: connections,
+	})
+	sideSystemState := uisysmanager.NewState(
+		sideSystemService,
+		vaultService,
+		preferenceService,
+		uisysmanager.WithRedrawRequest(invalidate),
+		uisysmanager.WithTerminalOpener(func(host domainvault.Host, command string) error {
+			if shellState == nil {
+				return errors.New("sysmanager: the shell is not ready")
+			}
+			preview := appsession.TransformCompose(command, appsession.ComposeOptions{})
+			return shellState.OpenHostWithStartup(host, state.StartupInput{Chunks: preview.Chunks})
+		}),
+	)
 
 	vaultState = vaultstate.NewState(
 		vaultService,
@@ -868,6 +888,17 @@ func run(afterReady func(hostWindow)) error {
 		},
 		serialui.WithRedraw(invalidate),
 	)
+	// The side panel's Scripts, History, Theme, and Notes read the states of
+	// the pages they mirror; each keeps its own search.
+	vaultSide := vaultui.NewSidePanels(vaultState, func(page vaultsection.Section) {
+		if shellState != nil {
+			shellState.ShowVaultSection(page)
+		}
+	})
+	historyPanel := logsui.NewHistoryPanel(logsState, func(command string, run bool) bool {
+		return shellState != nil && shellState.SendToFocused(command, run)
+	})
+	themePanel := settings.NewThemePanel(themesState, preferenceService)
 	shellState = state.NewState(
 		state.WithLocaleRequest(func(tag string) {
 			mygo.App.SetLocale(tag)
@@ -877,6 +908,7 @@ func run(afterReady func(hostWindow)) error {
 				windows.OpenSettings()
 			}
 		}),
+		state.WithQuickControls(preferencesState.QuickControls()),
 		// Opening and closing a Tab changes the shell's structure; ask for the
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.
@@ -910,7 +942,7 @@ func run(afterReady func(hostWindow)) error {
 				sessionui.WithTerminalFont(func() terminal.Font {
 					appearance := preferenceService.Settings().Appearance
 					return terminal.Font{
-						Family: appearance.TerminalFontFamily,
+						Family: domainpreferences.TerminalFontFamily(appearance.TerminalFontFamily),
 						Size:   float32(appearance.TerminalFontSize),
 					}
 				}),
@@ -978,6 +1010,27 @@ func run(afterReady func(hostWindow)) error {
 				})
 			},
 		}),
+		// The side panel's other tools, in the original's order.
+		state.WithSideTools(
+			state.SideTool{ID: state.SideScripts, View: func(state.SideTarget, float32) func(*ui.Context) {
+				return vaultSide.Scripts()
+			}},
+			state.SideTool{ID: state.SideHistory, View: func(target state.SideTarget, _ float32) func(*ui.Context) {
+				return historyPanel.View(target.Host)
+			}},
+			state.SideTool{ID: state.SideTheme, View: func(state.SideTarget, float32) func(*ui.Context) {
+				return themePanel.View()
+			}},
+			state.SideTool{ID: state.SideSystem, RemoteOnly: true,
+				View: func(target state.SideTarget, _ float32) func(*ui.Context) {
+					sideSystemState.ShowHost(string(target.Host))
+					return uisysmanager.SideView(sideSystemState)
+				},
+				Hide: sideSystemState.Hide},
+			state.SideTool{ID: state.SideNotes, View: func(state.SideTarget, float32) func(*ui.Context) {
+				return vaultSide.Notes()
+			}},
+		),
 		state.WithEditor(editorui.View(editorState)),
 		state.WithSearch(overlayState),
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
@@ -1102,7 +1155,7 @@ func run(afterReady func(hostWindow)) error {
 			})
 		}
 		if shellState != nil {
-			shellState.SetTerminalFont(current.Appearance.TerminalFontFamily,
+			shellState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
 				float32(current.Appearance.TerminalFontSize))
 			shellState.SetTerminalTheme(currentTerminalTheme())
 		}
@@ -1161,6 +1214,7 @@ func run(afterReady func(hostWindow)) error {
 		// System manager leases are channel leases too; release confirmed
 		// actions and samplers before the manager closes every transport.
 		closeSystemManager(sysManagerState, sysManagerService)
+		closeSystemManager(sideSystemState, sideSystemService)
 		desktopCtl.Shutdown()
 		// Stop the queue before the surface closes the Tab filesystems its
 		// rows are still reading and writing.
