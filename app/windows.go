@@ -9,6 +9,7 @@ import (
 	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 // windowSpec describes a native window the composition root asks the host to
@@ -47,6 +48,10 @@ type hostWindow interface {
 	SetTitle(string)
 	SetOpacity(float64)
 	SetIcon([]byte) error
+	// The self-drawn title bar's controls.
+	Minimize()
+	ToggleMaximize()
+	IsMaximized() bool
 }
 
 // windowHost creates native windows. The real host uses MyGo; tests record
@@ -88,6 +93,9 @@ func (nativeConfirmer) Confirm(prompt closePrompt) bool {
 type mygoWindowHost struct{}
 
 func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
+	// Every window is frameless, as the original's: no native caption or
+	// menu bar, and the content draws its own title bar and window controls
+	// (see withFrame). The menu still drives the accelerators.
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title:     spec.Title,
 		Width:     spec.Width,
@@ -95,6 +103,7 @@ func (mygoWindowHost) Create(spec windowSpec, hooks windowHooks) hostWindow {
 		MinWidth:  spec.MinWidth,
 		MinHeight: spec.MinHeight,
 		StateKey:  spec.StateKey,
+		Frameless: true,
 		Content:   ui.View(spec.Content),
 	})
 	if hooks.OnFocus != nil {
@@ -277,6 +286,19 @@ func (m *windowManager) withAccelerators(content func(*ui.Context)) func(*ui.Con
 	}
 }
 
+// withFrame draws the window controls over the top-right corner of the
+// content, outside the App Lock gate so a locked window can still be moved
+// aside or closed. window is resolved per frame: the content is built before
+// the host creates the window.
+func withFrame(style titlebar.Style, window func() hostWindow, content func(*ui.Context)) func(*ui.Context) {
+	return titlebar.Frame(style, func() titlebar.Window {
+		if w := window(); w != nil && !w.IsDestroyed() {
+			return w
+		}
+		return nil
+	}, content)
+}
+
 // wrap puts every window's content behind the one shared App Lock gate. The
 // current gate is resolved per frame, so replacing it also governs windows
 // that already exist, and no window builds its content while locked.
@@ -293,7 +315,8 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 // detachedContent is the content of a detached Tab's window: the Tab's view
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
-	return m.withTheme(m.withAccelerators(m.wrap(shell.DetachedView(m.state, tabID))))
+	window := func() hostWindow { return m.detached[tabID] }
+	return m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
 }
 
 func (m *windowManager) messages() locales.Messages {
@@ -312,7 +335,7 @@ func (m *windowManager) OpenMain() hostWindow {
 	}
 	// The content is inside the gate: while App Lock is closed no window
 	// builds anything.
-	gated := m.wrap(shell.View(m.state))
+	gated := withFrame(titlebar.Tabs, func() hostWindow { return m.main }, m.wrap(shell.View(m.state)))
 	// withAccelerators binds at the root context, before the gate builds its
 	// container, so MyGo registers window shortcuts. Inside the gate they
 	// would become element-scoped and fail from the Vault view with no
@@ -375,7 +398,7 @@ func (m *windowManager) OpenSettings() {
 		Height:    720,
 		MinWidth:  720,
 		MinHeight: 480,
-		Content:   m.withTheme(m.wrap(m.settingsContent())),
+		Content:   m.withTheme(withFrame(titlebar.Dialog, func() hostWindow { return m.settings }, m.wrap(m.settingsContent()))),
 	}, windowHooks{
 		OnFocus:  m.recordActivity,
 		OnClosed: func() { m.settings = nil; m.markQuittingIfNoWindows() },

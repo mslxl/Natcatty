@@ -145,6 +145,13 @@ type State struct {
 	filesShown *filesTarget
 	filesRatio float32
 	filesWidth float32
+	// sideTools are the side panel's tools besides SFTP and sideChosen each
+	// Tab's chosen one. sideDrawn is the tool drawn this frame and sideLast
+	// the one drawn the frame before, so a tool that stops drawing can rest.
+	sideTools  []SideTool
+	sideChosen map[model.TabID]SideToolID
+	sideDrawn  SideToolID
+	sideLast   SideToolID
 	// monitorVisible shows the Host monitoring surface. activate starts the
 	// active panel and deactivate stops sampling when another surface shows.
 	monitorVisible    bool
@@ -162,15 +169,21 @@ type State struct {
 	editorView func(*ui.Context)
 	// serialView renders the serial connection dialog above every surface.
 	// serialRequest opens it from a menu or command.
-	serialView      func(*ui.Context)
-	serialRequest   func()
-	requestLocale   func(string)
-	requestSettings func()
-	requestRedraw   func()
-	sessions        *appsession.Service
-	surfaces        SurfaceFactory
-	trustPrompt     *sessionui.TrustPrompt
-	authPrompt      *sessionui.AuthPrompt
+	serialView    func(*ui.Context)
+	serialRequest func()
+	requestLocale func(string)
+	quickControls func(*ui.Context)
+	quickOpen     bool
+	// terminalTheme is the scheme open terminals draw with, for the chrome
+	// around them; hasTerminalTheme is false until the app sets one.
+	terminalTheme    domaintheme.TerminalTheme
+	hasTerminalTheme bool
+	requestSettings  func()
+	requestRedraw    func()
+	sessions         *appsession.Service
+	surfaces         SurfaceFactory
+	trustPrompt      *sessionui.TrustPrompt
+	authPrompt       *sessionui.AuthPrompt
 
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
@@ -254,6 +267,23 @@ type Option func(*State)
 func WithLocaleRequest(fn func(string)) Option {
 	return func(s *State) { s.requestLocale = fn }
 }
+
+// WithQuickControls sets the content of the Tab bar's control panel. Without
+// it the bar has no control panel button.
+func WithQuickControls(view func(*ui.Context)) Option {
+	return func(s *State) { s.quickControls = view }
+}
+
+// QuickControls returns the control panel's content, or nil.
+func (s *State) QuickControls() func(*ui.Context) { return s.quickControls }
+
+// TerminalTheme is the scheme open terminals draw with, if the app set one.
+func (s *State) TerminalTheme() (domaintheme.TerminalTheme, bool) {
+	return s.terminalTheme, s.hasTerminalTheme
+}
+
+// QuickControlsOpen is whether the control panel is open, for its popover.
+func (s *State) QuickControlsOpen() *bool { return &s.quickOpen }
 
 // WithSettingsRequest sets the function called when the user opens Settings.
 // The app wires this to the singleton Settings window.

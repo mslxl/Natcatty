@@ -10,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/ui/shell/state"
+	"github.com/mslxl/natcatty/ui/titlebar"
 )
 
 func newDetachedGraph(t *testing.T) (*state.State, *[]model.TabID, *[]model.TabID) {
@@ -114,9 +115,8 @@ func TestDetachedWindowFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		}
 		title := assertInside(t, tester, size[0], size[1], "Local Session 1")
 		move := assertInside(t, tester, size[0], size[1], "Move to Main Window")
-		closeWindow := assertInside(t, tester, size[0], size[1], "Close Window")
 		assertSideBySide(t, title, move)
-		assertSideBySide(t, move, closeWindow)
+		assertClearOfWindowControls(t, move, size[0])
 	}
 }
 
@@ -146,37 +146,15 @@ func TestDetachedWindowHeaderShrinksALongTitle(t *testing.T) {
 	tester.Frame()
 	title := assertInside(t, tester, 480, 320, label)
 	move := assertInside(t, tester, 480, 320, "Move to Main Window")
-	closeWindow := assertInside(t, tester, 480, 320, "Close Window")
 	assertSideBySide(t, title, move)
-	assertSideBySide(t, move, closeWindow)
+	assertClearOfWindowControls(t, move, 480)
 }
 
-func TestDetachedWindowCloseActionAsksTheCompositionRoot(t *testing.T) {
-	var requested []model.TabID
-	service := appsession.NewService(&fakeFactory{transport: newFakeTransport()})
-	t.Cleanup(service.CloseAll)
-	shellState := state.NewState(
-		state.WithSessions(service, func(*appsession.Session) (state.Surface, error) {
-			return fakeSurface{}, nil
-		}),
-		state.WithDetachedCloseRequest(func(id model.TabID) {
-			requested = append(requested, id)
-		}),
-	)
-	if err := shellState.NewTab(); err != nil {
-		t.Fatal(err)
-	}
-	if !shellState.DetachTab(0) {
-		t.Fatal("DetachTab returned false")
-	}
-	id := shellState.DetachedTabIDs()[0]
-
-	tester := ui.NewTester(DetachedView(shellState, id), 640, 480)
-	tester.Frame()
-	if err := tester.Click("Close Window"); err != nil {
-		t.Fatal(err)
-	}
-	if len(requested) != 1 || requested[0] != id {
-		t.Fatalf("close requests = %v, want %q", requested, id)
+// assertClearOfWindowControls keeps a header action out of the corner the
+// frameless window's controls draw over.
+func assertClearOfWindowControls(t *testing.T, rect ui.Rect, width int) {
+	t.Helper()
+	if rect.X+rect.W > float32(width)-titlebar.PopupRoom+0.5 {
+		t.Fatalf("%+v reaches under the window controls of a %d-wide window", rect, width)
 	}
 }

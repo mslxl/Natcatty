@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -114,3 +115,33 @@ func hslColor(token string) ui.Color {
 }
 
 func mustRGB(c domaintheme.HSL) (uint8, uint8, uint8) { return c.RGB() }
+
+// TestChromeTakesTheTerminalSchemeColors pins the original's active chrome
+// theme: the background and text are the scheme's, the accent its cursor,
+// and the surfaces step away from the background toward the text's side.
+func TestChromeTakesTheTerminalSchemeColors(t *testing.T) {
+	base := UI(true, domaintheme.DarkPresets()[0], Options{Font: "Inter", FontSize: 13})
+	for _, preset := range domaintheme.TerminalThemes() {
+		chrome := Chrome(base, preset)
+		if chrome.Background != hex(preset.Colors.Background, "#000000") ||
+			chrome.Text != hex(preset.Colors.Foreground, "#ffffff") {
+			t.Fatalf("%s: chrome %v on %v, want the scheme's %s on %s", preset.ID,
+				chrome.Text, chrome.Background, preset.Colors.Foreground, preset.Colors.Background)
+		}
+		if domaintheme.ValidHex(preset.Colors.Cursor) && chrome.Accent != ui.Hex(preset.Colors.Cursor) {
+			t.Fatalf("%s: accent %v, want the cursor %s", preset.ID, chrome.Accent, preset.Colors.Cursor)
+		}
+		if chrome.Dark != preset.Dark || chrome.Font != "Inter" || chrome.FontSize != 13 {
+			t.Fatalf("%s: chrome lost the scheme's mode or the base font: %+v", preset.ID, chrome)
+		}
+		background, border := hexHSL(preset.Colors.Background, "#000000"), chromeHSL(chrome.Border)
+		if preset.Dark != (border.L >= background.L) {
+			t.Fatalf("%s: the border steps the wrong way from the background (%v to %v)",
+				preset.ID, background.L, border.L)
+		}
+	}
+}
+
+func chromeHSL(c ui.Color) domaintheme.HSL {
+	return hexHSL(fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B), "#000000")
+}
