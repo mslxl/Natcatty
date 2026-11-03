@@ -715,7 +715,8 @@ func run(afterReady func(hostWindow)) error {
 	).withClients(
 		newMoshFactory(connections, routes, transportRoots),
 		newETFactory(vaultService, routes, transportRoots),
-	).withInProcessET(
+	).withInProcess(
+		newInProcessMoshFactory(connections, routes),
 		adapteret.InProcessFactory{Manager: connections, Routes: routes},
 	).withImplementations(vaultService, preferenceService),
 		// Automatic logging starts with the Session, as the original's

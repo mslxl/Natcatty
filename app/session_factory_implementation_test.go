@@ -243,6 +243,45 @@ func TestAMissingBundledClientFailsClosedWithATypedError(t *testing.T) {
 	}
 }
 
+func TestInProcessMoshSelectionUsesTheInProcessFactory(t *testing.T) {
+	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{
+		"mosh": {ID: "mosh", Protocol: domainvault.ProtocolMosh},
+		"et":   {ID: "et", Protocol: domainvault.ProtocolET},
+	}}
+	bundledMosh := &implementationFactory{}
+	bundledET := &implementationFactory{}
+	inProcessMosh := &implementationFactory{}
+	factory := newTransportFactory(&factoryLocal{}, nil, nil, nil, nil).
+		withClients(bundledMosh, bundledET).
+		withInProcess(inProcessMosh, nil).
+		withImplementations(hosts, fakeImplementationDefaults{
+			settings: settingsWithImplementation(transportmodel.InProcess),
+		})
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindMosh, HostID: "mosh",
+	})
+	if err != nil {
+		t.Fatalf("Mosh Open: %v", err)
+	}
+	_ = transport.Close()
+	if inProcessMosh.calls != 1 || bundledMosh.calls != 0 || bundledET.calls != 0 {
+		t.Fatalf("in-process Mosh opens = %d, bundled Mosh = %d, ET = %d; want 1, 0, 0",
+			inProcessMosh.calls, bundledMosh.calls, bundledET.calls)
+	}
+
+	// Ticket 23 has not supplied an in-process ET client yet, so ET must keep
+	// failing closed with the typed unavailable error.
+	if _, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindET, HostID: "et",
+	}); !errors.Is(err, transportmodel.ErrImplementationUnavailable) {
+		t.Fatalf("ET Open error = %v, want ErrImplementationUnavailable", err)
+	}
+	if bundledET.calls != 0 {
+		t.Fatal("ET silently opened the bundled client")
+	}
+}
+
 func TestOtherProtocolsIgnoreTheImplementationSelection(t *testing.T) {
 	// A stale or in-process global choice concerns Mosh and ET only. SSH,
 	// Telnet, and a local shell must keep opening unchanged.
