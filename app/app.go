@@ -35,6 +35,7 @@ import (
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	"github.com/mslxl/natcatty/adapters/store"
 	adaptersyncbackup "github.com/mslxl/natcatty/adapters/syncbackup"
+	adaptersyncedsettings "github.com/mslxl/natcatty/adapters/syncedsettings"
 	adaptersyncstore "github.com/mslxl/natcatty/adapters/syncstore"
 	adaptersyncvault "github.com/mslxl/natcatty/adapters/syncvault"
 	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
@@ -171,6 +172,15 @@ func run(afterReady func(hostWindow)) error {
 		}
 	}
 
+	// notifySyncLocalChange feeds portable-setting writes into the same
+	// debounced automatic sync as Vault writes. The sync service ignores the
+	// call while stopped or while auto-sync is off.
+	notifySyncLocalChange := func() {
+		if syncService != nil {
+			syncService.NotifyLocalChange()
+		}
+	}
+
 	// openSettings is provided by the window manager below: one Settings
 	// window per app, as ADR 0006 requires.
 
@@ -181,6 +191,7 @@ func run(afterReady func(hostWindow)) error {
 	if err := setupBrowserStores(userData); err != nil {
 		return err
 	}
+	browserBookmarks.Subscribe(notifySyncLocalChange)
 
 	// Desktop integration lives in a versioned JSON file beside App Lock. The
 	// OS login-item state is refreshed once the application is ready; MyGo's
@@ -224,6 +235,7 @@ func run(afterReady func(hostWindow)) error {
 				sessions.SetHighlightPolicy(current.KeywordHighlightEnabled,
 					current.KeywordHighlightRules)
 			}
+			notifySyncLocalChange()
 		}),
 	)
 	_ = terminalService.Load(context.Background())
@@ -234,7 +246,11 @@ func run(afterReady func(hostWindow)) error {
 	// terminal settings. Both load before the shell exists, so a new Session
 	// reads the current font and key bindings.
 	preferenceService = apppreferences.NewService(
-		store.OpenPreferences(filepath.Join(userData, "preferences.json")))
+		store.OpenPreferences(filepath.Join(userData, "preferences.json")),
+		apppreferences.WithChangeHook(func(domainpreferences.Settings) {
+			invalidate()
+			notifySyncLocalChange()
+		}))
 	if err := preferenceService.Load(context.Background()); err != nil {
 		return err
 	}
@@ -263,7 +279,12 @@ func run(afterReady func(hostWindow)) error {
 	// Imported terminal color schemes live beside the preferences. The
 	// preference stores only the scheme ID, so an import is a second document
 	// that must load before a Session resolves its colors.
-	themeService = appthemes.NewService(store.OpenThemes(filepath.Join(userData, "themes.json")))
+	themeService = appthemes.NewService(
+		store.OpenThemes(filepath.Join(userData, "themes.json")),
+		appthemes.WithChangeHook(func([]domaintheme.TerminalTheme) {
+			invalidate()
+			notifySyncLocalChange()
+		}))
 	_ = themeService.Load(context.Background())
 	themePicker := themeFilePicker{locale: func() string { return mygo.App.Locale() }}
 	themesState = settings.NewThemesState(themeService,
@@ -289,7 +310,11 @@ func run(afterReady func(hostWindow)) error {
 
 	keybindingService = appkeybindings.NewService(
 		store.OpenKeyBindings(filepath.Join(userData, "keybindings.json")),
-		appkeybindings.WithGOOS(runtime.GOOS))
+		appkeybindings.WithGOOS(runtime.GOOS),
+		appkeybindings.WithChangeHook(func(appkeybindings.State) {
+			invalidate()
+			notifySyncLocalChange()
+		}))
 	if err := keybindingService.Load(context.Background()); err != nil {
 		return err
 	}
@@ -444,9 +469,23 @@ func run(afterReady func(hostWindow)) error {
 	// in-house; certificates are never skipped, and a wrong-region redirect is
 	// reported rather than followed.
 	s3Client := adapters3.New(adapters3.Options{})
+	// The global SFTP bookmark list is portable, so it is both the transfer
+	// service's repository and a cloud-sync document. The wrapper reports only
+	// global saves; local-pane bookmarks stay device-local.
+	sftpBookmarks := notifyingSFTPBookmarks{
+		BookmarkRepository: adaptersftp.NewBookmarks(
+			filepath.Join(userData, "sftp-bookmarks.json"),
+			filepath.Join(userData, "sftp-local-bookmarks.json"),
+		),
+		notify: notifySyncLocalChange,
+	}
+	syncedSettings := adaptersyncedsettings.New(
+		preferenceService, terminalService, keybindingService, themeService,
+		sftpBookmarks, browserBookmarks,
+	)
 	syncService = appsync.NewService(
 		githubClient,
-		adaptersyncvault.New(database, secretStore),
+		adaptersyncvault.New(database, secretStore, adaptersyncvault.WithSettings(syncedSettings)),
 		syncConfigStore,
 		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
 		appsync.WithDevice(deviceID, deviceName, version),
@@ -532,10 +571,7 @@ func run(afterReady func(hostWindow)) error {
 		adaptersftp.NewLocal(),
 		&sftpRemoteOpener{manager: connections, routes: routes, vault: vaultService},
 		apptransfer.WithHosts(sftpHostSource{vault: vaultService}),
-		apptransfer.WithBookmarks(adaptersftp.NewBookmarks(
-			filepath.Join(userData, "sftp-bookmarks.json"),
-			filepath.Join(userData, "sftp-local-bookmarks.json"),
-		)),
+		apptransfer.WithBookmarks(sftpBookmarks),
 	)
 	// The global Transfer queue schedules every pane copy, enforces the
 	// per-resource limit, and persists terminal history under the same user

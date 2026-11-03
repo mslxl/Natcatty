@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainsync "github.com/mslxl/natcatty/domain/sync"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 const convergentTestPassword = "secret"
@@ -1036,6 +1037,112 @@ func TestConvergentTwoDeviceProfilesConvergeIncludingConcurrentWrites(t *testing
 	}
 	if deviceA.service.Snapshot().Convergent.Writes != 0 || deviceB.service.Snapshot().Convergent.Writes != 0 {
 		t.Fatal("repeated converged sync did not report zero writes")
+	}
+}
+
+// TestConvergentTwoDevicesCarrySettingsAndGroupMoves exercises the full service
+// path: a group move and a portable-settings edit on one device reach the other
+// through the provider, and a second settings document merges independently.
+func TestConvergentTwoDevicesCarrySettingsAndGroupMoves(t *testing.T) {
+	settingsDoc := func(preferences string, terminal string) map[string]json.RawMessage {
+		documents := map[string]json.RawMessage{
+			settingsKeyPreferences: json.RawMessage(preferences),
+		}
+		if terminal != "" {
+			documents[settingsKeyTerminal] = json.RawMessage(terminal)
+		}
+		return documents
+	}
+	payloadWithTree := func(parentID, path string, settings map[string]json.RawMessage) Payload {
+		return Payload{
+			Groups: []domainvault.Group{
+				{ID: "g-prod", Name: "Prod", Path: "Prod", OrderKey: 1},
+				{ID: "g-web", ParentID: parentID, Name: "Web", Path: path, OrderKey: 2},
+			},
+			Hosts: []domainvault.Host{{
+				ID: "host-1", Label: "web", Group: path, GroupID: "g-web",
+			}},
+			Settings: settings,
+		}
+	}
+
+	remote := newFakeRemote()
+	deviceA := newConvergentDevice(t, remote, "device-a",
+		payloadWithTree("g-prod", "Prod/Web", settingsDoc(`{"appearance":{"terminalFontSize":13}}`, "")))
+	deviceB := newConvergentDevice(t, remote, "device-b", Payload{})
+	if _, err := deviceA.service.SetConvergentEnabled(context.Background(), true); err != nil {
+		t.Fatalf("enable A: %v", err)
+	}
+	if _, err := deviceB.service.SetConvergentEnabled(context.Background(), true); err != nil {
+		t.Fatalf("enable B: %v", err)
+	}
+	if _, err := deviceB.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("B adopts A: %v", err)
+	}
+
+	// B moves Web to the Vault root and edits the preferences document.
+	deviceB.vault.set(payloadWithTree("", "Web",
+		settingsDoc(`{"appearance":{"terminalFontSize":17}}`, `{"OSC52":"write"}`)))
+	if _, err := deviceB.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("B uploads the move: %v", err)
+	}
+	if _, err := deviceA.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("A downloads the move: %v", err)
+	}
+
+	deviceA.vault.mu.Lock()
+	applied := clonePayload(deviceA.vault.payload)
+	deviceA.vault.mu.Unlock()
+	paths := make(map[string]string, len(applied.Groups))
+	for _, group := range applied.Groups {
+		paths[group.ID] = group.Path
+	}
+	if paths["g-web"] != "Web" {
+		t.Fatalf("group paths after the move = %v, want g-web at Web", paths)
+	}
+	if len(applied.Hosts) != 1 || applied.Hosts[0].GroupID != "g-web" || applied.Hosts[0].Group != "Web" {
+		t.Fatalf("host after the move = %+v, want g-web at Web", applied.Hosts)
+	}
+	var preferences map[string]map[string]int
+	if err := json.Unmarshal(applied.Settings[settingsKeyPreferences], &preferences); err != nil {
+		t.Fatalf("decode preferences: %v", err)
+	}
+	if preferences["appearance"]["terminalFontSize"] != 17 {
+		t.Fatalf("preferences after sync = %s, want terminalFontSize 17", applied.Settings[settingsKeyPreferences])
+	}
+	assertJSONEqual(t, applied.Settings[settingsKeyTerminal], json.RawMessage(`{"OSC52":"write"}`))
+
+	// A edits a different settings document while B is offline; B must receive
+	// it without A's older preferences overwriting B's newer value.
+	deviceA.vault.set(payloadWithTree("", "Web",
+		settingsDoc(`{"appearance":{"terminalFontSize":17}}`, `{"OSC52":"read"}`)))
+	if _, err := deviceA.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("A uploads terminal settings: %v", err)
+	}
+	if _, err := deviceB.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("B downloads terminal settings: %v", err)
+	}
+	deviceB.vault.mu.Lock()
+	applied = clonePayload(deviceB.vault.payload)
+	deviceB.vault.mu.Unlock()
+	assertJSONEqual(t, applied.Settings[settingsKeyTerminal], json.RawMessage(`{"OSC52":"read"}`))
+	var preferencesB map[string]map[string]int
+	if err := json.Unmarshal(applied.Settings[settingsKeyPreferences], &preferencesB); err != nil {
+		t.Fatalf("decode B preferences: %v", err)
+	}
+	if preferencesB["appearance"]["terminalFontSize"] != 17 {
+		t.Fatalf("B preferences = %s, want the earlier 17", applied.Settings[settingsKeyPreferences])
+	}
+
+	writes := remote.writeCount()
+	if _, err := deviceA.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("A repeated sync: %v", err)
+	}
+	if _, err := deviceB.service.Sync(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("B repeated sync: %v", err)
+	}
+	if remote.writeCount() != writes {
+		t.Fatalf("repeated converged syncs wrote the provider: %d -> %d", writes, remote.writeCount())
 	}
 }
 

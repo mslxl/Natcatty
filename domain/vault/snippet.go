@@ -32,9 +32,13 @@ type Snippet struct {
 	// Targets lists Host ids. TargetGroups lists Host Group paths resolved
 	// against the latest Host inventory when the Snippet runs. TargetsAllHosts
 	// means every connectable Host.
-	Targets         []model.HostID `json:"targets,omitempty"`
-	TargetGroups    []string       `json:"targetGroups,omitempty"`
-	TargetsAllHosts bool           `json:"targetsAllHosts,omitempty"`
+	Targets      []model.HostID `json:"targets,omitempty"`
+	TargetGroups []string       `json:"targetGroups,omitempty"`
+	// TargetGroupIDs is the stable form of TargetGroups. A group move carries
+	// its Snippet targets with it; TargetGroups is re-derived on apply for the
+	// UI and for older readers.
+	TargetGroupIDs  []string `json:"targetGroupIds,omitempty"`
+	TargetsAllHosts bool     `json:"targetsAllHosts,omitempty"`
 	// NoAutoRun pastes the command without a trailing Enter.
 	NoAutoRun bool `json:"noAutoRun,omitempty"`
 	// MultiLineRunMode defaults to paste.

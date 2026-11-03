@@ -258,3 +258,76 @@ func groupAsValidation(err error, target **ValidationError) bool {
 	}
 	return ok
 }
+
+func TestEnsureGroupAncestorsSynthesizesTheTree(t *testing.T) {
+	groups := EnsureGroupAncestors(
+		[]Group{{Path: " prod / web "}},
+		[]string{"staging/db"},
+	)
+	byPath := make(map[string]Group, len(groups))
+	for _, group := range groups {
+		byPath[group.Path] = group
+	}
+
+	prod, ok := byPath["prod"]
+	if !ok || prod.ID != GroupIDFromPath("prod") || prod.ParentID != "" || prod.Name != "prod" {
+		t.Fatalf("prod = %+v, want a root implicit group", prod)
+	}
+	web, ok := byPath["prod/web"]
+	if !ok || web.ParentID != prod.ID || web.Name != "web" {
+		t.Fatalf("prod/web = %+v, want a child of prod", web)
+	}
+	for _, path := range []string{"staging", "staging/db"} {
+		if _, ok := byPath[path]; !ok {
+			t.Fatalf("implicit ancestor %q is missing: %+v", path, groups)
+		}
+	}
+	if byPath["staging/db"].ParentID != byPath["staging"].ID {
+		t.Fatalf("staging/db parent = %q, want %q",
+			byPath["staging/db"].ParentID, byPath["staging"].ID)
+	}
+}
+
+func TestResolveGroupTreeRenamesAndMovesWithoutChangingIdentity(t *testing.T) {
+	nodes := []GroupTreeNode{
+		{ID: "g-prod", Name: "Prod", OrderKey: 1},
+		{ID: "g-web", ParentID: "g-prod", Name: "Web", OrderKey: 2},
+	}
+	before := ResolveGroupTree(nodes)
+	if before["g-prod"] != "Prod" || before["g-web"] != "Prod/Web" {
+		t.Fatalf("paths = %v", before)
+	}
+
+	// Rename the root and move the child to the Vault root. The IDs are the
+	// same records, so no delete/insert is implied.
+	nodes[0].Name = "Production"
+	nodes[1].ParentID = ""
+	after := ResolveGroupTree(nodes)
+	if after["g-prod"] != "Production" || after["g-web"] != "Web" {
+		t.Fatalf("paths after rename and move = %v", after)
+	}
+}
+
+func TestResolveGroupTreeIsDeterministicForConflicts(t *testing.T) {
+	nodes := []GroupTreeNode{
+		{ID: "b", Name: "dup", OrderKey: 1},
+		{ID: "a", Name: "dup", OrderKey: 2},
+		// Two concurrent moves created a cycle.
+		{ID: "c", ParentID: "d", Name: "c"},
+		{ID: "d", ParentID: "c", Name: "d"},
+		// A dangling parent and a self-link both become roots.
+		{ID: "e", ParentID: "missing", Name: "e"},
+		{ID: "f", ParentID: "f", Name: "f"},
+	}
+	paths := ResolveGroupTree(nodes)
+	if paths["c"] != "c" || paths["d"] != "c/d" {
+		t.Fatalf("cycle paths = %q, %q; want the smallest ID to become the root",
+			paths["c"], paths["d"])
+	}
+	if paths["b"] != "dup" || paths["a"] != "dup (2)" {
+		t.Fatalf("duplicate sibling paths = %q, %q", paths["b"], paths["a"])
+	}
+	if paths["e"] != "e" || paths["f"] != "f" {
+		t.Fatalf("dangling and self-parent paths = %q, %q", paths["e"], paths["f"])
+	}
+}

@@ -225,6 +225,25 @@ type Settings struct {
 	HistoryRetentionDays int
 }
 
+// Portable returns the terminal settings that follow the user between
+// devices. LogDirectory names a local filesystem path and stays on this
+// device; Encodings records the last encoding each local Session used, which
+// is per-device state rather than a preference.
+func Portable(settings Settings) Settings {
+	settings.LogDirectory = ""
+	settings.Encodings = nil
+	return settings
+}
+
+// MergePortable overlays a synced terminal document on the current one while
+// keeping the local log directory and the per-device last-used encodings.
+func MergePortable(current, portable Settings) Settings {
+	next := portable
+	next.LogDirectory = current.LogDirectory
+	next.Encodings = current.Encodings
+	return Normalize(next)
+}
+
 // EncodingScopeLocal is the encoding scope of local shell Sessions.
 const EncodingScopeLocal = "local"
 
