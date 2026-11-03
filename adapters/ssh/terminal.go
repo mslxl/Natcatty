@@ -260,7 +260,9 @@ func (c *sshClient) watchDeath() {
 // example "SSH-2.0-OpenSSH_9.6") when the handshake captured it.
 func (c *sshClient) RemoteVersion() string { return c.remoteVersion }
 
-// OpenTerminal requests a PTY and an interactive shell.
+// OpenTerminal requests a PTY and then starts the terminal's command, or an
+// interactive login shell when the command is empty. Both cases use the same
+// channel, so input, output, resize, and exit classification do not branch.
 func (c *sshClient) OpenTerminal(ctx context.Context, spec appconnection.TerminalSpec) (appconnection.Terminal, error) {
 	c.mu.Lock()
 	closed := c.closed
@@ -313,7 +315,14 @@ func (c *sshClient) OpenTerminal(ctx context.Context, spec appconnection.Termina
 		_ = session.Close()
 		return nil, err
 	}
-	if err := session.Shell(); err != nil {
+	if spec.Command != "" {
+		// A PTY is already allocated, so the server runs the command with
+		// terminal semantics and merges stderr into the same stream.
+		if err := session.Start(spec.Command); err != nil {
+			_ = session.Close()
+			return nil, err
+		}
+	} else if err := session.Shell(); err != nil {
 		_ = session.Close()
 		return nil, err
 	}
