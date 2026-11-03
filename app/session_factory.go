@@ -7,15 +7,22 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
+	"github.com/mslxl/natcatty/domain/model/tmux"
 	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
+
+// tmuxProbeTimeout bounds the non-interactive probe on an established
+// Connection. A slow or wedged probe falls back to a plain login shell instead
+// of holding the Session in "connecting" forever.
+const tmuxProbeTimeout = 10 * time.Second
 
 // routeSource resolves the non-secret jump chain and proxy for a Host. The app
 // backs it with the Vault; tests provide a fake.
@@ -55,6 +62,9 @@ type transportFactory struct {
 	// not care about the choice keep the bundled default.
 	hosts    implementationHosts
 	defaults implementationDefaults
+	// tmuxNotices deduplicates fallback notices per Host: a missing tmux is
+	// announced once, not on every reconnect.
+	tmuxNotices *tmux.NoticeState
 }
 
 // withClients attaches the bundled Mosh and EternalTerminal factories.
@@ -74,7 +84,10 @@ func (f *transportFactory) withImplementations(hosts implementationHosts, defaul
 }
 
 func newTransportFactory(local, serial, telnet appsession.Factory, manager *appconnection.Manager, routes routeSource) *transportFactory {
-	return &transportFactory{local: local, serial: serial, telnet: telnet, manager: manager, routes: routes}
+	return &transportFactory{
+		local: local, serial: serial, telnet: telnet, manager: manager, routes: routes,
+		tmuxNotices: tmux.NewNoticeState(),
+	}
 }
 
 func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
@@ -111,11 +124,11 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		route = resolved
 	}
 
-	lease, terminal, notices, err := f.acquireTerminal(ctx, spec, route)
+	lease, terminal, notices, attached, err := f.acquireTerminal(ctx, spec, route)
 	if err != nil {
 		return nil, err
 	}
-	return &leasedTransport{terminal: terminal, lease: lease, notices: notices}, nil
+	return &leasedTransport{terminal: terminal, lease: lease, notices: notices, tmuxAttached: attached}, nil
 }
 
 // openSelected routes a Mosh or EternalTerminal Session to the persisted
@@ -167,12 +180,18 @@ func (f *transportFactory) selectedImplementation(ctx context.Context, spec apps
 
 // acquireTerminal opens a shell on a Connection lease. A parked transport that
 // dies during the liveness window is discarded by the pool; one retry opens a
-// fresh transport instead of failing the Session.
-func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, error) {
+// fresh transport instead of failing the Session. When the Session opts into
+// tmux, the same Connection answers a non-interactive probe first, so a
+// missing tmux falls back to the login shell without a second dial.
+func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.StartSpec, route appconnection.Route) (*appconnection.Lease, appconnection.Terminal, <-chan appsession.Notice, bool, error) {
 	var notices chan appsession.Notice
 	var onX11Notice func(appconnection.X11Notice)
+	if spec.X11Forwarding || spec.AutoAttachTmux {
+		// Room for the X11 notices and the at most two tmux notices this
+		// connection can publish.
+		notices = make(chan appsession.Notice, 8)
+	}
 	if spec.X11Forwarding {
-		notices = make(chan appsession.Notice, 4)
 		onX11Notice = func(notice appconnection.X11Notice) {
 			mapped, ok := mapX11Notice(notice)
 			if !ok {
@@ -199,26 +218,96 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		X11Display:        spec.X11Display,
 		OnX11Notice:       onX11Notice,
 	}
-	specification := appconnection.TerminalSpec{
-		Cols:    spec.Cols,
-		Rows:    spec.Rows,
-		Term:    "xterm-256color",
-		Command: spec.RemoteCommand,
-	}
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
+		}
+		specification := appconnection.TerminalSpec{
+			Cols:    spec.Cols,
+			Rows:    spec.Rows,
+			Term:    "xterm-256color",
+			Command: spec.RemoteCommand,
+		}
+		attached := false
+		var pending []tmux.NoticeKind
+		if spec.AutoAttachTmux && spec.Kind == appsession.KindSSH &&
+			!spec.NetworkDevice && spec.RemoteCommand == "" {
+			specification.Command, attached, pending = f.tmuxTerminal(ctx, lease, spec.HostID)
 		}
 		terminal, err := lease.OpenTerminal(ctx, specification)
 		if err == nil {
-			return lease, terminal, notices, nil
+			f.publishTmuxNotices(notices, spec.HostID, pending)
+			return lease, terminal, notices, attached, nil
 		}
 		_ = lease.Discard()
 		if attempt == 0 && errors.Is(err, appconnection.ErrStaleTransport) {
 			continue
 		}
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
+	}
+}
+
+// tmuxTerminal probes the remote and decides what the terminal channel should
+// run. A create or attach gets the wrapper command; a nested or unavailable
+// remote gets the plain login shell. The bool reports that the terminal runs
+// the wrapper, so its detach exit status is meaningful.
+func (f *transportFactory) tmuxTerminal(ctx context.Context, lease *appconnection.Lease, hostID model.HostID) (string, bool, []tmux.NoticeKind) {
+	session := tmux.SessionName(hostID)
+	if lease.SingleChannel() {
+		// A software-token peer accepts one channel only, so probing would
+		// consume the channel the terminal needs. The wrapper still refuses to
+		// nest, falls back to a login shell on its own, and reports a detach
+		// through its exit status; only the notices need the probe.
+		return tmux.WrapperCommand(session), true, nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, tmuxProbeTimeout)
+	defer cancel()
+	result, err := lease.Exec(probeCtx, tmux.ProbeCommand(session))
+	decision, parsed := tmux.ParseProbe(result.Stdout)
+	if err != nil || !parsed {
+		decision = tmux.DecisionUnavailable
+	}
+	switch decision {
+	case tmux.DecisionCreate:
+		return tmux.WrapperCommand(session), true, nil
+	case tmux.DecisionAttach:
+		return tmux.WrapperCommand(session), true, []tmux.NoticeKind{tmux.NoticeRestored}
+	case tmux.DecisionNested:
+		return "", false, []tmux.NoticeKind{tmux.NoticeNested}
+	default:
+		return "", false, []tmux.NoticeKind{tmux.NoticeUnavailable}
+	}
+}
+
+// publishTmuxNotices queues the capability notices for one successful
+// terminal open. Fallback notices are deduplicated per Host; a restored
+// notice is reported for every reattach.
+func (f *transportFactory) publishTmuxNotices(notices chan appsession.Notice, hostID model.HostID, kinds []tmux.NoticeKind) {
+	if notices == nil {
+		return
+	}
+	for _, kind := range kinds {
+		if !f.tmuxNotices.ShouldAnnounce(hostID, kind) {
+			continue
+		}
+		select {
+		case notices <- mapTmuxNotice(kind):
+		default:
+		}
+	}
+}
+
+// mapTmuxNotice translates the capability's decision vocabulary onto the
+// Session's UI-facing notice codes.
+func mapTmuxNotice(kind tmux.NoticeKind) appsession.Notice {
+	switch kind {
+	case tmux.NoticeRestored:
+		return appsession.Notice{Code: appsession.NoticeTmuxRestored}
+	case tmux.NoticeNested:
+		return appsession.Notice{Code: appsession.NoticeTmuxNested}
+	default:
+		return appsession.Notice{Code: appsession.NoticeTmuxUnavailable}
 	}
 }
 
@@ -275,6 +364,9 @@ type leasedTransport struct {
 	terminal appconnection.Terminal
 	lease    *appconnection.Lease
 	notices  <-chan appsession.Notice
+	// tmuxAttached reports that the terminal runs the tmux wrapper, so a clean
+	// exit is a detach rather than a shell exit.
+	tmuxAttached bool
 
 	mu     sync.Mutex
 	closed bool
@@ -325,11 +417,20 @@ func (t *leasedTransport) End() appsession.End {
 		return t.remember(appsession.End{Reason: appsession.EndReasonError})
 	}
 	reported := ending.End()
-	return t.remember(appsession.End{
+	classified := appsession.End{
 		Reason:      appsession.EndReason(reported.Reason),
 		ExitCode:    reported.ExitCode,
 		HasExitCode: reported.HasExitCode,
-	})
+	}
+	// The tmux wrapper reports a detach with a private status after confirming
+	// the named session still exists. An ordinary shell exit inside tmux
+	// destroys the session, so the wrapper exits with tmux's own status and the
+	// Tab stays open with the exit.
+	if t.tmuxAttached && classified.Reason == appsession.EndReasonExited &&
+		classified.HasExitCode && classified.ExitCode == tmux.DetachedExitStatus {
+		classified.Reason = appsession.EndReasonDetached
+	}
+	return t.remember(classified)
 }
 
 func (t *leasedTransport) remember(end appsession.End) appsession.End {

@@ -253,6 +253,10 @@ type Host struct {
 	// the original's Host Details "Network Device Mode" setting and uses the
 	// same persisted JSON name.
 	DeviceType DeviceType `json:"deviceType,omitempty"`
+	// AutoAttachTmux keeps an SSH Host's remote shell alive in a deterministic
+	// tmux session. It is opt-in, off by default, and meaningful only for
+	// ProtocolSSH: another protocol and network-device mode clear it.
+	AutoAttachTmux bool `json:"autoAttachTmux,omitempty"`
 	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
 	// Empty uses the remote PATH. It is kept only for ProtocolMosh.
 	MoshServerPath string `json:"moshServerPath,omitempty"`
@@ -312,6 +316,9 @@ type Draft struct {
 	// DeviceType selects raw network-device execution. It is kept only for
 	// SSH Hosts.
 	DeviceType DeviceType
+	// AutoAttachTmux keeps the SSH login shell in a deterministic tmux
+	// session. It is cleared for another protocol and for network-device mode.
+	AutoAttachTmux bool
 	// MoshServerPath overrides the remote mosh-server binary. It is kept only
 	// for ProtocolMosh.
 	MoshServerPath string
@@ -420,6 +427,12 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 		// Raw network-device execution needs an SSH PTY; a Host that switched
 		// to another protocol must not keep a mode its transport cannot run.
 		draft.DeviceType = DeviceTypeDefault
+	}
+	if draft.Protocol != ProtocolSSH || draft.DeviceType == DeviceTypeNetwork {
+		// tmux wraps an interactive POSIX login shell. A non-SSH protocol and
+		// a vendor CLI have no such shell, so a hidden control must not leave
+		// the preference on the Host record.
+		draft.AutoAttachTmux = false
 	}
 	draft.MoshServerPath = strings.TrimSpace(draft.MoshServerPath)
 	if draft.Protocol != ProtocolMosh {
@@ -536,6 +549,7 @@ func (h Host) Validate() error {
 		SFTPFileProtocol:        h.SFTPFileProtocol,
 		SFTPSudo:                h.SFTPSudo,
 		DeviceType:              h.DeviceType,
+		AutoAttachTmux:          h.AutoAttachTmux,
 		MoshServerPath:          h.MoshServerPath,
 		ETPort:                  h.ETPort,
 		TransportImplementation: h.TransportImplementation,
@@ -554,6 +568,13 @@ func (h Host) X11Enabled() bool {
 // hand-edited record) is not enough on its own.
 func (h Host) IsNetworkDevice() bool {
 	return h.Protocol == ProtocolSSH && h.DeviceType == DeviceTypeNetwork
+}
+
+// AutoAttachTmuxEnabled reports whether opening this Host should start the
+// tmux wrapper: the user opted in on a plain SSH Host. Network-device mode
+// speaks a vendor CLI, and mosh/ET have their own session persistence.
+func (h Host) AutoAttachTmuxEnabled() bool {
+	return h.AutoAttachTmux && h.Protocol == ProtocolSSH && !h.IsNetworkDevice()
 }
 
 func validateFields(draft Draft) error {

@@ -339,7 +339,11 @@ func (c *desktopController) NoteSession(snapshot appsession.Snapshot) {
 		c.ScheduleSync()
 		return
 	}
+	// A tmux detach closes the Tab by design and leaves the remote session
+	// running; it is not the Session-ended event a user should be notified
+	// about.
 	if snapshot.Status == appsession.StatusExited &&
+		snapshot.EndReason != appsession.EndReasonDetached &&
 		previous.status != appsession.StatusExited {
 		notify(appdesktop.EventSessionEnded)
 		c.ScheduleSync()

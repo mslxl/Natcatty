@@ -489,6 +489,9 @@
     }
   },
   "connectionX11CookieUnavailable": "X11 轉發無法讀取 {target} 的本機 xauth cookie。請為該顯示執行 xauth add，或允許本機連線。",
+  "connectionTmuxSessionRestored": "tmux 工作階段已還原。",
+  "connectionTmuxNested": "遠端 Host 已在 tmux 工作階段中；已直接連線，未巢狀。",
+  "connectionTmuxUnavailable": "遠端 Host 無法使用 tmux；已改用一般 Shell 連線。",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {
@@ -568,6 +571,8 @@
   "vaultHostX11Acknowledge": "我了解安全風險，並希望啟用 X11 轉發。",
   "vaultHostNetworkDevice": "網路裝置模式",
   "vaultHostNetworkDeviceHint": "適用於透過 SSH 連線的交換機、路由器和防火牆。自動化指令將原樣傳送，不進行 Shell 包裝，且無法取得結束代碼。僅對不執行標準 Shell 的裝置啟用。",
+  "vaultHostAutoAttachTmux": "自動附加 tmux",
+  "vaultHostAutoAttachTmuxHint": "將遠端 Shell 保留在以此外 Host 命名的 tmux 工作階段中。分離後工作階段會繼續執行，下次連線會重新附加。僅適用於一般 SSH；tmux 必須已安裝。",
   "vaultHostFileProtocol": "檔案協定",
   "vaultHostFileProtocolHint": "自動模式先嘗試 SFTP，僅在伺服器不支援 SFTP 時回退到 SCP。",
   "vaultHostSFTPSudo": "使用 sudo 執行 SFTP",

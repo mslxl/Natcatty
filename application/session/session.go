@@ -121,6 +121,10 @@ const (
 	EndReasonClosed EndReason = "closed"
 	// EndReasonTimeout is an administrative idle logout or connect timeout.
 	EndReasonTimeout EndReason = "timeout"
+	// EndReasonDetached is a tmux client detach. The remote session keeps
+	// running, so the local Session ended cleanly by design and its Tab closes
+	// without an error; the next connection reattaches.
+	EndReasonDetached EndReason = "detached"
 )
 
 // End is a transport's final state.
@@ -187,6 +191,10 @@ type Snapshot struct {
 	// normally reports its code, a signalled one reports 128+signal.
 	ExitCode    int
 	HasExitCode bool
+	// EndReason classifies a finished Session. It is empty while the Session
+	// runs and while it is reconnecting. A detached tmux client reports
+	// EndReasonDetached instead of a shell exit.
+	EndReason EndReason
 	// Cols and Rows are the last size sent to the transport.
 	Cols, Rows int
 	// PendingBytes is the output waiting for the terminal to read.
@@ -240,6 +248,15 @@ const (
 	NoticeX11Cookie NoticeCode = "x11_cookie"
 	// NoticeX11Channel reports that an X11 channel could not be accepted.
 	NoticeX11Channel NoticeCode = "x11_channel"
+	// NoticeTmuxRestored reports that a connection attached to an existing
+	// tmux session.
+	NoticeTmuxRestored NoticeCode = "tmux_session_restored"
+	// NoticeTmuxNested reports that the remote already ran inside tmux, so the
+	// app connected without nesting.
+	NoticeTmuxNested NoticeCode = "tmux_nested"
+	// NoticeTmuxUnavailable reports that tmux was missing or could not run, so
+	// the app fell back to a plain login shell.
+	NoticeTmuxUnavailable NoticeCode = "tmux_unavailable"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -297,6 +314,12 @@ type StartSpec struct {
 	// run this command instead of the login shell. Empty keeps the login-shell
 	// behavior. Other transports ignore it.
 	RemoteCommand string
+	// AutoAttachTmux asks an SSH transport to keep the remote shell in the
+	// Host's deterministic tmux session. The transport probes the remote and
+	// falls back to a plain login shell when tmux is unavailable or already
+	// nested, so the flag never makes a connection fail. Other transports
+	// ignore it, and an explicit RemoteCommand takes precedence.
+	AutoAttachTmux bool
 	// NetworkDevice marks an SSH Host whose peer runs a vendor CLI. Programmatic
 	// commands then use RawExec: they are written to the existing PTY as-is,
 	// without a shell wrapper or completion markers, and report no exit code.
@@ -1085,6 +1108,7 @@ func (s *Session) loop() {
 	connection := ConnectionStatusActive
 	code := -1
 	hasCode := false
+	reason := EndReason("")
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -1115,6 +1139,7 @@ func (s *Session) loop() {
 					status = StatusExited
 					connection = connectionForEnd(cmd.end)
 					code, hasCode = cmd.end.ExitCode, cmd.end.HasExitCode
+					reason = cmd.end.Reason
 					goto finished
 				}
 				// Advance the generation before starting the dial so a second
@@ -1168,6 +1193,7 @@ func (s *Session) loop() {
 				}
 				status = StatusExited
 				connection = ConnectionStatusError
+				reason = EndReasonError
 				goto finished
 			case commandClose:
 				status = StatusClosed
@@ -1192,6 +1218,7 @@ finished:
 		snapshot.Connection = connection
 		snapshot.ExitCode = code
 		snapshot.HasExitCode = hasCode
+		snapshot.EndReason = reason
 		snapshot.Logging = logging
 		// A hibernation only names a live transport whose screen was
 		// detached; the transport is gone now.
