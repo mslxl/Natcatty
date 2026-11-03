@@ -3,7 +3,7 @@ module github.com/mslxl/natcatty
 go 1.27.1
 
 require (
-	github.com/egoist/mygo v0.5.5
+	github.com/egoist/mygo v0.6.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
 	github.com/pkg/sftp v1.13.11

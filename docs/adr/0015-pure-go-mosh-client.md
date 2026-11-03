@@ -13,7 +13,8 @@ Desktop mosh moves from the bundled MoshCatty binary to an application-owned, pu
 **Consequences**:
 - Full parity is the release gate: real UDP interop against `mosh-server` 1.4.0 and 1.3.2 on Debian/Ubuntu LTS, Fedora, macOS Homebrew, and FreeBSD, plus byte-level Display and terminal golden tests. No waivers.
 - OCB3 is implemented in-repo from RFC 7253 and validated with official vectors; the `MOSH CONNECT` key stays in memory, is never logged or persisted, and is zeroized on close.
-- MyGo must be upgraded to the first release containing `Options.ResizeByConn`. If no such release exists, a documented client-side resize-ordering fallback with a `TODO` is a development stopgap, not a release-qualified path.
+- MyGo v0.6.0 is the first release containing `Options.ResizeByConn` (v0.5.x has no equivalent), and the module pins v0.6.0; no client-side resize-ordering fallback is required.
+- With `ResizeByConn` set, the view forwards the size it fits to `Conn` while the screen takes a size only from `Terminal.Resize`. The mosh transport must call it where the server's output reports a resize, before feeding the output that follows. The Session transport contract is view-to-transport only, so the terminal-parity work also adds the inverse resize signal from the transport to the terminal surface.
 - Windows arm64 becomes supported because no bundled binary is required.
 - Record provenance for any MoshCatty-derived code and ship its notices with the app.
 - Supersedes ADR-0005.
