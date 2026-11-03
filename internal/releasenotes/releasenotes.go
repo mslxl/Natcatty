@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/mslxl/natcatty/internal/legal"
 )
 
 // Section is one version section of a Keep a Changelog file.
@@ -101,6 +103,10 @@ func Generate(data []byte, version string) ([]byte, error) {
 		fmt.Fprintf(&out, "Released %s.\n\n", found.Date)
 	}
 	out.WriteString(found.Body)
+	out.WriteString("\n\n")
+	// Every published release body carries the GPL Corresponding Source offer,
+	// so a release note can never be published without it.
+	out.WriteString(legal.SourceOffer(version))
 	out.WriteString("\n")
 	return out.Bytes(), nil
 }

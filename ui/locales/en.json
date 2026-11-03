@@ -4404,5 +4404,19 @@
   "windowMinimize": "Minimize",
   "windowMaximize": "Maximize",
   "windowRestore": "Restore",
-  "windowClose": "Close"
+  "windowClose": "Close",
+  "settingsAreaAbout": "About & Licenses",
+  "settingsAboutDescription": "Version, copyright, license text, corresponding source, and third-party notices.",
+  "settingsAboutVersion": "Version {version}",
+  "settingsAboutLicenseTitle": "License and modification notice",
+  "settingsAboutLicenseBody": "Natcatty Native is a modified version of Netcatty, distributed under the GNU General Public License, version 3 or later. This program comes with absolutely no warranty.",
+  "settingsAboutModificationTitle": "Modification notice",
+  "settingsAboutLicenseTextTitle": "GNU General Public License v3.0 or later",
+  "settingsAboutSourceTitle": "Corresponding Source",
+  "settingsAboutSourceBody": "The complete corresponding source for this release is the repository at the release tag below. Build instructions are in docs/packaging.md.",
+  "settingsAboutOpenSource": "Open corresponding source",
+  "settingsAboutNoticesTitle": "Third-party notices",
+  "settingsAboutNoticesBody": "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, MoshCatty, EternalTerminal, and other bundled components.",
+  "settingsAboutUnavailable": "The legal documents are missing from this installation. Reinstall from a release artifact.",
+  "settingsAboutLegalReview": "Distribution compliance is mechanically checked and remains pending human and legal review."
 }

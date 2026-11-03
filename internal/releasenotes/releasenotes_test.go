@@ -72,6 +72,9 @@ func TestGenerateRendersOnlyTheRequestedVersion(t *testing.T) {
 		"Released 2026-10-28.",
 		"- Native app shell.",
 		"### Fixed",
+		"## Corresponding Source",
+		"https://github.com/mslxl/natcatty/tree/v0.1.0",
+		"GPL-3.0-or-later",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("notes missing %q:\n%s", want, text)
