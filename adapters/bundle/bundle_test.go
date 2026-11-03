@@ -215,7 +215,16 @@ func TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries(t *testing.T
 	if err != nil {
 		t.Fatalf("read notices: %v", err)
 	}
-	for _, want := range []string{"mosh-client", "GPL-3.0", "EternalTerminal", "Apache License 2.0"} {
+	for _, want := range []string{
+		"mosh-client",
+		"GPL-3.0",
+		"EternalTerminal",
+		"Apache License 2.0",
+		"mosh-go",
+		"Copyright (c) 2026 Unix Shells",
+		"554b9d305e7ac4b11de740d764bbc3e05f816d7b",
+		"RUST-DEPENDENCIES.json",
+	} {
 		if !strings.Contains(string(notices), want) {
 			t.Fatalf("notices do not mention %q", want)
 		}
@@ -257,6 +266,19 @@ func TestReleasedBundleCarriesLicensesProvenanceAndVerifiedBinaries(t *testing.T
 			!strings.Contains(string(provenance), bundle.sha256) {
 			t.Fatalf("%s provenance does not record release %s and binary %s",
 				bundle.kind, bundle.release, bundle.sha256)
+		}
+		if bundle.kind == Mosh {
+			if !strings.Contains(string(provenance), "554b9d305e7ac4b11de740d764bbc3e05f816d7b") ||
+				!strings.Contains(string(provenance), "protocolReference") ||
+				!strings.Contains(string(provenance), `"status": "not-established"`) {
+				t.Fatalf("mosh provenance does not record the source commit, protocol reference, and unreproduced build status")
+			}
+			for _, name := range []string{"LICENSE-MoshGo-MIT.txt", "RUST-DEPENDENCIES.json"} {
+				info, statErr := os.Stat(filepath.Join(dir, name))
+				if statErr != nil || info.Size() == 0 {
+					t.Fatalf("%s/%s: %v", bundle.kind, name, statErr)
+				}
+			}
 		}
 		if _, err := bundle.spec.ResolveTarget("win32-x64"); err != nil {
 			t.Fatalf("%s committed Windows binary does not verify: %v", bundle.kind, err)
