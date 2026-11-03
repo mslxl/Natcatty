@@ -277,6 +277,9 @@ func run(afterReady func(hostWindow)) error {
 		settings.WithThemeImported(func(theme domaintheme.TerminalTheme) bool {
 			err := preferenceService.Update(func(next *domainpreferences.Settings) {
 				next.Appearance.TerminalTheme = theme.ID
+				// An imported scheme is a choice the terminal must show, so
+				// it stops following the app.
+				next.Appearance.FollowAppTerminalTheme = false
 			})
 			return err == nil
 		}),
@@ -1115,12 +1118,14 @@ func run(afterReady func(hostWindow)) error {
 		return preferenceService.Settings().Security.ConfirmCloseSessions
 	})
 
-	// currentTerminalTheme resolves the stored scheme ID to a catalog entry.
-	// A malformed or removed ID falls back to the original's Netcatty Dark
-	// instead of leaving a terminal with MyGo's default palette.
+	// currentTerminalTheme resolves the scheme terminals draw with: the one
+	// matched to the active UI preset while the terminal follows the app,
+	// otherwise the stored scheme. A malformed or removed ID falls back to the
+	// original's Netcatty Dark instead of leaving a terminal with MyGo's
+	// default palette.
 	currentTerminalTheme = func() domaintheme.TerminalTheme {
-		return resolveTerminalTheme(preferenceService.Settings().Appearance.TerminalTheme,
-			themeService.Find)
+		return resolveAppTerminalTheme(preferenceService.Settings().Appearance,
+			mygo.Theme.IsDark(), themeService.Find)
 	}
 
 	// resolveUITheme maps the selected window mode, light/dark preset, accent,
@@ -1164,8 +1169,14 @@ func run(afterReady func(hostWindow)) error {
 	preferenceService.SetChangeHook(applyPreferences)
 	applyPreferences(preferenceService.Settings())
 	// System mode follows the desktop: a live appearance change invalidates
-	// every window, whose root resolves IsDark again.
-	mygo.Theme.OnUpdated(invalidate)
+	// every window, whose root resolves IsDark again, and a terminal that
+	// follows the app takes the new appearance's scheme.
+	mygo.Theme.OnUpdated(func() {
+		if shellState != nil {
+			shellState.SetTerminalTheme(currentTerminalTheme())
+		}
+		invalidate()
+	})
 
 	dispatcher := &bindingDispatcher{
 		service:   keybindingService,

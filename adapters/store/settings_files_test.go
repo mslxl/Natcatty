@@ -60,6 +60,36 @@ func TestKeyBindingsStoreRoundTripsAndToleratesBadFiles(t *testing.T) {
 	}
 }
 
+// TestPreferencesStoreUpgradesTerminalFollowing keeps the original's upgrade:
+// a profile that predates following keeps a scheme its user picked, one still
+// on the default follows the app, and a stored answer is kept as written.
+func TestPreferencesStoreUpgradesTerminalFollowing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	store := OpenPreferences(path)
+	cases := []struct {
+		document string
+		want     bool
+	}{
+		{`{"version":1,"appearance":{"terminalTheme":"dracula"}}`, false},
+		{`{"version":1,"appearance":{"terminalTheme":"netcatty-dark"}}`, true},
+		{`{"version":1,"layout":{"showSftpTab":false}}`, true},
+		{`{"version":1,"appearance":{"terminalTheme":"dracula","followAppTerminalTheme":true}}`, true},
+		{`{"version":1,"appearance":{"followAppTerminalTheme":false}}`, false},
+	}
+	for _, c := range cases {
+		if err := os.WriteFile(path, []byte(c.document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		settings, err := store.Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settings.Appearance.FollowAppTerminalTheme != c.want {
+			t.Errorf("%s: following = %v, want %v", c.document, settings.Appearance.FollowAppTerminalTheme, c.want)
+		}
+	}
+}
+
 func TestPreferencesStoreOverlaysPartialFilesOnDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "preferences.json")
 	store := OpenPreferences(path)

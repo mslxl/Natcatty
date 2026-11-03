@@ -71,7 +71,8 @@ func (p *ThemePanel) View() func(*ui.Context) {
 					c.Invalidate()
 				}
 			})
-			schemes := p.matching()
+			follow := appearance.FollowAppTerminalTheme
+			schemes := p.matching(follow)
 			if len(schemes) == 0 {
 				kit.EmptyState(c, icons.Palette, m.SettingsTerminalThemeNoResults(strings.TrimSpace(p.search)), "", nil)
 				return
@@ -79,6 +80,13 @@ func (p *ThemePanel) View() func(*ui.Context) {
 			current := appearance.TerminalTheme
 			if current == "" {
 				current = domain.DefaultTerminalTheme
+			}
+			if follow {
+				// The window's theme says which scheme the terminal shows.
+				preset := domaintheme.ResolvePreset(t.Dark, appearance.LightTheme, appearance.DarkTheme)
+				if id, ok := domaintheme.TerminalThemeForPreset(t.Dark, preset.ID); ok {
+					current = id
+				}
 			}
 			ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
 				ui.Column(c).FillWidth().Padding(0, 8, 8, 8).Gap(6).Children(func() {
@@ -91,11 +99,17 @@ func (p *ThemePanel) View() func(*ui.Context) {
 	}
 }
 
-// matching are the schemes whose name contains the search.
-func (p *ThemePanel) matching() []domaintheme.TerminalTheme {
+// matching are the schemes whose name contains the search. A terminal that
+// follows the app offers only the schemes matched to a window theme, as the
+// original's, since picking one switches the window theme.
+func (p *ThemePanel) matching(follow bool) []domaintheme.TerminalTheme {
 	query := strings.ToLower(strings.TrimSpace(p.search))
+	catalog := p.themes.Themes()
+	if follow {
+		catalog = domaintheme.FollowAppTerminalThemes()
+	}
 	var out []domaintheme.TerminalTheme
-	for _, scheme := range p.themes.Themes() {
+	for _, scheme := range catalog {
 		if query == "" || strings.Contains(strings.ToLower(scheme.Name), query) {
 			out = append(out, scheme)
 		}
@@ -148,7 +162,21 @@ func (p *ThemePanel) schemeRow(c *ui.Context, m locales.Messages, t *ui.Theme,
 	})
 	if card.Clicked() && !current {
 		id := scheme.ID
-		_ = p.look.Update(func(s *domain.Settings) { s.Appearance.TerminalTheme = id })
+		_ = p.look.Update(func(s *domain.Settings) {
+			if s.Appearance.FollowAppTerminalTheme {
+				// The terminal shows the window theme's scheme, so the pick
+				// switches the window theme and its appearance.
+				if preset, dark, ok := domaintheme.PresetForTerminalTheme(id); ok {
+					if dark {
+						s.Appearance.ThemeMode, s.Appearance.DarkTheme = domain.ThemeDark, preset
+					} else {
+						s.Appearance.ThemeMode, s.Appearance.LightTheme = domain.ThemeLight, preset
+					}
+					return
+				}
+			}
+			s.Appearance.TerminalTheme = id
+		})
 		c.Invalidate()
 	}
 }

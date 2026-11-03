@@ -132,6 +132,7 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaAppearance, domain.FieldUIFont, m.SettingsUIFont(), "font interface")
 	add(AreaAppearance, domain.FieldWindowOpacity, m.SettingsWindowOpacity(), "opacity transparency")
 	add(AreaAppearance, domain.FieldAppIcon, m.SettingsAppIcon(), "icon app dock taskbar tray")
+	add(AreaAppearance, domain.FieldFollowAppTerminalTheme, m.SettingsFollowAppTerminalTheme(), "terminal follow app theme match light dark")
 	add(AreaAppearance, domain.FieldTerminalTheme, m.SettingsTerminalTheme(), "terminal theme scheme palette")
 	add(AreaAppearance, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), "terminal font family")
 	add(AreaAppearance, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), "terminal font size")

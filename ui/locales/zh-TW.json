@@ -1582,6 +1582,8 @@
   "settingsAccentColor": "強調色",
   "settingsUIFont": "介面字型",
   "settingsWindowOpacity": "視窗不透明度",
+  "settingsFollowAppTerminalTheme": "跟隨應用程式主題",
+  "settingsFollowAppTerminalThemeDescription": "終端背景色自動配合目前應用程式主題，保持視覺一致性。",
   "settingsTerminalTheme": "終端機主題",
   "settingsTerminalFontFamily": "終端機字型",
   "settingsTerminalFontSize": "終端機字級",

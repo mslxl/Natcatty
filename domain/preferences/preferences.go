@@ -110,9 +110,14 @@ type Appearance struct {
 	// TerminalTheme persists a built-in terminal scheme ID or an imported
 	// custom scheme ID. Custom IDs live in themes.json, so this field cannot
 	// be validated against the built-in catalog alone.
-	TerminalTheme      string  `json:"terminalTheme"`
-	TerminalFontFamily string  `json:"terminalFontFamily"`
-	TerminalFontSize   float64 `json:"terminalFontSize"`
+	TerminalTheme string `json:"terminalTheme"`
+	// FollowAppTerminalTheme makes terminals use the scheme matched to the
+	// active UI preset, as the original's "Follow application theme", so a
+	// light window gets a light terminal. TerminalTheme is then only the
+	// fallback for a preset with no match.
+	FollowAppTerminalTheme bool    `json:"followAppTerminalTheme"`
+	TerminalFontFamily     string  `json:"terminalFontFamily"`
+	TerminalFontSize       float64 `json:"terminalFontSize"`
 }
 
 // Layout group.
@@ -195,17 +200,20 @@ const (
 func Defaults() Settings {
 	return Settings{
 		Appearance: Appearance{
-			ThemeMode:          ThemeSystem,
-			LightTheme:         domaintheme.DefaultLightTheme,
-			DarkTheme:          domaintheme.DefaultDarkTheme,
-			AccentMode:         AccentTheme,
-			AccentColor:        DefaultAccentColor,
-			AppIcon:            domaintheme.DefaultIconVariant,
-			UIFont:             "",
-			WindowOpacity:      1,
-			TerminalTheme:      DefaultTerminalTheme,
-			TerminalFontFamily: DefaultTerminalFont,
-			TerminalFontSize:   DefaultTerminalFontSize,
+			ThemeMode:     ThemeSystem,
+			LightTheme:    domaintheme.DefaultLightTheme,
+			DarkTheme:     domaintheme.DefaultDarkTheme,
+			AccentMode:    AccentTheme,
+			AccentColor:   DefaultAccentColor,
+			AppIcon:       domaintheme.DefaultIconVariant,
+			UIFont:        "",
+			WindowOpacity: 1,
+			TerminalTheme: DefaultTerminalTheme,
+			// As the original's, a fresh profile's terminal follows the app;
+			// the store keeps an older profile's chosen scheme.
+			FollowAppTerminalTheme: true,
+			TerminalFontFamily:     DefaultTerminalFont,
+			TerminalFontSize:       DefaultTerminalFontSize,
 		},
 		Layout: Layout{
 			ShowHostTreeSidebar:         true,
@@ -381,6 +389,7 @@ const (
 	FieldUIFont                      Field = "appearance.uiFont"
 	FieldWindowOpacity               Field = "appearance.windowOpacity"
 	FieldTerminalTheme               Field = "appearance.terminalTheme"
+	FieldFollowAppTerminalTheme      Field = "appearance.followAppTerminalTheme"
 	FieldTerminalFontFamily          Field = "appearance.terminalFontFamily"
 	FieldTerminalFontSize            Field = "appearance.terminalFontSize"
 	FieldShowHostTreeSidebar         Field = "layout.showHostTreeSidebar"
@@ -416,7 +425,7 @@ func Fields() []Field {
 	return []Field{
 		FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
-		FieldWindowOpacity, FieldTerminalTheme, FieldTerminalFontFamily,
+		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
@@ -438,7 +447,7 @@ func GroupOf(field Field) (Group, bool) {
 	switch field {
 	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
-		FieldWindowOpacity, FieldTerminalTheme, FieldTerminalFontFamily,
+		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
 		FieldTerminalFontSize:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
@@ -486,6 +495,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.WindowOpacity = defaults.Appearance.WindowOpacity
 	case FieldTerminalTheme:
 		settings.Appearance.TerminalTheme = defaults.Appearance.TerminalTheme
+	case FieldFollowAppTerminalTheme:
+		settings.Appearance.FollowAppTerminalTheme = defaults.Appearance.FollowAppTerminalTheme
 	case FieldTerminalFontFamily:
 		settings.Appearance.TerminalFontFamily = defaults.Appearance.TerminalFontFamily
 	case FieldTerminalFontSize:

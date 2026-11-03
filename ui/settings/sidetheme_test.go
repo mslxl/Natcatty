@@ -27,6 +27,7 @@ func TestThemePanelChangesTheSchemeAndFontSize(t *testing.T) {
 		{ID: "paper", Name: "Paper Light", Custom: true},
 	}}
 	look := &fakeLook{settings: domain.Defaults()}
+	look.settings.Appearance.FollowAppTerminalTheme = false
 	look.settings.Appearance.TerminalFontSize = domain.MaxTerminalFontSize - 1
 	tt := ui.NewTester(NewThemePanel(NewThemesState(catalog), look).View(), 360, 700)
 	tt.SetLocale("en")

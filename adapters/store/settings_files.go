@@ -112,7 +112,26 @@ func (s *PreferencesStore) Load(ctx context.Context) (domainpreferences.Settings
 	}
 	// Unmarshal overlays present fields onto the defaults; absent fields
 	// stay at their defaults.
-	return domainpreferences.Normalize(record.Settings), nil
+	settings = record.Settings
+	if !hasFollowAppTerminalTheme(data) {
+		// A profile written before the terminal could follow the app keeps a
+		// scheme its user picked, as the original's upgrade did; one still on
+		// the default scheme never chose and follows the app.
+		settings.Appearance.FollowAppTerminalTheme = settings.Appearance.TerminalTheme == "" ||
+			settings.Appearance.TerminalTheme == domainpreferences.DefaultTerminalTheme
+	}
+	return domainpreferences.Normalize(settings), nil
+}
+
+// hasFollowAppTerminalTheme reports whether a stored document already says
+// whether the terminal follows the app.
+func hasFollowAppTerminalTheme(data []byte) bool {
+	var probe struct {
+		Appearance struct {
+			FollowAppTerminalTheme *bool `json:"followAppTerminalTheme"`
+		} `json:"appearance"`
+	}
+	return json.Unmarshal(data, &probe) == nil && probe.Appearance.FollowAppTerminalTheme != nil
 }
 
 // Save atomically replaces the document.

@@ -2324,6 +2324,8 @@
   "settingsAccentColor": "Accent color",
   "settingsUIFont": "Interface font",
   "settingsWindowOpacity": "Window opacity",
+  "settingsFollowAppTerminalTheme": "Follow Application Theme",
+  "settingsFollowAppTerminalThemeDescription": "Automatically match the terminal background to the current app theme for a seamless look.",
   "settingsTerminalTheme": "Terminal theme",
   "settingsTerminalFontFamily": "Terminal font family",
   "settingsTerminalFontSize": "Terminal font size",

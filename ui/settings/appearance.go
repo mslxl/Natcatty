@@ -64,7 +64,12 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			}
 		})
 
-		terminalPicker(c, state, themes, m, t, settings)
+		followAppToggle(c, state, m, t, settings)
+		// As the original's, a terminal that follows the app has no scheme of
+		// its own to pick.
+		if !settings.Appearance.FollowAppTerminalTheme {
+			terminalPicker(c, state, themes, m, t, settings)
+		}
 
 		terminalFontPicker(c, state, m, t, settings.Appearance.TerminalFontFamily)
 		size := settings.Appearance.TerminalFontSize
@@ -248,6 +253,20 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			})
 		}
 	})
+}
+
+// followAppToggle is the original's "Follow application theme": the terminal
+// takes the scheme matched to the window's theme, light or dark.
+func followAppToggle(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
+	settings domain.Settings) {
+	follow := settings.Appearance.FollowAppTerminalTheme
+	fieldRow(c, state, m, t, domain.FieldFollowAppTerminalTheme, m.SettingsFollowAppTerminalTheme(), func() {
+		if ui.Checkbox(c, &follow, "").Changed() {
+			state.Update(func(s *domain.Settings) { s.Appearance.FollowAppTerminalTheme = follow })
+			c.Invalidate()
+		}
+	})
+	ui.Text(c, m.SettingsFollowAppTerminalThemeDescription()).FontSize(11).TextColor(t.TextMuted)
 }
 
 // terminalPicker is the scheme list and its import control. Imported schemes
