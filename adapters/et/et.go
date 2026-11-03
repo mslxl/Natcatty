@@ -1,12 +1,17 @@
-// Package et implements the EternalTerminal Session transport. The bundled
-// `et` client performs its own SSH bootstrap and ET handshake; this adapter
-// gives it a private HOME with a generated ssh_config, known-hosts snapshot,
-// key material, and an SSH_ASKPASS helper that answers only the saved password
-// and passphrase prompts.
+// Package et implements the EternalTerminal Session transport in two forms.
 //
-// The binary comes only from adapters/bundle and is verified before every
-// launch. A missing bundle is a typed error; the adapter never runs a system
-// `et`.
+// The bundled implementation runs the `et` client, which performs its own SSH
+// bootstrap and ET handshake; this adapter gives it a private HOME with a
+// generated ssh_config, known-hosts snapshot, key material, and an SSH_ASKPASS
+// helper that answers only the saved password and passphrase prompts. The
+// binary comes only from adapters/bundle and is verified before every launch.
+// A missing bundle is a typed error; the adapter never runs a system `et`.
+//
+// The in-process implementation (InProcessFactory) uses the pure-Go client
+// vendored in adapters/et/internal/etgo. It runs the etterminal bootstrap
+// through a connection.Manager lease and reaches etserver through the same
+// lease's direct-tcpip forwarding, so the ET session id and passkey never
+// leave memory.
 package et
 
 import (
