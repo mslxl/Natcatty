@@ -9,6 +9,7 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	"github.com/mslxl/natcatty/ui/locales"
 	"github.com/mslxl/natcatty/ui/shell/state"
 	"github.com/mslxl/natcatty/ui/titlebar"
 )
@@ -66,6 +67,40 @@ func TestDetachedWindowRendersItsTabAndMovesItBack(t *testing.T) {
 	}
 	if shellState.DetachedTabExists(tabID) {
 		t.Fatal("the detached Tab still exists after moving back")
+	}
+}
+
+// TestDetachedWindowNamesItsTabOnce keeps the original popup's single title:
+// the title bar names the lone Pane, so the Pane draws no header repeating it.
+func TestDetachedWindowNamesItsTabOnce(t *testing.T) {
+	shellState, detached, _ := newDetachedGraph(t)
+	if err := shellState.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	if !shellState.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	tabID := (*detached)[0]
+	info, ok := shellState.DetachedTabInfo(tabID)
+	if !ok {
+		t.Fatal("no detached Tab info")
+	}
+	title := DetachedTitle(locales.In("en"), info)
+
+	tester := ui.NewTester(DetachedView(shellState, tabID), 640, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	count := 0
+	for _, text := range tester.Texts() {
+		if text == title {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%q is shown %d times, want once: %v", title, count, tester.Texts())
+	}
+	if !tester.HasText("terminal-surface") {
+		t.Fatalf("the Pane lost its Session: %v", tester.Texts())
 	}
 }
 

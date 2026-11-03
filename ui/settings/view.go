@@ -11,6 +11,7 @@ import (
 	"github.com/mslxl/natcatty/domain/applock"
 	kb "github.com/mslxl/natcatty/domain/keybindings"
 	domain "github.com/mslxl/natcatty/domain/preferences"
+	"github.com/mslxl/natcatty/ui/icons"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	"github.com/mslxl/natcatty/ui/titlebar"
@@ -90,22 +91,76 @@ func viewWithSettings(config Config, layout *viewLayout) func(*ui.Context) {
 		// The window is frameless: as the original's, its header drags it
 		// and its close button sits at the header row's end.
 		ui.Column(c).Fill().Children(func() {
-			header(c, config, search, m, t)
+			header(c, m, t)
 			settingsBody(c, config, search, panes, hits, m, t)
 		})
 	}
 }
 
+// settingsBody is the original's split under the header: the nav column with
+// the search at its top, and the content pane on a faint muted fill.
 func settingsBody(c *ui.Context, config Config, search *SearchState, panes *viewState, hits []SearchHit,
 	m locales.Messages, t *ui.Theme) {
-	ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(18).Gap(12).Children(func() {
-		if config.Preferences != nil && config.Preferences.ResettingAll() {
-			confirmResetAll(c, config.Preferences, m, t)
-		}
+	ui.Row(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+		sidebar(c, config, search, panes, hits, m, t)
+		ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Background(t.TextMuted.Alpha(0.04)).
+			Children(func() {
+				if config.Preferences != nil && config.Preferences.ResettingAll() {
+					ui.Column(c).FillWidth().Shrink(0).Padding(24, 24, 0, 24).Children(func() {
+						confirmResetAll(c, config.Preferences, m, t)
+					})
+				}
+				body(c, config, search, panes, m, t)
+				if config.Sync != nil && search.Area() == AreaSync {
+					syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
+					syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
+				}
+				if config.MCP != nil && search.Area() == AreaMCP {
+					mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
+				}
+			})
+	})
+}
+
+// header is the Settings window's title bar, as the original's: the title on
+// a row under a 12-high band, the whole of it dragging the window, with a
+// line below. The row leaves the close button its end.
+func header(c *ui.Context, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+titlebar.DialogRoom, 8, 16).
+		AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
+		DragWindow().Children(func() {
+		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.NavSettings()).FontSize(18).FontWeight(600)
+		})
+	})
+}
+
+func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Padding(12, 16).Gap(8).Radius(8).Background(t.Surface).Border(1, t.Danger).Children(func() {
+		ui.Text(c, m.SettingsResetAllTitle()).FontSize(14).FontWeight(600)
+		ui.Text(c, m.SettingsResetAllBody()).FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, m.SettingsResetAllConfirm()).Clicked() {
+				state.ResetAll()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.SettingsCancel()).Clicked() {
+				state.CancelResetAll()
+				c.Invalidate()
+			}
+		})
+	})
+}
+
+// searchField is the original's expanded search: a 36-high input with a
+// search glyph at its start and, while a query is active, a clear glyph at
+// its end. Arrows move the highlighted match and Enter opens it.
+func searchField(c *ui.Context, search *SearchState, hits []SearchHit, m locales.Messages, t *ui.Theme) {
+	ui.Row(c).FillWidth().Shrink(0).Height(36).Children(func() {
 		ui.TextInput(c, search.Query()).
 			Label(m.SettingsSearchPlaceholder()).
 			Placeholder(m.SettingsSearchPlaceholder()).
-			Width(360).
+			FillWidth().Height(36).FontSize(14).Padding(0, 32, 0, 32).
 			OnTextKey(func(k ui.TextKey) bool {
 				switch k.Key {
 				case ui.KeyDown:
@@ -134,117 +189,81 @@ func settingsBody(c *ui.Context, config Config, search *SearchState, panes *view
 				}
 				return false
 			})
+		ui.Box(c).Absolute().Left(10).Top(11).Size(14, 14).TextColor(t.TextMuted).Children(func() {
+			ui.Icon(c, icons.Lucide(icons.Search)).Size(14, 14)
+		})
 		if search.Filtering() {
-			searchResults(c, config, search, hits, m, t)
-			return
-		}
-		body(c, config, search, panes, m, t)
-		if config.Sync != nil && search.Area() == AreaSync {
-			syncActionsPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t, panes.layout)
-			syncConvergentPinnedBar(c, config.Sync, config.Sync.Snapshot(), m, t)
-		}
-		if config.MCP != nil && search.Area() == AreaMCP {
-			mcpApprovalPinnedBar(c, config.MCP, config.MCP.Snapshot(), m, t, panes.layout)
-		}
-	})
-}
-
-// header is the Settings window's title bar, as the original's: the title and
-// the window's actions on a row under a 12-high band, the whole of it dragging
-// the window, with a line below. The row leaves the close button its end.
-func header(c *ui.Context, config Config, search *SearchState, m locales.Messages, t *ui.Theme) {
-	ui.Row(c).Key("title-bar").FillWidth().Shrink(0).Padding(titlebar.CloseTop, 16+titlebar.DialogRoom, 8, 16).
-		AlignItems(ui.Center).Justify(ui.SpaceBetween).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).
-		DragWindow().Children(func() {
-		ui.Row(c).Height(titlebar.CloseSize).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, m.NavSettings()).FontSize(18).FontWeight(600)
-		})
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			if search.Filtering() {
-				if ui.Button(c, m.SettingsSearchClear()).Clicked() {
-					search.Clear()
-					c.Invalidate()
-				}
+			clear := ui.ButtonBase(c).Key("settings-search-clear").Label(m.SettingsSearchClear()).
+				Absolute().Right(6).Top(7).Size(22, 22).Radius(3).TextColor(t.TextMuted)
+			if clear.Hovered() || clear.Pressed() {
+				clear.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
 			}
-			if config.Preferences != nil {
-				if ui.Button(c, m.SettingsResetAll()).Clicked() {
-					config.Preferences.AskResetAll()
-					c.Invalidate()
-				}
-			}
-		})
-	})
-}
-
-func confirmResetAll(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
-	ui.Column(c).Padding(12).Gap(8).Background(t.Surface).Border(1, t.Danger).Children(func() {
-		ui.Text(c, m.SettingsResetAllTitle()).Bold()
-		ui.Text(c, m.SettingsResetAllBody()).FontSize(12).TextColor(t.TextMuted)
-		ui.Row(c).Gap(8).Children(func() {
-			if ui.Button(c, m.SettingsResetAllConfirm()).Clicked() {
-				state.ResetAll()
+			clear.Children(func() { ui.Icon(c, icons.Lucide(icons.X)).Size(14, 14) })
+			if clear.Clicked() {
+				search.Clear()
 				c.Invalidate()
 			}
-			if ui.Button(c, m.SettingsCancel()).Clicked() {
-				state.CancelResetAll()
-				c.Invalidate()
-			}
-		})
+		}
 	})
 }
 
-func searchResults(c *ui.Context, config Config, search *SearchState, hits []SearchHit,
-	m locales.Messages, t *ui.Theme) {
-	if len(hits) == 0 {
-		// The count line would say "No matching settings" for zero too, so
-		// the empty state prints it once.
-		ui.Text(c, m.SettingsSearchNoResults()).FontSize(12).TextColor(t.TextMuted)
-		return
-	}
-	ui.Text(c, m.SettingsSearchResults(len(hits))).FontSize(12).TextColor(t.TextMuted)
-	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).Gap(4).Children(func() {
-			for index, hit := range hits {
-				hit := hit
-				selected := index == search.Selected()
-				label := AreaTitle(m, hit.Area) + " · " + hit.Label
-				button := ui.Button(c, label).FillWidth()
-				if selected {
-					button = button.Background(t.Accent).TextColor(t.AccentText)
+// searchResults is the original's results list under the search field: each
+// match's label over its area in small muted text, the highlighted one on a
+// faint primary fill, in a bordered popover box.
+func searchResults(c *ui.Context, search *SearchState, hits []SearchHit, m locales.Messages, t *ui.Theme) {
+	ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).Children(func() {
+		ui.Column(c).FillWidth().MinWidth(0).Radius(6).Border(1, t.Border).Background(t.Surface).Clip().
+			Children(func() {
+				if len(hits) == 0 {
+					ui.Text(c, m.SettingsSearchNoResults()).FontSize(12).TextColor(t.TextMuted).Padding(12)
+					return
 				}
-				if button.Clicked() {
-					search.SetArea(hit.Area)
-					c.Invalidate()
+				for index, hit := range hits {
+					hit := hit
+					option := ui.ButtonBase(c).Key("settings-hit-"+string(hit.Area)+"-"+hit.Label).
+						Label(hit.Label).FillWidth().MinWidth(0).Padding(8, 12).Justify(ui.Start)
+					switch {
+					case index == search.Selected():
+						option.Background(t.Accent.Alpha(0.15))
+					case option.Hovered() || option.Pressed():
+						option.Background(t.Text.Alpha(0.05))
+					}
+					option.Children(func() {
+						ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+							ui.Text(c, hit.Label).FontSize(14).FontWeight(500).TextColor(t.Text).MinWidth(0)
+							ui.Text(c, AreaTitle(m, hit.Area)).FontSize(11).TextColor(t.TextMuted).MinWidth(0)
+						})
+					})
+					if option.Clicked() {
+						search.SetArea(hit.Area)
+						c.Invalidate()
+					}
 				}
-			}
-		})
+			})
+		ui.Text(c, m.SettingsSearchHint()).FontSize(11).TextColor(t.TextMuted).Padding(6, 4, 0, 4)
 	})
-	ui.Text(c, m.SettingsSearchHint()).FontSize(11).TextColor(t.TextMuted)
 }
 
-// body splits the window into the sidebar and the content area. Both are
-// real, bounded scroll viewports: the row stretches them to the height left
-// under the header and search field, so content taller than that scrolls
-// instead of extending past the window edge.
+// body is the content pane: the selected area's title and description over
+// its sections, in a real, bounded scroll viewport the pane stretches to the
+// height left under the header, so taller content scrolls instead of
+// extending past the window edge.
 func body(c *ui.Context, config Config, search *SearchState, panes *viewState,
 	m locales.Messages, t *ui.Theme) {
-	gutter := scrollbarGutter(t)
-	ui.Row(c).Grow(1).Gap(16).MinWidth(0).Children(func() {
-		sidebar(c, search, panes, m, t)
-		content := ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).
-			PaddingEnd(gutter).TrackScroll(&panes.content)
-		if panes.layout != nil {
-			content = content.Bind(&panes.layout.Content)
-		}
-		content.Children(func() {
-			ui.Column(c).FillWidth().MinWidth(0).Gap(14).Children(func() {
-				area := search.Area()
-				ui.Text(c, AreaTitle(m, area)).FontSize(20).Bold()
+	content := ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).MinWidth(0).TrackScroll(&panes.content)
+	if panes.layout != nil {
+		content = content.Bind(&panes.layout.Content)
+	}
+	content.Children(func() {
+		ui.Column(c).FillWidth().MinWidth(0).Padding(24).Gap(24).Children(func() {
+			area := search.Area()
+			ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
+				ui.Text(c, AreaTitle(m, area)).FontSize(18).FontWeight(600)
 				if description := AreaDescription(m, area); description != "" {
 					ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
 				}
-				areaContent(c, config, area, m, t)
 			})
+			areaContent(c, config, area, m, t)
 		})
 	})
 }
@@ -260,27 +279,25 @@ func scrollbarGutter(t *ui.Theme) float32 {
 	return width + 6
 }
 
-// sidebarWidth is the sidebar's DIP width. 168 DIPs holds every catalog's
-// area names at the default metrics; a platform whose fonts are wider gets
-// the width its longest area name needs instead of an ellipsized label. The
-// scroll gutter, the nav buttons' horizontal padding, and their borders take
-// the rest of a label's box away from its text.
+// sidebarWidth is the nav column's DIP width: the original's 224, or what
+// its longest area name needs on a platform whose fonts are wider, so no
+// label is ellipsized. The column's and the items' padding, the icon and its
+// gap, and the scroll gutter take the rest of the width from the label.
 func sidebarWidth(c *ui.Context, m locales.Messages, t *ui.Theme) float32 {
 	const (
-		baseSidebarWidth = 168
-		// A nav button has a left and a right border outside its padding.
-		sidebarButtonBorders = 2
-		// MeasureText and the button's layout both round fractional DIPs. A
-		// box exactly as wide as the measured text can still clip its last
-		// glyph after the button's own rounding, so leave one DIP of room.
-		sidebarRoundingRoom = 1
+		baseSidebarWidth = 224
+		columnPadding    = 2 * 12
+		itemChrome       = 2*12 + navIconSize + 8
+		// MeasureText and the layout both round fractional DIPs, so leave
+		// one DIP of room for the last glyph.
+		roundingRoom = 1
 	)
 	width := float32(baseSidebarWidth)
-	chrome := scrollbarGutter(t) + 2*t.Space(3.5) + sidebarButtonBorders
+	chrome := columnPadding + itemChrome + scrollbarGutter(t) + roundingRoom
 	for _, area := range Areas() {
 		label := AreaTitle(m, area)
-		if measured, _ := c.MeasureText(0, ui.Span{Text: label, Size: t.FontSize}); measured > 0 {
-			if wanted := measured + chrome + sidebarRoundingRoom; wanted > width {
+		if measured, _ := c.MeasureText(0, ui.Span{Text: label, Size: 14}); measured > 0 {
+			if wanted := measured + chrome; wanted > width {
 				width = wanted
 			}
 		}
@@ -288,27 +305,90 @@ func sidebarWidth(c *ui.Context, m locales.Messages, t *ui.Theme) float32 {
 	return width
 }
 
-// sidebar lists the areas. At 720x480 the nine buttons can exceed the height
-// left by the header, so the list scrolls instead of losing its last entry to
-// the window edge.
-func sidebar(c *ui.Context, search *SearchState, panes *viewState,
+// navIconSize is the size of the nav column's Lucide glyphs, the original's 14.
+const navIconSize = 14
+
+// areaIcon is the glyph the original shows beside each Settings tab.
+func areaIcon(area Area) string {
+	switch area {
+	case AreaAppearance:
+		return icons.Palette
+	case AreaTerminal:
+		return icons.SquareTerminal
+	case AreaLayout:
+		return icons.LayoutGrid
+	case AreaSFTPEditor:
+		return icons.FileText
+	case AreaLogs:
+		return icons.ScrollText
+	case AreaSystem:
+		return icons.HardDrive
+	case AreaSecurity:
+		return icons.Shield
+	case AreaSync:
+		return icons.Cloud
+	case AreaShortcuts:
+		return icons.Keyboard
+	case AreaMCP:
+		return icons.Plug
+	}
+	return icons.Settings
+}
+
+// navItem is one entry of the nav column, as the original's tab trigger: a
+// 14-glyph and the label on a rounded row, muted until hovered or selected.
+func navItem(c *ui.Context, key, icon, label string, active bool, t *ui.Theme) ui.Element {
+	item := ui.ButtonBase(c).Key(key).Label(label).FillWidth().MinWidth(0).Padding(8, 12).Gap(8).
+		Radius(6).Justify(ui.Start).AlignItems(ui.Center).TextColor(t.TextMuted)
+	switch {
+	case active:
+		item.Background(t.Text.Alpha(0.08)).TextColor(t.Text)
+	case item.Hovered() || item.Pressed():
+		item.Background(t.Text.Alpha(0.04)).TextColor(t.Text)
+	}
+	item.Children(func() {
+		ui.Icon(c, icons.Lucide(icon)).Size(navIconSize, navIconSize).Shrink(0)
+		ui.Text(c, label).FontSize(14).SingleLine().MinWidth(0).Shrink(1)
+	})
+	return item
+}
+
+// sidebar is the original's nav column: the search at its top, then the
+// areas, or the matches while a query is active. At 720x480 the entries can
+// exceed the height left by the header, so the list scrolls instead of
+// losing its last entry to the window edge. Resetting every setting, which
+// the original keeps elsewhere, sits at the column's foot.
+func sidebar(c *ui.Context, config Config, search *SearchState, panes *viewState, hits []SearchHit,
 	m locales.Messages, t *ui.Theme) {
-	gutter := scrollbarGutter(t)
-	ui.Scroll(c).Width(sidebarWidth(c, m, t)).Shrink(0).FillHeight().
-		PaddingEnd(gutter).TrackScroll(&panes.sidebar).Children(func() {
-		ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
-			for _, area := range Areas() {
-				area := area
-				button := ui.Button(c, AreaTitle(m, area)).FillWidth()
-				if area == search.Area() {
-					button = button.Background(t.Accent).TextColor(t.AccentText)
+	ui.Column(c).Width(sidebarWidth(c, m, t)).Shrink(0).FillHeight().MinHeight(0).Padding(12).Gap(8).
+		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+		searchField(c, search, hits, m, t)
+		if search.Filtering() {
+			searchResults(c, search, hits, m, t)
+			return
+		}
+		ui.Scroll(c).FillWidth().Grow(1).MinHeight(0).PaddingEnd(scrollbarGutter(t)).
+			TrackScroll(&panes.sidebar).Children(func() {
+			ui.Column(c).FillWidth().MinWidth(0).Gap(4).Children(func() {
+				for _, area := range Areas() {
+					area := area
+					if navItem(c, "settings-nav-"+string(area), areaIcon(area), AreaTitle(m, area),
+						area == search.Area(), t).Clicked() {
+						search.SetArea(area)
+						c.Invalidate()
+					}
 				}
-				if button.Clicked() {
-					search.SetArea(area)
+			})
+		})
+		if config.Preferences != nil {
+			ui.Column(c).FillWidth().Shrink(0).BorderWidth(1, 0, 0, 0).
+				BorderColor(t.Border).Padding(8, scrollbarGutter(t), 0, 0).Children(func() {
+				if navItem(c, "settings-reset-all", icons.RefreshCw, m.SettingsResetAll(), false, t).Clicked() {
+					config.Preferences.AskResetAll()
 					c.Invalidate()
 				}
-			}
-		})
+			})
+		}
 	})
 }
 
@@ -955,7 +1035,7 @@ func notificationToggle(c *ui.Context, state *DesktopState, value bool, label st
 }
 
 func section(c *ui.Context, title, description string, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Background(t.Surface).Children(func() {
+	ui.Column(c).Padding(16).Gap(10).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Text(c, title).FontSize(18).Bold()
 		ui.Text(c, description).FontSize(12).TextColor(t.TextMuted)
 		build()
@@ -965,7 +1045,7 @@ func section(c *ui.Context, title, description string, t *ui.Theme, build func()
 // sectionBody is a section whose title and description the area header
 // already shows.
 func sectionBody(c *ui.Context, t *ui.Theme, build func()) {
-	ui.Column(c).Padding(16).Gap(10).Background(t.Surface).Children(build)
+	ui.Column(c).Padding(16).Gap(10).Radius(8).Background(t.Surface).Border(1, t.Border).Children(build)
 }
 
 func appLockSection(c *ui.Context, lock *AppLockState, m locales.Messages, t *ui.Theme) {
