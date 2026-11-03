@@ -163,6 +163,15 @@ notice to travel with copies:
 - mosh-go source:
   <https://github.com/unixshells/mosh-go/tree/8dca5c67ec8e09f71a4dc8eda9216f2f4ee7ec0f>
 
+**Direct mosh-go adaptation in the in-process client.** The pure-Go mosh
+client under `internal/mosh` adapts the OCB3 implementation from
+`unixshells/mosh-go` at commit `0284bd652aab3dfff5b0b74945c23901d7537b61`
+(tag `v0.5.2`). Its wire framing, protobuf field numbers, fragmentation, and
+SSP behavior were implemented against the mosh project's protocol and source
+code, with mosh-go as a reference. The MIT copyright and permission notice
+travel with the source at [`internal/mosh/NOTICE`](../internal/mosh/NOTICE);
+the MIT terms above apply to the adapted portions.
+
 **Build reproducibility: not established (pending human review).** The release
 workflow uses the floating `stable` Rust toolchain; no `rust-toolchain.toml`,
 rebuild comparison, build attestation, or reproducibility statement exists.
