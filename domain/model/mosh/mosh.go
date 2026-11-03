@@ -11,6 +11,7 @@
 package mosh
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -48,6 +49,17 @@ var (
 	ErrProxyUnsupported = errors.New("mosh: proxy connections are not supported")
 	// ErrHandshake reports that the server never announced MOSH CONNECT.
 	ErrHandshake = errors.New("mosh: no MOSH CONNECT line from mosh-server")
+	// ErrAnnouncement reports a MOSH CONNECT line whose port or key cannot be
+	// used.
+	ErrAnnouncement = errors.New("mosh: malformed MOSH CONNECT announcement")
+	// ErrProtocol reports an authenticated mosh peer that violated the wire
+	// protocol.
+	ErrProtocol = errors.New("mosh: protocol failure")
+	// ErrTimeout reports that mosh-server did not answer on UDP in time.
+	ErrTimeout = errors.New("mosh: timed out waiting for mosh-server")
+	// ErrNetwork reports a local network failure while opening the UDP
+	// channel.
+	ErrNetwork = errors.New("mosh: UDP network failure")
 	// ErrBundleUnavailable reports a missing bundled mosh-client.
 	ErrBundleUnavailable = errors.New("mosh: bundled mosh-client is not available")
 	// ErrChecksumMismatch reports a bundled mosh-client that failed SHA-256
@@ -276,6 +288,7 @@ type Sniffer struct {
 	pending  []byte
 	connect  *Connect
 	moshHost string
+	invalid  bool
 }
 
 // NewSniffer returns a sniffer with no buffered bytes.
@@ -283,6 +296,19 @@ func NewSniffer() *Sniffer { return &Sniffer{} }
 
 // Connected reports whether the announcement has been found.
 func (s *Sniffer) Connected() bool { return s.connect != nil }
+
+// InvalidAnnouncement reports that a MOSH CONNECT marker was seen but its
+// port or key was unusable. Callers use it to return ErrAnnouncement instead
+// of a generic handshake failure.
+func (s *Sniffer) InvalidAnnouncement() bool { return s.invalid }
+
+// noteInvalid records a line that carried the connect marker but whose port
+// or key could not be used.
+func (s *Sniffer) noteInvalid(line string) {
+	if strings.Contains(stripANSI(line), connectMarker) {
+		s.invalid = true
+	}
+}
 
 // Feed consumes one bootstrap chunk and returns the bytes the terminal may
 // show. It returns the announcement exactly once.
@@ -314,6 +340,7 @@ func (s *Sniffer) Feed(chunk []byte) ([]byte, *Connect) {
 			consumed = line.end
 			break
 		}
+		s.noteInvalid(line.text)
 		visible.WriteString(line.text)
 		visible.WriteString(line.newline)
 		consumed = line.end
@@ -359,6 +386,7 @@ func (s *Sniffer) Flush() ([]byte, *Connect) {
 	}
 	parsed, ok := ParseConnectLine(text)
 	if !ok {
+		s.noteInvalid(text)
 		return []byte(text), nil
 	}
 	s.connect = &Connect{Port: parsed.Port, Key: parsed.Key, Host: s.moshHost}
@@ -478,6 +506,31 @@ func ParseConnectLine(line string) (ParsedConnectLine, bool) {
 // token, or the same token padded to 24 with "==".
 func ValidKey(key string) bool {
 	return len(key) == 22 || len(key) == 24 && strings.HasSuffix(key, "==")
+}
+
+// DecodeKey decodes the announcement's base64 key into the 16 AES-128 bytes
+// mosh uses. Callers must zero the returned slice after handing it to the
+// cipher. A malformed key is an announcement error, not a handshake timeout.
+func DecodeKey(key string) ([]byte, error) {
+	if !ValidKey(key) {
+		return nil, fmt.Errorf("%w: key must be 22 or 24 base64 characters", ErrAnnouncement)
+	}
+	var (
+		decoded []byte
+		err     error
+	)
+	if strings.HasSuffix(key, "==") {
+		decoded, err = base64.StdEncoding.DecodeString(key)
+	} else {
+		decoded, err = base64.RawStdEncoding.DecodeString(key)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAnnouncement, err)
+	}
+	if len(decoded) != 16 {
+		return nil, fmt.Errorf("%w: key decodes to %d bytes, want 16", ErrAnnouncement, len(decoded))
+	}
+	return decoded, nil
 }
 
 // ParseIPLine parses the optional `MOSH IP <address>` announcement.

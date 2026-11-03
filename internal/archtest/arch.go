@@ -62,6 +62,13 @@ func checkImport(pkg, imp string) string {
 	case "adapters":
 		switch importedLayer {
 		case "domain", "application", "platform", "adapters":
+		case "internal":
+			// ADR-0015 places the pure-Go mosh protocol core in
+			// internal/mosh, below the Session transport in adapters/mosh.
+			if imported == "internal/mosh" || strings.HasPrefix(imported, "internal/mosh/") {
+				return ""
+			}
+			return "adapters may import only domain, application, platform, adapters, and internal/mosh"
 		default:
 			return "adapters may import only domain, application, platform, and adapters"
 		}
