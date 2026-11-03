@@ -25,9 +25,9 @@ func TestHostTransportImplementationSurvivesRestart(t *testing.T) {
 	host := domainvault.Host{
 		ID: model.HostID("host-1"), Label: "Mosh Box", Hostname: "mosh.example",
 		Port: 22, Username: "me", Protocol: domainvault.ProtocolMosh,
-		AuthMethod: domainvault.HostAuthPassword,
+		AuthMethod:              domainvault.HostAuthPassword,
 		TransportImplementation: transportmodel.InProcess,
-		CreatedAt: when, UpdatedAt: when,
+		CreatedAt:               when, UpdatedAt: when,
 	}
 	if err := first.Save(ctx, host); err != nil {
 		t.Fatalf("Save: %v", err)
