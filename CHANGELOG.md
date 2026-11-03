@@ -9,6 +9,16 @@ do not maintain them by hand.
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored GPL-3.0-or-later distribution compliance: a root `LICENSE` and
+  `NOTICE`, expanded third-party notices (the per-crate copyright and mosh-go
+  gaps are marked for ticket 15), an About & Licenses settings area, a
+  per-release Corresponding Source statement, and a release check that fails
+  when the license, notices, or source offer are missing. The published
+  `v0.1.0` release still needs a human-applied correction documented in
+  `docs/releases/v0.1.0-correction.md`.
+
 ### Changed
 
 - Session restore is opt-in. A fresh profile lands on the Vault and opens no

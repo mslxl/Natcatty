@@ -3178,5 +3178,19 @@
   "windowMinimize": "最小化",
   "windowMaximize": "最大化",
   "windowRestore": "還原",
-  "windowClose": "關閉"
+  "windowClose": "關閉",
+  "settingsAreaAbout": "關於與授權",
+  "settingsAboutDescription": "版本、版權、授權條款文字、對應原始碼與第三方聲明。",
+  "settingsAboutVersion": "版本 {version}",
+  "settingsAboutLicenseTitle": "授權與修改聲明",
+  "settingsAboutLicenseBody": "Natcatty Native 是 Netcatty 的修改版本，依 GNU 通用公共授權條款第 3 版或更新版本散布。本程式不提供任何擔保。",
+  "settingsAboutModificationTitle": "修改聲明",
+  "settingsAboutLicenseTextTitle": "GNU 通用公共授權條款 v3.0 或更新版本",
+  "settingsAboutSourceTitle": "對應原始碼",
+  "settingsAboutSourceBody": "本版本的完整對應原始碼位於下方發行標籤對應的儲存庫。建置說明見 docs/packaging.md。",
+  "settingsAboutOpenSource": "開啟對應原始碼",
+  "settingsAboutNoticesTitle": "第三方聲明",
+  "settingsAboutNoticesBody": "MyGo、libghostty-vt、Go 模組、MoshCatty、EternalTerminal 及其他隨附元件的授權與版權聲明。",
+  "settingsAboutUnavailable": "此安裝缺少法律文件。請從發行產物重新安裝。",
+  "settingsAboutLegalReview": "散布合規性已進行機械檢查，仍有待人工與法律審查。"
 }

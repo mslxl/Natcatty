@@ -3178,5 +3178,19 @@
   "windowMinimize": "Свернуть",
   "windowMaximize": "Развернуть",
   "windowRestore": "Восстановить",
-  "windowClose": "Закрыть"
+  "windowClose": "Закрыть",
+  "settingsAreaAbout": "О программе и лицензии",
+  "settingsAboutDescription": "Версия, авторские права, текст лицензии, соответствующий исходный код и уведомления третьих сторон.",
+  "settingsAboutVersion": "Версия {version}",
+  "settingsAboutLicenseTitle": "Лицензия и уведомление об изменениях",
+  "settingsAboutLicenseBody": "Natcatty Native — изменённая версия Netcatty, распространяемая по Стандартной общественной лицензии GNU, версии 3 или более поздней. Эта программа предоставляется совершенно без гарантий.",
+  "settingsAboutModificationTitle": "Уведомление об изменениях",
+  "settingsAboutLicenseTextTitle": "Стандартная общественная лицензия GNU v3.0 или более поздняя",
+  "settingsAboutSourceTitle": "Соответствующий исходный код",
+  "settingsAboutSourceBody": "Полный соответствующий исходный код этой версии — репозиторий по указанному ниже тегу выпуска. Инструкции по сборке находятся в docs/packaging.md.",
+  "settingsAboutOpenSource": "Открыть соответствующий исходный код",
+  "settingsAboutNoticesTitle": "Уведомления третьих сторон",
+  "settingsAboutNoticesBody": "Лицензии и уведомления об авторских правах MyGo, libghostty-vt, модулей Go, MoshCatty, EternalTerminal и других включённых компонентов.",
+  "settingsAboutUnavailable": "Правовые документы отсутствуют в этой установке. Переустановите из артефакта выпуска.",
+  "settingsAboutLegalReview": "Соответствие требованиям распространения проверяется механически и всё ещё ожидает человеческой и юридической проверки."
 }

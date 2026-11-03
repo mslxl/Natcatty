@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Package legal names the license and notice documents every Natcatty
+// distribution must carry, builds the per-release Corresponding Source offer,
+// and checks a repository checkout or a packaged artifact for them.
+//
+// The checks are mechanical: they prove the documents are present and name the
+// expected components. They are not a legal opinion and do not replace the
+// human and legal review tracked by ticket 19.
+package legal
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+const (
+	// RepositoryURL is the public source repository.
+	RepositoryURL = "https://github.com/mslxl/natcatty"
+	// LicenseFile is the full GPLv3 text carried at the repository root and in
+	// every packaged artifact.
+	LicenseFile = "LICENSE"
+	// NoticeFile is the modification and copyright notice.
+	NoticeFile = "NOTICE"
+	// ThirdPartyNoticesFile is the complete third-party notice document.
+	ThirdPartyNoticesFile = "THIRD-PARTY-NOTICES.md"
+	// SourceOfferFile is the per-release Corresponding Source statement in a
+	// packaged artifact.
+	SourceOfferFile = "SOURCE-OFFER.md"
+)
+
+// SourceTagURL returns the repository URL for a release tag. A development
+// build has no release tag, so it falls back to the repository root instead of
+// pointing at a nonexistent vdev tag.
+func SourceTagURL(version string) string {
+	version = normalizeVersion(version)
+	if version == "" || version == "dev" {
+		return RepositoryURL
+	}
+	return RepositoryURL + "/tree/v" + version
+}
+
+// SourceOffer returns the Markdown Corresponding Source section appended to
+// release notes and shipped as SOURCE-OFFER.md.
+func SourceOffer(version string) string {
+	version = normalizeVersion(version)
+	return fmt.Sprintf(`## Corresponding Source
+
+Natcatty %[1]s is free software distributed under the GNU General Public
+License, version 3 or later (GPL-3.0-or-later). The complete Corresponding
+Source for this release is the repository at the release tag:
+
+- %[2]s
+
+Build instructions are in `+"`docs/packaging.md`"+`. The license text is in
+`+"`LICENSE`"+`, the modification and copyright notice is in `+"`NOTICE`"+`, and the
+third-party components with their sources are in
+`+"`THIRD-PARTY-NOTICES.md`"+`.
+
+Bundled client sources:
+
+- MoshCatty `+"`moshcatty-0.1.8`"+` (mosh-client):
+  <https://github.com/binaricat/MoshCatty/tree/moshcatty-0.1.8>. Upstream mosh:
+  <https://github.com/mobile-shell/mosh>.
+- Netcatty-et-bin `+"`et-bin-6.2.10-1`"+` (et):
+  <https://github.com/binaricat/Netcatty-et-bin/releases/tag/et-bin-6.2.10-1>.
+  Upstream EternalTerminal at `+"`et-v6.2.10`"+`:
+  <https://github.com/MisterTea/EternalTerminal/tree/et-v6.2.10>.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+`, version, SourceTagURL(version))
+}
+
+// SourceOfferDocument returns the standalone SOURCE-OFFER.md document for a
+// packaged artifact.
+func SourceOfferDocument(version string) string {
+	version = normalizeVersion(version)
+	return "# Natcatty " + version + " — Corresponding Source\n\n" + SourceOffer(version)
+}
+
+func normalizeVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
+}
+
+type documentCheck struct {
+	path    string
+	markers []string
+}
+
+func licenseChecks() []documentCheck {
+	return []documentCheck{
+		{LicenseFile, []string{"GNU GENERAL PUBLIC LICENSE", "Version 3, 29 June 2007"}},
+		{NoticeFile, []string{"GPL-3.0-or-later", "modified version"}},
+		{filepath.Join("resources", ThirdPartyNoticesFile), []string{
+			"MyGo", "libghostty-vt", "MoshCatty", "EternalTerminal", "Netcatty",
+		}},
+	}
+}
+
+// CheckRepository verifies the legal documents in a repository checkout and
+// that mygo.json ships LICENSE and NOTICE with every artifact.
+func CheckRepository(root string) error {
+	for _, check := range licenseChecks() {
+		if err := checkDocument(root, check); err != nil {
+			return err
+		}
+	}
+	return checkManifestResources(root)
+}
+
+// CheckPackaged verifies the legal documents in a packaged artifact. The
+// artifact's mygo.json supplies the version the source offer must name.
+func CheckPackaged(root string) error {
+	for _, check := range licenseChecks() {
+		path := check.path
+		if path != filepath.Join("resources", ThirdPartyNoticesFile) {
+			// Packaged artifacts place the notices next to the executable.
+			path = filepath.Base(path)
+		} else {
+			path = ThirdPartyNoticesFile
+		}
+		check.path = path
+		if err := checkDocument(root, check); err != nil {
+			return err
+		}
+	}
+	version, err := manifestVersion(filepath.Join(root, "mygo.json"))
+	if err != nil {
+		return err
+	}
+	if err := checkDocument(root, documentCheck{
+		path:    SourceOfferFile,
+		markers: []string{"Corresponding Source", SourceTagURL(version), "GPL-3.0-or-later"},
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkDocument(root string, check documentCheck) error {
+	path := filepath.Join(root, check.path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("legal document %s: %w", check.path, err)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return fmt.Errorf("legal document %s is empty", check.path)
+	}
+	for _, marker := range check.markers {
+		if !strings.Contains(string(data), marker) {
+			return fmt.Errorf("legal document %s does not contain %q", check.path, marker)
+		}
+	}
+	return nil
+}
+
+func checkManifestResources(root string) error {
+	path := filepath.Join(root, "mygo.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read mygo.json: %w", err)
+	}
+	var manifest struct {
+		Resources []string `json:"resources"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse mygo.json: %w", err)
+	}
+	for _, required := range []string{LicenseFile, NoticeFile} {
+		found := false
+		for _, resource := range manifest.Resources {
+			if filepath.Clean(resource) == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("mygo.json does not ship %s in its resources", required)
+		}
+	}
+	return nil
+}
+
+func manifestVersion(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	if manifest.Version == "" {
+		return "", fmt.Errorf("%s has no version", path)
+	}
+	return manifest.Version, nil
+}

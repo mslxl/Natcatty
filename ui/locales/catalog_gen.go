@@ -22229,3 +22229,147 @@ func WindowClose() string { return In(i18n.Locale()).WindowClose() }
 func (msgs Messages) WindowClose() string {
 	return Catalog.Format(msgs.locale, "windowClose", nil)
 }
+
+// SettingsAreaAbout says "About & Licenses"
+// in the language the app shows.
+func SettingsAreaAbout() string { return In(i18n.Locale()).SettingsAreaAbout() }
+
+// SettingsAreaAbout says "About & Licenses"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaAbout() string {
+	return Catalog.Format(msgs.locale, "settingsAreaAbout", nil)
+}
+
+// SettingsAboutDescription says "Version, copyright, license text, corresponding source, and third-party notices."
+// in the language the app shows.
+func SettingsAboutDescription() string { return In(i18n.Locale()).SettingsAboutDescription() }
+
+// SettingsAboutDescription says "Version, copyright, license text, corresponding source, and third-party notices."
+// in the language of msgs.
+func (msgs Messages) SettingsAboutDescription() string {
+	return Catalog.Format(msgs.locale, "settingsAboutDescription", nil)
+}
+
+// SettingsAboutVersion says "Version {version}"
+// in the language the app shows.
+func SettingsAboutVersion(version string) string {
+	return In(i18n.Locale()).SettingsAboutVersion(version)
+}
+
+// SettingsAboutVersion says "Version {version}"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutVersion(version string) string {
+	return Catalog.Format(msgs.locale, "settingsAboutVersion", map[string]any{"version": version})
+}
+
+// SettingsAboutLicenseTitle says "License and modification notice"
+// in the language the app shows.
+func SettingsAboutLicenseTitle() string { return In(i18n.Locale()).SettingsAboutLicenseTitle() }
+
+// SettingsAboutLicenseTitle says "License and modification notice"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutLicenseTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAboutLicenseTitle", nil)
+}
+
+// SettingsAboutLicenseBody says "Natcatty Native is a modified version of Netcatty, distributed under the GNU General Public License, version 3 or lat…"
+// in the language the app shows.
+func SettingsAboutLicenseBody() string { return In(i18n.Locale()).SettingsAboutLicenseBody() }
+
+// SettingsAboutLicenseBody says "Natcatty Native is a modified version of Netcatty, distributed under the GNU General Public License, version 3 or lat…"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutLicenseBody() string {
+	return Catalog.Format(msgs.locale, "settingsAboutLicenseBody", nil)
+}
+
+// SettingsAboutModificationTitle says "Modification notice"
+// in the language the app shows.
+func SettingsAboutModificationTitle() string {
+	return In(i18n.Locale()).SettingsAboutModificationTitle()
+}
+
+// SettingsAboutModificationTitle says "Modification notice"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutModificationTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAboutModificationTitle", nil)
+}
+
+// SettingsAboutLicenseTextTitle says "GNU General Public License v3.0 or later"
+// in the language the app shows.
+func SettingsAboutLicenseTextTitle() string { return In(i18n.Locale()).SettingsAboutLicenseTextTitle() }
+
+// SettingsAboutLicenseTextTitle says "GNU General Public License v3.0 or later"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutLicenseTextTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAboutLicenseTextTitle", nil)
+}
+
+// SettingsAboutSourceTitle says "Corresponding Source"
+// in the language the app shows.
+func SettingsAboutSourceTitle() string { return In(i18n.Locale()).SettingsAboutSourceTitle() }
+
+// SettingsAboutSourceTitle says "Corresponding Source"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutSourceTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAboutSourceTitle", nil)
+}
+
+// SettingsAboutSourceBody says "The complete corresponding source for this release is the repository at the release tag below. Build instructions are…"
+// in the language the app shows.
+func SettingsAboutSourceBody() string { return In(i18n.Locale()).SettingsAboutSourceBody() }
+
+// SettingsAboutSourceBody says "The complete corresponding source for this release is the repository at the release tag below. Build instructions are…"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutSourceBody() string {
+	return Catalog.Format(msgs.locale, "settingsAboutSourceBody", nil)
+}
+
+// SettingsAboutOpenSource says "Open corresponding source"
+// in the language the app shows.
+func SettingsAboutOpenSource() string { return In(i18n.Locale()).SettingsAboutOpenSource() }
+
+// SettingsAboutOpenSource says "Open corresponding source"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutOpenSource() string {
+	return Catalog.Format(msgs.locale, "settingsAboutOpenSource", nil)
+}
+
+// SettingsAboutNoticesTitle says "Third-party notices"
+// in the language the app shows.
+func SettingsAboutNoticesTitle() string { return In(i18n.Locale()).SettingsAboutNoticesTitle() }
+
+// SettingsAboutNoticesTitle says "Third-party notices"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutNoticesTitle() string {
+	return Catalog.Format(msgs.locale, "settingsAboutNoticesTitle", nil)
+}
+
+// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, MoshCatty, EternalTerminal, and other bundled…"
+// in the language the app shows.
+func SettingsAboutNoticesBody() string { return In(i18n.Locale()).SettingsAboutNoticesBody() }
+
+// SettingsAboutNoticesBody says "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, MoshCatty, EternalTerminal, and other bundled…"
+// in the language of msgs.
+func (msgs Messages) SettingsAboutNoticesBody() string {
+	return Catalog.Format(msgs.locale, "settingsAboutNoticesBody", nil)
+}
+
+// SettingsAboutUnavailable says "The legal documents are missing from this installation. Reinstall from a release artifact."
+// in the language the app shows.
+func SettingsAboutUnavailable() string { return In(i18n.Locale()).SettingsAboutUnavailable() }
+
+// SettingsAboutUnavailable says "The legal documents are missing from this installation. Reinstall from a release artifact."
+// in the language of msgs.
+func (msgs Messages) SettingsAboutUnavailable() string {
+	return Catalog.Format(msgs.locale, "settingsAboutUnavailable", nil)
+}
+
+// SettingsAboutLegalReview says "Distribution compliance is mechanically checked and remains pending human and legal review."
+// in the language the app shows.
+func SettingsAboutLegalReview() string { return In(i18n.Locale()).SettingsAboutLegalReview() }
+
+// SettingsAboutLegalReview says "Distribution compliance is mechanically checked and remains pending human and legal review."
+// in the language of msgs.
+func (msgs Messages) SettingsAboutLegalReview() string {
+	return Catalog.Format(msgs.locale, "settingsAboutLegalReview", nil)
+}

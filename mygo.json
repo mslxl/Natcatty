@@ -3,7 +3,7 @@
   "identifier": "io.github.mslxl.natcatty",
   "version": "0.1.0",
   "out": "build",
-  "resources": ["mygo.json", "CHANGELOG.md"],
+  "resources": ["mygo.json", "CHANGELOG.md", "LICENSE", "NOTICE"],
   "urlSchemes": ["ssh"],
   "i18n": {
     "dir": "ui/locales",

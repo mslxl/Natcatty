@@ -16,6 +16,22 @@ This is the **Native edition** of [Netcatty](https://github.com/binaricat/Netcat
 
 For a stable and reliable version, use the upstream project: [binaricat/Netcatty](https://github.com/binaricat/Netcatty).
 
+## License
+
+Natcatty Native is a modified version of
+[Netcatty](https://github.com/binaricat/Netcatty) and is distributed under the
+**GNU General Public License, version 3 or later** (`GPL-3.0-or-later`). The
+full license text is in [`LICENSE`](LICENSE); the modification notice,
+copyright statement, and corresponding-source offer are in [`NOTICE`](NOTICE).
+Third-party components and their licenses are listed in
+[`resources/THIRD-PARTY-NOTICES.md`](resources/THIRD-PARTY-NOTICES.md).
+
+The upstream project declared `GPL-3.0-or-later` in `package.json` while its
+README said "GPL-3.0" and its `LICENSE` carried the GPLv3 text. This native
+rewrite has no `package.json`; the ambiguity is resolved as
+`GPL-3.0-or-later` in `NOTICE`. This repository's compliance is mechanically
+enforced but remains **pending human and legal review**.
+
 ## Building and release artifacts
 
 The native app is built with MyGo (see [docs/packaging.md](docs/packaging.md)):

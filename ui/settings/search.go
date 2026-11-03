@@ -22,12 +22,14 @@ const (
 	AreaSync       Area = "sync"
 	AreaShortcuts  Area = "shortcuts"
 	AreaMCP        Area = "mcp"
+	AreaAbout      Area = "about"
 )
 
 // Areas returns the sidebar order.
 func Areas() []Area {
 	return []Area{AreaAppearance, AreaTerminal, AreaLayout, AreaSFTPEditor,
-		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts, AreaMCP}
+		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts, AreaMCP,
+		AreaAbout}
 }
 
 // AreaTitle returns the localized area name.
@@ -53,6 +55,8 @@ func AreaTitle(m locales.Messages, area Area) string {
 		return m.SettingsAreaShortcuts()
 	case AreaMCP:
 		return m.SettingsAreaMCP()
+	case AreaAbout:
+		return m.SettingsAreaAbout()
 	default:
 		return ""
 	}
@@ -81,6 +85,8 @@ func AreaDescription(m locales.Messages, area Area) string {
 		return m.SettingsShortcutsDescription()
 	case AreaMCP:
 		return m.SettingsMCPDescription()
+	case AreaAbout:
+		return m.SettingsAboutDescription()
 	default:
 		return ""
 	}
@@ -213,6 +219,11 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaMCP, "", m.SettingsMCPApprovalTitle(), "approval prompt approve deny expiry")
 	add(AreaMCP, "", m.SettingsMCPApprove(), "approve accept")
 	add(AreaMCP, "", m.SettingsMCPDeny(), "deny reject")
+
+	add(AreaAbout, "", m.SettingsAboutLicenseTitle(),
+		"license gpl gnu copyright modification source corresponding third party notices about version")
+	add(AreaAbout, "", m.SettingsAboutSourceTitle(), "source corresponding offer repository tag")
+	add(AreaAbout, "", m.SettingsAboutNoticesTitle(), "third party notices licenses mygo ghostty mosh et")
 
 	add(AreaShortcuts, "", m.SettingsShortcutScheme(), "scheme mac pc disabled")
 	add(AreaShortcuts, "", m.SettingsShortcutResetAll(), "reset all shortcuts")
