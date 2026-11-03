@@ -57,6 +57,9 @@ type transportFactory struct {
 	// closed instead of falling back to a system executable.
 	mosh appsession.Factory
 	et   appsession.Factory
+	// etInProcess is the pure-Go ET transport. It is optional; an in-process
+	// selection without one fails closed with the same typed error as Mosh.
+	etInProcess appsession.Factory
 	// hosts and defaults resolve the persisted implementation choice for
 	// Mosh and EternalTerminal Sessions. They are optional so tests that do
 	// not care about the choice keep the bundled default.
@@ -71,6 +74,13 @@ type transportFactory struct {
 func (f *transportFactory) withClients(mosh, et appsession.Factory) *transportFactory {
 	f.mosh = mosh
 	f.et = et
+	return f
+}
+
+// withInProcessET attaches the pure-Go EternalTerminal factory. It is
+// separate from withClients so the mosh tracer bullet can land independently.
+func (f *transportFactory) withInProcessET(et appsession.Factory) *transportFactory {
+	f.etInProcess = et
 	return f
 }
 
@@ -105,9 +115,9 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.telnet.Open(ctx, spec)
 	case appsession.KindMosh:
-		return f.openSelected(ctx, spec, "Mosh", f.mosh)
+		return f.openSelected(ctx, spec, "Mosh", f.mosh, nil)
 	case appsession.KindET:
-		return f.openSelected(ctx, spec, "EternalTerminal", f.et)
+		return f.openSelected(ctx, spec, "EternalTerminal", f.et, f.etInProcess)
 	default:
 		return f.local.Open(ctx, spec)
 	}
@@ -132,12 +142,12 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 }
 
 // openSelected routes a Mosh or EternalTerminal Session to the persisted
-// implementation choice. The in-process clients do not exist yet (tickets 23
-// and 28), so selecting one fails closed with a typed error instead of
-// silently using the bundled client or pretending to connect. An unknown
-// persisted value fails closed the same way.
+// implementation choice. An in-process selection without an attached client
+// still fails closed with a typed error instead of silently using the bundled
+// client; that is the mosh path until ticket 28 lands. An unknown persisted
+// value fails closed the same way.
 func (f *transportFactory) openSelected(ctx context.Context, spec appsession.StartSpec,
-	label string, bundled appsession.Factory) (appsession.Transport, error) {
+	label string, bundled, inProcess appsession.Factory) (appsession.Transport, error) {
 
 	selected, err := f.selectedImplementation(ctx, spec)
 	if err != nil {
@@ -150,7 +160,10 @@ func (f *transportFactory) openSelected(ctx context.Context, spec appsession.Sta
 		}
 		return bundled.Open(ctx, spec)
 	case transportmodel.InProcess:
-		return nil, fmt.Errorf("%w: in-process %s client", transportmodel.ErrImplementationUnavailable, label)
+		if inProcess == nil {
+			return nil, fmt.Errorf("%w: in-process %s client", transportmodel.ErrImplementationUnavailable, label)
+		}
+		return inProcess.Open(ctx, spec)
 	default:
 		// Resolve rejects unknown values, but keep the factory fail-closed if a
 		// future value reaches here through another caller.

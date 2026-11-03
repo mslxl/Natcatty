@@ -54,6 +54,8 @@ func (f *implementationFactory) Open(_ context.Context, spec appsession.StartSpe
 func newImplementationFactory(hosts fakeImplementationHosts, defaults domainpreferences.Settings) *transportFactory {
 	return newTransportFactory(&factoryLocal{}, nil, &factoryTelnet{}, nil, nil).withClients(
 		&implementationFactory{}, &implementationFactory{},
+	).withInProcessET(
+		&implementationFactory{},
 	).withImplementations(hosts, fakeImplementationDefaults{settings: defaults})
 }
 
@@ -96,6 +98,9 @@ func TestMoshAndETDefaultToTheBundledImplementation(t *testing.T) {
 			if other.calls != 0 {
 				t.Fatalf("the other client factory opened a %s Session", c.kind)
 			}
+			if factory.etInProcess.(*implementationFactory).calls != 0 {
+				t.Fatalf("the in-process ET factory opened a %s Session", c.kind)
+			}
 		})
 	}
 }
@@ -121,24 +126,20 @@ func TestHostOverrideSelectsTheBundledImplementation(t *testing.T) {
 	}
 }
 
-func TestInProcessSelectionFailsClosedWithATypedError(t *testing.T) {
+func TestMoshInProcessSelectionFailsClosedWithATypedError(t *testing.T) {
 	cases := []struct {
 		name   string
-		kind   appsession.Kind
 		host   *domainvault.Host
 		global transportmodel.Implementation
 	}{
-		{"mosh Host override", appsession.KindMosh, &domainvault.Host{
+		{"mosh Host override", &domainvault.Host{
 			ID: "mosh", TransportImplementation: transportmodel.InProcess}, transportmodel.Bundled},
-		{"et Host override", appsession.KindET, &domainvault.Host{
-			ID: "et", TransportImplementation: transportmodel.InProcess}, transportmodel.Bundled},
-		{"mosh global default", appsession.KindMosh, nil, transportmodel.InProcess},
-		{"et global default", appsession.KindET, nil, transportmodel.InProcess},
+		{"mosh global default", nil, transportmodel.InProcess},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
-			spec := appsession.StartSpec{Kind: c.kind}
+			spec := appsession.StartSpec{Kind: appsession.KindMosh}
 			if c.host != nil {
 				hosts.items[c.host.ID] = *c.host
 				spec.HostID = c.host.ID
@@ -149,8 +150,44 @@ func TestInProcessSelectionFailsClosedWithATypedError(t *testing.T) {
 				t.Fatalf("Open error = %v, want ErrImplementationUnavailable", err)
 			}
 			if factory.mosh.(*implementationFactory).calls != 0 ||
-				factory.et.(*implementationFactory).calls != 0 {
-				t.Fatal("the factory silently opened the bundled client for an in-process selection")
+				factory.et.(*implementationFactory).calls != 0 ||
+				factory.etInProcess.(*implementationFactory).calls != 0 {
+				t.Fatal("the factory silently opened a client for an in-process selection")
+			}
+		})
+	}
+}
+
+func TestETInProcessSelectionRoutesToThePureGoClient(t *testing.T) {
+	cases := []struct {
+		name   string
+		host   *domainvault.Host
+		global transportmodel.Implementation
+	}{
+		{"et Host override", &domainvault.Host{
+			ID: "et", TransportImplementation: transportmodel.InProcess}, transportmodel.Bundled},
+		{"et global default", nil, transportmodel.InProcess},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
+			spec := appsession.StartSpec{Kind: appsession.KindET}
+			if c.host != nil {
+				hosts.items[c.host.ID] = *c.host
+				spec.HostID = c.host.ID
+			}
+			factory := newImplementationFactory(hosts, settingsWithImplementation(c.global))
+			transport, err := factory.Open(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			_ = transport.Close()
+			if factory.etInProcess.(*implementationFactory).calls != 1 {
+				t.Fatalf("in-process ET opens = %d, want 1",
+					factory.etInProcess.(*implementationFactory).calls)
+			}
+			if factory.et.(*implementationFactory).calls != 0 {
+				t.Fatal("the bundled ET client opened for an in-process selection")
 			}
 		})
 	}
@@ -183,7 +220,8 @@ func TestUnknownSelectionFailsClosedWithATypedError(t *testing.T) {
 				t.Fatalf("Open error = %v, want ErrUnknownImplementation", err)
 			}
 			if factory.mosh.(*implementationFactory).calls != 0 ||
-				factory.et.(*implementationFactory).calls != 0 {
+				factory.et.(*implementationFactory).calls != 0 ||
+				factory.etInProcess.(*implementationFactory).calls != 0 {
 				t.Fatal("the factory silently fell back for an unknown selection")
 			}
 		})

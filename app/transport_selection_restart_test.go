@@ -16,12 +16,12 @@ import (
 	uisettings "github.com/mslxl/natcatty/ui/settings"
 )
 
-// TestInProcessSelectionFromSettingsSurvivesRestartAndFailsClosed drives the
-// Settings seam and the Session factory together: choosing the in-process
-// client persists through a fresh service over the same preferences file, and
-// a Mosh or ET Session opened from the reloaded document fails closed with the
-// typed unavailable error instead of using the bundled client.
-func TestInProcessSelectionFromSettingsSurvivesRestartAndFailsClosed(t *testing.T) {
+// TestInProcessSelectionFromSettingsSurvivesRestart drives the Settings seam
+// and the Session factory together: choosing the in-process client persists
+// through a fresh service over the same preferences file. ET has a pure-Go
+// client, so it opens through it; Mosh has none yet, so it still fails closed
+// with the typed unavailable error instead of using the bundled client.
+func TestInProcessSelectionFromSettingsSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "preferences.json")
 
@@ -46,14 +46,22 @@ func TestInProcessSelectionFromSettingsSurvivesRestartAndFailsClosed(t *testing.
 
 	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
 	factory := newImplementationFactory(hosts, restarted.Settings())
-	for _, kind := range []appsession.Kind{appsession.KindMosh, appsession.KindET} {
-		_, err := factory.Open(ctx, appsession.StartSpec{Kind: kind})
-		if !errors.Is(err, transportmodel.ErrImplementationUnavailable) {
-			t.Fatalf("%s Open error = %v, want ErrImplementationUnavailable", kind, err)
-		}
+
+	if _, err := factory.Open(ctx, appsession.StartSpec{Kind: appsession.KindMosh}); !errors.Is(err, transportmodel.ErrImplementationUnavailable) {
+		t.Fatalf("Mosh Open error = %v, want ErrImplementationUnavailable", err)
 	}
+	transport, err := factory.Open(ctx, appsession.StartSpec{Kind: appsession.KindET})
+	if err != nil {
+		t.Fatalf("ET Open: %v", err)
+	}
+	_ = transport.Close()
+
 	if factory.mosh.(*implementationFactory).calls != 0 ||
 		factory.et.(*implementationFactory).calls != 0 {
 		t.Fatal("a Session opened with the in-process selection silently used the bundled client")
+	}
+	if factory.etInProcess.(*implementationFactory).calls != 1 {
+		t.Fatalf("in-process ET opens = %d, want 1",
+			factory.etInProcess.(*implementationFactory).calls)
 	}
 }
