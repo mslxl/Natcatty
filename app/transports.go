@@ -43,6 +43,17 @@ func newMoshFactory(manager *appconnection.Manager, routes routeSource, roots []
 	}
 }
 
+// newInProcessMoshFactory builds the pure-Go Mosh transport. It shares the
+// SSH bootstrap, route checks, and Connection Manager with the bundled
+// adapter, but speaks the UDP protocol in-process.
+func newInProcessMoshFactory(manager *appconnection.Manager, routes routeSource) appsession.Factory {
+	return &moshInProcessTransportFactory{
+		inner:   moshadapter.InProcessFactory{},
+		manager: manager,
+		routes:  routes,
+	}
+}
+
 // moshTransportFactory checks the Mosh route restriction before any process or
 // channel starts. Mosh's UDP channel cannot carry a jump chain or a proxy.
 type moshTransportFactory struct {
@@ -52,30 +63,59 @@ type moshTransportFactory struct {
 }
 
 func (f *moshTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
-	if spec.Mosh == nil {
-		return nil, fmt.Errorf("%w: no Mosh configuration", moshmodel.ErrInvalidConfig)
-	}
-	route, err := f.route(ctx, spec.HostID)
+	route, err := moshRoute(ctx, spec, f.manager, f.routes)
 	if err != nil {
 		return nil, err
-	}
-	if err := moshadapter.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
-		return nil, err
-	}
-	if f.manager == nil {
-		return nil, errors.New("app: no SSH connection manager for Mosh")
 	}
 	inner := f.inner
 	inner.Bootstrap = &moshBootstrap{manager: f.manager, route: route}
 	return inner.Open(ctx, spec)
 }
 
-// route resolves the non-secret jump chain and proxy for one Host.
-func (f *moshTransportFactory) route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
-	if f.routes == nil {
+// moshInProcessTransportFactory is the in-process counterpart of
+// moshTransportFactory.
+type moshInProcessTransportFactory struct {
+	inner   moshadapter.InProcessFactory
+	manager *appconnection.Manager
+	routes  routeSource
+}
+
+func (f *moshInProcessTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	route, err := moshRoute(ctx, spec, f.manager, f.routes)
+	if err != nil {
+		return nil, err
+	}
+	inner := f.inner
+	inner.Bootstrap = &moshBootstrap{manager: f.manager, route: route}
+	return inner.Open(ctx, spec)
+}
+
+// moshRoute validates the Mosh configuration and resolves the route
+// restrictions shared by both client implementations.
+func moshRoute(ctx context.Context, spec appsession.StartSpec,
+	manager *appconnection.Manager, routes routeSource) (appconnection.Route, error) {
+
+	if spec.Mosh == nil {
+		return appconnection.Route{}, fmt.Errorf("%w: no Mosh configuration", moshmodel.ErrInvalidConfig)
+	}
+	route, err := resolveMoshRoute(ctx, spec.HostID, routes)
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	if err := moshadapter.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
+		return appconnection.Route{}, err
+	}
+	if manager == nil {
+		return appconnection.Route{}, errors.New("app: no SSH connection manager for Mosh")
+	}
+	return route, nil
+}
+
+func resolveMoshRoute(ctx context.Context, id model.HostID, routes routeSource) (appconnection.Route, error) {
+	if routes == nil {
 		return appconnection.Route{}, nil
 	}
-	return f.routes.Route(ctx, id)
+	return routes.Route(ctx, id)
 }
 
 // moshBootstrap opens the one SSH exec channel that launches mosh-server.

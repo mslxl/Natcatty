@@ -57,9 +57,11 @@ type transportFactory struct {
 	// closed instead of falling back to a system executable.
 	mosh appsession.Factory
 	et   appsession.Factory
-	// etInProcess is the pure-Go ET transport. It is optional; an in-process
-	// selection without one fails closed with the same typed error as Mosh.
-	etInProcess appsession.Factory
+	// moshInProcess and etInProcess are the application-owned clients. They
+	// are optional too; an implementation this build does not supply fails
+	// closed with ErrImplementationUnavailable.
+	moshInProcess appsession.Factory
+	etInProcess   appsession.Factory
 	// hosts and defaults resolve the persisted implementation choice for
 	// Mosh and EternalTerminal Sessions. They are optional so tests that do
 	// not care about the choice keep the bundled default.
@@ -77,11 +79,18 @@ func (f *transportFactory) withClients(mosh, et appsession.Factory) *transportFa
 	return f
 }
 
-// withInProcessET attaches the pure-Go EternalTerminal factory. It is
-// separate from withClients so the mosh tracer bullet can land independently.
-func (f *transportFactory) withInProcessET(et appsession.Factory) *transportFactory {
+// withInProcess attaches the application-owned Mosh and EternalTerminal
+// factories. A nil factory keeps that implementation unavailable.
+func (f *transportFactory) withInProcess(mosh, et appsession.Factory) *transportFactory {
+	f.moshInProcess = mosh
 	f.etInProcess = et
 	return f
+}
+
+// withInProcessET attaches only the pure-Go EternalTerminal factory. It keeps
+// tests that predate the Mosh client concise.
+func (f *transportFactory) withInProcessET(et appsession.Factory) *transportFactory {
+	return f.withInProcess(f.moshInProcess, et)
 }
 
 // withImplementations attaches the persisted global default and the Host
@@ -115,7 +124,7 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.telnet.Open(ctx, spec)
 	case appsession.KindMosh:
-		return f.openSelected(ctx, spec, "Mosh", f.mosh, nil)
+		return f.openSelected(ctx, spec, "Mosh", f.mosh, f.moshInProcess)
 	case appsession.KindET:
 		return f.openSelected(ctx, spec, "EternalTerminal", f.et, f.etInProcess)
 	default:
@@ -142,10 +151,9 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 }
 
 // openSelected routes a Mosh or EternalTerminal Session to the persisted
-// implementation choice. An in-process selection without an attached client
-// still fails closed with a typed error instead of silently using the bundled
-// client; that is the mosh path until ticket 28 lands. An unknown persisted
-// value fails closed the same way.
+// implementation choice. An implementation this build does not supply fails
+// closed with a typed error instead of silently using the other client. An
+// unknown persisted value fails closed the same way.
 func (f *transportFactory) openSelected(ctx context.Context, spec appsession.StartSpec,
 	label string, bundled, inProcess appsession.Factory) (appsession.Transport, error) {
 

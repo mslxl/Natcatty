@@ -1,6 +1,8 @@
 package mosh
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -167,6 +169,92 @@ func TestSnifferPassesThroughAfterConnect(t *testing.T) {
 	if parsed != nil || string(out) != "late" {
 		t.Fatalf("after connect out=%q parsed=%+v", out, parsed)
 	}
+}
+
+func TestDecodeKey(t *testing.T) {
+	want, err := base64.RawStdEncoding.DecodeString(testKey)
+	if err != nil || len(want) != 16 {
+		t.Fatalf("test key decode = %d bytes, %v", len(want), err)
+	}
+	for _, key := range []string{testKey, testKey + "=="} {
+		decoded, err := DecodeKey(key)
+		if err != nil {
+			t.Fatalf("DecodeKey(%q): %v", key, err)
+		}
+		if !bytes.Equal(decoded, want) {
+			t.Fatalf("DecodeKey(%q) = %x, want %x", key, decoded, want)
+		}
+		clear(decoded)
+	}
+
+	for _, key := range []string{
+		"",
+		"short",
+		testKey + "X",
+		testKey + "=",
+		testKey[:21] + "!",
+		testKey[:21] + "=",
+	} {
+		if _, err := DecodeKey(key); !errors.Is(err, ErrAnnouncement) {
+			t.Fatalf("DecodeKey(%q) error = %v, want ErrAnnouncement", key, err)
+		}
+	}
+}
+
+func TestSnifferInvalidAnnouncement(t *testing.T) {
+	t.Run("invalid port", func(t *testing.T) {
+		sniffer := NewSniffer()
+		out, parsed := sniffer.Feed([]byte("MOSH CONNECT 70000 " + testKey + "\r\n"))
+		if parsed != nil {
+			t.Fatalf("parsed an invalid announcement: %+v", parsed)
+		}
+		if !sniffer.InvalidAnnouncement() {
+			t.Fatal("InvalidAnnouncement() = false for an unusable port")
+		}
+		if !strings.Contains(string(out), "MOSH CONNECT") {
+			t.Fatalf("visible = %q, want the unusable line kept", out)
+		}
+	})
+
+	t.Run("invalid key under Flush", func(t *testing.T) {
+		sniffer := NewSniffer()
+		if _, parsed := sniffer.Feed([]byte("MOSH CONNECT 60001 abc")); parsed != nil {
+			t.Fatalf("parsed an invalid key: %+v", parsed)
+		}
+		if sniffer.InvalidAnnouncement() {
+			t.Fatal("marker was reported invalid before the line ended")
+		}
+		visible, parsed := sniffer.Flush()
+		if parsed != nil {
+			t.Fatalf("Flush parsed an invalid key: %+v", parsed)
+		}
+		if !sniffer.InvalidAnnouncement() {
+			t.Fatal("InvalidAnnouncement() = false after an unusable key")
+		}
+		if !strings.Contains(string(visible), "MOSH CONNECT") {
+			t.Fatalf("flush visible = %q, want the unusable line kept", visible)
+		}
+	})
+
+	t.Run("ordinary output stays valid", func(t *testing.T) {
+		sniffer := NewSniffer()
+		if _, parsed := sniffer.Feed([]byte("Welcome to the server\r\n")); parsed != nil {
+			t.Fatalf("parsed ordinary output: %+v", parsed)
+		}
+		if sniffer.InvalidAnnouncement() {
+			t.Fatal("ordinary output was marked invalid")
+		}
+	})
+
+	t.Run("valid announcement stays valid", func(t *testing.T) {
+		sniffer := NewSniffer()
+		if _, parsed := sniffer.Feed([]byte("MOSH CONNECT 60001 " + testKey + "\r\n")); parsed == nil {
+			t.Fatal("valid announcement was not parsed")
+		}
+		if sniffer.InvalidAnnouncement() {
+			t.Fatal("valid announcement was marked invalid")
+		}
+	})
 }
 
 func TestRemoteCommand(t *testing.T) {

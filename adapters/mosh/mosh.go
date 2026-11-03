@@ -156,8 +156,14 @@ func (f Factory) Open(ctx context.Context, spec appsession.StartSpec) (appsessio
 
 // config merges the Session's locale environment into the Mosh configuration.
 func (f Factory) config(spec appsession.StartSpec) moshmodel.Config {
+	return configFromEnvironment(spec, f.baseEnv(spec.Env))
+}
+
+// configFromEnvironment merges a Session's locale environment into its Mosh
+// configuration. Both client implementations use it so the bootstrap command
+// is identical.
+func configFromEnvironment(spec appsession.StartSpec, environment []string) moshmodel.Config {
 	cfg := spec.Mosh.Normalized()
-	environment := f.baseEnv(spec.Env)
 	locales := make(map[string]string)
 	for _, name := range []string{
 		"LANG", "LANGUAGE", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
@@ -231,9 +237,11 @@ type transport struct {
 	finishOnce sync.Once
 }
 
-// handshake reads the bootstrap until the announcement arrives. It returns the
-// parsed announcement or a typed error.
-func (t *transport) handshake(ctx context.Context, stream io.ReadWriteCloser) (moshmodel.Connect, error) {
+// readAnnouncement consumes bootstrap output until the MOSH CONNECT marker
+// appears. Visible bytes are forwarded to queue. invalid reports that a marker
+// appeared but its port or key was unusable. The error is the underlying read
+// or context failure; io.EOF means the channel closed without an announcement.
+func readAnnouncement(ctx context.Context, stream io.ReadWriteCloser, queue *outputQueue) (moshmodel.Connect, bool, error) {
 	sniffer := moshmodel.NewSniffer()
 	buffer := make([]byte, 32<<10)
 	for {
@@ -241,37 +249,47 @@ func (t *transport) handshake(ctx context.Context, stream io.ReadWriteCloser) (m
 		if n > 0 {
 			visible, connect := sniffer.Feed(buffer[:n])
 			if len(visible) > 0 {
-				if err := t.queue.push(visible); err != nil {
-					return moshmodel.Connect{}, err
+				if err := queue.push(visible); err != nil {
+					return moshmodel.Connect{}, sniffer.InvalidAnnouncement(), err
 				}
 			}
 			if connect != nil {
-				return *connect, nil
+				return *connect, sniffer.InvalidAnnouncement(), nil
 			}
 		}
 		if readErr != nil {
 			visible, connect := sniffer.Flush()
 			if len(visible) > 0 {
-				if err := t.queue.push(visible); err != nil {
-					return moshmodel.Connect{}, err
+				if err := queue.push(visible); err != nil {
+					return moshmodel.Connect{}, sniffer.InvalidAnnouncement(), err
 				}
 			}
 			if connect != nil {
-				return *connect, nil
+				return *connect, sniffer.InvalidAnnouncement(), nil
 			}
 			if ctx.Err() != nil {
-				return moshmodel.Connect{}, ctx.Err()
+				return moshmodel.Connect{}, sniffer.InvalidAnnouncement(), ctx.Err()
 			}
-			if errors.Is(readErr, io.EOF) {
-				return moshmodel.Connect{}, mochHandshakeError(nil)
-			}
-			return moshmodel.Connect{}, mochHandshakeError(readErr)
+			return moshmodel.Connect{}, sniffer.InvalidAnnouncement(), readErr
 		}
 	}
 }
 
+// handshake reads the bootstrap until the announcement arrives. It returns the
+// parsed announcement or a typed error.
+func (t *transport) handshake(ctx context.Context, stream io.ReadWriteCloser) (moshmodel.Connect, error) {
+	connect, _, err := readAnnouncement(ctx, stream, t.queue)
+	if err != nil {
+		if ctx.Err() != nil {
+			return moshmodel.Connect{}, ctx.Err()
+		}
+		return moshmodel.Connect{}, mochHandshakeError(err)
+	}
+	return connect, nil
+}
+
 func mochHandshakeError(cause error) error {
-	if cause == nil {
+	if cause == nil || errors.Is(cause, io.EOF) {
 		return fmt.Errorf("%w: the SSH channel closed before mosh-server announced itself", moshmodel.ErrHandshake)
 	}
 	return fmt.Errorf("%w: %v", moshmodel.ErrHandshake, cause)
