@@ -470,8 +470,10 @@ func TestSettingsSearchMatchesChordsAndOverrides(t *testing.T) {
 	}
 
 	// A chord the user replaced no longer reaches the binding. Open SFTP's
-	// PC default is Ctrl+Shift+O; the override above retires it.
-	search.Clear()
+	// PC default is Ctrl+Shift+O; the override above retires it. The
+	// content pane stays visible under a query, as the original's, so leave
+	// the Shortcuts area, whose list names every binding.
+	search.SetArea(AreaAppearance)
 	tester.Frame()
 	tester.Type("Ctrl+Shift+O")
 	tester.Frame()
