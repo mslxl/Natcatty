@@ -192,9 +192,9 @@ applicable), 0BSD, Zlib, Unicode-3.0, and Apache-2.0 WITH LLVM-exception.
 | `hex` | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex | Copyright (c) 2013-2014 The Rust Project Developers.; Copyright (c) 2015-2020 The rust-hex Developers (LICENSE-MIT) |
 | `inout` | 0.1.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils | Copyright (c) 2022 The RustCrypto Project Developers; Copyright (c) 2022 Artyom Pavlov (LICENSE-MIT) |
 | `libc` | 0.2.186 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc | Copyright (c) The Rust Project Developers (LICENSE-MIT) |
-| `miniz_oxide` | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide | Copyright 2013-2014 RAD Game Tools and Valve Software; Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC; Copyright (c) 2017 Frommi; Copyright (c) 2017-2024 oyvindln (LICENSE-MIT) |
+| `miniz_oxide` | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide | Copyright 2013-2014 RAD Game Tools and Valve Software; Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC; Copyright (c) 2017 Frommi; Copyright (c) 2017-2024 oyvindln (LICENSE-MIT.md) |
 | `once_cell` | 1.21.4 | MIT OR Apache-2.0 | https://github.com/matklad/once_cell | Authors field: Aleksey Kladov <aleksey.kladov@gmail.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
-| `ppv-lite86` | 0.2.21 | MIT OR Apache-2.0 | https://github.com/cryptocorrosion/cryptocorrosion | Copyright 2019 The CryptoCorrosion Contributors (LICENSE-MIT) |
+| `ppv-lite86` | 0.2.21 | MIT OR Apache-2.0 | https://github.com/cryptocorrosion/cryptocorrosion | Copyright (c) 2019 The CryptoCorrosion Contributors (LICENSE-MIT) |
 | `proc-macro2` | 1.0.106 | MIT OR Apache-2.0 | https://github.com/dtolnay/proc-macro2 | Authors field: David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
 | `quinn-udp` | 0.5.14 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn | Copyright (c) 2018 The quinn Developers (LICENSE-MIT) |
 | `quote` | 1.0.46 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote | Authors field: David Tolnay <dtolnay@gmail.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
@@ -206,7 +206,7 @@ applicable), 0BSD, Zlib, Unicode-3.0, and Apache-2.0 WITH LLVM-exception.
 | `syn` | 2.0.118 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn | Authors field: David Tolnay <dtolnay@gmail.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
 | `thiserror` | 2.0.18 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror | Authors field: David Tolnay <dtolnay@gmail.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
 | `thiserror-impl` | 2.0.18 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror | Authors field: David Tolnay <dtolnay@gmail.com>; the shipped LICENSE-MIT carries no copyright line (Cargo.toml package.authors) |
-| `typenum` | 1.20.1 | MIT OR Apache-2.0 | https://github.com/paholg/typenum | Copyright 2014 Paho Lurie-Gregg (LICENSE) |
+| `typenum` | 1.20.1 | MIT OR Apache-2.0 | https://github.com/paholg/typenum | Copyright (c) 2014 Paho Lurie-Gregg (LICENSE-MIT) |
 | `unicode-ident` | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident | Copyright © 1991-2023 Unicode, Inc. (Unicode data); authors field: David Tolnay (LICENSE-UNICODE; Cargo.toml package.authors) |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-width | Copyright (c) 2015 The Rust Project Developers (LICENSE-MIT) |
 | `version_check` | 0.9.5 | MIT/Apache-2.0 | https://github.com/SergioBenitez/version_check | Copyright (c) 2017-2018 Sergio Benitez (LICENSE-MIT) |
