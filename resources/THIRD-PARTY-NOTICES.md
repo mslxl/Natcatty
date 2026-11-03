@@ -84,11 +84,16 @@ each module's own `LICENSE` file.
 | `golang.org/x/image` | v0.46.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/sys` | v0.49.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
 | `golang.org/x/text` | v0.43.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | Copyright (c) 2018 The Go Authors. All rights reserved. |
 | `gorm.io/gorm` | v1.31.1 | MIT | Copyright (c) 2013-present Jinzhu |
 | `modernc.org/libc` | v1.22.5 | BSD-3-Clause | Copyright (c) 2017 The Libc Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved. |
 | `modernc.org/mathutil` | v1.5.0 | BSD-3-Clause | Copyright (c) 2014 The mathutil Authors. All rights reserved.; bundled mersenne code Copyright (c) 2014 The mersenne Authors. All rights reserved. |
 | `modernc.org/memory` | v1.5.0 | BSD-3-Clause | Copyright (c) 2017 The Memory Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved.; mmap-go portion Copyright (c) 2011, Evan Shaw <edsrzf@gmail.com> |
 | `modernc.org/sqlite` | v1.23.1 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
+
+`github.com/google/go-cmp` appears in `go.sum` only because the protobuf
+module's own tests import it; no Natcatty package imports it and it is not
+linked into the distribution.
 
 Additional third-party portions embedded in those modules:
 
@@ -258,6 +263,32 @@ Additional Rust dependency notices:
   the binary
 - Packaged binaries: `resources/et/<target>/et` (and `et.exe` on Windows)
 - Provenance and build notes: `et/BUILD-PROVENANCE.json`, `et/README.md`
+
+## EternalTerminal pure-Go client (vendored et-go)
+
+- Component: the pure-Go EternalTerminal client forked from
+  [`tphakala/et-go`](https://github.com/tphakala/et-go)
+- Upstream commit: `bc33dd76b558418bc1079ba27c8c477b8145eea5`
+  (`ci: bump golangci-lint to v2.15.0`)
+- License: Apache License 2.0
+- Copyright: Copyright 2026 Tomi P. Hakala
+- Vendored path: `adapters/et/internal/etgo`
+- Local documents: `adapters/et/internal/etgo/LICENSE`,
+  `adapters/et/internal/etgo/NOTICE`, and
+  `adapters/et/internal/etgo/PROVENANCE.md`. The provenance file lists every
+  copied package and each modification from upstream.
+- Modifications: Go import paths rewritten to this module, Apache-2.0 SPDX
+  headers added, the console package reduced to the portable `Size` type, and
+  the upstream subprocess SSH bootstrap replaced by a command builder that
+  runs `etterminal` through `connection.Manager`. The protocol, wire, seal,
+  etcp, and session packages keep upstream behavior; see `PROVENANCE.md`.
+- The protocol buffer definitions under `protocol/proto` are copied from
+  [EternalTerminal](https://github.com/MisterTea/EternalTerminal) at commit
+  `6f53869473a16407b59f1f3382d291ab97b4f64f`.
+  Copyright Jason Gauci and contributors, Apache License 2.0
+- Full text: [Apache License 2.0](#apache-license-20)
+- **Pending human/legal review:** this attribution follows the vendored
+  tree's `PROVENANCE.md`; it has not been independently reviewed.
 
 ## Platform components that are not distributed
 

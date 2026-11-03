@@ -10,8 +10,9 @@ Terminal protocol.
   are copied into this directory unchanged.
 - Upstream copyright: Copyright 2026 Tomi P. Hakala.
 - The protocol buffer definitions under `protocol/proto` are copied from
-  [Eternal Terminal](https://github.com/MisterTea/EternalTerminal), Copyright
-  Jason Gauci and contributors, Apache License 2.0.
+  [Eternal Terminal](https://github.com/MisterTea/EternalTerminal) at commit
+  `6f53869473a16407b59f1f3382d291ab97b4f64f`, Copyright Jason Gauci and
+  contributors, Apache License 2.0.
 
 ## Copied packages
 

@@ -409,6 +409,54 @@ func TestThirdPartyNoticesNameEveryGoModule(t *testing.T) {
 	}
 }
 
+// TestThirdPartyNoticesAttributeVendoredETGoAndProtobuf ties the app-level
+// notices to the vendored tree's own provenance: a future provenance update
+// cannot leave the distributed notice naming a different commit, copyright
+// holder, or set of local license documents.
+func TestThirdPartyNoticesAttributeVendoredETGoAndProtobuf(t *testing.T) {
+	root := filepath.Join("..", "..")
+	notices, err := os.ReadFile(filepath.Join(root, "resources", ThirdPartyNoticesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendored := filepath.Join(root, "adapters", "et", "internal", "etgo")
+	provenance, err := os.ReadFile(filepath.Join(vendored, "PROVENANCE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		etGoCommit     = "bc33dd76b558418bc1079ba27c8c477b8145eea5"
+		etGoCopyright  = "Copyright 2026 Tomi P. Hakala"
+		protoCommit    = "6f53869473a16407b59f1f3382d291ab97b4f64f"
+		protobufNotice = "Copyright (c) 2018 The Go Authors. All rights reserved."
+	)
+	for _, want := range []string{etGoCommit, etGoCopyright, protoCommit} {
+		if !strings.Contains(string(provenance), want) {
+			t.Errorf("adapters/et/internal/etgo/PROVENANCE.md does not contain %q", want)
+		}
+	}
+	for _, want := range []string{
+		"tphakala/et-go",
+		etGoCommit,
+		etGoCopyright,
+		protoCommit,
+		"Jason Gauci and contributors",
+		"adapters/et/internal/etgo",
+		"google.golang.org/protobuf",
+		protobufNotice,
+	} {
+		if !strings.Contains(string(notices), want) {
+			t.Errorf("%s does not contain %q", ThirdPartyNoticesFile, want)
+		}
+	}
+	for _, name := range []string{"LICENSE", "NOTICE", "PROVENANCE.md"} {
+		if _, err := os.Stat(filepath.Join(vendored, name)); err != nil {
+			t.Errorf("vendored et-go document %s: %v", name, err)
+		}
+	}
+}
+
 func requiredModules(goMod string) []string {
 	var modules []string
 	inRequire := false
