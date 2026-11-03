@@ -15,12 +15,15 @@ configuration; `go tool mygo build` reads it directly.
 
 Every artifact copies the `resources/` tree next to the executable (inside
 `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
-`CHANGELOG.md`, the ET and mosh metadata and licenses, the platform transport
-clients fetched for the build, `icon.png`, and the `mygo.json` release
-manifest. `CHANGELOG.md` ships so the packaged application's ticket 60
-self-test can generate release notes from the file it was built with. The five
-locale catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the
-executable with `go:embed`; they are not loose files.
+`LICENSE`, `NOTICE`, `SOURCE-OFFER.md`, `CHANGELOG.md`, the ET and mosh
+metadata and licenses, the platform transport clients fetched for the build,
+`icon.png`, and the `mygo.json` release manifest. `CHANGELOG.md` ships so the
+packaged application's ticket 60 self-test can generate release notes from the
+file it was built with. `LICENSE`, `NOTICE`, and the third-party notices are
+also read by the in-app **Settings → About & Licenses** area. The five locale
+catalogs (`en`, `es`, `ru`, `zh-CN`, `zh-TW`) are compiled into the executable
+with `go:embed`; they are not loose files. `SOURCE-OFFER.md` is generated for
+the release version; it is not committed.
 
 ## Building
 
@@ -53,27 +56,35 @@ from the ephemeral workspace so each package carries only runnable clients.
 tag or on a pushed `v*` tag. A pushed tag publishes a GitHub release; a
 `workflow_dispatch` run validates and builds only, as a dry run.
 
-1. **validate** checks the Go release tooling tests (including the changelog
-   parser and release-note generator), runs the parity release gate
+1. **validate** checks the Go release tooling tests (including the legal
+   checks, changelog parser, and release-note generator), runs
+   `releasecheck check-legal -dir . -repository`, runs the parity release gate
    (`go run ./internal/tools/paritygen -release`), requires the tag to be
    strict SemVer (`vMAJOR.MINOR.PATCH[-pre]`) exactly matching `mygo.json`
    `version`, rejects signing/notarization/update configuration, refuses
    updater or signing environment variables, and generates `RELEASE_NOTES.md`
-   from `CHANGELOG.md` for that version and uploads it as the `release-notes`
-   workflow artifact. A missing changelog entry, a duplicate version, or an
-   empty section fails validation.
+   and `SOURCE-OFFER.md` from `CHANGELOG.md` for that version. It requires the
+   notes and the standalone offer to contain the `## Corresponding Source`
+   section and the tag URL, and uploads both as workflow artifacts. A missing
+   changelog entry, a duplicate version, an empty section, or a missing legal
+   document fails validation.
 2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
-   builds with MyGo, and verifies the artifact itself:
+   writes `resources/SOURCE-OFFER.md` for the validated version, builds with
+   MyGo, and verifies the artifact itself. Every platform runs
+   `releasecheck check-legal` against the packaged resources, so a missing
+   `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, or `SOURCE-OFFER.md` fails
+   the build:
    - macOS: `hdiutil verify`, mounts the DMG, checks `Info.plist`, the version,
-     the resources (including `CHANGELOG.md`), the embedded catalogs, and
-     `codesign -dv` (ad hoc, no `Authority`).
+     the resources (including `CHANGELOG.md` and the legal documents), the
+     embedded catalogs, and `codesign -dv` (ad hoc, no `Authority`).
    - Windows: `7z l` must identify the NSIS installer and list the app and
-     resources (including `CHANGELOG.md`); it is extracted, the embedded
-     catalogs are checked, and `Get-AuthenticodeSignature` must report
-     `NotSigned`.
+     resources (including `CHANGELOG.md` and the legal documents); it is
+     extracted, the legal documents and embedded catalogs are checked, and
+     `Get-AuthenticodeSignature` must report `NotSigned`.
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
-     (including `CHANGELOG.md`), and platform transport clients; the extracted
-     executable must embed all five catalogs.
+     (including `CHANGELOG.md` and the legal documents), and platform transport
+     clients; the extracted `.deb` and tarball pass `check-legal`, and the
+     extracted executable must embed all five catalogs.
    Every job also runs `releasecheck assert-no-updates`, then writes and
    verifies a checksum manifest for its own artifacts.
 3. **checksums** downloads the platform artifacts, re-verifies each one after
@@ -99,7 +110,9 @@ tag or on a pushed `v*` tag. A pushed tag publishes a GitHub release; a
 
 A tag push creates a GitHub release for that tag. Its body is the generated
 `RELEASE_NOTES.md`, so the notes come from `CHANGELOG.md` and are never written
-by hand. The assets are the seven installers and the checksum manifest:
+by hand; the body always ends with the generated `## Corresponding Source`
+statement for the tag. The assets are the seven installers and the checksum
+manifest:
 
 - `Natcatty.<version>.dmg` (macOS universal)
 - `Natcatty.Setup.<version>.amd64.exe` (Windows amd64)
@@ -112,7 +125,11 @@ by hand. The assets are the seven installers and the checksum manifest:
 
 GitHub replaces every space in a release-asset filename with a dot, which is
 why the published names above differ from the in-package names in the
-Artifacts table.
+Artifacts table. The license, modification notice, complete third-party
+notices, and corresponding-source offer are carried inside each installer next
+to the executable; the release body carries the source offer for the tag. The
+workflow asserts the offer is in the notes and in every extracted package
+before publishing.
 
 The release stays unsigned apart from MyGo's ad hoc macOS signature and carries
 no notarization or update metadata; publishing it does not relax any of the
@@ -123,9 +140,19 @@ rules live in `internal/release`. Run it locally with:
 
 ```sh
 go run ./internal/tools/releasecheck validate-tag -tag v0.1.0 -manifest mygo.json
+go run ./internal/tools/releasecheck check-legal -dir . -repository
 go run ./internal/tools/releasecheck generate-sums -dir dist
 go run ./internal/tools/releasecheck verify-sums -dir dist
 ```
+
+`check-legal -dir . -repository` requires `LICENSE`, `NOTICE`,
+`resources/THIRD-PARTY-NOTICES.md`, and a `mygo.json` resources list that ships
+`LICENSE` and `NOTICE`. Without `-repository` it checks a packaged artifact
+instead and requires
+`LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, and `SOURCE-OFFER.md` next to the
+executable, and requires the offer to name the version in the packaged
+`mygo.json`. The check is mechanical; it does not replace human or legal
+review.
 
 The aggregate manifest uses names relative to the collected artifact
 directory, so verify it from that directory.
@@ -138,17 +165,21 @@ Release notes are generated from it, never written by hand, with the library in
 `internal/tools/releasenotes`:
 
 ```sh
-go run ./internal/tools/releasenotes -version 0.1.0 -out RELEASE_NOTES.md
+go run ./internal/tools/releasenotes -version 0.1.0 -out RELEASE_NOTES.md \
+  -source-offer-out SOURCE-OFFER.md
 ```
 
 The tool reads the version section from `CHANGELOG.md` (`-changelog` overrides
 the default), accepts `v`-prefixed tags, and fails when the version has no
 section, appears twice, or has an empty body. The output is deterministic for
 the same changelog and version: the title is `# Natcatty <version>`, then the
-release date, then the section body. The release workflow writes
-`RELEASE_NOTES.md` for the validated manifest version, uploads it beside the
-build artifacts, and uses it as the body of the GitHub release that a tag push
-publishes.
+release date, then the section body. Every generated body ends with a
+`## Corresponding Source` section naming the GPL-3.0-or-later license, the
+repository URL at the release tag, the bundled component sources, and the
+warranty disclaimer. `-source-offer-out` writes the same section as a standalone
+`SOURCE-OFFER.md` for the packaged artifact. The release workflow writes both
+files for the validated manifest version, uploads them, and uses the notes as
+the body of the GitHub release that a tag push publishes.
 
 ## Signing, notarization, and updates
 

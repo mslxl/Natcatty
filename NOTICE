@@ -1,0 +1,72 @@
+# Natcatty modification notice and licensing statement
+
+This repository is a fork of [Netcatty](https://github.com/binaricat/Netcatty),
+which is licensed under the GNU General Public License, version 3 or later
+(GPL-3.0-or-later).
+
+This is a **modified version** of Netcatty. It was forked on 2026-10-18. On
+2026-10-19 the original Electron/TypeScript application tree was removed and
+the product was rewritten as a native Go application built with MyGo. The
+rewrite ports or reproduces code, data catalogs, locale messages, appearance
+presets, terminal themes, and product identity from the upstream work; it is
+not a clean-room implementation. This notice covers modifications made through
+2026-11-04.
+
+## License
+
+This work as a whole is distributed under **GPL-3.0-or-later**: you may
+redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+The full GNU GPL version 3 text is in [`LICENSE`](LICENSE). The licenses and
+copyright notices of the bundled third-party components are in
+[`resources/THIRD-PARTY-NOTICES.md`](resources/THIRD-PARTY-NOTICES.md).
+
+## Copyright
+
+Copyright in the upstream Netcatty work remains with its authors and
+contributors. Copyright in this fork's modifications remains with the
+respective contributors.
+
+Upstream package metadata at the fork point names `binaricat` as the package
+author and declares `"license": "GPL-3.0-or-later"`. No contributor copyright
+assignment or CLA was found. The exact copyright-holder line for this fork is
+pending human and legal review; it is not asserted here beyond the statements
+above.
+
+## Corresponding source
+
+The complete Corresponding Source for a release is this repository at the
+release tag, for example:
+
+- `v0.1.0`: <https://github.com/mslxl/natcatty/tree/v0.1.0>
+- general form: `https://github.com/mslxl/natcatty/tree/v<MAJOR>.<MINOR>.<PATCH>`
+
+Build instructions are in [`docs/packaging.md`](docs/packaging.md). The bundled
+`mosh-client` and `et` clients and their sources are identified in
+[`resources/THIRD-PARTY-NOTICES.md`](resources/THIRD-PARTY-NOTICES.md).
+
+## No warranty
+
+This program is distributed in the hope that it will be useful, but **WITHOUT
+ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+## License reconciliation
+
+The upstream tree was internally inconsistent: its `LICENSE` file contained the
+GNU GPL version 3 text, its `package.json` declared `GPL-3.0-or-later`, and its
+`README.md` said "GPL-3.0". The native rewrite has no `package.json` because it
+ships no Node.js toolchain, and its `README.md` previously had no license
+section.
+
+This fork resolves the ambiguity as **GPL-3.0-or-later**, matching the upstream
+package metadata and the "or later" option. `LICENSE` contains the GPLv3 text;
+this notice states the "or later" grant and the modification history.
+
+## Legal review
+
+This notice is repository engineering work, not legal advice. Distribution
+compliance, the derivative-work analysis, and the copyright-holder line remain
+subject to human and legal review.

@@ -33,6 +33,9 @@ type Config struct {
 	Search       *SearchState
 	Sync         *SyncState
 	MCP          *MCPState
+	// Licenses is the About and Licenses area: the GPLv3 Appropriate Legal
+	// Notices surface.
+	Licenses *LicensesState
 }
 
 // viewState owns the Settings window's scroll positions for as long as the
@@ -331,6 +334,8 @@ func areaIcon(area Area) string {
 		return icons.Keyboard
 	case AreaMCP:
 		return icons.Plug
+	case AreaAbout:
+		return icons.Info
 	}
 	return icons.Settings
 }
@@ -421,6 +426,8 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 		shortcutsArea(c, config.Shortcuts, m, t)
 	case AreaMCP:
 		mcpArea(c, config.MCP, m, t)
+	case AreaAbout:
+		licensesArea(c, config.Licenses, m, t)
 	}
 }
 

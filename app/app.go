@@ -117,6 +117,7 @@ func run(afterReady func(hostWindow)) error {
 	var preferenceService *apppreferences.Service
 	var themeService *appthemes.Service
 	var themesState *settings.ThemesState
+	var licensesState *settings.LicensesState
 	var currentTerminalTheme func() domaintheme.TerminalTheme
 	var keybindingService *appkeybindings.Service
 	var transferState *transferstate.State
@@ -1081,6 +1082,12 @@ func run(afterReady func(hostWindow)) error {
 		}
 	})
 
+	// The About and Licenses area reads the GPL text, the modification notice,
+	// and the third-party notices that ship beside the executable. The source
+	// URL names the exact release tag's Corresponding Source.
+	licensesState = settings.NewLicensesState(loadLegalDocuments(version),
+		settings.WithLicensesSourceOpener(mygo.Shell.OpenExternal))
+
 	// Every window is created through this manager, which wraps its content in
 	// the one App Lock gate and owns close/exit intent.
 	windows = newWindowManager(
@@ -1100,6 +1107,7 @@ func run(afterReady func(hostWindow)) error {
 				Search:       searchState,
 				Sync:         syncState,
 				MCP:          mcpSettingsState,
+				Licenses:     licensesState,
 			})
 		},
 		func() string { return mygo.App.Locale() },

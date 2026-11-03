@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mslxl/natcatty/internal/legal"
 	"github.com/mslxl/natcatty/internal/release"
 	"github.com/mslxl/natcatty/internal/releasenotes"
 )
@@ -35,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	version := flags.String("version", "", "release version, with or without a leading v")
 	changelogPath := flags.String("changelog", "CHANGELOG.md", "Keep a Changelog file")
 	outPath := flags.String("out", "", "output path; empty writes to stdout")
+	sourceOfferPath := flags.String("source-offer-out", "",
+		"write the Corresponding Source document to this path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -53,19 +56,36 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if *sourceOfferPath != "" {
+		if err := writeFile(*sourceOfferPath, []byte(legal.SourceOfferDocument(normalized))); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "wrote the corresponding-source offer for %s to %s\n",
+			normalized, *sourceOfferPath)
+	}
 	if *outPath == "" {
+		if *sourceOfferPath != "" {
+			return nil
+		}
 		_, err = stdout.Write(notes)
 		return err
 	}
-	if dir := filepath.Dir(*outPath); dir != "." {
+	if err := writeFile(*outPath, notes); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote release notes for %s to %s\n", normalized, *outPath)
+	return nil
+}
+
+func writeFile(path string, data []byte) error {
+	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(*outPath, notes, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", *outPath, err)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(stdout, "wrote release notes for %s to %s\n", normalized, *outPath)
 	return nil
 }
 

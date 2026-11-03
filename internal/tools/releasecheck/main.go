@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mslxl/natcatty/internal/legal"
 	"github.com/mslxl/natcatty/internal/release"
 )
 
@@ -44,6 +45,8 @@ func run(args []string) error {
 		return assertNoUpdatesCommand(rest)
 	case "check-binary":
 		return checkBinaryCommand(rest)
+	case "check-legal":
+		return checkLegalCommand(rest)
 	case "help", "-h", "--help":
 		return usage()
 	default:
@@ -69,6 +72,7 @@ commands:
   classify          -dir DIR
   assert-no-updates [-dir DIR] [-manifest mygo.json]
   check-binary      -binary FILE [-catalog-dir ui/locales]
+  check-legal       -dir DIR [-repository]
 `
 
 func newFlagSet(name string) *flag.FlagSet {
@@ -270,5 +274,36 @@ func checkBinaryCommand(args []string) error {
 		return err
 	}
 	fmt.Printf("%s embeds all %d catalogs\n", *binaryPath, len(CatalogTags))
+	return nil
+}
+
+// checkLegalCommand proves a repository checkout or a packaged artifact
+// carries the license, the modification notice, the complete third-party
+// notices, and (for a package) the per-release Corresponding Source offer
+// naming the version in its manifest.
+func checkLegalCommand(args []string) error {
+	flags := newFlagSet("check-legal")
+	dir := flags.String("dir", "", "root of a repository checkout or packaged artifact")
+	repository := flags.Bool("repository", false,
+		"check a repository checkout instead of a packaged artifact")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" {
+		return fmt.Errorf("check-legal needs -dir")
+	}
+	if *repository {
+		if err := legal.CheckRepository(*dir); err != nil {
+			return err
+		}
+		fmt.Printf("%s carries LICENSE, NOTICE, resources/%s, and ships LICENSE and NOTICE\n",
+			*dir, legal.ThirdPartyNoticesFile)
+		return nil
+	}
+	if err := legal.CheckPackaged(*dir); err != nil {
+		return err
+	}
+	fmt.Printf("%s carries LICENSE, NOTICE, %s, and %s\n",
+		*dir, legal.ThirdPartyNoticesFile, legal.SourceOfferFile)
 	return nil
 }

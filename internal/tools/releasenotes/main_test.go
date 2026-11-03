@@ -49,7 +49,10 @@ func TestGenerateWritesReleaseNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read notes: %v", err)
 	}
-	for _, want := range []string{"# Natcatty 1.2.3", "Released 2026-10-28.", "- The shipped feature."} {
+	for _, want := range []string{
+		"# Natcatty 1.2.3", "Released 2026-10-28.", "- The shipped feature.",
+		"## Corresponding Source", "https://github.com/mslxl/natcatty/tree/v1.2.3",
+	} {
 		if !strings.Contains(string(notes), want) {
 			t.Errorf("notes missing %q:\n%s", want, notes)
 		}
@@ -69,6 +72,34 @@ func TestGenerateToStdout(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	if !strings.HasPrefix(stdout.String(), "# Natcatty 1.2.3\n") {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+}
+
+func TestSourceOfferOutWritesTheStandaloneDocument(t *testing.T) {
+	changelog := writeChangelog(t, fixtureChangelog)
+	out := filepath.Join(t.TempDir(), "SOURCE-OFFER.md")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{
+		"-version", "v1.2.3", "-changelog", changelog, "-source-offer-out", out,
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read source offer: %v", err)
+	}
+	for _, want := range []string{
+		"# Natcatty 1.2.3 — Corresponding Source",
+		"## Corresponding Source",
+		"https://github.com/mslxl/natcatty/tree/v1.2.3",
+		"GPL-3.0-or-later",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("source offer missing %q:\n%s", want, data)
+		}
+	}
+	if !strings.Contains(stdout.String(), "corresponding-source offer for 1.2.3") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 }
