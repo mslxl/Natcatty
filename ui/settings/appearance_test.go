@@ -17,6 +17,8 @@ import (
 func newAppearanceFixture(t *testing.T) (*fakePreferences, *fakeThemeCatalog, *ThemesState, *int) {
 	t.Helper()
 	prefs := newFakePreferences()
+	// The scheme catalog shows only when the terminal keeps its own scheme.
+	prefs.settings.Appearance.FollowAppTerminalTheme = false
 	catalog := &fakeThemeCatalog{
 		themes: []domaintheme.TerminalTheme{
 			{ID: domaintheme.DefaultTerminalTheme, Name: "Netcatty Dark"},

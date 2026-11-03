@@ -11200,6 +11200,30 @@ func (msgs Messages) SettingsWindowOpacity() string {
 	return Catalog.Format(msgs.locale, "settingsWindowOpacity", nil)
 }
 
+// SettingsFollowAppTerminalTheme says "Follow Application Theme"
+// in the language the app shows.
+func SettingsFollowAppTerminalTheme() string {
+	return In(i18n.Locale()).SettingsFollowAppTerminalTheme()
+}
+
+// SettingsFollowAppTerminalTheme says "Follow Application Theme"
+// in the language of msgs.
+func (msgs Messages) SettingsFollowAppTerminalTheme() string {
+	return Catalog.Format(msgs.locale, "settingsFollowAppTerminalTheme", nil)
+}
+
+// SettingsFollowAppTerminalThemeDescription says "Automatically match the terminal background to the current app theme for a seamless look."
+// in the language the app shows.
+func SettingsFollowAppTerminalThemeDescription() string {
+	return In(i18n.Locale()).SettingsFollowAppTerminalThemeDescription()
+}
+
+// SettingsFollowAppTerminalThemeDescription says "Automatically match the terminal background to the current app theme for a seamless look."
+// in the language of msgs.
+func (msgs Messages) SettingsFollowAppTerminalThemeDescription() string {
+	return Catalog.Format(msgs.locale, "settingsFollowAppTerminalThemeDescription", nil)
+}
+
 // SettingsTerminalTheme says "Terminal theme"
 // in the language the app shows.
 func SettingsTerminalTheme() string { return In(i18n.Locale()).SettingsTerminalTheme() }

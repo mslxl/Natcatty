@@ -1582,6 +1582,8 @@
   "settingsAccentColor": "Акцентный цвет",
   "settingsUIFont": "Шрифт интерфейса",
   "settingsWindowOpacity": "Непрозрачность окна",
+  "settingsFollowAppTerminalTheme": "Следовать теме приложения",
+  "settingsFollowAppTerminalThemeDescription": "Автоматически подбирать фон терминала под текущую тему приложения для более цельного вида.",
   "settingsTerminalTheme": "Тема терминала",
   "settingsTerminalFontFamily": "Семейство шрифта терминала",
   "settingsTerminalFontSize": "Размер шрифта терминала",
