@@ -129,9 +129,10 @@ func scrollSettingsUp(t *testing.T, tester *ui.Tester, text string, viewport ui.
 // insidePinnedConvergentBar reports whether r is a control laid out in the
 // bottom action bar rather than in the scrolling report. The left edge is the
 // real content column's, so a wider localized sidebar does not move the bar's
-// controls into a guessed band.
+// controls into a guessed band. The content pane reaches the window's bottom
+// edge, so a report row the viewport clips to a sliver there is not the bar's.
 func insidePinnedConvergentBar(r ui.Rect, viewport ui.Rect, w, h int) bool {
-	return r.W > 0 && r.H > 0 &&
+	return r.W > 0 && r.H >= 10 &&
 		r.X >= viewport.X-0.5 && r.X+r.W <= float32(w)+0.5 &&
 		r.Y >= float32(h)-syncConvergentBarHeight-8-0.5 && r.Y+r.H <= float32(h)+0.5
 }

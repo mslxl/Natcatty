@@ -506,6 +506,13 @@ func paneDropZone(c *ui.Context, s *state.State, t *ui.Theme,
 // on the focused Pane, and Close.
 func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 	ref tabRef, info state.PaneInfo) {
+	// A detached window's lone Pane is already named by the window's title
+	// bar, as the original's terminal popup, so it shows no header of its own
+	// unless it has a status to report.
+	lone := !ref.managesPanes && !ref.split
+	if lone && !info.Pending && !(info.Focused && ref.status.text != "" && !ref.status.settled) {
+		return
+	}
 	header := ui.Row(c).FillWidth().Height(30).Padding(0, 4, 0, 8).Gap(4).Shrink(0).
 		Background(t.Background).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center)
 	header.Children(func() {
@@ -517,15 +524,17 @@ func paneHeader(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme,
 			handle.Drag(state.PaneDrag(ref.id, info.ID))
 		}
 
-		titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
-		if info.Focused {
-			titleElement.TextColor(t.Text)
-		} else {
-			titleElement.TextColor(t.TextMuted)
-		}
-		if titleElement.Clicked() {
-			if ref.focus(info.ID) {
-				c.Invalidate()
+		if !lone {
+			titleElement := ui.Text(c, paneTitle(m, info)).FontSize(11).FontWeight(600).SingleLine().MinWidth(0).Shrink(1)
+			if info.Focused {
+				titleElement.TextColor(t.Text)
+			} else {
+				titleElement.TextColor(t.TextMuted)
+			}
+			if titleElement.Clicked() {
+				if ref.focus(info.ID) {
+					c.Invalidate()
+				}
 			}
 		}
 		switch {
