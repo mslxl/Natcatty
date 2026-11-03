@@ -177,6 +177,9 @@ type Form struct {
 	SFTPSudo     bool
 	// NetworkDevice selects raw execution for a vendor CLI over SSH.
 	NetworkDevice bool
+	// AutoAttachTmux keeps the SSH login shell in a deterministic tmux
+	// session. It is offered only for SSH Hosts that run a normal shell.
+	AutoAttachTmux bool
 	// MoshServerPath overrides the remote mosh-server binary for a Mosh Host.
 	MoshServerPath string
 	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
@@ -715,6 +718,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		FileProtocol:            string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
 		SFTPSudo:                host.SFTPSudo,
 		NetworkDevice:           host.IsNetworkDevice(),
+		AutoAttachTmux:          host.AutoAttachTmux,
 		MoshServerPath:          host.MoshServerPath,
 		ETPort:                  etPortText(host),
 		TransportImplementation: string(host.TransportImplementation),
@@ -755,6 +759,7 @@ func (s *State) SetHostProtocol(protocol string) {
 		s.form.FileProtocol = string(domainvault.FileProtocolAuto)
 		s.form.SFTPSudo = false
 		s.form.NetworkDevice = false
+		s.form.AutoAttachTmux = false
 	}
 	if protocol != string(domainvault.ProtocolMosh) {
 		s.form.MoshServerPath = ""
@@ -1088,6 +1093,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		SFTPFileProtocol:        domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
 		SFTPSudo:                host.SFTPSudo,
 		DeviceType:              host.DeviceType,
+		AutoAttachTmux:          host.AutoAttachTmux,
 		MoshServerPath:          host.MoshServerPath,
 		ETPort:                  host.ETPort,
 		TransportImplementation: host.TransportImplementation,
@@ -1151,6 +1157,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		SFTPFileProtocol:        domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:                s.form.SFTPSudo,
 		DeviceType:              formDeviceType(s.form.NetworkDevice, s.form.Protocol),
+		AutoAttachTmux:          formAutoAttachTmux(s.form.AutoAttachTmux, s.form.NetworkDevice, s.form.Protocol),
 		MoshServerPath:          s.form.MoshServerPath,
 		ETPort:                  etPort,
 		TransportImplementation: transportmodel.Implementation(strings.TrimSpace(s.form.TransportImplementation)),
@@ -1165,6 +1172,13 @@ func formDeviceType(enabled bool, protocol string) domainvault.DeviceType {
 		return domainvault.DeviceTypeNetwork
 	}
 	return domainvault.DeviceTypeDefault
+}
+
+// formAutoAttachTmux maps the editor's checkbox onto the Host record. tmux
+// wraps an interactive POSIX login shell, so neither another protocol nor
+// network-device mode may save it.
+func formAutoAttachTmux(enabled, networkDevice bool, protocol string) bool {
+	return enabled && !networkDevice && domainvault.Protocol(protocol) == domainvault.ProtocolSSH
 }
 
 // problemFor maps a typed application error to the view's problem id.

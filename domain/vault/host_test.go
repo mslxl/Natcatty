@@ -743,3 +743,40 @@ func TestEffectivePortUsesSSHDefaultsForMoshAndET(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoAttachTmuxIsKeptOnlyForPlainSSHHosts(t *testing.T) {
+	ssh, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "example.com", Protocol: ProtocolSSH,
+		AutoAttachTmux: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft SSH: %v", err)
+	}
+	if !ssh.AutoAttachTmux {
+		t.Fatal("an SSH draft lost the auto-attach preference")
+	}
+
+	for _, protocol := range []Protocol{ProtocolTelnet, ProtocolLocal, ProtocolMosh, ProtocolET} {
+		normalized, err := NormalizeDraft(Draft{
+			Label: "web", Hostname: "example.com", Protocol: protocol,
+			AutoAttachTmux: true,
+		})
+		if err != nil {
+			t.Fatalf("NormalizeDraft %s: %v", protocol, err)
+		}
+		if normalized.AutoAttachTmux {
+			t.Errorf("%s kept autoAttachTmux", protocol)
+		}
+	}
+
+	network, err := NormalizeDraft(Draft{
+		Label: "switch", Hostname: "10.0.0.1", Protocol: ProtocolSSH,
+		DeviceType: DeviceTypeNetwork, AutoAttachTmux: true,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft network device: %v", err)
+	}
+	if network.AutoAttachTmux {
+		t.Fatal("network-device mode kept autoAttachTmux")
+	}
+}

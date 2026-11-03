@@ -1466,9 +1466,10 @@ func (s *State) openDescriptor(ctx context.Context,
 		return nil, ErrNoSessions
 	}
 	spec := appsession.StartSpec{
-		Label:         descriptor.Label,
-		Dir:           validLocalDir(descriptor.Dir),
-		X11Forwarding: descriptor.X11Forwarding,
+		Label:          descriptor.Label,
+		Dir:            validLocalDir(descriptor.Dir),
+		X11Forwarding:  descriptor.X11Forwarding,
+		AutoAttachTmux: descriptor.AutoAttachTmux,
 	}
 	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
@@ -1490,6 +1491,7 @@ func (s *State) openDescriptor(ctx context.Context,
 			spec.Username = host.Username
 			spec.X11Forwarding = host.X11Enabled()
 			spec.NetworkDevice = host.IsNetworkDevice()
+			spec.AutoAttachTmux = host.AutoAttachTmuxEnabled()
 			spec.Dir = ""
 		}
 		spec.Reconnect = &appsession.ReconnectPolicy{}
@@ -1503,6 +1505,9 @@ func (s *State) openDescriptor(ctx context.Context,
 		spec.Port = descriptor.Port
 		spec.Username = descriptor.Username
 		spec.X11Forwarding = false
+		// tmux never applies to Mosh or ET, even if a restored descriptor from
+		// an older record carries the flag.
+		spec.AutoAttachTmux = false
 		if s.resolveHost != nil {
 			host, ok := s.resolveHost(ctx, descriptor.HostID)
 			if !ok {
@@ -1580,6 +1585,57 @@ func validLocalDir(dir string) string {
 		return ""
 	}
 	return dir
+}
+
+// closeDetachedSessions removes Panes whose tmux client detached. The remote
+// session keeps running, so the local Session ended by design: its Tab or Pane
+// closes without an error and the next Host open attaches again. Only a clean
+// tmux detach carries EndReasonDetached, so an ordinary shell exit keeps its
+// ended Tab.
+func (s *State) closeDetachedSessions() bool {
+	changed := false
+	for index := len(s.tabs) - 1; index >= 0; index-- {
+		tab := s.tabs[index]
+		if tab == nil {
+			continue
+		}
+		for _, id := range tab.paneIDs() {
+			value := tab.panes[id]
+			if value == nil || value.session == nil {
+				continue
+			}
+			snapshot := value.session.Snapshot()
+			if snapshot.Status != appsession.StatusExited ||
+				snapshot.EndReason != appsession.EndReasonDetached {
+				continue
+			}
+			if len(tab.paneIDs()) == 1 {
+				s.CloseTab(index)
+				changed = true
+				break
+			}
+			// Focus survives unless the detached Pane itself had it; a
+			// background detach must not move focus in a split Tab.
+			_, focusedID := tab.focusedPane()
+			root, err := domainworkspace.RemovePane(tab.Root, id)
+			if err != nil {
+				continue
+			}
+			closePane(value)
+			delete(tab.panes, id)
+			tab.Root = root
+			if next := domainworkspace.FocusAfterRemove(root, focusedID, id); next != "" {
+				tab.setFocus(next)
+			}
+			changed = true
+		}
+	}
+	if changed {
+		s.refreshBroadcastState()
+		s.save()
+		s.RequestRedraw()
+	}
+	return changed
 }
 
 func closeTab(tab *Tab) {

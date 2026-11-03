@@ -540,6 +540,12 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionX11CookieUnavailable(notice.Target)
 	case appsession.NoticeX11Channel:
 		return m.ConnectionX11ChannelFailed(notice.Target)
+	case appsession.NoticeTmuxRestored:
+		return m.ConnectionTmuxSessionRestored()
+	case appsession.NoticeTmuxNested:
+		return m.ConnectionTmuxNested()
+	case appsession.NoticeTmuxUnavailable:
+		return m.ConnectionTmuxUnavailable()
 	default:
 		return ""
 	}

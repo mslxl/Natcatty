@@ -62,6 +62,7 @@ func (f *fakeHosts) Create(_ context.Context, draft domainvault.Draft) (domainva
 		SkipEcdsaHostKey:        normalized.SkipEcdsaHostKey,
 		Algorithms:              domainvault.CloneAlgorithms(normalized.Algorithms),
 		DeviceType:              normalized.DeviceType,
+		AutoAttachTmux:          normalized.AutoAttachTmux,
 		MoshServerPath:          normalized.MoshServerPath,
 		ETPort:                  normalized.ETPort,
 		TransportImplementation: normalized.TransportImplementation,
@@ -106,6 +107,7 @@ func (f *fakeHosts) Update(_ context.Context, id model.HostID, draft domainvault
 		host.SkipEcdsaHostKey = normalized.SkipEcdsaHostKey
 		host.Algorithms = domainvault.CloneAlgorithms(normalized.Algorithms)
 		host.DeviceType = normalized.DeviceType
+		host.AutoAttachTmux = normalized.AutoAttachTmux
 		host.MoshServerPath = normalized.MoshServerPath
 		host.ETPort = normalized.ETPort
 		host.TransportImplementation = normalized.TransportImplementation
@@ -1014,5 +1016,64 @@ func TestMoshAndETSettingsAreSavedOnlyForTheirProtocol(t *testing.T) {
 	}
 	if state.Problem() != ProblemETPort {
 		t.Fatalf("problem = %v, want %v", state.Problem(), ProblemETPort)
+	}
+}
+
+func TestHostFormSubmitsAndRestoresAutoAttachTmux(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	if state.Form().AutoAttachTmux {
+		t.Fatal("a new Host enabled autoAttachTmux by default")
+	}
+	form := state.Form()
+	form.Label = "web"
+	form.Hostname = "example.com"
+	form.AutoAttachTmux = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 || !repo.created[0].AutoAttachTmux {
+		t.Fatalf("created draft = %+v, want autoAttachTmux", repo.created)
+	}
+	if got := repo.items[0]; !got.AutoAttachTmux {
+		t.Fatalf("saved Host = %+v, want autoAttachTmux", got)
+	}
+
+	if !state.BeginEdit(repo.items[0].ID) {
+		t.Fatal("BeginEdit did not open the editor")
+	}
+	if !state.Form().AutoAttachTmux {
+		t.Fatal("the editor did not restore autoAttachTmux")
+	}
+	state.SetHostProtocol(string(domainvault.ProtocolTelnet))
+	if state.Form().AutoAttachTmux {
+		t.Fatal("switching protocol kept autoAttachTmux")
+	}
+	state.Form().AutoAttachTmux = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save Telnet: %v", err)
+	}
+	if repo.updated[len(repo.updated)-1].AutoAttachTmux {
+		t.Fatal("a Telnet draft carried autoAttachTmux")
+	}
+}
+
+func TestNetworkDeviceModeClearsAutoAttachTmux(t *testing.T) {
+	repo := &fakeHosts{}
+	state, _ := newTestState(t, repo)
+
+	state.BeginCreate()
+	form := state.Form()
+	form.Label = "switch"
+	form.Hostname = "10.0.0.1"
+	form.AutoAttachTmux = true
+	form.NetworkDevice = true
+	if err := state.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if len(repo.created) != 1 || repo.created[0].AutoAttachTmux {
+		t.Fatalf("network-device draft = %+v, want autoAttachTmux cleared", repo.created)
 	}
 }

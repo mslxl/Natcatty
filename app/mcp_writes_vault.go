@@ -214,8 +214,9 @@ func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 		ProxyProfileID: host.ProxyProfileID, LegacyAlgorithms: host.LegacyAlgorithms,
 		SkipEcdsaHostKey: host.SkipEcdsaHostKey, Algorithms: host.Algorithms,
 		SFTPFileProtocol: host.SFTPFileProtocol, SFTPSudo: host.SFTPSudo,
-		DeviceType: host.DeviceType, MoshServerPath: host.MoshServerPath,
-		ETPort: host.ETPort, TransportImplementation: host.TransportImplementation,
+		DeviceType: host.DeviceType, AutoAttachTmux: host.AutoAttachTmux,
+		MoshServerPath: host.MoshServerPath, ETPort: host.ETPort,
+		TransportImplementation: host.TransportImplementation,
 	}
 	if host.HostChain != nil {
 		chain := *host.HostChain
