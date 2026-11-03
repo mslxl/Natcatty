@@ -122,12 +122,19 @@ func groupModel(group domainvault.Group) (hostGroupSchema, error) {
 	if group.Path == "" {
 		return hostGroupSchema{}, fmt.Errorf("store: Host Group has no path")
 	}
+	if group.ID == "" {
+		group.ID = domainvault.GroupIDFromPath(group.Path)
+	}
+	if group.Name == "" {
+		group.Name = domainvault.GroupName(group.Path)
+	}
 	data, err := marshalData(group, "Host Group")
 	if err != nil {
 		return hostGroupSchema{}, err
 	}
 	return hostGroupSchema{
-		Path: group.Path, Notes: group.Notes, Username: group.Username, Port: int64(group.Port),
+		Path: group.Path, GroupID: group.ID, ParentID: group.ParentID, Name: group.Name,
+		Notes: group.Notes, Username: group.Username, Port: int64(group.Port),
 		Protocol: string(group.Protocol), AuthMethod: string(group.AuthMethod),
 		IdentityID: string(group.IdentityID), KeyID: string(group.KeyID),
 		UseSSHAgent: int64(boolInt(group.UseSSHAgent)), RequiresMFA: int64(boolInt(group.RequiresMFA)),

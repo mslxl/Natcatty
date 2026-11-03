@@ -86,6 +86,34 @@ func (s *Service) Load(ctx context.Context) error {
 	return err
 }
 
+// ReplaceCustom stores the complete imported-theme catalog and publishes it.
+// Built-in schemes are never written. Cloud sync uses it when a downloaded
+// theme document replaces the local custom set.
+func (s *Service) ReplaceCustom(themes []domaintheme.TerminalTheme) error {
+	next := sanitizeCustomThemes(themes)
+	if len(next) > maxCustomThemes {
+		next = next[:maxCustomThemes]
+	}
+	s.mu.Lock()
+	store := s.store
+	hook := s.onChange
+	s.mu.Unlock()
+
+	if store != nil {
+		if err := store.Save(context.Background(), next); err != nil {
+			return fmt.Errorf("%w: %v", ErrSave, err)
+		}
+	}
+	s.mu.Lock()
+	s.custom = next
+	s.problem = nil
+	s.mu.Unlock()
+	if hook != nil {
+		hook(append([]domaintheme.TerminalTheme(nil), next...))
+	}
+	return nil
+}
+
 // Problem returns the last load error, if any.
 func (s *Service) Problem() error {
 	s.mu.Lock()
