@@ -63,6 +63,30 @@ func TestResolveTerminalThemeFallsBack(t *testing.T) {
 	}
 }
 
+// TestTerminalFollowsTheAppTheme keeps the original's pairing: a following
+// terminal takes the active preset's scheme in each appearance, and one that
+// does not follow keeps the stored scheme.
+func TestTerminalFollowsTheAppTheme(t *testing.T) {
+	appearance := domainpreferences.Defaults().Appearance
+	if !appearance.FollowAppTerminalTheme {
+		t.Fatal("a fresh profile's terminal does not follow the app")
+	}
+	appearance.ThemeMode = domainpreferences.ThemeSystem
+	appearance.LightTheme = "snow"
+	appearance.DarkTheme = "catppuccin"
+	if got := resolveAppTerminalTheme(appearance, false, nil); got.ID != "ui-snow" || got.Dark {
+		t.Errorf("light window terminal = %q dark=%v", got.ID, got.Dark)
+	}
+	if got := resolveAppTerminalTheme(appearance, true, nil); got.ID != "system-catppuccin-dark" {
+		t.Errorf("dark window terminal = %q", got.ID)
+	}
+	appearance.FollowAppTerminalTheme = false
+	appearance.TerminalTheme = "dracula"
+	if got := resolveAppTerminalTheme(appearance, false, domaintheme.LookupTerminalTheme); got.ID != "dracula" {
+		t.Errorf("chosen scheme = %q", got.ID)
+	}
+}
+
 func TestIconVariantsDecodeAndTrayIconIsSmall(t *testing.T) {
 	seen := make(map[string][]byte)
 	for _, variant := range domaintheme.IconVariants() {

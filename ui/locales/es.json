@@ -1582,6 +1582,8 @@
   "settingsAccentColor": "Color de acento",
   "settingsUIFont": "Fuente de la interfaz",
   "settingsWindowOpacity": "Opacidad de la ventana",
+  "settingsFollowAppTerminalTheme": "Seguir el tema de la aplicación",
+  "settingsFollowAppTerminalThemeDescription": "Haz coincidir automáticamente el fondo de la terminal con el tema actual de la aplicación para una apariencia uniforme.",
   "settingsTerminalTheme": "Tema del terminal",
   "settingsTerminalFontFamily": "Familia de fuente del terminal",
   "settingsTerminalFontSize": "Tamaño de fuente del terminal",
