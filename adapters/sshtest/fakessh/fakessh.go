@@ -713,10 +713,15 @@ func (s *Server) handleSession(channel ssh.Channel, requests <-chan *ssh.Request
 				continue
 			}
 			request.Reply(true, nil)
-			status := uint32(handler(payload.Command, channel))
-			_, _ = channel.SendRequest("exit-status", false,
-				ssh.Marshal(struct{ Status uint32 }{status}))
-			_ = channel.Close()
+			// Serve the command concurrently with the request loop, like sshd,
+			// so a running command still receives window-change requests.
+			command := payload.Command
+			go func() {
+				status := uint32(handler(command, channel))
+				_, _ = channel.SendRequest("exit-status", false,
+					ssh.Marshal(struct{ Status uint32 }{status}))
+				_ = channel.Close()
+			}()
 		default:
 			request.Reply(false, nil)
 		}

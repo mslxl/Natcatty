@@ -293,6 +293,10 @@ type StartSpec struct {
 	// X11Display overrides the local display target. Empty uses DISPLAY or the
 	// platform default.
 	X11Display string
+	// RemoteCommand, when non-empty, makes an SSH transport request a PTY and
+	// run this command instead of the login shell. Empty keeps the login-shell
+	// behavior. Other transports ignore it.
+	RemoteCommand string
 	// NetworkDevice marks an SSH Host whose peer runs a vendor CLI. Programmatic
 	// commands then use RawExec: they are written to the existing PTY as-is,
 	// without a shell wrapper or completion markers, and report no exit code.

@@ -131,9 +131,10 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		OnX11Notice:       onX11Notice,
 	}
 	specification := appconnection.TerminalSpec{
-		Cols: spec.Cols,
-		Rows: spec.Rows,
-		Term: "xterm-256color",
+		Cols:    spec.Cols,
+		Rows:    spec.Rows,
+		Term:    "xterm-256color",
+		Command: spec.RemoteCommand,
 	}
 	for attempt := 0; ; attempt++ {
 		lease, err := f.manager.Acquire(ctx, request)

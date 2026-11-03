@@ -152,15 +152,20 @@ type DialHop struct {
 	Algorithms    AlgorithmPolicy
 }
 
-// TerminalSpec is one interactive shell's initial terminal state.
+// TerminalSpec is one interactive terminal channel's initial state. Command
+// optionally selects a remote command instead of a login shell.
 type TerminalSpec struct {
 	Cols int
 	Rows int
 	Term string
+	// Command, when non-empty, runs under the allocated PTY instead of the
+	// login shell. The channel still behaves as a terminal, so input, output,
+	// resize, and exit status use the same path as a shell.
+	Command string
 }
 
-// Terminal is an interactive shell channel. Read is output, Write is input,
-// Resize changes the remote PTY size, and Close hangs up the channel.
+// Terminal is an interactive terminal channel. Read is output, Write is
+// input, Resize changes the remote PTY size, and Close hangs up the channel.
 type Terminal interface {
 	io.ReadWriteCloser
 	Resize(cols, rows int) error
@@ -1136,10 +1141,11 @@ func (l *Lease) Subsystem(ctx context.Context, name string) (Subsystem, error) {
 	return stream, nil
 }
 
-// OpenTerminal opens an interactive shell channel on the leased Connection.
-// When the lease woke a parked transport whose server banner is unknown, the
-// shell must survive the liveness window first; a transport that dies
-// immediately is discarded and reported as a stale-transport failure.
+// OpenTerminal opens an interactive terminal channel on the leased Connection.
+// It runs a login shell unless the spec selects a command. When the lease woke
+// a parked transport whose server banner is unknown, the channel must survive
+// the liveness window first; a transport that dies immediately is discarded and
+// reported as a stale-transport failure.
 func (l *Lease) OpenTerminal(ctx context.Context, spec TerminalSpec) (Terminal, error) {
 	l.mu.Lock()
 	released := l.released
