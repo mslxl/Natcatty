@@ -1,6 +1,6 @@
 # Packaging and release artifacts
 
-Natcatty builds its native artifacts with MyGo v0.5.5. `mygo.json` is the
+Natcatty builds its native artifacts with MyGo v0.6.0. `mygo.json` is the
 single source of the product name, identifier, version, and packaging
 configuration; `go tool mygo build` reads it directly.
 
