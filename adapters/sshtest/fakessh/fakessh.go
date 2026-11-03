@@ -110,31 +110,32 @@ type Server struct {
 	closeOnce   sync.Once
 	forwardDial func(host string, port int) (net.Conn, error)
 
-	serverConn        *ssh.ServerConn
-	mu                sync.Mutex
-	acceptX11         bool
-	x11Requests       []X11Request
-	passwordAttempts  int
-	lastPassword      string
-	lastUsername      string
-	publicKeyAttempts int
-	lastPublicKeyType string
-	lastPublicKeyID   string
-	kiRounds          []KeyboardInteractiveRound
-	handshakeErr      error
-	pty               *Size
-	resizes           []Size
-	shellOpened       bool
-	shellHandler      func(ssh.Channel)
-	sessionChannels   int
-	forwards          []Forward
-	remoteForwards    []RemoteForward
-	remoteListeners   map[string]net.Listener
-	ignoreCancel      bool
-	subsystems        map[string]func(ssh.Channel)
-	subsystemRequests []string
-	execHandler       func(string, ssh.Channel) int
-	execRequests      []string
+	serverConn            *ssh.ServerConn
+	mu                    sync.Mutex
+	acceptX11             bool
+	x11Requests           []X11Request
+	passwordAttempts      int
+	lastPassword          string
+	lastUsername          string
+	publicKeyAttempts     int
+	lastPublicKeyType     string
+	lastPublicKeyID       string
+	lastPublicKeyUsername string
+	kiRounds              []KeyboardInteractiveRound
+	handshakeErr          error
+	pty                   *Size
+	resizes               []Size
+	shellOpened           bool
+	shellHandler          func(ssh.Channel)
+	sessionChannels       int
+	forwards              []Forward
+	remoteForwards        []RemoteForward
+	remoteListeners       map[string]net.Listener
+	ignoreCancel          bool
+	subsystems            map[string]func(ssh.Channel)
+	subsystemRequests     []string
+	execHandler           func(string, ssh.Channel) int
+	execRequests          []string
 }
 
 // Start configures and handshakes a server on conn in the background. It
@@ -218,6 +219,7 @@ func Start(conn net.Conn, options Options) (*Server, error) {
 			server.publicKeyAttempts++
 			server.lastPublicKeyType = key.Type()
 			server.lastPublicKeyID = ""
+			server.lastPublicKeyUsername = metadata.User()
 			if certificate, ok := key.(*ssh.Certificate); ok {
 				server.lastPublicKeyID = certificate.KeyId
 			}
@@ -293,6 +295,14 @@ func (s *Server) LastPublicKey() (keyType, keyID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastPublicKeyType, s.lastPublicKeyID
+}
+
+// LastPublicKeyUsername reports the username offered with the most recent
+// public-key or certificate attempt.
+func (s *Server) LastPublicKeyUsername() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastPublicKeyUsername
 }
 
 // KeyboardInteractiveRounds returns every challenge the server issued in
