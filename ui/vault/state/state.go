@@ -16,6 +16,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -181,6 +182,10 @@ type Form struct {
 	// ETPort is the EternalTerminal server port text for an ET Host. It stays a
 	// string so a malformed value can be rejected.
 	ETPort string
+	// TransportImplementation is the Host's Mosh or ET client choice. Empty
+	// inherits the global default. The value is opaque so a stale record is
+	// preserved rather than rewritten by an unrelated edit.
+	TransportImplementation string
 }
 
 // State is the Vault surface's state.
@@ -709,9 +714,10 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		X11WarningAcknowledged: host.X11WarningAcknowledged,
 		FileProtocol:           string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
 		SFTPSudo:               host.SFTPSudo,
-		NetworkDevice:          host.IsNetworkDevice(),
-		MoshServerPath:         host.MoshServerPath,
-		ETPort:                 etPortText(host),
+		NetworkDevice:           host.IsNetworkDevice(),
+		MoshServerPath:          host.MoshServerPath,
+		ETPort:                  etPortText(host),
+		TransportImplementation: string(host.TransportImplementation),
 	}
 	s.hostChain = domainvault.CloneHostChain(host.HostChain)
 	s.proxy = domainvault.CloneProxy(host.Proxy)
@@ -755,6 +761,10 @@ func (s *State) SetHostProtocol(protocol string) {
 	}
 	if protocol != string(domainvault.ProtocolET) {
 		s.form.ETPort = ""
+	}
+	if protocol != string(domainvault.ProtocolMosh) && protocol != string(domainvault.ProtocolET) {
+		// The transport choice concerns only the Mosh and ET transports.
+		s.form.TransportImplementation = ""
 	}
 	if !domainvault.Protocol(protocol).UsesSSHAuth() {
 		s.form.IdentityID = ""
@@ -1077,9 +1087,10 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		Algorithms:             domainvault.CloneAlgorithms(host.Algorithms),
 		SFTPFileProtocol:       domainvault.NormalizeFileProtocol(host.SFTPFileProtocol),
 		SFTPSudo:               host.SFTPSudo,
-		DeviceType:             host.DeviceType,
-		MoshServerPath:         host.MoshServerPath,
-		ETPort:                 host.ETPort,
+		DeviceType:              host.DeviceType,
+		MoshServerPath:          host.MoshServerPath,
+		ETPort:                  host.ETPort,
+		TransportImplementation: host.TransportImplementation,
 	}
 }
 
@@ -1139,9 +1150,10 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		Algorithms:       domainvault.CloneAlgorithms(s.algorithms),
 		SFTPFileProtocol: domainvault.FileProtocol(s.form.FileProtocol),
 		SFTPSudo:         s.form.SFTPSudo,
-		DeviceType:       formDeviceType(s.form.NetworkDevice, s.form.Protocol),
-		MoshServerPath:   s.form.MoshServerPath,
-		ETPort:           etPort,
+		DeviceType:              formDeviceType(s.form.NetworkDevice, s.form.Protocol),
+		MoshServerPath:          s.form.MoshServerPath,
+		ETPort:                  etPort,
+		TransportImplementation: transportmodel.Implementation(strings.TrimSpace(s.form.TransportImplementation)),
 	}, ProblemNone
 }
 
