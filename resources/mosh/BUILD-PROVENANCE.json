@@ -1,16 +1,36 @@
 {
   "schemaVersion": 1,
   "component": "mosh-client",
-  "release": {
+  "source": {
+    "package": "moshcatty",
+    "version": "0.1.8",
     "repository": "binaricat/MoshCatty",
+    "repositoryUrl": "https://github.com/binaricat/MoshCatty",
     "tag": "moshcatty-0.1.8",
-    "url": "https://github.com/binaricat/MoshCatty/releases/tag/moshcatty-0.1.8"
+    "commit": "554b9d305e7ac4b11de740d764bbc3e05f816d7b",
+    "tagUrl": "https://github.com/binaricat/MoshCatty/tree/moshcatty-0.1.8",
+    "releaseUrl": "https://github.com/binaricat/MoshCatty/releases/tag/moshcatty-0.1.8",
+    "publishedAt": "2026-07-17T06:27:35Z",
+    "buildCommand": "cargo build --release",
+    "workflowRun": "https://github.com/binaricat/MoshCatty/actions/runs/29559896639"
   },
   "license": "GPL-3.0-or-later",
   "licenseFile": "LICENSE-MoshCatty-GPL-3.0.txt",
-  "upstream": {
+  "thirdPartyNotices": [
+    {
+      "component": "mosh-go",
+      "role": "Adapted MIT-licensed protocol tests, transport, protobuf, framebuffer, and prediction material",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Unix Shells",
+      "licenseFile": "LICENSE-MoshGo-MIT.txt",
+      "repositoryUrl": "https://github.com/unixshells/mosh-go",
+      "commit": "8dca5c67ec8e09f71a4dc8eda9216f2f4ee7ec0f"
+    }
+  ],
+  "protocolReference": {
     "repository": "mobile-shell/mosh",
-    "url": "https://github.com/mobile-shell/mosh"
+    "url": "https://github.com/mobile-shell/mosh",
+    "role": "Protocol and behavioral reference only; not the source of this binary."
   },
   "artifacts": [
     {
@@ -43,8 +63,18 @@
     }
   ],
   "buildNotes": [
-    "MoshCatty publishes prebuilt mosh-client binaries from upstream mosh.",
+    "MoshCatty's release workflow runs cargo build --release on MoshCatty's own Rust source; it does not build mobile-shell/mosh.",
     "Windows arm64 is not built.",
+    "The committed win32-x64 binary matches the digest recorded for the published moshcatty-0.1.8 asset in the ticket 13 research; the local file is re-verified against the compiled-in manifest before every launch.",
     "The release archives and extracted binaries above were verified on 2026-10-25."
-  ]
+  ],
+  "reproducibility": {
+    "status": "not-established",
+    "evidence": null,
+    "notes": [
+      "The release workflow uses the floating stable Rust toolchain and has no rust-toolchain.toml.",
+      "No rebuild comparison, build attestation, or reproducibility statement was published.",
+      "Do not represent these binaries as reproducible; independent build evidence is pending human review."
+    ]
+  }
 }
