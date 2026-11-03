@@ -213,7 +213,7 @@
       "repository": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
       "homepage": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
       "copyrightOrAuthors": "Copyright 2013-2014 RAD Game Tools and Valve Software; Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC; Copyright (c) 2017 Frommi; Copyright (c) 2017-2024 oyvindln",
-      "copyrightSource": "LICENSE-MIT",
+      "copyrightSource": "LICENSE-MIT.md",
       "licenseFiles": [
         "LICENSE",
         "LICENSE-APACHE.md",
@@ -240,7 +240,7 @@
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/cryptocorrosion/cryptocorrosion",
       "homepage": null,
-      "copyrightOrAuthors": "Copyright 2019 The CryptoCorrosion Contributors",
+      "copyrightOrAuthors": "Copyright (c) 2019 The CryptoCorrosion Contributors",
       "copyrightSource": "LICENSE-MIT",
       "licenseFiles": [
         "LICENSE-APACHE",
@@ -395,8 +395,8 @@
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/paholg/typenum",
       "homepage": null,
-      "copyrightOrAuthors": "Copyright 2014 Paho Lurie-Gregg",
-      "copyrightSource": "LICENSE",
+      "copyrightOrAuthors": "Copyright (c) 2014 Paho Lurie-Gregg",
+      "copyrightSource": "LICENSE-MIT",
       "licenseFiles": [
         "LICENSE",
         "LICENSE-APACHE",

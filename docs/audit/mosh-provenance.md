@@ -295,7 +295,8 @@ Metadata provenance:
   copyright notice for those crates is a human review item, not something this
   report resolves.
 - `cfg_aliases` ships a `NOTICES.md` for MIT-licensed code derived from
-  `tectonic_cfg_support::target_cfg!`; it is reproduced in the notices.
+  `tectonic_cfg_support::target_cfg!`; the notices summarize that attribution
+  and reproduce the generic MIT text, not `NOTICES.md` verbatim.
   No other locked crate shipped an Apache-2.0 `NOTICE` file.
 - `unicode-ident` carries Unicode data under the Unicode License V3; the exact
   shipped text (copyright 1991-2023) is included.
@@ -370,6 +371,11 @@ No file claims that an independent audit or legal review has been completed.
 6. **Have a human release owner correct the published `v0.1.0` notices** or
    publish a corrective release. This report does not modify released
    artifacts.
+7. **Confirm the notice basis for the seven crates without a license-file
+   copyright line** (`once_cell`, `proc-macro2`, `quote`, `syn`, `thiserror`,
+   `thiserror-impl`, and `wasi`). Their rows rely on the `Cargo.toml` authors
+   field; confirm that this is a sufficient copyright notice and that no
+   separate holder attribution is required.
 
 ## 9. Evidence index
 
