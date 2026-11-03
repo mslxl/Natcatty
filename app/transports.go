@@ -205,6 +205,10 @@ func (f *etTransportFactory) Open(ctx context.Context, spec appsession.StartSpec
 		}
 		route = resolved
 	}
+	// This factory is the bundled client only: it owns the SSH bootstrap, so
+	// the original one-jump/no-proxy restriction stays here until ticket 35.
+	// An in-process selection never reaches this factory; its implementation
+	// hands the whole route to the Connection Manager.
 	if err := etmodel.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
 		return nil, err
 	}

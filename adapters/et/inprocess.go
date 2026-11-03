@@ -165,6 +165,11 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 
 // route resolves the Host's non-secret path. A nil resolver is a direct
 // connection, as it is for the SSH factory.
+//
+// The in-process path deliberately does not call the bundled client's
+// CheckRoute: a proxy and any number of jump Hosts are ordinary Connection
+// Manager routes, shared with SSH Sessions. Only the bundled factory keeps the
+// original one-jump/no-proxy restriction.
 func (f InProcessFactory) route(ctx context.Context, id model.HostID) (appconnection.Route, error) {
 	if f.Routes == nil {
 		return appconnection.Route{}, nil
