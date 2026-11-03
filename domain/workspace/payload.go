@@ -47,6 +47,10 @@ type SessionDescriptor struct {
 	Dir string `json:"dir,omitempty"`
 	// X11Forwarding records the Host preference captured when the pane opened.
 	X11Forwarding bool `json:"x11Forwarding,omitempty"`
+	// AutoAttachTmux records the SSH Host preference captured when the pane
+	// opened, so a restored Session reattaches the same tmux session when the
+	// Host record is unavailable.
+	AutoAttachTmux bool `json:"autoAttachTmux,omitempty"`
 	// Serial is the port and framing a serial Pane reopens with. It carries no
 	// credential material.
 	Serial *serial.Config `json:"serial,omitempty"`

@@ -489,6 +489,9 @@
     }
   },
   "connectionX11CookieUnavailable": "El reenvío X11 no pudo leer una cookie xauth local para {target}. Ejecuta xauth add para la pantalla o configúrala para permitir conexiones locales.",
+  "connectionTmuxSessionRestored": "Sesión de tmux restaurada.",
+  "connectionTmuxNested": "Ya estás dentro de una sesión de tmux en el Host remoto; se conectó sin anidar.",
+  "connectionTmuxUnavailable": "tmux no está disponible en el Host remoto; se conectó con un shell simple.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {
@@ -568,6 +571,8 @@
   "vaultHostX11Acknowledge": "Entiendo el riesgo de seguridad y quiero habilitar el reenvío X11.",
   "vaultHostNetworkDevice": "Modo de dispositivo de red",
   "vaultHostNetworkDeviceHint": "Para switches, routers y firewalls conectados por SSH. La automatización envía los comandos tal cual, sin envoltura de shell, y no hay código de salida. Habilítalo solo para dispositivos que no ejecutan un shell estándar.",
+  "vaultHostAutoAttachTmux": "Adjuntar tmux automáticamente",
+  "vaultHostAutoAttachTmuxHint": "Mantiene el shell remoto activo en una sesión tmux con el nombre de este Host. Al desconectarse sigue en ejecución y la próxima conexión se vuelve a adjuntar. Solo SSH simple; tmux debe estar ya instalado.",
   "vaultHostFileProtocol": "Protocolo de archivos",
   "vaultHostFileProtocolHint": "Automático intenta SFTP y recurre a SCP solo cuando el servidor no tiene SFTP.",
   "vaultHostSFTPSudo": "Usar sudo para SFTP",

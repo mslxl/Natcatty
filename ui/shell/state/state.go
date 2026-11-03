@@ -753,31 +753,33 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 	ctx := s.ctx
 	go func() {
 		session, err := s.sessions.Open(ctx, appsession.StartSpec{
-			Kind:          plan.kind,
-			Label:         label,
-			HostID:        host.ID,
-			Hostname:      host.Hostname,
-			Port:          host.Port,
-			Username:      host.Username,
-			X11Forwarding: x11,
-			NetworkDevice: plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
-			Telnet:        plan.telnet,
-			Mosh:          plan.mosh,
-			ET:            plan.et,
-			Reconnect:     plan.reconnect,
+			Kind:           plan.kind,
+			Label:          label,
+			HostID:         host.ID,
+			Hostname:       host.Hostname,
+			Port:           host.Port,
+			Username:       host.Username,
+			X11Forwarding:  x11,
+			NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
+			AutoAttachTmux: plan.tmux,
+			Telnet:         plan.telnet,
+			Mosh:           plan.mosh,
+			ET:             plan.et,
+			Reconnect:      plan.reconnect,
 		})
 		s.mu.Lock()
 		s.outcomes = append(s.outcomes, openOutcome{
 			session: session,
 			label:   label,
 			descriptor: domainworkspace.SessionDescriptor{
-				Kind:          plan.descriptor,
-				Label:         label,
-				HostID:        host.ID,
-				Hostname:      host.Hostname,
-				Port:          host.Port,
-				Username:      host.Username,
-				X11Forwarding: x11,
+				Kind:           plan.descriptor,
+				Label:          label,
+				HostID:         host.ID,
+				Hostname:       host.Hostname,
+				Port:           host.Port,
+				Username:       host.Username,
+				X11Forwarding:  x11,
+				AutoAttachTmux: plan.tmux,
 			},
 			startup: startup,
 			err:     err,
@@ -811,18 +813,19 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 	plan := hostSessionTransport(host)
 	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
 	session, err := s.sessions.Open(ctx, appsession.StartSpec{
-		Kind:          plan.kind,
-		Label:         label,
-		HostID:        host.ID,
-		Hostname:      host.Hostname,
-		Port:          host.Port,
-		Username:      host.Username,
-		X11Forwarding: x11,
-		NetworkDevice: plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
-		Telnet:        plan.telnet,
-		Mosh:          plan.mosh,
-		ET:            plan.et,
-		Reconnect:     plan.reconnect,
+		Kind:           plan.kind,
+		Label:          label,
+		HostID:         host.ID,
+		Hostname:       host.Hostname,
+		Port:           host.Port,
+		Username:       host.Username,
+		X11Forwarding:  x11,
+		NetworkDevice:  plan.kind == appsession.KindSSH && host.IsNetworkDevice(),
+		AutoAttachTmux: plan.tmux,
+		Telnet:         plan.telnet,
+		Mosh:           plan.mosh,
+		ET:             plan.et,
+		Reconnect:      plan.reconnect,
 	})
 	if err != nil {
 		// Flush clears the pending label and records the problem on the UI
@@ -838,13 +841,14 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 		session: session,
 		label:   label,
 		descriptor: domainworkspace.SessionDescriptor{
-			Kind:          plan.descriptor,
-			Label:         label,
-			HostID:        host.ID,
-			Hostname:      host.Hostname,
-			Port:          host.Port,
-			Username:      host.Username,
-			X11Forwarding: x11,
+			Kind:           plan.descriptor,
+			Label:          label,
+			HostID:         host.ID,
+			Hostname:       host.Hostname,
+			Port:           host.Port,
+			Username:       host.Username,
+			X11Forwarding:  x11,
+			AutoAttachTmux: plan.tmux,
 		},
 	})
 	s.mu.Unlock()
@@ -861,6 +865,9 @@ type hostTransportPlan struct {
 	mosh       *domoshmodel.Config
 	et         *domainetmodel.Config
 	reconnect  *appsession.ReconnectPolicy
+	// tmux carries the Host's opt-in auto-attach setting. Only a plain SSH
+	// Session may use it; Mosh and ET keep their own persistence.
+	tmux bool
 }
 
 // hostSessionTransport maps a saved Host's protocol onto the Session
@@ -899,6 +906,7 @@ func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 		kind:       appsession.KindSSH,
 		descriptor: domainworkspace.SessionSSH,
 		reconnect:  &appsession.ReconnectPolicy{},
+		tmux:       host.AutoAttachTmuxEnabled(),
 	}
 }
 
@@ -1043,6 +1051,10 @@ func (s *State) Flush() {
 		s.problem = appconnection.KindInternal
 		s.problemErr = nil
 	}
+	// A tmux detach ends the local wrapper cleanly while the remote session
+	// keeps running. Removing the Pane here, on the UI thread, is what makes
+	// detach close the Tab without an error.
+	s.closeDetachedSessions()
 	// Tabs and Panes may have changed; keep the input-thread broadcast
 	// recipient snapshot exact.
 	s.refreshBroadcastState()

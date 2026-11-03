@@ -1410,8 +1410,17 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					ui.Text(c, m.VaultHostX11Warning()).FontSize(12).TextColor(uitheme.DangerText(t))
 					ui.Checkbox(c, &form.X11WarningAcknowledged, m.VaultHostX11Acknowledge())
 				}
-				ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice())
+				if ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice()).Changed() {
+					if form.NetworkDevice {
+						// A vendor CLI has no login shell for tmux to wrap.
+						form.AutoAttachTmux = false
+					}
+					c.Invalidate()
+				}
 				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(12).TextColor(t.TextMuted)
+				ui.Checkbox(c, &form.AutoAttachTmux, m.VaultHostAutoAttachTmux()).
+					Disabled(form.NetworkDevice)
+				ui.Text(c, m.VaultHostAutoAttachTmuxHint()).FontSize(12).TextColor(t.TextMuted)
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) || form.Protocol == string(domainvault.ProtocolET) {
 				ui.Field(c, m.VaultHostTransportImplementation(), func() {

@@ -3430,6 +3430,36 @@ func (msgs Messages) ConnectionX11CookieUnavailable(target string) string {
 	return Catalog.Format(msgs.locale, "connectionX11CookieUnavailable", map[string]any{"target": target})
 }
 
+// ConnectionTmuxSessionRestored says "tmux session restored."
+// in the language the app shows.
+func ConnectionTmuxSessionRestored() string { return In(i18n.Locale()).ConnectionTmuxSessionRestored() }
+
+// ConnectionTmuxSessionRestored says "tmux session restored."
+// in the language of msgs.
+func (msgs Messages) ConnectionTmuxSessionRestored() string {
+	return Catalog.Format(msgs.locale, "connectionTmuxSessionRestored", nil)
+}
+
+// ConnectionTmuxNested says "Already inside a tmux session on the remote Host; connected without nesting."
+// in the language the app shows.
+func ConnectionTmuxNested() string { return In(i18n.Locale()).ConnectionTmuxNested() }
+
+// ConnectionTmuxNested says "Already inside a tmux session on the remote Host; connected without nesting."
+// in the language of msgs.
+func (msgs Messages) ConnectionTmuxNested() string {
+	return Catalog.Format(msgs.locale, "connectionTmuxNested", nil)
+}
+
+// ConnectionTmuxUnavailable says "tmux is not available on the remote Host; connected with a plain shell."
+// in the language the app shows.
+func ConnectionTmuxUnavailable() string { return In(i18n.Locale()).ConnectionTmuxUnavailable() }
+
+// ConnectionTmuxUnavailable says "tmux is not available on the remote Host; connected with a plain shell."
+// in the language of msgs.
+func (msgs Messages) ConnectionTmuxUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionTmuxUnavailable", nil)
+}
+
 // HostKeyPromptUnknownTitle says "Unknown host key"
 // in the language the app shows.
 func HostKeyPromptUnknownTitle() string { return In(i18n.Locale()).HostKeyPromptUnknownTitle() }
@@ -4180,6 +4210,26 @@ func VaultHostNetworkDeviceHint() string { return In(i18n.Locale()).VaultHostNet
 // in the language of msgs.
 func (msgs Messages) VaultHostNetworkDeviceHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostNetworkDeviceHint", nil)
+}
+
+// VaultHostAutoAttachTmux says "Auto-attach tmux"
+// in the language the app shows.
+func VaultHostAutoAttachTmux() string { return In(i18n.Locale()).VaultHostAutoAttachTmux() }
+
+// VaultHostAutoAttachTmux says "Auto-attach tmux"
+// in the language of msgs.
+func (msgs Messages) VaultHostAutoAttachTmux() string {
+	return Catalog.Format(msgs.locale, "vaultHostAutoAttachTmux", nil)
+}
+
+// VaultHostAutoAttachTmuxHint says "Keeps the remote shell alive in a tmux session named after this Host. Detaching leaves it running and the next connec…"
+// in the language the app shows.
+func VaultHostAutoAttachTmuxHint() string { return In(i18n.Locale()).VaultHostAutoAttachTmuxHint() }
+
+// VaultHostAutoAttachTmuxHint says "Keeps the remote shell alive in a tmux session named after this Host. Detaching leaves it running and the next connec…"
+// in the language of msgs.
+func (msgs Messages) VaultHostAutoAttachTmuxHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostAutoAttachTmuxHint", nil)
 }
 
 // VaultHostFileProtocol says "File protocol"
