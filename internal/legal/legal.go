@@ -6,7 +6,8 @@
 //
 // The checks are mechanical: they prove the documents are present and name the
 // expected components. They are not a legal opinion and do not replace the
-// human and legal review tracked by ticket 19.
+// independent provenance audit and human/legal review tracked by tickets 15
+// and 19.
 package legal
 
 import (
@@ -62,9 +63,16 @@ third-party components with their sources are in
 
 Bundled client sources:
 
-- MoshCatty `+"`moshcatty-0.1.8`"+` (mosh-client):
-  <https://github.com/binaricat/MoshCatty/tree/moshcatty-0.1.8>. Upstream mosh:
-  <https://github.com/mobile-shell/mosh>.
+- MoshCatty `+"`moshcatty-0.1.8`"+` (mosh-client), the bundled pure-Rust
+  implementation:
+  <https://github.com/binaricat/MoshCatty/tree/moshcatty-0.1.8>, tag commit
+  `+"`554b9d305e7ac4b11de740d764bbc3e05f816d7b`"+`. Upstream mosh
+  (<https://github.com/mobile-shell/mosh>) is a protocol reference only and is
+  not the source of this binary. The bundled client also contains
+  MIT-licensed material from
+  <https://github.com/unixshells/mosh-go/tree/8dca5c67ec8e09f71a4dc8eda9216f2f4ee7ec0f>
+  (Copyright (c) 2026 Unix Shells); its notice ships as
+  `+"`resources/mosh/LICENSE-MoshGo-MIT.txt`"+`.
 - Netcatty-et-bin `+"`et-bin-6.2.10-1`"+` (et):
   <https://github.com/binaricat/Netcatty-et-bin/releases/tag/et-bin-6.2.10-1>.
   Upstream EternalTerminal at `+"`et-v6.2.10`"+`:
@@ -98,6 +106,7 @@ func licenseChecks() []documentCheck {
 		{NoticeFile, []string{"GPL-3.0-or-later", "modified version"}},
 		{filepath.Join("resources", ThirdPartyNoticesFile), []string{
 			"MyGo", "libghostty-vt", "MoshCatty", "EternalTerminal", "Netcatty",
+			"mosh-go", "554b9d305e7ac4b11de740d764bbc3e05f816d7b",
 		}},
 	}
 }
