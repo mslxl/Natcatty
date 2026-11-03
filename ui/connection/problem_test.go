@@ -8,6 +8,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	"github.com/mslxl/natcatty/ui/locales"
 )
 
@@ -77,6 +78,30 @@ func TestSecurityKeyMessagesExistInEveryLocale(t *testing.T) {
 		} {
 			if text == "" {
 				t.Fatalf("%s: %s message is empty", locale, name)
+			}
+		}
+	}
+}
+
+// TestProblemTextForNamesTransportImplementationFailures checks the typed
+// fail-closed errors of ticket 21 reach the user as actionable text, not the
+// generic internal fallback.
+func TestProblemTextForNamesTransportImplementationFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want func(locales.Messages) string
+	}{
+		{"unavailable", fmt.Errorf("%w: in-process", transportmodel.ErrImplementationUnavailable),
+			func(m locales.Messages) string { return m.ConnectionErrorTransportUnavailable() }},
+		{"unknown", fmt.Errorf("%w: %q", transportmodel.ErrUnknownImplementation, "future_client"),
+			func(m locales.Messages) string { return m.ConnectionErrorTransportUnknown() }},
+	}
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		for _, tc := range cases {
+			if got, want := ProblemTextFor(m, tc.err), tc.want(m); got == "" || got != want {
+				t.Fatalf("%s/%s = %q, want %q", locale, tc.name, got, want)
 			}
 		}
 	}

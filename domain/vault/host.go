@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/mslxl/natcatty/domain/model"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 )
 
 // Protocol is the connection protocol a Host uses. Serial and network-device
@@ -26,8 +27,8 @@ const (
 	ProtocolLocal Protocol = "local"
 	// ProtocolMosh is an SSH Host that swaps to Mosh after the bootstrap.
 	ProtocolMosh Protocol = "mosh"
-	// ProtocolET is an SSH Host reached through the bundled EternalTerminal
-	// client.
+	// ProtocolET is an SSH Host reached through the EternalTerminal
+	// transport, bundled or in process.
 	ProtocolET Protocol = "et"
 )
 
@@ -51,6 +52,9 @@ const (
 	maxProxyCommandLength = 8 << 10
 	// maxMoshServerPathLength bounds the remote mosh-server override.
 	maxMoshServerPathLength = 4 << 10
+	// maxTransportImplementationLength bounds the persisted implementation
+	// selection. Known values are short; the bound only rejects garbage.
+	maxTransportImplementationLength = 64
 	// maxAlgorithmCount and maxAlgorithmNameLength bound an advanced algorithm
 	// selection so a pasted list cannot balloon the Host record.
 	maxAlgorithmCount      = 64
@@ -255,6 +259,11 @@ type Host struct {
 	// ETPort is the EternalTerminal server port for an ET Host. Zero means the
 	// 2022 default. It is kept only for ProtocolET.
 	ETPort int `json:"etPort,omitempty"`
+	// TransportImplementation overrides the global Mosh and ET client choice
+	// for this Host. Empty inherits the global default, so a Host saved before
+	// this setting existed keeps working unchanged. It is kept only for
+	// ProtocolMosh and ProtocolET.
+	TransportImplementation transportmodel.Implementation `json:"transportImplementation,omitempty"`
 	// OrderKey orders Hosts within their Host Group, in steps of 1000.
 	OrderKey  int64     `json:"orderKey"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -309,6 +318,10 @@ type Draft struct {
 	// ETPort is the EternalTerminal server port. Zero means the default and is
 	// kept only for ProtocolET.
 	ETPort int
+	// TransportImplementation overrides the global Mosh and ET client choice.
+	// Empty inherits the global default and is kept only for ProtocolMosh and
+	// ProtocolET.
+	TransportImplementation transportmodel.Implementation
 	// Password is plaintext form input. The Vault application encrypts it
 	// into the field-secret store; it is never copied onto Host or written
 	// to the JSON tail. An empty value on Update keeps the stored password.
@@ -345,8 +358,9 @@ const (
 	FieldSFTPSudo     Field = "sftp_sudo"
 	// FieldMoshServerPath and FieldETPort name the Mosh and EternalTerminal
 	// settings a validation error concerns.
-	FieldMoshServerPath Field = "mosh_server_path"
-	FieldETPort         Field = "et_port"
+	FieldMoshServerPath          Field = "mosh_server_path"
+	FieldETPort                  Field = "et_port"
+	FieldTransportImplementation Field = "transport_implementation"
 	// FieldSnippet, FieldSnippetCommand, and FieldSnippetPackage name the
 	// parts of a Snippet a validation error concerns.
 	FieldSnippet        Field = "snippet"
@@ -415,6 +429,15 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	}
 	if draft.Protocol != ProtocolET {
 		draft.ETPort = 0
+	}
+	// The implementation choice concerns the Mosh and ET transports only.
+	// The value stays opaque here: a stale or future value must be preserved
+	// so the Session factory can fail closed with a typed error rather than
+	// silently rewriting the user's choice.
+	draft.TransportImplementation = transportmodel.Implementation(
+		strings.TrimSpace(string(draft.TransportImplementation)))
+	if draft.Protocol != ProtocolMosh && draft.Protocol != ProtocolET {
+		draft.TransportImplementation = transportmodel.Unspecified
 	}
 	if !draft.Protocol.UsesSSHAuth() {
 		// Telnet and a Local shell never read the SSH credential bundle. Clear
@@ -493,28 +516,29 @@ func (h Host) MergeKey() string {
 // Validate checks that a Host already in canonical form is saveable.
 func (h Host) Validate() error {
 	return validateFields(Draft{
-		Label:                  h.Label,
-		Hostname:               h.Hostname,
-		Port:                   h.Port,
-		Username:               h.Username,
-		Protocol:               h.Protocol,
-		Group:                  h.Group,
-		Tags:                   h.Tags,
-		Notes:                  h.Notes,
-		AuthMethod:             h.AuthMethod,
-		RequiresMFA:            h.RequiresMFA,
-		UseSSHAgent:            h.UseSSHAgent,
-		X11Forwarding:          h.X11Forwarding,
-		X11WarningAcknowledged: h.X11WarningAcknowledged,
-		HostChain:              h.HostChain,
-		Proxy:                  h.Proxy,
-		ProxyProfileID:         h.ProxyProfileID,
-		Algorithms:             h.Algorithms,
-		SFTPFileProtocol:       h.SFTPFileProtocol,
-		SFTPSudo:               h.SFTPSudo,
-		DeviceType:             h.DeviceType,
-		MoshServerPath:         h.MoshServerPath,
-		ETPort:                 h.ETPort,
+		Label:                   h.Label,
+		Hostname:                h.Hostname,
+		Port:                    h.Port,
+		Username:                h.Username,
+		Protocol:                h.Protocol,
+		Group:                   h.Group,
+		Tags:                    h.Tags,
+		Notes:                   h.Notes,
+		AuthMethod:              h.AuthMethod,
+		RequiresMFA:             h.RequiresMFA,
+		UseSSHAgent:             h.UseSSHAgent,
+		X11Forwarding:           h.X11Forwarding,
+		X11WarningAcknowledged:  h.X11WarningAcknowledged,
+		HostChain:               h.HostChain,
+		Proxy:                   h.Proxy,
+		ProxyProfileID:          h.ProxyProfileID,
+		Algorithms:              h.Algorithms,
+		SFTPFileProtocol:        h.SFTPFileProtocol,
+		SFTPSudo:                h.SFTPSudo,
+		DeviceType:              h.DeviceType,
+		MoshServerPath:          h.MoshServerPath,
+		ETPort:                  h.ETPort,
+		TransportImplementation: h.TransportImplementation,
 	})
 }
 
@@ -616,6 +640,14 @@ func validateFields(draft Draft) error {
 	}
 	if draft.Protocol == ProtocolET && draft.ETPort != 0 && (draft.ETPort < 1 || draft.ETPort > 65535) {
 		return validation(FieldETPort, RuleOutOfRange)
+	}
+	// The selection is intentionally not checked against this build's known
+	// values. A record written by another build must remain saveable so the
+	// user can repair it, and the Session factory is the place that fails
+	// closed on a value it cannot route.
+	if err := validateText(FieldTransportImplementation,
+		string(draft.TransportImplementation), maxTransportImplementationLength, true); err != nil {
+		return err
 	}
 
 	if len(draft.Group) > maxGroupLength {

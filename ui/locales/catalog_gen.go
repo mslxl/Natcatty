@@ -10106,6 +10106,168 @@ func (msgs Messages) SettingsAreaTerminal() string {
 	return Catalog.Format(msgs.locale, "settingsAreaTerminal", nil)
 }
 
+// SettingsAreaTransport says "Transport"
+// in the language the app shows.
+func SettingsAreaTransport() string { return In(i18n.Locale()).SettingsAreaTransport() }
+
+// SettingsAreaTransport says "Transport"
+// in the language of msgs.
+func (msgs Messages) SettingsAreaTransport() string {
+	return Catalog.Format(msgs.locale, "settingsAreaTransport", nil)
+}
+
+// SettingsTransportDescription says "Choose the client implementation for Mosh and EternalTerminal Sessions."
+// in the language the app shows.
+func SettingsTransportDescription() string { return In(i18n.Locale()).SettingsTransportDescription() }
+
+// SettingsTransportDescription says "Choose the client implementation for Mosh and EternalTerminal Sessions."
+// in the language of msgs.
+func (msgs Messages) SettingsTransportDescription() string {
+	return Catalog.Format(msgs.locale, "settingsTransportDescription", nil)
+}
+
+// SettingsTransportImplementation says "Transport implementation"
+// in the language the app shows.
+func SettingsTransportImplementation() string {
+	return In(i18n.Locale()).SettingsTransportImplementation()
+}
+
+// SettingsTransportImplementation says "Transport implementation"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportImplementation() string {
+	return Catalog.Format(msgs.locale, "settingsTransportImplementation", nil)
+}
+
+// SettingsTransportBundled says "Bundled client"
+// in the language the app shows.
+func SettingsTransportBundled() string { return In(i18n.Locale()).SettingsTransportBundled() }
+
+// SettingsTransportBundled says "Bundled client"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportBundled() string {
+	return Catalog.Format(msgs.locale, "settingsTransportBundled", nil)
+}
+
+// SettingsTransportInProcess says "In-process client (not available yet)"
+// in the language the app shows.
+func SettingsTransportInProcess() string { return In(i18n.Locale()).SettingsTransportInProcess() }
+
+// SettingsTransportInProcess says "In-process client (not available yet)"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportInProcess() string {
+	return Catalog.Format(msgs.locale, "settingsTransportInProcess", nil)
+}
+
+// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use this client unless a Host overrides it. The in-process client is not available …"
+// in the language the app shows.
+func SettingsTransportImplementationHint() string {
+	return In(i18n.Locale()).SettingsTransportImplementationHint()
+}
+
+// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use this client unless a Host overrides it. The in-process client is not available …"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportImplementationHint() string {
+	return Catalog.Format(msgs.locale, "settingsTransportImplementationHint", nil)
+}
+
+// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose Bu…"
+// in the language the app shows.
+func SettingsTransportUnknown() string { return In(i18n.Locale()).SettingsTransportUnknown() }
+
+// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose Bu…"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportUnknown() string {
+	return Catalog.Format(msgs.locale, "settingsTransportUnknown", nil)
+}
+
+// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this version. Choose Bundled for the Host or in Settings."
+// in the language the app shows.
+func ConnectionErrorTransportUnavailable() string {
+	return In(i18n.Locale()).ConnectionErrorTransportUnavailable()
+}
+
+// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this version. Choose Bundled for the Host or in Settings."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorTransportUnavailable() string {
+	return Catalog.Format(msgs.locale, "connectionErrorTransportUnavailable", nil)
+}
+
+// ConnectionErrorTransportUnknown says "The saved transport implementation is not recognized by this version. Choose Bundled for the Host or in Settings."
+// in the language the app shows.
+func ConnectionErrorTransportUnknown() string {
+	return In(i18n.Locale()).ConnectionErrorTransportUnknown()
+}
+
+// ConnectionErrorTransportUnknown says "The saved transport implementation is not recognized by this version. Choose Bundled for the Host or in Settings."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorTransportUnknown() string {
+	return Catalog.Format(msgs.locale, "connectionErrorTransportUnknown", nil)
+}
+
+// VaultHostTransportImplementation says "Transport implementation"
+// in the language the app shows.
+func VaultHostTransportImplementation() string {
+	return In(i18n.Locale()).VaultHostTransportImplementation()
+}
+
+// VaultHostTransportImplementation says "Transport implementation"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportImplementation() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportImplementation", nil)
+}
+
+// VaultHostTransportInherit says "Use global default"
+// in the language the app shows.
+func VaultHostTransportInherit() string { return In(i18n.Locale()).VaultHostTransportInherit() }
+
+// VaultHostTransportInherit says "Use global default"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportInherit() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportInherit", nil)
+}
+
+// VaultHostTransportBundled says "Bundled client"
+// in the language the app shows.
+func VaultHostTransportBundled() string { return In(i18n.Locale()).VaultHostTransportBundled() }
+
+// VaultHostTransportBundled says "Bundled client"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportBundled() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportBundled", nil)
+}
+
+// VaultHostTransportInProcess says "In-process client (not available yet)"
+// in the language the app shows.
+func VaultHostTransportInProcess() string { return In(i18n.Locale()).VaultHostTransportInProcess() }
+
+// VaultHostTransportInProcess says "In-process client (not available yet)"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportInProcess() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportInProcess", nil)
+}
+
+// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is not available in …"
+// in the language the app shows.
+func VaultHostTransportImplementationHint() string {
+	return In(i18n.Locale()).VaultHostTransportImplementationHint()
+}
+
+// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is not available in …"
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportImplementationHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportImplementationHint", nil)
+}
+
+// VaultHostTransportUnknown says "This Host has an unrecognized transport implementation and will fail to connect until you choose a valid option."
+// in the language the app shows.
+func VaultHostTransportUnknown() string { return In(i18n.Locale()).VaultHostTransportUnknown() }
+
+// VaultHostTransportUnknown says "This Host has an unrecognized transport implementation and will fail to connect until you choose a valid option."
+// in the language of msgs.
+func (msgs Messages) VaultHostTransportUnknown() string {
+	return Catalog.Format(msgs.locale, "vaultHostTransportUnknown", nil)
+}
+
 // SettingsAreaLayout says "Layout & Tabs"
 // in the language the app shows.
 func SettingsAreaLayout() string { return In(i18n.Locale()).SettingsAreaLayout() }

@@ -7,6 +7,7 @@ import (
 	"math"
 
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 )
 
 // Group names a resettable settings area.
@@ -19,6 +20,7 @@ const (
 	GroupLogs       Group = "logs"
 	GroupSync       Group = "sync"
 	GroupSecurity   Group = "security"
+	GroupTransport  Group = "transport"
 	GroupMonitor    Group = "monitor"
 	GroupSysManager Group = "sysManager"
 )
@@ -27,7 +29,7 @@ const (
 // surface configuration rather than a Settings form, so it is not listed.
 func Groups() []Group {
 	return []Group{GroupAppearance, GroupLayout, GroupSFTPEditor, GroupLogs,
-		GroupSync, GroupSecurity}
+		GroupSync, GroupSecurity, GroupTransport}
 }
 
 // ThemeMode is the original's light/dark/system appearance choice.
@@ -170,6 +172,14 @@ type Security struct {
 	ConfirmDestructive   bool `json:"confirmDestructive"`
 }
 
+// Transport selects the client implementation for Mosh and EternalTerminal
+// Sessions. The value is persisted as written: an unknown value from another
+// build must reach the Session factory and fail closed, so Normalize does not
+// replace it with the default.
+type Transport struct {
+	Implementation transportmodel.Implementation `json:"implementation"`
+}
+
 // Settings is the whole persisted preference document.
 type Settings struct {
 	Appearance Appearance `json:"appearance"`
@@ -178,6 +188,7 @@ type Settings struct {
 	Logs       Logs       `json:"logs"`
 	Sync       Sync       `json:"sync"`
 	Security   Security   `json:"security"`
+	Transport  Transport  `json:"transport"`
 	Monitor    Monitor    `json:"monitor"`
 	SysManager SysManager `json:"sysManager"`
 }
@@ -243,9 +254,12 @@ func Defaults() Settings {
 			// the least surprising fallback.
 			DefaultOpener: Opener{Kind: OpenerSystem},
 		},
-		Logs:       Logs{SSHDebug: false},
-		Sync:       Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
-		Security:   Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
+		Logs:     Logs{SSHDebug: false},
+		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
+		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
+		// The bundled clients stay the default until the parity gate and the
+		// opt-in beta complete, per the migration spec.
+		Transport:  Transport{Implementation: transportmodel.Bundled},
 		Monitor:    DefaultMonitor(),
 		SysManager: DefaultSysManager(),
 	}
@@ -314,6 +328,13 @@ func Normalize(settings Settings) Settings {
 	default:
 		settings.Sync.ConflictStrategy = defaults.Sync.ConflictStrategy
 	}
+	// An absent global transport choice means the bundled default. A
+	// non-empty value this build does not recognize is deliberately left
+	// alone: the Session factory must report a typed error instead of
+	// silently falling back.
+	if settings.Transport.Implementation == transportmodel.Unspecified {
+		settings.Transport.Implementation = defaults.Transport.Implementation
+	}
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	settings.SysManager = NormalizeSysManager(settings.SysManager)
 	return settings
@@ -367,6 +388,8 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.Sync = defaults.Sync
 	case GroupSecurity:
 		settings.Security = defaults.Security
+	case GroupTransport:
+		settings.Transport = defaults.Transport
 	case GroupMonitor:
 		settings.Monitor = defaults.Monitor
 	case GroupSysManager:
@@ -418,6 +441,7 @@ const (
 	FieldSyncProvider                Field = "sync.provider"
 	FieldConfirmCloseSessions        Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive          Field = "security.confirmDestructive"
+	FieldTransportImplementation     Field = "transport.implementation"
 )
 
 // Fields returns every resettable field in Settings-window order.
@@ -439,6 +463,7 @@ func Fields() []Field {
 		FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
+		FieldTransportImplementation,
 	}
 }
 
@@ -467,6 +492,8 @@ func GroupOf(field Field) (Group, bool) {
 		return GroupSync, true
 	case FieldConfirmCloseSessions, FieldConfirmDestructive:
 		return GroupSecurity, true
+	case FieldTransportImplementation:
+		return GroupTransport, true
 	default:
 		return "", false
 	}
@@ -553,6 +580,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Security.ConfirmCloseSessions = defaults.Security.ConfirmCloseSessions
 	case FieldConfirmDestructive:
 		settings.Security.ConfirmDestructive = defaults.Security.ConfirmDestructive
+	case FieldTransportImplementation:
+		settings.Transport.Implementation = defaults.Transport.Implementation
 	}
 	return settings
 }

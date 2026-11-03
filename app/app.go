@@ -715,7 +715,7 @@ func run(afterReady func(hostWindow)) error {
 	).withClients(
 		newMoshFactory(connections, routes, transportRoots),
 		newETFactory(vaultService, routes, transportRoots),
-	),
+	).withImplementations(vaultService, preferenceService),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
 		appsession.WithAutoLogging(func(spec appsession.StartSpec) *appsession.LogOptions {

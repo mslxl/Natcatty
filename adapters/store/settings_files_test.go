@@ -9,6 +9,7 @@ import (
 	appkeybindings "github.com/mslxl/natcatty/application/keybindings"
 	apppreferences "github.com/mslxl/natcatty/application/preferences"
 	domainkeybindings "github.com/mslxl/natcatty/domain/keybindings"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 )
 
@@ -183,6 +184,49 @@ func TestSFTPTransferSettingsSurviveRestart(t *testing.T) {
 	got := second.Settings().SFTPEditor
 	if got.UseCompressedUpload || !got.AutoSync || !got.FollowTerminalCwd {
 		t.Fatalf("SFTP transfer settings after restart = %+v", got)
+	}
+}
+
+// TestTransportImplementationSelectionSurvivesRestart proves the global Mosh
+// and EternalTerminal implementation is saved and read back by a new service
+// over the same preferences file, and that an old file without the field keeps
+// the bundled default.
+func TestTransportImplementationSelectionSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "preferences.json")
+	ctx := context.Background()
+
+	first := apppreferences.NewService(OpenPreferences(path))
+	if err := first.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := first.Settings().Transport.Implementation; got != transportmodel.Bundled {
+		t.Fatalf("default implementation = %q, want bundled", got)
+	}
+	if err := first.Update(func(settings *domainpreferences.Settings) {
+		settings.Transport.Implementation = transportmodel.InProcess
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second := apppreferences.NewService(OpenPreferences(path))
+	if err := second.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := second.Settings().Transport.Implementation; got != transportmodel.InProcess {
+		t.Fatalf("implementation after restart = %q, want in_process", got)
+	}
+
+	// A document written before the field existed must keep working under the
+	// bundled default rather than failing to open Mosh and ET Hosts.
+	if err := os.WriteFile(path, []byte(`{"version":1,"layout":{"showSftpTab":false}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := apppreferences.NewService(OpenPreferences(path))
+	if err := legacy.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := legacy.Settings().Transport.Implementation; got != transportmodel.Bundled {
+		t.Fatalf("legacy document implementation = %q, want bundled", got)
 	}
 }
 

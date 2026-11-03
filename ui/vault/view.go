@@ -12,6 +12,7 @@ import (
 
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainbackup "github.com/mslxl/natcatty/domain/vaultbackup"
 	uiforwarding "github.com/mslxl/natcatty/ui/forwarding"
@@ -1411,6 +1412,25 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 				}
 				ui.Checkbox(c, &form.NetworkDevice, m.VaultHostNetworkDevice())
 				ui.Text(c, m.VaultHostNetworkDeviceHint()).FontSize(12).TextColor(t.TextMuted)
+			}
+			if form.Protocol == string(domainvault.ProtocolMosh) || form.Protocol == string(domainvault.ProtocolET) {
+				ui.Field(c, m.VaultHostTransportImplementation(), func() {
+					ui.RadioGroup(c, func() {
+						ui.Radio(c, &form.TransportImplementation, "", m.VaultHostTransportInherit())
+						ui.Radio(c, &form.TransportImplementation,
+							string(transportmodel.Bundled), m.VaultHostTransportBundled())
+						// The in-process clients are later tickets: the label
+						// says so, but the value stays selectable so it can be
+						// persisted. The factory fails closed with a typed
+						// error until the transport lands.
+						ui.Radio(c, &form.TransportImplementation,
+							string(transportmodel.InProcess), m.VaultHostTransportInProcess())
+					})
+				}).Description(m.VaultHostTransportImplementationHint())
+				value := transportmodel.Implementation(form.TransportImplementation)
+				if value != transportmodel.Unspecified && !transportmodel.Known(value) {
+					ui.Text(c, m.VaultHostTransportUnknown()).FontSize(12).TextColor(uitheme.DangerText(t))
+				}
 			}
 			if form.Protocol == string(domainvault.ProtocolMosh) {
 				ui.Field(c, m.VaultHostMoshServerPath(), func() {

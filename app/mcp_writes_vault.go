@@ -215,7 +215,7 @@ func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 		SkipEcdsaHostKey: host.SkipEcdsaHostKey, Algorithms: host.Algorithms,
 		SFTPFileProtocol: host.SFTPFileProtocol, SFTPSudo: host.SFTPSudo,
 		DeviceType: host.DeviceType, MoshServerPath: host.MoshServerPath,
-		ETPort: host.ETPort,
+		ETPort: host.ETPort, TransportImplementation: host.TransportImplementation,
 	}
 	if host.HostChain != nil {
 		chain := *host.HostChain

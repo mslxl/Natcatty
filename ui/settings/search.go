@@ -14,6 +14,7 @@ type Area string
 const (
 	AreaAppearance Area = "appearance"
 	AreaTerminal   Area = "terminal"
+	AreaTransport  Area = "transport"
 	AreaLayout     Area = "layout"
 	AreaSFTPEditor Area = "sftpEditor"
 	AreaLogs       Area = "logs"
@@ -27,7 +28,7 @@ const (
 
 // Areas returns the sidebar order.
 func Areas() []Area {
-	return []Area{AreaAppearance, AreaTerminal, AreaLayout, AreaSFTPEditor,
+	return []Area{AreaAppearance, AreaTerminal, AreaTransport, AreaLayout, AreaSFTPEditor,
 		AreaLogs, AreaSystem, AreaSecurity, AreaSync, AreaShortcuts, AreaMCP,
 		AreaAbout}
 }
@@ -39,6 +40,8 @@ func AreaTitle(m locales.Messages, area Area) string {
 		return m.SettingsAreaAppearance()
 	case AreaTerminal:
 		return m.SettingsAreaTerminal()
+	case AreaTransport:
+		return m.SettingsAreaTransport()
 	case AreaLayout:
 		return m.SettingsAreaLayout()
 	case AreaSFTPEditor:
@@ -69,6 +72,8 @@ func AreaDescription(m locales.Messages, area Area) string {
 		return m.SettingsAppearanceDescription()
 	case AreaTerminal:
 		return m.SettingsTerminalDescription()
+	case AreaTransport:
+		return m.SettingsTransportDescription()
 	case AreaLayout:
 		return m.SettingsLayoutDescription()
 	case AreaSFTPEditor:
@@ -182,6 +187,9 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsConnectionLogRetentionDays(), "connection log retention days")
 	add(AreaTerminal, "", m.SettingsHistoryRetentionCount(), "command history retention count")
 	add(AreaTerminal, "", m.SettingsHistoryRetentionDays(), "command history retention days")
+
+	add(AreaTransport, domain.FieldTransportImplementation, m.SettingsTransportImplementation(),
+		"transport implementation mosh eternal terminal et bundled in-process in process client")
 
 	add(AreaSFTPEditor, domain.FieldDoubleClickBehavior, m.SettingsDoubleClickBehavior(), "double click open transfer")
 	add(AreaSFTPEditor, domain.FieldAutoSync, m.SettingsAutoSync(), "sync directories")
