@@ -222,6 +222,30 @@ func TestMoshGoMITNoticeIsShipped(t *testing.T) {
 	}
 }
 
+func TestInProcessMoshNoticeIsShipped(t *testing.T) {
+	notice, err := os.ReadFile(filepath.Join("..", "..", "internal", "mosh", "NOTICE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"https://github.com/unixshells/mosh-go",
+		"0284bd652aab3dfff5b0b74945c23901d7537b61",
+		"MIT License",
+		"Copyright (c) 2026 Unix Shells",
+	} {
+		if !strings.Contains(string(notice), want) {
+			t.Errorf("internal/mosh/NOTICE does not contain %q", want)
+		}
+	}
+	packaged, err := os.ReadFile(filepath.Join("..", "..", "resources", "THIRD-PARTY-NOTICES.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(packaged), "internal/mosh/NOTICE") {
+		t.Error("resources/THIRD-PARTY-NOTICES.md does not point at internal/mosh/NOTICE")
+	}
+}
+
 func TestThirdPartyNoticesNameEveryBundledRustCrate(t *testing.T) {
 	root := filepath.Join("..", "..")
 	path := filepath.Join(root, "resources", "mosh", "RUST-DEPENDENCIES.json")
