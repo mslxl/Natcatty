@@ -318,6 +318,8 @@ func areaIcon(area Area) string {
 		return icons.Palette
 	case AreaTerminal:
 		return icons.SquareTerminal
+	case AreaTransport:
+		return icons.Cpu
 	case AreaLayout:
 		return icons.LayoutGrid
 	case AreaSFTPEditor:
@@ -408,6 +410,8 @@ func areaContent(c *ui.Context, config Config, area Area, m locales.Messages, t 
 				return config.Terminal.ResetAll()
 			}, true)
 		}
+	case AreaTransport:
+		transportArea(c, config.Preferences, m, t)
 	case AreaLayout:
 		layoutArea(c, config.Preferences, m, t)
 	case AreaSFTPEditor:
