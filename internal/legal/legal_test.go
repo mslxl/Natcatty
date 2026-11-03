@@ -3,12 +3,20 @@
 package legal
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// canonicalGPL3NormalizedSHA256 is the canonical FSF text from
+// https://www.gnu.org/licenses/gpl-3.0.txt after collapsing every run of
+// whitespace to one space. Hashing the word sequence ignores harmless reflow
+// but catches any altered, added, or omitted wording.
+const canonicalGPL3NormalizedSHA256 = "972a178adadacfbdddec346b16d45fd4ed9937ec5e4a5bb46d8685ba4e73a0b1"
 
 func TestSourceOfferNamesTheReleaseTagAndBundledSources(t *testing.T) {
 	offer := SourceOfferDocument("v0.1.0")
@@ -32,6 +40,25 @@ func TestSourceTagURLFallsBackToTheRepositoryForDevelopment(t *testing.T) {
 	for _, version := range []string{"", "dev", "v"} {
 		if got := SourceTagURL(version); got != RepositoryURL {
 			t.Errorf("SourceTagURL(%q) = %q, want %q", version, got, RepositoryURL)
+		}
+	}
+}
+
+func TestShippedGPL3TextMatchesCanonicalWording(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, name := range []string{
+		LicenseFile,
+		filepath.Join("resources", "mosh", "LICENSE-MoshCatty-GPL-3.0.txt"),
+	} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalized := strings.Join(strings.Fields(string(data)), " ")
+		sum := sha256.Sum256([]byte(normalized))
+		if got := hex.EncodeToString(sum[:]); got != canonicalGPL3NormalizedSHA256 {
+			t.Errorf("%s does not match the canonical GPLv3 wording: normalized SHA-256 %s, want %s",
+				name, got, canonicalGPL3NormalizedSHA256)
 		}
 	}
 }
