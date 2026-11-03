@@ -93,9 +93,8 @@ func TestSmartMergeCombinesBothSidesUsingTheStoredAnchor(t *testing.T) {
 // TestSmartMergeCarriesSettingsThroughTheService proves the deep merge is not
 // only reachable through the pure function: the service merges a payload's
 // settings, applies the merged snapshot, and publishes it. The real Vault
-// adapter intentionally omits device-local settings from its snapshot (ticket
-// 49 and spec section Cloud sync), so the engine is exercised here with a
-// payload that carries settings.
+// adapter publishes only the portable settings documents, so the engine is
+// exercised here with a payload that carries arbitrary settings keys.
 func TestSmartMergeCarriesSettingsThroughTheService(t *testing.T) {
 	backups := &fakeBackups{}
 	service, remote, vault, _ := serviceForStrategy(t, domainsync.StrategySmartMerge, backups)

@@ -197,12 +197,17 @@ type Host struct {
 	Username string       `json:"username"`
 	Protocol Protocol     `json:"protocol"`
 	// Group is a slash-separated Host Group path, "" for the Vault root.
-	// It is a path, not an id: a Host may reference a group that no longer
-	// exists, matching the original's non-cascading behavior.
-	Group  string   `json:"group"`
-	Tags   []string `json:"tags"`
-	Notes  string   `json:"notes,omitempty"`
-	Pinned bool     `json:"pinned"`
+	// It is the display and reference path; GroupID is the stable identity
+	// convergent sync uses so a group move carries its members with it. A Host
+	// may reference a group that no longer exists, matching the original's
+	// non-cascading behavior.
+	Group string `json:"group"`
+	// GroupID is the stable Host Group identity. It is empty for the Vault
+	// root and for a path no saved group owns.
+	GroupID string   `json:"groupId,omitempty"`
+	Tags    []string `json:"tags"`
+	Notes   string   `json:"notes,omitempty"`
+	Pinned  bool     `json:"pinned"`
 	// HasPassword reports that an encrypted password exists for this Host.
 	// The ciphertext lives in secret_values, never in this record.
 	HasPassword bool `json:"hasPassword,omitempty"`

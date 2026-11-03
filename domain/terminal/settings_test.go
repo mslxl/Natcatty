@@ -77,3 +77,32 @@ func TestClipboardPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestPortableTerminalSettingsKeepDeviceLocalState(t *testing.T) {
+	settings := Defaults()
+	settings.LogDirectory = "/var/log/natcatty"
+	settings.Encodings = map[string]Encoding{"host:host-1": EncodingGB18030}
+	settings.OSC52 = ClipboardReadWrite
+
+	portable := Portable(settings)
+	if portable.LogDirectory != "" || len(portable.Encodings) != 0 {
+		t.Fatalf("portable settings = %+v, want local path and encodings stripped", portable)
+	}
+	if portable.OSC52 != ClipboardReadWrite {
+		t.Fatalf("portable OSC52 = %q", portable.OSC52)
+	}
+
+	current := Defaults()
+	current.LogDirectory = "/home/me/logs"
+	current.Encodings = map[string]Encoding{"local": EncodingUTF8}
+	merged := MergePortable(current, portable)
+	if merged.LogDirectory != "/home/me/logs" {
+		t.Fatalf("merged LogDirectory = %q, want the local value", merged.LogDirectory)
+	}
+	if len(merged.Encodings) != 1 || merged.Encodings["local"] != EncodingUTF8 {
+		t.Fatalf("merged Encodings = %+v, want the local map", merged.Encodings)
+	}
+	if merged.OSC52 != ClipboardReadWrite {
+		t.Fatalf("merged OSC52 = %q, want the portable value", merged.OSC52)
+	}
+}
