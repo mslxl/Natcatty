@@ -52,6 +52,17 @@ var (
 	ErrChecksumMismatch = errors.New("et: bundled client failed checksum verification")
 	// ErrPlatformUnsupported reports a platform with no published et build.
 	ErrPlatformUnsupported = errors.New("et: this platform has no bundled client")
+	// ErrBootstrapFailed reports that the in-process client could not start
+	// etterminal over the SSH connection, or could not read the IDPASSKEY it
+	// prints. It never carries the printed passkey.
+	ErrBootstrapFailed = errors.New("et: SSH bootstrap failed")
+	// ErrHandshakeFailed reports that the ET connection or its
+	// INITIAL_PAYLOAD exchange failed. A server that rejects the session or
+	// sends an unreadable stream is a handshake failure.
+	ErrHandshakeFailed = errors.New("et: ET handshake failed")
+	// ErrUnsupportedServer reports a server that does not speak the client's
+	// protocol version.
+	ErrUnsupportedServer = errors.New("et: unsupported ET server")
 )
 
 // ValidationError reports the configuration field that is unusable.
