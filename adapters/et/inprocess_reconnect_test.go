@@ -59,6 +59,34 @@ func requireEventually(t *testing.T, what string, check func() bool) {
 	}
 }
 
+// recvTerminalInput waits for the server to receive want in one or more
+// TERMINAL_BUFFER packets, skipping liveness probes and other traffic. It
+// fails when the deadline passes with only part of the input.
+func recvTerminalInput(t *testing.T, server *etservertest.Server, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var input strings.Builder
+	for {
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		packet, err := server.Recv(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("server did not receive %q: %v; received %q", want, err, input.String())
+		}
+		if packet.Header != protocol.HeaderTerminalBuffer {
+			continue
+		}
+		buffer := &protocol.TerminalBuffer{}
+		if err := proto.Unmarshal(packet.Payload, buffer); err != nil {
+			t.Fatalf("decode replayed TerminalBuffer: %v", err)
+		}
+		input.Write(buffer.GetBuffer())
+		if strings.Contains(input.String(), want) {
+			return
+		}
+	}
+}
+
 // TestNetworkChangeReconnectsWithANewLease proves a lost SSH lease is
 // replaced without opening a new bootstrap session: the ET client reacquires a
 // lease, redials etserver through it, and replays the same sequence state, so
@@ -133,6 +161,13 @@ func TestNetworkChangeReconnectsWithANewLease(t *testing.T) {
 	network.SetRefuse(true)
 	network.CutAll()
 
+	// Input typed while the link is down is sealed once and retained in the
+	// replay window; the replacement link must deliver it exactly once.
+	const queuedInput = "typed during the network change"
+	if _, err := transport.Write([]byte(queuedInput)); err != nil {
+		t.Fatalf("Write during the network change: %v", err)
+	}
+
 	requireEventually(t, "a replacement lease", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -152,6 +187,7 @@ func TestNetworkChangeReconnectsWithANewLease(t *testing.T) {
 	if strings.Contains(text, "before the network change") {
 		t.Fatalf("reconnect replayed output into the live terminal: %q", text)
 	}
+	recvTerminalInput(t, server, queuedInput)
 
 	mu.Lock()
 	defer mu.Unlock()

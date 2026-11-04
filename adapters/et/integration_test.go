@@ -359,6 +359,53 @@ func TestLabAppRestartReattach(t *testing.T) {
 	}
 }
 
+// TestLabNetworkChangeReconnectsWithoutBootstrap is the stock-server form of
+// the roaming contract: the SSH transport carrying the ET link disappears and
+// the client acquires a new lease, redials etserver, and resumes the same
+// remote shell. The shell's environment variable proves no second etterminal
+// bootstrap created a new shell.
+func TestLabNetworkChangeReconnectsWithoutBootstrap(t *testing.T) {
+	requireLab(t)
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			manager := labManager(t, server.password)
+			factory := InProcessFactory{Manager: manager}
+			var mu sync.Mutex
+			var leases []ConnectionLease
+			factory.Acquire = func(ctx context.Context, req appconnection.Request) (ConnectionLease, error) {
+				lease, err := manager.Acquire(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				mu.Lock()
+				leases = append(leases, lease)
+				mu.Unlock()
+				return lease, nil
+			}
+			spec := labSpec(t, server)
+			transport := openLab(t, factory, spec)
+			output := newOutputCollector(transport)
+
+			writeCommand(t, transport, `ET_NETWORK_MARK=42; printf 'ET_NET_%s\n' "$ET_NETWORK_MARK"`)
+			output.waitFor(t, "ET_NET_42", 20*time.Second)
+
+			// A network change: the leased SSH transport dies, so its exec and
+			// direct-tcpip channels can no longer carry the ET link. The
+			// etserver session itself stays alive; the Connection Manager is
+			// still able to acquire the replacement.
+			mu.Lock()
+			first := leases[0]
+			mu.Unlock()
+			_ = first.Discard()
+
+			// Input queued while the link is down is delivered after the
+			// reconnect. A fresh bootstrap would not inherit the variable.
+			writeCommand(t, transport, `printf 'ET_SURVIVED_%s\n' "${ET_NETWORK_MARK-unset}"`)
+			output.waitFor(t, "ET_SURVIVED_42", 30*time.Second)
+		})
+	}
+}
+
 // TestInProcessWrongPasswordIsATypedAuthError proves the SSH bootstrap keeps
 // the Connection Manager's auth classification.
 func TestInProcessWrongPasswordIsATypedAuthError(t *testing.T) {

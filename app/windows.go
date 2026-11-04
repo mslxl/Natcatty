@@ -437,18 +437,13 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		OnClosed: func() {
 			delete(m.detached, tabID)
 			delete(m.forceClose, "detached:"+string(tabID))
-			// A window closed as part of the quit sequence, or as the last
-			// window, must keep resumable credentials: OnWillQuit runs only
-			// after this hook. Closing one detached window while another
-			// remains is an explicit close and clears them.
-			preserve := m.quitting || m.noWindowsLeft()
+			// Detached Tabs are not part of the persisted Workspace, so a
+			// saved credential pair could never be reattached after a restart.
+			// Closing the window therefore clears it, whether this is a quit or
+			// an explicit close.
 			// Idempotent: a re-attached Tab is no longer detached, so its
 			// Sessions stay alive in the main window.
-			if preserve {
-				m.state.CloseDetachedTabPreserving(tabID)
-			} else {
-				m.state.CloseDetachedTab(tabID)
-			}
+			m.state.CloseDetachedTab(tabID)
 			m.markQuittingIfNoWindows()
 		},
 	})
