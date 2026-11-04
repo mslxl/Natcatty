@@ -717,7 +717,11 @@ func run(afterReady func(hostWindow)) error {
 		newETFactory(vaultService, routes, transportRoots),
 	).withInProcess(
 		newInProcessMoshFactory(connections, routes),
-		adapteret.InProcessFactory{Manager: connections, Routes: routes},
+		adapteret.InProcessFactory{
+			Manager:  connections,
+			Routes:   routes,
+			Sessions: adapteret.SecretSessionStore{Secrets: secretStore},
+		},
 	).withImplementations(vaultService, preferenceService),
 		// Automatic logging starts with the Session, as the original's
 		// configured log did. An empty directory keeps it off.
@@ -1251,8 +1255,7 @@ func run(afterReady func(hostWindow)) error {
 		syncService.Stop()
 		syncService.ClearPassword()
 		shellState.Shutdown()
-		shellState.CloseAllSessions()
-		sessions.CloseAll()
+		shutdownSessions(shellState, sessions)
 		connections.CloseAll()
 	})
 
@@ -1642,4 +1645,14 @@ func appliedSnapshotRefresh(state func() *vaultstate.State) func() {
 			s.InvalidateLists()
 		}
 	}
+}
+
+// shutdownSessions is the session half of app shutdown. MyGo runs OnWillQuit
+// only after every window closed, so the window hooks preserve resumable
+// transports first; this is the last-resort path for a Session that no window
+// hook saw. Every close here is a graceful one and keeps ET resume
+// credentials, unlike an explicit tab or pane close.
+func shutdownSessions(shellState *state.State, sessions *appsession.Service) {
+	shellState.CloseAllSessions()
+	sessions.CloseAll()
 }

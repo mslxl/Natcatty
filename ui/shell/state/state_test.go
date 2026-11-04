@@ -584,6 +584,13 @@ func TestOpenHostOpensAnETHostWithTheETTransport(t *testing.T) {
 	if spec.Reconnect == nil {
 		t.Fatal("an ET Session has no reconnect policy")
 	}
+	if spec.ResumeKey == "" {
+		t.Fatal("an ET Session has no secret-store resume key")
+	}
+	panes := graph.state.WorkspacePayload().Panes
+	if len(panes) != 1 || panes[0].Session.ResumeKey != spec.ResumeKey {
+		t.Fatalf("saved ET Pane = %+v, want resume key %q", panes, spec.ResumeKey)
+	}
 	snapshot, ok := graph.state.ActiveSnapshot()
 	if !ok || snapshot.Kind != appsession.KindET || snapshot.Status != appsession.StatusRunning {
 		t.Fatalf("snapshot = %+v, %v; want a running ET Session", snapshot, ok)

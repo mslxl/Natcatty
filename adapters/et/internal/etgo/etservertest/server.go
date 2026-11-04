@@ -10,7 +10,10 @@ package etservertest
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +21,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/mslxl/natcatty/adapters/et/internal/etgo/etcp"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/seal"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/wire"
@@ -33,6 +37,7 @@ type Server struct {
 	mu         sync.Mutex
 	registered bool // false after EndSession: connects get INVALID_KEY
 	known      bool // a client connected before: the next connect is RETURNING_CLIENT
+	legacy     bool // answer without the v7 challenge, like etserver 6.2.10
 	echo       bool
 	out        *seal.Stream // server to client
 	sent       [][]byte     // every sealed packet sent; index is the sequence number
@@ -89,24 +94,40 @@ func (s *Server) Serve(ctx context.Context, c net.Conn) error {
 	if err := wire.ReadMessage(c, &req); err != nil {
 		return fmt.Errorf("etservertest: connect request: %w", err)
 	}
-	status, text := s.admit(&req)
-	resp := &protocol.ConnectResponse{}
-	resp.SetStatus(status)
-	if text != "" {
-		resp.SetError(text)
+	if req.GetVersion() != protocol.Version {
+		// Upstream's text (src/base/ServerConnection.cpp:55-59 at et-v7.1.1).
+		return s.reject(c, protocol.ConnectStatus_MISMATCHED_PROTOCOL, fmt.Sprintf(
+			"Mismatched protocol versions.  Your client & server must be on the same version of ET.  Client: %d != Server: %d",
+			req.GetVersion(), protocol.Version))
 	}
-	if err := wire.WriteMessage(c, resp); err != nil {
-		return fmt.Errorf("etservertest: connect response: %w", err)
+	s.mu.Lock()
+	registered := req.GetClientId() == s.id && s.registered
+	legacy := s.legacy || !req.GetSupportsChallenge()
+	s.mu.Unlock()
+	if !registered {
+		// MEASURED against etserver 7.0.0: the error text for an unknown or
+		// ended session is "Client is not registered".
+		return s.reject(c, protocol.ConnectStatus_INVALID_KEY, "Client is not registered")
+	}
+
+	status, resetRequired, salt, err := s.authenticate(c, &req, legacy)
+	if err != nil {
+		return err
 	}
 	if status != protocol.ConnectStatus_NEW_CLIENT && status != protocol.ConnectStatus_RETURNING_CLIENT {
-		return fmt.Errorf("etservertest: rejected: %s", text)
+		return fmt.Errorf("etservertest: rejected: status %v", status)
 	}
 
 	done := s.takeOver(c)
 	defer close(done)
 
 	var flushed int64
-	if status == protocol.ConnectStatus_RETURNING_CLIENT {
+	switch {
+	case resetRequired:
+		if err := s.resetRecover(c, salt); err != nil {
+			return err
+		}
+	case status == protocol.ConnectStatus_RETURNING_CLIENT:
 		f, err := s.recover(c)
 		if err != nil {
 			return err
@@ -121,26 +142,167 @@ func (s *Server) Serve(ctx context.Context, c net.Conn) error {
 	return context.Cause(lctx)
 }
 
-// admit decides the ConnectResponse status for req.
-func (s *Server) admit(req *protocol.ConnectRequest) (status protocol.ConnectStatus, text string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	switch {
-	case req.GetVersion() != protocol.Version:
-		// Upstream's text (src/base/ServerConnection.cpp:55-59 at et-v7.0.0).
-		return protocol.ConnectStatus_MISMATCHED_PROTOCOL, fmt.Sprintf(
-			"Mismatched protocol versions.  Your client & server must be on the same version of ET.  Client: %d != Server: %d",
-			req.GetVersion(), protocol.Version)
-	case req.GetClientId() != s.id || !s.registered:
-		// MEASURED against etserver 7.0.0: the error text for an unknown or
-		// ended session is "Client is not registered".
-		return protocol.ConnectStatus_INVALID_KEY, "Client is not registered"
-	case !s.known:
-		s.known = true
-		return protocol.ConnectStatus_NEW_CLIENT, ""
-	default:
-		return protocol.ConnectStatus_RETURNING_CLIENT, ""
+// reject writes a status-only response, as upstream does before any
+// challenge, and reports the fixed rejection text.
+func (s *Server) reject(c net.Conn, status protocol.ConnectStatus, text string) error {
+	resp := &protocol.ConnectResponse{}
+	resp.SetStatus(status)
+	if text != "" {
+		resp.SetError(text)
 	}
+	if err := wire.WriteMessage(c, resp); err != nil {
+		return fmt.Errorf("etservertest: connect response: %w", err)
+	}
+	return fmt.Errorf("etservertest: rejected: %s", text)
+}
+
+// authenticate runs the v7 challenge and decides the final status, or, for a
+// legacy peer, decides directly from the known-client state. It returns
+// resetRequired and salt for an authenticated reset recovery.
+func (s *Server) authenticate(c net.Conn, req *protocol.ConnectRequest, legacy bool) (
+	status protocol.ConnectStatus, resetRequired bool, salt []byte, err error) {
+
+	if legacy {
+		s.mu.Lock()
+		status = protocol.ConnectStatus_RETURNING_CLIENT
+		if !s.known {
+			status = protocol.ConnectStatus_NEW_CLIENT
+			s.known = true
+		}
+		s.mu.Unlock()
+		resp := &protocol.ConnectResponse{}
+		resp.SetStatus(status)
+		if err := wire.WriteMessage(c, resp); err != nil {
+			return 0, false, nil, fmt.Errorf("etservertest: connect response: %w", err)
+		}
+		return status, false, nil, nil
+	}
+
+	challenge := randomBytes()
+	challengeResponse := &protocol.ConnectResponse{}
+	challengeResponse.SetAuthChallenge(challenge)
+	if err := wire.WriteMessage(c, challengeResponse); err != nil {
+		return 0, false, nil, fmt.Errorf("etservertest: auth challenge: %w", err)
+	}
+	var auth protocol.ConnectAuth
+	if err := wire.ReadMessage(c, &auth); err != nil {
+		return 0, false, nil, fmt.Errorf("etservertest: connect auth: %w", err)
+	}
+	expected, proofErr := etcp.ConnectionProof(s.key[:], req.GetClientId(), req.GetVersion(),
+		challenge, req.GetResetIntent())
+	if proofErr != nil || subtle.ConstantTimeCompare(auth.GetProof(), expected) != 1 {
+		rejected := &protocol.ConnectResponse{}
+		rejected.SetStatus(protocol.ConnectStatus_INVALID_KEY)
+		rejected.SetError("Client authentication failed")
+		if err := wire.WriteMessage(c, rejected); err != nil {
+			return 0, false, nil, fmt.Errorf("etservertest: connect response: %w", err)
+		}
+		return 0, false, nil, errors.New("etservertest: rejected: client authentication failed")
+	}
+
+	s.mu.Lock()
+	known := s.known
+	if !known {
+		s.known = true
+	}
+	s.mu.Unlock()
+	if known {
+		status = protocol.ConnectStatus_RETURNING_CLIENT
+		resetRequired = req.GetResetIntent()
+		if resetRequired {
+			salt = randomBytes()
+		}
+	} else {
+		status = protocol.ConnectStatus_NEW_CLIENT
+	}
+	proof, err := etcp.ResetDecisionProof(s.key[:], req.GetClientId(), req.GetVersion(),
+		challenge, status, resetRequired, salt)
+	if err != nil {
+		return 0, false, nil, fmt.Errorf("etservertest: reset decision proof: %w", err)
+	}
+	resp := &protocol.ConnectResponse{}
+	resp.SetStatus(status)
+	resp.SetResetRequired(resetRequired)
+	if resetRequired {
+		resp.SetResetSalt(salt)
+	}
+	resp.SetResetProof(proof)
+	if err := wire.WriteMessage(c, resp); err != nil {
+		return 0, false, nil, fmt.Errorf("etservertest: connect response: %w", err)
+	}
+	return status, resetRequired, salt, nil
+}
+
+// resetRecover runs upstream's forced-reset exchange: both sides write a
+// zero sequence header carrying the negotiated salt, exchange empty catchup
+// buffers, rekey, and restart the stream at sequence zero
+// (src/base/Connection.cpp:120-177 at et-v7.1.1).
+func (s *Server) resetRecover(c io.ReadWriter, salt []byte) error {
+	// Upstream writes each message before reading the peer's. Over net.Pipe
+	// there is no buffer, so both sides would block on their first write;
+	// write concurrently with the read, as the client's recover does.
+	sh := &protocol.SequenceHeader{}
+	sh.SetSequenceNumber(0)
+	sh.SetReset(true)
+	sh.SetResetSalt(salt)
+	writeErr := make(chan error, 1)
+	go func() { writeErr <- wire.WriteMessage(c, sh) }()
+	var peer protocol.SequenceHeader
+	readErr := wire.ReadMessage(c, &peer)
+	if err := <-writeErr; err != nil {
+		return fmt.Errorf("etservertest: write reset sequence: %w", err)
+	}
+	if readErr != nil {
+		return fmt.Errorf("etservertest: read reset sequence: %w", readErr)
+	}
+	if !peer.GetReset() || !bytes.Equal(peer.GetResetSalt(), salt) {
+		return errors.New("etservertest: reset request does not match the negotiated salt")
+	}
+	go func() { writeErr <- wire.WriteMessage(c, &protocol.CatchupBuffer{}) }()
+	var theirs protocol.CatchupBuffer
+	readErr = wire.ReadMessage(c, &theirs)
+	if err := <-writeErr; err != nil {
+		return fmt.Errorf("etservertest: write empty catchup: %w", err)
+	}
+	if readErr != nil {
+		return fmt.Errorf("etservertest: read reset catchup: %w", readErr)
+	}
+	if len(theirs.GetBuffer()) != 0 {
+		return errors.New("etservertest: reset catchup is not empty")
+	}
+
+	out := seal.New(&s.key, seal.ServerToClient)
+	if err := out.Rekey(salt); err != nil {
+		return fmt.Errorf("etservertest: rekey server stream: %w", err)
+	}
+	in := seal.New(&s.key, seal.ClientToServer)
+	if err := in.Rekey(salt); err != nil {
+		return fmt.Errorf("etservertest: rekey client stream: %w", err)
+	}
+	s.mu.Lock()
+	s.out = out
+	s.in = in
+	s.sent = nil
+	s.recvSeq = 0
+	s.queue = nil
+	s.mu.Unlock()
+	return nil
+}
+
+// LegacyHandshake makes the server answer without the v7 challenge, as
+// etserver 6.2.10 does with unknown ConnectRequest fields.
+func (s *Server) LegacyHandshake(on bool) {
+	s.mu.Lock()
+	s.legacy = on
+	s.mu.Unlock()
+}
+
+func randomBytes() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("etservertest: crypto/rand: " + err.Error())
+	}
+	return b
 }
 
 // takeOver makes c the active link, closing the previous one and waiting for

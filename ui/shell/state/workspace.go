@@ -139,6 +139,20 @@ func newRuntimeID(prefix string) string {
 	return prefix + hex.EncodeToString(id[:])
 }
 
+// newETResumeKey returns the opaque, non-secret locator for a resumable ET
+// Session's saved credentials. Every Pane owns a distinct key.
+func newETResumeKey() string { return newRuntimeID("et-resume-") }
+
+// withFreshResumeKey gives a duplicated or split ET Session its own resume
+// credentials. Copying the source's key would make two Panes reattach the same
+// remote shell and fight over ET's single client slot.
+func withFreshResumeKey(descriptor domainworkspace.SessionDescriptor) domainworkspace.SessionDescriptor {
+	if descriptor.Kind == domainworkspace.SessionET {
+		descriptor.ResumeKey = newETResumeKey()
+	}
+	return descriptor
+}
+
 func (s *State) newTab(opts TabOptions) *Tab {
 	number := s.nextTabNumber
 	s.nextTabNumber++
@@ -452,7 +466,7 @@ func (s *State) CloseTab(index int) bool {
 		return false
 	}
 	tab := s.tabs[index]
-	closeTab(tab)
+	closeTab(tab, false)
 	s.removeTabAt(index)
 	s.save()
 	s.RequestRedraw()
@@ -470,7 +484,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 		if tab == keep {
 			continue
 		}
-		closeTab(tab)
+		closeTab(tab, false)
 		closed = true
 	}
 	s.tabs = []*Tab{keep}
@@ -495,7 +509,7 @@ func (s *State) CloseTabsRight(index int) bool {
 		return false
 	}
 	for _, tab := range s.tabs[index+1:] {
-		closeTab(tab)
+		closeTab(tab, false)
 	}
 	s.tabs = s.tabs[:index+1]
 	if s.active > index {
@@ -589,7 +603,7 @@ func (s *State) cloneTab(source *Tab) (*Tab, error) {
 	}
 	s.nextTabNumber++
 	for oldID, newID := range mapping {
-		descriptor := source.panes[oldID].descriptor
+		descriptor := withFreshResumeKey(source.panes[oldID].descriptor)
 		copyTab.panes[newID] = &pane{ID: newID, descriptor: descriptor, pending: true}
 	}
 	copyTab.setFocus(mapping[mustFocusedID(source)])
@@ -850,31 +864,56 @@ func (s *State) ActiveSessionCountDetached(id model.TabID) int {
 }
 
 // CloseMainSessions ends the Sessions shown by the main window without
-// touching detached windows. The persisted layout is left intact.
+// touching detached windows. The persisted layout is left intact. It is the
+// explicit close path, so resumable credentials are cleared.
 func (s *State) CloseMainSessions() {
 	for _, tab := range s.tabs {
-		closeTab(tab)
+		closeTab(tab, false)
+	}
+}
+
+// CloseMainSessionsPreserving ends the main window's Sessions like
+// CloseMainSessions but keeps resumable ET credentials for the next app run.
+// The main window closing is a graceful end of its Sessions: a quit closes the
+// windows before OnWillQuit runs, so this is the only point where the
+// credentials can still be preserved.
+func (s *State) CloseMainSessionsPreserving() {
+	for _, tab := range s.tabs {
+		closeTab(tab, true)
 	}
 }
 
 // CloseAllSessions ends the Sessions of every window. The app calls it on
-// quit, after the windows are already gone.
+// quit, after the windows are already gone, so resumable credentials are kept
+// for the next run.
 func (s *State) CloseAllSessions() {
-	s.CloseMainSessions()
+	s.CloseMainSessionsPreserving()
 	for _, tab := range s.detached {
-		closeTab(tab)
+		closeTab(tab, true)
 	}
 	s.detached = nil
 }
 
 // CloseDetachedTab closes a Tab that left the main window, ending its
-// Sessions. It is also the idempotent close hook for a detached window.
+// Sessions. It is also the idempotent close hook for a detached window. This
+// explicit path clears resumable credentials.
 func (s *State) CloseDetachedTab(id model.TabID) bool {
+	return s.closeDetachedTab(id, false)
+}
+
+// CloseDetachedTabPreserving closes a detached window's Tab like
+// CloseDetachedTab, but keeps resumable ET credentials. The quit sequence
+// closes detached windows before OnWillQuit runs.
+func (s *State) CloseDetachedTabPreserving(id model.TabID) bool {
+	return s.closeDetachedTab(id, true)
+}
+
+func (s *State) closeDetachedTab(id model.TabID, preserve bool) bool {
 	for index, tab := range s.detached {
 		if tab.ID != id {
 			continue
 		}
-		closeTab(tab)
+		closeTab(tab, preserve)
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.RequestRedraw()
 		return true
@@ -955,15 +994,16 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 		return err
 	}
 	tab.Root = root
+	descriptor := withFreshResumeKey(value.descriptor)
 	tab.panes[newPaneID] = &pane{
 		ID:         newPaneID,
-		descriptor: value.descriptor,
+		descriptor: descriptor,
 		pending:    true,
 	}
 	tab.setFocus(newPaneID)
 	// The new Pane inherits the source Session's last known directory, as the
 	// original split did when it copied the shell's current cwd.
-	s.requestPaneOpen(tab.ID, newPaneID, value.descriptor, true)
+	s.requestPaneOpen(tab.ID, newPaneID, descriptor, true)
 	s.save()
 	s.RequestRedraw()
 	return nil
@@ -996,7 +1036,7 @@ func (s *State) CloseFocusedPane() bool {
 		return false
 	}
 	next := domainworkspace.FocusAfterRemove(root, focusedID, focusedID)
-	closePane(value)
+	closePane(value, false)
 	delete(tab.panes, focusedID)
 	tab.Root = root
 	if next == "" {
@@ -1318,6 +1358,11 @@ func (s *State) Restore(ctx context.Context) {
 			if descriptor.Kind == domainworkspace.SessionLocal {
 				descriptor.Dir = validLocalDir(descriptor.Dir)
 			}
+			if descriptor.Kind == domainworkspace.SessionET && descriptor.ResumeKey == "" {
+				// A workspace written before ET resume keys existed still gets a
+				// locator, so this run's session becomes resumable too.
+				descriptor.ResumeKey = newETResumeKey()
+			}
 			if descriptor.Label == "" {
 				descriptor.Label = restored.Title
 			}
@@ -1383,7 +1428,7 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 		return false
 	}
 	if value.session != nil {
-		closePane(value)
+		closePane(value, false)
 		value.session = nil
 	}
 	value.pending = true
@@ -1470,6 +1515,7 @@ func (s *State) openDescriptor(ctx context.Context,
 		Dir:            validLocalDir(descriptor.Dir),
 		X11Forwarding:  descriptor.X11Forwarding,
 		AutoAttachTmux: descriptor.AutoAttachTmux,
+		ResumeKey:      descriptor.ResumeKey,
 	}
 	switch descriptor.Kind {
 	case domainworkspace.SessionLocal:
@@ -1621,7 +1667,7 @@ func (s *State) closeDetachedSessions() bool {
 			if err != nil {
 				continue
 			}
-			closePane(value)
+			closePane(value, false)
 			delete(tab.panes, id)
 			tab.Root = root
 			if next := domainworkspace.FocusAfterRemove(root, focusedID, id); next != "" {
@@ -1638,13 +1684,13 @@ func (s *State) closeDetachedSessions() bool {
 	return changed
 }
 
-func closeTab(tab *Tab) {
+func closeTab(tab *Tab, preserve bool) {
 	for _, value := range tab.panes {
-		closePane(value)
+		closePane(value, preserve)
 	}
 }
 
-func closePane(value *pane) {
+func closePane(value *pane, preserve bool) {
 	if value == nil {
 		return
 	}
@@ -1652,7 +1698,11 @@ func closePane(value *pane) {
 		value.surface.Close()
 	}
 	if value.session != nil {
-		_ = value.session.Close()
+		if preserve {
+			_ = value.session.ClosePreservingResume()
+		} else {
+			_ = value.session.Close()
+		}
 	}
 }
 

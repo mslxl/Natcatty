@@ -579,10 +579,13 @@ func TestInProcessOfflineVictimIsDisplacedAgainstStock711(t *testing.T) {
 	}
 	connectCancel()
 	runCtx, cancelRun := context.WithCancel(context.Background())
-	victim := newInProcessTransport(conn, victimLease, newLocalTerminal(spec.Cols, spec.Rows),
-		notices, cancelRun, nil)
+	victimDialer, err := newLeaseDialer(victimLease, nil)
+	if err != nil {
+		t.Fatalf("victim lease dialer: %v", err)
+	}
+	victim := newInProcessTransport(conn, victimDialer, newLocalTerminal(spec.Cols, spec.Rows),
+		notices, cancelRun, nil, nil)
 	go victim.run(runCtx)
-	go victim.watchLease(runCtx)
 	t.Cleanup(func() { _ = victim.Close() })
 
 	openCounter := &labSessionFactory{first: victim}

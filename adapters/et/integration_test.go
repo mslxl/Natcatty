@@ -285,6 +285,80 @@ func waitExit(t *testing.T, transport appsession.Transport) (int, error) {
 	}
 }
 
+// TestLabAppRestartReattach pins the stock server behavior the feature was
+// designed against: etserver 7.1.1 reattaches the same remote shell by reset,
+// so it starts blank but keeps shell state. etserver 6.2.10 cannot negotiate
+// the challenge or reset, so stock refuses the reattach and tells the user to
+// upgrade; it must not silently start a second shell.
+func TestLabAppRestartReattach(t *testing.T) {
+	requireLab(t)
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			store := SecretSessionStore{Secrets: newFakeFieldSecrets()}
+			spec := labSpec(t, server)
+			spec.ResumeKey = "lab-resume-" + strings.ReplaceAll(server.name, ".", "-")
+
+			firstManager := labManager(t, server.password)
+			first := openLab(t, InProcessFactory{Manager: firstManager, Sessions: store}, spec)
+			firstOutput := newOutputCollector(first)
+			writeCommand(t, first, `ET_RESUME_MARK=42; printf 'ET_MARKED_%s\n' "$ET_RESUME_MARK"`)
+			firstOutput.waitFor(t, "ET_MARKED_42", 20*time.Second)
+			saved, err := store.Load(context.Background(), spec.ResumeKey)
+			if err != nil || saved.ID == "" || len(saved.Passkey) != 32 {
+				t.Fatalf("saved session record is incomplete: %v", err)
+			}
+
+			// An app shutdown preserves the pair; the transport is closed as
+			// the process would close it.
+			first.(appsession.ResumePreserver).PreserveResume()
+			if err := first.Close(); err != nil {
+				t.Fatalf("close first process: %v", err)
+			}
+			firstManager.CloseAll()
+
+			secondManager := labManager(t, server.password)
+			factory := InProcessFactory{Manager: secondManager, Sessions: store}
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			second, err := factory.Open(ctx, spec)
+
+			after, loadErr := store.Load(context.Background(), spec.ResumeKey)
+			if loadErr != nil || after.ID == "" || len(after.Passkey) != 32 {
+				t.Fatalf("saved session record after restart is incomplete: %v", loadErr)
+			}
+
+			if server.name == "etserver-7.1.1" {
+				if err != nil {
+					t.Fatalf("reattach on %s: %v", server.name, err)
+				}
+				t.Cleanup(func() { _ = second.Close() })
+				secondOutput := newOutputCollector(second)
+				writeCommand(t, second, `printf 'ET_RESUMED_%s\n' "${ET_RESUME_MARK-unset}"`)
+				text := secondOutput.waitFor(t, "ET_RESUMED_42", 20*time.Second)
+				if after != saved {
+					t.Fatal("reattach changed the saved credential pair")
+				}
+				if strings.Contains(text, "ET_MARKED_42") {
+					t.Fatal("reattach replayed output from before the restart")
+				}
+				return
+			}
+
+			// etserver 6.2.10 answers without the v7 challenge, so stock
+			// cannot authenticate a reattach or reset its sequence/keystream.
+			if !errors.Is(err, etmodel.ErrReattachUnsupported) {
+				t.Fatalf("legacy reattach = %v, want ErrReattachUnsupported", err)
+			}
+			if !strings.Contains(err.Error(), "does not support session reattach; upgrade etserver") {
+				t.Fatalf("legacy reattach error = %q, want stock's upgrade sentence", err)
+			}
+			if after != saved {
+				t.Fatal("a refused legacy reattach cleared or changed the saved credentials")
+			}
+		})
+	}
+}
+
 // TestInProcessWrongPasswordIsATypedAuthError proves the SSH bootstrap keeps
 // the Connection Manager's auth classification.
 func TestInProcessWrongPasswordIsATypedAuthError(t *testing.T) {
