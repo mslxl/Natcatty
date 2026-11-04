@@ -23,7 +23,7 @@ func (s *Store) ListGroups(ctx context.Context) ([]domainvault.Group, error) {
 	if err != nil {
 		return nil, err
 	}
-	return groups, nil
+	return domainvault.EnsureGroupIdentities(groups), nil
 }
 
 // GetGroup returns one Host Group by path.
@@ -44,7 +44,7 @@ func (s *Store) GetGroup(ctx context.Context, path string) (domainvault.Group, e
 	if err := decodeData(data, "Host Group", &group); err != nil {
 		return domainvault.Group{}, err
 	}
-	return group, nil
+	return domainvault.EnsureGroupIdentities([]domainvault.Group{group})[0], nil
 }
 
 // SaveGroup inserts or replaces one Host Group.
@@ -55,6 +55,7 @@ func (s *Store) SaveGroup(ctx context.Context, group domainvault.Group) error {
 	}
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		return upsertModel(tx, &model, "path",
+			"id", "parent_id", "name",
 			"notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id",
 			"use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key",
 			"proxy_profile_id", "order_key", "updated_at", "data")

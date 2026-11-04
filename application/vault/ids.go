@@ -43,6 +43,11 @@ func newSnippetID() string { return newULID() }
 // a Host identifier.
 func newNoteID() string { return newULID() }
 
+// newGroupID returns a Host Group identifier with the same opaque ULID shape
+// as a Host identifier. Unlike a group path, this value survives a rename or
+// move and is what convergent sync keys the group tree by.
+func newGroupID() string { return newULID() }
+
 func newULID() string {
 	var id [16]byte
 	milliseconds := uint64(time.Now().UnixMilli())

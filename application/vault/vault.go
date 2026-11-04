@@ -42,6 +42,7 @@ type Service struct {
 	newProxyProfileID func() string
 	newSnippetID      func() string
 	newNoteID         func() string
+	newGroupID        func() string
 	now               func() time.Time
 	importStore       ImportStore
 	importFiles       ImportFileReader
@@ -124,6 +125,16 @@ func WithProxyProfileIDGenerator(fn func() string) Option {
 	}
 }
 
+// WithGroupIDGenerator sets how the Service names Host Groups. The ID is the
+// stable identity a rename or move preserves.
+func WithGroupIDGenerator(fn func() string) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.newGroupID = fn
+		}
+	}
+}
+
 // NewService returns a Service that persists Hosts through repo.
 func NewService(repo HostRepository, opts ...Option) *Service {
 	service := &Service{
@@ -134,6 +145,7 @@ func NewService(repo HostRepository, opts ...Option) *Service {
 		newProxyProfileID: newProxyProfileID,
 		newSnippetID:      newSnippetID,
 		newNoteID:         newNoteID,
+		newGroupID:        newGroupID,
 		now:               time.Now,
 	}
 	for _, opt := range opts {
@@ -404,6 +416,12 @@ func applyDraft(host domainvault.Host, draft domainvault.Draft) domainvault.Host
 	edited.OrderKey = host.OrderKey
 	edited.CreatedAt = host.CreatedAt
 	edited.UpdatedAt = host.UpdatedAt
+	// A Host that stays in the same group keeps its stable group reference.
+	// A draft that moves it gets a fresh resolution from the sync snapshot;
+	// carrying the old ID here would point at the wrong group.
+	if domainvault.NormalizeGroup(edited.Group) == domainvault.NormalizeGroup(host.Group) {
+		edited.GroupID = host.GroupID
+	}
 	return edited
 }
 
