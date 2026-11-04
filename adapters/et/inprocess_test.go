@@ -753,14 +753,15 @@ func TestOpenRetryLaterIsTyped(t *testing.T) {
 // TestClassifyDialErrorV7 pins the typed vocabulary for the v7 outcomes.
 func TestClassifyDialErrorV7(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want error
+		name      string
+		err       error
+		want      error
+		permanent bool
 	}{
-		{"version", etcp.ErrVersion, etmodel.ErrUnsupportedServer},
-		{"legacy reattach", etcp.ErrLegacyReattach, etmodel.ErrReattachUnsupported},
-		{"retry later", etcp.ErrRetryLater, etmodel.ErrRetryLater},
-		{"displaced", etcp.ErrDisplaced, etmodel.ErrSessionDisplaced},
+		{"version", etcp.ErrVersion, etmodel.ErrUnsupportedServer, true},
+		{"legacy reattach", etcp.ErrLegacyReattach, etmodel.ErrReattachUnsupported, true},
+		{"retry later", etcp.ErrRetryLater, etmodel.ErrRetryLater, false},
+		{"displaced", etcp.ErrDisplaced, etmodel.ErrSessionDisplaced, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -770,6 +771,10 @@ func TestClassifyDialErrorV7(t *testing.T) {
 			}
 			if !errors.Is(err, tt.err) {
 				t.Fatalf("classifyDialError(%v) lost the underlying error: %v", tt.err, err)
+			}
+			var failure interface{ Permanent() bool }
+			if got := errors.As(err, &failure); got != tt.permanent {
+				t.Fatalf("classifyDialError(%v) permanent = %v, want %v", tt.err, got, tt.permanent)
 			}
 		})
 	}

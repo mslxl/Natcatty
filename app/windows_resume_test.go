@@ -270,9 +270,12 @@ func TestQuitDuringReconnectDelayPreservesETResume(t *testing.T) {
 	}
 }
 
-// TestQuitPreservesDetachedWindowETResume handles the detached windows the
-// quit sequence closes before OnWillQuit.
-func TestQuitPreservesDetachedWindowETResume(t *testing.T) {
+// TestQuitPreservesMainButDiscardsDetachedETResume handles the detached
+// windows the quit sequence closes before OnWillQuit. Main-window Tabs are
+// part of the persisted Workspace, so their credentials survive for the next
+// run; detached Tabs are never persisted, so their credentials must be cleared
+// instead of orphaned in the secret store.
+func TestQuitPreservesMainButDiscardsDetachedETResume(t *testing.T) {
 	mainTransport := newResumeTransport()
 	detachedTransport := newResumeTransport()
 	graph := newResumeWindowGraph(t, &resumeFactory{transports: []*resumeTransport{mainTransport, detachedTransport}})
@@ -322,15 +325,19 @@ func TestQuitPreservesDetachedWindowETResume(t *testing.T) {
 	waitForTransportDone(t, detachedTransport)
 	shutdownSessions(graph.state, graph.service)
 
-	for name, transport := range map[string]*resumeTransport{
-		"main": mainTransport, "detached": detachedTransport,
-	} {
-		if got := transport.preserves(); got == 0 {
-			t.Fatalf("%s window quit discarded the ET resume credentials", name)
-		}
-		if got := transport.discards(); got != 0 {
-			t.Fatalf("%s window quit called DiscardResume %d times", name, got)
-		}
+	if got := mainTransport.preserves(); got == 0 {
+		t.Fatal("the main window quit discarded the ET resume credentials")
+	}
+	if got := mainTransport.discards(); got != 0 {
+		t.Fatalf("the main window quit called DiscardResume %d times", got)
+	}
+	// A detached Tab cannot be restored, so its credentials must not be left
+	// behind in the secret store.
+	if got := detachedTransport.preserves(); got != 0 {
+		t.Fatalf("a detached window quit preserved credentials %d times", got)
+	}
+	if got := detachedTransport.discards(); got == 0 {
+		t.Fatal("a detached window quit left the ET credentials in the secret store")
 	}
 }
 
