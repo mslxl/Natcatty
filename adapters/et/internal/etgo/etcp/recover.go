@@ -72,9 +72,10 @@ const maxRecoveryFailures = 6
 // reconnect dials until a link is recovered, the error is fatal, or the Conn
 // ends. A RETRY_LATER answer is not fatal; it falls through to the next
 // backoff, which is how a session survives an etserver restart while its
-// terminals re-register. A server sequence that goes backwards (detected in
-// writeRecover), or repeated recovery-exchange failures on a live session, is
-// fatal with ErrDisplaced: another client reset the session.
+// terminals re-register. A server sequence outside this client's own stream,
+// backwards or past what it sent (both detected in writeRecover), or
+// repeated recovery-exchange failures on a live session, is fatal with
+// ErrDisplaced: another client reset the session.
 func (c *Conn) reconnect(b *backoff) (net.Conn, [][]byte, error) {
 	recoveryFailures := 0
 	for {
@@ -108,17 +109,20 @@ func (c *Conn) reconnect(b *backoff) (net.Conn, [][]byte, error) {
 }
 
 // recover runs the client side of the recover exchange and returns the peer's
-// catchup entries. Upstream has each side write its SequenceHeader, read the
-// peer's, write its CatchupBuffer, then read the peer's
-// (src/base/Connection.cpp:105-143). Because both sides write before they
-// read at every step, this client reads the peer's two messages concurrently
-// with writing its own: done in sequence, the exchange deadlocks as soon as
-// the connection cannot buffer what both sides write (at once over net.Pipe,
-// and over TCP once both catchups exceed the socket buffers). Whichever side
-// fails first closes conn to unblock the other; readerErrWins decides which
-// error is reported. On success the ring holds our catchup until the server
-// first speaks on the new link (see releaseHold).
-func (c *Conn) recover(conn net.Conn) ([][]byte, error) {
+// catchup entries. first reports whether this is Dial's connect rather than a
+// reconnect of a session that was already running; writeRecover uses it to
+// tell a first-attempt resume from a takeover of a live session. Upstream has
+// each side write its SequenceHeader, read the peer's, write its
+// CatchupBuffer, then read the peer's (src/base/Connection.cpp:105-143).
+// Because both sides write before they read at every step, this client reads
+// the peer's two messages concurrently with writing its own: done in
+// sequence, the exchange deadlocks as soon as the connection cannot buffer
+// what both sides write (at once over net.Pipe, and over TCP once both
+// catchups exceed the socket buffers). Whichever side fails first closes
+// conn to unblock the other; readerErrWins decides which error is reported.
+// On success the ring holds our catchup until the server first speaks on the
+// new link (see releaseHold).
+func (c *Conn) recover(conn net.Conn, first bool) ([][]byte, error) {
 	var (
 		peer   protocol.SequenceHeader
 		theirs protocol.CatchupBuffer
@@ -140,7 +144,7 @@ func (c *Conn) recover(conn net.Conn) ([][]byte, error) {
 		gotAll <- err
 	})
 
-	snap, err := c.writeRecover(conn, gotSeq, &peer)
+	snap, err := c.writeRecover(conn, gotSeq, &peer, first)
 	if err != nil {
 		_ = conn.Close() // unblock the reader
 	}
@@ -259,11 +263,13 @@ var maxCatchupSize = wire.MaxMessageSize
 // or our catchup is too large for one message, and also when we have
 // received more packets than SequenceHeader's int32 sequence_number can
 // state (internal/protocol ET.pb.go), rather than send a wrapped negative
-// count. The peer's position needs no such guard: a position truncated to
+// count. On a reconnect, a peer position past our own send count is
+// ErrDisplaced: another client's reset made the server's reader count its
+// packets. The peer's position needs no int32 guard: a position truncated to
 // int32 lies at least 2^31 packets below its true value, while the retained
 // window holds at most a few ReplayLimits of bytes, far fewer packets, so
 // ring.since refuses it.
-func (c *Conn) writeRecover(conn net.Conn, gotSeq <-chan error, peer *protocol.SequenceHeader) (int64, error) {
+func (c *Conn) writeRecover(conn net.Conn, gotSeq <-chan error, peer *protocol.SequenceHeader, first bool) (int64, error) {
 	if c.recvSeq > math.MaxInt32 {
 		return 0, fmt.Errorf("%w: received %d packets, more than the protocol's int32 sequence number can express",
 			ErrReplayExceeded, c.recvSeq)
@@ -300,15 +306,38 @@ func (c *Conn) writeRecover(conn net.Conn, gotSeq <-chan error, peer *protocol.S
 	if peerSeq > snap {
 		c.mu.Unlock()
 		// The server has received more packets than this client ever sent.
+		// On a reconnect that is impossible for this client's own stream, so
+		// the reader was reset and advanced by another client's reset
+		// recovery: the sleeping-victim takeover. Report it as displacement
+		// so the Session stops instead of reconnecting over the new owner.
+		// On Dial's first connect there is no running session to lose, and
+		// an earlier attempt cannot have sent anything for this Conn, so keep
+		// the replay error: Dial reports it as a failed handshake.
+		//
+		// One takeover shape remains invisible to these counters: a foreign
+		// reset whose reader has not counted a packet yet reports zero, and
+		// a client whose own peerSeq is also zero sees no backwards move.
+		// peerSeq is zero before INITIAL_RESPONSE and stays zero for the
+		// whole epoch opened by resetRecover, since only this exchange
+		// records the peer's count; a second reset that counts nothing is
+		// therefore invisible to a reset-attached victim. No sequence field
+		// distinguishes it: the reconnect is attempted, and once the server
+		// speaks, the first frame after recovery fails to open under the old
+		// epoch and ends as displaced (see afterRecovery). If it never
+		// speaks, the replay cannot be decrypted and the link is retried.
+		if !first {
+			return 0, fmt.Errorf("%w: server received %d packets, this client sent %d",
+				ErrDisplaced, peerSeq, snap)
+		}
 		return 0, fmt.Errorf("%w: server received %d packets, this client sent %d",
 			ErrReplayExceeded, peerSeq, snap)
 	}
 	ours, ok := c.ring.since(peerSeq, snap)
-	first := c.ring.first
+	windowStart := c.ring.first
 	c.mu.Unlock()
 	if !ok {
 		return 0, fmt.Errorf("%w: peer is at %d, retained window is [%d, %d]",
-			ErrReplayExceeded, peer.GetSequenceNumber(), first, snap)
+			ErrReplayExceeded, peer.GetSequenceNumber(), windowStart, snap)
 	}
 	cb := &protocol.CatchupBuffer{}
 	cb.SetBuffer(ours)

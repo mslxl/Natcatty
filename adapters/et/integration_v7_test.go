@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -418,4 +419,230 @@ func labCommand(t *testing.T, manager *appconnection.Manager, spec appsession.St
 		t.Fatalf("remote command %q: %v (stdout %q, stderr %q)", command, err, output.Stdout, output.Stderr)
 	}
 	return output.Stdout
+}
+
+// labProxy is a single-process TCP relay on the lab host. The victim's ET
+// socket is pointed at it while the second client reaches etserver directly,
+// so killing the relay takes only the victim offline and leaving its SSH lease
+// up. A single process matters: exiting closes the listener and every relayed
+// connection at once.
+const labProxy = `
+use strict;
+use warnings;
+use IO::Socket::INET;
+use IO::Select;
+$SIG{PIPE} = "IGNORE";
+$| = 1;
+my $port = shift @ARGV;
+my $target = shift @ARGV;
+my $listen = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $port,
+    Listen => 16, ReuseAddr => 1) or die "listen: $!";
+print "READY\n";
+my $select = IO::Select->new($listen);
+my %peer;
+while (1) {
+  for my $fh ($select->can_read) {
+    if ($fh == $listen) {
+      my $client = $listen->accept or next;
+      my $server = IO::Socket::INET->new(PeerAddr => "127.0.0.1",
+          PeerPort => $target, Proto => "tcp") or do { close $client; next };
+      $peer{$client} = $server;
+      $peer{$server} = $client;
+      $select->add($client);
+      $select->add($server);
+      next;
+    }
+    my $buffer;
+    my $n = sysread($fh, $buffer, 65536);
+    if (!defined $n || $n == 0) {
+      my $other = $peer{$fh};
+      if (defined $other) {
+        $select->remove($other);
+        delete $peer{$other};
+        close $other;
+      }
+      $select->remove($fh);
+      delete $peer{$fh};
+      close $fh;
+      next;
+    }
+    my $other = $peer{$fh};
+    if (defined $other) {
+      my $off = 0;
+      while ($off < $n) {
+        my $written = syswrite($other, $buffer, $n - $off, $off);
+        last if !defined $written || $written == 0;
+        $off += $written;
+      }
+    }
+  }
+}
+`
+
+// startLabProxy starts labProxy on port and returns a stop function. Stopping
+// is idempotent and also clears a relay left by an earlier failed run.
+func startLabProxy(t *testing.T, manager *appconnection.Manager,
+	spec appsession.StartSpec, port, target int) func() {
+	t.Helper()
+	logPath := fmt.Sprintf("/tmp/natcatty-proxy-%d.log", port)
+	pidPath := fmt.Sprintf("/tmp/natcatty-proxy-%d.pid", port)
+	scriptPath := fmt.Sprintf("/tmp/natcatty-proxy-%d.pl", port)
+	stop := func() {
+		_ = labCommand(t, manager, spec, fmt.Sprintf(
+			`sh -c 'if [ -f %[1]s ]; then kill $(cat %[1]s) 2>/dev/null || true; rm -f %[1]s; fi'`,
+			pidPath))
+	}
+	stop()
+	command := fmt.Sprintf(`cat > %[1]s <<'PERL'
+%[2]s
+PERL
+rm -f %[3]s %[4]s
+nohup perl %[1]s %[5]d %[6]d >%[3]s 2>&1 </dev/null &
+echo $! >%[4]s
+i=0
+while [ "$i" -lt 200 ]; do
+  if grep -q READY %[3]s 2>/dev/null; then echo READY; exit 0; fi
+  i=$((i+1))
+  sleep 0.05
+done
+echo NOTREADY
+exit 1`, scriptPath, labProxy, logPath, pidPath, port, target)
+	if output := labCommand(t, manager, spec, command); !strings.Contains(output, "READY") {
+		t.Fatalf("start lab proxy on %d: output %q", port, output)
+	}
+	return stop
+}
+
+// labSessionFactory hands out the victim transport the test already built on
+// the Session's first Open and refuses every later one. A displaced Session
+// must end instead of asking for a replacement; a refused replacement fails
+// the test quickly rather than leaving it in the reconnect loop.
+type labSessionFactory struct {
+	first appsession.Transport
+	opens atomic.Int32
+}
+
+type labReconnectRefused struct{}
+
+func (labReconnectRefused) Error() string   { return "test: Session reconnected after displacement" }
+func (labReconnectRefused) Permanent() bool { return true }
+
+func (f *labSessionFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
+	if f.opens.Add(1) > 1 {
+		return nil, labReconnectRefused{}
+	}
+	return f.first, nil
+}
+
+// TestInProcessOfflineVictimIsDisplacedAgainstStock711 reproduces the
+// sleeping-laptop takeover end to end. The victim runs through a relay while
+// its SSH lease stays up; killing the relay takes the victim offline, a second
+// reset-intent client takes the session and sends packets, and the relay comes
+// back. The victim's first reconnect then sees a server reader ahead of its own
+// send count. That must surface as NoticeETDisplaced and EndReasonDisplaced:
+// treating it as a resume failure would make the default policy reconnect over
+// the new owner.
+func TestInProcessOfflineVictimIsDisplacedAgainstStock711(t *testing.T) {
+	requireLab(t)
+	server := labServers()[0] // etserver 7.1.1
+	manager := labManager(t, server.password)
+	spec := labSpec(t, server)
+
+	const proxyPort = 2031
+	stopProxy := startLabProxy(t, manager, spec, proxyPort, etmodel.DefaultETPort)
+	defer stopProxy()
+
+	victimLease := acquireLabLease(t, manager, spec)
+	forwarding, err := victimLease.Forwarding()
+	if err != nil {
+		t.Fatalf("victim forwarding: %v", err)
+	}
+	id, passkey := fixedLabCredentials(t)
+	credentials := startLabTerminal(t, victimLease, id, passkey)
+
+	// Build the victim through the production transport pieces. The bootstrap
+	// is skipped only because the test needs the same credentials for the
+	// second client; InProcessFactory.dial supplies the notice wiring.
+	proxyAddress := net.JoinHostPort(etServerHost, strconv.Itoa(proxyPort))
+	notices := make(chan appsession.Notice, 8)
+	factory := InProcessFactory{Manager: manager}
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	conn, err := factory.dial(connectCtx, forwarding, proxyAddress, credentials, notices)
+	if err != nil {
+		connectCancel()
+		t.Fatalf("dial victim through relay: %v", err)
+	}
+	if err := etsession.Start(connectCtx, conn, etsession.Options{}); err != nil {
+		connectCancel()
+		_ = conn.Close()
+		t.Fatalf("start victim session: %v", err)
+	}
+	connectCancel()
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	victim := newInProcessTransport(conn, victimLease, newLocalTerminal(spec.Cols, spec.Rows),
+		notices, cancelRun, nil)
+	go victim.run(runCtx)
+	go victim.watchLease(runCtx)
+	t.Cleanup(func() { _ = victim.Close() })
+
+	openCounter := &labSessionFactory{first: victim}
+	service := appsession.NewService(openCounter)
+	sessionSpec := spec
+	sessionSpec.Reconnect = &appsession.ReconnectPolicy{Delay: 250 * time.Millisecond}
+	openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	session, err := service.Open(openCtx, sessionSpec)
+	openCancel()
+	if err != nil {
+		t.Fatalf("open victim Session: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	collector := newOutputCollector(session.TerminalConn())
+	writeCommand(t, session.TerminalConn(), `echo VICTIM$((2+3))_READY`)
+	collector.waitFor(t, "VICTIM5_READY", 20*time.Second)
+
+	// Offline: the victim's ET link dies with the relay, but its SSH lease --
+	// and so the Session -- keeps running while it redials.
+	stopProxy()
+	time.Sleep(500 * time.Millisecond)
+
+	second, err := dialLab(t, forwarding, spec, credentials, true)
+	if err != nil {
+		t.Fatalf("attach second client: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	if !second.Resumed() {
+		t.Fatal("the reset-intent attach did not report Resumed")
+	}
+	// Empty lines are one packet each: the server's reader moves past the
+	// victim's three packets (INITIAL_PAYLOAD, TERMINAL_INFO, its command).
+	for range 12 {
+		sendETInput(t, second, "\n")
+	}
+	sendETInput(t, second, "echo ATT$((7+9))_READY\n")
+	readETUntil(t, second, "ATT16_READY", 20*time.Second)
+
+	// The victim's redials resume now; the server reports the second
+	// client's reader position, ahead of everything the victim sent.
+	stopProxy = startLabProxy(t, manager, spec, proxyPort, etmodel.DefaultETPort)
+	defer stopProxy()
+
+	select {
+	case <-session.Done():
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the displaced Session did not end: snapshot=%+v opens=%d",
+			session.Snapshot(), openCounter.opens.Load())
+	}
+	snapshot := session.Snapshot()
+	if snapshot.EndReason != appsession.EndReasonDisplaced {
+		t.Fatalf("EndReason = %q, want %q (snapshot %+v)",
+			snapshot.EndReason, appsession.EndReasonDisplaced, snapshot)
+	}
+	if snapshot.Notice == nil || snapshot.Notice.Code != appsession.NoticeETDisplaced {
+		t.Fatalf("Notice = %+v, want the ET displaced notice (snapshot %+v)",
+			snapshot.Notice, snapshot)
+	}
+	if got := openCounter.opens.Load(); got != 1 {
+		t.Fatalf("Session opened its transport %d times, want 1: a displaced Session must not auto-reconnect", got)
+	}
 }
