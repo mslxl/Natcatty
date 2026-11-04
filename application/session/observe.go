@@ -409,6 +409,13 @@ func (c *ViewConn) Write(p []byte) (int, error) { return c.session.conn.Write(p)
 // Resize reaches the transport through the Session's command loop.
 func (c *ViewConn) Resize(cols, rows int) error { return c.session.Resize(cols, rows) }
 
+// SetScreenSizeSink installs the terminal's Resize as the receiver of the
+// peer's authoritative screen size. The Session's reader applies a pending
+// size through this sink before returning output encoded for it.
+func (c *ViewConn) SetScreenSizeSink(sink func(cols, rows int)) {
+	c.session.conn.setScreenSizeSink(c.token, sink)
+}
+
 // Close detaches the view without ending the Session.
 func (c *ViewConn) Close() error {
 	c.once.Do(func() { c.session.conn.detachView(c.token) })
@@ -431,8 +438,11 @@ type ResumedView struct {
 // ScreenSize reports the size the snapshot was captured at.
 func (r *ResumedView) ScreenSize() (cols, rows int) { return r.cols, r.rows }
 
-// Read replays the snapshot, then reads live output.
+// Read replays the snapshot, then reads live output. A server-authoritative
+// size that arrived while the Session was hibernated is applied to the live
+// terminal before any snapshot byte encoded for it is returned.
 func (r *ResumedView) Read(p []byte) (int, error) {
+	r.view.session.conn.prepareScreen(r.view.token)
 	r.mu.Lock()
 	if len(r.head) > 0 {
 		n := copy(p, r.head)
@@ -449,6 +459,12 @@ func (r *ResumedView) Write(p []byte) (int, error) { return r.view.Write(p) }
 
 // Resize reaches the transport.
 func (r *ResumedView) Resize(cols, rows int) error { return r.view.Resize(cols, rows) }
+
+// SetScreenSizeSink installs the terminal's Resize for the peer's
+// authoritative size, as ViewConn does.
+func (r *ResumedView) SetScreenSizeSink(sink func(cols, rows int)) {
+	r.view.SetScreenSizeSink(sink)
+}
 
 // Close detaches the resumed live view.
 func (r *ResumedView) Close() error { return r.view.Close() }

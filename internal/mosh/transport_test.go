@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -81,6 +82,11 @@ func (p *testPeer) datagrams(instruction TransportInstruction, now time.Time) []
 }
 
 func (p *testPeer) hostState(oldNum, newNum, ack uint64, instructions []HostInstruction, now time.Time) [][]byte {
+	return p.hostStateWithThrowaway(oldNum, newNum, ack, 0, instructions, now)
+}
+
+func (p *testPeer) hostStateWithThrowaway(oldNum, newNum, ack, throwaway uint64,
+	instructions []HostInstruction, now time.Time) [][]byte {
 	var diff []byte
 	if instructions != nil {
 		diff = MarshalHostMessage(instructions)
@@ -90,6 +96,7 @@ func (p *testPeer) hostState(oldNum, newNum, ack uint64, instructions []HostInst
 		OldNum:          oldNum,
 		NewNum:          newNum,
 		AckNum:          ack,
+		ThrowawayNum:    throwaway,
 		Diff:            diff,
 	}, now)
 }
@@ -156,9 +163,65 @@ func receiveAll(t *testing.T, client *Client, datagrams [][]byte, now time.Time)
 			t.Fatal("datagram was not authenticated")
 		}
 		update.Output = append(update.Output, got.Output...)
+		update.HostStates = append(update.HostStates, got.HostStates...)
 		update.RemoteShutdown = update.RemoteShutdown || got.RemoteShutdown
 	}
 	return update
+}
+
+func requireHostState(t *testing.T, update Update, want HostState) {
+	t.Helper()
+	if len(update.HostStates) != 1 {
+		t.Fatalf("HostStates = %+v, want one state", update.HostStates)
+	}
+	got := update.HostStates[0]
+	if got.Num != want.Num || got.OldNum != want.OldNum ||
+		got.ThrowawayNum != want.ThrowawayNum || got.Newest != want.Newest ||
+		!reflect.DeepEqual(got.Instructions, want.Instructions) {
+		t.Fatalf("HostState = %+v, want %+v", got, want)
+	}
+}
+
+// TestTransportHostStateThrowaway covers the snapshot-pruning metadata the
+// renderer needs: diffs carry their own old/new/throwaway numbers, and states
+// below the sender's throwaway point are no longer references.
+func TestTransportHostStateThrowaway(t *testing.T) {
+	client, err := NewClient(testKey(), 80, 24)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+	peer := newTestPeer(t)
+	defer peer.Close()
+
+	now := time.Unix(1700000000, 0)
+	receiveAll(t, client, peer.hostState(0, 1, 0, []HostInstruction{{HostString: []byte("A")}}, now), now)
+	receiveAll(t, client, peer.hostState(1, 2, 0, []HostInstruction{{HostString: []byte("B")}}, now), now)
+	update := receiveAll(t, client, peer.hostStateWithThrowaway(
+		2, 3, 0, 2, []HostInstruction{{HostString: []byte("C")}}, now), now)
+	requireHostState(t, update, HostState{Num: 3, OldNum: 2, ThrowawayNum: 2, Newest: true,
+		Instructions: []HostInstruction{{HostString: []byte("C")}}})
+
+	client.mu.Lock()
+	var kept []uint64
+	for _, state := range client.received {
+		kept = append(kept, state.num)
+	}
+	client.mu.Unlock()
+	if len(kept) != 2 || kept[0] != 2 || kept[1] != 3 {
+		t.Fatalf("received snapshots after throwaway = %v, want [2 3]", kept)
+	}
+
+	// A state whose reference was thrown away is ignored; it must not produce
+	// a HostState for the renderer.
+	update = receiveAll(t, client, peer.hostState(1, 4, 0,
+		[]HostInstruction{{HostString: []byte("stale")}}, now), now)
+	if len(update.HostStates) != 0 {
+		t.Fatalf("stale reference produced HostStates %+v", update.HostStates)
+	}
+	if len(update.Output) != 0 {
+		t.Fatalf("stale reference produced output %q", update.Output)
+	}
 }
 
 func TestTransportInitialSend(t *testing.T) {
@@ -221,8 +284,8 @@ func TestTransportReceivesOutputAndSendsInput(t *testing.T) {
 
 	// A duplicate state must not be delivered twice.
 	duplicate := receiveAll(t, client, peer.hostState(0, 1, 1, []HostInstruction{{HostString: []byte("hello ")}}, now.Add(time.Millisecond)), now.Add(time.Millisecond))
-	if len(duplicate.Output) != 0 {
-		t.Fatalf("duplicate output = %q", duplicate.Output)
+	if len(duplicate.Output) != 0 || len(duplicate.HostStates) != 0 {
+		t.Fatalf("duplicate update = %+v", duplicate)
 	}
 
 	if err := client.Input([]byte("ls\r")); err != nil {
@@ -723,22 +786,31 @@ func TestTransportOutOfOrderStates(t *testing.T) {
 	if string(update.Output) != "A" {
 		t.Fatalf("state 1 output = %q", update.Output)
 	}
+	requireHostState(t, update, HostState{Num: 1, OldNum: 0, Newest: true,
+		Instructions: []HostInstruction{{HostString: []byte("A")}}})
 	// State 3 arrives before state 2 but cites state 1, so it applies.
 	update = receiveAll(t, client, peer.hostState(1, 3, 0, []HostInstruction{{HostString: []byte("C")}}, now), now)
 	if string(update.Output) != "C" {
 		t.Fatalf("state 3 output = %q", update.Output)
 	}
+	requireHostState(t, update, HostState{Num: 3, OldNum: 1, Newest: true,
+		Instructions: []HostInstruction{{HostString: []byte("C")}}})
 	// State 2 arrives late; it is retained but not delivered because state 3
 	// is already the newest state.
 	update = receiveAll(t, client, peer.hostState(1, 2, 0, []HostInstruction{{HostString: []byte("B")}}, now), now)
 	if len(update.Output) != 0 {
 		t.Fatalf("out-of-order state output = %q", update.Output)
 	}
-	// State 4 is built on state 3 and must not repeat B or C.
+	requireHostState(t, update, HostState{Num: 2, OldNum: 1, Newest: false,
+		Instructions: []HostInstruction{{HostString: []byte("B")}}})
+	// State 4 is built on state 3 and must not repeat B or C. The diff it
+	// reports is only D, not the accumulated reference instructions.
 	update = receiveAll(t, client, peer.hostState(3, 4, 0, []HostInstruction{{HostString: []byte("D")}}, now), now)
 	if string(update.Output) != "D" {
 		t.Fatalf("state 4 output = %q", update.Output)
 	}
+	requireHostState(t, update, HostState{Num: 4, OldNum: 3, Newest: true,
+		Instructions: []HostInstruction{{HostString: []byte("D")}}})
 	client.mu.Lock()
 	ack := client.ackNum
 	client.mu.Unlock()
