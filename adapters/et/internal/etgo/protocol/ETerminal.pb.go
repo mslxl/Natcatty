@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copied from Eternal Terminal (https://github.com/MisterTea/EternalTerminal),
-// proto/ETerminal.proto at commit 6f53869473a16407b59f1f3382d291ab97b4f64f.
+// proto/ETerminal.proto at tag et-v7.1.1, commit
+// a8318ca4598756ca3c5f4711cce12a65faeff57d.
 // Copyright Jason Gauci and contributors, licensed under the Apache License,
 // Version 2.0. Unmodified apart from this header; see NOTICE.
 
@@ -92,6 +93,47 @@ func (TerminalPacketType) Type() protoreflect.EnumType {
 }
 
 func (x TerminalPacketType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+type TerminalInfo_Command int32
+
+const (
+	TerminalInfo_NONE         TerminalInfo_Command = 0
+	TerminalInfo_KILL_SESSION TerminalInfo_Command = 1
+)
+
+// Enum value maps for TerminalInfo_Command.
+var (
+	TerminalInfo_Command_name = map[int32]string{
+		0: "NONE",
+		1: "KILL_SESSION",
+	}
+	TerminalInfo_Command_value = map[string]int32{
+		"NONE":         0,
+		"KILL_SESSION": 1,
+	}
+)
+
+func (x TerminalInfo_Command) Enum() *TerminalInfo_Command {
+	p := new(TerminalInfo_Command)
+	*p = x
+	return p
+}
+
+func (x TerminalInfo_Command) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TerminalInfo_Command) Descriptor() protoreflect.EnumDescriptor {
+	return file_ETerminal_proto_enumTypes[1].Descriptor()
+}
+
+func (TerminalInfo_Command) Type() protoreflect.EnumType {
+	return &file_ETerminal_proto_enumTypes[1]
+}
+
+func (x TerminalInfo_Command) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
@@ -289,17 +331,25 @@ func (b0 TerminalExitStatus_builder) Build() *TerminalExitStatus {
 }
 
 type TerminalInfo struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Id          *string                `protobuf:"bytes,1,opt,name=id"`
-	xxx_hidden_Row         int32                  `protobuf:"varint,2,opt,name=row"`
-	xxx_hidden_Column      int32                  `protobuf:"varint,3,opt,name=column"`
-	xxx_hidden_Width       int32                  `protobuf:"varint,4,opt,name=width"`
-	xxx_hidden_Height      int32                  `protobuf:"varint,5,opt,name=height"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Id             *string                `protobuf:"bytes,1,opt,name=id"`
+	xxx_hidden_Row            int32                  `protobuf:"varint,2,opt,name=row"`
+	xxx_hidden_Column         int32                  `protobuf:"varint,3,opt,name=column"`
+	xxx_hidden_Width          int32                  `protobuf:"varint,4,opt,name=width"`
+	xxx_hidden_Height         int32                  `protobuf:"varint,5,opt,name=height"`
+	xxx_hidden_Command        TerminalInfo_Command   `protobuf:"varint,6,opt,name=command,enum=et.TerminalInfo_Command,def=0"`
+	xxx_hidden_Commandversion int32                  `protobuf:"varint,7,opt,name=commandversion,def=0"`
+	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
+	XXX_presence              [1]uint32
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
+
+// Default values for TerminalInfo fields.
+const (
+	Default_TerminalInfo_Command        = TerminalInfo_NONE
+	Default_TerminalInfo_Commandversion = int32(0)
+)
 
 func (x *TerminalInfo) Reset() {
 	*x = TerminalInfo{}
@@ -364,29 +414,57 @@ func (x *TerminalInfo) GetHeight() int32 {
 	return 0
 }
 
+func (x *TerminalInfo) GetCommand() TerminalInfo_Command {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 5) {
+			return x.xxx_hidden_Command
+		}
+	}
+	return Default_TerminalInfo_Command
+}
+
+func (x *TerminalInfo) GetCommandversion() int32 {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 6) {
+			return x.xxx_hidden_Commandversion
+		}
+	}
+	return Default_TerminalInfo_Commandversion
+}
+
 func (x *TerminalInfo) SetId(v string) {
 	x.xxx_hidden_Id = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 7)
 }
 
 func (x *TerminalInfo) SetRow(v int32) {
 	x.xxx_hidden_Row = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 7)
 }
 
 func (x *TerminalInfo) SetColumn(v int32) {
 	x.xxx_hidden_Column = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 7)
 }
 
 func (x *TerminalInfo) SetWidth(v int32) {
 	x.xxx_hidden_Width = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 7)
 }
 
 func (x *TerminalInfo) SetHeight(v int32) {
 	x.xxx_hidden_Height = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 7)
+}
+
+func (x *TerminalInfo) SetCommand(v TerminalInfo_Command) {
+	x.xxx_hidden_Command = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 7)
+}
+
+func (x *TerminalInfo) SetCommandversion(v int32) {
+	x.xxx_hidden_Commandversion = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 7)
 }
 
 func (x *TerminalInfo) HasId() bool {
@@ -424,6 +502,20 @@ func (x *TerminalInfo) HasHeight() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
 }
 
+func (x *TerminalInfo) HasCommand() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
+func (x *TerminalInfo) HasCommandversion() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
+}
+
 func (x *TerminalInfo) ClearId() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_Id = nil
@@ -449,14 +541,24 @@ func (x *TerminalInfo) ClearHeight() {
 	x.xxx_hidden_Height = 0
 }
 
+func (x *TerminalInfo) ClearCommand() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+}
+
+func (x *TerminalInfo) ClearCommandversion() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 6)
+}
+
 type TerminalInfo_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	Id     *string
-	Row    *int32
-	Column *int32
-	Width  *int32
-	Height *int32
+	Id             *string
+	Row            *int32
+	Column         *int32
+	Width          *int32
+	Height         *int32
+	Command        *TerminalInfo_Command
+	Commandversion *int32
 }
 
 func (b0 TerminalInfo_builder) Build() *TerminalInfo {
@@ -464,24 +566,32 @@ func (b0 TerminalInfo_builder) Build() *TerminalInfo {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.Id != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 7)
 		x.xxx_hidden_Id = b.Id
 	}
 	if b.Row != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 7)
 		x.xxx_hidden_Row = *b.Row
 	}
 	if b.Column != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 7)
 		x.xxx_hidden_Column = *b.Column
 	}
 	if b.Width != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 7)
 		x.xxx_hidden_Width = *b.Width
 	}
 	if b.Height != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 7)
 		x.xxx_hidden_Height = *b.Height
+	}
+	if b.Command != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 7)
+		x.xxx_hidden_Command = *b.Command
+	}
+	if b.Commandversion != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 7)
+		x.xxx_hidden_Commandversion = *b.Commandversion
 	}
 	return m0
 }
@@ -777,7 +887,8 @@ type PortForwardDestinationRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	Destination *SocketEndpoint
-	Fd          *int32
+	// Opaque request token, echoed in clientfd; not a peer OS descriptor.
+	Fd *int32
 }
 
 func (b0 PortForwardDestinationRequest_builder) Build() *PortForwardDestinationRequest {
@@ -1163,18 +1274,19 @@ func (b0 PortForwardData_builder) Build() *PortForwardData {
 }
 
 type InitialPayload struct {
-	state                           protoimpl.MessageState       `protogen:"opaque.v1"`
-	xxx_hidden_Jumphost             bool                         `protobuf:"varint,1,opt,name=jumphost,def=0"`
-	xxx_hidden_Reversetunnels       *[]*PortForwardSourceRequest `protobuf:"bytes,2,rep,name=reversetunnels"`
-	xxx_hidden_Environmentvariables map[string]string            `protobuf:"bytes,3,rep,name=environmentvariables" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	xxx_hidden_NoPty                bool                         `protobuf:"varint,4,opt,name=no_pty,json=noPty,def=0"`
-	xxx_hidden_Command              *string                      `protobuf:"bytes,5,opt,name=command"`
-	xxx_hidden_SupportsExitStatus   bool                         `protobuf:"varint,6,opt,name=supports_exit_status,json=supportsExitStatus,def=0"`
-	xxx_hidden_NoShell              bool                         `protobuf:"varint,7,opt,name=no_shell,json=noShell,def=0"`
-	XXX_raceDetectHookData          protoimpl.RaceDetectHookData
-	XXX_presence                    [1]uint32
-	unknownFields                   protoimpl.UnknownFields
-	sizeCache                       protoimpl.SizeCache
+	state                               protoimpl.MessageState       `protogen:"opaque.v1"`
+	xxx_hidden_Jumphost                 bool                         `protobuf:"varint,1,opt,name=jumphost,def=0"`
+	xxx_hidden_Reversetunnels           *[]*PortForwardSourceRequest `protobuf:"bytes,2,rep,name=reversetunnels"`
+	xxx_hidden_Environmentvariables     map[string]string            `protobuf:"bytes,3,rep,name=environmentvariables" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	xxx_hidden_NoPty                    bool                         `protobuf:"varint,4,opt,name=no_pty,json=noPty,def=0"`
+	xxx_hidden_Command                  *string                      `protobuf:"bytes,5,opt,name=command"`
+	xxx_hidden_SupportsExitStatus       bool                         `protobuf:"varint,6,opt,name=supports_exit_status,json=supportsExitStatus,def=0"`
+	xxx_hidden_NoShell                  bool                         `protobuf:"varint,7,opt,name=no_shell,json=noShell,def=0"`
+	xxx_hidden_DisconnectTimeoutSeconds int32                        `protobuf:"varint,8,opt,name=disconnect_timeout_seconds,json=disconnectTimeoutSeconds"`
+	XXX_raceDetectHookData              protoimpl.RaceDetectHookData
+	XXX_presence                        [1]uint32
+	unknownFields                       protoimpl.UnknownFields
+	sizeCache                           protoimpl.SizeCache
 }
 
 // Default values for InitialPayload fields.
@@ -1272,9 +1384,16 @@ func (x *InitialPayload) GetNoShell() bool {
 	return Default_InitialPayload_NoShell
 }
 
+func (x *InitialPayload) GetDisconnectTimeoutSeconds() int32 {
+	if x != nil {
+		return x.xxx_hidden_DisconnectTimeoutSeconds
+	}
+	return 0
+}
+
 func (x *InitialPayload) SetJumphost(v bool) {
 	x.xxx_hidden_Jumphost = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 8)
 }
 
 func (x *InitialPayload) SetReversetunnels(v []*PortForwardSourceRequest) {
@@ -1287,22 +1406,27 @@ func (x *InitialPayload) SetEnvironmentvariables(v map[string]string) {
 
 func (x *InitialPayload) SetNoPty(v bool) {
 	x.xxx_hidden_NoPty = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 8)
 }
 
 func (x *InitialPayload) SetCommand(v string) {
 	x.xxx_hidden_Command = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 8)
 }
 
 func (x *InitialPayload) SetSupportsExitStatus(v bool) {
 	x.xxx_hidden_SupportsExitStatus = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 8)
 }
 
 func (x *InitialPayload) SetNoShell(v bool) {
 	x.xxx_hidden_NoShell = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 7)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 8)
+}
+
+func (x *InitialPayload) SetDisconnectTimeoutSeconds(v int32) {
+	x.xxx_hidden_DisconnectTimeoutSeconds = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 7, 8)
 }
 
 func (x *InitialPayload) HasJumphost() bool {
@@ -1340,6 +1464,13 @@ func (x *InitialPayload) HasNoShell() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
 }
 
+func (x *InitialPayload) HasDisconnectTimeoutSeconds() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 7)
+}
+
 func (x *InitialPayload) ClearJumphost() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 }
@@ -1361,6 +1492,11 @@ func (x *InitialPayload) ClearNoShell() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 6)
 }
 
+func (x *InitialPayload) ClearDisconnectTimeoutSeconds() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 7)
+	x.xxx_hidden_DisconnectTimeoutSeconds = 0
+}
+
 type InitialPayload_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -1375,6 +1511,11 @@ type InitialPayload_builder struct {
 	SupportsExitStatus *bool
 	// ssh -W: keep the session without a pty or a shell.
 	NoShell *bool
+	// When set, overrides etserver's global disconnect timeout for this session.
+	// Seconds a disconnected etterminal may stay alive before etserver closes it.
+	// 0 means no timeout. Clients convert --disconnect-timeout minutes to
+	// seconds.
+	DisconnectTimeoutSeconds *int32
 }
 
 func (b0 InitialPayload_builder) Build() *InitialPayload {
@@ -1382,26 +1523,30 @@ func (b0 InitialPayload_builder) Build() *InitialPayload {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.Jumphost != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 8)
 		x.xxx_hidden_Jumphost = *b.Jumphost
 	}
 	x.xxx_hidden_Reversetunnels = &b.Reversetunnels
 	x.xxx_hidden_Environmentvariables = b.Environmentvariables
 	if b.NoPty != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 8)
 		x.xxx_hidden_NoPty = *b.NoPty
 	}
 	if b.Command != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 8)
 		x.xxx_hidden_Command = b.Command
 	}
 	if b.SupportsExitStatus != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 8)
 		x.xxx_hidden_SupportsExitStatus = *b.SupportsExitStatus
 	}
 	if b.NoShell != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 7)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 8)
 		x.xxx_hidden_NoShell = *b.NoShell
+	}
+	if b.DisconnectTimeoutSeconds != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 7, 8)
+		x.xxx_hidden_DisconnectTimeoutSeconds = *b.DisconnectTimeoutSeconds
 	}
 	return m0
 }
@@ -1590,22 +1735,25 @@ func (b0 ConfigParams_builder) Build() *ConfigParams {
 }
 
 type TermInit struct {
-	state                        protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Environmentnames  []string               `protobuf:"bytes,1,rep,name=environmentnames"`
-	xxx_hidden_Environmentvalues []string               `protobuf:"bytes,2,rep,name=environmentvalues"`
-	xxx_hidden_NoPty             bool                   `protobuf:"varint,3,opt,name=no_pty,json=noPty,def=0"`
-	xxx_hidden_Command           *string                `protobuf:"bytes,4,opt,name=command"`
-	xxx_hidden_NoShell           bool                   `protobuf:"varint,5,opt,name=no_shell,json=noShell,def=0"`
-	XXX_raceDetectHookData       protoimpl.RaceDetectHookData
-	XXX_presence                 [1]uint32
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	state                               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Environmentnames         []string               `protobuf:"bytes,1,rep,name=environmentnames"`
+	xxx_hidden_Environmentvalues        []string               `protobuf:"bytes,2,rep,name=environmentvalues"`
+	xxx_hidden_NoPty                    bool                   `protobuf:"varint,3,opt,name=no_pty,json=noPty,def=0"`
+	xxx_hidden_Command                  *string                `protobuf:"bytes,4,opt,name=command"`
+	xxx_hidden_NoShell                  bool                   `protobuf:"varint,5,opt,name=no_shell,json=noShell,def=0"`
+	xxx_hidden_Hadreversetunnels        bool                   `protobuf:"varint,6,opt,name=hadreversetunnels,def=0"`
+	xxx_hidden_DisconnectTimeoutSeconds int32                  `protobuf:"varint,7,opt,name=disconnect_timeout_seconds,json=disconnectTimeoutSeconds"`
+	XXX_raceDetectHookData              protoimpl.RaceDetectHookData
+	XXX_presence                        [1]uint32
+	unknownFields                       protoimpl.UnknownFields
+	sizeCache                           protoimpl.SizeCache
 }
 
 // Default values for TermInit fields.
 const (
-	Default_TermInit_NoPty   = bool(false)
-	Default_TermInit_NoShell = bool(false)
+	Default_TermInit_NoPty             = bool(false)
+	Default_TermInit_NoShell           = bool(false)
+	Default_TermInit_Hadreversetunnels = bool(false)
 )
 
 func (x *TermInit) Reset() {
@@ -1675,6 +1823,22 @@ func (x *TermInit) GetNoShell() bool {
 	return Default_TermInit_NoShell
 }
 
+func (x *TermInit) GetHadreversetunnels() bool {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 5) {
+			return x.xxx_hidden_Hadreversetunnels
+		}
+	}
+	return Default_TermInit_Hadreversetunnels
+}
+
+func (x *TermInit) GetDisconnectTimeoutSeconds() int32 {
+	if x != nil {
+		return x.xxx_hidden_DisconnectTimeoutSeconds
+	}
+	return 0
+}
+
 func (x *TermInit) SetEnvironmentnames(v []string) {
 	x.xxx_hidden_Environmentnames = v
 }
@@ -1685,17 +1849,27 @@ func (x *TermInit) SetEnvironmentvalues(v []string) {
 
 func (x *TermInit) SetNoPty(v bool) {
 	x.xxx_hidden_NoPty = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 7)
 }
 
 func (x *TermInit) SetCommand(v string) {
 	x.xxx_hidden_Command = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 7)
 }
 
 func (x *TermInit) SetNoShell(v bool) {
 	x.xxx_hidden_NoShell = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 7)
+}
+
+func (x *TermInit) SetHadreversetunnels(v bool) {
+	x.xxx_hidden_Hadreversetunnels = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 7)
+}
+
+func (x *TermInit) SetDisconnectTimeoutSeconds(v int32) {
+	x.xxx_hidden_DisconnectTimeoutSeconds = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 7)
 }
 
 func (x *TermInit) HasNoPty() bool {
@@ -1719,6 +1893,20 @@ func (x *TermInit) HasNoShell() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
 }
 
+func (x *TermInit) HasHadreversetunnels() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
+func (x *TermInit) HasDisconnectTimeoutSeconds() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
+}
+
 func (x *TermInit) ClearNoPty() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
 }
@@ -1732,6 +1920,15 @@ func (x *TermInit) ClearNoShell() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 4)
 }
 
+func (x *TermInit) ClearHadreversetunnels() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+}
+
+func (x *TermInit) ClearDisconnectTimeoutSeconds() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 6)
+	x.xxx_hidden_DisconnectTimeoutSeconds = 0
+}
+
 type TermInit_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -1740,6 +1937,10 @@ type TermInit_builder struct {
 	NoPty             *bool
 	Command           *string
 	NoShell           *bool
+	Hadreversetunnels *bool
+	// Copied from InitialPayload so etterminal can re-advertise it after an
+	// etserver restart (see TerminalUserInfo.disconnect_timeout_seconds).
+	DisconnectTimeoutSeconds *int32
 }
 
 func (b0 TermInit_builder) Build() *TermInit {
@@ -1749,32 +1950,48 @@ func (b0 TermInit_builder) Build() *TermInit {
 	x.xxx_hidden_Environmentnames = b.Environmentnames
 	x.xxx_hidden_Environmentvalues = b.Environmentvalues
 	if b.NoPty != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 7)
 		x.xxx_hidden_NoPty = *b.NoPty
 	}
 	if b.Command != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 7)
 		x.xxx_hidden_Command = b.Command
 	}
 	if b.NoShell != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 7)
 		x.xxx_hidden_NoShell = *b.NoShell
+	}
+	if b.Hadreversetunnels != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 7)
+		x.xxx_hidden_Hadreversetunnels = *b.Hadreversetunnels
+	}
+	if b.DisconnectTimeoutSeconds != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 7)
+		x.xxx_hidden_DisconnectTimeoutSeconds = *b.DisconnectTimeoutSeconds
 	}
 	return m0
 }
 
 type TerminalUserInfo struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Id          *string                `protobuf:"bytes,1,opt,name=id"`
-	xxx_hidden_Passkey     *string                `protobuf:"bytes,2,opt,name=passkey"`
-	xxx_hidden_Uid         int64                  `protobuf:"varint,3,opt,name=uid"`
-	xxx_hidden_Gid         int64                  `protobuf:"varint,4,opt,name=gid"`
-	xxx_hidden_Fd          int64                  `protobuf:"varint,5,opt,name=fd"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                               protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Id                       *string                `protobuf:"bytes,1,opt,name=id"`
+	xxx_hidden_Passkey                  *string                `protobuf:"bytes,2,opt,name=passkey"`
+	xxx_hidden_Uid                      int64                  `protobuf:"varint,3,opt,name=uid"`
+	xxx_hidden_Gid                      int64                  `protobuf:"varint,4,opt,name=gid"`
+	xxx_hidden_Fd                       int64                  `protobuf:"varint,5,opt,name=fd"`
+	xxx_hidden_Ptyactive                bool                   `protobuf:"varint,6,opt,name=ptyactive"`
+	xxx_hidden_Hadreversetunnels        bool                   `protobuf:"varint,7,opt,name=hadreversetunnels,def=0"`
+	xxx_hidden_DisconnectTimeoutSeconds int32                  `protobuf:"varint,8,opt,name=disconnect_timeout_seconds,json=disconnectTimeoutSeconds"`
+	XXX_raceDetectHookData              protoimpl.RaceDetectHookData
+	XXX_presence                        [1]uint32
+	unknownFields                       protoimpl.UnknownFields
+	sizeCache                           protoimpl.SizeCache
 }
+
+// Default values for TerminalUserInfo fields.
+const (
+	Default_TerminalUserInfo_Hadreversetunnels = bool(false)
+)
 
 func (x *TerminalUserInfo) Reset() {
 	*x = TerminalUserInfo{}
@@ -1842,29 +2059,67 @@ func (x *TerminalUserInfo) GetFd() int64 {
 	return 0
 }
 
+func (x *TerminalUserInfo) GetPtyactive() bool {
+	if x != nil {
+		return x.xxx_hidden_Ptyactive
+	}
+	return false
+}
+
+func (x *TerminalUserInfo) GetHadreversetunnels() bool {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 6) {
+			return x.xxx_hidden_Hadreversetunnels
+		}
+	}
+	return Default_TerminalUserInfo_Hadreversetunnels
+}
+
+func (x *TerminalUserInfo) GetDisconnectTimeoutSeconds() int32 {
+	if x != nil {
+		return x.xxx_hidden_DisconnectTimeoutSeconds
+	}
+	return 0
+}
+
 func (x *TerminalUserInfo) SetId(v string) {
 	x.xxx_hidden_Id = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 8)
 }
 
 func (x *TerminalUserInfo) SetPasskey(v string) {
 	x.xxx_hidden_Passkey = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 8)
 }
 
 func (x *TerminalUserInfo) SetUid(v int64) {
 	x.xxx_hidden_Uid = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 8)
 }
 
 func (x *TerminalUserInfo) SetGid(v int64) {
 	x.xxx_hidden_Gid = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 8)
 }
 
 func (x *TerminalUserInfo) SetFd(v int64) {
 	x.xxx_hidden_Fd = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 5)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 8)
+}
+
+func (x *TerminalUserInfo) SetPtyactive(v bool) {
+	x.xxx_hidden_Ptyactive = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 8)
+}
+
+func (x *TerminalUserInfo) SetHadreversetunnels(v bool) {
+	x.xxx_hidden_Hadreversetunnels = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 6, 8)
+}
+
+func (x *TerminalUserInfo) SetDisconnectTimeoutSeconds(v int32) {
+	x.xxx_hidden_DisconnectTimeoutSeconds = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 7, 8)
 }
 
 func (x *TerminalUserInfo) HasId() bool {
@@ -1902,6 +2157,27 @@ func (x *TerminalUserInfo) HasFd() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
 }
 
+func (x *TerminalUserInfo) HasPtyactive() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
+func (x *TerminalUserInfo) HasHadreversetunnels() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 6)
+}
+
+func (x *TerminalUserInfo) HasDisconnectTimeoutSeconds() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 7)
+}
+
 func (x *TerminalUserInfo) ClearId() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_Id = nil
@@ -1927,6 +2203,20 @@ func (x *TerminalUserInfo) ClearFd() {
 	x.xxx_hidden_Fd = 0
 }
 
+func (x *TerminalUserInfo) ClearPtyactive() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+	x.xxx_hidden_Ptyactive = false
+}
+
+func (x *TerminalUserInfo) ClearHadreversetunnels() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 6)
+}
+
+func (x *TerminalUserInfo) ClearDisconnectTimeoutSeconds() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 7)
+	x.xxx_hidden_DisconnectTimeoutSeconds = 0
+}
+
 type TerminalUserInfo_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
@@ -1935,6 +2225,16 @@ type TerminalUserInfo_builder struct {
 	Uid     *int64
 	Gid     *int64
 	Fd      *int64
+	// Set when a terminal re-registers after its router went away: the pty and
+	// its shell are already running, so the server must resume the session
+	// instead of bootstrapping a fresh one.
+	Ptyactive *bool
+	// Preserved by etterminal so a replacement server can warn that the
+	// server-side listeners from the original bootstrap no longer exist.
+	Hadreversetunnels *bool
+	// Preserved from TermInit so a resumed pump keeps the client's per-session
+	// disconnect timeout across etserver restart.
+	DisconnectTimeoutSeconds *int32
 }
 
 func (b0 TerminalUserInfo_builder) Build() *TerminalUserInfo {
@@ -1942,24 +2242,36 @@ func (b0 TerminalUserInfo_builder) Build() *TerminalUserInfo {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.Id != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 8)
 		x.xxx_hidden_Id = b.Id
 	}
 	if b.Passkey != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 8)
 		x.xxx_hidden_Passkey = b.Passkey
 	}
 	if b.Uid != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 8)
 		x.xxx_hidden_Uid = *b.Uid
 	}
 	if b.Gid != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 8)
 		x.xxx_hidden_Gid = *b.Gid
 	}
 	if b.Fd != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 5)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 8)
 		x.xxx_hidden_Fd = *b.Fd
+	}
+	if b.Ptyactive != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 8)
+		x.xxx_hidden_Ptyactive = *b.Ptyactive
+	}
+	if b.Hadreversetunnels != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 6, 8)
+		x.xxx_hidden_Hadreversetunnels = *b.Hadreversetunnels
+	}
+	if b.DisconnectTimeoutSeconds != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 7, 8)
+		x.xxx_hidden_DisconnectTimeoutSeconds = *b.DisconnectTimeoutSeconds
 	}
 	return m0
 }
@@ -1973,13 +2285,18 @@ const file_ETerminal_proto_rawDesc = "" +
 	"\x06buffer\x18\x01 \x01(\fR\x06buffer\x12\"\n" +
 	"\tis_stderr\x18\x02 \x01(\b:\x05falseR\bisStderr\"0\n" +
 	"\x12TerminalExitStatus\x12\x1a\n" +
-	"\bexitcode\x18\x01 \x01(\x05R\bexitcode\"v\n" +
+	"\bexitcode\x18\x01 \x01(\x05R\bexitcode\"\x82\x02\n" +
 	"\fTerminalInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03row\x18\x02 \x01(\x05R\x03row\x12\x16\n" +
 	"\x06column\x18\x03 \x01(\x05R\x06column\x12\x14\n" +
 	"\x05width\x18\x04 \x01(\x05R\x05width\x12\x16\n" +
-	"\x06height\x18\x05 \x01(\x05R\x06height\"\xae\x01\n" +
+	"\x06height\x18\x05 \x01(\x05R\x06height\x128\n" +
+	"\acommand\x18\x06 \x01(\x0e2\x18.et.TerminalInfo.Command:\x04NONER\acommand\x12)\n" +
+	"\x0ecommandversion\x18\a \x01(\x05:\x010R\x0ecommandversion\"%\n" +
+	"\aCommand\x12\b\n" +
+	"\x04NONE\x10\x00\x12\x10\n" +
+	"\fKILL_SESSION\x10\x01\"\xae\x01\n" +
 	"\x18PortForwardSourceRequest\x12*\n" +
 	"\x06source\x18\x01 \x01(\v2\x12.et.SocketEndpointR\x06source\x124\n" +
 	"\vdestination\x18\x02 \x01(\v2\x12.et.SocketEndpointR\vdestination\x120\n" +
@@ -2000,7 +2317,7 @@ const file_ETerminal_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x16\n" +
 	"\x06closed\x18\x05 \x01(\bR\x06closed\x12\x1d\n" +
 	"\n" +
-	"half_close\x18\x06 \x01(\bR\thalfClose\"\xb7\x03\n" +
+	"half_close\x18\x06 \x01(\bR\thalfClose\"\xf5\x03\n" +
 	"\x0eInitialPayload\x12!\n" +
 	"\bjumphost\x18\x01 \x01(\b:\x05falseR\bjumphost\x12D\n" +
 	"\x0ereversetunnels\x18\x02 \x03(\v2\x1c.et.PortForwardSourceRequestR\x0ereversetunnels\x12`\n" +
@@ -2008,7 +2325,8 @@ const file_ETerminal_proto_rawDesc = "" +
 	"\x06no_pty\x18\x04 \x01(\b:\x05falseR\x05noPty\x12\x18\n" +
 	"\acommand\x18\x05 \x01(\tR\acommand\x127\n" +
 	"\x14supports_exit_status\x18\x06 \x01(\b:\x05falseR\x12supportsExitStatus\x12 \n" +
-	"\bno_shell\x18\a \x01(\b:\x05falseR\anoShell\x1aG\n" +
+	"\bno_shell\x18\a \x01(\b:\x05falseR\anoShell\x12<\n" +
+	"\x1adisconnect_timeout_seconds\x18\b \x01(\x05R\x18disconnectTimeoutSeconds\x1aG\n" +
 	"\x19EnvironmentvariablesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"'\n" +
@@ -2016,19 +2334,24 @@ const file_ETerminal_proto_rawDesc = "" +
 	"\x05error\x18\x01 \x01(\tR\x05error\"H\n" +
 	"\fConfigParams\x12\x16\n" +
 	"\x06vlevel\x18\x01 \x01(\x05R\x06vlevel\x12 \n" +
-	"\vminloglevel\x18\x02 \x01(\x05R\vminloglevel\"\xbe\x01\n" +
+	"\vminloglevel\x18\x02 \x01(\x05R\vminloglevel\"\xb1\x02\n" +
 	"\bTermInit\x12*\n" +
 	"\x10environmentnames\x18\x01 \x03(\tR\x10environmentnames\x12,\n" +
 	"\x11environmentvalues\x18\x02 \x03(\tR\x11environmentvalues\x12\x1c\n" +
 	"\x06no_pty\x18\x03 \x01(\b:\x05falseR\x05noPty\x12\x18\n" +
 	"\acommand\x18\x04 \x01(\tR\acommand\x12 \n" +
-	"\bno_shell\x18\x05 \x01(\b:\x05falseR\anoShell\"p\n" +
+	"\bno_shell\x18\x05 \x01(\b:\x05falseR\anoShell\x123\n" +
+	"\x11hadreversetunnels\x18\x06 \x01(\b:\x05falseR\x11hadreversetunnels\x12<\n" +
+	"\x1adisconnect_timeout_seconds\x18\a \x01(\x05R\x18disconnectTimeoutSeconds\"\x81\x02\n" +
 	"\x10TerminalUserInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\apasskey\x18\x02 \x01(\tR\apasskey\x12\x10\n" +
 	"\x03uid\x18\x03 \x01(\x03R\x03uid\x12\x10\n" +
 	"\x03gid\x18\x04 \x01(\x03R\x03gid\x12\x0e\n" +
-	"\x02fd\x18\x05 \x01(\x03R\x02fd*\x9c\x02\n" +
+	"\x02fd\x18\x05 \x01(\x03R\x02fd\x12\x1c\n" +
+	"\tptyactive\x18\x06 \x01(\bR\tptyactive\x123\n" +
+	"\x11hadreversetunnels\x18\a \x01(\b:\x05falseR\x11hadreversetunnels\x12<\n" +
+	"\x1adisconnect_timeout_seconds\x18\b \x01(\x05R\x18disconnectTimeoutSeconds*\x9c\x02\n" +
 	"\x12TerminalPacketType\x12\x0e\n" +
 	"\n" +
 	"KEEP_ALIVE\x10\x00\x12\x13\n" +
@@ -2044,37 +2367,39 @@ const file_ETerminal_proto_rawDesc = "" +
 	"\x0eTERMINAL_CLOSE\x10\v\x12\x18\n" +
 	"\x14TERMINAL_EXIT_STATUS\x10\fB\x02H\x03"
 
-var file_ETerminal_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_ETerminal_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_ETerminal_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_ETerminal_proto_goTypes = []any{
 	(TerminalPacketType)(0),                // 0: et.TerminalPacketType
-	(*TerminalBuffer)(nil),                 // 1: et.TerminalBuffer
-	(*TerminalExitStatus)(nil),             // 2: et.TerminalExitStatus
-	(*TerminalInfo)(nil),                   // 3: et.TerminalInfo
-	(*PortForwardSourceRequest)(nil),       // 4: et.PortForwardSourceRequest
-	(*PortForwardSourceResponse)(nil),      // 5: et.PortForwardSourceResponse
-	(*PortForwardDestinationRequest)(nil),  // 6: et.PortForwardDestinationRequest
-	(*PortForwardDestinationResponse)(nil), // 7: et.PortForwardDestinationResponse
-	(*PortForwardData)(nil),                // 8: et.PortForwardData
-	(*InitialPayload)(nil),                 // 9: et.InitialPayload
-	(*InitialResponse)(nil),                // 10: et.InitialResponse
-	(*ConfigParams)(nil),                   // 11: et.ConfigParams
-	(*TermInit)(nil),                       // 12: et.TermInit
-	(*TerminalUserInfo)(nil),               // 13: et.TerminalUserInfo
-	nil,                                    // 14: et.InitialPayload.EnvironmentvariablesEntry
-	(*SocketEndpoint)(nil),                 // 15: et.SocketEndpoint
+	(TerminalInfo_Command)(0),              // 1: et.TerminalInfo.Command
+	(*TerminalBuffer)(nil),                 // 2: et.TerminalBuffer
+	(*TerminalExitStatus)(nil),             // 3: et.TerminalExitStatus
+	(*TerminalInfo)(nil),                   // 4: et.TerminalInfo
+	(*PortForwardSourceRequest)(nil),       // 5: et.PortForwardSourceRequest
+	(*PortForwardSourceResponse)(nil),      // 6: et.PortForwardSourceResponse
+	(*PortForwardDestinationRequest)(nil),  // 7: et.PortForwardDestinationRequest
+	(*PortForwardDestinationResponse)(nil), // 8: et.PortForwardDestinationResponse
+	(*PortForwardData)(nil),                // 9: et.PortForwardData
+	(*InitialPayload)(nil),                 // 10: et.InitialPayload
+	(*InitialResponse)(nil),                // 11: et.InitialResponse
+	(*ConfigParams)(nil),                   // 12: et.ConfigParams
+	(*TermInit)(nil),                       // 13: et.TermInit
+	(*TerminalUserInfo)(nil),               // 14: et.TerminalUserInfo
+	nil,                                    // 15: et.InitialPayload.EnvironmentvariablesEntry
+	(*SocketEndpoint)(nil),                 // 16: et.SocketEndpoint
 }
 var file_ETerminal_proto_depIdxs = []int32{
-	15, // 0: et.PortForwardSourceRequest.source:type_name -> et.SocketEndpoint
-	15, // 1: et.PortForwardSourceRequest.destination:type_name -> et.SocketEndpoint
-	15, // 2: et.PortForwardDestinationRequest.destination:type_name -> et.SocketEndpoint
-	4,  // 3: et.InitialPayload.reversetunnels:type_name -> et.PortForwardSourceRequest
-	14, // 4: et.InitialPayload.environmentvariables:type_name -> et.InitialPayload.EnvironmentvariablesEntry
-	5,  // [5:5] is the sub-list for method output_type
-	5,  // [5:5] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	1,  // 0: et.TerminalInfo.command:type_name -> et.TerminalInfo.Command
+	16, // 1: et.PortForwardSourceRequest.source:type_name -> et.SocketEndpoint
+	16, // 2: et.PortForwardSourceRequest.destination:type_name -> et.SocketEndpoint
+	16, // 3: et.PortForwardDestinationRequest.destination:type_name -> et.SocketEndpoint
+	5,  // 4: et.InitialPayload.reversetunnels:type_name -> et.PortForwardSourceRequest
+	15, // 5: et.InitialPayload.environmentvariables:type_name -> et.InitialPayload.EnvironmentvariablesEntry
+	6,  // [6:6] is the sub-list for method output_type
+	6,  // [6:6] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_ETerminal_proto_init() }
@@ -2088,7 +2413,7 @@ func file_ETerminal_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ETerminal_proto_rawDesc), len(file_ETerminal_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,

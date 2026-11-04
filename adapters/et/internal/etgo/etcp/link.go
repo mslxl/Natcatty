@@ -127,9 +127,25 @@ func (c *Conn) deliver(ctx context.Context, l *link, b []byte) error {
 	}
 	plain, err := c.in.Open(nil, payload)
 	if err != nil {
+		// The first packet after a successful recovery should open under the
+		// epoch key both sides negotiated. A failure there cannot be ordinary
+		// packet loss: the bytes are ordered and authenticated under a key this
+		// client does not have, which is what another client's reset leaves
+		// behind. Report displacement rather than an integrity failure.
+		if c.afterRecovery.CompareAndSwap(true, false) {
+			return c.failDisplaced()
+		}
 		return c.fail(fmt.Errorf("%w: %w", ErrIntegrity, err))
 	}
+	c.afterRecovery.Store(false)
 	c.recvSeq++
+	if h == protocol.HeaderInitialResponse && c.peerSeq < 1 {
+		// The server answers INITIAL_RESPONSE only after reading
+		// INITIAL_PAYLOAD, so its reader has received at least one packet.
+		// Keeping this floor lets the next reconnect notice a server reader
+		// reset to zero even before it has reported a sequence itself.
+		c.peerSeq = 1
+	}
 	p := protocol.Packet{Header: h, Payload: plain}
 	if err := c.handOver(ctx, l, p); err != nil {
 		// Counted in recvSeq, so the server will not resend it: keep it

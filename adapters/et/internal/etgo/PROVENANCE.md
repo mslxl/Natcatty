@@ -10,9 +10,9 @@ Terminal protocol.
   are copied into this directory unchanged.
 - Upstream copyright: Copyright 2026 Tomi P. Hakala.
 - The protocol buffer definitions under `protocol/proto` are copied from
-  [Eternal Terminal](https://github.com/MisterTea/EternalTerminal) at commit
-  `6f53869473a16407b59f1f3382d291ab97b4f64f`, Copyright Jason Gauci and
-  contributors, Apache License 2.0.
+  [Eternal Terminal](https://github.com/MisterTea/EternalTerminal) at tag
+  `et-v7.1.1`, commit `a8318ca4598756ca3c5f4711cce12a65faeff57d`, Copyright
+  Jason Gauci and contributors, Apache License 2.0.
 
 ## Copied packages
 
@@ -42,8 +42,14 @@ Terminal protocol.
   `etterminal` over `connection.Manager`. `export.go` adds exported wrappers
   for the unchanged parser and placeholder functions, and `command.go` is
   reduced to the remote command and its validation.
-- Generated protobuf files keep upstream's generated code. Each has an SPDX
-  license line and a copied-from Eternal Terminal provenance header above the
-  generated header; the generated messages and methods are unchanged.
+- The generated protobuf files were regenerated from the et-v7.1.1 protos with
+  `protoc` 3.21.12 and `protoc-gen-go` v1.36.12, the toolchain pin the
+  repository already used for the opaque API. Each has an SPDX license line
+  and a copied-from Eternal Terminal provenance header above the generated
+  header.
+- `etcp/` is extended locally with the v7.1.1 challenge exchange, reset
+  recovery, RETRY_LATER handling, and displacement detection; `seal/` gains
+  the epoch rekey. These changes are Natcatty's, not part of the vendored
+  upstream snapshot.
 
 The application adapter that consumes these packages lives in `adapters/et`.

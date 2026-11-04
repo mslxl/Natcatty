@@ -1,5 +1,6 @@
 // Copied from Eternal Terminal (https://github.com/MisterTea/EternalTerminal),
-// proto/ETerminal.proto at commit 6f53869473a16407b59f1f3382d291ab97b4f64f.
+// proto/ETerminal.proto at tag et-v7.1.1, commit
+// a8318ca4598756ca3c5f4711cce12a65faeff57d.
 // Copyright Jason Gauci and contributors, licensed under the Apache License,
 // Version 2.0. Unmodified apart from this header; see NOTICE.
 
@@ -38,11 +39,18 @@ message TerminalExitStatus {
 }
 
 message TerminalInfo {
+  enum Command {
+    NONE = 0;
+    KILL_SESSION = 1;
+  }
+
   optional string id = 1;
   optional int32 row = 2;
   optional int32 column = 3;
   optional int32 width = 4;
   optional int32 height = 5;
+  optional Command command = 6 [default = NONE];
+  optional int32 commandversion = 7 [default = 0];
 }
 
 message PortForwardSourceRequest {
@@ -57,6 +65,7 @@ message PortForwardSourceResponse {
 
 message PortForwardDestinationRequest {
   optional SocketEndpoint destination = 1;
+  // Opaque request token, echoed in clientfd; not a peer OS descriptor.
   optional int32 fd = 2;
 }
 
@@ -88,6 +97,11 @@ message InitialPayload {
   optional bool supports_exit_status = 6 [default = false];
   // ssh -W: keep the session without a pty or a shell.
   optional bool no_shell = 7 [default = false];
+  // When set, overrides etserver's global disconnect timeout for this session.
+  // Seconds a disconnected etterminal may stay alive before etserver closes it.
+  // 0 means no timeout. Clients convert --disconnect-timeout minutes to
+  // seconds.
+  optional int32 disconnect_timeout_seconds = 8;
 }
 
 message InitialResponse {
@@ -105,6 +119,10 @@ message TermInit {
   optional bool no_pty = 3 [default = false];
   optional string command = 4;
   optional bool no_shell = 5 [default = false];
+  optional bool hadreversetunnels = 6 [default = false];
+  // Copied from InitialPayload so etterminal can re-advertise it after an
+  // etserver restart (see TerminalUserInfo.disconnect_timeout_seconds).
+  optional int32 disconnect_timeout_seconds = 7;
 }
 
 message TerminalUserInfo {
@@ -113,4 +131,14 @@ message TerminalUserInfo {
   optional int64 uid = 3;
   optional int64 gid = 4;
   optional int64 fd = 5;
+  // Set when a terminal re-registers after its router went away: the pty and
+  // its shell are already running, so the server must resume the session
+  // instead of bootstrapping a fresh one.
+  optional bool ptyactive = 6;
+  // Preserved by etterminal so a replacement server can warn that the
+  // server-side listeners from the original bootstrap no longer exist.
+  optional bool hadreversetunnels = 7 [default = false];
+  // Preserved from TermInit so a resumed pump keeps the client's per-session
+  // disconnect timeout across etserver restart.
+  optional int32 disconnect_timeout_seconds = 8;
 }

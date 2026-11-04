@@ -14,6 +14,7 @@ Desktop ET moves from the bundled `et` binary to an application-owned, pure-Go c
 - ET Hosts gain the same SSH route capabilities as SSH Hosts: proxy and jump chains, shared credentials, timeouts, keepalives, and host-key verification. The current one-jump/no-proxy restriction, private HOME, `ssh_config`, `known_hosts`, and askpass helper are removed.
 - Full stock `et` 7.1.1 parity is the release gate against etserver 7.1.1 and 6.2.10 on Debian/Ubuntu LTS, Fedora, Arch, and macOS, with real SSH/TCP tests. No waivers.
 - ET port forwarding is out of scope for v1; the transport interface must leave room for it.
+- A reattached terminal starts blank, matching stock `et`: etserver keeps no screen snapshot, and reset recovery exchanges empty catchup buffers rather than replaying prior output. Natcatty preserves that behavior and does not synthesize a restored screen.
 - The vendored `et-go` code needs its Apache-2.0 LICENSE/NOTICE and attribution in the app's third-party notices.
 - Mobile remains deferred; the pure-Go client is portable when the mobile gate reopens.
 - Supersedes ADR-0005.

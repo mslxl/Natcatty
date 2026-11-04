@@ -613,6 +613,7 @@
   "connectionTmuxSessionRestored": "tmux session restored.",
   "connectionTmuxNested": "Already inside a tmux session on the remote Host; connected without nesting.",
   "connectionTmuxUnavailable": "tmux is not available on the remote Host; connected with a plain shell.",
+  "connectionEternalTerminalDisplaced": "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client at a time.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

@@ -492,6 +492,7 @@
   "connectionTmuxSessionRestored": "Сеанс tmux восстановлен.",
   "connectionTmuxNested": "Вы уже находитесь в сеансе tmux на удалённом Host; подключение выполнено без вложения.",
   "connectionTmuxUnavailable": "tmux недоступен на удалённом Host; выполнено подключение с обычной оболочкой.",
+  "connectionEternalTerminalDisplaced": "Другой клиент подключился к этому сеансу EternalTerminal, поэтому это подключение завершено. EternalTerminal допускает только одного клиента одновременно.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

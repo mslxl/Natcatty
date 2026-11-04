@@ -6,14 +6,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/et/internal/etgo/bootstrap"
+	"github.com/mslxl/natcatty/adapters/et/internal/etgo/etcp"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/etservertest"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/wire"
@@ -593,6 +598,172 @@ func TestDialFailureIsATypedHandshakeFailure(t *testing.T) {
 	}
 	if _, err := factory.Open(context.Background(), inProcessStartSpec()); !errors.Is(err, etmodel.ErrHandshakeFailed) {
 		t.Fatalf("Open error = %v, want ErrHandshakeFailed", err)
+	}
+}
+
+// TestRetryLaterRetriesWithBackoff proves the adapter's initial connect
+// treats RETRY_LATER as a wait, not a fatal handshake: it redials after 250 ms
+// and then 500 ms, and accepts the session when the server stops recovering.
+func TestRetryLaterRetriesWithBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var dials atomic.Int32
+		var servers sync.WaitGroup
+		forwarding := &recordingForwarder{dial: func(context.Context) (net.Conn, error) {
+			n := int(dials.Add(1)) - 1
+			client, server := net.Pipe()
+			servers.Go(func() {
+				defer server.Close()
+				var request protocol.ConnectRequest
+				if wire.ReadMessage(server, &request) != nil {
+					return
+				}
+				response := &protocol.ConnectResponse{}
+				if n < 2 {
+					response.SetStatus(protocol.ConnectStatus_RETRY_LATER)
+					_ = wire.WriteMessage(server, response)
+					return
+				}
+				response.SetStatus(protocol.ConnectStatus_NEW_CLIENT)
+				if wire.WriteMessage(server, response) != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, server)
+			})
+			return client, nil
+		}}
+		notices := make(chan appsession.Notice, 8)
+		factory := InProcessFactory{}
+		type result struct {
+			conn *etcp.Conn
+			err  error
+		}
+		done := make(chan result, 1)
+		start := time.Now()
+		go func() {
+			conn, err := factory.dial(t.Context(), forwarding, "et.example:2022",
+				bootstrap.NewCredentials(testID, testPasskey), notices)
+			done <- result{conn: conn, err: err}
+		}()
+		got := <-done
+		if got.err != nil {
+			t.Fatalf("dial after RETRY_LATER: %v", got.err)
+		}
+		if count := dials.Load(); count != 3 {
+			t.Fatalf("dials = %d, want 3 (two RETRY_LATER answers)", count)
+		}
+		if elapsed := time.Since(start); elapsed < retryLaterDelay+2*retryLaterDelay {
+			t.Fatalf("RETRY_LATER retries took %v, want at least %v of backoff",
+				elapsed, retryLaterDelay+2*retryLaterDelay)
+		}
+		if err := got.conn.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		servers.Wait()
+	})
+}
+
+// TestRetryLaterIsTypedWhenTheWaitEnds: if the server never stops recovering,
+// the last answer is still reported as the typed retry-later outcome rather
+// than a generic handshake failure.
+func TestRetryLaterIsTypedWhenTheWaitEnds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		forwarding := &recordingForwarder{dial: func(context.Context) (net.Conn, error) {
+			client, server := net.Pipe()
+			go func() {
+				defer server.Close()
+				var request protocol.ConnectRequest
+				if wire.ReadMessage(server, &request) != nil {
+					return
+				}
+				response := &protocol.ConnectResponse{}
+				response.SetStatus(protocol.ConnectStatus_RETRY_LATER)
+				_ = wire.WriteMessage(server, response)
+			}()
+			return client, nil
+		}}
+		factory := InProcessFactory{HandshakeTimeout: 2 * time.Second}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		_, err := factory.dial(ctx, forwarding, "et.example:2022",
+			bootstrap.NewCredentials(testID, testPasskey), make(chan appsession.Notice, 8))
+		if !errors.Is(err, etcp.ErrRetryLater) {
+			t.Fatalf("dial = %v, want ErrRetryLater", err)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("dial = %v, want the context deadline too", err)
+		}
+	})
+}
+
+// TestOpenRetryLaterIsTyped proves the public Open path keeps the retry-later
+// vocabulary when the wait ends. Reporting the generic handshake-timeout
+// sentence instead would hide that the server was recovering and asking the
+// client to retry.
+func TestOpenRetryLaterIsTyped(t *testing.T) {
+	var servers sync.WaitGroup
+	forwarding := &recordingForwarder{dial: func(context.Context) (net.Conn, error) {
+		client, server := net.Pipe()
+		servers.Go(func() {
+			defer server.Close()
+			var request protocol.ConnectRequest
+			if wire.ReadMessage(server, &request) != nil {
+				return
+			}
+			response := &protocol.ConnectResponse{}
+			response.SetStatus(protocol.ConnectStatus_RETRY_LATER)
+			_ = wire.WriteMessage(server, response)
+		})
+		return client, nil
+	}}
+	lease := newFakeLease(credentialsExec(), forwarding)
+	factory := InProcessFactory{HandshakeTimeout: 300 * time.Millisecond}
+	factory.Acquire = func(context.Context, appconnection.Request) (ConnectionLease, error) {
+		return lease, nil
+	}
+	_, err := factory.Open(context.Background(), inProcessStartSpec())
+	if !errors.Is(err, etmodel.ErrRetryLater) {
+		t.Fatalf("Open error = %v, want ErrRetryLater", err)
+	}
+	if errors.Is(err, etmodel.ErrHandshakeFailed) {
+		t.Fatalf("a recovering server was classified as a handshake failure: %v", err)
+	}
+	if _, _, discarded := lease.state(); !discarded {
+		t.Fatal("a retry-later open did not discard the lease")
+	}
+	servers.Wait()
+}
+
+// TestClassifyDialErrorV7 pins the typed vocabulary for the v7 outcomes.
+func TestClassifyDialErrorV7(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"version", etcp.ErrVersion, etmodel.ErrUnsupportedServer},
+		{"legacy reattach", etcp.ErrLegacyReattach, etmodel.ErrReattachUnsupported},
+		{"retry later", etcp.ErrRetryLater, etmodel.ErrRetryLater},
+		{"displaced", etcp.ErrDisplaced, etmodel.ErrSessionDisplaced},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyDialError(fmt.Errorf("wrapped: %w", tt.err))
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("classifyDialError(%v) = %v, want %v", tt.err, err, tt.want)
+			}
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("classifyDialError(%v) lost the underlying error: %v", tt.err, err)
+			}
+		})
+	}
+}
+
+// TestClassifyRunDisplaced proves the Session ends as displaced, not as a
+// generic error, so the reconnect policy will not fight the new client.
+func TestClassifyRunDisplaced(t *testing.T) {
+	end := classifyRun(fmt.Errorf("session: %w", etcp.ErrDisplaced))
+	if end.Reason != appsession.EndReasonDisplaced {
+		t.Fatalf("End = %+v, want displaced", end)
 	}
 }
 

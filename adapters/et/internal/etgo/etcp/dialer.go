@@ -48,6 +48,17 @@ var (
 	// ErrVersion reports that the server speaks another protocol version
 	// (MISMATCHED_PROTOCOL), on the first connect or a redial.
 	ErrVersion = errors.New("etcp: protocol version mismatch")
+	// ErrRetryLater reports that the server is recovering its session table
+	// (RETRY_LATER). It is not fatal: a redial after a backoff can succeed.
+	ErrRetryLater = errors.New("etcp: server is recovering; retry later")
+	// ErrLegacyReattach reports that a reattach (ResetIntent) reached a server
+	// without the v7 challenge capability. Upstream's client fails with this
+	// outcome too (ClientConnection.cpp:165-175 at et-v7.1.1).
+	ErrLegacyReattach = errors.New("etcp: server does not support session reattach; upgrade etserver")
+	// ErrDisplaced reports that another client took over this session or that
+	// the server reset the session's history behind this client's back. It is
+	// fatal: the old sequence numbers and epoch key can never be used again.
+	ErrDisplaced = errors.New("etcp: session was taken over by another client")
 	// ErrIntegrity reports a packet that failed authentication or could not
 	// be parsed, a frame above wire.MaxFrameSize, or a handshake message
 	// that is oversized or does not decode: the stream is out of step or
@@ -94,6 +105,23 @@ type Dialer struct {
 	// with no payload, which is KEEP_ALIVE, echoed by etserver once the session
 	// runs (src/terminal/TerminalServer.cpp:389-393 at et-v7.0.0).
 	Probe protocol.Packet
+	// ResetIntent makes the first connect ask the server for reset recovery:
+	// the request carries resetIntent, and a v7 server answers RETURNING_CLIENT
+	// with resetRequired and a fresh salt. Both sides then start a new epoch
+	// at sequence zero under a key derived from the salt, and the caller must
+	// not send INITIAL_PAYLOAD (Conn.Resumed reports this). Use it to attach to
+	// an existing session with saved id and passkey, like stock `et --attach`.
+	// A server without the v7 challenge capability (6.2.10) answers with a
+	// legacy NEW_CLIENT/RETURNING_CLIENT and the dial fails with
+	// ErrLegacyReattach, the same outcome as stock. Reconnects made by the Conn
+	// itself never set resetIntent; the server selects reset recovery when it
+	// has lost the session's history.
+	ResetIntent bool
+	// OnDisplaced, when non-nil, is called at most once if this client is
+	// displaced by another client taking over the session, or if the server
+	// resets the session's epoch behind its back. The Conn then fails with
+	// ErrDisplaced. It runs on a Conn goroutine and must not block.
+	OnDisplaced func()
 	// ReplayLimit bounds the sealed bytes kept for replay; Dial refuses a
 	// negative value or one above 64 MiB, and zero means 64 MiB. It is a soft
 	// bound applied separately to the two kinds of retained packets: packets
@@ -136,17 +164,26 @@ func (d *Dialer) Dial(ctx context.Context, addr, id, passkey string) (*Conn, err
 		return nil, fmt.Errorf("etcp: ReplayLimit %d: must be between 0 (the default) and %d", d.ReplayLimit, maxReplayLimit)
 	}
 	c := d.newConn(addr, id, passkey)
-	nc, catchup, err := c.connect(ctx, true)
+	nc, info, err := c.connect(ctx, true)
 	if err != nil {
 		c.cancel(err)
 		return nil, err
 	}
+	if info.resumed {
+		c.resumed.Store(true)
+	}
 	c.wg.Go(func() {
 		defer close(c.readerDone)
-		c.supervise(nc, catchup)
+		c.supervise(nc, info.catchup)
 	})
 	return c, nil
 }
+
+// Resumed reports whether Dial attached to an existing session with reset
+// recovery (ResetIntent and a v7 server). When true the server has already
+// started the shell, so the caller must not send INITIAL_PAYLOAD. It matches
+// upstream TerminalClient::attachedToExisting.
+func (c *Conn) Resumed() bool { return c.resumed.Load() }
 
 func (d *Dialer) newConn(addr, id, passkey string) *Conn {
 	var nd netDialer = d.NetDialer
@@ -167,19 +204,22 @@ func (d *Dialer) newConn(addr, id, passkey string) *Conn {
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	c := &Conn{
-		netDialer:  nd,
-		addr:       addr,
-		id:         id,
-		keepAlive:  cmp.Or(d.KeepAlive, defaultKeepAlive),
-		probe:      d.Probe,
-		logger:     logger,
-		ctx:        ctx,
-		cancel:     cancel,
-		inbox:      make(chan protocol.Packet, inboxSize),
-		readerDone: make(chan struct{}),
-		wake:       make(chan struct{}, 1),
-		space:      make(chan struct{}, 1),
+		netDialer:   nd,
+		addr:        addr,
+		id:          id,
+		keepAlive:   cmp.Or(d.KeepAlive, defaultKeepAlive),
+		probe:       d.Probe,
+		logger:      logger,
+		resetIntent: d.ResetIntent,
+		onDisplaced: d.OnDisplaced,
+		ctx:         ctx,
+		cancel:      cancel,
+		inbox:       make(chan protocol.Packet, inboxSize),
+		readerDone:  make(chan struct{}),
+		wake:        make(chan struct{}, 1),
+		space:       make(chan struct{}, 1),
 	}
+	copy(c.key[:], passkey)
 	c.lastProbe = -1
 	c.ring.limit = cmp.Or(d.ReplayLimit, defaultReplayLimit)
 	var key [32]byte
@@ -193,14 +233,27 @@ type netDialer interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
+// connectResult is the state one successful connect leaves for the caller:
+// the peer's catchup entries and whether this was an attach (reset recovery on
+// the first connect).
+type connectResult struct {
+	catchup [][]byte
+	resumed bool
+}
+
+// errRecoveryExchange marks a failure after the server accepted the connect
+// handshake but the recover exchange did not complete. Unlike a dial or
+// handshake failure, repeated occurrences mean the two sides disagree about
+// the session's sequence history, not that the network is flaky.
+var errRecoveryExchange = errors.New("etcp: recovery exchange failed")
+
 // connect dials one TCP link and runs the connect handshake on it (plus the
-// recover exchange for a returning client). It returns the ready connection
-// and the peer's catchup entries, which the new link delivers first. If ctx
-// ends during the dial or the handshake, the error wraps context.Cause(ctx),
-// unless a definitive error (one isFatal accepts, such as the server's
-// rejection) came first. A handshake message that is oversized or does not
-// decode yields ErrIntegrity.
-func (c *Conn) connect(ctx context.Context, first bool) (net.Conn, [][]byte, error) {
+// recover or reset exchange for a returning client). It returns the ready
+// connection. If ctx ends during the dial or the handshake, the error wraps
+// context.Cause(ctx), unless a definitive error (one isFatal accepts, such as
+// the server's rejection) came first. A handshake message that is oversized or
+// does not decode yields ErrIntegrity.
+func (c *Conn) connect(ctx context.Context, first bool) (net.Conn, connectResult, error) {
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	nc, err := c.netDialer.DialContext(dctx, "tcp", c.addr)
@@ -208,13 +261,13 @@ func (c *Conn) connect(ctx context.Context, first bool) (net.Conn, [][]byte, err
 		if ctx.Err() != nil {
 			// As for the handshake below: the caller needs its cause, not
 			// the dialer's generic context error.
-			return nil, nil, fmt.Errorf("etcp: dial: %w", context.Cause(ctx))
+			return nil, connectResult{}, fmt.Errorf("etcp: dial: %w", context.Cause(ctx))
 		}
-		return nil, nil, fmt.Errorf("etcp: dial: %w", err)
+		return nil, connectResult{}, fmt.Errorf("etcp: dial: %w", err)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = nc.Close() })
 	defer stop()
-	catchup, err := c.handshake(idleConn{Conn: nc, timeout: handshakeIdle}, first)
+	info, err := c.handshake(idleConn{Conn: nc, timeout: handshakeIdle}, first)
 	if err == nil && !stop() {
 		// ctx ended as the handshake finished and the AfterFunc has
 		// closed nc: the link is unusable.
@@ -239,60 +292,124 @@ func (c *Conn) connect(ctx context.Context, first bool) (net.Conn, [][]byte, err
 			// connection; the cause is what the caller needs. A definitive
 			// answer that arrived just before (a rejection, a version
 			// mismatch) is kept: it says more than the deadline does.
-			return nil, nil, fmt.Errorf("etcp: connect: %w", context.Cause(ctx))
+			return nil, connectResult{}, fmt.Errorf("etcp: connect: %w", context.Cause(ctx))
 		}
-		return nil, nil, err
+		return nil, connectResult{}, err
 	}
-	return nc, catchup, nil
+	return nc, info, nil
 }
 
-func (c *Conn) handshake(conn net.Conn, first bool) ([][]byte, error) {
+// handshake runs the connect exchange. The client always advertises the v7
+// challenge capability; a 6.2.10 server ignores the unknown fields and answers
+// with the legacy single response. A v7.1.1 server answers a known client with
+// a challenge first, then authenticates the ConnectAuth proof before sending
+// the final response with a reset-decision proof.
+func (c *Conn) handshake(conn net.Conn, first bool) (connectResult, error) {
+	resetIntent := first && c.resetIntent
 	req := &protocol.ConnectRequest{}
 	req.SetClientId(c.id)
 	req.SetVersion(protocol.Version)
+	req.SetResetIntent(resetIntent)
+	req.SetSupportsChallenge(true)
 	if err := wire.WriteMessage(conn, req); err != nil {
-		return nil, fmt.Errorf("etcp: connect request: %w", err)
+		return connectResult{}, fmt.Errorf("etcp: connect request: %w", err)
 	}
-	var resp protocol.ConnectResponse
-	if err := wire.ReadMessage(conn, &resp); err != nil {
-		return nil, fmt.Errorf("etcp: connect response: %w", err)
+	var firstResp protocol.ConnectResponse
+	if err := wire.ReadMessage(conn, &firstResp); err != nil {
+		return connectResult{}, fmt.Errorf("etcp: connect response: %w", err)
 	}
-	switch resp.GetStatus() {
-	case protocol.ConnectStatus_NEW_CLIENT:
-		if first {
-			return nil, nil
+	resp := &firstResp
+	challenge := firstResp.GetAuthChallenge()
+	if len(challenge) > 0 {
+		if len(challenge) != authChallengeBytes {
+			return connectResult{}, fmt.Errorf("%w: server sent a %d-byte auth challenge",
+				ErrIntegrity, len(challenge))
 		}
-		// Deliberately stricter than upstream, whose client closes the
-		// socket and keeps redialing on any status other than INVALID_KEY
-		// and RETURNING_CLIENT (src/base/ClientConnection.cpp:113-127 at
-		// et-v7.0.0). This applies to NEW_CLIENT here and equally to
-		// MISMATCHED_PROTOCOL and unknown statuses below: a server that
-		// has lost the session's state or changed protocol will not answer
-		// differently on the next redial.
-		return nil, fmt.Errorf("%w: server answered NEW_CLIENT to a returning client", ErrRejected)
-	case protocol.ConnectStatus_RETURNING_CLIENT:
-		// Also possible on the first connect, when an earlier attempt died
-		// after the server registered it. Upstream's client accepts that
-		// answer but then skips the recover exchange
-		// (src/base/ClientConnection.cpp:35-62 at et-v7.0.0), although the
-		// server always runs it after RETURNING_CLIENT
-		// (src/base/ServerConnection.cpp:117-123).
-		// Running it here with empty state (nothing sent, nothing received)
-		// matches what the server expects.
-		return c.recover(conn)
+		proof, err := connectionProof(c.key[:], c.id, protocol.Version, challenge, resetIntent)
+		if err != nil {
+			return connectResult{}, err
+		}
+		auth := &protocol.ConnectAuth{}
+		auth.SetProof(proof)
+		if err := wire.WriteMessage(conn, auth); err != nil {
+			return connectResult{}, fmt.Errorf("etcp: connect auth: %w", err)
+		}
+		var final protocol.ConnectResponse
+		if err := wire.ReadMessage(conn, &final); err != nil {
+			return connectResult{}, fmt.Errorf("etcp: connect response after auth: %w", err)
+		}
+		resp = &final
+		switch resp.GetStatus() {
+		case protocol.ConnectStatus_NEW_CLIENT, protocol.ConnectStatus_RETURNING_CLIENT:
+			if resp.GetResetRequired() && len(resp.GetResetSalt()) != epochSaltBytes {
+				return connectResult{}, fmt.Errorf("%w: reset decision salt is %d bytes",
+					ErrIntegrity, len(resp.GetResetSalt()))
+			}
+			if !verifyResetDecisionProof(resp.GetResetProof(), c.key[:], c.id, protocol.Version,
+				challenge, resp.GetStatus(), resp.GetResetRequired(), resp.GetResetSalt()) {
+				return connectResult{}, fmt.Errorf("%w: connect success has no valid reset decision proof",
+					ErrIntegrity)
+			}
+		}
+	} else if resetIntent &&
+		(firstResp.GetStatus() == protocol.ConnectStatus_NEW_CLIENT ||
+			firstResp.GetStatus() == protocol.ConnectStatus_RETURNING_CLIENT) {
+		// A server without the challenge capability cannot authenticate a
+		// reattach or reset its sequence and nonce state. Accepting this
+		// response would reuse the first connection's keystream.
+		return connectResult{}, ErrLegacyReattach
+	}
+
 	// The response's error text is never quoted: it is peer-controlled, so
 	// it could carry the passkey or terminal escape sequences, and upstream
 	// only puts fixed sentences there (src/base/ServerConnection.cpp:55-59,
-	// 93 at et-v7.0.0).
+	// 93 at et-v7.1.1).
+	switch resp.GetStatus() {
+	case protocol.ConnectStatus_NEW_CLIENT:
+		if first {
+			return connectResult{}, nil
+		}
+		// Deliberately stricter than upstream, whose client closes the
+		// socket and keeps redialing on any status other than INVALID_KEY
+		// and RETURNING_CLIENT (src/base/ClientConnection.cpp:222-258 at
+		// et-v7.1.1). This applies to NEW_CLIENT here and equally to
+		// MISMATCHED_PROTOCOL and unknown statuses below: a server that
+		// has lost the session's state or changed protocol will not answer
+		// differently on the next redial.
+		return connectResult{}, fmt.Errorf("%w: server answered NEW_CLIENT to a returning client", ErrRejected)
+	case protocol.ConnectStatus_RETURNING_CLIENT:
+		info := connectResult{}
+		if resp.GetResetRequired() {
+			if err := c.resetRecover(conn, resp.GetResetSalt()); err != nil {
+				return connectResult{}, fmt.Errorf("%w: %w", errRecoveryExchange, err)
+			}
+			// Stock marks a first connect that ran reset recovery as
+			// attached, so the caller skips INITIAL_PAYLOAD.
+			info.resumed = first
+			return info, nil
+		}
+		// Also possible on the first connect, when an earlier attempt died
+		// after the server registered it. Running the recover exchange with
+		// empty state (nothing sent, nothing received) matches what the
+		// server expects after RETURNING_CLIENT
+		// (src/base/ServerConnection.cpp:192-203 at et-v7.1.1).
+		catchup, err := c.recover(conn)
+		if err != nil {
+			return connectResult{}, fmt.Errorf("%w: %w", errRecoveryExchange, err)
+		}
+		info.catchup = catchup
+		return info, nil
 	case protocol.ConnectStatus_INVALID_KEY:
 		if first {
-			return nil, fmt.Errorf("%w: server does not know this client", ErrRejected)
+			return connectResult{}, fmt.Errorf("%w: server does not know this client", ErrRejected)
 		}
-		return nil, ErrSessionEnded
+		return connectResult{}, ErrSessionEnded
 	case protocol.ConnectStatus_MISMATCHED_PROTOCOL:
-		return nil, fmt.Errorf("%w: server does not speak protocol version %d", ErrVersion, protocol.Version)
+		return connectResult{}, fmt.Errorf("%w: server does not speak protocol version %d", ErrVersion, protocol.Version)
+	case protocol.ConnectStatus_RETRY_LATER:
+		return connectResult{}, ErrRetryLater
 	default:
-		return nil, fmt.Errorf("%w: unexpected status %v", ErrRejected, resp.GetStatus())
+		return connectResult{}, fmt.Errorf("%w: unexpected status %v", ErrRejected, resp.GetStatus())
 	}
 }
 
@@ -300,7 +417,7 @@ func (c *Conn) handshake(conn net.Conn, first bool) ([][]byte, error) {
 // triggering a retry. Integrity failures on the stream never reach here (the
 // reader ends the Conn directly); ones in a handshake message do.
 func isFatal(err error) bool {
-	for _, target := range []error{ErrSessionEnded, ErrVersion, ErrReplayExceeded, ErrRejected, ErrIntegrity} {
+	for _, target := range []error{ErrSessionEnded, ErrVersion, ErrReplayExceeded, ErrRejected, ErrIntegrity, ErrDisplaced, ErrLegacyReattach} {
 		if errors.Is(err, target) {
 			return true
 		}
