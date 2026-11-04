@@ -518,6 +518,9 @@ func TestNoticeTextLocalizesX11Failures(t *testing.T) {
 	}); got != m.ConnectionX11CookieUnavailable("localhost:6000") {
 		t.Fatalf("cookie notice = %q", got)
 	}
+	if got := noticeText(m, &appsession.Notice{Code: appsession.NoticeETDisplaced}); got != m.ConnectionEternalTerminalDisplaced() {
+		t.Fatalf("ET displaced notice = %q, want %q", got, m.ConnectionEternalTerminalDisplaced())
+	}
 	if got := noticeText(m, &appsession.Notice{Code: "unknown"}); got != "" {
 		t.Fatalf("unknown notice = %q, want empty", got)
 	}

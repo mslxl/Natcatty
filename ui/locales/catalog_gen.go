@@ -3460,6 +3460,18 @@ func (msgs Messages) ConnectionTmuxUnavailable() string {
 	return Catalog.Format(msgs.locale, "connectionTmuxUnavailable", nil)
 }
 
+// ConnectionEternalTerminalDisplaced says "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client …"
+// in the language the app shows.
+func ConnectionEternalTerminalDisplaced() string {
+	return In(i18n.Locale()).ConnectionEternalTerminalDisplaced()
+}
+
+// ConnectionEternalTerminalDisplaced says "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client …"
+// in the language of msgs.
+func (msgs Messages) ConnectionEternalTerminalDisplaced() string {
+	return Catalog.Format(msgs.locale, "connectionEternalTerminalDisplaced", nil)
+}
+
 // HostKeyPromptUnknownTitle says "Unknown host key"
 // in the language the app shows.
 func HostKeyPromptUnknownTitle() string { return In(i18n.Locale()).HostKeyPromptUnknownTitle() }

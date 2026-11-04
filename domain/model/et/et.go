@@ -63,6 +63,18 @@ var (
 	// ErrUnsupportedServer reports a server that does not speak the client's
 	// protocol version.
 	ErrUnsupportedServer = errors.New("et: unsupported ET server")
+	// ErrReattachUnsupported reports that an attach or reset requested by the
+	// client reached a server without the v7 challenge capability. Stock et
+	// fails with "Server does not support session reattach; upgrade etserver".
+	ErrReattachUnsupported = errors.New("et: server does not support session reattach")
+	// ErrRetryLater reports that the server is recovering and asked the
+	// client to retry (RETRY_LATER). It is not a fatal session outcome: a
+	// reconnect after a backoff can succeed.
+	ErrRetryLater = errors.New("et: server is recovering; retry later")
+	// ErrSessionDisplaced reports that another client took over the session,
+	// or that the server reset its history behind this client's back. A second
+	// client owns ET's single session slot; reconnecting would fight it.
+	ErrSessionDisplaced = errors.New("et: session was taken over by another client")
 )
 
 // ValidationError reports the configuration field that is unusable.

@@ -492,6 +492,7 @@
   "connectionTmuxSessionRestored": "tmux 会话已恢复。",
   "connectionTmuxNested": "远程 Host 已在 tmux 会话中；已直接连接，未嵌套。",
   "connectionTmuxUnavailable": "远程 Host 上无法使用 tmux；已改用普通 Shell 连接。",
+  "connectionEternalTerminalDisplaced": "另一个客户端已接入该 EternalTerminal 会话，因此当前连接已结束。EternalTerminal 同一时间只允许一个客户端。",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

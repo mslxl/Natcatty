@@ -452,7 +452,7 @@ func TestThirdPartyNoticesAttributeVendoredETGoAndProtobuf(t *testing.T) {
 	const (
 		etGoCommit     = "bc33dd76b558418bc1079ba27c8c477b8145eea5"
 		etGoCopyright  = "Copyright 2026 Tomi P. Hakala"
-		protoCommit    = "6f53869473a16407b59f1f3382d291ab97b4f64f"
+		protoCommit    = "a8318ca4598756ca3c5f4711cce12a65faeff57d"
 		protobufNotice = "Copyright (c) 2018 The Go Authors. All rights reserved."
 	)
 	for _, want := range []string{etGoCommit, etGoCopyright, protoCommit} {

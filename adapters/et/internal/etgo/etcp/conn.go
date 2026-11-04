@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol"
@@ -26,16 +27,30 @@ const maxPayload = wire.MaxFrameSize - 2 - secretbox.Overhead
 // Waiting happens only on channels and timers, never on a held mutex, so
 // testing/synctest can drive every blocking path.
 type Conn struct {
-	netDialer netDialer
-	addr      string
-	id        string
-	keepAlive time.Duration
-	probe     protocol.Packet
-	logger    *slog.Logger
+	netDialer   netDialer
+	addr        string
+	id          string
+	key         [32]byte // passkey bytes; the base key for every reset epoch
+	keepAlive   time.Duration
+	probe       protocol.Packet
+	logger      *slog.Logger
+	resetIntent bool
+	onDisplaced func()
 
 	ctx    context.Context // lifetime of the Conn; its cause is what callers see
 	cancel context.CancelCauseFunc
 	wg     sync.WaitGroup
+
+	// resumed reports that Dial attached to a running session (reset recovery
+	// on the first connect), so INITIAL_PAYLOAD must be skipped.
+	resumed atomic.Bool
+	// afterRecovery is set while the first packet of a recovered or reset link
+	// has not opened yet. A failure there cannot be an ordinary network loss:
+	// the bytes are in order but the epoch key differs, which means another
+	// client reset the session behind ours.
+	afterRecovery atomic.Bool
+	// displacedOnce ensures OnDisplaced runs at most once.
+	displacedOnce sync.Once
 
 	mu      sync.Mutex   // guards the outbound state below
 	out     *seal.Stream // client to server
@@ -50,6 +65,14 @@ type Conn struct {
 	// recovery, never two at once.
 	in      *seal.Stream
 	recvSeq int64
+	// peerSeq is the highest sequence number the server has reported having
+	// received from this client, or one once the server has answered
+	// INITIAL_PAYLOAD: it must then have received at least that packet. It
+	// only grows until a reset epoch: the ordered stream never un-receives
+	// packets. A reconnect that reports a smaller value means the server's
+	// reader was reset behind this client's back, which another client's reset
+	// recovery does.
+	peerSeq int64
 	// pending holds packets already opened and counted in recvSeq whose link
 	// ended before ReadPacket took them; the next link reader hands them
 	// over first. Owned like recvSeq until readerDone closes, then by

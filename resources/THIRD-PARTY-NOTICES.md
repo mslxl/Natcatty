@@ -289,11 +289,13 @@ Additional Rust dependency notices:
 - Modifications: Go import paths rewritten to this module, Apache-2.0 SPDX
   headers added, the console package reduced to the portable `Size` type, and
   the upstream subprocess SSH bootstrap replaced by a command builder that
-  runs `etterminal` through `connection.Manager`. The protocol, wire, seal,
-  etcp, and session packages keep upstream behavior; see `PROVENANCE.md`.
+  runs `etterminal` through `connection.Manager`. `etcp` and `seal` are
+  extended locally for EternalTerminal 7.1.1 challenge authentication, reset
+  recovery, RETRY_LATER handling, epoch rekey, and displacement detection; see
+  `PROVENANCE.md`.
 - The protocol buffer definitions under `protocol/proto` are copied from
-  [EternalTerminal](https://github.com/MisterTea/EternalTerminal) at commit
-  `6f53869473a16407b59f1f3382d291ab97b4f64f`.
+  [EternalTerminal](https://github.com/MisterTea/EternalTerminal) at tag
+  `et-v7.1.1`, commit `a8318ca4598756ca3c5f4711cce12a65faeff57d`.
   Copyright Jason Gauci and contributors, Apache License 2.0
 - Full text: [Apache License 2.0](#apache-license-20)
 - **Pending human/legal review:** this attribution follows the vendored

@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/nacl/secretbox"
 )
 
 var testKey = [32]byte([]byte("0123456789ABCDEFGHIJKLMNOPQRSTUV"))
@@ -173,6 +176,72 @@ func TestGoldenOpen(t *testing.T) {
 
 // TestNewInvalidDirection pins that a direction other than the two upstream
 // defines is refused at construction, not left to fail every Open later.
+// TestRekeyDerivesEpochKeyAndResetsNonce pins CryptoHandler::rekey: the epoch
+// key is BLAKE2b-256 keyed by the original passkey over the 32-byte salt, and
+// the counter nonce restarts at the direction byte. A peer that runs the same
+// derivation decrypts the new epoch from its first packet.
+func TestRekeyDerivesEpochKeyAndResetsNonce(t *testing.T) {
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+	s := New(&testKey, ClientToServer)
+	_ = s.Seal(nil, []byte("old epoch"))
+	if err := s.Rekey(salt); err != nil {
+		t.Fatalf("Rekey: %v", err)
+	}
+
+	hash, err := blake2b.New256(testKey[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = hash.Write(salt)
+	epoch := hash.Sum(nil)
+	if !bytes.Equal(s.st.key[:], epoch) {
+		t.Fatalf("epoch key = %x, want %x", s.st.key, epoch)
+	}
+	if s.st.nonce != ([24]byte{}) {
+		t.Fatalf("nonce after Rekey = %x, want zero plus direction", s.st.nonce)
+	}
+
+	var epochKey [32]byte
+	copy(epochKey[:], epoch)
+	nonce := [24]byte{}
+	nonce[0] = 1 // Seal increments before use
+	want := secretbox.Seal(nil, []byte("new epoch"), &nonce, &epochKey)
+	if got := s.Seal(nil, []byte("new epoch")); !bytes.Equal(got, want) {
+		t.Fatalf("first epoch box = %x, want %x", got, want)
+	}
+
+	peer := New(&testKey, ClientToServer)
+	if err := peer.Rekey(salt); err != nil {
+		t.Fatalf("peer Rekey: %v", err)
+	}
+	plain, err := peer.Open(nil, want)
+	if err != nil || string(plain) != "new epoch" {
+		t.Fatalf("peer Open = %q, %v", plain, err)
+	}
+}
+
+// TestRekeyKeepsDirectionAndRejectsBadSalt covers the two side conditions: the
+// new nonce keeps the stream's direction byte, and an unauthenticated salt
+// length is refused instead of deriving a key the peer never uses.
+func TestRekeyKeepsDirectionAndRejectsBadSalt(t *testing.T) {
+	s := New(&testKey, ServerToClient)
+	if err := s.Rekey(make([]byte, 32)); err != nil {
+		t.Fatalf("Rekey: %v", err)
+	}
+	if got := s.st.nonce[23]; got != byte(ServerToClient) {
+		t.Fatalf("nonce direction byte = %d, want %d", got, ServerToClient)
+	}
+	if err := s.Rekey(make([]byte, 31)); err == nil {
+		t.Fatal("Rekey accepted a 31-byte salt")
+	}
+	if err := s.Rekey(make([]byte, 33)); err == nil {
+		t.Fatal("Rekey accepted a 33-byte salt")
+	}
+}
+
 func TestNewInvalidDirection(t *testing.T) {
 	defer func() {
 		r := recover()

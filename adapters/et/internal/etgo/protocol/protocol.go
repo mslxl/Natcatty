@@ -10,10 +10,9 @@ type Header uint8
 
 // Packet types used by the client. The values are fixed by upstream; a test
 // checks each one against the generated enums. HeaderTerminalClose (11) and
-// HeaderTerminalExitStatus (12) exist only in upstream master (the copied
-// protos, commit 6f53869), not in et-v7.0.0: a 7.0.0 server never sends them
-// (verified: et-v7.0.0's proto/ has no TERMINAL_CLOSE or
-// TERMINAL_EXIT_STATUS).
+// HeaderTerminalExitStatus (12) are absent from et-v7.0.0; the copied protos
+// are et-v7.1.1, which defines TERMINAL_EXIT_STATUS. A 7.0.0 server never
+// sends either.
 const (
 	HeaderKeepAlive          Header = 0
 	HeaderTerminalBuffer     Header = 1
@@ -25,7 +24,9 @@ const (
 )
 
 // Version is the protocol version the client speaks (upstream
-// PROTOCOL_VERSION, src/base/Headers.hpp:169 at et-v7.0.0).
+// PROTOCOL_VERSION, src/base/Headers.hpp:169 at et-v7.1.1). The v7 capabilities
+// are optional fields and messages inside protocol 6, so 6.2.10 servers keep
+// working.
 const Version = 6
 
 // Packet is one plaintext application packet.

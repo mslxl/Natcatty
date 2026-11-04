@@ -246,7 +246,14 @@ func TestInProcessAgainstStockServers(t *testing.T) {
 			if end.Reason != appsession.EndReasonExited {
 				t.Fatalf("%s End = %+v, want exited", server.name, end)
 			}
-			if end.HasExitCode && end.ExitCode != 7 {
+			// et 7.1 propagates the shell's status (TERMINAL_EXIT_STATUS);
+			// 6.2.10 has no such packet, and stock et reports no status there.
+			wantStatus := server.name == "etserver-7.1.1"
+			if end.HasExitCode != wantStatus {
+				t.Fatalf("%s HasExitCode = %v, want %v (End = %+v)",
+					server.name, end.HasExitCode, wantStatus, end)
+			}
+			if wantStatus && end.ExitCode != 7 {
 				t.Fatalf("%s exit = %d, want 7", server.name, end.ExitCode)
 			}
 			t.Logf("%s ended: %+v (Wait reported %d)", server.name, end, code)

@@ -427,6 +427,44 @@ func (f *notifyingFactory) Open(context.Context, StartSpec) (Transport, error) {
 	return f.transport, nil
 }
 
+// displacedTransport ends by reporting a takeover, like the ET transport. It
+// deliberately sends no notice: the end reason alone must leave the user-visible
+// notice, because the real notice and the end race through separate channels.
+type displacedTransport struct{ *fakeTransport }
+
+func (t *displacedTransport) End() End { return End{Reason: EndReasonDisplaced} }
+
+type staticFactory struct{ transport Transport }
+
+func (f *staticFactory) Open(context.Context, StartSpec) (Transport, error) {
+	return f.transport, nil
+}
+
+func TestDisplacedEndLeavesTheTakeoverNotice(t *testing.T) {
+	transport := &displacedTransport{fakeTransport: newFakeTransport()}
+	service := newTestService(&staticFactory{transport: transport},
+		WithIDGenerator(func() model.SessionID { return "session-displaced" }))
+
+	session, err := service.OpenLocal(context.Background())
+	if err != nil {
+		t.Fatalf("OpenLocal: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	transport.end()
+	eventually(t, "the displaced Session to finish", func() bool {
+		return session.Snapshot().Status == StatusExited
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.EndReason != EndReasonDisplaced {
+		t.Fatalf("end reason = %q, want %q", snapshot.EndReason, EndReasonDisplaced)
+	}
+	if snapshot.Notice == nil || snapshot.Notice.Code != NoticeETDisplaced {
+		t.Fatalf("notice = %+v, want the ET displaced notice", snapshot.Notice)
+	}
+}
+
 func TestNoticesReachTheSnapshotWithoutEndingTheSession(t *testing.T) {
 	transport := &notifyingTransport{fakeTransport: newFakeTransport(), notices: make(chan Notice, 1)}
 	service := newTestService(&notifyingFactory{transport: transport},

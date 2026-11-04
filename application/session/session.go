@@ -125,6 +125,11 @@ const (
 	// running, so the local Session ended cleanly by design and its Tab closes
 	// without an error; the next connection reattaches.
 	EndReasonDetached EndReason = "detached"
+	// EndReasonDisplaced reports that another client took over an ET session
+	// or the server reset its history. ET has one client slot per session, so
+	// reconnecting would fight the new owner; the transport reports a notice
+	// instead of retrying.
+	EndReasonDisplaced EndReason = "displaced"
 )
 
 // End is a transport's final state.
@@ -257,6 +262,10 @@ const (
 	// NoticeTmuxUnavailable reports that tmux was missing or could not run, so
 	// the app fell back to a plain login shell.
 	NoticeTmuxUnavailable NoticeCode = "tmux_unavailable"
+	// NoticeETDisplaced reports that another client took over this ET
+	// session's single client slot, or that the server reset the session
+	// behind this client. ET has no multi-attach: the newest client wins.
+	NoticeETDisplaced NoticeCode = "et_session_displaced"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -1220,6 +1229,13 @@ finished:
 		snapshot.HasExitCode = hasCode
 		snapshot.EndReason = reason
 		snapshot.Logging = logging
+		// A takeover notice and the end of the displaced transport race:
+		// the notice channel closes as the transport ends, and the notice
+		// loop may observe the end first. The end reason is authoritative,
+		// and a displaced Session never reopens to clear the notice.
+		if reason == EndReasonDisplaced {
+			snapshot.Notice = &Notice{Code: NoticeETDisplaced}
+		}
 		// A hibernation only names a live transport whose screen was
 		// detached; the transport is gone now.
 		snapshot.Hibernated = false

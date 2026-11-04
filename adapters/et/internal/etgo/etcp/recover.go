@@ -2,6 +2,7 @@
 package etcp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -33,6 +34,9 @@ func (c *Conn) supervise(nc net.Conn, catchup [][]byte) {
 		var err error
 		nc, catchup, err = c.reconnect(&b)
 		if err != nil {
+			if errors.Is(err, ErrDisplaced) {
+				c.notifyDisplaced()
+			}
 			c.cancel(err)
 			return
 		}
@@ -40,8 +44,39 @@ func (c *Conn) supervise(nc net.Conn, catchup [][]byte) {
 	}
 }
 
-// reconnect dials until a link is recovered, the error is fatal, or the Conn ends.
+// notifyDisplaced runs the configured callback once. It must never block: it
+// runs on the supervisor or reader goroutine that is ending the Conn.
+func (c *Conn) notifyDisplaced() {
+	c.displacedOnce.Do(func() {
+		if c.onDisplaced != nil {
+			c.onDisplaced()
+		}
+	})
+}
+
+// failDisplaced reports displacement and ends the Conn.
+func (c *Conn) failDisplaced() error {
+	c.notifyDisplaced()
+	return c.fail(ErrDisplaced)
+}
+
+// maxRecoveryFailures is how many consecutive authenticated recover exchanges
+// may fail before a live session is treated as displaced. A server that
+// accepted the handshake and then cannot serve either side's sequence history
+// is not a transient network fault; another client reset the session, and its
+// new keystream is why every exchange fails. It equals a few reconnect
+// attempts, so a takeover by a client that has already typed enough input to
+// hide the backwards sequence still surfaces.
+const maxRecoveryFailures = 6
+
+// reconnect dials until a link is recovered, the error is fatal, or the Conn
+// ends. A RETRY_LATER answer is not fatal; it falls through to the next
+// backoff, which is how a session survives an etserver restart while its
+// terminals re-register. A server sequence that goes backwards (detected in
+// writeRecover), or repeated recovery-exchange failures on a live session, is
+// fatal with ErrDisplaced: another client reset the session.
 func (c *Conn) reconnect(b *backoff) (net.Conn, [][]byte, error) {
+	recoveryFailures := 0
 	for {
 		if d := b.next(); d > 0 {
 			t := time.NewTimer(d)
@@ -52,12 +87,21 @@ func (c *Conn) reconnect(b *backoff) (net.Conn, [][]byte, error) {
 				return nil, nil, context.Cause(c.ctx)
 			}
 		}
-		nc, catchup, err := c.connect(c.ctx, false)
+		nc, info, err := c.connect(c.ctx, false)
 		if err == nil {
-			return nc, catchup, nil
+			return nc, info.catchup, nil
 		}
 		if isFatal(err) || c.ctx.Err() != nil {
 			return nil, nil, err
+		}
+		if errors.Is(err, errRecoveryExchange) && c.peerSeq > 0 {
+			recoveryFailures++
+			if recoveryFailures >= maxRecoveryFailures {
+				return nil, nil, fmt.Errorf("%w: %d consecutive recovery exchanges failed: %w",
+					ErrDisplaced, recoveryFailures, err)
+			}
+		} else {
+			recoveryFailures = 0
 		}
 		c.logger.Debug("etcp: reconnect attempt failed", "err", err)
 	}
@@ -124,7 +168,68 @@ func (c *Conn) recover(conn net.Conn) ([][]byte, error) {
 	if room {
 		signal(c.space)
 	}
+	c.afterRecovery.Store(true)
 	return theirs.GetBuffer(), nil
+}
+
+// resetRecover runs the v7 reset exchange after the authenticated handshake
+// selected it. Both sides echo the salted decision in their SequenceHeader,
+// exchange empty catchup buffers, then start a new epoch at sequence zero under
+// BLAKE2b-256(baseKey, salt) (src/base/Connection.cpp:128-168 and
+// src/base/ClientConnection.cpp:96-104 at et-v7.1.1). Upstream writes each
+// message before reading the peer's; the messages here are empty, so a
+// sequential exchange cannot deadlock.
+func (c *Conn) resetRecover(conn net.Conn, salt []byte) error {
+	if len(salt) != epochSaltBytes {
+		return fmt.Errorf("%w: reset salt is %d bytes", ErrIntegrity, len(salt))
+	}
+	mine := &protocol.SequenceHeader{}
+	mine.SetSequenceNumber(0)
+	mine.SetReset(true)
+	mine.SetResetSalt(salt)
+	if err := wire.WriteMessage(conn, mine); err != nil {
+		return fmt.Errorf("etcp: write reset sequence: %w", err)
+	}
+	var peer protocol.SequenceHeader
+	if err := wire.ReadMessage(conn, &peer); err != nil {
+		return fmt.Errorf("etcp: read reset sequence: %w", err)
+	}
+	if !peer.GetReset() || !bytes.Equal(peer.GetResetSalt(), salt) {
+		return fmt.Errorf("%w: server did not echo the negotiated reset salt", ErrIntegrity)
+	}
+	if err := wire.WriteMessage(conn, &protocol.CatchupBuffer{}); err != nil {
+		return fmt.Errorf("etcp: write empty catchup: %w", err)
+	}
+	var theirs protocol.CatchupBuffer
+	if err := wire.ReadMessage(conn, &theirs); err != nil {
+		return fmt.Errorf("etcp: read empty catchup: %w", err)
+	}
+	// Reset recovery promises empty catchups. A non-empty one contradicts the
+	// authenticated decision and must not be replayed under the new epoch.
+	if len(theirs.GetBuffer()) != 0 {
+		return fmt.Errorf("%w: server sent %d catchup packets during reset recovery",
+			ErrIntegrity, len(theirs.GetBuffer()))
+	}
+
+	c.mu.Lock()
+	if err := c.out.Rekey(salt); err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("etcp: reset outbound epoch: %w", err)
+	}
+	limit := c.ring.limit
+	c.ring = ring{limit: limit}
+	c.flushed, c.unsent, c.lastProbe = 0, 0, -1
+	c.mu.Unlock()
+	signal(c.space) // writers may have been waiting on the old backlog
+
+	if err := c.in.Rekey(salt); err != nil {
+		return fmt.Errorf("etcp: reset inbound epoch: %w", err)
+	}
+	c.recvSeq = 0
+	c.peerSeq = 0
+	c.afterRecovery.Store(true)
+	c.logger.Info("etcp: reset recovery complete")
+	return nil
 }
 
 // readerErrWins reports whether the recover reader's error rerr, rather than
@@ -171,13 +276,34 @@ func (c *Conn) writeRecover(conn net.Conn, gotSeq <-chan error, peer *protocol.S
 	if err := <-gotSeq; err != nil {
 		return 0, fmt.Errorf("etcp: read sequence: %w", err)
 	}
+	if peer.GetReset() || len(peer.GetResetSalt()) != 0 {
+		// The server may send a reset header only when the authenticated
+		// handshake selected reset recovery, which this exchange is not.
+		return 0, fmt.Errorf("%w: unexpected reset request during recovery", ErrIntegrity)
+	}
 
 	// Read ring.next(), the send sequence, exactly once. Packets written
 	// after this snapshot are not in our catchup; the new link sends them
 	// because it starts at snap.
 	c.mu.Lock()
 	snap := c.ring.next()
-	ours, ok := c.ring.since(int64(peer.GetSequenceNumber()), snap)
+	peerSeq := int64(peer.GetSequenceNumber())
+	if peerSeq < c.peerSeq {
+		c.mu.Unlock()
+		// The ordered stream never un-receives a packet, so a lower count
+		// means the server's reader was reset without telling this client.
+		// Only another client's reset recovery does that.
+		return 0, fmt.Errorf("%w: server sequence went backwards from %d to %d",
+			ErrDisplaced, c.peerSeq, peerSeq)
+	}
+	c.peerSeq = peerSeq
+	if peerSeq > snap {
+		c.mu.Unlock()
+		// The server has received more packets than this client ever sent.
+		return 0, fmt.Errorf("%w: server received %d packets, this client sent %d",
+			ErrReplayExceeded, peerSeq, snap)
+	}
+	ours, ok := c.ring.since(peerSeq, snap)
 	first := c.ring.first
 	c.mu.Unlock()
 	if !ok {
