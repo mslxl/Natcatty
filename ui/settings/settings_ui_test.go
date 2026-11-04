@@ -405,9 +405,12 @@ func TestSettingsScreenshotsAndClipping(t *testing.T) {
 			tester.Frame()
 
 			m := locales.In(locale)
+			// The area title repeats the nav item's label, and at 720x480 the
+			// nav list scrolls, so Find can return the clipped nav item. Check
+			// content-only labels that sit beside the title instead.
 			for _, text := range []string{
 				m.NavSettings(), m.SettingsSearchPlaceholder(),
-				m.SettingsShortcutsTitle(), m.SettingsShortcutConflictTitle(),
+				m.SettingsShortcutScheme(), m.SettingsShortcutConflictTitle(),
 			} {
 				rect, ok := tester.Find(text)
 				if !ok {

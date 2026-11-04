@@ -1173,7 +1173,17 @@ func run(afterReady func(hostWindow)) error {
 		if shellState != nil {
 			shellState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
 				float32(current.Appearance.TerminalFontSize))
-			shellState.SetTerminalTheme(currentTerminalTheme())
+			// currentTerminalTheme reads Theme.IsDark, which panics before
+			// App.Run; the initial preference apply below happens before the
+			// event loop starts. WhenReady also schedules immediately after
+			// startup, so later appearance changes still apply the theme at
+			// once.
+			applyTerminalTheme := func() { shellState.SetTerminalTheme(currentTerminalTheme()) }
+			if mygo.App.IsReady() {
+				applyTerminalTheme()
+			} else {
+				mygo.App.WhenReady(applyTerminalTheme)
+			}
 		}
 		invalidate()
 	}
