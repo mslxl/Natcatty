@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/bootstrap"
@@ -55,6 +56,10 @@ type RouteSource interface {
 type ConnectionLease interface {
 	OpenExec(ctx context.Context, command string) (appconnection.ExecStream, error)
 	Forwarding() (appconnection.ForwardingClient, error)
+	// Alive reports whether the underlying SSH transport can still serve a
+	// channel. A lost network connection reports false, so the ET connection
+	// replaces the lease instead of dialing through a dead transport.
+	Alive() bool
 	Release() error
 	Discard() error
 	Done() <-chan struct{}
@@ -67,6 +72,12 @@ var _ ConnectionLease = (*appconnection.Lease)(nil)
 // Connection Manager's exec capability and the ET socket is reached through
 // the same lease's direct-tcpip forwarding, so saved credentials, host-key
 // trust, timeouts, proxy, and jump chains behave like an SSH Session.
+//
+// With Sessions set, a fresh ET session saves its id and passkey in the
+// encrypted secret store so a later app process can reattach the same remote
+// shell by reset. etserver 7.1.1 and newer support that reset; a pre-v7 server
+// such as 6.2.10 cannot negotiate it, so a saved session fails with the same
+// upgrade outcome as stock instead of silently starting a second shell.
 //
 // The zero value is not usable: Manager or Acquire must be set.
 type InProcessFactory struct {
@@ -82,11 +93,21 @@ type InProcessFactory struct {
 	Acquire func(ctx context.Context, req appconnection.Request) (ConnectionLease, error)
 	// HandshakeTimeout overrides handshakeTimeout. Zero keeps the default.
 	HandshakeTimeout time.Duration
+	// KeepAlive overrides the ET link's liveness period. Zero keeps etcp's
+	// default. Tests use a short value to observe a reconnect quickly.
+	KeepAlive time.Duration
+	// ReplayLimit overrides how many sealed bytes are retained for replay.
+	// Zero keeps etcp's 64 MiB default. Tests use a small value.
+	ReplayLimit int
+	// Sessions saves resumable ET session credentials in the encrypted secret
+	// store so a new app process can reattach. Nil keeps sessions memory-only.
+	Sessions SessionStore
 }
 
 // Open starts etterminal through one SSH exec channel, dials etserver through
-// the same lease's direct-tcpip channel, completes the protocol-6 handshake,
-// and returns the Session transport.
+// the same lease's direct-tcpip channel, completes the connect handshake (the
+// v7 challenge when the server offers one, reset recovery when a saved session
+// is reattached), and returns the Session transport.
 func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -116,11 +137,20 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		}
 	}()
 
-	credentials, err := f.bootstrap(ctx, lease)
+	resuming, credentials, err := f.resumeSession(ctx, spec.ResumeKey)
 	if err != nil {
 		return nil, err
 	}
-	forwarding, err := lease.Forwarding()
+	startingFresh := !resuming
+	if !resuming {
+		credentials, err = f.bootstrap(ctx, lease)
+		if err != nil {
+			return nil, err
+		}
+	}
+	dialer, err := newLeaseDialer(lease, func(acquireCtx context.Context) (ConnectionLease, error) {
+		return f.acquire(acquireCtx, spec, route, cfg)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: SSH forwarding for etserver: %w", etmodel.ErrHandshakeFailed, err)
 	}
@@ -128,8 +158,21 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, f.handshakeTimeout())
 	defer cancelHandshake()
 	notices := make(chan appsession.Notice, 8)
-	conn, err := f.dial(handshakeCtx, forwarding, address, credentials, notices)
+	conn, err := f.dialThrough(handshakeCtx, dialer, address, credentials, resuming, notices)
+	if err != nil && resuming && reattachUnavailable(err) {
+		// INVALID_KEY means etserver no longer knows the saved id: the remote
+		// shell exited while the app was closed. Stock starts a fresh session
+		// in that case. An unchallenged legacy server is not this case; stock
+		// refuses that reattach with the upgrade outcome.
+		f.clearSession(ctx, spec.ResumeKey)
+		credentials, err = f.bootstrap(ctx, lease)
+		if err == nil {
+			startingFresh = true
+			conn, err = f.dialThrough(handshakeCtx, dialer, address, credentials, false, notices)
+		}
+	}
 	if err != nil {
+		dialer.Close(true)
 		close(notices)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, context.Cause(ctx)
@@ -154,6 +197,7 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	if !conn.Resumed() {
 		if err := etsession.Start(handshakeCtx, conn, etsession.Options{Logger: f.logger()}); err != nil {
 			_ = conn.Close()
+			dialer.Close(true)
 			close(notices)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, context.Cause(ctx)
@@ -167,16 +211,34 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	cancelHandshake()
 	if err := ctx.Err(); err != nil {
 		_ = conn.Close()
+		dialer.Close(true)
 		close(notices)
 		return nil, context.Cause(ctx)
 	}
+	if startingFresh {
+		if err := f.saveSession(ctx, spec.ResumeKey, credentials); err != nil {
+			// Persistence only enables a later reattach; a fully working
+			// session must not fail because the secret store is unavailable.
+			// The error never contains the credentials.
+			f.logger().Warn("et: session credentials not saved for reattach", "err", err)
+		}
+	}
 
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	transport := newInProcessTransport(conn, lease, newLocalTerminal(spec.Cols, spec.Rows), notices, cancel, f.logger())
+	transport := newInProcessTransport(conn, dialer, newLocalTerminal(spec.Cols, spec.Rows),
+		notices, cancel, f.logger(), f.forgetSession(spec.ResumeKey))
 	go transport.run(runCtx)
-	go transport.watchLease(runCtx)
 	opened = true
 	return transport, nil
+}
+
+// reattachUnavailable reports a saved session etserver no longer knows
+// (INVALID_KEY on the first connect). Stock falls back to a fresh session
+// there. A legacy server that cannot challenge the passkey is a different
+// outcome: stock fails with ErrLegacyReattach and tells the user to upgrade
+// etserver, so that case must surface instead of starting a second shell.
+func reattachUnavailable(err error) bool {
+	return errors.Is(err, etcp.ErrRejected)
 }
 
 // retryLaterDelay is the first backoff after RETRY_LATER and its cap. The
@@ -188,11 +250,22 @@ const (
 	retryLaterMaxDelay = 5 * time.Second
 )
 
-// dial connects to etserver, retrying with backoff while the server answers
-// RETRY_LATER. The caller's context bounds the wait. The Displaced callback
-// publishes a Session notice without blocking the connection goroutine.
+// dial connects once through a single forwarding client. It is the
+// compatibility path tests and the lab helpers use when there is no lease
+// replacement to exercise.
 func (f InProcessFactory) dial(ctx context.Context, forwarding appconnection.ForwardingClient,
 	address string, credentials bootstrap.Credentials, notices chan appsession.Notice) (*etcp.Conn, error) {
+	return f.dialThrough(ctx, noDeadlineDialer{forwarding: forwarding}, address, credentials, false, notices)
+}
+
+// dialThrough connects to etserver through netDialer, retrying with backoff
+// while the server answers RETRY_LATER. The caller's context bounds the wait.
+// The Displaced callback publishes a Session notice without blocking the
+// connection goroutine. resetIntent asks the first handshake for a v7 reset
+// recovery; the etcp Conn's own redials never set it again.
+func (f InProcessFactory) dialThrough(ctx context.Context, netDialer leaseNetDialer,
+	address string, credentials bootstrap.Credentials, resetIntent bool,
+	notices chan appsession.Notice) (*etcp.Conn, error) {
 
 	onDisplaced := func() {
 		select {
@@ -201,7 +274,10 @@ func (f InProcessFactory) dial(ctx context.Context, forwarding appconnection.For
 		}
 	}
 	dialer := &etcp.Dialer{
-		NetDialer:   noDeadlineDialer{forwarding: forwarding},
+		NetDialer:   netDialer,
+		KeepAlive:   f.KeepAlive,
+		ReplayLimit: f.ReplayLimit,
+		ResetIntent: resetIntent,
 		Logger:      f.logger(),
 		OnDisplaced: onDisplaced,
 	}
@@ -384,6 +460,10 @@ func classifyDialError(err error) error {
 		return fmt.Errorf("%w: %w", etmodel.ErrUnsupportedServer, err)
 	case errors.Is(err, etcp.ErrLegacyReattach):
 		return fmt.Errorf("%w: %w", etmodel.ErrReattachUnsupported, err)
+	case errors.Is(err, etcp.ErrReplayExceeded):
+		// The sequence gap is beyond the retained window: the remote session
+		// cannot be continued and the caller needs a typed, actionable error.
+		return fmt.Errorf("%w: %w", etmodel.ErrSessionUnavailable, err)
 	case errors.Is(err, etcp.ErrRetryLater):
 		return fmt.Errorf("%w: %w", etmodel.ErrRetryLater, err)
 	case errors.Is(err, etcp.ErrDisplaced):
@@ -432,12 +512,172 @@ func classifyRun(err error) appsession.End {
 	return appsession.End{Reason: appsession.EndReasonError}
 }
 
-// noDeadlineDialer adapts a direct-tcpip channel to the etcp dialer. The SSH
+// leaseNetDialer is the etcp dialer's transport seam: it dials one ET link,
+// either through the current SSH lease or a replacement acquired after the old
+// lease died.
+type leaseNetDialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// leaseDialer adapts the current SSH lease's direct-tcpip forwarding to the
+// etcp dialer. It survives a network change: when the leased SSH transport
+// dies, the next dial discards it, acquires a fresh lease through the
+// Connection Manager, and dials etserver through that lease. The ET session
+// credentials and sequence state stay in the etcp.Conn, so reconnecting never
+// reruns the etterminal bootstrap or starts a new ET session.
+//
+// The SSH channel rejects SetDeadline while the handshake sets idle deadlines
+// on its conn; noDeadlineConn accepts and ignores them. Open bounds the initial
+// handshake with handshakeTimeout, which etcp uses to close the channel, and
+// etcp's liveness watcher bounds every later link.
+type leaseDialer struct {
+	acquire func(context.Context) (ConnectionLease, error)
+
+	// dialMu serializes lease replacement and dials. etcp's supervisor dials
+	// one link at a time, but the initial dial may overlap a caller that
+	// closes the transport, and keeping it serial means at most one extra
+	// lease can exist.
+	dialMu sync.Mutex
+
+	mu         sync.Mutex
+	lease      ConnectionLease
+	forwarding appconnection.ForwardingClient
+	closed     bool
+}
+
+func newLeaseDialer(lease ConnectionLease, acquire func(context.Context) (ConnectionLease, error)) (*leaseDialer, error) {
+	if lease == nil {
+		return nil, errors.New("et: no SSH lease")
+	}
+	forwarding, err := lease.Forwarding()
+	if err != nil {
+		return nil, err
+	}
+	return &leaseDialer{lease: lease, forwarding: forwarding, acquire: acquire}, nil
+}
+
+// DialContext dials etserver through the current lease. A dead lease, or a
+// dial that fails, is dropped so the next attempt acquires a fresh SSH
+// connection instead of retrying a transport the network already lost.
+func (d *leaseDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.dialMu.Lock()
+	defer d.dialMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, context.Cause(ctx)
+	}
+
+	lease, forwarding := d.current()
+	if lease == nil || !lease.Alive() || forwarding == nil {
+		var err error
+		lease, forwarding, err = d.replace(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	conn, err := forwarding.DialContext(ctx, network, address)
+	if err != nil {
+		d.drop(lease)
+		return nil, err
+	}
+	return noDeadlineConn{Conn: conn}, nil
+}
+
+// current returns the lease and forwarding client in use, or nil after Close.
+func (d *leaseDialer) current() (ConnectionLease, appconnection.ForwardingClient) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return nil, nil
+	}
+	return d.lease, d.forwarding
+}
+
+// replace discards the current lease, acquires a new one, and installs its
+// forwarding client. A Close that races the acquisition wins: the new lease is
+// released instead of installed.
+func (d *leaseDialer) replace(ctx context.Context) (ConnectionLease, appconnection.ForwardingClient, error) {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, nil, net.ErrClosed
+	}
+	old := d.lease
+	d.lease, d.forwarding = nil, nil
+	d.mu.Unlock()
+	discardLease(old)
+
+	if d.acquire == nil {
+		return nil, nil, errors.New("et: no SSH lease provider for a reconnect")
+	}
+	lease, err := d.acquire(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if lease == nil {
+		return nil, nil, errors.New("et: the SSH lease provider returned no lease")
+	}
+	forwarding, err := lease.Forwarding()
+	if err != nil {
+		discardLease(lease)
+		return nil, nil, err
+	}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		discardLease(lease)
+		return nil, nil, net.ErrClosed
+	}
+	d.lease, d.forwarding = lease, forwarding
+	d.mu.Unlock()
+	return lease, forwarding, nil
+}
+
+// drop forgets lease after its forwarding channel failed. A lease that still
+// reports alive is discarded anyway: the SSH connection did not serve the
+// channel the ET session needs, and keeping it would retry a broken path
+// forever.
+func (d *leaseDialer) drop(lease ConnectionLease) {
+	d.mu.Lock()
+	if d.lease == lease {
+		d.lease, d.forwarding = nil, nil
+	}
+	d.mu.Unlock()
+	discardLease(lease)
+}
+
+// Close releases the current lease. discard closes it instead of parking it
+// for reuse; a failed Session discards, a clean one releases.
+func (d *leaseDialer) Close(discard bool) {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
+	d.closed = true
+	lease := d.lease
+	d.lease, d.forwarding = nil, nil
+	d.mu.Unlock()
+	if lease == nil {
+		return
+	}
+	if discard {
+		discardLease(lease)
+		return
+	}
+	_ = lease.Release()
+}
+
+func discardLease(lease ConnectionLease) {
+	if lease != nil {
+		_ = lease.Discard()
+	}
+}
+
+// noDeadlineDialer adapts one direct-tcpip channel to the etcp dialer. The SSH
 // channel rejects SetDeadline, while the handshake sets idle deadlines on its
 // conn. Those deadlines are accepted and ignored: Open bounds the initial
 // handshake with handshakeTimeout, which etcp uses to close the channel.
-// Reconnect handshakes are the vendored supervisor's and belong to a later
-// ticket.
+// Reconnect handshakes go through leaseDialer and etcp's liveness watcher.
 type noDeadlineDialer struct {
 	forwarding appconnection.ForwardingClient
 }

@@ -75,6 +75,17 @@ func (l *fakeLease) Discard() error {
 
 func (l *fakeLease) Done() <-chan struct{} { return l.done }
 
+func (l *fakeLease) Alive() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	select {
+	case <-l.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (l *fakeLease) state() (command string, released, discarded bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -189,6 +200,12 @@ func testLogger(buffer *bytes.Buffer) *slog.Logger {
 func openFake(t *testing.T, factory InProcessFactory, lease *fakeLease,
 	server *etservertest.Server, initial chan protocol.Packet) appsession.Transport {
 	t.Helper()
+	return openFakeSpec(t, factory, lease, server, initial, inProcessStartSpec())
+}
+
+func openFakeSpec(t *testing.T, factory InProcessFactory, lease *fakeLease,
+	server *etservertest.Server, initial chan protocol.Packet, spec appsession.StartSpec) appsession.Transport {
+	t.Helper()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -213,7 +230,7 @@ func openFake(t *testing.T, factory InProcessFactory, lease *fakeLease,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	transport, err := factory.Open(ctx, inProcessStartSpec())
+	transport, err := factory.Open(ctx, spec)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

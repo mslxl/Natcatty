@@ -106,6 +106,29 @@ func resetDecisionMessage(clientID string, version int32, challenge []byte,
 	return message
 }
 
+// ConnectionProof and ResetDecisionProof expose the two v7 proof
+// constructions to the independent fake server and to integration tests.
+// Production code uses connectionProof and verifyResetDecisionProof; these
+// wrappers exist so a test server can check the client without copying the
+// message formats. The algorithms are pinned against upstream vectors in
+// auth_test.go.
+func ConnectionProof(key []byte, clientID string, version int32, challenge []byte, resetIntent bool) ([]byte, error) {
+	return connectionProof(key, clientID, version, challenge, resetIntent)
+}
+
+// ResetDecisionProof builds the proof a v7 server puts in its final
+// ConnectResponse for the given decision.
+func ResetDecisionProof(key []byte, clientID string, version int32, challenge []byte,
+	status protocol.ConnectStatus, resetRequired bool, resetSalt []byte) ([]byte, error) {
+	if len(key) != 32 || len(challenge) != authChallengeBytes {
+		return nil, fmt.Errorf("etcp: reset decision proof needs a 32-byte key and challenge")
+	}
+	if (resetRequired && len(resetSalt) != epochSaltBytes) || (!resetRequired && len(resetSalt) != 0) {
+		return nil, fmt.Errorf("etcp: reset decision salt does not match the reset decision")
+	}
+	return keyedHash(key, resetDecisionMessage(clientID, version, challenge, status, resetRequired, resetSalt))
+}
+
 func keyedHash(key, message []byte) ([]byte, error) {
 	hash, err := blake2b.New256(key)
 	if err != nil {

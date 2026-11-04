@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mslxl/natcatty/adapters/et/internal/etgo/etcp"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/etservertest"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol"
 	"github.com/mslxl/natcatty/adapters/et/internal/etgo/seal"
@@ -39,6 +40,7 @@ func connect(t *testing.T, n *etservertest.Network, id string, version int32) (*
 	req := &protocol.ConnectRequest{}
 	req.SetClientId(id)
 	req.SetVersion(version)
+	req.SetSupportsChallenge(true)
 	if err := wire.WriteMessage(conn, req); err != nil {
 		t.Fatalf("WriteMessage: %v", err)
 	}
@@ -48,6 +50,21 @@ func connect(t *testing.T, n *etservertest.Network, id string, version int32) (*
 	}
 	var key [32]byte
 	copy(key[:], testKey)
+	if resp.HasAuthChallenge() {
+		proof, err := etcp.ConnectionProof(key[:], id, version, resp.GetAuthChallenge(), false)
+		if err != nil {
+			t.Fatalf("ConnectionProof: %v", err)
+		}
+		auth := &protocol.ConnectAuth{}
+		auth.SetProof(proof)
+		if err := wire.WriteMessage(conn, auth); err != nil {
+			t.Fatalf("WriteMessage(auth): %v", err)
+		}
+		resp = &protocol.ConnectResponse{}
+		if err := wire.ReadMessage(conn, resp); err != nil {
+			t.Fatalf("ReadMessage(final): %v", err)
+		}
+	}
 	return &rawClient{
 		conn: conn,
 		br:   bufio.NewReader(conn),

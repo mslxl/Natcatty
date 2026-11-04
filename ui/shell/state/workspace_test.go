@@ -1030,6 +1030,7 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 			Session: domainworkspace.SessionDescriptor{
 				Kind: domainworkspace.SessionET, HostID: "host-et",
 				Hostname: "stale.example", Port: 22, Username: "stale", Label: "et",
+				ResumeKey: "et-resume-retained",
 			},
 		}},
 	}
@@ -1049,5 +1050,127 @@ func TestRestoreReopensMoshAndETPanesFromTheSavedHost(t *testing.T) {
 		spec.ET.Hostname != "et.example.com" || spec.ET.Port != 2022 ||
 		spec.ET.Username != "bob" || spec.ET.ETPort != 8737 {
 		t.Fatalf("restored ET spec = %+v", spec)
+	}
+	if spec.ResumeKey != "et-resume-retained" {
+		t.Fatalf("restored ET resume key = %q, want the descriptor's locator", spec.ResumeKey)
+	}
+}
+
+// TestRestoreGivesALegacyETPaneANewResumeKey: descriptors written before ET
+// resume existed still get a locator, so the fresh session's credentials can
+// be found after the next restart.
+func TestRestoreGivesALegacyETPaneANewResumeKey(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	graph.repo.payload = domainworkspace.Payload{
+		Version: domainworkspace.PayloadVersion, ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-et",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionET, HostID: "host-et",
+				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
+			},
+		}},
+	}
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the restored ET Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-et")
+		return ok && !info.Pending && info.Err == nil
+	})
+	spec := graph.factory.lastSpec()
+	if spec.ResumeKey == "" {
+		t.Fatal("a restored ET Pane without a locator did not get a resume key")
+	}
+	panes := graph.state.WorkspacePayload().Panes
+	if len(panes) != 1 || panes[0].Session.ResumeKey != spec.ResumeKey {
+		t.Fatalf("saved restored ET Pane = %+v, want resume key %q", panes, spec.ResumeKey)
+	}
+}
+
+// TestETSplitGetsItsOwnResumeKey keeps two Panes' secret entries independent:
+// closing one must not clear the other's saved session.
+func TestETSplitGetsItsOwnResumeKey(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	graph.flushUntil(t, "the first ET Pane", func() bool {
+		return graph.state.TabCount() == 1 && graph.factory.specCount() == 1 &&
+			graph.state.ActiveSurface() != nil
+	})
+	first := graph.factory.lastSpec()
+	if first.ResumeKey == "" {
+		t.Fatal("the first ET Pane has no resume key")
+	}
+	if err := graph.state.SplitRight(); err != nil {
+		t.Fatalf("SplitRight: %v", err)
+	}
+	graph.flushUntil(t, "the split ET Pane", func() bool {
+		return graph.factory.specCount() == 2 && len(graph.surfaces) == 2
+	})
+	second := graph.factory.lastSpec()
+	if second.Kind != appsession.KindET || second.ResumeKey == "" {
+		t.Fatalf("split ET spec = %+v, want a resume key", second)
+	}
+	if second.ResumeKey == first.ResumeKey {
+		t.Fatalf("split ET Pane reused resume key %q", first.ResumeKey)
+	}
+}
+
+// TestETDuplicateGetsItsOwnResumeKey: a duplicated Tab is a new client, so it
+// must not share the source's saved session and fight over ET's single slot.
+func TestETDuplicateGetsItsOwnResumeKey(t *testing.T) {
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	if err := graph.state.OpenHost(graph.hosts["host-et"]); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	graph.flushUntil(t, "the first ET Pane", func() bool {
+		return graph.state.TabCount() == 1 && graph.factory.specCount() == 1 &&
+			graph.state.ActiveSurface() != nil
+	})
+	first := graph.factory.lastSpec()
+	if first.ResumeKey == "" {
+		t.Fatal("the first ET Pane has no resume key")
+	}
+	if err := graph.state.DuplicateTab(0); err != nil {
+		t.Fatalf("DuplicateTab: %v", err)
+	}
+	graph.flushUntil(t, "the duplicated ET Pane", func() bool {
+		return graph.state.TabCount() == 2 && graph.factory.specCount() == 2
+	})
+	second := graph.factory.lastSpec()
+	if second.Kind != appsession.KindET || second.ResumeKey == "" {
+		t.Fatalf("duplicated ET spec = %+v, want a resume key", second)
+	}
+	if second.ResumeKey == first.ResumeKey {
+		t.Fatalf("duplicated ET Pane reused resume key %q", first.ResumeKey)
+	}
+	panes := graph.state.WorkspacePayload().Panes
+	keys := make(map[string]bool, len(panes))
+	for _, pane := range panes {
+		if pane.Session.Kind != domainworkspace.SessionET {
+			continue
+		}
+		if pane.Session.ResumeKey == "" || keys[pane.Session.ResumeKey] {
+			t.Fatalf("workspace ET resume keys are not distinct: %+v", panes)
+		}
+		keys[pane.Session.ResumeKey] = true
+	}
+	if len(keys) != 2 {
+		t.Fatalf("workspace holds %d distinct ET resume keys, want 2: %+v", len(keys), panes)
 	}
 }

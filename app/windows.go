@@ -356,8 +356,11 @@ func (m *windowManager) OpenMain() hostWindow {
 		OnClosed: func() {
 			m.state.Persist()
 			// A detached window keeps the app alive: closing the main window
-			// ends only its own Sessions.
-			m.state.CloseMainSessions()
+			// ends only its own Sessions. Their resumable credentials survive so
+			// the next app run can reattach; MyGo calls OnWillQuit only after
+			// every window closed, so this close is the last chance to preserve
+			// them.
+			m.state.CloseMainSessionsPreserving()
 			m.main = nil
 			m.markQuittingIfNoWindows()
 		},
@@ -434,9 +437,18 @@ func (m *windowManager) OpenDetached(tabID model.TabID) {
 		OnClosed: func() {
 			delete(m.detached, tabID)
 			delete(m.forceClose, "detached:"+string(tabID))
+			// A window closed as part of the quit sequence, or as the last
+			// window, must keep resumable credentials: OnWillQuit runs only
+			// after this hook. Closing one detached window while another
+			// remains is an explicit close and clears them.
+			preserve := m.quitting || m.noWindowsLeft()
 			// Idempotent: a re-attached Tab is no longer detached, so its
 			// Sessions stay alive in the main window.
-			m.state.CloseDetachedTab(tabID)
+			if preserve {
+				m.state.CloseDetachedTabPreserving(tabID)
+			} else {
+				m.state.CloseDetachedTab(tabID)
+			}
 			m.markQuittingIfNoWindows()
 		},
 	})
@@ -546,21 +558,28 @@ func (m *windowManager) recordActivity() {
 	}
 }
 
-// markQuittingIfNoWindows records that the user approved closing the last
-// application window, so the quit sequence that follows does not ask again.
-func (m *windowManager) markQuittingIfNoWindows() {
+// noWindowsLeft reports whether every application window has closed.
+func (m *windowManager) noWindowsLeft() bool {
 	if m.main != nil && !m.main.IsDestroyed() {
-		return
+		return false
 	}
 	if m.settings != nil && !m.settings.IsDestroyed() {
-		return
+		return false
 	}
 	for _, window := range m.detached {
 		if window != nil && !window.IsDestroyed() {
-			return
+			return false
 		}
 	}
-	m.quitting = true
+	return true
+}
+
+// markQuittingIfNoWindows records that the user approved closing the last
+// application window, so the quit sequence that follows does not ask again.
+func (m *windowManager) markQuittingIfNoWindows() {
+	if m.noWindowsLeft() {
+		m.quitting = true
+	}
 }
 
 // FocusMain brings the main window forward, creating it if it was closed.

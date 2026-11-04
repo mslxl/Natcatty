@@ -54,6 +54,10 @@ type SessionDescriptor struct {
 	// Serial is the port and framing a serial Pane reopens with. It carries no
 	// credential material.
 	Serial *serial.Config `json:"serial,omitempty"`
+	// ResumeKey locates an EternalTerminal Pane's saved session credentials in
+	// the encrypted secret store. It is an opaque locator, never the ET
+	// session id or passkey; those stay only in the store.
+	ResumeKey string `json:"resumeKey,omitempty"`
 }
 
 // Valid reports whether a descriptor can be restored.
