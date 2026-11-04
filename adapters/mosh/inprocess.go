@@ -36,6 +36,18 @@ const (
 	tickInterval = 25 * time.Millisecond
 	// receiveBuffer matches mosh's Session::RECEIVE_MTU.
 	receiveBuffer = 2048
+	// readRetryInterval and maxReadFailures bound transient read errors on
+	// the unconnected UDP socket. A local address change or an ICMP error
+	// must not end the Session; a persistently unusable socket should reach
+	// the reconnect policy.
+	readRetryInterval = 100 * time.Millisecond
+	maxReadFailures   = 50
+	// probeRetransmitInterval paces the initial SSP state during the bounded
+	// connection probe. The probe cannot wait for the full SSP RTO: with the
+	// default 1200ms window, one lost initial datagram would consume almost
+	// all of it. Stock mosh-client has no such fixed probe deadline and keeps
+	// sending until the server answers.
+	probeRetransmitInterval = 250 * time.Millisecond
 )
 
 // InProcessFactory opens Mosh Sessions without a bundled client binary. The
@@ -124,7 +136,7 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		client.Close()
 		return nil, err
 	}
-	conn, err := probe(ctx, client, cfg, connect, probeTimeout, queue)
+	result, err := probe(ctx, client, cfg, connect, probeTimeout, queue)
 	if err != nil {
 		client.Close()
 		return nil, err
@@ -133,13 +145,19 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	transport := &inProcessTransport{
 		queue:  queue,
 		client: client,
-		conn:   conn,
+		link:   result.link,
 		cols:   cfg.Cols,
 		rows:   cfg.Rows,
 		done:   make(chan struct{}),
 	}
 	go transport.readLoop()
 	go transport.tickLoop()
+	if result.remoteShutdown {
+		// The shell exited before the probe finished. The sentinel was
+		// acknowledged and any final output is already queued; Read drains
+		// it and then reports EOF, and End reports a normal remote exit.
+		transport.finish(appsession.End{Reason: appsession.EndReasonExited}, nil)
+	}
 	return transport, nil
 }
 
@@ -166,12 +184,43 @@ type candidateAddress struct {
 	err  error
 }
 
+// udpLink is one client-side UDP channel to mosh-server. The socket is
+// deliberately unconnected, like stock mosh: the OCB key authenticates the
+// peer, and an unconnected socket keeps working when the local address
+// changes, avoids ICMP-induced read errors, and accepts server replies after
+// a NAT rebinding.
+type udpLink struct {
+	conn   *net.UDPConn
+	remote *net.UDPAddr
+}
+
+func (l *udpLink) writeOne(datagram []byte) error {
+	_, err := l.conn.WriteToUDP(datagram, l.remote)
+	return err
+}
+
+func (l *udpLink) close() error { return l.conn.Close() }
+
+// probeResult is a usable UDP link plus any state the first authenticated
+// datagram already carried. A server whose shell exits immediately can send
+// its shutdown sentinel before the probe returns.
+type probeResult struct {
+	link           *udpLink
+	remoteShutdown bool
+}
+
+// isClosedNetworkError reports the only send/read error that cannot be
+// recovered by retransmission.
+func isClosedNetworkError(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed)
+}
+
 // probe sends the initial SSP datagram to each candidate and keeps the first
-// endpoint that returns an authenticated mosh packet. Packets are accepted
-// only from the connected endpoint; the cryptographic check authenticates the
-// server.
+// endpoint that returns an authenticated mosh packet. The cryptographic check
+// authenticates the server; the source address of a reply is not pinned,
+// matching stock mosh-client.
 func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
-	connect moshmodel.Connect, timeout time.Duration, queue *outputQueue) (*net.UDPConn, error) {
+	connect moshmodel.Connect, timeout time.Duration, queue *outputQueue) (*probeResult, error) {
 
 	hosts := make([]string, 0, 2)
 	if connect.Host != "" {
@@ -190,7 +239,6 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 		candidates = append(candidates, candidateAddress{host: host, addr: address, err: err})
 	}
 
-	initial := client.SendDatagrams(time.Now())
 	var lastErr error
 	resolved := false
 	for _, candidate := range candidates {
@@ -203,29 +251,37 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 		if candidate.addr.IP.To4() == nil {
 			network = "udp6"
 		}
-		conn, err := net.DialUDP(network, nil, candidate.addr)
+		socket, err := net.ListenUDP(network, nil)
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		link := &udpLink{conn: socket, remote: candidate.addr}
+		// The first candidate sends the initial state; a fallback candidate
+		// needs an immediate retransmission because the shared client may
+		// have sent moments ago and its RTO may not be due yet.
+		initial := client.SendDatagrams(time.Now())
+		if len(initial) == 0 {
+			initial = client.Retransmit(time.Now())
+		}
 		writeFailed := false
 		for _, datagram := range initial {
-			if _, err := conn.Write(datagram); err != nil {
+			if err := link.writeOne(datagram); err != nil {
 				lastErr = err
 				writeFailed = true
 				break
 			}
 		}
 		if writeFailed {
-			_ = conn.Close()
+			_ = link.close()
 			continue
 		}
 
-		connected, err := awaitResponse(ctx, client, conn, timeout, queue, candidate.host)
+		connected, err := awaitResponse(ctx, client, link, timeout, queue, candidate.host)
 		if connected != nil {
 			return connected, nil
 		}
-		_ = conn.Close()
+		_ = link.close()
 		if err != nil {
 			// A protocol failure or cancellation is terminal; a candidate
 			// timeout moves on to the fallback address.
@@ -251,11 +307,17 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 	return nil, fmt.Errorf("%w: resolve mosh-server address", moshmodel.ErrNetwork)
 }
 
-// awaitResponse waits for one authenticated datagram from the connected
-// server. A non-nil conn means the probe succeeded. A non-nil error is either
-// terminal (protocol/cancellation) or a candidate timeout.
-func awaitResponse(ctx context.Context, client *moshcore.Client, conn *net.UDPConn,
-	timeout time.Duration, queue *outputQueue, host string) (*net.UDPConn, error) {
+// awaitResponse waits for one authenticated datagram from the server. While
+// waiting for each candidate it retransmits the initial SSP state every
+// probeRetransmitInterval, so lost initial datagrams do not turn a reachable
+// server into ErrTimeout. A non-nil result means the probe succeeded; its
+// remoteShutdown flag reports a sentinel that arrived before the probe
+// finished. A non-nil error is either terminal (protocol/cancellation) or a
+// candidate timeout.
+func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
+	timeout time.Duration, queue *outputQueue, host string) (*probeResult, error) {
+
+	lastRetransmit := time.Now()
 
 	deadline := time.Now().Add(timeout)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
@@ -263,17 +325,34 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, conn *net.UDPCo
 	}
 	buffer := make([]byte, receiveBuffer)
 	for {
-		if err := conn.SetReadDeadline(deadline); err != nil {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("%w: %s did not answer", moshmodel.ErrTimeout, host)
+		}
+		wait := remaining
+		if wait > tickInterval {
+			wait = tickInterval
+		}
+		if err := link.conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
 			return nil, err
 		}
-		n, err := conn.Read(buffer)
+		n, _, err := link.conn.ReadFromUDP(buffer)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			var networkError net.Error
 			if errors.As(err, &networkError) && networkError.Timeout() {
-				return nil, fmt.Errorf("%w: %s did not answer", moshmodel.ErrTimeout, host)
+				// Keep probing on a fixed cadence instead of the SSP RTO so
+				// a lost initial datagram does not consume the probe window.
+				now := time.Now()
+				if now.Sub(lastRetransmit) >= probeRetransmitInterval {
+					lastRetransmit = now
+					for _, datagram := range client.Retransmit(now) {
+						_ = link.writeOne(datagram)
+					}
+				}
+				continue
 			}
 			return nil, fmt.Errorf("%w: %s: %v", moshmodel.ErrNetwork, host, err)
 		}
@@ -292,7 +371,18 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, conn *net.UDPCo
 				return nil, err
 			}
 		}
-		return conn, nil
+		if update.RemoteShutdown {
+			// Acknowledge immediately; the probe caller will classify this
+			// as a normal remote exit rather than discarding the sentinel.
+			for _, datagram := range client.SendDatagrams(time.Now()) {
+				_ = link.writeOne(datagram)
+			}
+		}
+		// The probe polls with short read deadlines. Clear the deadline
+		// before handing the socket to the long-lived read loop, which
+		// otherwise observes an immediate i/o timeout.
+		_ = link.conn.SetReadDeadline(time.Time{})
+		return &probeResult{link: link, remoteShutdown: update.RemoteShutdown}, nil
 	}
 }
 
@@ -302,7 +392,7 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, conn *net.UDPCo
 type inProcessTransport struct {
 	queue  *outputQueue
 	client *moshcore.Client
-	conn   *net.UDPConn
+	link   *udpLink
 
 	// sendMu serializes SSP state changes with their UDP datagrams, so
 	// fragments of different instructions never interleave.
@@ -331,8 +421,10 @@ func (t *inProcessTransport) Write(p []byte) (int, error) {
 	if err := t.client.Input(p); err != nil {
 		return 0, err
 	}
-	datagrams := t.client.SendDatagrams(time.Now())
-	if err := t.writeDatagrams(datagrams); err != nil {
+	// A transient send failure is not a write failure: the client retains the
+	// state and retransmits it, exactly as stock mosh ignores sendto() errors
+	// and keeps the input in its SSP state.
+	if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -357,10 +449,20 @@ func (t *inProcessTransport) Resize(cols, rows int) error {
 	return t.writeDatagrams(t.client.SendDatagrams(time.Now()))
 }
 
+// writeDatagrams sends datagrams to the announced server address. Transient
+// send failures are ignored; the client keeps the corresponding state and
+// retransmits it. Only a closed socket is a transport failure.
 func (t *inProcessTransport) writeDatagrams(datagrams [][]byte) error {
 	for _, datagram := range datagrams {
-		if _, err := t.conn.Write(datagram); err != nil {
-			return err
+		if err := t.link.writeOne(datagram); err != nil {
+			if isClosedNetworkError(err) {
+				return err
+			}
+			// The route is temporarily unavailable (network switch, ICMP,
+			// ENOBUFS). Sending the remaining fragments would likely fail
+			// too; retransmission will resend the whole instruction with a
+			// fresh fragment ID.
+			return nil
 		}
 	}
 	return nil
@@ -376,14 +478,30 @@ func (t *inProcessTransport) flush(now time.Time) error {
 
 func (t *inProcessTransport) readLoop() {
 	buffer := make([]byte, receiveBuffer)
+	failures := 0
 	for {
-		n, err := t.conn.Read(buffer)
+		n, _, err := t.link.conn.ReadFromUDP(buffer)
 		if err != nil {
-			if !t.isFinished() && !t.isClosing() {
-				t.finish(appsession.End{Reason: appsession.EndReasonError}, fmt.Errorf("%w: %v", moshmodel.ErrNetwork, err))
+			if t.isFinished() || t.isClosing() {
+				return
 			}
+			if !isClosedNetworkError(err) && failures+1 < maxReadFailures {
+				// A network switch can surface a transient read error.
+				// Keep the SSP state and socket alive; the tick loop keeps
+				// sending until the path recovers.
+				failures++
+				select {
+				case <-t.done:
+					return
+				case <-time.After(readRetryInterval):
+				}
+				continue
+			}
+			t.finish(appsession.End{Reason: appsession.EndReasonError},
+				fmt.Errorf("%w: %v", moshmodel.ErrNetwork, err))
 			return
 		}
+		failures = 0
 		update, authenticated, receiveErr := t.client.Receive(buffer[:n], time.Now())
 		if receiveErr != nil {
 			if t.isClosing() {
@@ -470,7 +588,7 @@ func (t *inProcessTransport) Close() error {
 			case <-time.After(shutdownTimeout):
 			}
 		}
-		_ = t.conn.Close()
+		_ = t.link.close()
 		t.client.Close()
 		t.finish(appsession.End{Reason: appsession.EndReasonClosed}, nil)
 	})
