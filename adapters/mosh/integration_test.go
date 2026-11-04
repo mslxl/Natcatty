@@ -3,12 +3,14 @@
 package mosh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,6 +158,235 @@ func runRealMoshCase(t *testing.T, host string, sshPort int, user, password, ser
 			t.Fatal("mosh-server is still running after the client's shutdown")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestInProcessAdapterRealMoshRoaming drives stock mosh-server 1.4.0 through a
+// local UDP relay, changes the relay's upstream source address mid-session,
+// and checks that the same SSP session continues without a second SSH
+// bootstrap. The relay also drops the first client datagram, proving the
+// probe's RTO retransmission against a real server.
+//
+// The relay is the client-visible NAT: once it rebinds, the server must learn
+// the new source address from the next authenticated datagram. Because the old
+// upstream socket is closed, a server that failed to roam would send all
+// further output into a dead port and the post-rebind command would never
+// complete.
+func TestInProcessAdapterRealMoshRoaming(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_INTEGRATION") == "" {
+		t.Skip("set NATCATTY_MOSH_INTEGRATION=1 to run against stock mosh-server")
+	}
+	host := envOr("NATCATTY_MOSH_SSH_HOST", "127.0.0.1")
+	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
+	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
+	sshPort := envInt("NATCATTY_MOSH_140_SSH_PORT", 2225)
+	udpPort := envInt("NATCATTY_MOSH_140_UDP_PORT", 60121)
+	serverPath := envOr("NATCATTY_MOSH_140_SERVER_PATH", "/usr/local/bin/mosh-60121")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pattern := fmt.Sprintf("[m]osh-server.*-p %d", udpPort)
+	sshRun(t, host, sshPort, user, password, fmt.Sprintf(
+		`for p in $(pgrep -f '%s' 2>/dev/null); do kill "$p" 2>/dev/null; done; true`, pattern))
+	t.Cleanup(func() {
+		sshRunQuiet(host, sshPort, user, password, fmt.Sprintf(
+			`for p in $(pgrep -f '%s' 2>/dev/null); do kill "$p" 2>/dev/null; done; true`, pattern))
+	})
+
+	serverAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(udpPort)))
+	if err != nil {
+		t.Fatalf("resolve mosh-server UDP endpoint: %v", err)
+	}
+	proxy := startFaultProxy(t, serverAddr)
+	// Lose the first probe datagram; the client must retransmit on its RTO.
+	proxy.dropClientThrough.Store(1)
+
+	spec := appsession.StartSpec{
+		Kind:     appsession.KindMosh,
+		Hostname: host,
+		Port:     sshPort,
+		Username: user,
+		Cols:     80,
+		Rows:     24,
+		Env:      []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"},
+		Mosh: &moshmodel.Config{
+			Hostname:   host,
+			Port:       sshPort,
+			Username:   user,
+			ServerPath: serverPath,
+			Lang:       "C.UTF-8",
+			Locales:    map[string]string{"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+			Cols:       80,
+			Rows:       24,
+		},
+	}
+	bootstrap := &announcementRewritingBootstrap{
+		inner:        sshBootstrap{host: host, port: sshPort, user: user, password: password},
+		announcePort: proxy.Port(),
+	}
+	factory := InProcessFactory{
+		Bootstrap:        bootstrap,
+		ProbeTimeout:     DefaultProbeTimeout,
+		HandshakeTimeout: 20 * time.Second,
+	}
+	transport, err := factory.Open(ctx, spec)
+	if err != nil {
+		t.Fatalf("Open through roaming relay: %v", err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = transport.Close()
+		}
+	})
+
+	before := proxy.UpstreamAddr()
+	if _, err := transport.Write([]byte("echo NATCATTY_ROAM_BEFORE\r")); err != nil {
+		t.Fatalf("write before roaming: %v", err)
+	}
+	readUntilCount(t, transport, "NATCATTY_ROAM_BEFORE", 2, 15*time.Second)
+
+	proxy.Rebind()
+	after := proxy.UpstreamAddr()
+	if before == nil || after == nil || before.String() == after.String() {
+		t.Fatalf("relay source address did not change: %v -> %v", before, after)
+	}
+	if _, err := transport.Write([]byte("echo NATCATTY_ROAM_AFTER\r")); err != nil {
+		t.Fatalf("write after roaming: %v", err)
+	}
+	readUntilCount(t, transport, "NATCATTY_ROAM_AFTER", 2, 15*time.Second)
+
+	if calls := bootstrap.Calls(); calls != 1 {
+		t.Fatalf("SSH bootstrap calls = %d, want 1; roaming must not re-handshake", calls)
+	}
+	if proxy.Drops() == 0 {
+		t.Fatal("the relay never dropped the initial probe datagram")
+	}
+	if proxy.Rebinds() != 1 {
+		t.Fatalf("relay rebinds = %d, want 1", proxy.Rebinds())
+	}
+
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	closed = true
+	if end := transport.(appsession.EndReporter).End(); end.Reason != appsession.EndReasonClosed {
+		t.Fatalf("end = %+v, want closed", end)
+	}
+
+	// The stock server must still exit on the shutdown sentinel after roaming.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		running, runErr := remoteServerRunning(host, sshPort, user, password, pattern)
+		if runErr != nil {
+			t.Fatalf("check mosh-server: %v", runErr)
+		}
+		if !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("mosh-server is still running after the client's shutdown")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// announcementRewritingBootstrap counts SSH bootstrap calls and rewrites the
+// announced UDP port to a relay, dropping the MOSH IP line so the relay is the
+// only probe candidate.
+type announcementRewritingBootstrap struct {
+	inner        Bootstrap
+	announcePort int
+	mu           sync.Mutex
+	calls        int
+}
+
+func (b *announcementRewritingBootstrap) OpenBootstrap(ctx context.Context, spec appsession.StartSpec,
+	cfg moshmodel.Config) (io.ReadWriteCloser, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	stream, err := b.inner.OpenBootstrap(ctx, spec, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &announcementRewriteStream{ReadWriteCloser: stream, port: b.announcePort}, nil
+}
+
+func (b *announcementRewritingBootstrap) Calls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
+var announcementPortPattern = regexp.MustCompile(`MOSH CONNECT [0-9]+ `)
+
+// announcementRewriteStream buffers the bootstrap banner until the MOSH
+// CONNECT line is complete, then drops MOSH IP lines and replaces the
+// announced port. Output after the announcement passes through unchanged.
+type announcementRewriteStream struct {
+	io.ReadWriteCloser
+	port int
+
+	mu         sync.Mutex
+	pending    []byte
+	pendingErr error
+	done       bool
+}
+
+func (s *announcementRewriteStream) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.done {
+		_ = s.capture()
+	}
+	if len(s.pending) > 0 {
+		n := copy(p, s.pending)
+		s.pending = s.pending[n:]
+		return n, nil
+	}
+	if s.pendingErr != nil {
+		err := s.pendingErr
+		s.pendingErr = nil
+		return 0, err
+	}
+	return s.ReadWriteCloser.Read(p)
+}
+
+func (s *announcementRewriteStream) capture() error {
+	for {
+		if idx := bytes.Index(s.pending, []byte("MOSH CONNECT")); idx >= 0 {
+			if length := bytes.IndexByte(s.pending[idx:], '\n'); length >= 0 {
+				end := idx + length + 1
+				head := string(s.pending[:end])
+				tail := append([]byte(nil), s.pending[end:]...)
+				lines := make([]string, 0, 4)
+				for _, line := range strings.Split(head, "\n") {
+					if strings.Contains(line, "MOSH IP") {
+						continue
+					}
+					if strings.Contains(line, "MOSH CONNECT") {
+						line = announcementPortPattern.ReplaceAllString(line,
+							fmt.Sprintf("MOSH CONNECT %d ", s.port))
+					}
+					lines = append(lines, line)
+				}
+				s.pending = append([]byte(strings.Join(lines, "\n")), tail...)
+				s.done = true
+				return nil
+			}
+		}
+		chunk := make([]byte, 4096)
+		n, err := s.ReadWriteCloser.Read(chunk)
+		if n > 0 {
+			s.pending = append(s.pending, chunk[:n]...)
+		}
+		if err != nil {
+			s.done = true
+			s.pendingErr = err
+			return err
+		}
 	}
 }
 

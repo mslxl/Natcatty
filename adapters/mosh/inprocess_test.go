@@ -64,9 +64,17 @@ type fakeServer struct {
 	ocb  *moshcore.OCB
 	key  []byte
 
+	// sendMu guards the mutable send path: concurrent injected datagrams
+	// (protocol-error and roaming tests) must not race the receive loop's
+	// replies.
+	sendMu     sync.Mutex
 	seq        uint64
 	fragID     uint64
 	clientAddr *net.UDPAddr
+	lastHost   *moshcore.TransportInstruction
+	// lastClientTS is the most recent client timestamp, echoed in replies so
+	// the client can sample RTT.
+	lastClientTS uint32
 
 	assemblerID uint64
 	haveID      bool
@@ -75,26 +83,37 @@ type fakeServer struct {
 	arrived     int
 	total       int
 
-	seen          map[uint64]bool
-	clientAckNum  uint64
-	lastHostNum   uint64
-	inputBuffer   []byte
-	remoteGone    bool
-	protocol      uint32
-	input         chan []byte
-	resizes       chan [2]int
-	shutdown      chan struct{}
-	shutdownAck   chan struct{}
-	stop          chan struct{}
-	closeOnce     sync.Once
-	firstResponse bool
+	seen            map[uint64]bool
+	clientAckNum    uint64
+	lastHostNum     uint64
+	inputBuffer     []byte
+	remoteGone      bool
+	protocol        uint32
+	input           chan []byte
+	resizes         chan [2]int
+	shutdown        chan struct{}
+	shutdownAck     chan struct{}
+	badProtocol     chan uint32
+	stop            chan struct{}
+	closeOnce       sync.Once
+	wg              sync.WaitGroup
+	firstResponse   bool
+	shutdownOnFirst bool
 }
 
 func startFakeServer(t *testing.T) *fakeServer {
 	return startFakeServerWithProtocol(t, 2)
 }
 
+func startFakeServerShutdownOnFirst(t *testing.T) *fakeServer {
+	return startFakeServerWithOptions(t, 2, true)
+}
+
 func startFakeServerWithProtocol(t *testing.T, protocol uint32) *fakeServer {
+	return startFakeServerWithOptions(t, protocol, false)
+}
+
+func startFakeServerWithOptions(t *testing.T, protocol uint32, shutdownOnFirst bool) *fakeServer {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x33}, 16)
 	ocb, err := moshcore.NewOCB(key)
@@ -106,40 +125,86 @@ func startFakeServerWithProtocol(t *testing.T, protocol uint32) *fakeServer {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	server := &fakeServer{
-		t:             t,
-		conn:          conn,
-		ocb:           ocb,
-		key:           key,
-		seen:          make(map[uint64]bool),
-		protocol:      protocol,
-		input:         make(chan []byte, 32),
-		resizes:       make(chan [2]int, 8),
-		shutdown:      make(chan struct{}, 1),
-		shutdownAck:   make(chan struct{}, 1),
-		stop:          make(chan struct{}),
-		firstResponse: true,
+		t:               t,
+		conn:            conn,
+		ocb:             ocb,
+		key:             key,
+		seen:            make(map[uint64]bool),
+		protocol:        protocol,
+		input:           make(chan []byte, 32),
+		resizes:         make(chan [2]int, 8),
+		shutdown:        make(chan struct{}, 1),
+		shutdownAck:     make(chan struct{}, 1),
+		badProtocol:     make(chan uint32, 1),
+		stop:            make(chan struct{}),
+		firstResponse:   true,
+		shutdownOnFirst: shutdownOnFirst,
 	}
+	server.wg.Add(2)
 	go server.loop()
+	go server.injectLoop()
 	t.Cleanup(server.Close)
 	return server
+}
+
+// injectLoop sends test-triggered datagrams from the server side without
+// racing the receive loop.
+func (s *fakeServer) injectLoop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case version := <-s.badProtocol:
+			s.send(moshcore.TransportInstruction{ProtocolVersion: version, OldNum: 0, NewNum: 1})
+		}
+	}
+}
+
+// sendProtocolError asks the fixture to send an authenticated instruction
+// with an unsupported protocol version. The client must classify it as a fatal
+// protocol failure.
+func (s *fakeServer) sendProtocolError(version uint32) {
+	select {
+	case s.badProtocol <- version:
+	case <-s.stop:
+	}
 }
 
 func (s *fakeServer) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stop)
 		_ = s.conn.Close()
+		// Wait for the receive loops before zeroizing the cipher: a datagram
+		// already read may still be in flight through send().
+		s.wg.Wait()
 		s.ocb.Close()
 	})
 }
 
 func (s *fakeServer) Port() int { return s.conn.LocalAddr().(*net.UDPAddr).Port }
 
-func (s *fakeServer) announcement() string {
-	return "MOSH CONNECT " + strconv.Itoa(s.Port()) + " " +
+// clientAddress returns the source address of the most recent client datagram.
+func (s *fakeServer) clientAddress() *net.UDPAddr {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if s.clientAddr == nil {
+		return nil
+	}
+	clone := *s.clientAddr
+	return &clone
+}
+
+func (s *fakeServer) announcement() string { return s.announcementOn(s.Port()) }
+
+// announcementOn builds an announcement for a relay in front of the server.
+func (s *fakeServer) announcementOn(port int) string {
+	return "MOSH CONNECT " + strconv.Itoa(port) + " " +
 		base64.RawStdEncoding.EncodeToString(s.key) + "\r\n"
 }
 
 func (s *fakeServer) loop() {
+	defer s.wg.Done()
 	buffer := make([]byte, 2048)
 	for {
 		n, addr, err := s.conn.ReadFromUDP(buffer)
@@ -151,9 +216,21 @@ func (s *fakeServer) loop() {
 				return
 			}
 		}
+		s.sendMu.Lock()
 		s.clientAddr = addr
+		s.sendMu.Unlock()
 		instruction, keys, resize, complete := s.decode(buffer[:n])
 		if !complete {
+			continue
+		}
+		if s.shutdownOnFirst && !s.remoteGone {
+			// The remote shell exits before the probe completes; mosh-server
+			// sends its shutdown sentinel as the first host state.
+			s.remoteGone = true
+			s.sendMu.Lock()
+			s.clientAckNum = instruction.NewNum
+			s.sendMu.Unlock()
+			s.sendHostState([]byte("bye\r\n"), moshcore.ShutdownNum)
 			continue
 		}
 		if instruction.NewNum == moshcore.ShutdownNum {
@@ -178,15 +255,26 @@ func (s *fakeServer) loop() {
 			}
 		}
 		if s.seen[instruction.NewNum] {
+			// A retransmitted client state means the peer missed our last
+			// host state (or its ack). Stock's sender resends from the last
+			// acknowledged state; the fixture only ever has one host state
+			// outstanding, so resending it is equivalent here.
+			s.resendLastHost()
 			continue
 		}
 		s.seen[instruction.NewNum] = true
+		s.sendMu.Lock()
 		if instruction.NewNum > s.clientAckNum {
 			s.clientAckNum = instruction.NewNum
 		}
+		s.sendMu.Unlock()
 		if len(keys) > 0 {
 			s.inputBuffer = append(s.inputBuffer, keys...)
-			s.input <- keys
+			select {
+			case s.input <- keys:
+			case <-s.stop:
+				return
+			}
 		}
 		if resize != nil {
 			s.resizes <- [2]int{resize[0], resize[1]}
@@ -232,6 +320,16 @@ func (s *fakeServer) sendHostState(output []byte, newNum uint64) {
 
 func (s *fakeServer) send(instruction moshcore.TransportInstruction) {
 	s.t.Helper()
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	// Remember the last host instruction so a retransmitted client state
+	// triggers the same recovery a stock sender would provide.
+	stored := instruction
+	stored.Diff = append([]byte(nil), instruction.Diff...)
+	s.lastHost = &stored
+	if s.clientAddr == nil {
+		return
+	}
 	var compressed bytes.Buffer
 	writer := zlib.NewWriter(&compressed)
 	if _, err := writer.Write(instruction.Marshal()); err != nil {
@@ -265,7 +363,11 @@ func (s *fakeServer) send(instruction moshcore.TransportInstruction) {
 		binary.BigEndian.PutUint64(nonce[4:], 1<<63|sequence)
 		plaintext := make([]byte, 4, 4+len(fragment))
 		binary.BigEndian.PutUint16(plaintext[:2], uint16(time.Now().UnixMilli()))
-		binary.BigEndian.PutUint16(plaintext[2:4], 0xffff)
+		reply := uint16(0xffff)
+		if s.lastClientTS != 0 {
+			reply = uint16(s.lastClientTS)
+		}
+		binary.BigEndian.PutUint16(plaintext[2:4], reply)
 		plaintext = append(plaintext, fragment...)
 		ciphertext, err := s.ocb.Encrypt(nonce[:], plaintext)
 		if err != nil {
@@ -287,6 +389,17 @@ func (s *fakeServer) send(instruction moshcore.TransportInstruction) {
 	}
 }
 
+// resendLastHost resends the most recent host instruction with fresh sequence
+// and fragment numbers.
+func (s *fakeServer) resendLastHost() {
+	s.sendMu.Lock()
+	instruction := s.lastHost
+	s.sendMu.Unlock()
+	if instruction != nil {
+		s.send(*instruction)
+	}
+}
+
 // decode parses client datagrams with the production wire format.
 func (s *fakeServer) decode(wire []byte) (moshcore.TransportInstruction, []byte, []int, bool) {
 	if len(wire) < 24 {
@@ -302,6 +415,9 @@ func (s *fakeServer) decode(wire []byte) (moshcore.TransportInstruction, []byte,
 	if !ok || len(plaintext) < 14 {
 		return moshcore.TransportInstruction{}, nil, nil, false
 	}
+	s.sendMu.Lock()
+	s.lastClientTS = uint32(binary.BigEndian.Uint16(plaintext[:2]))
+	s.sendMu.Unlock()
 	header := plaintext[4:]
 	id := binary.BigEndian.Uint64(header[:8])
 	combined := binary.BigEndian.Uint16(header[8:10])
