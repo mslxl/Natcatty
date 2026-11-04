@@ -127,11 +127,18 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	address := net.JoinHostPort(etServerHost, strconv.Itoa(cfg.ETPort))
 	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, f.handshakeTimeout())
 	defer cancelHandshake()
-	conn, err := (&etcp.Dialer{NetDialer: noDeadlineDialer{forwarding: forwarding}, Logger: f.logger()}).Dial(
-		handshakeCtx, address, credentials.ID, credentials.Passkey())
+	notices := make(chan appsession.Notice, 8)
+	conn, err := f.dial(handshakeCtx, forwarding, address, credentials, notices)
 	if err != nil {
+		close(notices)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, context.Cause(ctx)
+		}
+		// A server that answered RETRY_LATER until the handshake deadline is
+		// still a retry-later outcome; the generic timeout sentence would hide
+		// that the server was recovering.
+		if errors.Is(err, etcp.ErrRetryLater) {
+			return nil, classifyDialError(err)
 		}
 		if errors.Is(context.Cause(handshakeCtx), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("%w: connect handshake timed out after %v: %w",
@@ -139,28 +146,84 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		}
 		return nil, classifyDialError(err)
 	}
-	if err := etsession.Start(handshakeCtx, conn, etsession.Options{Logger: f.logger()}); err != nil {
-		_ = conn.Close()
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, context.Cause(ctx)
+	// A reset-recovery connect attached to a session whose shell is already
+	// running, so stock et skips INITIAL_PAYLOAD (ClientConnection's
+	// wasRecovered path). The terminal then starts blank: ET has no
+	// server-side screen snapshot and reset recovery exchanges empty catchup
+	// buffers, exactly like stock `et --attach`.
+	if !conn.Resumed() {
+		if err := etsession.Start(handshakeCtx, conn, etsession.Options{Logger: f.logger()}); err != nil {
+			_ = conn.Close()
+			close(notices)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, context.Cause(ctx)
+			}
+			if errors.Is(context.Cause(handshakeCtx), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("%w: INITIAL_PAYLOAD timed out: %w", etmodel.ErrHandshakeFailed, err)
+			}
+			return nil, classifyStartError(err)
 		}
-		if errors.Is(context.Cause(handshakeCtx), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("%w: INITIAL_PAYLOAD timed out: %w", etmodel.ErrHandshakeFailed, err)
-		}
-		return nil, classifyStartError(err)
 	}
 	cancelHandshake()
 	if err := ctx.Err(); err != nil {
 		_ = conn.Close()
+		close(notices)
 		return nil, context.Cause(ctx)
 	}
 
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	transport := newInProcessTransport(conn, lease, newLocalTerminal(spec.Cols, spec.Rows), cancel, f.logger())
+	transport := newInProcessTransport(conn, lease, newLocalTerminal(spec.Cols, spec.Rows), notices, cancel, f.logger())
 	go transport.run(runCtx)
 	go transport.watchLease(runCtx)
 	opened = true
 	return transport, nil
+}
+
+// retryLaterDelay is the first backoff after RETRY_LATER and its cap. The
+// server asks for a retry only while it rebuilds its session table after a
+// restart; stock et's reconnect loop also waits and retries instead of ending
+// the session.
+const (
+	retryLaterDelay    = 250 * time.Millisecond
+	retryLaterMaxDelay = 5 * time.Second
+)
+
+// dial connects to etserver, retrying with backoff while the server answers
+// RETRY_LATER. The caller's context bounds the wait. The Displaced callback
+// publishes a Session notice without blocking the connection goroutine.
+func (f InProcessFactory) dial(ctx context.Context, forwarding appconnection.ForwardingClient,
+	address string, credentials bootstrap.Credentials, notices chan appsession.Notice) (*etcp.Conn, error) {
+
+	onDisplaced := func() {
+		select {
+		case notices <- appsession.Notice{Code: appsession.NoticeETDisplaced}:
+		default:
+		}
+	}
+	dialer := &etcp.Dialer{
+		NetDialer:   noDeadlineDialer{forwarding: forwarding},
+		Logger:      f.logger(),
+		OnDisplaced: onDisplaced,
+	}
+	delay := retryLaterDelay
+	for {
+		conn, err := dialer.Dial(ctx, address, credentials.ID, credentials.Passkey())
+		if err == nil {
+			return conn, nil
+		}
+		if !errors.Is(err, etcp.ErrRetryLater) {
+			return nil, err
+		}
+		f.logger().Info("et: server is recovering; retrying", "delay", delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("%w: %w", err, context.Cause(ctx))
+		}
+		delay = min(2*delay, retryLaterMaxDelay)
+	}
 }
 
 // route resolves the Host's non-secret path. A nil resolver is a direct
@@ -319,6 +382,12 @@ func classifyDialError(err error) error {
 	switch {
 	case errors.Is(err, etcp.ErrVersion):
 		return fmt.Errorf("%w: %w", etmodel.ErrUnsupportedServer, err)
+	case errors.Is(err, etcp.ErrLegacyReattach):
+		return fmt.Errorf("%w: %w", etmodel.ErrReattachUnsupported, err)
+	case errors.Is(err, etcp.ErrRetryLater):
+		return fmt.Errorf("%w: %w", etmodel.ErrRetryLater, err)
+	case errors.Is(err, etcp.ErrDisplaced):
+		return fmt.Errorf("%w: %w", etmodel.ErrSessionDisplaced, err)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	default:
@@ -353,6 +422,12 @@ func classifyRun(err error) appsession.End {
 	if errors.Is(err, etsession.ErrDetached) {
 		// The local escape deliberately ends the client, like stock et.
 		return appsession.End{Reason: appsession.EndReasonExited}
+	}
+	if errors.Is(err, etcp.ErrDisplaced) {
+		// Another client owns ET's single session slot. Reconnecting would
+		// fight it, so the Session ends with the takeover notice instead of
+		// entering the reconnect loop.
+		return appsession.End{Reason: appsession.EndReasonDisplaced}
 	}
 	return appsession.End{Reason: appsession.EndReasonError}
 }

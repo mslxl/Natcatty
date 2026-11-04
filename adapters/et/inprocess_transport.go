@@ -23,6 +23,7 @@ type inProcessTransport struct {
 	conn     *etcp.Conn
 	lease    ConnectionLease
 	terminal *localTerminal
+	notices  chan appsession.Notice
 	logger   *slog.Logger
 	cancel   context.CancelFunc
 
@@ -40,19 +41,25 @@ var (
 	_ appsession.Transport   = (*inProcessTransport)(nil)
 	_ appsession.ExitWaiter  = (*inProcessTransport)(nil)
 	_ appsession.EndReporter = (*inProcessTransport)(nil)
+	_ appsession.Notifier    = (*inProcessTransport)(nil)
 )
 
 func newInProcessTransport(conn *etcp.Conn, lease ConnectionLease, terminal *localTerminal,
-	cancel context.CancelFunc, logger *slog.Logger) *inProcessTransport {
+	notices chan appsession.Notice, cancel context.CancelFunc, logger *slog.Logger) *inProcessTransport {
 	return &inProcessTransport{
 		conn:     conn,
 		lease:    lease,
 		terminal: terminal,
+		notices:  notices,
 		logger:   logger,
 		cancel:   cancel,
 		done:     make(chan struct{}),
 	}
 }
+
+// Notices reports a takeover by another client. The channel closes with the
+// transport; the notice also ends the Session with EndReasonDisplaced.
+func (t *inProcessTransport) Notices() <-chan appsession.Notice { return t.notices }
 
 // run owns the ET session service for the transport's lifetime.
 func (t *inProcessTransport) run(ctx context.Context) {
@@ -156,6 +163,7 @@ func (t *inProcessTransport) finish(end appsession.End) {
 		} else {
 			_ = t.lease.Release()
 		}
+		close(t.notices)
 		close(t.done)
 	})
 }

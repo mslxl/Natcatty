@@ -15,11 +15,15 @@ import (
 	"fmt"
 	"log/slog"
 
+	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/nacl/secretbox"
 )
 
 // Direction selects the nonce stream. Its value is the nonce's last byte.
 type Direction uint8
+
+// saltBytes is the reset salt length fixed by upstream CryptoHandler.
+const saltBytes = 32
 
 // The two streams of a connection (upstream CLIENT_SERVER_NONCE_MSB and
 // SERVER_CLIENT_NONCE_MSB, src/base/Headers.hpp:172-173 at et-v7.0.0).
@@ -49,8 +53,13 @@ type Stream struct {
 
 // state is the mutable part of a Stream.
 type state struct {
-	key   *[32]byte
-	nonce [24]byte
+	// key is the epoch key, derived from base by Rekey. base is the passkey
+	// the caller supplied to New and never changes, so every reset epoch
+	// derives from the same root (upstream CryptoHandler::baseKey).
+	key       *[32]byte
+	base      *[32]byte
+	nonce     [24]byte
+	direction Direction
 }
 
 // New returns a Stream for direction d with the nonce at its initial value.
@@ -63,9 +72,40 @@ func New(key *[32]byte, d Direction) *Stream {
 		panic(fmt.Sprintf("seal: invalid direction %d", d))
 	}
 	k := *key
-	st := &state{key: &k}
-	st.nonce[len(st.nonce)-1] = byte(d)
+	st := &state{key: &k, base: &k, direction: d}
+	st.resetNonce()
 	return &Stream{st: st}
+}
+
+// Rekey starts a new reset epoch: it replaces the epoch key with
+// BLAKE2b-256 keyed by the original base key over salt, and resets the nonce
+// to its initial value, matching CryptoHandler::rekey
+// (src/base/CryptoHandler.cpp:114-128 at et-v7.1.1). Both peers derive the
+// same epoch key from the salt authenticated in ConnectResponse. The caller
+// must not use the Stream concurrently with Rekey; salt must be 32 bytes.
+func (s *Stream) Rekey(salt []byte) error {
+	if s == nil || s.st == nil {
+		return errors.New("seal: Rekey on an uninitialized Stream")
+	}
+	if len(salt) != saltBytes {
+		return fmt.Errorf("seal: reset salt must be %d bytes, got %d", saltBytes, len(salt))
+	}
+	hash, err := blake2b.New256(s.st.base[:])
+	if err != nil {
+		return fmt.Errorf("seal: epoch key derivation: %w", err)
+	}
+	_, _ = hash.Write(salt)
+	var key [32]byte
+	copy(key[:], hash.Sum(nil))
+	s.st.key = &key
+	s.st.resetNonce()
+	return nil
+}
+
+// resetNonce returns the counter to its initial value for this direction.
+func (st *state) resetNonce() {
+	st.nonce = [24]byte{}
+	st.nonce[len(st.nonce)-1] = byte(st.direction)
 }
 
 // Seal encrypts and authenticates plaintext with the next nonce and appends

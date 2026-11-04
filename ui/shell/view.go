@@ -546,6 +546,8 @@ func noticeText(m locales.Messages, notice *appsession.Notice) string {
 		return m.ConnectionTmuxNested()
 	case appsession.NoticeTmuxUnavailable:
 		return m.ConnectionTmuxUnavailable()
+	case appsession.NoticeETDisplaced:
+		return m.ConnectionEternalTerminalDisplaced()
 	default:
 		return ""
 	}

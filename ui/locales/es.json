@@ -492,6 +492,7 @@
   "connectionTmuxSessionRestored": "Sesión de tmux restaurada.",
   "connectionTmuxNested": "Ya estás dentro de una sesión de tmux en el Host remoto; se conectó sin anidar.",
   "connectionTmuxUnavailable": "tmux no está disponible en el Host remoto; se conectó con un shell simple.",
+  "connectionEternalTerminalDisplaced": "Otro cliente se conectó a esta sesión de EternalTerminal, por lo que esta conexión terminó. EternalTerminal permite un solo cliente a la vez.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

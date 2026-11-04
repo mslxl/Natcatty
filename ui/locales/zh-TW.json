@@ -492,6 +492,7 @@
   "connectionTmuxSessionRestored": "tmux 工作階段已還原。",
   "connectionTmuxNested": "遠端 Host 已在 tmux 工作階段中；已直接連線，未巢狀。",
   "connectionTmuxUnavailable": "遠端 Host 無法使用 tmux；已改用一般 Shell 連線。",
+  "connectionEternalTerminalDisplaced": "另一個用戶端已接入此 EternalTerminal 工作階段，因此目前連線已結束。EternalTerminal 同一時間只允許一個用戶端。",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

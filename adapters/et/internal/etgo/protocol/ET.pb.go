@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copied from Eternal Terminal (https://github.com/MisterTea/EternalTerminal),
-// proto/ET.proto at commit 6f53869473a16407b59f1f3382d291ab97b4f64f.
+// proto/ET.proto at tag et-v7.1.1, commit
+// a8318ca4598756ca3c5f4711cce12a65faeff57d.
 // Copyright Jason Gauci and contributors, licensed under the Apache License,
 // Version 2.0. Unmodified apart from this header; see NOTICE.
 
@@ -78,6 +79,7 @@ const (
 	ConnectStatus_RETURNING_CLIENT    ConnectStatus = 2
 	ConnectStatus_INVALID_KEY         ConnectStatus = 3
 	ConnectStatus_MISMATCHED_PROTOCOL ConnectStatus = 4
+	ConnectStatus_RETRY_LATER         ConnectStatus = 5
 )
 
 // Enum value maps for ConnectStatus.
@@ -87,12 +89,14 @@ var (
 		2: "RETURNING_CLIENT",
 		3: "INVALID_KEY",
 		4: "MISMATCHED_PROTOCOL",
+		5: "RETRY_LATER",
 	}
 	ConnectStatus_value = map[string]int32{
 		"NEW_CLIENT":          1,
 		"RETURNING_CLIENT":    2,
 		"INVALID_KEY":         3,
 		"MISMATCHED_PROTOCOL": 4,
+		"RETRY_LATER":         5,
 	}
 )
 
@@ -119,14 +123,22 @@ func (x ConnectStatus) Number() protoreflect.EnumNumber {
 }
 
 type ConnectRequest struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ClientId    *string                `protobuf:"bytes,1,opt,name=clientId"`
-	xxx_hidden_Version     int32                  `protobuf:"varint,2,opt,name=version"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                        protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ClientId          *string                `protobuf:"bytes,1,opt,name=clientId"`
+	xxx_hidden_Version           int32                  `protobuf:"varint,2,opt,name=version"`
+	xxx_hidden_ResetIntent       bool                   `protobuf:"varint,3,opt,name=resetIntent,def=0"`
+	xxx_hidden_SupportsChallenge bool                   `protobuf:"varint,4,opt,name=supportsChallenge,def=0"`
+	XXX_raceDetectHookData       protoimpl.RaceDetectHookData
+	XXX_presence                 [1]uint32
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
+
+// Default values for ConnectRequest fields.
+const (
+	Default_ConnectRequest_ResetIntent       = bool(false)
+	Default_ConnectRequest_SupportsChallenge = bool(false)
+)
 
 func (x *ConnectRequest) Reset() {
 	*x = ConnectRequest{}
@@ -170,14 +182,42 @@ func (x *ConnectRequest) GetVersion() int32 {
 	return 0
 }
 
+func (x *ConnectRequest) GetResetIntent() bool {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 2) {
+			return x.xxx_hidden_ResetIntent
+		}
+	}
+	return Default_ConnectRequest_ResetIntent
+}
+
+func (x *ConnectRequest) GetSupportsChallenge() bool {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 3) {
+			return x.xxx_hidden_SupportsChallenge
+		}
+	}
+	return Default_ConnectRequest_SupportsChallenge
+}
+
 func (x *ConnectRequest) SetClientId(v string) {
 	x.xxx_hidden_ClientId = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 4)
 }
 
 func (x *ConnectRequest) SetVersion(v int32) {
 	x.xxx_hidden_Version = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 4)
+}
+
+func (x *ConnectRequest) SetResetIntent(v bool) {
+	x.xxx_hidden_ResetIntent = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 4)
+}
+
+func (x *ConnectRequest) SetSupportsChallenge(v bool) {
+	x.xxx_hidden_SupportsChallenge = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 4)
 }
 
 func (x *ConnectRequest) HasClientId() bool {
@@ -194,6 +234,20 @@ func (x *ConnectRequest) HasVersion() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
 }
 
+func (x *ConnectRequest) HasResetIntent() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
+func (x *ConnectRequest) HasSupportsChallenge() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 3)
+}
+
 func (x *ConnectRequest) ClearClientId() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_ClientId = nil
@@ -204,11 +258,23 @@ func (x *ConnectRequest) ClearVersion() {
 	x.xxx_hidden_Version = 0
 }
 
+func (x *ConnectRequest) ClearResetIntent() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+}
+
+func (x *ConnectRequest) ClearSupportsChallenge() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 3)
+}
+
 type ConnectRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	ClientId *string
-	Version  *int32
+	ClientId    *string
+	Version     *int32
+	ResetIntent *bool
+	// Set by clients that implement the authChallenge/ConnectAuth exchange.
+	// Servers answer requests without it using the protocol-6 handshake.
+	SupportsChallenge *bool
 }
 
 func (b0 ConnectRequest_builder) Build() *ConnectRequest {
@@ -216,25 +282,42 @@ func (b0 ConnectRequest_builder) Build() *ConnectRequest {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.ClientId != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 4)
 		x.xxx_hidden_ClientId = b.ClientId
 	}
 	if b.Version != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 4)
 		x.xxx_hidden_Version = *b.Version
+	}
+	if b.ResetIntent != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 4)
+		x.xxx_hidden_ResetIntent = *b.ResetIntent
+	}
+	if b.SupportsChallenge != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 4)
+		x.xxx_hidden_SupportsChallenge = *b.SupportsChallenge
 	}
 	return m0
 }
 
 type ConnectResponse struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Status      ConnectStatus          `protobuf:"varint,1,opt,name=status,enum=et.ConnectStatus"`
-	xxx_hidden_Error       *string                `protobuf:"bytes,2,opt,name=error"`
-	XXX_raceDetectHookData protoimpl.RaceDetectHookData
-	XXX_presence           [1]uint32
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Status        ConnectStatus          `protobuf:"varint,1,opt,name=status,enum=et.ConnectStatus"`
+	xxx_hidden_Error         *string                `protobuf:"bytes,2,opt,name=error"`
+	xxx_hidden_AuthChallenge []byte                 `protobuf:"bytes,3,opt,name=authChallenge"`
+	xxx_hidden_ResetRequired bool                   `protobuf:"varint,4,opt,name=resetRequired,def=0"`
+	xxx_hidden_ResetProof    []byte                 `protobuf:"bytes,5,opt,name=resetProof"`
+	xxx_hidden_ResetSalt     []byte                 `protobuf:"bytes,6,opt,name=resetSalt"`
+	XXX_raceDetectHookData   protoimpl.RaceDetectHookData
+	XXX_presence             [1]uint32
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
+
+// Default values for ConnectResponse fields.
+const (
+	Default_ConnectResponse_ResetRequired = bool(false)
+)
 
 func (x *ConnectResponse) Reset() {
 	*x = ConnectResponse{}
@@ -280,14 +363,73 @@ func (x *ConnectResponse) GetError() string {
 	return ""
 }
 
+func (x *ConnectResponse) GetAuthChallenge() []byte {
+	if x != nil {
+		return x.xxx_hidden_AuthChallenge
+	}
+	return nil
+}
+
+func (x *ConnectResponse) GetResetRequired() bool {
+	if x != nil {
+		if protoimpl.X.Present(&(x.XXX_presence[0]), 3) {
+			return x.xxx_hidden_ResetRequired
+		}
+	}
+	return Default_ConnectResponse_ResetRequired
+}
+
+func (x *ConnectResponse) GetResetProof() []byte {
+	if x != nil {
+		return x.xxx_hidden_ResetProof
+	}
+	return nil
+}
+
+func (x *ConnectResponse) GetResetSalt() []byte {
+	if x != nil {
+		return x.xxx_hidden_ResetSalt
+	}
+	return nil
+}
+
 func (x *ConnectResponse) SetStatus(v ConnectStatus) {
 	x.xxx_hidden_Status = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 6)
 }
 
 func (x *ConnectResponse) SetError(v string) {
 	x.xxx_hidden_Error = &v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 2)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 6)
+}
+
+func (x *ConnectResponse) SetAuthChallenge(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_AuthChallenge = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 6)
+}
+
+func (x *ConnectResponse) SetResetRequired(v bool) {
+	x.xxx_hidden_ResetRequired = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 3, 6)
+}
+
+func (x *ConnectResponse) SetResetProof(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_ResetProof = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 4, 6)
+}
+
+func (x *ConnectResponse) SetResetSalt(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_ResetSalt = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 6)
 }
 
 func (x *ConnectResponse) HasStatus() bool {
@@ -304,6 +446,34 @@ func (x *ConnectResponse) HasError() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
 }
 
+func (x *ConnectResponse) HasAuthChallenge() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
+func (x *ConnectResponse) HasResetRequired() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 3)
+}
+
+func (x *ConnectResponse) HasResetProof() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 4)
+}
+
+func (x *ConnectResponse) HasResetSalt() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
 func (x *ConnectResponse) ClearStatus() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_Status = ConnectStatus_NEW_CLIENT
@@ -314,11 +484,39 @@ func (x *ConnectResponse) ClearError() {
 	x.xxx_hidden_Error = nil
 }
 
+func (x *ConnectResponse) ClearAuthChallenge() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_AuthChallenge = nil
+}
+
+func (x *ConnectResponse) ClearResetRequired() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 3)
+}
+
+func (x *ConnectResponse) ClearResetProof() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 4)
+	x.xxx_hidden_ResetProof = nil
+}
+
+func (x *ConnectResponse) ClearResetSalt() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+	x.xxx_hidden_ResetSalt = nil
+}
+
 type ConnectResponse_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	Status *ConnectStatus
 	Error  *string
+	// Set only for the first response to a known client. The client must answer
+	// with ConnectAuth before the server sends the final connection status.
+	AuthChallenge []byte
+	// Authenticated setup result: the following recovery must reset history.
+	ResetRequired *bool
+	ResetProof    []byte
+	// Exact salt used by the following reset recovery. It is authenticated by
+	// resetProof and must be echoed by both SequenceHeaders.
+	ResetSalt []byte
 }
 
 func (b0 ConnectResponse_builder) Build() *ConnectResponse {
@@ -326,12 +524,107 @@ func (b0 ConnectResponse_builder) Build() *ConnectResponse {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.Status != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 6)
 		x.xxx_hidden_Status = *b.Status
 	}
 	if b.Error != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 2)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 6)
 		x.xxx_hidden_Error = b.Error
+	}
+	if b.AuthChallenge != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 6)
+		x.xxx_hidden_AuthChallenge = b.AuthChallenge
+	}
+	if b.ResetRequired != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 3, 6)
+		x.xxx_hidden_ResetRequired = *b.ResetRequired
+	}
+	if b.ResetProof != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 4, 6)
+		x.xxx_hidden_ResetProof = b.ResetProof
+	}
+	if b.ResetSalt != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 6)
+		x.xxx_hidden_ResetSalt = b.ResetSalt
+	}
+	return m0
+}
+
+type ConnectAuth struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Proof       []byte                 `protobuf:"bytes,1,opt,name=proof"`
+	XXX_raceDetectHookData protoimpl.RaceDetectHookData
+	XXX_presence           [1]uint32
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ConnectAuth) Reset() {
+	*x = ConnectAuth{}
+	mi := &file_ET_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectAuth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectAuth) ProtoMessage() {}
+
+func (x *ConnectAuth) ProtoReflect() protoreflect.Message {
+	mi := &file_ET_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ConnectAuth) GetProof() []byte {
+	if x != nil {
+		return x.xxx_hidden_Proof
+	}
+	return nil
+}
+
+func (x *ConnectAuth) SetProof(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Proof = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
+}
+
+func (x *ConnectAuth) HasProof() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
+}
+
+func (x *ConnectAuth) ClearProof() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
+	x.xxx_hidden_Proof = nil
+}
+
+type ConnectAuth_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// Keyed proof over the client id, protocol version, and fresh challenge.
+	Proof []byte
+}
+
+func (b0 ConnectAuth_builder) Build() *ConnectAuth {
+	m0 := &ConnectAuth{}
+	b, x := &b0, m0
+	_, _ = b, x
+	if b.Proof != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
+		x.xxx_hidden_Proof = b.Proof
 	}
 	return m0
 }
@@ -339,6 +632,8 @@ func (b0 ConnectResponse_builder) Build() *ConnectResponse {
 type SequenceHeader struct {
 	state                     protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_SequenceNumber int32                  `protobuf:"varint,1,opt,name=sequenceNumber"`
+	xxx_hidden_Reset_         bool                   `protobuf:"varint,2,opt,name=reset"`
+	xxx_hidden_ResetSalt      []byte                 `protobuf:"bytes,3,opt,name=resetSalt"`
 	XXX_raceDetectHookData    protoimpl.RaceDetectHookData
 	XXX_presence              [1]uint32
 	unknownFields             protoimpl.UnknownFields
@@ -347,7 +642,7 @@ type SequenceHeader struct {
 
 func (x *SequenceHeader) Reset() {
 	*x = SequenceHeader{}
-	mi := &file_ET_proto_msgTypes[2]
+	mi := &file_ET_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -359,7 +654,7 @@ func (x *SequenceHeader) String() string {
 func (*SequenceHeader) ProtoMessage() {}
 
 func (x *SequenceHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_ET_proto_msgTypes[2]
+	mi := &file_ET_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -377,9 +672,36 @@ func (x *SequenceHeader) GetSequenceNumber() int32 {
 	return 0
 }
 
+func (x *SequenceHeader) GetReset() bool {
+	if x != nil {
+		return x.xxx_hidden_Reset_
+	}
+	return false
+}
+
+func (x *SequenceHeader) GetResetSalt() []byte {
+	if x != nil {
+		return x.xxx_hidden_ResetSalt
+	}
+	return nil
+}
+
 func (x *SequenceHeader) SetSequenceNumber(v int32) {
 	x.xxx_hidden_SequenceNumber = v
-	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 1)
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 0, 3)
+}
+
+func (x *SequenceHeader) SetReset(v bool) {
+	x.xxx_hidden_Reset_ = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 1, 3)
+}
+
+func (x *SequenceHeader) SetResetSalt(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_ResetSalt = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 2, 3)
 }
 
 func (x *SequenceHeader) HasSequenceNumber() bool {
@@ -389,15 +711,45 @@ func (x *SequenceHeader) HasSequenceNumber() bool {
 	return protoimpl.X.Present(&(x.XXX_presence[0]), 0)
 }
 
+func (x *SequenceHeader) HasReset() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 1)
+}
+
+func (x *SequenceHeader) HasResetSalt() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 2)
+}
+
 func (x *SequenceHeader) ClearSequenceNumber() {
 	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 0)
 	x.xxx_hidden_SequenceNumber = 0
+}
+
+func (x *SequenceHeader) ClearReset() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 1)
+	x.xxx_hidden_Reset_ = false
+}
+
+func (x *SequenceHeader) ClearResetSalt() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 2)
+	x.xxx_hidden_ResetSalt = nil
 }
 
 type SequenceHeader_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
 	SequenceNumber *int32
+	// Set when both sides' authenticated connection setup selected reset
+	// recovery. Both peers then zero their BackedReader/BackedWriter state and
+	// exchange empty catchup buffers instead of replaying history.
+	Reset *bool
+	// Must exactly match the resetSalt authenticated in ConnectResponse.
+	ResetSalt []byte
 }
 
 func (b0 SequenceHeader_builder) Build() *SequenceHeader {
@@ -405,8 +757,16 @@ func (b0 SequenceHeader_builder) Build() *SequenceHeader {
 	b, x := &b0, m0
 	_, _ = b, x
 	if b.SequenceNumber != nil {
-		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 1)
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 0, 3)
 		x.xxx_hidden_SequenceNumber = *b.SequenceNumber
+	}
+	if b.Reset != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 1, 3)
+		x.xxx_hidden_Reset_ = *b.Reset
+	}
+	if b.ResetSalt != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 2, 3)
+		x.xxx_hidden_ResetSalt = b.ResetSalt
 	}
 	return m0
 }
@@ -420,7 +780,7 @@ type CatchupBuffer struct {
 
 func (x *CatchupBuffer) Reset() {
 	*x = CatchupBuffer{}
-	mi := &file_ET_proto_msgTypes[3]
+	mi := &file_ET_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -432,7 +792,7 @@ func (x *CatchupBuffer) String() string {
 func (*CatchupBuffer) ProtoMessage() {}
 
 func (x *CatchupBuffer) ProtoReflect() protoreflect.Message {
-	mi := &file_ET_proto_msgTypes[3]
+	mi := &file_ET_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -480,7 +840,7 @@ type SocketEndpoint struct {
 
 func (x *SocketEndpoint) Reset() {
 	*x = SocketEndpoint{}
-	mi := &file_ET_proto_msgTypes[4]
+	mi := &file_ET_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +852,7 @@ func (x *SocketEndpoint) String() string {
 func (*SocketEndpoint) ProtoMessage() {}
 
 func (x *SocketEndpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_ET_proto_msgTypes[4]
+	mi := &file_ET_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,15 +940,27 @@ var File_ET_proto protoreflect.FileDescriptor
 
 const file_ET_proto_rawDesc = "" +
 	"\n" +
-	"\bET.proto\x12\x02et\"F\n" +
+	"\bET.proto\x12\x02et\"\xa4\x01\n" +
 	"\x0eConnectRequest\x12\x1a\n" +
 	"\bclientId\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x05R\aversion\"R\n" +
+	"\aversion\x18\x02 \x01(\x05R\aversion\x12'\n" +
+	"\vresetIntent\x18\x03 \x01(\b:\x05falseR\vresetIntent\x123\n" +
+	"\x11supportsChallenge\x18\x04 \x01(\b:\x05falseR\x11supportsChallenge\"\xe3\x01\n" +
 	"\x0fConnectResponse\x12)\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x11.et.ConnectStatusR\x06status\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"8\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12$\n" +
+	"\rauthChallenge\x18\x03 \x01(\fR\rauthChallenge\x12+\n" +
+	"\rresetRequired\x18\x04 \x01(\b:\x05falseR\rresetRequired\x12\x1e\n" +
+	"\n" +
+	"resetProof\x18\x05 \x01(\fR\n" +
+	"resetProof\x12\x1c\n" +
+	"\tresetSalt\x18\x06 \x01(\fR\tresetSalt\"#\n" +
+	"\vConnectAuth\x12\x14\n" +
+	"\x05proof\x18\x01 \x01(\fR\x05proof\"l\n" +
 	"\x0eSequenceHeader\x12&\n" +
-	"\x0esequenceNumber\x18\x01 \x01(\x05R\x0esequenceNumber\"'\n" +
+	"\x0esequenceNumber\x18\x01 \x01(\x05R\x0esequenceNumber\x12\x14\n" +
+	"\x05reset\x18\x02 \x01(\bR\x05reset\x12\x1c\n" +
+	"\tresetSalt\x18\x03 \x01(\fR\tresetSalt\"'\n" +
 	"\rCatchupBuffer\x12\x16\n" +
 	"\x06buffer\x18\x01 \x03(\fR\x06buffer\"8\n" +
 	"\x0eSocketEndpoint\x12\x12\n" +
@@ -597,24 +969,26 @@ const file_ET_proto_rawDesc = "" +
 	"\fEtPacketType\x12\x0e\n" +
 	"\tHEARTBEAT\x10\xfe\x01\x12\x14\n" +
 	"\x0fINITIAL_PAYLOAD\x10\xfd\x01\x12\x15\n" +
-	"\x10INITIAL_RESPONSE\x10\xfc\x01*_\n" +
+	"\x10INITIAL_RESPONSE\x10\xfc\x01*p\n" +
 	"\rConnectStatus\x12\x0e\n" +
 	"\n" +
 	"NEW_CLIENT\x10\x01\x12\x14\n" +
 	"\x10RETURNING_CLIENT\x10\x02\x12\x0f\n" +
 	"\vINVALID_KEY\x10\x03\x12\x17\n" +
-	"\x13MISMATCHED_PROTOCOL\x10\x04B\x02H\x03"
+	"\x13MISMATCHED_PROTOCOL\x10\x04\x12\x0f\n" +
+	"\vRETRY_LATER\x10\x05B\x02H\x03"
 
 var file_ET_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_ET_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_ET_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_ET_proto_goTypes = []any{
 	(EtPacketType)(0),       // 0: et.EtPacketType
 	(ConnectStatus)(0),      // 1: et.ConnectStatus
 	(*ConnectRequest)(nil),  // 2: et.ConnectRequest
 	(*ConnectResponse)(nil), // 3: et.ConnectResponse
-	(*SequenceHeader)(nil),  // 4: et.SequenceHeader
-	(*CatchupBuffer)(nil),   // 5: et.CatchupBuffer
-	(*SocketEndpoint)(nil),  // 6: et.SocketEndpoint
+	(*ConnectAuth)(nil),     // 4: et.ConnectAuth
+	(*SequenceHeader)(nil),  // 5: et.SequenceHeader
+	(*CatchupBuffer)(nil),   // 6: et.CatchupBuffer
+	(*SocketEndpoint)(nil),  // 7: et.SocketEndpoint
 }
 var file_ET_proto_depIdxs = []int32{
 	1, // 0: et.ConnectResponse.status:type_name -> et.ConnectStatus
@@ -636,7 +1010,7 @@ func file_ET_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ET_proto_rawDesc), len(file_ET_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -5,7 +5,9 @@ package protocol
 // the generators. Regenerate with `go generate ./internal/protocol` after
 // changing a .proto file or bumping protoc-gen-go. The generated headers record
 // the protoc version, so use protoc 3.21.12 (the version CI pins) or the CI
-// freshness check reports a diff. The protoc step needs a POSIX shell.
+// freshness check reports a diff. The protoc step needs a POSIX shell. The
+// committed files also carry an SPDX license line above the protoc banner;
+// restore it if regeneration drops it.
 
 //go:generate sh -c "protoc -I proto --plugin=protoc-gen-go=\"$(go tool -n protoc-gen-go)\" --go_out=. --go_opt=paths=source_relative --go_opt=default_api_level=API_OPAQUE --go_opt=MET.proto=github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol --go_opt=METerminal.proto=github.com/mslxl/natcatty/adapters/et/internal/etgo/protocol ET.proto ETerminal.proto"
 //go:generate go tool stringer -type=Header -trimprefix=Header
