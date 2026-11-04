@@ -104,6 +104,31 @@ func (s *Service) Update(change func(*domainterminal.Settings)) error {
 	return nil
 }
 
+// Replace stores a complete group and publishes it. The sync adapter overlays
+// a downloaded document on the current one first, preserving the local log
+// directory.
+func (s *Service) Replace(settings domainterminal.Settings) error {
+	next := domainterminal.Normalize(settings)
+	s.mu.Lock()
+	store := s.store
+	hook := s.onChange
+	s.mu.Unlock()
+
+	if store != nil {
+		if err := store.Save(context.Background(), next); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.settings = next
+	s.loaded = true
+	s.mu.Unlock()
+	if hook != nil {
+		hook(next)
+	}
+	return nil
+}
+
 // SetLoggingEnabled enables or disables automatic Session logging.
 func (s *Service) SetLoggingEnabled(enabled bool) error {
 	return s.Update(func(settings *domainterminal.Settings) {
