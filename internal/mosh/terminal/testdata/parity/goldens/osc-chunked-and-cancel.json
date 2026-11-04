@@ -1,0 +1,43 @@
+{
+  "name": "osc-chunked-and-cancel",
+  "width": 8,
+  "height": 3,
+  "events": [
+    {
+      "input": "G10yO3Bhcg=="
+    },
+    {
+      "input": "dGlhbAdB"
+    },
+    {
+      "input": "G10wO3gbXEI="
+    },
+    {
+      "input": "G101MjtjO2RhdGEH"
+    },
+    {
+      "input": "G101MjtjO21vcmU="
+    },
+    {
+      "input": "Bw=="
+    }
+  ],
+  "frames": [
+    "G1s/NWwbW3IbWzBtG1tIG1syShtbPzI1bBtbSwobW0sKG1tLG1sxOzFIG1s/MjVoG1swbRtbPzIwMDRsG1s/MTAwM2wbWz8xMDAybBtbPzEwMDFsG1s/MTAwMGwbWz8xMDA0bBtbPzEwMTVsG1s/MTAwNmwbWz8xMDA1bA==",
+    "",
+    "G10xOwcbXTI7cGFydGlhbAdB",
+    "G10wO3gHQg==",
+    "G101MjtjO2RhdGEH",
+    "",
+    "G101MjtjO21vcmUH"
+  ],
+  "screens": [
+    "size\t8\t3\ncursor\t0\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t0\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t1\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t1\ntitle\t7061727469616c\nicon\t\nclipboard\t\nrow\t0\t0\t0,0,0,1b5b306d,41\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t2\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t1\ntitle\t78\nicon\t78\nclipboard\t\nrow\t0\t0\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,42\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t2\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t1\ntitle\t78\nicon\t78\nclipboard\t64617461\nrow\t0\t0\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,42\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t2\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t1\ntitle\t78\nicon\t78\nclipboard\t64617461\nrow\t0\t0\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,42\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t2\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t1\ntitle\t78\nicon\t78\nclipboard\t6d6f7265\nrow\t0\t0\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,42\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n"
+  ]
+}

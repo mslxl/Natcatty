@@ -67,12 +67,38 @@ var ErrKey = errors.New("mosh: invalid key")
 // Update is the result of receiving one datagram: newly available terminal
 // output and state-machine flags.
 type Update struct {
-	// Output is the host bytes not yet delivered, in order.
+	// Output is the host bytes not yet delivered, in order. It is a
+	// convenience for consumers that only append output; a terminal state
+	// machine must use HostStates instead because mosh's prospective resend
+	// can rewind the reference state.
 	Output []byte
+	// HostStates contains every state accepted from this datagram, including
+	// out-of-order states retained for a future diff. A terminal model applies
+	// each state's Instructions to a copy of the state named by OldNum.
+	HostStates []HostState
 	// RemoteShutdown reports that the server sent the shutdown sentinel. The
 	// caller should send one more datagram carrying the acknowledgement and
 	// then end the Session as a normal exit.
 	RemoteShutdown bool
+}
+
+// HostState is one remote state accepted from a TransportInstruction. It is
+// the information a terminal model needs to mirror Transport::received_states
+// without inferring state boundaries from concatenated host bytes.
+type HostState struct {
+	// Num is the new state number.
+	Num uint64
+	// OldNum is the state this diff applies to.
+	OldNum uint64
+	// ThrowawayNum is the oldest state the sender still needs. Snapshots below
+	// it may be discarded.
+	ThrowawayNum uint64
+	// Instructions is the diff that produced this state from OldNum, in order.
+	Instructions []HostInstruction
+	// Newest reports that this state was appended at the end of the received
+	// queue. Only a newest state may be drawn; an out-of-order state is kept
+	// solely as a reference for a later diff.
+	Newest bool
 }
 
 type sentState struct {
@@ -654,6 +680,7 @@ func (c *Client) processInstructionLocked(instruction TransportInstruction, now 
 	// other entries and change indices, but never the referenced state itself
 	// (the sender always keeps old_num at or above its throwaway number).
 	instructions := c.received[referenceIndex].instructions
+	var hostState HostState
 
 	c.processThrowawayLocked(instruction.ThrowawayNum)
 
@@ -673,9 +700,15 @@ func (c *Client) processInstructionLocked(instruction TransportInstruction, now 
 		combined = append(combined, instructions...)
 		combined = append(combined, added...)
 		instructions = combined
+		hostState.Instructions = added
+	} else {
+		hostState.Instructions = nil
 	}
 
 	state := receivedState{num: instruction.NewNum, at: now, instructions: instructions}
+	hostState.Num = instruction.NewNum
+	hostState.OldNum = instruction.OldNum
+	hostState.ThrowawayNum = instruction.ThrowawayNum
 	insertAt := len(c.received)
 	for i := range c.received {
 		if c.received[i].num > state.num {
@@ -687,10 +720,11 @@ func (c *Client) processInstructionLocked(instruction TransportInstruction, now 
 		c.received = append(c.received, receivedState{})
 		copy(c.received[insertAt+1:], c.received[insertAt:])
 		c.received[insertAt] = state
-		return Update{}, true, nil
+		return Update{HostStates: []HostState{hostState}}, true, nil
 	}
 
 	c.received = append(c.received, state)
+	hostState.Newest = true
 	c.ackNum = state.num
 	if len(instruction.Diff) > 0 {
 		c.pendingAck = true
@@ -701,6 +735,7 @@ func (c *Client) processInstructionLocked(instruction TransportInstruction, now 
 	}
 
 	var update Update
+	update.HostStates = []HostState{hostState}
 	if c.delivered < len(state.instructions) {
 		var output []byte
 		for _, hostInstruction := range state.instructions[c.delivered:] {

@@ -126,38 +126,34 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		return nil, err
 	}
 
+	// The renderer owns the remote Complete snapshots from the initial state
+	// onward. The display's first frame clears the handshake banner, so the
+	// old viewport-reset escape is not needed and no raw host bytes are queued.
+	renderer := newTerminalRenderer(queue, cfg.Cols, cfg.Rows)
+
 	probeTimeout := f.ProbeTimeout
 	if probeTimeout <= 0 {
 		probeTimeout = DefaultProbeTimeout
 	}
-	// The handshake banner is already queued. Reset the viewport before the
-	// probe can surface the first server frame, so that frame survives.
-	if err := queue.push([]byte(viewportReset)); err != nil {
-		client.Close()
-		return nil, err
-	}
-	result, err := probe(ctx, client, cfg, connect, probeTimeout, queue)
+	result, err := probe(ctx, client, cfg, connect, probeTimeout, renderer)
 	if err != nil {
 		client.Close()
 		return nil, err
 	}
 
 	transport := &inProcessTransport{
-		queue:  queue,
-		client: client,
-		link:   result.link,
-		cols:   cfg.Cols,
-		rows:   cfg.Rows,
-		done:   make(chan struct{}),
+		queue:    queue,
+		client:   client,
+		link:     result.link,
+		renderer: renderer,
+		cols:     cfg.Cols,
+		rows:     cfg.Rows,
+		done:     make(chan struct{}),
 	}
-	go transport.readLoop()
+	// A sentinel consumed by the probe must still render its final frame, so
+	// the read loop owns the finish rather than Open racing it synchronously.
+	go transport.readLoop(result.remoteShutdown)
 	go transport.tickLoop()
-	if result.remoteShutdown {
-		// The shell exited before the probe finished. The sentinel was
-		// acknowledged and any final output is already queued; Read drains
-		// it and then reports EOF, and End reports a normal remote exit.
-		transport.finish(appsession.End{Reason: appsession.EndReasonExited}, nil)
-	}
 	return transport, nil
 }
 
@@ -220,7 +216,7 @@ func isClosedNetworkError(err error) bool {
 // authenticates the server; the source address of a reply is not pinned,
 // matching stock mosh-client.
 func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
-	connect moshmodel.Connect, timeout time.Duration, queue *outputQueue) (*probeResult, error) {
+	connect moshmodel.Connect, timeout time.Duration, renderer *terminalRenderer) (*probeResult, error) {
 
 	hosts := make([]string, 0, 2)
 	if connect.Host != "" {
@@ -277,7 +273,7 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 			continue
 		}
 
-		connected, err := awaitResponse(ctx, client, link, timeout, queue, candidate.host)
+		connected, err := awaitResponse(ctx, client, link, timeout, renderer, candidate.host)
 		if connected != nil {
 			return connected, nil
 		}
@@ -315,7 +311,7 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 // finished. A non-nil error is either terminal (protocol/cancellation) or a
 // candidate timeout.
 func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
-	timeout time.Duration, queue *outputQueue, host string) (*probeResult, error) {
+	timeout time.Duration, renderer *terminalRenderer, host string) (*probeResult, error) {
 
 	lastRetransmit := time.Now()
 
@@ -366,10 +362,8 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		if !authenticated {
 			continue
 		}
-		if len(update.Output) > 0 {
-			if err := queue.push(update.Output); err != nil {
-				return nil, err
-			}
+		if err := renderer.applyUpdate(update); err != nil {
+			return nil, fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err)
 		}
 		if update.RemoteShutdown {
 			// Acknowledge immediately; the probe caller will classify this
@@ -390,9 +384,10 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 // terminal input, Resize reaches mosh-server, and Close performs the mosh
 // shutdown handshake.
 type inProcessTransport struct {
-	queue  *outputQueue
-	client *moshcore.Client
-	link   *udpLink
+	queue    *outputQueue
+	client   *moshcore.Client
+	link     *udpLink
+	renderer *terminalRenderer
 
 	// sendMu serializes SSP state changes with their UDP datagrams, so
 	// fragments of different instructions never interleave.
@@ -413,21 +408,31 @@ type inProcessTransport struct {
 func (t *inProcessTransport) Read(p []byte) (int, error) { return t.queue.Read(p) }
 
 func (t *inProcessTransport) Write(p []byte) (int, error) {
+	forwarded := t.renderer.translateInput(p)
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
 	if t.isClosing() {
 		return 0, io.ErrClosedPipe
 	}
-	if err := t.client.Input(p); err != nil {
-		return 0, err
-	}
-	// A transient send failure is not a write failure: the client retains the
-	// state and retransmits it, exactly as stock mosh ignores sendto() errors
-	// and keeps the input in its SSP state.
-	if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
-		return 0, err
+	if len(forwarded) > 0 {
+		if err := t.client.Input(forwarded); err != nil {
+			return 0, err
+		}
+		// A transient send failure is not a write failure: the client retains
+		// the state and retransmits it, exactly as stock mosh ignores sendto()
+		// errors and keeps the input in its SSP state.
+		if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
+			return 0, err
+		}
 	}
 	return len(p), nil
+}
+
+// SetScreenSizeHandler installs the inverse resize signal the Session uses to
+// resize MyGo before display bytes encoded for the new size arrive. Position
+// is the display-stream offset of the resize.
+func (t *inProcessTransport) SetScreenSizeHandler(handler func(cols, rows int, position uint64)) {
+	t.renderer.setScreenSizeHandler(handler)
 }
 
 func (t *inProcessTransport) Resize(cols, rows int) error {
@@ -476,7 +481,32 @@ func (t *inProcessTransport) flush(now time.Time) error {
 	return t.writeDatagrams(t.client.SendDatagrams(now))
 }
 
-func (t *inProcessTransport) readLoop() {
+func (t *inProcessTransport) readLoop(probeShutdown bool) {
+	// Emit once the transport is live. A remote resize waits here until the
+	// Session registers its inverse resize signal, so display bytes encoded
+	// for the new size can never overtake the resize.
+	if err := t.renderer.emitInitial(); err != nil {
+		t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+		return
+	}
+	// Render the state the probe already accepted, if any. This includes the
+	// final frame of a shutdown sentinel consumed during the probe, which must
+	// reach the queue before finish closes it.
+	if err := t.renderer.emitLatest(); err != nil {
+		t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+		return
+	}
+	if probeShutdown {
+		// The probe acknowledged the sentinel and captured its final state. A
+		// user-initiated Close keeps its classification when the two race.
+		if t.isClosing() {
+			t.finish(appsession.End{Reason: appsession.EndReasonClosed}, nil)
+		} else {
+			t.finish(appsession.End{Reason: appsession.EndReasonExited}, nil)
+		}
+		return
+	}
+
 	buffer := make([]byte, receiveBuffer)
 	failures := 0
 	for {
@@ -514,11 +544,14 @@ func (t *inProcessTransport) readLoop() {
 		if !authenticated {
 			continue
 		}
-		if len(update.Output) > 0 {
-			if err := t.queue.push(update.Output); err != nil {
-				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
-				return
-			}
+		if err := t.renderer.applyUpdate(update); err != nil {
+			t.finish(appsession.End{Reason: appsession.EndReasonError},
+				fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err))
+			return
+		}
+		if err := t.renderer.emitLatest(); err != nil {
+			t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+			return
 		}
 		if err := t.flush(time.Now()); err != nil {
 			if t.isClosing() {
@@ -620,6 +653,7 @@ func (t *inProcessTransport) finish(end appsession.End, cause error) {
 		t.hasEnd = true
 		t.end = end
 		t.mu.Unlock()
+		t.renderer.close()
 		t.queue.close(cause)
 		close(t.done)
 	})

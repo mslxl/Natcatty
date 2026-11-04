@@ -1,6 +1,23 @@
 Third-party notice for internal/mosh
 ====================================
 
+The terminal/ package is a Go port of the client-side terminal model in stock
+mosh 1.4.0: src/terminal (parser, emulator, framebuffer, dispatcher, display,
+and user input), src/statesync/completeterminal.cc, and
+src/frontend/terminaloverlay.cc. The parity driver and committed goldens under
+terminal/testdata/parity are built from or produced by that stock code.
+
+  Source: https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz
+  SHA-256: 872e4b134e5df29c8933dff12350785054d2fd2839b5ae6b5587b14db1465ddd
+  Copyright (C) 2012 Keith Winstein and mosh contributors
+  License: GNU General Public License, version 3 or later
+
+This port is distributed as part of the same GPL-3.0-or-later work. The Docker
+parity harness downloads and builds the stock source at image-build time; no
+stock mosh source or binary is committed to this repository. The harness
+provenance and source hash are recorded in
+terminal/testdata/parity/harness/README.md.
+
 The OCB3 implementation in ocb.go is adapted from mosh-go:
 
   Repository: https://github.com/unixshells/mosh-go

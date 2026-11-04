@@ -331,11 +331,17 @@ func New(session *appsession.Session, optionList ...Option) (*Surface, error) {
 // currently allows. Reading the policy per request is what makes a Settings
 // change affect live Sessions.
 func (s *Surface) attach(conn io.ReadWriteCloser) error {
+	// A mosh Session's peer owns the screen size. ResizeByConn makes the view
+	// report the size it fits through Conn without resizing MyGo's screen;
+	// the Session then applies the server's authoritative size through
+	// SetScreenSizeSink before feeding the bytes encoded for it.
+	remoteScreen := s.session.ScreenSizeFromRemote()
 	options := terminal.Options{
 		Conn:             conn,
 		Font:             s.terminalFont(),
 		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
+		ResizeByConn:     remoteScreen,
 		NoClipboardWrite: false,
 		ClipboardRead:    terminal.ClipboardAsk,
 		OnClipboardRequest: func(request terminal.ClipboardRequest) {
@@ -364,6 +370,11 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	term, err := terminal.New(options)
 	if err != nil {
 		return err
+	}
+	if remoteScreen {
+		if sink, ok := conn.(interface{ SetScreenSizeSink(func(cols, rows int)) }); ok {
+			sink.SetScreenSizeSink(term.Resize)
+		}
 	}
 	s.terminal = term
 	return nil

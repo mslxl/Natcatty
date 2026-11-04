@@ -1,0 +1,2 @@
+#define HAVE_MEMORY 1
+#define HAVE_STD_SHARED_PTR 1
