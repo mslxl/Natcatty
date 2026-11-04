@@ -25,17 +25,32 @@ const (
 	// ShutdownNum is the sentinel state number mosh uses to shut down.
 	ShutdownNum = math.MaxUint64
 
-	// Datagram layout: 8-byte nonce/direction, 16-byte OCB tag, 4-byte
-	// timestamps, 10-byte fragment header, and at most 1180 bytes of
-	// compressed instruction. The total stays below an IPv6 minimum MTU.
-	maxFragmentPayload = 1180
+	// Datagram layout: 8-byte sequence/direction, 16-byte OCB tag, 4-byte
+	// timestamps, 10-byte fragment header, and at most 1178 bytes of
+	// compressed instruction. Stock mosh budgets 1216 bytes of UDP payload
+	// for IPv6 (the 1280-byte minimum MTU minus 64 bytes of headers), so
+	// 8+16+4+10+1178 = 1216 exactly. The tracer's old 1180 exceeded that
+	// budget by two bytes and could be fragmented by IPv6 routers.
+	maxFragmentPayload = 1178
 	minDatagramSize    = 8 + 16 + 4 + fragmentHeaderSize
 	receiveBufferSize  = 2048
 
+	// ACK_DELAY and ACK_INTERVAL match stock mosh's transportsender.h. Data
+	// acks are held briefly so a response can piggyback, and an idle peer is
+	// probed with an empty ack every three seconds.
 	ackDelay    = 100 * time.Millisecond
 	ackInterval = 3000 * time.Millisecond
-	minRTO      = 50 * time.Millisecond
-	maxRTO      = 1000 * time.Millisecond
+	// SEND_INTERVAL_MIN and SEND_INTERVAL_MAX bound stock's frame pacing.
+	// They drive shutdown retransmission, where mosh trades reliability for
+	// a prompt exit rather than waiting for the RTO.
+	sendIntervalMin = 20 * time.Millisecond
+	sendIntervalMax = 250 * time.Millisecond
+	minRTO          = 50 * time.Millisecond
+	maxRTO          = 1000 * time.Millisecond
+	// shutdownRetries and shutdownWindow bound the local shutdown handshake,
+	// matching stock's SHUTDOWN_RETRIES and ACTIVE_RETRY_TIMEOUT.
+	shutdownRetries = 16
+	shutdownWindow  = 10 * time.Second
 )
 
 // ErrProtocol reports an authenticated peer that violated the protocol. It is
@@ -93,6 +108,9 @@ type Client struct {
 	ackNum      uint64
 	lastAckSent uint64
 	pendingAck  bool
+	// ackDue is when a delayed data ack becomes due. It is only meaningful
+	// while pendingAck is set; the shutdown sentinel bypasses the delay.
+	ackDue time.Time
 	// delivered counts HostInstructions already forwarded to the terminal from
 	// the newest delivered state. This tracer-bullet model assumes host states
 	// extend the previously delivered one; mosh's prospective resend can rewind
@@ -226,7 +244,10 @@ func (c *Client) SendDatagrams(now time.Time) [][]byte {
 		if c.remoteShutdown && c.remoteShutdownAckSent {
 			return nil
 		}
-		if c.sentinelSent && now.Sub(c.lastSend) < c.rto {
+		// Stock retransmits the sentinel at its frame rate rather than the
+		// RTO, so a user close has several chances inside the adapter's one
+		// second shutdown window.
+		if c.sentinelSent && now.Sub(c.lastSend) < c.sendIntervalLocked() {
 			return nil
 		}
 		return c.sendShutdownLocked(now)
@@ -236,10 +257,15 @@ func (c *Client) SendDatagrams(now time.Time) [][]byte {
 	if haveNew {
 		return c.sendStateLocked(now, false)
 	}
-	if c.pendingAck || c.ackNum != c.lastAckSent {
-		return c.sendStateLocked(now, true)
-	}
-	if now.Sub(c.lastSend) >= ackInterval {
+	if c.ackDueLocked(now) || now.Sub(c.lastSend) >= ackInterval {
+		// Stock sends the diff from the state it assumes the peer has. When
+		// that assumption has fallen behind the newest sent state (no ack
+		// within the RTO window), an empty ack would reference a state the
+		// peer may never have received and its acknowledgement would be
+		// dropped. Resend the real diff instead so the ack gets through.
+		if c.assumedReceiverIndexLocked(now) != len(c.sent)-1 {
+			return c.sendStateLocked(now, false)
+		}
 		return c.sendStateLocked(now, true)
 	}
 	newest := c.sent[len(c.sent)-1]
@@ -247,6 +273,58 @@ func (c *Client) SendDatagrams(now time.Time) [][]byte {
 		return c.sendRetransmitLocked(now)
 	}
 	return nil
+}
+
+// ackDueLocked reports whether the peer is waiting for an acknowledgement.
+// Stock delays a data ack by ACK_DELAY so the next outgoing diff can carry
+// it, but acknowledges the shutdown sentinel immediately and bypasses the
+// delay when the ack itself is a shutdown.
+func (c *Client) ackDueLocked(now time.Time) bool {
+	if c.ackNum == c.lastAckSent {
+		return false
+	}
+	if c.ackNum == ShutdownNum {
+		return true
+	}
+	if !c.pendingAck {
+		return false
+	}
+	return !c.ackDue.IsZero() && !now.Before(c.ackDue)
+}
+
+// sendIntervalLocked is stock's clamp(SRTT/2, SEND_INTERVAL_MIN,
+// SEND_INTERVAL_MAX).
+func (c *Client) sendIntervalLocked() time.Duration {
+	interval := c.srtt / 2
+	if interval < sendIntervalMin {
+		interval = sendIntervalMin
+	}
+	if interval > sendIntervalMax {
+		interval = sendIntervalMax
+	}
+	return interval
+}
+
+// Retransmit sends the newest unacknowledged state immediately, without
+// waiting for the RTO. The connection probe uses it when it moves to a
+// fallback address, where the shared client may have sent moments before and
+// an ordinary SendDatagrams call would return nothing.
+func (c *Client) Retransmit(now time.Time) [][]byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.err != nil {
+		return nil
+	}
+	if c.shutdown {
+		return c.sendShutdownLocked(now)
+	}
+	if len(c.sent) > 1 {
+		return c.sendRetransmitLocked(now)
+	}
+	if !userInstructionsEqual(c.current, c.sent[0].instructions) {
+		return c.sendStateLocked(now, false)
+	}
+	return c.sendStateLocked(now, true)
 }
 
 // BeginShutdown starts the mosh shutdown handshake and returns the first
@@ -314,7 +392,7 @@ func (c *Client) ShutdownTimedOut(now time.Time) bool {
 
 func (c *Client) shutdownTimedOutLocked(now time.Time) bool {
 	return c.shutdown && !c.shutdownAcked &&
-		(c.shutdownTries >= 16 || now.Sub(c.shutdownStarted) >= 10*time.Second)
+		(c.shutdownTries >= shutdownRetries || now.Sub(c.shutdownStarted) >= shutdownWindow)
 }
 
 // Err returns the fatal protocol error, if any.
@@ -324,12 +402,27 @@ func (c *Client) Err() error {
 	return c.err
 }
 
-// sendStateLocked builds one instruction. When emptyAck is true the state
-// number advances with the current contents, matching mosh's empty ack; when
-// false a genuinely new state is sent.
+// sendStateLocked builds one instruction. When emptyAck is true the caller
+// has no new user instructions; the state number advances with the current
+// contents and the wire diff is empty, matching mosh's send_empty_ack. The
+// empty diff is essential: rebuilding a diff from an older base under a new
+// state number would replay user input the peer may already have applied when
+// an acknowledgement was lost. When emptyAck is false a genuinely new state
+// is sent as a diff from the assumed receiver state.
 func (c *Client) sendStateLocked(now time.Time, emptyAck bool) [][]byte {
 	newest := c.sent[len(c.sent)-1]
 	target := c.current
+
+	if emptyAck {
+		newNum := newest.num + 1
+		c.sent = append(c.sent, sentStateSnapshot{
+			sentState:    sentState{num: newNum, at: now, inflight: true},
+			instructions: cloneUserInstructions(target),
+		})
+		c.trimSentLocked()
+		return c.finishSendLocked(now, newest.num, newNum, nil, false)
+	}
+
 	newNum := newest.num + 1
 
 	// The assumed receiver state must be chosen before the new state joins
@@ -374,6 +467,7 @@ func (c *Client) finishSendLocked(now time.Time, oldNum, newNum uint64, diff []b
 	c.lastSend = now
 	c.lastAckSent = c.ackNum
 	c.pendingAck = false
+	c.ackDue = time.Time{}
 	if shutdown {
 		c.shutdownTries++
 	}
@@ -409,8 +503,10 @@ func (c *Client) trimSentLocked() {
 // Receive processes one wire datagram. authenticated reports a well-formed,
 // authenticated mosh datagram, even when it carried no new state (a fragment
 // of a larger instruction is still proof of life). A nil error with
-// authenticated=false means the datagram was dropped as a replay, a packet for
-// the other direction, or a failed authentication check.
+// authenticated=false means the datagram was empty, belonged to the other
+// direction, or failed authentication. Reordered and duplicate datagrams are
+// still fed to fragment reassembly and the SSP, which ignores state numbers it
+// has already seen.
 func (c *Client) Receive(wire []byte, now time.Time) (update Update, authenticated bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -429,9 +525,12 @@ func (c *Client) Receive(wire []byte, now time.Time) (update Update, authenticat
 		return Update{}, false, nil
 	}
 	sequence := directionSequence & sequenceMask
-	if c.seqInSet && sequence <= c.seqInMax {
-		return Update{}, false, nil
-	}
+	// Stock mosh still feeds reordered and duplicate datagrams to fragment
+	// reassembly and SSP; only timestamps, RTT estimation, and roaming are
+	// gated on sequence freshness. Dropping older datagrams outright, as the
+	// tracer did, loses fragments whenever UDP reorders an instruction and
+	// forces an otherwise unnecessary retransmission.
+	newest := !c.seqInSet || sequence > c.seqInMax
 
 	var nonce [12]byte
 	binary.BigEndian.PutUint64(nonce[4:], directionSequence)
@@ -439,14 +538,18 @@ func (c *Client) Receive(wire []byte, now time.Time) (update Update, authenticat
 	if !ok {
 		return Update{}, false, nil
 	}
-	c.seqInMax = sequence
-	c.seqInSet = true
-	c.lastReceive = now
+	if newest {
+		c.seqInMax = sequence
+		c.seqInSet = true
+		c.lastReceive = now
+	}
 
 	if len(plaintext) < 4+fragmentHeaderSize {
 		return c.protocolFailureLocked(fmt.Errorf("%w: datagram too short for timestamps and fragment", ErrProtocol))
 	}
-	c.processTimestampsLocked(plaintext[:4], now)
+	if newest {
+		c.processTimestampsLocked(plaintext[:4], now)
+	}
 
 	frag, err := unmarshalFragment(plaintext[4:])
 	if err != nil {
@@ -591,6 +694,10 @@ func (c *Client) processInstructionLocked(instruction TransportInstruction, now 
 	c.ackNum = state.num
 	if len(instruction.Diff) > 0 {
 		c.pendingAck = true
+		due := now.Add(ackDelay)
+		if c.ackDue.IsZero() || due.Before(c.ackDue) {
+			c.ackDue = due
+		}
 	}
 
 	var update Update
