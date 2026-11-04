@@ -747,6 +747,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 	s.pending = append(s.pending, label)
 
 	plan := hostSessionTransport(host)
+	resumeKey := plan.resumeKey()
 	// X11 forwarding requires both the Host preference and an explicit
 	// security acknowledgement, and exists only on SSH.
 	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
@@ -765,6 +766,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 			Telnet:         plan.telnet,
 			Mosh:           plan.mosh,
 			ET:             plan.et,
+			ResumeKey:      resumeKey,
 			Reconnect:      plan.reconnect,
 		})
 		s.mu.Lock()
@@ -780,6 +782,7 @@ func (s *State) OpenHostWithStartup(host domainvault.Host, startup StartupInput)
 				Username:       host.Username,
 				X11Forwarding:  x11,
 				AutoAttachTmux: plan.tmux,
+				ResumeKey:      resumeKey,
 			},
 			startup: startup,
 			err:     err,
@@ -811,6 +814,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 		ctx = context.Background()
 	}
 	plan := hostSessionTransport(host)
+	resumeKey := plan.resumeKey()
 	x11 := plan.kind == appsession.KindSSH && host.X11Enabled()
 	session, err := s.sessions.Open(ctx, appsession.StartSpec{
 		Kind:           plan.kind,
@@ -825,6 +829,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 		Telnet:         plan.telnet,
 		Mosh:           plan.mosh,
 		ET:             plan.et,
+		ResumeKey:      resumeKey,
 		Reconnect:      plan.reconnect,
 	})
 	if err != nil {
@@ -849,6 +854,7 @@ func (s *State) OpenHostForMCP(ctx context.Context, host domainvault.Host) (mode
 			Username:       host.Username,
 			X11Forwarding:  x11,
 			AutoAttachTmux: plan.tmux,
+			ResumeKey:      resumeKey,
 		},
 	})
 	s.mu.Unlock()
@@ -868,6 +874,16 @@ type hostTransportPlan struct {
 	// tmux carries the Host's opt-in auto-attach setting. Only a plain SSH
 	// Session may use it; Mosh and ET keep their own persistence.
 	tmux bool
+}
+
+// resumeKey returns a fresh opaque locator for an ET Session's saved
+// credentials, or "" for a transport without resume state. The same value goes
+// into the StartSpec and the persisted descriptor.
+func (p hostTransportPlan) resumeKey() string {
+	if p.kind == appsession.KindET {
+		return newETResumeKey()
+	}
+	return ""
 }
 
 // hostSessionTransport maps a saved Host's protocol onto the Session

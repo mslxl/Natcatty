@@ -21,31 +21,39 @@ import (
 // between the ET session service and the Session.
 type inProcessTransport struct {
 	conn     *etcp.Conn
-	lease    ConnectionLease
+	lease    *leaseDialer
 	terminal *localTerminal
 	notices  chan appsession.Notice
 	logger   *slog.Logger
 	cancel   context.CancelFunc
+	// forget clears the credential pair from the secret store on an explicit
+	// close. Nil means the Session was not persisted.
+	forget func()
 
-	mu     sync.Mutex
-	closed bool
-	hasEnd bool
-	end    appsession.End
+	mu             sync.Mutex
+	closed         bool
+	preserveResume bool
+	hasEnd         bool
+	end            appsession.End
 
 	done       chan struct{}
 	finishOnce sync.Once
 	closeOnce  sync.Once
+	forgetOnce sync.Once
 }
 
 var (
-	_ appsession.Transport   = (*inProcessTransport)(nil)
-	_ appsession.ExitWaiter  = (*inProcessTransport)(nil)
-	_ appsession.EndReporter = (*inProcessTransport)(nil)
-	_ appsession.Notifier    = (*inProcessTransport)(nil)
+	_ appsession.Transport       = (*inProcessTransport)(nil)
+	_ appsession.ExitWaiter      = (*inProcessTransport)(nil)
+	_ appsession.EndReporter     = (*inProcessTransport)(nil)
+	_ appsession.Notifier        = (*inProcessTransport)(nil)
+	_ appsession.ResumePreserver = (*inProcessTransport)(nil)
+	_ appsession.ResumeDiscarder = (*inProcessTransport)(nil)
 )
 
-func newInProcessTransport(conn *etcp.Conn, lease ConnectionLease, terminal *localTerminal,
-	notices chan appsession.Notice, cancel context.CancelFunc, logger *slog.Logger) *inProcessTransport {
+func newInProcessTransport(conn *etcp.Conn, lease *leaseDialer, terminal *localTerminal,
+	notices chan appsession.Notice, cancel context.CancelFunc, logger *slog.Logger,
+	forget func()) *inProcessTransport {
 	return &inProcessTransport{
 		conn:     conn,
 		lease:    lease,
@@ -53,8 +61,28 @@ func newInProcessTransport(conn *etcp.Conn, lease ConnectionLease, terminal *loc
 		notices:  notices,
 		logger:   logger,
 		cancel:   cancel,
+		forget:   forget,
 		done:     make(chan struct{}),
 	}
+}
+
+// PreserveResume keeps the saved credential pair when this transport closes,
+// so a reconnect or the next app run can reattach the remote session.
+func (t *inProcessTransport) PreserveResume() {
+	t.mu.Lock()
+	t.preserveResume = true
+	t.mu.Unlock()
+}
+
+// DiscardResume clears the saved credential pair even after PreserveResume and
+// Close. It is idempotent: an explicit Session close may call it on a transport
+// a reconnect handover already closed.
+func (t *inProcessTransport) DiscardResume() {
+	t.forgetOnce.Do(func() {
+		if t.forget != nil {
+			t.forget()
+		}
+	})
 }
 
 // Notices reports a takeover by another client. The channel closes with the
@@ -75,18 +103,6 @@ func (t *inProcessTransport) run(ctx context.Context) {
 		end = appsession.End{Reason: appsession.EndReasonClosed}
 	}
 	t.finish(end)
-}
-
-// watchLease ends the ET connection when the SSH transport disappears. A
-// reconnect would have no forwarding path, so waiting for an error is better
-// than blocking until the Session's idle timeout.
-func (t *inProcessTransport) watchLease(ctx context.Context) {
-	select {
-	case <-t.lease.Done():
-		_ = t.conn.Close()
-	case <-t.done:
-	case <-ctx.Done():
-	}
 }
 
 // Read returns remote terminal output. The ET session service closes the
@@ -141,10 +157,16 @@ func (t *inProcessTransport) Close() error {
 	t.closeOnce.Do(func() {
 		t.mu.Lock()
 		t.closed = true
+		preserve := t.preserveResume
 		t.mu.Unlock()
 		t.cancel()
 		_ = t.conn.Close()
 		_ = t.terminal.Close()
+		// An explicit close ends the remote ET session's claim on these
+		// credentials. A reconnect handover or app shutdown preserves them.
+		if !preserve {
+			t.DiscardResume()
+		}
 	})
 	<-t.done
 	return nil
@@ -158,11 +180,7 @@ func (t *inProcessTransport) finish(end appsession.End) {
 			t.end = end
 		}
 		t.mu.Unlock()
-		if end.Reason == appsession.EndReasonError {
-			_ = t.lease.Discard()
-		} else {
-			_ = t.lease.Release()
-		}
+		t.lease.Close(end.Reason == appsession.EndReasonError)
 		close(t.notices)
 		close(t.done)
 	})

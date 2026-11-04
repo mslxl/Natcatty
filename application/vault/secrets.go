@@ -35,11 +35,17 @@ const (
 	EntitySSHKey       = "ssh_key"
 	EntityIdentity     = "identity"
 	EntityProxyProfile = "proxy_profile"
+	// EntityETSession stores one resumable EternalTerminal client session.
+	// Its EntityID is the opaque resume key from the non-secret workspace
+	// descriptor, never the ET session id.
+	EntityETSession = "et_session"
 
 	FieldPassword      = "password"
 	FieldPassphrase    = "passphrase"
 	FieldPrivateKey    = "private_key"
 	FieldProxyPassword = "proxy_password"
+	FieldETSessionID   = "session_id"
+	FieldETSessionKey  = "session_passkey"
 )
 
 // EncryptedPlaceholder prefixes a portable credential value meaning
@@ -75,6 +81,13 @@ func IdentitySecretRef(id model.IdentityID, field string) SecretRef {
 // secret store like every other credential.
 func ProxyProfileSecretRef(id string, field string) SecretRef {
 	return SecretRef{EntityType: EntityProxyProfile, EntityID: id, Field: field}
+}
+
+// ETSessionSecretRef names one half of a saved EternalTerminal session. The
+// resume key locates it across an app restart; the resume key itself is not a
+// credential and may be stored in the workspace descriptor.
+func ETSessionSecretRef(resumeKey, field string) SecretRef {
+	return SecretRef{EntityType: EntityETSession, EntityID: resumeKey, Field: field}
 }
 
 // FieldSecrets is the field-secret port the Vault consumes. The adapter owns

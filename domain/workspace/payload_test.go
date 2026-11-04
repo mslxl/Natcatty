@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -218,6 +219,33 @@ func TestTelnetDescriptorRequiresTheSavedHostAndAddress(t *testing.T) {
 		if invalid.Valid() {
 			t.Fatalf("descriptor %+v is valid, want invalid", invalid)
 		}
+	}
+}
+
+// TestETDescriptorRoundTripsOnlyTheResumeLocator: the persisted descriptor
+// stores an opaque locator for the secret-store entry, never the ET session id
+// or passkey themselves.
+func TestETDescriptorRoundTripsOnlyTheResumeLocator(t *testing.T) {
+	descriptor := SessionDescriptor{
+		Kind: SessionET, HostID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "alice", ResumeKey: "et-resume-0123456789abcdef0123456789abcdef",
+	}
+	if !descriptor.Valid() {
+		t.Fatal("a complete ET descriptor is invalid")
+	}
+	data, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded SessionDescriptor
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, descriptor) {
+		t.Fatalf("ET descriptor round trip = %+v, want %+v", decoded, descriptor)
+	}
+	if !bytes.Contains(data, []byte(`"resumeKey":"et-resume-`)) {
+		t.Fatalf("ET descriptor JSON = %s, want the resume locator", data)
 	}
 }
 

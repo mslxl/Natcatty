@@ -18,9 +18,38 @@ type scriptedTransport struct {
 	once   sync.Once
 	end    End
 
-	mu      sync.Mutex
-	written bytes.Buffer
-	resizes [][2]int
+	mu            sync.Mutex
+	written       bytes.Buffer
+	resizes       [][2]int
+	preserveCalls int
+	discardCalls  int
+}
+
+// PreserveResume records the handover decision; the transport itself has no
+// secret store.
+func (t *scriptedTransport) PreserveResume() {
+	t.mu.Lock()
+	t.preserveCalls++
+	t.mu.Unlock()
+}
+
+// DiscardResume records the explicit-close cleanup.
+func (t *scriptedTransport) DiscardResume() {
+	t.mu.Lock()
+	t.discardCalls++
+	t.mu.Unlock()
+}
+
+func (t *scriptedTransport) preserves() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.preserveCalls
+}
+
+func (t *scriptedTransport) discards() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.discardCalls
 }
 
 func newScriptedTransport() *scriptedTransport {
@@ -235,12 +264,76 @@ func TestSessionReconnectsAfterATransportError(t *testing.T) {
 		t.Fatalf("status = %q during reconnect, want running", snapshot.Status)
 	}
 
+	// The abandoned transport's resume credentials must survive the handover,
+	// or the replacement Open could not reattach a remote ET session.
+	if got := first.preserves(); got != 1 {
+		t.Fatalf("abandoned transport PreserveResume calls = %d, want 1", got)
+	}
+	if got := second.preserves(); got != 0 {
+		t.Fatalf("replacement transport was preserved before close: %d calls", got)
+	}
+
 	if _, err := session.TerminalConn().Write([]byte("ls\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	waitForCondition(t, "input on the replacement transport", func() bool {
 		return second.input() == "ls\n"
 	})
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	waitForCondition(t, "the explicitly closed Session", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if got := second.preserves(); got != 0 {
+		t.Fatalf("an explicit close preserved the replacement transport %d times", got)
+	}
+	if got := second.discards(); got != 1 {
+		t.Fatalf("an explicit close discarded the replacement credentials %d times, want 1", got)
+	}
+}
+
+// TestUserCloseDuringReconnectDelayClearsSavedCredentials covers the window
+// between preserving the old transport for a handover and the replacement
+// Open: the old transport is already closed, but a user close must still clear
+// the saved ET credentials.
+func TestUserCloseDuringReconnectDelayClearsSavedCredentials(t *testing.T) {
+	first := newScriptedTransport()
+	factory := &scriptedFactory{transports: []*scriptedTransport{first}}
+	service := reconnectTestService(factory)
+
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindET, ResumeKey: "resume-test",
+		Reconnect: &ReconnectPolicy{Delay: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	first.fail(End{Reason: EndReasonError})
+	waitForCondition(t, "the preserved reconnect handover", func() bool {
+		return first.preserves() == 1 &&
+			session.Snapshot().Connection == ConnectionStatusReconnecting
+	})
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	waitForCondition(t, "the closed Session", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if got := first.discards(); got != 1 {
+		t.Fatalf("an explicit close during the reconnect delay discarded credentials %d times, want 1", got)
+	}
 }
 
 func TestSessionDoesNotReconnectAfterACleanExit(t *testing.T) {
@@ -302,6 +395,34 @@ func TestSessionDoesNotReconnectAfterUserClose(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if calls := factory.callCount(); calls != 1 {
 		t.Fatalf("factory calls = %d after a user close, want 1", calls)
+	}
+	if got := first.preserves(); got != 0 {
+		t.Fatalf("a user close preserved the transport %d times", got)
+	}
+}
+
+// TestCloseAllPreservesResumableTransports: app shutdown is not a user close.
+// The saved ET credentials must survive so the next process can reattach.
+func TestCloseAllPreservesResumableTransports(t *testing.T) {
+	first := newScriptedTransport()
+	factory := &scriptedFactory{transports: []*scriptedTransport{first}}
+	service := reconnectTestService(factory)
+
+	session, err := service.Open(context.Background(), StartSpec{Kind: KindET})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	service.CloseAll()
+	waitForCondition(t, "the app-shutdown close", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if got := first.preserves(); got != 1 {
+		t.Fatalf("CloseAll PreserveResume calls = %d, want 1", got)
 	}
 }
 

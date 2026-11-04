@@ -294,6 +294,37 @@ type ExitWaiter interface {
 	Wait() (int, error)
 }
 
+// ResumePreserver is implemented by transports that can keep their resume
+// credentials in the secret store past Close. Close clears them by default; the
+// Session service preserves them when it abandons a transport for a reconnect
+// and when the whole app shuts down.
+type ResumePreserver interface {
+	PreserveResume()
+}
+
+// preserveTransportResume keeps a resumable transport's credentials for a
+// later reattach. Transports without resume state ignore it.
+func preserveTransportResume(transport Transport) {
+	if preserver, ok := transport.(ResumePreserver); ok {
+		preserver.PreserveResume()
+	}
+}
+
+// ResumeDiscarder is implemented by resumable transports that must clear the
+// credentials after an earlier PreserveResume. An explicit Session close uses
+// it when the transport was already closed for a reconnect handover.
+type ResumeDiscarder interface {
+	DiscardResume()
+}
+
+// discardTransportResume clears a resumable transport's credentials even if
+// PreserveResume was called before. Transports without resume state ignore it.
+func discardTransportResume(transport Transport) {
+	if discarder, ok := transport.(ResumeDiscarder); ok {
+		discarder.DiscardResume()
+	}
+}
+
 // StartSpec describes a Session to open. Command empty asks the transport
 // adapter for its platform's default shell. SSH Sessions use HostID to read
 // the saved credential and Hostname, Port, and Username to reach the endpoint;
@@ -346,6 +377,10 @@ type StartSpec struct {
 	// ET carries an EternalTerminal Session's endpoint and credentials. It is
 	// required when Kind is KindET and ignored by every other transport.
 	ET *etmodel.Config
+	// ResumeKey locates a saved ET session in the secret store so a new
+	// process can reattach it. It is an opaque, non-secret identifier; the
+	// session id and passkey live only in the store. Empty disables reattach.
+	ResumeKey string
 	// Reconnect reopens the transport after a retryable end. A nil policy
 	// disables reconnection, which is the rule for local shells.
 	Reconnect *ReconnectPolicy
@@ -482,6 +517,9 @@ type command struct {
 	transport  Transport
 	end        End
 	err        error
+	// preserve keeps resumable transport credentials when this close is an
+	// app shutdown rather than the user ending the Session.
+	preserve bool
 }
 
 // permanentFailure is implemented by typed open failures that must not be
@@ -981,7 +1019,9 @@ func (s *Service) Close(id model.SessionID) (bool, error) {
 	return true, session.Close()
 }
 
-// CloseAll closes every live Session and stops accepting new ones.
+// CloseAll closes every live Session and stops accepting new ones. It is the
+// app-shutdown path, so resumable transports keep their credentials for the
+// next run; a user closing one Session clears them.
 func (s *Service) CloseAll() {
 	s.mu.Lock()
 	s.closing = true
@@ -992,7 +1032,7 @@ func (s *Service) CloseAll() {
 	s.mu.Unlock()
 
 	for _, session := range sessions {
-		_ = session.Close()
+		_ = session.close(true)
 	}
 }
 
@@ -1090,11 +1130,21 @@ func (s *Session) ReconnectNow() bool {
 }
 
 // Close ends the Session. It is idempotent and returns once the command is
-// queued; Done reports when teardown finished.
-func (s *Session) Close() error {
+// queued; Done reports when teardown finished. An explicit close clears any
+// credentials a resumable transport saved.
+func (s *Session) Close() error { return s.close(false) }
+
+// ClosePreservingResume ends the Session like Close, but asks a resumable
+// transport to keep its saved credentials for the next app run. The app uses
+// it for a graceful window close; a user closing one Session uses Close.
+func (s *Session) ClosePreservingResume() error { return s.close(true) }
+
+// close ends the Session, optionally keeping resume credentials for the next
+// app run.
+func (s *Session) close(preserve bool) error {
 	s.closeOnce.Do(func() {
 		select {
-		case s.commands <- command{kind: commandClose}:
+		case s.commands <- command{kind: commandClose, preserve: preserve}:
 		case <-s.done:
 		case <-s.ctx.Done():
 		}
@@ -1143,8 +1193,14 @@ func (s *Session) loop() {
 					}
 					continue
 				}
+				retry := s.spec.Reconnect != nil && s.spec.Reconnect.shouldRetry(cmd.end)
+				if retry {
+					// The next Open may reattach the same remote session, so keep
+					// its credentials across this handover.
+					preserveTransportResume(cmd.transport)
+				}
 				_ = cmd.transport.Close()
-				if s.spec.Reconnect == nil || !s.spec.Reconnect.shouldRetry(cmd.end) {
+				if !retry {
 					status = StatusExited
 					connection = connectionForEnd(cmd.end)
 					code, hasCode = cmd.end.ExitCode, cmd.end.HasExitCode
@@ -1174,6 +1230,7 @@ func (s *Session) loop() {
 				close(s.genDone)
 				s.genDone = make(chan struct{})
 				if s.transport != nil {
+					preserveTransportResume(s.transport)
 					_ = s.transport.Close()
 				}
 				s.update(func(snapshot *Snapshot) {
@@ -1205,6 +1262,14 @@ func (s *Session) loop() {
 				reason = EndReasonError
 				goto finished
 			case commandClose:
+				if cmd.preserve {
+					preserveTransportResume(s.transport)
+				} else {
+					// The current transport may already be closed: a reconnect
+					// handover preserves its credentials before closing it. An
+					// explicit close still has to clear them.
+					discardTransportResume(s.transport)
+				}
 				status = StatusClosed
 				goto finished
 			}

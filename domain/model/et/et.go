@@ -75,6 +75,11 @@ var (
 	// or that the server reset its history behind this client's back. A second
 	// client owns ET's single session slot; reconnecting would fight it.
 	ErrSessionDisplaced = errors.New("et: session was taken over by another client")
+	// ErrSessionUnavailable reports a saved ET session that cannot be
+	// reattached: the replay window cannot cover the gap, or its saved
+	// credentials could not be read. The error never carries the session id or
+	// passkey.
+	ErrSessionUnavailable = errors.New("et: saved session is unavailable")
 )
 
 // ValidationError reports the configuration field that is unusable.
