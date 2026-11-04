@@ -193,6 +193,56 @@ type Settings struct {
 	SysManager SysManager `json:"sysManager"`
 }
 
+// PortableSettings is the subset of Settings that follows the user between
+// devices. Platform and machine bindings stay local: the app icon variant,
+// the default opener, file associations, and the cloud-sync provider profile
+// all name a local platform or a device authorization.
+type PortableSettings struct {
+	Appearance Appearance `json:"appearance"`
+	Layout     Layout     `json:"layout"`
+	SFTPEditor SFTPEditor `json:"sftpEditor"`
+	Logs       Logs       `json:"logs"`
+	Security   Security   `json:"security"`
+	Monitor    Monitor    `json:"monitor"`
+	SysManager SysManager `json:"sysManager"`
+}
+
+// Portable strips the device-local fields from a preference document.
+func Portable(settings Settings) PortableSettings {
+	appearance := settings.Appearance
+	appearance.AppIcon = ""
+	editor := settings.SFTPEditor
+	editor.DefaultOpener = Opener{}
+	editor.FileAssociations = nil
+	return PortableSettings{
+		Appearance: appearance,
+		Layout:     settings.Layout,
+		SFTPEditor: editor,
+		Logs:       settings.Logs,
+		Security:   settings.Security,
+		Monitor:    settings.Monitor,
+		SysManager: settings.SysManager,
+	}
+}
+
+// MergePortable overlays a synced document on the current one. Device-local
+// fields keep their local values, so a download never changes an icon variant
+// or an installed application path.
+func MergePortable(current Settings, portable PortableSettings) Settings {
+	next := current
+	next.Appearance = portable.Appearance
+	next.Appearance.AppIcon = current.Appearance.AppIcon
+	next.Layout = portable.Layout
+	next.SFTPEditor = portable.SFTPEditor
+	next.SFTPEditor.DefaultOpener = current.SFTPEditor.DefaultOpener
+	next.SFTPEditor.FileAssociations = current.SFTPEditor.FileAssociations
+	next.Logs = portable.Logs
+	next.Security = portable.Security
+	next.Monitor = portable.Monitor
+	next.SysManager = portable.SysManager
+	return Normalize(next)
+}
+
 const (
 	DefaultAccentColor      = "221.2 83.2% 53.3%"
 	DefaultTerminalTheme    = "netcatty-dark"

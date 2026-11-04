@@ -95,6 +95,30 @@ func (s *Service) Update(change func(*domain.Settings)) error {
 	return nil
 }
 
+// Replace stores a complete document and publishes it. Cloud sync uses it
+// after overlaying the synced groups on the current local document, so a
+// device-local field such as the app icon is never taken from the cloud copy.
+func (s *Service) Replace(settings domain.Settings) error {
+	next := domain.Normalize(settings)
+	s.mu.Lock()
+	store := s.store
+	hook := s.onChange
+	s.mu.Unlock()
+
+	if store != nil {
+		if err := store.Save(context.Background(), next); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.settings = next
+	s.mu.Unlock()
+	if hook != nil {
+		hook(next)
+	}
+	return nil
+}
+
 // ResetGroup restores one group to its defaults.
 func (s *Service) ResetGroup(group domain.Group) error {
 	return s.Update(func(settings *domain.Settings) {

@@ -1844,7 +1844,6 @@
     - app.TestReattachClosesTheWindowWithoutPromptOrEndingSessions
     - app.TestCopyToNewWindowOpensAWindowAndLeavesTheSource
     - ui/shell.TestDetachedWindowRendersItsTabAndMovesItBack
-    - ui/shell.TestDetachedWindowCloseActionAsksTheCompositionRoot
     - ui/shell.TestDetachedWindowFitsAtDefaultAndMinimumSizes
     - ui/shell.TestDetachedWindowHeaderShrinksALongTitle
     - ui/shell/state.TestDetachPaneKeepsItsSessionAndReturnsOnReattach
@@ -2531,12 +2530,31 @@
     - application/sync.TestConvergentEqualVectorDifferentStateIsDivergenceAndRestoreIsSafe
     - application/sync.TestConvergentPauseNeverFallsBackToLegacy
     - application/sync.TestConvergentTwoDeviceProfilesConvergeIncludingConcurrentWrites
+    - application/sync.TestConvergentTwoDevicesCarrySettingsAndGroupMoves
+    - application/sync.TestSettingsFamilyKeepsTheFlatObjectShape
+    - application/sync.TestSettingsFamilyMergesDifferentDocumentsAndFields
+    - application/sync.TestSettingsFamilyRejectsANullDocument
+    - application/sync.TestMigrateGroupFamilyReKeysLegacyPathRecords
+    - application/sync.TestMigratedGroupStateBuriesAPathKeyedReplica
+    - application/sync.TestPayloadFromStateDecoratesGroupReferencesWithoutBreakingTheEnvelope
+    - application/sync.TestGroupMoveOnOneDeviceCarriesMembersOnAnother
+    - application/sync.TestLegacyPayloadWithOnlyALeafGroupMatchesTheMigratedEnvelope
+    - application/sync.TestLegacyHostInAnImplicitGroupMigratesToStableReferences
+    - application/sync.TestLegacySnippetTargetsMigrateToStableReferences
+    - application/sync.TestMigrationAdoptsTheCloudCopyWithOnlyLocalDefaultSettings
+    - application/sync.TestMigrationPublishesSettingsFromAnEmptyVaultWhenNoCloudCopyExists
+    - application/sync.TestMigrationIntoAV1CloudCarriesTheLocalPortableSettings
+    - application/sync.TestMigrationDoesNotBlockWhenOnlyPortableSettingsDiffer
+    - adapters/syncedsettings.TestSnapshotAndApplyPreserveDeviceLocalSettings
+    - adapters/syncedsettings.TestApplyRejectsAMalformedDocumentBeforeWritingAny
+    - adapters/syncvault.TestSnapshotCarriesStableGroupReferencesAndPortableSettings
+    - adapters/syncvault.TestApplyForwardsPortableSettingsToTheSettingsPort
     - ui/settings.TestSyncConvergentEnablePauseResume
     - ui/settings.TestSyncConvergentVerificationRoundsAreSurfaced
     - ui/settings.TestSyncConvergentMigrationRefusalIsFailClosed
     - ui/settings.TestSyncConvergentDivergenceOffersOnlySafeActions
   status: verified
-  notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Settings and credentials remain device-local and outside the CRDT. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not compared byte-for-byte against an original CRDT fixture; the convergence, migration, verification, and divergence behavior is verified by the listed tests. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
+  notes: "Opt-in v2 stores a dotted version vector and exact per-register causal contexts, a multi-value register for presence and every field, permanent dot-origin ownership, tombstones, and an HLC used only as a deterministic tie-break (live value over tombstone, then HLC, node id, and dot). Merge is a join and is tested for commutativity, associativity, idempotence, byte-identical duplicate delivery, and randomized three-replica interleavings. Verification runs at most three read/join/conditional-write/read-back rounds; it compares the manifest and version vectors, each entity's canonical hash, and the full-state hash, and stops with a typed divergence instead of overwriting. Migration writes a protective backup first, requires the explicit v2 marker and trusted legacy baseline, and refuses unknown, newer, partial, corrupt, or shrink/conflict-blocked inputs without changing provider or local bytes; a v2 marker never falls through to the v1 writer. The divergence report exposes only inspect, restore, and re-sync, and restore is local-only behind a backup; a converged repeat performs zero provider writes. Portable settings and credentials are part of the state: the flat settings object is an object-shaped family keyed by namespaced document name, device-local fields are stripped on snapshot and preserved on apply, and Host Groups use a stable-ID movable tree with derived paths so a rename or move is a register write. A legacy path-keyed group state is migrated deterministically before verification, with the old entities retained as tombstones and old Host/Snippet path references rewritten to stable IDs. The Go state and envelope follow the original materialized-winner-v1/schema-2 shape but were not compared byte-for-byte against an original CRDT fixture; the convergence, migration, verification, and divergence behavior is verified by the listed tests. The original's explicit downgrade-to-v1 flow and OS-level cross-process Web Lock are not implemented; this build keeps v2 opt-in, refuses implicit legacy writes after initialization, and relies on the service's serialized command loop for in-process exclusion."
 
 # --- Ticket 50: Google Drive appDataFolder ---
 
@@ -2980,7 +2998,7 @@
     - application/sync.TestSmartMergeCarriesSettingsThroughTheService
     - application/sync.TestAnchorPersistsOnlyCiphertext
   status: verified
-  notes: "The anchor is the last successfully synced plaintext payload sealed with the master password under AES-256-GCM and stored as base64 in SyncBase, with format version 3 and a SHA-256 BaseSignature; cloud-sync.json contains no plaintext entity, hostname, credential, or master password. A corrupt or unknown anchor falls back to a base-less set union. The field merge is keyed by record id (path for configuration families) and covers add/add, update/update, delete/update, delete/delete, one-sided changes, empty base, tombstones, and secret values. A field deleted locally while the other side edits a different field stays from the remote copy, matching the original local-key iteration; this is covered by TestMergeFieldDeletedLocallyStaysFromRemote. Settings merge recursively and is exercised both as a pure function and through the service: nested maps merge, unknown keys on both sides survive, id-keyed arrays merge by id, an explicit empty object resets a map, a first merge with no base prefers cloud on a same-field clash, both sides deleting the same key is agreement rather than a conflict, and terminalSettings.autoCloseOnExit keeps its original migration. The real SyncVault adapter deliberately omits device-local settings from its payload (ticket 49 and the Cloud sync spec), so production sync does not publish this build's app settings."
+  notes: "The anchor is the last successfully synced plaintext payload sealed with the master password under AES-256-GCM and stored as base64 in SyncBase, with format version 3 and a SHA-256 BaseSignature; cloud-sync.json contains no plaintext entity, hostname, credential, or master password. A corrupt or unknown anchor falls back to a base-less set union. The field merge is keyed by record id (path for configuration families) and covers add/add, update/update, delete/update, delete/delete, one-sided changes, empty base, tombstones, and secret values. A field deleted locally while the other side edits a different field stays from the remote copy, matching the original local-key iteration; this is covered by TestMergeFieldDeletedLocallyStaysFromRemote. Settings merge recursively and is exercised both as a pure function and through the service: nested maps merge, unknown keys on both sides survive, id-keyed arrays merge by id, an explicit empty object resets a map, a first merge with no base prefers cloud on a same-field clash, both sides deleting the same key is agreement rather than a conflict, and terminalSettings.autoCloseOnExit keeps its original migration. The real SyncVault adapter publishes only the portable settings documents under namespaced keys (ticket 49 and the Cloud sync spec); device-local fields such as the app icon, local opener paths, log directory, last-used encodings, and the sync provider profile are stripped from the payload and preserved on apply."
 
 - id: sync.destructive-guards
   area: sync
