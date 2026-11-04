@@ -100,48 +100,123 @@ func TestWriteDuringRecovery(t *testing.T) {
 	})
 }
 
-// The server claims to have received less than we still hold (or more than
-// we ever sent): the session cannot be recovered and the Conn ends.
+// The server claims to have received less than we still hold: the session
+// cannot be recovered and the Conn ends.
 func TestReplayWindowExceeded(t *testing.T) {
-	tests := []struct {
-		name string
-		peer int32
-	}{
-		{name: "peer behind the window", peer: 0},
-		{name: "peer ahead of us", peer: 1_000_000},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				s := &scripted{handle: func(i int, c *rawServer) {
-					if i == 0 {
-						c.acceptFrames(100) // the client writes and trims its ring
-						return
-					}
-					c.claimSequence(tt.peer)
-				}}
-				d := etcp.Dialer{NetDialer: s, ReplayLimit: 1 << 10}
-				conn, err := d.Dial(t.Context(), testAddr, testID, testKey)
-				if err != nil {
-					t.Fatalf("Dial: %v", err)
-				}
-				defer func() {
-					_ = conn.Close()
-					s.wg.Wait()
-				}()
-				for i := range 100 { // 100 KiB through a 1 KiB window
-					if err := conn.WritePacket(t.Context(), numbered(i, 1024)); err != nil {
-						t.Fatalf("WritePacket: %v", err)
-					}
-				}
-				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-				defer cancel()
-				if _, err := conn.ReadPacket(ctx); !errors.Is(err, etcp.ErrReplayExceeded) {
-					t.Fatalf("ReadPacket = %v, want ErrReplayExceeded", err)
-				}
-			})
-		})
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s := &scripted{handle: func(i int, c *rawServer) {
+			if i == 0 {
+				c.acceptFrames(100) // the client writes and trims its ring
+				return
+			}
+			c.claimSequence(0)
+		}}
+		d := etcp.Dialer{NetDialer: s, ReplayLimit: 1 << 10}
+		conn, err := d.Dial(t.Context(), testAddr, testID, testKey)
+		if err != nil {
+			t.Fatalf("Dial: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+			s.wg.Wait()
+		}()
+		for i := range 100 { // 100 KiB through a 1 KiB window
+			if err := conn.WritePacket(t.Context(), numbered(i, 1024)); err != nil {
+				t.Fatalf("WritePacket: %v", err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		if _, err := conn.ReadPacket(ctx); !errors.Is(err, etcp.ErrReplayExceeded) {
+			t.Fatalf("ReadPacket = %v, want ErrReplayExceeded", err)
+		}
+	})
+}
+
+// An offline victim's reconnect can meet a server reader that another client's
+// reset moved ahead of everything this client sealed. That is displacement,
+// not an unrecoverable replay window: ErrReplayExceeded would end the Session
+// as a generic error and its default policy would auto-reconnect over the new
+// owner. The victim itself has sent two packets; the foreign reset plus the
+// second client's three packets leave the server reader at three.
+func TestPeerAheadOnReconnectIsDisplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var (
+			displaced atomic.Int32
+			resumed   atomic.Bool
+		)
+		s := &scripted{handle: func(i int, c *rawServer) {
+			switch i {
+			case 0:
+				// The victim's link dies after its two packets reached the
+				// server; the session itself stays alive server-side.
+				c.acceptFrames(2)
+			case 1:
+				// The victim slept through a foreign reset and three packets
+				// from the client that reset the session.
+				c.claimSequence(3)
+			default:
+				resumed.Store(true)
+				_ = c.respond(protocol.ConnectStatus_NEW_CLIENT)
+				c.drain()
+			}
+		}}
+		d := etcp.Dialer{NetDialer: s, OnDisplaced: func() { displaced.Add(1) }}
+		conn, err := d.Dial(t.Context(), testAddr, testID, testKey)
+		if err != nil {
+			t.Fatalf("Dial: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+			s.wg.Wait()
+		}()
+		for i := range 2 {
+			if err := conn.WritePacket(t.Context(), numbered(i, 10)); err != nil {
+				t.Fatalf("WritePacket: %v", err)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		if _, err := conn.ReadPacket(ctx); !errors.Is(err, etcp.ErrDisplaced) {
+			t.Fatalf("ReadPacket = %v, want ErrDisplaced", err)
+		}
+		if got := displaced.Load(); got != 1 {
+			t.Fatalf("OnDisplaced ran %d times, want 1", got)
+		}
+		if resumed.Load() {
+			t.Fatal("the displaced victim resumed the session")
+		}
+		if got := s.dials.Load(); got != 2 {
+			t.Fatalf("dials = %d, want 2: displacement must not redial", got)
+		}
+	})
+}
+
+// On Dial's first connect this Conn has sent nothing, so a peer count past it
+// belongs to an earlier attempt or a takeover before the Session existed.
+// There is no running Session to end as displaced, and Dial reports a failed
+// handshake, so the replay error stands.
+func TestPeerAheadOnFirstConnectIsReplayExceeded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var displaced atomic.Int32
+		s := &scripted{handle: func(i int, c *rawServer) {
+			if i == 0 {
+				c.claimSequence(1)
+			}
+		}}
+		d := etcp.Dialer{NetDialer: s, OnDisplaced: func() { displaced.Add(1) }}
+		_, err := d.Dial(t.Context(), testAddr, testID, testKey)
+		if !errors.Is(err, etcp.ErrReplayExceeded) {
+			t.Fatalf("Dial = %v, want ErrReplayExceeded", err)
+		}
+		if errors.Is(err, etcp.ErrDisplaced) {
+			t.Fatalf("Dial = %v, want no ErrDisplaced on the first connect", err)
+		}
+		if got := displaced.Load(); got != 0 {
+			t.Fatalf("OnDisplaced ran %d times on a failed first connect, want 0", got)
+		}
+	})
 }
 
 // A catchup too large for one handshake message (etserver refuses messages

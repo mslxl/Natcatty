@@ -41,7 +41,7 @@ func TestWriteRecoverRefusesSequenceBeyondInt32(t *testing.T) {
 		// returns instead of waiting for the peer's sequence.
 		gotSeq := make(chan error, 1)
 		gotSeq <- errors.New("no peer sequence")
-		_, err := c.writeRecover(client, gotSeq, &protocol.SequenceHeader{})
+		_, err := c.writeRecover(client, gotSeq, &protocol.SequenceHeader{}, true)
 		_ = client.Close()
 		if !errors.Is(err, ErrReplayExceeded) {
 			t.Fatalf("writeRecover = %v, want ErrReplayExceeded", err)
@@ -75,7 +75,7 @@ func TestWriteRecoverSendsSequenceAtInt32Limit(t *testing.T) {
 
 		gotSeq := make(chan error, 1)
 		gotSeq <- errors.New("no peer sequence")
-		_, err := c.writeRecover(client, gotSeq, &protocol.SequenceHeader{})
+		_, err := c.writeRecover(client, gotSeq, &protocol.SequenceHeader{}, true)
 		_ = client.Close()
 		if errors.Is(err, ErrReplayExceeded) {
 			t.Fatalf("writeRecover = %v, want the header sent at the int32 limit", err)
