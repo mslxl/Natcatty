@@ -3,6 +3,7 @@ package etcp
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -109,5 +110,37 @@ func TestRingBytesBetweenAndRange(t *testing.T) {
 	got := r.appendRange(nil, 1, 3)
 	if len(got) != 2 || got[0][0] != 1 || got[1][0] != 2 {
 		t.Fatalf("appendRange(1, 3) = %v", got)
+	}
+}
+
+// The replay window is upstream's MAX_BACKUP_BYTES: exactly 64 MiB of sealed
+// written packets (src/base/BackedWriter.hpp:32 at et-v7.0.0). A peer at the
+// oldest retained sequence is still replayable; one sequence older is outside
+// the window and must be refused, which is what writeRecover reports as
+// ErrReplayExceeded on reconnect.
+func TestRingReplaysAtThe64MiBBoundary(t *testing.T) {
+	if defaultReplayLimit != 64<<20 {
+		t.Fatalf("defaultReplayLimit = %d, want upstream's 64 MiB", defaultReplayLimit)
+	}
+	const entry = 8 << 20
+	r := filledRing(defaultReplayLimit, 9, entry) // 72 MiB: one entry over the window
+	r.trim(9, 0)
+	if r.first != 1 || r.bytes != 8*entry {
+		t.Fatalf("after trim: first, bytes = %d, %d; want 1, %d", r.first, r.bytes, 8*entry)
+	}
+	if got, ok := r.since(r.first, r.next()); !ok || len(got) != 8 {
+		t.Fatalf("since(oldest retained) = %d entries, %v; want the full 64 MiB window, true", len(got), ok)
+	}
+	if _, ok := r.since(r.first-1, r.next()); ok {
+		t.Fatal("since(one sequence before the window) succeeded; a too-old sequence must be refused")
+	}
+}
+
+// A Dialer without ReplayLimit is the transport's default: the replay ring
+// retains upstream's 64 MiB, not a test-sized window.
+func TestDefaultDialerRetainsThe64MiBWindow(t *testing.T) {
+	c := (&Dialer{}).newConn("127.0.0.1:2022", "client", strings.Repeat("k", 32))
+	if c.ring.limit != 64<<20 {
+		t.Fatalf("default ring limit = %d, want 64 MiB", c.ring.limit)
 	}
 }

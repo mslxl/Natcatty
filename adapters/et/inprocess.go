@@ -96,9 +96,6 @@ type InProcessFactory struct {
 	// KeepAlive overrides the ET link's liveness period. Zero keeps etcp's
 	// default. Tests use a short value to observe a reconnect quickly.
 	KeepAlive time.Duration
-	// ReplayLimit overrides how many sealed bytes are retained for replay.
-	// Zero keeps etcp's 64 MiB default. Tests use a small value.
-	ReplayLimit int
 	// Sessions saves resumable ET session credentials in the encrypted secret
 	// store so a new app process can reattach. Nil keeps sessions memory-only.
 	Sessions SessionStore
@@ -276,7 +273,6 @@ func (f InProcessFactory) dialThrough(ctx context.Context, netDialer leaseNetDia
 	dialer := &etcp.Dialer{
 		NetDialer:   netDialer,
 		KeepAlive:   f.KeepAlive,
-		ReplayLimit: f.ReplayLimit,
 		ResetIntent: resetIntent,
 		Logger:      f.logger(),
 		OnDisplaced: onDisplaced,
@@ -452,14 +448,24 @@ func bootstrapEndError(stream appconnection.ExecStream, output []byte, readErr e
 	return fmt.Errorf("%w: %w", etmodel.ErrBootstrapFailed, readErr)
 }
 
+// permanentError marks an Open failure that retrying cannot change, such as a
+// server speaking another protocol or refusing reattach. The Session service
+// stops on it instead of looping on the same typed outcome. errors.Is and
+// errors.As still see the wrapped error.
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+func (permanentError) Permanent() bool { return true }
+
 // classifyDialError maps the vendored ET connection's failures onto the
 // domain's typed vocabulary.
 func classifyDialError(err error) error {
 	switch {
 	case errors.Is(err, etcp.ErrVersion):
-		return fmt.Errorf("%w: %w", etmodel.ErrUnsupportedServer, err)
+		return permanentError{fmt.Errorf("%w: %w", etmodel.ErrUnsupportedServer, err)}
 	case errors.Is(err, etcp.ErrLegacyReattach):
-		return fmt.Errorf("%w: %w", etmodel.ErrReattachUnsupported, err)
+		return permanentError{fmt.Errorf("%w: %w", etmodel.ErrReattachUnsupported, err)}
 	case errors.Is(err, etcp.ErrReplayExceeded):
 		// The sequence gap is beyond the retained window: the remote session
 		// cannot be continued and the caller needs a typed, actionable error.
@@ -467,7 +473,8 @@ func classifyDialError(err error) error {
 	case errors.Is(err, etcp.ErrRetryLater):
 		return fmt.Errorf("%w: %w", etmodel.ErrRetryLater, err)
 	case errors.Is(err, etcp.ErrDisplaced):
-		return fmt.Errorf("%w: %w", etmodel.ErrSessionDisplaced, err)
+		// Another client owns ET's single slot; a retry would fight it.
+		return permanentError{fmt.Errorf("%w: %w", etmodel.ErrSessionDisplaced, err)}
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	default:

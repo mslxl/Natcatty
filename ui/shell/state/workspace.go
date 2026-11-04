@@ -884,36 +884,27 @@ func (s *State) CloseMainSessionsPreserving() {
 }
 
 // CloseAllSessions ends the Sessions of every window. The app calls it on
-// quit, after the windows are already gone, so resumable credentials are kept
-// for the next run.
+// quit, after the windows are already gone; main-window Tabs are part of the
+// persisted Workspace, so their resumable credentials are kept for the next
+// run. Detached Tabs are not persisted, so keeping their credentials would
+// only orphan them in the secret store.
 func (s *State) CloseAllSessions() {
 	s.CloseMainSessionsPreserving()
 	for _, tab := range s.detached {
-		closeTab(tab, true)
+		closeTab(tab, false)
 	}
 	s.detached = nil
 }
 
 // CloseDetachedTab closes a Tab that left the main window, ending its
-// Sessions. It is also the idempotent close hook for a detached window. This
-// explicit path clears resumable credentials.
+// Sessions. It is also the idempotent close hook for a detached window. A
+// detached Tab is never restored, so this path clears resumable credentials.
 func (s *State) CloseDetachedTab(id model.TabID) bool {
-	return s.closeDetachedTab(id, false)
-}
-
-// CloseDetachedTabPreserving closes a detached window's Tab like
-// CloseDetachedTab, but keeps resumable ET credentials. The quit sequence
-// closes detached windows before OnWillQuit runs.
-func (s *State) CloseDetachedTabPreserving(id model.TabID) bool {
-	return s.closeDetachedTab(id, true)
-}
-
-func (s *State) closeDetachedTab(id model.TabID, preserve bool) bool {
 	for index, tab := range s.detached {
 		if tab.ID != id {
 			continue
 		}
-		closeTab(tab, preserve)
+		closeTab(tab, false)
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.RequestRedraw()
 		return true
