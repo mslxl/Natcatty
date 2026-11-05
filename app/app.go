@@ -769,7 +769,8 @@ func run(afterReady func(hostWindow)) error {
 
 	transportRoots := transportBundleRoots()
 	sessions = appsession.NewService(newTransportFactory(
-		localpty.Factory{}, adapterserial.Factory{}, adapterstnet.Factory{}, connections, routes,
+		localpty.Factory{}, adapterserial.Factory{},
+		newTelnetFactory(adapterstnet.Factory{}, routes, networkProviders), connections, routes,
 	).withClients(
 		newMoshFactory(connections, routes, transportRoots),
 		newETFactory(vaultService, routes, transportRoots),
