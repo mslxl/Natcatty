@@ -61,8 +61,8 @@ jobs:
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
 
-      - name: Test the legal and release-note packages
-        run: go test ./internal/legal ./internal/releasenotes -count=1
+      - name: Test the legal package
+        run: go test ./internal/legal -count=1
 
       - name: Check the parity release gate
         run: go run ./internal/tools/paritygen -release
@@ -100,35 +100,6 @@ jobs:
             fi
           done
           echo "no signing or notarization environment variables are set"
-
-      - name: Generate release notes from the changelog
-        run: |
-          set -euo pipefail
-          version="$(nu scripts/release.nu version --manifest mygo.json)"
-          go run ./internal/tools/releasenotes \
-            -version "${version}" -changelog CHANGELOG.md -out RELEASE_NOTES.md \
-            -source-offer-out SOURCE-OFFER.md
-          test -s RELEASE_NOTES.md
-          test -s SOURCE-OFFER.md
-          grep -q "^# Natcatty ${version}$" RELEASE_NOTES.md
-          grep -q "^## Corresponding Source$" RELEASE_NOTES.md
-          grep -q "^## Corresponding Source$" SOURCE-OFFER.md
-          grep -q "https://github.com/mslxl/natcatty/tree/v${version}" RELEASE_NOTES.md
-          cat RELEASE_NOTES.md
-
-      - name: Upload the release notes
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: RELEASE_NOTES.md
-          if-no-files-found: error
-
-      - name: Upload the corresponding-source offer
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-offer
-          path: SOURCE-OFFER.md
-          if-no-files-found: error
 
   build:
     name: build (${{ matrix.artifact }})
@@ -194,8 +165,8 @@ jobs:
       - name: Write the Corresponding Source offer into the resources
         run: |
           set -euo pipefail
-          go run ./internal/tools/releasenotes -version "${NATCATTY_VERSION}" \
-            -changelog CHANGELOG.md -source-offer-out resources/SOURCE-OFFER.md
+          go run ./internal/tools/sourceoffer -version "${NATCATTY_VERSION}" \
+            -out resources/SOURCE-OFFER.md
           test -s resources/SOURCE-OFFER.md
 
       - name: Build with MyGo
@@ -462,9 +433,9 @@ jobs:
 
       - name: Download every platform artifact
         # `natcatty-*` selects exactly the three platform artifacts the build
-        # job uploads. The notes artifact (`release-notes`) and the aggregate
-        # checksum artifact (`release-checksums`) stay outside the pattern, so
-        # a re-run cannot sweep the previous attempt's aggregate file back in.
+        # job uploads. The aggregate checksum artifact (`release-checksums`)
+        # stays outside the pattern, so a re-run cannot sweep the previous
+        # attempt's aggregate file back in.
         uses: actions/download-artifact@v4
         with:
           path: downloads
@@ -554,7 +525,7 @@ jobs:
 
       - name: Download every platform artifact
         # The same pattern as the checksums job: exactly the three platform
-        # artifacts, never the notes or aggregate checksum artifacts.
+        # artifacts, never the aggregate checksum artifact.
         uses: actions/download-artifact@v4
         with:
           path: downloads
@@ -565,11 +536,6 @@ jobs:
         with:
           name: release-checksums
           path: checksums
-
-      - name: Download the release notes
-        uses: actions/download-artifact@v4
-        with:
-          name: release-notes
 
       - name: Collect the release artifacts
         run: |
@@ -583,14 +549,6 @@ jobs:
           cmp release/SHA256SUMS checksums/SHA256SUMS
           cat release/SHA256SUMS
 
-      - name: Check the generated release notes
-        run: |
-          set -euo pipefail
-          test -s RELEASE_NOTES.md
-          head -1 RELEASE_NOTES.md
-          grep -q "^## Corresponding Source$" RELEASE_NOTES.md
-          grep -q "https://github.com/mslxl/natcatty/tree/v${NATCATTY_VERSION}" RELEASE_NOTES.md
-
       - name: Publish the GitHub release
         # Re-pushing or force-moving a tag is expected, so an existing release
         # is edited and its assets replaced instead of failing. The tag and the
@@ -603,6 +561,13 @@ jobs:
           assets=(release/*)
           # The seven installers plus the checksum manifest.
           test "${#assets[@]}" -eq 8
+          # GitHub generates the body from the commits and pull requests since
+          # the previous release. `gh release edit` cannot regenerate notes, so
+          # fetch one body and use it for both the create and edit paths.
+          notes="$(mktemp)"
+          trap 'rm -f "${notes}"' EXIT
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${NATCATTY_TAG}" --jq .body > "${notes}"
           # A SemVer pre-release is published as a GitHub pre-release and never
           # becomes Latest. A normal release clears a stale pre-release mark.
           flags=(--prerelease=false)
@@ -613,12 +578,12 @@ jobs:
             echo "release ${NATCATTY_TAG} already exists; updating it in place"
             gh release edit "${NATCATTY_TAG}" "${flags[@]}" \
               --title "Natcatty ${NATCATTY_VERSION}" \
-              --notes-file RELEASE_NOTES.md
+              --notes-file "${notes}"
           else
             gh release create "${NATCATTY_TAG}" "${flags[@]}" \
               --verify-tag \
               --title "Natcatty ${NATCATTY_VERSION}" \
-              --notes-file RELEASE_NOTES.md
+              --notes-file "${notes}"
           fi
           gh release upload "${NATCATTY_TAG}" "${assets[@]}" --clobber
           gh release view "${NATCATTY_TAG}" --json url,tagName,assets
