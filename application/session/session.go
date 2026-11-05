@@ -442,16 +442,23 @@ type Session struct {
 	genDone    chan struct{}
 
 	commands chan command
-	// closeCh is unbuffered: a successful send proves the loop received the
-	// close. A close that finds the loop already finished clears the transport's
-	// resume credentials directly after teardown instead.
-	closeCh chan closeCommand
+	// closeCh is a one-slot wake-up for an explicit close. It is buffered so
+	// Close never waits for a command loop that is inside a blocking transport
+	// call; pendingClose carries the request itself.
+	closeCh chan struct{}
 	writeCh chan []byte
 	done    chan struct{}
 
 	closeOnce sync.Once
-	mu        sync.Mutex
-	snapshot  Snapshot
+	// closeMu guards the explicit close record and the ended publication.
+	// Resume calls are applied outside it (they may touch the secret store),
+	// but taking a record and publishing Done share one critical section so a
+	// close racing teardown is never lost.
+	closeMu      sync.Mutex
+	pendingClose *closeRequest
+	ended        bool
+	mu           sync.Mutex
+	snapshot     Snapshot
 
 	tap             *terminalTap
 	clipboardAccess domainterminal.ClipboardAccess
@@ -526,9 +533,10 @@ type command struct {
 	err        error
 }
 
-// closeCommand asks the loop to end the Session. The channel is unbuffered, so
-// a close is never left queued after the loop has stopped receiving commands.
-type closeCommand struct {
+// closeRequest is the Session's one explicit close. The command loop or
+// teardown takes it under closeMu exactly once, so its preserve/discard effect
+// happens once even when Close races the end of the Session.
+type closeRequest struct {
 	// preserve keeps resumable transport credentials when this close is an
 	// app shutdown rather than the user ending the Session.
 	preserve bool
@@ -756,7 +764,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		genDone:         make(chan struct{}),
 		writeCh:         make(chan []byte, s.writeDepth),
 		commands:        make(chan command, 16),
-		closeCh:         make(chan closeCommand),
+		closeCh:         make(chan struct{}, 1),
 		done:            make(chan struct{}),
 		onNotification:  s.onNotification,
 		onTransfer:      s.onTransfer,
@@ -1149,11 +1157,11 @@ func (s *Session) ReconnectNow() bool {
 	}
 }
 
-// Close ends the Session. It is idempotent. It returns once the loop has
-// received the close request, once an already-ended Session has cleared its
-// preserved credentials, or once teardown that was already running finished;
-// Done reports when teardown finished. An explicit close clears any
-// credentials a resumable transport saved.
+// Close ends the Session. It is idempotent and never waits for the command
+// loop to accept the request: the loop may be inside a blocking transport call,
+// and the UI closes a Session synchronously. Done reports when teardown
+// finished. An explicit close clears any credentials a resumable transport
+// saved, including when the Session had already ended.
 func (s *Session) Close() error { return s.close(false) }
 
 // ClosePreservingResume ends the Session like Close, but asks a resumable
@@ -1161,29 +1169,82 @@ func (s *Session) Close() error { return s.close(false) }
 // it for a graceful window close; a user closing one Session uses Close.
 func (s *Session) ClosePreservingResume() error { return s.close(true) }
 
-// close ends the Session, optionally keeping resume credentials for the next
-// app run.
+// close records the Session's one explicit close and wakes the command loop.
+// The record is authoritative: the loop applies it when it handles the wake-up,
+// and teardown applies it if the Session ends without accepting the wake-up.
+// The record is taken under closeMu exactly once, so the preserve/discard call
+// happens once even when Close races the end of the Session.
 func (s *Session) close(preserve bool) error {
 	s.closeOnce.Do(func() {
-		select {
-		case s.closeCh <- closeCommand{preserve: preserve}:
-			// The loop received the close and owns teardown; a preserve close
-			// marked the transport before finishing.
-			return
-		case <-s.done:
-		case <-s.ctx.Done():
-			// Teardown is already running. Wait for it before touching the
-			// transport: the loop may still be replacing or closing it.
-			<-s.done
+		request := &closeRequest{preserve: preserve}
+		s.closeMu.Lock()
+		ended := s.ended
+		if !ended {
+			s.pendingClose = request
 		}
-		// The loop never received the close, so no command cleared the pair a
-		// reconnect handover preserved. An explicit close must still clear it;
-		// this is safe after Done because the loop no longer touches s.transport.
-		if !preserve {
-			discardTransportResume(s.transport)
+		s.closeMu.Unlock()
+		if ended {
+			// Teardown already published Done and will not take another
+			// record. Apply this close before returning, as an ended Session's
+			// explicit close must still clear preserved credentials.
+			s.applyClose(request)
+			return
+		}
+		select {
+		case s.closeCh <- struct{}{}:
+		default:
+			// A wake-up is already queued; the record is the same one.
 		}
 	})
 	return nil
+}
+
+// consumeCloseRequest applies the pending explicit close, if any. A later
+// teardown pass applies a close that is recorded after this take.
+func (s *Session) consumeCloseRequest() {
+	s.closeMu.Lock()
+	request := s.pendingClose
+	s.pendingClose = nil
+	s.closeMu.Unlock()
+	if request != nil {
+		s.applyClose(request)
+	}
+}
+
+// applyClose applies one explicit close to the current transport. It runs
+// outside closeMu because a resume call may block in the secret store.
+func (s *Session) applyClose(request *closeRequest) {
+	if s.transport == nil {
+		return
+	}
+	if request.preserve {
+		preserveTransportResume(s.transport)
+		return
+	}
+	discardTransportResume(s.transport)
+}
+
+// publishEnded applies a close recorded while teardown was finishing, marks
+// the Session ended, and publishes Done. The record is applied outside closeMu
+// because a resume call may block in the secret store, so the take and the
+// Done close cannot share one section. Instead the last empty take and closing
+// Done share one: a Close that stores before it is applied first, and a Close
+// that stores after it observes ended and applies its own request. A request is
+// therefore never lost and is applied exactly once.
+func (s *Session) publishEnded() {
+	for {
+		s.closeMu.Lock()
+		request := s.pendingClose
+		if request == nil {
+			s.ended = true
+			close(s.done)
+			s.closeMu.Unlock()
+			return
+		}
+		s.pendingClose = nil
+		s.closeMu.Unlock()
+		s.applyClose(request)
+	}
 }
 
 func (s *Session) start() {
@@ -1296,15 +1357,12 @@ func (s *Session) loop() {
 				reason = EndReasonError
 				goto finished
 			}
-		case cmd := <-s.closeCh:
-			if cmd.preserve {
-				preserveTransportResume(s.transport)
-			} else {
-				// The current transport may already be closed: a reconnect
-				// handover preserves its credentials before closing it. An
-				// explicit close still has to clear them.
-				discardTransportResume(s.transport)
-			}
+		case <-s.closeCh:
+			// Apply the explicit close before teardown closes the transport.
+			// The current transport may already be closed: a reconnect handover
+			// preserves its credentials before closing it, and an explicit close
+			// still has to clear them.
+			s.consumeCloseRequest()
 			status = StatusClosed
 			goto finished
 		}
@@ -1343,7 +1401,7 @@ finished:
 	if s.onEnd != nil {
 		s.onEnd(s.id)
 	}
-	close(s.done)
+	s.publishEnded()
 }
 
 // connectionForEnd reports the indicator a final transport end leaves. A
