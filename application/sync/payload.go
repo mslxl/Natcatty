@@ -31,10 +31,10 @@ type Payload struct {
 	// PortForwardingRules follows notes in the original's field order.
 	PortForwardingRules []domainforward.Rule `json:"portForwardingRules"`
 	// Settings is the original payload's flat settings object. This build
-	// treats app preferences as device-local and never publishes them (spec
-	// item 111), but the field is carried so a payload written by another
-	// client merges with the original's deep-merge rules instead of losing
-	// unknown keys.
+	// publishes only portable settings under namespaced keys and keeps
+	// device-local fields out; unknown keys from another client are carried so
+	// the original's deep-merge rules don't lose them. In v2 the whole object
+	// is an object-shaped CRDT family, one entity per key.
 	Settings map[string]json.RawMessage `json:"settings,omitempty"`
 	Secrets  []SecretValue              `json:"secrets,omitempty"`
 	// ConvergentSync is the v2 CRDT envelope. It is present only when the

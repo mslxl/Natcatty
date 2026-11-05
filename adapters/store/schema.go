@@ -125,7 +125,13 @@ type workspaceLayoutSchema struct {
 func (workspaceLayoutSchema) TableName() string { return "workspace_layout" }
 
 type hostGroupSchema struct {
-	Path             string `gorm:"column:path;type:text;primaryKey;index:host_groups_order,priority:2,collate:nocase"`
+	Path string `gorm:"column:path;type:text;primaryKey;index:host_groups_order,priority:2,collate:nocase"`
+	// GroupID is the stable sync identity. It is not the primary key because
+	// the original Vault addressed groups by path; keeping path as the key
+	// lets an existing database open without a table rewrite.
+	GroupID          string `gorm:"column:id;type:text;not null;default:'';index:host_groups_id"`
+	ParentID         string `gorm:"column:parent_id;type:text;not null;default:'';index:host_groups_parent"`
+	Name             string `gorm:"column:name;type:text;not null;default:''"`
 	Notes            string `gorm:"column:notes;type:text;not null;default:''"`
 	Username         string `gorm:"column:username;type:text;not null;default:''"`
 	Port             int64  `gorm:"column:port;not null;default:0"`

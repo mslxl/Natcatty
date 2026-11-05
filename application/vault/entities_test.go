@@ -190,6 +190,9 @@ func TestCreateGroupNormalizesAndPersists(t *testing.T) {
 	if len(groups.items) != 1 {
 		t.Fatalf("saved groups = %d, want 1", len(groups.items))
 	}
+	if group.ID == "" || group.Name != "web" || group.ParentID != domainvault.GroupIDFromPath("prod") {
+		t.Fatalf("group identity = %+v, want a stable ID under the implicit prod group", group)
+	}
 
 	if _, err := service.CreateGroup(context.Background(), domainvault.GroupDraft{Path: "prod/web"}); err == nil {
 		t.Fatal("CreateGroup accepted a duplicate path")
@@ -242,14 +245,14 @@ func TestAssignHostGroupMovesOneHostAndRejectsAnUnknownGroup(t *testing.T) {
 	repo := &fakeHosts{hosts: []domainvault.Host{
 		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22, Protocol: domainvault.ProtocolSSH},
 	}}
-	groups := &fakeGroups{items: []domainvault.Group{{Path: "prod"}}}
+	groups := &fakeGroups{items: []domainvault.Group{{ID: "g-prod", Name: "prod", Path: "prod"}}}
 	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
 
 	if err := service.AssignHostGroup(context.Background(), "host-1", " prod/ "); err != nil {
 		t.Fatalf("AssignHostGroup: %v", err)
 	}
-	if repo.hosts[0].Group != "prod" {
-		t.Fatalf("Group = %q, want prod", repo.hosts[0].Group)
+	if repo.hosts[0].Group != "prod" || repo.hosts[0].GroupID != "g-prod" {
+		t.Fatalf("Group = %q/%q, want prod/g-prod", repo.hosts[0].Group, repo.hosts[0].GroupID)
 	}
 	if repo.saves != 1 {
 		t.Fatalf("saves = %d, want 1", repo.saves)
@@ -267,8 +270,8 @@ func TestAssignHostGroupMovesOneHostAndRejectsAnUnknownGroup(t *testing.T) {
 	if err := service.AssignHostGroup(context.Background(), "host-1", ""); err != nil {
 		t.Fatalf("AssignHostGroup root: %v", err)
 	}
-	if repo.hosts[0].Group != "" {
-		t.Fatalf("Group = %q, want root", repo.hosts[0].Group)
+	if repo.hosts[0].Group != "" || repo.hosts[0].GroupID != "" {
+		t.Fatalf("Group = %q/%q, want the Vault root", repo.hosts[0].Group, repo.hosts[0].GroupID)
 	}
 }
 
@@ -438,12 +441,14 @@ func TestABlankPortAndAnExplicitDefaultAreNotDuplicatesInAPortGroup(t *testing.T
 
 func TestRenameGroupRemapsHostsAndDescendantGroups(t *testing.T) {
 	repo := &fakeHosts{hosts: []domainvault.Host{
-		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22, Protocol: domainvault.ProtocolSSH, Group: "prod/web"},
-		{ID: "host-2", Label: "db", Hostname: "db.example.com", Port: 22, Protocol: domainvault.ProtocolSSH, Group: "prod/web/internal"},
+		{ID: "host-1", Label: "web", Hostname: "web.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web", GroupID: "g-web"},
+		{ID: "host-2", Label: "db", Hostname: "db.example.com", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/web/internal", GroupID: "g-deep"},
 	}}
 	groups := &fakeGroups{items: []domainvault.Group{
-		{Path: "prod/web", Username: "old"},
-		{Path: "prod/web/internal"},
+		{ID: "g-web", Name: "web", Path: "prod/web", Username: "old"},
+		{ID: "g-deep", ParentID: "g-web", Name: "internal", Path: "prod/web/internal"},
 	}}
 	service := newEntityService(t, repo, groups, &fakeProxies{}, &fakeKnownHosts{})
 
@@ -453,18 +458,33 @@ func TestRenameGroupRemapsHostsAndDescendantGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateGroup: %v", err)
 	}
-	if updated.Path != "prod/app" || updated.Username != "new" {
-		t.Fatalf("updated group = %+v", updated)
+	if updated.Path != "prod/app" || updated.Username != "new" ||
+		updated.ID != "g-web" || updated.Name != "app" ||
+		updated.ParentID != domainvault.GroupIDFromPath("prod") {
+		t.Fatalf("updated group = %+v, want the same ID under the new name", updated)
 	}
 	if repo.hosts[0].Group != "prod/app" || repo.hosts[1].Group != "prod/app/internal" {
 		t.Fatalf("Host groups = %q / %q", repo.hosts[0].Group, repo.hosts[1].Group)
 	}
-	paths := map[string]bool{}
-	for _, group := range groups.items {
-		paths[group.Path] = true
+	if repo.hosts[0].GroupID != "g-web" || repo.hosts[1].GroupID != "g-deep" {
+		t.Fatalf("Host group IDs = %q / %q, want them unchanged",
+			repo.hosts[0].GroupID, repo.hosts[1].GroupID)
 	}
-	if paths["prod/web"] || !paths["prod/app"] || !paths["prod/app/internal"] {
-		t.Fatalf("groups after rename = %v", paths)
+	byPath := map[string]domainvault.Group{}
+	for _, group := range groups.items {
+		byPath[group.Path] = group
+	}
+	if _, exists := byPath["prod/web"]; exists {
+		t.Fatalf("groups after rename = %v, want the old path removed", byPath)
+	}
+	renamed, ok := byPath["prod/app"]
+	if !ok || renamed.ID != "g-web" || renamed.Name != "app" {
+		t.Fatalf("renamed group = %+v", renamed)
+	}
+	descendant, ok := byPath["prod/app/internal"]
+	if !ok || descendant.ID != "g-deep" || descendant.ParentID != "g-web" ||
+		descendant.Name != "internal" {
+		t.Fatalf("descendant group = %+v", descendant)
 	}
 
 	_, err = service.UpdateGroup(context.Background(), "prod/app", domainvault.GroupDraft{Path: "prod/app/internal/deeper"})

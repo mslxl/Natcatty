@@ -193,3 +193,48 @@ func TestResetFieldIgnoresAnUnknownField(t *testing.T) {
 		t.Errorf("ResetField(unknown) = %+v", got)
 	}
 }
+
+func TestPortableStripsDeviceLocalPreferences(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.AppIcon = "device-icon"
+	settings.Appearance.TerminalFontSize = 18
+	settings.SFTPEditor.DefaultOpener = Opener{Kind: OpenerExternal, Application: ExternalApplication{Path: "/opt/editor"}}
+	settings.SFTPEditor.FileAssociations = []FileAssociation{{Extension: "txt", Kind: OpenerExternal, Application: ExternalApplication{Path: "/opt/viewer"}}}
+	settings.Security.ConfirmDestructive = false
+
+	portable := Portable(settings)
+	if portable.Appearance.AppIcon != "" {
+		t.Fatalf("portable AppIcon = %q, want it stripped", portable.Appearance.AppIcon)
+	}
+	if portable.Appearance.TerminalFontSize != 18 {
+		t.Fatalf("portable TerminalFontSize = %v", portable.Appearance.TerminalFontSize)
+	}
+	if portable.SFTPEditor.DefaultOpener.Kind != "" || len(portable.SFTPEditor.FileAssociations) != 0 {
+		t.Fatalf("portable SFTP editor = %+v", portable.SFTPEditor)
+	}
+	if portable.Security.ConfirmDestructive {
+		t.Fatal("portable security settings did not follow the source")
+	}
+
+	current := Defaults()
+	current.Appearance.AppIcon = "bright"
+	current.SFTPEditor.DefaultOpener = Opener{Kind: OpenerSystem}
+	current.SFTPEditor.FileAssociations = []FileAssociation{{Extension: "md", Kind: OpenerExternal, Application: ExternalApplication{Path: "/local/app"}}}
+	merged := MergePortable(current, portable)
+	if merged.Appearance.AppIcon != "bright" {
+		t.Fatalf("merged AppIcon = %q, want the local value", merged.Appearance.AppIcon)
+	}
+	if merged.Appearance.TerminalFontSize != 18 {
+		t.Fatalf("merged TerminalFontSize = %v", merged.Appearance.TerminalFontSize)
+	}
+	if merged.SFTPEditor.DefaultOpener.Kind != OpenerSystem ||
+		len(merged.SFTPEditor.FileAssociations) != 1 {
+		t.Fatalf("merged SFTP editor = %+v, want device-local fields preserved", merged.SFTPEditor)
+	}
+	if merged.Security.ConfirmDestructive {
+		t.Fatal("merged security settings did not take the portable value")
+	}
+	if merged.Sync != current.Sync {
+		t.Fatalf("merged Sync = %+v, want the device-local value", merged.Sync)
+	}
+}

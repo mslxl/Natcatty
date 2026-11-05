@@ -2,6 +2,7 @@ package syncvault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 
 type fakeRecords struct {
 	hosts    []domainvault.Host
+	groups   []domainvault.Group
+	snippets []domainvault.Snippet
 	keys     []domainvault.Key
 	applied  []appsync.Payload
 	applyErr error
@@ -22,7 +25,7 @@ type fakeRecords struct {
 
 func (r *fakeRecords) List(context.Context) ([]domainvault.Host, error) { return r.hosts, nil }
 func (r *fakeRecords) ListGroups(context.Context) ([]domainvault.Group, error) {
-	return nil, nil
+	return r.groups, nil
 }
 func (r *fakeRecords) ListKeys(context.Context) ([]domainvault.Key, error) { return r.keys, nil }
 func (r *fakeRecords) ListIdentities(context.Context) ([]domainvault.Identity, error) {
@@ -35,7 +38,7 @@ func (r *fakeRecords) ListForwardingRules(context.Context) ([]domainforward.Rule
 	return nil, nil
 }
 func (r *fakeRecords) ListSnippets(context.Context) ([]domainvault.Snippet, error) {
-	return nil, nil
+	return r.snippets, nil
 }
 func (r *fakeRecords) ListSnippetPackages(context.Context) ([]domainvault.SnippetPackage, error) {
 	return nil, nil
@@ -175,6 +178,81 @@ func TestApplyStoresIncomingSecretsAndClearsStaleOnes(t *testing.T) {
 	}
 	if _, ok := secrets.values[hostRef("host-1")]; ok {
 		t.Fatal("stale credential survived")
+	}
+}
+
+type fakeSettings struct {
+	snapshot map[string]json.RawMessage
+	applied  map[string]json.RawMessage
+}
+
+func (s *fakeSettings) Snapshot(context.Context) (map[string]json.RawMessage, error) {
+	return s.snapshot, nil
+}
+
+func (s *fakeSettings) Apply(_ context.Context, settings map[string]json.RawMessage) error {
+	s.applied = settings
+	return nil
+}
+
+func TestSnapshotCarriesStableGroupReferencesAndPortableSettings(t *testing.T) {
+	records := &fakeRecords{
+		hosts: []domainvault.Host{{
+			ID: "host-1", Label: "h", Hostname: "h", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "Prod/Web",
+		}},
+		groups: []domainvault.Group{{Path: "Prod/Web", Notes: "web"}},
+		snippets: []domainvault.Snippet{{
+			ID: "snippet-1", Label: "deploy", TargetGroups: []string{"Prod/Web"},
+		}},
+	}
+	settings := &fakeSettings{snapshot: map[string]json.RawMessage{
+		"natcatty.preferences": json.RawMessage(`{"appearance":{}}`),
+	}}
+	payload, err := New(records, &fakeSecrets{}, WithSettings(settings)).Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(payload.Groups) != 2 {
+		t.Fatalf("groups = %+v, want the saved group and its implicit parent", payload.Groups)
+	}
+	pathIDs := map[string]string{}
+	for _, group := range payload.Groups {
+		if group.ID == "" {
+			t.Fatalf("group %q has no stable ID", group.Path)
+		}
+		pathIDs[group.Path] = group.ID
+	}
+	webID := pathIDs["Prod/Web"]
+	if webID == "" || pathIDs["Prod"] == webID {
+		t.Fatalf("group IDs = %v", pathIDs)
+	}
+	if payload.Hosts[0].GroupID != webID {
+		t.Fatalf("Host GroupID = %q, want %q", payload.Hosts[0].GroupID, webID)
+	}
+	if len(payload.Snippets[0].TargetGroupIDs) != 1 ||
+		payload.Snippets[0].TargetGroupIDs[0] != webID {
+		t.Fatalf("Snippet target IDs = %v, want %q", payload.Snippets[0].TargetGroupIDs, webID)
+	}
+	if _, ok := payload.Settings["natcatty.preferences"]; !ok {
+		t.Fatalf("portable settings are missing: %+v", payload.Settings)
+	}
+}
+
+func TestApplyForwardsPortableSettingsToTheSettingsPort(t *testing.T) {
+	records := &fakeRecords{}
+	settings := &fakeSettings{}
+	payload := appsync.Payload{Settings: map[string]json.RawMessage{
+		"natcatty.preferences": json.RawMessage(`{"appearance":{}}`),
+	}}
+	if err := New(records, &fakeSecrets{}, WithSettings(settings)).Apply(context.Background(), payload); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(settings.applied) != 1 {
+		t.Fatalf("applied settings = %+v, want the full document map", settings.applied)
+	}
+	if len(records.applied) != 1 {
+		t.Fatal("records were not replaced")
 	}
 }
 

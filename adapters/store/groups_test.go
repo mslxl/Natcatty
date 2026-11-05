@@ -20,11 +20,12 @@ func TestHostGroupsPersistAndReorder(t *testing.T) {
 	}
 	when := time.Unix(1700000000, 0).UTC()
 	groups := []domainvault.Group{
-		{Path: "prod/web", Username: "deploy", Port: 2222,
+		{ID: "g-web", ParentID: "g-prod", Name: "web", Path: "prod/web",
+			Username: "deploy", Port: 2222,
 			Protocol: domainvault.ProtocolSSH, AuthMethod: domainvault.HostAuthPassword,
 			UseSSHAgent: true, ProxyProfileID: "proxy-1", OrderKey: 2000,
 			CreatedAt: when, UpdatedAt: when},
-		{Path: "prod", Notes: "production", OrderKey: 1000,
+		{ID: "g-prod", Name: "prod", Path: "prod", Notes: "production", OrderKey: 1000,
 			CreatedAt: when, UpdatedAt: when},
 	}
 	for _, group := range groups {
@@ -48,6 +49,12 @@ func TestHostGroupsPersistAndReorder(t *testing.T) {
 	}
 	if len(loaded) != 2 || loaded[0].Path != "prod" || loaded[1].Path != "prod/web" {
 		t.Fatalf("groups = %+v, want order prod then prod/web", loaded)
+	}
+	if loaded[0].ID != "g-prod" || loaded[0].Name != "prod" || loaded[0].ParentID != "" {
+		t.Fatalf("prod identity = %+v", loaded[0])
+	}
+	if loaded[1].ID != "g-web" || loaded[1].ParentID != "g-prod" || loaded[1].Name != "web" {
+		t.Fatalf("prod/web identity = %+v", loaded[1])
 	}
 	if loaded[1].Username != "deploy" || loaded[1].Port != 2222 ||
 		loaded[1].AuthMethod != domainvault.HostAuthPassword || !loaded[1].UseSSHAgent ||

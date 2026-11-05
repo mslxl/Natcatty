@@ -1,6 +1,10 @@
 package vault
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -8,11 +12,23 @@ import (
 )
 
 // Group is one Host Group: a user-defined grouping of Hosts with shared
-// connection defaults. Its identity is its slash-separated path, so a rename
-// is a path change and every reference is a path, not an id. A Host may keep a
-// Group path that no longer exists, matching the original Vault's
-// non-cascading references.
+// connection defaults. Path remains the local display identity and the value a
+// Host or Snippet references. ID is the stable identity convergent sync uses,
+// so moving or renaming a group keeps its causal history and does not look
+// like a delete plus an insert to another device. A Host may keep a Group path
+// that no longer exists, matching the original Vault's non-cascading
+// references.
 type Group struct {
+	// ID is the sync identity. It is generated once and survives renames and
+	// moves. Path-derived IDs are used only for records written before IDs
+	// existed, so those records still merge with their old counterparts.
+	ID string `json:"id,omitempty"`
+	// ParentID is the containing group's ID, or "" at the Vault root. The
+	// pair (ParentID, Name) is the movable-tree structure; Path is derived
+	// from it when a payload is materialized.
+	ParentID string `json:"parentId,omitempty"`
+	// Name is the last path segment. It is what a move or rename changes.
+	Name  string `json:"name,omitempty"`
 	Path  string `json:"path"`
 	Notes string `json:"notes,omitempty"`
 	// The fields below are defaults for member Hosts. A zero value means the
@@ -343,4 +359,274 @@ func ReplaceGroupPrefix(path, root, next string) string {
 	default:
 		return path
 	}
+}
+
+// GroupIDFromPath returns the deterministic identity used for a Host Group
+// written before stable IDs existed. The same path always produces the same
+// ID, so an old path-keyed record and a new ID-keyed record describing the
+// same group merge instead of duplicating.
+func GroupIDFromPath(path string) string {
+	path = NormalizeGroup(path)
+	if path == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("natcatty-group\x00" + path))
+	return "group-" + hex.EncodeToString(sum[:16])
+}
+
+// EnsureGroupIdentities fills the sync identity fields on records loaded from
+// storage that predates them. A saved ID and ParentID are preserved; only
+// missing values are derived. The returned slice is a copy.
+func EnsureGroupIdentities(groups []Group) []Group {
+	out := make([]Group, len(groups))
+	pathIDs := make(map[string]string, len(groups))
+	for index, group := range groups {
+		group.Path = NormalizeGroup(group.Path)
+		if group.ID == "" {
+			group.ID = GroupIDFromPath(group.Path)
+		}
+		if group.Name == "" {
+			group.Name = GroupName(group.Path)
+		}
+		out[index] = group
+		if group.Path != "" {
+			pathIDs[group.Path] = group.ID
+		}
+	}
+	for index := range out {
+		if out[index].Path == "" {
+			continue
+		}
+		parentPath := ParentGroupPath(out[index].Path)
+		if parentPath == "" {
+			out[index].ParentID = ""
+			continue
+		}
+		if out[index].ParentID != "" {
+			continue
+		}
+		if id, ok := pathIDs[parentPath]; ok {
+			out[index].ParentID = id
+		} else {
+			out[index].ParentID = GroupIDFromPath(parentPath)
+		}
+	}
+	return out
+}
+
+// EnsureGroupAncestors adds a minimal record for every implicit ancestor of a
+// saved group or a Host/Snippet reference. A Host may name "prod/web" while
+// only "prod/web" has a saved record; the tree still needs "prod" as a node,
+// otherwise a payload materializer would treat "prod/web" as a root group.
+// Existing records are never replaced.
+func EnsureGroupAncestors(groups []Group, referencedPaths []string) []Group {
+	out := EnsureGroupIdentities(groups)
+	byPath := make(map[string]Group, len(out))
+	needed := map[string]bool{}
+	for _, group := range out {
+		if group.Path != "" {
+			byPath[group.Path] = group
+			for _, ancestor := range GroupAncestors(group.Path) {
+				needed[ancestor] = true
+			}
+		}
+	}
+	for _, path := range referencedPaths {
+		path = NormalizeGroup(path)
+		if path == "" {
+			continue
+		}
+		for _, ancestor := range GroupAncestors(path) {
+			needed[ancestor] = true
+		}
+	}
+	pathIDs := make(map[string]string, len(needed))
+	for path, group := range byPath {
+		pathIDs[path] = group.ID
+	}
+	for path := range needed {
+		if pathIDs[path] != "" {
+			continue
+		}
+		pathIDs[path] = GroupIDFromPath(path)
+	}
+
+	missing := make([]string, 0, len(needed))
+	for path := range needed {
+		if _, ok := byPath[path]; !ok {
+			missing = append(missing, path)
+		}
+	}
+	sort.Strings(missing)
+	for _, path := range missing {
+		parentPath := ParentGroupPath(path)
+		parentID := ""
+		if parentPath != "" {
+			parentID = pathIDs[parentPath]
+		}
+		out = append(out, Group{
+			ID:       pathIDs[path],
+			ParentID: parentID,
+			Name:     GroupName(path),
+			Path:     path,
+		})
+	}
+	return out
+}
+
+// GroupTreeNode is the structural part of a Host Group used to materialize
+// paths. Display text and connection defaults are deliberately absent: only
+// identity, parent, name, and sibling order affect the tree.
+type GroupTreeNode struct {
+	ID       string
+	ParentID string
+	Name     string
+	OrderKey int64
+}
+
+// ResolveGroupTree materializes each node's slash-separated path from the
+// parent links. It is deterministic for every replica:
+//
+//   - a parent that does not exist, or a self-link, makes the node a root;
+//   - every cycle is broken by making the lexicographically smallest node in
+//     that cycle a root, so two devices that concurrently move groups into a
+//     cycle still derive the same forest;
+//   - duplicate sibling names get " (2)", " (3)" suffixes in
+//     (OrderKey, ID) order, so a concurrent create cannot produce two
+//     indistinguishable paths.
+func ResolveGroupTree(nodes []GroupTreeNode) map[string]string {
+	byID := make(map[string]GroupTreeNode, len(nodes))
+	for _, node := range nodes {
+		if node.ID == "" {
+			continue
+		}
+		if existing, ok := byID[node.ID]; ok {
+			// Two records with one ID are already a protocol error. Keeping the
+			// first is deterministic and lets the caller report the state
+			// separately.
+			if existing.Name == "" && node.Name != "" {
+				byID[node.ID] = node
+			}
+			continue
+		}
+		byID[node.ID] = node
+	}
+
+	parent := make(map[string]string, len(byID))
+	for id := range byID {
+		candidate := byID[id].ParentID
+		if candidate == "" || candidate == id {
+			parent[id] = ""
+			continue
+		}
+		if _, ok := byID[candidate]; !ok {
+			parent[id] = ""
+			continue
+		}
+		parent[id] = candidate
+	}
+	repairGroupCycles(parent)
+
+	children := make(map[string][]string, len(byID)+1)
+	for id := range byID {
+		children[parent[id]] = append(children[parent[id]], id)
+	}
+	for _, ids := range children {
+		sort.Slice(ids, func(left, right int) bool {
+			leftNode, rightNode := byID[ids[left]], byID[ids[right]]
+			if leftNode.OrderKey != rightNode.OrderKey {
+				return leftNode.OrderKey < rightNode.OrderKey
+			}
+			return leftNode.ID < rightNode.ID
+		})
+	}
+
+	names := make(map[string]string, len(byID))
+	for _, ids := range children {
+		used := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			name := sanitizeGroupSegment(byID[id].Name)
+			if name == "" {
+				name = sanitizeGroupSegment(id)
+			}
+			if name == "" {
+				name = "group"
+			}
+			candidate := name
+			for suffix := 2; used[strings.ToLower(candidate)]; suffix++ {
+				candidate = name + " (" + strconv.Itoa(suffix) + ")"
+			}
+			used[strings.ToLower(candidate)] = true
+			names[id] = candidate
+		}
+	}
+
+	paths := make(map[string]string, len(byID))
+	var resolve func(string) string
+	resolve = func(id string) string {
+		if path, ok := paths[id]; ok {
+			return path
+		}
+		name := names[id]
+		path := name
+		if p := parent[id]; p != "" {
+			path = resolve(p) + "/" + name
+		}
+		paths[id] = path
+		return path
+	}
+	for id := range byID {
+		resolve(id)
+	}
+	return paths
+}
+
+func repairGroupCycles(parent map[string]string) {
+	for {
+		cycle := firstGroupCycle(parent)
+		if len(cycle) == 0 {
+			return
+		}
+		root := cycle[0]
+		for _, id := range cycle[1:] {
+			if id < root {
+				root = id
+			}
+		}
+		parent[root] = ""
+	}
+}
+
+func firstGroupCycle(parent map[string]string) []string {
+	ids := make([]string, 0, len(parent))
+	for id := range parent {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, start := range ids {
+		seen := make(map[string]int, len(parent))
+		path := make([]string, 0, len(parent))
+		for id := start; id != ""; id = parent[id] {
+			if at, ok := seen[id]; ok {
+				return append([]string(nil), path[at:]...)
+			}
+			seen[id] = len(path)
+			path = append(path, id)
+		}
+	}
+	return nil
+}
+
+func sanitizeGroupSegment(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.Trim(name, "/")
+	var out strings.Builder
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return strings.TrimSpace(out.String())
 }
