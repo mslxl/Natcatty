@@ -250,7 +250,7 @@
   "vaultNetworkAuthKey": "Auth key",
   "vaultNetworkAuthKeyHint": "The key is stored in the field secret store and never exported.",
   "vaultNetworkAuthKeySaved": "An auth key is saved. Leave blank to keep it.",
-  "vaultNetworkControlURL": "Control URL",
+  "vaultNetworkControlURLExperimental": "Control URL (experimental)",
   "vaultNetworkControlURLHint": "Experimental until verified on a real tailnet. Tailscale's control server or a local Headscale URL. Plain HTTP is allowed but unencrypted.",
   "vaultNetworkEphemeral": "Ephemeral node",
   "vaultNetworkTags": "Tags",
@@ -475,6 +475,11 @@
     }
   },
   "vaultNetworkLoginRequired": "Login required: open {url}",
+  "vaultNetworkLoginStart": "Log in",
+  "vaultNetworkLoginCopy": "Copy login link",
+  "vaultNetworkLoginOpen": "Open in browser",
+  "vaultNetworkLoginCancel": "Cancel login",
+  "vaultNetworkLoginRetry": "Retry",
   "@vaultNetworkLoginRequired": {
     "description": "The interactive-login address a Network Profile's Provider is waiting on.",
     "placeholders": {
@@ -484,7 +489,7 @@
       }
     }
   },
-  "vaultNetworkAuthKeyStateHint": "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored. To switch tailnets, create a new Network Profile.",
+  "vaultNetworkAuthKeyStateHint": "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored. To switch tailnets, create a new Network Profile or clear this Profile's state directory.",
   "@vaultNetworkAuthKeyStateHint": {
     "description": "Explains tsnet's state-directory precedence over a newly entered Auth Key."
   },

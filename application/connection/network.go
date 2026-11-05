@@ -39,6 +39,15 @@ type NetworkProviderCloser interface {
 	Close() error
 }
 
+// NetworkProviderCanceller is the optional capability of a Provider that can
+// stop its current start or interactive login while remaining reusable for a
+// later Acquire or retry. Cancel is a user action, so the Provider reports the
+// resulting Stopped phase; Close stays the application-shutdown path and is
+// silent.
+type NetworkProviderCanceller interface {
+	Cancel() error
+}
+
 // NetworkProviderFactory opens the provider for one Network Profile. It is the
 // seam Tailscale Net and WireGuard Net implement. Open may take time (joining a
 // tailnet, starting a netstack) and must honor ctx. Until a factory is wired,
@@ -66,10 +75,12 @@ type NetworkProviderRegistry struct {
 
 // providerEntry is one profile's open attempt or running Provider. ready closes
 // once the attempt settles, so waiters share its result; provider and err are
-// written before ready closes.
+// written before ready closes. cancel stops an open attempt that Close, Cancel,
+// or CloseAll abandoned.
 type providerEntry struct {
 	fingerprint string
 	ready       chan struct{}
+	cancel      context.CancelFunc
 	provider    NetworkProvider
 	err         error
 	// abandoned is set by Close while an open is in flight. The leader still
@@ -88,9 +99,10 @@ func NewNetworkProviderRegistry(factory NetworkProviderFactory) *NetworkProvider
 }
 
 // SetCloseHook installs a callback invoked with the profile ID whenever this
-// registry closes a live Provider, whether through Close, CloseAll, or a
-// fingerprint replacement. The Manager uses it to invalidate idle pooled
-// Connections. The hook runs without any registry lock and must not block.
+// registry retires a live Provider, whether through Close, CloseAll, a
+// fingerprint replacement, or Cancel. The Manager uses it to invalidate idle
+// pooled Connections. The hook runs without any registry lock and must not
+// block.
 func (r *NetworkProviderRegistry) SetCloseHook(fn func(profileID string)) {
 	if r == nil {
 		return
@@ -171,10 +183,13 @@ func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRout
 		}
 
 		entry = &providerEntry{fingerprint: route.Fingerprint, ready: make(chan struct{})}
+		openCtx, cancel := context.WithCancel(ctx)
+		entry.cancel = cancel
 		r.entries[route.ProfileID] = entry
 		r.mu.Unlock()
 
-		provider, err := r.factory.Open(ctx, route)
+		provider, err := r.factory.Open(openCtx, route)
+		cancel()
 		if err == nil && provider == nil {
 			err = fmt.Errorf("%w: factory returned no provider", ErrNetworkProvider)
 		}
@@ -234,6 +249,53 @@ func (r *NetworkProviderRegistry) Close(profileID string) error {
 		return r.closeProvider(provider, profileID)
 	default:
 		entry.abandoned = true
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+		r.mu.Unlock()
+		return nil
+	}
+}
+
+// Cancel stops the current start or interactive login for one profile and
+// removes it from the registry, so the next Acquire opens a fresh Provider.
+// Cancelling an unknown or already finished profile is a no-op. A Provider that
+// does not implement NetworkProviderCanceller is closed instead, which is safe
+// but leaves it unreusable until the next Acquire. Cancelling while an open is
+// in flight cancels that open; its caller observes the cancellation, and the
+// registry closes whatever the open produced.
+func (r *NetworkProviderRegistry) Cancel(profileID string) error {
+	if r == nil || profileID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	entry := r.entries[profileID]
+	if entry == nil {
+		r.mu.Unlock()
+		return nil
+	}
+	delete(r.entries, profileID)
+	select {
+	case <-entry.ready:
+		provider := entry.provider
+		hook := r.onClose
+		r.mu.Unlock()
+		var err error
+		if canceller, ok := provider.(NetworkProviderCanceller); ok {
+			err = canceller.Cancel()
+			if hook != nil && provider != nil {
+				// A cancelled Provider no longer carries this profile's idle
+				// connections, so they must not be reused.
+				hook(profileID)
+			}
+			return err
+		}
+		return r.closeProvider(provider, profileID)
+	default:
+		entry.abandoned = true
+		if entry.cancel != nil {
+			entry.cancel()
+		}
 		r.mu.Unlock()
 		return nil
 	}
@@ -266,6 +328,9 @@ func (r *NetworkProviderRegistry) CloseAll() error {
 			}
 		default:
 			entry.abandoned = true
+			if entry.cancel != nil {
+				entry.cancel()
+			}
 		}
 	}
 	r.mu.Unlock()

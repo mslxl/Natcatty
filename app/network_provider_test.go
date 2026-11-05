@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -733,5 +734,244 @@ func TestConnectionLogFromWireGuardStatus(t *testing.T) {
 	log, ok := connectionLogFromWireGuardStatus(noEndpoint, at)
 	if !ok || log.NetworkAddress != "" {
 		t.Fatalf("address fallback = %q, want empty", log.NetworkAddress)
+	}
+}
+
+// fakeProviderRegistry scripts the two lifecycle calls the interactive-login
+// controller performs. It records the call order so a test can prove that a
+// retry retires the old attempt before opening a new one.
+type fakeProviderRegistry struct {
+	mu       sync.Mutex
+	acquires int
+	routes   []appconnection.NetworkRoute
+	cancels  []string
+	events   []string
+	openFn   func(context.Context, appconnection.NetworkRoute, int) (appconnection.NetworkProvider, error)
+}
+
+func (r *fakeProviderRegistry) Acquire(ctx context.Context,
+	route appconnection.NetworkRoute) (appconnection.NetworkProvider, error) {
+	r.mu.Lock()
+	r.acquires++
+	index := r.acquires
+	r.routes = append(r.routes, route)
+	r.events = append(r.events, "acquire")
+	fn := r.openFn
+	r.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, route, index)
+	}
+	return &stubProvider{}, nil
+}
+
+func (r *fakeProviderRegistry) Cancel(profileID string) error {
+	r.mu.Lock()
+	r.cancels = append(r.cancels, profileID)
+	r.events = append(r.events, "cancel")
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *fakeProviderRegistry) snapshot() (int, []appconnection.NetworkRoute, []string, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.acquires, append([]appconnection.NetworkRoute(nil), r.routes...),
+		append([]string(nil), r.cancels...), append([]string(nil), r.events...)
+}
+
+func waitForAppSignal(t *testing.T, signal <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func TestNetworkProviderControllerResolvesTheProfileRoute(t *testing.T) {
+	profile := tailscaleTestProfile()
+	vault := &fakeNetworkVault{profile: profile}
+	registry := &fakeProviderRegistry{}
+	controller := &networkProviderController{vault: vault, registry: registry}
+
+	if err := controller.StartNetworkProvider(context.Background(), profile.ID); err != nil {
+		t.Fatalf("StartNetworkProvider: %v", err)
+	}
+	acquires, routes, _, _ := registry.snapshot()
+	if acquires != 1 || len(routes) != 1 {
+		t.Fatalf("registry acquires = %d, want one", acquires)
+	}
+	route := routes[0]
+	if route.ProfileID != profile.ID || route.Kind != string(profile.Kind) ||
+		route.Label != profile.Label {
+		t.Fatalf("route = %+v, want the profile identity", route)
+	}
+	if route.Fingerprint != domainvault.NetworkProfileFingerprint(profile) {
+		t.Fatalf("route fingerprint = %q, want the profile fingerprint", route.Fingerprint)
+	}
+	if vault.secretLookups != 0 {
+		t.Fatal("the login controller read the Auth Key; only the Provider factory may")
+	}
+	controller.mu.Lock()
+	pending := len(controller.starts)
+	controller.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("in-flight starts = %d, want the settled attempt removed", pending)
+	}
+}
+
+func TestNetworkProviderControllerRepeatedStartCancelsThePreviousAttempt(t *testing.T) {
+	profile := tailscaleTestProfile()
+	firstStarted := make(chan struct{})
+	firstCanceled := make(chan error, 1)
+	registry := &fakeProviderRegistry{}
+	registry.openFn = func(ctx context.Context, _ appconnection.NetworkRoute,
+		index int) (appconnection.NetworkProvider, error) {
+		if index == 1 {
+			close(firstStarted)
+			<-ctx.Done()
+			firstCanceled <- ctx.Err()
+			return nil, ctx.Err()
+		}
+		return &stubProvider{}, nil
+	}
+	controller := &networkProviderController{
+		vault:    &fakeNetworkVault{profile: profile},
+		registry: registry,
+	}
+
+	results := make(chan error, 2)
+	go func() { results <- controller.StartNetworkProvider(context.Background(), profile.ID) }()
+	waitForAppSignal(t, firstStarted, "the first provider open")
+	go func() { results <- controller.StartNetworkProvider(context.Background(), profile.ID) }()
+
+	select {
+	case err := <-firstCanceled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("first attempt context error = %v, want cancellation", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a repeated Start did not cancel the older attempt")
+	}
+
+	var errs []error
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-results:
+			errs = append(errs, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for a start result")
+		}
+	}
+	canceled, succeeded := 0, 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+		} else if errors.Is(err, context.Canceled) {
+			canceled++
+		}
+	}
+	if canceled != 1 || succeeded != 1 {
+		t.Fatalf("start results = %v, want one cancelled and one successful attempt", errs)
+	}
+	acquires, _, _, _ := registry.snapshot()
+	if acquires != 2 {
+		t.Fatalf("registry acquires = %d, want a fresh open after the cancelled attempt", acquires)
+	}
+}
+
+func TestNetworkProviderControllerCancelStopsTheStartAndRegistryEntry(t *testing.T) {
+	profile := tailscaleTestProfile()
+	started := make(chan struct{})
+	registry := &fakeProviderRegistry{}
+	registry.openFn = func(ctx context.Context, _ appconnection.NetworkRoute,
+		_ int) (appconnection.NetworkProvider, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	controller := &networkProviderController{
+		vault:    &fakeNetworkVault{profile: profile},
+		registry: registry,
+	}
+
+	startResult := make(chan error, 1)
+	go func() { startResult <- controller.StartNetworkProvider(context.Background(), profile.ID) }()
+	waitForAppSignal(t, started, "the provider open")
+
+	if err := controller.CancelNetworkProvider(context.Background(), profile.ID); err != nil {
+		t.Fatalf("CancelNetworkProvider: %v", err)
+	}
+	if err := <-startResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("start error = %v, want cancellation", err)
+	}
+	_, _, cancels, _ := registry.snapshot()
+	if len(cancels) != 1 || cancels[0] != profile.ID {
+		t.Fatalf("registry cancels = %v, want [%s]", cancels, profile.ID)
+	}
+}
+
+func TestNetworkProviderControllerRetryCancelsThenStarts(t *testing.T) {
+	profile := tailscaleTestProfile()
+	started := make(chan struct{})
+	registry := &fakeProviderRegistry{}
+	registry.openFn = func(ctx context.Context, _ appconnection.NetworkRoute,
+		index int) (appconnection.NetworkProvider, error) {
+		if index == 1 {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return &stubProvider{}, nil
+	}
+	controller := &networkProviderController{
+		vault:    &fakeNetworkVault{profile: profile},
+		registry: registry,
+	}
+
+	go func() { _ = controller.StartNetworkProvider(context.Background(), profile.ID) }()
+	waitForAppSignal(t, started, "the first provider open")
+
+	if err := controller.RetryNetworkProvider(context.Background(), profile.ID); err != nil {
+		t.Fatalf("RetryNetworkProvider: %v", err)
+	}
+	_, routes, cancels, events := registry.snapshot()
+	if len(cancels) != 1 || cancels[0] != profile.ID {
+		t.Fatalf("registry cancels = %v, want the retried profile", cancels)
+	}
+	if len(events) != 3 || events[0] != "acquire" || events[1] != "cancel" || events[2] != "acquire" {
+		t.Fatalf("lifecycle order = %v, want acquire, cancel, acquire", events)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("routes = %d, want a fresh route for the retry", len(routes))
+	}
+}
+
+func TestNetworkProviderControllerFailsClosedWithoutAProfileOrRegistry(t *testing.T) {
+	registry := &fakeProviderRegistry{}
+	controller := &networkProviderController{
+		vault:    &fakeNetworkVault{profileErr: appvault.ErrNotFound},
+		registry: registry,
+	}
+	err := controller.StartNetworkProvider(context.Background(), "net-missing")
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("missing-profile error = %v, want KindProvider", err)
+	}
+	if typed.Provider == nil || typed.Provider.ProfileID != "net-missing" ||
+		typed.Provider.Phase != appconnection.ProviderPhaseError {
+		t.Fatalf("ProviderInfo = %+v, want the missing profile", typed.Provider)
+	}
+	if acquires, _, _, _ := registry.snapshot(); acquires != 0 {
+		t.Fatalf("registry acquires = %d, want none without a profile", acquires)
+	}
+
+	unwired := &networkProviderController{vault: &fakeNetworkVault{profile: tailscaleTestProfile()}}
+	err = unwired.StartNetworkProvider(context.Background(), "net-1")
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("unwired error = %v, want KindProvider", err)
+	}
+	if err := unwired.CancelNetworkProvider(context.Background(), "net-1"); err != nil {
+		t.Fatalf("CancelNetworkProvider without a registry: %v", err)
 	}
 }

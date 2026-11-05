@@ -1452,14 +1452,16 @@ func (msgs Messages) VaultNetworkAuthKeySaved() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkAuthKeySaved", nil)
 }
 
-// VaultNetworkControlURL says "Control URL"
+// VaultNetworkControlURLExperimental says "Control URL (experimental)"
 // in the language the app shows.
-func VaultNetworkControlURL() string { return In(i18n.Locale()).VaultNetworkControlURL() }
+func VaultNetworkControlURLExperimental() string {
+	return In(i18n.Locale()).VaultNetworkControlURLExperimental()
+}
 
-// VaultNetworkControlURL says "Control URL"
+// VaultNetworkControlURLExperimental says "Control URL (experimental)"
 // in the language of msgs.
-func (msgs Messages) VaultNetworkControlURL() string {
-	return Catalog.Format(msgs.locale, "vaultNetworkControlURL", nil)
+func (msgs Messages) VaultNetworkControlURLExperimental() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkControlURLExperimental", nil)
 }
 
 // VaultNetworkControlURLHint says "Experimental until verified on a real tailnet. Tailscale's control server or a local Headscale URL. Plain HTTP is all…"
@@ -2322,6 +2324,56 @@ func VaultNetworkLoginRequired(url string) string {
 // The interactive-login address a Network Profile's Provider is waiting on.
 func (msgs Messages) VaultNetworkLoginRequired(url string) string {
 	return Catalog.Format(msgs.locale, "vaultNetworkLoginRequired", map[string]any{"url": url})
+}
+
+// VaultNetworkLoginStart says "Log in"
+// in the language the app shows.
+func VaultNetworkLoginStart() string { return In(i18n.Locale()).VaultNetworkLoginStart() }
+
+// VaultNetworkLoginStart says "Log in"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkLoginStart() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginStart", nil)
+}
+
+// VaultNetworkLoginCopy says "Copy login link"
+// in the language the app shows.
+func VaultNetworkLoginCopy() string { return In(i18n.Locale()).VaultNetworkLoginCopy() }
+
+// VaultNetworkLoginCopy says "Copy login link"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkLoginCopy() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginCopy", nil)
+}
+
+// VaultNetworkLoginOpen says "Open in browser"
+// in the language the app shows.
+func VaultNetworkLoginOpen() string { return In(i18n.Locale()).VaultNetworkLoginOpen() }
+
+// VaultNetworkLoginOpen says "Open in browser"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkLoginOpen() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginOpen", nil)
+}
+
+// VaultNetworkLoginCancel says "Cancel login"
+// in the language the app shows.
+func VaultNetworkLoginCancel() string { return In(i18n.Locale()).VaultNetworkLoginCancel() }
+
+// VaultNetworkLoginCancel says "Cancel login"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkLoginCancel() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginCancel", nil)
+}
+
+// VaultNetworkLoginRetry says "Retry"
+// in the language the app shows.
+func VaultNetworkLoginRetry() string { return In(i18n.Locale()).VaultNetworkLoginRetry() }
+
+// VaultNetworkLoginRetry says "Retry"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkLoginRetry() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginRetry", nil)
 }
 
 // VaultNetworkAuthKeyStateHint says "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored…"
