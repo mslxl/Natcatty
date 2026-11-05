@@ -704,6 +704,7 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithNoteFileWriter(noteFileWriter{}),
 		vaultstate.WithImports(vaultService),
 		vaultstate.WithImportPicker(importFilePicker{locale: func() string { return mygo.App.Locale() }}),
+		vaultstate.WithWireGuardConfPicker(wireguardConfPicker{locale: func() string { return mygo.App.Locale() }}),
 		vaultstate.WithExports(vaultService),
 		vaultstate.WithExportWriter(noteFileWriter{}),
 		vaultstate.WithBackups(backupService),

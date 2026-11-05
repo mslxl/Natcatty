@@ -59,6 +59,7 @@ func TestNormalizeNetworkProfileDraftAcceptsWireGuard(t *testing.T) {
 			Addresses:  []string{"10.0.0.2/32", "fd00::2"},
 			DNS:        []string{"10.0.0.1"},
 			MTU:        1280,
+			ListenPort: 51820,
 			Peers: []WireGuardPeerDraft{{
 				ID:                  "peer-1",
 				PublicKey:           publicKey,
@@ -73,7 +74,8 @@ func TestNormalizeNetworkProfileDraftAcceptsWireGuard(t *testing.T) {
 		t.Fatalf("NormalizeNetworkProfileDraft: %v", err)
 	}
 	config := normalized.WireGuard
-	if config == nil || config.PrivateKey != privateKey || config.MTU != 1280 {
+	if config == nil || config.PrivateKey != privateKey || config.MTU != 1280 ||
+		config.ListenPort != 51820 {
 		t.Fatalf("normalized WireGuard config = %+v", config)
 	}
 	if len(config.Addresses) != 2 || config.Addresses[1] != "fd00::2/128" {
@@ -90,6 +92,30 @@ func TestNormalizeNetworkProfileDraftAcceptsWireGuard(t *testing.T) {
 	}
 	if normalized.Tailscale != nil {
 		t.Fatalf("WireGuard draft kept a Tailscale config: %+v", normalized.Tailscale)
+	}
+}
+
+func TestNormalizeNetworkProfileDraftKeepsAddressHostBitsButMasksAllowedIPs(t *testing.T) {
+	normalized, err := NormalizeNetworkProfileDraft(NetworkProfileDraft{
+		Label: "wg",
+		Kind:  NetworkKindWireGuard,
+		WireGuard: &WireGuardNetworkDraft{
+			PrivateKey: wireGuardKey(1),
+			Addresses:  []string{"10.0.0.2/24"},
+			Peers: []WireGuardPeerDraft{{
+				PublicKey:  wireGuardKey(2),
+				AllowedIPs: []string{"10.0.0.9/24"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeNetworkProfileDraft: %v", err)
+	}
+	if got := normalized.WireGuard.Addresses[0]; got != "10.0.0.2/24" {
+		t.Fatalf("address = %q, want the host bits kept for display", got)
+	}
+	if got := normalized.WireGuard.Peers[0].AllowedIPs[0]; got != "10.0.0.0/24" {
+		t.Fatalf("AllowedIPs = %q, want a masked prefix", got)
 	}
 }
 
@@ -174,6 +200,10 @@ func TestNormalizeNetworkProfileDraftRejectsInvalidProfiles(t *testing.T) {
 			WireGuard: wireGuard(func(w *WireGuardNetworkDraft) { w.MTU = 575 })}, FieldNetworkProfile, RuleOutOfRange},
 		{"mtu too large", NetworkProfileDraft{Label: "x", Kind: NetworkKindWireGuard,
 			WireGuard: wireGuard(func(w *WireGuardNetworkDraft) { w.MTU = 65536 })}, FieldNetworkProfile, RuleOutOfRange},
+		{"listen port too large", NetworkProfileDraft{Label: "x", Kind: NetworkKindWireGuard,
+			WireGuard: wireGuard(func(w *WireGuardNetworkDraft) { w.ListenPort = 65536 })}, FieldNetworkProfile, RuleOutOfRange},
+		{"listen port negative", NetworkProfileDraft{Label: "x", Kind: NetworkKindWireGuard,
+			WireGuard: wireGuard(func(w *WireGuardNetworkDraft) { w.ListenPort = -1 })}, FieldNetworkProfile, RuleOutOfRange},
 		{"keepalive out of range", NetworkProfileDraft{Label: "x", Kind: NetworkKindWireGuard,
 			WireGuard: wireGuard(func(w *WireGuardNetworkDraft) { w.Peers[0].PersistentKeepalive = 65536 })}, FieldNetworkProfile, RuleOutOfRange},
 	}

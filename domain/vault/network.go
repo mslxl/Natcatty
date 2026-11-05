@@ -78,6 +78,7 @@ type WireGuardNetwork struct {
 	Addresses     []string        `json:"addresses,omitempty"`
 	DNS           []string        `json:"dns,omitempty"`
 	MTU           int             `json:"mtu,omitempty"`
+	ListenPort    int             `json:"listenPort,omitempty"`
 	Peers         []WireGuardPeer `json:"peers,omitempty"`
 	HasPrivateKey bool            `json:"hasPrivateKey,omitempty"`
 }
@@ -121,6 +122,7 @@ type WireGuardNetworkDraft struct {
 	Addresses  []string
 	DNS        []string
 	MTU        int
+	ListenPort int
 	Peers      []WireGuardPeerDraft
 }
 
@@ -324,6 +326,9 @@ func normalizeWireGuardDraft(draft WireGuardNetworkDraft) (WireGuardNetworkDraft
 	if draft.MTU < 576 || draft.MTU > 65535 {
 		return WireGuardNetworkDraft{}, validation(FieldNetworkProfile, RuleOutOfRange)
 	}
+	if draft.ListenPort < 0 || draft.ListenPort > 65535 {
+		return WireGuardNetworkDraft{}, validation(FieldNetworkProfile, RuleOutOfRange)
+	}
 
 	if len(draft.Peers) == 0 {
 		return WireGuardNetworkDraft{}, validation(FieldNetworkProfile, RuleRequired)
@@ -416,12 +421,12 @@ func validateWireGuardEndpoint(value string) error {
 }
 
 // normalizeNetworkAddress accepts an IP literal or a CIDR prefix and returns
-// the canonical prefix form. The stored form keeps the prefix for display; the
-// provider later passes only the host address to the netstack.
+// the canonical prefix form. The stored form keeps the prefix and host bits for
+// display; the provider later passes only the host address to the netstack.
 func normalizeNetworkAddress(value string) (string, bool) {
 	value = strings.TrimSpace(value)
 	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Masked().String(), true
+		return prefix.String(), true
 	}
 	address, err := netip.ParseAddr(value)
 	if err != nil {

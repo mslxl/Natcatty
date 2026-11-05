@@ -124,10 +124,11 @@ func (s *Service) CreateNetworkProfile(ctx context.Context,
 	case domainvault.NetworkKindWireGuard:
 		config := normalized.WireGuard
 		profile.WireGuard = &domainvault.WireGuardNetwork{
-			Addresses: append([]string(nil), config.Addresses...),
-			DNS:       append([]string(nil), config.DNS...),
-			MTU:       config.MTU,
-			Peers:     make([]domainvault.WireGuardPeer, 0, len(config.Peers)),
+			Addresses:  append([]string(nil), config.Addresses...),
+			DNS:        append([]string(nil), config.DNS...),
+			MTU:        config.MTU,
+			ListenPort: config.ListenPort,
+			Peers:      make([]domainvault.WireGuardPeer, 0, len(config.Peers)),
 		}
 		if config.PrivateKey != "" {
 			if s.secrets == nil {
@@ -247,6 +248,7 @@ func (s *Service) UpdateNetworkProfile(ctx context.Context, id string,
 			Addresses:     append([]string(nil), config.Addresses...),
 			DNS:           append([]string(nil), config.DNS...),
 			MTU:           config.MTU,
+			ListenPort:    config.ListenPort,
 			Peers:         make([]domainvault.WireGuardPeer, 0, len(config.Peers)),
 			HasPrivateKey: existing.WireGuard != nil && existing.WireGuard.HasPrivateKey,
 		}

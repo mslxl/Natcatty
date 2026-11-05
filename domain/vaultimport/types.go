@@ -320,6 +320,7 @@ type FamilyWireGuardNetwork struct {
 	Addresses     []string
 	DNS           []string
 	MTU           int
+	ListenPort    int
 	Peers         []FamilyWireGuardPeer
 	HasPrivateKey bool
 }

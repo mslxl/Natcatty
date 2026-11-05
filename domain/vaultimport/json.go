@@ -128,6 +128,7 @@ type jsonWireGuardNetwork struct {
 	Addresses     []string            `json:"addresses"`
 	DNS           []string            `json:"dns"`
 	MTU           int                 `json:"mtu"`
+	ListenPort    int                 `json:"listenPort"`
 	Peers         []jsonWireGuardPeer `json:"peers"`
 	HasPrivateKey bool                `json:"hasPrivateKey"`
 }
@@ -438,6 +439,7 @@ func familyWireGuardNetwork(config *jsonWireGuardNetwork) *FamilyWireGuardNetwor
 		Addresses:     append([]string(nil), config.Addresses...),
 		DNS:           append([]string(nil), config.DNS...),
 		MTU:           config.MTU,
+		ListenPort:    config.ListenPort,
 		HasPrivateKey: config.HasPrivateKey,
 		Peers:         make([]FamilyWireGuardPeer, 0, len(config.Peers)),
 	}

@@ -119,6 +119,7 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 
 func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {
 	form := s.NetworkProfileForm()
+	preview := s.NetworkImportPreview()
 	title := m.VaultNetworkFormCreateTitle()
 	if form.ID != "" {
 		title = m.VaultNetworkFormEditTitle()
@@ -126,6 +127,13 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 
 	ui.Scroll(c).Grow(1).FillWidth().TrackScroll(scroll).Children(func() {
 		ui.Text(c, title).FontSize(20).Bold()
+		// A parsed .conf is reviewed on its own surface. Save is not offered
+		// until the user confirms it, so an unconfirmed import cannot be
+		// persisted by a stray Save click.
+		if preview != nil {
+			networkImportReview(c, s, preview, m, t)
+			return
+		}
 
 		ui.Form(c, func() {
 			ui.Field(c, m.VaultHostLabel(), func() {
@@ -165,6 +173,12 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 		}
 	})
 
+	// The import review owns its own Confirm and Cancel actions. Save stays
+	// hidden until the user confirms, so no unconfirmed parse can be persisted.
+	if preview != nil {
+		return
+	}
+
 	problem(c, s, t)
 	editorActions(c, func() { _ = s.SaveNetworkProfile() }, s.CancelNetworkProfileEdit, m)
 }
@@ -193,6 +207,8 @@ func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm, m local
 
 func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.NetworkProfileForm,
 	m locales.Messages, t *ui.Theme) {
+	networkImportControls(c, s, m, t)
+
 	privateKeyHint := m.VaultNetworkPrivateKeyHint()
 	if form.HasPrivateKey {
 		privateKeyHint = m.VaultNetworkPrivateKeySaved()
@@ -210,6 +226,9 @@ func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.Networ
 	ui.Field(c, m.VaultNetworkMTU(), func() {
 		ui.TextInput(c, &form.MTU).Placeholder(strconv.Itoa(domainvault.DefaultWireGuardMTU)).Width(120)
 	}).Description(m.VaultNetworkMTUHint())
+	ui.Field(c, m.VaultNetworkListenPort(), func() {
+		ui.TextInput(c, &form.ListenPort).Placeholder("0").Width(120)
+	}).Description(m.VaultNetworkListenPortHint())
 
 	ui.Text(c, m.VaultNetworkPeers()).FontSize(14).Bold()
 	for index := range form.Peers {

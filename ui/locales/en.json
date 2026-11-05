@@ -265,6 +265,149 @@
   "vaultNetworkPeerAllowedIPs": "Allowed IPs",
   "vaultNetworkPeerAllowedIPsHint": "Comma-separated IP prefixes routed through this peer.",
   "vaultNetworkPeerKeepalive": "Persistent keepalive",
+  "vaultNetworkListenPort": "Listen port",
+  "vaultNetworkListenPortHint": "UDP port WireGuard listens on. Leave blank or 0 to choose automatically.",
+  "vaultNetworkImport": "Import a .conf file",
+  "vaultNetworkImportChooseFile": "Choose .conf file",
+  "vaultNetworkConfFileFilter": "WireGuard configuration",
+  "vaultNetworkImportHint": "Choose a wg-quick .conf file up to 1 MiB. Nothing fills the form or is saved until you confirm the parsed result.",
+  "vaultNetworkImportResult": "Parsed {fileName}",
+  "@vaultNetworkImportResult": {
+    "description": "The heading of the import review, naming the chosen file.",
+    "placeholders": {
+      "fileName": {
+        "type": "String",
+        "example": "wg0.conf"
+      }
+    }
+  },
+  "vaultNetworkImportAddresses": "Addresses: {addresses}",
+  "@vaultNetworkImportAddresses": {
+    "description": "The normalized interface addresses of a parsed .conf.",
+    "placeholders": {
+      "addresses": {
+        "type": "String",
+        "example": "10.0.0.2/32, fd00::2/128"
+      }
+    }
+  },
+  "vaultNetworkImportDNS": "DNS: {servers}",
+  "@vaultNetworkImportDNS": {
+    "description": "The normalized DNS servers of a parsed .conf.",
+    "placeholders": {
+      "servers": {
+        "type": "String",
+        "example": "10.0.0.1"
+      }
+    }
+  },
+  "vaultNetworkImportMTU": "MTU: {mtu}",
+  "@vaultNetworkImportMTU": {
+    "description": "The effective MTU of a parsed .conf.",
+    "placeholders": {
+      "mtu": {
+        "type": "int",
+        "example": "1420"
+      }
+    }
+  },
+  "vaultNetworkImportListenPort": "Listen port: {port}",
+  "@vaultNetworkImportListenPort": {
+    "description": "The listen port of a parsed .conf.",
+    "placeholders": {
+      "port": {
+        "type": "int",
+        "example": "51820"
+      }
+    }
+  },
+  "vaultNetworkImportPeers": "Peers: {count}",
+  "@vaultNetworkImportPeers": {
+    "description": "The number of peers in a parsed .conf.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNetworkImportPeerPublicKey": "Public key: {key}",
+  "@vaultNetworkImportPeerPublicKey": {
+    "description": "A parsed peer's public key, shown for review.",
+    "placeholders": {
+      "key": {
+        "type": "String",
+        "example": "dG9vLXNob3J0…"
+      }
+    }
+  },
+  "vaultNetworkImportPeerEndpoint": "Endpoint: {endpoint}",
+  "@vaultNetworkImportPeerEndpoint": {
+    "description": "A parsed peer's optional endpoint.",
+    "placeholders": {
+      "endpoint": {
+        "type": "String",
+        "example": "vpn.example.com:51820"
+      }
+    }
+  },
+  "vaultNetworkImportPeerAllowedIPs": "Allowed IPs: {allowedIPs}",
+  "@vaultNetworkImportPeerAllowedIPs": {
+    "description": "A parsed peer's normalized AllowedIPs.",
+    "placeholders": {
+      "allowedIPs": {
+        "type": "String",
+        "example": "10.0.0.0/24"
+      }
+    }
+  },
+  "vaultNetworkImportPeerKeepalive": "Persistent keepalive: {seconds}",
+  "@vaultNetworkImportPeerKeepalive": {
+    "description": "A parsed peer's persistent keepalive in seconds.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "25"
+      }
+    }
+  },
+  "vaultNetworkImportPeerPresharedKeySet": "Preshared key: set",
+  "vaultNetworkImportDiagnostics": "Diagnostics",
+  "vaultNetworkImportNoDiagnostics": "No ignored or adjusted fields.",
+  "vaultNetworkImportIssue": "Line {line} · {field}: {message}",
+  "@vaultNetworkImportIssue": {
+    "description": "One import diagnostic with its 1-based line, field, and localized explanation.",
+    "placeholders": {
+      "line": {
+        "type": "int",
+        "example": "12"
+      },
+      "field": {
+        "type": "String",
+        "example": "Endpoint"
+      },
+      "message": {
+        "type": "String",
+        "example": "This key is not recognized."
+      }
+    }
+  },
+  "vaultNetworkImportWholeFile": "whole file",
+  "vaultNetworkImportConfirm": "Use this configuration",
+  "vaultNetworkImportErrSyntax": "This line is not a valid key = value pair, or a value is malformed.",
+  "vaultNetworkImportErrUnknownKey": "This key is not recognized.",
+  "vaultNetworkImportErrUnknownSection": "This section is not recognized.",
+  "vaultNetworkImportErrMissingRequired": "A required value is missing: the Interface PrivateKey or a Peer PublicKey.",
+  "vaultNetworkImportErrDuplicatePeer": "Two peers use the same public key.",
+  "vaultNetworkImportErrUnsupported": "This configuration uses a feature the import does not support, such as a non-empty hook.",
+  "vaultNetworkImportErrLimit": "This configuration exceeds an import limit.",
+  "vaultNetworkImportErrEncoding": "The file is empty or is not valid UTF-8 or UTF-16 text.",
+  "vaultNetworkImportWarnIgnoredField": "Ignored because this field has no effect in Netcatty.",
+  "vaultNetworkImportWarnSearchDomain": "Ignored: only IP DNS servers are imported.",
+  "vaultNetworkImportWarnHostBits": "Host bits were cleared in this prefix.",
+  "vaultNetworkImportWarnEmptyAllowedIPs": "An empty AllowedIPs entry was ignored.",
+  "vaultNetworkImportWarnDuplicateScalar": "This key appears more than once; the last value is used.",
+  "vaultNetworkImportWarnEmptyHook": "An empty hook was ignored.",
   "vaultNetworkSummary": "{kind} · {detail}",
   "@vaultNetworkSummary": {
     "description": "A Network Profile row's kind and endpoint.",
@@ -873,6 +1016,11 @@
   "vaultProblemNetworkProfile": "Check the Network Profile fields: the label, keys, addresses, peers, and endpoints must be valid.",
   "vaultProblemNetworkMTU": "MTU must be a whole number.",
   "vaultProblemNetworkKeepalive": "Persistent keepalive must be a whole number between 0 and 65535.",
+  "vaultProblemNetworkListenPort": "Listen port must be a whole number between 0 and 65535.",
+  "vaultProblemNetworkImportFile": "Could not read the selected .conf file.",
+  "vaultProblemNetworkImportParse": "The .conf file was rejected. Fix the reported line and try again.",
+  "vaultProblemNetworkImportTooLarge": "The .conf file is larger than the 1 MiB import limit.",
+  "vaultProblemNetworkImportUnavailable": "Importing a .conf file is not available in this build.",
   "vaultProblemAlgorithms": "Check the SSH algorithm selection.",
   "authPromptPassphraseTitle": "Unlock {username}@{hostname}",
   "@authPromptPassphraseTitle": {

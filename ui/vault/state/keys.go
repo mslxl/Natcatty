@@ -194,6 +194,7 @@ func (s *State) closeEntityEditors() {
 	s.editingNetwork = false
 	s.networkForm = NetworkProfileForm{}
 	s.pendingDeleteNetwork = ""
+	s.resetNetworkImport()
 	s.pendingDeleteKnown = ""
 	s.editingSnippet = false
 	s.snippetForm = SnippetForm{}
