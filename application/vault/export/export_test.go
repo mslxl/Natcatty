@@ -182,6 +182,48 @@ func TestJSONWithoutSecretsOmitsKeyMaterial(t *testing.T) {
 	}
 }
 
+// TestOrdinaryNetworkProfileDocumentMatchesTheDomainRecord pins the portable
+// Network Profile shape to the domain record. The export document uses its own
+// struct to add optional secret fields, so a new domain field must not silently
+// disappear from an ordinary export.
+func TestOrdinaryNetworkProfileDocumentMatchesTheDomainRecord(t *testing.T) {
+	profile := domainvault.NetworkProfile{
+		ID: "net-1", Label: "Everything", Kind: domainvault.NetworkKindWireGuard,
+		Tailscale: &domainvault.TailscaleNetwork{
+			Hostname: "node", ControlURL: "https://control.example.test",
+			Ephemeral: true, Tags: []string{"tag:server"}, HasAuthKey: true,
+		},
+		WireGuard: &domainvault.WireGuardNetwork{
+			Addresses: []string{"10.0.0.2/32"}, DNS: []string{"10.0.0.1"},
+			MTU: 1420, ListenPort: 51820, HasPrivateKey: true,
+			Peers: []domainvault.WireGuardPeer{{
+				ID: "peer-1", PublicKey: "peer-key", Endpoint: "vpn.example.test:51820",
+				AllowedIPs: []string{"10.0.0.0/24"}, PersistentKeepalive: 25,
+				HasPresharedKey: true,
+			}},
+		},
+		OrderKey: 1000, CreatedAt: stamp, UpdatedAt: stamp.Add(time.Minute),
+	}
+
+	documents := networkProfileDocuments(
+		[]domainvault.NetworkProfile{profile}, nil, false)
+	if len(documents) != 1 {
+		t.Fatalf("documents = %d, want 1", len(documents))
+	}
+	domainJSON, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentJSON, err := json.Marshal(documents[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(documentJSON) != string(domainJSON) {
+		t.Fatalf("ordinary export changed the Network Profile shape:\n got %s\nwant %s",
+			documentJSON, domainJSON)
+	}
+}
+
 func TestSnippetsExportDropsHostTargets(t *testing.T) {
 	var decoded struct {
 		Kind            string   `json:"kind"`

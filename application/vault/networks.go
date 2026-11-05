@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
@@ -17,9 +18,24 @@ type NetworkProfileRepository interface {
 	DeleteNetworkProfile(ctx context.Context, id string) error
 }
 
+// NetworkProfileStateCleaner removes the local runtime state a Network Profile
+// owns, such as an embedded Tailscale node's state directory. The deletion
+// confirmation belongs to the UI; this port makes the cleanup part of the
+// confirmed delete instead of an orphaned directory. Implementations must
+// remove only state for the given profile and be idempotent.
+type NetworkProfileStateCleaner interface {
+	RemoveNetworkProfileState(ctx context.Context, profile domainvault.NetworkProfile) error
+}
+
 // WithNetworkProfiles gives the Service Network Profile persistence.
 func WithNetworkProfiles(repo NetworkProfileRepository) Option {
 	return func(s *Service) { s.networks = repo }
+}
+
+// WithNetworkProfileStateCleaner gives the Service the cleanup that runs when
+// a confirmed Network Profile delete removes runtime state.
+func WithNetworkProfileStateCleaner(cleaner NetworkProfileStateCleaner) Option {
+	return func(s *Service) { s.networkState = cleaner }
 }
 
 // WithNetworkProfileIDGenerator sets how the Service names Network Profiles.
@@ -331,9 +347,12 @@ func (s *Service) UpdateNetworkProfile(ctx context.Context, id string,
 }
 
 // DeleteNetworkProfile removes a profile, clears every Host and Host Group
-// reference to it, and removes the field secrets it owned. Referenced Hosts
-// and Host Groups survive with the reference cleared; no other record is
-// deleted.
+// reference to it, removes the field secrets it owned, and deletes the local
+// runtime state it accumulated (for example a Tailscale node identity).
+// Referenced Hosts and Host Groups survive with the reference cleared; no
+// other record is deleted. Runtime-state cleanup runs before any record is
+// touched, so a failed cleanup leaves the profile deletable again instead of
+// stranding credential material.
 func (s *Service) DeleteNetworkProfile(ctx context.Context, id string) error {
 	if s.networks == nil {
 		return unsupported(ErrNetworkProfilesUnavailable)
@@ -344,6 +363,11 @@ func (s *Service) DeleteNetworkProfile(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return internal(err)
+	}
+	if s.networkState != nil {
+		if err := s.networkState.RemoveNetworkProfileState(ctx, profile); err != nil {
+			return internal(fmt.Errorf("remove state for Network Profile %q: %w", id, err))
+		}
 	}
 	hosts, err := s.repo.List(ctx)
 	if err != nil {

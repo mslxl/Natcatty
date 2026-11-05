@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/mslxl/natcatty/application/vault/export"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
 // ExportFormat is one portable output shape.
@@ -301,6 +303,11 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 			return dataset, 0, internal(err)
 		}
 		dataset.NetworkProfiles = networks
+		if opts.IncludeSecrets && s.secrets != nil {
+			secrets, unreadableSecrets := s.exportNetworkSecrets(ctx, networks)
+			unreadable += unreadableSecrets
+			dataset.NetworkSecrets = secrets
+		}
 	}
 	if s.knownHosts != nil {
 		known, err := s.knownHosts.ListKnownHosts(ctx)
@@ -346,6 +353,64 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 		dataset.History = entries
 	}
 	return dataset, unreadable, nil
+}
+
+// exportNetworkSecrets reads the Network Profile credentials a destructive
+// export may write. Every address is attempted, without gating the read on the
+// record's Has* markers: a session-only secret store keeps values while the
+// markers stay false, and a destructive backup is the one place those values
+// can be preserved. A missing value is absent; a marker that promises a value
+// but finds none, or any other read failure, is counted as unreadable and
+// never aborts the export.
+func (s *Service) exportNetworkSecrets(ctx context.Context,
+	profiles []domainvault.NetworkProfile) (map[string]vaultexport.NetworkProfileSecrets, int) {
+
+	secrets := make(map[string]vaultexport.NetworkProfileSecrets, len(profiles))
+	unreadable := 0
+	read := func(ref SecretRef, marked bool) (string, bool) {
+		value, err := s.secrets.Get(ctx, ref)
+		switch {
+		case err == nil:
+			return value, true
+		case errors.Is(err, ErrSecretNotFound):
+			if marked {
+				// The record advertises a credential the export cannot
+				// produce; surface it instead of writing a silently unkeyed
+				// backup.
+				unreadable++
+			}
+			return "", false
+		default:
+			unreadable++
+			return "", false
+		}
+	}
+	for _, profile := range profiles {
+		entry := vaultexport.NetworkProfileSecrets{}
+		if profile.Tailscale != nil {
+			entry.AuthKey, _ = read(
+				NetworkProfileSecretRef(profile.ID, FieldNetworkAuthKey),
+				profile.Tailscale.HasAuthKey)
+		}
+		if profile.WireGuard != nil {
+			entry.PrivateKey, _ = read(
+				NetworkProfileSecretRef(profile.ID, FieldNetworkPrivateKey),
+				profile.WireGuard.HasPrivateKey)
+			if len(profile.WireGuard.Peers) > 0 {
+				entry.PresharedKeys = make(map[string]string, len(profile.WireGuard.Peers))
+				for _, peer := range profile.WireGuard.Peers {
+					value, ok := read(
+						NetworkPeerSecretRef(peer.ID, FieldNetworkPresharedKey),
+						peer.HasPresharedKey)
+					if ok {
+						entry.PresharedKeys[peer.ID] = value
+					}
+				}
+			}
+		}
+		secrets[profile.ID] = entry
+	}
+	return secrets, unreadable
 }
 
 func (s *Service) exportKeys(ctx context.Context, includeSecrets bool) ([]vaultexport.Key, error) {

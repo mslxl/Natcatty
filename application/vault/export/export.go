@@ -120,6 +120,17 @@ type Key struct {
 	Passphrase string
 }
 
+// NetworkProfileSecrets is one Network Profile's credential plaintext for a
+// destructive JSON export. PresharedKeys is keyed by the source peer ID. The
+// values are populated only when Options.IncludeSecrets is set; the profile
+// record's Has* markers remain the only credential information in an ordinary
+// export.
+type NetworkProfileSecrets struct {
+	AuthKey       string
+	PrivateKey    string
+	PresharedKeys map[string]string
+}
+
 // Dataset is everything one export may serialize. A format uses the families
 // it owns and ignores the rest.
 type Dataset struct {
@@ -141,6 +152,9 @@ type Dataset struct {
 	// are populated only when secrets are included.
 	IdentityPasswords     map[string]string
 	ProxyProfilePasswords map[string]string
+	// NetworkSecrets carries Network Profile credential plaintext keyed by
+	// source profile ID. It is populated only when secrets are included.
+	NetworkSecrets map[string]NetworkProfileSecrets
 	// ActiveTheme is the appearance theme name the settings surface reports.
 	ActiveTheme string
 }
@@ -197,20 +211,20 @@ func Export(d Dataset, format Format, opts Options) ([]byte, error) {
 // ---------------------------------------------------------------- JSON
 
 type jsonDocument struct {
-	Kind            string                       `json:"kind"`
-	Version         int                          `json:"version"`
-	ExportedAt      string                       `json:"exportedAt"`
-	Groups          []domainvault.Group          `json:"groups"`
-	Hosts           []jsonHost                   `json:"hosts"`
-	Keys            []jsonKey                    `json:"keys"`
-	Identities      []jsonIdentity               `json:"identities"`
-	ProxyProfiles   []jsonProxyProfile           `json:"proxyProfiles"`
-	NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
-	KnownHosts      []jsonKnownHost              `json:"knownHosts"`
-	Snippets        []jsonSnippet                `json:"snippets"`
-	SnippetPackages []string                     `json:"snippetPackages"`
-	Notes           []domainvault.Note           `json:"notes"`
-	NoteGroups      []string                     `json:"noteGroups"`
+	Kind            string               `json:"kind"`
+	Version         int                  `json:"version"`
+	ExportedAt      string               `json:"exportedAt"`
+	Groups          []domainvault.Group  `json:"groups"`
+	Hosts           []jsonHost           `json:"hosts"`
+	Keys            []jsonKey            `json:"keys"`
+	Identities      []jsonIdentity       `json:"identities"`
+	ProxyProfiles   []jsonProxyProfile   `json:"proxyProfiles"`
+	NetworkProfiles []jsonNetworkProfile `json:"networkProfiles"`
+	KnownHosts      []jsonKnownHost      `json:"knownHosts"`
+	Snippets        []jsonSnippet        `json:"snippets"`
+	SnippetPackages []string             `json:"snippetPackages"`
+	Notes           []domainvault.Note   `json:"notes"`
+	NoteGroups      []string             `json:"noteGroups"`
 }
 
 // jsonIdentity adds the credential plaintext the domain Identity deliberately
@@ -225,6 +239,50 @@ type jsonIdentity struct {
 type jsonProxyProfile struct {
 	domainvault.ProxyProfile
 	Password string `json:"password,omitempty"`
+}
+
+// jsonNetworkProfile mirrors the domain Network Profile and adds the
+// credential plaintext a destructive export may write. The non-secret fields
+// keep the domain JSON tags so an ordinary export is byte-compatible with the
+// document existing importers already read.
+type jsonNetworkProfile struct {
+	ID        string                         `json:"id"`
+	Label     string                         `json:"label"`
+	Kind      domainvault.NetworkProfileKind `json:"kind"`
+	Tailscale *jsonNetworkTailscale          `json:"tailscale,omitempty"`
+	WireGuard *jsonNetworkWireGuard          `json:"wireguard,omitempty"`
+	OrderKey  int64                          `json:"orderKey"`
+	CreatedAt time.Time                      `json:"createdAt"`
+	UpdatedAt time.Time                      `json:"updatedAt"`
+}
+
+type jsonNetworkTailscale struct {
+	Hostname   string   `json:"hostname,omitempty"`
+	ControlURL string   `json:"controlUrl,omitempty"`
+	Ephemeral  bool     `json:"ephemeral,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	HasAuthKey bool     `json:"hasAuthKey,omitempty"`
+	AuthKey    string   `json:"authKey,omitempty"`
+}
+
+type jsonNetworkWireGuard struct {
+	Addresses     []string          `json:"addresses,omitempty"`
+	DNS           []string          `json:"dns,omitempty"`
+	MTU           int               `json:"mtu,omitempty"`
+	ListenPort    int               `json:"listenPort,omitempty"`
+	Peers         []jsonNetworkPeer `json:"peers,omitempty"`
+	HasPrivateKey bool              `json:"hasPrivateKey,omitempty"`
+	PrivateKey    string            `json:"privateKey,omitempty"`
+}
+
+type jsonNetworkPeer struct {
+	ID                  string   `json:"id"`
+	PublicKey           string   `json:"publicKey"`
+	Endpoint            string   `json:"endpoint,omitempty"`
+	AllowedIPs          []string `json:"allowedIps,omitempty"`
+	PersistentKeepalive int      `json:"persistentKeepalive,omitempty"`
+	HasPresharedKey     bool     `json:"hasPresharedKey,omitempty"`
+	PresharedKey        string   `json:"presharedKey,omitempty"`
 }
 
 // jsonHost adds the fields the domain Host intentionally omits: credential
@@ -292,10 +350,11 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		}
 		document.ProxyProfiles = append(document.ProxyProfiles, entry)
 	}
-	// Network Profiles never carry key material in the portable document, not
-	// even with IncludeSecrets: the record's Has* markers describe the source
-	// device's secret store.
-	document.NetworkProfiles = sortedNetworkProfiles(d.NetworkProfiles)
+	// An ordinary export carries only the non-secret configuration and the
+	// Has* markers. A destructive export additionally writes the credentials
+	// the caller loaded; the markers stay unchanged so a reader can tell
+	// whether the source device had a stored credential.
+	document.NetworkProfiles = networkProfileDocuments(d.NetworkProfiles, d.NetworkSecrets, opts.IncludeSecrets)
 	keys := sortedKeys(d.Keys)
 	keyByID := make(map[string]domainvault.Key, len(keys))
 	document.Keys = make([]jsonKey, 0, len(keys))
@@ -328,6 +387,71 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 	document.Snippets = snippetDocuments(sortedSnippets(d.Snippets))
 
 	return marshal(document)
+}
+
+// networkProfileDocuments renders the portable Network Profile family. Secret
+// fields are copied only when includeSecrets is true; the Has* markers are
+// always copied from the source record and describe its secret store, not the
+// destination's.
+func networkProfileDocuments(profiles []domainvault.NetworkProfile,
+	secrets map[string]NetworkProfileSecrets, includeSecrets bool) []jsonNetworkProfile {
+
+	sorted := sortedNetworkProfiles(profiles)
+	out := make([]jsonNetworkProfile, 0, len(sorted))
+	for _, profile := range sorted {
+		entry := jsonNetworkProfile{
+			ID:        profile.ID,
+			Label:     profile.Label,
+			Kind:      profile.Kind,
+			OrderKey:  profile.OrderKey,
+			CreatedAt: profile.CreatedAt,
+			UpdatedAt: profile.UpdatedAt,
+		}
+		secret := secrets[profile.ID]
+		if profile.Tailscale != nil {
+			config := &jsonNetworkTailscale{
+				Hostname:   profile.Tailscale.Hostname,
+				ControlURL: profile.Tailscale.ControlURL,
+				Ephemeral:  profile.Tailscale.Ephemeral,
+				Tags:       append([]string(nil), profile.Tailscale.Tags...),
+				HasAuthKey: profile.Tailscale.HasAuthKey,
+			}
+			if includeSecrets {
+				config.AuthKey = secret.AuthKey
+			}
+			entry.Tailscale = config
+		}
+		if profile.WireGuard != nil {
+			config := &jsonNetworkWireGuard{
+				Addresses:     append([]string(nil), profile.WireGuard.Addresses...),
+				DNS:           append([]string(nil), profile.WireGuard.DNS...),
+				MTU:           profile.WireGuard.MTU,
+				ListenPort:    profile.WireGuard.ListenPort,
+				HasPrivateKey: profile.WireGuard.HasPrivateKey,
+				Peers:         make([]jsonNetworkPeer, 0, len(profile.WireGuard.Peers)),
+			}
+			if includeSecrets {
+				config.PrivateKey = secret.PrivateKey
+			}
+			for _, peer := range profile.WireGuard.Peers {
+				document := jsonNetworkPeer{
+					ID:                  peer.ID,
+					PublicKey:           peer.PublicKey,
+					Endpoint:            peer.Endpoint,
+					AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
+					PersistentKeepalive: peer.PersistentKeepalive,
+					HasPresharedKey:     peer.HasPresharedKey,
+				}
+				if includeSecrets {
+					document.PresharedKey = secret.PresharedKeys[peer.ID]
+				}
+				config.Peers = append(config.Peers, document)
+			}
+			entry.WireGuard = config
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func marshal(value any) ([]byte, error) {

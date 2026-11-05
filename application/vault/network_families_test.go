@@ -57,46 +57,170 @@ func TestExportJSONCarriesNetworkProfilesWithoutSecrets(t *testing.T) {
 	secrets.values[NetworkProfileSecretRef("network-2", FieldNetworkAuthKey)] = "tskey-auth-secret"
 	service := newNetworkExportService(networks, secrets)
 
-	for _, includeSecrets := range []bool{false, true} {
-		exported, err := service.ExportVault(context.Background(), ExportOptions{
-			Format: ExportJSON, IncludeSecrets: includeSecrets, ExportedAt: fixedFamilyTime(),
-		})
-		if err != nil {
-			t.Fatalf("ExportVault(includeSecrets=%v): %v", includeSecrets, err)
+	exported, err := service.ExportVault(context.Background(), ExportOptions{
+		Format: ExportJSON, ExportedAt: fixedFamilyTime(),
+	})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+	content := string(exported.Content)
+	for _, secret := range []string{
+		testWireGuardKey(1), testWireGuardKey(3), "tskey-auth-secret",
+	} {
+		if strings.Contains(content, secret) {
+			t.Fatalf("an ordinary export contains a Network Profile secret: %s", content)
 		}
-		content := string(exported.Content)
-		for _, secret := range []string{
-			testWireGuardKey(1), testWireGuardKey(3), "tskey-auth-secret",
-		} {
-			if strings.Contains(content, secret) {
-				t.Fatalf("export contains a Network Profile secret: %s", content)
-			}
+	}
+	var document struct {
+		NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
+	}
+	if err := json.Unmarshal(exported.Content, &document); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if len(document.NetworkProfiles) != 2 {
+		t.Fatalf("networkProfiles = %d, want 2", len(document.NetworkProfiles))
+	}
+	if document.NetworkProfiles[0].ID != "network-1" ||
+		document.NetworkProfiles[1].ID != "network-2" {
+		t.Fatalf("networkProfiles order = %+v", document.NetworkProfiles)
+	}
+	if !document.NetworkProfiles[0].WireGuard.HasPrivateKey ||
+		!document.NetworkProfiles[0].WireGuard.Peers[0].HasPresharedKey ||
+		!document.NetworkProfiles[1].Tailscale.HasAuthKey {
+		t.Fatalf("presence markers were not exported: %+v", document.NetworkProfiles)
+	}
+	if document.NetworkProfiles[0].WireGuard.ListenPort != 51820 {
+		t.Fatalf("exported ListenPort = %d, want 51820",
+			document.NetworkProfiles[0].WireGuard.ListenPort)
+	}
+	if exported.OmittedSecrets != 3 {
+		t.Fatalf("OmittedSecrets = %d, want the three stored Network Profile secrets",
+			exported.OmittedSecrets)
+	}
+}
+
+// TestDestructiveExportWritesNetworkSecrets proves IncludeSecrets is the only
+// switch that puts credential plaintext in the portable document, and that the
+// presence markers stay alongside it.
+func TestDestructiveExportWritesNetworkSecrets(t *testing.T) {
+	secrets := newFakeSecrets()
+	networks := &fakeNetworkProfiles{items: []domainvault.NetworkProfile{
+		{
+			ID: "network-1", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+			WireGuard: &domainvault.WireGuardNetwork{
+				Addresses: []string{"10.0.0.2/32"}, HasPrivateKey: true,
+				Peers: []domainvault.WireGuardPeer{{
+					ID: "peer-1", PublicKey: testWireGuardKey(2),
+					HasPresharedKey: true,
+				}},
+			},
+			OrderKey: 1000, CreatedAt: fixedFamilyTime(), UpdatedAt: fixedFamilyTime(),
+		},
+		{
+			ID: "network-2", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,
+			Tailscale: &domainvault.TailscaleNetwork{Hostname: "app-node", HasAuthKey: true},
+			OrderKey:  2000, CreatedAt: fixedFamilyTime(), UpdatedAt: fixedFamilyTime(),
+		},
+	}}
+	privateKey := testWireGuardKey(1)
+	presharedKey := testWireGuardKey(3)
+	const authKey = "tskey-auth-secret"
+	secrets.values[NetworkProfileSecretRef("network-1", FieldNetworkPrivateKey)] = privateKey
+	secrets.values[NetworkPeerSecretRef("peer-1", FieldNetworkPresharedKey)] = presharedKey
+	secrets.values[NetworkProfileSecretRef("network-2", FieldNetworkAuthKey)] = authKey
+	service := newNetworkExportService(networks, secrets)
+
+	exported, err := service.ExportVault(context.Background(), ExportOptions{
+		Format: ExportJSON, IncludeSecrets: true, ExportedAt: fixedFamilyTime(),
+	})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+	content := string(exported.Content)
+	for _, secret := range []string{privateKey, presharedKey, authKey} {
+		if !strings.Contains(content, secret) {
+			t.Fatalf("the destructive export does not contain a Network Profile secret: %s",
+				content)
 		}
-		var document struct {
-			NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
-		}
-		if err := json.Unmarshal(exported.Content, &document); err != nil {
-			t.Fatalf("decode export: %v", err)
-		}
-		if len(document.NetworkProfiles) != 2 {
-			t.Fatalf("networkProfiles = %d, want 2", len(document.NetworkProfiles))
-		}
-		if document.NetworkProfiles[0].ID != "network-1" ||
-			document.NetworkProfiles[1].ID != "network-2" {
-			t.Fatalf("networkProfiles order = %+v", document.NetworkProfiles)
-		}
-		if !document.NetworkProfiles[0].WireGuard.HasPrivateKey ||
-			!document.NetworkProfiles[0].WireGuard.Peers[0].HasPresharedKey ||
-			!document.NetworkProfiles[1].Tailscale.HasAuthKey {
-			t.Fatalf("presence markers were not exported: %+v", document.NetworkProfiles)
-		}
-		if document.NetworkProfiles[0].WireGuard.ListenPort != 51820 {
-			t.Fatalf("exported ListenPort = %d, want 51820",
-				document.NetworkProfiles[0].WireGuard.ListenPort)
-		}
-		if !includeSecrets && exported.OmittedSecrets != 3 {
-			t.Fatalf("OmittedSecrets = %d, want the three stored Network Profile secrets",
-				exported.OmittedSecrets)
+	}
+	if exported.OmittedSecrets != 0 || exported.UnreadableSecrets != 0 {
+		t.Fatalf("destructive export counts = omitted %d, unreadable %d; want 0/0",
+			exported.OmittedSecrets, exported.UnreadableSecrets)
+	}
+	var document struct {
+		NetworkProfiles []struct {
+			ID        string `json:"id"`
+			Tailscale *struct {
+				HasAuthKey bool   `json:"hasAuthKey"`
+				AuthKey    string `json:"authKey"`
+			} `json:"tailscale"`
+			WireGuard *struct {
+				HasPrivateKey bool   `json:"hasPrivateKey"`
+				PrivateKey    string `json:"privateKey"`
+				Peers         []struct {
+					HasPresharedKey bool   `json:"hasPresharedKey"`
+					PresharedKey    string `json:"presharedKey"`
+				} `json:"peers"`
+			} `json:"wireguard"`
+		} `json:"networkProfiles"`
+	}
+	if err := json.Unmarshal(exported.Content, &document); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if len(document.NetworkProfiles) != 2 {
+		t.Fatalf("networkProfiles = %+v", document.NetworkProfiles)
+	}
+	wireGuard := document.NetworkProfiles[0]
+	if wireGuard.WireGuard == nil || !wireGuard.WireGuard.HasPrivateKey ||
+		wireGuard.WireGuard.PrivateKey != privateKey ||
+		len(wireGuard.WireGuard.Peers) != 1 ||
+		!wireGuard.WireGuard.Peers[0].HasPresharedKey ||
+		wireGuard.WireGuard.Peers[0].PresharedKey != presharedKey {
+		t.Fatalf("destructive WireGuard document = %+v", wireGuard)
+	}
+	tailscale := document.NetworkProfiles[1]
+	if tailscale.Tailscale == nil || !tailscale.Tailscale.HasAuthKey ||
+		tailscale.Tailscale.AuthKey != authKey {
+		t.Fatalf("destructive Tailscale document = %+v", tailscale)
+	}
+}
+
+// TestDestructiveExportCountsAMarkedButMissingNetworkSecretAsUnreadable
+// keeps the Network family consistent with Host, Identity, and Proxy exports:
+// a marker promises a credential, so a destructive backup that cannot produce
+// it reports an unreadable secret rather than silently omitting it.
+func TestDestructiveExportCountsAMarkedButMissingNetworkSecretAsUnreadable(t *testing.T) {
+	secrets := newFakeSecrets()
+	networks := &fakeNetworkProfiles{items: []domainvault.NetworkProfile{
+		{
+			ID: "network-1", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+			WireGuard: &domainvault.WireGuardNetwork{
+				HasPrivateKey: true,
+				Peers: []domainvault.WireGuardPeer{{
+					ID: "peer-1", PublicKey: testWireGuardKey(2), HasPresharedKey: true,
+				}},
+			},
+		},
+		{
+			ID: "network-2", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,
+			Tailscale: &domainvault.TailscaleNetwork{HasAuthKey: true},
+		},
+	}}
+	service := newNetworkExportService(networks, secrets)
+
+	exported, err := service.ExportVault(context.Background(), ExportOptions{
+		Format: ExportJSON, IncludeSecrets: true, ExportedAt: fixedFamilyTime(),
+	})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+	if exported.UnreadableSecrets != 3 {
+		t.Fatalf("UnreadableSecrets = %d, want the three marked but missing secrets",
+			exported.UnreadableSecrets)
+	}
+	for _, field := range []string{`"authKey"`, `"privateKey"`, `"presharedKey"`} {
+		if strings.Contains(string(exported.Content), field) {
+			t.Fatalf("a missing secret was written as %s: %s", field, exported.Content)
 		}
 	}
 }
@@ -259,5 +383,87 @@ func TestImportRestoresNetworkProfilesFromTheJSONFamily(t *testing.T) {
 		tailscale.Tailscale.ControlURL != "https://headscale.example.com" ||
 		!tailscale.Tailscale.Ephemeral || tailscale.Tailscale.HasAuthKey {
 		t.Fatalf("imported Tailscale profile = %+v", tailscale)
+	}
+}
+
+// TestImportRestoresDestructiveExportSecretsAndMarkers proves a document that
+// carries credential plaintext (a destructive export) restores the credentials
+// into the destination field-secret store and advertises them with true Has*
+// markers. The old-format test above proves the opposite case: no plaintext
+// means no marker, so a record never claims a key the destination lacks.
+func TestImportRestoresDestructiveExportSecretsAndMarkers(t *testing.T) {
+	privateKey := testWireGuardKey(1)
+	publicKey := testWireGuardKey(2)
+	presharedKey := testWireGuardKey(3)
+	const authKey = "wbmkw-qpxu-tawura"
+	document := `{
+  "kind": "netcatty.vault",
+  "version": 1,
+  "hosts": [],
+  "networkProfiles": [
+    {
+      "id": "source-wg",
+      "label": "wg",
+      "kind": "wireguard",
+      "wireguard": {
+        "addresses": ["10.0.0.2/32"],
+        "mtu": 1280,
+        "hasPrivateKey": true,
+        "privateKey": "` + privateKey + `",
+        "peers": [{
+          "id": "source-peer",
+          "publicKey": "` + publicKey + `",
+          "endpoint": "vpn.example.com:51820",
+          "allowedIps": ["10.0.0.0/24"],
+          "hasPresharedKey": true,
+          "presharedKey": "` + presharedKey + `"
+        }]
+      }
+    },
+    {
+      "id": "source-ts",
+      "label": "tailnet",
+      "kind": "tailscale",
+      "tailscale": {
+        "hostname": "app-node",
+        "hasAuthKey": true,
+        "authKey": "` + authKey + `"
+      }
+    }
+  ]
+}`
+
+	networks := &fakeNetworkProfiles{}
+	secrets := newFakeSecrets()
+	destination := newNetworkExportService(networks, secrets)
+	preview, err := destination.PreviewImport(context.Background(), document,
+		PreviewImportOptions{FileName: "netcatty-vault.json"})
+	if err != nil {
+		t.Fatalf("PreviewImport: %v", err)
+	}
+	if _, err := destination.CommitImport(context.Background(), preview, ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if len(networks.items) != 2 {
+		t.Fatalf("imported profiles = %+v", networks.items)
+	}
+	wireGuard := networks.items[0]
+	if wireGuard.WireGuard == nil || !wireGuard.WireGuard.HasPrivateKey ||
+		len(wireGuard.WireGuard.Peers) != 1 || !wireGuard.WireGuard.Peers[0].HasPresharedKey {
+		t.Fatalf("imported WireGuard markers = %+v", wireGuard)
+	}
+	peerID := wireGuard.WireGuard.Peers[0].ID
+	if got := secrets.values[NetworkProfileSecretRef(wireGuard.ID, FieldNetworkPrivateKey)]; got != privateKey {
+		t.Fatalf("stored Private Key = %q, want the document value", got)
+	}
+	if got := secrets.values[NetworkPeerSecretRef(peerID, FieldNetworkPresharedKey)]; got != presharedKey {
+		t.Fatalf("stored Preshared Key = %q, want the document value", got)
+	}
+	tailscale := networks.items[1]
+	if tailscale.Tailscale == nil || !tailscale.Tailscale.HasAuthKey {
+		t.Fatalf("imported Tailscale marker = %+v", tailscale)
+	}
+	if got := secrets.values[NetworkProfileSecretRef(tailscale.ID, FieldNetworkAuthKey)]; got != authKey {
+		t.Fatalf("stored Auth Key = %q, want the document value", got)
 	}
 }

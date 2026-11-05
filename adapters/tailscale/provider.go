@@ -862,6 +862,81 @@ func prepareStateDir(base, profileID string) (string, error) {
 	return resolved, nil
 }
 
+// RemoveStateDir deletes one Network Profile's state directory under base. It
+// is the delete-time counterpart to prepareStateDir: it removes only the exact
+// directory derived from profileID, returns nil when nothing exists, and
+// refuses a base or path component that resolves into a system Tailscale
+// directory, outside base, or through a link. A link at the profile directory
+// itself is removed as a link by RemoveAll, but is refused here so a redirected
+// node state is never treated as this profile's data.
+func RemoveStateDir(base, profileID string) error {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		return errors.New("empty profile id")
+	}
+	dir, err := stateDirFor(base, profileID)
+	if err != nil {
+		return err
+	}
+	absoluteBase, err := filepath.Abs(strings.TrimSpace(base))
+	if err != nil {
+		return fmt.Errorf("resolve state base: %w", err)
+	}
+	// Vet the base and every existing ancestor before removal, so a link above
+	// the base cannot redirect the delete into a protected root.
+	if err := requireStateBaseOutsideSystemDirs(absoluteBase); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// A base that has never been created cannot own profile state.
+			return nil
+		}
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect state directory: %w", err)
+	}
+	if _, linkErr := os.Readlink(dir); linkErr == nil {
+		return errors.New("state directory is a link")
+	}
+	if !info.IsDir() {
+		return errors.New("state directory is not a directory")
+	}
+
+	resolvedBase, err := canonicalStatePath(absoluteBase)
+	if err != nil {
+		return err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve state directory: %w", err)
+	}
+	resolvedDir, err = resolveStateLinkTarget(resolvedDir)
+	if err != nil {
+		return fmt.Errorf("resolve state directory: %w", err)
+	}
+	if !within(resolvedBase, resolvedDir) || filepath.Clean(resolvedDir) == filepath.Clean(resolvedBase) {
+		return errors.New("state directory escapes its base")
+	}
+	if isSystemTailscaleDir(resolvedDir) {
+		return errors.New("state directory must not be a system Tailscale directory")
+	}
+	// After canonicalization the target must still be exactly this profile's
+	// derived directory. A redirected intermediate component is refused rather
+	// than deleted.
+	expected := filepath.Join("tailscale", stateDirName(profileID))
+	relative, err := filepath.Rel(resolvedBase, resolvedDir)
+	if err != nil || relative != expected {
+		return errors.New("state directory escapes its base")
+	}
+	if err := os.RemoveAll(resolvedDir); err != nil {
+		return fmt.Errorf("remove state directory: %w", err)
+	}
+	return nil
+}
+
 // requireStateBaseOutsideSystemDirs rejects a base whose deepest existing
 // ancestor is not a real directory or resolves into a system Tailscale root. It
 // must run before any MkdirAll or Chmod: a link above the base can redirect

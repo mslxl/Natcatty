@@ -424,8 +424,10 @@ func (s *Service) commitFamilyLinks(ctx context.Context, preview ImportPreview,
 }
 
 // networkProfileDraftFromFamily maps a portable record onto an editable draft.
-// The document never carries key material, so the draft has none: an imported
-// profile must not claim a key the destination does not hold.
+// Credential plaintext is present only in a destructive export. Create then
+// writes it to the destination field-secret store and sets the record's Has*
+// markers from what it actually stored; an old or ordinary document has no
+// plaintext, so its imported record correctly carries no marker either.
 func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) domainvault.NetworkProfileDraft {
 	draft := domainvault.NetworkProfileDraft{
 		Label: profile.Label,
@@ -434,6 +436,7 @@ func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) dom
 	if profile.Tailscale != nil {
 		draft.Tailscale = &domainvault.TailscaleNetworkDraft{
 			Hostname:   profile.Tailscale.Hostname,
+			AuthKey:    profile.Tailscale.AuthKey,
 			ControlURL: profile.Tailscale.ControlURL,
 			Ephemeral:  profile.Tailscale.Ephemeral,
 			Tags:       append([]string(nil), profile.Tailscale.Tags...),
@@ -441,6 +444,7 @@ func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) dom
 	}
 	if profile.WireGuard != nil {
 		draft.WireGuard = &domainvault.WireGuardNetworkDraft{
+			PrivateKey: profile.WireGuard.PrivateKey,
 			Addresses:  append([]string(nil), profile.WireGuard.Addresses...),
 			DNS:        append([]string(nil), profile.WireGuard.DNS...),
 			MTU:        profile.WireGuard.MTU,
@@ -451,6 +455,7 @@ func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) dom
 			draft.WireGuard.Peers = append(draft.WireGuard.Peers, domainvault.WireGuardPeerDraft{
 				ID:                  peer.ID,
 				PublicKey:           peer.PublicKey,
+				PresharedKey:        peer.PresharedKey,
 				Endpoint:            peer.Endpoint,
 				AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
 				PersistentKeepalive: peer.PersistentKeepalive,
