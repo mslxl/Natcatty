@@ -103,6 +103,7 @@ const (
 	ProblemNetworkProfile           Problem = "network_profile"
 	ProblemNetworkMTU               Problem = "network_mtu"
 	ProblemNetworkKeepalive         Problem = "network_keepalive"
+	ProblemNetworkListenPort        Problem = "network_listen_port"
 	ProblemAlgorithms               Problem = "algorithms"
 	ProblemX11                      Problem = "x11"
 	ProblemX11Acknowledged          Problem = "x11_acknowledged"
@@ -122,6 +123,10 @@ const (
 	ProblemImportParse              Problem = "import_parse"
 	ProblemImportStore              Problem = "import_store"
 	ProblemImportUnavailable        Problem = "import_unavailable"
+	ProblemNetworkImportFile        Problem = "network_import_file"
+	ProblemNetworkImportParse       Problem = "network_import_parse"
+	ProblemNetworkImportTooLarge    Problem = "network_import_too_large"
+	ProblemNetworkImportUnavailable Problem = "network_import_unavailable"
 	ProblemExportUnavailable        Problem = "export_unavailable"
 	ProblemExportWriter             Problem = "export_writer"
 	ProblemExportFormat             Problem = "export_format"
@@ -281,6 +286,7 @@ type State struct {
 	editingNetwork        bool
 	networkForm           NetworkProfileForm
 	pendingDeleteNetwork  string
+	networkImport         networkImportState
 	pendingDeleteKnown    string
 
 	editingSnippet              bool

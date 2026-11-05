@@ -93,7 +93,8 @@ _Avoid_: Tailscale profile, tailnet
 
 **WireGuard Net**:
 A Network Provider that joins a WireGuard network from addresses, DNS servers, an
-MTU, and a peer list, using the embedded netstack.
+MTU, an optional listen port, and a peer list, using the embedded netstack. A
+wg-quick `.conf` can fill its editor after a reviewed import.
 _Avoid_: WireGuard profile, VPN
 
 **First endpoint**:

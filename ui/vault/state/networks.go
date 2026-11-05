@@ -54,6 +54,7 @@ type NetworkProfileForm struct {
 	Addresses     string
 	DNS           string
 	MTU           string
+	ListenPort    string
 	Peers         []NetworkPeerForm
 }
 
@@ -103,6 +104,7 @@ func (s *State) BeginCreateNetworkProfile(kind domainvault.NetworkProfileKind) b
 	s.closeEditors()
 	s.editingNetwork = true
 	s.networkForm = NetworkProfileForm{Kind: string(kind)}
+	s.resetNetworkImport()
 	if kind == domainvault.NetworkKindWireGuard {
 		// A WireGuard profile needs at least one peer, so the editor opens with
 		// an empty row instead of a validation error after the first Save.
@@ -147,6 +149,9 @@ func (s *State) BeginEditNetworkProfile(id string) bool {
 			if profile.WireGuard.MTU != 0 {
 				form.MTU = strconv.Itoa(profile.WireGuard.MTU)
 			}
+			if profile.WireGuard.ListenPort != 0 {
+				form.ListenPort = strconv.Itoa(profile.WireGuard.ListenPort)
+			}
 			for _, peer := range profile.WireGuard.Peers {
 				row := NetworkPeerForm{
 					ID:              peer.ID,
@@ -163,6 +168,7 @@ func (s *State) BeginEditNetworkProfile(id string) bool {
 		}
 	}
 	s.networkForm = form
+	s.resetNetworkImport()
 	s.problem = ProblemNone
 	s.redraw()
 	return true
@@ -172,6 +178,7 @@ func (s *State) BeginEditNetworkProfile(id string) bool {
 func (s *State) CancelNetworkProfileEdit() {
 	s.editingNetwork = false
 	s.networkForm = NetworkProfileForm{}
+	s.resetNetworkImport()
 	s.problem = ProblemNone
 	s.redraw()
 }
@@ -225,6 +232,7 @@ func (s *State) SaveNetworkProfile() error {
 	}
 	s.editingNetwork = false
 	s.networkForm = NetworkProfileForm{}
+	s.resetNetworkImport()
 	s.problem = ProblemNone
 	s.redraw()
 	return nil
@@ -307,11 +315,20 @@ func (s *State) networkDraft() (domainvault.NetworkProfileDraft, Problem) {
 			}
 			mtu = parsed
 		}
+		listenPort := 0
+		if trimmed := strings.TrimSpace(s.networkForm.ListenPort); trimmed != "" {
+			parsed, err := strconv.Atoi(trimmed)
+			if err != nil || parsed < 0 || parsed > 65535 {
+				return domainvault.NetworkProfileDraft{}, ProblemNetworkListenPort
+			}
+			listenPort = parsed
+		}
 		config := &domainvault.WireGuardNetworkDraft{
 			PrivateKey: s.networkForm.PrivateKey,
 			Addresses:  splitFormList(s.networkForm.Addresses),
 			DNS:        splitFormList(s.networkForm.DNS),
 			MTU:        mtu,
+			ListenPort: listenPort,
 		}
 		for _, row := range s.networkForm.Peers {
 			keepalive := 0

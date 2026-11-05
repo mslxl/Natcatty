@@ -1814,6 +1814,16 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemNetworkMTU()
 	case vaultstate.ProblemNetworkKeepalive:
 		return m.VaultProblemNetworkKeepalive()
+	case vaultstate.ProblemNetworkListenPort:
+		return m.VaultProblemNetworkListenPort()
+	case vaultstate.ProblemNetworkImportFile:
+		return m.VaultProblemNetworkImportFile()
+	case vaultstate.ProblemNetworkImportParse:
+		return m.VaultProblemNetworkImportParse()
+	case vaultstate.ProblemNetworkImportTooLarge:
+		return m.VaultProblemNetworkImportTooLarge()
+	case vaultstate.ProblemNetworkImportUnavailable:
+		return m.VaultProblemNetworkImportUnavailable()
 	case vaultstate.ProblemAlgorithms:
 		return m.VaultProblemAlgorithms()
 	case vaultstate.ProblemX11:

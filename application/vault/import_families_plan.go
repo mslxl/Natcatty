@@ -428,10 +428,11 @@ func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) dom
 	}
 	if profile.WireGuard != nil {
 		draft.WireGuard = &domainvault.WireGuardNetworkDraft{
-			Addresses: append([]string(nil), profile.WireGuard.Addresses...),
-			DNS:       append([]string(nil), profile.WireGuard.DNS...),
-			MTU:       profile.WireGuard.MTU,
-			Peers:     make([]domainvault.WireGuardPeerDraft, 0, len(profile.WireGuard.Peers)),
+			Addresses:  append([]string(nil), profile.WireGuard.Addresses...),
+			DNS:        append([]string(nil), profile.WireGuard.DNS...),
+			MTU:        profile.WireGuard.MTU,
+			ListenPort: profile.WireGuard.ListenPort,
+			Peers:      make([]domainvault.WireGuardPeerDraft, 0, len(profile.WireGuard.Peers)),
 		}
 		for _, peer := range profile.WireGuard.Peers {
 			draft.WireGuard.Peers = append(draft.WireGuard.Peers, domainvault.WireGuardPeerDraft{
