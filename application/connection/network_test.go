@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeNetworkProvider is the single dial port's test double. It records the
@@ -435,6 +436,180 @@ func TestNetworkProviderRegistryCloseWhileOpeningAbandonsTheResult(t *testing.T)
 	}
 	if got := provider.closeCount(); got != 1 {
 		t.Fatalf("abandoned provider close count = %d, want 1", got)
+	}
+}
+
+// cancellableFakeProvider is a provider that can stop its current attempt while
+// staying reusable, like the Tailscale Net Provider.
+type cancellableFakeProvider struct {
+	fakeNetworkProvider
+	cancels   int
+	cancelErr error
+}
+
+func (p *cancellableFakeProvider) Cancel() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cancels++
+	return p.cancelErr
+}
+
+func (p *cancellableFakeProvider) cancelCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cancels
+}
+
+func TestNetworkProviderRegistryCancelStopsWithoutClosingAndReopens(t *testing.T) {
+	provider := &cancellableFakeProvider{}
+	factory := &fakeProviderFactory{}
+	factory.openFn = func(context.Context, NetworkRoute) (NetworkProvider, error) {
+		if factory.openCount() == 1 {
+			return provider, nil
+		}
+		return &cancellableFakeProvider{}, nil
+	}
+	registry := NewNetworkProviderRegistry(factory)
+	var (
+		mu       sync.Mutex
+		profiles []string
+	)
+	registry.SetCloseHook(func(profileID string) {
+		mu.Lock()
+		profiles = append(profiles, profileID)
+		mu.Unlock()
+	})
+	route := testNetworkRoute("profile-a", "fp-1")
+
+	first, err := registry.Acquire(context.Background(), route)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := registry.Cancel(route.ProfileID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if got := provider.cancelCount(); got != 1 {
+		t.Fatalf("provider cancels = %d, want 1", got)
+	}
+	if got := provider.closeCount(); got != 0 {
+		t.Fatalf("provider closes = %d, want the cancelled provider left reusable", got)
+	}
+	mu.Lock()
+	hookProfiles := append([]string(nil), profiles...)
+	mu.Unlock()
+	if len(hookProfiles) != 1 || hookProfiles[0] != route.ProfileID {
+		t.Fatalf("close hook profiles = %v, want one invalidation for the profile", hookProfiles)
+	}
+
+	second, err := registry.Acquire(context.Background(), route)
+	if err != nil {
+		t.Fatalf("Acquire after Cancel: %v", err)
+	}
+	if second == first {
+		t.Fatal("Acquire after Cancel reused the cancelled provider")
+	}
+	if got := factory.openCount(); got != 2 {
+		t.Fatalf("factory opens = %d, want a fresh provider after Cancel", got)
+	}
+
+	// Cancelling an unknown profile and an empty registry is a no-op.
+	if err := registry.Cancel("profile-missing"); err != nil {
+		t.Fatalf("Cancel unknown profile: %v", err)
+	}
+	var nilRegistry *NetworkProviderRegistry
+	if err := nilRegistry.Cancel("profile-a"); err != nil {
+		t.Fatalf("nil registry Cancel: %v", err)
+	}
+}
+
+func TestNetworkProviderRegistryCancelReportsTheCancellerError(t *testing.T) {
+	boom := errors.New("cancel failed")
+	provider := &cancellableFakeProvider{cancelErr: boom}
+	factory := &fakeProviderFactory{openFn: func(context.Context, NetworkRoute) (NetworkProvider, error) {
+		return provider, nil
+	}}
+	registry := NewNetworkProviderRegistry(factory)
+	route := testNetworkRoute("profile-a", "fp-1")
+	if _, err := registry.Acquire(context.Background(), route); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := registry.Cancel(route.ProfileID); !errors.Is(err, boom) {
+		t.Fatalf("Cancel error = %v, want the canceller failure", err)
+	}
+	if got := provider.closeCount(); got != 0 {
+		t.Fatalf("provider closes = %d, want no close on a canceller path", got)
+	}
+}
+
+func TestNetworkProviderRegistryCancelClosesAProviderWithoutCanceller(t *testing.T) {
+	factory := &fakeProviderFactory{}
+	registry := NewNetworkProviderRegistry(factory)
+	var (
+		mu       sync.Mutex
+		profiles []string
+	)
+	registry.SetCloseHook(func(profileID string) {
+		mu.Lock()
+		profiles = append(profiles, profileID)
+		mu.Unlock()
+	})
+	route := testNetworkRoute("profile-a", "fp-1")
+	opened, err := registry.Acquire(context.Background(), route)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := registry.Cancel(route.ProfileID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if got := opened.(*fakeNetworkProvider).closeCount(); got != 1 {
+		t.Fatalf("provider closes = %d, want the fallback close exactly once", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(profiles) != 1 || profiles[0] != route.ProfileID {
+		t.Fatalf("close hook profiles = %v, want one invalidation for the profile", profiles)
+	}
+}
+
+func TestNetworkProviderRegistryCancelWhileOpeningCancelsTheOpen(t *testing.T) {
+	started := make(chan struct{})
+	openCanceled := make(chan struct{})
+	provider := &cancellableFakeProvider{}
+	factory := &fakeProviderFactory{openFn: func(ctx context.Context, _ NetworkRoute) (NetworkProvider, error) {
+		close(started)
+		<-ctx.Done()
+		close(openCanceled)
+		return nil, ctx.Err()
+	}}
+	registry := NewNetworkProviderRegistry(factory)
+	route := testNetworkRoute("profile-a", "fp-1")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := registry.Acquire(context.Background(), route)
+		done <- err
+	}()
+	<-started
+	if err := registry.Cancel(route.ProfileID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	select {
+	case <-openCanceled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Cancel did not cancel the in-flight open")
+	}
+	err := <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire after Cancel = %v, want the cancelled open's error", err)
+	}
+	if typed := typedConnectionError(t, err); typed.Kind != KindCancelled {
+		t.Fatalf("kind = %s, want cancelled", typed.Kind)
+	}
+	if got := provider.closeCount(); got != 0 {
+		t.Fatalf("provider close count = %d, want none when the open produced no provider", got)
+	}
+	if got := provider.cancelCount(); got != 0 {
+		t.Fatalf("provider cancels = %d, want the in-flight attempt cancelled through its context", got)
 	}
 }
 

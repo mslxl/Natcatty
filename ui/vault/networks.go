@@ -4,8 +4,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -54,7 +56,7 @@ func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkP
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, networkSummary(m, profile)).FontSize(12).TextColor(t.TextMuted)
-			networkProviderStatus(c, s, profile.ID, m, t)
+			networkProviderStatus(c, s, profile, m, t)
 		})
 		if ui.Button(c, m.VaultHostEdit()).Clicked() {
 			s.BeginEditNetworkProfile(profile.ID)
@@ -68,12 +70,21 @@ func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkP
 }
 
 // networkProviderStatus renders the latest non-secret Provider status of one
-// Profile. A Profile whose Provider has never run shows no status line; ticket
-// 10 owns starting and stopping the lifecycle explicitly.
-func networkProviderStatus(c *ui.Context, s *vaultstate.State, profileID string,
-	m locales.Messages, t *ui.Theme) {
-	status, ok := s.NetworkStatus(profileID)
+// Network Profile plus the interactive-login actions. A Network Profile whose
+// Kind is Tailscale and whose Provider has never run offers a login button; a
+// failed or cancelled one offers Retry.
+// The Auth URL is login material, not a stored secret, and stays on this
+// surface: it is never written to the connection log.
+func networkProviderStatus(c *ui.Context, s *vaultstate.State,
+	profile domainvault.NetworkProfile, m locales.Messages, t *ui.Theme) {
+	status, ok := s.NetworkStatus(profile.ID)
 	if !ok {
+		if profile.Kind == domainvault.NetworkKindTailscale {
+			if ui.Button(c, m.VaultNetworkLoginStart()).Clicked() {
+				s.StartNetworkProviderLogin(profile.ID)
+				c.Invalidate()
+			}
+		}
 		return
 	}
 	if phase := uiconnection.ProviderPhaseText(m, status.Phase); phase != "" {
@@ -90,16 +101,36 @@ func networkProviderStatus(c *ui.Context, s *vaultstate.State, profileID string,
 			status.LastHandshake, status.RxBytes, status.TxBytes)).
 			FontSize(12).TextColor(t.TextMuted)
 	}
-	// The Auth URL is the interactive-login address, not a stored secret. It
-	// stays on the Profile surface and is never written to the connection log.
 	if status.AuthURL != "" {
 		ui.Text(c, m.VaultNetworkLoginRequired(status.AuthURL)).
 			FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(6).Wrap().Children(func() {
+			if ui.Button(c, m.VaultNetworkLoginCopy()).Clicked() {
+				mygo.Clipboard.WriteText(status.AuthURL)
+			}
+			if ui.Button(c, m.VaultNetworkLoginOpen()).Clicked() {
+				_ = mygo.Shell.OpenExternal(status.AuthURL)
+			}
+		})
 	}
 	if status.LastError != "" {
 		ui.Text(c, m.VaultNetworkProviderStatusError(status.LastError)).
 			FontSize(12).TextColor(uitheme.DangerText(t))
 	}
+	ui.Row(c).Gap(6).Wrap().Children(func() {
+		switch status.Phase {
+		case appconnection.ProviderPhaseStarting, appconnection.ProviderPhaseNeedsLogin:
+			if ui.Button(c, m.VaultNetworkLoginCancel()).Clicked() {
+				s.CancelNetworkProviderLogin(profile.ID)
+				c.Invalidate()
+			}
+		case appconnection.ProviderPhaseError, appconnection.ProviderPhaseStopped:
+			if ui.Button(c, m.VaultNetworkLoginRetry()).Clicked() {
+				s.RetryNetworkProvider(profile.ID)
+				c.Invalidate()
+			}
+		}
+	})
 }
 
 // networkSummary names a profile's Kind and the endpoint a list row can show.
@@ -254,7 +285,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 			// group in the same frame.
 			switch domainvault.NetworkProfileKind(form.Kind) {
 			case domainvault.NetworkKindTailscale:
-				tailscaleFields(c, form, m, t)
+				tailscaleFields(c, s, form, m, t)
 			case domainvault.NetworkKindWireGuard:
 				wireguardFields(c, s, form, m, t)
 			}
@@ -277,8 +308,8 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 	editorActions(c, func() { _ = s.SaveNetworkProfile() }, s.CancelNetworkProfileEdit, m)
 }
 
-func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm,
-	m locales.Messages, t *ui.Theme) {
+func tailscaleFields(c *ui.Context, s *vaultstate.State,
+	form *vaultstate.NetworkProfileForm, m locales.Messages, t *ui.Theme) {
 	ui.Field(c, m.VaultNetworkHostname(), func() {
 		ui.TextInput(c, &form.Hostname).Placeholder("netcatty-node")
 	}).Description(m.VaultNetworkHostnameHint())
@@ -294,7 +325,10 @@ func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm,
 	// Auth Key. Say so here so a key that appears to be ignored is explained.
 	ui.Text(c, m.VaultNetworkAuthKeyStateHint()).FontSize(12).TextColor(t.TextMuted)
 
-	ui.Field(c, m.VaultNetworkControlURL(), func() {
+	// A custom Control URL may be a Headscale control plane. Until the
+	// Headscale + tsnet matrix in decisions/08 is verified on a real
+	// environment, the field is labeled experimental instead of promised.
+	ui.Field(c, m.VaultNetworkControlURLExperimental(), func() {
 		ui.TextInput(c, &form.ControlURL).Placeholder("https://controlplane.tailscale.com")
 	}).Description(m.VaultNetworkControlURLHint())
 	ui.Checkbox(c, &form.Ephemeral, m.VaultNetworkEphemeral())
@@ -306,6 +340,14 @@ func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm,
 	// Say so before the profile is saved rather than implying privacy the
 	// Provider does not provide.
 	ui.Text(c, m.VaultNetworkPrivacyNotice()).FontSize(12).TextColor(t.TextMuted)
+
+	// A saved Profile can start its node and show the interactive-login state
+	// here, so logging in does not require editing a Host first.
+	if form.ID != "" {
+		if profile, ok := s.NetworkProfileByID(form.ID); ok {
+			networkProviderStatus(c, s, profile, m, t)
+		}
+	}
 }
 
 func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.NetworkProfileForm,

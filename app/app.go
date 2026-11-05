@@ -560,6 +560,13 @@ func run(afterReady func(hostWindow)) error {
 		observeWireGuard: networkStatusSink.ObserveWireGuard,
 	}
 	networkProviders := appconnection.NewNetworkProviderRegistry(networkProviderFactory)
+	// The Vault's interactive-login actions drive the same registry without a
+	// Host dial. Starting here keeps the Auth URL flow independent of any one
+	// connection attempt; cancel/retry act on this profile's node only.
+	networkProviderControl := &networkProviderController{
+		vault:    vaultService,
+		registry: networkProviders,
+	}
 	// Registry shutdown rides on connections.CloseAll.
 	connections := appconnection.NewManager(
 		sshadapter.NewDialer(sshadapter.WithSecurityKeyAgent(securityKeys)),
@@ -719,6 +726,7 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithGroups(vaultService),
 		vaultstate.WithProxyProfiles(vaultService),
 		vaultstate.WithNetworkProfiles(vaultService),
+		vaultstate.WithNetworkProviderActions(networkProviderControl),
 		vaultstate.WithKnownHosts(vaultService),
 		vaultstate.WithSnippets(vaultService),
 		vaultstate.WithNotes(vaultService),

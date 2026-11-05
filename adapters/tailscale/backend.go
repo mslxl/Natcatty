@@ -87,10 +87,12 @@ func newTSNetBackend(cfg Config) (backend, error) {
 	return &tsnetBackend{server: server, authKey: cfg.AuthKey}, nil
 }
 
-// Start begins the node and waits for a stable state. With an Auth Key it waits
-// for Running, allowing tsnet's brief NeedsLogin transition; a key that still
-// needs login after the grace window is reported as NeedsLogin so the caller
-// fails closed instead of blocking forever.
+// Start begins the node and waits for a stable state. It returns Running with a
+// tailnet address, or NeedsLogin with an Auth URL while the server keeps
+// running: a later Status can then observe the completed browser login. With an
+// Auth Key it waits through tsnet's brief NeedsLogin transition; an expired or
+// invalid key that still needs login after the grace window is reported as
+// NeedsLogin so the interactive-login path can take over.
 func (b *tsnetBackend) Start(ctx context.Context) (backendStatus, error) {
 	if err := b.server.Start(); err != nil {
 		return backendStatus{}, err

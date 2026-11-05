@@ -435,11 +435,57 @@ func TestVaultViewNetworkRowShowsProviderStatus(t *testing.T) {
 		m.VaultNetworkProviderStatus(m.NetworkProviderPhaseNeedsLogin(),
 			"natcatty-office.tailnet.ts.net"),
 		m.VaultNetworkLoginRequired("https://login.tailscale.com/a/example"),
+		m.VaultNetworkLoginCopy(),
+		m.VaultNetworkLoginOpen(),
+		m.VaultNetworkLoginCancel(),
 		m.VaultNetworkProviderStatusError("tailscale: machine authorization required"),
 	} {
 		if !tt.HasText(want) {
 			t.Fatalf("the Network Profile row does not show %q, texts %q", want, tt.Texts())
 		}
+	}
+}
+
+func TestVaultViewNetworkRowOffersLoginAndRetry(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	// A saved Network Profile with no provider status offers the first login.
+	if !tt.HasText(m.VaultNetworkLoginStart()) {
+		t.Fatalf("the Network Profile row does not offer a login, texts %q", tt.Texts())
+	}
+
+	state.PostNetworkProviderStatus(vaultstate.NetworkProviderStatus{
+		ProfileID: "net-1",
+		Phase:     appconnection.ProviderPhaseError,
+		LastError: "tailscale: node failed while waiting for login",
+	})
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkLoginRetry()) {
+		t.Fatalf("a failed Provider does not offer Retry, texts %q", tt.Texts())
+	}
+	if tt.HasText(m.VaultNetworkLoginCancel()) {
+		t.Fatal("a failed Provider offered Cancel instead of Retry")
+	}
+
+	state.PostNetworkProviderStatus(vaultstate.NetworkProviderStatus{
+		ProfileID: "net-1",
+		Phase:     appconnection.ProviderPhaseStarting,
+	})
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkLoginCancel()) {
+		t.Fatalf("a starting Provider does not offer Cancel, texts %q", tt.Texts())
+	}
+}
+
+func TestVaultViewTailscaleEditorMarksTheControlURLExperimental(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	state.BeginCreateNetworkProfile(domainvault.NetworkKindTailscale)
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkControlURLExperimental()) {
+		t.Fatalf("the Control URL field is not marked experimental, texts %q", tt.Texts())
 	}
 }
 
