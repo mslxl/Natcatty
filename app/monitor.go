@@ -42,6 +42,7 @@ func (c monitorConnector) Open(ctx context.Context, host domainvault.Host) (appm
 		Username:          host.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		// Monitoring shares a channel-capable transport but never a Session

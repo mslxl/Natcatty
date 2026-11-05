@@ -527,6 +527,8 @@
   "connectionErrorSecurityKeyUnavailable": "No se encontró el agente OpenSSH del sistema. Instala OpenSSH e inicia ssh-agent para usar llaves del agente o una llave de seguridad.",
   "connectionErrorSecurityKeyTimeout": "La llave de seguridad no respondió en 30 segundos. Toca la llave cuando el sistema lo pida e inténtalo de nuevo.",
   "connectionErrorInternal": "No se pudo abrir la conexión.",
+  "connectionErrorProvider": "El perfil de red no pudo proporcionar una conexión. Comprueba el estado del perfil e inténtalo de nuevo.",
+  "connectionErrorProxyCommandNetwork": "ProxyCommand ejecuta un proceso local fuera del perfil de red integrado, por lo que no se pueden combinar. Quita uno de ellos para este Host.",
   "connectionErrorX11": "No se pudo iniciar el reenvío X11. Asegúrate de que el Host permita el reenvío X11 y de que xauth esté instalado.",
   "menuSerial": "Puerto serial…",
   "serialTitle": "Conectar a puerto serial",

@@ -32,6 +32,11 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return ""
 	}
 	switch {
+	// A ProxyCommand plus Network Profile selection is a specific unsupported
+	// combination, not a generic negotiation failure: name both so the user
+	// knows which setting to remove.
+	case errors.Is(err, appconnection.ErrProxyCommandNetworkConflict):
+		return m.ConnectionErrorProxyCommandNetwork()
 	case errors.Is(err, appconnection.ErrSecurityKeyUnsupported):
 		return m.ConnectionErrorSecurityKeyUnavailable()
 	case errors.Is(err, appconnection.ErrSecurityKeyDeviceTimeout):
@@ -88,6 +93,8 @@ func ProblemText(m locales.Messages, kind appconnection.Kind) string {
 		return m.ConnectionErrorCancelled()
 	case appconnection.KindX11:
 		return m.ConnectionErrorX11()
+	case appconnection.KindProvider:
+		return m.ConnectionErrorProvider()
 	case appconnection.KindInternal:
 		return m.ConnectionErrorInternal()
 	}

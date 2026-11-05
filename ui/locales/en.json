@@ -799,6 +799,8 @@
   "connectionErrorSecurityKeyUnavailable": "The system OpenSSH agent was not found. Install OpenSSH and start ssh-agent to use agent keys or a security key.",
   "connectionErrorSecurityKeyTimeout": "The security key did not respond within 30 seconds. Touch the key when the system asks and try again.",
   "connectionErrorInternal": "The connection could not be opened.",
+  "connectionErrorProvider": "The Network Profile could not provide a connection. Check the profile's status and try again.",
+  "connectionErrorProxyCommandNetwork": "ProxyCommand runs a local process outside the embedded Network Profile, so the two cannot be combined. Remove one of them for this Host.",
   "connectionErrorX11": "X11 forwarding could not be started. Make sure the Host allows X11 forwarding and xauth is installed.",
   "menuSerial": "Serial Port…",
   "serialTitle": "Connect to Serial Port",
