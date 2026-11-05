@@ -541,10 +541,17 @@ func run(afterReady func(hostWindow)) error {
 	// extend into jump chains and a shared pool. Hardware security keys go
 	// through the same system OpenSSH agent as ordinary agent identities.
 	securityKeys := sshadapter.NewSecurityKeyAgent()
+	// One in-process Network Provider per Network Profile, started lazily.
+	// Tickets 06 (Tailscale Net) and 08 (WireGuard Net) own the factory. Until
+	// one is wired, the nil factory fails closed with KindProvider when a Host
+	// selects a profile; it must never dial directly.
+	networkProviders := appconnection.NewNetworkProviderRegistry(nil)
+	// Registry shutdown rides on connections.CloseAll.
 	connections := appconnection.NewManager(
 		sshadapter.NewDialer(sshadapter.WithSecurityKeyAgent(securityKeys)),
 		vaultPasswords{vault: vaultService},
 		database,
+		appconnection.WithNetworkProviders(networkProviders),
 		appconnection.WithPrompter(trustPrompt),
 		appconnection.WithKnownHostsChanged(func() {
 			if vaultState != nil {

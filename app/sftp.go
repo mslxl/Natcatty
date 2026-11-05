@@ -104,6 +104,7 @@ func (o *sftpRemoteOpener) connect(ctx context.Context, hostID model.HostID) (ap
 		Username:          host.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseChannel,

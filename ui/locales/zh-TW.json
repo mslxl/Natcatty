@@ -527,6 +527,8 @@
   "connectionErrorSecurityKeyUnavailable": "找不到系統 OpenSSH 代理。請安裝 OpenSSH 並啟動 ssh-agent，以使用代理金鑰或安全金鑰。",
   "connectionErrorSecurityKeyTimeout": "安全金鑰在 30 秒內沒有回應。請在系統提示時觸碰金鑰，然後重試。",
   "connectionErrorInternal": "無法開啟連線。",
+  "connectionErrorProvider": "Network Profile 無法提供連線。請檢查該設定的狀態後重試。",
+  "connectionErrorProxyCommandNetwork": "ProxyCommand 在本機子程序中執行，無法使用內嵌的 Network Profile。請為該 Host 移除其中一個。",
   "connectionErrorX11": "無法啟動 X11 轉發。請確認 Host 允許 X11 轉發並已安裝 xauth。",
   "menuSerial": "序列埠…",
   "serialTitle": "連線序列埠",

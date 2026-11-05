@@ -107,6 +107,11 @@ type endpointConfig struct {
 	noReuse           bool
 	keepalive         KeepalivePolicy
 	configFingerprint string
+	// networkProfileID and networkFingerprint scope a transport to one
+	// Network Profile version. The label is display metadata and never enters
+	// the key or these fields.
+	networkProfileID   string
+	networkFingerprint string
 }
 
 // allowsReuse applies the original findTransportByEndpoint rules.
@@ -171,22 +176,34 @@ func endpointFor(req Request) endpointConfig {
 		keepalive = &KeepalivePolicy{}
 	}
 	resolved := keepalive.resolved()
+	network := "-"
+	networkProfileID := ""
+	networkFingerprint := ""
+	if req.Network != nil {
+		networkProfileID = req.Network.ProfileID
+		networkFingerprint = req.Network.Fingerprint
+		// Profile identity and version scope reuse. The label is display
+		// metadata, not identity, so it is deliberately excluded here.
+		network = digest("network", networkProfileID, networkFingerprint)
+	}
 	return endpointConfig{
 		key: digest(
 			"ssh", string(req.HostID), req.Hostname, strconv.Itoa(port), username,
 			digest(jumps...), proxy, algorithmFingerprint(req.Algorithms),
-			resolved.key(), req.ConfigFingerprint,
+			resolved.key(), req.ConfigFingerprint, network,
 		),
-		hostID:            string(req.HostID),
-		hostname:          req.Hostname,
-		port:              port,
-		username:          username,
-		agentForwarding:   req.AgentForwarding,
-		forwardingAgent:   req.ForwardingAgentFingerprint,
-		singleChannel:     req.SingleChannel,
-		noReuse:           req.SingleChannel || req.X11Forwarding || req.Dedicated,
-		keepalive:         resolved,
-		configFingerprint: req.ConfigFingerprint,
+		hostID:             string(req.HostID),
+		hostname:           req.Hostname,
+		port:               port,
+		username:           username,
+		agentForwarding:    req.AgentForwarding,
+		forwardingAgent:    req.ForwardingAgentFingerprint,
+		singleChannel:      req.SingleChannel,
+		noReuse:            req.SingleChannel || req.X11Forwarding || req.Dedicated,
+		keepalive:          resolved,
+		configFingerprint:  req.ConfigFingerprint,
+		networkProfileID:   networkProfileID,
+		networkFingerprint: networkFingerprint,
 	}
 }
 
@@ -557,6 +574,44 @@ func (p *pool) removeLocked(conn *Connection) {
 		conn.stopTimer()
 		conn.stopTimer = nil
 	}
+}
+
+// invalidateNetworkProfile closes every parked transport opened through one
+// Network Profile. A profile edit, deletion, or Provider shutdown invalidates
+// those transports; an active lease keeps its own transport so its owner sees
+// the failure on the next I/O instead of a silent re-dial.
+func (p *pool) invalidateNetworkProfile(profileID string) {
+	if profileID == "" {
+		return
+	}
+	var idle []*Connection
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	for _, connections := range p.byKey {
+		for _, conn := range connections {
+			if conn.endpoint.networkProfileID != profileID {
+				continue
+			}
+			conn.mu.Lock()
+			// A zero-lease transport is either parked or between its final
+			// Release and park. The pool lock serializes us with both, so a
+			// zero-lease transport here can be closed rather than allowed to
+			// park under a dead Provider.
+			unleased := conn.refs == 0
+			conn.mu.Unlock()
+			if unleased {
+				idle = append(idle, conn)
+			}
+		}
+	}
+	for _, conn := range idle {
+		p.removeLocked(conn)
+	}
+	p.mu.Unlock()
+	closeConnections(idle)
 }
 
 // closeAll stops the pool and returns every transport for teardown.

@@ -42,6 +42,7 @@ func (c sysmanagerConnector) Open(ctx context.Context, host domainvault.Host) (a
 		Username:          host.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		// A channel lease is enough for exec and never claims a Session

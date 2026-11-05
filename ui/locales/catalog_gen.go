@@ -4098,6 +4098,28 @@ func (msgs Messages) ConnectionErrorInternal() string {
 	return Catalog.Format(msgs.locale, "connectionErrorInternal", nil)
 }
 
+// ConnectionErrorProvider says "The Network Profile could not provide a connection. Check the profile's status and try again."
+// in the language the app shows.
+func ConnectionErrorProvider() string { return In(i18n.Locale()).ConnectionErrorProvider() }
+
+// ConnectionErrorProvider says "The Network Profile could not provide a connection. Check the profile's status and try again."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorProvider() string {
+	return Catalog.Format(msgs.locale, "connectionErrorProvider", nil)
+}
+
+// ConnectionErrorProxyCommandNetwork says "ProxyCommand runs a local process outside the embedded Network Profile, so the two cannot be combined. Remove one of …"
+// in the language the app shows.
+func ConnectionErrorProxyCommandNetwork() string {
+	return In(i18n.Locale()).ConnectionErrorProxyCommandNetwork()
+}
+
+// ConnectionErrorProxyCommandNetwork says "ProxyCommand runs a local process outside the embedded Network Profile, so the two cannot be combined. Remove one of …"
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorProxyCommandNetwork() string {
+	return Catalog.Format(msgs.locale, "connectionErrorProxyCommandNetwork", nil)
+}
+
 // ConnectionErrorX11 says "X11 forwarding could not be started. Make sure the Host allows X11 forwarding and xauth is installed."
 // in the language the app shows.
 func ConnectionErrorX11() string { return In(i18n.Locale()).ConnectionErrorX11() }

@@ -33,12 +33,17 @@ import (
 // Jumps, when present, are full endpoints reached before the target, ordered
 // first = closest to the client. Proxy applies to the first endpoint only.
 type Request struct {
-	HostID     model.HostID
-	Hostname   string
-	Port       int
-	Username   string
-	Jumps      []Hop
-	Proxy      *Proxy
+	HostID   model.HostID
+	Hostname string
+	Port     int
+	Username string
+	Jumps    []Hop
+	Proxy    *Proxy
+	// Network selects the Network Profile used for the first endpoint. Nil
+	// keeps today's direct behavior. When non-nil, every failure fails closed
+	// through the Provider; the Manager never retries or falls back to a
+	// direct dial.
+	Network    *NetworkRoute
 	Algorithms AlgorithmPolicy
 	// ConfigFingerprint is an opaque, non-secret digest of the effective
 	// credential selection and connection policy. The Manager only compares
@@ -122,6 +127,15 @@ type DialRequest struct {
 	// Proxy applies to the first endpoint only: the first jump when present,
 	// otherwise the target.
 	Proxy *Proxy
+	// Network is the non-secret Network Profile selection for the first
+	// endpoint. It is runtime-only metadata; the adapter uses it to reject a
+	// ProxyCommand combination and never reads key material from it.
+	Network *NetworkRoute
+	// Provider, when non-nil, is the already-opened dial port for Network. The
+	// adapter routes the first endpoint and the HTTP/SOCKS proxy server
+	// address through it. It is nil when the route has no Network Profile and
+	// must never be substituted with a direct dial.
+	Provider NetworkProvider
 	// X11, when non-nil, enables X11 forwarding for the shell opened on this
 	// transport. It is never set on a reused or pooled transport.
 	X11 *X11Options
@@ -232,6 +246,10 @@ type Manager struct {
 	livenessProbe time.Duration
 	schedule      timerScheduler
 	pool          *pool
+	// providers lazily opens one Network Provider per profile. A nil registry
+	// means selecting a Network Profile fails closed with KindProvider; it
+	// never means "dial directly".
+	providers *NetworkProviderRegistry
 }
 
 // Option customizes a Manager.
@@ -326,6 +344,19 @@ func WithTimerScheduler(fn func(time.Duration, func()) (stop func())) Option {
 	}
 }
 
+// WithNetworkProviders gives the Manager the Network Provider registry. Without
+// it, any Request carrying a Network Route fails closed with KindProvider.
+// Provider closure invalidates that profile's idle pooled Connections through
+// the registry's close hook.
+func WithNetworkProviders(registry *NetworkProviderRegistry) Option {
+	return func(m *Manager) {
+		m.providers = registry
+		if registry != nil {
+			registry.SetCloseHook(m.InvalidateNetworkProfile)
+		}
+	}
+}
+
 // NewManager returns a Manager over its ports.
 func NewManager(dialer Dialer, passwords PasswordSource, known KnownHostRepository, opts ...Option) *Manager {
 	manager := &Manager{
@@ -352,13 +383,32 @@ func NewManager(dialer Dialer, passwords PasswordSource, known KnownHostReposito
 	return manager
 }
 
-// CloseAll closes every pooled Connection and stops accepting new ones. The
-// app calls it on quit after closing Sessions.
+// CloseAll closes every pooled Connection, shuts down every Network Provider,
+// and stops accepting new ones. The app calls it on quit after closing
+// Sessions. Provider shutdown rides on this call; there is no separate app
+// lifecycle for the registry.
 func (m *Manager) CloseAll() {
-	if m == nil || m.pool == nil {
+	if m == nil {
 		return
 	}
-	closeConnections(m.pool.closeAll())
+	if m.pool != nil {
+		closeConnections(m.pool.closeAll())
+	}
+	if m.providers != nil {
+		_ = m.providers.CloseAll()
+	}
+}
+
+// InvalidateNetworkProfile closes idle pooled Connections opened through one
+// Network Profile. A profile edit, deletion, or Provider shutdown calls it
+// through the registry close hook. Active leases keep their transport so the
+// owner sees the failure on its next I/O; that transport is never replaced by a
+// direct connection.
+func (m *Manager) InvalidateNetworkProfile(profileID string) {
+	if m == nil || m.pool == nil || profileID == "" {
+		return
+	}
+	m.pool.invalidateNetworkProfile(profileID)
 }
 
 // Acquire opens a new Connection and returns its first Lease. The caller's
@@ -371,6 +421,27 @@ func (m *Manager) CloseAll() {
 func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 	if m.dialer == nil {
 		return nil, internalError(ErrNoDialer)
+	}
+
+	// A selected Network Profile must have a live Provider before a pooled
+	// transport is handed out or a dial starts. Doing it here, ahead of the
+	// pool, is what makes reuse fail closed too: a stopped Provider can never
+	// leave a parked transport to be silently used again.
+	var provider NetworkProvider
+	if req.Network != nil {
+		if m.providers == nil {
+			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
+				fmt.Errorf("%w: no registry", ErrNetworkProvider))
+		}
+		opened, err := m.providers.Acquire(ctx, *req.Network)
+		if err != nil {
+			return nil, err
+		}
+		if opened == nil {
+			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
+				fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
+		}
+		provider = opened
 	}
 
 	endpoint := endpointFor(req)
@@ -406,7 +477,7 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		return nil, internalError(lead.err)
 	}
 
-	conn, err := m.dial(ctx, req, endpoint)
+	conn, err := m.dial(ctx, req, endpoint, provider)
 	if completeErr := m.pool.complete(lead, conn, err); completeErr != nil {
 		if err != nil {
 			return nil, err
@@ -430,8 +501,10 @@ func (m *Manager) readyLease(lease *Lease) *Lease {
 	return lease
 }
 
-// dial opens a physical transport and returns its first Connection.
-func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig) (*Connection, error) {
+// dial opens a physical transport and returns its first Connection. provider is
+// the live dial port for req.Network, or nil when the route selects no Network
+// Profile.
+func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig, provider NetworkProvider) (*Connection, error) {
 	known, err := m.knownHosts(ctx)
 	if err != nil {
 		return nil, err
@@ -487,6 +560,8 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 
 	dialRequest := DialRequest{
 		Proxy:      req.Proxy,
+		Network:    req.Network,
+		Provider:   provider,
 		Algorithms: req.Algorithms,
 		OnProgress: req.OnProgress,
 	}
@@ -535,6 +610,13 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 	client, err := m.dialer.Dial(ctx, dialRequest)
 	if err != nil {
 		classified := classifyDialError(err)
+		if req.Network != nil {
+			// Keep the transport's Kind: an unreachable target stays
+			// KindNetwork and an expired deadline stays KindTimeout. Only the
+			// provider context is added, and the failure is never retried
+			// through a direct dial.
+			classified = TagProvider(classified, providerInfo(*req.Network, ProviderPhaseRunning))
+		}
 		if isAuthenticationFailure(classified) {
 			// A failed login means the cached method may have been revoked or
 			// the server's policy changed; try every method next time. Clear

@@ -27,22 +27,74 @@ const (
 	KindInternal Kind = "internal"
 	// KindX11 reports that the SSH Host refused X11 forwarding.
 	KindX11 Kind = "x11"
+	// KindProvider reports that the Network Provider for a selected Network
+	// Profile could not supply a connection: it is not logged in, failed to
+	// start, has an invalid configuration, or its tunnel is unavailable. An
+	// unreachable target remains KindNetwork and an expired deadline remains
+	// KindTimeout, even when a Provider carried the dial.
+	KindProvider Kind = "provider"
 )
+
+// ProviderPhase is a Network Provider's lifecycle state at the moment a failure
+// was observed. It is stable data, never display text.
+type ProviderPhase string
+
+const (
+	// ProviderPhaseStopped reports a Provider that never started or was shut
+	// down. Selecting a profile with no factory or registry also lands here.
+	ProviderPhaseStopped ProviderPhase = "stopped"
+	// ProviderPhaseStarting reports a Provider that is joining its network.
+	ProviderPhaseStarting ProviderPhase = "starting"
+	// ProviderPhaseNeedsLogin reports an interactive login that has not
+	// completed. A Tailscale Net provider reports it with its Auth URL.
+	ProviderPhaseNeedsLogin ProviderPhase = "needs_login"
+	// ProviderPhaseRunning reports a Provider that was up when the operation
+	// failed, such as a target the tunnel could not reach.
+	ProviderPhaseRunning ProviderPhase = "running"
+	// ProviderPhaseStopping reports a Provider shutting down.
+	ProviderPhaseStopping ProviderPhase = "stopping"
+	// ProviderPhaseError reports a Provider that failed to start or lost its
+	// tunnel.
+	ProviderPhaseError ProviderPhase = "error"
+)
+
+// ProviderInfo identifies the Network Profile behind a failure without
+// carrying key material. Label is optional display metadata; ProfileID, Kind,
+// and Phase are the stable diagnostics.
+type ProviderInfo struct {
+	ProfileID string
+	Label     string
+	Kind      string
+	Phase     ProviderPhase
+}
 
 // Error is a typed connection error. Cause carries the transport or storage
 // detail; it is never user-visible text. Hop identifies the chain endpoint
-// that failed when the failure happened during a jump chain. Error() is a
-// developer diagnostic; the UI localizes Kind and Hop.Label instead.
+// that failed when the failure happened during a jump chain. Provider
+// identifies the Network Profile behind a failure; it never carries key
+// material. Error() is a developer diagnostic; the UI localizes Kind, Hop.Label,
+// and Provider.Phase instead.
 type Error struct {
-	Kind  Kind
-	Cause error
-	Hop   *HopInfo
+	Kind     Kind
+	Cause    error
+	Hop      *HopInfo
+	Provider *ProviderInfo
 }
 
 func (e *Error) Error() string {
 	message := fmt.Sprintf("connection: %s", e.Kind)
 	if e.Cause != nil {
 		message += fmt.Sprintf(": %v", e.Cause)
+	}
+	if e.Provider != nil {
+		message += fmt.Sprintf(" (network profile %q", e.Provider.ProfileID)
+		if e.Provider.Kind != "" {
+			message += ", kind " + e.Provider.Kind
+		}
+		if e.Provider.Phase != "" {
+			message += ", phase " + string(e.Provider.Phase)
+		}
+		message += ")"
 	}
 	return message + hopErrorText(e.Hop)
 }
@@ -101,7 +153,80 @@ var (
 	// ErrX11Unavailable reports a local X11 bridge that could not start, such
 	// as an unavailable random source.
 	ErrX11Unavailable = errors.New("connection: X11 forwarding unavailable")
+	// ErrNetworkProvider reports that a selected Network Profile has no
+	// runtime registry or factory to provide it. The more specific sentinels
+	// below cover a closed registry, a missing profile, and an unsupported
+	// Kind. Every provider-level failure is KindProvider, and no Network
+	// Route may ever fall back to a direct dial.
+	ErrNetworkProvider = errors.New("connection: network provider unavailable")
+	// ErrNetworkProviderClosed reports a Provider registry that has shut down.
+	ErrNetworkProviderClosed = errors.New("connection: network provider is closed")
+	// ErrNetworkProviderProfile reports a Network Route without a profile
+	// identity, such as a dangling reference.
+	ErrNetworkProviderProfile = errors.New("connection: network profile is missing")
+	// ErrNetworkProviderKind reports a Network Profile Kind this build cannot
+	// run.
+	ErrNetworkProviderKind = errors.New("connection: unsupported network profile kind")
+	// ErrProviderUnavailable reports a DialRequest that selected a Network
+	// Route but carried no opened Provider. The Manager always supplies one;
+	// this sentinel guards the adapter contract that a Network Route is never
+	// substituted with a direct dial.
+	ErrProviderUnavailable = errors.New("connection: network provider was not supplied")
+	// ErrProxyCommandNetworkConflict reports that a ProxyCommand and a
+	// Network Profile were selected for the same first endpoint. ProxyCommand
+	// spawns a local process on the operating system's network, which an
+	// in-process Provider cannot carry.
+	ErrProxyCommandNetworkConflict = errors.New("connection: ProxyCommand cannot be combined with a Network Profile")
 )
+
+// ProxyCommandNetworkConflict returns the typed failure for a route that
+// selects both a ProxyCommand and a Network Profile. It names both in its
+// diagnostic so neither selection is silently ignored, and carries the
+// profile identity for the UI. The caller must raise it before starting the
+// ProxyCommand process.
+func ProxyCommandNetworkConflict(route NetworkRoute) error {
+	return &Error{
+		Kind: KindUnsupported,
+		Cause: fmt.Errorf("%w: ProxyCommand and Network Profile %q",
+			ErrProxyCommandNetworkConflict, route.ProfileID),
+		Provider: &ProviderInfo{
+			ProfileID: route.ProfileID,
+			Label:     route.Label,
+			Kind:      route.Kind,
+		},
+	}
+}
+
+// ProviderUnavailable returns the typed failure for a Network Route that
+// reached a transport without its opened Provider. It fails closed instead of
+// dialing directly, because a route whose Provider is missing would otherwise
+// silently bypass the selected Network Profile. Phase is stopped: no Provider
+// was ever supplied for the route.
+func ProviderUnavailable(route NetworkRoute) error {
+	return providerRouteError(route, ProviderPhaseStopped,
+		fmt.Errorf("%w: Network Profile %q", ErrProviderUnavailable, route.ProfileID))
+}
+
+// TagProvider attaches ProviderInfo to an error without changing a Kind the
+// transport already chose. A failure that is not yet classified becomes
+// KindProvider, because a plain error from the Provider layer is a provider
+// failure, never a reason to dial directly.
+func TagProvider(err error, info ProviderInfo) error {
+	if err == nil {
+		return nil
+	}
+	var typed *Error
+	if errors.As(err, &typed) {
+		clone := *typed
+		merged := info
+		if typed.Provider != nil {
+			mergeProviderInfo(&merged, *typed.Provider)
+		}
+		clone.Provider = &merged
+		return &clone
+	}
+	return &Error{Kind: KindProvider, Cause: err, Provider: &info}
+}
 
 // X11NoticeCode identifies a non-fatal X11 runtime problem. It is an
 // identifier, never localized text; the UI resolves it through its catalogs.

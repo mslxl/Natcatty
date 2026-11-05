@@ -28,7 +28,13 @@ const maxProxyResponse = 64 << 10
 
 // dialProxy opens a transport to the first endpoint through proxy. It owns the
 // handshake and returns a connection ready for SSH bytes.
-func (d *Dialer) dialProxy(ctx context.Context, proxy *appconnection.Proxy, targetHost string, targetPort int) (net.Conn, error) {
+//
+// provider, when non-nil, dials the proxy server address, so an HTTP CONNECT or
+// SOCKS5 proxy itself lives inside the Network Profile's virtual network. The
+// proxy handshake after that dial is unchanged. ProxyCommand is rejected by
+// Dial before reaching here because a local process cannot be carried by the
+// in-process Provider.
+func (d *Dialer) dialProxy(ctx context.Context, proxy *appconnection.Proxy, provider appconnection.NetworkProvider, targetHost string, targetPort int) (net.Conn, error) {
 	if proxy == nil {
 		return nil, &appconnection.Error{Kind: appconnection.KindInternal, Cause: appconnection.ErrInvalidProxy}
 	}
@@ -36,7 +42,7 @@ func (d *Dialer) dialProxy(ctx context.Context, proxy *appconnection.Proxy, targ
 	case appconnection.ProxyCommand:
 		return d.dialProxyCommand(ctx, proxy, targetHost, targetPort)
 	case appconnection.ProxyHTTP, appconnection.ProxySOCKS5:
-		return d.dialSocketProxy(ctx, proxy, targetHost, targetPort)
+		return d.dialSocketProxy(ctx, proxy, provider, targetHost, targetPort)
 	default:
 		return nil, &appconnection.Error{
 			Kind:  appconnection.KindUnsupported,
@@ -74,12 +80,12 @@ func (d *Dialer) dialProxyCommand(ctx context.Context, proxy *appconnection.Prox
 	return conn, nil
 }
 
-func (d *Dialer) dialSocketProxy(ctx context.Context, proxy *appconnection.Proxy, targetHost string, targetPort int) (net.Conn, error) {
+func (d *Dialer) dialSocketProxy(ctx context.Context, proxy *appconnection.Proxy, provider appconnection.NetworkProvider, targetHost string, targetPort int) (net.Conn, error) {
 	if proxy.Host == "" || proxy.Port <= 0 || proxy.Port > 65535 {
 		return nil, &appconnection.Error{Kind: appconnection.KindInternal, Cause: appconnection.ErrInvalidProxy}
 	}
 	address := net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port))
-	conn, err := d.dial(ctx, "tcp", address)
+	conn, err := d.dialEndpoint(ctx, provider, "tcp", address)
 	if err != nil {
 		return nil, classifyDialFailure(ctx, ctx, err)
 	}

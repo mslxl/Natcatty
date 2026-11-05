@@ -81,10 +81,14 @@ type Proxy struct {
 type NetworkRoute struct {
 	ProfileID string
 	Kind      string
-	// Fingerprint is reserved for the Provider lifecycle work: it will digest
-	// the profile's non-secret configuration and secret-material version so a
-	// rotated key invalidates parked connections. It is empty until that ticket
-	// wires the Provider registry.
+	// Label is optional display metadata for ProviderInfo and diagnostics. It
+	// never participates in a pool key directly; the profile version in
+	// Fingerprint still invalidates transports on any edit, including a rename.
+	Label string
+	// Fingerprint digests the profile's non-secret configuration and a
+	// secret-material version. It invalidates parked connections when the
+	// profile is edited or its credentials rotate, and it never contains key
+	// material.
 	Fingerprint string
 }
 
