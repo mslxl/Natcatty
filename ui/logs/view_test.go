@@ -189,6 +189,34 @@ func TestLogsSurfaceIsReadableAndScrollableAtBothSizes(t *testing.T) {
 	}
 }
 
+func TestNetworkProviderRowRendersItsPhaseAndHasNoTerminalAction(t *testing.T) {
+	m := locales.In("en")
+	source := &fakeSource{}
+	source.logs = []domainhistory.ConnectionLog{{
+		ID:                   "provider-1",
+		Kind:                 "tailscale",
+		Status:               domainhistory.ConnectionFailed,
+		Error:                "tailscale: machine authorization required",
+		StartedAt:            time.Now(),
+		NetworkProfileID:     "net-1",
+		NetworkProfileLabel:  "Office",
+		NetworkProviderKind:  "tailscale",
+		NetworkProviderPhase: "needs_login",
+		NetworkAddress:       "natcatty-office.tailnet.ts.net",
+	}}
+	tt, _ := newProductionLogsView(t, 720, 480, source, &fakeActions{})
+
+	assertVisible(t, tt, "Office", 720, 480)
+	assertVisible(t, tt, m.LogsProviderMeta(m.NetworkProviderPhaseNeedsLogin(), "tailscale"), 720, 480)
+	assertVisible(t, tt, "natcatty-office.tailnet.ts.net", 720, 480)
+	assertVisible(t, tt, "tailscale: machine authorization required", 720, 480)
+	// A provider row has no Session to reopen, so it must not offer the
+	// terminal action a Host row shows.
+	if textsContain(tt, m.LogsOpenTerminal()) {
+		t.Fatalf("provider row rendered the terminal action, texts %q", tt.Texts())
+	}
+}
+
 func TestLogsFiltersUpdateTheRenderedRows(t *testing.T) {
 	m := locales.In("en")
 	tt, state := newProductionLogsView(t, 720, 480, seededSource(), &fakeActions{})

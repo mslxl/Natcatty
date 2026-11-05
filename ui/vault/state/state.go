@@ -291,7 +291,15 @@ type State struct {
 	networkForm           NetworkProfileForm
 	pendingDeleteNetwork  string
 	networkImport         networkImportState
-	pendingDeleteKnown    string
+
+	// Network Provider statuses are produced off the UI thread by the dial
+	// goroutine. PostNetworkProviderStatus queues them; the view publishes the
+	// queue with FlushNetworkProviderStatus. The map is read only on the UI
+	// thread and is guarded anyway so tests may observe it directly.
+	networkStatusMu      sync.Mutex
+	networkStatusPending []NetworkProviderStatus
+	networkStatuses      map[string]NetworkProviderStatus
+	pendingDeleteKnown   string
 
 	editingSnippet              bool
 	snippetForm                 SnippetForm

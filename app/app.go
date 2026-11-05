@@ -542,10 +542,22 @@ func run(afterReady func(hostWindow)) error {
 	// through the same system OpenSSH agent as ordinary agent identities.
 	securityKeys := sshadapter.NewSecurityKeyAgent()
 	// One in-process Network Provider per Network Profile, started lazily.
-	// Tickets 06 (Tailscale Net) and 08 (WireGuard Net) own the factory. Until
-	// one is wired, the nil factory fails closed with KindProvider when a Host
-	// selects a profile; it must never dial directly.
-	networkProviders := appconnection.NewNetworkProviderRegistry(nil)
+	// The factory dispatches on the Profile's kind: Tailscale Net uses the
+	// embedded tsnet adapter, while WireGuard Net fails closed until ticket 08.
+	// A Provider failure is reported as KindProvider and never becomes a
+	// direct dial. The state directory lives under this app's user data,
+	// isolated per Profile; no system tailscaled state or root access is used.
+	networkStatusSink := &networkProviderStatusSink{
+		// vaultState is assigned later; resolve it when a status arrives.
+		vault:   func() *vaultstate.State { return vaultState },
+		history: historyService,
+	}
+	networkProviderFactory := &networkProviderFactory{
+		vault:     vaultService,
+		stateBase: filepath.Join(userData, "network-providers"),
+		observe:   networkStatusSink.Observe,
+	}
+	networkProviders := appconnection.NewNetworkProviderRegistry(networkProviderFactory)
 	// Registry shutdown rides on connections.CloseAll.
 	connections := appconnection.NewManager(
 		sshadapter.NewDialer(sshadapter.WithSecurityKeyAgent(securityKeys)),
