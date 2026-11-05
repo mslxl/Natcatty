@@ -691,14 +691,9 @@ authorization of the copyright holder.
 
 ## Verification and open gaps
 
-- A Go release check (`internal/legal/legal.go`, run as
-  `go run ./internal/tools/releasecheck check-legal -dir DIR`) fails when
-  `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, or the per-release
-  `SOURCE-OFFER.md` is missing or empty in an artifact. Add `-repository` to
-  check a checkout, where the notices live under `resources/`.
-- `internal/legal` also tests the repository's own legal files and the bundled
-  Rust crate metadata, so `go test ./internal/legal` fails if a required notice
-  or crate row disappears.
+- `internal/legal` tests the repository's own legal files and the bundled Rust
+  crate metadata, so `go test ./internal/legal` fails if a required notice or
+  crate row disappears.
 - **Corrected in ticket 15:** the MoshCatty source description (pure Rust, not
   an upstream mosh build), its tag commit, the mosh-go MIT notice and shipped
   license file, the 49 Rust crate notices, and the MoshCatty
