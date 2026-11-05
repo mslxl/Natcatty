@@ -74,6 +74,7 @@ const (
 	TableKeys            = "ssh_keys"
 	TableIdentities      = "identities"
 	TableProxyProfiles   = "proxy_profiles"
+	TableNetworkProfiles = "network_profiles"
 	TableKnownHosts      = "known_hosts"
 	TableForwardingRules = "forwarding_rules"
 	TableSnippets        = "snippets"
@@ -93,12 +94,22 @@ var Tables = []string{
 	TableIdentities,
 	TableKeys,
 	TableKnownHosts,
+	TableNetworkProfiles,
 	TableNoteGroups,
 	TableNotes,
 	TableProxyProfiles,
 	TableSecrets,
 	TableSnippetPackages,
 	TableSnippets,
+}
+
+// OptionalTable reports whether a family was added after the original snapshot
+// schema. A Snapshot omits an optional table while it has no rows, so a backup
+// of a Vault that does not use the family stays readable by a build that
+// predates it. A reader must treat a missing optional table as empty. No
+// existing table is optional, so absence still fails validation for them.
+func OptionalTable(name string) bool {
+	return name == TableNetworkProfiles
 }
 
 func knownTable(name string) bool {
@@ -194,6 +205,7 @@ type Counts struct {
 	Keys            int `json:"keys"`
 	Identities      int `json:"identities"`
 	ProxyProfiles   int `json:"proxyProfiles"`
+	NetworkProfiles int `json:"networkProfiles"`
 	KnownHosts      int `json:"knownHosts"`
 	ForwardingRules int `json:"forwardingRules"`
 	Snippets        int `json:"snippets"`
@@ -205,8 +217,8 @@ type Counts struct {
 // Total reports how many Vault records the snapshot carries.
 func (c Counts) Total() int {
 	return c.Hosts + c.Groups + c.Keys + c.Identities + c.ProxyProfiles +
-		c.KnownHosts + c.ForwardingRules + c.Snippets + c.SnippetPackages +
-		c.Notes + c.NoteGroups
+		c.NetworkProfiles + c.KnownHosts + c.ForwardingRules + c.Snippets +
+		c.SnippetPackages + c.Notes + c.NoteGroups
 }
 
 // Summary describes one stored backup without its encrypted payload.
@@ -346,6 +358,8 @@ func (s Snapshot) Counts() Counts {
 			counts.Identities = rows
 		case TableProxyProfiles:
 			counts.ProxyProfiles = rows
+		case TableNetworkProfiles:
+			counts.NetworkProfiles = rows
 		case TableKnownHosts:
 			counts.KnownHosts = rows
 		case TableForwardingRules:

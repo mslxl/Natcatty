@@ -165,6 +165,7 @@ func TestSyncSurfaceLocalizesEntityFamilies(t *testing.T) {
 		"keys":                en.SearchSectionKey(),
 		"identities":          en.SearchSectionIdentity(),
 		"proxyProfiles":       en.SearchSectionProxyProfile(),
+		"networkProfiles":     en.VaultNetworkProfile(),
 		"snippets":            en.SearchSectionSnippet(),
 		"groups":              en.SearchSectionHostGroup(),
 		"snippetPackages":     en.SearchSectionSnippetPackage(),

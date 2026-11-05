@@ -94,6 +94,67 @@ func TestApplySyncReplacesSyncedFamiliesAndPreservesLocalOnes(t *testing.T) {
 	}
 }
 
+func TestApplySyncWritesAndDeletesNetworkProfiles(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	now := time.UnixMilli(1_700_000_000_000)
+	if err := store.SaveNetworkProfile(ctx, domainvault.NetworkProfile{
+		ID: "old-network", Label: "old", Kind: domainvault.NetworkKindTailscale, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := appsync.Payload{NetworkProfiles: []domainvault.NetworkProfile{
+		{
+			ID: "net-ts", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,
+			Tailscale: &domainvault.TailscaleNetwork{Hostname: "node", HasAuthKey: true},
+			OrderKey:  1000, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "net-wg", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+			WireGuard: &domainvault.WireGuardNetwork{
+				Addresses: []string{"10.0.0.2/32"}, MTU: 1280, HasPrivateKey: true,
+				Peers: []domainvault.WireGuardPeer{{
+					ID: "peer-1", PublicKey: "peer-public",
+					AllowedIPs: []string{"10.0.0.0/24"}, HasPresharedKey: true,
+				}},
+			},
+			OrderKey: 2000, CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	if err := store.ApplySync(ctx, payload); err != nil {
+		t.Fatalf("ApplySync: %v", err)
+	}
+	profiles, err := store.ListNetworkProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 2 || profiles[0].ID != "net-ts" || profiles[1].ID != "net-wg" {
+		t.Fatalf("profiles = %+v", profiles)
+	}
+	if !profiles[0].Tailscale.HasAuthKey || !profiles[1].WireGuard.HasPrivateKey ||
+		len(profiles[1].WireGuard.Peers) != 1 || !profiles[1].WireGuard.Peers[0].HasPresharedKey {
+		t.Fatalf("markers or peers were lost: %+v", profiles)
+	}
+	if _, err := store.GetNetworkProfile(ctx, "old-network"); err == nil {
+		t.Fatal("a profile absent from the payload survived the apply")
+	}
+
+	// The store applies exactly what it is given: an absent family means "no
+	// Network Profiles". Preserving records when a payload predates the family
+	// is the sync adapter's job, not this layer's.
+	if err := store.ApplySync(ctx, appsync.Payload{}); err != nil {
+		t.Fatalf("ApplySync without the family: %v", err)
+	}
+	profiles, err = store.ListNetworkProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("profiles after empty payload = %+v", profiles)
+	}
+}
+
 func TestApplySyncRejectsAnInvalidPayloadBeforeDeleting(t *testing.T) {
 	store, _ := openTestStore(t)
 	ctx := context.Background()

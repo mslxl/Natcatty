@@ -35,6 +35,9 @@ var vaultColumns = map[string][]string{
 	domainbackup.TableProxyProfiles: {
 		"id", "label", "type", "host", "port", "order_key", "created_at", "updated_at", "data",
 	},
+	domainbackup.TableNetworkProfiles: {
+		"id", "label", "kind", "order_key", "created_at", "updated_at", "data",
+	},
 	domainbackup.TableKnownHosts: {
 		"id", "hostname", "port", "key_type", "fingerprint", "public_key",
 		"discovered_at", "last_seen", "converted_to_host_id", "order_key", "data",
@@ -82,6 +85,11 @@ func (s *Store) Snapshot(ctx context.Context) (domainbackup.Snapshot, error) {
 			if err := tx.Table(table).Select(columns).Order("rowid").Find(&rows).Error; err != nil {
 				return fmt.Errorf("store: snapshot %s: %w", table, err)
 			}
+			if len(rows) == 0 && domainbackup.OptionalTable(table) {
+				// Keep a snapshot of an unaffected Vault readable by a build
+				// that predates the optional family. Absence means empty.
+				continue
+			}
 			tableRows := make([]domainbackup.Row, 0, len(rows))
 			for _, values := range rows {
 				row := make(domainbackup.Row, len(columns))
@@ -124,7 +132,8 @@ func snapshotValue(value any) (domainbackup.Value, error) {
 }
 
 // Validate rejects a snapshot this build cannot restore. It requires every
-// Vault table, because a missing table would otherwise survive a restore.
+// Vault table whose absence would otherwise survive a restore; an optional
+// family may be missing because snapshots written before it existed omit it.
 func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) error {
 	version, err := s.SchemaVersion(ctx)
 	if err != nil {
@@ -156,7 +165,7 @@ func (s *Store) Validate(ctx context.Context, snapshot domainbackup.Snapshot) er
 		}
 	}
 	for _, table := range domainbackup.Tables {
-		if !seen[table] {
+		if !seen[table] && !domainbackup.OptionalTable(table) {
 			return fmt.Errorf("store: snapshot is missing table %s", table)
 		}
 	}
@@ -210,6 +219,8 @@ func backupTableModel(table string) any {
 		return &identitySchema{}
 	case domainbackup.TableProxyProfiles:
 		return &proxyProfileSchema{}
+	case domainbackup.TableNetworkProfiles:
+		return &networkProfileSchema{}
 	case domainbackup.TableKnownHosts:
 		return &knownHostSchema{}
 	case domainbackup.TableForwardingRules:

@@ -114,6 +114,28 @@ func TestTombstoneGuardFallsBackToTheRemoteWhenTheAnchorIsEmpty(t *testing.T) {
 	}
 }
 
+func TestShrinkGuardProtectsNetworkProfiles(t *testing.T) {
+	profiles := func(count int) []domainvault.NetworkProfile {
+		values := make([]domainvault.NetworkProfile, 0, count)
+		for i := 0; i < count; i++ {
+			values = append(values, mergeTestNetworkProfile(
+				"net-"+string(rune('a'+i)), domainvault.NetworkKindWireGuard))
+		}
+		return values
+	}
+	reference := Payload{NetworkProfiles: profiles(12)}
+	outgoing := Payload{NetworkProfiles: profiles(2)}
+	finding := DetectDestructiveSync(outgoing, &reference, nil)
+	if finding.Kind != GuardShrink || finding.Reason != GuardReasonLargeShrink ||
+		finding.EntityType != "networkProfiles" {
+		t.Fatalf("finding = %+v", finding)
+	}
+	// Network Profiles count as Vault data for the whole-vault tombstone rule.
+	if finding := DetectDestructiveSync(Payload{}, &reference, nil); finding.Kind != GuardTombstone {
+		t.Fatalf("tombstone finding = %+v", finding)
+	}
+}
+
 func TestTombstoneGuardDoesNotFireWhenAnyEntitySurvives(t *testing.T) {
 	reference := hostsPayload(2)
 	outgoing := hostsPayload(1)

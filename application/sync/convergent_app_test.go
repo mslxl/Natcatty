@@ -1404,3 +1404,123 @@ func TestConvergentFinalRoundRetriesOrdinaryConcurrency(t *testing.T) {
 		t.Fatal("the retried final round did not materialize the concurrent record")
 	}
 }
+
+func TestConvergentNetworkProfilesRoundTripAndDelete(t *testing.T) {
+	ts := mergeTestNetworkProfile("net-ts", domainvault.NetworkKindTailscale)
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	payload := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{ts, wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-ts", "network_auth_key", "auth"),
+			networkSecret("network_profile", "net-wg", "network_private_key", "private"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "psk-1"),
+			networkSecret("network_peer", "net-wg-peer-2", "network_preshared_key", "psk-2"),
+		},
+	}
+	state := convergentStateForTest(t, payload, "device-a", 1000)
+	if _, ok := state.Collections["networkProfiles"]; !ok {
+		t.Fatal("the v2 state has no networkProfiles collection")
+	}
+	out, err := payloadFromState(state, nil, 1000, "device-a")
+	if err != nil {
+		t.Fatalf("payloadFromState: %v", err)
+	}
+	byID := map[string]bool{}
+	for _, profile := range out.NetworkProfiles {
+		if byID[profile.ID] {
+			t.Fatalf("duplicate profile %q after materialization", profile.ID)
+		}
+		byID[profile.ID] = true
+	}
+	if len(byID) != 2 || !byID["net-ts"] || !byID["net-wg"] {
+		t.Fatalf("materialized profiles = %+v", out.NetworkProfiles)
+	}
+	wantProfiles, _ := json.Marshal(payload.NetworkProfiles)
+	gotProfiles, _ := json.Marshal(out.NetworkProfiles)
+	if !bytes.Equal(wantProfiles, gotProfiles) {
+		t.Fatalf("profile round trip differs\nwant: %s\ngot:  %s", wantProfiles, gotProfiles)
+	}
+	if len(out.Secrets) != 4 {
+		t.Fatalf("materialized secrets = %+v", out.Secrets)
+	}
+	// Profile records never carry credential plaintext.
+	encodedProfiles, _ := json.Marshal(out.NetworkProfiles)
+	for _, plaintext := range []string{"auth", "private", "psk-1", "psk-2"} {
+		if bytes.Contains(encodedProfiles, []byte(`"`+plaintext+`"`)) {
+			t.Fatalf("materialized profile records contain %q", plaintext)
+		}
+	}
+
+	// Removing net-ts from the local snapshot tombstones it in the CRDT and
+	// drops its field secret, while the surviving profile and peers remain.
+	withoutTS := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+		Secrets:         payload.Secrets[1:],
+	}
+	snapshot, err := payloadSnapshot(withoutTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, changed, err := domainsync.ApplyConvergentSnapshot(state, snapshot, "device-a", 2000, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("deleting a network profile allocated no causal write")
+	}
+	tombstones, err := domainsync.ConvergentTombstones(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundTombstone := false
+	for _, tombstone := range tombstones {
+		if tombstone.Family == "networkProfiles" && tombstone.ID == "net-ts" {
+			foundTombstone = true
+			break
+		}
+	}
+	if !foundTombstone {
+		t.Fatalf("deleted profile has no tombstone: %+v", tombstones)
+	}
+	materialized, err := domainsync.MaterializeConvergentSnapshot(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records := materialized.Families["networkProfiles"]; len(records) != 1 || records[0].ID != "net-wg" {
+		t.Fatalf("materialized profiles after delete = %+v", records)
+	}
+	secretIDs := map[string]bool{}
+	for _, record := range materialized.Families["secrets"] {
+		secretIDs[record.ID] = true
+	}
+	if secretIDs["network_profile\x1fnet-ts\x1fnetwork_auth_key"] {
+		t.Fatalf("deleted profile's secret survived: %+v", secretIDs)
+	}
+	if !secretIDs["network_peer\x1fnet-wg-peer-1\x1fnetwork_preshared_key"] {
+		t.Fatalf("surviving peer secret was dropped: %+v", secretIDs)
+	}
+}
+
+func TestConvergentLegacyPayloadWithoutNetworkProfilesFamily(t *testing.T) {
+	// A v2 payload written before the family existed has no networkProfiles
+	// key. It must parse to an empty family and still match an envelope that
+	// has no such collection.
+	snapshot, err := payloadSnapshot(Payload{Hosts: []domainvault.Host{mergeTestHost("h1", "H", "h.example")}})
+	if err != nil {
+		t.Fatalf("payloadSnapshot: %v", err)
+	}
+	records, ok := snapshot.Families["networkProfiles"]
+	if !ok {
+		t.Fatal("the parser did not materialize the missing family as empty")
+	}
+	if len(records) != 0 {
+		t.Fatalf("legacy payload produced network profiles: %+v", records)
+	}
+	state, err := domainsync.CreateConvergentStateFromSnapshot(snapshot, "device-a", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := domainsync.EnvelopeMatchesSnapshot(state, snapshot); err != nil {
+		t.Fatalf("empty family is not envelope-stable: %v", err)
+	}
+}

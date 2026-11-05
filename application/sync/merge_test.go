@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -561,6 +562,372 @@ func TestMergePathIdentifiedFamilies(t *testing.T) {
 	}
 }
 
+func mergeTestNetworkProfile(id string, kind domainvault.NetworkProfileKind) domainvault.NetworkProfile {
+	profile := domainvault.NetworkProfile{ID: id, Label: id, Kind: kind, UpdatedAt: time.UnixMilli(1000)}
+	switch kind {
+	case domainvault.NetworkKindTailscale:
+		profile.Tailscale = &domainvault.TailscaleNetwork{
+			Hostname: id + "-node", ControlURL: "https://headscale.example.com", HasAuthKey: true,
+		}
+	case domainvault.NetworkKindWireGuard:
+		profile.WireGuard = &domainvault.WireGuardNetwork{
+			Addresses: []string{"10.0.0.2/32"}, DNS: []string{"10.0.0.1"}, MTU: 1280,
+			HasPrivateKey: true,
+			Peers: []domainvault.WireGuardPeer{
+				{ID: id + "-peer-1", PublicKey: "peer-public-1", AllowedIPs: []string{"10.0.0.0/24"}, HasPresharedKey: true},
+				{ID: id + "-peer-2", PublicKey: "peer-public-2", AllowedIPs: []string{"10.1.0.0/24"}, HasPresharedKey: true},
+			},
+		}
+	}
+	return profile
+}
+
+func networkSecret(entityType, entityID, field, value string) SecretValue {
+	return SecretValue{EntityType: entityType, EntityID: entityID, Field: field, Value: value}
+}
+
+func TestMergeNetworkProfilesDeletesSurvivingRecordsAndOrphanPeerSecrets(t *testing.T) {
+	ts := mergeTestNetworkProfile("net-ts", domainvault.NetworkKindTailscale)
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	base := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{ts, wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-ts", "network_auth_key", "base-auth"),
+			networkSecret("network_profile", "net-wg", "network_private_key", "base-private"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "base-psk-1"),
+			networkSecret("network_peer", "net-wg-peer-2", "network_preshared_key", "base-psk-2"),
+		},
+	}
+	// Local drops net-ts, removes net-wg-peer-2, edits net-wg, and adds a new
+	// profile. A real Snapshot would also omit the dropped secrets.
+	localWG := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	localWG.Label = "wg local"
+	localWG.WireGuard.Peers = localWG.WireGuard.Peers[:1]
+	added := mergeTestNetworkProfile("net-added", domainvault.NetworkKindTailscale)
+	local := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{localWG, added},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-wg", "network_private_key", "local-private"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "local-psk-1"),
+			networkSecret("network_profile", "net-added", "network_auth_key", "added-auth"),
+		},
+	}
+	result, err := MergePayloads(&base, local, base, MergeOptions{})
+	if err != nil {
+		t.Fatalf("MergePayloads: %v", err)
+	}
+	byID := map[string]domainvault.NetworkProfile{}
+	for _, profile := range result.Payload.NetworkProfiles {
+		if _, exists := byID[profile.ID]; exists {
+			t.Fatalf("duplicate profile %q in merged payload", profile.ID)
+		}
+		byID[profile.ID] = profile
+	}
+	if _, ok := byID["net-ts"]; ok {
+		t.Error("a deleted profile was resurrected")
+	}
+	if byID["net-wg"].Label != "wg local" || len(byID["net-wg"].WireGuard.Peers) != 1 ||
+		byID["net-wg"].WireGuard.Peers[0].ID != "net-wg-peer-1" {
+		t.Fatalf("local profile edit was lost: %+v", byID["net-wg"])
+	}
+	if _, ok := byID["net-added"]; !ok {
+		t.Error("a one-sided profile addition was lost")
+	}
+
+	secretValues := map[string]string{}
+	for _, secret := range result.Payload.Secrets {
+		secretValues[secret.EntityType+"/"+secret.EntityID+"/"+secret.Field] = secret.Value
+	}
+	want := map[string]string{
+		"network_profile/net-wg/network_private_key":       "local-private",
+		"network_peer/net-wg-peer-1/network_preshared_key": "local-psk-1",
+		"network_profile/net-added/network_auth_key":       "added-auth",
+	}
+	if len(secretValues) != len(want) {
+		t.Fatalf("secrets = %+v, want %+v", secretValues, want)
+	}
+	for key, value := range want {
+		if secretValues[key] != value {
+			t.Errorf("secret %s = %q, want %q", key, secretValues[key], value)
+		}
+	}
+	if _, ok := secretValues["network_peer/net-wg-peer-2/network_preshared_key"]; ok {
+		t.Error("a removed peer's Preshared Key was retained")
+	}
+	if _, ok := secretValues["network_profile/net-ts/network_auth_key"]; ok {
+		t.Error("a deleted profile's Auth Key was retained")
+	}
+
+	// Profile records never carry plaintext, and the Has* markers survive.
+	encoded, err := json.Marshal(result.Payload.NetworkProfiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plaintext := range []string{"local-private", "local-psk-1", "added-auth"} {
+		if bytes.Contains(encoded, []byte(plaintext)) {
+			t.Fatalf("merged profile records contain plaintext %q", plaintext)
+		}
+	}
+	if !bytes.Contains(encoded, []byte(`"hasAuthKey":true`)) ||
+		!bytes.Contains(encoded, []byte(`"hasPresharedKey":true`)) {
+		t.Fatalf("Has* markers were lost: %s", encoded)
+	}
+}
+
+func TestMergeNetworkProfileTombstonePreventsResurrection(t *testing.T) {
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	ts := mergeTestNetworkProfile("net-ts", domainvault.NetworkKindTailscale)
+	local := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{ts, wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-ts", "network_auth_key", "stale-auth"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "live-psk"),
+		},
+	}
+	remote := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+		SyncMeta: &SyncMeta{SchemaVersion: 1, Deletions: []SyncDeletion{{
+			EntityType: "networkProfiles", ID: "net-ts", DeletedAt: 100,
+		}}},
+	}
+	result, err := MergePayloads(nil, local, remote, MergeOptions{})
+	if err != nil {
+		t.Fatalf("MergePayloads: %v", err)
+	}
+	if len(result.Payload.NetworkProfiles) != 1 || result.Payload.NetworkProfiles[0].ID != "net-wg" {
+		t.Fatalf("tombstoned profile was resurrected: %+v", result.Payload.NetworkProfiles)
+	}
+	if len(result.Payload.Secrets) != 1 ||
+		result.Payload.Secrets[0].EntityID != "net-wg-peer-1" {
+		t.Fatalf("secrets after tombstone = %+v", result.Payload.Secrets)
+	}
+	if result.Payload.SyncMeta == nil || len(result.Payload.SyncMeta.Deletions) != 1 ||
+		result.Payload.SyncMeta.Deletions[0].EntityType != "networkProfiles" ||
+		result.Payload.SyncMeta.Deletions[0].ID != "net-ts" {
+		t.Fatalf("tombstone was dropped: %+v", result.Payload.SyncMeta)
+	}
+}
+
+func TestFilterSecretsKeepsOnlyNestedPeerKeys(t *testing.T) {
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	payload := Payload{
+		Hosts:           []domainvault.Host{mergeTestHost("h1", "H", "h.example")},
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+	}
+	secrets := []SecretValue{
+		networkSecret("network_profile", "net-wg", "network_private_key", "private"),
+		networkSecret("network_profile", "unknown", "network_private_key", "orphan-profile"),
+		networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "kept-peer"),
+		networkSecret("network_peer", "missing-peer", "network_preshared_key", "orphan-peer"),
+		networkSecret("host", "h1", "password", "host-secret"),
+		networkSecret("host", "missing", "password", "orphan-host"),
+	}
+	filtered := filterSecretsToPayload(payload, secrets)
+	kept := map[string]bool{}
+	for _, secret := range filtered {
+		kept[secret.EntityType+"/"+secret.EntityID] = true
+	}
+	for _, want := range []string{"network_profile/net-wg", "network_peer/net-wg-peer-1", "host/h1"} {
+		if !kept[want] {
+			t.Errorf("secret %s was dropped", want)
+		}
+	}
+	for _, unwanted := range []string{"network_profile/unknown", "network_peer/missing-peer", "host/missing"} {
+		if kept[unwanted] {
+			t.Errorf("secret %s was retained", unwanted)
+		}
+	}
+}
+
+func TestLegacyPayloadWithoutNetworkProfilesStillParsesAndMerges(t *testing.T) {
+	// A payload written before the family existed has no networkProfiles key.
+	legacy := []byte(`{"hosts":[{"id":"h1","label":"H","hostname":"h.example","port":22,"username":"root","protocol":"ssh"}],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1}`)
+	var payload Payload
+	if err := json.Unmarshal(legacy, &payload); err != nil {
+		t.Fatalf("legacy payload did not parse: %v", err)
+	}
+	if len(payload.NetworkProfiles) != 0 {
+		t.Fatalf("legacy payload produced profiles: %+v", payload.NetworkProfiles)
+	}
+	result, err := MergePayloads(nil, payload, Payload{}, MergeOptions{})
+	if err != nil {
+		t.Fatalf("legacy payload did not merge: %v", err)
+	}
+	if len(result.Payload.Hosts) != 1 || len(result.Payload.NetworkProfiles) != 0 {
+		t.Fatalf("legacy merge = %+v", result.Payload)
+	}
+}
+
+func TestNetworkProfilesJSONDistinguishesMissingFromExplicitlyEmpty(t *testing.T) {
+	const baseFields = `"hosts":[],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1`
+	var missing Payload
+	if err := json.Unmarshal([]byte("{"+baseFields+"}"), &missing); err != nil {
+		t.Fatal(err)
+	}
+	if missing.NetworkProfiles != nil {
+		t.Fatal("a missing networkProfiles key must decode as nil")
+	}
+	var explicit Payload
+	if err := json.Unmarshal([]byte("{"+baseFields+`,"networkProfiles":[]}`), &explicit); err != nil {
+		t.Fatal(err)
+	}
+	if explicit.NetworkProfiles == nil {
+		t.Fatal("an explicit [] must decode as a non-nil empty slice")
+	}
+	encoded, err := json.Marshal(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"networkProfiles":[]`)) {
+		t.Fatalf("an empty family did not serialize as []: %s", encoded)
+	}
+}
+
+func TestLegacyPayloadWithoutNetworkProfilesPreservesLocalProfiles(t *testing.T) {
+	// A payload written before the family existed cannot express a deletion.
+	const legacy = `{"hosts":[],"keys":[],"identities":[],"proxyProfiles":[],"snippets":[],"groups":[],"snippetPackages":[],"notes":[],"noteGroups":[],"portForwardingRules":[],"syncedAt":1}`
+	var remote Payload
+	if err := json.Unmarshal([]byte(legacy), &remote); err != nil {
+		t.Fatalf("legacy payload did not parse: %v", err)
+	}
+	if remote.NetworkProfiles != nil {
+		t.Fatal("the legacy payload unexpectedly carries networkProfiles")
+	}
+
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	local := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-wg", "network_private_key", "local-private"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "local-psk"),
+		},
+	}
+	base := Payload{NetworkProfiles: []domainvault.NetworkProfile{wg}}
+	result, err := MergePayloads(&base, local, remote, MergeOptions{})
+	if err != nil {
+		t.Fatalf("MergePayloads: %v", err)
+	}
+	if len(result.Payload.NetworkProfiles) != 1 || result.Payload.NetworkProfiles[0].ID != "net-wg" {
+		t.Fatalf("a pre-family payload deleted local profiles: %+v", result.Payload.NetworkProfiles)
+	}
+	values := map[string]string{}
+	for _, secret := range result.Payload.Secrets {
+		values[secret.EntityType+"/"+secret.EntityID+"/"+secret.Field] = secret.Value
+	}
+	if values["network_profile/net-wg/network_private_key"] != "local-private" ||
+		values["network_peer/net-wg-peer-1/network_preshared_key"] != "local-psk" {
+		t.Fatalf("network credentials were dropped: %+v", values)
+	}
+	if result.Payload.SyncMeta != nil {
+		for _, deletion := range result.Payload.SyncMeta.Deletions {
+			if deletion.EntityType == "networkProfiles" {
+				t.Fatalf("a pre-family payload produced a tombstone: %+v", deletion)
+			}
+		}
+	}
+}
+
+func TestLegacyNilNetworkProfilesHonorsRelayedTombstone(t *testing.T) {
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	local := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-wg", "network_private_key", "local-private"),
+			networkSecret("network_peer", "net-wg-peer-1", "network_preshared_key", "local-psk-1"),
+			networkSecret("network_peer", "net-wg-peer-2", "network_preshared_key", "local-psk-2"),
+		},
+	}
+	base := Payload{NetworkProfiles: []domainvault.NetworkProfile{wg}}
+
+	t.Run("relayed tombstone deletes", func(t *testing.T) {
+		// A pre-family writer omits the family entirely but still relays the
+		// tombstone a newer device published.
+		remote := Payload{SyncMeta: &SyncMeta{SchemaVersion: 1, Deletions: []SyncDeletion{{
+			EntityType: "networkProfiles", ID: "net-wg", DeletedAt: 100,
+		}}}}
+		if remote.NetworkProfiles != nil {
+			t.Fatal("the test payload must omit the networkProfiles family")
+		}
+		for name, basePayload := range map[string]*Payload{
+			"without base": nil,
+			"with base":    &base,
+		} {
+			t.Run(name, func(t *testing.T) {
+				result, err := MergePayloads(basePayload, local, remote, MergeOptions{})
+				if err != nil {
+					t.Fatalf("MergePayloads: %v", err)
+				}
+				if len(result.Payload.NetworkProfiles) != 0 {
+					t.Fatalf("tombstoned profile survived: %+v", result.Payload.NetworkProfiles)
+				}
+				if len(result.Payload.Secrets) != 0 {
+					t.Fatalf("tombstoned profile's secrets survived: %+v", result.Payload.Secrets)
+				}
+				found := false
+				if result.Payload.SyncMeta != nil {
+					for _, deletion := range result.Payload.SyncMeta.Deletions {
+						if deletion.EntityType == "networkProfiles" && deletion.ID == "net-wg" {
+							found = true
+						}
+					}
+				}
+				if !found {
+					t.Fatalf("relayed tombstone was dropped: %+v", result.Payload.SyncMeta)
+				}
+			})
+		}
+	})
+
+	t.Run("absence without tombstone preserves", func(t *testing.T) {
+		result, err := MergePayloads(&base, local, Payload{}, MergeOptions{})
+		if err != nil {
+			t.Fatalf("MergePayloads: %v", err)
+		}
+		if len(result.Payload.NetworkProfiles) != 1 || result.Payload.NetworkProfiles[0].ID != "net-wg" {
+			t.Fatalf("plain absence deleted local profiles: %+v", result.Payload.NetworkProfiles)
+		}
+		if len(result.Payload.Secrets) != 3 {
+			t.Fatalf("plain absence dropped network credentials: %+v", result.Payload.Secrets)
+		}
+		if result.Payload.SyncMeta != nil {
+			for _, deletion := range result.Payload.SyncMeta.Deletions {
+				if deletion.EntityType == "networkProfiles" {
+					t.Fatalf("plain absence produced a tombstone: %+v", deletion)
+				}
+			}
+		}
+	})
+}
+
+func TestExplicitEmptyNetworkProfilesPropagatesADeletion(t *testing.T) {
+	wg := mergeTestNetworkProfile("net-wg", domainvault.NetworkKindWireGuard)
+	local := Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{wg},
+		Secrets: []SecretValue{
+			networkSecret("network_profile", "net-wg", "network_private_key", "local-private"),
+		},
+	}
+	remote := Payload{NetworkProfiles: []domainvault.NetworkProfile{}}
+	result, err := MergePayloads(&local, local, remote, MergeOptions{})
+	if err != nil {
+		t.Fatalf("MergePayloads: %v", err)
+	}
+	if len(result.Payload.NetworkProfiles) != 0 || len(result.Payload.Secrets) != 0 {
+		t.Fatalf("an explicit empty family did not delete: %+v", result.Payload)
+	}
+	found := false
+	if result.Payload.SyncMeta != nil {
+		for _, deletion := range result.Payload.SyncMeta.Deletions {
+			if deletion.EntityType == "networkProfiles" && deletion.ID == "net-wg" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the deletion was not tombstoned: %+v", result.Payload.SyncMeta)
+	}
+}
+
 func settingsFromJSON(t *testing.T, raw string) map[string]json.RawMessage {
 	t.Helper()
 	var settings map[string]json.RawMessage
@@ -569,7 +936,6 @@ func settingsFromJSON(t *testing.T, raw string) map[string]json.RawMessage {
 	}
 	return settings
 }
-
 func settingsToStringMap(t *testing.T, settings map[string]json.RawMessage) map[string]any {
 	t.Helper()
 	value, err := decodeSettingsMap(settings)

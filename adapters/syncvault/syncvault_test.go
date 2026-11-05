@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ type fakeRecords struct {
 	groups   []domainvault.Group
 	snippets []domainvault.Snippet
 	keys     []domainvault.Key
+	networks []domainvault.NetworkProfile
 	applied  []appsync.Payload
 	applyErr error
 }
@@ -33,6 +35,9 @@ func (r *fakeRecords) ListIdentities(context.Context) ([]domainvault.Identity, e
 }
 func (r *fakeRecords) ListProxyProfiles(context.Context) ([]domainvault.ProxyProfile, error) {
 	return nil, nil
+}
+func (r *fakeRecords) ListNetworkProfiles(context.Context) ([]domainvault.NetworkProfile, error) {
+	return r.networks, nil
 }
 func (r *fakeRecords) ListForwardingRules(context.Context) ([]domainforward.Rule, error) {
 	return nil, nil
@@ -264,5 +269,196 @@ func TestApplyPropagatesTheRecordTransactionError(t *testing.T) {
 	}
 	if len(secrets.set) != 0 {
 		t.Fatal("credentials were written after a failed record transaction")
+	}
+}
+
+const (
+	testAuthKey    = "tailscale-auth-key-plaintext"
+	testPrivateKey = "wireguard-private-key-plaintext"
+	testPSK        = "wireguard-preshared-key-plaintext"
+)
+
+func networkFixtures() (domainvault.NetworkProfile, domainvault.NetworkProfile) {
+	now := time.UnixMilli(5000)
+	tailscale := domainvault.NetworkProfile{
+		ID: "net-1", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,
+		Tailscale: &domainvault.TailscaleNetwork{Hostname: "node", HasAuthKey: true},
+		UpdatedAt: now,
+	}
+	wireguard := domainvault.NetworkProfile{
+		ID: "net-2", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+		WireGuard: &domainvault.WireGuardNetwork{
+			Addresses: []string{"10.0.0.2/32"}, HasPrivateKey: true,
+			Peers: []domainvault.WireGuardPeer{{
+				ID: "peer-1", PublicKey: "peer-public", AllowedIPs: []string{"10.0.0.0/24"},
+				HasPresharedKey: true,
+			}},
+		},
+		UpdatedAt: now,
+	}
+	return tailscale, wireguard
+}
+
+func networkRefs() (auth, private, psk appvault.SecretRef) {
+	return appvault.NetworkProfileSecretRef("net-1", appvault.FieldNetworkAuthKey),
+		appvault.NetworkProfileSecretRef("net-2", appvault.FieldNetworkPrivateKey),
+		appvault.NetworkPeerSecretRef("peer-1", appvault.FieldNetworkPresharedKey)
+}
+
+func TestSnapshotCarriesNetworkProfileSecretsWithoutPlaintextRecords(t *testing.T) {
+	tailscale, wireguard := networkFixtures()
+	records := &fakeRecords{networks: []domainvault.NetworkProfile{tailscale, wireguard}}
+	auth, private, psk := networkRefs()
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		auth: testAuthKey, private: testPrivateKey, psk: testPSK,
+	}}
+	payload, err := New(records, secrets).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.NetworkProfiles) != 2 {
+		t.Fatalf("profiles = %+v", payload.NetworkProfiles)
+	}
+	if payload.SyncedAt != 5000 {
+		t.Fatalf("SyncedAt = %d", payload.SyncedAt)
+	}
+	if len(payload.Secrets) != 3 {
+		t.Fatalf("secrets = %+v", payload.Secrets)
+	}
+	byRef := map[appvault.SecretRef]string{}
+	for _, secret := range payload.Secrets {
+		byRef[appvault.SecretRef{
+			EntityType: secret.EntityType, EntityID: secret.EntityID, Field: secret.Field,
+		}] = secret.Value
+	}
+	if byRef[auth] != testAuthKey || byRef[private] != testPrivateKey || byRef[psk] != testPSK {
+		t.Fatalf("network secrets = %+v", byRef)
+	}
+	// The profile records themselves never carry credential plaintext; they
+	// only advertise the Has* markers.
+	encoded, err := json.Marshal(payload.NetworkProfiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plaintext := range []string{testAuthKey, testPrivateKey, testPSK} {
+		if strings.Contains(string(encoded), plaintext) {
+			t.Fatalf("profile records contain plaintext %q", plaintext)
+		}
+	}
+	if !strings.Contains(string(encoded), `"hasAuthKey":true`) ||
+		!strings.Contains(string(encoded), `"hasPrivateKey":true`) ||
+		!strings.Contains(string(encoded), `"hasPresharedKey":true`) {
+		t.Fatalf("Has* markers were lost: %s", encoded)
+	}
+}
+
+func TestSnapshotOmitsAMissingNetworkSecretButFailsOnAnUnreadableOne(t *testing.T) {
+	tailscale, _ := networkFixtures()
+	records := &fakeRecords{networks: []domainvault.NetworkProfile{tailscale}}
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{}}
+	payload, err := New(records, secrets).Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("a stale HasAuthKey marker should omit the secret: %v", err)
+	}
+	if len(payload.Secrets) != 0 {
+		t.Fatalf("secrets = %+v", payload.Secrets)
+	}
+
+	secrets.getErr = appvault.ErrSecretsLocked
+	if _, err := New(records, secrets).Snapshot(context.Background()); err == nil {
+		t.Fatal("an unreadable network secret was silently dropped")
+	}
+	secrets.getErr = appvault.ErrSecretUnreadable
+	if _, err := New(records, secrets).Snapshot(context.Background()); !errors.Is(err, appvault.ErrSecretUnreadable) {
+		t.Fatalf("a damaged network secret error = %v, want ErrSecretUnreadable", err)
+	}
+}
+
+func TestSnapshotEncodesAnEmptyNetworkFamilyAsExplicitlyEmpty(t *testing.T) {
+	payload, err := New(&fakeRecords{}, &fakeSecrets{mode: appvault.SecretModeOS}).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.NetworkProfiles == nil {
+		t.Fatal("an empty family must be non-nil so a deletion is distinguishable")
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"networkProfiles":[]`) {
+		t.Fatalf("empty family did not serialize as []: %s", encoded)
+	}
+}
+
+func TestApplyRemovesSecretsForDroppedNetworkProfilesAndPeers(t *testing.T) {
+	tailscale, wireguard := networkFixtures()
+	removedPeer := domainvault.WireGuardPeer{
+		ID: "peer-2", PublicKey: "peer-public-2", HasPresharedKey: true,
+	}
+	wireguard.WireGuard.Peers = append(wireguard.WireGuard.Peers, removedPeer)
+	records := &fakeRecords{networks: []domainvault.NetworkProfile{tailscale, wireguard}}
+	auth, private, psk := networkRefs()
+	removedPSK := appvault.NetworkPeerSecretRef("peer-2", appvault.FieldNetworkPresharedKey)
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{
+		auth: "old-auth", private: "old-private", psk: "old-psk", removedPSK: "old-removed-psk",
+	}}
+
+	// The incoming payload keeps net-2 with one peer; net-1 and peer-2 are gone.
+	incoming := appsync.Payload{
+		NetworkProfiles: []domainvault.NetworkProfile{{
+			ID: "net-2", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+			WireGuard: &domainvault.WireGuardNetwork{
+				Addresses: []string{"10.0.0.2/32"}, HasPrivateKey: true,
+				Peers: []domainvault.WireGuardPeer{{
+					ID: "peer-1", PublicKey: "peer-public", HasPresharedKey: true,
+				}},
+			},
+		}},
+		Secrets: []appsync.SecretValue{
+			{EntityType: appvault.EntityNetworkProfile, EntityID: "net-2", Field: appvault.FieldNetworkPrivateKey, Value: "new-private"},
+			{EntityType: appvault.EntityNetworkPeer, EntityID: "peer-1", Field: appvault.FieldNetworkPresharedKey, Value: "new-psk"},
+		},
+	}
+	if err := New(records, secrets).Apply(context.Background(), incoming); err != nil {
+		t.Fatal(err)
+	}
+	if len(records.applied) != 1 || len(records.applied[0].NetworkProfiles) != 1 {
+		t.Fatalf("applied network profiles = %+v", records.applied)
+	}
+	if _, ok := secrets.values[auth]; ok {
+		t.Fatal("a dropped profile's Auth Key ciphertext survived")
+	}
+	if _, ok := secrets.values[removedPSK]; ok {
+		t.Fatal("a dropped peer's Preshared Key ciphertext survived")
+	}
+	if secrets.values[private] != "new-private" || secrets.values[psk] != "new-psk" {
+		t.Fatalf("incoming network secrets = %+v", secrets.values)
+	}
+
+	// A payload written before the family existed has no opinion about
+	// Network Profiles: the local records and credentials survive.
+	if err := New(records, secrets).Apply(context.Background(), appsync.Payload{}); err != nil {
+		t.Fatal(err)
+	}
+	lastApplied := records.applied[len(records.applied)-1]
+	if len(lastApplied.NetworkProfiles) != 2 {
+		t.Fatalf("a family-less payload erased local profiles: %+v", lastApplied.NetworkProfiles)
+	}
+	for _, ref := range []appvault.SecretRef{private, psk} {
+		if _, ok := secrets.values[ref]; !ok {
+			t.Fatalf("network secret %+v was cleared by a family-less payload", ref)
+		}
+	}
+
+	// An explicit empty family from a current writer does delete everything.
+	explicitEmpty := appsync.Payload{NetworkProfiles: []domainvault.NetworkProfile{}}
+	if err := New(records, secrets).Apply(context.Background(), explicitEmpty); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []appvault.SecretRef{auth, private, psk, removedPSK} {
+		if _, ok := secrets.values[ref]; ok {
+			t.Fatalf("network secret %+v survived an explicit empty payload", ref)
+		}
 	}
 }
