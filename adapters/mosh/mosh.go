@@ -319,6 +319,10 @@ func (f Factory) launch(resolved bundle.Resolved, cfg moshmodel.Config, spec app
 	environment = setEnv(environment, "TERM", moshmodel.DefaultTerm)
 	environment = moshmodel.ClientEnv(environment, connect.Key, cfg.Lang, fallback)
 	environment = setEnv(environment, "MOSH_NO_TERM_INIT", "1")
+	// Stock's default is adaptive; the setting is passed explicitly so the
+	// user's choice reaches the bundled client with the same meaning as the
+	// in-process prediction engine.
+	environment = setEnv(environment, "MOSH_PREDICTION_DISPLAY", cfg.PredictionDisplay.EnvValue())
 
 	spawn := f.Spawn
 	if spawn == nil {

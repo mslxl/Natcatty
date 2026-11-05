@@ -1038,3 +1038,98 @@ func TestNewClientRejectsBadKey(t *testing.T) {
 		t.Fatalf("error = %v, want ErrKey", err)
 	}
 }
+
+// TestSentStateNumbersTrackTheSendQueue pins the accessors the prediction
+// overlay uses: the newest sent state (the frame a new prediction will travel
+// in, plus one) and the oldest retained state (stock's acknowledged base).
+func TestSentStateNumbersTrackTheSendQueue(t *testing.T) {
+	client, err := NewClient(testKey(), 80, 24)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+	peer := newTestPeer(t)
+	defer peer.Close()
+
+	if got := client.SentStateAcked(); got != 0 {
+		t.Fatalf("initial acked state = %d, want 0", got)
+	}
+	if got := client.SentStateLast(); got != 0 {
+		t.Fatalf("initial last state = %d, want 0", got)
+	}
+
+	firstSend := time.Unix(1700000000, 0)
+	if datagrams := client.SendDatagrams(firstSend); len(datagrams) != 1 {
+		t.Fatalf("initial datagrams = %d", len(datagrams))
+	}
+	if got := client.SentStateLast(); got != 1 {
+		t.Fatalf("last state after the probe = %d, want 1", got)
+	}
+	// The initial no-op state 0 is still the oldest retained base until the
+	// server acknowledges the probe.
+	if got := client.SentStateAcked(); got != 0 {
+		t.Fatalf("acked state before any response = %d, want 0", got)
+	}
+
+	receiveAll(t, client, peer.hostState(0, 1, 1, nil, firstSend.Add(time.Millisecond)),
+		firstSend.Add(time.Millisecond))
+	if got := client.SentStateAcked(); got != 1 {
+		t.Fatalf("acked state after the ack = %d, want 1", got)
+	}
+
+	if err := client.Input([]byte("x")); err != nil {
+		t.Fatalf("Input: %v", err)
+	}
+	secondSend := firstSend.Add(50 * time.Millisecond)
+	if datagrams := client.SendDatagrams(secondSend); len(datagrams) != 1 {
+		t.Fatalf("second send produced %d datagrams", len(datagrams))
+	}
+	if got := client.SentStateLast(); got != 2 {
+		t.Fatalf("last state after input = %d, want 2", got)
+	}
+	if got := client.SentStateAcked(); got != 1 {
+		t.Fatalf("acked state moved before its ack: %d", got)
+	}
+	receiveAll(t, client, peer.hostState(1, 2, 2, nil, secondSend.Add(time.Millisecond)),
+		secondSend.Add(time.Millisecond))
+	if got := client.SentStateAcked(); got != 2 {
+		t.Fatalf("acked state after the second ack = %d, want 2", got)
+	}
+	if got := client.SentStateLast(); got != 2 {
+		t.Fatalf("last state after the ack = %d, want 2", got)
+	}
+}
+
+// TestSendIntervalClampsStockRange pins TransportSender::send_interval:
+// ceil(SRTT/2) clamped to 20..250ms. The prediction overlay's adaptive and
+// underline triggers are driven by this value.
+func TestSendIntervalClampsStockRange(t *testing.T) {
+	client, err := NewClient(testKey(), 80, 24)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	if got := client.SendInterval(); got != 250 {
+		t.Fatalf("initial SendInterval = %d, want stock's 250ms initial", got)
+	}
+	cases := []struct {
+		srtt time.Duration
+		want uint
+	}{
+		{0, 20},
+		{10 * time.Millisecond, 20},
+		{39 * time.Millisecond, 20},
+		{100 * time.Millisecond, 50},
+		{400 * time.Millisecond, 200},
+		{time.Second, 250},
+	}
+	for _, c := range cases {
+		client.mu.Lock()
+		client.srtt = c.srtt
+		client.mu.Unlock()
+		if got := client.SendInterval(); got != c.want {
+			t.Errorf("SRTT %v: SendInterval = %d, want %d", c.srtt, got, c.want)
+		}
+	}
+}

@@ -138,6 +138,8 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	if f.clock != nil {
 		rendererOptions.Clock = f.clock
 	}
+	prediction := predictionPreference(cfg.PredictionDisplay)
+	rendererOptions.PredictionDisplay = &prediction
 	renderer := newTerminalRendererWithOptions(queue, cfg.Cols, cfg.Rows, rendererOptions)
 	renderer.setUDPPort(connect.Port)
 
@@ -438,20 +440,42 @@ func (t *inProcessTransport) Read(p []byte) (int, error) { return t.queue.Read(p
 func (t *inProcessTransport) Write(p []byte) (int, error) {
 	forwarded := t.renderer.translateInput(p)
 	t.sendMu.Lock()
-	defer t.sendMu.Unlock()
 	if t.isClosing() {
+		t.sendMu.Unlock()
 		return 0, io.ErrClosedPipe
 	}
+	// Capture the frame the incoming bytes will travel in before the state is
+	// extended. Stock's prediction overlay records this as the expiration
+	// frame; it is a hint, never part of the outgoing message.
+	localFrameSent := t.client.SentStateLast()
+	// Record the prediction before the state carrying these bytes is sent, as
+	// STMClient::process_user_input does before network->tick() sends it. If
+	// the socket reader were allowed to process the server's echo first, the
+	// EchoAck could reach this frame before the prediction exists and the
+	// overlay would cull it without ever drawing it. Holding sendMu keeps the
+	// expiration frame stable; predictUserInput takes the renderer lock, the
+	// same sendMu-then-renderer order Resize and the send-error path use.
+	t.renderer.predictUserInput(p, localFrameSent)
 	if len(forwarded) > 0 {
 		if err := t.client.Input(forwarded); err != nil {
+			t.sendMu.Unlock()
 			return 0, err
 		}
 		// A transient send failure is not a write failure: the client retains
 		// the state and retransmits it, exactly as stock mosh ignores sendto()
 		// errors and keeps the input in its SSP state.
 		if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
+			t.sendMu.Unlock()
 			return 0, err
 		}
+	}
+	t.sendMu.Unlock()
+
+	// Prediction consumed the raw keystrokes stock feeds Parser::UTF8Parser;
+	// the send path above used UserInput's translation and is already complete,
+	// so nothing here can change the bytes on the wire.
+	if err := t.renderer.emitLatest(); err != nil {
+		return 0, err
 	}
 	return len(p), nil
 }
@@ -479,6 +503,9 @@ func (t *inProcessTransport) Resize(cols, rows int) error {
 	if err := t.client.Resize(cols, rows); err != nil {
 		return err
 	}
+	// STMClient::process_resize tells the remote emulator and then resets the
+	// prediction engine, because the predicted cells' geometry just changed.
+	t.renderer.resetPredictions()
 	return t.writeDatagrams(t.client.SendDatagrams(time.Now()))
 }
 
@@ -534,6 +561,12 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 		t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
 		return
 	}
+	// Feed the prediction engine the same hints STMClient::process_network_input
+	// gives it on every authenticated receive. The probe's state was applied
+	// before this goroutine started, so without this first update a fast link
+	// would keep stock's conservative initial 250ms pacing until the next
+	// server state arrived.
+	t.renderer.predictionNetworkHints(t.client.SentStateAcked(), t.client.SendInterval())
 	// Render the state the probe already accepted, if any. This includes the
 	// final frame of a shutdown sentinel consumed during the probe, which must
 	// reach the queue before finish closes it.
@@ -601,6 +634,9 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 				fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err))
 			return
 		}
+		// STMClient::process_network_input feeds the prediction engine the
+		// acknowledged frame, current pacing, and EchoAck before redrawing.
+		t.renderer.predictionNetworkHints(t.client.SentStateAcked(), t.client.SendInterval())
 		if err := t.renderer.emitLatest(); err != nil {
 			t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
 			return

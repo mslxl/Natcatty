@@ -56,78 +56,6 @@ const (
 	DisplayExperimental
 )
 
-// PredictionEngine is the stock prediction overlay's public seam. Ticket 30
-// implements speculative cells, cursor moves, confirmation, and EchoAck
-// handling; ticket 29 establishes the overlay order and leaves this engine
-// inert so it cannot perturb terminal parity.
-//
-// The overlay manager deliberately calls Cull and Apply in stock's order, so
-// ticket 30 can fill in the engine without touching the Session or renderer
-// pipeline.
-type PredictionEngine struct {
-	displayPreference DisplayPreference
-	predictOverwrite  bool
-	sendInterval      uint
-	localFrameSent    uint64
-	localFrameAcked   uint64
-	localFrameLateAck uint64
-}
-
-// NewPredictionEngine returns an engine with stock defaults: adaptive display
-// and overwrite prediction disabled.
-func NewPredictionEngine() *PredictionEngine {
-	return &PredictionEngine{displayPreference: DisplayAdaptive}
-}
-
-// SetDisplayPreference selects always, never, adaptive, or experimental.
-func (p *PredictionEngine) SetDisplayPreference(preference DisplayPreference) {
-	p.displayPreference = preference
-}
-
-// DisplayPreference returns the selected mode.
-func (p *PredictionEngine) DisplayPreference() DisplayPreference {
-	return p.displayPreference
-}
-
-// SetPredictOverwrite sets stock's overwrite-prediction option.
-func (p *PredictionEngine) SetPredictOverwrite(overwrite bool) {
-	p.predictOverwrite = overwrite
-}
-
-// PredictOverwrite reports stock's overwrite-prediction option.
-func (p *PredictionEngine) PredictOverwrite() bool { return p.predictOverwrite }
-
-// SetLocalFrameSent records the last input frame sent.
-func (p *PredictionEngine) SetLocalFrameSent(frame uint64) { p.localFrameSent = frame }
-
-// SetLocalFrameAcked records the last input frame acknowledged.
-func (p *PredictionEngine) SetLocalFrameAcked(frame uint64) { p.localFrameAcked = frame }
-
-// SetLocalFrameLateAcked records the EchoAck from the latest remote state.
-func (p *PredictionEngine) SetLocalFrameLateAcked(frame uint64) { p.localFrameLateAck = frame }
-
-// SetSendInterval records the transport's current send interval in
-// milliseconds.
-func (p *PredictionEngine) SetSendInterval(interval uint) { p.sendInterval = interval }
-
-// Cull discards invalid predictions. Inert until ticket 30.
-func (p *PredictionEngine) Cull(*Framebuffer) {}
-
-// Apply draws prediction overlays. Inert until ticket 30.
-func (p *PredictionEngine) Apply(*Framebuffer) {}
-
-// NewUserByte feeds a user keystroke to the predictor. Inert until ticket 30.
-func (p *PredictionEngine) NewUserByte(byte, *Framebuffer) {}
-
-// Reset drops all predictions. Inert until ticket 30.
-func (p *PredictionEngine) Reset() {}
-
-// WaitTime returns stock's prediction wakeup interval. Inert until ticket 30.
-func (p *PredictionEngine) WaitTime() int { return int(^uint(0) >> 1) }
-
-// Active reports whether any prediction is displayed.
-func (p *PredictionEngine) Active() bool { return false }
-
 // NotificationEngine is Overlay::NotificationEngine: the network-status bar at
 // the top of the screen. The messages, timing, and drawing match stock mosh
 // 1.4.0.
@@ -387,7 +315,7 @@ type OverlayManager struct {
 func NewOverlayManager(clock Clock) *OverlayManager {
 	return &OverlayManager{
 		notifications: NewNotificationEngine(clock),
-		predictions:   NewPredictionEngine(),
+		predictions:   NewPredictionEngine(clock),
 		title:         &TitleEngine{},
 	}
 }

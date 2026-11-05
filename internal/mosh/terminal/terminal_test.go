@@ -414,28 +414,26 @@ func TestTitlePrefixOverlay(t *testing.T) {
 	}
 }
 
-func TestPredictionScaffoldIsInert(t *testing.T) {
-	engine := NewPredictionEngine()
-	if engine.DisplayPreference() != DisplayAdaptive {
-		t.Fatalf("default display preference = %d", engine.DisplayPreference())
-	}
-	if engine.Active() {
-		t.Fatal("inert prediction engine reports active")
-	}
-	if got := engine.WaitTime(); got != int(^uint(0)>>1) {
-		t.Fatalf("inert WaitTime = %d, want max", got)
-	}
-	fb := NewFramebuffer(5, 2)
-	fb.Cell(0, 0).Contents = "x"
-	before := fb.Clone()
-	engine.Cull(fb)
-	engine.Apply(fb)
-	if !fb.Equal(before) {
-		t.Fatal("inert prediction engine modified the framebuffer")
-	}
+func TestOverlayManagerUsesAPredictionEngine(t *testing.T) {
 	manager := NewOverlayManager(func() uint64 { return 0 })
 	if got := manager.WaitTime(); got != (1<<31)-1 {
 		t.Fatalf("overlay manager WaitTime = %d, want notification's cap", got)
+	}
+	engine := manager.Predictions()
+	if engine == nil {
+		t.Fatal("overlay manager has no prediction engine")
+	}
+	fb := NewFramebuffer(5, 2)
+	fb.DS.SetCursor(0, 0)
+	engine.SetDisplayPreference(DisplayAlways)
+	engine.Cull(fb)
+	engine.confirmedEpoch = engine.predictionEpoch
+	engine.SetLocalFrameSent(0)
+	engine.NewUserByte('x', fb)
+	display := fb.Clone()
+	manager.Apply(display)
+	if display.Cell(0, 0).Contents != "x" {
+		t.Fatal("overlay manager's prediction engine is not wired for display")
 	}
 }
 

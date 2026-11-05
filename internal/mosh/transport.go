@@ -414,6 +414,44 @@ func (c *Client) SentStateAckedTimestamp() time.Time {
 	return c.sent[0].at
 }
 
+// SentStateAcked returns the number of the oldest retained sent state, which
+// stock exposes as TransportSender::get_sent_state_acked(). It is the base the
+// prediction overlay uses for a prediction's age.
+func (c *Client) SentStateAcked() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sent) == 0 {
+		return 0
+	}
+	return c.sent[0].num
+}
+
+// SentStateLast returns the number of the newest sent state, exactly as
+// TransportSender::get_sent_state_last(). A prediction made now will travel in
+// state SentStateLast()+1, which is the expiration frame the overlay records.
+func (c *Client) SentStateLast() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sent) == 0 {
+		return 0
+	}
+	return c.sent[len(c.sent)-1].num
+}
+
+// SendInterval returns the current frame pacing in milliseconds, exactly as
+// TransportSender::send_interval(): ceil(SRTT/2), clamped to 20..250 ms. The
+// prediction overlay's adaptive and underline triggers are driven by it.
+func (c *Client) SendInterval() uint {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	interval := c.sendIntervalLocked()
+	milliseconds := int64(interval / time.Millisecond)
+	if interval%time.Millisecond != 0 {
+		milliseconds++
+	}
+	return uint(milliseconds)
+}
+
 // ShutdownComplete reports whether the server acknowledged our shutdown
 // sentinel.
 func (c *Client) ShutdownComplete() bool {
