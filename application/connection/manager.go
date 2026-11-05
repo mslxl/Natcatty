@@ -411,6 +411,18 @@ func (m *Manager) InvalidateNetworkProfile(profileID string) {
 	m.pool.invalidateNetworkProfile(profileID)
 }
 
+// ActiveNetworkProfileLeases reports how many live leases and in-flight dials
+// currently use one Network Profile. The Vault uses it to warn before a delete
+// closes the Provider under a live Session. It is advisory runtime state and
+// carries no credential material; zero also covers Sessions that do not borrow
+// a pooled transport, such as Telnet.
+func (m *Manager) ActiveNetworkProfileLeases(profileID string) int {
+	if m == nil || m.pool == nil {
+		return 0
+	}
+	return m.pool.activeNetworkProfileLeases(profileID)
+}
+
 // Acquire opens a new Connection and returns its first Lease. The caller's
 // context bounds dialing, the trust prompt, and authentication; after Acquire
 // returns, the Connection owns its transport.
@@ -440,6 +452,15 @@ func (m *Manager) Acquire(ctx context.Context, req Request) (*Lease, error) {
 		if opened == nil {
 			return nil, providerRouteError(*req.Network, ProviderPhaseStopped,
 				fmt.Errorf("%w: registry returned no provider", ErrNetworkProvider))
+		}
+		// The registry reuses a live Provider while its profile fingerprint is
+		// unchanged, so its phase can have moved since the open. Refuse to reuse
+		// a parked transport or start a dial unless the Provider is actually
+		// running; a login prompt, a restart, or a dead node must surface as a
+		// typed provider failure, never as a direct connection.
+		if phase := providerPhase(opened); phase != "" && phase != ProviderPhaseRunning {
+			return nil, providerRouteError(*req.Network, phase,
+				fmt.Errorf("%w: phase %s", ErrNetworkProviderNotRunning, phase))
 		}
 		provider = opened
 	}
@@ -613,9 +634,16 @@ func (m *Manager) dial(ctx context.Context, req Request, endpoint endpointConfig
 		if req.Network != nil {
 			// Keep the transport's Kind: an unreachable target stays
 			// KindNetwork and an expired deadline stays KindTimeout. Only the
-			// provider context is added, and the failure is never retried
-			// through a direct dial.
-			classified = TagProvider(classified, providerInfo(*req.Network, ProviderPhaseRunning))
+			// provider context is added, with the Provider's live phase when it
+			// reports one, and the failure is never retried through a direct
+			// dial.
+			phase := ProviderPhaseRunning
+			if provider != nil {
+				if reported := providerPhase(provider); reported != "" {
+					phase = reported
+				}
+			}
+			classified = TagProvider(classified, providerInfo(*req.Network, phase))
 		}
 		if isAuthenticationFailure(classified) {
 			// A failed login means the cached method may have been revoked or

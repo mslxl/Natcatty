@@ -167,6 +167,12 @@ var (
 	// ErrNetworkProviderKind reports a Network Profile Kind this build cannot
 	// run.
 	ErrNetworkProviderKind = errors.New("connection: unsupported network profile kind")
+	// ErrNetworkProviderNotRunning reports an opened Provider whose live phase
+	// cannot carry a dial: it stopped, is still starting, is shutting down, is
+	// waiting for an interactive login, or failed. The Manager refuses to reuse
+	// a pooled transport or start a dial in that state, and never substitutes a
+	// direct connection.
+	ErrNetworkProviderNotRunning = errors.New("connection: network provider is not running")
 	// ErrProviderUnavailable reports a DialRequest that selected a Network
 	// Route but carried no opened Provider. The Manager always supplies one;
 	// this sentinel guards the adapter contract that a Network Route is never

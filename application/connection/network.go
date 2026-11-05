@@ -48,6 +48,17 @@ type NetworkProviderCanceller interface {
 	Cancel() error
 }
 
+// NetworkProviderPhaseReporter is the optional lifecycle capability of a
+// Provider that can report its current phase without dialing. It lets the
+// registry retire a Provider that died after a successful open and lets the
+// Manager fail closed before it hands out a pooled transport. A Provider that
+// does not implement it is treated as running; an empty phase is unknown and is
+// likewise treated as usable. Phase must be safe to call concurrently and must
+// not block on the network.
+type NetworkProviderPhaseReporter interface {
+	Phase() ProviderPhase
+}
+
 // NetworkProviderFactory opens the provider for one Network Profile. It is the
 // seam Tailscale Net and WireGuard Net implement. Open may take time (joining a
 // tailnet, starting a netstack) and must honor ctx. Until a factory is wired,
@@ -71,12 +82,19 @@ type NetworkProviderRegistry struct {
 	entries map[string]*providerEntry
 	closed  bool
 	onClose func(profileID string)
+	// afterOwnership, when non-nil, runs with mu held after an opener has made
+	// its ownership decision and published the entry's readiness. Tests use it
+	// to order Close, Cancel, or CloseAll against that handshake; production
+	// leaves it nil.
+	afterOwnership func(entry *providerEntry)
 }
 
 // providerEntry is one profile's open attempt or running Provider. ready closes
 // once the attempt settles, so waiters share its result; provider and err are
-// written before ready closes. cancel stops an open attempt that Close, Cancel,
-// or CloseAll abandoned.
+// written before ready closes. The opener publishes ready while holding the
+// registry lock, so Close, Cancel, and CloseAll observe either an unsettled
+// attempt they can abandon or a settled one whose Provider they must release.
+// cancel stops an open attempt that Close, Cancel, or CloseAll abandoned.
 type providerEntry struct {
 	fingerprint string
 	ready       chan struct{}
@@ -87,6 +105,10 @@ type providerEntry struct {
 	// closes whatever the factory produced, and waiters observe the closed
 	// result instead of a provider the registry no longer owns.
 	abandoned bool
+	// retired is set once when a cached Provider that reports a stopped or
+	// failed phase is removed. It guarantees concurrent Acquires close that
+	// Provider exactly once.
+	retired bool
 }
 
 // NewNetworkProviderRegistry returns an empty registry over factory. A nil
@@ -116,6 +138,12 @@ func (r *NetworkProviderRegistry) SetCloseHook(fn func(profileID string)) {
 // use. An empty profile ID, a Kind this build cannot run, a nil factory, or a
 // closed registry fails closed with a typed provider error; no caller may
 // substitute a direct dial.
+//
+// A cached Provider that reports a stopped or failed phase is retired and
+// reopened once in the same Acquire: a Provider can die between calls without
+// any caller noticing. A Provider still starting, waiting for an interactive
+// login, or shutting down is returned unchanged so the Manager can fail closed
+// with the accurate phase.
 func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRoute) (NetworkProvider, error) {
 	if r == nil {
 		return nil, providerRouteError(route, ProviderPhaseStopped,
@@ -129,6 +157,7 @@ func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRout
 			fmt.Errorf("%w: no factory", ErrNetworkProvider))
 	}
 
+	retriedDeadProvider := false
 	for {
 		r.mu.Lock()
 		if r.closed {
@@ -164,6 +193,21 @@ func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRout
 					return nil, err
 				}
 				provider := entry.provider
+				if !retriedDeadProvider && providerNeedsRestart(provider) {
+					// The cached Provider died after its open succeeded. Drop it
+					// and open once more; a second dead result is returned so the
+					// caller fails closed with that Provider's real phase.
+					retriedDeadProvider = true
+					if entry.retired {
+						r.mu.Unlock()
+						continue
+					}
+					entry.retired = true
+					delete(r.entries, route.ProfileID)
+					r.mu.Unlock()
+					r.closeProvider(provider, route.ProfileID)
+					continue
+				}
 				r.mu.Unlock()
 				return provider, nil
 			default:
@@ -209,9 +253,18 @@ func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRout
 				delete(r.entries, route.ProfileID)
 			}
 		}
+		// Publish readiness inside the critical section. Close, Cancel, and
+		// CloseAll decide ownership under this same lock: either they run first
+		// (removing the entry and marking it abandoned, so owned is false and this
+		// opener closes the Provider), or they run after (seeing ready closed and
+		// taking responsibility for closing it). Publishing after the unlock left a
+		// window where both sides could believe the other owned the Provider.
+		close(entry.ready)
+		if r.afterOwnership != nil {
+			r.afterOwnership(entry)
+		}
 		r.mu.Unlock()
 
-		close(entry.ready)
 		if wrapped != nil {
 			// A factory that returned a provider together with an error still
 			// transferred ownership. Close it so a failed attempt cannot leak a
@@ -222,6 +275,22 @@ func (r *NetworkProviderRegistry) Acquire(ctx context.Context, route NetworkRout
 		if !owned {
 			r.closeProvider(provider, route.ProfileID)
 			return nil, providerRouteError(route, ProviderPhaseStopped, ErrNetworkProviderClosed)
+		}
+		if !retriedDeadProvider && providerNeedsRestart(provider) {
+			// The provider died while the open attempt settled. Retire it and
+			// open once more rather than handing a dead dial port to the caller.
+			r.mu.Lock()
+			claimed := !entry.retired && r.entries[route.ProfileID] == entry
+			if claimed {
+				entry.retired = true
+				delete(r.entries, route.ProfileID)
+			}
+			r.mu.Unlock()
+			retriedDeadProvider = true
+			if claimed {
+				r.closeProvider(provider, route.ProfileID)
+			}
+			continue
 		}
 		return provider, nil
 	}
@@ -388,6 +457,30 @@ func validateNetworkRoute(route NetworkRoute) error {
 	default:
 		return providerRouteError(route, ProviderPhaseStopped,
 			fmt.Errorf("%w: %q", ErrNetworkProviderKind, route.Kind))
+	}
+}
+
+// providerPhase returns the Provider's live phase, or "" when it does not
+// report one. An unknown phase is never treated as a failure.
+func providerPhase(provider NetworkProvider) ProviderPhase {
+	reporter, ok := provider.(NetworkProviderPhaseReporter)
+	if !ok {
+		return ""
+	}
+	return reporter.Phase()
+}
+
+// providerNeedsRestart reports a cached Provider whose phase proves it cannot
+// serve a new dial. NeedsLogin, Starting, and Stopping are deliberately not
+// retired: those phases are part of a live lifecycle (an interactive login can
+// complete, a start can finish), and the Manager fails closed with the accurate
+// phase instead of hiding it behind an extra open attempt.
+func providerNeedsRestart(provider NetworkProvider) bool {
+	switch providerPhase(provider) {
+	case ProviderPhaseStopped, ProviderPhaseError:
+		return true
+	default:
+		return false
 	}
 }
 

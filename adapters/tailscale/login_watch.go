@@ -80,6 +80,9 @@ func (p *Provider) watchLogin(ctx context.Context, cancel context.CancelFunc,
 				return
 			}
 			p.applyStatusLocked(status, appconnection.ProviderPhaseRunning, nil)
+			// The login watcher hands a running node back to the lifecycle
+			// audit, so a later authorization loss or stop is still observed.
+			p.startPollLocked(b)
 			p.mu.Unlock()
 			p.emit()
 			return

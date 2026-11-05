@@ -239,6 +239,10 @@
       }
     }
   },
+  "vaultNetworkDeleteActiveUse": "Active Sessions or connection leases are using this Network Profile. Deleting it closes its Provider; affected Sessions fail on their next I/O and must be reconnected.",
+  "@vaultNetworkDeleteActiveUse": {
+    "description": "The delete banner's warning that live Sessions or connection leases are currently using the Network Profile, so deleting it closes the Provider under them."
+  },
   "vaultNetworkFormCreateTitle": "New Network Profile",
   "vaultNetworkFormEditTitle": "Edit Network Profile",
   "vaultNetworkKind": "Network kind",
