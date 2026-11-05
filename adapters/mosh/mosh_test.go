@@ -891,3 +891,37 @@ func TestUDPFixtureRoundTrip(t *testing.T) {
 		t.Fatal("the UDP fixture received no datagram")
 	}
 }
+
+// TestBundledClientCarriesPredictionDisplayMode checks the bundled Mosh client
+// receives the persisted mode through stock's MOSH_PREDICTION_DISPLAY
+// variable, including the stock adaptive default and an old unknown value.
+func TestBundledClientCarriesPredictionDisplayMode(t *testing.T) {
+	cases := []struct {
+		name string
+		mode moshmodel.PredictionDisplay
+		want string
+	}{
+		{"default", "", "adaptive"},
+		{"adaptive", moshmodel.PredictionAdaptive, "adaptive"},
+		{"always", moshmodel.PredictionAlways, "always"},
+		{"never", moshmodel.PredictionNever, "never"},
+		{"unknown", moshmodel.PredictionDisplay("experimental"), "adaptive"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, "MOSH CONNECT 60001 "+testKey+"\r\n")
+			spec := testSpec()
+			cfg := *spec.Mosh
+			cfg.PredictionDisplay = c.mode
+			spec.Mosh = &cfg
+			transport, err := h.factory.Open(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer transport.Close()
+			if got := envValue(h.client.env, "MOSH_PREDICTION_DISPLAY"); got != c.want {
+				t.Fatalf("MOSH_PREDICTION_DISPLAY = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

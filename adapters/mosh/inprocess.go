@@ -15,11 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	moshcore "github.com/mslxl/natcatty/internal/mosh"
+	"github.com/mslxl/natcatty/internal/mosh/terminal"
 )
 
 const (
@@ -63,6 +65,9 @@ type InProcessFactory struct {
 	HandshakeTimeout time.Duration
 	// ProbeTimeout overrides DefaultProbeTimeout.
 	ProbeTimeout time.Duration
+	// clock overrides the overlay clock in tests. Production uses the
+	// process monotonic clock.
+	clock terminal.Clock
 }
 
 // Open performs the SSH handshake, probes the announced UDP endpoint (with a
@@ -126,38 +131,41 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		return nil, err
 	}
 
+	// The renderer owns the remote Complete snapshots from the initial state
+	// onward. The display's first frame clears the handshake banner, so the
+	// old viewport-reset escape is not needed and no raw host bytes are queued.
+	rendererOptions := defaultTerminalRendererOptions()
+	if f.clock != nil {
+		rendererOptions.Clock = f.clock
+	}
+	prediction := predictionPreference(cfg.PredictionDisplay)
+	rendererOptions.PredictionDisplay = &prediction
+	renderer := newTerminalRendererWithOptions(queue, cfg.Cols, cfg.Rows, rendererOptions)
+	renderer.setUDPPort(connect.Port)
+
 	probeTimeout := f.ProbeTimeout
 	if probeTimeout <= 0 {
 		probeTimeout = DefaultProbeTimeout
 	}
-	// The handshake banner is already queued. Reset the viewport before the
-	// probe can surface the first server frame, so that frame survives.
-	if err := queue.push([]byte(viewportReset)); err != nil {
-		client.Close()
-		return nil, err
-	}
-	result, err := probe(ctx, client, cfg, connect, probeTimeout, queue)
+	result, err := probe(ctx, client, cfg, connect, probeTimeout, renderer)
 	if err != nil {
 		client.Close()
 		return nil, err
 	}
 
 	transport := &inProcessTransport{
-		queue:  queue,
-		client: client,
-		link:   result.link,
-		cols:   cfg.Cols,
-		rows:   cfg.Rows,
-		done:   make(chan struct{}),
+		queue:    queue,
+		client:   client,
+		link:     result.link,
+		renderer: renderer,
+		cols:     cfg.Cols,
+		rows:     cfg.Rows,
+		done:     make(chan struct{}),
 	}
-	go transport.readLoop()
+	// A sentinel consumed by the probe must still render its final frame, so
+	// the read loop owns the finish rather than Open racing it synchronously.
+	go transport.readLoop(result.remoteShutdown)
 	go transport.tickLoop()
-	if result.remoteShutdown {
-		// The shell exited before the probe finished. The sentinel was
-		// acknowledged and any final output is already queued; Read drains
-		// it and then reports EOF, and End reports a normal remote exit.
-		transport.finish(appsession.End{Reason: appsession.EndReasonExited}, nil)
-	}
 	return transport, nil
 }
 
@@ -199,7 +207,25 @@ func (l *udpLink) writeOne(datagram []byte) error {
 	return err
 }
 
+func (l *udpLink) readFrom(buffer []byte) (int, error) {
+	n, _, err := l.conn.ReadFromUDP(buffer)
+	return n, err
+}
+
+func (l *udpLink) setReadDeadline(deadline time.Time) error {
+	return l.conn.SetReadDeadline(deadline)
+}
+
 func (l *udpLink) close() error { return l.conn.Close() }
+
+// datagramLink is the UDP surface the transport uses. Tests substitute a link
+// whose writes fail so the network-error notification path is deterministic.
+type datagramLink interface {
+	writeOne(datagram []byte) error
+	readFrom(buffer []byte) (int, error)
+	setReadDeadline(deadline time.Time) error
+	close() error
+}
 
 // probeResult is a usable UDP link plus any state the first authenticated
 // datagram already carried. A server whose shell exits immediately can send
@@ -220,7 +246,7 @@ func isClosedNetworkError(err error) bool {
 // authenticates the server; the source address of a reply is not pinned,
 // matching stock mosh-client.
 func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
-	connect moshmodel.Connect, timeout time.Duration, queue *outputQueue) (*probeResult, error) {
+	connect moshmodel.Connect, timeout time.Duration, renderer *terminalRenderer) (*probeResult, error) {
 
 	hosts := make([]string, 0, 2)
 	if connect.Host != "" {
@@ -277,7 +303,7 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 			continue
 		}
 
-		connected, err := awaitResponse(ctx, client, link, timeout, queue, candidate.host)
+		connected, err := awaitResponse(ctx, client, link, timeout, renderer, candidate.host)
 		if connected != nil {
 			return connected, nil
 		}
@@ -315,7 +341,7 @@ func probe(ctx context.Context, client *moshcore.Client, cfg moshmodel.Config,
 // finished. A non-nil error is either terminal (protocol/cancellation) or a
 // candidate timeout.
 func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
-	timeout time.Duration, queue *outputQueue, host string) (*probeResult, error) {
+	timeout time.Duration, renderer *terminalRenderer, host string) (*probeResult, error) {
 
 	lastRetransmit := time.Now()
 
@@ -333,10 +359,10 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		if wait > tickInterval {
 			wait = tickInterval
 		}
-		if err := link.conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		if err := link.setReadDeadline(time.Now().Add(wait)); err != nil {
 			return nil, err
 		}
-		n, _, err := link.conn.ReadFromUDP(buffer)
+		n, err := link.readFrom(buffer)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -366,10 +392,8 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		if !authenticated {
 			continue
 		}
-		if len(update.Output) > 0 {
-			if err := queue.push(update.Output); err != nil {
-				return nil, err
-			}
+		if err := renderer.applyUpdate(update); err != nil {
+			return nil, fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err)
 		}
 		if update.RemoteShutdown {
 			// Acknowledge immediately; the probe caller will classify this
@@ -381,7 +405,7 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		// The probe polls with short read deadlines. Clear the deadline
 		// before handing the socket to the long-lived read loop, which
 		// otherwise observes an immediate i/o timeout.
-		_ = link.conn.SetReadDeadline(time.Time{})
+		_ = link.setReadDeadline(time.Time{})
 		return &probeResult{link: link, remoteShutdown: update.RemoteShutdown}, nil
 	}
 }
@@ -390,9 +414,10 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 // terminal input, Resize reaches mosh-server, and Close performs the mosh
 // shutdown handshake.
 type inProcessTransport struct {
-	queue  *outputQueue
-	client *moshcore.Client
-	link   *udpLink
+	queue    *outputQueue
+	client   *moshcore.Client
+	link     datagramLink
+	renderer *terminalRenderer
 
 	// sendMu serializes SSP state changes with their UDP datagrams, so
 	// fragments of different instructions never interleave.
@@ -413,21 +438,53 @@ type inProcessTransport struct {
 func (t *inProcessTransport) Read(p []byte) (int, error) { return t.queue.Read(p) }
 
 func (t *inProcessTransport) Write(p []byte) (int, error) {
+	forwarded := t.renderer.translateInput(p)
 	t.sendMu.Lock()
-	defer t.sendMu.Unlock()
 	if t.isClosing() {
+		t.sendMu.Unlock()
 		return 0, io.ErrClosedPipe
 	}
-	if err := t.client.Input(p); err != nil {
-		return 0, err
+	// Capture the frame the incoming bytes will travel in before the state is
+	// extended. Stock's prediction overlay records this as the expiration
+	// frame; it is a hint, never part of the outgoing message.
+	localFrameSent := t.client.SentStateLast()
+	// Record the prediction before the state carrying these bytes is sent, as
+	// STMClient::process_user_input does before network->tick() sends it. If
+	// the socket reader were allowed to process the server's echo first, the
+	// EchoAck could reach this frame before the prediction exists and the
+	// overlay would cull it without ever drawing it. Holding sendMu keeps the
+	// expiration frame stable; predictUserInput takes the renderer lock, the
+	// same sendMu-then-renderer order Resize and the send-error path use.
+	t.renderer.predictUserInput(p, localFrameSent)
+	if len(forwarded) > 0 {
+		if err := t.client.Input(forwarded); err != nil {
+			t.sendMu.Unlock()
+			return 0, err
+		}
+		// A transient send failure is not a write failure: the client retains
+		// the state and retransmits it, exactly as stock mosh ignores sendto()
+		// errors and keeps the input in its SSP state.
+		if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
+			t.sendMu.Unlock()
+			return 0, err
+		}
 	}
-	// A transient send failure is not a write failure: the client retains the
-	// state and retransmits it, exactly as stock mosh ignores sendto() errors
-	// and keeps the input in its SSP state.
-	if err := t.writeDatagrams(t.client.SendDatagrams(time.Now())); err != nil {
+	t.sendMu.Unlock()
+
+	// Prediction consumed the raw keystrokes stock feeds Parser::UTF8Parser;
+	// the send path above used UserInput's translation and is already complete,
+	// so nothing here can change the bytes on the wire.
+	if err := t.renderer.emitLatest(); err != nil {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// SetScreenSizeHandler installs the inverse resize signal the Session uses to
+// resize MyGo before display bytes encoded for the new size arrive. Position
+// is the display-stream offset of the resize.
+func (t *inProcessTransport) SetScreenSizeHandler(handler func(cols, rows int, position uint64)) {
+	t.renderer.setScreenSizeHandler(handler)
 }
 
 func (t *inProcessTransport) Resize(cols, rows int) error {
@@ -446,7 +503,22 @@ func (t *inProcessTransport) Resize(cols, rows int) error {
 	if err := t.client.Resize(cols, rows); err != nil {
 		return err
 	}
+	// STMClient::process_resize tells the remote emulator and then resets the
+	// prediction engine, because the predicted cells' geometry just changed.
+	t.renderer.resetPredictions()
 	return t.writeDatagrams(t.client.SendDatagrams(time.Now()))
+}
+
+// networkErrorMessage formats a socket failure the way stock mosh does:
+// Network::send stores "sendto: " + strerror(errno), and recvmsg failures are
+// NetworkException("recvmsg", errno). Go's net.OpError adds the operation,
+// address, and a nested syscall prefix that stock never displays.
+func networkErrorMessage(operation string, err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return operation + ": " + errno.Error()
+	}
+	return operation + ": " + err.Error()
 }
 
 // writeDatagrams sends datagrams to the announced server address. Transient
@@ -461,10 +533,15 @@ func (t *inProcessTransport) writeDatagrams(datagrams [][]byte) error {
 			// The route is temporarily unavailable (network switch, ICMP,
 			// ENOBUFS). Sending the remaining fragments would likely fail
 			// too; retransmission will resend the whole instruction with a
-			// fresh fragment ID.
+			// fresh fragment ID. Stock stores the sendto error in
+			// Network::send_error, which the main loop turns into the
+			// network-error notification.
+			t.renderer.setNetworkError(networkErrorMessage("sendto", err))
 			return nil
 		}
 	}
+	// Stock clears send_error whenever a send pass reports none.
+	t.renderer.clearNetworkError()
 	return nil
 }
 
@@ -476,11 +553,42 @@ func (t *inProcessTransport) flush(now time.Time) error {
 	return t.writeDatagrams(t.client.SendDatagrams(now))
 }
 
-func (t *inProcessTransport) readLoop() {
+func (t *inProcessTransport) readLoop(probeShutdown bool) {
+	// Emit once the transport is live. A remote resize waits here until the
+	// Session registers its inverse resize signal, so display bytes encoded
+	// for the new size can never overtake the resize.
+	if err := t.renderer.emitInitial(); err != nil {
+		t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+		return
+	}
+	// Feed the prediction engine the same hints STMClient::process_network_input
+	// gives it on every authenticated receive. The probe's state was applied
+	// before this goroutine started, so without this first update a fast link
+	// would keep stock's conservative initial 250ms pacing until the next
+	// server state arrived.
+	t.renderer.predictionNetworkHints(t.client.SentStateAcked(), t.client.SendInterval())
+	// Render the state the probe already accepted, if any. This includes the
+	// final frame of a shutdown sentinel consumed during the probe, which must
+	// reach the queue before finish closes it.
+	if err := t.renderer.emitLatest(); err != nil {
+		t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+		return
+	}
+	if probeShutdown {
+		// The probe acknowledged the sentinel and captured its final state. A
+		// user-initiated Close keeps its classification when the two race.
+		if t.isClosing() {
+			t.finish(appsession.End{Reason: appsession.EndReasonClosed}, nil)
+		} else {
+			t.finish(appsession.End{Reason: appsession.EndReasonExited}, nil)
+		}
+		return
+	}
+
 	buffer := make([]byte, receiveBuffer)
 	failures := 0
 	for {
-		n, _, err := t.link.conn.ReadFromUDP(buffer)
+		n, err := t.link.readFrom(buffer)
 		if err != nil {
 			if t.isFinished() || t.isClosing() {
 				return
@@ -488,7 +596,9 @@ func (t *inProcessTransport) readLoop() {
 			if !isClosedNetworkError(err) && failures+1 < maxReadFailures {
 				// A network switch can surface a transient read error.
 				// Keep the SSP state and socket alive; the tick loop keeps
-				// sending until the path recovers.
+				// sending until the path recovers. Stock reports the same
+				// condition through its network-error notification.
+				t.renderer.setNetworkError(networkErrorMessage("recvmsg", err))
 				failures++
 				select {
 				case <-t.done:
@@ -502,6 +612,7 @@ func (t *inProcessTransport) readLoop() {
 			return
 		}
 		failures = 0
+		t.renderer.clearNetworkError()
 		update, authenticated, receiveErr := t.client.Receive(buffer[:n], time.Now())
 		if receiveErr != nil {
 			if t.isClosing() {
@@ -514,11 +625,21 @@ func (t *inProcessTransport) readLoop() {
 		if !authenticated {
 			continue
 		}
-		if len(update.Output) > 0 {
-			if err := t.queue.push(update.Output); err != nil {
-				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
-				return
-			}
+		// STMClient::process_network_input reports the send time of the oldest
+		// retained sent state after every receive. Like stock, this timestamp
+		// advances only when an ack prunes the sent queue.
+		t.renderer.serverAcked(t.client.SentStateAckedTimestamp())
+		if err := t.renderer.applyUpdate(update); err != nil {
+			t.finish(appsession.End{Reason: appsession.EndReasonError},
+				fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err))
+			return
+		}
+		// STMClient::process_network_input feeds the prediction engine the
+		// acknowledged frame, current pacing, and EchoAck before redrawing.
+		t.renderer.predictionNetworkHints(t.client.SentStateAcked(), t.client.SendInterval())
+		if err := t.renderer.emitLatest(); err != nil {
+			t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+			return
 		}
 		if err := t.flush(time.Now()); err != nil {
 			if t.isClosing() {
@@ -554,6 +675,16 @@ func (t *inProcessTransport) tickLoop() {
 			}
 			if err := t.flush(now); err != nil {
 				if t.isClosing() {
+					return
+				}
+				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+				return
+			}
+			// Stock interleaves output_new_frame with network ticks using
+			// min(network->wait_time(), overlays.wait_time()), and caps the
+			// wait at 250ms while still connecting.
+			if err := t.renderer.maintainOverlays(); err != nil {
+				if t.isFinished() {
 					return
 				}
 				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
@@ -620,6 +751,7 @@ func (t *inProcessTransport) finish(end appsession.End, cause error) {
 		t.hasEnd = true
 		t.end = end
 		t.mu.Unlock()
+		t.renderer.close()
 		t.queue.close(cause)
 		close(t.done)
 	})

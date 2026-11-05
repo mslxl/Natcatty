@@ -329,6 +329,17 @@ func discardTransportResume(transport Transport) {
 	}
 }
 
+// ScreenSizer is implemented by transports whose remote peer owns the screen
+// size (mosh). The handler is called from the transport before it makes bytes
+// encoded for that size available to Read, and it returns only after the live
+// screen applied the size. Position is the number of output bytes the
+// transport produced before the resize, so the Session can deliver every
+// earlier byte to the view at the old size first. The Session installs the
+// handler that carries the signal to the attached view.
+type ScreenSizer interface {
+	SetScreenSizeHandler(handler func(cols, rows int, position uint64))
+}
+
 // StartSpec describes a Session to open. Command empty asks the transport
 // adapter for its platform's default shell. SSH Sessions use HostID to read
 // the saved credential and Hostname, Port, and Username to reach the endpoint;
@@ -448,6 +459,11 @@ type Session struct {
 	closeCh chan struct{}
 	writeCh chan []byte
 	done    chan struct{}
+
+	// remoteScreen reports that the transport receives its authoritative
+	// screen size from the peer. The UI sets MyGo's ResizeByConn option and
+	// registers the inverse resize sink for such a Session.
+	remoteScreen atomic.Bool
 
 	closeOnce sync.Once
 	// closeMu guards the explicit close record and the ended publication.
@@ -784,6 +800,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		onChange: s.changed,
 	}
 	session.conn = newTerminalConn(session)
+	session.bindScreenSizer(transport)
 	// A local PTY is attached to a live shell at Open; a remote shell has to
 	// finish its startup (a ForceCommand bash -i included) before it can read a
 	// wrapper, so the first command probes readiness first.
@@ -1247,6 +1264,26 @@ func (s *Session) publishEnded() {
 	}
 }
 
+// bindScreenSizer connects a transport that owns the remote screen size to
+// the live view's inverse resize path. A reconnect binds the replacement
+// transport the same way.
+func (s *Session) bindScreenSizer(transport Transport) {
+	sizer, ok := transport.(ScreenSizer)
+	if !ok {
+		return
+	}
+	s.remoteScreen.Store(true)
+	// Output positions are relative to one transport generation. A reconnect
+	// binds a replacement transport whose stream starts at zero again.
+	s.conn.resetTransportPosition()
+	sizer.SetScreenSizeHandler(s.conn.applyScreenSize)
+}
+
+// ScreenSizeFromRemote reports whether the peer's screen size is
+// authoritative. The terminal surface then uses MyGo's ResizeByConn and
+// applies the inverse resize signal before rendering following output.
+func (s *Session) ScreenSizeFromRemote() bool { return s.remoteScreen.Load() }
+
 func (s *Session) start() {
 	go s.loop()
 	go s.readLoop(s.generation, s.transport)
@@ -1341,6 +1378,7 @@ func (s *Session) loop() {
 				}
 				s.reopening = false
 				s.transport = cmd.transport
+				s.bindScreenSizer(cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive
 					snapshot.Notice = nil
@@ -1490,6 +1528,9 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			if effects.Transfer != nil && s.onTransfer != nil {
 				s.onTransfer(s.id, *effects.Transfer)
 			}
+			// The bytes are now in the backlog (or filtered out); a pending
+			// remote resize may proceed without overtaking them.
+			s.conn.noteTransportRead(n)
 		}
 		if err != nil {
 			s.flushHighlightCarry()

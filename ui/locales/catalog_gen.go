@@ -10254,6 +10254,58 @@ func (msgs Messages) SettingsTransportUnknown() string {
 	return Catalog.Format(msgs.locale, "settingsTransportUnknown", nil)
 }
 
+// SettingsMoshPredictionDisplay says "Mosh prediction"
+// in the language the app shows.
+func SettingsMoshPredictionDisplay() string { return In(i18n.Locale()).SettingsMoshPredictionDisplay() }
+
+// SettingsMoshPredictionDisplay says "Mosh prediction"
+// in the language of msgs.
+func (msgs Messages) SettingsMoshPredictionDisplay() string {
+	return Catalog.Format(msgs.locale, "settingsMoshPredictionDisplay", nil)
+}
+
+// SettingsMoshPredictionAdaptive says "Adaptive (recommended)"
+// in the language the app shows.
+func SettingsMoshPredictionAdaptive() string {
+	return In(i18n.Locale()).SettingsMoshPredictionAdaptive()
+}
+
+// SettingsMoshPredictionAdaptive says "Adaptive (recommended)"
+// in the language of msgs.
+func (msgs Messages) SettingsMoshPredictionAdaptive() string {
+	return Catalog.Format(msgs.locale, "settingsMoshPredictionAdaptive", nil)
+}
+
+// SettingsMoshPredictionAlways says "Always"
+// in the language the app shows.
+func SettingsMoshPredictionAlways() string { return In(i18n.Locale()).SettingsMoshPredictionAlways() }
+
+// SettingsMoshPredictionAlways says "Always"
+// in the language of msgs.
+func (msgs Messages) SettingsMoshPredictionAlways() string {
+	return Catalog.Format(msgs.locale, "settingsMoshPredictionAlways", nil)
+}
+
+// SettingsMoshPredictionNever says "Never"
+// in the language the app shows.
+func SettingsMoshPredictionNever() string { return In(i18n.Locale()).SettingsMoshPredictionNever() }
+
+// SettingsMoshPredictionNever says "Never"
+// in the language of msgs.
+func (msgs Messages) SettingsMoshPredictionNever() string {
+	return Catalog.Format(msgs.locale, "settingsMoshPredictionNever", nil)
+}
+
+// SettingsMoshPredictionHint says "Mosh can draw keystrokes locally before the server echoes them. Adaptive shows predictions only on links slow enough …"
+// in the language the app shows.
+func SettingsMoshPredictionHint() string { return In(i18n.Locale()).SettingsMoshPredictionHint() }
+
+// SettingsMoshPredictionHint says "Mosh can draw keystrokes locally before the server echoes them. Adaptive shows predictions only on links slow enough …"
+// in the language of msgs.
+func (msgs Messages) SettingsMoshPredictionHint() string {
+	return Catalog.Format(msgs.locale, "settingsMoshPredictionHint", nil)
+}
+
 // ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this version. Choose Bundled for the Host or in Settings."
 // in the language the app shows.
 func ConnectionErrorTransportUnavailable() string {
