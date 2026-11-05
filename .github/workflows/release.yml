@@ -60,6 +60,13 @@ jobs:
       - name: Test the legal package
         run: go test ./internal/legal -count=1
 
+      - name: Scan dependencies for known vulnerabilities
+        # Pin the scanner: a new version changes the advisory view and must be
+        # reviewed with the dependency baseline in go.mod. The default
+        # symbol-level scan fails when a vulnerability affects called code;
+        # package- and module-level findings are reported but do not fail it.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       - name: Read the release version from mygo.json
         id: tag
         env:
