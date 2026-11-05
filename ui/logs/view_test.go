@@ -13,6 +13,7 @@ import (
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	shellui "github.com/mslxl/natcatty/ui/shell"
 	shellstate "github.com/mslxl/natcatty/ui/shell/state"
@@ -214,6 +215,34 @@ func TestNetworkProviderRowRendersItsPhaseAndHasNoTerminalAction(t *testing.T) {
 	// terminal action a Host row shows.
 	if textsContain(tt, m.LogsOpenTerminal()) {
 		t.Fatalf("provider row rendered the terminal action, texts %q", tt.Texts())
+	}
+}
+
+func TestWireGuardProviderRowRendersHandshakeAndTraffic(t *testing.T) {
+	m := locales.In("en")
+	handshake := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	source := &fakeSource{}
+	source.logs = []domainhistory.ConnectionLog{{
+		ID:                   "wg-row-1",
+		Kind:                 "wireguard",
+		Status:               domainhistory.ConnectionConnected,
+		StartedAt:            time.Now(),
+		NetworkProfileID:     "wg-1",
+		NetworkProfileLabel:  "Office WG",
+		NetworkProviderKind:  "wireguard",
+		NetworkProviderPhase: "running",
+		NetworkAddress:       "203.0.113.7:51820",
+		NetworkLastHandshake: handshake,
+		NetworkRxBytes:       1536,
+		NetworkTxBytes:       512,
+	}}
+	tt, _ := newProductionLogsView(t, 720, 600, source, &fakeActions{})
+
+	assertVisible(t, tt, "Office WG", 720, 600)
+	assertVisible(t, tt, "203.0.113.7:51820", 720, 600)
+	assertVisible(t, tt, uiconnection.WireGuardDetail(m, true, handshake, 1536, 512), 720, 600)
+	if textsContain(tt, m.LogsOpenTerminal()) {
+		t.Fatalf("WireGuard provider row rendered the terminal action, texts %q", tt.Texts())
 	}
 }
 

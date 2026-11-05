@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -12,6 +13,7 @@ import (
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
@@ -454,5 +456,64 @@ func TestVaultViewTailscaleEditorDisclosesStateAndLogPrivacy(t *testing.T) {
 		if !tt.HasText(want) {
 			t.Fatalf("the Tailscale editor does not show %q, texts %q", want, tt.Texts())
 		}
+	}
+}
+
+func TestVaultViewNetworkRowShowsWireGuardTunnelDetail(t *testing.T) {
+	profiles := &viewNetworkProfiles{items: []domainvault.NetworkProfile{{
+		ID:    "wg-1",
+		Label: "Office WG",
+		Kind:  domainvault.NetworkKindWireGuard,
+		WireGuard: &domainvault.WireGuardNetwork{
+			Addresses: []string{"10.0.0.2/32"},
+			Peers:     []domainvault.WireGuardPeer{{ID: "peer-1", PublicKey: "peer-public"}},
+		},
+	}}}
+	state := vaultstate.NewState(&fakeHosts{}, vaultstate.WithNetworkProfiles(profiles))
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := ui.NewTester(View(state), 900, 900)
+	handshake := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	state.PostNetworkProviderStatus(vaultstate.NetworkProviderStatus{
+		ProfileID:            "wg-1",
+		Label:                "Office WG",
+		Kind:                 string(domainvault.NetworkKindWireGuard),
+		Phase:                appconnection.ProviderPhaseRunning,
+		WireGuardEndpoint:    "203.0.113.7:51820",
+		HandshakeEstablished: true,
+		LastHandshake:        handshake,
+		RxBytes:              1536,
+		TxBytes:              512,
+	})
+	tt.Frame()
+
+	m := locales.In("en")
+	for _, want := range []string{
+		m.VaultNetworkProviderStatus(m.NetworkProviderPhaseRunning(), "203.0.113.7:51820"),
+		uiconnection.WireGuardDetail(m, true, handshake, 1536, 512),
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("the WireGuard profile row does not show %q, texts %q", want, tt.Texts())
+		}
+	}
+}
+
+func TestVaultViewWireGuardEditorWarnsWithoutTunnelDNS(t *testing.T) {
+	state := vaultstate.NewState(&fakeHosts{})
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	tt := ui.NewTester(View(state), 900, 1800)
+	m := locales.In("en")
+	state.BeginCreateNetworkProfile(domainvault.NetworkKindWireGuard)
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkWarningWireGuardDNS()) {
+		t.Fatalf("the WireGuard editor does not warn about the missing tunnel DNS, texts %q", tt.Texts())
+	}
+	state.NetworkProfileForm().DNS = "10.0.0.1"
+	tt.Frame()
+	if tt.HasText(m.VaultNetworkWarningWireGuardDNS()) {
+		t.Fatalf("the warning remained after a tunnel DNS server was entered, texts %q", tt.Texts())
 	}
 }

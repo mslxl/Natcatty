@@ -2202,6 +2202,18 @@ func (msgs Messages) VaultNetworkWarningControlURLInsecure() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkWarningControlURLInsecure", nil)
 }
 
+// VaultNetworkWarningWireGuardDNS says "No DNS server is configured. This profile can reach only IP-literal targets; host names fail instead of using the sys…"
+// in the language the app shows.
+func VaultNetworkWarningWireGuardDNS() string {
+	return In(i18n.Locale()).VaultNetworkWarningWireGuardDNS()
+}
+
+// VaultNetworkWarningWireGuardDNS says "No DNS server is configured. This profile can reach only IP-literal targets; host names fail instead of using the sys…"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkWarningWireGuardDNS() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkWarningWireGuardDNS", nil)
+}
+
 // NetworkProviderPhaseStopped says "Stopped"
 // in the language the app shows.
 func NetworkProviderPhaseStopped() string { return In(i18n.Locale()).NetworkProviderPhaseStopped() }
@@ -2340,6 +2352,54 @@ func VaultNetworkPrivacyNotice() string { return In(i18n.Locale()).VaultNetworkP
 // Privacy disclosure in the Tailscale Network Profile editor.
 func (msgs Messages) VaultNetworkPrivacyNotice() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPrivacyNotice", nil)
+}
+
+// NetworkHandshakeEstablished says "Handshake established"
+// in the language the app shows.
+func NetworkHandshakeEstablished() string { return In(i18n.Locale()).NetworkHandshakeEstablished() }
+
+// NetworkHandshakeEstablished says "Handshake established"
+// in the language of msgs.
+func (msgs Messages) NetworkHandshakeEstablished() string {
+	return Catalog.Format(msgs.locale, "networkHandshakeEstablished", nil)
+}
+
+// NetworkHandshakePending says "No handshake yet"
+// in the language the app shows.
+func NetworkHandshakePending() string { return In(i18n.Locale()).NetworkHandshakePending() }
+
+// NetworkHandshakePending says "No handshake yet"
+// in the language of msgs.
+func (msgs Messages) NetworkHandshakePending() string {
+	return Catalog.Format(msgs.locale, "networkHandshakePending", nil)
+}
+
+// NetworkHandshakeNever says "never"
+// in the language the app shows.
+func NetworkHandshakeNever() string { return In(i18n.Locale()).NetworkHandshakeNever() }
+
+// NetworkHandshakeNever says "never"
+// in the language of msgs.
+func (msgs Messages) NetworkHandshakeNever() string {
+	return Catalog.Format(msgs.locale, "networkHandshakeNever", nil)
+}
+
+// NetworkWireGuardDetail says "{handshake} · last {lastHandshake} · rx {rx} · tx {tx}"
+// in the language the app shows.
+//
+// Live WireGuard tunnel detail on a Network Profile row and a Connection
+// Log row.
+func NetworkWireGuardDetail(handshake string, lastHandshake string, rx string, tx string) string {
+	return In(i18n.Locale()).NetworkWireGuardDetail(handshake, lastHandshake, rx, tx)
+}
+
+// NetworkWireGuardDetail says "{handshake} · last {lastHandshake} · rx {rx} · tx {tx}"
+// in the language of msgs.
+//
+// Live WireGuard tunnel detail on a Network Profile row and a Connection
+// Log row.
+func (msgs Messages) NetworkWireGuardDetail(handshake string, lastHandshake string, rx string, tx string) string {
+	return Catalog.Format(msgs.locale, "networkWireGuardDetail", map[string]any{"handshake": handshake, "lastHandshake": lastHandshake, "rx": rx, "tx": tx})
 }
 
 // LogsProviderMeta says "{phase} · {kind}"

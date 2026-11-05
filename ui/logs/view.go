@@ -7,6 +7,7 @@ import (
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -263,6 +264,15 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 								appconnection.ProviderPhase(log.NetworkProviderPhase)),
 							log.NetworkProviderKind)
 						ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
+						// A WireGuard row also keeps the handshake time and the
+						// counters recorded for that event, so the Logs surface
+						// shows the same tunnel detail as the Profile row.
+						if log.NetworkProviderKind == string(domainvault.NetworkKindWireGuard) {
+							ui.Text(c, uiconnection.WireGuardDetail(m,
+								!log.NetworkLastHandshake.IsZero(), log.NetworkLastHandshake,
+								log.NetworkRxBytes, log.NetworkTxBytes)).
+								FontSize(12).TextColor(t.TextMuted)
+						}
 					} else {
 						status := statusLabel(m, log.Status)
 						meta := m.LogsConnectionMeta(status, log.Kind)
