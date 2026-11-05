@@ -783,6 +783,9 @@ func TestInProcessETPassesTheSharedRouteAndPolicies(t *testing.T) {
 			Type: appconnection.ProxySOCKS5, Host: "proxy.internal", Port: 1080,
 			Username: "proxy-user", Password: "proxy-password",
 		},
+		Network: &appconnection.NetworkRoute{
+			ProfileID: "net-target", Kind: "tailscale", Label: "Office", Fingerprint: "net-fp",
+		},
 		Algorithms: appconnection.AlgorithmPolicy{
 			Legacy: true, SkipECDSAHostKey: true, Ciphers: []string{"aes256-ctr"},
 		},
@@ -830,6 +833,9 @@ func TestInProcessETPassesTheSharedRouteAndPolicies(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.Proxy, route.Proxy) {
 				t.Fatalf("request proxy = %+v, want %+v", got.Proxy, route.Proxy)
+			}
+			if !reflect.DeepEqual(got.Network, route.Network) {
+				t.Fatalf("request network = %+v, want %+v", got.Network, route.Network)
 			}
 			if !reflect.DeepEqual(got.Algorithms, route.Algorithms) {
 				t.Fatalf("request algorithms = %+v, want %+v", got.Algorithms, route.Algorithms)

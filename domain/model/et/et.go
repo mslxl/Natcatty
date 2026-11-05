@@ -45,6 +45,12 @@ var (
 	// ErrMultipleJumpHosts reports more than one jump Host. Netcatty supports
 	// at most one because et exposes a single --jumphost.
 	ErrMultipleJumpHosts = errors.New("et: at most one jump host is supported")
+	// ErrNetworkUnsupported reports a Network Profile selected for a bundled
+	// EternalTerminal Session. The bundled client performs its own SSH
+	// bootstrap in a child process on the operating system's network, which an
+	// in-process Provider cannot carry. The in-process client supports the
+	// profile; the bundled one must fail closed instead of dialing directly.
+	ErrNetworkUnsupported = errors.New("et: the bundled client cannot use a Network Profile")
 	// ErrBundleUnavailable reports a missing bundled et binary.
 	ErrBundleUnavailable = errors.New("et: bundled client is not available")
 	// ErrChecksumMismatch reports a bundled et binary that failed SHA-256

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/mslxl/natcatty/adapters/bundle"
 	etadapter "github.com/mslxl/natcatty/adapters/et"
 	moshadapter "github.com/mslxl/natcatty/adapters/mosh"
+	adapterstnet "github.com/mslxl/natcatty/adapters/telnet"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -102,6 +104,23 @@ func moshRoute(ctx context.Context, spec appsession.StartSpec,
 	if err != nil {
 		return appconnection.Route{}, err
 	}
+	// Mosh's UDP channel is not connected to a Network Provider yet. Fail
+	// closed before the bundle, the SSH bootstrap, or mosh-server starts:
+	// dialing the bootstrap directly would silently bypass the selected
+	// profile. The UI maps this sentinel to the OS-level-VPN guidance.
+	if route.Network != nil {
+		return appconnection.Route{}, &appconnection.Error{
+			Kind: appconnection.KindUnsupported,
+			Cause: fmt.Errorf(
+				"%w: Network Profile %q; use an OS-level VPN",
+				moshmodel.ErrNetworkUnsupported, route.Network.ProfileID),
+			Provider: &appconnection.ProviderInfo{
+				ProfileID: route.Network.ProfileID,
+				Label:     route.Network.Label,
+				Kind:      route.Network.Kind,
+			},
+		}
+	}
 	if err := moshadapter.CheckRoute(len(route.Jumps), route.Proxy != nil); err != nil {
 		return appconnection.Route{}, err
 	}
@@ -162,6 +181,82 @@ func (s *moshBootstrapStream) Close() error {
 	return err
 }
 
+// telnetNetworkRoutes resolves only the target Host's effective Network
+// Profile. Telnet has no jump chain or proxy, so the first endpoint is always
+// the target Host.
+type telnetNetworkRoutes interface {
+	NetworkRouteForHost(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error)
+}
+
+// newTelnetFactory gives the Telnet adapter the Network Provider selected for
+// the Host's effective Network Profile. The profile is resolved at Open time;
+// without one the adapter dials exactly as it did before Network Profiles
+// existed. A selected profile is never replaced with the adapter's direct
+// dialer: a Provider failure is returned typed and the Telnet socket is not
+// opened.
+func newTelnetFactory(inner adapterstnet.Factory, routes telnetNetworkRoutes,
+	providers *appconnection.NetworkProviderRegistry) appsession.Factory {
+	return &telnetTransportFactory{inner: inner, routes: routes, providers: providers}
+}
+
+type telnetTransportFactory struct {
+	inner     adapterstnet.Factory
+	routes    telnetNetworkRoutes
+	providers *appconnection.NetworkProviderRegistry
+}
+
+func (f *telnetTransportFactory) Open(ctx context.Context, spec appsession.StartSpec) (appsession.Transport, error) {
+	network, err := f.networkRoute(ctx, spec.HostID)
+	if err != nil {
+		return nil, err
+	}
+	if network == nil {
+		return f.inner.Open(ctx, spec)
+	}
+	provider, err := f.providers.Acquire(ctx, *network)
+	if err != nil {
+		return nil, err
+	}
+	factory := f.inner
+	// Tag only the failure that came from the dial seam. A configuration error
+	// the adapter catches before dialing (an empty hostname, an out-of-range
+	// port) must keep its own meaning instead of blaming the profile.
+	dialFailed := false
+	factory.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := provider.DialContext(ctx, network, address)
+		if err != nil {
+			dialFailed = true
+		}
+		return conn, err
+	}
+	transport, err := factory.Open(ctx, spec)
+	if err != nil {
+		if !dialFailed {
+			return nil, err
+		}
+		// Keep the transport's Kind (an unreachable target stays KindNetwork and
+		// an expired deadline stays KindTimeout), but name the profile behind
+		// the failure. A typed provider failure keeps KindProvider.
+		return nil, appconnection.TagProvider(err, appconnection.ProviderInfo{
+			ProfileID: network.ProfileID,
+			Label:     network.Label,
+			Kind:      network.Kind,
+			Phase:     appconnection.ProviderPhaseRunning,
+		})
+	}
+	return transport, nil
+}
+
+// networkRoute returns nil when the Host has no saved identity or no effective
+// profile, which keeps the adapter's original direct dial byte-identical for
+// ad-hoc restore descriptors and Hosts without a Network Profile.
+func (f *telnetTransportFactory) networkRoute(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error) {
+	if f.routes == nil || id == "" {
+		return nil, nil
+	}
+	return f.routes.NetworkRouteForHost(ctx, id)
+}
+
 // etVault is the Vault surface an EternalTerminal Session needs: the Host, its
 // resolved credentials, and the known-host snapshot. The Vault service
 // implements it; tests provide a fake.
@@ -204,6 +299,23 @@ func (f *etTransportFactory) Open(ctx context.Context, spec appsession.StartSpec
 			return nil, err
 		}
 		route = resolved
+	}
+	// The bundled client runs its own SSH bootstrap in a child process on the
+	// operating system's network, so an in-process Network Provider cannot
+	// carry it. Fail closed instead of silently dialing outside the selected
+	// profile; the in-process client is the implementation that supports it.
+	if route.Network != nil {
+		return nil, &appconnection.Error{
+			Kind: appconnection.KindUnsupported,
+			Cause: fmt.Errorf(
+				"%w: Network Profile %q; select the in-process EternalTerminal client",
+				etmodel.ErrNetworkUnsupported, route.Network.ProfileID),
+			Provider: &appconnection.ProviderInfo{
+				ProfileID: route.Network.ProfileID,
+				Label:     route.Network.Label,
+				Kind:      route.Network.Kind,
+			},
+		}
 	}
 	// This factory is the bundled client only: it owns the SSH bootstrap, so
 	// the original one-jump/no-proxy restriction stays here until ticket 35.

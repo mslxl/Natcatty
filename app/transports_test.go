@@ -40,6 +40,47 @@ func TestMoshRejectsAJumpChainBeforeOpeningAnything(t *testing.T) {
 	}
 }
 
+// TestMoshRejectsANetworkProfileBeforeOpeningAnything checks both Mosh client
+// implementations fail closed, with the typed OS-level-VPN guidance, before any
+// bundle process or SSH bootstrap dial starts.
+func TestMoshRejectsANetworkProfileBeforeOpeningAnything(t *testing.T) {
+	dialer := &factoryDialer{client: &factoryClient{terminal: &factoryTerminal{}}}
+	manager := appconnection.NewManager(dialer, nil, &factoryKnownHosts{})
+	t.Cleanup(manager.CloseAll)
+	routes := fakeTransportRoute{route: appconnection.Route{Network: &appconnection.NetworkRoute{
+		ProfileID: "net-mosh", Kind: "tailscale", Label: "Office", Fingerprint: "fp-mosh",
+	}}}
+	cfg := moshmodel.Config{Hostname: "mosh.example", Port: 22}.Normalized()
+	spec := appsession.StartSpec{
+		Kind: appsession.KindMosh, HostID: "mosh", Hostname: "mosh.example", Port: 22, Mosh: &cfg,
+	}
+	cases := []struct {
+		name    string
+		factory appsession.Factory
+	}{
+		{"bundled", &moshTransportFactory{routes: routes, manager: manager}},
+		{"in-process", &moshInProcessTransportFactory{routes: routes, manager: manager}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.factory.Open(context.Background(), spec)
+			if !errors.Is(err, moshmodel.ErrNetworkUnsupported) {
+				t.Fatalf("Open = %v, want the Network Profile restriction", err)
+			}
+			var typed *appconnection.Error
+			if !errors.As(err, &typed) || typed.Kind != appconnection.KindUnsupported {
+				t.Fatalf("Open error = %v, want a typed unsupported failure", err)
+			}
+			if typed.Provider == nil || typed.Provider.ProfileID != "net-mosh" {
+				t.Fatalf("Provider info = %+v, want the selected profile", typed.Provider)
+			}
+		})
+	}
+	if dialer.calls != 0 {
+		t.Fatalf("SSH bootstrap dials = %d, want none", dialer.calls)
+	}
+}
+
 func TestMoshRejectsAProxyBeforeOpeningAnything(t *testing.T) {
 	factory := &moshTransportFactory{
 		routes: fakeTransportRoute{route: appconnection.Route{
@@ -159,6 +200,38 @@ func TestETRejectsAnUnsupportedRouteBeforeStartingAProcess(t *testing.T) {
 				t.Fatalf("Open = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestETBundledRejectsANetworkProfileBeforeStartingAProcess proves the bundled
+// client never inherits the operating system's network behind the user's back
+// when a Network Profile is selected. Only the in-process client can carry it.
+func TestETBundledRejectsANetworkProfileBeforeStartingAProcess(t *testing.T) {
+	host := domainvault.Host{
+		ID: "host", Protocol: domainvault.ProtocolET, Hostname: "et.example", Port: 22,
+	}
+	vault := fakeETVault{hosts: map[string]domainvault.Host{"host": host}, auth: map[string]appvault.ResolvedAuth{
+		"host": {Selection: domainvault.AuthSelection{Username: "alice", Method: domainvault.HostAuthAuto}},
+	}}
+	factory := &etTransportFactory{
+		vault: vault,
+		routes: fakeTransportRoute{route: appconnection.Route{Network: &appconnection.NetworkRoute{
+			ProfileID: "net-et", Kind: "wireguard", Label: "Lab", Fingerprint: "fp-et",
+		}}},
+	}
+	cfg := etmodel.Config{Hostname: "et.example", Port: 22}.Normalized()
+	_, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindET, HostID: "host", Hostname: "et.example", Port: 22, ET: &cfg,
+	})
+	if !errors.Is(err, etmodel.ErrNetworkUnsupported) {
+		t.Fatalf("Open = %v, want the bundled Network Profile restriction", err)
+	}
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindUnsupported {
+		t.Fatalf("Open error = %v, want a typed unsupported failure", err)
+	}
+	if typed.Provider == nil || typed.Provider.ProfileID != "net-et" {
+		t.Fatalf("Provider info = %+v, want the selected profile", typed.Provider)
 	}
 }
 

@@ -621,6 +621,21 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	return route, nil
 }
 
+// NetworkRouteForHost resolves only the target Host's effective Network
+// Profile, ignoring any jump chain. Telnet has no jumps or proxy, so its first
+// endpoint is always the target Host; an SSH route would otherwise prefer the
+// first jump's profile.
+func (r vaultRoutes) NetworkRouteForHost(ctx context.Context, id model.HostID) (*appconnection.NetworkRoute, error) {
+	if r.vault == nil {
+		return nil, routeError(errors.New("app: no Vault for route resolution"))
+	}
+	target, err := r.vault.Get(ctx, id)
+	if err != nil {
+		return nil, routeError(fmt.Errorf("Host %s: %w", id, err))
+	}
+	return r.networkRoute(ctx, target)
+}
+
 // networkRoute resolves the selected profile's identity, Kind, display label,
 // and non-secret configuration fingerprint. It never loads key material. A
 // dangling reference stays selected so the runtime fails closed instead of

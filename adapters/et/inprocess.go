@@ -333,12 +333,16 @@ func (f InProcessFactory) acquire(ctx context.Context, spec appsession.StartSpec
 		username = cfg.Username
 	}
 	request := appconnection.Request{
-		HostID:            spec.HostID,
-		Hostname:          spec.Hostname,
-		Port:              spec.Port,
-		Username:          username,
-		Jumps:             route.Jumps,
-		Proxy:             route.Proxy,
+		HostID:   spec.HostID,
+		Hostname: spec.Hostname,
+		Port:     spec.Port,
+		Username: username,
+		Jumps:    route.Jumps,
+		Proxy:    route.Proxy,
+		// The bootstrap and every replacement lease use the same first-endpoint
+		// Network Profile: the Manager opens the Provider from this route and
+		// never falls back to a direct dial.
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
