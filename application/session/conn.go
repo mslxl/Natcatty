@@ -31,6 +31,28 @@ type TerminalConn struct {
 	// output as soon as it is detached, so a hibernated view can never steal
 	// bytes from its replacement.
 	view *viewToken
+	// viewSink applies an authoritative remote screen size to the live view's
+	// terminal. It is registered by the surface after it creates MyGo and is
+	// cleared with the view. The reading goroutine applies pending sizes after
+	// the output produced before the resize and before output encoded for the
+	// new size.
+	viewSink func(cols, rows int)
+	// pendingScreen is the newest remote size the reader has not applied yet.
+	pendingScreen    *screenSizeRequest
+	screenGeneration uint64
+	// transportRead counts output bytes read from the current ScreenSizer
+	// transport and appended to the backlog. It lets the transport's resize
+	// handler wait until every earlier byte reached the view at the old size.
+	transportRead uint64
+}
+
+// screenSizeRequest is one remote resize waiting for the live view's reader.
+// drainBefore is the number of unread backlog bytes produced before the
+// resize; they are returned to the view before the size is applied.
+type screenSizeRequest struct {
+	cols, rows  int
+	generation  uint64
+	drainBefore int
 }
 
 // viewToken identifies one claimed live view.
@@ -51,31 +73,213 @@ func (c *TerminalConn) Read(p []byte) (int, error) {
 // read drains the backlog for the owning view when token is non-nil, or for
 // the legacy direct reader when it is nil. A view whose token is no longer
 // current gets io.EOF without consuming bytes meant for its replacement.
+//
+// A pending authoritative resize splits the backlog: bytes produced before it
+// are returned at the old size, then this goroutine calls Terminal.Resize, and
+// only then are bytes encoded for the new size returned. That is the other
+// half of MyGo's ResizeByConn contract.
 func (c *TerminalConn) read(p []byte, token *viewToken) (int, error) {
 	c.mu.Lock()
-	for len(c.buffer) == 0 && (token == nil || c.view == token) && !c.eof && !c.closed {
+	for {
+		if token != nil && c.view != token {
+			c.mu.Unlock()
+			return 0, io.EOF
+		}
+		if c.pendingScreen != nil {
+			resize := *c.pendingScreen
+			// Bytes the transport produced before the resize belong to the
+			// old screen. Deliver them before Terminal.Resize so MyGo lays
+			// them out at the size the server used.
+			if resize.drainBefore > 0 && len(c.buffer) > 0 {
+				n := c.consumeLocked(p, resize.drainBefore)
+				resize.drainBefore -= n
+				c.pendingScreen = &resize
+				c.mu.Unlock()
+				return n, nil
+			}
+			sink := c.viewSink
+			if sink == nil {
+				if c.eof || c.closed {
+					c.pendingScreen = nil
+					c.cond.Broadcast()
+					continue
+				}
+				if token == nil && c.view == nil {
+					// No live screen can apply it; a later view reads the
+					// next resize the transport reports.
+					c.pendingScreen = nil
+					c.cond.Broadcast()
+					continue
+				}
+				c.cond.Wait()
+				continue
+			}
+			c.mu.Unlock()
+			sink(resize.cols, resize.rows)
+			c.mu.Lock()
+			if c.pendingScreen != nil && c.pendingScreen.generation == resize.generation {
+				c.pendingScreen = nil
+				c.cond.Broadcast()
+			}
+			continue
+		}
+		if len(c.buffer) > 0 {
+			n := c.consumeLocked(p, len(p))
+			c.mu.Unlock()
+			return n, nil
+		}
+		if c.eof || c.closed {
+			c.mu.Unlock()
+			return 0, io.EOF
+		}
 		c.cond.Wait()
 	}
-	if token != nil && c.view != token {
-		c.mu.Unlock()
-		return 0, io.EOF
+}
+
+// consumeLocked moves at most limit bytes from the backlog into p. The caller
+// holds c.mu.
+func (c *TerminalConn) consumeLocked(p []byte, limit int) int {
+	if limit > len(p) {
+		limit = len(p)
 	}
-	if len(c.buffer) > 0 {
-		n := copy(p, c.buffer)
-		c.buffer = c.buffer[n:]
-		if len(c.buffer) == 0 {
-			c.buffer = nil
-		}
-		c.pending -= n
-		if c.paused && c.pending <= LowWaterMark {
-			c.paused = false
-			c.cond.Broadcast()
-		}
+	if limit > len(c.buffer) {
+		limit = len(c.buffer)
+	}
+	n := copy(p, c.buffer[:limit])
+	c.buffer = c.buffer[n:]
+	if len(c.buffer) == 0 {
+		c.buffer = nil
+	}
+	c.pending -= n
+	if c.paused && c.pending <= LowWaterMark {
+		c.paused = false
+		c.cond.Broadcast()
+	}
+	return n
+}
+
+// noteTransportRead records output bytes read from the current ScreenSizer
+// transport. The resize handler waits on this count so a screen size never
+// overtakes bytes the server produced before it.
+func (c *TerminalConn) noteTransportRead(n int) {
+	if n <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.transportRead += uint64(n)
+	c.cond.Broadcast()
+	c.mu.Unlock()
+}
+
+// resetTransportPosition starts a new transport generation at offset zero.
+func (c *TerminalConn) resetTransportPosition() {
+	c.mu.Lock()
+	c.transportRead = 0
+	c.mu.Unlock()
+}
+
+// applyScreenSize records the peer's authoritative size and waits until the
+// live view's reader has applied it. Position is the transport's output offset
+// before the resize; with a live view, every byte below it is delivered to the
+// view at the old size first. With no live view the size stays pending and the
+// next view applies it before reading queued output. The transport calls this
+// before making display bytes encoded at that size available.
+func (c *TerminalConn) applyScreenSize(cols, rows int, position uint64) {
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+	c.mu.Lock()
+	if c.closed || c.eof {
 		c.mu.Unlock()
-		return n, nil
+		return
+	}
+	waited := c.view != nil
+	for c.view != nil && !c.eof && !c.closed && c.transportRead < position {
+		c.cond.Wait()
+	}
+	if c.closed || c.eof {
+		c.mu.Unlock()
+		return
+	}
+	if waited {
+		// Keyword highlighting can hold a partial line after the reader has
+		// consumed its raw bytes. Flush it now so those bytes join the old-size
+		// backlog rather than surfacing after the resize.
+		c.mu.Unlock()
+		c.session.flushHighlightCarry()
+		c.mu.Lock()
+		if c.closed || c.eof {
+			c.mu.Unlock()
+			return
+		}
+	}
+	c.screenGeneration++
+	request := &screenSizeRequest{
+		cols:        cols,
+		rows:        rows,
+		generation:  c.screenGeneration,
+		drainBefore: len(c.buffer),
+	}
+	c.pendingScreen = request
+	c.cond.Broadcast()
+	if c.view == nil {
+		c.mu.Unlock()
+		return
+	}
+	for c.pendingScreen != nil && c.pendingScreen.generation == request.generation &&
+		c.view != nil && !c.eof && !c.closed {
+		c.cond.Wait()
 	}
 	c.mu.Unlock()
-	return 0, io.EOF
+}
+
+// prepareScreen applies a pending authoritative size to the live view through
+// its sink. A resumed view calls this before replaying its snapshot: the
+// snapshot may already contain output encoded for the new size, and it must
+// not reach the terminal before Terminal.Resize. A nil sink waits until the
+// surface registers one or the view is detached.
+func (c *TerminalConn) prepareScreen(token *viewToken) {
+	c.mu.Lock()
+	for {
+		if token != nil && c.view != token {
+			c.mu.Unlock()
+			return
+		}
+		if c.pendingScreen == nil {
+			c.mu.Unlock()
+			return
+		}
+		pending := *c.pendingScreen
+		sink := c.viewSink
+		if sink == nil {
+			if c.eof || c.closed {
+				c.pendingScreen = nil
+				c.cond.Broadcast()
+				c.mu.Unlock()
+				return
+			}
+			c.cond.Wait()
+			continue
+		}
+		c.mu.Unlock()
+		sink(pending.cols, pending.rows)
+		c.mu.Lock()
+		if c.pendingScreen != nil && c.pendingScreen.generation == pending.generation {
+			c.pendingScreen = nil
+			c.cond.Broadcast()
+		}
+	}
+}
+
+// setScreenSizeSink installs the live view's Terminal.Resize. The token check
+// keeps a detached view from applying a size meant for its replacement.
+func (c *TerminalConn) setScreenSizeSink(token *viewToken, sink func(cols, rows int)) {
+	c.mu.Lock()
+	if token != nil && c.view == token {
+		c.viewSink = sink
+		c.cond.Broadcast()
+	}
+	c.mu.Unlock()
 }
 
 // Write queues input for the transport. It blocks while the bounded writer
@@ -123,6 +327,8 @@ func (c *TerminalConn) Close() error {
 	c.closed = true
 	c.buffer = nil
 	c.pending = 0
+	c.pendingScreen = nil
+	c.viewSink = nil
 	c.cond.Broadcast()
 	c.mu.Unlock()
 	return c.session.Close()
@@ -195,6 +401,7 @@ func (c *TerminalConn) detachView(token *viewToken) {
 	c.mu.Lock()
 	if c.view == token {
 		c.view = nil
+		c.viewSink = nil
 		c.cond.Broadcast()
 	}
 	c.mu.Unlock()
@@ -212,6 +419,7 @@ func (c *TerminalConn) hasView() bool {
 func (c *TerminalConn) detachCurrentView() {
 	c.mu.Lock()
 	c.view = nil
+	c.viewSink = nil
 	c.cond.Broadcast()
 	c.mu.Unlock()
 }

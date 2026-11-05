@@ -124,7 +124,7 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		}
 		return f.telnet.Open(ctx, spec)
 	case appsession.KindMosh:
-		return f.openSelected(ctx, spec, "Mosh", f.mosh, f.moshInProcess)
+		return f.openSelected(ctx, f.withMoshPreferences(spec), "Mosh", f.mosh, f.moshInProcess)
 	case appsession.KindET:
 		return f.openSelected(ctx, spec, "EternalTerminal", f.et, f.etInProcess)
 	default:
@@ -148,6 +148,22 @@ func (f *transportFactory) Open(ctx context.Context, spec appsession.StartSpec) 
 		return nil, err
 	}
 	return &leasedTransport{terminal: terminal, lease: lease, notices: notices, tmuxAttached: attached}, nil
+}
+
+// withMoshPreferences copies the persisted prediction choice into a Mosh
+// Session's bootstrap configuration. Both client implementations then receive
+// the same mode: the bundled client through MOSH_PREDICTION_DISPLAY and the
+// in-process client through its prediction engine. A test or MCP caller that
+// supplies no global preferences keeps the configuration as written.
+func (f *transportFactory) withMoshPreferences(spec appsession.StartSpec) appsession.StartSpec {
+	if spec.Mosh == nil || f.defaults == nil {
+		return spec
+	}
+	settings := f.defaults.Settings()
+	cfg := spec.Mosh.Normalized()
+	cfg.PredictionDisplay = settings.Transport.MoshPredictionDisplay.Normalized()
+	spec.Mosh = &cfg
+	return spec
 }
 
 // openSelected routes a Mosh or EternalTerminal Session to the persisted

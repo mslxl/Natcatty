@@ -99,6 +99,17 @@ type fakeServer struct {
 	wg              sync.WaitGroup
 	firstResponse   bool
 	shutdownOnFirst bool
+	// onDecoded, when non-nil, takes over normal request handling. The
+	// scripted stock-client test uses it to drive a deterministic state
+	// sequence after each client acknowledgement.
+	onDecoded func(moshcore.TransportInstruction)
+	// scripted suppresses the lifecycle server's automatic prompt responses.
+	scripted bool
+	// appModeProbe switches the remote cursor-key mode on the first input and
+	// renders a marker, so a Session-seam test can observe both translation
+	// directions.
+	appModeProbe bool
+	appModeSent  bool
 }
 
 func startFakeServer(t *testing.T) *fakeServer {
@@ -115,35 +126,69 @@ func startFakeServerWithProtocol(t *testing.T, protocol uint32) *fakeServer {
 
 func startFakeServerWithOptions(t *testing.T, protocol uint32, shutdownOnFirst bool) *fakeServer {
 	t.Helper()
+	server := newFakeServerAt(t, net.IPv4(127, 0, 0, 1), protocol)
+	server.shutdownOnFirst = shutdownOnFirst
+	server.start()
+	return server
+}
+
+// startInputModeServer switches the remote DECCKM state on the first input so
+// an end-to-end Session test can check both cursor-key translation paths.
+func startInputModeServer(t *testing.T) *fakeServer {
+	t.Helper()
+	server := newFakeServerAt(t, net.IPv4(127, 0, 0, 1), 2)
+	server.appModeProbe = true
+	server.start()
+	return server
+}
+
+// newFakeServerAt binds the fake mosh server to ip without starting its read
+// loop. Tests that install a script configure the server first, so the loop
+// goroutine cannot race a field write.
+func newFakeServerAt(t *testing.T, ip net.IP, protocol uint32) *fakeServer {
+	t.Helper()
 	key := bytes.Repeat([]byte{0x33}, 16)
 	ocb, err := moshcore.NewOCB(key)
 	if err != nil {
 		t.Fatalf("NewOCB: %v", err)
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
-	server := &fakeServer{
-		t:               t,
-		conn:            conn,
-		ocb:             ocb,
-		key:             key,
-		seen:            make(map[uint64]bool),
-		protocol:        protocol,
-		input:           make(chan []byte, 32),
-		resizes:         make(chan [2]int, 8),
-		shutdown:        make(chan struct{}, 1),
-		shutdownAck:     make(chan struct{}, 1),
-		badProtocol:     make(chan uint32, 1),
-		stop:            make(chan struct{}),
-		firstResponse:   true,
-		shutdownOnFirst: shutdownOnFirst,
+	return &fakeServer{
+		t:             t,
+		conn:          conn,
+		ocb:           ocb,
+		key:           key,
+		seen:          make(map[uint64]bool),
+		protocol:      protocol,
+		input:         make(chan []byte, 32),
+		resizes:       make(chan [2]int, 8),
+		shutdown:      make(chan struct{}, 1),
+		shutdownAck:   make(chan struct{}, 1),
+		badProtocol:   make(chan uint32, 1),
+		stop:          make(chan struct{}),
+		firstResponse: true,
 	}
-	server.wg.Add(2)
-	go server.loop()
-	go server.injectLoop()
-	t.Cleanup(server.Close)
+}
+
+// start launches the server's receive and injection loops. Tests configure
+// the fixture first, so the goroutines cannot race a field write.
+func (s *fakeServer) start() {
+	s.wg.Add(2)
+	go s.loop()
+	go s.injectLoop()
+	s.t.Cleanup(s.Close)
+}
+
+// startFakeServerAt binds the fake mosh server to ip. The stock-client test
+// listens on all IPv4 interfaces so a Docker container can reach it through
+// host.docker.internal; lifecycle tests stay on loopback.
+func startFakeServerAt(t *testing.T, ip net.IP, protocol uint32) *fakeServer {
+	t.Helper()
+	server := newFakeServerAt(t, ip, protocol)
+	server.start()
 	return server
 }
 
@@ -203,6 +248,16 @@ func (s *fakeServer) announcementOn(port int) string {
 		base64.RawStdEncoding.EncodeToString(s.key) + "\r\n"
 }
 
+// noteClientState records the newest client state the next host-state datagram
+// should acknowledge, as mosh-server does.
+func (s *fakeServer) noteClientState(num uint64) {
+	s.sendMu.Lock()
+	if num > s.clientAckNum {
+		s.clientAckNum = num
+	}
+	s.sendMu.Unlock()
+}
+
 func (s *fakeServer) loop() {
 	defer s.wg.Done()
 	buffer := make([]byte, 2048)
@@ -227,11 +282,24 @@ func (s *fakeServer) loop() {
 			// The remote shell exits before the probe completes; mosh-server
 			// sends its shutdown sentinel as the first host state.
 			s.remoteGone = true
-			s.sendMu.Lock()
-			s.clientAckNum = instruction.NewNum
-			s.sendMu.Unlock()
+			s.noteClientState(instruction.NewNum)
 			s.sendHostState([]byte("bye\r\n"), moshcore.ShutdownNum)
 			continue
+		}
+		if s.onDecoded != nil {
+			if s.scripted {
+				// mosh-server acknowledges the client's latest state in every
+				// datagram. The scripted driver supplies no host input of its
+				// own, but stock still sends empty acks with fresh state
+				// numbers; record them before sending the next state. Without
+				// this stock's reply-late count-up fires after 10 s and draws
+				// a wall-clock notification bar into the differential.
+				s.noteClientState(instruction.NewNum)
+			}
+			s.onDecoded(instruction)
+			if s.scripted {
+				continue
+			}
 		}
 		if instruction.NewNum == moshcore.ShutdownNum {
 			select {
@@ -263,11 +331,7 @@ func (s *fakeServer) loop() {
 			continue
 		}
 		s.seen[instruction.NewNum] = true
-		s.sendMu.Lock()
-		if instruction.NewNum > s.clientAckNum {
-			s.clientAckNum = instruction.NewNum
-		}
-		s.sendMu.Unlock()
+		s.noteClientState(instruction.NewNum)
 		if len(keys) > 0 {
 			s.inputBuffer = append(s.inputBuffer, keys...)
 			select {
@@ -275,6 +339,11 @@ func (s *fakeServer) loop() {
 			case <-s.stop:
 				return
 			}
+		}
+		if s.appModeProbe && !s.appModeSent && len(keys) > 0 {
+			s.appModeSent = true
+			s.sendHostState([]byte("\x1b[?1hMODE"), 0)
+			continue
 		}
 		if resize != nil {
 			s.resizes <- [2]int{resize[0], resize[1]}
@@ -298,9 +367,19 @@ func (s *fakeServer) loop() {
 // sendHostState sends one host instruction. newNum 0 means "advance the host
 // state"; ShutdownNum sends the sentinel state.
 func (s *fakeServer) sendHostState(output []byte, newNum uint64) {
-	var diff []byte
+	var instructions []moshcore.HostInstruction
 	if len(output) > 0 {
-		diff = moshcore.MarshalHostMessage([]moshcore.HostInstruction{{HostString: output}})
+		instructions = []moshcore.HostInstruction{{HostString: output}}
+	}
+	s.sendHostInstructions(instructions, newNum)
+}
+
+// sendHostInstructions sends one host state carrying a group of terminal
+// instructions, which is how mosh-server combines a resize and output.
+func (s *fakeServer) sendHostInstructions(instructions []moshcore.HostInstruction, newNum uint64) {
+	var diff []byte
+	if len(instructions) > 0 {
+		diff = moshcore.MarshalHostMessage(instructions)
 	}
 	if newNum == 0 {
 		newNum = s.lastHostNum + 1
@@ -518,6 +597,53 @@ func readUntil(t *testing.T, transport appsession.Transport, marker string, time
 	}
 }
 
+// readStreamUntil reads any io.Reader (a Session view in the input-translation
+// test) until it contains marker.
+func readStreamUntil(t *testing.T, reader io.Reader, marker string, timeout time.Duration) string {
+	t.Helper()
+	result := make(chan string, 1)
+	go func() {
+		var collected bytes.Buffer
+		buffer := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buffer)
+			if n > 0 {
+				collected.Write(buffer[:n])
+				if strings.Contains(collected.String(), marker) {
+					result <- collected.String()
+					return
+				}
+			}
+			if err != nil {
+				result <- collected.String()
+				return
+			}
+		}
+	}()
+	select {
+	case text := <-result:
+		if !strings.Contains(text, marker) {
+			t.Fatalf("output %q does not contain %q", text, marker)
+		}
+		return text
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for %q", marker)
+		return ""
+	}
+}
+
+// nextInputChunk waits for exactly one chunk of keys the fake server received.
+func nextInputChunk(t *testing.T, server *fakeServer, timeout time.Duration) []byte {
+	t.Helper()
+	select {
+	case chunk := <-server.input:
+		return chunk
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for input")
+		return nil
+	}
+}
+
 func waitInput(t *testing.T, server *fakeServer, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -545,8 +671,13 @@ func TestInProcessAdapterLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = transport.Close() })
 
 	first := readUntil(t, transport, "fake$ ", 2*time.Second)
-	if reset, prompt := strings.Index(first, viewportReset), strings.Index(first, "fake$ "); reset < 0 || reset > prompt {
-		t.Fatalf("first output %q does not reset the viewport before the first frame", first)
+	// The first bytes are the Display encoder's open and initial blank frame,
+	// which clears the bootstrap banner before the server's screen diff.
+	if open, prompt := strings.Index(first, "\x1b[?1h"), strings.Index(first, "fake$ "); open < 0 || open > prompt {
+		t.Fatalf("first output %q does not open the display before the first frame", first)
+	}
+	if clear, prompt := strings.Index(first, "\x1b[H\x1b[2J"), strings.Index(first, "fake$ "); clear < 0 || clear > prompt {
+		t.Fatalf("first output %q does not clear before the server frame", first)
 	}
 	if _, err := transport.Write([]byte("echo hi\r")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -580,6 +711,49 @@ resized:
 	}
 	if end := transport.(appsession.EndReporter).End(); end.Reason != appsession.EndReasonClosed {
 		t.Fatalf("end = %+v, want closed", end)
+	}
+}
+
+// TestSessionInputTranslationReachesTransport exercises cursor-key
+// translation through a real Session and view, not only the renderer: an SS3
+// arrow becomes CSI while the remote is in normal mode, and stays SS3 after
+// the remote enables application cursor mode.
+func TestSessionInputTranslationReachesTransport(t *testing.T) {
+	server := startInputModeServer(t)
+	factory := InProcessFactory{
+		Bootstrap:    bannerBootstrap{banner: server.announcement()},
+		ProbeTimeout: 500 * time.Millisecond,
+	}
+	service := appsession.NewService(factory)
+	t.Cleanup(service.CloseAll)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := service.Open(ctx, inProcessTestSpec())
+	if err != nil {
+		t.Fatalf("open Session: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	view, err := session.AttachView()
+	if err != nil {
+		t.Fatalf("attach view: %v", err)
+	}
+	t.Cleanup(func() { _ = view.Close() })
+
+	if _, err := view.Write([]byte("\x1bOA")); err != nil {
+		t.Fatalf("write normal-mode SS3: %v", err)
+	}
+	if got := nextInputChunk(t, server, 2*time.Second); string(got) != "\x1b[A" {
+		t.Fatalf("normal-mode input = %q, want CSI A", got)
+	}
+	// MODE is rendered from the same host state that sets DECCKM, so once the
+	// view sees it the remote application-cursor mode is active.
+	readStreamUntil(t, view, "MODE", 2*time.Second)
+
+	if _, err := view.Write([]byte("\x1bOA")); err != nil {
+		t.Fatalf("write application-mode SS3: %v", err)
+	}
+	if got := nextInputChunk(t, server, 2*time.Second); string(got) != "\x1bOA" {
+		t.Fatalf("application-mode input = %q, want SS3 A", got)
 	}
 }
 

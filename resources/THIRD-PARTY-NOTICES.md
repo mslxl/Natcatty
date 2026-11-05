@@ -258,6 +258,28 @@ Additional Rust dependency notices:
   `MIT/Apache-2.0`; this notice treats it as `MIT OR Apache-2.0` and includes
   both texts.
 
+## Stock mosh terminal model in the in-process client
+
+- Component: the client-side terminal model ported into
+  `internal/mosh/terminal` (parser, emulator, framebuffer, dispatcher, display,
+  user input, and terminal overlays)
+- Upstream: stock mosh 1.4.0 `src/terminal/`, `src/statesync/completeterminal.cc`,
+  and `src/frontend/terminaloverlay.cc`
+- Source:
+  <https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz>
+- SHA-256:
+  `872e4b134e5df29c8933dff12350785054d2fd2839b5ae6b5587b14db1465ddd`
+- Copyright: Copyright (C) 2012 Keith Winstein and mosh contributors
+- License: GPL-3.0-or-later (full text: [`LICENSE`](../LICENSE))
+- Shipped notice: [`internal/mosh/NOTICE`](../internal/mosh/NOTICE)
+- Parity harness and recorded image/source provenance:
+  `internal/mosh/terminal/testdata/parity/harness/README.md`
+
+The Go port is distributed under the app's GPL-3.0-or-later license. The parity
+harness downloads and builds the pinned stock source only inside a Docker image
+at test time; no stock mosh source or binary is committed or shipped with the
+application.
+
 ## EternalTerminal client (`et`)
 
 - Component: `et` from Netcatty-et-bin `et-bin-6.2.10-1`
