@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -951,6 +953,44 @@ func TestProviderRedactsSecretsFromErrorsAndLogs(t *testing.T) {
 	}
 	if !strings.Contains(joined, "[redacted]") {
 		t.Fatalf("the device log was not redacted: %s", joined)
+	}
+}
+
+// TestProviderWritesNoPlaintextFiles pins WireGuard's no-persistence model:
+// starting a device with a Private Key and Preshared Key creates no file in the
+// process working directory. The netstack backend keeps its state in memory;
+// there is no TUN device and no state directory to protect.
+func TestProviderWritesNoPlaintextFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	config := testConfig()
+	config.Peers[0].PresharedKey = testPSK
+	provider := newTestProvider(t, config, &fakeFactory{}, nil)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var written []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			written = append(written, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk working directory: %v", err)
+	}
+	if len(written) != 0 {
+		t.Fatalf("WireGuard wrote plaintext files: %v", written)
+	}
+	// The keys remain in memory for the running device; no exported field or
+	// status string renders them.
+	rendered := fmt.Sprintf("%+v", provider.Status())
+	if strings.Contains(rendered, testPrivateKey) || strings.Contains(rendered, testPSK) {
+		t.Fatalf("the live status carries key material: %s", rendered)
 	}
 }
 

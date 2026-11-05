@@ -166,6 +166,36 @@ type cancelPathWriter struct{}
 
 func (cancelPathWriter) Save(string, []byte) (string, error) { return "", nil }
 
+func TestCancelledDestructiveExportKeepsNoFileOrOutcome(t *testing.T) {
+	// The user enabled plaintext secrets and confirmed, then cancelled the
+	// native save dialog. Content may be generated in memory, but the writer
+	// is told to save and returns no path, so no file and no success banner is
+	// produced.
+	exports := &fakeExports{result: appvault.Export{
+		Filename: "netcatty-vault.json",
+		Content:  []byte(`{"secrets":"in-memory-only"}`),
+	}}
+	state := NewState(&fakeHosts{}, WithExports(exports),
+		WithExportWriter(cancelPathWriter{}), WithRedrawRequest(func() {}))
+	state.BeginExport()
+	state.SetExportIncludeSecrets(true)
+	state.ConfirmExportSecrets()
+	if err := state.Export(""); err != nil {
+		t.Fatal(err)
+	}
+	if len(exports.options) != 1 || !exports.options[0].IncludeSecrets {
+		t.Fatalf("the confirmed destructive export did not reach the use case: %+v",
+			exports.options)
+	}
+	if state.ExportProblem() != ProblemNone || !state.ExportOpen() {
+		t.Fatalf("cancel reported a problem or closed the panel: %q, %v",
+			state.ExportProblem(), state.ExportOpen())
+	}
+	if _, ok := state.ExportOutcome(); ok {
+		t.Fatal("a cancelled save recorded a successful export")
+	}
+}
+
 func TestExportUnavailableAndWriterFailuresAreReported(t *testing.T) {
 	state := NewState(&fakeHosts{}, WithRedrawRequest(func() {}))
 	state.BeginExport()

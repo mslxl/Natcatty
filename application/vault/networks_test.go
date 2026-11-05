@@ -71,9 +71,10 @@ func testWireGuardKey(b byte) string {
 	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{b}, 32))
 }
 
-func newNetworkTestService(repo NetworkProfileRepository, secrets FieldSecrets) *Service {
+func newNetworkTestService(repo NetworkProfileRepository, secrets FieldSecrets,
+	extra ...Option) *Service {
 	var profiles, peers int
-	return NewService(&fakeHosts{},
+	options := []Option{
 		WithSecrets(secrets),
 		WithNetworkProfiles(repo),
 		WithNetworkProfileIDGenerator(func() string {
@@ -85,7 +86,9 @@ func newNetworkTestService(repo NetworkProfileRepository, secrets FieldSecrets) 
 			return "peer-" + strconv.Itoa(peers)
 		}),
 		WithClock(func() time.Time { return time.Unix(1700000000, 0).UTC() }),
-	)
+	}
+	options = append(options, extra...)
+	return NewService(&fakeHosts{}, options...)
 }
 
 func tailscaleNetworkDraft(authKey string) domainvault.NetworkProfileDraft {
@@ -389,6 +392,65 @@ func TestDeleteNetworkProfileRemovesTheRecordAndEverySecret(t *testing.T) {
 	}
 	if err := service.DeleteNetworkProfile(context.Background(), "missing"); err != ErrNotFound {
 		t.Fatalf("deleting a missing profile = %v, want ErrNotFound", err)
+	}
+}
+
+type fakeNetworkStateCleaner struct {
+	profiles []domainvault.NetworkProfile
+	err      error
+}
+
+func (f *fakeNetworkStateCleaner) RemoveNetworkProfileState(_ context.Context,
+	profile domainvault.NetworkProfile) error {
+	f.profiles = append(f.profiles, profile)
+	return f.err
+}
+
+func TestDeleteNetworkProfileCleansRuntimeState(t *testing.T) {
+	cleaner := &fakeNetworkStateCleaner{}
+	secrets := newFakeSecrets()
+	repo := &fakeNetworkProfiles{}
+	service := newNetworkTestService(repo, secrets, WithNetworkProfileStateCleaner(cleaner))
+	profile, err := service.CreateNetworkProfile(context.Background(),
+		wireGuardNetworkDraft(testWireGuardKey(1), testWireGuardKey(2), testWireGuardKey(3)))
+	if err != nil {
+		t.Fatalf("CreateNetworkProfile: %v", err)
+	}
+	if err := service.DeleteNetworkProfile(context.Background(), profile.ID); err != nil {
+		t.Fatalf("DeleteNetworkProfile: %v", err)
+	}
+	if len(cleaner.profiles) != 1 || cleaner.profiles[0].ID != profile.ID ||
+		cleaner.profiles[0].Kind != profile.Kind {
+		t.Fatalf("state cleanup = %+v, want the deleted profile", cleaner.profiles)
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != profile.ID {
+		t.Fatalf("deleted = %v", repo.deleted)
+	}
+}
+
+func TestDeleteNetworkProfileRefusesWhenStateCleanupFails(t *testing.T) {
+	// A failure to remove node identity material must not report a completed
+	// delete. The record, its references, and its secrets stay so the user can
+	// retry instead of leaving state behind an already-deleted profile.
+	cleaner := &fakeNetworkStateCleaner{err: errors.New("state directory is a link")}
+	secrets := newFakeSecrets()
+	repo := &fakeNetworkProfiles{}
+	service := newNetworkTestService(repo, secrets, WithNetworkProfileStateCleaner(cleaner))
+	profile, err := service.CreateNetworkProfile(context.Background(),
+		wireGuardNetworkDraft(testWireGuardKey(1), testWireGuardKey(2), testWireGuardKey(3)))
+	if err != nil {
+		t.Fatalf("CreateNetworkProfile: %v", err)
+	}
+	err = service.DeleteNetworkProfile(context.Background(), profile.ID)
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != KindInternal {
+		t.Fatalf("DeleteNetworkProfile error = %v, want KindInternal", err)
+	}
+	if len(repo.deleted) != 0 || len(repo.items) != 1 {
+		t.Fatalf("a refused delete changed the repository: %+v", repo)
+	}
+	if _, ok := secrets.values[NetworkProfileSecretRef(profile.ID, FieldNetworkPrivateKey)]; !ok {
+		t.Fatal("a refused delete removed the Private Key ciphertext")
 	}
 }
 

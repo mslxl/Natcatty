@@ -296,9 +296,11 @@ type FamilyProxyProfile struct {
 	Password string
 }
 
-// FamilyNetworkProfile is one portable Network Profile. The document never
-// carries Auth Keys, Private Keys, or Preshared Keys; the Has* flags describe
-// the source device's secret store and are not restorable on their own.
+// FamilyNetworkProfile is one portable Network Profile. An ordinary export
+// carries no Auth Key, Private Key, or Preshared Key and leaves the Has* flags
+// to describe the source device's secret store. A destructive export adds the
+// credential plaintext in memory; the application writes it to the destination
+// field-secret store and never to the profile record.
 type FamilyNetworkProfile struct {
 	ID        string
 	Label     string
@@ -307,16 +309,19 @@ type FamilyNetworkProfile struct {
 	WireGuard *FamilyWireGuardNetwork
 }
 
-// FamilyTailscaleNetwork is a Tailscale Net's non-secret configuration.
+// FamilyTailscaleNetwork is a Tailscale Net's configuration. AuthKey is
+// plaintext in memory only and is present only in a destructive export.
 type FamilyTailscaleNetwork struct {
 	Hostname   string
 	ControlURL string
 	Ephemeral  bool
 	Tags       []string
 	HasAuthKey bool
+	AuthKey    string
 }
 
-// FamilyWireGuardNetwork is a WireGuard Net's non-secret configuration.
+// FamilyWireGuardNetwork is a WireGuard Net's configuration. PrivateKey is
+// plaintext in memory only and is present only in a destructive export.
 type FamilyWireGuardNetwork struct {
 	Addresses     []string
 	DNS           []string
@@ -324,9 +329,11 @@ type FamilyWireGuardNetwork struct {
 	ListenPort    int
 	Peers         []FamilyWireGuardPeer
 	HasPrivateKey bool
+	PrivateKey    string
 }
 
-// FamilyWireGuardPeer is one portable WireGuard peer.
+// FamilyWireGuardPeer is one portable WireGuard peer. PresharedKey is
+// plaintext in memory only and is present only in a destructive export.
 type FamilyWireGuardPeer struct {
 	ID                  string
 	PublicKey           string
@@ -334,6 +341,7 @@ type FamilyWireGuardPeer struct {
 	AllowedIPs          []string
 	PersistentKeepalive int
 	HasPresharedKey     bool
+	PresharedKey        string
 }
 
 // FamilyKnownHost is one recorded host-key trust decision.

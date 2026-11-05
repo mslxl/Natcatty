@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -349,6 +351,38 @@ func TestSnapshotCarriesNetworkProfileSecretsWithoutPlaintextRecords(t *testing.
 		!strings.Contains(string(encoded), `"hasPrivateKey":true`) ||
 		!strings.Contains(string(encoded), `"hasPresharedKey":true`) {
 		t.Fatalf("Has* markers were lost: %s", encoded)
+	}
+}
+
+// TestSnapshotExcludesRuntimeStateFiles proves cloud sync is built only from
+// Vault records and field secrets. A sentinel planted where an embedded
+// Tailscale node keeps its state directory must not appear in the payload,
+// even though the file sits under the same user-data tree.
+func TestSnapshotExcludesRuntimeStateFiles(t *testing.T) {
+	userData := t.TempDir()
+	stateDir := filepath.Join(userData, "network-providers", "tailscale", "node-0123456789abcdef")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "tailscale-node-state-sentinel"
+	if err := os.WriteFile(filepath.Join(stateDir, "tailscaled.state"), []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tailscale, _ := networkFixtures()
+	records := &fakeRecords{networks: []domainvault.NetworkProfile{tailscale}}
+	secrets := &fakeSecrets{mode: appvault.SecretModeOS, values: map[appvault.SecretRef]string{}}
+	payload, err := New(records, secrets).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{sentinel, "network-providers", "tailscaled.state"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("the sync payload contains runtime state %q: %s", forbidden, encoded)
+		}
 	}
 }
 
