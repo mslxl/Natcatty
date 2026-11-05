@@ -2,12 +2,12 @@ package releasenotes
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mslxl/natcatty/internal/release"
 	"github.com/mslxl/natcatty/internal/testutil"
 )
 
@@ -161,8 +161,10 @@ func TestGenerateReleaseNotesForTheRealChangelog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read mygo.json: %v", err)
 	}
-	manifest, err := release.ParseManifest(manifestData)
-	if err != nil {
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("parse mygo.json: %v", err)
 	}
 	notes, err := Generate(changelog, manifest.Version)

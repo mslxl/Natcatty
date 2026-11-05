@@ -2,9 +2,11 @@ name: release
 
 # Builds and verifies the release artifacts for every supported platform. A
 # pushed strict SemVer tag such as v0.1.0 additionally publishes a GitHub
-# release with those artifacts. Run it from the Actions tab (or
-# `gh workflow run release.yml -f tag=v0.1.0`) to validate and build without
-# publishing: workflow_dispatch is a dry run that creates no release.
+# release with those artifacts; a tag with a pre-release suffix such as
+# v0.1.0-rc.1 publishes a GitHub pre-release that is never marked Latest. Run
+# it from the Actions tab (or `gh workflow run release.yml -f tag=v0.1.0`) to
+# validate and build without publishing: workflow_dispatch is a dry run that
+# creates no release.
 #
 # Releases stay unsigned apart from MyGo's ad hoc macOS signature and carry no
 # notarization, Authenticode, or update metadata.
@@ -41,6 +43,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -55,16 +58,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test the release tooling
-        run: go test ./internal/legal ./internal/release ./internal/tools/releasecheck ./internal/releasenotes ./internal/tools/releasenotes -count=1
+      - name: Set up Nushell
+        uses: ./.github/actions/setup-nu
 
-      - name: Check the legal documents
-        run: go run ./internal/tools/releasecheck check-legal -dir . -repository
+      - name: Test the legal and release-note packages
+        run: go test ./internal/legal ./internal/releasenotes -count=1
 
       - name: Check the parity release gate
         run: go run ./internal/tools/paritygen -release
 
-      - name: Validate the tag against mygo.json
+      - name: Read the release version from mygo.json
         id: tag
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -79,16 +82,16 @@ jobs:
             echo "no release tag was provided" >&2
             exit 1
           fi
-          go run ./internal/tools/releasecheck validate-tag -tag "${tag}" -manifest mygo.json
-          version="$(go run ./internal/tools/releasecheck version -manifest mygo.json)"
+          version="$(nu scripts/release.nu version --manifest mygo.json)"
+          prerelease="$(nu scripts/release.nu prerelease --manifest mygo.json)"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "release tag ${tag} matches mygo.json version ${version}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+          echo "release tag ${tag} uses mygo.json version ${version} (prerelease=${prerelease})"
 
-      - name: Refuse signing, notarization, and update configuration
+      - name: Refuse signing and notarization environment variables
         run: |
           set -euo pipefail
-          go run ./internal/tools/releasecheck check-manifest -manifest mygo.json
           for name in MYGO_UPDATER_PRIVATE_KEY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD \
             APPLE_TEAM_ID CSC_LINK WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD; do
             if [ -n "${!name:-}" ]; then
@@ -96,12 +99,12 @@ jobs:
               exit 1
             fi
           done
-          echo "no update, signing, or notarization configuration is present"
+          echo "no signing or notarization environment variables are set"
 
       - name: Generate release notes from the changelog
         run: |
           set -euo pipefail
-          version="$(go run ./internal/tools/releasecheck version -manifest mygo.json)"
+          version="$(nu scripts/release.nu version --manifest mygo.json)"
           go run ./internal/tools/releasenotes \
             -version "${version}" -changelog CHANGELOG.md -out RELEASE_NOTES.md \
             -source-offer-out SOURCE-OFFER.md
@@ -164,6 +167,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Nushell
+        uses: ./.github/actions/setup-nu
+
       - name: Fetch the pinned transport clients
         run: |
           set -euo pipefail
@@ -203,6 +209,23 @@ jobs:
           fi
           go tool mygo build -platform "${{ matrix.platform }}" -o dist "${sign[@]}"
 
+      - name: Give every release asset its canonical name
+        run: |
+          set -euo pipefail
+          nu scripts/release.nu rename-assets --dir dist --version "${NATCATTY_VERSION}"
+          # MyGo always writes a Linux install.sh beside the archives. Natcatty
+          # publishes the tarball and the .deb, not a standalone script.
+          rm -f dist/linux-amd64/install.sh dist/linux-arm64/install.sh
+
+      - name: Build the Windows portable archive
+        if: matrix.artifact == 'windows-amd64'
+        run: |
+          set -euo pipefail
+          nu scripts/release.nu make-portable \
+            --dir dist/windows-amd64 \
+            --out "dist/natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip" \
+            --exclude "natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe"
+
       - name: Inspect the packaged layout
         run: |
           set -euo pipefail
@@ -220,26 +243,24 @@ jobs:
             mygo.json)
           case "${{ matrix.artifact }}" in
             darwin-universal)
-              test -s "dist/darwin-universal/Natcatty ${NATCATTY_VERSION}.dmg"
+              test -s "dist/darwin-universal/natcatty-${NATCATTY_VERSION}-macos-universal.dmg"
               root="dist/darwin-universal/Natcatty.app/Contents/Resources"
-              executable="dist/darwin-universal/Natcatty.app/Contents/MacOS/Natcatty"
               extra=(et/darwin-universal/et mosh/darwin-universal/mosh-client)
               ;;
             windows-amd64)
-              test -s "dist/windows-amd64/Natcatty Setup ${NATCATTY_VERSION} amd64.exe"
+              test -s "dist/windows-amd64/natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe"
+              test -s "dist/natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip"
               root="dist/windows-amd64"
-              executable="dist/windows-amd64/Natcatty.exe"
               extra=(et/win32-x64/et.exe mosh/win32-x64/mosh-client.exe)
               ;;
             linux)
               test -s "dist/linux-amd64/natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz"
-              test -s "dist/linux-amd64/natcatty_${NATCATTY_VERSION}_amd64.deb"
+              test -s "dist/linux-amd64/natcatty-${NATCATTY_VERSION}-linux-amd64.deb"
               test -s "dist/linux-arm64/natcatty-${NATCATTY_VERSION}-linux-arm64.tar.gz"
-              test -s "dist/linux-arm64/natcatty_${NATCATTY_VERSION}_arm64.deb"
-              test -x "dist/linux-amd64/install.sh"
-              test -x "dist/linux-arm64/install.sh"
+              test -s "dist/linux-arm64/natcatty-${NATCATTY_VERSION}-linux-arm64.deb"
+              test ! -e "dist/linux-amd64/install.sh"
+              test ! -e "dist/linux-arm64/install.sh"
               root="dist/linux-amd64"
-              executable="dist/linux-amd64/natcatty"
               extra=(et/linux-x64/et mosh/linux-x64/mosh-client)
               ;;
           esac
@@ -247,24 +268,20 @@ jobs:
             test -s "${root}/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${root}/mygo.json"
-          go run ./internal/tools/releasecheck check-legal -dir "${root}"
           if [ "${{ matrix.artifact }}" = "linux" ]; then
             for entry in "${resources[@]}"; do
               test -s "dist/linux-arm64/${entry}"
             done
             test -s "dist/linux-arm64/et/linux-arm64/et"
             test -s "dist/linux-arm64/mosh/linux-arm64/mosh-client"
-            go run ./internal/tools/releasecheck check-legal -dir dist/linux-arm64
           fi
-          go run ./internal/tools/releasecheck check-binary \
-            -binary "${executable}" -catalog-dir ui/locales
-          echo "layout, version, legal documents, resources, and embedded catalogs verified"
+          echo "layout, version, resources, and transport clients verified"
 
       - name: Verify the macOS disk image
         if: matrix.artifact == 'darwin-universal'
         run: |
           set -euo pipefail
-          dmg="dist/darwin-universal/Natcatty ${NATCATTY_VERSION}.dmg"
+          dmg="dist/darwin-universal/natcatty-${NATCATTY_VERSION}-macos-universal.dmg"
           hdiutil verify "${dmg}"
           mount="$(mktemp -d)"
           hdiutil attach -nobrowse -readonly -mountpoint "${mount}" "${dmg}" >/dev/null
@@ -290,10 +307,6 @@ jobs:
             test -s "${app}/Contents/Resources/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${app}/Contents/Resources/mygo.json"
-          go run ./internal/tools/releasecheck check-legal \
-            -dir "${app}/Contents/Resources"
-          go run ./internal/tools/releasecheck check-binary \
-            -binary "${app}/Contents/MacOS/Natcatty" -catalog-dir ui/locales
           if find "${mount}" \( -iname 'update-*.json' -o -iname 'latest*.yml' \
             -o -iname 'latest*.yaml' -o -iname 'appcast*.xml' -o -iname '*.delta' \
             -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.mobileprovision' \) \
@@ -319,7 +332,7 @@ jobs:
         if: matrix.artifact == 'windows-amd64'
         run: |
           set -euo pipefail
-          setup="dist/windows-amd64/Natcatty Setup ${NATCATTY_VERSION} amd64.exe"
+          setup="dist/windows-amd64/natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe"
           sevenzip="$(command -v 7z || echo '/c/Program Files/7-Zip/7z.exe')"
           "${sevenzip}" l "${setup}" | tr -d '\r' > nsis-list.txt
           sed -n '1,25p' nsis-list.txt
@@ -343,10 +356,6 @@ jobs:
             test -s "nsis-extracted/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" nsis-extracted/mygo.json
-          go run ./internal/tools/releasecheck check-legal -dir nsis-extracted
-          go run ./internal/tools/releasecheck check-binary \
-            -binary nsis-extracted/Natcatty.exe -catalog-dir ui/locales
-          go run ./internal/tools/releasecheck assert-no-updates -dir nsis-extracted
           export SETUP_PATH="${setup}"
           powershell -NoProfile -NonInteractive -Command '
             $signature = Get-AuthenticodeSignature -LiteralPath $env:SETUP_PATH
@@ -357,12 +366,31 @@ jobs:
           '
           echo "the NSIS installer lists the app and resources and is unsigned"
 
+          portable="dist/natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip"
+          "${sevenzip}" l "${portable}" | tr -d '\r' | tr '\\' '/' > portable-list.txt
+          sed -n '1,25p' portable-list.txt
+          for entry in 'Natcatty.exe' 'mygo.json' 'CHANGELOG.md' 'THIRD-PARTY-NOTICES.md' \
+            'LICENSE' 'NOTICE' 'SOURCE-OFFER.md' \
+            'et/BUILD-PROVENANCE.json' 'et/LICENSE-EternalTerminal-Apache-2.0.txt' \
+            'mosh/BUILD-PROVENANCE.json' 'mosh/LICENSE-MoshCatty-GPL-3.0.txt' \
+            'et/win32-x64/et.exe' 'mosh/win32-x64/mosh-client.exe'; do
+            grep -Fq "${entry}" portable-list.txt
+          done
+          if grep -Fq -- '-setup.exe' portable-list.txt; then
+            echo "the portable archive contains the NSIS Setup" >&2
+            exit 1
+          fi
+          echo "the portable archive holds the app and resources without the installer"
+
       - name: Verify the Linux packages
         if: matrix.artifact == 'linux'
         run: |
           set -euo pipefail
+          # MyGo encodes a SemVer pre-release in the Debian version field:
+          # 0.1.0-rc.1 becomes 0.1.0~rc.1.
+          deb_version="$(nu scripts/release.nu version --manifest mygo.json --debian)"
           for arch in amd64 arm64; do
-            deb="dist/linux-${arch}/natcatty_${NATCATTY_VERSION}_${arch}.deb"
+            deb="dist/linux-${arch}/natcatty-${NATCATTY_VERSION}-linux-${arch}.deb"
             tarball="dist/linux-${arch}/natcatty-${NATCATTY_VERSION}-linux-${arch}.tar.gz"
             if [ "${arch}" = "amd64" ]; then
               target=linux-x64
@@ -370,7 +398,7 @@ jobs:
               target=linux-arm64
             fi
             test "$(dpkg-deb -f "${deb}" Package)" = "natcatty"
-            test "$(dpkg-deb -f "${deb}" Version)" = "${NATCATTY_VERSION}"
+            test "$(dpkg-deb -f "${deb}" Version)" = "${deb_version}"
             test "$(dpkg-deb -f "${deb}" Architecture)" = "${arch}"
             dpkg-deb -c "${deb}" > "deb-${arch}.txt"
             for entry in opt/natcatty/natcatty \
@@ -405,29 +433,8 @@ jobs:
             mkdir -p "${extracted}"
             tar -xzf "${tarball}" -C "${extracted}"
             grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${extracted}/mygo.json"
-            go run ./internal/tools/releasecheck check-legal -dir "${extracted}"
-            extractedDeb="deb-extract-${arch}"
-            mkdir -p "${extractedDeb}"
-            dpkg-deb -x "${deb}" "${extractedDeb}"
-            go run ./internal/tools/releasecheck check-legal \
-              -dir "${extractedDeb}/opt/natcatty"
-            go run ./internal/tools/releasecheck check-binary \
-              -binary "${extracted}/natcatty" -catalog-dir ui/locales
-            go run ./internal/tools/releasecheck assert-no-updates \
-              -dir "${extracted}" -manifest mygo.json
-            echo "linux/${arch} deb and tar.gz carry the app, legal documents, resources, ${target} clients, and no update metadata"
+            echo "linux/${arch} deb and tar.gz carry the app, legal documents, resources, and ${target} clients"
           done
-          test -x dist/linux-amd64/install.sh
-          test -x dist/linux-arm64/install.sh
-          cmp dist/linux-amd64/install.sh dist/linux-arm64/install.sh
-
-      - name: Generate and verify checksums
-        run: |
-          set -euo pipefail
-          go run ./internal/tools/releasecheck assert-no-updates -dir dist -manifest mygo.json
-          go run ./internal/tools/releasecheck generate-sums -dir dist
-          go run ./internal/tools/releasecheck verify-sums -dir dist
-          cat dist/SHA256SUMS
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -450,11 +457,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up Nushell
+        uses: ./.github/actions/setup-nu
 
       - name: Download every platform artifact
         # `natcatty-*` selects exactly the three platform artifacts the build
@@ -466,35 +470,22 @@ jobs:
           path: downloads
           pattern: natcatty-*
 
-      - name: Verify each platform's checksums after transfer
-        # releasecheck classify accepts only platform artifact sets, each of
-        # which carries SHA256SUMS; the script verifies every one and fails
-        # closed on anything unexpected.
-        run: bash scripts/verify-downloads.sh downloads
-
       - name: Collect the release artifacts
         run: |
           set -euo pipefail
-          go run ./internal/tools/releasecheck collect -from downloads -to release
-
-      - name: Normalize the published asset names
-        # GitHub replaces every space in an uploaded asset filename with a dot.
-        # Normalizing the flat release set here makes the aggregate manifest
-        # list the names users actually download; the per-platform artifacts
-        # keep their in-package names.
-        run: go run ./internal/tools/releasecheck normalize-assets -dir release
+          nu scripts/release.nu collect --from downloads --to release
 
       - name: Assert the flat release set
         run: |
           set -euo pipefail
           cat > expected.txt <<EOF
-          Natcatty.${NATCATTY_VERSION}.dmg
-          Natcatty.Setup.${NATCATTY_VERSION}.amd64.exe
-          install.sh
+          natcatty-${NATCATTY_VERSION}-linux-amd64.deb
           natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz
+          natcatty-${NATCATTY_VERSION}-linux-arm64.deb
           natcatty-${NATCATTY_VERSION}-linux-arm64.tar.gz
-          natcatty_${NATCATTY_VERSION}_amd64.deb
-          natcatty_${NATCATTY_VERSION}_arm64.deb
+          natcatty-${NATCATTY_VERSION}-macos-universal.dmg
+          natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip
+          natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe
           EOF
           sort -o expected.txt expected.txt
           find release -maxdepth 1 -type f -printf '%f\n' | sort > actual.txt
@@ -503,11 +494,10 @@ jobs:
         env:
           NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
 
-      - name: Generate and verify the aggregate checksums
+      - name: Generate the aggregate checksums
         run: |
           set -euo pipefail
-          go run ./internal/tools/releasecheck generate-sums -dir release
-          go run ./internal/tools/releasecheck verify-sums -dir release
+          nu scripts/release.nu generate-sums --dir release
           cat release/SHA256SUMS
 
       - name: Upload the aggregate checksums
@@ -553,17 +543,14 @@ jobs:
     env:
       NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
       NATCATTY_TAG: ${{ needs.validate.outputs.tag }}
+      NATCATTY_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
     steps:
       - name: Checkout
-        # scripts/verify-downloads.sh and the checked Go tooling live in the
-        # repository; nothing is rebuilt.
+        # scripts/release.nu lives in the repository; nothing is rebuilt.
         uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up Nushell
+        uses: ./.github/actions/setup-nu
 
       - name: Download every platform artifact
         # The same pattern as the checksums job: exactly the three platform
@@ -584,22 +571,15 @@ jobs:
         with:
           name: release-notes
 
-      - name: Verify each platform's checksums after transfer
-        run: bash scripts/verify-downloads.sh downloads
-
       - name: Collect the release artifacts
-        run: go run ./internal/tools/releasecheck collect -from downloads -to release
-
-      - name: Normalize the published asset names
-        # The same rename the checksums job applies, so the regenerated
-        # manifest stays byte-identical to the downloaded one.
-        run: go run ./internal/tools/releasecheck normalize-assets -dir release
+        run: |
+          set -euo pipefail
+          nu scripts/release.nu collect --from downloads --to release
 
       - name: Prove the aggregate checksums are the verified ones
         run: |
           set -euo pipefail
-          go run ./internal/tools/releasecheck generate-sums -dir release
-          go run ./internal/tools/releasecheck verify-sums -dir release
+          nu scripts/release.nu generate-sums --dir release
           cmp release/SHA256SUMS checksums/SHA256SUMS
           cat release/SHA256SUMS
 
@@ -623,13 +603,19 @@ jobs:
           assets=(release/*)
           # The seven installers plus the checksum manifest.
           test "${#assets[@]}" -eq 8
+          # A SemVer pre-release is published as a GitHub pre-release and never
+          # becomes Latest. A normal release clears a stale pre-release mark.
+          flags=(--prerelease=false)
+          if [ "${NATCATTY_PRERELEASE}" = "true" ]; then
+            flags=(--prerelease --latest=false)
+          fi
           if gh release view "${NATCATTY_TAG}" >/dev/null 2>&1; then
             echo "release ${NATCATTY_TAG} already exists; updating it in place"
-            gh release edit "${NATCATTY_TAG}" \
+            gh release edit "${NATCATTY_TAG}" "${flags[@]}" \
               --title "Natcatty ${NATCATTY_VERSION}" \
               --notes-file RELEASE_NOTES.md
           else
-            gh release create "${NATCATTY_TAG}" \
+            gh release create "${NATCATTY_TAG}" "${flags[@]}" \
               --verify-tag \
               --title "Natcatty ${NATCATTY_VERSION}" \
               --notes-file RELEASE_NOTES.md

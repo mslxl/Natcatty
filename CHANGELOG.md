@@ -25,9 +25,14 @@ do not maintain them by hand.
   Tabs; the previous Tabs and layout are restored only after enabling Restore
   the previous session in Settings → Layout & Tabs.
 - Release tags now publish a GitHub Release page with the platform installers
-  (the macOS disk image, the Windows Setup, the Linux tar.gz and .deb packages
-  for amd64 and arm64, and `install.sh`) and the checksum manifest. A manually
-  dispatched workflow run still only validates and builds.
+  (the macOS disk image, the Windows Setup and portable zip, and the Linux
+  tar.gz and .deb packages for amd64 and arm64) and the checksum manifest,
+  under one `natcatty-<version>-<os>-<arch>` naming scheme. The standalone
+  Linux `install.sh` is no longer published. A SemVer pre-release tag is
+  marked as a GitHub pre-release and never becomes Latest. A manually
+  dispatched workflow run still only validates and builds. Release preparation
+  uses `scripts/release.nu`; the Go `releasecheck` helper and its release-time
+  checks were removed.
 
 ## [0.1.0] - 2026-10-28
 

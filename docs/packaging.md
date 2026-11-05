@@ -6,12 +6,22 @@ configuration; `go tool mygo build` reads it directly.
 
 ## Artifacts
 
+Every published asset follows the same
+`natcatty-<version>-<os>-<arch>[-<kind>].<ext>` scheme. MyGo writes the DMG,
+the Setup executable, and the `.deb` files under its own names; the build job
+renames them with `scripts/release.nu rename-assets` before writing any
+checksum.
+The `.deb`'s own `Version` field is Debian-encoded, so a SemVer pre-release
+`0.1.0-rc.1` becomes `0.1.0~rc.1` inside the package; the published file name
+keeps the SemVer form.
+
 | Platform | Artifact | Notes |
 | --- | --- | --- |
-| macOS (universal) | `Natcatty 0.1.0.dmg` | Contains `Natcatty.app` for arm64 and amd64. Ad hoc signed only. |
-| Windows amd64 | `Natcatty Setup 0.1.0 amd64.exe` | NSIS installer, unsigned. The raw `Natcatty.exe` and its resources are the build inputs. |
-| Linux amd64 | `natcatty-0.1.0-linux-amd64.tar.gz`, `natcatty_0.1.0_amd64.deb`, `install.sh` | The tarball holds the executable and resources; `install.sh` installs either arch for the current user. |
-| Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty_0.1.0_arm64.deb`, `install.sh` | Same shape; the arm64 bundle selects the arm64 transport clients. |
+| macOS (universal) | `natcatty-0.1.0-macos-universal.dmg` | Contains `Natcatty.app` for arm64 and amd64. Ad hoc signed only. |
+| Windows amd64 | `natcatty-0.1.0-windows-amd64-setup.exe` | NSIS installer, unsigned. The raw `Natcatty.exe` and its resources are the build inputs. |
+| Windows amd64 | `natcatty-0.1.0-windows-amd64-portable.zip` | The raw executable and resources, without the NSIS installer. |
+| Linux amd64 | `natcatty-0.1.0-linux-amd64.tar.gz`, `natcatty-0.1.0-linux-amd64.deb` | The tarball holds the executable and resources. MyGo's standalone `install.sh` is removed and not published. |
+| Linux arm64 | `natcatty-0.1.0-linux-arm64.tar.gz`, `natcatty-0.1.0-linux-arm64.deb` | Same shape; the arm64 bundle selects the arm64 transport clients. |
 
 Every artifact copies the `resources/` tree next to the executable (inside
 `Contents/Resources` on macOS). That includes `THIRD-PARTY-NOTICES.md`,
@@ -56,55 +66,51 @@ from the ephemeral workspace so each package carries only runnable clients.
 tag or on a pushed `v*` tag. A pushed tag publishes a GitHub release; a
 `workflow_dispatch` run validates and builds only, as a dry run.
 
-1. **validate** checks the Go release tooling tests (including the legal
-   checks, changelog parser, and release-note generator), runs
-   `releasecheck check-legal -dir . -repository`, runs the parity release gate
-   (`go run ./internal/tools/paritygen -release`), requires the tag to be
-   strict SemVer (`vMAJOR.MINOR.PATCH[-pre]`) exactly matching `mygo.json`
-   `version`, rejects signing/notarization/update configuration, refuses
-   updater or signing environment variables, and generates `RELEASE_NOTES.md`
-   and `SOURCE-OFFER.md` from `CHANGELOG.md` for that version. It requires the
-   notes and the standalone offer to contain the `## Corresponding Source`
-   section and the tag URL, and uploads both as workflow artifacts. A missing
-   changelog entry, a duplicate version, an empty section, or a missing legal
-   document fails validation.
+1. **validate** runs the remaining release-adjacent Go tests (the legal checks
+   and the changelog parser and release-note generator), runs the parity
+   release gate (`go run ./internal/tools/paritygen -release`), reads the
+   version and pre-release flag from `mygo.json` with
+   `nu scripts/release.nu`, refuses updater or signing environment variables,
+   and generates `RELEASE_NOTES.md` and `SOURCE-OFFER.md` from `CHANGELOG.md`
+   for that version. It requires the notes and the standalone offer to contain
+   the `## Corresponding Source` section and the tag URL, and uploads both as
+   workflow artifacts. A missing changelog entry, a duplicate version, or an
+   empty section fails validation.
 2. **build** runs on `macos-latest`, `windows-latest`, and `ubuntu-latest`,
-   writes `resources/SOURCE-OFFER.md` for the validated version, builds with
-   MyGo, and verifies the artifact itself. Every platform runs
-   `releasecheck check-legal` against the packaged resources, so a missing
-   `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, or `SOURCE-OFFER.md` fails
-   the build:
+   writes `resources/SOURCE-OFFER.md` for the manifest version, builds with
+   MyGo, renames every release artifact to its canonical name with
+   `nu scripts/release.nu rename-assets`, and removes MyGo's standalone Linux
+   `install.sh`. Windows also gets the portable archive, built from the app
+   directory without the Setup executable by
+   `nu scripts/release.nu make-portable`. Every platform then verifies the
+   artifact's layout and required resources:
    - macOS: `hdiutil verify`, mounts the DMG, checks `Info.plist`, the version,
-     the resources (including `CHANGELOG.md` and the legal documents), the
-     embedded catalogs, and `codesign -dv` (ad hoc, no `Authority`).
+     the resources (including `CHANGELOG.md` and the legal documents), and
+     `codesign -dv` (ad hoc, no `Authority`).
    - Windows: `7z l` must identify the NSIS installer and list the app and
      resources (including `CHANGELOG.md` and the legal documents); it is
-     extracted, the legal documents and embedded catalogs are checked, and
-     `Get-AuthenticodeSignature` must report `NotSigned`.
+     extracted and `Get-AuthenticodeSignature` must report `NotSigned`. The
+     portable zip is listed too and must hold the app and resources without
+     the Setup.
    - Linux: `dpkg-deb -f`/`-c` and `tar -tzf` must list the app, resources
      (including `CHANGELOG.md` and the legal documents), and platform transport
-     clients; the extracted `.deb` and tarball pass `check-legal`, and the
-     extracted executable must embed all five catalogs.
-   Every job also runs `releasecheck assert-no-updates`, then writes and
-   verifies a checksum manifest for its own artifacts.
-3. **checksums** downloads the platform artifacts, re-verifies each one after
-   transfer, flattens the release set, renames the flat assets the way GitHub
-   does for release assets (every space becomes a dot), and generates one
-   aggregate checksum manifest with relative names. `releasecheck` names each
-   downloaded directory and fails closed on anything unexpected. It also
-   asserts the exact seven-file set. Both the platform artifacts and the
-   aggregate manifest are uploaded as workflow artifacts.
+     clients.
+3. **checksums** downloads the platform artifacts, flattens the release set
+   with `nu scripts/release.nu collect`, asserts the exact seven-file set, and
+   generates one aggregate checksum manifest with relative names. Both the
+   platform artifacts and the aggregate manifest are uploaded as workflow
+   artifacts.
 4. **publish** runs only for a pushed tag, depends on `validate`, `build`, and
    `checksums`, and is the only job with `contents: write`. It downloads the
-   already-verified platform artifacts, re-runs their checksums after
-   transfer, and flattens them again. It applies the same asset rename,
-   regenerates the aggregate checksum manifest, verifies it, and requires it
-   to be byte-identical to the one the `checksums` job produced, so the
-   published manifest is provably the verified one. It then creates a GitHub
-   release titled `Natcatty <version>` for the tag, or edits the existing
-   release when the tag is re-pushed or force-moved, and attaches the release
-   assets with `--clobber`. The tag and the release are never deleted. A
-   `workflow_dispatch` run skips this job and publishes nothing.
+   platform artifacts and flattens them again. It regenerates the aggregate
+   checksum manifest and requires it to be byte-identical to the one the
+   `checksums` job produced. It then creates a GitHub release titled
+   `Natcatty <version>` for the tag, or edits the existing release when the
+   tag is re-pushed or force-moved, and attaches the release assets with
+   `--clobber`. A version with a SemVer pre-release suffix is marked as a
+   GitHub pre-release and is never marked Latest. The tag and the release are
+   never deleted. A `workflow_dispatch` run skips this job and publishes
+   nothing.
 
 ## Release page
 
@@ -114,18 +120,18 @@ by hand; the body always ends with the generated `## Corresponding Source`
 statement for the tag. The assets are the seven installers and the checksum
 manifest:
 
-- `Natcatty.<version>.dmg` (macOS universal)
-- `Natcatty.Setup.<version>.amd64.exe` (Windows amd64)
+- `natcatty-<version>-macos-universal.dmg`
+- `natcatty-<version>-windows-amd64-setup.exe`
+- `natcatty-<version>-windows-amd64-portable.zip`
 - `natcatty-<version>-linux-amd64.tar.gz`
 - `natcatty-<version>-linux-arm64.tar.gz`
-- `natcatty_<version>_amd64.deb`
-- `natcatty_<version>_arm64.deb`
-- `install.sh`
+- `natcatty-<version>-linux-amd64.deb`
+- `natcatty-<version>-linux-arm64.deb`
 - the checksum manifest, which lists all seven with relative names
 
-GitHub replaces every space in a release-asset filename with a dot, which is
-why the published names above differ from the in-package names in the
-Artifacts table. The license, modification notice, complete third-party
+A tag whose version has a pre-release suffix (for example
+`v0.1.0-rc.1`) produces a GitHub pre-release instead of a normal release, and
+is never marked Latest. The license, modification notice, complete third-party
 notices, and corresponding-source offer are carried inside each installer next
 to the executable; the release body carries the source offer for the tag. The
 workflow asserts the offer is in the notes and in every extracted package
@@ -135,27 +141,27 @@ The release stays unsigned apart from MyGo's ad hoc macOS signature and carries
 no notarization or update metadata; publishing it does not relax any of the
 checks above.
 
-`releasecheck` is checked Go tooling in `internal/tools/releasecheck`; its
-rules live in `internal/release`. Run it locally with:
+`scripts/release.nu` is the checked release tooling. It reads `mygo.json`,
+renames the built packages, writes the Windows portable archive, and generates
+and flattens the checksum manifests. The release workflow installs the pinned
+Nushell release with `.github/actions/setup-nu`; install Nushell locally to run
+the same commands:
 
 ```sh
-go run ./internal/tools/releasecheck validate-tag -tag v0.1.0 -manifest mygo.json
-go run ./internal/tools/releasecheck check-legal -dir . -repository
-go run ./internal/tools/releasecheck generate-sums -dir dist
-go run ./internal/tools/releasecheck verify-sums -dir dist
+nu scripts/release.nu version --manifest mygo.json
+nu scripts/release.nu version --manifest mygo.json --debian
+nu scripts/release.nu prerelease --manifest mygo.json
+nu scripts/release.nu rename-assets --dir dist --version 0.1.0
+nu scripts/release.nu make-portable --dir dist/windows-amd64 \
+  --out dist/natcatty-0.1.0-windows-amd64-portable.zip \
+  --exclude natcatty-0.1.0-windows-amd64-setup.exe
+nu scripts/release.nu generate-sums --dir dist
+nu scripts/release.nu collect --from downloads --to release
 ```
 
-`check-legal -dir . -repository` requires `LICENSE`, `NOTICE`,
-`resources/THIRD-PARTY-NOTICES.md`, and a `mygo.json` resources list that ships
-`LICENSE` and `NOTICE`. Without `-repository` it checks a packaged artifact
-instead and requires
-`LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md`, and `SOURCE-OFFER.md` next to the
-executable, and requires the offer to name the version in the packaged
-`mygo.json`. The check is mechanical; it does not replace human or legal
-review.
-
-The aggregate manifest uses names relative to the collected artifact
-directory, so verify it from that directory.
+`make-portable` needs `7z`; the Windows runner provides it. The aggregate
+manifest uses names relative to the collected artifact directory, so verify it
+from that directory with `sha256sum -c SHA256SUMS`.
 
 ## Release notes
 
@@ -213,7 +219,7 @@ megabytes and licensing review; the prerequisite is documented instead.
 
 The Go executables themselves are byte-reproducible for identical sources,
 inputs, and toolchain; two local Linux builds produced identical `natcatty`
-binaries and identical `install.sh` scripts. The tarballs and `.deb` packages
+binaries. The tarballs and `.deb` packages
 are not byte-reproducible because MyGo embeds build timestamps in their
 archives, so two builds differ in those container files even when every payload
 is identical. Treat the aggregate checksum manifest as identifying the

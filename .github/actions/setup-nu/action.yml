@@ -1,0 +1,90 @@
+name: Set up Nushell
+description: Install the pinned Nushell release used by scripts/release.nu.
+inputs:
+  version:
+    description: Nushell release to install.
+    required: false
+    default: 0.114.1
+runs:
+  using: composite
+  steps:
+    - name: Install Nushell
+      shell: bash
+      env:
+        NU_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        # GitHub's runners do not ship Nushell. Pin one release and verify the
+        # downloaded archive against the digest recorded here.
+        case "${RUNNER_OS}" in
+          Linux)
+            target=x86_64-unknown-linux-gnu
+            ext=tar.gz
+            sha256=8802b26edcdf1a64477567b5ce909fbae3d72d731c8f0847892ea16c6fa73c53
+            ;;
+          macOS)
+            case "$(uname -m)" in
+              arm64)
+                target=aarch64-apple-darwin
+                sha256=cb0ac9b97b985cd217a952f44438a14d2df2a95504d9bd8bc01ec73e1351b179
+                ;;
+              x86_64)
+                target=x86_64-apple-darwin
+                sha256=4659a78545b7f6a303e661fe3bd276a765c64ccde67112d32045be5fe075f206
+                ;;
+              *)
+                echo "unsupported macOS architecture: $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+            ext=tar.gz
+            ;;
+          Windows)
+            target=x86_64-pc-windows-msvc
+            ext=zip
+            sha256=71a88cb74f51a9fdd91003273fb1f3361d7b393fb3a03014f43e5f111df9666f
+            ;;
+          *)
+            echo "unsupported runner: ${RUNNER_OS}" >&2
+            exit 1
+            ;;
+        esac
+
+        if command -v cygpath >/dev/null 2>&1; then
+          temp="$(cygpath -u "${RUNNER_TEMP}")"
+        else
+          temp="${RUNNER_TEMP}"
+        fi
+        work="${temp}/nushell-${NU_VERSION}-${target}"
+        rm -rf "${work}"
+        mkdir -p "${work}"
+
+        asset="nu-${NU_VERSION}-${target}.${ext}"
+        curl -fsSL -o "${work}/${asset}" \
+          "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${asset}"
+
+        if command -v sha256sum >/dev/null 2>&1; then
+          (cd "${work}" && printf '%s  %s\n' "${sha256}" "${asset}" | sha256sum --check -)
+        elif command -v shasum >/dev/null 2>&1; then
+          (cd "${work}" && printf '%s  %s\n' "${sha256}" "${asset}" | shasum -a 256 --check -)
+        else
+          actual="$(certutil -hashfile "${work}/${asset}" SHA256 | sed -n '2p' | tr -d ' \r')"
+          test "${actual}" = "${sha256}"
+        fi
+
+        if [ "${ext}" = "zip" ]; then
+          sevenzip="$(command -v 7z || echo '/c/Program Files/7-Zip/7z.exe')"
+          "${sevenzip}" x -y -o"${work}" "${work}/${asset}" >/dev/null
+          bin="${work}"
+        else
+          tar -xzf "${work}/${asset}" -C "${work}"
+          bin="${work}/nu-${NU_VERSION}-${target}"
+        fi
+
+        if command -v cygpath >/dev/null 2>&1; then
+          echo "$(cygpath -w "${bin}")" >> "${GITHUB_PATH}"
+        else
+          echo "${bin}" >> "${GITHUB_PATH}"
+        fi
+        "${bin}/nu" --version

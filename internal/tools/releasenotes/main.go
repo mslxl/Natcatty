@@ -1,7 +1,7 @@
 // Command releasenotes generates RELEASE_NOTES.md for one version from the
 // repository's Keep a Changelog file. It is checked release tooling: the
-// release workflow runs it after the tag matches mygo.json, uploads the result
-// as a workflow artifact, and uses it as the body of the GitHub release that a
+// release workflow runs it for the version in mygo.json, uploads the result as
+// a workflow artifact, and uses it as the body of the GitHub release that a
 // tag push publishes.
 //
 //	go run ./internal/tools/releasenotes -version 0.1.0 -changelog CHANGELOG.md -out RELEASE_NOTES.md
@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/mslxl/natcatty/internal/legal"
-	"github.com/mslxl/natcatty/internal/release"
 	"github.com/mslxl/natcatty/internal/releasenotes"
 )
 
@@ -44,9 +43,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if *version == "" {
 		return fmt.Errorf("-version is required")
 	}
-	normalized, err := normalizeVersion(*version)
-	if err != nil {
-		return err
+	normalized := normalizeVersion(*version)
+	if normalized == "" {
+		return fmt.Errorf("-version is empty")
 	}
 	changelog, err := os.ReadFile(*changelogPath)
 	if err != nil {
@@ -89,20 +88,8 @@ func writeFile(path string, data []byte) error {
 	return nil
 }
 
-// normalizeVersion accepts the strict manifest version or the release tag and
-// returns the manifest spelling the changelog heading uses.
-func normalizeVersion(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "v") {
-		parsed, err := release.ParseTag(value)
-		if err != nil {
-			return "", err
-		}
-		return parsed.String(), nil
-	}
-	parsed, err := release.ParseVersion(value)
-	if err != nil {
-		return "", err
-	}
-	return parsed.String(), nil
+// normalizeVersion accepts the manifest version or the release tag and returns
+// the manifest spelling the changelog heading uses.
+func normalizeVersion(value string) string {
+	return strings.TrimPrefix(strings.TrimSpace(value), "v")
 }
