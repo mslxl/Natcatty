@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	moshcore "github.com/mslxl/natcatty/internal/mosh"
 	"github.com/mslxl/natcatty/internal/mosh/terminal"
 )
@@ -93,6 +94,22 @@ type terminalRendererOptions struct {
 	// tests substitute a manually advanced clock, which is then also read
 	// directly for acknowledgements.
 	Clock terminal.Clock
+	// PredictionDisplay selects the local-echo mode. Nil keeps the prediction
+	// engine's stock adaptive default.
+	PredictionDisplay *terminal.DisplayPreference
+}
+
+// predictionPreference maps the persisted Mosh choice onto the terminal
+// overlay's stock modes.
+func predictionPreference(mode moshmodel.PredictionDisplay) terminal.DisplayPreference {
+	switch mode.Normalized() {
+	case moshmodel.PredictionAlways:
+		return terminal.DisplayAlways
+	case moshmodel.PredictionNever:
+		return terminal.DisplayNever
+	default:
+		return terminal.DisplayAdaptive
+	}
 }
 
 // defaultTerminalRendererOptions returns the production renderer settings.
@@ -161,6 +178,9 @@ func newTerminalRendererWithOptions(queue *outputQueue, cols, rows int,
 	}
 	initial := terminal.NewComplete(cols, rows)
 	overlays := terminal.NewOverlayManager(clock)
+	if options.PredictionDisplay != nil {
+		overlays.Predictions().SetDisplayPreference(*options.PredictionDisplay)
+	}
 	if len(options.TitlePrefix) > 0 {
 		overlays.SetTitlePrefix(options.TitlePrefix)
 	}
@@ -430,6 +450,49 @@ func (r *terminalRenderer) maintainOverlays() error {
 	r.nextOverlayDraw = now + uint64(waitTime)
 	r.mu.Unlock()
 	return r.emitLatest()
+}
+
+// predictionNetworkHints mirrors STMClient::process_network_input's overlay
+// updates: the acknowledged SSP state, the transport's current send interval,
+// and the newest remote state's EchoAck. Stock updates these after every
+// authenticated receive, before the next frame is drawn.
+func (r *terminalRenderer) predictionNetworkHints(sentAcked uint64, sendInterval uint) {
+	r.mu.Lock()
+	predictions := r.overlays.Predictions()
+	predictions.SetLocalFrameAcked(sentAcked)
+	predictions.SetSendInterval(sendInterval)
+	if r.latest != nil {
+		predictions.SetLocalFrameLateAcked(r.latest.EchoAck())
+	}
+	r.mu.Unlock()
+}
+
+// predictUserInput feeds the raw keystrokes to the speculative overlay, exactly
+// as STMClient::process_user_input does before handing them to UserInput. It
+// operates on the framebuffer the user is currently looking at, and only ever
+// mutates overlay state; the bytes sent to the server are decided by the
+// caller and are untouched here.
+func (r *terminalRenderer) predictUserInput(data []byte, localFrameSent uint64) {
+	r.mu.Lock()
+	predictions := r.overlays.Predictions()
+	predictions.SetLocalFrameSent(localFrameSent)
+	if len(data) > 100 {
+		// Don't predict for bulk data (stock's paste heuristic).
+		predictions.Reset()
+	} else {
+		for _, b := range data {
+			predictions.NewUserByte(b, r.lastDrawn)
+		}
+	}
+	r.mu.Unlock()
+}
+
+// resetPredictions discards speculative state, as STMClient::process_resize
+// does when the remote size may change.
+func (r *terminalRenderer) resetPredictions() {
+	r.mu.Lock()
+	r.overlays.Predictions().Reset()
+	r.mu.Unlock()
 }
 
 // translateInput applies the client's forced DECCKM state and the remote

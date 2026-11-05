@@ -6,6 +6,7 @@ package preferences
 import (
 	"math"
 
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 )
@@ -178,6 +179,9 @@ type Security struct {
 // replace it with the default.
 type Transport struct {
 	Implementation transportmodel.Implementation `json:"implementation"`
+	// MoshPredictionDisplay selects local echo for Mosh Sessions. Adaptive is
+	// stock mosh's default and the value an older document implies.
+	MoshPredictionDisplay moshmodel.PredictionDisplay `json:"moshPredictionDisplay"`
 }
 
 // Settings is the whole persisted preference document.
@@ -309,7 +313,10 @@ func Defaults() Settings {
 		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
 		// The bundled clients stay the default until the parity gate and the
 		// opt-in beta complete, per the migration spec.
-		Transport:  Transport{Implementation: transportmodel.Bundled},
+		Transport: Transport{
+			Implementation:        transportmodel.Bundled,
+			MoshPredictionDisplay: moshmodel.PredictionAdaptive,
+		},
 		Monitor:    DefaultMonitor(),
 		SysManager: DefaultSysManager(),
 	}
@@ -385,6 +392,10 @@ func Normalize(settings Settings) Settings {
 	if settings.Transport.Implementation == transportmodel.Unspecified {
 		settings.Transport.Implementation = defaults.Transport.Implementation
 	}
+	// Prediction is display-only, so an old or unknown value safely becomes the
+	// stock default instead of failing a Session open.
+	settings.Transport.MoshPredictionDisplay =
+		settings.Transport.MoshPredictionDisplay.Normalized()
 	settings.Monitor = NormalizeMonitor(settings.Monitor)
 	settings.SysManager = NormalizeSysManager(settings.SysManager)
 	return settings
@@ -492,6 +503,7 @@ const (
 	FieldConfirmCloseSessions        Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive          Field = "security.confirmDestructive"
 	FieldTransportImplementation     Field = "transport.implementation"
+	FieldMoshPredictionDisplay       Field = "transport.moshPredictionDisplay"
 )
 
 // Fields returns every resettable field in Settings-window order.
@@ -513,7 +525,7 @@ func Fields() []Field {
 		FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
-		FieldTransportImplementation,
+		FieldTransportImplementation, FieldMoshPredictionDisplay,
 	}
 }
 
@@ -542,7 +554,7 @@ func GroupOf(field Field) (Group, bool) {
 		return GroupSync, true
 	case FieldConfirmCloseSessions, FieldConfirmDestructive:
 		return GroupSecurity, true
-	case FieldTransportImplementation:
+	case FieldTransportImplementation, FieldMoshPredictionDisplay:
 		return GroupTransport, true
 	default:
 		return "", false
@@ -632,6 +644,8 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Security.ConfirmDestructive = defaults.Security.ConfirmDestructive
 	case FieldTransportImplementation:
 		settings.Transport.Implementation = defaults.Transport.Implementation
+	case FieldMoshPredictionDisplay:
+		settings.Transport.MoshPredictionDisplay = defaults.Transport.MoshPredictionDisplay
 	}
 	return settings
 }
