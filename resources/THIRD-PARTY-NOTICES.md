@@ -72,12 +72,12 @@ each module's own `LICENSE` file.
 | `github.com/glebarez/go-sqlite` | v1.21.2 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
 | `github.com/glebarez/sqlite` | v1.11.0 | MIT | Copyright (c) 2013-NOW Jinzhu |
 | `github.com/go-text/typesetting` | v0.3.5 | BSD-3-Clause (dual-licensed Unlicense OR BSD-3-Clause; this distribution relies on BSD-3-Clause) | Copyright 2021 The go-text authors |
-| `github.com/google/uuid` | v1.3.0 | BSD-3-Clause | Copyright (c) 2009,2014 Google Inc. All rights reserved. |
+| `github.com/google/uuid` | v1.6.0 | BSD-3-Clause | Copyright (c) 2009,2014 Google Inc. All rights reserved. |
 | `github.com/jinzhu/inflection` | v1.0.0 | MIT | Copyright (c) 2015 - Jinzhu |
 | `github.com/jinzhu/now` | v1.1.5 | MIT | Copyright (c) 2013-NOW Jinzhu |
 | `github.com/kayrus/putty` | v1.0.5 | Apache-2.0 | Copyright kayrus and the putty package contributors (the package LICENSE carries the Apache-2.0 text without a copyright line) |
 | `github.com/kr/fs` | v0.1.0 | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
-| `github.com/mattn/go-isatty` | v0.0.17 | MIT (Expat) | Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com> |
+| `github.com/mattn/go-isatty` | v0.0.24 | MIT (Expat) | Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com> |
 | `github.com/pkg/sftp` | v1.13.11 | BSD-2-Clause | Copyright (c) 2013, Dave Cheney |
 | `github.com/remyoudompheng/bigfft` | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
 | `golang.org/x/crypto` | v0.58.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
@@ -91,9 +91,69 @@ each module's own `LICENSE` file.
 | `modernc.org/memory` | v1.5.0 | BSD-3-Clause | Copyright (c) 2017 The Memory Authors. All rights reserved.; portions Copyright (c) 2009 The Go Authors. All rights reserved.; mmap-go portion Copyright (c) 2011, Evan Shaw <edsrzf@gmail.com> |
 | `modernc.org/sqlite` | v1.23.1 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved. |
 
-`github.com/google/go-cmp` appears in `go.sum` only because the protobuf
-module's own tests import it; no Natcatty package imports it and it is not
-linked into the distribution.
+`github.com/google/go-cmp` is an indirect requirement because the protobuf
+module's tests import it; no Natcatty package imports it and it is not linked
+into the distribution.
+
+## Network Provider dependency baseline
+
+Ticket 01 pins the modules used by the in-process Tailscale and WireGuard
+network providers. They are in the `go.mod` module graph and the minimal import
+probe in `internal/netprobe` compiles the packages the adapters use under
+`CGO_ENABLED=0` on every supported target. The application does not import them
+yet, so they are not linked into the current release binary; the provider
+tickets will link them. They are listed now so the pinned graph is auditable
+before those adapters land.
+
+| Module | Version | License | Copyright notice |
+| --- | --- | --- | --- |
+| `filippo.io/edwards25519` | v1.2.0 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved. |
+| `github.com/akutz/memconn` | v0.1.0 | Apache-2.0 | Copyright akutz/memconn contributors (the Apache-2.0 LICENSE has no copyright line) |
+| `github.com/alexbrainman/sspi` | v0.0.0-20250919150558-7d374ff0d59e | BSD-3-Clause | Copyright (c) 2012 The Go Authors. All rights reserved. |
+| `github.com/coder/websocket` | v1.8.15 | ISC | Copyright (c) 2025 Coder |
+| `github.com/creachadair/msync` | v0.10.1 | BSD-3-Clause | Copyright (C) 2022, Michael J. Fromberger |
+| `github.com/dblohm7/wingoes` | v0.0.0-20260526185140-fb298caac7ca | BSD-3-Clause | Copyright (c) 2022, Tailscale Inc. |
+| `github.com/fxamacker/cbor/v2` | v2.9.3 | MIT | Copyright (c) 2019-present Faye Amacker |
+| `github.com/gaissmai/bart` | v0.29.0 | MIT | Copyright (c) 2026 Karl Gaissmaier |
+| `github.com/go-json-experiment/json` | v0.0.0-20260820222146-c27c302e5fc3 | BSD-3-Clause | Copyright (c) 2020 The Go Authors. All rights reserved. |
+| `github.com/godbus/dbus/v5` | v5.2.2 | BSD-2-Clause | Copyright (c) 2013, Georg Reinke, Google |
+| `github.com/golang/groupcache` | v0.0.0-20241129210726-2c02b8208cf8 | Apache-2.0 | Copyright the groupcache authors (the Apache-2.0 LICENSE has no copyright line) |
+| `github.com/google/btree` | v1.1.3 | Apache-2.0 | Copyright the btree authors (the Apache-2.0 LICENSE has no copyright line) |
+| `github.com/google/go-cmp` | v0.7.0 | BSD-3-Clause | Copyright (c) 2017 The Go Authors. All rights reserved. |
+| `github.com/hdevalence/ed25519consensus` | v0.2.0 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved.; Copyright (c) 2020 Henry de Valence. All rights reserved. |
+| `github.com/huin/goupnp` | v1.3.0 | BSD-2-Clause | Copyright (c) 2013, John Beisley |
+| `github.com/jsimonetti/rtnetlink` | v1.4.2 | MIT | Copyright (C) 2016 Jeroen Simonetti |
+| `github.com/klauspost/compress` | v1.20.0 | BSD-3-Clause (bundled components also carry Apache-2.0 and MIT notices) | Copyright (c) 2012 The Go Authors. All rights reserved.; Copyright (c) 2019 Klaus Post. All rights reserved. |
+| `github.com/mdlayher/netlink` | v1.11.2 | MIT | Copyright (C) 2016-2026 Matt Layher |
+| `github.com/mdlayher/socket` | v0.7.0 | MIT | Copyright (C) 2021 Matt Layher |
+| `github.com/mitchellh/go-ps` | v1.0.0 | MIT | Copyright (c) 2014 Mitchell Hashimoto |
+| `github.com/pires/go-proxyproto` | v0.15.0 | Apache-2.0 | Copyright the go-proxyproto authors (the Apache-2.0 LICENSE has no copyright line) |
+| `github.com/safchain/ethtool` | v0.7.0 | Apache-2.0 | Copyright the ethtool authors (the Apache-2.0 LICENSE has no copyright line) |
+| `github.com/tailscale/certstore` | v0.1.1-0.20260409135935-3638fb84b77d | MIT | Copyright (c) 2017 Ben Toews. |
+| `github.com/tailscale/go-winio` | v0.0.0-20231025203758-c4f33415bf55 | MIT | Copyright (c) 2015 Microsoft |
+| `github.com/tailscale/hujson` | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | Copyright (c) 2019 Tailscale Inc. All rights reserved. |
+| `github.com/tailscale/peercred` | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | Copyright (c) 2021, Tailscale Inc. |
+| `github.com/tailscale/web-client-prebuilt` | v0.0.0-20260917222731-e0ed2d0d0fea | BSD-3-Clause | Copyright (c) 2020 Tailscale Inc & AUTHORS. |
+| `github.com/tailscale/wireguard-go` | v0.0.0-20260928213032-417aef361226 | MIT | Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved. |
+| `github.com/x448/float16` | v0.8.4 | MIT | Copyright (c) 2019 Montgomery Edwards and Faye Amacker |
+| `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | Copyright the go4.org authors (the Apache-2.0 LICENSE has no copyright line) |
+| `go4.org/netipx` | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | Copyright (c) 2020 The Inet.af AUTHORS. All rights reserved. |
+| `golang.org/x/exp` | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/net` | v0.60.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/oauth2` | v0.37.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/sync` | v0.24.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/term` | v0.47.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.org/x/time` | v0.16.0 | BSD-3-Clause | Copyright 2009 The Go Authors. |
+| `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | Copyright WireGuard LLC (the MIT LICENSE has no copyright line) |
+| `golang.zx2c4.com/wireguard` | v0.0.0-20261024220952-b3bc704ef0ee | MIT | Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved. |
+| `golang.zx2c4.com/wireguard/windows` | v1.0.1 | MIT | Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved. |
+| `gvisor.dev/gvisor` | v0.0.0-20260915211658-a6f909f08a72 | Apache-2.0 | Copyright the gVisor authors (the Apache-2.0 LICENSE has no copyright line; the module carries an AUTHORS file) |
+| `tailscale.com` | v1.104.5 | BSD-3-Clause | Copyright (c) 2020 Tailscale Inc & contributors. |
+
+The pinned `tailscale.com` and `golang.zx2c4.com/wireguard` versions are
+recorded in `go.mod` with their upgrade and audit requirements. The `replace`
+directive for `golang.zx2c4.com/wireguard/tun/netstack` only selects the pinned
+main module; it does not add or change a license.
 
 Additional third-party portions embedded in those modules:
 
@@ -392,6 +452,20 @@ Redistribution and use in source and binary forms, with or without modification,
  * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+### ISC license
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### 0BSD license
 
@@ -694,6 +768,15 @@ authorization of the copyright holder.
 - `internal/legal` tests the repository's own legal files and the bundled Rust
   crate metadata, so `go test ./internal/legal` fails if a required notice or
   crate row disappears.
+- **Ticket 01 baseline:** the release validation job runs the pinned scanner
+  `golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`; upgrading the scanner is a
+  dependency-baseline change and needs the same audit as a `go.mod` change. At
+  this baseline it reported no vulnerabilities affecting called code and three
+  module-only findings that the code does not call: GO-2026-6866 and
+  GO-2026-6860 in `golang.org/x/net v0.60.0` (fixed upstream in v0.62.0), and
+  GO-2026-5932 in `golang.org/x/crypto v0.58.0` (fixed upstream in
+  v0.58.1-0.20261009181718-2f1f834330b2). The release gate is a point-in-time
+  advisory check, not a standing guarantee.
 - **Corrected in ticket 15:** the MoshCatty source description (pure Rust, not
   an upstream mosh build), its tag commit, the mosh-go MIT notice and shipped
   license file, the 49 Rust crate notices, and the MoshCatty
