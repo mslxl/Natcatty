@@ -109,6 +109,7 @@ func wireGuardNetworkDraft(privateKey, peerKey, presharedKey string) domainvault
 			PrivateKey: privateKey,
 			Addresses:  []string{"10.0.0.2/32"},
 			DNS:        []string{"10.0.0.1"},
+			ListenPort: 51820,
 			Peers: []domainvault.WireGuardPeerDraft{{
 				PublicKey:           peerKey,
 				PresharedKey:        presharedKey,
@@ -164,6 +165,9 @@ func TestCreateWireGuardProfileStoresEverySecretUnderItsOwnRef(t *testing.T) {
 	}
 	if profile.WireGuard == nil || !profile.WireGuard.HasPrivateKey {
 		t.Fatalf("HasPrivateKey = %+v, want true", profile.WireGuard)
+	}
+	if profile.WireGuard.ListenPort != 51820 {
+		t.Fatalf("ListenPort = %d, want 51820", profile.WireGuard.ListenPort)
 	}
 	if len(profile.WireGuard.Peers) != 1 || !profile.WireGuard.Peers[0].HasPresharedKey {
 		t.Fatalf("peers = %+v, want one peer with a saved Preshared Key", profile.WireGuard.Peers)

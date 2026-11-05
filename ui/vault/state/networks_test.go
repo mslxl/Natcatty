@@ -141,6 +141,7 @@ func TestNetworkProfileEditorParsesWireGuardListsAndNumbers(t *testing.T) {
 	form.Addresses = "10.0.0.2/32, fd00::2"
 	form.DNS = "10.0.0.1"
 	form.MTU = "1280"
+	form.ListenPort = "51820"
 	form.Peers[0].PublicKey = "public"
 	form.Peers[0].PresharedKey = "preshared"
 	form.Peers[0].Endpoint = "vpn.example.com:51820"
@@ -166,7 +167,8 @@ func TestNetworkProfileEditorParsesWireGuardListsAndNumbers(t *testing.T) {
 	if draft.Kind != domainvault.NetworkKindWireGuard || draft.WireGuard == nil {
 		t.Fatalf("draft = %+v", draft)
 	}
-	if draft.WireGuard.MTU != 1280 || draft.WireGuard.PrivateKey != "private" {
+	if draft.WireGuard.MTU != 1280 || draft.WireGuard.ListenPort != 51820 ||
+		draft.WireGuard.PrivateKey != "private" {
 		t.Fatalf("WireGuard draft = %+v", draft.WireGuard)
 	}
 	if len(draft.WireGuard.Addresses) != 2 || draft.WireGuard.Addresses[1] != "fd00::2" {
@@ -197,6 +199,14 @@ func TestNetworkProfileEditorParsesWireGuardListsAndNumbers(t *testing.T) {
 	}
 	if state.Problem() != ProblemNetworkKeepalive || len(service.created) != 1 {
 		t.Fatalf("malformed keepalive problem = %q", state.Problem())
+	}
+	state.NetworkProfileForm().Peers[0].PersistentKeepalive = "25"
+	state.NetworkProfileForm().ListenPort = "70000"
+	if err := state.SaveNetworkProfile(); err != nil {
+		t.Fatalf("SaveNetworkProfile: %v", err)
+	}
+	if state.Problem() != ProblemNetworkListenPort || len(service.created) != 1 {
+		t.Fatalf("out-of-range listen port problem = %q", state.Problem())
 	}
 }
 

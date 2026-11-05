@@ -1640,6 +1640,458 @@ func (msgs Messages) VaultNetworkPeerKeepalive() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPeerKeepalive", nil)
 }
 
+// VaultNetworkListenPort says "Listen port"
+// in the language the app shows.
+func VaultNetworkListenPort() string { return In(i18n.Locale()).VaultNetworkListenPort() }
+
+// VaultNetworkListenPort says "Listen port"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkListenPort() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkListenPort", nil)
+}
+
+// VaultNetworkListenPortHint says "UDP port WireGuard listens on. Leave blank or 0 to choose automatically."
+// in the language the app shows.
+func VaultNetworkListenPortHint() string { return In(i18n.Locale()).VaultNetworkListenPortHint() }
+
+// VaultNetworkListenPortHint says "UDP port WireGuard listens on. Leave blank or 0 to choose automatically."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkListenPortHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkListenPortHint", nil)
+}
+
+// VaultNetworkImport says "Import a .conf file"
+// in the language the app shows.
+func VaultNetworkImport() string { return In(i18n.Locale()).VaultNetworkImport() }
+
+// VaultNetworkImport says "Import a .conf file"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImport() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImport", nil)
+}
+
+// VaultNetworkImportChooseFile says "Choose .conf file"
+// in the language the app shows.
+func VaultNetworkImportChooseFile() string { return In(i18n.Locale()).VaultNetworkImportChooseFile() }
+
+// VaultNetworkImportChooseFile says "Choose .conf file"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportChooseFile() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportChooseFile", nil)
+}
+
+// VaultNetworkConfFileFilter says "WireGuard configuration"
+// in the language the app shows.
+func VaultNetworkConfFileFilter() string { return In(i18n.Locale()).VaultNetworkConfFileFilter() }
+
+// VaultNetworkConfFileFilter says "WireGuard configuration"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkConfFileFilter() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkConfFileFilter", nil)
+}
+
+// VaultNetworkImportHint says "Choose a wg-quick .conf file up to 1 MiB. Nothing fills the form or is saved until you confirm the parsed result."
+// in the language the app shows.
+func VaultNetworkImportHint() string { return In(i18n.Locale()).VaultNetworkImportHint() }
+
+// VaultNetworkImportHint says "Choose a wg-quick .conf file up to 1 MiB. Nothing fills the form or is saved until you confirm the parsed result."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportHint", nil)
+}
+
+// VaultNetworkImportResult says "Parsed {fileName}"
+// in the language the app shows.
+//
+// The heading of the import review, naming the chosen file.
+func VaultNetworkImportResult(fileName string) string {
+	return In(i18n.Locale()).VaultNetworkImportResult(fileName)
+}
+
+// VaultNetworkImportResult says "Parsed {fileName}"
+// in the language of msgs.
+//
+// The heading of the import review, naming the chosen file.
+func (msgs Messages) VaultNetworkImportResult(fileName string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportResult", map[string]any{"fileName": fileName})
+}
+
+// VaultNetworkImportAddresses says "Addresses: {addresses}"
+// in the language the app shows.
+//
+// The normalized interface addresses of a parsed .conf.
+func VaultNetworkImportAddresses(addresses string) string {
+	return In(i18n.Locale()).VaultNetworkImportAddresses(addresses)
+}
+
+// VaultNetworkImportAddresses says "Addresses: {addresses}"
+// in the language of msgs.
+//
+// The normalized interface addresses of a parsed .conf.
+func (msgs Messages) VaultNetworkImportAddresses(addresses string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportAddresses", map[string]any{"addresses": addresses})
+}
+
+// VaultNetworkImportDNS says "DNS: {servers}"
+// in the language the app shows.
+//
+// The normalized DNS servers of a parsed .conf.
+func VaultNetworkImportDNS(servers string) string {
+	return In(i18n.Locale()).VaultNetworkImportDNS(servers)
+}
+
+// VaultNetworkImportDNS says "DNS: {servers}"
+// in the language of msgs.
+//
+// The normalized DNS servers of a parsed .conf.
+func (msgs Messages) VaultNetworkImportDNS(servers string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportDNS", map[string]any{"servers": servers})
+}
+
+// VaultNetworkImportMTU says "MTU: {mtu}"
+// in the language the app shows.
+//
+// The effective MTU of a parsed .conf.
+func VaultNetworkImportMTU(mtu int) string { return In(i18n.Locale()).VaultNetworkImportMTU(mtu) }
+
+// VaultNetworkImportMTU says "MTU: {mtu}"
+// in the language of msgs.
+//
+// The effective MTU of a parsed .conf.
+func (msgs Messages) VaultNetworkImportMTU(mtu int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportMTU", map[string]any{"mtu": mtu})
+}
+
+// VaultNetworkImportListenPort says "Listen port: {port}"
+// in the language the app shows.
+//
+// The listen port of a parsed .conf.
+func VaultNetworkImportListenPort(port int) string {
+	return In(i18n.Locale()).VaultNetworkImportListenPort(port)
+}
+
+// VaultNetworkImportListenPort says "Listen port: {port}"
+// in the language of msgs.
+//
+// The listen port of a parsed .conf.
+func (msgs Messages) VaultNetworkImportListenPort(port int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportListenPort", map[string]any{"port": port})
+}
+
+// VaultNetworkImportPeers says "Peers: {count}"
+// in the language the app shows.
+//
+// The number of peers in a parsed .conf.
+func VaultNetworkImportPeers(count int) string {
+	return In(i18n.Locale()).VaultNetworkImportPeers(count)
+}
+
+// VaultNetworkImportPeers says "Peers: {count}"
+// in the language of msgs.
+//
+// The number of peers in a parsed .conf.
+func (msgs Messages) VaultNetworkImportPeers(count int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeers", map[string]any{"count": count})
+}
+
+// VaultNetworkImportPeerPublicKey says "Public key: {key}"
+// in the language the app shows.
+//
+// A parsed peer's public key, shown for review.
+func VaultNetworkImportPeerPublicKey(key string) string {
+	return In(i18n.Locale()).VaultNetworkImportPeerPublicKey(key)
+}
+
+// VaultNetworkImportPeerPublicKey says "Public key: {key}"
+// in the language of msgs.
+//
+// A parsed peer's public key, shown for review.
+func (msgs Messages) VaultNetworkImportPeerPublicKey(key string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeerPublicKey", map[string]any{"key": key})
+}
+
+// VaultNetworkImportPeerEndpoint says "Endpoint: {endpoint}"
+// in the language the app shows.
+//
+// A parsed peer's optional endpoint.
+func VaultNetworkImportPeerEndpoint(endpoint string) string {
+	return In(i18n.Locale()).VaultNetworkImportPeerEndpoint(endpoint)
+}
+
+// VaultNetworkImportPeerEndpoint says "Endpoint: {endpoint}"
+// in the language of msgs.
+//
+// A parsed peer's optional endpoint.
+func (msgs Messages) VaultNetworkImportPeerEndpoint(endpoint string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeerEndpoint", map[string]any{"endpoint": endpoint})
+}
+
+// VaultNetworkImportPeerAllowedIPs says "Allowed IPs: {allowedIPs}"
+// in the language the app shows.
+//
+// A parsed peer's normalized AllowedIPs.
+func VaultNetworkImportPeerAllowedIPs(allowedIPs string) string {
+	return In(i18n.Locale()).VaultNetworkImportPeerAllowedIPs(allowedIPs)
+}
+
+// VaultNetworkImportPeerAllowedIPs says "Allowed IPs: {allowedIPs}"
+// in the language of msgs.
+//
+// A parsed peer's normalized AllowedIPs.
+func (msgs Messages) VaultNetworkImportPeerAllowedIPs(allowedIPs string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeerAllowedIPs", map[string]any{"allowedIPs": allowedIPs})
+}
+
+// VaultNetworkImportPeerKeepalive says "Persistent keepalive: {seconds}"
+// in the language the app shows.
+//
+// A parsed peer's persistent keepalive in seconds.
+func VaultNetworkImportPeerKeepalive(seconds int) string {
+	return In(i18n.Locale()).VaultNetworkImportPeerKeepalive(seconds)
+}
+
+// VaultNetworkImportPeerKeepalive says "Persistent keepalive: {seconds}"
+// in the language of msgs.
+//
+// A parsed peer's persistent keepalive in seconds.
+func (msgs Messages) VaultNetworkImportPeerKeepalive(seconds int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeerKeepalive", map[string]any{"seconds": seconds})
+}
+
+// VaultNetworkImportPeerPresharedKeySet says "Preshared key: set"
+// in the language the app shows.
+func VaultNetworkImportPeerPresharedKeySet() string {
+	return In(i18n.Locale()).VaultNetworkImportPeerPresharedKeySet()
+}
+
+// VaultNetworkImportPeerPresharedKeySet says "Preshared key: set"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportPeerPresharedKeySet() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportPeerPresharedKeySet", nil)
+}
+
+// VaultNetworkImportDiagnostics says "Diagnostics"
+// in the language the app shows.
+func VaultNetworkImportDiagnostics() string { return In(i18n.Locale()).VaultNetworkImportDiagnostics() }
+
+// VaultNetworkImportDiagnostics says "Diagnostics"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportDiagnostics() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportDiagnostics", nil)
+}
+
+// VaultNetworkImportNoDiagnostics says "No ignored or adjusted fields."
+// in the language the app shows.
+func VaultNetworkImportNoDiagnostics() string {
+	return In(i18n.Locale()).VaultNetworkImportNoDiagnostics()
+}
+
+// VaultNetworkImportNoDiagnostics says "No ignored or adjusted fields."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportNoDiagnostics() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportNoDiagnostics", nil)
+}
+
+// VaultNetworkImportIssue says "Line {line} · {field}: {message}"
+// in the language the app shows.
+//
+// One import diagnostic with its 1-based line, field, and localized
+// explanation.
+func VaultNetworkImportIssue(line int, field string, message string) string {
+	return In(i18n.Locale()).VaultNetworkImportIssue(line, field, message)
+}
+
+// VaultNetworkImportIssue says "Line {line} · {field}: {message}"
+// in the language of msgs.
+//
+// One import diagnostic with its 1-based line, field, and localized
+// explanation.
+func (msgs Messages) VaultNetworkImportIssue(line int, field string, message string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportIssue", map[string]any{"line": line, "field": field, "message": message})
+}
+
+// VaultNetworkImportWholeFile says "whole file"
+// in the language the app shows.
+func VaultNetworkImportWholeFile() string { return In(i18n.Locale()).VaultNetworkImportWholeFile() }
+
+// VaultNetworkImportWholeFile says "whole file"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWholeFile() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWholeFile", nil)
+}
+
+// VaultNetworkImportConfirm says "Use this configuration"
+// in the language the app shows.
+func VaultNetworkImportConfirm() string { return In(i18n.Locale()).VaultNetworkImportConfirm() }
+
+// VaultNetworkImportConfirm says "Use this configuration"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportConfirm() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportConfirm", nil)
+}
+
+// VaultNetworkImportErrSyntax says "This line is not a valid key = value pair, or a value is malformed."
+// in the language the app shows.
+func VaultNetworkImportErrSyntax() string { return In(i18n.Locale()).VaultNetworkImportErrSyntax() }
+
+// VaultNetworkImportErrSyntax says "This line is not a valid key = value pair, or a value is malformed."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrSyntax() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrSyntax", nil)
+}
+
+// VaultNetworkImportErrUnknownKey says "This key is not recognized."
+// in the language the app shows.
+func VaultNetworkImportErrUnknownKey() string {
+	return In(i18n.Locale()).VaultNetworkImportErrUnknownKey()
+}
+
+// VaultNetworkImportErrUnknownKey says "This key is not recognized."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrUnknownKey() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrUnknownKey", nil)
+}
+
+// VaultNetworkImportErrUnknownSection says "This section is not recognized."
+// in the language the app shows.
+func VaultNetworkImportErrUnknownSection() string {
+	return In(i18n.Locale()).VaultNetworkImportErrUnknownSection()
+}
+
+// VaultNetworkImportErrUnknownSection says "This section is not recognized."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrUnknownSection() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrUnknownSection", nil)
+}
+
+// VaultNetworkImportErrMissingRequired says "A required value is missing: the Interface PrivateKey or a Peer PublicKey."
+// in the language the app shows.
+func VaultNetworkImportErrMissingRequired() string {
+	return In(i18n.Locale()).VaultNetworkImportErrMissingRequired()
+}
+
+// VaultNetworkImportErrMissingRequired says "A required value is missing: the Interface PrivateKey or a Peer PublicKey."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrMissingRequired() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrMissingRequired", nil)
+}
+
+// VaultNetworkImportErrDuplicatePeer says "Two peers use the same public key."
+// in the language the app shows.
+func VaultNetworkImportErrDuplicatePeer() string {
+	return In(i18n.Locale()).VaultNetworkImportErrDuplicatePeer()
+}
+
+// VaultNetworkImportErrDuplicatePeer says "Two peers use the same public key."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrDuplicatePeer() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrDuplicatePeer", nil)
+}
+
+// VaultNetworkImportErrUnsupported says "This configuration uses a feature the import does not support, such as a non-empty hook."
+// in the language the app shows.
+func VaultNetworkImportErrUnsupported() string {
+	return In(i18n.Locale()).VaultNetworkImportErrUnsupported()
+}
+
+// VaultNetworkImportErrUnsupported says "This configuration uses a feature the import does not support, such as a non-empty hook."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrUnsupported() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrUnsupported", nil)
+}
+
+// VaultNetworkImportErrLimit says "This configuration exceeds an import limit."
+// in the language the app shows.
+func VaultNetworkImportErrLimit() string { return In(i18n.Locale()).VaultNetworkImportErrLimit() }
+
+// VaultNetworkImportErrLimit says "This configuration exceeds an import limit."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrLimit() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrLimit", nil)
+}
+
+// VaultNetworkImportErrEncoding says "The file is empty or is not valid UTF-8 or UTF-16 text."
+// in the language the app shows.
+func VaultNetworkImportErrEncoding() string { return In(i18n.Locale()).VaultNetworkImportErrEncoding() }
+
+// VaultNetworkImportErrEncoding says "The file is empty or is not valid UTF-8 or UTF-16 text."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportErrEncoding() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportErrEncoding", nil)
+}
+
+// VaultNetworkImportWarnIgnoredField says "Ignored because this field has no effect in Netcatty."
+// in the language the app shows.
+func VaultNetworkImportWarnIgnoredField() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnIgnoredField()
+}
+
+// VaultNetworkImportWarnIgnoredField says "Ignored because this field has no effect in Netcatty."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnIgnoredField() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnIgnoredField", nil)
+}
+
+// VaultNetworkImportWarnSearchDomain says "Ignored: only IP DNS servers are imported."
+// in the language the app shows.
+func VaultNetworkImportWarnSearchDomain() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnSearchDomain()
+}
+
+// VaultNetworkImportWarnSearchDomain says "Ignored: only IP DNS servers are imported."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnSearchDomain() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnSearchDomain", nil)
+}
+
+// VaultNetworkImportWarnHostBits says "Host bits were cleared in this prefix."
+// in the language the app shows.
+func VaultNetworkImportWarnHostBits() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnHostBits()
+}
+
+// VaultNetworkImportWarnHostBits says "Host bits were cleared in this prefix."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnHostBits() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnHostBits", nil)
+}
+
+// VaultNetworkImportWarnEmptyAllowedIPs says "An empty AllowedIPs entry was ignored."
+// in the language the app shows.
+func VaultNetworkImportWarnEmptyAllowedIPs() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnEmptyAllowedIPs()
+}
+
+// VaultNetworkImportWarnEmptyAllowedIPs says "An empty AllowedIPs entry was ignored."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnEmptyAllowedIPs() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnEmptyAllowedIPs", nil)
+}
+
+// VaultNetworkImportWarnDuplicateScalar says "This key appears more than once; the last value is used."
+// in the language the app shows.
+func VaultNetworkImportWarnDuplicateScalar() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnDuplicateScalar()
+}
+
+// VaultNetworkImportWarnDuplicateScalar says "This key appears more than once; the last value is used."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnDuplicateScalar() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnDuplicateScalar", nil)
+}
+
+// VaultNetworkImportWarnEmptyHook says "An empty hook was ignored."
+// in the language the app shows.
+func VaultNetworkImportWarnEmptyHook() string {
+	return In(i18n.Locale()).VaultNetworkImportWarnEmptyHook()
+}
+
+// VaultNetworkImportWarnEmptyHook says "An empty hook was ignored."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkImportWarnEmptyHook() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkImportWarnEmptyHook", nil)
+}
+
 // VaultNetworkSummary says "{kind} · {detail}"
 // in the language the app shows.
 //
@@ -4892,6 +5344,62 @@ func VaultProblemNetworkKeepalive() string { return In(i18n.Locale()).VaultProbl
 // in the language of msgs.
 func (msgs Messages) VaultProblemNetworkKeepalive() string {
 	return Catalog.Format(msgs.locale, "vaultProblemNetworkKeepalive", nil)
+}
+
+// VaultProblemNetworkListenPort says "Listen port must be a whole number between 0 and 65535."
+// in the language the app shows.
+func VaultProblemNetworkListenPort() string { return In(i18n.Locale()).VaultProblemNetworkListenPort() }
+
+// VaultProblemNetworkListenPort says "Listen port must be a whole number between 0 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkListenPort() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkListenPort", nil)
+}
+
+// VaultProblemNetworkImportFile says "Could not read the selected .conf file."
+// in the language the app shows.
+func VaultProblemNetworkImportFile() string { return In(i18n.Locale()).VaultProblemNetworkImportFile() }
+
+// VaultProblemNetworkImportFile says "Could not read the selected .conf file."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkImportFile() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkImportFile", nil)
+}
+
+// VaultProblemNetworkImportParse says "The .conf file was rejected. Fix the reported line and try again."
+// in the language the app shows.
+func VaultProblemNetworkImportParse() string {
+	return In(i18n.Locale()).VaultProblemNetworkImportParse()
+}
+
+// VaultProblemNetworkImportParse says "The .conf file was rejected. Fix the reported line and try again."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkImportParse() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkImportParse", nil)
+}
+
+// VaultProblemNetworkImportTooLarge says "The .conf file is larger than the 1 MiB import limit."
+// in the language the app shows.
+func VaultProblemNetworkImportTooLarge() string {
+	return In(i18n.Locale()).VaultProblemNetworkImportTooLarge()
+}
+
+// VaultProblemNetworkImportTooLarge says "The .conf file is larger than the 1 MiB import limit."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkImportTooLarge() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkImportTooLarge", nil)
+}
+
+// VaultProblemNetworkImportUnavailable says "Importing a .conf file is not available in this build."
+// in the language the app shows.
+func VaultProblemNetworkImportUnavailable() string {
+	return In(i18n.Locale()).VaultProblemNetworkImportUnavailable()
+}
+
+// VaultProblemNetworkImportUnavailable says "Importing a .conf file is not available in this build."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkImportUnavailable() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkImportUnavailable", nil)
 }
 
 // VaultProblemAlgorithms says "Check the SSH algorithm selection."

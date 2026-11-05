@@ -34,7 +34,7 @@ func TestExportJSONCarriesNetworkProfilesWithoutSecrets(t *testing.T) {
 			ID: "network-1", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
 			WireGuard: &domainvault.WireGuardNetwork{
 				Addresses: []string{"10.0.0.2/32"}, DNS: []string{"10.0.0.1"},
-				MTU: 1420, HasPrivateKey: true,
+				MTU: 1420, ListenPort: 51820, HasPrivateKey: true,
 				Peers: []domainvault.WireGuardPeer{{
 					ID: "peer-1", PublicKey: testWireGuardKey(2),
 					Endpoint: "vpn.example.com:51820", AllowedIPs: []string{"10.0.0.0/24"},
@@ -90,6 +90,10 @@ func TestExportJSONCarriesNetworkProfilesWithoutSecrets(t *testing.T) {
 			!document.NetworkProfiles[1].Tailscale.HasAuthKey {
 			t.Fatalf("presence markers were not exported: %+v", document.NetworkProfiles)
 		}
+		if document.NetworkProfiles[0].WireGuard.ListenPort != 51820 {
+			t.Fatalf("exported ListenPort = %d, want 51820",
+				document.NetworkProfiles[0].WireGuard.ListenPort)
+		}
 		if !includeSecrets && exported.OmittedSecrets != 3 {
 			t.Fatalf("OmittedSecrets = %d, want the three stored Network Profile secrets",
 				exported.OmittedSecrets)
@@ -111,6 +115,7 @@ func TestImportRestoresNetworkProfilesFromTheJSONFamily(t *testing.T) {
         "addresses": ["10.0.0.2/32"],
         "dns": ["10.0.0.1"],
         "mtu": 1280,
+        "listenPort": 51821,
         "hasPrivateKey": true,
         "peers": [{
           "id": "source-peer",
@@ -162,6 +167,7 @@ func TestImportRestoresNetworkProfilesFromTheJSONFamily(t *testing.T) {
 	wireguard := networks.items[0]
 	if wireguard.Kind != domainvault.NetworkKindWireGuard || wireguard.Label != "wg" ||
 		wireguard.WireGuard == nil || wireguard.WireGuard.MTU != 1280 ||
+		wireguard.WireGuard.ListenPort != 51821 ||
 		len(wireguard.WireGuard.Peers) != 1 ||
 		wireguard.WireGuard.Peers[0].PublicKey != testWireGuardKey(2) ||
 		wireguard.WireGuard.Peers[0].Endpoint != "vpn.example.com:51820" {
