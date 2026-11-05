@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	"github.com/mslxl/natcatty/domain/model"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -409,5 +410,49 @@ func TestVaultViewNetworkDeleteBannerWarnsAboutAffectedRecords(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText(m.VaultNetworkDeleteAffected(1, 2)) {
 		t.Fatalf("the delete banner does not warn about the affected Host and Groups, texts %q", tt.Texts())
+	}
+}
+
+func TestVaultViewNetworkRowShowsProviderStatus(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	state.PostNetworkProviderStatus(vaultstate.NetworkProviderStatus{
+		ProfileID:    "net-1",
+		Label:        "Tailnet",
+		Kind:         string(domainvault.NetworkKindTailscale),
+		Phase:        appconnection.ProviderPhaseNeedsLogin,
+		TailscaleIPs: []string{"100.64.0.2"},
+		DNSName:      "natcatty-office.tailnet.ts.net",
+		AuthURL:      "https://login.tailscale.com/a/example",
+		LastError:    "tailscale: machine authorization required",
+	})
+	tt.Frame()
+
+	for _, want := range []string{
+		m.VaultNetworkProviderStatus(m.NetworkProviderPhaseNeedsLogin(),
+			"natcatty-office.tailnet.ts.net"),
+		m.VaultNetworkLoginRequired("https://login.tailscale.com/a/example"),
+		m.VaultNetworkProviderStatusError("tailscale: machine authorization required"),
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("the Network Profile row does not show %q, texts %q", want, tt.Texts())
+		}
+	}
+}
+
+func TestVaultViewTailscaleEditorDisclosesStateAndLogPrivacy(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	state.BeginCreateNetworkProfile(domainvault.NetworkKindTailscale)
+	tt.Frame()
+	for _, want := range []string{
+		m.VaultNetworkAuthKeyStateHint(),
+		m.VaultNetworkPrivacyNotice(),
+	} {
+		if !tt.HasText(want) {
+			t.Fatalf("the Tailscale editor does not show %q, texts %q", want, tt.Texts())
+		}
 	}
 }

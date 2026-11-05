@@ -184,6 +184,9 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 		// thread; apply the stale flag here so the lists refresh in this
 		// frame. An open editor form is left intact.
 		s.FlushLists()
+		// Network Providers report phase and node identity from their dial
+		// goroutine; publish the queued statuses before drawing the list.
+		s.FlushNetworkProviderStatus()
 		if configured.forwarding != nil {
 			// Runtime status arrives on the forwarding manager's goroutine;
 			// apply it on the UI thread before rendering.

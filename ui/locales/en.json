@@ -443,6 +443,68 @@
     }
   },
   "vaultNetworkWarningControlURLInsecure": "This Control URL uses plain HTTP, so the auth key is not encrypted in transit.",
+  "networkProviderPhaseStopped": "Stopped",
+  "networkProviderPhaseStarting": "Starting",
+  "networkProviderPhaseNeedsLogin": "Needs login",
+  "networkProviderPhaseRunning": "Running",
+  "networkProviderPhaseStopping": "Stopping",
+  "networkProviderPhaseError": "Error",
+  "vaultNetworkProviderStatus": "{phase} · {address}",
+  "@vaultNetworkProviderStatus": {
+    "description": "A Network Profile row's Provider phase and node address.",
+    "placeholders": {
+      "phase": {
+        "type": "String",
+        "example": "Running"
+      },
+      "address": {
+        "type": "String",
+        "example": "natcatty-office.tailnet.ts.net"
+      }
+    }
+  },
+  "vaultNetworkProviderStatusError": "Last error: {error}",
+  "@vaultNetworkProviderStatusError": {
+    "description": "The last failure a Network Profile's Provider reported.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "tailscale: machine authorization required"
+      }
+    }
+  },
+  "vaultNetworkLoginRequired": "Login required: open {url}",
+  "@vaultNetworkLoginRequired": {
+    "description": "The interactive-login address a Network Profile's Provider is waiting on.",
+    "placeholders": {
+      "url": {
+        "type": "String",
+        "example": "https://login.tailscale.com/a/example"
+      }
+    }
+  },
+  "vaultNetworkAuthKeyStateHint": "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored. To switch tailnets, create a new Network Profile.",
+  "@vaultNetworkAuthKeyStateHint": {
+    "description": "Explains tsnet's state-directory precedence over a newly entered Auth Key."
+  },
+  "vaultNetworkPrivacyNotice": "The embedded Tailscale node uploads operational logs to log.tailscale.com. This build has no switch to disable that upload, and a self-hosted control server does not stop it. If that is not acceptable, do not use Tailscale Net in this build.",
+  "@vaultNetworkPrivacyNotice": {
+    "description": "Privacy disclosure in the Tailscale Network Profile editor."
+  },
+  "logsProviderMeta": "{phase} · {kind}",
+  "@logsProviderMeta": {
+    "description": "The Provider phase and Network kind of a connection log row.",
+    "placeholders": {
+      "phase": {
+        "type": "String",
+        "example": "Running"
+      },
+      "kind": {
+        "type": "String",
+        "example": "tailscale"
+      }
+    }
+  },
   "vaultKnownHostsTitle": "Known Hosts ({count})",
   "@vaultKnownHostsTitle": {
     "description": "The Vault's Known Host list heading and its record count.",
