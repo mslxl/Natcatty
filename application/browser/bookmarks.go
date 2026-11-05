@@ -112,6 +112,33 @@ func (b *Bookmarks) Get(id string) (domainbrowser.Bookmark, bool) {
 	return domainbrowser.Bookmark{}, false
 }
 
+// Replace stores the complete bookmark list. It is the cloud-sync write path:
+// IDs are preserved, invalid entries reject the whole download, and a
+// previous load failure still blocks an overwrite.
+func (b *Bookmarks) Replace(items []domainbrowser.Bookmark) error {
+	if len(items) > domainbrowser.MaxBookmarks {
+		return domainbrowser.ErrBookmarkLimit
+	}
+	b.mu.Lock()
+	if err := b.saveErrorLocked(); err != nil {
+		b.mu.Unlock()
+		return err
+	}
+	next := b.sanitize(items)
+	if len(next) != len(items) {
+		b.mu.Unlock()
+		return domainbrowser.ErrBookmarkID
+	}
+	if err := b.store.Save(next); err != nil {
+		b.mu.Unlock()
+		return err
+	}
+	b.items = next
+	b.mu.Unlock()
+	b.notify()
+	return nil
+}
+
 // Upsert creates or edits a bookmark on behalf of hostID. Host-scoped edits
 // are refused when the bookmark belongs to another Host; all-Host bookmarks
 // are shared and editable from any Host. A failed persist leaves the previous

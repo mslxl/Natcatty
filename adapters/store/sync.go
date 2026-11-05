@@ -106,7 +106,7 @@ func (s *Store) ApplySync(ctx context.Context, payload appsync.Payload) error {
 			}
 		}
 		for index := range groups {
-			if err := upsertModel(tx, &groups[index], "path", "notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id", "use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key", "proxy_profile_id", "order_key", "updated_at", "data"); err != nil {
+			if err := upsertModel(tx, &groups[index], "path", "id", "parent_id", "name", "notes", "username", "port", "protocol", "auth_method", "identity_id", "key_id", "use_ssh_agent", "requires_mfa", "legacy_algorithms", "skip_ecdsa_host_key", "proxy_profile_id", "order_key", "updated_at", "data"); err != nil {
 				return err
 			}
 		}

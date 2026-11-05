@@ -5,6 +5,7 @@ package syncvault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -37,17 +38,38 @@ type Secrets interface {
 	Delete(ctx context.Context, ref appvault.SecretRef) error
 }
 
+// Settings reads and applies the portable settings documents that travel in
+// the payload's flat settings object. A nil implementation leaves settings
+// device-local.
+type Settings interface {
+	Snapshot(ctx context.Context) (map[string]json.RawMessage, error)
+	Apply(ctx context.Context, settings map[string]json.RawMessage) error
+}
+
 // Vault implements appsync.Vault over the local records and credentials.
 type Vault struct {
-	records Records
-	secrets Secrets
+	records  Records
+	secrets  Secrets
+	settings Settings
 }
 
 var _ appsync.Vault = (*Vault)(nil)
 
+// Option customizes a Vault adapter.
+type Option func(*Vault)
+
+// WithSettings adds the portable settings document set to the payload.
+func WithSettings(settings Settings) Option {
+	return func(v *Vault) { v.settings = settings }
+}
+
 // New returns a Vault adapter.
-func New(records Records, secrets Secrets) *Vault {
-	return &Vault{records: records, secrets: secrets}
+func New(records Records, secrets Secrets, opts ...Option) *Vault {
+	vault := &Vault{records: records, secrets: secrets}
+	for _, opt := range opts {
+		opt(vault)
+	}
+	return vault
 }
 
 // Snapshot reads every synced family plus the plaintext credentials the
@@ -154,6 +176,16 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 	for _, group := range payload.NoteGroups {
 		add(group.UpdatedAt.UnixMilli())
 	}
+	if err := decorateGroupReferences(&payload); err != nil {
+		return appsync.Payload{}, err
+	}
+	if v.settings != nil {
+		settings, err := v.settings.Snapshot(ctx)
+		if err != nil {
+			return appsync.Payload{}, err
+		}
+		payload.Settings = settings
+	}
 	payload.SyncedAt = newest
 	return payload, nil
 }
@@ -188,6 +220,11 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 	}
 	if err := v.records.ApplySync(ctx, payload); err != nil {
 		return err
+	}
+	if v.settings != nil && len(payload.Settings) > 0 {
+		if err := v.settings.Apply(ctx, payload.Settings); err != nil {
+			return err
+		}
 	}
 	byRef := make(map[appvault.SecretRef]bool, len(payload.Secrets))
 	for _, secret := range payload.Secrets {
@@ -240,6 +277,90 @@ func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef m
 		if err := clear(appvault.ProxyProfileSecretRef(profile.ID, appvault.FieldProxyPassword)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// decorateGroupReferences makes the portable payload internally consistent:
+// every group has a stable ID, every implicit ancestor exists as a node, and
+// Host and Snippet references carry both the stable ID and the current path.
+// Local callers still use paths; convergent sync uses IDs so a move on another
+// device carries its members instead of looking like a delete.
+func decorateGroupReferences(payload *appsync.Payload) error {
+	groups := domainvault.EnsureGroupIdentities(payload.Groups)
+	referenced := make([]string, 0, len(payload.Hosts)+len(payload.Snippets))
+	for _, host := range payload.Hosts {
+		referenced = append(referenced, host.Group)
+	}
+	for _, snippet := range payload.Snippets {
+		referenced = append(referenced, snippet.TargetGroups...)
+	}
+	groups = domainvault.EnsureGroupAncestors(groups, referenced)
+	payload.Groups = groups
+
+	pathIDs := make(map[string]string, len(groups))
+	idPaths := make(map[string]string, len(groups))
+	for _, group := range groups {
+		pathIDs[group.Path] = group.ID
+		idPaths[group.ID] = group.Path
+	}
+	for index := range payload.Hosts {
+		host := &payload.Hosts[index]
+		host.Group = domainvault.NormalizeGroup(host.Group)
+		if host.Group == "" {
+			host.GroupID = ""
+			continue
+		}
+		if host.GroupID != "" {
+			if path, ok := idPaths[host.GroupID]; ok {
+				host.Group = path
+				continue
+			}
+		}
+		if id, ok := pathIDs[host.Group]; ok {
+			host.GroupID = id
+		} else {
+			host.GroupID = ""
+		}
+	}
+	for index := range payload.Snippets {
+		snippet := &payload.Snippets[index]
+		paths := make([]string, 0, len(snippet.TargetGroups)+len(snippet.TargetGroupIDs))
+		for _, path := range snippet.TargetGroups {
+			paths = append(paths, path)
+		}
+		if len(paths) == 0 {
+			for _, id := range snippet.TargetGroupIDs {
+				if path, ok := idPaths[id]; ok {
+					paths = append(paths, path)
+				}
+			}
+		}
+		ids := make([]string, 0, len(paths))
+		targets := make([]string, 0, len(paths))
+		seen := make(map[string]bool, len(paths))
+		for _, path := range paths {
+			path = domainvault.NormalizeGroup(path)
+			if path == "" {
+				continue
+			}
+			id, ok := pathIDs[path]
+			if !ok {
+				id = domainvault.GroupIDFromPath(path)
+			}
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+			if canonical, ok := idPaths[id]; ok {
+				targets = append(targets, canonical)
+			} else {
+				targets = append(targets, path)
+			}
+		}
+		snippet.TargetGroupIDs = ids
+		snippet.TargetGroups = targets
 	}
 	return nil
 }

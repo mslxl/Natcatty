@@ -125,6 +125,33 @@ func (s *Service) State() State {
 	}
 }
 
+// Replace stores a complete binding document and publishes it. The active
+// scheme stays device-local because the default scheme differs by platform;
+// only user overrides and menu suppressions are taken from the synced copy.
+func (s *Service) Replace(state State) error {
+	s.mu.Lock()
+	currentScheme := s.state.Scheme
+	store := s.store
+	hook := s.onChange
+	s.mu.Unlock()
+	state.Scheme = currentScheme
+	state.Overrides = state.Overrides.Normalize()
+	state.SuppressedMenus = dedupe(state.SuppressedMenus)
+
+	if store != nil {
+		if err := store.Save(context.Background(), state); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.state = state
+	s.mu.Unlock()
+	if hook != nil {
+		hook(state)
+	}
+	return nil
+}
+
 // Scheme returns the active scheme.
 func (s *Service) Scheme() domain.Scheme {
 	s.mu.Lock()
