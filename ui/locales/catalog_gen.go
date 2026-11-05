@@ -1450,11 +1450,11 @@ func (msgs Messages) VaultNetworkAuthKey() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkAuthKey", nil)
 }
 
-// VaultNetworkAuthKeyHint says "The key is stored in the field secret store and never exported."
+// VaultNetworkAuthKeyHint says "The key is stored in the field secret store. Only a destructive export that explicitly includes plaintext secrets wri…"
 // in the language the app shows.
 func VaultNetworkAuthKeyHint() string { return In(i18n.Locale()).VaultNetworkAuthKeyHint() }
 
-// VaultNetworkAuthKeyHint says "The key is stored in the field secret store and never exported."
+// VaultNetworkAuthKeyHint says "The key is stored in the field secret store. Only a destructive export that explicitly includes plaintext secrets wri…"
 // in the language of msgs.
 func (msgs Messages) VaultNetworkAuthKeyHint() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkAuthKeyHint", nil)
@@ -1532,11 +1532,11 @@ func (msgs Messages) VaultNetworkPrivateKey() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPrivateKey", nil)
 }
 
-// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store and never exported."
+// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store. Only a destructive export that explicitly includes plaintext secrets wri…"
 // in the language the app shows.
 func VaultNetworkPrivateKeyHint() string { return In(i18n.Locale()).VaultNetworkPrivateKeyHint() }
 
-// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store and never exported."
+// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store. Only a destructive export that explicitly includes plaintext secrets wri…"
 // in the language of msgs.
 func (msgs Messages) VaultNetworkPrivateKeyHint() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPrivateKeyHint", nil)
@@ -1676,13 +1676,13 @@ func (msgs Messages) VaultNetworkPeerPresharedKey() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPeerPresharedKey", nil)
 }
 
-// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store and never exported."
+// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store; only a destructive export that explicitly includes plaintext secrets writ…"
 // in the language the app shows.
 func VaultNetworkPeerPresharedKeyHint() string {
 	return In(i18n.Locale()).VaultNetworkPeerPresharedKeyHint()
 }
 
-// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store and never exported."
+// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store; only a destructive export that explicitly includes plaintext secrets writ…"
 // in the language of msgs.
 func (msgs Messages) VaultNetworkPeerPresharedKeyHint() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkPeerPresharedKeyHint", nil)
