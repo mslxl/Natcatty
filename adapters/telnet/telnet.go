@@ -31,7 +31,9 @@ import (
 const readChunkSize = 32 << 10
 
 // Factory opens Telnet Sessions. The zero value dials the network directly.
-// Dial is the test seam; it is never set in the running app.
+// Dial is the dial seam: the app sets it to a Network Provider's DialContext
+// when the Host selects a Network Profile, and tests set it to a fake. A nil
+// value uses net.Dialer, which is the path for a Host with no profile.
 type Factory struct {
 	// Dial opens the TCP connection. A nil value uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
@@ -84,7 +86,14 @@ func (f Factory) dial(ctx context.Context, network, address string) (net.Conn, e
 }
 
 // classifyDialError maps a dial failure onto the UI's connection vocabulary.
+// A typed failure from the dial seam keeps its classification: when the app
+// routes the dial through a Network Provider, a provider-level failure must
+// stay KindProvider instead of being downgraded to a plain network error.
 func classifyDialError(ctx context.Context, dialCtxErr error, address string, err error) error {
+	var typed *appconnection.Error
+	if errors.As(err, &typed) {
+		return err
+	}
 	if ctx.Err() != nil {
 		return &appconnection.Error{Kind: appconnection.KindCancelled, Cause: ctx.Err()}
 	}

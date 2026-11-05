@@ -60,8 +60,12 @@ func ProblemTextFor(m locales.Messages, err error) string {
 		return m.ConnectionErrorMoshJump()
 	case errors.Is(err, moshmodel.ErrProxyUnsupported):
 		return m.ConnectionErrorMoshProxy()
+	case errors.Is(err, moshmodel.ErrNetworkUnsupported):
+		return m.ConnectionErrorMoshNetwork()
 	case errors.Is(err, moshmodel.ErrHandshake):
 		return m.ConnectionErrorMoshHandshake()
+	case errors.Is(err, etmodel.ErrNetworkUnsupported):
+		return m.ConnectionErrorETNetwork()
 	case errors.Is(err, etmodel.ErrChecksumMismatch):
 		return m.ConnectionErrorETChecksum()
 	case errors.Is(err, etmodel.ErrBundleUnavailable),

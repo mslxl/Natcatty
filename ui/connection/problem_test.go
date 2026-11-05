@@ -140,12 +140,14 @@ func TestProblemTextForNamesMoshAndETFailures(t *testing.T) {
 		{"mosh-platform", moshmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshUnavailable() }},
 		{"mosh-jump", moshmodel.ErrJumpUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshJump() }},
 		{"mosh-proxy", moshmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshProxy() }},
+		{"mosh-network", moshmodel.ErrNetworkUnsupported, func(m locales.Messages) string { return m.ConnectionErrorMoshNetwork() }},
 		{"mosh-handshake", moshmodel.ErrHandshake, func(m locales.Messages) string { return m.ConnectionErrorMoshHandshake() }},
 		{"et-checksum", etmodel.ErrChecksumMismatch, func(m locales.Messages) string { return m.ConnectionErrorETChecksum() }},
 		{"et-unavailable", etmodel.ErrBundleUnavailable, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
 		{"et-platform", etmodel.ErrPlatformUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETUnavailable() }},
 		{"et-jump", etmodel.ErrMultipleJumpHosts, func(m locales.Messages) string { return m.ConnectionErrorETJump() }},
 		{"et-proxy", etmodel.ErrProxyUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETProxy() }},
+		{"et-network", etmodel.ErrNetworkUnsupported, func(m locales.Messages) string { return m.ConnectionErrorETNetwork() }},
 	}
 	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
 		m := locales.In(locale)

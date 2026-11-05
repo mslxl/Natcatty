@@ -47,6 +47,12 @@ var (
 	// ErrProxyUnsupported reports a Host route that uses a proxy. Mosh cannot
 	// carry the proxy through to its UDP channel.
 	ErrProxyUnsupported = errors.New("mosh: proxy connections are not supported")
+	// ErrNetworkUnsupported reports a Host route that selects a Network
+	// Profile. The Mosh UDP channel is not connected to a Network Provider, so
+	// the only correct behavior is to fail closed and tell the user to use an
+	// OS-level VPN; silently dialing the SSH bootstrap or the UDP channel
+	// directly would bypass the selected network.
+	ErrNetworkUnsupported = errors.New("mosh: network profiles are not supported")
 	// ErrHandshake reports that the server never announced MOSH CONNECT.
 	ErrHandshake = errors.New("mosh: no MOSH CONNECT line from mosh-server")
 	// ErrAnnouncement reports a MOSH CONNECT line whose port or key cannot be

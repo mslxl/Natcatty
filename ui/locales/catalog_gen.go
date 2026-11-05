@@ -21554,6 +21554,16 @@ func (msgs Messages) ConnectionErrorMoshProxy() string {
 	return Catalog.Format(msgs.locale, "connectionErrorMoshProxy", nil)
 }
 
+// ConnectionErrorMoshNetwork says "Mosh Sessions cannot use an embedded Network Profile. Use an OS-level VPN for this Host."
+// in the language the app shows.
+func ConnectionErrorMoshNetwork() string { return In(i18n.Locale()).ConnectionErrorMoshNetwork() }
+
+// ConnectionErrorMoshNetwork says "Mosh Sessions cannot use an embedded Network Profile. Use an OS-level VPN for this Host."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorMoshNetwork() string {
+	return Catalog.Format(msgs.locale, "connectionErrorMoshNetwork", nil)
+}
+
 // ConnectionErrorMoshHandshake says "mosh-server did not start. Check that mosh-server is installed on the Host."
 // in the language the app shows.
 func ConnectionErrorMoshHandshake() string { return In(i18n.Locale()).ConnectionErrorMoshHandshake() }
@@ -21602,6 +21612,16 @@ func ConnectionErrorETProxy() string { return In(i18n.Locale()).ConnectionErrorE
 // in the language of msgs.
 func (msgs Messages) ConnectionErrorETProxy() string {
 	return Catalog.Format(msgs.locale, "connectionErrorETProxy", nil)
+}
+
+// ConnectionErrorETNetwork says "The bundled EternalTerminal client cannot use an embedded Network Profile. Select the in-process client for this Host."
+// in the language the app shows.
+func ConnectionErrorETNetwork() string { return In(i18n.Locale()).ConnectionErrorETNetwork() }
+
+// ConnectionErrorETNetwork says "The bundled EternalTerminal client cannot use an embedded Network Profile. Select the in-process client for this Host."
+// in the language of msgs.
+func (msgs Messages) ConnectionErrorETNetwork() string {
+	return Catalog.Format(msgs.locale, "connectionErrorETNetwork", nil)
 }
 
 // BrowserAddress says "Address"
