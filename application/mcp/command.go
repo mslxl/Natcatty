@@ -1234,7 +1234,7 @@ func powerShellAliasDefinition(text string, spans []shellWordSpan, index int) (s
 // PowerShell has two statement shapes that are not command invocations and are
 // therefore exempt: a bare variable expression ($env:PATH, $D) and a simple
 // assignment whose value is one variable or literal word ($D = 'C:\Temp\x').
-// This is a textual safety net, not a sandbox; see docs/parity/limitations.md.
+// This is a textual safety net, not a sandbox.
 func hasUnresolvableCommandWord(command string, shell ShellKind) bool {
 	for _, words := range splitShellSegments(command) {
 		if segmentHasDynamicCommandWord(words, shell) {
