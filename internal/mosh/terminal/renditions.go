@@ -33,7 +33,13 @@ const (
 	attrCount
 )
 
-const trueColorMask uint32 = 0x1000000
+// trueColorMask marks a packed 24-bit color. Stock also stores it in a 25-bit
+// bitfield, so components wider than a byte are truncated together rather than
+// individually.
+const (
+	trueColorMask      uint32 = 0x1000000
+	trueColorFieldMask uint32 = 0x1ffffff
+)
 
 // NewRenditions returns renditions with the given background color and default
 // foreground and attributes, as Renditions(background) does.
@@ -41,9 +47,15 @@ func NewRenditions(background uint32) Renditions {
 	return Renditions{Background: background}
 }
 
-// MakeTrueColor packs an RGB value the way mosh's make_true_color does.
+// MakeTrueColor packs an RGB value the way mosh's make_true_color does:
+// true_color_mask | (r << 16) | (g << 8) | b with 32-bit wraparound, stored in
+// the 25-bit foreground_color/background_color bitfields. Components are not
+// masked individually; an out-of-range component therefore bleeds into its
+// neighbours exactly as it does in stock, and SGR serializes the resulting
+// bytes. For example SGR 38;2;1;2;300 packs as 0x101032c and prints
+// 38;2;1;3;44.
 func MakeTrueColor(r, g, b uint32) uint32 {
-	return trueColorMask | (r&0xff)<<16 | (g&0xff)<<8 | b&0xff
+	return (r<<16 | g<<8 | b | trueColorMask) & trueColorFieldMask
 }
 
 // IsTrueColor reports whether a packed color is a 24-bit true color.

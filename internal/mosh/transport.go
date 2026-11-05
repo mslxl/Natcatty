@@ -401,6 +401,19 @@ func (c *Client) CounterpartyShutdownAcknowledged() bool {
 	return c.remoteShutdownAckSent
 }
 
+// SentStateAckedTimestamp returns the send time of the oldest retained sent
+// state, exactly as TransportSender::get_sent_state_acked_timestamp() returns
+// sent_states.front().timestamp. It advances only when an acknowledgement
+// prunes the sent queue, not when a datagram arrives.
+func (c *Client) SentStateAckedTimestamp() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sent) == 0 {
+		return time.Time{}
+	}
+	return c.sent[0].at
+}
+
 // ShutdownComplete reports whether the server acknowledged our shutdown
 // sentinel.
 func (c *Client) ShutdownComplete() bool {

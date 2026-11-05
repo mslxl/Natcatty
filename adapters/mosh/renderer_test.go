@@ -4,12 +4,15 @@ package mosh
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -314,6 +317,379 @@ func TestRendererResizeBeforeOutput(t *testing.T) {
 	out := drainQueue(queue)
 	if len(out) == 0 || !bytes.Contains(out, []byte("resized")) {
 		t.Fatalf("output after resize = %q, want rendered text", out)
+	}
+}
+
+// newOverlayTestRenderer builds an initialized renderer whose overlay clock is
+// controlled by the caller. The escape key is unset so the stock default hint
+// ("Ctrl-^") is deterministic.
+func newOverlayTestRenderer(t *testing.T, clock func() uint64) (*terminalRenderer, *outputQueue) {
+	t.Helper()
+	unsetTestEnv(t, "MOSH_ESCAPE_KEY")
+	queue := newOutputQueue(1 << 20)
+	// Wide enough for the full notification strings: Display clips the bar to
+	// the framebuffer width.
+	renderer := newTerminalRendererWithOptions(queue, 80, 4, terminalRendererOptions{
+		Display: terminal.DefaultDisplayOptions(),
+		Clock:   clock,
+	})
+	renderer.setScreenSizeHandler(func(int, int, uint64) {})
+	if err := renderer.emitInitial(); err != nil {
+		t.Fatalf("emit initial: %v", err)
+	}
+	drainQueue(queue)
+	return renderer, queue
+}
+
+// TestEscapeKeyNameMatchesStock covers mosh-client's MOSH_ESCAPE_KEY parsing
+// and the string it appends to notification bars.
+func TestEscapeKeyNameMatchesStock(t *testing.T) {
+	unsetTestEnv(t, "MOSH_ESCAPE_KEY")
+	if got := escapeKeyName(); got != "Ctrl-^" {
+		t.Fatalf("unset escape key name = %q, want Ctrl-^", got)
+	}
+	for _, testCase := range []struct {
+		value string
+		want  string
+	}{
+		{"", ""},     // empty disables the quit hint
+		{"x", `"x"`}, // stock quotes a printable key
+		{"\x01", "Ctrl-A"},
+		{"\x1e", "Ctrl-^"},
+		{"\x03", "Ctrl-^"}, // stock refuses Ctrl-C
+		{"\x04", "Ctrl-^"},
+		{"\x0a", "Ctrl-^"},
+		{"\x0c", "Ctrl-^"},
+		{"\x0d", "Ctrl-^"},
+		{"ab", "Ctrl-^"}, // only a single byte is accepted
+	} {
+		t.Setenv("MOSH_ESCAPE_KEY", testCase.value)
+		if got := escapeKeyName(); got != testCase.want {
+			t.Errorf("MOSH_ESCAPE_KEY=%q: name = %q, want %q", testCase.value, got, testCase.want)
+		}
+	}
+}
+
+// TestRendererConnectingNotification covers stock's startup bar: while
+// remote_state_num is zero, the main loop wakes at least every 250ms and shows
+// the announced UDP port plus the quit hint. The first server state clears it.
+func TestRendererConnectingNotification(t *testing.T) {
+	now := uint64(1000)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	renderer.setUDPPort(60001)
+
+	now = 1200
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain before 250ms: %v", err)
+	}
+	if out := string(drainQueue(queue)); len(out) != 0 {
+		t.Fatalf("connecting bar drawn before 250ms: %q", out)
+	}
+
+	now = 1251
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain after 250ms: %v", err)
+	}
+	out := string(drainQueue(queue))
+	for _, want := range []string{
+		"Nothing received from server on UDP port 60001.",
+		"[To quit: Ctrl-^ .]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("connecting output %q does not contain %q", out, want)
+		}
+	}
+
+	// The message is non-permanent, but stock re-sets it on every wake while
+	// still connecting, so it must not expire after its first second.
+	now = 2400
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain while still connecting: %v", err)
+	}
+	renderer.mu.Lock()
+	message := string(renderer.overlays.Notifications().NotificationString())
+	renderer.mu.Unlock()
+	if message != connectingNotification(60001) {
+		t.Fatalf("connecting bar expired while still connecting: %q", message)
+	}
+
+	if err := renderer.applyUpdate(hostState(1, 0, true,
+		moshcore.HostInstruction{HostString: []byte("connected")})); err != nil {
+		t.Fatalf("apply state: %v", err)
+	}
+	now += 10
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain after connect: %v", err)
+	}
+	out = string(drainQueue(queue))
+	if strings.Contains(out, "Nothing received from server") {
+		t.Fatalf("connecting bar survived the first server state: %q", out)
+	}
+	if !strings.Contains(out, "connected") {
+		t.Fatalf("connected frame %q does not render the server state", out)
+	}
+}
+
+// TestRendererEmptyEscapeKeyHidesQuitHint covers stock's MOSH_ESCAPE_KEY=""
+// state: set_escape_key_string is never called, so notification bars carry no
+// "[To quit: ... .]" suffix at all.
+func TestRendererEmptyEscapeKeyHidesQuitHint(t *testing.T) {
+	t.Setenv("MOSH_ESCAPE_KEY", "")
+	now := uint64(0)
+	queue := newOutputQueue(1 << 20)
+	renderer := newTerminalRendererWithOptions(queue, 80, 2, terminalRendererOptions{
+		Display: terminal.DefaultDisplayOptions(),
+		Clock:   func() uint64 { return now },
+	})
+	renderer.setScreenSizeHandler(func(int, int, uint64) {})
+	if err := renderer.emitInitial(); err != nil {
+		t.Fatalf("emit initial: %v", err)
+	}
+	drainQueue(queue)
+	renderer.setUDPPort(60003)
+	now = 300
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain: %v", err)
+	}
+	out := string(drainQueue(queue))
+	if !strings.Contains(out, "Nothing received from server on UDP port 60003.") {
+		t.Fatalf("connecting output = %q", out)
+	}
+	if strings.Contains(out, "To quit") {
+		t.Fatalf("empty MOSH_ESCAPE_KEY still rendered a quit hint: %q", out)
+	}
+}
+
+// TestRendererConnectingTimeoutNotification mirrors stock's 15-second message.
+// Stock also calls network->start_shutdown() at that point; this ticket
+// deliberately wires only the visible notification, as documented on
+// maintainOverlays.
+func TestRendererConnectingTimeoutNotification(t *testing.T) {
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	renderer.setUDPPort(60002)
+	now = 15001
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain at timeout: %v", err)
+	}
+	out := string(drainQueue(queue))
+	if !strings.Contains(out, "mosh: Timed out waiting for server...") {
+		t.Fatalf("timeout output = %q", out)
+	}
+}
+
+// TestRendererCountUpRedrawsOnTimer proves the overlay timer, not a server
+// update, drives the last-contact count-up exactly as stock's select loop does.
+func TestRendererCountUpRedrawsOnTimer(t *testing.T) {
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	if err := renderer.applyUpdate(hostState(1, 0, true,
+		moshcore.HostInstruction{HostString: []byte("x")})); err != nil {
+		t.Fatalf("apply state: %v", err)
+	}
+	if err := renderer.emitLatest(); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	drainQueue(queue)
+
+	now = 7000
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain at 7s: %v", err)
+	}
+	out := string(drainQueue(queue))
+	if !strings.Contains(out, "mosh: Last contact 7 seconds ago. [To quit: Ctrl-^ .]") {
+		t.Fatalf("7s count-up output = %q", out)
+	}
+
+	// Past 60 seconds stock slows the count-up to one update every 3 seconds.
+	now = 71000
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain at 71s: %v", err)
+	}
+	// The encoder emits a minimal diff: only the changed duration and the
+	// escape hint moved, so the bar prefix is not repeated in this frame.
+	out = string(drainQueue(queue))
+	if !strings.Contains(out, "1:11 ago.") {
+		t.Fatalf("71s count-up output = %q", out)
+	}
+}
+
+// TestRendererServerAckedSelectsReplyCountUp proves ServerAcked participates in
+// stock's "reply" explanation instead of leaving only the last-contact clock.
+func TestRendererServerAckedSelectsReplyCountUp(t *testing.T) {
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	if err := renderer.applyUpdate(hostState(1, 0, true,
+		moshcore.HostInstruction{HostString: []byte("x")})); err != nil {
+		t.Fatalf("apply state: %v", err)
+	}
+	if err := renderer.emitLatest(); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	drainQueue(queue)
+
+	// A fresh server word arrives, but the server has not acknowledged our
+	// sent state for 11 seconds: stock reports the reply clock, not contact.
+	now = 11000
+	if err := renderer.applyUpdate(hostState(2, 1, true,
+		moshcore.HostInstruction{HostString: []byte("y")})); err != nil {
+		t.Fatalf("apply second state: %v", err)
+	}
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain: %v", err)
+	}
+	out := string(drainQueue(queue))
+	if !strings.Contains(out, "mosh: Last reply 11 seconds ago.") {
+		t.Fatalf("reply count-up output = %q", out)
+	}
+
+	// Acknowledging now clears both late conditions; the next timer draw
+	// removes the bar. The injected clock reads itself, so the wall timestamp
+	// passed by the transport is ignored.
+	renderer.serverAcked(time.Time{})
+	now = 12000
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain after ack: %v", err)
+	}
+	out = string(drainQueue(queue))
+	if strings.Contains(out, "Last reply") {
+		t.Fatalf("reply bar survived the acknowledgement: %q", out)
+	}
+}
+
+// TestRendererNetworkErrorNotification covers set/clear and expiry of stock's
+// sendto error string.
+func TestRendererNetworkErrorNotification(t *testing.T) {
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+
+	renderer.setNetworkError("sendto: no route to host")
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain: %v", err)
+	}
+	out := string(drainQueue(queue))
+	for _, want := range []string{"mosh: sendto: no route to host", "[To quit: Ctrl-^ .]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("network-error output %q does not contain %q", out, want)
+		}
+	}
+
+	// set_network_error expires after ACK_INTERVAL + 100ms.
+	now = 3101
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain at expiry: %v", err)
+	}
+	if out := string(drainQueue(queue)); strings.Contains(out, "no route to host") {
+		t.Fatalf("expired network error was redrawn: %q", out)
+	}
+
+	// clear_network_error shortens a live error to one second.
+	now = 4000
+	renderer.setNetworkError("sendto: host unreachable")
+	now = 4500
+	renderer.clearNetworkError()
+	now = 5501
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain after clear: %v", err)
+	}
+	if out := string(drainQueue(queue)); strings.Contains(out, "host unreachable") {
+		t.Fatalf("cleared network error was redrawn: %q", out)
+	}
+}
+
+// failingLink is a datagramLink whose writes fail, for the transport-level
+// network-error wiring test.
+type failingLink struct {
+	writeErr error
+}
+
+func (l *failingLink) writeOne([]byte) error           { return l.writeErr }
+func (l *failingLink) readFrom([]byte) (int, error)    { return 0, io.EOF }
+func (l *failingLink) setReadDeadline(time.Time) error { return nil }
+func (l *failingLink) close() error                    { return nil }
+
+// TestTransportWriteErrorShowsNetworkNotification proves the transport's send
+// path reaches SetNetworkError/ClearNetworkError, not just the renderer API.
+func TestTransportWriteErrorShowsNetworkNotification(t *testing.T) {
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	link := &failingLink{writeErr: errors.New("no route to host")}
+	transport := &inProcessTransport{
+		queue:    queue,
+		renderer: renderer,
+		link:     link,
+		done:     make(chan struct{}),
+	}
+
+	if err := transport.writeDatagrams([][]byte{[]byte("datagram")}); err != nil {
+		t.Fatalf("transient send failure escaped as an error: %v", err)
+	}
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain: %v", err)
+	}
+	if out := string(drainQueue(queue)); !strings.Contains(out, "mosh: sendto: no route to host") {
+		t.Fatalf("transport send error did not reach the notification bar: %q", out)
+	}
+
+	link.writeErr = nil
+	if err := transport.writeDatagrams([][]byte{[]byte("datagram")}); err != nil {
+		t.Fatalf("successful send: %v", err)
+	}
+	now = 1101
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain after recovery: %v", err)
+	}
+	if out := string(drainQueue(queue)); strings.Contains(out, "no route to host") {
+		t.Fatalf("network error survived a successful send: %q", out)
+	}
+}
+
+// TestNetworkErrorMessageMatchesStock covers socket-error formatting: stock
+// shows "sendto: " or "recvmsg: " plus strerror, never Go's decorated
+// "write udp 127.0.0.1:...: sendto: ..." shape or a doubled operation prefix.
+func TestNetworkErrorMessageMatchesStock(t *testing.T) {
+	opErr := &net.OpError{
+		Op:  "write",
+		Net: "udp",
+		Err: os.NewSyscallError("sendto", syscall.ENETUNREACH),
+	}
+	if got, want := networkErrorMessage("sendto", opErr),
+		"sendto: "+syscall.ENETUNREACH.Error(); got != want {
+		t.Fatalf("formatted send error = %q, want %q", got, want)
+	}
+	if got, want := networkErrorMessage("recvmsg", errors.New("boom")), "recvmsg: boom"; got != want {
+		t.Fatalf("formatted recv error = %q, want %q", got, want)
+	}
+}
+
+// TestTransportCallsServerAcked proves the read loop reports the server's
+// acknowledgement timestamp from a real Receive, as process_network_input does.
+func TestTransportCallsServerAcked(t *testing.T) {
+	server := startFakeServer(t)
+	factory := InProcessFactory{
+		Bootstrap:    bannerBootstrap{banner: server.announcement()},
+		ProbeTimeout: 500 * time.Millisecond,
+		clock:        func() uint64 { return 42 },
+	}
+	transport, err := factory.Open(context.Background(), inProcessTestSpec())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	readUntil(t, transport, "fake$ ", 2*time.Second)
+
+	if _, err := transport.Write([]byte("echo hi\r")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	waitInput(t, server, "echo hi", time.Second)
+	readUntil(t, transport, "hi\r\n", 2*time.Second)
+
+	inner := transport.(*inProcessTransport)
+	inner.renderer.mu.Lock()
+	acked := inner.renderer.lastServerAck
+	inner.renderer.mu.Unlock()
+	if acked != 42 {
+		t.Fatalf("server ack timestamp = %d, want 42 from the injected clock", acked)
 	}
 }
 

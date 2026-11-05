@@ -88,3 +88,38 @@ The oracle constructs `Display(false)`, matching stock mosh-client with
 transport deliberately uses the same capabilities because MyGo is the
 renderer; `XtermDisplayOptions` covers the alternate-screen enter/leave bytes
 for a stand-alone terminal.
+
+## wcwidth semantics
+
+Stock mosh computes a printable rune's column width with `wcwidth(3)` from the
+host C library after the parity driver calls `setlocale(LC_ALL, "C.UTF-8")`.
+Go's `unicode.IsPrint` and `golang.org/x/text/width` do not reproduce that
+behavior, so `internal/mosh/terminal/widthtable.go` is generated from the
+oracle: glibc 2.39 in Ubuntu 24.04 with `LC_CTYPE=C.UTF-8`. The target
+semantics are:
+
+- `-1` unprintable controls, unassigned code points, and noncharacters.
+- `0` combining marks, format characters, variation selectors, and Hangul
+  medial/final Jamo U+1160 to U+11FF.
+- `1` everything else, including all non-ASCII Zs separators (U+1680,
+  U+2000 to U+200A, U+202F, U+205F) and private-use code points U+E000 to
+  U+F8FF and the supplementary private-use planes. U+3000 is width 2 in this
+  locale because it is East Asian wide.
+- `2` East Asian wide and fullwidth code points, including Hangul leading Jamo
+  U+1100 to U+115F.
+
+Regenerate the table when the parity image changes, and review the generated
+diff:
+
+```sh
+docker run --rm -v "$PWD":/repo --entrypoint sh natcatty/mosh-parity:1.4.0 -c \
+  'cc -O2 -o /tmp/wcwidth_gen \
+     /repo/internal/mosh/terminal/testdata/parity/harness/wcwidth_gen.c &&
+   /tmp/wcwidth_gen > /repo/internal/mosh/terminal/widthtable.go'
+```
+
+The `width-edges` golden and `TestSessionMatchesStockMoshClientWidthEdges`
+differential carry these code points through the stock client's real terminal
+I/O. `TestStockParityTerminalModel` also sends out-of-range true-color SGR
+components; stock packs them unmasked into a 25-bit field, so the rendered SGR
+can differ from the nominal RGB values.
