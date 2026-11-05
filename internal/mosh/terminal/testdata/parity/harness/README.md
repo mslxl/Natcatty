@@ -59,13 +59,25 @@ The stock-client script excludes corpus events that query the terminal
 terminal-to-host reply. The internal driver comparison still covers the model
 behavior for those sequences.
 
-Stock also draws a wall-clock status bar ("Nothing received from server on UDP
+Stock also draws wall-clock status bars that do not come from the scripted
+host states: the startup notification ("Nothing received from server on UDP
 port …") if the container's first UDP exchange is scheduled more than 250 ms
-after the client starts. That frame depends on container scheduling, not on the
-scripted host states, so the differential retries a run that contains it and
-compares only runs without the startup status frame. The notification engine's
+after the client starts, and the last-contact/last-reply count-up after
+6500/10000 ms without a server state or acknowledgement. Those frames depend on
+container and host scheduling, so the differential retries a stock run that
+contains one and compares only runs without any status frame. The retry
+predicate matches the bar's bold white-on-blue rendition together with the
+"mosh:" label (plus the overlay's generated messages, for a frame that reuses
+the terminal's current rendition), so scripted SGR content cannot trip it. The
+Go reference renderer and the Session run with a frozen overlay clock, and the
+harness fails if either still emits a status frame. The notification engine's
 formatting, expiry, and count-up behavior remain covered by the terminal-model
 tests; the stock-client differential is the scripted terminal stream oracle.
+
+The scripted fake server acknowledges the stock client's latest state in every
+host-state datagram, as mosh-server does. Without that acknowledgement stock's
+reply-late count-up fires deterministically once a long corpus run exceeds
+10 s.
 
 Regenerate the committed goldens after changing a scenario:
 
