@@ -246,6 +246,20 @@ func endpointsFor(req appconnection.DialRequest) []endpoint {
 // verifies its host key before offering a credential. A failure closes the
 // hops already open and is tagged with the endpoint that produced it.
 func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appconnection.Client, error) {
+	// ProxyCommand runs an operating-system process, so it cannot be carried
+	// by an in-process Network Provider. Reject the combination before any
+	// process starts and never silently ignore either selection.
+	if req.Network != nil && req.Proxy != nil && req.Proxy.Type == appconnection.ProxyCommand {
+		return nil, appconnection.ProxyCommandNetworkConflict(*req.Network)
+	}
+	// A Network Route without its opened Provider must fail closed. The
+	// Manager always supplies one today, but the adapter's contract is that a
+	// selected Network Profile is never substituted with a direct dial, so a
+	// future caller must not silently bypass it either. This runs after the
+	// ProxyCommand conflict check, which still wins when both apply.
+	if req.Network != nil && req.Provider == nil {
+		return nil, appconnection.ProviderUnavailable(*req.Network)
+	}
 	endpoints := endpointsFor(req)
 	total := len(endpoints)
 	clients := make([]*xssh.Client, 0, total)
@@ -268,7 +282,7 @@ func (d *Dialer) Dial(ctx context.Context, req appconnection.DialRequest) (appco
 			err error
 		)
 		if i == 0 {
-			raw, err = d.openFirst(ctx, req.Proxy, ep)
+			raw, err = d.openFirst(ctx, req.Proxy, req.Provider, ep)
 		} else {
 			previous := endpoints[i-1]
 			previousLabel := previous.label
@@ -332,18 +346,33 @@ func reportChain(req appconnection.DialRequest, total, index int, label string, 
 }
 
 // openFirst reaches the endpoint directly or through the proxy. The proxy
-// applies only here: later hops travel inside the SSH chain.
-func (d *Dialer) openFirst(ctx context.Context, proxy *appconnection.Proxy, ep endpoint) (net.Conn, error) {
+// applies only here: later hops travel inside the SSH chain. When a Network
+// Provider is present, both the direct first-endpoint dial and the proxy
+// server dial go through it, so the whole first hop sits inside the virtual
+// network.
+func (d *Dialer) openFirst(ctx context.Context, proxy *appconnection.Proxy, provider appconnection.NetworkProvider, ep endpoint) (net.Conn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, d.dialTimeout)
 	defer cancel()
 	if proxy != nil {
-		return d.dialProxy(dialCtx, proxy, ep.hostname, ep.portOr22())
+		return d.dialProxy(dialCtx, proxy, provider, ep.hostname, ep.portOr22())
 	}
-	conn, err := d.dial(dialCtx, "tcp", ep.address())
+	conn, err := d.dialEndpoint(dialCtx, provider, "tcp", ep.address())
 	if err != nil {
 		return nil, classifyDialFailure(ctx, dialCtx, err)
 	}
 	return conn, nil
+}
+
+// dialEndpoint is the one place the first endpoint chooses between the
+// Provider and the original direct dialer. Dial rejects a Network Route
+// without a Provider before reaching here, so a nil provider is only possible
+// for a request that selected no Network Profile; that keeps the pre-Network
+// behavior exactly.
+func (d *Dialer) dialEndpoint(ctx context.Context, provider appconnection.NetworkProvider, network, address string) (net.Conn, error) {
+	if provider != nil {
+		return provider.DialContext(ctx, network, address)
+	}
+	return d.dial(ctx, network, address)
 }
 
 // openForward asks the previous hop for a direct-tcpip channel to the next

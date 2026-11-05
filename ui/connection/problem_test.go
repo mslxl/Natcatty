@@ -66,6 +66,28 @@ func TestProblemTextForFallsBackToTheProtocolKind(t *testing.T) {
 	}
 }
 
+// TestProblemTextForNamesProviderFailures checks that a Provider failure and
+// the ProxyCommand/Network Profile conflict reach the user as actionable text
+// instead of the generic unsupported fallback.
+func TestProblemTextForNamesProviderFailures(t *testing.T) {
+	providerErr := &appconnection.Error{
+		Kind:  appconnection.KindProvider,
+		Cause: errors.New("tunnel is down"),
+	}
+	conflict := appconnection.ProxyCommandNetworkConflict(appconnection.NetworkRoute{
+		ProfileID: "net-target", Kind: "tailscale",
+	})
+	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
+		m := locales.In(locale)
+		if got, want := ProblemTextFor(m, providerErr), m.ConnectionErrorProvider(); got == "" || got != want {
+			t.Fatalf("%s provider text = %q, want %q", locale, got, want)
+		}
+		if got, want := ProblemTextFor(m, conflict), m.ConnectionErrorProxyCommandNetwork(); got == "" || got != want {
+			t.Fatalf("%s ProxyCommand conflict text = %q, want %q", locale, got, want)
+		}
+	}
+}
+
 func TestSecurityKeyMessagesExistInEveryLocale(t *testing.T) {
 	for _, locale := range []string{"en", "es", "ru", "zh-CN", "zh-TW"} {
 		m := locales.In(locale)

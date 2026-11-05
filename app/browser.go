@@ -150,6 +150,7 @@ func (c browserConnector) Connect(ctx context.Context, hostID model.HostID) (app
 		Username:          host.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		// A browser never shares a transport: its own failure, idle timeout,

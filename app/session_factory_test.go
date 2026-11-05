@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
@@ -92,6 +94,30 @@ func (d *factoryDialer) Dial(_ context.Context, req appconnection.DialRequest) (
 	d.calls++
 	d.request = req
 	return d.client, nil
+}
+
+// factoryNetworkProvider is an inert Network Provider for tests that only
+// assert the route reaches the Manager. The fake dialer never uses it.
+type factoryNetworkProvider struct{}
+
+func (factoryNetworkProvider) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, errors.New("factory network provider is inert")
+}
+
+type factoryNetworkFactory struct{}
+
+func (factoryNetworkFactory) Open(context.Context, appconnection.NetworkRoute) (appconnection.NetworkProvider, error) {
+	return factoryNetworkProvider{}, nil
+}
+
+func factoryManagerWithProviders(dialer appconnection.Dialer) *appconnection.Manager {
+	return appconnection.NewManager(
+		dialer,
+		vaultPasswords{vault: factoryPasswords{value: "pw"}},
+		&factoryKnownHosts{},
+		appconnection.WithNetworkProviders(
+			appconnection.NewNetworkProviderRegistry(factoryNetworkFactory{})),
+	)
 }
 
 type factoryLocal struct {
@@ -656,6 +682,107 @@ func TestVaultRoutesSelectTheNetworkProfileFromTheFirstEndpoint(t *testing.T) {
 			t.Fatalf("Network = %+v, want nil", got.Network)
 		}
 	})
+}
+
+func TestVaultRoutesCarryTheNetworkFingerprintAndLabel(t *testing.T) {
+	profile := domainvault.NetworkProfile{
+		ID:        "net-target",
+		Label:     "Office",
+		Kind:      domainvault.NetworkKindTailscale,
+		UpdatedAt: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+		Tailscale: &domainvault.TailscaleNetwork{
+			Hostname:   "natcatty-office",
+			ControlURL: "https://control.example.com",
+			HasAuthKey: true,
+		},
+	}
+	route, err := (vaultRoutes{vault: &fakeRouteVault{
+		hosts: map[model.HostID]domainvault.Host{
+			"target": {ID: "target", Hostname: "target.internal", NetworkProfileID: "net-target"},
+		},
+		networkProfiles: map[string]domainvault.NetworkProfile{"net-target": profile},
+	}}).Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if route.Network == nil {
+		t.Fatal("Network = nil, want the selected profile")
+	}
+	if route.Network.Label != "Office" {
+		t.Fatalf("Network.Label = %q, want the profile label", route.Network.Label)
+	}
+	want := domainvault.NetworkProfileFingerprint(profile)
+	if want == "" {
+		t.Fatal("the domain fingerprint is empty")
+	}
+	if route.Network.Fingerprint != want {
+		t.Fatalf("Network.Fingerprint = %q, want %q", route.Network.Fingerprint, want)
+	}
+}
+
+// A reference to a profile that no longer exists must stay selected so the
+// runtime fails closed with KindProvider instead of silently dialing directly.
+func TestVaultRoutesKeepADanglingNetworkProfileReference(t *testing.T) {
+	route, err := (vaultRoutes{vault: &fakeRouteVault{
+		hosts: map[model.HostID]domainvault.Host{
+			"target": {ID: "target", Hostname: "target.internal", NetworkProfileID: "gone"},
+		},
+		networkProfiles: map[string]domainvault.NetworkProfile{},
+	}}).Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if route.Network == nil {
+		t.Fatal("Network = nil, want the dangling reference preserved")
+	}
+	if route.Network.ProfileID != "gone" || route.Network.Kind != "" ||
+		route.Network.Label != "" || route.Network.Fingerprint != "" {
+		t.Fatalf("Network = %+v, want only the dangling profile ID", route.Network)
+	}
+}
+
+func TestSSHSessionPassesTheNetworkRouteToTheManager(t *testing.T) {
+	client := &factoryClient{terminal: &factoryTerminal{}}
+	dialer := &factoryDialer{client: client}
+	manager := factoryManagerWithProviders(dialer)
+	t.Cleanup(manager.CloseAll)
+	network := &appconnection.NetworkRoute{
+		ProfileID: "net-target", Kind: "tailscale", Label: "Office", Fingerprint: "fp-1",
+	}
+	routes := &factoryRoutes{route: appconnection.Route{Network: network}}
+	factory := newTransportFactory(&factoryLocal{}, nil, nil, manager, routes)
+
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, HostID: "target", Hostname: "target.internal", Username: "root",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	if dialer.request.Network == nil || dialer.request.Network.ProfileID != "net-target" ||
+		dialer.request.Network.Fingerprint != "fp-1" {
+		t.Fatalf("DialRequest.Network = %+v, want the route's NetworkRoute", dialer.request.Network)
+	}
+}
+
+func TestTestConnectionPassesTheNetworkRouteToTheManager(t *testing.T) {
+	dialer := &factoryDialer{client: &factoryClient{terminal: &factoryTerminal{}}}
+	manager := factoryManagerWithProviders(dialer)
+	t.Cleanup(manager.CloseAll)
+	network := &appconnection.NetworkRoute{
+		ProfileID: "net-target", Kind: "wireguard", Label: "Lab", Fingerprint: "fp-2",
+	}
+	routes := &factoryRoutes{route: appconnection.Route{Network: network}}
+
+	if err := testConnection(context.Background(), manager, routes, domainvault.Host{
+		ID: "target", Hostname: "target.internal", Username: "root",
+	}); err != nil {
+		t.Fatalf("testConnection: %v", err)
+	}
+	if dialer.request.Network == nil || dialer.request.Network.ProfileID != "net-target" ||
+		dialer.request.Network.Fingerprint != "fp-2" {
+		t.Fatalf("DialRequest.Network = %+v, want the route's NetworkRoute", dialer.request.Network)
+	}
 }
 
 // The route resolver reads Hosts through the Vault's effective view, so a

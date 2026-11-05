@@ -247,6 +247,7 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		Username:          spec.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
@@ -386,6 +387,7 @@ func testConnection(ctx context.Context, manager *appconnection.Manager, routes 
 		Username:          host.Username,
 		Jumps:             route.Jumps,
 		Proxy:             route.Proxy,
+		Network:           route.Network,
 		Algorithms:        route.Algorithms,
 		ConfigFingerprint: route.ConfigFingerprint,
 		LeaseKind:         appconnection.LeaseShell,
@@ -619,10 +621,11 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	return route, nil
 }
 
-// networkRoute resolves the selected profile's identity and Kind. It never
-// loads key material. A dangling reference stays selected so the runtime fails
-// closed instead of silently connecting directly; the empty Kind is the
-// resolver's way of saying the profile no longer exists.
+// networkRoute resolves the selected profile's identity, Kind, display label,
+// and non-secret configuration fingerprint. It never loads key material. A
+// dangling reference stays selected so the runtime fails closed instead of
+// silently connecting directly; the empty Kind is the resolver's way of saying
+// the profile no longer exists.
 func (r vaultRoutes) networkRoute(ctx context.Context, host domainvault.Host) (*appconnection.NetworkRoute, error) {
 	if host.NetworkProfileID == "" {
 		return nil, nil
@@ -632,6 +635,8 @@ func (r vaultRoutes) networkRoute(ctx context.Context, host domainvault.Host) (*
 	switch {
 	case err == nil:
 		network.Kind = string(profile.Kind)
+		network.Label = profile.Label
+		network.Fingerprint = domainvault.NetworkProfileFingerprint(profile)
 	case errors.Is(err, appvault.ErrNotFound):
 		// The reference comes from another device or a hand-edited record.
 		// Keeping it non-nil is what prevents a silent direct connection.
