@@ -416,6 +416,10 @@ func run(afterReady func(hostWindow)) error {
 	// is inside the app's user data, never a system Tailscale directory, and is
 	// deliberately not part of the SQLite Vault that backup and sync carry.
 	networkStateBase := filepath.Join(userData, "network-providers")
+	// Profile edits and deletes must retire the live Provider and its idle
+	// Connections. The Vault service is built first, so the runtime is bound to
+	// the registry and Manager once they exist.
+	networkRuntime := &networkProfileRuntime{}
 	vaultService := appvault.NewService(
 		database,
 		appvault.WithSecrets(secretStore),
@@ -425,6 +429,7 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithProxyProfiles(database),
 		appvault.WithNetworkProfiles(database),
 		appvault.WithNetworkProfileStateCleaner(networkStateCleaner{base: networkStateBase}),
+		appvault.WithNetworkProfileChanged(networkRuntime.InvalidateProfile),
 		appvault.WithKnownHosts(database),
 		appvault.WithSnippets(database),
 		appvault.WithNotes(database),
@@ -592,6 +597,12 @@ func run(afterReady func(hostWindow)) error {
 		appconnection.WithAuthMethodCache(
 			appconnection.NewAuthMethodCache(appconnection.MaxAuthMethodCacheEntries)),
 	)
+	networkRuntime.providers = networkProviders
+	networkRuntime.connections = connections
+	// A Provider that stops, fails, or loses authorization makes every parked
+	// transport for its Profile unusable. Drop those idle Connections now; an
+	// active lease keeps its transport and fails typed on its next I/O.
+	networkStatusSink.onPhase = networkRuntime.PhaseChanged
 
 	// The Vault starts from the database. A read failure leaves the surface
 	// empty and shows the localized internal-error message rather than
@@ -732,6 +743,16 @@ func run(afterReady func(hostWindow)) error {
 		vaultstate.WithProxyProfiles(vaultService),
 		vaultstate.WithNetworkProfiles(vaultService),
 		vaultstate.WithNetworkProviderActions(networkProviderControl),
+		vaultstate.WithNetworkProfileRuntimeUsage(func(profileID string) bool {
+			// Neither the Session service nor the Connection Manager exists when
+			// the Vault state is built; both are resolved at call time.
+			var live liveSessionLister
+			if sessions != nil {
+				live = sessions
+			}
+			return networkProfileRuntimeInUse(context.Background(), profileID,
+				live, routes, connections)
+		}),
 		vaultstate.WithKnownHosts(vaultService),
 		vaultstate.WithSnippets(vaultService),
 		vaultstate.WithNotes(vaultService),

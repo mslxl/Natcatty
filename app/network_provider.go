@@ -578,6 +578,10 @@ type networkProviderStatusSink struct {
 	vault   func() *vaultstate.State
 	history *apphistory.Service
 	now     func() time.Time
+	// onPhase receives every Provider phase change. The runtime uses terminal
+	// phases to invalidate idle Connections built through that Profile. It runs
+	// on the Provider goroutine and must not block for long.
+	onPhase func(profileID string, phase appconnection.ProviderPhase)
 
 	// mu guards wireGuardLogState, which suppresses counter-only updates from
 	// the live WireGuard status poll. A busy tunnel would otherwise append a
@@ -600,6 +604,9 @@ type wireGuardLogEvent struct {
 func (s *networkProviderStatusSink) Observe(status adaptertailscale.Status) {
 	if s == nil {
 		return
+	}
+	if s.onPhase != nil && status.ProfileID != "" {
+		s.onPhase(status.ProfileID, status.Phase)
 	}
 	if s.vault != nil {
 		if state := s.vault(); state != nil {
@@ -643,6 +650,9 @@ func statusErrorText(err error) string {
 func (s *networkProviderStatusSink) ObserveWireGuard(status adapterwireguard.Status) {
 	if s == nil {
 		return
+	}
+	if s.onPhase != nil && status.ProfileID != "" {
+		s.onPhase(status.ProfileID, status.Phase)
 	}
 	if s.vault != nil {
 		if state := s.vault(); state != nil {

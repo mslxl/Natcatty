@@ -1342,6 +1342,24 @@ func (msgs Messages) VaultNetworkDeleteAffected(hosts int, groups int) string {
 	return Catalog.Format(msgs.locale, "vaultNetworkDeleteAffected", map[string]any{"hosts": hosts, "groups": groups})
 }
 
+// VaultNetworkDeleteActiveUse says "Active Sessions or connection leases are using this Network Profile. Deleting it closes its Provider; affected Sessio…"
+// in the language the app shows.
+//
+// The delete banner's warning that live Sessions or connection leases are
+// currently using the Network Profile, so deleting it closes the Provider
+// under them.
+func VaultNetworkDeleteActiveUse() string { return In(i18n.Locale()).VaultNetworkDeleteActiveUse() }
+
+// VaultNetworkDeleteActiveUse says "Active Sessions or connection leases are using this Network Profile. Deleting it closes its Provider; affected Sessio…"
+// in the language of msgs.
+//
+// The delete banner's warning that live Sessions or connection leases are
+// currently using the Network Profile, so deleting it closes the Provider
+// under them.
+func (msgs Messages) VaultNetworkDeleteActiveUse() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkDeleteActiveUse", nil)
+}
+
 // VaultNetworkFormCreateTitle says "New Network Profile"
 // in the language the app shows.
 func VaultNetworkFormCreateTitle() string { return In(i18n.Locale()).VaultNetworkFormCreateTitle() }

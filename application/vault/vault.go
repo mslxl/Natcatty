@@ -53,6 +53,11 @@ type Service struct {
 	applyBarrier        func(ctx context.Context) error
 	history             HistoryReader
 	themeSource         func() string
+	// networkProfileChanged runs after a profile edit or deletion has been
+	// persisted. The composition root uses it to close that profile's runtime
+	// Provider and invalidate pooled Connections; the Vault itself owns no
+	// runtime state.
+	networkProfileChanged func(profileID string)
 }
 
 // Option customizes a Service.

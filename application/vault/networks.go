@@ -38,6 +38,19 @@ func WithNetworkProfileStateCleaner(cleaner NetworkProfileStateCleaner) Option {
 	return func(s *Service) { s.networkState = cleaner }
 }
 
+// WithNetworkProfileChanged installs a callback invoked with the profile ID
+// after an edit or deletion has been persisted successfully. The runtime uses
+// it to retire the profile's live Provider and idle Connections. It runs after
+// the write completes and may take as long as releasing a Provider; it must
+// not call back into the Vault. A failed write never calls it.
+func WithNetworkProfileChanged(fn func(profileID string)) Option {
+	return func(s *Service) {
+		if fn != nil {
+			s.networkProfileChanged = fn
+		}
+	}
+}
+
 // WithNetworkProfileIDGenerator sets how the Service names Network Profiles.
 func WithNetworkProfileIDGenerator(fn func() string) Option {
 	return func(s *Service) {
@@ -337,12 +350,14 @@ func (s *Service) UpdateNetworkProfile(ctx context.Context, id string,
 				_ = s.secrets.Delete(ctx, NetworkPeerSecretRef(peerID, FieldNetworkPresharedKey))
 			}
 		}
+		s.notifyNetworkProfileChanged(updated.ID)
 		return updated, nil
 	}
 	if err := s.networks.SaveNetworkProfile(ctx, updated); err != nil {
 		rollback()
 		return domainvault.NetworkProfile{}, internal(err)
 	}
+	s.notifyNetworkProfileChanged(updated.ID)
 	return updated, nil
 }
 
@@ -417,7 +432,19 @@ func (s *Service) DeleteNetworkProfile(ctx context.Context, id string) error {
 			}
 		}
 	}
+	s.notifyNetworkProfileChanged(id)
 	return nil
+}
+
+// notifyNetworkProfileChanged announces a persisted profile change to the
+// runtime. The callback is advisory: a Provider that fails to close is still
+// removed from the registry, so the next dial fails closed rather than reusing
+// it.
+func (s *Service) notifyNetworkProfileChanged(id string) {
+	if s == nil || s.networkProfileChanged == nil || id == "" {
+		return
+	}
+	s.networkProfileChanged(id)
 }
 
 // NetworkProfileSecret reads a profile-level credential for the Provider that

@@ -1152,3 +1152,93 @@ func mustHex(t *testing.T, value string) []byte {
 	}
 	return decoded
 }
+
+// TestProviderDialChecksALivePhaseEvenWhenBackendStatusFails is the regression
+// for a dial racing device death: netstackBackend.Status returns
+// (PhaseError, "device stopped unexpectedly"), so requiring statusErr == nil
+// before reading the phase classified the dead tunnel as KindNetwork with a
+// stale running phase.
+func TestProviderDialChecksALivePhaseEvenWhenBackendStatusFails(t *testing.T) {
+	config := testConfig()
+	config.Peers[0].Endpoint = "198.51.100.9:51820"
+	factory := &fakeFactory{}
+	provider := newTestProvider(t, config, factory, nil)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	backend := factory.backend(0)
+	backend.mu.Lock()
+	backend.dialFn = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("wireguard: device is not running")
+	}
+	backend.statusFn = func(context.Context) (backendStatus, error) {
+		return backendStatus{Phase: appconnection.ProviderPhaseError},
+			errors.New("wireguard: device stopped unexpectedly")
+	}
+	backend.mu.Unlock()
+
+	conn, err := provider.DialContext(context.Background(), "tcp", "10.9.0.10:22")
+	if conn != nil {
+		t.Fatal("a dial racing device death returned a connection")
+	}
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("error %v is not typed", err)
+	}
+	if typed.Kind != appconnection.KindProvider {
+		t.Fatalf("Kind = %q, want provider: %v", typed.Kind, err)
+	}
+	if typed.Provider == nil || typed.Provider.Phase != appconnection.ProviderPhaseError {
+		t.Fatalf("ProviderInfo = %+v, want the live error phase", typed.Provider)
+	}
+	if typed.Provider.ProfileID != config.ProfileID {
+		t.Fatalf("ProfileID = %q, want %q", typed.Provider.ProfileID, config.ProfileID)
+	}
+	if provider.Phase() != appconnection.ProviderPhaseError {
+		t.Fatalf("Provider phase = %q, want error", provider.Phase())
+	}
+	if provider.Status().Err == nil {
+		t.Fatal("the Provider status does not carry the failure")
+	}
+	if factory.backendCount() != 1 {
+		t.Fatalf("a failed dial opened %d backends; it must not retry outside the tunnel",
+			factory.backendCount())
+	}
+}
+
+// TestProviderConnClassifiesIOFailuresAfterClose proves an active connection
+// reports KindProvider on its next I/O when its Provider was closed, instead of
+// an untyped transport error that could invite a direct retry.
+func TestProviderConnClassifiesIOFailuresAfterClose(t *testing.T) {
+	config := testConfig()
+	config.Peers[0].Endpoint = "198.51.100.9:51820"
+	factory := &fakeFactory{}
+	provider := newTestProvider(t, config, factory, nil)
+
+	conn, err := provider.DialContext(context.Background(), "tcp", "10.9.0.10:22")
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	// A healthy Provider leaves an ordinary transport error unclassified.
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("the stub connection did not fail its read")
+	} else {
+		var typed *appconnection.Error
+		if errors.As(err, &typed) {
+			t.Fatalf("a healthy Provider classified its transport error: %v", err)
+		}
+	}
+
+	if err := provider.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, err = conn.Read(make([]byte, 1))
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("read after Close = %v, want KindProvider", err)
+	}
+	if typed.Provider == nil || typed.Provider.Phase != appconnection.ProviderPhaseStopped {
+		t.Fatalf("ProviderInfo = %+v, want the stopped phase", typed.Provider)
+	}
+}

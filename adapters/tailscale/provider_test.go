@@ -125,11 +125,87 @@ func fakeProvider(t *testing.T, cfg Config, fake *fakeBackend) (*Provider, *stat
 	provider, err := NewProvider(cfg,
 		WithStatusObserver(recorder.observe),
 		withBackendFactory(func(Config) (backend, error) { return fake, nil }),
+		// The background poll is exercised explicitly; keep it out of the
+		// timing of unrelated state-machine tests.
+		withPollInterval(time.Hour),
 	)
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
+	t.Cleanup(func() { _ = provider.Close() })
 	return provider, recorder
+}
+
+// pollingProvider builds a Provider whose live status poll runs at interval and
+// reports through a channel, so a phase transition is awaited as a condition
+// rather than a fixed delay.
+func pollingProvider(t *testing.T, cfg Config, fake *fakeBackend,
+	interval time.Duration) (*Provider, <-chan Status) {
+	t.Helper()
+	observed := make(chan Status, 64)
+	provider, err := NewProvider(cfg,
+		WithStatusObserver(func(status Status) {
+			select {
+			case observed <- status:
+			default:
+			}
+		}),
+		withBackendFactory(func(Config) (backend, error) { return fake, nil }),
+		withPollInterval(interval),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	return provider, observed
+}
+
+// waitForStatus reads observations until want arrives or a hard deadline
+// expires.
+func waitForStatus(t *testing.T, observed <-chan Status,
+	want appconnection.ProviderPhase) Status {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case status := <-observed:
+			if status.Phase == want {
+				return status
+			}
+		case <-deadline:
+			t.Fatalf("no %q status was observed", want)
+		}
+	}
+}
+
+// waitForProviderPhase polls the live phase until it reaches want or a hard
+// deadline expires.
+func waitForProviderPhase(t *testing.T, provider *Provider, want appconnection.ProviderPhase) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if provider.Phase() == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("phase = %q, want %q", provider.Phase(), want)
+}
+
+// waitForBackendCloses waits until the backend's Close has been called want
+// times or a hard deadline expires. failRuntime publishes the error phase
+// before releasing the backend, so observing the phase alone is not proof that
+// the close finished.
+func waitForBackendCloses(t *testing.T, fake *fakeBackend, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if fake.closeCount() == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("backend closes = %d, want %d", fake.closeCount(), want)
 }
 
 func typedProviderError(t *testing.T, err error) *appconnection.Error {
@@ -337,6 +413,56 @@ func TestInteractiveLoginCompletionPublishesRunning(t *testing.T) {
 	}
 }
 
+// TestLoginWatcherPromotedNodeKeepsTheLiveStatusPoll proves a node that reaches
+// Running through an interactive login is still audited for a later
+// authorization loss or stop, not left unmonitored once the watcher exits.
+func TestLoginWatcherPromotedNodeKeepsTheLiveStatusPoll(t *testing.T) {
+	const authURL = "https://login.tailscale.com/a/promoted"
+	var loggedIn atomic.Bool
+	var lost atomic.Bool
+	fake := &fakeBackend{
+		startFn: func(context.Context) (backendStatus, error) {
+			return backendStatus{Phase: appconnection.ProviderPhaseNeedsLogin, AuthURL: authURL}, nil
+		},
+		statusFn: func(context.Context) (backendStatus, error) {
+			switch {
+			case lost.Load():
+				return backendStatus{}, errors.New("tailscale: read live state: LocalClient unavailable")
+			case loggedIn.Load():
+				return backendStatus{
+					Phase:        appconnection.ProviderPhaseRunning,
+					TailscaleIPs: []string{"100.64.0.2"},
+				}, nil
+			default:
+				return backendStatus{Phase: appconnection.ProviderPhaseNeedsLogin, AuthURL: authURL}, nil
+			}
+		},
+	}
+	observe, events := phaseEvents()
+	provider, err := NewProvider(testConfig(t),
+		WithStatusObserver(observe),
+		withBackendFactory(func(Config) (backend, error) { return fake, nil }),
+		withLoginWatchInterval(time.Millisecond),
+		withPollInterval(time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	loggedIn.Store(true)
+	waitForPhase(t, events, appconnection.ProviderPhaseRunning)
+
+	lost.Store(true)
+	waitForPhase(t, events, appconnection.ProviderPhaseError)
+	waitForProviderPhase(t, provider, appconnection.ProviderPhaseError)
+	waitForBackendCloses(t, fake, 1)
+	if err := provider.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestCancelStopsPendingLoginAndTheNextStartRuns(t *testing.T) {
 	authURL := "https://login.tailscale.com/a/example"
 	var mu sync.Mutex
@@ -482,9 +608,7 @@ func TestLoginWatcherFailureRetiresNodeAndRetryStartsFresh(t *testing.T) {
 	if got := provider.Phase(); got != appconnection.ProviderPhaseError {
 		t.Fatalf("Phase = %q, want error", got)
 	}
-	if fakes[0].closeCount() != 1 {
-		t.Fatalf("backend closes = %d, want the failed node released once", fakes[0].closeCount())
-	}
+	waitForBackendCloses(t, fakes[0], 1)
 	if status := provider.Status(); status.AuthURL != "" || status.Err == nil {
 		t.Fatalf("status after node failure = %+v, want a cleared login URL and a cause", status)
 	}
@@ -975,5 +1099,280 @@ func TestNodeHostnameSanitization(t *testing.T) {
 	}
 	if provider.cfg.nodeHostname != "natcatty-my-office" {
 		t.Fatalf("derived hostname = %q", provider.cfg.nodeHostname)
+	}
+}
+
+// TestDialChecksALivePhaseEvenWhenBackendStatusFails covers the same race as
+// the WireGuard regression: a backend that cannot read its live state (and
+// therefore reports no phase) must fail closed as KindProvider, never as an
+// ordinary network failure with a stale running phase.
+func TestDialChecksALivePhaseEvenWhenBackendStatusFails(t *testing.T) {
+	fake := &fakeBackend{
+		dialFn: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("tailscale: node is not running")
+		},
+		statusFn: func(context.Context) (backendStatus, error) {
+			return backendStatus{}, errors.New("tailscale: read live state: LocalClient unavailable")
+		},
+	}
+	provider, _ := fakeProvider(t, testConfig(t), fake)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	conn, err := provider.DialContext(context.Background(), "tcp", "peer.tailnet.ts.net:22")
+	if conn != nil {
+		t.Fatal("a dial with an unreadable live state returned a connection")
+	}
+	typed := typedProviderError(t, err)
+	if typed.Kind != appconnection.KindProvider {
+		t.Fatalf("Kind = %q, want provider: %v", typed.Kind, err)
+	}
+	if typed.Provider.Phase != appconnection.ProviderPhaseError {
+		t.Fatalf("Phase = %q, want error", typed.Provider.Phase)
+	}
+	if typed.Provider.ProfileID != "net-1" {
+		t.Fatalf("ProfileID = %q, want net-1", typed.Provider.ProfileID)
+	}
+	if provider.Phase() != appconnection.ProviderPhaseError {
+		t.Fatalf("Provider phase = %q, want error", provider.Phase())
+	}
+}
+
+// TestDialChecksAStoppedPhaseReportedWithAnError covers a status that carries
+// both a definitive phase and an error.
+func TestDialChecksAStoppedPhaseReportedWithAnError(t *testing.T) {
+	fake := &fakeBackend{
+		dialFn: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("tailscale: node is not running")
+		},
+		statusFn: func(context.Context) (backendStatus, error) {
+			return backendStatus{Phase: appconnection.ProviderPhaseStopped},
+				errors.New("tsnet: server closed")
+		},
+	}
+	provider, _ := fakeProvider(t, testConfig(t), fake)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, err := provider.DialContext(context.Background(), "tcp", "peer.tailnet.ts.net:22")
+	typed := typedProviderError(t, err)
+	if typed.Kind != appconnection.KindProvider ||
+		typed.Provider.Phase != appconnection.ProviderPhaseStopped {
+		t.Fatalf("error = %v, want KindProvider/stopped", err)
+	}
+}
+
+// TestClosePublishesStoppingAndStopped proves shutdown reaches the Vault row
+// and the Connection Log instead of leaving the last running status in place.
+func TestClosePublishesStoppingAndStopped(t *testing.T) {
+	fake := &fakeBackend{}
+	provider, recorder := fakeProvider(t, testConfig(t), fake)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	statuses := recorder.all()
+	sawStopping := false
+	for _, status := range statuses {
+		if status.Phase == appconnection.ProviderPhaseStopping {
+			sawStopping = true
+		}
+	}
+	if !sawStopping {
+		t.Fatalf("status events = %+v, want a stopping event", statuses)
+	}
+	if len(statuses) == 0 || statuses[len(statuses)-1].Phase != appconnection.ProviderPhaseStopped {
+		t.Fatalf("last status = %+v, want stopped", statuses)
+	}
+}
+
+// TestStatusPollReportsAuthorizationLossAndTypesTheNextIO proves losing the
+// tailnet authorization after startup reaches the status surface without
+// another dial, keeps the node for a possible login, and turns an active
+// connection's next failed I/O into a typed KindProvider error.
+func TestStatusPollReportsAuthorizationLossAndTypesTheNextIO(t *testing.T) {
+	const authURL = "https://login.tailscale.com/a/lost"
+	var lost atomic.Bool
+	fake := &fakeBackend{
+		statusFn: func(context.Context) (backendStatus, error) {
+			if lost.Load() {
+				return backendStatus{
+					Phase:   appconnection.ProviderPhaseNeedsLogin,
+					AuthURL: authURL,
+				}, nil
+			}
+			return backendStatus{
+				Phase:        appconnection.ProviderPhaseRunning,
+				TailscaleIPs: []string{"100.64.0.2"},
+			}, nil
+		},
+	}
+	provider, observed := pollingProvider(t, testConfig(t), fake, 2*time.Millisecond)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	conn, err := provider.DialContext(context.Background(), "tcp", "peer.tailnet.ts.net:22")
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	lost.Store(true)
+	status := waitForStatus(t, observed, appconnection.ProviderPhaseNeedsLogin)
+	if status.AuthURL != authURL {
+		t.Fatalf("needs-login status AuthURL = %q, want %q", status.AuthURL, authURL)
+	}
+	if got := provider.Phase(); got != appconnection.ProviderPhaseNeedsLogin {
+		t.Fatalf("phase = %q, want needs_login", got)
+	}
+	if fake.closeCount() != 0 {
+		t.Fatalf("backend closes = %d, want the node kept for a login", fake.closeCount())
+	}
+
+	_, err = conn.Read(make([]byte, 1))
+	typed := typedProviderError(t, err)
+	if typed.Kind != appconnection.KindProvider {
+		t.Fatalf("next I/O Kind = %q, want provider", typed.Kind)
+	}
+	if typed.Provider.Phase != appconnection.ProviderPhaseNeedsLogin {
+		t.Fatalf("next I/O phase = %q, want needs_login", typed.Provider.Phase)
+	}
+
+	// The authorization can return while the same node stays alive; the poll
+	// must publish the recovery and the next I/O is an ordinary transport error
+	// again.
+	lost.Store(false)
+	waitForStatus(t, observed, appconnection.ProviderPhaseRunning)
+	if got := provider.Phase(); got != appconnection.ProviderPhaseRunning {
+		t.Fatalf("phase after recovery = %q, want running", got)
+	}
+	if fake.closeCount() != 0 {
+		t.Fatalf("backend closes after recovery = %d, want the same node", fake.closeCount())
+	}
+}
+
+// TestStatusPollFailsClosedWhenTheNodeDies proves an unexpected stop or an
+// unreadable live state releases the node and publishes an error phase, so a
+// retry can never silently reuse a dead tunnel.
+func TestStatusPollFailsClosedWhenTheNodeDies(t *testing.T) {
+	tests := map[string]func(context.Context) (backendStatus, error){
+		"stopped": func(context.Context) (backendStatus, error) {
+			return backendStatus{Phase: appconnection.ProviderPhaseStopped}, nil
+		},
+		"unreadable": func(context.Context) (backendStatus, error) {
+			return backendStatus{}, errors.New("local client unavailable")
+		},
+	}
+	for name, statusFn := range tests {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeBackend{statusFn: statusFn}
+			provider, _ := pollingProvider(t, testConfig(t), fake, 2*time.Millisecond)
+			if err := provider.Start(context.Background()); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			waitForProviderPhase(t, provider, appconnection.ProviderPhaseError)
+			waitForBackendCloses(t, fake, 1)
+			if provider.Status().Err == nil {
+				t.Fatal("the error phase carries no failure reason")
+			}
+			provider.mu.Lock()
+			attached := provider.backend
+			provider.mu.Unlock()
+			if attached != nil {
+				t.Fatal("the dead backend is still attached")
+			}
+		})
+	}
+}
+
+// TestCloseKeepsATerminalStartFailureStatus proves releasing a Provider after a
+// failed start does not overwrite the reason (or the login URL) the Vault row
+// and the Connection Log need. The opener closes the adapter on a Start error,
+// so a clean stopped status would otherwise erase every failure.
+func TestCloseKeepsATerminalStartFailureStatus(t *testing.T) {
+	const authURL = "https://login.tailscale.com/a/example"
+	tests := map[string]struct {
+		startFn func(context.Context) (backendStatus, error)
+		phase   appconnection.ProviderPhase
+		authURL string
+		wantErr bool
+	}{
+		"error": {
+			startFn: func(context.Context) (backendStatus, error) {
+				return backendStatus{}, errors.New("control server refused the node")
+			},
+			phase:   appconnection.ProviderPhaseError,
+			wantErr: true,
+		},
+		"needs login": {
+			// A login-needing node is normally kept alive for the browser
+			// login; a NeedsLogin status that ends a start is the terminal case
+			// where the backend also reports an error (for example, an Auth Key
+			// that did not complete the login within its grace period).
+			startFn: func(context.Context) (backendStatus, error) {
+				return backendStatus{
+					Phase:   appconnection.ProviderPhaseNeedsLogin,
+					AuthURL: authURL,
+				}, errors.New("interactive login did not complete")
+			},
+			phase:   appconnection.ProviderPhaseNeedsLogin,
+			authURL: authURL,
+			wantErr: true,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeBackend{startFn: test.startFn}
+			provider, recorder := fakeProvider(t, testConfig(t), fake)
+			if err := provider.Start(context.Background()); err == nil {
+				t.Fatal("Start succeeded with a failing start")
+			}
+			events := len(recorder.all())
+			if err := provider.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			statuses := recorder.all()
+			if len(statuses) != events {
+				t.Fatalf("Close published %d extra statuses: %+v", len(statuses)-events, statuses[events:])
+			}
+			last := statuses[len(statuses)-1]
+			if last.Phase != test.phase || last.AuthURL != test.authURL {
+				t.Fatalf("last status = %+v, want phase %q and AuthURL %q",
+					last, test.phase, test.authURL)
+			}
+			if test.wantErr != (last.Err != nil) {
+				t.Fatalf("last status error = %v, wantErr %v", last.Err, test.wantErr)
+			}
+		})
+	}
+}
+
+// TestProviderConnClassifiesIOFailuresAfterClose proves an active connection
+// reports KindProvider on its next I/O after the node was closed.
+func TestProviderConnClassifiesIOFailuresAfterClose(t *testing.T) {
+	fake := &fakeBackend{}
+	provider, _ := fakeProvider(t, testConfig(t), fake)
+	if err := provider.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	conn, err := provider.DialContext(context.Background(), "tcp", "peer.tailnet.ts.net:22")
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, err = conn.Read(make([]byte, 1))
+	typed := typedProviderError(t, err)
+	if typed.Kind != appconnection.KindProvider {
+		t.Fatalf("Kind = %q, want provider", typed.Kind)
+	}
+	if typed.Provider.Phase != appconnection.ProviderPhaseStopped {
+		t.Fatalf("Phase = %q, want stopped", typed.Provider.Phase)
 	}
 }
