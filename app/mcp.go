@@ -673,6 +673,7 @@ func (b *mcpReadBridge) groups(ctx context.Context) map[string]any {
 			"legacyAlgorithms": group.LegacyAlgorithms,
 			"skipEcdsaHostKey": group.SkipEcdsaHostKey,
 			"proxyProfileId":   group.ProxyProfileID,
+			"networkProfileId": group.NetworkProfileID,
 		}
 		if group.Algorithms != nil {
 			defaults["algorithms"] = group.Algorithms

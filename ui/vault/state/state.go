@@ -179,6 +179,10 @@ type Form struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manually configured
 	// Proxy still wins; an empty reference means no profile is selected.
 	ProxyProfileID string
+	// NetworkProfileID selects a saved Network Profile for the route's first
+	// endpoint. An empty value inherits the Host Group's default; the source
+	// helpers tell the editor which of the two applies.
+	NetworkProfileID string
 	// FileProtocol is the remote-pane transfer protocol: automatic, SFTP, or
 	// SCP. SFTPSudo elevates the SFTP subsystem through sudo.
 	FileProtocol string
@@ -727,6 +731,7 @@ func (s *State) BeginEdit(id model.HostID) bool {
 		UseSSHAgent:             host.UseSSHAgent,
 		RequiresMFA:             host.RequiresMFA,
 		ProxyProfileID:          host.ProxyProfileID,
+		NetworkProfileID:        host.NetworkProfileID,
 		X11Forwarding:           host.X11Forwarding,
 		X11WarningAcknowledged:  host.X11WarningAcknowledged,
 		FileProtocol:            string(domainvault.NormalizeFileProtocol(host.SFTPFileProtocol)),
@@ -1109,6 +1114,7 @@ func draftFromHost(host domainvault.Host, pinned bool) domainvault.Draft {
 		HostChain:               domainvault.CloneHostChain(host.HostChain),
 		Proxy:                   domainvault.CloneProxy(host.Proxy),
 		ProxyProfileID:          host.ProxyProfileID,
+		NetworkProfileID:        host.NetworkProfileID,
 		LegacyAlgorithms:        host.LegacyAlgorithms,
 		SkipEcdsaHostKey:        host.SkipEcdsaHostKey,
 		Algorithms:              domainvault.CloneAlgorithms(host.Algorithms),
@@ -1173,6 +1179,7 @@ func (s *State) draft() (domainvault.Draft, Problem) {
 		HostChain:               domainvault.CloneHostChain(s.hostChain),
 		Proxy:                   domainvault.CloneProxy(s.proxy),
 		ProxyProfileID:          s.form.ProxyProfileID,
+		NetworkProfileID:        s.form.NetworkProfileID,
 		LegacyAlgorithms:        s.legacyAlgorithms,
 		SkipEcdsaHostKey:        s.skipEcdsaHostKey,
 		Algorithms:              domainvault.CloneAlgorithms(s.algorithms),

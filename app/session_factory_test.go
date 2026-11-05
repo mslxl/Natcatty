@@ -485,8 +485,9 @@ func TestSSHSessionRouteFailurePreventsDialing(t *testing.T) {
 }
 
 type fakeRouteVault struct {
-	hosts   map[model.HostID]domainvault.Host
-	secrets map[string]string
+	hosts           map[model.HostID]domainvault.Host
+	networkProfiles map[string]domainvault.NetworkProfile
+	secrets         map[string]string
 }
 
 func (v *fakeRouteVault) Get(_ context.Context, id model.HostID) (domainvault.Host, error) {
@@ -503,6 +504,14 @@ func (v *fakeRouteVault) Secret(_ context.Context, id model.HostID, field string
 		return "", appvault.ErrNotFound
 	}
 	return value, nil
+}
+
+func (v *fakeRouteVault) NetworkProfile(_ context.Context, id string) (domainvault.NetworkProfile, error) {
+	profile, ok := v.networkProfiles[id]
+	if !ok {
+		return domainvault.NetworkProfile{}, appvault.ErrNotFound
+	}
+	return profile, nil
 }
 
 func TestVaultRoutesResolveTheChainAndFirstHopProxy(t *testing.T) {
@@ -565,6 +574,238 @@ func TestVaultRoutesResolveTheChainAndFirstHopProxy(t *testing.T) {
 	if route.Jumps[1].Algorithms.Legacy || route.Jumps[1].Algorithms.SkipECDSAHostKey ||
 		len(route.Jumps[1].Algorithms.Ciphers) != 0 {
 		t.Fatalf("second jump algorithms = %+v", route.Jumps[1].Algorithms)
+	}
+}
+
+func TestVaultRoutesSelectTheNetworkProfileFromTheFirstEndpoint(t *testing.T) {
+	networkProfiles := map[string]domainvault.NetworkProfile{
+		"net-target": {ID: "net-target", Kind: domainvault.NetworkKindTailscale},
+		"net-first":  {ID: "net-first", Kind: domainvault.NetworkKindWireGuard},
+		"net-later":  {ID: "net-later", Kind: domainvault.NetworkKindTailscale},
+	}
+	route := func(t *testing.T, hosts map[model.HostID]domainvault.Host) appconnection.Route {
+		t.Helper()
+		resolved, err := (vaultRoutes{vault: &fakeRouteVault{
+			hosts: hosts, networkProfiles: networkProfiles, secrets: map[string]string{},
+		}}).Route(context.Background(), "target")
+		if err != nil {
+			t.Fatalf("Route: %v", err)
+		}
+		return resolved
+	}
+
+	t.Run("host chooses its own profile", func(t *testing.T) {
+		got := route(t, map[model.HostID]domainvault.Host{
+			"target": {ID: "target", Hostname: "target.internal", NetworkProfileID: "net-target"},
+		})
+		if got.Network == nil || got.Network.ProfileID != "net-target" ||
+			got.Network.Kind != string(domainvault.NetworkKindTailscale) {
+			t.Fatalf("Network = %+v, want the target's net-target", got.Network)
+		}
+	})
+
+	t.Run("first jump wins over the target and later hops", func(t *testing.T) {
+		got := route(t, map[model.HostID]domainvault.Host{
+			"target": {
+				ID: "target", Hostname: "target.internal",
+				NetworkProfileID: "net-target",
+				HostChain:        &domainvault.HostChain{HostIDs: []model.HostID{"jump-1", "jump-2"}},
+			},
+			"jump-1": {ID: "jump-1", Hostname: "bastion.internal", NetworkProfileID: "net-first"},
+			"jump-2": {ID: "jump-2", Hostname: "gateway.internal", NetworkProfileID: "net-later"},
+		})
+		if got.Network == nil || got.Network.ProfileID != "net-first" ||
+			got.Network.Kind != string(domainvault.NetworkKindWireGuard) {
+			t.Fatalf("Network = %+v, want the first jump's net-first", got.Network)
+		}
+	})
+
+	t.Run("target profile is the fallback without a first-hop profile", func(t *testing.T) {
+		got := route(t, map[model.HostID]domainvault.Host{
+			"target": {
+				ID: "target", Hostname: "target.internal",
+				NetworkProfileID: "net-target",
+				HostChain:        &domainvault.HostChain{HostIDs: []model.HostID{"jump-1"}},
+			},
+			"jump-1": {ID: "jump-1", Hostname: "bastion.internal"},
+		})
+		if got.Network == nil || got.Network.ProfileID != "net-target" {
+			t.Fatalf("Network = %+v, want the target's net-target", got.Network)
+		}
+	})
+
+	t.Run("a later hop is never selected", func(t *testing.T) {
+		got := route(t, map[model.HostID]domainvault.Host{
+			"target": {
+				ID: "target", Hostname: "target.internal",
+				HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"jump-1", "jump-2"}},
+			},
+			"jump-1": {ID: "jump-1", Hostname: "bastion.internal"},
+			"jump-2": {ID: "jump-2", Hostname: "gateway.internal", NetworkProfileID: "net-later"},
+		})
+		if got.Network != nil {
+			t.Fatalf("Network = %+v, want nil because only a later hop set one", got.Network)
+		}
+	})
+
+	t.Run("no profile configured keeps today's direct route", func(t *testing.T) {
+		got := route(t, map[model.HostID]domainvault.Host{
+			"target": {ID: "target", Hostname: "target.internal", Proxy: nil},
+		})
+		if got.Network != nil {
+			t.Fatalf("Network = %+v, want nil", got.Network)
+		}
+	})
+}
+
+// The route resolver reads Hosts through the Vault's effective view, so a
+// first hop that only inherits a Network Profile from its Host Group must
+// still beat the target's own selection.
+type routeHostRepo struct {
+	hosts map[model.HostID]domainvault.Host
+}
+
+func (r *routeHostRepo) List(context.Context) ([]domainvault.Host, error) {
+	items := make([]domainvault.Host, 0, len(r.hosts))
+	for _, host := range r.hosts {
+		items = append(items, host)
+	}
+	return items, nil
+}
+
+func (r *routeHostRepo) Get(_ context.Context, id model.HostID) (domainvault.Host, error) {
+	host, ok := r.hosts[id]
+	if !ok {
+		return domainvault.Host{}, appvault.ErrNotFound
+	}
+	return host, nil
+}
+
+func (r *routeHostRepo) Save(_ context.Context, host domainvault.Host) error {
+	r.hosts[host.ID] = host
+	return nil
+}
+
+func (r *routeHostRepo) Delete(_ context.Context, id model.HostID) error {
+	delete(r.hosts, id)
+	return nil
+}
+
+type routeGroupRepo struct {
+	items []domainvault.Group
+}
+
+func (r *routeGroupRepo) ListGroups(context.Context) ([]domainvault.Group, error) {
+	return append([]domainvault.Group(nil), r.items...), nil
+}
+
+func (r *routeGroupRepo) GetGroup(_ context.Context, path string) (domainvault.Group, error) {
+	for _, group := range r.items {
+		if group.Path == path {
+			return group, nil
+		}
+	}
+	return domainvault.Group{}, appvault.ErrNotFound
+}
+
+func (r *routeGroupRepo) SaveGroup(_ context.Context, group domainvault.Group) error {
+	for i, existing := range r.items {
+		if existing.Path == group.Path {
+			r.items[i] = group
+			return nil
+		}
+	}
+	r.items = append(r.items, group)
+	return nil
+}
+
+func (r *routeGroupRepo) DeleteGroup(_ context.Context, path string) error {
+	for i, group := range r.items {
+		if group.Path == path {
+			r.items = append(r.items[:i], r.items[i+1:]...)
+			return nil
+		}
+	}
+	return appvault.ErrNotFound
+}
+
+type routeNetworkRepo struct {
+	items map[string]domainvault.NetworkProfile
+}
+
+func (r *routeNetworkRepo) ListNetworkProfiles(context.Context) ([]domainvault.NetworkProfile, error) {
+	items := make([]domainvault.NetworkProfile, 0, len(r.items))
+	for _, profile := range r.items {
+		items = append(items, profile)
+	}
+	return items, nil
+}
+
+func (r *routeNetworkRepo) GetNetworkProfile(_ context.Context, id string) (domainvault.NetworkProfile, error) {
+	profile, ok := r.items[id]
+	if !ok {
+		return domainvault.NetworkProfile{}, appvault.ErrNotFound
+	}
+	return profile, nil
+}
+
+func (r *routeNetworkRepo) SaveNetworkProfile(_ context.Context, profile domainvault.NetworkProfile) error {
+	r.items[profile.ID] = profile
+	return nil
+}
+
+func (r *routeNetworkRepo) DeleteNetworkProfile(_ context.Context, id string) error {
+	delete(r.items, id)
+	return nil
+}
+
+func TestVaultRoutesUseTheFirstHopsGroupInheritedNetworkProfile(t *testing.T) {
+	service := appvault.NewService(&routeHostRepo{hosts: map[model.HostID]domainvault.Host{
+		"target": {
+			ID: "target", Label: "target", Hostname: "target.internal", Port: 22,
+			Protocol: domainvault.ProtocolSSH, NetworkProfileID: "net-target",
+			HostChain: &domainvault.HostChain{HostIDs: []model.HostID{"jump-1"}},
+		},
+		"jump-1": {
+			ID: "jump-1", Label: "bastion", Hostname: "bastion.internal", Port: 22,
+			Protocol: domainvault.ProtocolSSH, Group: "prod/bastion",
+		},
+	}}, appvault.WithGroups(&routeGroupRepo{items: []domainvault.Group{
+		{Path: "prod", NetworkProfileID: "net-group"},
+		{Path: "prod/bastion"},
+	}}), appvault.WithNetworkProfiles(&routeNetworkRepo{items: map[string]domainvault.NetworkProfile{
+		"net-group":  {ID: "net-group", Kind: domainvault.NetworkKindWireGuard},
+		"net-target": {ID: "net-target", Kind: domainvault.NetworkKindTailscale},
+	}}))
+
+	route, err := (vaultRoutes{vault: service}).Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if route.Network == nil || route.Network.ProfileID != "net-group" ||
+		route.Network.Kind != string(domainvault.NetworkKindWireGuard) {
+		t.Fatalf("Network = %+v, want the first hop's inherited net-group", route.Network)
+	}
+}
+
+func TestVaultRoutesKeepADanglingNetworkProfileSelected(t *testing.T) {
+	// The reference comes from another device or a hand-edited record. The
+	// route must stay non-nil with an empty Kind so a future Provider fails
+	// closed instead of silently connecting directly.
+	vault := &fakeRouteVault{
+		hosts: map[model.HostID]domainvault.Host{
+			"target": {ID: "target", Hostname: "target.internal", NetworkProfileID: "missing"},
+		},
+		networkProfiles: map[string]domainvault.NetworkProfile{},
+		secrets:         map[string]string{},
+	}
+	route, err := (vaultRoutes{vault: vault}).Route(context.Background(), "target")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if route.Network == nil || route.Network.ProfileID != "missing" || route.Network.Kind != "" {
+		t.Fatalf("Network = %+v, want the dangling reference kept with an empty Kind",
+			route.Network)
 	}
 }
 

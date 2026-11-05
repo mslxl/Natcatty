@@ -197,8 +197,8 @@ type Record struct {
 	SourceID string
 	// Pinned, IdentityID, KeyID, AuthMethod, UseSSHAgent, RequiresMFA,
 	// X11Forwarding, X11WarningAcknowledged, ProxyProfileID,
-	// LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms are the Host options a
-	// Netcatty JSON export carries.
+	// NetworkProfileID, LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms are
+	// the Host options a Netcatty JSON export carries.
 	Pinned                 bool
 	IdentityID             string
 	KeyID                  string
@@ -206,6 +206,7 @@ type Record struct {
 	RequiresMFA            bool
 	X11WarningAcknowledged bool
 	ProxyProfileID         string
+	NetworkProfileID       string
 	LegacyAlgorithms       bool
 	SkipEcdsaHostKey       bool
 	Algorithms             *Algorithms

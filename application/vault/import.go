@@ -595,6 +595,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 			draft.KeyID = remapKeyID(keyIDs, recordKey(preview.records[index]), draft.KeyID)
 			draft.IdentityID = preview.remapIdentityID(draft.IdentityID)
 			draft.ProxyProfileID = preview.remapProxyProfileID(draft.ProxyProfileID)
+			draft.NetworkProfileID = preview.remapNetworkProfileID(draft.NetworkProfileID)
 			draft.HostChain = chains[index]
 			updated, err := s.Update(ctx, row.Existing, draft)
 			if err != nil {
@@ -657,6 +658,7 @@ func (s *Service) CommitImport(ctx context.Context, preview ImportPreview,
 		draft.KeyID = remapKeyID(keyIDs, recordKey(preview.records[index]), draft.KeyID)
 		draft.IdentityID = preview.remapIdentityID(draft.IdentityID)
 		draft.ProxyProfileID = preview.remapProxyProfileID(draft.ProxyProfileID)
+		draft.NetworkProfileID = preview.remapNetworkProfileID(draft.NetworkProfileID)
 		draft.HostChain = chains[index]
 		for _, ancestor := range groupAncestorsWithSelf(draft.Group) {
 			if !groupByPath[ancestor] {
@@ -848,6 +850,7 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		RequiresMFA:      record.RequiresMFA,
 		Password:         record.Password,
 		ProxyProfileID:   record.ProxyProfileID,
+		NetworkProfileID: record.NetworkProfileID,
 		LegacyAlgorithms: record.LegacyAlgorithms,
 		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
 		DeviceType:       domainvault.NormalizeDeviceType(domainvault.DeviceType(record.DeviceType)),
@@ -1002,6 +1005,7 @@ func hostFromDraft(draft domainvault.Draft) domainvault.Host {
 		HostChain:               domainvault.CloneHostChain(draft.HostChain),
 		Proxy:                   domainvault.CloneProxy(draft.Proxy),
 		ProxyProfileID:          draft.ProxyProfileID,
+		NetworkProfileID:        draft.NetworkProfileID,
 		LegacyAlgorithms:        draft.LegacyAlgorithms,
 		SkipEcdsaHostKey:        draft.SkipEcdsaHostKey,
 		Algorithms:              domainvault.CloneAlgorithms(draft.Algorithms),
