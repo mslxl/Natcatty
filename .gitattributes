@@ -8,6 +8,7 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+*.nu text eol=lf
 
 # The CSV import fixtures assert exact bytes (UTF-8 BOM, CRLF row endings), and
 # the rest of the import fixture tree must stay byte-stable too. The JSON rule
