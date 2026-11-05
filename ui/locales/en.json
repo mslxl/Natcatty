@@ -38,6 +38,7 @@
   "navHosts": "Hosts",
   "navKeychain": "Keychain",
   "navProxies": "Proxies",
+  "navNetworks": "Networks",
   "navForwarding": "Port Forwarding",
   "navSnippets": "Snippets",
   "navNotes": "Notes",
@@ -205,6 +206,80 @@
   "vaultProxyTypeHTTP": "HTTP",
   "vaultProxyTypeSOCKS5": "SOCKS5",
   "vaultProxyTypeCommand": "ProxyCommand",
+  "vaultNetworkListTitle": "Network Profiles ({count})",
+  "@vaultNetworkListTitle": {
+    "description": "The Vault's Network Profile list heading and its profile count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "vaultNetworkNewTailscale": "New Tailscale Net",
+  "vaultNetworkNewWireGuard": "New WireGuard Net",
+  "vaultNetworkEmpty": "No Network Profiles yet.",
+  "vaultNetworkFormCreateTitle": "New Network Profile",
+  "vaultNetworkFormEditTitle": "Edit Network Profile",
+  "vaultNetworkKind": "Network kind",
+  "vaultNetworkKindHint": "The kind decides which fields and secrets the profile uses.",
+  "vaultNetworkKindTailscale": "Tailscale Net",
+  "vaultNetworkKindWireGuard": "WireGuard Net",
+  "vaultNetworkHostname": "Hostname",
+  "vaultNetworkHostnameHint": "The node name this device asks the control server for. Leave blank to let the server choose.",
+  "vaultNetworkAuthKey": "Auth key",
+  "vaultNetworkAuthKeyHint": "The key is stored in the field secret store and never exported.",
+  "vaultNetworkAuthKeySaved": "An auth key is saved. Leave blank to keep it.",
+  "vaultNetworkControlURL": "Control URL",
+  "vaultNetworkControlURLHint": "Experimental until verified on a real tailnet. Tailscale's control server or a local Headscale URL. Plain HTTP is allowed but unencrypted.",
+  "vaultNetworkEphemeral": "Ephemeral node",
+  "vaultNetworkTags": "Tags",
+  "vaultNetworkTagsHint": "Comma-separated tags, for example tag:prod.",
+  "vaultNetworkPrivateKey": "Private key",
+  "vaultNetworkPrivateKeyHint": "The key is stored in the field secret store and never exported.",
+  "vaultNetworkPrivateKeySaved": "A private key is saved. Leave blank to keep it.",
+  "vaultNetworkAddresses": "Addresses",
+  "vaultNetworkAddressesHint": "Comma- or newline-separated IP addresses or prefixes.",
+  "vaultNetworkDNS": "DNS servers",
+  "vaultNetworkDNSHint": "Comma-separated IP addresses.",
+  "vaultNetworkMTU": "MTU",
+  "vaultNetworkMTUHint": "Leave blank to use the default.",
+  "vaultNetworkPeers": "Peers",
+  "vaultNetworkPeerAdd": "Add peer",
+  "vaultNetworkPeerRemove": "Remove peer",
+  "vaultNetworkPeerTitle": "Peer {number}",
+  "@vaultNetworkPeerTitle": {
+    "description": "A WireGuard peer card's heading and its position in the list.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "vaultNetworkPeerPublicKey": "Public key",
+  "vaultNetworkPeerPresharedKey": "Preshared key",
+  "vaultNetworkPeerPresharedKeyHint": "Optional. Stored in the field secret store and never exported.",
+  "vaultNetworkPeerPresharedKeySaved": "A preshared key is saved. Leave blank to keep it.",
+  "vaultNetworkPeerEndpoint": "Endpoint",
+  "vaultNetworkPeerAllowedIPs": "Allowed IPs",
+  "vaultNetworkPeerAllowedIPsHint": "Comma-separated IP prefixes routed through this peer.",
+  "vaultNetworkPeerKeepalive": "Persistent keepalive",
+  "vaultNetworkSummary": "{kind} · {detail}",
+  "@vaultNetworkSummary": {
+    "description": "A Network Profile row's kind and endpoint.",
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "example": "WireGuard Net"
+      },
+      "detail": {
+        "type": "String",
+        "example": "10.0.0.2/32, fd00::2/128"
+      }
+    }
+  },
+  "vaultNetworkWarningControlURLInsecure": "This Control URL uses plain HTTP, so the auth key is not encrypted in transit.",
   "vaultKnownHostsTitle": "Known Hosts ({count})",
   "@vaultKnownHostsTitle": {
     "description": "The Vault's Known Host list heading and its record count.",
@@ -300,6 +375,7 @@
   "vaultImportFamilyKey": "Key",
   "vaultImportFamilyIdentity": "Identity",
   "vaultImportFamilyProxyProfile": "Proxy profile",
+  "vaultImportFamilyNetworkProfile": "Network profile",
   "vaultImportFamilyKnownHost": "Known host",
   "vaultImportIssueInvalidArchive": "The ZIP archive is damaged or invalid.",
   "vaultImportIssueInvalidManifest": "The Notes manifest is invalid; file names are used instead.",
@@ -794,6 +870,9 @@
   "vaultProblemIdentityUsernameRequired": "A password Identity needs a username.",
   "vaultProblemAuthMethod": "Choose a supported authentication method.",
   "vaultProblemProxy": "Check the jump chain and proxy settings.",
+  "vaultProblemNetworkProfile": "Check the Network Profile fields: the label, keys, addresses, peers, and endpoints must be valid.",
+  "vaultProblemNetworkMTU": "MTU must be a whole number.",
+  "vaultProblemNetworkKeepalive": "Persistent keepalive must be a whole number between 0 and 65535.",
   "vaultProblemAlgorithms": "Check the SSH algorithm selection.",
   "authPromptPassphraseTitle": "Unlock {username}@{hostname}",
   "@authPromptPassphraseTitle": {

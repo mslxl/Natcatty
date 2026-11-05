@@ -234,6 +234,7 @@ type Family struct {
 	Keys            []FamilyKey
 	Identities      []FamilyIdentity
 	ProxyProfiles   []FamilyProxyProfile
+	NetworkProfiles []FamilyNetworkProfile
 	KnownHosts      []FamilyKnownHost
 }
 
@@ -294,6 +295,45 @@ type FamilyProxyProfile struct {
 	Password string
 }
 
+// FamilyNetworkProfile is one portable Network Profile. The document never
+// carries Auth Keys, Private Keys, or Preshared Keys; the Has* flags describe
+// the source device's secret store and are not restorable on their own.
+type FamilyNetworkProfile struct {
+	ID        string
+	Label     string
+	Kind      string
+	Tailscale *FamilyTailscaleNetwork
+	WireGuard *FamilyWireGuardNetwork
+}
+
+// FamilyTailscaleNetwork is a Tailscale Net's non-secret configuration.
+type FamilyTailscaleNetwork struct {
+	Hostname   string
+	ControlURL string
+	Ephemeral  bool
+	Tags       []string
+	HasAuthKey bool
+}
+
+// FamilyWireGuardNetwork is a WireGuard Net's non-secret configuration.
+type FamilyWireGuardNetwork struct {
+	Addresses     []string
+	DNS           []string
+	MTU           int
+	Peers         []FamilyWireGuardPeer
+	HasPrivateKey bool
+}
+
+// FamilyWireGuardPeer is one portable WireGuard peer.
+type FamilyWireGuardPeer struct {
+	ID                  string
+	PublicKey           string
+	Endpoint            string
+	AllowedIPs          []string
+	PersistentKeepalive int
+	HasPresharedKey     bool
+}
+
 // FamilyKnownHost is one recorded host-key trust decision.
 type FamilyKnownHost struct {
 	Hostname          string
@@ -314,7 +354,8 @@ func (f *Family) HasData() bool {
 	}
 	return len(f.Groups) > 0 || len(f.SnippetPackages) > 0 || len(f.Snippets) > 0 ||
 		len(f.NoteGroups) > 0 || len(f.Notes) > 0 || len(f.Keys) > 0 ||
-		len(f.Identities) > 0 || len(f.ProxyProfiles) > 0 || len(f.KnownHosts) > 0
+		len(f.Identities) > 0 || len(f.ProxyProfiles) > 0 ||
+		len(f.NetworkProfiles) > 0 || len(f.KnownHosts) > 0
 }
 
 // Result is one document's parse output.

@@ -236,6 +236,8 @@ func vaultPageIcon(page section.Section) string {
 		return icons.KeyRound
 	case section.Proxies:
 		return icons.Globe
+	case section.Networks:
+		return icons.Network
 	case section.Forwarding:
 		return icons.Plug
 	case section.Snippets:
@@ -255,6 +257,8 @@ func vaultPageLabel(m locales.Messages, page section.Section) string {
 		return m.NavKeychain()
 	case section.Proxies:
 		return m.NavProxies()
+	case section.Networks:
+		return m.NavNetworks()
 	case section.Forwarding:
 		return m.NavForwarding()
 	case section.Snippets:

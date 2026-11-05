@@ -424,6 +424,16 @@ func (msgs Messages) NavProxies() string {
 	return Catalog.Format(msgs.locale, "navProxies", nil)
 }
 
+// NavNetworks says "Networks"
+// in the language the app shows.
+func NavNetworks() string { return In(i18n.Locale()).NavNetworks() }
+
+// NavNetworks says "Networks"
+// in the language of msgs.
+func (msgs Messages) NavNetworks() string {
+	return Catalog.Format(msgs.locale, "navNetworks", nil)
+}
+
 // NavForwarding says "Port Forwarding"
 // in the language the app shows.
 func NavForwarding() string { return In(i18n.Locale()).NavForwarding() }
@@ -1206,6 +1216,458 @@ func (msgs Messages) VaultProxyTypeCommand() string {
 	return Catalog.Format(msgs.locale, "vaultProxyTypeCommand", nil)
 }
 
+// VaultNetworkListTitle says "Network Profiles ({count})"
+// in the language the app shows.
+//
+// The Vault's Network Profile list heading and its profile count.
+func VaultNetworkListTitle(count int) string { return In(i18n.Locale()).VaultNetworkListTitle(count) }
+
+// VaultNetworkListTitle says "Network Profiles ({count})"
+// in the language of msgs.
+//
+// The Vault's Network Profile list heading and its profile count.
+func (msgs Messages) VaultNetworkListTitle(count int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkListTitle", map[string]any{"count": count})
+}
+
+// VaultNetworkNewTailscale says "New Tailscale Net"
+// in the language the app shows.
+func VaultNetworkNewTailscale() string { return In(i18n.Locale()).VaultNetworkNewTailscale() }
+
+// VaultNetworkNewTailscale says "New Tailscale Net"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkNewTailscale() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkNewTailscale", nil)
+}
+
+// VaultNetworkNewWireGuard says "New WireGuard Net"
+// in the language the app shows.
+func VaultNetworkNewWireGuard() string { return In(i18n.Locale()).VaultNetworkNewWireGuard() }
+
+// VaultNetworkNewWireGuard says "New WireGuard Net"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkNewWireGuard() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkNewWireGuard", nil)
+}
+
+// VaultNetworkEmpty says "No Network Profiles yet."
+// in the language the app shows.
+func VaultNetworkEmpty() string { return In(i18n.Locale()).VaultNetworkEmpty() }
+
+// VaultNetworkEmpty says "No Network Profiles yet."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkEmpty() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkEmpty", nil)
+}
+
+// VaultNetworkFormCreateTitle says "New Network Profile"
+// in the language the app shows.
+func VaultNetworkFormCreateTitle() string { return In(i18n.Locale()).VaultNetworkFormCreateTitle() }
+
+// VaultNetworkFormCreateTitle says "New Network Profile"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkFormCreateTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkFormCreateTitle", nil)
+}
+
+// VaultNetworkFormEditTitle says "Edit Network Profile"
+// in the language the app shows.
+func VaultNetworkFormEditTitle() string { return In(i18n.Locale()).VaultNetworkFormEditTitle() }
+
+// VaultNetworkFormEditTitle says "Edit Network Profile"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkFormEditTitle() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkFormEditTitle", nil)
+}
+
+// VaultNetworkKind says "Network kind"
+// in the language the app shows.
+func VaultNetworkKind() string { return In(i18n.Locale()).VaultNetworkKind() }
+
+// VaultNetworkKind says "Network kind"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkKind() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkKind", nil)
+}
+
+// VaultNetworkKindHint says "The kind decides which fields and secrets the profile uses."
+// in the language the app shows.
+func VaultNetworkKindHint() string { return In(i18n.Locale()).VaultNetworkKindHint() }
+
+// VaultNetworkKindHint says "The kind decides which fields and secrets the profile uses."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkKindHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkKindHint", nil)
+}
+
+// VaultNetworkKindTailscale says "Tailscale Net"
+// in the language the app shows.
+func VaultNetworkKindTailscale() string { return In(i18n.Locale()).VaultNetworkKindTailscale() }
+
+// VaultNetworkKindTailscale says "Tailscale Net"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkKindTailscale() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkKindTailscale", nil)
+}
+
+// VaultNetworkKindWireGuard says "WireGuard Net"
+// in the language the app shows.
+func VaultNetworkKindWireGuard() string { return In(i18n.Locale()).VaultNetworkKindWireGuard() }
+
+// VaultNetworkKindWireGuard says "WireGuard Net"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkKindWireGuard() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkKindWireGuard", nil)
+}
+
+// VaultNetworkHostname says "Hostname"
+// in the language the app shows.
+func VaultNetworkHostname() string { return In(i18n.Locale()).VaultNetworkHostname() }
+
+// VaultNetworkHostname says "Hostname"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkHostname() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkHostname", nil)
+}
+
+// VaultNetworkHostnameHint says "The node name this device asks the control server for. Leave blank to let the server choose."
+// in the language the app shows.
+func VaultNetworkHostnameHint() string { return In(i18n.Locale()).VaultNetworkHostnameHint() }
+
+// VaultNetworkHostnameHint says "The node name this device asks the control server for. Leave blank to let the server choose."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkHostnameHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkHostnameHint", nil)
+}
+
+// VaultNetworkAuthKey says "Auth key"
+// in the language the app shows.
+func VaultNetworkAuthKey() string { return In(i18n.Locale()).VaultNetworkAuthKey() }
+
+// VaultNetworkAuthKey says "Auth key"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkAuthKey() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAuthKey", nil)
+}
+
+// VaultNetworkAuthKeyHint says "The key is stored in the field secret store and never exported."
+// in the language the app shows.
+func VaultNetworkAuthKeyHint() string { return In(i18n.Locale()).VaultNetworkAuthKeyHint() }
+
+// VaultNetworkAuthKeyHint says "The key is stored in the field secret store and never exported."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkAuthKeyHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAuthKeyHint", nil)
+}
+
+// VaultNetworkAuthKeySaved says "An auth key is saved. Leave blank to keep it."
+// in the language the app shows.
+func VaultNetworkAuthKeySaved() string { return In(i18n.Locale()).VaultNetworkAuthKeySaved() }
+
+// VaultNetworkAuthKeySaved says "An auth key is saved. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkAuthKeySaved() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAuthKeySaved", nil)
+}
+
+// VaultNetworkControlURL says "Control URL"
+// in the language the app shows.
+func VaultNetworkControlURL() string { return In(i18n.Locale()).VaultNetworkControlURL() }
+
+// VaultNetworkControlURL says "Control URL"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkControlURL() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkControlURL", nil)
+}
+
+// VaultNetworkControlURLHint says "Experimental until verified on a real tailnet. Tailscale's control server or a local Headscale URL. Plain HTTP is all…"
+// in the language the app shows.
+func VaultNetworkControlURLHint() string { return In(i18n.Locale()).VaultNetworkControlURLHint() }
+
+// VaultNetworkControlURLHint says "Experimental until verified on a real tailnet. Tailscale's control server or a local Headscale URL. Plain HTTP is all…"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkControlURLHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkControlURLHint", nil)
+}
+
+// VaultNetworkEphemeral says "Ephemeral node"
+// in the language the app shows.
+func VaultNetworkEphemeral() string { return In(i18n.Locale()).VaultNetworkEphemeral() }
+
+// VaultNetworkEphemeral says "Ephemeral node"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkEphemeral() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkEphemeral", nil)
+}
+
+// VaultNetworkTags says "Tags"
+// in the language the app shows.
+func VaultNetworkTags() string { return In(i18n.Locale()).VaultNetworkTags() }
+
+// VaultNetworkTags says "Tags"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkTags() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkTags", nil)
+}
+
+// VaultNetworkTagsHint says "Comma-separated tags, for example tag:prod."
+// in the language the app shows.
+func VaultNetworkTagsHint() string { return In(i18n.Locale()).VaultNetworkTagsHint() }
+
+// VaultNetworkTagsHint says "Comma-separated tags, for example tag:prod."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkTagsHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkTagsHint", nil)
+}
+
+// VaultNetworkPrivateKey says "Private key"
+// in the language the app shows.
+func VaultNetworkPrivateKey() string { return In(i18n.Locale()).VaultNetworkPrivateKey() }
+
+// VaultNetworkPrivateKey says "Private key"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPrivateKey() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPrivateKey", nil)
+}
+
+// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store and never exported."
+// in the language the app shows.
+func VaultNetworkPrivateKeyHint() string { return In(i18n.Locale()).VaultNetworkPrivateKeyHint() }
+
+// VaultNetworkPrivateKeyHint says "The key is stored in the field secret store and never exported."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPrivateKeyHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPrivateKeyHint", nil)
+}
+
+// VaultNetworkPrivateKeySaved says "A private key is saved. Leave blank to keep it."
+// in the language the app shows.
+func VaultNetworkPrivateKeySaved() string { return In(i18n.Locale()).VaultNetworkPrivateKeySaved() }
+
+// VaultNetworkPrivateKeySaved says "A private key is saved. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPrivateKeySaved() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPrivateKeySaved", nil)
+}
+
+// VaultNetworkAddresses says "Addresses"
+// in the language the app shows.
+func VaultNetworkAddresses() string { return In(i18n.Locale()).VaultNetworkAddresses() }
+
+// VaultNetworkAddresses says "Addresses"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkAddresses() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAddresses", nil)
+}
+
+// VaultNetworkAddressesHint says "Comma- or newline-separated IP addresses or prefixes."
+// in the language the app shows.
+func VaultNetworkAddressesHint() string { return In(i18n.Locale()).VaultNetworkAddressesHint() }
+
+// VaultNetworkAddressesHint says "Comma- or newline-separated IP addresses or prefixes."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkAddressesHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAddressesHint", nil)
+}
+
+// VaultNetworkDNS says "DNS servers"
+// in the language the app shows.
+func VaultNetworkDNS() string { return In(i18n.Locale()).VaultNetworkDNS() }
+
+// VaultNetworkDNS says "DNS servers"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkDNS() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkDNS", nil)
+}
+
+// VaultNetworkDNSHint says "Comma-separated IP addresses."
+// in the language the app shows.
+func VaultNetworkDNSHint() string { return In(i18n.Locale()).VaultNetworkDNSHint() }
+
+// VaultNetworkDNSHint says "Comma-separated IP addresses."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkDNSHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkDNSHint", nil)
+}
+
+// VaultNetworkMTU says "MTU"
+// in the language the app shows.
+func VaultNetworkMTU() string { return In(i18n.Locale()).VaultNetworkMTU() }
+
+// VaultNetworkMTU says "MTU"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkMTU() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkMTU", nil)
+}
+
+// VaultNetworkMTUHint says "Leave blank to use the default."
+// in the language the app shows.
+func VaultNetworkMTUHint() string { return In(i18n.Locale()).VaultNetworkMTUHint() }
+
+// VaultNetworkMTUHint says "Leave blank to use the default."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkMTUHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkMTUHint", nil)
+}
+
+// VaultNetworkPeers says "Peers"
+// in the language the app shows.
+func VaultNetworkPeers() string { return In(i18n.Locale()).VaultNetworkPeers() }
+
+// VaultNetworkPeers says "Peers"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeers() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeers", nil)
+}
+
+// VaultNetworkPeerAdd says "Add peer"
+// in the language the app shows.
+func VaultNetworkPeerAdd() string { return In(i18n.Locale()).VaultNetworkPeerAdd() }
+
+// VaultNetworkPeerAdd says "Add peer"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerAdd() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerAdd", nil)
+}
+
+// VaultNetworkPeerRemove says "Remove peer"
+// in the language the app shows.
+func VaultNetworkPeerRemove() string { return In(i18n.Locale()).VaultNetworkPeerRemove() }
+
+// VaultNetworkPeerRemove says "Remove peer"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerRemove() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerRemove", nil)
+}
+
+// VaultNetworkPeerTitle says "Peer {number}"
+// in the language the app shows.
+//
+// A WireGuard peer card's heading and its position in the list.
+func VaultNetworkPeerTitle(number int) string { return In(i18n.Locale()).VaultNetworkPeerTitle(number) }
+
+// VaultNetworkPeerTitle says "Peer {number}"
+// in the language of msgs.
+//
+// A WireGuard peer card's heading and its position in the list.
+func (msgs Messages) VaultNetworkPeerTitle(number int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerTitle", map[string]any{"number": number})
+}
+
+// VaultNetworkPeerPublicKey says "Public key"
+// in the language the app shows.
+func VaultNetworkPeerPublicKey() string { return In(i18n.Locale()).VaultNetworkPeerPublicKey() }
+
+// VaultNetworkPeerPublicKey says "Public key"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerPublicKey() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerPublicKey", nil)
+}
+
+// VaultNetworkPeerPresharedKey says "Preshared key"
+// in the language the app shows.
+func VaultNetworkPeerPresharedKey() string { return In(i18n.Locale()).VaultNetworkPeerPresharedKey() }
+
+// VaultNetworkPeerPresharedKey says "Preshared key"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerPresharedKey() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerPresharedKey", nil)
+}
+
+// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store and never exported."
+// in the language the app shows.
+func VaultNetworkPeerPresharedKeyHint() string {
+	return In(i18n.Locale()).VaultNetworkPeerPresharedKeyHint()
+}
+
+// VaultNetworkPeerPresharedKeyHint says "Optional. Stored in the field secret store and never exported."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerPresharedKeyHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerPresharedKeyHint", nil)
+}
+
+// VaultNetworkPeerPresharedKeySaved says "A preshared key is saved. Leave blank to keep it."
+// in the language the app shows.
+func VaultNetworkPeerPresharedKeySaved() string {
+	return In(i18n.Locale()).VaultNetworkPeerPresharedKeySaved()
+}
+
+// VaultNetworkPeerPresharedKeySaved says "A preshared key is saved. Leave blank to keep it."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerPresharedKeySaved() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerPresharedKeySaved", nil)
+}
+
+// VaultNetworkPeerEndpoint says "Endpoint"
+// in the language the app shows.
+func VaultNetworkPeerEndpoint() string { return In(i18n.Locale()).VaultNetworkPeerEndpoint() }
+
+// VaultNetworkPeerEndpoint says "Endpoint"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerEndpoint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerEndpoint", nil)
+}
+
+// VaultNetworkPeerAllowedIPs says "Allowed IPs"
+// in the language the app shows.
+func VaultNetworkPeerAllowedIPs() string { return In(i18n.Locale()).VaultNetworkPeerAllowedIPs() }
+
+// VaultNetworkPeerAllowedIPs says "Allowed IPs"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerAllowedIPs() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerAllowedIPs", nil)
+}
+
+// VaultNetworkPeerAllowedIPsHint says "Comma-separated IP prefixes routed through this peer."
+// in the language the app shows.
+func VaultNetworkPeerAllowedIPsHint() string {
+	return In(i18n.Locale()).VaultNetworkPeerAllowedIPsHint()
+}
+
+// VaultNetworkPeerAllowedIPsHint says "Comma-separated IP prefixes routed through this peer."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerAllowedIPsHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerAllowedIPsHint", nil)
+}
+
+// VaultNetworkPeerKeepalive says "Persistent keepalive"
+// in the language the app shows.
+func VaultNetworkPeerKeepalive() string { return In(i18n.Locale()).VaultNetworkPeerKeepalive() }
+
+// VaultNetworkPeerKeepalive says "Persistent keepalive"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkPeerKeepalive() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPeerKeepalive", nil)
+}
+
+// VaultNetworkSummary says "{kind} · {detail}"
+// in the language the app shows.
+//
+// A Network Profile row's kind and endpoint.
+func VaultNetworkSummary(kind string, detail string) string {
+	return In(i18n.Locale()).VaultNetworkSummary(kind, detail)
+}
+
+// VaultNetworkSummary says "{kind} · {detail}"
+// in the language of msgs.
+//
+// A Network Profile row's kind and endpoint.
+func (msgs Messages) VaultNetworkSummary(kind string, detail string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkSummary", map[string]any{"kind": kind, "detail": detail})
+}
+
+// VaultNetworkWarningControlURLInsecure says "This Control URL uses plain HTTP, so the auth key is not encrypted in transit."
+// in the language the app shows.
+func VaultNetworkWarningControlURLInsecure() string {
+	return In(i18n.Locale()).VaultNetworkWarningControlURLInsecure()
+}
+
+// VaultNetworkWarningControlURLInsecure says "This Control URL uses plain HTTP, so the auth key is not encrypted in transit."
+// in the language of msgs.
+func (msgs Messages) VaultNetworkWarningControlURLInsecure() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkWarningControlURLInsecure", nil)
+}
+
 // VaultKnownHostsTitle says "Known Hosts ({count})"
 // in the language the app shows.
 //
@@ -1818,6 +2280,18 @@ func VaultImportFamilyProxyProfile() string { return In(i18n.Locale()).VaultImpo
 // in the language of msgs.
 func (msgs Messages) VaultImportFamilyProxyProfile() string {
 	return Catalog.Format(msgs.locale, "vaultImportFamilyProxyProfile", nil)
+}
+
+// VaultImportFamilyNetworkProfile says "Network profile"
+// in the language the app shows.
+func VaultImportFamilyNetworkProfile() string {
+	return In(i18n.Locale()).VaultImportFamilyNetworkProfile()
+}
+
+// VaultImportFamilyNetworkProfile says "Network profile"
+// in the language of msgs.
+func (msgs Messages) VaultImportFamilyNetworkProfile() string {
+	return Catalog.Format(msgs.locale, "vaultImportFamilyNetworkProfile", nil)
 }
 
 // VaultImportFamilyKnownHost says "Known host"
@@ -4388,6 +4862,36 @@ func VaultProblemProxy() string { return In(i18n.Locale()).VaultProblemProxy() }
 // in the language of msgs.
 func (msgs Messages) VaultProblemProxy() string {
 	return Catalog.Format(msgs.locale, "vaultProblemProxy", nil)
+}
+
+// VaultProblemNetworkProfile says "Check the Network Profile fields: the label, keys, addresses, peers, and endpoints must be valid."
+// in the language the app shows.
+func VaultProblemNetworkProfile() string { return In(i18n.Locale()).VaultProblemNetworkProfile() }
+
+// VaultProblemNetworkProfile says "Check the Network Profile fields: the label, keys, addresses, peers, and endpoints must be valid."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkProfile() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkProfile", nil)
+}
+
+// VaultProblemNetworkMTU says "MTU must be a whole number."
+// in the language the app shows.
+func VaultProblemNetworkMTU() string { return In(i18n.Locale()).VaultProblemNetworkMTU() }
+
+// VaultProblemNetworkMTU says "MTU must be a whole number."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkMTU() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkMTU", nil)
+}
+
+// VaultProblemNetworkKeepalive says "Persistent keepalive must be a whole number between 0 and 65535."
+// in the language the app shows.
+func VaultProblemNetworkKeepalive() string { return In(i18n.Locale()).VaultProblemNetworkKeepalive() }
+
+// VaultProblemNetworkKeepalive says "Persistent keepalive must be a whole number between 0 and 65535."
+// in the language of msgs.
+func (msgs Messages) VaultProblemNetworkKeepalive() string {
+	return Catalog.Format(msgs.locale, "vaultProblemNetworkKeepalive", nil)
 }
 
 // VaultProblemAlgorithms says "Check the SSH algorithm selection."
