@@ -217,6 +217,18 @@ func runStockMoshClient(t *testing.T, server *fakeServer, cols, rows int) []byte
 	return nil
 }
 
+// parityClockBase is any non-zero timebase well below stock's 6500 ms
+// server-late and 10000 ms reply-late thresholds; non-zero keeps a frozen clock
+// distinguishable from an accidentally unset one.
+const parityClockBase uint64 = 42
+
+// fixedParityClock freezes the Go side's overlay clock during the stock-client
+// differential. Stock's wall-clock frames are retried on the stock side; a
+// fixed clock guarantees the reference renderer and the Session cannot draw a
+// count-up bar of their own when the test process stalls for more than stock's
+// 6500 ms server-late threshold.
+func fixedParityClock() uint64 { return parityClockBase }
+
 // referenceRendererOutput drives the terminal renderer directly with the same
 // states. It localizes a mismatch before and after the Session is involved.
 func referenceRendererOutput(t *testing.T, states []scriptedState) []byte {
@@ -225,6 +237,7 @@ func referenceRendererOutput(t *testing.T, states []scriptedState) []byte {
 	renderer := newTerminalRendererWithOptions(queue, 80, 24, terminalRendererOptions{
 		Display:     terminal.DefaultDisplayOptions(),
 		TitlePrefix: []rune("[mosh] "),
+		Clock:       fixedParityClock,
 	})
 	renderer.setScreenSizeHandler(func(int, int, uint64) {})
 	if err := renderer.emitInitial(); err != nil {
@@ -240,7 +253,9 @@ func referenceRendererOutput(t *testing.T, states []scriptedState) []byte {
 		}
 	}
 	renderer.close()
-	return drainQueue(queue)
+	out := drainQueue(queue)
+	requireNoStatusFrame(t, out, "reference renderer")
+	return out
 }
 
 // sessionOutput opens a real Session around the in-process transport, attaches
@@ -253,6 +268,10 @@ func sessionOutput(t *testing.T, states []scriptedState) ([]byte, [][2]int) {
 		return InProcessFactory{
 			Bootstrap:    bannerBootstrap{banner: server.announcement()},
 			ProbeTimeout: 2 * time.Second,
+			// Freeze the overlay clock for the same reason as the reference
+			// renderer: the tick loop must not inject a wall-clock bar during a
+			// scheduler stall that stock's clean run cannot mirror.
+			clock: fixedParityClock,
 		}.Open(ctx, spec)
 	}}
 	service := appsession.NewService(factory)
@@ -301,6 +320,7 @@ func sessionOutput(t *testing.T, states []scriptedState) ([]byte, [][2]int) {
 		if result.err != io.EOF {
 			t.Fatalf("Session view ended with %v, want EOF", result.err)
 		}
+		requireNoStatusFrame(t, result.data, "Session")
 		sizesMu.Lock()
 		defer sizesMu.Unlock()
 		return result.data, append([][2]int(nil), sizes...)
@@ -338,24 +358,238 @@ func firstDifference(got, want []byte) (int, []byte, []byte) {
 	return limit, tail(got, 80), tail(want, 80)
 }
 
-// stockStartupNotification is drawn only when the container's first UDP
-// exchange is scheduled later than stock's 250 ms startup grace. It is a
-// wall-clock status frame, not output of the scripted host states, so a run
-// that contains it is retried rather than compared.
-const stockStartupNotification = "Nothing received from server on UDP port"
+// stockNotificationBarRendition is the SGR prefix Display emits for stock's
+// top-row notification bar: bold, white on blue. Only the overlay draws that
+// frame, and every bar frame starts at column 0 with the "mosh:" label, so the
+// rendition and label together identify a bar without matching ordinary
+// scripted terminal content.
+const (
+	stockNotificationBarRendition = "\x1b[0;1;37;44m"
+	stockNotificationBarLabel     = "mosh:"
+	// stockCountUpWindow bounds the distance between a "mosh: Last contact "
+	// (or "reply") prefix and the generated " ago." suffix that follows the
+	// duration in every count-up format.
+	stockCountUpWindow = 40
+)
+
+// stockFixedOverlayMessages are complete generated messages terminaloverlay.cc
+// puts on the bar. They come from the overlay's wall clock, never from a
+// scripted host state, and also cover a first bar frame whose rendition already
+// matches the terminal's current rendition, in which case Display omits the SGR
+// prefix.
+var stockFixedOverlayMessages = []string{
+	"mosh: Nothing received from server on UDP port ",
+	"mosh: Timed out waiting for server",
+}
+
+// stockCountUpPrefixes start the two count-up formats. Their generated
+// " ago." suffix is required too, so a scripted string quoting only the prefix
+// does not match.
+var stockCountUpPrefixes = []string{
+	"mosh: Last contact ",
+	"mosh: Last reply ",
+}
+
+// stockTimingDependentFrame reports why out contains a stock status frame drawn
+// from wall-clock time rather than from the scripted host states, or "" when
+// out is clean. Stock draws the startup notification after 250 ms without a
+// UDP exchange and the last-contact/last-reply count-up after 6500/10000 ms
+// without a server state; a scheduler stall in the test can therefore inject an
+// extra frame that no byte-equal scripted reference can mirror.
+func stockTimingDependentFrame(out []byte) string {
+	if bytes.Contains(out, []byte(stockNotificationBarRendition+stockNotificationBarLabel)) {
+		return "notification bar frame"
+	}
+	for _, message := range stockFixedOverlayMessages {
+		if bytes.Contains(out, []byte(message)) {
+			return fmt.Sprintf("notification bar text %q", message)
+		}
+	}
+	for _, prefix := range stockCountUpPrefixes {
+		if stockCountUpAfter(out, prefix) {
+			return fmt.Sprintf("notification bar text %q", prefix)
+		}
+	}
+	return ""
+}
+
+// stockCountUpAfter reports whether prefix occurs followed within
+// stockCountUpWindow bytes by the " ago." suffix that ends every count-up
+// format.
+func stockCountUpAfter(out []byte, prefix string) bool {
+	for {
+		i := bytes.Index(out, []byte(prefix))
+		if i < 0 {
+			return false
+		}
+		window := out[i+len(prefix):]
+		if len(window) > stockCountUpWindow {
+			window = window[:stockCountUpWindow]
+		}
+		if bytes.Contains(window, []byte(" ago.")) {
+			return true
+		}
+		out = out[i+len(prefix):]
+	}
+}
+
+// requireNoStatusFrame fails when producer emitted a wall-clock status frame.
+// The Go sides run with a frozen overlay clock, so any such frame indicates a
+// real divergence from the scripted host states rather than timing noise.
+func requireNoStatusFrame(t *testing.T, out []byte, producer string) {
+	t.Helper()
+	if reason := stockTimingDependentFrame(out); reason != "" {
+		t.Fatalf("%s drew a %s outside the scripted states", producer, reason)
+	}
+}
+
+// stockRunFunc executes one fresh stock mosh-client attempt. Tests substitute a
+// deterministic stub so the retry predicate can be exercised without Docker.
+type stockRunFunc func(t *testing.T, states []scriptedState) []byte
 
 func runStockMoshClientStable(t *testing.T, states []scriptedState) []byte {
 	t.Helper()
+	return runStockMoshClientStableWith(t, states, func(t *testing.T, states []scriptedState) []byte {
+		return runStockMoshClient(t, startScriptedServer(t, states), 80, 24)
+	})
+}
+
+// runStockMoshClientStableWith retries until one stock run contains no
+// wall-clock status frame. The accepted run is returned unmodified; byte
+// equality with the reference is never relaxed.
+func runStockMoshClientStableWith(t *testing.T, states []scriptedState, run stockRunFunc) []byte {
+	t.Helper()
 	const attempts = 4
 	for attempt := 1; attempt <= attempts; attempt++ {
-		out := runStockMoshClient(t, startScriptedServer(t, states), 80, 24)
-		if !bytes.Contains(out, []byte(stockStartupNotification)) {
+		out := run(t, states)
+		reason := stockTimingDependentFrame(out)
+		if reason == "" {
 			return out
 		}
-		t.Logf("stock client drew its startup notification on attempt %d; retrying", attempt)
+		t.Logf("stock client drew a timing-dependent %s on attempt %d; retrying", reason, attempt)
 	}
-	t.Fatalf("stock client drew its timing-dependent startup notification on all %d attempts", attempts)
+	t.Fatalf("stock client drew a timing-dependent notification bar on all %d attempts", attempts)
 	return nil
+}
+
+// stockCountUpBarFrame encodes the frame stock's overlay draws after more than
+// 6500 ms without a server state. It drives the real terminal model and Display
+// with a controlled clock, so the retry predicate is exercised against the
+// actual bytes of a "mosh: Last contact ..." bar rather than a hand-written
+// approximation.
+func stockCountUpBarFrame(t *testing.T) []byte {
+	t.Helper()
+	now := uint64(0)
+	renderer, queue := newOverlayTestRenderer(t, func() uint64 { return now })
+	if err := renderer.applyUpdate(hostState(1, 0, true,
+		moshcore.HostInstruction{HostString: []byte("scripted")})); err != nil {
+		t.Fatalf("apply state: %v", err)
+	}
+	if err := renderer.emitLatest(); err != nil {
+		t.Fatalf("emit state: %v", err)
+	}
+	drainQueue(queue)
+
+	// Advance past stock's 6500 ms server_late threshold.
+	now = 7000
+	if err := renderer.maintainOverlays(); err != nil {
+		t.Fatalf("maintain at 7s: %v", err)
+	}
+	frame := drainQueue(queue)
+	if !bytes.Contains(frame, []byte(stockNotificationBarRendition+stockNotificationBarLabel)) {
+		t.Fatalf("count-up frame is not a notification bar: %q", frame)
+	}
+	if !bytes.Contains(frame, []byte("mosh: Last contact 7 seconds ago.")) {
+		t.Fatalf("count-up frame does not carry stock's count-up text: %q", frame)
+	}
+	return frame
+}
+
+// TestStockClientRetryPredicate is the deterministic regression for the
+// timing-flaky differential: a scheduler stall longer than stock's 6500 ms
+// server-late threshold makes stock draw a wall-clock count-up bar that the
+// scripted states do not produce. The stub runner injects that exact frame
+// (encoded by the terminal model at a controlled clock), then a clean stream;
+// the retry helper must reject the bar run and return the clean run unchanged.
+func TestStockClientRetryPredicate(t *testing.T) {
+	bar := stockCountUpBarFrame(t)
+	clean := []byte("scripted state frame\x1b[?25h")
+	startupBar := []byte(stockNotificationBarRendition +
+		"mosh: Nothing received from server on UDP port 60000. [To quit: Ctrl-^ .]")
+	replyBarWithoutRendition := []byte("mosh: Last reply 11 seconds ago. [To quit: Ctrl-^ .]")
+	blueScriptedContent := []byte(stockNotificationBarRendition +
+		"a blue banner from a scripted host state")
+	moshTextWithoutBar := []byte("scripted output mentions mosh: but draws no overlay")
+	scriptedCountUpPrefix := []byte("scripted text quotes mosh: Last contact without the generated suffix")
+
+	tests := []struct {
+		name      string
+		outputs   [][]byte
+		wantCalls int
+		want      []byte
+	}{
+		{
+			name:      "clean run is accepted without retrying",
+			outputs:   [][]byte{clean},
+			wantCalls: 1,
+			want:      clean,
+		},
+		{
+			name:      "count-up bar run is rejected and retried",
+			outputs:   [][]byte{bar, clean},
+			wantCalls: 2,
+			want:      clean,
+		},
+		{
+			name:      "startup bar run is rejected and retried",
+			outputs:   [][]byte{startupBar, clean},
+			wantCalls: 2,
+			want:      clean,
+		},
+		{
+			name:      "bar text without its rendition is rejected and retried",
+			outputs:   [][]byte{replyBarWithoutRendition, clean},
+			wantCalls: 2,
+			want:      clean,
+		},
+		{
+			name:      "bar rendition without the mosh label is scripted content",
+			outputs:   [][]byte{blueScriptedContent},
+			wantCalls: 1,
+			want:      blueScriptedContent,
+		},
+		{
+			name:      "mosh text without an overlay message is scripted content",
+			outputs:   [][]byte{moshTextWithoutBar},
+			wantCalls: 1,
+			want:      moshTextWithoutBar,
+		},
+		{
+			name:      "count-up prefix without the generated suffix is scripted content",
+			outputs:   [][]byte{scriptedCountUpPrefix},
+			wantCalls: 1,
+			want:      scriptedCountUpPrefix,
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			calls := 0
+			got := runStockMoshClientStableWith(t, nil, func(*testing.T, []scriptedState) []byte {
+				if calls >= len(testCase.outputs) {
+					t.Fatalf("retry helper ran more than %d attempts", len(testCase.outputs))
+				}
+				out := testCase.outputs[calls]
+				calls++
+				return out
+			})
+			if calls != testCase.wantCalls {
+				t.Fatalf("stock runs = %d, want %d", calls, testCase.wantCalls)
+			}
+			if !bytes.Equal(got, testCase.want) {
+				t.Fatalf("accepted output = %q, want %q", got, testCase.want)
+			}
+		})
+	}
 }
 
 func compareStatesWithStock(t *testing.T, states []scriptedState) []byte {
