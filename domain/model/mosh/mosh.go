@@ -82,6 +82,32 @@ func (e *ValidationError) Error() string {
 // Is makes every validation failure match ErrInvalidConfig.
 func (e *ValidationError) Is(target error) bool { return target == ErrInvalidConfig }
 
+// PredictionDisplay is mosh-client's MOSH_PREDICTION_DISPLAY choice: when the
+// client speculatively draws the user's keystrokes before their echo arrives.
+// Stock's default (and the value an empty setting means) is adaptive.
+type PredictionDisplay string
+
+const (
+	PredictionAdaptive PredictionDisplay = "adaptive"
+	PredictionAlways   PredictionDisplay = "always"
+	PredictionNever    PredictionDisplay = "never"
+)
+
+// Normalized replaces an empty or unrecognized mode with stock's adaptive
+// default. The setting is display-only, so an old value cannot make a Session
+// unusable.
+func (p PredictionDisplay) Normalized() PredictionDisplay {
+	switch p {
+	case PredictionAdaptive, PredictionAlways, PredictionNever:
+		return p
+	default:
+		return PredictionAdaptive
+	}
+}
+
+// EnvValue returns the stock MOSH_PREDICTION_DISPLAY value.
+func (p PredictionDisplay) EnvValue() string { return string(p.Normalized()) }
+
 // Config is one Mosh Session's bootstrap and client settings.
 type Config struct {
 	// Hostname, Port, and Username address the SSH bootstrap. Port defaults to
@@ -100,6 +126,9 @@ type Config struct {
 	Locales map[string]string
 	// Cols and Rows size the local mosh-client.
 	Cols, Rows int
+	// PredictionDisplay selects mosh's local-echo behavior. Empty means
+	// stock's adaptive default.
+	PredictionDisplay PredictionDisplay
 }
 
 // Normalized fills the defaults a blank form implies.
@@ -114,6 +143,7 @@ func (c Config) Normalized() Config {
 	if c.Lang == "" {
 		c.Lang = DefaultLang
 	}
+	c.PredictionDisplay = c.PredictionDisplay.Normalized()
 	if c.Locales != nil {
 		trimmed := make(map[string]string, len(c.Locales))
 		for name, value := range c.Locales {

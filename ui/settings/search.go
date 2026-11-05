@@ -190,6 +190,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 
 	add(AreaTransport, domain.FieldTransportImplementation, m.SettingsTransportImplementation(),
 		"transport implementation mosh eternal terminal et bundled in-process in process client")
+	add(AreaTransport, domain.FieldMoshPredictionDisplay, m.SettingsMoshPredictionDisplay(),
+		"mosh prediction local echo adaptive always never latency")
 
 	add(AreaSFTPEditor, domain.FieldDoubleClickBehavior, m.SettingsDoubleClickBehavior(), "double click open transfer")
 	add(AreaSFTPEditor, domain.FieldAutoSync, m.SettingsAutoSync(), "sync directories")
