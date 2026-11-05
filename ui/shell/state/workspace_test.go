@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -10,9 +11,46 @@ import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	appworkspace "github.com/mslxl/natcatty/application/workspace"
 	"github.com/mslxl/natcatty/domain/model"
+	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 )
+
+// fakeETResumeStore is the slice of the ET secret store the shell uses: notes
+// which resume keys were seeded and which the shell deleted.
+type fakeETResumeStore struct {
+	mu      sync.Mutex
+	records map[string]bool
+	deletes []string
+	err     error
+}
+
+func newFakeETResumeStore() *fakeETResumeStore {
+	return &fakeETResumeStore{records: make(map[string]bool)}
+}
+
+func (s *fakeETResumeStore) seed(resumeKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records[resumeKey] = true
+}
+
+func (s *fakeETResumeStore) has(resumeKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.records[resumeKey]
+}
+
+func (s *fakeETResumeStore) Delete(_ context.Context, resumeKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	s.deletes = append(s.deletes, resumeKey)
+	delete(s.records, resumeKey)
+	return nil
+}
 
 // workspaceFactory opens a fresh fake transport per Session so split and
 // restore tests can keep several Sessions alive at once.
@@ -82,14 +120,16 @@ type workspaceGraph struct {
 	hosts      map[model.HostID]domainvault.Host
 	detached   []model.TabID
 	reattached []model.TabID
+	etResume   *fakeETResumeStore
 }
 
 func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 	t.Helper()
 	graph := &workspaceGraph{
-		factory: &workspaceFactory{},
-		repo:    &memoryWorkspaceRepository{payload: domainworkspace.EmptyPayload()},
-		hosts:   map[model.HostID]domainvault.Host{},
+		factory:  &workspaceFactory{},
+		repo:     &memoryWorkspaceRepository{payload: domainworkspace.EmptyPayload()},
+		hosts:    map[model.HostID]domainvault.Host{},
+		etResume: newFakeETResumeStore(),
 	}
 	graph.service = appsession.NewService(graph.factory)
 	t.Cleanup(graph.service.CloseAll)
@@ -100,6 +140,7 @@ func newWorkspaceGraph(t *testing.T) *workspaceGraph {
 			graph.surfaces = append(graph.surfaces, surface)
 			return surface, nil
 		}),
+		WithETResumeStore(graph.etResume),
 		WithWorkspace(appworkspace.NewService(graph.repo),
 			func(_ context.Context, id model.HostID) (domainvault.Host, bool) {
 				host, ok := graph.hosts[id]
@@ -1090,6 +1131,112 @@ func TestRestoreGivesALegacyETPaneANewResumeKey(t *testing.T) {
 	panes := graph.state.WorkspacePayload().Panes
 	if len(panes) != 1 || panes[0].Session.ResumeKey != spec.ResumeKey {
 		t.Fatalf("saved restored ET Pane = %+v, want resume key %q", panes, spec.ResumeKey)
+	}
+}
+
+// TestRestoreETPaneFallsBackWhenLegacyServerRefusesReattach: a pair saved by
+// an older build is unusable on a pre-v7 server. Restoring the Pane must clear
+// the stale secret and explicitly start one fresh session, with a visible
+// notice, instead of leaving the Pane permanently failed and retrying the same
+// key forever. The fake factory models the adapter's typed outcome: the first
+// Open with a saved pair returns ErrReattachUnsupported; the pair is gone on
+// the second Open.
+func TestRestoreETPaneFallsBackWhenLegacyServerRefusesReattach(t *testing.T) {
+	const resumeKey = "et-resume-legacy"
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	graph.etResume.seed(resumeKey)
+	graph.factory.fail = func(spec appsession.StartSpec) error {
+		if spec.Kind == appsession.KindET && spec.ResumeKey == resumeKey && graph.etResume.has(resumeKey) {
+			return fmt.Errorf("%w: server does not support session reattach; upgrade etserver",
+				etmodel.ErrReattachUnsupported)
+		}
+		return nil
+	}
+	graph.repo.payload = domainworkspace.Payload{
+		Version: domainworkspace.PayloadVersion, ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-et",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionET, HostID: "host-et",
+				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
+				ResumeKey: resumeKey,
+			},
+		}},
+	}
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the fresh ET Pane after the legacy fallback", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-et")
+		return ok && !info.Pending && info.Err == nil && info.Surface != nil
+	})
+	if got := graph.factory.specCount(); got != 2 {
+		t.Fatalf("ET opens = %d, want the refused reattach followed by one fresh session", got)
+	}
+	if graph.etResume.has(resumeKey) {
+		t.Fatal("the stale pair survived the fallback")
+	}
+	if len(graph.etResume.deletes) != 1 || graph.etResume.deletes[0] != resumeKey {
+		t.Fatalf("secret deletes = %v, want exactly %q", graph.etResume.deletes, resumeKey)
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Notice == nil || snapshot.Notice.Code != appsession.NoticeETResumeFallback {
+		t.Fatalf("fallback notice = %+v, %v; want the explicit ET resume fallback notice", snapshot.Notice, ok)
+	}
+}
+
+// TestFailedETPaneCloseClearsSavedCredentials: a Pane whose Open never
+// produced a Session has no transport that could clear its pair. Closing that
+// Pane explicitly must clear it rather than orphan it in the secret store.
+func TestFailedETPaneCloseClearsSavedCredentials(t *testing.T) {
+	const resumeKey = "et-resume-failed"
+	graph := newWorkspaceGraph(t)
+	graph.hosts["host-et"] = domainvault.Host{
+		ID: "host-et", Hostname: "et.example.com", Port: 2022,
+		Username: "bob", Protocol: domainvault.ProtocolET, ETPort: 8737,
+	}
+	graph.etResume.seed(resumeKey)
+	graph.factory.fail = func(spec appsession.StartSpec) error {
+		if spec.Kind == appsession.KindET {
+			return errors.New("network unreachable")
+		}
+		return nil
+	}
+	graph.repo.payload = domainworkspace.Payload{
+		Version: domainworkspace.PayloadVersion, ActiveTab: 0,
+		Tabs: []domainworkspace.RestoredTab{{
+			ID: "tab-et", Number: 1, Root: domainworkspace.NewPaneNode("pane-et"),
+		}},
+		Panes: []domainworkspace.RestoredPane{{
+			ID: "pane-et",
+			Session: domainworkspace.SessionDescriptor{
+				Kind: domainworkspace.SessionET, HostID: "host-et",
+				Hostname: "et.example.com", Port: 2022, Username: "bob", Label: "et",
+				ResumeKey: resumeKey,
+			},
+		}},
+	}
+	graph.state.Restore(context.Background())
+	graph.flushUntil(t, "the failed ET Pane", func() bool {
+		info, ok := graph.state.PaneInfoAt(0, "pane-et")
+		return ok && !info.Pending && info.Err != nil
+	})
+	if !graph.etResume.has(resumeKey) {
+		t.Fatal("a failed Open cleared the pair before the user closed the Pane")
+	}
+	if !graph.state.CloseTab(0) {
+		t.Fatal("CloseTab returned false")
+	}
+	if graph.etResume.has(resumeKey) {
+		t.Fatal("closing a failed ET Pane left its saved pair orphaned")
+	}
+	if len(graph.etResume.deletes) != 1 || graph.etResume.deletes[0] != resumeKey {
+		t.Fatalf("secret deletes = %v, want exactly %q", graph.etResume.deletes, resumeKey)
 	}
 }
 
