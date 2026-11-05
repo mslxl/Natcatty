@@ -123,6 +123,7 @@
   "vaultNetworkNewWireGuard": "Новая сеть WireGuard",
   "vaultNetworkEmpty": "Профилей сетей пока нет.",
   "vaultNetworkDeleteAffected": "Затрагивает {hosts, plural, one {# хост} few {# хоста} many {# хостов} other {# хоста}} и {groups, plural, one {# группу хостов} few {# группы хостов} many {# групп хостов} other {# группы хостов}}. При удалении этого профиля сети эти варианты выбора будут очищены.",
+  "vaultNetworkDeleteActiveUse": "Этот профиль сети используется активными Sessions или подключениями. При удалении его провайдер будет закрыт; затронутые Sessions завершатся ошибкой при следующем вводе-выводе, и их нужно будет переподключить.",
   "vaultNetworkFormCreateTitle": "Новый профиль сети",
   "vaultNetworkFormEditTitle": "Изменить профиль сети",
   "vaultNetworkKind": "Тип сети",

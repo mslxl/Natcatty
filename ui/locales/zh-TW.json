@@ -123,6 +123,7 @@
   "vaultNetworkNewWireGuard": "新增 WireGuard 網路",
   "vaultNetworkEmpty": "尚無網路設定。",
   "vaultNetworkDeleteAffected": "影響 {hosts, plural, other {# 部主機}}和 {groups, plural, other {# 個主機群組}}。刪除此網路設定會清除這些選擇。",
+  "vaultNetworkDeleteActiveUse": "有活動工作階段或連線正在使用此 Network Profile。刪除後將關閉其 Provider；受影響的工作階段會在下一次 I/O 時失敗，需要重新連線。",
   "vaultNetworkFormCreateTitle": "新增網路設定",
   "vaultNetworkFormEditTitle": "編輯網路設定",
   "vaultNetworkKind": "網路類型",

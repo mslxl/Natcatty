@@ -19,6 +19,7 @@ type fakeNetworkProvider struct {
 	conn      net.Conn
 	err       error
 	closes    int
+	phase     ProviderPhase
 }
 
 func (p *fakeNetworkProvider) DialContext(_ context.Context, network, address string) (net.Conn, error) {
@@ -46,6 +47,20 @@ func (p *fakeNetworkProvider) closeCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.closes
+}
+
+// Phase implements the optional lifecycle reporter. The zero value means
+// unknown, so providers created by the shared fake keep working.
+func (p *fakeNetworkProvider) Phase() ProviderPhase {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.phase
+}
+
+func (p *fakeNetworkProvider) setPhase(phase ProviderPhase) {
+	p.mu.Lock()
+	p.phase = phase
+	p.mu.Unlock()
 }
 
 // fakeProviderFactory opens a fresh fake provider per call unless openFn
@@ -436,6 +451,84 @@ func TestNetworkProviderRegistryCloseWhileOpeningAbandonsTheResult(t *testing.T)
 	}
 	if got := provider.closeCount(); got != 1 {
 		t.Fatalf("abandoned provider close count = %d, want 1", got)
+	}
+}
+
+// TestNetworkProviderRegistryStoppingDuringReadyPublicationClosesOnce pins the
+// ownership handshake that used to race: an opener that has decided it owns the
+// entry must publish readiness before releasing the registry lock. Close,
+// Cancel, and CloseAll arriving in that window must observe a settled entry and
+// release the Provider exactly once.
+func TestNetworkProviderRegistryStoppingDuringReadyPublicationClosesOnce(t *testing.T) {
+	operations := map[string]func(*NetworkProviderRegistry, string) error{
+		"close": func(registry *NetworkProviderRegistry, profileID string) error {
+			return registry.Close(profileID)
+		},
+		"cancel": func(registry *NetworkProviderRegistry, profileID string) error {
+			return registry.Cancel(profileID)
+		},
+		"close all": func(registry *NetworkProviderRegistry, _ string) error {
+			return registry.CloseAll()
+		},
+	}
+	for name, stop := range operations {
+		t.Run(name, func(t *testing.T) {
+			factory := &fakeProviderFactory{}
+			registry := NewNetworkProviderRegistry(factory)
+			hookEntered := make(chan struct{})
+			releaseHook := make(chan struct{})
+			registry.afterOwnership = func(entry *providerEntry) {
+				select {
+				case <-entry.ready:
+				default:
+					t.Error("readiness was not published while the registry lock was held")
+				}
+				close(hookEntered)
+				<-releaseHook
+			}
+			route := testNetworkRoute("profile-a", "fp-1")
+
+			type acquisition struct {
+				provider NetworkProvider
+				err      error
+			}
+			acquired := make(chan acquisition, 1)
+			go func() {
+				provider, err := registry.Acquire(context.Background(), route)
+				acquired <- acquisition{provider: provider, err: err}
+			}()
+			<-hookEntered
+
+			stopStarted := make(chan struct{})
+			stopped := make(chan error, 1)
+			go func() {
+				close(stopStarted)
+				stopped <- stop(registry, route.ProfileID)
+			}()
+			<-stopStarted
+			close(releaseHook)
+
+			result := <-acquired
+			if err := <-stopped; err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if result.err == nil && result.provider == nil {
+				t.Fatal("Acquire returned neither a Provider nor an error")
+			}
+			providers := factory.openedProviders()
+			if len(providers) != 1 {
+				t.Fatalf("opened Providers = %d, want 1", len(providers))
+			}
+			if got := providers[0].closeCount(); got != 1 {
+				t.Fatalf("Provider close count = %d, want exactly 1", got)
+			}
+			if result.err == nil {
+				stoppedProvider, ok := result.provider.(*fakeNetworkProvider)
+				if !ok || stoppedProvider != providers[0] {
+					t.Fatalf("Acquire returned %T, want the opened Provider", result.provider)
+				}
+			}
+		})
 	}
 }
 

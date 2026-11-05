@@ -63,6 +63,29 @@ func WithNetworkProfiles(profiles NetworkProfiles) Option {
 	return func(s *State) { s.networks = profiles }
 }
 
+// NetworkProfileRuntimeUsage reports whether a Network Profile is in use by a
+// live Session or an active Connection lease right now. It is advisory: the app
+// wires runtime state, tests a fake, and a nil function reports no use.
+type NetworkProfileRuntimeUsage func(profileID string) bool
+
+// WithNetworkProfileRuntimeUsage gives the delete confirmation a live-use
+// warning so the user knows a Provider will close under running Sessions. The
+// lookup may read the Vault and must not load credentials; the delete banner
+// calls it only while a confirmation is open.
+func WithNetworkProfileRuntimeUsage(fn NetworkProfileRuntimeUsage) Option {
+	return func(s *State) { s.networkUsage = fn }
+}
+
+// NetworkProfileInUse reports whether a Network Profile is currently used by a
+// live Session or active Connection lease. It is safe to call while rendering
+// the delete confirmation; no answer means not in use.
+func (s *State) NetworkProfileInUse(id string) bool {
+	if s == nil || s.networkUsage == nil || id == "" {
+		return false
+	}
+	return s.networkUsage(id)
+}
+
 // NetworkProfiles returns the listed Network Profiles in repository order.
 func (s *State) NetworkProfiles() []domainvault.NetworkProfile { return s.networkItems }
 

@@ -183,6 +183,13 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 				ui.Text(c, m.VaultNetworkDeleteAffected(hosts, groups)).
 					FontSize(12).TextColor(t.TextMuted)
 			}
+			// Deleting closes the Provider. Say so when a Session or lease is
+			// using it, because those owners fail on their next I/O and must
+			// retry instead of silently falling back.
+			if s.NetworkProfileInUse(id) {
+				ui.Text(c, m.VaultNetworkDeleteActiveUse()).
+					FontSize(12).TextColor(uitheme.DangerText(t))
+			}
 		})
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteNetworkProfile()

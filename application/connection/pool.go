@@ -614,6 +614,44 @@ func (p *pool) invalidateNetworkProfile(profileID string) {
 	closeConnections(idle)
 }
 
+// activeNetworkProfileLeases counts the leases held on transports opened
+// through one Network Profile, plus in-flight dials that will become leases.
+// The count is advisory: it answers whether a delete would pull the Provider
+// out from under something that is running now. It never loads credentials.
+func (p *pool) activeNetworkProfileLeases(profileID string) int {
+	if p == nil || profileID == "" {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	count := 0
+	for _, connections := range p.byKey {
+		for _, conn := range connections {
+			if conn.endpoint.networkProfileID != profileID {
+				continue
+			}
+			conn.mu.Lock()
+			if conn.refs > 0 && conn.aliveLocked() {
+				count += conn.refs
+			}
+			conn.mu.Unlock()
+		}
+	}
+	for _, dials := range p.pending {
+		for _, dial := range dials {
+			if dial.endpoint.networkProfileID != profileID {
+				continue
+			}
+			select {
+			case <-dial.done:
+			default:
+				count++
+			}
+		}
+	}
+	return count
+}
+
 // closeAll stops the pool and returns every transport for teardown.
 func (p *pool) closeAll() []*Connection {
 	p.mu.Lock()

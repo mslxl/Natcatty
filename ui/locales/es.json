@@ -123,6 +123,7 @@
   "vaultNetworkNewWireGuard": "Nueva red WireGuard",
   "vaultNetworkEmpty": "Aún no hay perfiles de red.",
   "vaultNetworkDeleteAffected": "Afecta a {hosts, plural, one {# host} many {# hosts} other {# hosts}} y {groups, plural, one {# grupo de hosts} many {# grupos de hosts} other {# grupos de hosts}}. Al eliminar este perfil de red se borran esas selecciones.",
+  "vaultNetworkDeleteActiveUse": "Hay Sessions o conexiones activas usando este perfil de red. Al eliminarlo se cierra su proveedor; las Sessions afectadas fallarán en su próxima E/S y deberán reconectarse.",
   "vaultNetworkFormCreateTitle": "Nuevo perfil de red",
   "vaultNetworkFormEditTitle": "Editar perfil de red",
   "vaultNetworkKind": "Tipo de red",

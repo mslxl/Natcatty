@@ -211,6 +211,7 @@ type State struct {
 	groups              Groups
 	proxies             ProxyProfiles
 	networks            NetworkProfiles
+	networkUsage        NetworkProfileRuntimeUsage
 	knownHosts          KnownHosts
 	secrets             Secrets
 	snippets            Snippets

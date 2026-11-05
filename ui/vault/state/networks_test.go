@@ -412,3 +412,26 @@ func TestNetworkProfileUsageCountsHostsAndGroupsIncludingInheritance(t *testing.
 		t.Fatalf("unused usage = %d Hosts, %d Groups, want 0 and 0", hosts, groups)
 	}
 }
+
+func TestNetworkProfileInUseUsesTheRuntimeLookupWhenWired(t *testing.T) {
+	state := NewState(&fakeHosts{})
+	if state.NetworkProfileInUse("net-1") {
+		t.Fatal("a state without a runtime lookup reported active use")
+	}
+	if state.NetworkProfileInUse("") {
+		t.Fatal("an empty profile ID reported active use")
+	}
+
+	state = NewState(&fakeHosts{}, WithNetworkProfileRuntimeUsage(func(id string) bool {
+		return id == "net-1"
+	}))
+	if !state.NetworkProfileInUse("net-1") {
+		t.Fatal("the runtime lookup was ignored")
+	}
+	if state.NetworkProfileInUse("net-2") {
+		t.Fatal("an unused profile reported active use")
+	}
+	if state.NetworkProfileInUse("") {
+		t.Fatal("an empty profile ID reached the runtime lookup")
+	}
+}

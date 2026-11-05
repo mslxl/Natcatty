@@ -344,7 +344,7 @@ func (f *viewNetworkProfiles) UpdateNetworkProfile(_ context.Context, id string,
 
 func (f *viewNetworkProfiles) DeleteNetworkProfile(context.Context, string) error { return nil }
 
-func newRoutingView(t *testing.T) (*vaultstate.State, *ui.Tester) {
+func newRoutingView(t *testing.T, opts ...vaultstate.Option) (*vaultstate.State, *ui.Tester) {
 	t.Helper()
 	hosts := &fakeHosts{items: []domainvault.Host{{
 		ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
@@ -357,10 +357,11 @@ func newRoutingView(t *testing.T) (*vaultstate.State, *ui.Tester) {
 	profiles := &viewNetworkProfiles{items: []domainvault.NetworkProfile{
 		{ID: "net-1", Label: "Tailnet", Kind: domainvault.NetworkKindTailscale},
 	}}
-	state := vaultstate.NewState(hosts,
+	all := append([]vaultstate.Option{
 		vaultstate.WithGroups(groups),
 		vaultstate.WithNetworkProfiles(profiles),
-	)
+	}, opts...)
+	state := vaultstate.NewState(hosts, all...)
 	if err := state.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
@@ -412,6 +413,27 @@ func TestVaultViewNetworkDeleteBannerWarnsAboutAffectedRecords(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText(m.VaultNetworkDeleteAffected(1, 2)) {
 		t.Fatalf("the delete banner does not warn about the affected Host and Groups, texts %q", tt.Texts())
+	}
+	if tt.HasText(m.VaultNetworkDeleteActiveUse()) {
+		t.Fatalf("the banner claimed active use without a runtime lookup, texts %q", tt.Texts())
+	}
+}
+
+func TestVaultViewNetworkDeleteBannerWarnsAboutActiveUse(t *testing.T) {
+	state, tt := newRoutingView(t, vaultstate.WithNetworkProfileRuntimeUsage(
+		func(id string) bool { return id == "net-1" }))
+	m := locales.In("en")
+
+	state.RequestDeleteNetworkProfile("net-1")
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkDeleteActiveUse()) {
+		t.Fatalf("the delete banner does not warn about active Sessions or leases, texts %q", tt.Texts())
+	}
+
+	state.RequestDeleteNetworkProfile("net-other")
+	tt.Frame()
+	if tt.HasText(m.VaultNetworkDeleteActiveUse()) {
+		t.Fatalf("an unused profile showed the active-use warning, texts %q", tt.Texts())
 	}
 }
 

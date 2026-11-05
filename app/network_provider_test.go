@@ -615,6 +615,46 @@ func TestStatusSinkPublishesToTheVaultSurface(t *testing.T) {
 	(&networkProviderStatusSink{}).Observe(adaptertailscale.Status{ProfileID: "net-1"})
 }
 
+// TestStatusSinkForwardsEveryProviderPhaseToTheRuntime proves the composition
+// root sees the same lifecycle changes that feed the Vault row and the
+// Connection Log, so an authorization loss can invalidate idle Connections.
+func TestStatusSinkForwardsEveryProviderPhaseToTheRuntime(t *testing.T) {
+	var profiles []string
+	var phases []appconnection.ProviderPhase
+	sink := &networkProviderStatusSink{
+		onPhase: func(profileID string, phase appconnection.ProviderPhase) {
+			profiles = append(profiles, profileID)
+			phases = append(phases, phase)
+		},
+	}
+	sink.Observe(adaptertailscale.Status{
+		ProfileID: "net-1",
+		Phase:     appconnection.ProviderPhaseNeedsLogin,
+	})
+	sink.ObserveWireGuard(adapterwireguard.Status{
+		ProfileID: "wg-1",
+		Phase:     appconnection.ProviderPhaseError,
+	})
+	// A status without a profile cannot invalidate anything and is not
+	// forwarded.
+	sink.Observe(adaptertailscale.Status{Phase: appconnection.ProviderPhaseError})
+
+	wantProfiles := []string{"net-1", "wg-1"}
+	wantPhases := []appconnection.ProviderPhase{
+		appconnection.ProviderPhaseNeedsLogin,
+		appconnection.ProviderPhaseError,
+	}
+	if len(profiles) != len(wantProfiles) {
+		t.Fatalf("forwarded profiles = %v, want %v", profiles, wantProfiles)
+	}
+	for i := range wantProfiles {
+		if profiles[i] != wantProfiles[i] || phases[i] != wantPhases[i] {
+			t.Fatalf("forwarded event %d = %s/%s, want %s/%s",
+				i, profiles[i], phases[i], wantProfiles[i], wantPhases[i])
+		}
+	}
+}
+
 func TestConnectionLogFromProviderStatus(t *testing.T) {
 	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	base := adaptertailscale.Status{

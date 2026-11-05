@@ -611,3 +611,69 @@ func TestDeleteNetworkProfileClearsHostAndGroupReferences(t *testing.T) {
 		t.Fatalf("deleting a missing profile = %v, want ErrNotFound", err)
 	}
 }
+
+// TestNetworkProfileChangesNotifyOnlyAfterASuccessfulWrite proves the runtime
+// retirement hook fires once per persisted edit or deletion and never on a
+// rejected or failed write.
+func TestNetworkProfileChangesNotifyOnlyAfterASuccessfulWrite(t *testing.T) {
+	repo := &fakeNetworkProfiles{}
+	secrets := newFakeSecrets()
+	service := newNetworkTestService(repo, secrets)
+	var notified []string
+	service.networkProfileChanged = func(id string) { notified = append(notified, id) }
+
+	created, err := service.CreateNetworkProfile(context.Background(), tailscaleNetworkDraft("auth-key"))
+	if err != nil {
+		t.Fatalf("CreateNetworkProfile: %v", err)
+	}
+	if len(notified) != 0 {
+		t.Fatalf("create notified %v; only edits and deletes retire a provider", notified)
+	}
+
+	update := tailscaleNetworkDraft("")
+	if _, err := service.UpdateNetworkProfile(context.Background(), created.ID, update); err != nil {
+		t.Fatalf("UpdateNetworkProfile: %v", err)
+	}
+	if len(notified) != 1 || notified[0] != created.ID {
+		t.Fatalf("notified = %v, want one edit notification for %q", notified, created.ID)
+	}
+
+	// A Kind change is rejected before anything is written.
+	before := len(notified)
+	bad := wireGuardNetworkDraft(testWireGuardKey(1), testWireGuardKey(2), "")
+	if _, err := service.UpdateNetworkProfile(context.Background(), created.ID, bad); err == nil {
+		t.Fatal("a Kind change was accepted")
+	}
+	if len(notified) != before {
+		t.Fatalf("a rejected update notified %v", notified[before:])
+	}
+
+	// A storage failure is not a successful edit either.
+	repo.err = errors.New("disk full")
+	if _, err := service.UpdateNetworkProfile(context.Background(), created.ID, update); err == nil {
+		t.Fatal("UpdateNetworkProfile succeeded with a failing repository")
+	}
+	if len(notified) != before {
+		t.Fatalf("a failed update notified %v", notified[before:])
+	}
+	if err := service.DeleteNetworkProfile(context.Background(), created.ID); err == nil {
+		t.Fatal("DeleteNetworkProfile succeeded with a failing repository")
+	}
+	if len(notified) != before {
+		t.Fatalf("a failed delete notified %v", notified[before:])
+	}
+
+	repo.err = nil
+	if err := service.DeleteNetworkProfile(context.Background(), created.ID); err != nil {
+		t.Fatalf("DeleteNetworkProfile: %v", err)
+	}
+	if len(notified) != before+1 || notified[before] != created.ID {
+		t.Fatalf("notified = %v, want one delete notification", notified)
+	}
+	if err := service.DeleteNetworkProfile(context.Background(), created.ID); err != ErrNotFound {
+		t.Fatalf("deleting a missing profile = %v, want ErrNotFound", err)
+	}
+	if len(notified) != before+1 {
+		t.Fatalf("a missing delete notified %v", notified[before+1:])
+	}
+}

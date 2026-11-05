@@ -624,24 +624,42 @@ func (p *Provider) DialContext(ctx context.Context, network, address string) (ne
 
 	conn, err := b.Dial(ctx, network, address)
 	if err == nil {
-		return conn, nil
+		return p.wrapConn(conn, b), nil
 	}
 	cause := p.redactor.redactError(err)
 
 	// A failed dial can mean the device stopped after startup. Ask the backend
-	// for its live phase so a dead tunnel fails closed with KindProvider instead
-	// of masquerading as an ordinary network error.
-	if live, statusErr := b.Status(ctx); statusErr == nil && live.Phase != appconnection.ProviderPhaseRunning {
+	// for its live phase even when Status reports an error: a dead device
+	// returns PhaseError together with "device stopped unexpectedly", and
+	// trusting only statusErr == nil would classify that race as an ordinary
+	// network failure with a stale running phase. Caller cancellation stays
+	// authoritative: the dial was interrupted, not necessarily the Provider.
+	live, statusErr := b.Status(ctx)
+	if live.Phase == "" && statusErr != nil && ctx.Err() == nil {
+		// The backend could not report a phase. Unknown on a live error means
+		// the tunnel cannot be trusted to carry the retry, so fail closed.
+		live.Phase = appconnection.ProviderPhaseError
+	}
+	if live.Phase != "" && live.Phase != appconnection.ProviderPhaseRunning &&
+		ctx.Err() == nil {
+		failure := cause
+		if statusErr != nil {
+			failure = p.redactor.redactError(statusErr)
+		}
+		applied := false
 		p.mu.Lock()
 		if !p.closed && p.backend == b {
-			next := p.statusFromBackendLocked(live, cause)
+			next := p.statusFromBackendLocked(live, failure)
 			next.Phase = live.Phase
 			p.status = next
 			p.phase = live.Phase
+			applied = true
 		}
 		p.mu.Unlock()
-		p.emit()
-		return nil, p.errorFor(live.Phase, cause)
+		if applied {
+			p.emit()
+		}
+		return nil, p.errorFor(live.Phase, failure)
 	}
 	// netstack translates a cancelled context into its own sentinel, so the
 	// caller's context is the authoritative cancellation signal.
@@ -667,6 +685,27 @@ func (p *Provider) DialContext(ctx context.Context, network, address string) (ne
 	}
 	return nil, &appconnection.Error{Kind: kind, Cause: cause,
 		Provider: p.providerInfo(phase)}
+}
+
+// wrapConn tags a post-dial I/O failure with the Provider state. An open
+// Connection whose Provider was closed or replaced must surface KindProvider on
+// its next I/O instead of an unclassified transport error that could invite a
+// direct retry. While the same device is running, ordinary transport errors
+// pass through unchanged.
+func (p *Provider) wrapConn(conn net.Conn, b backend) net.Conn {
+	return appconnection.WrapProviderConn(conn,
+		func() (appconnection.ProviderPhase, *appconnection.ProviderInfo) {
+			p.mu.Lock()
+			phase := p.phase
+			switch {
+			case p.closed:
+				phase = appconnection.ProviderPhaseStopped
+			case p.backend != b:
+				phase = appconnection.ProviderPhaseError
+			}
+			p.mu.Unlock()
+			return phase, p.providerInfo(phase)
+		})
 }
 
 // isTimeout reports whether err carries a net.Error timeout classification.

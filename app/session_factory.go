@@ -609,11 +609,7 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 	}
 	route.Proxy = proxy
 
-	networkOwner := target
-	if first != nil && first.NetworkProfileID != "" {
-		networkOwner = *first
-	}
-	network, err := r.networkRoute(ctx, networkOwner)
+	network, err := r.networkRoute(ctx, networkProfileOwner(target, first))
 	if err != nil {
 		return appconnection.Route{}, err
 	}
@@ -634,6 +630,40 @@ func (r vaultRoutes) NetworkRouteForHost(ctx context.Context, id model.HostID) (
 		return nil, routeError(fmt.Errorf("Host %s: %w", id, err))
 	}
 	return r.networkRoute(ctx, target)
+}
+
+// NetworkProfileIDForHost resolves only the Network Profile a Session's first
+// endpoint would use. It follows Route's first-jump priority but deliberately
+// stops there: no credential, proxy, or profile configuration is read, so the
+// Vault can ask on every delete-confirmation frame without touching secrets.
+func (r vaultRoutes) NetworkProfileIDForHost(ctx context.Context, id model.HostID) (string, error) {
+	if r.vault == nil {
+		return "", routeError(errors.New("app: no Vault for route resolution"))
+	}
+	target, err := r.vault.Get(ctx, id)
+	if err != nil {
+		return "", routeError(fmt.Errorf("Host %s: %w", id, err))
+	}
+	var first *domainvault.Host
+	if target.HostChain != nil && len(target.HostChain.HostIDs) > 0 {
+		jump, err := r.vault.Get(ctx, target.HostChain.HostIDs[0])
+		if err != nil {
+			return "", routeError(fmt.Errorf("jump Host %s: %w", target.HostChain.HostIDs[0], err))
+		}
+		first = &jump
+	}
+	return networkProfileOwner(target, first).NetworkProfileID, nil
+}
+
+// networkProfileOwner applies the first-endpoint rule Route and the delete
+// warning share: the first jump's effective Network Profile wins when it has
+// one, otherwise the target Host's profile is selected. Later hops never
+// select a profile because they travel inside the first connection.
+func networkProfileOwner(target domainvault.Host, first *domainvault.Host) domainvault.Host {
+	if first != nil && first.NetworkProfileID != "" {
+		return *first
+	}
+	return target
 }
 
 // networkRoute resolves the selected profile's identity, Kind, display label,
