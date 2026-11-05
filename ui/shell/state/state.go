@@ -184,6 +184,11 @@ type State struct {
 	surfaces         SurfaceFactory
 	trustPrompt      *sessionui.TrustPrompt
 	authPrompt       *sessionui.AuthPrompt
+	// etResumeStore lets the shell clear a saved ET credential pair when no
+	// live Session owns it any more: a restored reattach the server refuses as
+	// unsupported, or an ET Pane closed while its Session never opened. Nil
+	// leaves such stale pairs in place.
+	etResumeStore ETResumeStore
 
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
@@ -304,6 +309,19 @@ func WithSessions(service *appsession.Service, surfaces SurfaceFactory) Option {
 		s.sessions = service
 		s.surfaces = surfaces
 	}
+}
+
+// ETResumeStore removes a saved ET session pair from the secret store. The app
+// backs it with the ET adapter's SecretSessionStore; tests use a fake.
+type ETResumeStore interface {
+	Delete(ctx context.Context, resumeKey string) error
+}
+
+// WithETResumeStore lets the shell clear ET credentials that no live Session
+// can clear itself: a stale pair refused by a legacy server during restore, or
+// one left by an ET Pane whose Session never opened.
+func WithETResumeStore(store ETResumeStore) Option {
+	return func(s *State) { s.etResumeStore = store }
 }
 
 // WithVault gives the shell the Vault surface. The app wires the real Vault

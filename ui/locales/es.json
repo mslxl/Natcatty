@@ -493,6 +493,7 @@
   "connectionTmuxNested": "Ya estás dentro de una sesión de tmux en el Host remoto; se conectó sin anidar.",
   "connectionTmuxUnavailable": "tmux no está disponible en el Host remoto; se conectó con un shell simple.",
   "connectionEternalTerminalDisplaced": "Otro cliente se conectó a esta sesión de EternalTerminal, por lo que esta conexión terminó. EternalTerminal permite un solo cliente a la vez.",
+  "connectionEternalTerminalResumeUnsupported": "No se pudo restaurar la sesión de EternalTerminal guardada porque el servidor no admite la reanudación de sesiones (etserver 6.2.10 o anterior). Se inició una sesión nueva; actualice etserver para reanudar sesiones tras reiniciar.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

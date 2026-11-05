@@ -3472,6 +3472,18 @@ func (msgs Messages) ConnectionEternalTerminalDisplaced() string {
 	return Catalog.Format(msgs.locale, "connectionEternalTerminalDisplaced", nil)
 }
 
+// ConnectionEternalTerminalResumeUnsupported says "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserve…"
+// in the language the app shows.
+func ConnectionEternalTerminalResumeUnsupported() string {
+	return In(i18n.Locale()).ConnectionEternalTerminalResumeUnsupported()
+}
+
+// ConnectionEternalTerminalResumeUnsupported says "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserve…"
+// in the language of msgs.
+func (msgs Messages) ConnectionEternalTerminalResumeUnsupported() string {
+	return Catalog.Format(msgs.locale, "connectionEternalTerminalResumeUnsupported", nil)
+}
+
 // HostKeyPromptUnknownTitle says "Unknown host key"
 // in the language the app shows.
 func HostKeyPromptUnknownTitle() string { return In(i18n.Locale()).HostKeyPromptUnknownTitle() }

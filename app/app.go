@@ -1083,6 +1083,10 @@ func run(afterReady func(hostWindow)) error {
 		state.WithSerialDialog(serialui.View(serialDialog), serialDialog.Show),
 		state.WithTrustPrompt(trustPrompt),
 		state.WithAuthPrompt(authPrompt),
+		// The shell clears a stale ET pair when no live Session owns it: a
+		// restored Pane a legacy server refuses to reattach, or one closed
+		// while its Open never produced a Session.
+		state.WithETResumeStore(adapteret.SecretSessionStore{Secrets: secretStore}),
 		state.WithWorkspace(workspaceService, func(ctx context.Context, id model.HostID) (domainvault.Host, bool) {
 			host, err := vaultService.Get(ctx, id)
 			if err != nil {

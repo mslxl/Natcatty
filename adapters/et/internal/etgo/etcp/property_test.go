@@ -16,6 +16,13 @@ import (
 // Random traffic in both directions while the network is cut at random
 // moments, including in the middle of frames, handshakes and catchups. Every
 // packet must arrive exactly once and in order on both sides.
+//
+// Literal packet reordering cannot be injected over ETCP: it runs on TCP,
+// which delivers bytes in order, and the sealed sequence stream preserves that
+// order. This test injects loss and mid-frame cuts instead; exactly-once and
+// in-order delivery is checked on both sides, and the recover tests cover a
+// peer whose sequence state diverges (a replay it no longer holds, or a reset
+// behind this client's back).
 func TestPropertyExactlyOnceUnderRandomCuts(t *testing.T) {
 	for seed := range uint64(20) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {

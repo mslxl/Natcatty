@@ -27,15 +27,16 @@ const maxPayload = wire.MaxFrameSize - 2 - secretbox.Overhead
 // Waiting happens only on channels and timers, never on a held mutex, so
 // testing/synctest can drive every blocking path.
 type Conn struct {
-	netDialer   netDialer
-	addr        string
-	id          string
-	key         [32]byte // passkey bytes; the base key for every reset epoch
-	keepAlive   time.Duration
-	probe       protocol.Packet
-	logger      *slog.Logger
-	resetIntent bool
-	onDisplaced func()
+	netDialer        netDialer
+	addr             string
+	id               string
+	key              [32]byte // passkey bytes; the base key for every reset epoch
+	keepAlive        time.Duration
+	handshakeTimeout time.Duration
+	probe            protocol.Packet
+	logger           *slog.Logger
+	resetIntent      bool
+	onDisplaced      func()
 
 	ctx    context.Context // lifetime of the Conn; its cause is what callers see
 	cancel context.CancelCauseFunc
@@ -44,6 +45,9 @@ type Conn struct {
 	// resumed reports that Dial attached to a running session (reset recovery
 	// on the first connect), so INITIAL_PAYLOAD must be skipped.
 	resumed atomic.Bool
+	// challenged reports that the server used the v7 auth challenge on the
+	// first connect, which is what makes a later reattach possible.
+	challenged atomic.Bool
 	// afterRecovery is set while the first packet of a recovered or reset link
 	// has not opened yet. A failure there cannot be an ordinary network loss:
 	// the bytes are in order but the epoch key differs, which means another

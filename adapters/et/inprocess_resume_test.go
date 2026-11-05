@@ -205,6 +205,56 @@ func TestInProcessPersistsCredentialsAndClearsOnExplicitClose(t *testing.T) {
 	}
 }
 
+// TestLegacyServerKeepsSessionMemoryOnly pins capability-aware persistence:
+// a pre-v7 server cannot authenticate a reattach, so writing its pair to the
+// secret store would only produce a permanent ErrReattachUnsupported after the
+// next restart (and could never restore the shell). The live session still
+// works and reconnects in-process; only persistence is skipped.
+func TestLegacyServerKeepsSessionMemoryOnly(t *testing.T) {
+	server, network := fakeServer(t)
+	server.LegacyHandshake(true)
+	store := newFakeSessionStore()
+	lease := newFakeLease(credentialsExec(), testForwarder(network))
+	transport := openFakeSpec(t, InProcessFactory{Sessions: store},
+		lease, server, nil, resumeSpec())
+	t.Cleanup(func() { _ = transport.Close() })
+
+	if _, ok := store.record(testResumeKey); ok {
+		t.Fatal("a pre-v7 server's session was persisted; a restart could never reattach it")
+	}
+	if command, _, _ := lease.state(); !strings.Contains(command, "etterminal") {
+		t.Fatalf("the fresh legacy session did not run the etterminal bootstrap: %q", command)
+	}
+}
+
+// TestLegacyReattachIsRefusedAndPairKept keeps stock's explicit refusal for a
+// pair an older build saved on a legacy server. The adapter must not silently
+// bootstrap a second shell in the same Open, and must not clear the pair:
+// clearing it is the shell's explicit fallback decision.
+func TestLegacyReattachIsRefusedAndPairKept(t *testing.T) {
+	server, network := fakeServer(t)
+	server.LegacyHandshake(true)
+	store := newFakeSessionStore()
+	store.records[testResumeKey] = SessionRecord{ID: testID, Passkey: testPasskey}
+	lease := newFakeLease(credentialsExec(), testForwarder(network))
+	factory := InProcessFactory{Sessions: store}
+	factory.Acquire = func(context.Context, appconnection.Request) (ConnectionLease, error) {
+		return lease, nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err := factory.Open(ctx, resumeSpec())
+	if !errors.Is(err, etmodel.ErrReattachUnsupported) {
+		t.Fatalf("legacy reattach = %v, want ErrReattachUnsupported", err)
+	}
+	if command, _, _ := lease.state(); command != "" {
+		t.Fatalf("a refused legacy reattach started a second shell: %q", command)
+	}
+	if _, ok := store.record(testResumeKey); !ok {
+		t.Fatal("a refused legacy reattach cleared the saved pair instead of leaving it for the shell")
+	}
+}
+
 // TestPreserveResumeKeepsCredentialsAcrossClose covers the reconnect and
 // app-shutdown handover: the Session service marks the transport before
 // closing, and the pair stays available for the next Open.
