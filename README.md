@@ -120,6 +120,13 @@ To describe the feature set accurately, the following are **explicitly out of sc
 
 </details>
 
+## Documentation
+
+- [Network Providers](docs/network-providers.md): in-process Tailscale Net and
+  WireGuard Net, supported transports, capability limits, validation status,
+  and the opt-in real-network tests.
+- [Packaging](docs/packaging.md): release artifacts and platform requirements.
+
 ---
 
 ## Protocols

@@ -867,6 +867,123 @@ func TestCanceledStartLeavesNoLiveServer(t *testing.T) {
 	}
 }
 
+// TestExpiredLoginWaitPublishesACleanStoppedStatus covers a caller context that
+// expires while a start is waiting on the login path. The backend can still
+// report the last NeedsLogin snapshot it read, but that node is closed and no
+// interactive login is live: the Provider must publish a stopped status with
+// neither a dead Auth URL nor an error, and the next Start must open a fresh
+// node.
+func TestExpiredLoginWaitPublishesACleanStoppedStatus(t *testing.T) {
+	const authURL = "https://login.tailscale.com/a/expired"
+	tests := map[string]struct {
+		expired error
+		ctx     func(*testing.T) context.Context
+	}{
+		"canceled": {
+			expired: context.Canceled,
+			ctx: func(*testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			},
+		},
+		"deadline": {
+			expired: context.DeadlineExceeded,
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithDeadline(context.Background(),
+					time.Now().Add(-time.Second))
+				t.Cleanup(cancel)
+				return ctx
+			},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var fakes []*fakeBackend
+			factory := func(Config) (backend, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				fake := &fakeBackend{}
+				if len(fakes) == 0 {
+					fake.startFn = func(ctx context.Context) (backendStatus, error) {
+						// This is the snapshot a backend returns when the caller's
+						// context ends while the keyed login wait is pending.
+						return backendStatus{
+							Phase:   appconnection.ProviderPhaseNeedsLogin,
+							AuthURL: authURL,
+						}, test.expired
+					}
+				}
+				fakes = append(fakes, fake)
+				return fake, nil
+			}
+			recorder := &statusRecorder{}
+			provider, err := NewProvider(testConfig(t),
+				WithStatusObserver(recorder.observe),
+				withBackendFactory(factory),
+				withLoginWatchInterval(time.Hour),
+				withPollInterval(time.Hour),
+			)
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+			t.Cleanup(func() { _ = provider.Close() })
+
+			err = provider.Start(test.ctx(t))
+			if !errors.Is(err, test.expired) {
+				t.Fatalf("Start error = %v, want %v", err, test.expired)
+			}
+			typed := typedProviderError(t, err)
+			wantKind := appconnection.KindCancelled
+			if errors.Is(test.expired, context.DeadlineExceeded) {
+				wantKind = appconnection.KindTimeout
+			}
+			if typed.Kind != wantKind ||
+				typed.Provider.Phase != appconnection.ProviderPhaseStopped {
+				t.Fatalf("typed error = %+v, want kind %q and phase stopped",
+					typed, wantKind)
+			}
+			if got := provider.Phase(); got != appconnection.ProviderPhaseStopped {
+				t.Fatalf("Phase = %q, want stopped", got)
+			}
+			status := provider.Status()
+			if status.Phase != appconnection.ProviderPhaseStopped ||
+				status.AuthURL != "" || status.Err != nil {
+				t.Fatalf("status after an expired login wait = %+v, want a clean stopped status", status)
+			}
+			events := recorder.all()
+			if len(events) == 0 {
+				t.Fatal("the expired start published no status")
+			}
+			if last := events[len(events)-1]; last.Phase != appconnection.ProviderPhaseStopped ||
+				last.AuthURL != "" || last.Err != nil {
+				t.Fatalf("last status = %+v, want a clean stopped status", last)
+			}
+			if fakes[0].closeCount() != 1 {
+				t.Fatalf("backend closes = %d, want the expired node released exactly once",
+					fakes[0].closeCount())
+			}
+
+			// The expired start stays retryable: a fresh Start opens a new node
+			// and never reuses the dead login.
+			if retryErr := provider.Start(context.Background()); retryErr != nil {
+				t.Fatalf("retry after an expired login wait: %v", retryErr)
+			}
+			if got := provider.Phase(); got != appconnection.ProviderPhaseRunning {
+				t.Fatalf("Phase after retry = %q, want running", got)
+			}
+			if len(fakes) != 2 {
+				t.Fatalf("backends opened = %d, want a fresh node for the retry", len(fakes))
+			}
+			if fakes[0].closeCount() != 1 || fakes[1].closeCount() != 0 {
+				t.Fatalf("backend closes = %d/%d, want the retry node still open",
+					fakes[0].closeCount(), fakes[1].closeCount())
+			}
+		})
+	}
+}
+
 func TestCloseIsIdempotentAndClosesTheServerOnce(t *testing.T) {
 	fake := &fakeBackend{}
 	provider, _ := fakeProvider(t, testConfig(t), fake)

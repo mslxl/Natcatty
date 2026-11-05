@@ -72,6 +72,35 @@ jobs:
       - name: Test
         run: go test ./... -count=1
 
+      - name: Confirm real-network tests skip without credentials
+        # Default CI has no tailnet and no WireGuard peer. The opt-in tests are
+        # compiled into the normal test binaries and must report SKIP, never a
+        # silent pass, when their credentials are absent. Fail if someone wires
+        # real credentials into the default jobs: those belong to a separate,
+        # explicitly opted-in run.
+        run: |
+          set -euo pipefail
+          for name in \
+            NETCATTY_TAILSCALE_AUTH_KEY NETCATTY_TAILSCALE_HOST \
+            NETCATTY_TAILSCALE_SSH_USER NATCATTY_WIREGUARD_E2E \
+            NATCATTY_WIREGUARD_E2E_PRIVATE_KEY \
+            NATCATTY_WIREGUARD_E2E_PEER_PUBLIC_KEY \
+            NATCATTY_WIREGUARD_E2E_PEER_ENDPOINT \
+            NATCATTY_WIREGUARD_E2E_ALLOWED_IPS \
+            NATCATTY_WIREGUARD_E2E_TARGET; do
+            if [ -n "${!name:-}" ]; then
+              echo "${name} must not be set for the default CI jobs" >&2
+              exit 1
+            fi
+          done
+          go test ./adapters/tailscale ./adapters/wireguard \
+            -run 'TestReal' -count=1 -v | tee real-network-tests.txt
+          grep -q -- '--- SKIP: TestRealTailnetSSH' real-network-tests.txt
+          grep -q -- '--- SKIP: TestRealPeerTCP' real-network-tests.txt
+          grep -q 'skipping the real tailnet SSH test' real-network-tests.txt
+          grep -q 'set NATCATTY_WIREGUARD_E2E=1 to run the real-peer test' real-network-tests.txt
+          echo "real-network tests skipped with explicit messages"
+
       - name: Check architecture
         run: go test ./internal/archtest -count=1
 
