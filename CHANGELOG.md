@@ -37,6 +37,12 @@ requests; this file is the human-maintained changelog.
   `internal/tools/sourceoffer` writes the package's Corresponding Source
   offer.
 
+### Removed
+
+- The generated parity matrix, its `paritygen` CLI, the CI and release gates
+  that read it, and the signed limitations list. The MyGo rewrite is complete;
+  the regular test suite and the workflow's artifact checks cover releases.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added
@@ -143,5 +149,5 @@ requests; this file is the human-maintained changelog.
   Chinese or Traditional Chinese text; the package does not declare a font
   dependency.
 
-The complete, signed-off list with parity rows is in
-`docs/parity/limitations.md`.
+The complete, signed-off list with parity rows was published with `v0.1.0`;
+it remains available in that tag's tree at `docs/parity/limitations.md`.
