@@ -1,13 +1,17 @@
 package state
 
 import (
+	"time"
+
 	appconnection "github.com/mslxl/natcatty/application/connection"
 )
 
 // NetworkProviderStatus is the latest non-secret status of one Network
 // Profile's Provider. It carries no Auth Key or credential material; AuthURL is
 // the short-lived interactive-login address the user may open, not a secret the
-// Vault persists.
+// Vault persists. WireGuard fields describe the live provider: the current
+// peer Endpoint, whether a handshake completed, when it completed, and the
+// summed counters.
 type NetworkProviderStatus struct {
 	ProfileID    string
 	Label        string
@@ -17,10 +21,17 @@ type NetworkProviderStatus struct {
 	DNSName      string
 	AuthURL      string
 	LastError    string
+
+	WireGuardEndpoint    string
+	HandshakeEstablished bool
+	LastHandshake        time.Time
+	RxBytes              uint64
+	TxBytes              uint64
 }
 
 // Address returns the name to show for the node: its tailnet DNS name when it
-// has one, otherwise its first tailnet address.
+// has one, otherwise its first tailnet address, otherwise the WireGuard peer
+// Endpoint the device currently uses.
 func (status NetworkProviderStatus) Address() string {
 	if status.DNSName != "" {
 		return status.DNSName
@@ -28,7 +39,7 @@ func (status NetworkProviderStatus) Address() string {
 	if len(status.TailscaleIPs) > 0 {
 		return status.TailscaleIPs[0]
 	}
-	return ""
+	return status.WireGuardEndpoint
 }
 
 // PostNetworkProviderStatus queues a status change for the Vault surface. The

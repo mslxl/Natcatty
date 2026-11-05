@@ -224,6 +224,19 @@ func TestNetworkProfileWarningsFollowTheControlURL(t *testing.T) {
 	}
 }
 
+func TestNetworkProfileWarningsFollowWireGuardTunnelDNS(t *testing.T) {
+	state := newNetworkState(&fakeNetworkProfileService{})
+	state.BeginCreateNetworkProfile(domainvault.NetworkKindWireGuard)
+	warnings := state.NetworkProfileWarnings()
+	if len(warnings) != 1 || warnings[0] != domainvault.WarningWireGuardDNSUnavailable {
+		t.Fatalf("warnings = %v, want the missing-DNS warning", warnings)
+	}
+	state.NetworkProfileForm().DNS = "10.0.0.1"
+	if warnings := state.NetworkProfileWarnings(); len(warnings) != 0 {
+		t.Fatalf("warning remained with a tunnel DNS server: %v", warnings)
+	}
+}
+
 func TestNetworkProfileDeleteConfirmationAndServiceErrors(t *testing.T) {
 	service := &fakeNetworkProfileService{items: []domainvault.NetworkProfile{{
 		ID: "network-1", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,

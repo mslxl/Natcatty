@@ -388,6 +388,11 @@ func (s *State) NetworkProfileWarnings() []domainvault.NetworkWarning {
 			ControlURL: s.networkForm.ControlURL,
 		}
 	}
+	if draft.Kind == domainvault.NetworkKindWireGuard {
+		draft.WireGuard = &domainvault.WireGuardNetworkDraft{
+			DNS: splitFormList(s.networkForm.DNS),
+		}
+	}
 	return domainvault.NetworkProfileWarnings(draft)
 }
 

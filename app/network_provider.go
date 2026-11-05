@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	adaptertailscale "github.com/mslxl/natcatty/adapters/tailscale"
+	adapterwireguard "github.com/mslxl/natcatty/adapters/wireguard"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	apphistory "github.com/mslxl/natcatty/application/history"
 	appvault "github.com/mslxl/natcatty/application/vault"
@@ -18,11 +20,14 @@ import (
 )
 
 // networkProfileVault is the Vault read surface the Network Provider factory
-// needs. The profile record is non-secret; the Auth Key is read only when the
-// Provider actually starts and never enters the route, a pool key, or a log.
+// needs. The profile record is non-secret; credential plaintext (the Tailscale
+// Auth Key, the WireGuard Private Key, and each peer's Preshared Key) is read
+// only when the Provider actually starts and never enters the route, a pool
+// key, or a log.
 type networkProfileVault interface {
 	NetworkProfile(ctx context.Context, id string) (domainvault.NetworkProfile, error)
 	NetworkProfileSecret(ctx context.Context, id, field string) (string, error)
+	NetworkPeerPresharedKey(ctx context.Context, profileID, peerID string) (string, error)
 }
 
 // tailscaleOpener constructs and starts one Tailscale Net Provider. The
@@ -31,16 +36,25 @@ type networkProfileVault interface {
 type tailscaleOpener func(context.Context, adaptertailscale.Config,
 	...adaptertailscale.Option) (appconnection.NetworkProvider, error)
 
+// wireguardOpener constructs and starts one WireGuard Net Provider. The
+// composition root uses the real adapter; tests replace it to prove the
+// factory's loading and dispatch rules without a userspace network stack.
+type wireguardOpener func(context.Context, adapterwireguard.Config,
+	...adapterwireguard.Option) (appconnection.NetworkProvider, error)
+
 // networkProviderFactory dispatches a Network Route to the Provider that can
-// run its Kind. WireGuard Net lands in ticket 08; until then selecting one
-// fails closed with KindProvider and never falls back to a direct dial.
+// run its Kind. Tailscale Net uses the embedded tsnet adapter and WireGuard Net
+// the in-process netstack adapter. Any other Kind fails closed with
+// KindProvider and never falls back to a direct dial.
 type networkProviderFactory struct {
 	vault     networkProfileVault
 	stateBase string
 	observe   func(adaptertailscale.Status)
 	logf      func(format string, args ...any)
 
-	openTailscale tailscaleOpener
+	observeWireGuard func(adapterwireguard.Status)
+	openTailscale    tailscaleOpener
+	openWireGuard    wireguardOpener
 }
 
 var _ appconnection.NetworkProviderFactory = (*networkProviderFactory)(nil)
@@ -53,8 +67,7 @@ func (f *networkProviderFactory) Open(ctx context.Context,
 	case domainvault.NetworkKindTailscale:
 		return f.openTailscaleRoute(ctx, route)
 	case domainvault.NetworkKindWireGuard:
-		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
-			errors.New("WireGuard Net is not available in this build yet"))
+		return f.openWireGuardRoute(ctx, route)
 	default:
 		return nil, networkRouteError(route, appconnection.ProviderPhaseStopped,
 			fmt.Errorf("%w: %q", appconnection.ErrNetworkProviderKind, route.Kind))
@@ -150,6 +163,119 @@ func openTailscaleProvider(ctx context.Context, cfg adaptertailscale.Config,
 	return provider, nil
 }
 
+// openWireGuardProvider is the production opener: construct the adapter and
+// start the in-process netstack device before handing the Provider to the
+// registry. A failed start closes the adapter so no device is left behind.
+func openWireGuardProvider(ctx context.Context, cfg adapterwireguard.Config,
+	options ...adapterwireguard.Option) (appconnection.NetworkProvider, error) {
+	provider, err := adapterwireguard.NewProvider(cfg, options...)
+	if err != nil {
+		return nil, err
+	}
+	if err := provider.Start(ctx); err != nil {
+		_ = provider.Close()
+		return nil, err
+	}
+	return provider, nil
+}
+
+// openWireGuardRoute loads the profile, its Private Key, and every stored
+// Preshared Key through the Vault and starts the in-process netstack device.
+// WireGuard has no interactive login, so a missing Private Key is a provider
+// failure: the route fails closed instead of dialing directly. A peer whose
+// marker says it has a Preshared Key but whose secret is unreadable also fails
+// closed, because starting without it would silently change authentication.
+func (f *networkProviderFactory) openWireGuardRoute(ctx context.Context,
+	route appconnection.NetworkRoute) (appconnection.NetworkProvider, error) {
+	if f.vault == nil {
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			errors.New("network profile vault is unavailable"))
+	}
+	profile, err := f.vault.NetworkProfile(ctx, route.ProfileID)
+	if err != nil {
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			fmt.Errorf("read Network Profile %q: %w", route.ProfileID, err))
+	}
+	if profile.Kind != domainvault.NetworkKindWireGuard {
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			fmt.Errorf("Network Profile %q is %q, route selects %q",
+				route.ProfileID, profile.Kind, route.Kind))
+	}
+	if profile.WireGuard == nil {
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			fmt.Errorf("Network Profile %q has no WireGuard configuration", route.ProfileID))
+	}
+	if route.Label == "" {
+		route.Label = profile.Label
+	}
+
+	privateKey, err := f.vault.NetworkProfileSecret(ctx, route.ProfileID,
+		appvault.FieldNetworkPrivateKey)
+	switch {
+	case errors.Is(err, appvault.ErrNotFound):
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			fmt.Errorf("Network Profile %q has no Private Key; WireGuard cannot start without one",
+				route.ProfileID))
+	case err != nil:
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			fmt.Errorf("read the Private Key for Network Profile %q: %w", route.ProfileID, err))
+	}
+
+	peers := make([]adapterwireguard.Peer, 0, len(profile.WireGuard.Peers))
+	for _, peer := range profile.WireGuard.Peers {
+		presharedKey := ""
+		if peer.HasPresharedKey {
+			presharedKey, err = f.vault.NetworkPeerPresharedKey(ctx, route.ProfileID, peer.ID)
+			if err != nil {
+				return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+					fmt.Errorf("read the Preshared Key for peer %q of Network Profile %q: %w",
+						peer.ID, route.ProfileID, err))
+			}
+		}
+		peers = append(peers, adapterwireguard.Peer{
+			ID:                  peer.ID,
+			PublicKey:           peer.PublicKey,
+			PresharedKey:        presharedKey,
+			Endpoint:            peer.Endpoint,
+			AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
+			PersistentKeepalive: peer.PersistentKeepalive,
+		})
+	}
+
+	cfg := adapterwireguard.Config{
+		ProfileID:  profile.ID,
+		Label:      profile.Label,
+		Kind:       profile.Kind,
+		Addresses:  append([]string(nil), profile.WireGuard.Addresses...),
+		DNS:        append([]string(nil), profile.WireGuard.DNS...),
+		MTU:        profile.WireGuard.MTU,
+		ListenPort: profile.WireGuard.ListenPort,
+		PrivateKey: privateKey,
+		Peers:      peers,
+	}
+	var options []adapterwireguard.Option
+	if f.observeWireGuard != nil {
+		options = append(options, adapterwireguard.WithStatusObserver(f.observeWireGuard))
+	}
+	if f.logf != nil {
+		options = append(options, adapterwireguard.WithLogf(f.logf))
+	}
+
+	open := f.openWireGuard
+	if open == nil {
+		open = openWireGuardProvider
+	}
+	provider, err := open(ctx, cfg, options...)
+	if err != nil {
+		return nil, networkProviderFailure(route, err)
+	}
+	if provider == nil {
+		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+			errors.New("network provider factory returned no provider"))
+	}
+	return provider, nil
+}
+
 // networkProviderFailure attaches the route identity to an adapter failure and
 // preserves a more specific Kind and Phase the adapter reported. It never
 // converts a provider failure into a direct-dial path.
@@ -195,6 +321,20 @@ type networkProviderStatusSink struct {
 	vault   func() *vaultstate.State
 	history *apphistory.Service
 	now     func() time.Time
+
+	// mu guards wireGuardLogState, which suppresses counter-only updates from
+	// the live WireGuard status poll. A busy tunnel would otherwise append a
+	// Connection Log row on every sample; the log records lifecycle changes and
+	// the first completed handshake instead.
+	mu                sync.Mutex
+	wireGuardLogState map[string]wireGuardLogEvent
+}
+
+// wireGuardLogEvent is the part of a WireGuard status that decides whether a
+// Connection Log row is a new event. Counters are deliberately excluded.
+type wireGuardLogEvent struct {
+	phase       appconnection.ProviderPhase
+	established bool
 }
 
 // Observe publishes a non-secret status. The Auth URL stays in the Vault
@@ -239,16 +379,93 @@ func statusErrorText(err error) string {
 	return err.Error()
 }
 
+// ObserveWireGuard publishes one WireGuard Net status. The Vault surface
+// receives every change so its row shows live counters; the Connection Log
+// receives only lifecycle changes and the first completed handshake, because a
+// counter poll is not a new event. Nothing here contains key material.
+func (s *networkProviderStatusSink) ObserveWireGuard(status adapterwireguard.Status) {
+	if s == nil {
+		return
+	}
+	if s.vault != nil {
+		if state := s.vault(); state != nil {
+			state.PostNetworkProviderStatus(vaultstate.NetworkProviderStatus{
+				ProfileID:            status.ProfileID,
+				Label:                status.Label,
+				Kind:                 status.Kind,
+				Phase:                status.Phase,
+				WireGuardEndpoint:    status.Endpoint(),
+				HandshakeEstablished: status.Handshake == adapterwireguard.HandshakeEstablished,
+				LastHandshake:        status.LastHandshake,
+				RxBytes:              status.RxBytes,
+				TxBytes:              status.TxBytes,
+				LastError:            statusErrorText(status.Err),
+			})
+		}
+	}
+	if s.history == nil {
+		return
+	}
+	if !s.shouldRecordWireGuard(status) {
+		return
+	}
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	log, ok := connectionLogFromWireGuardStatus(status, now())
+	if !ok {
+		return
+	}
+	_ = s.history.RecordConnection(context.Background(), log)
+}
+
+// providerLoggablePhase reports whether a Provider phase is a useful
+// Connection Log event. Starting and stopping are transient progress, so they
+// are not recorded; running, needs-login, error, and stopped are diagnostic
+// events.
+func providerLoggablePhase(phase appconnection.ProviderPhase) bool {
+	switch phase {
+	case appconnection.ProviderPhaseRunning, appconnection.ProviderPhaseNeedsLogin,
+		appconnection.ProviderPhaseError, appconnection.ProviderPhaseStopped:
+		return true
+	}
+	return false
+}
+
+// shouldRecordWireGuard reports whether a status is a new loggable event. A
+// changed phase or the first completed handshake is new; a counter-only update
+// is not.
+func (s *networkProviderStatusSink) shouldRecordWireGuard(status adapterwireguard.Status) bool {
+	if status.ProfileID == "" {
+		return false
+	}
+	if !providerLoggablePhase(status.Phase) {
+		return false
+	}
+	current := wireGuardLogEvent{
+		phase:       status.Phase,
+		established: status.Handshake == adapterwireguard.HandshakeEstablished,
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.wireGuardLogState == nil {
+		s.wireGuardLogState = make(map[string]wireGuardLogEvent)
+	}
+	if previous, seen := s.wireGuardLogState[status.ProfileID]; seen && previous == current {
+		return false
+	}
+	s.wireGuardLogState[status.ProfileID] = current
+	return true
+}
+
 // connectionLogFromProviderStatus maps one provider status change onto a
 // Connection Log row. Starting and stopping are transient progress, so they are
 // not recorded; running, needs-login, error, and stopped are useful diagnostic
 // events. AuthURL is never part of the row.
 func connectionLogFromProviderStatus(status adaptertailscale.Status,
 	at time.Time) (domainhistory.ConnectionLog, bool) {
-	switch status.Phase {
-	case appconnection.ProviderPhaseRunning, appconnection.ProviderPhaseNeedsLogin,
-		appconnection.ProviderPhaseError, appconnection.ProviderPhaseStopped:
-	default:
+	if !providerLoggablePhase(status.Phase) {
 		return domainhistory.ConnectionLog{}, false
 	}
 	kind := status.Kind
@@ -273,6 +490,42 @@ func connectionLogFromProviderStatus(status adaptertailscale.Status,
 		NetworkProviderKind:  kind,
 		NetworkProviderPhase: string(status.Phase),
 		NetworkAddress:       address,
+		StartedAt:            at,
+		EndedAt:              at,
+	}, true
+}
+
+// connectionLogFromWireGuardStatus maps one WireGuard Net status onto a
+// Connection Log row. Starting and stopping are transient progress, so they are
+// not recorded; running, error, and stopped are useful diagnostic events. The
+// row keeps the current peer Endpoint, the most recent handshake, and the
+// summed counters, and never carries key material.
+func connectionLogFromWireGuardStatus(status adapterwireguard.Status,
+	at time.Time) (domainhistory.ConnectionLog, bool) {
+	if !providerLoggablePhase(status.Phase) {
+		return domainhistory.ConnectionLog{}, false
+	}
+	kind := status.Kind
+	if kind == "" {
+		kind = string(domainvault.NetworkKindWireGuard)
+	}
+	connectionStatus := domainhistory.ConnectionConnected
+	if status.Phase != appconnection.ProviderPhaseRunning {
+		connectionStatus = domainhistory.ConnectionFailed
+	}
+	return domainhistory.ConnectionLog{
+		HostLabel:            status.Label,
+		Kind:                 kind,
+		Status:               connectionStatus,
+		Error:                statusErrorText(status.Err),
+		NetworkProfileID:     status.ProfileID,
+		NetworkProfileLabel:  status.Label,
+		NetworkProviderKind:  kind,
+		NetworkProviderPhase: string(status.Phase),
+		NetworkAddress:       status.Endpoint(),
+		NetworkLastHandshake: status.LastHandshake,
+		NetworkRxBytes:       status.RxBytes,
+		NetworkTxBytes:       status.TxBytes,
 		StartedAt:            at,
 		EndedAt:              at,
 	}, true

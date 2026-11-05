@@ -142,10 +142,17 @@ type WireGuardPeerDraft struct {
 // stable data, never display text.
 type NetworkWarning string
 
-// WarningControlURLInsecure reports a plain-http ControlURL. Plain http is
-// accepted only for a local Headscale instance, and even then must be shown as
-// a warning.
-const WarningControlURLInsecure NetworkWarning = "control_url_insecure"
+const (
+	// WarningControlURLInsecure reports a plain-http ControlURL. Plain http is
+	// accepted only for a local Headscale instance, and even then must be shown
+	// as a warning.
+	WarningControlURLInsecure NetworkWarning = "control_url_insecure"
+	// WarningWireGuardDNSUnavailable reports a WireGuard profile with no tunnel
+	// DNS server. The Provider resolves target host names only through the
+	// tunnel, so such a profile can reach IP-literal targets only; a host name
+	// fails closed instead of using the operating system resolver.
+	WarningWireGuardDNSUnavailable NetworkWarning = "wireguard_dns_unavailable"
+)
 
 // NormalizeNetworkProfileDraft trims and validates a Network Profile draft. It
 // returns a *ValidationError when the input cannot be saved.
@@ -194,21 +201,32 @@ func NormalizeNetworkProfileDraft(draft NetworkProfileDraft) (NetworkProfileDraf
 // NetworkProfileWarnings returns the non-blocking warnings a draft must show
 // before it is saved.
 func NetworkProfileWarnings(draft NetworkProfileDraft) []NetworkWarning {
-	if draft.Kind != NetworkKindTailscale || draft.Tailscale == nil {
-		return nil
-	}
-	controlURL := strings.TrimSpace(draft.Tailscale.ControlURL)
-	if controlURL == "" {
-		return nil
-	}
-	parsed, err := url.Parse(controlURL)
-	if err != nil {
-		return nil
-	}
-	// Only a local plain-http URL survives validation, so only that combination
-	// is an accepted-but-insecure configuration worth warning about.
-	if strings.EqualFold(parsed.Scheme, "http") && isLocalControlURLHost(parsed.Hostname()) {
-		return []NetworkWarning{WarningControlURLInsecure}
+	switch draft.Kind {
+	case NetworkKindTailscale:
+		if draft.Tailscale == nil {
+			return nil
+		}
+		controlURL := strings.TrimSpace(draft.Tailscale.ControlURL)
+		if controlURL == "" {
+			return nil
+		}
+		parsed, err := url.Parse(controlURL)
+		if err != nil {
+			return nil
+		}
+		// Only a local plain-http URL survives validation, so only that
+		// combination is an accepted-but-insecure configuration worth warning
+		// about.
+		if strings.EqualFold(parsed.Scheme, "http") && isLocalControlURLHost(parsed.Hostname()) {
+			return []NetworkWarning{WarningControlURLInsecure}
+		}
+	case NetworkKindWireGuard:
+		// An empty DNS list is valid: the profile then reaches IP-literal
+		// targets only. The editor warns because a host-name Host will fail at
+		// dial time rather than silently resolving through the system.
+		if draft.WireGuard != nil && len(draft.WireGuard.DNS) == 0 {
+			return []NetworkWarning{WarningWireGuardDNSUnavailable}
+		}
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	adaptertailscale "github.com/mslxl/natcatty/adapters/tailscale"
+	adapterwireguard "github.com/mslxl/natcatty/adapters/wireguard"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appvault "github.com/mslxl/natcatty/application/vault"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
@@ -17,12 +18,18 @@ import (
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
 )
 
-// fakeNetworkVault scripts the two Vault reads the factory performs.
+// fakeNetworkVault scripts the Vault reads the factory performs.
 type fakeNetworkVault struct {
 	profile    domainvault.NetworkProfile
 	profileErr error
 	secret     string
 	secretErr  error
+
+	peerSecret    string
+	peerSecretErr error
+	peerLookups   int
+	peerIDs       []string
+	peerProfiles  []string
 
 	profileIDs    []string
 	secretIDs     []string
@@ -46,6 +53,16 @@ func (v *fakeNetworkVault) NetworkProfileSecret(_ context.Context, id, field str
 		return "", v.secretErr
 	}
 	return v.secret, nil
+}
+
+func (v *fakeNetworkVault) NetworkPeerPresharedKey(_ context.Context, profileID, peerID string) (string, error) {
+	v.peerLookups++
+	v.peerProfiles = append(v.peerProfiles, profileID)
+	v.peerIDs = append(v.peerIDs, peerID)
+	if v.peerSecretErr != nil {
+		return "", v.peerSecretErr
+	}
+	return v.peerSecret, nil
 }
 
 // stubProvider stands in for the adapter so the factory can be tested without
@@ -218,32 +235,190 @@ func TestFactoryRejectsAProfileOfAnotherKind(t *testing.T) {
 	}
 }
 
-func TestFactoryFailsClosedForWireGuardAndUnknownKinds(t *testing.T) {
+func wireguardTestProfile() domainvault.NetworkProfile {
+	return domainvault.NetworkProfile{
+		ID:    "wg-1",
+		Label: "Office WG",
+		Kind:  domainvault.NetworkKindWireGuard,
+		WireGuard: &domainvault.WireGuardNetwork{
+			Addresses:     []string{"10.0.0.2/32", "fd00::2/128"},
+			DNS:           []string{"10.0.0.1"},
+			MTU:           1280,
+			ListenPort:    51820,
+			HasPrivateKey: true,
+			Peers: []domainvault.WireGuardPeer{
+				{
+					ID:                  "peer-1",
+					PublicKey:           "peer-public-1",
+					Endpoint:            "vpn.example.com:51820",
+					AllowedIPs:          []string{"10.0.0.0/24"},
+					PersistentKeepalive: 25,
+					HasPresharedKey:     true,
+				},
+				{
+					ID:         "peer-2",
+					PublicKey:  "peer-public-2",
+					AllowedIPs: []string{"10.1.0.0/24"},
+				},
+			},
+		},
+	}
+}
+
+func TestFactoryMapsTheWireGuardProfileAndSecrets(t *testing.T) {
+	vault := &fakeNetworkVault{
+		profile:    wireguardTestProfile(),
+		secret:     "private-key-plaintext",
+		peerSecret: "preshared-key-plaintext",
+	}
+	var cfg adapterwireguard.Config
+	var optionCount int
+	provider := &stubProvider{}
 	factory := &networkProviderFactory{
-		vault: &fakeNetworkVault{profile: tailscaleTestProfile(), secret: "must-not-be-read"},
+		vault:            vault,
+		observeWireGuard: func(adapterwireguard.Status) {},
+		logf:             func(string, ...any) {},
+		openWireGuard: func(_ context.Context, got adapterwireguard.Config,
+			options ...adapterwireguard.Option) (appconnection.NetworkProvider, error) {
+			cfg = got
+			optionCount = len(options)
+			return provider, nil
+		},
+	}
+
+	opened, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard), Fingerprint: "fp",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if opened != provider {
+		t.Fatalf("Open returned %T, want the adapter provider", opened)
+	}
+	if cfg.ProfileID != "wg-1" || cfg.Label != "Office WG" ||
+		cfg.Kind != domainvault.NetworkKindWireGuard {
+		t.Fatalf("Config identity = %+v", cfg)
+	}
+	if len(cfg.Addresses) != 2 || cfg.Addresses[0] != "10.0.0.2/32" ||
+		len(cfg.DNS) != 1 || cfg.DNS[0] != "10.0.0.1" ||
+		cfg.MTU != 1280 || cfg.ListenPort != 51820 {
+		t.Fatalf("Config network fields = %+v", cfg)
+	}
+	if cfg.PrivateKey != "private-key-plaintext" {
+		t.Fatal("the Vault Private Key did not reach the adapter configuration")
+	}
+	if len(cfg.Peers) != 2 {
+		t.Fatalf("peers = %d, want 2", len(cfg.Peers))
+	}
+	first := cfg.Peers[0]
+	if first.ID != "peer-1" || first.PublicKey != "peer-public-1" ||
+		first.PresharedKey != "preshared-key-plaintext" ||
+		first.Endpoint != "vpn.example.com:51820" ||
+		len(first.AllowedIPs) != 1 || first.PersistentKeepalive != 25 {
+		t.Fatalf("peer-1 = %+v", first)
+	}
+	if cfg.Peers[1].PresharedKey != "" {
+		t.Fatal("a peer without a saved Preshared Key received one")
+	}
+	if vault.peerLookups != 1 || vault.peerIDs[0] != "peer-1" ||
+		vault.peerProfiles[0] != "wg-1" {
+		t.Fatalf("peer secret reads = %v (profiles %v), want only peer-1",
+			vault.peerIDs, vault.peerProfiles)
+	}
+	if len(vault.secretFields) != 1 || vault.secretFields[0] != appvault.FieldNetworkPrivateKey {
+		t.Fatalf("profile secret fields = %v", vault.secretFields)
+	}
+	if optionCount != 2 {
+		t.Fatalf("adapter options = %d, want status observer and logger", optionCount)
+	}
+}
+
+func TestFactoryWireGuardFailsClosedOnVaultProblems(t *testing.T) {
+	tests := []struct {
+		name  string
+		vault *fakeNetworkVault
+	}{
+		{
+			name:  "missing private key",
+			vault: &fakeNetworkVault{profile: wireguardTestProfile(), secretErr: appvault.ErrNotFound},
+		},
+		{
+			name: "locked private key",
+			vault: &fakeNetworkVault{
+				profile:   wireguardTestProfile(),
+				secretErr: errors.New("the field secret store is locked"),
+			},
+		},
+		{
+			name: "missing peer preshared key",
+			vault: &fakeNetworkVault{
+				profile:       wireguardTestProfile(),
+				secret:        "private-key-plaintext",
+				peerSecretErr: appvault.ErrNotFound,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			openCalls := 0
+			factory := &networkProviderFactory{
+				vault: test.vault,
+				openWireGuard: func(context.Context, adapterwireguard.Config,
+					...adapterwireguard.Option) (appconnection.NetworkProvider, error) {
+					openCalls++
+					return &stubProvider{}, nil
+				},
+			}
+			_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+				ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard),
+			})
+			var typed *appconnection.Error
+			if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+				t.Fatalf("error = %v, want KindProvider", err)
+			}
+			if typed.Provider == nil || typed.Provider.ProfileID != "wg-1" ||
+				typed.Provider.Kind != string(domainvault.NetworkKindWireGuard) ||
+				typed.Provider.Phase != appconnection.ProviderPhaseError {
+				t.Fatalf("ProviderInfo = %+v", typed.Provider)
+			}
+			if openCalls != 0 {
+				t.Fatalf("adapter opened %d times after a Vault failure", openCalls)
+			}
+		})
+	}
+}
+
+func TestFactoryWireGuardRejectsAProfileOfAnotherKind(t *testing.T) {
+	profile := wireguardTestProfile()
+	profile.Kind = domainvault.NetworkKindTailscale
+	factory := &networkProviderFactory{
+		vault: &fakeNetworkVault{profile: profile, secret: "must-not-be-used"},
 	}
 	_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
 		ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard),
 	})
 	var typed *appconnection.Error
 	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
-		t.Fatalf("WireGuard error = %v, want KindProvider", err)
+		t.Fatalf("error = %v, want KindProvider", err)
 	}
-	if typed.Provider == nil || typed.Provider.ProfileID != "wg-1" {
-		t.Fatalf("WireGuard ProviderInfo = %+v", typed.Provider)
-	}
-	if !strings.Contains(err.Error(), "WireGuard") {
-		t.Fatalf("WireGuard error does not explain the unimplemented kind: %v", err)
-	}
+}
 
-	_, err = factory.Open(context.Background(), appconnection.NetworkRoute{
+func TestFactoryFailsClosedForUnknownKinds(t *testing.T) {
+	factory := &networkProviderFactory{
+		vault: &fakeNetworkVault{profile: tailscaleTestProfile(), secret: "must-not-be-read"},
+	}
+	_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
 		ProfileID: "x-1", Kind: "someday-net",
 	})
 	if !errors.Is(err, appconnection.ErrNetworkProviderKind) {
 		t.Fatalf("unknown-kind error = %v, want ErrNetworkProviderKind", err)
 	}
+	var typed *appconnection.Error
 	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
 		t.Fatalf("unknown-kind error = %v, want KindProvider", err)
+	}
+	if typed.Provider == nil || typed.Provider.ProfileID != "x-1" {
+		t.Fatalf("ProviderInfo = %+v", typed.Provider)
 	}
 
 	_, err = factory.Open(context.Background(), appconnection.NetworkRoute{})
@@ -407,5 +582,156 @@ func TestConnectionLogProviderRowsAreNormalizedAsProviderRows(t *testing.T) {
 	}
 	if log.NetworkProviderPhase != "running" || log.NetworkAddress != "natcatty-office.tailnet.ts.net" {
 		t.Fatalf("provider metadata was not trimmed: %+v", log)
+	}
+}
+
+func TestWireGuardStatusSinkPublishesLiveDetail(t *testing.T) {
+	state := vaultstate.NewState(nil)
+	sink := &networkProviderStatusSink{vault: func() *vaultstate.State { return state }}
+	handshake := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	sink.ObserveWireGuard(adapterwireguard.Status{
+		ProfileID:     "wg-1",
+		Label:         "Office WG",
+		Kind:          string(domainvault.NetworkKindWireGuard),
+		Phase:         appconnection.ProviderPhaseRunning,
+		Handshake:     adapterwireguard.HandshakeEstablished,
+		LastHandshake: handshake,
+		RxBytes:       1536,
+		TxBytes:       512,
+		Peers: []adapterwireguard.PeerStatus{{
+			ID: "peer-1", Endpoint: "203.0.113.7:51820",
+		}},
+	})
+	state.FlushNetworkProviderStatus()
+	status, ok := state.NetworkStatus("wg-1")
+	if !ok {
+		t.Fatal("the Vault surface did not receive the WireGuard status")
+	}
+	if status.Kind != string(domainvault.NetworkKindWireGuard) ||
+		status.Phase != appconnection.ProviderPhaseRunning {
+		t.Fatalf("status identity = %+v", status)
+	}
+	if status.Address() != "203.0.113.7:51820" {
+		t.Fatalf("address = %q, want the current WireGuard peer endpoint", status.Address())
+	}
+	if !status.HandshakeEstablished || !status.LastHandshake.Equal(handshake) {
+		t.Fatalf("handshake fields = %+v", status)
+	}
+	if status.RxBytes != 1536 || status.TxBytes != 512 {
+		t.Fatalf("counter fields = %+v", status)
+	}
+
+	// A nil vault and nil history are harmless during shutdown.
+	(&networkProviderStatusSink{}).ObserveWireGuard(adapterwireguard.Status{ProfileID: "wg-1"})
+}
+
+func TestWireGuardLogStateIgnoresCounterOnlyPolls(t *testing.T) {
+	sink := &networkProviderStatusSink{}
+	status := adapterwireguard.Status{
+		ProfileID: "wg-1",
+		Phase:     appconnection.ProviderPhaseRunning,
+		Handshake: adapterwireguard.HandshakePending,
+		RxBytes:   1,
+	}
+	if !sink.shouldRecordWireGuard(status) {
+		t.Fatal("the first running status was not recorded")
+	}
+	status.RxBytes = 99
+	status.TxBytes = 42
+	if sink.shouldRecordWireGuard(status) {
+		t.Fatal("a counter-only poll was recorded as a new event")
+	}
+	status.Handshake = adapterwireguard.HandshakeEstablished
+	if !sink.shouldRecordWireGuard(status) {
+		t.Fatal("the first completed handshake was not recorded")
+	}
+	status.RxBytes = 1000
+	status.TxBytes = 900
+	if sink.shouldRecordWireGuard(status) {
+		t.Fatal("a counter update after the handshake was recorded")
+	}
+	status.Phase = appconnection.ProviderPhaseError
+	status.Err = errors.New("tunnel died")
+	if !sink.shouldRecordWireGuard(status) {
+		t.Fatal("the error phase was not recorded")
+	}
+	status.Phase = appconnection.ProviderPhaseStarting
+	if sink.shouldRecordWireGuard(status) {
+		t.Fatal("a transient phase was recorded")
+	}
+	if sink.shouldRecordWireGuard(adapterwireguard.Status{}) {
+		t.Fatal("a status without a profile was recorded")
+	}
+}
+
+func TestConnectionLogFromWireGuardStatus(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	handshake := at.Add(-30 * time.Second)
+	base := adapterwireguard.Status{
+		ProfileID:     "wg-1",
+		Label:         "Office WG",
+		Kind:          string(domainvault.NetworkKindWireGuard),
+		Handshake:     adapterwireguard.HandshakeEstablished,
+		LastHandshake: handshake,
+		RxBytes:       1536,
+		TxBytes:       512,
+		Peers: []adapterwireguard.PeerStatus{{
+			ID: "peer-1", Endpoint: "203.0.113.7:51820",
+		}},
+	}
+
+	for _, phase := range []appconnection.ProviderPhase{
+		appconnection.ProviderPhaseStarting, appconnection.ProviderPhaseStopping,
+	} {
+		status := base
+		status.Phase = phase
+		if _, ok := connectionLogFromWireGuardStatus(status, at); ok {
+			t.Fatalf("phase %q was recorded; transient progress should not be", phase)
+		}
+	}
+
+	for _, test := range []struct {
+		phase  appconnection.ProviderPhase
+		status domainhistory.ConnectionStatus
+	}{
+		{appconnection.ProviderPhaseRunning, domainhistory.ConnectionConnected},
+		{appconnection.ProviderPhaseError, domainhistory.ConnectionFailed},
+		{appconnection.ProviderPhaseStopped, domainhistory.ConnectionFailed},
+	} {
+		status := base
+		status.Phase = test.phase
+		log, ok := connectionLogFromWireGuardStatus(status, at)
+		if !ok {
+			t.Fatalf("phase %q was not recorded", test.phase)
+		}
+		if log.Status != test.status {
+			t.Fatalf("phase %q status = %q, want %q", test.phase, log.Status, test.status)
+		}
+		if !log.IsProvider() || log.IsLocal() || log.IsUnsaved() {
+			t.Fatalf("phase %q row was misclassified: %+v", test.phase, log)
+		}
+		if log.NetworkProfileID != "wg-1" || log.NetworkProfileLabel != "Office WG" ||
+			log.NetworkProviderKind != string(domainvault.NetworkKindWireGuard) ||
+			log.NetworkProviderPhase != string(test.phase) {
+			t.Fatalf("phase %q metadata = %+v", test.phase, log)
+		}
+		if log.NetworkAddress != "203.0.113.7:51820" ||
+			!log.NetworkLastHandshake.Equal(handshake) ||
+			log.NetworkRxBytes != 1536 || log.NetworkTxBytes != 512 {
+			t.Fatalf("phase %q WireGuard detail = %+v", test.phase, log)
+		}
+		if log.StartedAt != at || log.EndedAt != at {
+			t.Fatalf("phase %q timestamps = %v/%v", test.phase, log.StartedAt, log.EndedAt)
+		}
+	}
+
+	// A status with no configured Endpoint still produces a valid row with an
+	// empty address; it must not invent one.
+	noEndpoint := base
+	noEndpoint.Phase = appconnection.ProviderPhaseRunning
+	noEndpoint.Peers = nil
+	log, ok := connectionLogFromWireGuardStatus(noEndpoint, at)
+	if !ok || log.NetworkAddress != "" {
+		t.Fatalf("address fallback = %q, want empty", log.NetworkAddress)
 	}
 }
