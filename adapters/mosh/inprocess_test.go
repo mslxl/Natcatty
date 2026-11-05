@@ -248,6 +248,16 @@ func (s *fakeServer) announcementOn(port int) string {
 		base64.RawStdEncoding.EncodeToString(s.key) + "\r\n"
 }
 
+// noteClientState records the newest client state the next host-state datagram
+// should acknowledge, as mosh-server does.
+func (s *fakeServer) noteClientState(num uint64) {
+	s.sendMu.Lock()
+	if num > s.clientAckNum {
+		s.clientAckNum = num
+	}
+	s.sendMu.Unlock()
+}
+
 func (s *fakeServer) loop() {
 	defer s.wg.Done()
 	buffer := make([]byte, 2048)
@@ -272,13 +282,20 @@ func (s *fakeServer) loop() {
 			// The remote shell exits before the probe completes; mosh-server
 			// sends its shutdown sentinel as the first host state.
 			s.remoteGone = true
-			s.sendMu.Lock()
-			s.clientAckNum = instruction.NewNum
-			s.sendMu.Unlock()
+			s.noteClientState(instruction.NewNum)
 			s.sendHostState([]byte("bye\r\n"), moshcore.ShutdownNum)
 			continue
 		}
 		if s.onDecoded != nil {
+			if s.scripted {
+				// mosh-server acknowledges the client's latest state in every
+				// datagram. The scripted driver supplies no host input of its
+				// own, but stock still sends empty acks with fresh state
+				// numbers; record them before sending the next state. Without
+				// this stock's reply-late count-up fires after 10 s and draws
+				// a wall-clock notification bar into the differential.
+				s.noteClientState(instruction.NewNum)
+			}
 			s.onDecoded(instruction)
 			if s.scripted {
 				continue
@@ -314,11 +331,7 @@ func (s *fakeServer) loop() {
 			continue
 		}
 		s.seen[instruction.NewNum] = true
-		s.sendMu.Lock()
-		if instruction.NewNum > s.clientAckNum {
-			s.clientAckNum = instruction.NewNum
-		}
-		s.sendMu.Unlock()
+		s.noteClientState(instruction.NewNum)
 		if len(keys) > 0 {
 			s.inputBuffer = append(s.inputBuffer, keys...)
 			select {
