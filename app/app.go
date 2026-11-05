@@ -412,6 +412,10 @@ func run(afterReady func(hostWindow)) error {
 		}
 	})
 
+	// Embedded Network Providers keep per-Profile runtime state here. The path
+	// is inside the app's user data, never a system Tailscale directory, and is
+	// deliberately not part of the SQLite Vault that backup and sync carry.
+	networkStateBase := filepath.Join(userData, "network-providers")
 	vaultService := appvault.NewService(
 		database,
 		appvault.WithSecrets(secretStore),
@@ -420,6 +424,7 @@ func run(afterReady func(hostWindow)) error {
 		appvault.WithGroups(database),
 		appvault.WithProxyProfiles(database),
 		appvault.WithNetworkProfiles(database),
+		appvault.WithNetworkProfileStateCleaner(networkStateCleaner{base: networkStateBase}),
 		appvault.WithKnownHosts(database),
 		appvault.WithSnippets(database),
 		appvault.WithNotes(database),
@@ -555,7 +560,7 @@ func run(afterReady func(hostWindow)) error {
 	}
 	networkProviderFactory := &networkProviderFactory{
 		vault:            vaultService,
-		stateBase:        filepath.Join(userData, "network-providers"),
+		stateBase:        networkStateBase,
 		observe:          networkStatusSink.Observe,
 		observeWireGuard: networkStatusSink.ObserveWireGuard,
 	}

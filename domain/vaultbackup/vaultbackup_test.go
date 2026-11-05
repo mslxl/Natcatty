@@ -206,6 +206,28 @@ func TestOptionalNetworkProfilesTable(t *testing.T) {
 	}
 }
 
+// TestSnapshotTablesAreDatabaseTablesOnly pins the backup schema to the Vault's
+// SQLite tables. Runtime state such as an embedded Tailscale node directory
+// lives outside the database, so it can never be smuggled into an ordinary
+// backup as a pseudo-table; a restore can only rewrite the listed families.
+func TestSnapshotTablesAreDatabaseTablesOnly(t *testing.T) {
+	for _, name := range Tables {
+		if strings.ContainsAny(name, `/\`) || strings.Contains(name, "network-providers") ||
+			strings.Contains(name, "tailscale") {
+			t.Fatalf("snapshot table %q names a filesystem path, not a Vault table", name)
+		}
+	}
+	for _, name := range []string{"network-providers", "tailscale_state", "state_directory"} {
+		err := Validate(Snapshot{SchemaVersion: 1, Tables: []Table{{
+			Name: name,
+			Rows: []Row{{"path": Text("/must/not/be/backed/up")}},
+		}}})
+		if !errors.Is(err, ErrInvalidSnapshot) {
+			t.Fatalf("snapshot accepted the non-Vault table %q: %v", name, err)
+		}
+	}
+}
+
 func TestReasonValid(t *testing.T) {
 	for _, reason := range []Reason{ReasonVaultChange, ReasonBeforeRestore, ReasonAppVersionChange} {
 		if !reason.Valid() {

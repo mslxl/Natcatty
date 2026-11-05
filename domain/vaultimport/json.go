@@ -123,6 +123,8 @@ type jsonTailscaleNetwork struct {
 	Ephemeral  bool     `json:"ephemeral"`
 	Tags       []string `json:"tags"`
 	HasAuthKey bool     `json:"hasAuthKey"`
+	// AuthKey is present only in a destructive export.
+	AuthKey string `json:"authKey"`
 }
 
 type jsonWireGuardNetwork struct {
@@ -132,6 +134,8 @@ type jsonWireGuardNetwork struct {
 	ListenPort    int                 `json:"listenPort"`
 	Peers         []jsonWireGuardPeer `json:"peers"`
 	HasPrivateKey bool                `json:"hasPrivateKey"`
+	// PrivateKey is present only in a destructive export.
+	PrivateKey string `json:"privateKey"`
 }
 
 type jsonWireGuardPeer struct {
@@ -141,6 +145,8 @@ type jsonWireGuardPeer struct {
 	AllowedIPs          []string `json:"allowedIps"`
 	PersistentKeepalive int      `json:"persistentKeepalive"`
 	HasPresharedKey     bool     `json:"hasPresharedKey"`
+	// PresharedKey is present only in a destructive export.
+	PresharedKey string `json:"presharedKey"`
 }
 
 type jsonKnownHost struct {
@@ -430,6 +436,7 @@ func familyTailscaleNetwork(config *jsonTailscaleNetwork) *FamilyTailscaleNetwor
 		Ephemeral:  config.Ephemeral,
 		Tags:       append([]string(nil), config.Tags...),
 		HasAuthKey: config.HasAuthKey,
+		AuthKey:    config.AuthKey,
 	}
 }
 
@@ -443,6 +450,7 @@ func familyWireGuardNetwork(config *jsonWireGuardNetwork) *FamilyWireGuardNetwor
 		MTU:           config.MTU,
 		ListenPort:    config.ListenPort,
 		HasPrivateKey: config.HasPrivateKey,
+		PrivateKey:    config.PrivateKey,
 		Peers:         make([]FamilyWireGuardPeer, 0, len(config.Peers)),
 	}
 	for _, peer := range config.Peers {
@@ -453,6 +461,7 @@ func familyWireGuardNetwork(config *jsonWireGuardNetwork) *FamilyWireGuardNetwor
 			AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
 			PersistentKeepalive: peer.PersistentKeepalive,
 			HasPresharedKey:     peer.HasPresharedKey,
+			PresharedKey:        peer.PresharedKey,
 		})
 	}
 	return out

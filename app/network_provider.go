@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,22 @@ type tailscaleOpener func(context.Context, adaptertailscale.Config,
 // factory's loading and dispatch rules without a userspace network stack.
 type wireguardOpener func(context.Context, adapterwireguard.Config,
 	...adapterwireguard.Option) (appconnection.NetworkProvider, error)
+
+// networkStateCleaner implements the Vault's Network Profile state-cleanup
+// port. Only Tailscale Net has local runtime state (the tsnet node directory);
+// WireGuard keys are memory-only and leave no file behind. The cleaner runs
+// only from the confirmed profile delete.
+type networkStateCleaner struct {
+	base string
+}
+
+func (c networkStateCleaner) RemoveNetworkProfileState(_ context.Context,
+	profile domainvault.NetworkProfile) error {
+	if profile.Kind != domainvault.NetworkKindTailscale {
+		return nil
+	}
+	return adaptertailscale.RemoveStateDir(c.base, profile.ID)
+}
 
 // networkProviderFactory dispatches a Network Route to the Provider that can
 // run its Kind. Tailscale Net uses the embedded tsnet adapter and WireGuard Net
@@ -102,11 +119,16 @@ func (f *networkProviderFactory) openTailscaleRoute(ctx context.Context,
 		route.Label = profile.Label
 	}
 
+	// Read the Auth Key unconditionally. A session-only secret store keeps the
+	// value while the record's HasAuthKey marker is false, so gating this read
+	// on the marker would silently switch a keyed profile to interactive login.
 	authKey, err := f.vault.NetworkProfileSecret(ctx, route.ProfileID, appvault.FieldNetworkAuthKey)
 	switch {
 	case errors.Is(err, appvault.ErrNotFound):
 		// No stored key means the node uses interactive login. The adapter
 		// reports NeedsLogin with the Auth URL instead of pretending to dial.
+		// This also covers a stale HasAuthKey marker: absence is a defined
+		// login mode for Tailscale rather than a credential mismatch.
 		authKey = ""
 	case err != nil:
 		return nil, networkRouteError(route, appconnection.ProviderPhaseError,
@@ -126,7 +148,14 @@ func (f *networkProviderFactory) openTailscaleRoute(ctx context.Context,
 	}
 	var options []adaptertailscale.Option
 	if f.observe != nil {
-		options = append(options, adaptertailscale.WithStatusObserver(f.observe))
+		// The adapter redacts its own diagnostics, but the app is the last
+		// boundary before the Vault surface and the persisted Connection Log.
+		// Redact again with the exact credential this route loaded so a future
+		// adapter regression cannot make key material durable.
+		observer := f.observe
+		options = append(options, adaptertailscale.WithStatusObserver(func(status adaptertailscale.Status) {
+			observer(redactTailscaleStatus(status, authKey))
+		}))
 	}
 	if f.logf != nil {
 		options = append(options, adaptertailscale.WithLogf(f.logf))
@@ -209,6 +238,9 @@ func (f *networkProviderFactory) openWireGuardRoute(ctx context.Context,
 		route.Label = profile.Label
 	}
 
+	// As with the Auth Key, read unconditionally: SecretModeSession stores the
+	// key but records HasPrivateKey=false. WireGuard has no login fallback, so a
+	// missing key always fails closed below.
 	privateKey, err := f.vault.NetworkProfileSecret(ctx, route.ProfileID,
 		appvault.FieldNetworkPrivateKey)
 	switch {
@@ -222,15 +254,36 @@ func (f *networkProviderFactory) openWireGuardRoute(ctx context.Context,
 	}
 
 	peers := make([]adapterwireguard.Peer, 0, len(profile.WireGuard.Peers))
+	// Every credential this route loaded, used to scrub status diagnostics
+	// before they reach the Vault surface or the Connection Log.
+	routeSecrets := []string{privateKey}
 	for _, peer := range profile.WireGuard.Peers {
-		presharedKey := ""
-		if peer.HasPresharedKey {
-			presharedKey, err = f.vault.NetworkPeerPresharedKey(ctx, route.ProfileID, peer.ID)
-			if err != nil {
+		// Read every peer's Preshared Key, not only the marked ones. A
+		// session-only secret store keeps the value while HasPresharedKey is
+		// false; skipping the read there would start the tunnel without its
+		// configured PSK and every handshake would fail.
+		presharedKey, readErr := f.vault.NetworkPeerPresharedKey(ctx, route.ProfileID, peer.ID)
+		switch {
+		case readErr == nil:
+			// A stored value is used even when the marker is false (session
+			// mode) because it is the credential the user configured.
+		case errors.Is(readErr, appvault.ErrNotFound):
+			if peer.HasPresharedKey {
+				// The record claims a stored Preshared Key but the secret is
+				// gone. Starting without it would silently weaken or break
+				// authentication, so fail closed.
 				return nil, networkRouteError(route, appconnection.ProviderPhaseError,
-					fmt.Errorf("read the Preshared Key for peer %q of Network Profile %q: %w",
-						peer.ID, route.ProfileID, err))
+					fmt.Errorf("Network Profile %q marks a Preshared Key for peer %q but none is stored; refusing to start without it",
+						route.ProfileID, peer.ID))
 			}
+			presharedKey = ""
+		default:
+			return nil, networkRouteError(route, appconnection.ProviderPhaseError,
+				fmt.Errorf("read the Preshared Key for peer %q of Network Profile %q: %w",
+					peer.ID, route.ProfileID, readErr))
+		}
+		if presharedKey != "" {
+			routeSecrets = append(routeSecrets, presharedKey)
 		}
 		peers = append(peers, adapterwireguard.Peer{
 			ID:                  peer.ID,
@@ -255,7 +308,13 @@ func (f *networkProviderFactory) openWireGuardRoute(ctx context.Context,
 	}
 	var options []adapterwireguard.Option
 	if f.observeWireGuard != nil {
-		options = append(options, adapterwireguard.WithStatusObserver(f.observeWireGuard))
+		// Defense in depth for the persisted Connection Log: an adapter bug
+		// must not be able to write a Private Key or Preshared Key through the
+		// status path.
+		observer := f.observeWireGuard
+		options = append(options, adapterwireguard.WithStatusObserver(func(status adapterwireguard.Status) {
+			observer(redactWireGuardStatus(status, routeSecrets...))
+		}))
 	}
 	if f.logf != nil {
 		options = append(options, adapterwireguard.WithLogf(f.logf))
@@ -442,6 +501,73 @@ func (c *networkProviderController) loadProfile(ctx context.Context,
 			fmt.Errorf("read Network Profile %q: %w", profileID, err))
 	}
 	return profile, nil
+}
+
+// redactCredentialText replaces every non-empty credential with a placeholder.
+// It is the app boundary's defense in depth: adapters already redact their own
+// diagnostics, but a status text here becomes durable in the Connection Log.
+func redactCredentialText(text string, secrets ...string) string {
+	if text == "" {
+		return ""
+	}
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, secret, "[redacted]")
+	}
+	return text
+}
+
+// redactedStatusError keeps the original error when nothing matched, so
+// errors.Is still classifies an untouched failure. A redacted error keeps its
+// cause for the same reason while exposing only the scrubbed text.
+func redactedStatusError(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error()
+	redacted := redactCredentialText(text, secrets...)
+	if redacted == text {
+		return err
+	}
+	return redactedError{text: redacted, cause: err}
+}
+
+type redactedError struct {
+	text  string
+	cause error
+}
+
+func (e redactedError) Error() string { return e.text }
+
+func (e redactedError) Unwrap() error { return e.cause }
+
+// redactTailscaleStatus scrubs every free-form field of a status before it
+// crosses into the Vault surface or the Connection Log. Numeric, identity, and
+// phase fields are non-secret and stay intact.
+func redactTailscaleStatus(status adaptertailscale.Status, secrets ...string) adaptertailscale.Status {
+	status.Label = redactCredentialText(status.Label, secrets...)
+	status.DNSName = redactCredentialText(status.DNSName, secrets...)
+	status.AuthURL = redactCredentialText(status.AuthURL, secrets...)
+	status.TailscaleIPs = append([]string(nil), status.TailscaleIPs...)
+	for index, address := range status.TailscaleIPs {
+		status.TailscaleIPs[index] = redactCredentialText(address, secrets...)
+	}
+	status.Err = redactedStatusError(status.Err, secrets...)
+	return status
+}
+
+// redactWireGuardStatus scrubs the free-form fields of a WireGuard status. The
+// indexed loop keeps the caller's slice untouched.
+func redactWireGuardStatus(status adapterwireguard.Status, secrets ...string) adapterwireguard.Status {
+	status.Label = redactCredentialText(status.Label, secrets...)
+	status.Peers = append([]adapterwireguard.PeerStatus(nil), status.Peers...)
+	for index := range status.Peers {
+		status.Peers[index].Endpoint = redactCredentialText(status.Peers[index].Endpoint, secrets...)
+	}
+	status.Err = redactedStatusError(status.Err, secrets...)
+	return status
 }
 
 // networkProviderStatusSink fans one Provider status out to the Vault surface

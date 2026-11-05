@@ -32,6 +32,7 @@ type Service struct {
 	groups              GroupRepository
 	proxies             ProxyProfileRepository
 	networks            NetworkProfileRepository
+	networkState        NetworkProfileStateCleaner
 	knownHosts          KnownHostRepository
 	snippets            SnippetRepository
 	notes               NoteRepository

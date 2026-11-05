@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -28,9 +29,14 @@ type fakeNetworkVault struct {
 
 	peerSecret    string
 	peerSecretErr error
-	peerLookups   int
-	peerIDs       []string
-	peerProfiles  []string
+	// peerSecretValues and peerSecretErrors override the legacy peerSecret
+	// fixture per peer, including peers whose HasPresharedKey marker is false
+	// (the session-only secret mode).
+	peerSecretValues map[string]string
+	peerSecretErrors map[string]error
+	peerLookups      int
+	peerIDs          []string
+	peerProfiles     []string
 
 	profileIDs    []string
 	secretIDs     []string
@@ -60,10 +66,39 @@ func (v *fakeNetworkVault) NetworkPeerPresharedKey(_ context.Context, profileID,
 	v.peerLookups++
 	v.peerProfiles = append(v.peerProfiles, profileID)
 	v.peerIDs = append(v.peerIDs, peerID)
-	if v.peerSecretErr != nil {
-		return "", v.peerSecretErr
+	if err, ok := v.peerSecretErrors[peerID]; ok {
+		return "", err
 	}
-	return v.peerSecret, nil
+	if value, ok := v.peerSecretValues[peerID]; ok {
+		return value, nil
+	}
+	// The legacy fixture models a persistent secret store: it only has a
+	// Preshared Key for a peer whose record advertises one.
+	if v.peerSecretErr != nil {
+		if peerHasPresharedKey(v.profile, peerID) {
+			return "", v.peerSecretErr
+		}
+		return "", appvault.ErrNotFound
+	}
+	if v.peerSecret != "" {
+		if peerHasPresharedKey(v.profile, peerID) {
+			return v.peerSecret, nil
+		}
+		return "", appvault.ErrNotFound
+	}
+	return "", appvault.ErrNotFound
+}
+
+func peerHasPresharedKey(profile domainvault.NetworkProfile, peerID string) bool {
+	if profile.WireGuard == nil {
+		return false
+	}
+	for _, peer := range profile.WireGuard.Peers {
+		if peer.ID == peerID {
+			return peer.HasPresharedKey
+		}
+	}
+	return false
 }
 
 // stubProvider stands in for the adapter so the factory can be tested without
@@ -321,9 +356,11 @@ func TestFactoryMapsTheWireGuardProfileAndSecrets(t *testing.T) {
 	if cfg.Peers[1].PresharedKey != "" {
 		t.Fatal("a peer without a saved Preshared Key received one")
 	}
-	if vault.peerLookups != 1 || vault.peerIDs[0] != "peer-1" ||
-		vault.peerProfiles[0] != "wg-1" {
-		t.Fatalf("peer secret reads = %v (profiles %v), want only peer-1",
+	// Every peer is queried, including one whose marker is false, so a
+	// session-only Preshared Key is never skipped. Only peer-1 has a value.
+	if vault.peerLookups != 2 || vault.peerIDs[0] != "peer-1" || vault.peerIDs[1] != "peer-2" ||
+		vault.peerProfiles[0] != "wg-1" || vault.peerProfiles[1] != "wg-1" {
+		t.Fatalf("peer secret reads = %v (profiles %v), want both peers of wg-1",
 			vault.peerIDs, vault.peerProfiles)
 	}
 	if len(vault.secretFields) != 1 || vault.secretFields[0] != appvault.FieldNetworkPrivateKey {
@@ -331,6 +368,96 @@ func TestFactoryMapsTheWireGuardProfileAndSecrets(t *testing.T) {
 	}
 	if optionCount != 2 {
 		t.Fatalf("adapter options = %d, want status observer and logger", optionCount)
+	}
+}
+
+// TestFactoryReadsSessionModeSecrets covers the required fix for a
+// session-only secret store: the record carries false Has* markers while the
+// field-secret store still holds the credentials. Every read must happen
+// unconditionally, and the values must reach the adapter configuration.
+func TestFactoryReadsSessionModeSecrets(t *testing.T) {
+	t.Run("tailscale auth key", func(t *testing.T) {
+		profile := tailscaleTestProfile()
+		profile.Tailscale.HasAuthKey = false
+		vault := &fakeNetworkVault{profile: profile, secret: "session-auth-key-value"}
+		var cfg adaptertailscale.Config
+		factory := &networkProviderFactory{
+			vault: vault,
+			openTailscale: func(_ context.Context, got adaptertailscale.Config,
+				_ ...adaptertailscale.Option) (appconnection.NetworkProvider, error) {
+				cfg = got
+				return &stubProvider{}, nil
+			},
+		}
+		if _, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+			ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale),
+		}); err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if cfg.AuthKey != vault.secret {
+			t.Fatal("a session-only Auth Key was skipped because HasAuthKey was false")
+		}
+	})
+
+	t.Run("wireguard private and preshared keys", func(t *testing.T) {
+		profile := wireguardTestProfile()
+		profile.WireGuard.HasPrivateKey = false
+		profile.WireGuard.Peers[0].HasPresharedKey = false
+		peerSecret := "session-preshared-key-value"
+		vault := &fakeNetworkVault{
+			profile:          profile,
+			secret:           "session-private-key-value",
+			peerSecretValues: map[string]string{"peer-1": peerSecret},
+		}
+		var cfg adapterwireguard.Config
+		factory := &networkProviderFactory{
+			vault: vault,
+			openWireGuard: func(_ context.Context, got adapterwireguard.Config,
+				_ ...adapterwireguard.Option) (appconnection.NetworkProvider, error) {
+				cfg = got
+				return &stubProvider{}, nil
+			},
+		}
+		if _, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+			ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard),
+		}); err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if cfg.PrivateKey != vault.secret {
+			t.Fatal("a session-only Private Key was skipped")
+		}
+		if len(cfg.Peers) != 2 || cfg.Peers[0].PresharedKey != peerSecret {
+			t.Fatal("a session-only Preshared Key was skipped because HasPresharedKey was false")
+		}
+		if cfg.Peers[1].PresharedKey != "" {
+			t.Fatal("a peer with neither a marker nor a stored key received one")
+		}
+	})
+}
+
+// TestFactoryTreatsAMissingUnmarkedPresharedKeyAsNoPSK proves the fail-closed
+// rule is marker-sensitive: false + ErrNotFound is a valid peer without a PSK,
+// while the existing fail-closed test covers true + ErrNotFound.
+func TestFactoryTreatsAMissingUnmarkedPresharedKeyAsNoPSK(t *testing.T) {
+	profile := wireguardTestProfile()
+	profile.WireGuard.Peers[0].HasPresharedKey = false
+	vault := &fakeNetworkVault{profile: profile, secret: "session-private-key-value"}
+	var cfg adapterwireguard.Config
+	factory := &networkProviderFactory{
+		vault: vault,
+		openWireGuard: func(_ context.Context, got adapterwireguard.Config,
+			_ ...adapterwireguard.Option) (appconnection.NetworkProvider, error) {
+			cfg = got
+			return &stubProvider{}, nil
+		},
+	}
+	if _, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard),
+	}); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if cfg.Peers[0].PresharedKey != "" {
+		t.Fatal("a peer without a marker or stored key received a Preshared Key")
 	}
 }
 
@@ -662,6 +789,82 @@ func TestWireGuardLogStateIgnoresCounterOnlyPolls(t *testing.T) {
 	}
 	if sink.shouldRecordWireGuard(adapterwireguard.Status{}) {
 		t.Fatal("a status without a profile was recorded")
+	}
+}
+
+// TestStatusRedactionKeepsInjectedSecretsOutOfConnectionLogs uses deliberately
+// injected credential strings in every free-form status field an adapter could
+// populate. The redacted statuses are mapped through the same functions that
+// write durable Connection Log rows.
+func TestStatusRedactionKeepsInjectedSecretsOutOfConnectionLogs(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	authKey := "injected-tailscale-auth-key"
+	privateKey := "injected-wireguard-private-key"
+	presharedKey := "injected-wireguard-preshared-key"
+
+	tailscaleStatus := redactTailscaleStatus(adaptertailscale.Status{
+		ProfileID:    "net-1",
+		Label:        "Office " + authKey,
+		Kind:         string(domainvault.NetworkKindTailscale),
+		Phase:        appconnection.ProviderPhaseError,
+		TailscaleIPs: []string{authKey},
+		DNSName:      "node." + authKey,
+		AuthURL:      authKey,
+		Err:          errors.New("control rejected " + authKey),
+	}, authKey)
+	tailscaleLog, ok := connectionLogFromProviderStatus(tailscaleStatus, at)
+	if !ok {
+		t.Fatal("the redacted Tailscale status did not produce a log row")
+	}
+	for _, field := range []string{
+		tailscaleLog.HostLabel, tailscaleLog.Error, tailscaleLog.NetworkAddress,
+		tailscaleLog.NetworkProfileLabel, tailscaleLog.NetworkProviderKind,
+	} {
+		if strings.Contains(field, authKey) {
+			t.Fatalf("the Connection Log row leaked the injected Auth Key: %+v", tailscaleLog)
+		}
+	}
+
+	wireGuardStatus := redactWireGuardStatus(adapterwireguard.Status{
+		ProfileID: "wg-1",
+		Label:     "Office " + privateKey,
+		Kind:      string(domainvault.NetworkKindWireGuard),
+		Phase:     appconnection.ProviderPhaseError,
+		Peers: []adapterwireguard.PeerStatus{{
+			ID: "peer-1", Endpoint: presharedKey,
+		}},
+		Err: errors.New("device failed with " + privateKey + " and " + presharedKey),
+	}, privateKey, presharedKey)
+	wireGuardLog, ok := connectionLogFromWireGuardStatus(wireGuardStatus, at)
+	if !ok {
+		t.Fatal("the redacted WireGuard status did not produce a log row")
+	}
+	for _, field := range []string{
+		wireGuardLog.HostLabel, wireGuardLog.Error, wireGuardLog.NetworkAddress,
+		wireGuardLog.NetworkProfileLabel, wireGuardLog.NetworkProviderKind,
+	} {
+		for _, secret := range []string{privateKey, presharedKey} {
+			if strings.Contains(field, secret) {
+				t.Fatalf("the Connection Log row leaked an injected WireGuard key: %+v",
+					wireGuardLog)
+			}
+		}
+	}
+	if !strings.Contains(wireGuardLog.Error, "[redacted]") {
+		t.Fatalf("the WireGuard error was not redacted: %q", wireGuardLog.Error)
+	}
+
+	// Redaction changes the displayed text, not the failure's identity:
+	// callers that classify a status error with errors.Is must still see the
+	// original cause.
+	sentinel := errors.New("sentinel provider failure")
+	redacted := redactedStatusError(
+		fmt.Errorf("dial with %s: %w", privateKey, sentinel), privateKey)
+	if !errors.Is(redacted, sentinel) {
+		t.Fatalf("redacted error lost its cause: %v", redacted)
+	}
+	if strings.Contains(redacted.Error(), privateKey) {
+		t.Fatalf("redacted error leaked the injected key: %q", redacted)
 	}
 }
 
