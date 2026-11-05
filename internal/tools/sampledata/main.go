@@ -1,8 +1,8 @@
-// Command devseed fills a fresh Vault database with sample Host Groups,
+// Command sampledata fills a fresh Vault database with sample Host Groups,
 // Hosts, Snippets, and Proxy Profiles, for looking at the interface with
 // realistic content. Point it at a throwaway user-data directory:
 //
-//	go run ./internal/tools/devseed <userData>/Natcatty/natcatty.db
+//	go run ./internal/tools/sampledata <userData>/Natcatty/natcatty.db
 package main
 
 import (
@@ -18,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatal("usage: devseed <natcatty.db>")
+		log.Fatal("usage: sampledata <natcatty.db>")
 	}
 	ctx := context.Background()
 	database, err := store.Open(ctx, os.Args[1])
