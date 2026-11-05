@@ -455,14 +455,27 @@ func (p *Provider) failStartWithBackend(b backend, status backendStatus,
 	phase appconnection.ProviderPhase, cause error) error {
 	cause = redactError(cause, p.cfg.AuthKey)
 	cause = redactError(cause, status.AuthURL)
-	if status.Phase == appconnection.ProviderPhaseNeedsLogin {
+	// A start that ends because the caller's context expired is not a live
+	// interactive-login wait: the backend may still report the last NeedsLogin
+	// snapshot it read, but its node is closed and that Auth URL is dead.
+	// Publishing it would leave a login prompt that can never complete. Such a
+	// start is a clean stop and stays retryable; a NeedsLogin that ends a start
+	// for any other reason is a terminal failure and keeps its login URL for the
+	// Vault row and the Connection Log.
+	expired := errors.Is(cause, context.Canceled) ||
+		errors.Is(cause, context.DeadlineExceeded)
+	if expired {
+		phase = appconnection.ProviderPhaseStopped
+		status = backendStatus{}
+	} else if status.Phase == appconnection.ProviderPhaseNeedsLogin {
 		phase = appconnection.ProviderPhaseNeedsLogin
 	}
-	// A caller-cancelled start is a normal stop, not a failure: the caller still
-	// receives the cancellation through the returned error, but the Vault and the
-	// Connection Log must not render the user's Cancel as a red error.
+	// An expired start is a normal stop for the Vault surface, not a failure: the
+	// caller still receives the cancellation or deadline through the returned
+	// error, but the Vault and the Connection Log must not render it as a red
+	// error row.
 	statusCause := cause
-	if errors.Is(cause, context.Canceled) {
+	if expired {
 		statusCause = nil
 	}
 	p.mu.Lock()
