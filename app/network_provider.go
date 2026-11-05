@@ -313,6 +313,137 @@ func networkRouteError(route appconnection.NetworkRoute,
 		}}
 }
 
+// networkProviderRegistry is the lifecycle surface the interactive-login
+// controller needs. The connection registry implements it; tests script it.
+type networkProviderRegistry interface {
+	Acquire(ctx context.Context, route appconnection.NetworkRoute) (appconnection.NetworkProvider, error)
+	Cancel(profileID string) error
+}
+
+// networkProviderStart is one in-flight start or login attempt the Vault
+// triggered. Cancel and a later Start use it to stop the previous attempt
+// before opening the next, so two tsnet servers never share one profile's state
+// directory.
+type networkProviderStart struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// networkProviderController drives a Network Profile's Provider from the Vault
+// surface, without a Host dial. It resolves the profile's non-secret route on
+// every call, so an edit between attempts starts the edited configuration. The
+// Auth Key is still read only by the Provider factory when the node starts.
+type networkProviderController struct {
+	vault    networkProfileVault
+	registry networkProviderRegistry
+
+	mu     sync.Mutex
+	starts map[string]*networkProviderStart
+}
+
+var _ vaultstate.NetworkProviderActions = (*networkProviderController)(nil)
+
+// StartNetworkProvider starts one profile's Provider for interactive login. It
+// returns when the node reaches Running or NeedsLogin; the status observer
+// carries the Auth URL. A start already in flight for the same profile is
+// cancelled and awaited first, so repeated clicks cannot leave two nodes behind.
+func (c *networkProviderController) StartNetworkProvider(ctx context.Context,
+	profileID string) error {
+	if c == nil || c.registry == nil {
+		return networkRouteError(appconnection.NetworkRoute{ProfileID: profileID},
+			appconnection.ProviderPhaseError, errors.New("network provider registry is unavailable"))
+	}
+	profile, err := c.loadProfile(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	route := appconnection.NetworkRoute{
+		ProfileID:   profile.ID,
+		Kind:        string(profile.Kind),
+		Label:       profile.Label,
+		Fingerprint: domainvault.NetworkProfileFingerprint(profile),
+	}
+
+	for {
+		c.mu.Lock()
+		previous := c.starts[profile.ID]
+		if previous == nil {
+			startCtx, cancel := context.WithCancel(ctx)
+			start := &networkProviderStart{cancel: cancel, done: make(chan struct{})}
+			if c.starts == nil {
+				c.starts = make(map[string]*networkProviderStart)
+			}
+			c.starts[profile.ID] = start
+			c.mu.Unlock()
+
+			_, err := c.registry.Acquire(startCtx, route)
+			c.finishStart(profile.ID, start)
+			return err
+		}
+		c.mu.Unlock()
+		// Retire the older attempt before opening another node for the profile.
+		previous.cancel()
+		<-previous.done
+	}
+}
+
+// CancelNetworkProvider stops the current start or login wait and releases the
+// Provider through the registry. The profile's next Acquire starts afresh.
+func (c *networkProviderController) CancelNetworkProvider(_ context.Context,
+	profileID string) error {
+	if c == nil || c.registry == nil {
+		return nil
+	}
+	c.mu.Lock()
+	start := c.starts[profileID]
+	c.mu.Unlock()
+	if start != nil {
+		start.cancel()
+		<-start.done
+	}
+	return c.registry.Cancel(profileID)
+}
+
+// RetryNetworkProvider cancels any current attempt and starts a new node. It is
+// the same fail-closed path as a first login: no direct dial is ever tried.
+func (c *networkProviderController) RetryNetworkProvider(ctx context.Context,
+	profileID string) error {
+	if err := c.CancelNetworkProvider(ctx, profileID); err != nil {
+		return err
+	}
+	return c.StartNetworkProvider(ctx, profileID)
+}
+
+// finishStart removes one attempt from the in-flight table and releases its
+// context. The map entry is compared by identity so a newer attempt survives.
+func (c *networkProviderController) finishStart(profileID string, start *networkProviderStart) {
+	c.mu.Lock()
+	if c.starts[profileID] == start {
+		delete(c.starts, profileID)
+	}
+	c.mu.Unlock()
+	start.cancel()
+	close(start.done)
+}
+
+// loadProfile reads one Network Profile and classifies a failure as a typed
+// provider error with the profile identity.
+func (c *networkProviderController) loadProfile(ctx context.Context,
+	profileID string) (domainvault.NetworkProfile, error) {
+	route := appconnection.NetworkRoute{ProfileID: profileID}
+	if c.vault == nil {
+		return domainvault.NetworkProfile{}, networkRouteError(route,
+			appconnection.ProviderPhaseError, errors.New("network profile vault is unavailable"))
+	}
+	profile, err := c.vault.NetworkProfile(ctx, profileID)
+	if err != nil {
+		return domainvault.NetworkProfile{}, networkRouteError(route,
+			appconnection.ProviderPhaseError,
+			fmt.Errorf("read Network Profile %q: %w", profileID, err))
+	}
+	return profile, nil
+}
+
 // networkProviderStatusSink fans one Provider status out to the Vault surface
 // and the Connection Log. It is safe to call from the Provider's dial
 // goroutine: the Vault state enqueues for the UI thread, and the history

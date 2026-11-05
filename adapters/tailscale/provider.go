@@ -18,6 +18,14 @@
 // written to the state directory, a log line, an error, or a status event.
 // Only HasAuthKey markers and non-secret status cross this package boundary.
 //
+// Without an Auth Key, or when a stored key no longer authenticates, the node
+// reports NeedsLogin with a short-lived Auth URL. The server stays alive while
+// the user completes the browser login; a status watcher publishes the later
+// Running transition. Cancel stops one such attempt without closing the
+// Provider, so a retry or the next Acquire can join again. The Auth URL is
+// display material for that flow and never enters an error, a log line, or the
+// Connection Log.
+//
 // Privacy: tsnet uploads diagnostic logs to log.tailscale.com by default. The
 // Logf/UserLogf hooks below only redact and forward local lines; they do not
 // disable that upload. This version cannot fully turn it off, and the Vault
@@ -144,6 +152,16 @@ func withBackendFactory(fn func(Config) (backend, error)) Option {
 	}
 }
 
+// withLoginWatchInterval shortens the interactive-login watcher cadence in
+// tests. Production uses statusPollInterval.
+func withLoginWatchInterval(interval time.Duration) Option {
+	return func(p *Provider) {
+		if interval > 0 {
+			p.watchInterval = interval
+		}
+	}
+}
+
 // Provider is one Network Profile's in-process Tailscale Net dial port. It
 // implements application/connection's NetworkProvider and
 // NetworkProviderCloser. Create it with NewProvider, start it with Start, and
@@ -154,15 +172,26 @@ type Provider struct {
 	observe    func(Status)
 	logf       func(format string, args ...any)
 
-	mu          sync.Mutex
-	backend     backend
-	phase       appconnection.ProviderPhase
-	status      Status
-	closed      bool
-	starting    bool
-	startDone   chan struct{}
-	startCancel context.CancelFunc
-	startErr    error
+	mu            sync.Mutex
+	backend       backend
+	phase         appconnection.ProviderPhase
+	status        Status
+	closed        bool
+	starting      bool
+	startDone     chan struct{}
+	startCancel   context.CancelFunc
+	startErr      error
+	startEpoch    uint64
+	watchCancel   context.CancelFunc
+	watchDone     chan struct{}
+	watchInterval time.Duration
+
+	// emitMu serializes status delivery so a snapshot taken before a newer
+	// transition cannot reach an observer after it. statusSeq advances on every
+	// status mutation; emittedSeq records the newest delivered sequence.
+	emitMu     sync.Mutex
+	statusSeq  uint64
+	emittedSeq uint64
 }
 
 // NewProvider validates and derives one profile's configuration. It creates no
@@ -194,9 +223,10 @@ func NewProvider(cfg Config, opts ...Option) (*Provider, error) {
 	cfg.stateDir = stateDir
 
 	provider := &Provider{
-		cfg:        cfg,
-		newBackend: newTSNetBackend,
-		phase:      appconnection.ProviderPhaseStopped,
+		cfg:           cfg,
+		newBackend:    newTSNetBackend,
+		watchInterval: statusPollInterval,
+		phase:         appconnection.ProviderPhaseStopped,
 		status: Status{
 			ProfileID: cfg.ProfileID,
 			Label:     cfg.Label,
@@ -212,17 +242,23 @@ func NewProvider(cfg Config, opts ...Option) (*Provider, error) {
 	return provider, nil
 }
 
-// Start joins the tailnet and waits until the node is Running or is known to
-// need an interactive login. A previous failed attempt is retried with a fresh
-// server. On failure the server is closed before Start returns, so a cancelled
-// or failed start never leaves a live node behind.
+// Start joins the tailnet and waits until the node is Running or needs an
+// interactive login. NeedsLogin is not a failure: the node stays alive with its
+// Auth URL published through the status observer, and a background watcher
+// reports Running once the user finishes the browser login. A previous failed
+// or cancelled attempt is retried with a fresh server. Every failed start closes
+// its server before Start returns, so an error never leaves a live node behind.
 func (p *Provider) Start(ctx context.Context) error {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
 		return p.errorFor(appconnection.ProviderPhaseStopped, ErrProviderClosed)
 	}
-	if p.phase == appconnection.ProviderPhaseRunning && p.backend != nil {
+	if p.backend != nil &&
+		(p.phase == appconnection.ProviderPhaseRunning ||
+			p.phase == appconnection.ProviderPhaseNeedsLogin) {
+		// Running is already up, and a NeedsLogin node is already waiting for
+		// the user; a second Start must not replace either server.
 		p.mu.Unlock()
 		return nil
 	}
@@ -240,28 +276,30 @@ func (p *Provider) Start(ctx context.Context) error {
 		return err
 	}
 
-	// A backend left by an earlier lost tunnel or failed attempt is retired
-	// before the replacement starts, so one profile never runs two servers.
+	// A backend left by an earlier lost tunnel, cancelled login, or failed
+	// attempt is retired before the replacement starts, so one profile never
+	// runs two servers.
 	old := p.backend
 	p.backend = nil
+	watchDone := p.stopLoginWatchLocked()
 	p.starting = true
 	p.startDone = make(chan struct{})
 	startCtx, cancel := context.WithCancel(ctx)
 	p.startCancel = cancel
+	p.startEpoch++
+	epoch := p.startEpoch
 	p.startErr = nil
-	p.phase = appconnection.ProviderPhaseStarting
-	p.status.Phase = appconnection.ProviderPhaseStarting
-	p.status.TailscaleIPs = nil
-	p.status.DNSName = ""
-	p.status.AuthURL = ""
-	p.status.Err = nil
+	p.resetStatusLocked(appconnection.ProviderPhaseStarting)
 	p.mu.Unlock()
 	p.emit()
+	if watchDone != nil {
+		<-watchDone
+	}
 	if old != nil {
 		_ = old.Close()
 	}
 
-	err := p.runStart(startCtx)
+	err := p.runStart(startCtx, epoch)
 
 	p.mu.Lock()
 	p.starting = false
@@ -277,8 +315,10 @@ func (p *Provider) Start(ctx context.Context) error {
 
 // runStart creates and starts the backend. It owns the backend until it
 // returns: on every failure path the backend is closed and cleared so the
-// Provider never owns a live server for a failed attempt.
-func (p *Provider) runStart(ctx context.Context) error {
+// Provider never owns a live server for a failed attempt. epoch identifies this
+// attempt so a concurrent Cancel can prevent a late success from resurrecting
+// it.
+func (p *Provider) runStart(ctx context.Context, epoch uint64) error {
 	cfg := p.cfg
 	cfg.logf = p.logf
 
@@ -294,10 +334,12 @@ func (p *Provider) runStart(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
-	if p.closed {
+	if p.closed || p.startEpoch != epoch {
 		p.mu.Unlock()
+		// The attempt was cancelled before this backend was published; it never
+		// became the Provider's server, so runStart still owns closing it.
 		_ = b.Close()
-		return p.errorFor(appconnection.ProviderPhaseStopped, ErrProviderClosed)
+		return p.errorFor(appconnection.ProviderPhaseStopped, context.Canceled)
 	}
 	p.backend = b
 	p.mu.Unlock()
@@ -310,25 +352,61 @@ func (p *Provider) runStart(ctx context.Context) error {
 		}
 		return p.failStartWithBackend(b, status, phase, err)
 	}
-	if status.Phase != appconnection.ProviderPhaseRunning &&
-		status.Phase != appconnection.ProviderPhaseNeedsLogin {
+	switch status.Phase {
+	case appconnection.ProviderPhaseRunning:
+		if len(status.TailscaleIPs) == 0 {
+			return p.failStartWithBackend(b, status, appconnection.ProviderPhaseError,
+				errors.New("tailscale: running without a tailnet address"))
+		}
+		p.mu.Lock()
+		if p.startRetiredLocked(b, epoch) {
+			p.mu.Unlock()
+			return p.startRetired()
+		}
+		p.applyStatusLocked(status, appconnection.ProviderPhaseRunning, nil)
+		p.mu.Unlock()
+		p.emit()
+		return nil
+	case appconnection.ProviderPhaseNeedsLogin:
+		p.mu.Lock()
+		if p.startRetiredLocked(b, epoch) {
+			p.mu.Unlock()
+			return p.startRetired()
+		}
+		p.applyStatusLocked(status, appconnection.ProviderPhaseNeedsLogin, nil)
+		p.startLoginWatchLocked(b)
+		p.mu.Unlock()
+		p.emit()
+		return nil
+	default:
 		return p.failStartWithBackend(b, status, appconnection.ProviderPhaseError,
 			fmt.Errorf("tailscale: backend reported phase %q", status.Phase))
 	}
-	if status.Phase == appconnection.ProviderPhaseRunning && len(status.TailscaleIPs) == 0 {
-		return p.failStartWithBackend(b, status, appconnection.ProviderPhaseError,
-			errors.New("tailscale: running without a tailnet address"))
-	}
-	if status.Phase == appconnection.ProviderPhaseNeedsLogin {
-		return p.failStartWithBackend(b, status, appconnection.ProviderPhaseNeedsLogin,
-			fmt.Errorf("%w", ErrNeedsLogin))
-	}
+}
 
-	p.mu.Lock()
-	p.applyStatusLocked(status, appconnection.ProviderPhaseRunning, nil)
-	p.mu.Unlock()
-	p.emit()
-	return nil
+// startRetiredLocked reports whether a Cancel or Close retired this start
+// attempt while its backend was joining. It must run under the Provider lock.
+// When this attempt still holds the backend, it clears the ownership so the
+// caller closes the server exactly once; the cancel path then has nothing left
+// to close.
+func (p *Provider) startRetiredLocked(b backend, epoch uint64) bool {
+	if !p.closed && p.startEpoch == epoch && p.backend == b {
+		return false
+	}
+	if p.backend == b {
+		// This attempt still owned the server; close it here. A backend another
+		// operation removed is that operation's to close exactly once.
+		p.backend = nil
+		_ = b.Close()
+	}
+	return true
+}
+
+// startRetired is the classified result of a start attempt a Cancel or Close
+// retired while the backend was joining. No live node is left behind: either
+// the cancel path or the caller closed it.
+func (p *Provider) startRetired() error {
+	return p.errorFor(appconnection.ProviderPhaseStopped, context.Canceled)
 }
 
 // failStart records a startup failure with no backend to close.
@@ -337,19 +415,39 @@ func (p *Provider) failStart(status backendStatus, phase appconnection.ProviderP
 }
 
 // failStartWithBackend records a startup failure and closes the backend once.
-// It must be called before the caller releases the Provider.
+// A backend a concurrent Cancel already retired is not closed here: the
+// operation that removed it owns the one close.
 func (p *Provider) failStartWithBackend(b backend, status backendStatus,
 	phase appconnection.ProviderPhase, cause error) error {
 	cause = redactError(cause, p.cfg.AuthKey)
+	cause = redactError(cause, status.AuthURL)
 	if status.Phase == appconnection.ProviderPhaseNeedsLogin {
 		phase = appconnection.ProviderPhaseNeedsLogin
 	}
+	// A caller-cancelled start is a normal stop, not a failure: the caller still
+	// receives the cancellation through the returned error, but the Vault and the
+	// Connection Log must not render the user's Cancel as a red error.
+	statusCause := cause
+	if errors.Is(cause, context.Canceled) {
+		statusCause = nil
+	}
 	p.mu.Lock()
-	p.backend = nil
-	p.applyStatusLocked(status, phase, cause)
+	owned := b == nil || p.backend == b
+	// A Cancel or Close that retired this attempt owns the status transition:
+	// publishing the cancelled start's cause would turn the user's Cancel into a
+	// spurious error row in the Vault and the Connection Log.
+	retired := !owned || p.closed
+	if owned {
+		p.backend = nil
+	}
+	if !retired {
+		p.applyStatusLocked(status, phase, statusCause)
+	}
 	p.mu.Unlock()
-	p.emit()
-	if b != nil {
+	if !retired {
+		p.emit()
+	}
+	if owned && b != nil {
 		_ = b.Close()
 	}
 	return p.errorFor(phase, cause)
@@ -364,6 +462,60 @@ func (p *Provider) applyStatusLocked(status backendStatus, phase appconnection.P
 	p.status.DNSName = status.DNSName
 	p.status.AuthURL = status.AuthURL
 	p.status.Err = cause
+	p.statusSeq++
+}
+
+// resetStatusLocked moves the Provider to phase and clears every field that
+// belonged to the previous backend: addresses, login URL, and cause. The caller
+// must hold p.mu.
+func (p *Provider) resetStatusLocked(phase appconnection.ProviderPhase) {
+	p.phase = phase
+	p.status.Phase = phase
+	p.status.TailscaleIPs = nil
+	p.status.DNSName = ""
+	p.status.AuthURL = ""
+	p.status.Err = nil
+	p.statusSeq++
+}
+
+// Cancel stops a start or a pending interactive login and leaves the Provider
+// reusable. Unlike Close it keeps the object open, so the next Start can join
+// again. A cancelled start is reported as Stopped rather than as a failure.
+func (p *Provider) Cancel() error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return p.errorFor(appconnection.ProviderPhaseStopped, ErrProviderClosed)
+	}
+	starting := p.starting
+	startDone := p.startDone
+	startCancel := p.startCancel
+	watchDone := p.stopLoginWatchLocked()
+	b := p.backend
+	p.backend = nil
+	// Advance the epoch so a backend that ignores the cancelled start context
+	// cannot publish a late Running or NeedsLogin result.
+	p.startEpoch++
+	p.resetStatusLocked(appconnection.ProviderPhaseStopped)
+	p.mu.Unlock()
+
+	if starting {
+		if startCancel != nil {
+			startCancel()
+		}
+		if startDone != nil {
+			<-startDone
+		}
+	}
+	if watchDone != nil {
+		<-watchDone
+	}
+	var err error
+	if b != nil {
+		err = b.Close()
+	}
+	p.emit()
+	return err
 }
 
 // DialContext dials one tailnet TCP address through the embedded node. It
@@ -398,6 +550,9 @@ func (p *Provider) DialContext(ctx context.Context, network, address string) (ne
 		phase = p.phase
 		p.mu.Unlock()
 	}
+	if phase == appconnection.ProviderPhaseNeedsLogin {
+		return nil, p.errorFor(phase, ErrNeedsLogin)
+	}
 	if b == nil || phase != appconnection.ProviderPhaseRunning {
 		return nil, p.errorFor(phase, ErrNotRunning)
 	}
@@ -413,10 +568,24 @@ func (p *Provider) DialContext(ctx context.Context, network, address string) (ne
 	// closed with KindProvider instead of masquerading as an ordinary network
 	// error.
 	if live, statusErr := b.Status(ctx); statusErr == nil && live.Phase != appconnection.ProviderPhaseRunning {
+		statusCause := cause
+		if live.Phase == appconnection.ProviderPhaseNeedsLogin {
+			// The failed dial is not the login's error. Publish a clean
+			// NeedsLogin state and let the watcher observe the completed login.
+			statusCause = nil
+		}
 		p.mu.Lock()
-		p.applyStatusLocked(live, live.Phase, cause)
+		if p.backend == b {
+			p.applyStatusLocked(live, live.Phase, statusCause)
+			if live.Phase == appconnection.ProviderPhaseNeedsLogin {
+				p.startLoginWatchLocked(b)
+			}
+		}
 		p.mu.Unlock()
 		p.emit()
+		if live.Phase == appconnection.ProviderPhaseNeedsLogin {
+			return nil, p.errorFor(live.Phase, ErrNeedsLogin)
+		}
 		return nil, p.errorFor(live.Phase, cause)
 	}
 	switch {
@@ -432,9 +601,10 @@ func (p *Provider) DialContext(ctx context.Context, network, address string) (ne
 	}
 }
 
-// Close releases the node. It is idempotent and waits for an in-flight start so
-// tsnet's Close is never concurrent with Start. A Provider closes its server
-// exactly once.
+// Close releases the node. It is idempotent and waits for an in-flight start and
+// login watcher so tsnet's Close is never concurrent with Start. A Provider
+// closes its server exactly once, whether the server ended through Cancel, a
+// failed start, or Close.
 func (p *Provider) Close() error {
 	p.mu.Lock()
 	if p.closed {
@@ -445,6 +615,7 @@ func (p *Provider) Close() error {
 	starting := p.starting
 	done := p.startDone
 	cancel := p.startCancel
+	watchDone := p.stopLoginWatchLocked()
 	p.mu.Unlock()
 
 	if starting {
@@ -455,12 +626,14 @@ func (p *Provider) Close() error {
 			<-done
 		}
 	}
+	if watchDone != nil {
+		<-watchDone
+	}
 
 	p.mu.Lock()
 	b := p.backend
 	p.backend = nil
-	p.phase = appconnection.ProviderPhaseStopped
-	p.status.Phase = appconnection.ProviderPhaseStopped
+	p.resetStatusLocked(appconnection.ProviderPhaseStopped)
 	p.mu.Unlock()
 	if b == nil {
 		return nil
@@ -485,17 +658,28 @@ func (p *Provider) Phase() appconnection.ProviderPhase {
 	return p.phase
 }
 
-// emit publishes a status snapshot outside the Provider lock. The observer
-// must be non-blocking and must not call back into this Provider.
+// emit publishes the current status outside the Provider lock. The observer
+// must be non-blocking and must not call back into this Provider. Delivery is
+// serialized, and a transition whose snapshot a newer one already superseded is
+// dropped, so concurrent transitions cannot reach an observer out of order.
 func (p *Provider) emit() {
+	p.emitMu.Lock()
+	defer p.emitMu.Unlock()
+
 	p.mu.Lock()
 	if p.observe == nil {
+		p.mu.Unlock()
+		return
+	}
+	seq := p.statusSeq
+	if seq <= p.emittedSeq {
 		p.mu.Unlock()
 		return
 	}
 	status := p.status
 	status.TailscaleIPs = append([]string(nil), p.status.TailscaleIPs...)
 	observe := p.observe
+	p.emittedSeq = seq
 	p.mu.Unlock()
 	observe(status)
 }

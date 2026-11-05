@@ -291,6 +291,7 @@ type State struct {
 	networkForm           NetworkProfileForm
 	pendingDeleteNetwork  string
 	networkImport         networkImportState
+	providerActions       NetworkProviderActions
 
 	// Network Provider statuses are produced off the UI thread by the dial
 	// goroutine. PostNetworkProviderStatus queues them; the view publishes the
