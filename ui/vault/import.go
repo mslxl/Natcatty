@@ -395,6 +395,8 @@ func importFamilyKindText(m locales.Messages, kind string) string {
 		return m.VaultImportFamilyIdentity()
 	case appvault.FamilyKindProxyProfile:
 		return m.VaultImportFamilyProxyProfile()
+	case appvault.FamilyKindNetworkProfile:
+		return m.VaultImportFamilyNetworkProfile()
 	case appvault.FamilyKindKnownHost:
 		return m.VaultImportFamilyKnownHost()
 	default:

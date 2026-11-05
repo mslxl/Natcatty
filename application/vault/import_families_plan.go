@@ -23,6 +23,7 @@ const (
 	FamilyKindKey            = "key"
 	FamilyKindIdentity       = "identity"
 	FamilyKindProxyProfile   = "proxy_profile"
+	FamilyKindNetworkProfile = "network_profile"
 	FamilyKindKnownHost      = "known_host"
 )
 
@@ -50,6 +51,7 @@ func (preview *ImportPreview) collectFamilyPlan(missingGroups map[string]bool) {
 		Keys:            len(family.Keys),
 		Identities:      len(family.Identities),
 		ProxyProfiles:   len(family.ProxyProfiles),
+		NetworkProfiles: len(family.NetworkProfiles),
 		KnownHosts:      len(family.KnownHosts),
 	}
 	rows := make([]ImportFamilyRow, 0, counts.Total())
@@ -86,6 +88,11 @@ func (preview *ImportPreview) collectFamilyPlan(missingGroups map[string]bool) {
 	for _, profile := range family.ProxyProfiles {
 		rows = append(rows, ImportFamilyRow{
 			Kind: FamilyKindProxyProfile, Label: profile.Label, Detail: profile.Config.Host,
+		})
+	}
+	for _, profile := range family.NetworkProfiles {
+		rows = append(rows, ImportFamilyRow{
+			Kind: FamilyKindNetworkProfile, Label: profile.Label, Detail: profile.Kind,
 		})
 	}
 	for _, known := range family.KnownHosts {
@@ -287,8 +294,9 @@ func (s *Service) commitFamilyKeys(ctx context.Context, preview ImportPreview,
 	return nil
 }
 
-// commitFamilyLinks creates the Keys, Identities, and Proxy Profiles Hosts
-// reference. Keys are created by commitImportKeys; this step maps the rest.
+// commitFamilyLinks creates the Keys, Identities, Proxy Profiles, and Network
+// Profiles Hosts reference. Keys are created by commitImportKeys; this step
+// maps the rest.
 func (s *Service) commitFamilyLinks(ctx context.Context, preview ImportPreview,
 	result *ImportCommitResult) error {
 	if preview.family == nil || preview.familyDone[familyStageLinks] {
@@ -369,8 +377,73 @@ func (s *Service) commitFamilyLinks(ctx context.Context, preview ImportPreview,
 		}
 		result.FamilyCreated++
 	}
+	for _, profile := range preview.family.NetworkProfiles {
+		if profile.ID != "" {
+			if _, done := preview.networkProfileIDs[profile.ID]; done {
+				continue
+			}
+			if s.networks != nil {
+				existing, err := s.networks.GetNetworkProfile(ctx, profile.ID)
+				switch {
+				case err == nil:
+					preview.networkProfileIDs[profile.ID] = existing.ID
+					continue
+				case !errors.Is(err, ErrNotFound):
+					return internal(err)
+				}
+			}
+		}
+		if s.networks == nil {
+			result.FamilySkipped++
+			continue
+		}
+		created, err := s.CreateNetworkProfile(ctx, networkProfileDraftFromFamily(profile))
+		if err != nil {
+			return err
+		}
+		if profile.ID != "" {
+			preview.networkProfileIDs[profile.ID] = created.ID
+		}
+		result.FamilyCreated++
+	}
 	preview.familyDone[familyStageLinks] = true
 	return nil
+}
+
+// networkProfileDraftFromFamily maps a portable record onto an editable draft.
+// The document never carries key material, so the draft has none: an imported
+// profile must not claim a key the destination does not hold.
+func networkProfileDraftFromFamily(profile vaultimport.FamilyNetworkProfile) domainvault.NetworkProfileDraft {
+	draft := domainvault.NetworkProfileDraft{
+		Label: profile.Label,
+		Kind:  domainvault.NetworkProfileKind(profile.Kind),
+	}
+	if profile.Tailscale != nil {
+		draft.Tailscale = &domainvault.TailscaleNetworkDraft{
+			Hostname:   profile.Tailscale.Hostname,
+			ControlURL: profile.Tailscale.ControlURL,
+			Ephemeral:  profile.Tailscale.Ephemeral,
+			Tags:       append([]string(nil), profile.Tailscale.Tags...),
+		}
+	}
+	if profile.WireGuard != nil {
+		draft.WireGuard = &domainvault.WireGuardNetworkDraft{
+			Addresses: append([]string(nil), profile.WireGuard.Addresses...),
+			DNS:       append([]string(nil), profile.WireGuard.DNS...),
+			MTU:       profile.WireGuard.MTU,
+			Peers:     make([]domainvault.WireGuardPeerDraft, 0, len(profile.WireGuard.Peers)),
+		}
+		for _, peer := range profile.WireGuard.Peers {
+			draft.WireGuard.Peers = append(draft.WireGuard.Peers, domainvault.WireGuardPeerDraft{
+				ID:                  peer.ID,
+				PublicKey:           peer.PublicKey,
+				Endpoint:            peer.Endpoint,
+				AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
+				PersistentKeepalive: peer.PersistentKeepalive,
+			})
+		}
+	}
+	return draft
 }
 
 // commitFamilyRecords restores Snippets, Notes, and Known Hosts. It runs once,

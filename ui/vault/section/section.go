@@ -15,6 +15,8 @@ const (
 	Keychain Section = "keychain"
 	// Proxies lists the Proxy Profiles.
 	Proxies Section = "proxies"
+	// Networks lists the Network Profiles.
+	Networks Section = "networks"
 	// Forwarding lists the Port Forwarding Rules.
 	Forwarding Section = "forwarding"
 	// Snippets lists the Snippets and their packages.
@@ -27,7 +29,7 @@ const (
 
 // Pages returns the Vault's pages in sidebar order.
 func Pages() []Section {
-	return []Section{Hosts, Keychain, Proxies, Forwarding, Snippets, Notes, KnownHosts}
+	return []Section{Hosts, Keychain, Proxies, Networks, Forwarding, Snippets, Notes, KnownHosts}
 }
 
 // Shows reports whether the page current draws the family of page s.

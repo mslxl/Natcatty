@@ -166,6 +166,18 @@ type proxyProfileSchema struct {
 
 func (proxyProfileSchema) TableName() string { return "proxy_profiles" }
 
+type networkProfileSchema struct {
+	ID        string `gorm:"column:id;type:text;primaryKey;index:network_profiles_order,priority:3"`
+	Label     string `gorm:"column:label;type:text;not null;index:network_profiles_order,priority:2,collate:nocase"`
+	Kind      string `gorm:"column:kind;type:text;not null;default:''"`
+	OrderKey  int64  `gorm:"column:order_key;not null;default:0;index:network_profiles_order,priority:1"`
+	CreatedAt int64  `gorm:"column:created_at;not null"`
+	UpdatedAt int64  `gorm:"column:updated_at;not null"`
+	Data      string `gorm:"column:data;type:text;not null"`
+}
+
+func (networkProfileSchema) TableName() string { return "network_profiles" }
+
 type snippetSchema struct {
 	ID          string `gorm:"column:id;type:text;primaryKey;index:snippets_order,priority:3"`
 	Label       string `gorm:"column:label;type:text;not null;index:snippets_order,priority:2,collate:nocase"`
@@ -253,6 +265,7 @@ var schemaModels = []any{
 	&workspaceLayoutSchema{},
 	&hostGroupSchema{},
 	&proxyProfileSchema{},
+	&networkProfileSchema{},
 	&snippetSchema{},
 	&snippetPackageSchema{},
 	&noteSchema{},

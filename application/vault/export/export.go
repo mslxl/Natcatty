@@ -128,6 +128,7 @@ type Dataset struct {
 	Keys            []Key
 	Identities      []domainvault.Identity
 	ProxyProfiles   []domainvault.ProxyProfile
+	NetworkProfiles []domainvault.NetworkProfile
 	KnownHosts      []domainconn.KnownHost
 	Snippets        []domainvault.Snippet
 	SnippetPackages []domainvault.SnippetPackage
@@ -196,19 +197,20 @@ func Export(d Dataset, format Format, opts Options) ([]byte, error) {
 // ---------------------------------------------------------------- JSON
 
 type jsonDocument struct {
-	Kind            string              `json:"kind"`
-	Version         int                 `json:"version"`
-	ExportedAt      string              `json:"exportedAt"`
-	Groups          []domainvault.Group `json:"groups"`
-	Hosts           []jsonHost          `json:"hosts"`
-	Keys            []jsonKey           `json:"keys"`
-	Identities      []jsonIdentity      `json:"identities"`
-	ProxyProfiles   []jsonProxyProfile  `json:"proxyProfiles"`
-	KnownHosts      []jsonKnownHost     `json:"knownHosts"`
-	Snippets        []jsonSnippet       `json:"snippets"`
-	SnippetPackages []string            `json:"snippetPackages"`
-	Notes           []domainvault.Note  `json:"notes"`
-	NoteGroups      []string            `json:"noteGroups"`
+	Kind            string                       `json:"kind"`
+	Version         int                          `json:"version"`
+	ExportedAt      string                       `json:"exportedAt"`
+	Groups          []domainvault.Group          `json:"groups"`
+	Hosts           []jsonHost                   `json:"hosts"`
+	Keys            []jsonKey                    `json:"keys"`
+	Identities      []jsonIdentity               `json:"identities"`
+	ProxyProfiles   []jsonProxyProfile           `json:"proxyProfiles"`
+	NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
+	KnownHosts      []jsonKnownHost              `json:"knownHosts"`
+	Snippets        []jsonSnippet                `json:"snippets"`
+	SnippetPackages []string                     `json:"snippetPackages"`
+	Notes           []domainvault.Note           `json:"notes"`
+	NoteGroups      []string                     `json:"noteGroups"`
 }
 
 // jsonIdentity adds the credential plaintext the domain Identity deliberately
@@ -290,6 +292,10 @@ func exportJSON(d Dataset, opts Options) ([]byte, error) {
 		}
 		document.ProxyProfiles = append(document.ProxyProfiles, entry)
 	}
+	// Network Profiles never carry key material in the portable document, not
+	// even with IncludeSecrets: the record's Has* markers describe the source
+	// device's secret store.
+	document.NetworkProfiles = sortedNetworkProfiles(d.NetworkProfiles)
 	keys := sortedKeys(d.Keys)
 	keyByID := make(map[string]domainvault.Key, len(keys))
 	document.Keys = make([]jsonKey, 0, len(keys))
@@ -840,6 +846,11 @@ func sortedIdentities(items []domainvault.Identity) []domainvault.Identity {
 func sortedProxies(items []domainvault.ProxyProfile) []domainvault.ProxyProfile {
 	return sortedByOrder(items, func(p domainvault.ProxyProfile) int64 { return p.OrderKey },
 		func(p domainvault.ProxyProfile) string { return p.ID })
+}
+
+func sortedNetworkProfiles(items []domainvault.NetworkProfile) []domainvault.NetworkProfile {
+	return sortedByOrder(items, func(p domainvault.NetworkProfile) int64 { return p.OrderKey },
+		func(p domainvault.NetworkProfile) string { return p.ID })
 }
 
 func sortedSnippets(items []domainvault.Snippet) []domainvault.Snippet {

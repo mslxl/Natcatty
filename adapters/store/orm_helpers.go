@@ -208,6 +208,21 @@ func proxyProfileModel(profile domainvault.ProxyProfile) (proxyProfileSchema, er
 	}, nil
 }
 
+func networkProfileModel(profile domainvault.NetworkProfile) (networkProfileSchema, error) {
+	if profile.ID == "" {
+		return networkProfileSchema{}, fmt.Errorf("store: Network Profile has no id")
+	}
+	data, err := marshalData(profile, "Network Profile")
+	if err != nil {
+		return networkProfileSchema{}, err
+	}
+	return networkProfileSchema{
+		ID: profile.ID, Label: profile.Label, Kind: string(profile.Kind),
+		OrderKey: profile.OrderKey, CreatedAt: profile.CreatedAt.UnixMilli(),
+		UpdatedAt: profile.UpdatedAt.UnixMilli(), Data: data,
+	}, nil
+}
+
 func snippetModel(snippet domainvault.Snippet) (snippetSchema, error) {
 	if snippet.ID == "" {
 		return snippetSchema{}, fmt.Errorf("store: Snippet has no id")

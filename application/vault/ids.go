@@ -35,6 +35,14 @@ func newIdentityID() model.IdentityID {
 // ULID shape as a Host identifier.
 func newProxyProfileID() string { return newULID() }
 
+// newNetworkProfileID returns a Network Profile identifier with the same
+// opaque ULID shape as a Host identifier.
+func newNetworkProfileID() string { return newULID() }
+
+// newNetworkPeerID returns a WireGuard peer identifier. It is stable for the
+// peer's lifetime and names the peer's Preshared Key in the secret store.
+func newNetworkPeerID() string { return newULID() }
+
 // newSnippetID returns a Snippet identifier with the same opaque ULID shape
 // as a Host identifier.
 func newSnippetID() string { return newULID() }

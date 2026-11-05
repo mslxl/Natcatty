@@ -362,8 +362,11 @@ const (
 	FieldCertificate Field = "certificate"
 	FieldChain       Field = "chain"
 	FieldProxy       Field = "proxy"
-	FieldAlgorithms  Field = "algorithms"
-	FieldX11         Field = "x11"
+	// FieldNetworkProfile names a Network Profile configuration. A Network
+	// Profile editor has one form, so its Kind-specific rules share one field.
+	FieldNetworkProfile Field = "network_profile"
+	FieldAlgorithms     Field = "algorithms"
+	FieldX11            Field = "x11"
 	// FieldFileProtocol and FieldSFTPSudo name the remote-pane protocol
 	// preference.
 	FieldFileProtocol Field = "file_protocol"

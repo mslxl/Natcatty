@@ -38,14 +38,19 @@ const (
 	// EntityETSession stores one resumable EternalTerminal client session.
 	// Its EntityID is the opaque resume key from the non-secret workspace
 	// descriptor, never the ET session id.
-	EntityETSession = "et_session"
+	EntityETSession      = "et_session"
+	EntityNetworkProfile = "network_profile"
+	EntityNetworkPeer    = "network_peer"
 
-	FieldPassword      = "password"
-	FieldPassphrase    = "passphrase"
-	FieldPrivateKey    = "private_key"
-	FieldProxyPassword = "proxy_password"
-	FieldETSessionID   = "session_id"
-	FieldETSessionKey  = "session_passkey"
+	FieldPassword            = "password"
+	FieldPassphrase          = "passphrase"
+	FieldPrivateKey          = "private_key"
+	FieldProxyPassword       = "proxy_password"
+	FieldETSessionID         = "session_id"
+	FieldETSessionKey        = "session_passkey"
+	FieldNetworkAuthKey      = "network_auth_key"
+	FieldNetworkPrivateKey   = "network_private_key"
+	FieldNetworkPresharedKey = "network_preshared_key"
 )
 
 // EncryptedPlaceholder prefixes a portable credential value meaning
@@ -88,6 +93,19 @@ func ProxyProfileSecretRef(id string, field string) SecretRef {
 // credential and may be stored in the workspace descriptor.
 func ETSessionSecretRef(resumeKey, field string) SecretRef {
 	return SecretRef{EntityType: EntityETSession, EntityID: resumeKey, Field: field}
+}
+
+// NetworkProfileSecretRef names a Network Profile's credential field. The
+// record carries only HasAuthKey or HasPrivateKey; the ciphertext lives in the
+// field secret store like every other credential.
+func NetworkProfileSecretRef(id string, field string) SecretRef {
+	return SecretRef{EntityType: EntityNetworkProfile, EntityID: id, Field: field}
+}
+
+// NetworkPeerSecretRef names one WireGuard peer's Preshared Key. The entity ID
+// is the peer's stable ID, as ADR-0010 requires.
+func NetworkPeerSecretRef(peerID string, field string) SecretRef {
+	return SecretRef{EntityType: EntityNetworkPeer, EntityID: peerID, Field: field}
 }
 
 // FieldSecrets is the field-secret port the Vault consumes. The adapter owns

@@ -146,6 +146,21 @@ func omittedSecrets(dataset vaultexport.Dataset, format ExportFormat, includeSec
 				count++
 			}
 		}
+		for _, profile := range dataset.NetworkProfiles {
+			if profile.Tailscale != nil && profile.Tailscale.HasAuthKey {
+				count++
+			}
+			if profile.WireGuard != nil {
+				if profile.WireGuard.HasPrivateKey {
+					count++
+				}
+				for _, peer := range profile.WireGuard.Peers {
+					if peer.HasPresharedKey {
+						count++
+					}
+				}
+			}
+		}
 		return count
 	case ExportCSV:
 		count := countHostCredentials()
@@ -279,6 +294,13 @@ func (s *Service) exportDataset(ctx context.Context, opts ExportOptions) (vaulte
 				dataset.ProxyProfilePasswords[profile.ID] = value
 			}
 		}
+	}
+	if s.networks != nil {
+		networks, err := s.networks.ListNetworkProfiles(ctx)
+		if err != nil {
+			return dataset, 0, internal(err)
+		}
+		dataset.NetworkProfiles = networks
 	}
 	if s.knownHosts != nil {
 		known, err := s.knownHosts.ListKnownHosts(ctx)

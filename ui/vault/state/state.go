@@ -100,6 +100,9 @@ const (
 	ProblemIdentityUsernameRequired Problem = "identity_username_required"
 	ProblemAuthMethod               Problem = "auth_method"
 	ProblemProxy                    Problem = "proxy"
+	ProblemNetworkProfile           Problem = "network_profile"
+	ProblemNetworkMTU               Problem = "network_mtu"
+	ProblemNetworkKeepalive         Problem = "network_keepalive"
 	ProblemAlgorithms               Problem = "algorithms"
 	ProblemX11                      Problem = "x11"
 	ProblemX11Acknowledged          Problem = "x11_acknowledged"
@@ -198,6 +201,7 @@ type State struct {
 	identities          Identities
 	groups              Groups
 	proxies             ProxyProfiles
+	networks            NetworkProfiles
 	knownHosts          KnownHosts
 	secrets             Secrets
 	snippets            Snippets
@@ -209,6 +213,7 @@ type State struct {
 	identityItems       []domainvault.Identity
 	groupItems          []domainvault.Group
 	proxyItems          []domainvault.ProxyProfile
+	networkItems        []domainvault.NetworkProfile
 	knownItems          []domainconn.KnownHost
 	snippetItems        []domainvault.Snippet
 	snippetPackageItems []domainvault.SnippetPackage
@@ -273,6 +278,9 @@ type State struct {
 	editingProxy          bool
 	proxyForm             ProxyForm
 	pendingDeleteProxy    string
+	editingNetwork        bool
+	networkForm           NetworkProfileForm
+	pendingDeleteNetwork  string
 	pendingDeleteKnown    string
 
 	editingSnippet              bool
@@ -952,6 +960,14 @@ func (s *State) load() error {
 		}
 		s.proxyItems = proxies
 	}
+	if s.networks != nil {
+		networks, err := s.networks.ListNetworkProfiles(context.Background())
+		if err != nil {
+			s.problem = ProblemInternal
+			return err
+		}
+		s.networkItems = networks
+	}
 	if s.snippets != nil {
 		snippets, err := s.snippets.ListSnippets(context.Background())
 		if err != nil {
@@ -1257,6 +1273,8 @@ func problemForValidation(invalid *domainvault.ValidationError) Problem {
 		return ProblemNotes
 	case domainvault.FieldChain, domainvault.FieldProxy:
 		return ProblemProxy
+	case domainvault.FieldNetworkProfile:
+		return ProblemNetworkProfile
 	case domainvault.FieldAlgorithms:
 		return ProblemAlgorithms
 	case domainvault.FieldX11:

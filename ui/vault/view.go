@@ -77,6 +77,7 @@ const (
 	surfaceIdentity
 	surfaceGroup
 	surfaceProxy
+	surfaceNetwork
 	surfaceSnippetRun
 	surfaceSnippet
 	surfaceSnippetPackage
@@ -142,6 +143,8 @@ func editorSurface(s *vaultstate.State, forwarding *uiforwarding.State) surface 
 		return surfaceGroup
 	case s.EditingProxyProfile():
 		return surfaceProxy
+	case s.EditingNetworkProfile():
+		return surfaceNetwork
 	case s.EditingSnippetPackage():
 		return surfaceSnippetPackage
 	case s.EditingSnippet():
@@ -207,6 +210,8 @@ func View(s *vaultstate.State, opts ...Option) func(*ui.Context) {
 				groupEditor(c, s, m, t, &positions.editor)
 			case surfaceProxy:
 				proxyEditor(c, s, m, t, &positions.editor)
+			case surfaceNetwork:
+				networkEditor(c, s, m, t, &positions.editor)
 			case surfaceSnippetRun:
 				snippetRunEditor(c, s, m, t, &positions.editor)
 			case surfaceSnippet:
@@ -277,6 +282,7 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 	identityDeleteBanner(c, s, m, t)
 	groupDeleteBanner(c, s, m, t)
 	proxyDeleteBanner(c, s, m, t)
+	networkDeleteBanner(c, s, m, t)
 	knownHostDeleteBanner(c, s, m, t)
 	snippetDeleteBanner(c, s, m, t)
 	snippetPackageDeleteBanner(c, s, m, t)
@@ -303,6 +309,9 @@ func list(c *ui.Context, s *vaultstate.State, opts options,
 		if page.Shows(section.Proxies) {
 			proxySection(c, s, m, t)
 		}
+		if page.Shows(section.Networks) {
+			networkSection(c, s, m, t)
+		}
 		if page.Shows(section.KnownHosts) {
 			knownHostSection(c, s, m, t)
 		}
@@ -326,6 +335,8 @@ func pageTitle(s *vaultstate.State, page section.Section, m locales.Messages) st
 		return m.NavKeychain()
 	case section.Proxies:
 		return m.NavProxies()
+	case section.Networks:
+		return m.NavNetworks()
 	case section.Forwarding:
 		return m.NavForwarding()
 	case section.Snippets:
@@ -1797,6 +1808,12 @@ func problemText(m locales.Messages, problem vaultstate.Problem) string {
 		return m.VaultProblemAuthMethod()
 	case vaultstate.ProblemProxy:
 		return m.VaultProblemProxy()
+	case vaultstate.ProblemNetworkProfile:
+		return m.VaultProblemNetworkProfile()
+	case vaultstate.ProblemNetworkMTU:
+		return m.VaultProblemNetworkMTU()
+	case vaultstate.ProblemNetworkKeepalive:
+		return m.VaultProblemNetworkKeepalive()
 	case vaultstate.ProblemAlgorithms:
 		return m.VaultProblemAlgorithms()
 	case vaultstate.ProblemX11:

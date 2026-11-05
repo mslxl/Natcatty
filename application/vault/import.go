@@ -137,13 +137,14 @@ type ImportFamilyCounts struct {
 	Keys            int
 	Identities      int
 	ProxyProfiles   int
+	NetworkProfiles int
 	KnownHosts      int
 }
 
 // Total returns how many family records the preview will write.
 func (c ImportFamilyCounts) Total() int {
 	return c.Groups + c.SnippetPackages + c.Snippets + c.NoteGroups + c.Notes +
-		c.Keys + c.Identities + c.ProxyProfiles + c.KnownHosts
+		c.Keys + c.Identities + c.ProxyProfiles + c.NetworkProfiles + c.KnownHosts
 }
 
 // ImportPreview is a parsed, validated, conflict-analyzed inventory. Nothing
@@ -176,12 +177,13 @@ type ImportPreview struct {
 	// Family plan state, allocated during preview. The maps are reference
 	// values, so mappings created in one commit chunk survive into the next
 	// call even though ImportPreview is passed by value.
-	family          *vaultimport.Family
-	hostIDs         map[string]model.HostID
-	identityIDs     map[string]model.IdentityID
-	proxyProfileIDs map[string]string
-	snippetIDs      map[string]string
-	noteIDs         map[string]string
+	family            *vaultimport.Family
+	hostIDs           map[string]model.HostID
+	identityIDs       map[string]model.IdentityID
+	proxyProfileIDs   map[string]string
+	networkProfileIDs map[string]string
+	snippetIDs        map[string]string
+	noteIDs           map[string]string
 	// familyDone marks the family stages a commit finished, so a chunked
 	// commit writes each family record once. It is a reference value for the
 	// same reason the id maps are.
@@ -222,21 +224,22 @@ func (s *Service) PreviewImport(ctx context.Context, text string, opts PreviewIm
 		FileName: opts.FileName, MasterPassword: opts.MasterPassword,
 	})
 	preview := ImportPreview{
-		Format:          parsed.Format,
-		FileName:        opts.FileName,
-		Issues:          append([]vaultimport.Issue(nil), parsed.Issues...),
-		records:         parsed.Records,
-		drafts:          make([]domainvault.Draft, len(parsed.Records)),
-		keyFiles:        make(map[string]*importKeyFile),
-		keyIDs:          make(map[string]model.KeyID),
-		newIDs:          make([]model.HostID, len(parsed.Records)),
-		family:          parsed.Family,
-		hostIDs:         make(map[string]model.HostID),
-		identityIDs:     make(map[string]model.IdentityID),
-		proxyProfileIDs: make(map[string]string),
-		snippetIDs:      make(map[string]string),
-		noteIDs:         make(map[string]string),
-		familyDone:      make(map[string]bool),
+		Format:            parsed.Format,
+		FileName:          opts.FileName,
+		Issues:            append([]vaultimport.Issue(nil), parsed.Issues...),
+		records:           parsed.Records,
+		drafts:            make([]domainvault.Draft, len(parsed.Records)),
+		keyFiles:          make(map[string]*importKeyFile),
+		keyIDs:            make(map[string]model.KeyID),
+		newIDs:            make([]model.HostID, len(parsed.Records)),
+		family:            parsed.Family,
+		hostIDs:           make(map[string]model.HostID),
+		identityIDs:       make(map[string]model.IdentityID),
+		proxyProfileIDs:   make(map[string]string),
+		networkProfileIDs: make(map[string]string),
+		snippetIDs:        make(map[string]string),
+		noteIDs:           make(map[string]string),
+		familyDone:        make(map[string]bool),
 	}
 
 	hosts, err := s.repo.List(ctx)

@@ -191,6 +191,9 @@ func (s *State) closeEntityEditors() {
 	s.editingProxy = false
 	s.proxyForm = ProxyForm{}
 	s.pendingDeleteProxy = ""
+	s.editingNetwork = false
+	s.networkForm = NetworkProfileForm{}
+	s.pendingDeleteNetwork = ""
 	s.pendingDeleteKnown = ""
 	s.editingSnippet = false
 	s.snippetForm = SnippetForm{}

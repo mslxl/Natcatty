@@ -42,12 +42,13 @@ func (s *Store) vaultChanged() {
 }
 
 var (
-	_ appvault.HostRepository         = (*Store)(nil)
-	_ appvault.KeyRepository          = (*Store)(nil)
-	_ appvault.IdentityRepository     = (*Store)(nil)
-	_ appvault.GroupRepository        = (*Store)(nil)
-	_ appvault.ProxyProfileRepository = (*Store)(nil)
-	_ appvault.SnippetRepository      = (*Store)(nil)
+	_ appvault.HostRepository           = (*Store)(nil)
+	_ appvault.KeyRepository            = (*Store)(nil)
+	_ appvault.IdentityRepository       = (*Store)(nil)
+	_ appvault.GroupRepository          = (*Store)(nil)
+	_ appvault.ProxyProfileRepository   = (*Store)(nil)
+	_ appvault.NetworkProfileRepository = (*Store)(nil)
+	_ appvault.SnippetRepository        = (*Store)(nil)
 )
 
 // schemaVersion identifies the AutoMigrate schema used by this build. It is

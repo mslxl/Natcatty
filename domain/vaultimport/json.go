@@ -9,18 +9,19 @@ import (
 // jsonDocument is the versioned Netcatty JSON envelope. The exporter writes
 // KindNetcattyVault and every format version 1; imports accept the same.
 type jsonDocument struct {
-	Kind            string             `json:"kind"`
-	Version         int                `json:"version"`
-	Groups          []jsonGroup        `json:"groups"`
-	Hosts           []jsonHost         `json:"hosts"`
-	Keys            []jsonKey          `json:"keys"`
-	Identities      []jsonIdentity     `json:"identities"`
-	ProxyProfiles   []jsonProxyProfile `json:"proxyProfiles"`
-	KnownHosts      []jsonKnownHost    `json:"knownHosts"`
-	Snippets        []jsonSnippet      `json:"snippets"`
-	SnippetPackages []string           `json:"snippetPackages"`
-	Notes           []jsonNote         `json:"notes"`
-	NoteGroups      []string           `json:"noteGroups"`
+	Kind            string               `json:"kind"`
+	Version         int                  `json:"version"`
+	Groups          []jsonGroup          `json:"groups"`
+	Hosts           []jsonHost           `json:"hosts"`
+	Keys            []jsonKey            `json:"keys"`
+	Identities      []jsonIdentity       `json:"identities"`
+	ProxyProfiles   []jsonProxyProfile   `json:"proxyProfiles"`
+	NetworkProfiles []jsonNetworkProfile `json:"networkProfiles"`
+	KnownHosts      []jsonKnownHost      `json:"knownHosts"`
+	Snippets        []jsonSnippet        `json:"snippets"`
+	SnippetPackages []string             `json:"snippetPackages"`
+	Notes           []jsonNote           `json:"notes"`
+	NoteGroups      []string             `json:"noteGroups"`
 }
 
 type jsonGroup struct {
@@ -105,6 +106,39 @@ type jsonProxy struct {
 	Command     string `json:"command"`
 	Username    string `json:"username"`
 	HasPassword bool   `json:"hasPassword"`
+}
+
+type jsonNetworkProfile struct {
+	ID        string                `json:"id"`
+	Label     string                `json:"label"`
+	Kind      string                `json:"kind"`
+	Tailscale *jsonTailscaleNetwork `json:"tailscale"`
+	WireGuard *jsonWireGuardNetwork `json:"wireguard"`
+}
+
+type jsonTailscaleNetwork struct {
+	Hostname   string   `json:"hostname"`
+	ControlURL string   `json:"controlUrl"`
+	Ephemeral  bool     `json:"ephemeral"`
+	Tags       []string `json:"tags"`
+	HasAuthKey bool     `json:"hasAuthKey"`
+}
+
+type jsonWireGuardNetwork struct {
+	Addresses     []string            `json:"addresses"`
+	DNS           []string            `json:"dns"`
+	MTU           int                 `json:"mtu"`
+	Peers         []jsonWireGuardPeer `json:"peers"`
+	HasPrivateKey bool                `json:"hasPrivateKey"`
+}
+
+type jsonWireGuardPeer struct {
+	ID                  string   `json:"id"`
+	PublicKey           string   `json:"publicKey"`
+	Endpoint            string   `json:"endpoint"`
+	AllowedIPs          []string `json:"allowedIps"`
+	PersistentKeepalive int      `json:"persistentKeepalive"`
+	HasPresharedKey     bool     `json:"hasPresharedKey"`
 }
 
 type jsonKnownHost struct {
@@ -320,6 +354,15 @@ func familyFromJSON(document jsonDocument) *Family {
 			Password: profile.Password,
 		})
 	}
+	for _, profile := range document.NetworkProfiles {
+		family.NetworkProfiles = append(family.NetworkProfiles, FamilyNetworkProfile{
+			ID:        profile.ID,
+			Label:     strings.TrimSpace(profile.Label),
+			Kind:      strings.ToLower(strings.TrimSpace(profile.Kind)),
+			Tailscale: familyTailscaleNetwork(profile.Tailscale),
+			WireGuard: familyWireGuardNetwork(profile.WireGuard),
+		})
+	}
 	for _, known := range document.KnownHosts {
 		family.KnownHosts = append(family.KnownHosts, FamilyKnownHost{
 			Hostname: known.Hostname, Port: known.Port, KeyType: known.KeyType,
@@ -370,6 +413,43 @@ func cloneStringMap(values map[string]string) map[string]string {
 	out := make(map[string]string, len(values))
 	for name, value := range values {
 		out[name] = value
+	}
+	return out
+}
+
+func familyTailscaleNetwork(config *jsonTailscaleNetwork) *FamilyTailscaleNetwork {
+	if config == nil {
+		return nil
+	}
+	return &FamilyTailscaleNetwork{
+		Hostname:   strings.TrimSpace(config.Hostname),
+		ControlURL: strings.TrimSpace(config.ControlURL),
+		Ephemeral:  config.Ephemeral,
+		Tags:       append([]string(nil), config.Tags...),
+		HasAuthKey: config.HasAuthKey,
+	}
+}
+
+func familyWireGuardNetwork(config *jsonWireGuardNetwork) *FamilyWireGuardNetwork {
+	if config == nil {
+		return nil
+	}
+	out := &FamilyWireGuardNetwork{
+		Addresses:     append([]string(nil), config.Addresses...),
+		DNS:           append([]string(nil), config.DNS...),
+		MTU:           config.MTU,
+		HasPrivateKey: config.HasPrivateKey,
+		Peers:         make([]FamilyWireGuardPeer, 0, len(config.Peers)),
+	}
+	for _, peer := range config.Peers {
+		out.Peers = append(out.Peers, FamilyWireGuardPeer{
+			ID:                  peer.ID,
+			PublicKey:           strings.TrimSpace(peer.PublicKey),
+			Endpoint:            strings.TrimSpace(peer.Endpoint),
+			AllowedIPs:          append([]string(nil), peer.AllowedIPs...),
+			PersistentKeepalive: peer.PersistentKeepalive,
+			HasPresharedKey:     peer.HasPresharedKey,
+		})
 	}
 	return out
 }
