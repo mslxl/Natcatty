@@ -169,6 +169,7 @@ func entityCountsInOriginalOrder(payload *Payload) []familyCount {
 		{"keys", len(payload.Keys)},
 		{"identities", len(payload.Identities)},
 		{"proxyProfiles", len(payload.ProxyProfiles)},
+		{"networkProfiles", len(payload.NetworkProfiles)},
 		{"snippets", len(payload.Snippets)},
 		{"groups", len(payload.Groups)},
 		{"snippetPackages", len(payload.SnippetPackages)},

@@ -17,6 +17,20 @@ import (
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
+// Entity types in the plaintext Secrets array. These mirror the Vault's
+// field-secret AAD vocabulary (application/vault.Entity*): they are durable
+// identifiers shared through the payload, so the two declarations must stay
+// byte-for-byte identical. They are duplicated rather than imported because
+// architecture rules forbid one application context from importing another.
+const (
+	entityHost           = "host"
+	entitySSHKey         = "ssh_key"
+	entityIdentity       = "identity"
+	entityProxyProfile   = "proxy_profile"
+	entityNetworkProfile = "network_profile"
+	entityNetworkPeer    = "network_peer"
+)
+
 // ConflictKind is the per-item conflict classification the original's change
 // summary used.
 type ConflictKind string
@@ -126,6 +140,23 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 	if err != nil {
 		return MergeResult{}, err
 	}
+	// A nil family means the payload predates Network Profiles. That writer
+	// cannot express a profile deletion by itself, so carry the local view
+	// forward instead of reading absence as a remote delete. It can still relay
+	// tombstone records learned from a newer device, though: profiles named by
+	// those tombstones are omitted from the substitute remote view so the normal
+	// family deletion rules honor them. An explicit [] still deletes.
+	remoteNetworkProfiles := remote.NetworkProfiles
+	if remoteNetworkProfiles == nil {
+		remoteNetworkProfiles = withoutNetworkProfiles(local.NetworkProfiles,
+			deletedIDs(remote.SyncMeta, "networkProfiles"))
+	}
+	profiles, err := mergeFamily("networkProfiles", b.NetworkProfiles, local.NetworkProfiles, remoteNetworkProfiles,
+		func(v domainvault.NetworkProfile) string { return v.ID },
+		local.SyncMeta, remote.SyncMeta, opts)
+	if err != nil {
+		return MergeResult{}, err
+	}
 	snippets, err := mergeFamily("snippets", b.Snippets, local.Snippets, remote.Snippets,
 		func(v domainvault.Snippet) string { return v.ID },
 		local.SyncMeta, remote.SyncMeta, opts)
@@ -171,6 +202,7 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 		{"keys", keys.counts},
 		{"identities", identities.counts},
 		{"proxyProfiles", proxies.counts},
+		{"networkProfiles", profiles.counts},
 		{"snippets", snippets.counts},
 		{"groups", groups.counts},
 		{"snippetPackages", packages.counts},
@@ -188,6 +220,7 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 		Keys:                keys.values,
 		Identities:          identities.values,
 		ProxyProfiles:       proxies.values,
+		NetworkProfiles:     profiles.values,
 		Snippets:            snippets.values,
 		Groups:              groups.values,
 		SnippetPackages:     packages.values,
@@ -210,6 +243,12 @@ func MergePayloads(base *Payload, local, remote Payload, opts MergeOptions) (Mer
 
 	payload.SyncedAt = maxInt64(b.SyncedAt, maxInt64(local.SyncedAt, remote.SyncedAt))
 	payload.SyncMeta = mergeSyncMeta(b, local, remote, payload)
+	if remote.NetworkProfiles == nil {
+		// The remote writer could not publish network credentials either, so
+		// its missing entries are not deletions. filterSecretsToPayload then
+		// drops anything whose profile or peer did not survive.
+		payload.Secrets = carryLocalNetworkSecrets(payload.Secrets, local.Secrets)
+	}
 	payload.Secrets = filterSecretsToPayload(payload, payload.Secrets)
 	sortConflicts(result.Conflicts)
 	result.Payload = payload
@@ -507,6 +546,23 @@ func deletedIDs(meta *SyncMeta, entityType string) map[string]bool {
 	return ids
 }
 
+// withoutNetworkProfiles returns profiles minus the IDs named by tombstones.
+// The input is returned unchanged, including a nil slice, when no ID is
+// deleted, so a legacy payload's "no opinion" view keeps its nil signal.
+func withoutNetworkProfiles(profiles []domainvault.NetworkProfile, deleted map[string]bool) []domainvault.NetworkProfile {
+	if len(deleted) == 0 {
+		return profiles
+	}
+	kept := make([]domainvault.NetworkProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if deleted[profile.ID] {
+			continue
+		}
+		kept = append(kept, profile)
+	}
+	return kept
+}
+
 func mergeSyncMeta(base, local, remote, merged Payload) *SyncMeta {
 	deletions := map[string]SyncDeletion{}
 	add := func(meta *SyncMeta) {
@@ -599,6 +655,11 @@ func payloadEntityIDs(payload Payload) map[string]bool {
 		proxies[i] = v.ID
 	}
 	add("proxyProfiles", proxies...)
+	profiles := make([]string, len(payload.NetworkProfiles))
+	for i, v := range payload.NetworkProfiles {
+		profiles[i] = v.ID
+	}
+	add("networkProfiles", profiles...)
 	snippets := make([]string, len(payload.Snippets))
 	for i, v := range payload.Snippets {
 		snippets[i] = v.ID
@@ -698,28 +759,71 @@ func mergeSecrets(base, local, remote []SecretValue) []SecretValue {
 	return merged
 }
 
+// carryLocalNetworkSecrets keeps the credentials of a family a pre-family
+// writer could not publish. mergeSecrets reads their absence from the remote
+// array as a deletion; they are restored here and orphaned ones are dropped by
+// filterSecretsToPayload once the surviving profiles and peers are known.
+func carryLocalNetworkSecrets(merged, local []SecretValue) []SecretValue {
+	present := make(map[string]bool, len(merged))
+	for _, value := range merged {
+		present[secretIdentity(value)] = true
+	}
+	for _, value := range local {
+		if value.EntityType != entityNetworkProfile && value.EntityType != entityNetworkPeer {
+			continue
+		}
+		key := secretIdentity(value)
+		if present[key] {
+			continue
+		}
+		present[key] = true
+		merged = append(merged, value)
+	}
+	return merged
+}
+
+func secretIdentity(value SecretValue) string {
+	return value.EntityType + "\x00" + value.EntityID + "\x00" + value.Field
+}
+
 func filterSecretsToPayload(payload Payload, secrets []SecretValue) []SecretValue {
 	if len(secrets) == 0 {
 		return nil
 	}
-	family := map[string]bool{
-		"host":          true,
-		"ssh_key":       true,
-		"identity":      true,
-		"proxy_profile": true,
-	}
 	entities := payloadEntityIDs(payload)
 	familyFor := map[string]string{
-		"host":          "hosts",
-		"ssh_key":       "keys",
-		"identity":      "identities",
-		"proxy_profile": "proxyProfiles",
+		entityHost:           "hosts",
+		entitySSHKey:         "keys",
+		entityIdentity:       "identities",
+		entityProxyProfile:   "proxyProfiles",
+		entityNetworkProfile: "networkProfiles",
+	}
+	// A WireGuard peer is nested inside its profile, so its Preshared Key is
+	// addressed by the stable peer id rather than by a top-level payload
+	// entity. Keep such a secret only while a surviving profile still lists
+	// that peer, so a removed peer cannot leave orphaned ciphertext behind and
+	// a peer id cannot be borrowed from a profile that the merge dropped.
+	peers := map[string]bool{}
+	for _, profile := range payload.NetworkProfiles {
+		if profile.WireGuard == nil {
+			continue
+		}
+		for _, peer := range profile.WireGuard.Peers {
+			peers[peer.ID] = true
+		}
 	}
 	var filtered []SecretValue
 	for _, secret := range secrets {
-		entityFamily := familyFor[secret.EntityType]
-		if !family[secret.EntityType] || !entities[entityFamily+"\x00"+secret.EntityID] {
-			continue
+		switch secret.EntityType {
+		case entityNetworkPeer:
+			if !peers[secret.EntityID] {
+				continue
+			}
+		default:
+			entityFamily, known := familyFor[secret.EntityType]
+			if !known || !entities[entityFamily+"\x00"+secret.EntityID] {
+				continue
+			}
 		}
 		filtered = append(filtered, secret)
 	}

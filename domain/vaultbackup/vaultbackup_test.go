@@ -148,6 +148,64 @@ func TestCountsAndEmpty(t *testing.T) {
 	}
 }
 
+func TestOptionalNetworkProfilesTable(t *testing.T) {
+	if !OptionalTable(TableNetworkProfiles) {
+		t.Fatal("network_profiles must be optional")
+	}
+	for _, table := range Tables {
+		if table != TableNetworkProfiles && OptionalTable(table) {
+			t.Errorf("%q was made optional", table)
+		}
+	}
+
+	// A snapshot written before the family existed has no table at all.
+	legacy := sampleSnapshot()
+	if err := Validate(legacy); err != nil {
+		t.Fatalf("legacy snapshot without network profiles: %v", err)
+	}
+	if legacy.Counts().NetworkProfiles != 0 || legacy.Counts().Total() != 3 {
+		t.Fatalf("legacy counts = %+v", legacy.Counts())
+	}
+
+	withProfiles := Snapshot{SchemaVersion: 10, Tables: []Table{
+		{Name: TableNetworkProfiles, Rows: []Row{
+			{
+				"id":    Text("net-1"),
+				"label": Text("tailnet"),
+				"kind":  Text("tailscale"),
+				"data":  Text(`{"id":"net-1","tailscale":{"hasAuthKey":true}}`),
+			},
+			{
+				"id":    Text("net-2"),
+				"label": Text("wg"),
+				"kind":  Text("wireguard"),
+				"data":  Text(`{"id":"net-2","wireguard":{"hasPrivateKey":true,"peers":[{"id":"peer-1","hasPresharedKey":true}]}}`),
+			},
+		}},
+	}}
+	if err := Validate(withProfiles); err != nil {
+		t.Fatalf("snapshot with network profiles: %v", err)
+	}
+	counts := withProfiles.Counts()
+	if counts.NetworkProfiles != 2 || counts.Total() != 2 {
+		t.Fatalf("counts = %+v", counts)
+	}
+	encoded, err := CanonicalBytes(withProfiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Parse(encoded)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := decoded.Counts().NetworkProfiles; got != 2 {
+		t.Fatalf("decoded network profiles = %d", got)
+	}
+	if decoded.Empty() {
+		t.Fatal("a snapshot with only Network Profiles reported empty")
+	}
+}
+
 func TestReasonValid(t *testing.T) {
 	for _, reason := range []Reason{ReasonVaultChange, ReasonBeforeRestore, ReasonAppVersionChange} {
 		if !reason.Valid() {
