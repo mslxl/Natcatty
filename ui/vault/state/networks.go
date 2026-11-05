@@ -79,6 +79,104 @@ func (s *State) NetworkProfileByID(id string) (domainvault.NetworkProfile, bool)
 	return domainvault.NetworkProfile{}, false
 }
 
+// NetworkProfileSource names where an editor's effective Network Profile
+// selection comes from. It lets the view say whether the value belongs to the
+// record being edited or is inherited.
+type NetworkProfileSource string
+
+const (
+	// NetworkProfileSourceNone means neither the record nor an ancestor sets a
+	// Network Profile.
+	NetworkProfileSourceNone NetworkProfileSource = ""
+	// NetworkProfileSourceRecord means the record being edited holds the
+	// reference: a Host's own selection or the edited Host Group's default.
+	NetworkProfileSourceRecord NetworkProfileSource = "record"
+	// NetworkProfileSourceInherited means the selection comes from a Host
+	// Group: a Host's group, or an ancestor of the edited Host Group.
+	NetworkProfileSourceInherited NetworkProfileSource = "inherited"
+)
+
+// NetworkProfileLabel returns a profile's display label, or the raw reference
+// when the profile no longer exists. The latter lets an editor show a dangling
+// soft reference instead of pretending nothing is selected.
+func (s *State) NetworkProfileLabel(id string) string {
+	if id == "" {
+		return ""
+	}
+	if profile, ok := s.NetworkProfileByID(id); ok {
+		return profile.Label
+	}
+	return id
+}
+
+// NetworkProfileUsage counts the records whose effective selection a delete
+// would change. A Host or Host Group that inherits the profile from an
+// ancestor is counted too: clearing the owning reference changes its route
+// even though the record itself holds no reference.
+func (s *State) NetworkProfileUsage(id string) (hosts, groups int) {
+	if id == "" {
+		return 0, 0
+	}
+	for _, group := range s.groupItems {
+		if domainvault.ResolveGroupDefaults(s.groupItems, group.Path).NetworkProfileID == id {
+			groups++
+		}
+	}
+	for _, host := range s.items {
+		effective := host.NetworkProfileID
+		if effective == "" {
+			effective = domainvault.ResolveGroupDefaults(s.groupItems, host.Group).NetworkProfileID
+		}
+		if effective == id {
+			hosts++
+		}
+	}
+	return hosts, groups
+}
+
+// HostNetworkProfileSource reports the Host editor's effective selection: the
+// Host's own reference, the Host Group default, or nothing. It also returns the
+// Host Group path that owns an inherited selection and the profile ID.
+func (s *State) HostNetworkProfileSource() (NetworkProfileSource, string, string) {
+	if id := strings.TrimSpace(s.form.NetworkProfileID); id != "" {
+		return NetworkProfileSourceRecord, "", id
+	}
+	group := domainvault.NormalizeGroup(s.form.Group)
+	if id := domainvault.ResolveGroupDefaults(s.groupItems, group).NetworkProfileID; id != "" {
+		return NetworkProfileSourceInherited, s.networkProfileOwner(group), id
+	}
+	return NetworkProfileSourceNone, "", ""
+}
+
+// GroupNetworkProfileSource reports the Host Group editor's effective
+// selection: the group's own reference, an ancestor's default, or nothing. It
+// names the ancestor that actually holds the reference.
+func (s *State) GroupNetworkProfileSource() (NetworkProfileSource, string, string) {
+	if id := strings.TrimSpace(s.groupForm.NetworkProfileID); id != "" {
+		return NetworkProfileSourceRecord, "", id
+	}
+	parent := domainvault.ParentGroupPath(s.groupForm.Path)
+	if id := domainvault.ResolveGroupDefaults(s.groupItems, parent).NetworkProfileID; id != "" {
+		return NetworkProfileSourceInherited, s.networkProfileOwner(parent), id
+	}
+	return NetworkProfileSourceNone, "", ""
+}
+
+// networkProfileOwner returns the deepest group at or above path that holds
+// its own Network Profile reference, matching the child-last merge order.
+func (s *State) networkProfileOwner(path string) string {
+	owner := ""
+	for _, ancestor := range domainvault.GroupAncestors(path) {
+		for _, group := range s.groupItems {
+			if group.Path == ancestor && group.NetworkProfileID != "" {
+				owner = ancestor
+				break
+			}
+		}
+	}
+	return owner
+}
+
 // EditingNetworkProfile reports whether the Network Profile editor is open.
 func (s *State) EditingNetworkProfile() bool { return s.editingNetwork }
 
@@ -252,7 +350,8 @@ func (s *State) CancelDeleteNetworkProfile() {
 }
 
 // ConfirmDeleteNetworkProfile deletes the profile awaiting confirmation. Its
-// field secrets are removed by the service; no Host is touched.
+// field secrets and every Host and Host Group reference to it are removed by
+// the service; the records themselves survive.
 func (s *State) ConfirmDeleteNetworkProfile() error {
 	if s.pendingDeleteNetwork == "" {
 		return nil

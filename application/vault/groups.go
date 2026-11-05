@@ -388,6 +388,7 @@ func groupFromDraft(group domainvault.Group, draft domainvault.GroupDraft) domai
 	group.SkipEcdsaHostKey = draft.SkipEcdsaHostKey
 	group.Algorithms = domainvault.CloneAlgorithms(draft.Algorithms)
 	group.ProxyProfileID = draft.ProxyProfileID
+	group.NetworkProfileID = draft.NetworkProfileID
 	return group
 }
 

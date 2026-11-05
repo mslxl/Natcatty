@@ -538,6 +538,10 @@ func (p vaultPasswords) Password(ctx context.Context, id model.HostID) (string, 
 type routeVault interface {
 	Get(ctx context.Context, id model.HostID) (domainvault.Host, error)
 	Secret(ctx context.Context, id model.HostID, field string) (string, error)
+	// NetworkProfile reads the non-secret profile a Host or Host Group
+	// references. The route carries only its identity and Kind; key material
+	// stays in the Vault until a Provider starts.
+	NetworkProfile(ctx context.Context, id string) (domainvault.NetworkProfile, error)
 }
 
 // authMaterialResolver is implemented by the Vault service. Route fakes need
@@ -547,10 +551,13 @@ type authMaterialResolver interface {
 	ResolveAuth(ctx context.Context, hostID model.HostID) (appvault.ResolvedAuth, error)
 }
 
-// vaultRoutes resolves a Host's ordered jump chain and its effective proxy.
-// The proxy belongs to the first endpoint, matching the original: the first
-// jump's proxy wins, otherwise the target Host's proxy is used. Later hops
-// never use a proxy because they travel inside the SSH chain.
+// vaultRoutes resolves a Host's ordered jump chain, its effective proxy, and
+// the Network Profile selected for the first endpoint. The proxy belongs to the
+// first endpoint, matching the original: the first jump's proxy wins, otherwise
+// the target Host's proxy is used. The Network Profile follows the same
+// first-endpoint rule: the first jump's effective profile wins, otherwise the
+// target Host's. Later hops never use either because they travel inside the SSH
+// chain.
 type vaultRoutes struct {
 	vault routeVault
 }
@@ -599,7 +606,40 @@ func (r vaultRoutes) Route(ctx context.Context, id model.HostID) (appconnection.
 		return appconnection.Route{}, err
 	}
 	route.Proxy = proxy
+
+	networkOwner := target
+	if first != nil && first.NetworkProfileID != "" {
+		networkOwner = *first
+	}
+	network, err := r.networkRoute(ctx, networkOwner)
+	if err != nil {
+		return appconnection.Route{}, err
+	}
+	route.Network = network
 	return route, nil
+}
+
+// networkRoute resolves the selected profile's identity and Kind. It never
+// loads key material. A dangling reference stays selected so the runtime fails
+// closed instead of silently connecting directly; the empty Kind is the
+// resolver's way of saying the profile no longer exists.
+func (r vaultRoutes) networkRoute(ctx context.Context, host domainvault.Host) (*appconnection.NetworkRoute, error) {
+	if host.NetworkProfileID == "" {
+		return nil, nil
+	}
+	network := &appconnection.NetworkRoute{ProfileID: host.NetworkProfileID}
+	profile, err := r.vault.NetworkProfile(ctx, host.NetworkProfileID)
+	switch {
+	case err == nil:
+		network.Kind = string(profile.Kind)
+	case errors.Is(err, appvault.ErrNotFound):
+		// The reference comes from another device or a hand-edited record.
+		// Keeping it non-nil is what prevents a silent direct connection.
+	default:
+		return nil, routeError(fmt.Errorf(
+			"Network Profile %s: %w", host.NetworkProfileID, err))
+	}
+	return network, nil
 }
 
 func (r vaultRoutes) proxy(ctx context.Context, host domainvault.Host) (*appconnection.Proxy, error) {

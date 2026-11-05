@@ -330,9 +330,10 @@ func (s *Service) UpdateNetworkProfile(ctx context.Context, id string,
 	return updated, nil
 }
 
-// DeleteNetworkProfile removes a profile and every field secret it owned.
-// Host and Host Group references are cleared by the routing ticket's service
-// change; this method never touches another record.
+// DeleteNetworkProfile removes a profile, clears every Host and Host Group
+// reference to it, and removes the field secrets it owned. Referenced Hosts
+// and Host Groups survive with the reference cleared; no other record is
+// deleted.
 func (s *Service) DeleteNetworkProfile(ctx context.Context, id string) error {
 	if s.networks == nil {
 		return unsupported(ErrNetworkProfilesUnavailable)
@@ -343,6 +344,36 @@ func (s *Service) DeleteNetworkProfile(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return internal(err)
+	}
+	hosts, err := s.repo.List(ctx)
+	if err != nil {
+		return internal(err)
+	}
+	for _, host := range hosts {
+		if host.NetworkProfileID != id {
+			continue
+		}
+		host.NetworkProfileID = ""
+		host.UpdatedAt = s.now()
+		if err := s.repo.Save(ctx, host); err != nil {
+			return internal(err)
+		}
+	}
+	if s.groups != nil {
+		groups, err := s.groups.ListGroups(ctx)
+		if err != nil {
+			return internal(err)
+		}
+		for _, group := range groups {
+			if group.NetworkProfileID != id {
+				continue
+			}
+			group.NetworkProfileID = ""
+			group.UpdatedAt = s.now()
+			if err := s.groups.SaveGroup(ctx, group); err != nil {
+				return internal(err)
+			}
+		}
 	}
 	if err := s.networks.DeleteNetworkProfile(ctx, id); err != nil {
 		if errors.Is(err, ErrNotFound) {

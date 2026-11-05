@@ -240,6 +240,11 @@ type Host struct {
 	// ProxyProfileID selects a saved Proxy Profile. A manual Proxy wins over a
 	// profile; an empty reference means the Host has no proxy of its own.
 	ProxyProfileID string `json:"proxyProfileId,omitempty"`
+	// NetworkProfileID selects a saved Network Profile for the first endpoint
+	// of this Host's route. An empty reference inherits the Host Group's
+	// selection; with no group default the Host has no Network Route and
+	// connects exactly as before.
+	NetworkProfileID string `json:"networkProfileId,omitempty"`
 	// LegacyAlgorithms widens the offered algorithms for older servers. On a
 	// jump Host it is additive with the target's setting.
 	LegacyAlgorithms bool `json:"legacyAlgorithms,omitempty"`
@@ -310,6 +315,10 @@ type Draft struct {
 	// deleting a profile clears it on every Host and Host Group, but a record
 	// written by an older version may still hold an unknown identifier.
 	ProxyProfileID string
+	// NetworkProfileID selects a saved Network Profile. It is a soft reference
+	// resolved like ProxyProfileID: a Host's own value wins over its Host
+	// Group's default, and deleting the profile clears both.
+	NetworkProfileID string
 	// LegacyAlgorithms, SkipEcdsaHostKey, and Algorithms configure SSH
 	// negotiation. Each jump Host carries its own copy.
 	LegacyAlgorithms bool
@@ -479,6 +488,7 @@ func NormalizeDraft(draft Draft) (Draft, error) {
 	draft.HostChain = normalizeHostChain(draft.HostChain)
 	draft.Proxy = normalizeProxy(draft.Proxy)
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// Disabling X11 drops the acknowledgement, so re-enabling it always asks
 	// the user to accept the warning again.
@@ -553,6 +563,7 @@ func (h Host) Validate() error {
 		HostChain:               h.HostChain,
 		Proxy:                   h.Proxy,
 		ProxyProfileID:          h.ProxyProfileID,
+		NetworkProfileID:        h.NetworkProfileID,
 		Algorithms:              h.Algorithms,
 		SFTPFileProtocol:        h.SFTPFileProtocol,
 		SFTPSudo:                h.SFTPSudo,
@@ -719,6 +730,9 @@ func validateFields(draft Draft) error {
 		return err
 	}
 	if err := validateText(FieldProxy, draft.ProxyProfileID, maxLabelLength, false); err != nil {
+		return err
+	}
+	if err := validateText(FieldNetworkProfile, draft.NetworkProfileID, maxLabelLength, false); err != nil {
 		return err
 	}
 	return validateAlgorithms(draft.Algorithms)

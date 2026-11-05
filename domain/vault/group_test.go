@@ -251,6 +251,62 @@ func TestParentGroupPathDropsTheLastSegment(t *testing.T) {
 	}
 }
 
+func TestNetworkProfileReferenceFollowsProxyProfileMergingRules(t *testing.T) {
+	// The Host editor trims the soft reference like every other selector, and a
+	// saved Host keeps it through Validate.
+	host, err := NormalizeDraft(Draft{
+		Label: "web", Hostname: "10.0.0.2", NetworkProfileID: "  net-host  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeDraft: %v", err)
+	}
+	if host.NetworkProfileID != "net-host" {
+		t.Fatalf("Host NetworkProfileID = %q, want net-host", host.NetworkProfileID)
+	}
+	stored := Host{Label: "web", Hostname: "10.0.0.2", Protocol: ProtocolSSH,
+		NetworkProfileID: host.NetworkProfileID}
+	if err := stored.Validate(); err != nil {
+		t.Fatalf("Host.Validate: %v", err)
+	}
+
+	groupDraft, err := NormalizeGroupDraft(GroupDraft{
+		Path: "prod", NetworkProfileID: "  net-group  ",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGroupDraft: %v", err)
+	}
+	if groupDraft.NetworkProfileID != "net-group" {
+		t.Fatalf("Group NetworkProfileID = %q, want net-group", groupDraft.NetworkProfileID)
+	}
+
+	groups := []Group{
+		{Path: "prod", NetworkProfileID: "net-parent"},
+		{Path: "prod/web", NetworkProfileID: "net-child"},
+	}
+	if got := ResolveGroupDefaults(groups, "prod/web").NetworkProfileID; got != "net-child" {
+		t.Fatalf("child default = %q, want net-child", got)
+	}
+	if got := ResolveGroupDefaults(groups, "prod/db").NetworkProfileID; got != "net-parent" {
+		t.Fatalf("sibling default = %q, want the parent's net-parent", got)
+	}
+
+	defaults := ResolveGroupDefaults(groups, "prod/web")
+	own := ApplyGroupDefaults(Host{
+		Protocol: ProtocolSSH, Group: "prod/web", NetworkProfileID: "net-own",
+	}, defaults)
+	if own.NetworkProfileID != "net-own" {
+		t.Fatalf("a Host's own reference lost to the group: %q", own.NetworkProfileID)
+	}
+	inherited := ApplyGroupDefaults(Host{Protocol: ProtocolSSH, Group: "prod/web"}, defaults)
+	if inherited.NetworkProfileID != "net-child" {
+		t.Fatalf("inherited reference = %q, want net-child", inherited.NetworkProfileID)
+	}
+	local := ApplyGroupDefaults(Host{Protocol: ProtocolLocal, Group: "prod/web"}, defaults)
+	if local.NetworkProfileID != "" {
+		t.Fatalf("a Local shell inherited a Network Profile: %q", local.NetworkProfileID)
+	}
+}
+
 func groupAsValidation(err error, target **ValidationError) bool {
 	invalid, ok := err.(*ValidationError)
 	if ok {

@@ -435,3 +435,117 @@ func TestSessionOnlyNetworkSecretsAreNotClaimedByTheRecord(t *testing.T) {
 		t.Fatalf("session store value = %q", got)
 	}
 }
+
+// routingNetworkService builds a Vault with the Hosts, Host Groups, and
+// Network Profiles the routing reference tests need.
+func routingNetworkService(hosts *fakeHosts, groups *fakeGroups, networks *fakeNetworkProfiles) *Service {
+	return NewService(hosts,
+		WithGroups(groups),
+		WithNetworkProfiles(networks),
+		WithSecrets(newFakeSecrets()),
+		WithClock(fixedFamilyTime),
+	)
+}
+
+func TestEffectiveHostInheritsTheGroupNetworkProfileUnlessItSelectsOne(t *testing.T) {
+	ctx := context.Background()
+	hosts := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "inherited", Label: "inherited", Hostname: "one.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "own", Label: "own", Hostname: "two.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod", NetworkProfileID: "net-own"},
+		{ID: "outside", Label: "outside", Hostname: "three.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "lab"},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{
+		{Path: "prod", NetworkProfileID: "net-group"},
+		{Path: "lab"},
+	}}
+	networks := &fakeNetworkProfiles{items: []domainvault.NetworkProfile{
+		{ID: "net-group", Label: "group net", Kind: domainvault.NetworkKindTailscale},
+		{ID: "net-own", Label: "own net", Kind: domainvault.NetworkKindWireGuard},
+	}}
+	service := routingNetworkService(hosts, groups, networks)
+
+	inherited, err := service.EffectiveHost(ctx, "inherited")
+	if err != nil {
+		t.Fatalf("EffectiveHost inherited: %v", err)
+	}
+	if inherited.NetworkProfileID != "net-group" {
+		t.Fatalf("inherited NetworkProfileID = %q, want net-group", inherited.NetworkProfileID)
+	}
+	own, err := service.EffectiveHost(ctx, "own")
+	if err != nil {
+		t.Fatalf("EffectiveHost own: %v", err)
+	}
+	if own.NetworkProfileID != "net-own" {
+		t.Fatalf("own NetworkProfileID = %q, want net-own to beat the group", own.NetworkProfileID)
+	}
+	outside, err := service.EffectiveHost(ctx, "outside")
+	if err != nil {
+		t.Fatalf("EffectiveHost outside: %v", err)
+	}
+	if outside.NetworkProfileID != "" {
+		t.Fatalf("a Host outside the group inherited %q", outside.NetworkProfileID)
+	}
+	if hosts.hosts[0].NetworkProfileID != "" || hosts.hosts[1].NetworkProfileID != "net-own" {
+		t.Fatalf("the stored Hosts changed: %+v", hosts.hosts)
+	}
+}
+
+func TestDeleteNetworkProfileClearsHostAndGroupReferences(t *testing.T) {
+	ctx := context.Background()
+	hosts := &fakeHosts{hosts: []domainvault.Host{
+		{ID: "inherited", Label: "inherited", Hostname: "one.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod"},
+		{ID: "own", Label: "own", Hostname: "two.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "prod", NetworkProfileID: "net-group"},
+		{ID: "other", Label: "other", Hostname: "three.example.com",
+			Protocol: domainvault.ProtocolSSH, Group: "lab"},
+	}}
+	groups := &fakeGroups{items: []domainvault.Group{
+		{Path: "prod", NetworkProfileID: "net-group"},
+		{Path: "lab", NetworkProfileID: "net-other"},
+	}}
+	networks := &fakeNetworkProfiles{items: []domainvault.NetworkProfile{
+		{ID: "net-group", Label: "group net", Kind: domainvault.NetworkKindTailscale},
+		{ID: "net-other", Label: "other net", Kind: domainvault.NetworkKindWireGuard},
+	}}
+	service := routingNetworkService(hosts, groups, networks)
+
+	if err := service.DeleteNetworkProfile(ctx, "net-group"); err != nil {
+		t.Fatalf("DeleteNetworkProfile: %v", err)
+	}
+	if len(hosts.hosts) != 3 || len(groups.items) != 2 {
+		t.Fatalf("a soft-reference delete cascaded: hosts=%+v groups=%+v", hosts.hosts, groups.items)
+	}
+	if hosts.hosts[0].NetworkProfileID != "" || hosts.hosts[1].NetworkProfileID != "" {
+		t.Fatalf("Host references survived the delete: %+v", hosts.hosts)
+	}
+	if groups.items[0].NetworkProfileID != "" {
+		t.Fatalf("Host Group reference survived the delete: %+v", groups.items[0])
+	}
+	if groups.items[1].NetworkProfileID != "net-other" {
+		t.Fatalf("an unrelated group reference was cleared: %+v", groups.items[1])
+	}
+	if len(networks.items) != 1 || networks.items[0].ID != "net-other" {
+		t.Fatalf("remaining profiles = %+v, want only net-other", networks.items)
+	}
+	inherited, err := service.EffectiveHost(ctx, "inherited")
+	if err != nil {
+		t.Fatalf("EffectiveHost after delete: %v", err)
+	}
+	if inherited.NetworkProfileID != "" {
+		t.Fatalf("the deleted group reference is still effective: %q", inherited.NetworkProfileID)
+	}
+	other, err := service.EffectiveHost(ctx, "other")
+	if err != nil {
+		t.Fatalf("EffectiveHost other: %v", err)
+	}
+	if other.NetworkProfileID != "net-other" {
+		t.Fatalf("the surviving profile did not stay effective: %q", other.NetworkProfileID)
+	}
+	if err := service.DeleteNetworkProfile(ctx, "net-group"); err != ErrNotFound {
+		t.Fatalf("deleting a missing profile = %v, want ErrNotFound", err)
+	}
+}

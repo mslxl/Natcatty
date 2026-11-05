@@ -93,19 +93,29 @@ func networkSummary(m locales.Messages, profile domainvault.NetworkProfile) stri
 }
 
 func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
-	if s.PendingDeleteNetworkProfile() == "" {
+	id := s.PendingDeleteNetworkProfile()
+	if id == "" {
 		return
 	}
 	label := ""
-	if profile, ok := s.NetworkProfileByID(s.PendingDeleteNetworkProfile()); ok {
+	if profile, ok := s.NetworkProfileByID(id); ok {
 		label = profile.Label
 	}
 	message := m.VaultDeleteConfirmUnknown()
 	if label != "" {
 		message = m.VaultDeleteConfirm(label)
 	}
+	hosts, groups := s.NetworkProfileUsage(id)
 	ui.Row(c).FillWidth().Gap(8).Padding(8).Background(t.Surface).Children(func() {
-		ui.Text(c, message).Grow(1).TextColor(uitheme.DangerText(t))
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, message).TextColor(uitheme.DangerText(t))
+			// Deleting clears soft references, so the affected scope must be
+			// visible before the user confirms.
+			if hosts > 0 || groups > 0 {
+				ui.Text(c, m.VaultNetworkDeleteAffected(hosts, groups)).
+					FontSize(12).TextColor(t.TextMuted)
+			}
+		})
 		if ui.Button(c, m.VaultHostCancel()).Clicked() {
 			s.CancelDeleteNetworkProfile()
 			c.Invalidate()
@@ -115,6 +125,53 @@ func networkDeleteBanner(c *ui.Context, s *vaultstate.State, m locales.Messages,
 			c.Invalidate()
 		}
 	})
+}
+
+// hostNetworkProfileField renders the Host editor's Network Profile selector
+// and the line that says whether the effective value is the Host's own or a
+// Host Group default.
+func hostNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.Form()
+	ui.Field(c, m.VaultNetworkProfile(), func() {
+		ui.RadioGroup(c, func() {
+			ui.Radio(c, &form.NetworkProfileID, "", m.VaultNone())
+			for _, profile := range s.NetworkProfiles() {
+				ui.Radio(c, &form.NetworkProfileID, profile.ID, profile.Label)
+			}
+		})
+	}).Description(m.VaultHostNetworkProfileHint())
+	source, path, id := s.HostNetworkProfileSource()
+	switch source {
+	case vaultstate.NetworkProfileSourceRecord:
+		ui.Text(c, m.VaultNetworkProfileSourceHost()).
+			FontSize(12).TextColor(t.TextMuted)
+	case vaultstate.NetworkProfileSourceInherited:
+		ui.Text(c, m.VaultNetworkProfileInherited(path, s.NetworkProfileLabel(id))).
+			FontSize(12).TextColor(t.TextMuted)
+	}
+}
+
+// groupNetworkProfileField renders the Host Group editor's Network Profile
+// default and says whether it belongs to this group or a parent group.
+func groupNetworkProfileField(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme) {
+	form := s.GroupForm()
+	ui.Field(c, m.VaultNetworkProfile(), func() {
+		ui.RadioGroup(c, func() {
+			ui.Radio(c, &form.NetworkProfileID, "", m.VaultNone())
+			for _, profile := range s.NetworkProfiles() {
+				ui.Radio(c, &form.NetworkProfileID, profile.ID, profile.Label)
+			}
+		})
+	}).Description(m.VaultGroupNetworkProfileHint())
+	source, path, id := s.GroupNetworkProfileSource()
+	switch source {
+	case vaultstate.NetworkProfileSourceRecord:
+		ui.Text(c, m.VaultNetworkProfileSourceHostGroup()).
+			FontSize(12).TextColor(t.TextMuted)
+	case vaultstate.NetworkProfileSourceInherited:
+		ui.Text(c, m.VaultNetworkProfileInherited(path, s.NetworkProfileLabel(id))).
+			FontSize(12).TextColor(t.TextMuted)
+	}
 }
 
 func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme, scroll *ui.ScrollState) {

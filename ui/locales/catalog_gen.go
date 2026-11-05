@@ -1076,6 +1076,70 @@ func (msgs Messages) VaultHostProxyProfileHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostProxyProfileHint", nil)
 }
 
+// VaultNetworkProfile says "Network Profile"
+// in the language the app shows.
+func VaultNetworkProfile() string { return In(i18n.Locale()).VaultNetworkProfile() }
+
+// VaultNetworkProfile says "Network Profile"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkProfile() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProfile", nil)
+}
+
+// VaultHostNetworkProfileHint says "The first jump's Network Profile wins; otherwise this Host's. Later hops never use one."
+// in the language the app shows.
+func VaultHostNetworkProfileHint() string { return In(i18n.Locale()).VaultHostNetworkProfileHint() }
+
+// VaultHostNetworkProfileHint says "The first jump's Network Profile wins; otherwise this Host's. Later hops never use one."
+// in the language of msgs.
+func (msgs Messages) VaultHostNetworkProfileHint() string {
+	return Catalog.Format(msgs.locale, "vaultHostNetworkProfileHint", nil)
+}
+
+// VaultGroupNetworkProfileHint says "Member Hosts inherit this unless they select their own. The first jump's profile wins."
+// in the language the app shows.
+func VaultGroupNetworkProfileHint() string { return In(i18n.Locale()).VaultGroupNetworkProfileHint() }
+
+// VaultGroupNetworkProfileHint says "Member Hosts inherit this unless they select their own. The first jump's profile wins."
+// in the language of msgs.
+func (msgs Messages) VaultGroupNetworkProfileHint() string {
+	return Catalog.Format(msgs.locale, "vaultGroupNetworkProfileHint", nil)
+}
+
+// VaultNetworkProfileSourceHost says "Set on this Host"
+// in the language the app shows.
+func VaultNetworkProfileSourceHost() string { return In(i18n.Locale()).VaultNetworkProfileSourceHost() }
+
+// VaultNetworkProfileSourceHost says "Set on this Host"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkProfileSourceHost() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProfileSourceHost", nil)
+}
+
+// VaultNetworkProfileSourceHostGroup says "Set on this Host Group"
+// in the language the app shows.
+func VaultNetworkProfileSourceHostGroup() string {
+	return In(i18n.Locale()).VaultNetworkProfileSourceHostGroup()
+}
+
+// VaultNetworkProfileSourceHostGroup says "Set on this Host Group"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkProfileSourceHostGroup() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProfileSourceHostGroup", nil)
+}
+
+// VaultNetworkProfileInherited says "Inherited from {path} ({label})"
+// in the language the app shows.
+func VaultNetworkProfileInherited(path string, label string) string {
+	return In(i18n.Locale()).VaultNetworkProfileInherited(path, label)
+}
+
+// VaultNetworkProfileInherited says "Inherited from {path} ({label})"
+// in the language of msgs.
+func (msgs Messages) VaultNetworkProfileInherited(path string, label string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProfileInherited", map[string]any{"path": path, "label": label})
+}
+
 // VaultProxyListTitle says "Proxy Profiles ({count})"
 // in the language the app shows.
 //
@@ -1258,6 +1322,24 @@ func VaultNetworkEmpty() string { return In(i18n.Locale()).VaultNetworkEmpty() }
 // in the language of msgs.
 func (msgs Messages) VaultNetworkEmpty() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkEmpty", nil)
+}
+
+// VaultNetworkDeleteAffected says "Affects {hosts, plural, one {# Host} other {# Hosts}} and {groups, plural, one {# Host Group} other {# Host Groups}}.…"
+// in the language the app shows.
+//
+// The scope a Network Profile delete affects, naming the Hosts and Host
+// Groups whose references are cleared.
+func VaultNetworkDeleteAffected(hosts int, groups int) string {
+	return In(i18n.Locale()).VaultNetworkDeleteAffected(hosts, groups)
+}
+
+// VaultNetworkDeleteAffected says "Affects {hosts, plural, one {# Host} other {# Hosts}} and {groups, plural, one {# Host Group} other {# Host Groups}}.…"
+// in the language of msgs.
+//
+// The scope a Network Profile delete affects, naming the Hosts and Host
+// Groups whose references are cleared.
+func (msgs Messages) VaultNetworkDeleteAffected(hosts int, groups int) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkDeleteAffected", map[string]any{"hosts": hosts, "groups": groups})
 }
 
 // VaultNetworkFormCreateTitle says "New Network Profile"

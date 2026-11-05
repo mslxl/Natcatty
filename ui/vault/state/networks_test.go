@@ -260,3 +260,142 @@ func TestNetworkProfileDeleteConfirmationAndServiceErrors(t *testing.T) {
 		t.Fatalf("validation problem = %q, want %q", state.Problem(), ProblemNetworkProfile)
 	}
 }
+
+func routingState() *State {
+	hosts := &fakeHosts{items: []domainvault.Host{
+		{ID: "own", Label: "own", Group: "prod/web", NetworkProfileID: "net-own"},
+		{ID: "inherited", Label: "inherited", Group: "prod/web"},
+		{ID: "outside", Label: "outside", Group: "lab"},
+	}}
+	groups := &effectiveGroups{items: []domainvault.Group{
+		{Path: "prod", NetworkProfileID: "net-parent"},
+		{Path: "prod/web"},
+		{Path: "prod/db", NetworkProfileID: "net-own"},
+		{Path: "lab"},
+	}}
+	profiles := &fakeNetworkProfileService{items: []domainvault.NetworkProfile{
+		{ID: "net-parent", Label: "Parent"},
+		{ID: "net-own", Label: "Own"},
+	}}
+	return NewState(hosts, WithGroups(groups), WithNetworkProfiles(profiles))
+}
+
+func TestHostAndGroupFormsRoundTripTheNetworkProfileReference(t *testing.T) {
+	state := routingState()
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if !state.BeginEdit("own") {
+		t.Fatalf("BeginEdit: %v", state.Problem())
+	}
+	if state.Form().NetworkProfileID != "net-own" {
+		t.Fatalf("edit form NetworkProfileID = %q, want net-own", state.Form().NetworkProfileID)
+	}
+	draft, problem := state.draft()
+	if problem != ProblemNone || draft.NetworkProfileID != "net-own" {
+		t.Fatalf("Host draft = %+v, problem = %q", draft.NetworkProfileID, problem)
+	}
+
+	state.BeginCreate()
+	state.Form().NetworkProfileID = "net-parent"
+	draft, problem = state.draft()
+	if problem != ProblemNone || draft.NetworkProfileID != "net-parent" {
+		t.Fatalf("create draft NetworkProfileID = %q, problem = %q",
+			draft.NetworkProfileID, problem)
+	}
+
+	if !state.BeginEditGroup("prod/db") {
+		t.Fatalf("BeginEditGroup: %v", state.Problem())
+	}
+	if state.GroupForm().NetworkProfileID != "net-own" {
+		t.Fatalf("group edit form NetworkProfileID = %q, want net-own",
+			state.GroupForm().NetworkProfileID)
+	}
+	groupDraft, problem := state.groupDraft()
+	if problem != ProblemNone || groupDraft.NetworkProfileID != "net-own" {
+		t.Fatalf("Group draft NetworkProfileID = %q, problem = %q",
+			groupDraft.NetworkProfileID, problem)
+	}
+
+	state.BeginCreateGroup()
+	state.GroupForm().Path = "prod/web/internal"
+	state.GroupForm().NetworkProfileID = "net-parent"
+	groupDraft, problem = state.groupDraft()
+	if problem != ProblemNone || groupDraft.NetworkProfileID != "net-parent" {
+		t.Fatalf("create group draft NetworkProfileID = %q, problem = %q",
+			groupDraft.NetworkProfileID, problem)
+	}
+}
+
+func TestNetworkProfileSourceReportsTheOwningRecord(t *testing.T) {
+	state := routingState()
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	state.BeginEdit("own")
+	source, path, id := state.HostNetworkProfileSource()
+	if source != NetworkProfileSourceRecord || path != "" || id != "net-own" {
+		t.Fatalf("own Host source = %q/%q/%q", source, path, id)
+	}
+
+	state.BeginEdit("inherited")
+	source, path, id = state.HostNetworkProfileSource()
+	if source != NetworkProfileSourceInherited || path != "prod" || id != "net-parent" {
+		t.Fatalf("inherited Host source = %q/%q/%q", source, path, id)
+	}
+	if label := state.NetworkProfileLabel(id); label != "Parent" {
+		t.Fatalf("inherited label = %q, want Parent", label)
+	}
+
+	state.BeginEdit("outside")
+	if source, path, id = state.HostNetworkProfileSource(); source != NetworkProfileSourceNone ||
+		path != "" || id != "" {
+		t.Fatalf("unconfigured Host source = %q/%q/%q", source, path, id)
+	}
+
+	// The group editor distinguishes its own reference from a parent default.
+	state.BeginEditGroup("prod/db")
+	if source, path, id = state.GroupNetworkProfileSource(); source != NetworkProfileSourceRecord ||
+		path != "" || id != "net-own" {
+		t.Fatalf("own Group source = %q/%q/%q", source, path, id)
+	}
+	state.BeginEditGroup("prod/web")
+	if source, path, id = state.GroupNetworkProfileSource(); source != NetworkProfileSourceInherited ||
+		path != "prod" || id != "net-parent" {
+		t.Fatalf("inherited Group source = %q/%q/%q", source, path, id)
+	}
+	state.GroupForm().NetworkProfileID = "net-own"
+	if source, path, id = state.GroupNetworkProfileSource(); source != NetworkProfileSourceRecord ||
+		path != "" || id != "net-own" {
+		t.Fatalf("edited Group source = %q/%q/%q", source, path, id)
+	}
+
+	// A dangling reference is shown by its raw ID instead of vanishing.
+	if label := state.NetworkProfileLabel("gone"); label != "gone" {
+		t.Fatalf("dangling label = %q, want the raw reference", label)
+	}
+}
+
+func TestNetworkProfileUsageCountsHostsAndGroupsIncludingInheritance(t *testing.T) {
+	state := routingState()
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	// prod owns net-parent and prod/web inherits it; the Host in prod/web is
+	// affected through both, so the scope includes the inheriting Group.
+	if hosts, groups := state.NetworkProfileUsage("net-parent"); hosts != 1 || groups != 2 {
+		t.Fatalf("net-parent usage = %d Hosts, %d Groups, want 1 and 2", hosts, groups)
+	}
+	if hosts, groups := state.NetworkProfileUsage("net-own"); hosts != 1 || groups != 1 {
+		t.Fatalf("net-own usage = %d Hosts, %d Groups, want 1 and 1", hosts, groups)
+	}
+	if hosts, groups := state.NetworkProfileUsage(""); hosts != 0 || groups != 0 {
+		t.Fatalf("empty usage = %d Hosts, %d Groups, want 0 and 0", hosts, groups)
+	}
+	if hosts, groups := state.NetworkProfileUsage("unused"); hosts != 0 || groups != 0 {
+		t.Fatalf("unused usage = %d Hosts, %d Groups, want 0 and 0", hosts, groups)
+	}
+}

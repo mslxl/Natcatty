@@ -211,7 +211,8 @@ func hostDraftFromHost(host domainvault.Host) domainvault.Draft {
 		AuthMethod: host.AuthMethod, UseSSHAgent: host.UseSSHAgent,
 		RequiresMFA:   host.RequiresMFA,
 		X11Forwarding: host.X11Forwarding, X11WarningAcknowledged: host.X11WarningAcknowledged,
-		ProxyProfileID: host.ProxyProfileID, LegacyAlgorithms: host.LegacyAlgorithms,
+		ProxyProfileID: host.ProxyProfileID, NetworkProfileID: host.NetworkProfileID,
+		LegacyAlgorithms: host.LegacyAlgorithms,
 		SkipEcdsaHostKey: host.SkipEcdsaHostKey, Algorithms: host.Algorithms,
 		SFTPFileProtocol: host.SFTPFileProtocol, SFTPSudo: host.SFTPSudo,
 		DeviceType: host.DeviceType, AutoAttachTmux: host.AutoAttachTmux,
@@ -295,6 +296,9 @@ func (e *mcpWriteExecutor) updateHost(ctx context.Context, tool string,
 	}
 	if hasArg(arguments, "proxyProfileId") {
 		draft.ProxyProfileID = stringParam(arguments, "proxyProfileId")
+	}
+	if hasArg(arguments, "networkProfileId") {
+		draft.NetworkProfileID = stringParam(arguments, "networkProfileId")
 	}
 	if hasArg(arguments, "password") {
 		draft.Password = stringParam(arguments, "password")
@@ -680,6 +684,7 @@ func (e *mcpWriteExecutor) executeGroups(ctx context.Context, tool string,
 				LegacyAlgorithms: group.LegacyAlgorithms,
 				SkipEcdsaHostKey: group.SkipEcdsaHostKey,
 				Algorithms:       group.Algorithms, ProxyProfileID: group.ProxyProfileID,
+				NetworkProfileID: group.NetworkProfileID,
 			}
 			break
 		}
@@ -757,6 +762,8 @@ func applyGroupDefaults(draft *domainvault.GroupDraft, defaults map[string]any) 
 			draft.IdentityID = model.IdentityID(anyString(value))
 		case "proxyProfileId":
 			draft.ProxyProfileID = anyString(value)
+		case "networkProfileId":
+			draft.NetworkProfileID = anyString(value)
 		case "keyId":
 			draft.KeyID = model.KeyID(anyString(value))
 		case "port":
