@@ -58,6 +58,13 @@ func goldenScriptStates(t *testing.T) []scriptedState {
 		t.Fatal("no parity goldens found")
 	}
 	sort.Strings(paths)
+	return scriptStatesForPaths(t, paths)
+}
+
+// scriptStatesForPaths turns golden files into the scripted host-state
+// sequence the stock-client differential replays.
+func scriptStatesForPaths(t *testing.T, paths []string) []scriptedState {
+	t.Helper()
 	var states []scriptedState
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
@@ -351,14 +358,11 @@ func runStockMoshClientStable(t *testing.T, states []scriptedState) []byte {
 	return nil
 }
 
-func TestSessionMatchesStockMoshClient(t *testing.T) {
-	if os.Getenv("NATCATTY_MOSH_PARITY") == "" {
-		t.Skip("set NATCATTY_MOSH_PARITY=1 to compare a Session with stock mosh-client")
-	}
+func compareStatesWithStock(t *testing.T, states []scriptedState) []byte {
+	t.Helper()
 	// Both sides run with the variable absent, so the stock title prefix is
 	// part of the compared stream regardless of the caller's environment.
 	unsetTestEnv(t, "MOSH_TITLE_NOPREFIX")
-	states := goldenScriptStates(t)
 
 	stock := runStockMoshClientStable(t, states)
 	reference := referenceRendererOutput(t, states)
@@ -381,9 +385,30 @@ func TestSessionMatchesStockMoshClient(t *testing.T) {
 	if fmt.Sprint(sizes) != fmt.Sprint(wantSizes) {
 		t.Fatalf("view resize sequence = %v, want %v", sizes, wantSizes)
 	}
+	return stock
+}
+
+func TestSessionMatchesStockMoshClient(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_PARITY") == "" {
+		t.Skip("set NATCATTY_MOSH_PARITY=1 to compare a Session with stock mosh-client")
+	}
+	stock := compareStatesWithStock(t, goldenScriptStates(t))
 	if !strings.Contains(string(stock), "\x1b[?1h") {
 		t.Fatal("stock output never forced application-cursor-key mode")
 	}
+}
+
+// TestSessionMatchesStockMoshClientWidthEdges is the focused differential for
+// the glibc wcwidth code points Go's unicode tables get wrong: Zs separators,
+// Hangul Jamo, and private-use planes. It runs the same stock mosh-client PTY
+// comparison as the full corpus test, against only the width-edges scenario.
+func TestSessionMatchesStockMoshClientWidthEdges(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_PARITY") == "" {
+		t.Skip("set NATCATTY_MOSH_PARITY=1 to compare a Session with stock mosh-client")
+	}
+	path := filepath.Join("..", "..", "internal", "mosh", "terminal",
+		"testdata", "parity", "goldens", "width-edges.json")
+	compareStatesWithStock(t, scriptStatesForPaths(t, []string{path}))
 }
 
 // TestInProcessTransportOnlyQueuesEncodedOutput is the non-opt-in form of the

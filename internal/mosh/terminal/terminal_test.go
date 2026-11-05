@@ -5,6 +5,7 @@ package terminal
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func rowRunes(fb *Framebuffer, row int) string {
@@ -34,10 +35,136 @@ func TestRuneWidth(t *testing.T) {
 		{"bell", 0x07, -1},
 		{"del", 0x7f, -1},
 		{"c1", 0x85, -1},
+		// Expected values come from glibc 2.39 wcwidth(3) in the Ubuntu
+		// 24.04 C.UTF-8 locale, the stock parity oracle. unicode.IsPrint and
+		// x/text/width disagree with it for several of these code points.
+		{"ogham-space", 0x1680, 1},
+		{"en-quad", 0x2000, 1},
+		{"hair-space", 0x200a, 1},
+		{"narrow-nbsp", 0x202f, 1},
+		{"medium-math-space", 0x205f, 1},
+		{"ideo-space-width", 0x3000, 2},
+		{"soft-hyphen", 0x00ad, 1},
+		{"private-use-low", 0xe000, 1},
+		{"private-use-high", 0xf8ff, 1},
+		{"supplementary-pua-a", 0xf0000, 1},
+		{"supplementary-pua-b", 0x10fffd, 1},
+		{"hangul-leading-jamo", 0x1100, 2},
+		{"hangul-leading-jamo-last", 0x115f, 2},
+		{"hangul-medial-jamo", 0x1160, 0},
+		{"hangul-medial-jamo-mid", 0x1161, 0},
+		{"hangul-final-jamo", 0x11a8, 0},
+		{"hangul-jamo-end", 0x11ff, 0},
+		{"enclosing-mark", 0x20dd, 0},
+		{"variation-selector-16", 0xfe0f, 0},
+		{"variation-selector-supplementary", 0xe0100, 0},
+		{"zero-width-space", 0x200b, 0},
+		{"word-joiner", 0x2060, 0},
+		{"interlinear-annotation", 0xfff9, 0},
+		{"emoji-wide", 0x1f600, 2},
+		{"regional-indicator", 0x1f1e6, 1},
+		{"thai-sara-am", 0x0e33, 1},
+		{"unassigned", 0x0378, -1},
+		{"unassigned-cyrillic", 0x05ff, -1},
+		{"noncharacter", 0x10ffff, -1},
+		{"out-of-range", 0x110000, -1},
 	}
 	for _, testCase := range cases {
 		if got := RuneWidth(testCase.r); got != testCase.want {
 			t.Errorf("%s: RuneWidth(%U) = %d, want %d", testCase.name, testCase.r, got, testCase.want)
+		}
+	}
+}
+
+// TestWcwidthTableIsWellFormed guards the generated table: sorted,
+// non-overlapping, in range, and with only the three widths stock handles.
+func TestWcwidthTableIsWellFormed(t *testing.T) {
+	previous := rune(-1)
+	for i, interval := range wcwidthRanges {
+		if interval.lo > interval.hi {
+			t.Fatalf("interval %d is reversed: %+v", i, interval)
+		}
+		if interval.lo <= previous {
+			t.Fatalf("interval %d overlaps or is unsorted: %+v after U+%04X", i, interval, previous)
+		}
+		if interval.hi > 0x10FFFF {
+			t.Fatalf("interval %d exceeds Unicode: %+v", i, interval)
+		}
+		switch interval.width {
+		case -1, 0, 2:
+		default:
+			t.Fatalf("interval %d has unexpected width %d", i, interval.width)
+		}
+		previous = interval.hi
+	}
+	// RuneWidth must agree with the oracle for every code point the table
+	// covers and return width 1 in the gaps.
+	for _, interval := range wcwidthRanges {
+		for _, r := range []rune{interval.lo, interval.hi} {
+			if r == 0 {
+				continue // stock's NUL special case
+			}
+			if got := RuneWidth(r); got != int(interval.width) {
+				t.Fatalf("RuneWidth(U+%04X) = %d, want table width %d", r, got, interval.width)
+			}
+		}
+	}
+}
+
+// TestMonotonicMillisAt pins the transport timestamp conversion: stock stores
+// transport send timestamps on the same monotonic clock its overlay uses,
+// while Go's transport stores time.Time values. Zero and pre-start times have
+// no in-process meaning and map to zero.
+func TestMonotonicMillisAt(t *testing.T) {
+	if got := MonotonicMillisAt(time.Time{}); got != 0 {
+		t.Fatalf("zero time = %d, want 0", got)
+	}
+	if got := MonotonicMillisAt(processStart.Add(-time.Second)); got != 0 {
+		t.Fatalf("pre-start time = %d, want 0", got)
+	}
+	at := processStart.Add(1234*time.Millisecond + 900*time.Microsecond)
+	if got := MonotonicMillisAt(at); got != 1234 {
+		t.Fatalf("converted timestamp = %d, want 1234", got)
+	}
+}
+
+// TestSGRTrueColorOutOfRangeMatchesStock pins stock's unmasked packing. A
+// 25-bit bitfield stores the OR of the unmasked components, so an SGR 300 blue
+// component bleeds into green and serializes as 3;44, exactly as the Ubuntu
+// 24.04 stock oracle emits. Masking each component would print 2;44 instead.
+func TestSGRTrueColorOutOfRangeMatchesStock(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*Renditions)
+		want string
+	}{
+		{
+			name: "foreground-blue-overflow",
+			set: func(r *Renditions) {
+				r.SetForegroundColor(MakeTrueColor(1, 2, 300))
+			},
+			want: "\033[0;38;2;1;3;44m",
+		},
+		{
+			name: "background-blue-overflow",
+			set: func(r *Renditions) {
+				r.SetBackgroundColor(MakeTrueColor(255, 2, 511))
+			},
+			want: "\033[0;48;2;255;3;255m",
+		},
+		{
+			name: "foreground-green-overflow",
+			set: func(r *Renditions) {
+				r.SetForegroundColor(MakeTrueColor(0, 0x1ff, 0))
+			},
+			want: "\033[0;38;2;1;255;0m",
+		},
+	}
+	for _, testCase := range cases {
+		var r Renditions
+		testCase.set(&r)
+		if got := r.SGR(); got != testCase.want {
+			t.Errorf("%s: SGR = %q, want %q", testCase.name, got, testCase.want)
 		}
 	}
 }

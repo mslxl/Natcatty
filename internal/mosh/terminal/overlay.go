@@ -18,6 +18,23 @@ func MonotonicMillis() uint64 {
 	return uint64(time.Since(processStart) / time.Millisecond)
 }
 
+// MonotonicMillisAt converts a wall-clock timestamp to the MonotonicMillis
+// timebase. Stock's transport state stores timestamps from the same clock the
+// overlay engine uses, so the conversion is numeric identity there; in Go the
+// transport keeps time.Time values and the overlay keeps process-relative
+// milliseconds. A zero or pre-start time has no in-process meaning and maps to
+// zero.
+func MonotonicMillisAt(at time.Time) uint64 {
+	if at.IsZero() {
+		return 0
+	}
+	elapsed := at.Sub(processStart)
+	if elapsed <= 0 {
+		return 0
+	}
+	return uint64(elapsed / time.Millisecond)
+}
+
 // Validity is Overlay::Validity: the state of one prediction.
 type Validity uint8
 

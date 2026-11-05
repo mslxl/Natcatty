@@ -260,6 +260,51 @@ func TestTransportInitialSend(t *testing.T) {
 	}
 }
 
+// TestSentStateAckedTimestampTracksOldestSentState pins stock's
+// TransportSender::get_sent_state_acked_timestamp(): the overlay's ack clock is
+// the send time of the oldest retained sent state, which advances when an
+// acknowledgement prunes the sent queue, not on every received datagram.
+func TestSentStateAckedTimestampTracksOldestSentState(t *testing.T) {
+	client, err := NewClient(testKey(), 80, 24)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+	peer := newTestPeer(t)
+	defer peer.Close()
+
+	firstSend := time.Unix(1700000000, 0)
+	if datagrams := client.SendDatagrams(firstSend); len(datagrams) != 1 {
+		t.Fatalf("initial datagrams = %d", len(datagrams))
+	}
+	if got := client.SentStateAckedTimestamp(); got.IsZero() {
+		t.Fatal("initial sent-state timestamp is zero")
+	}
+	receiveAll(t, client, peer.hostState(0, 1, 1, nil, firstSend.Add(time.Millisecond)),
+		firstSend.Add(time.Millisecond))
+	if got := client.SentStateAckedTimestamp(); !got.Equal(firstSend) {
+		t.Fatalf("acked timestamp = %v, want the first send time %v", got, firstSend)
+	}
+
+	// Sending a newer state does not move the clock; only its acknowledgement
+	// does.
+	if err := client.Input([]byte("x")); err != nil {
+		t.Fatalf("Input: %v", err)
+	}
+	secondSend := firstSend.Add(50 * time.Millisecond)
+	if datagrams := client.SendDatagrams(secondSend); len(datagrams) != 1 {
+		t.Fatalf("second send produced %d datagrams", len(datagrams))
+	}
+	if got := client.SentStateAckedTimestamp(); !got.Equal(firstSend) {
+		t.Fatalf("acked timestamp moved before the ack: %v", got)
+	}
+	receiveAll(t, client, peer.hostState(1, 2, 2, nil, secondSend.Add(time.Millisecond)),
+		secondSend.Add(time.Millisecond))
+	if got := client.SentStateAckedTimestamp(); !got.Equal(secondSend) {
+		t.Fatalf("acked timestamp after the second ack = %v, want %v", got, secondSend)
+	}
+}
+
 func TestTransportReceivesOutputAndSendsInput(t *testing.T) {
 	client, err := NewClient(testKey(), 80, 24)
 	if err != nil {
