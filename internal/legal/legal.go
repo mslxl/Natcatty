@@ -44,8 +44,8 @@ func SourceTagURL(version string) string {
 	return RepositoryURL + "/tree/v" + version
 }
 
-// SourceOffer returns the Markdown Corresponding Source section appended to
-// release notes and shipped as SOURCE-OFFER.md.
+// SourceOffer returns the Markdown Corresponding Source section carried by the
+// standalone SOURCE-OFFER.md document.
 func SourceOffer(version string) string {
 	version = normalizeVersion(version)
 	return fmt.Sprintf(`## Corresponding Source
