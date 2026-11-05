@@ -167,12 +167,30 @@ func convergentInfoFor(config Config) ConvergentInfo {
 // Payload <-> snapshot conversion
 // ---------------------------------------------------------------------------
 
-// convergentFamilies are the payload arrays covered by v2. Settings stay
-// device-local per spec item 111 and are not CRDT registers; they are carried
-// through unchanged so no field is silently dropped. SyncMeta is derived from
-// entity tombstones.
+// convergentFamilies are the payload arrays covered by v2. Host Groups use a
+// stable-ID movable tree; the flat settings object is an object-shaped family
+// so portable preferences and local documents share the same causal state
+// without changing the wire envelope. SyncMeta is derived from entity
+// tombstones.
 func convergentFamilies() []domainsync.ConvergentFamily {
-	return domainsync.DefaultConvergentFamilies()
+	families := domainsync.DefaultConvergentFamilies()
+	for index := range families {
+		switch families[index].Name {
+		case "groups":
+			families[index] = groupFamily()
+		case "hosts":
+			// A Host Group path is derived from the group tree and the Host's
+			// stable GroupID. Keeping it out of the register set lets the
+			// materialized payload follow a group move without turning the
+			// derived rewrite into an apparent remote edit. Legacy records are
+			// converted in the same pass, so their path does not survive as a
+			// register either.
+			families[index].Normalize = normalizeHostRecord
+		case "snippets":
+			families[index].Normalize = normalizeSnippetRecord
+		}
+	}
+	return append(families, settingsFamily())
 }
 
 func payloadSnapshot(payload Payload) (domainsync.ConvergentSnapshot, error) {
@@ -184,7 +202,33 @@ func payloadSnapshot(payload Payload) (domainsync.ConvergentSnapshot, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return domainsync.ConvergentSnapshot{}, err
 	}
+	if err := synthesizeLegacyGroupAncestors(raw); err != nil {
+		return domainsync.ConvergentSnapshot{}, err
+	}
 	return domainsync.ParseConvergentSnapshot(raw, convergentFamilies())
+}
+
+// vaultSnapshotsEqual compares only the Vault families. Migration uses it to
+// decide whether the local Vault and the provider already agree: portable
+// settings are new to the v2 state and every device has its own current
+// documents, so counting them would make two identical Vaults look divergent
+// on the first device that enables sync.
+func vaultSnapshotsEqual(left, right domainsync.ConvergentSnapshot) bool {
+	return snapshotsEqual(
+		domainsync.ConvergentSnapshot{Families: withoutSettingsFamily(left.Families)},
+		domainsync.ConvergentSnapshot{Families: withoutSettingsFamily(right.Families)},
+	)
+}
+
+func withoutSettingsFamily(families map[string][]domainsync.ConvergentRecord) map[string][]domainsync.ConvergentRecord {
+	out := make(map[string][]domainsync.ConvergentRecord, len(families))
+	for family, records := range families {
+		if family == "settings" {
+			continue
+		}
+		out[family] = records
+	}
+	return out
 }
 
 func snapshotsEqual(left, right domainsync.ConvergentSnapshot) bool {
@@ -215,7 +259,26 @@ func snapshotsEqual(left, right domainsync.ConvergentSnapshot) bool {
 	return true
 }
 
-func snapshotHasData(snapshot domainsync.ConvergentSnapshot) bool {
+// snapshotHasVaultData reports whether any Vault entity family has a record.
+// The settings family is excluded: every device always has portable settings
+// documents, and counting them would make a fresh install look like a populated
+// Vault in the bootstrap and empty-vault decisions.
+func snapshotHasVaultData(snapshot domainsync.ConvergentSnapshot) bool {
+	for family, records := range snapshot.Families {
+		if family == "settings" {
+			continue
+		}
+		if len(records) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// snapshotHasAnyData includes portable settings. It distinguishes a genuinely
+// empty local state from a Vault that has no records yet but does have settings
+// to publish.
+func snapshotHasAnyData(snapshot domainsync.ConvergentSnapshot) bool {
 	for _, records := range snapshot.Families {
 		if len(records) > 0 {
 			return true
@@ -233,33 +296,37 @@ func snapshotEntityCount(snapshot domainsync.ConvergentSnapshot) int {
 }
 
 // payloadFromState builds the complete v1 materialized payload plus the inline
-// envelope. Settings are supplied by the caller (device-local, carried from
-// the remote copy when present), and syncMeta is rebuilt from tombstones so an
+// envelope. Every family, including settings, is materialized from the state;
+// the settings argument is historical and deliberately ignored, because
+// injecting a document the state does not contain would make the inline
+// payload disagree with the envelope. syncMeta is rebuilt from tombstones so an
 // older client sees the same deletions.
 func payloadFromState(state domainsync.ConvergentState, settings map[string]json.RawMessage, now int64, deviceID string) (Payload, error) {
 	snapshot, err := domainsync.MaterializeConvergentSnapshot(state)
 	if err != nil {
 		return Payload{}, err
 	}
-	raw, err := domainsync.RawSnapshot(snapshot)
+	families := convergentFamilies()
+	raw, err := domainsync.RawSnapshotFor(snapshot, families)
 	if err != nil {
 		return Payload{}, err
 	}
-	families := convergentFamilies()
 	for _, family := range families {
-		value, exists := raw[family.Name]
-		if !exists {
-			value = json.RawMessage("[]")
+		if _, exists := raw[family.Name]; exists {
+			continue
 		}
-		raw[family.Name] = value
-	}
-	if len(settings) > 0 {
-		encoded, err := json.Marshal(settings)
-		if err != nil {
-			return Payload{}, err
+		if family.Object {
+			raw[family.Name] = json.RawMessage("{}")
+		} else {
+			raw[family.Name] = json.RawMessage("[]")
 		}
-		raw["settings"] = encoded
 	}
+	if err := decorateGroupPayload(raw, snapshot); err != nil {
+		return Payload{}, err
+	}
+	// Settings are materialized from the state. The historical settings
+	// argument is intentionally not injected: adding a document the state does
+	// not contain would make the inline payload disagree with the envelope.
 	tombstones, err := domainsync.ConvergentTombstones(state)
 	if err != nil {
 		return Payload{}, err
@@ -318,17 +385,22 @@ func legacyConvergentDeletions(payload Payload, snapshot domainsync.ConvergentSn
 			present[family+"\x00"+record.ID] = true
 		}
 	}
+	groupPaths, _ := groupRecordPathMap(snapshot)
 	deletions := make([]domainsync.ConvergentDeletion, 0, len(payload.SyncMeta.Deletions))
 	for _, deletion := range payload.SyncMeta.Deletions {
 		if !known[deletion.EntityType] || deletion.ID == "" {
 			continue
 		}
-		if present[deletion.EntityType+"\x00"+deletion.ID] {
+		id := deletion.ID
+		if deletion.EntityType == "groups" {
+			id = legacyGroupDeletionID(id, groupPaths)
+		}
+		if present[deletion.EntityType+"\x00"+id] {
 			continue
 		}
 		deletions = append(deletions, domainsync.ConvergentDeletion{
 			Family:    deletion.EntityType,
-			ID:        deletion.ID,
+			ID:        id,
 			DeletedAt: deletion.DeletedAt,
 			Node:      deletion.DeviceID,
 		})
@@ -417,7 +489,11 @@ func (s *Service) loadConvergentStateStrict(config Config) (domainsync.Convergen
 	if hash != config.Convergent.ReplicaSignature {
 		return domainsync.ConvergentState{}, fmt.Errorf("%w: replica signature mismatch", ErrConvergentCorrupt)
 	}
-	return envelope.State, nil
+	state, _, err := migrateGroupFamily(envelope.State)
+	if err != nil {
+		return domainsync.ConvergentState{}, fmt.Errorf("%w: %v", ErrConvergentCorrupt, err)
+	}
+	return state, nil
 }
 
 func (s *Service) sealVerifiedPayload(payload Payload) (string, string, error) {
@@ -618,6 +694,18 @@ func (s *Service) readConvergentRemote(ctx context.Context, token domainsync.Tok
 		base.Detail = err.Error()
 		return base, nextToken, nil
 	}
+	// A replica written before Host Groups had stable IDs is migrated before
+	// it is compared with the inline snapshot. The migration is derived from
+	// the old state, so every device that joins the same replica performs the
+	// same rewrite.
+	migrated, _, err := migrateGroupFamily(parsed.State)
+	if err != nil {
+		base.Kind = convergentRemoteInvalid
+		base.Code = "damaged-envelope"
+		base.Detail = err.Error()
+		return base, nextToken, nil
+	}
+	parsed.State = migrated
 	materialized, err := payloadSnapshot(payload)
 	if err != nil {
 		base.Kind = convergentRemoteInvalid
@@ -700,7 +788,7 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		state = *remote.State
 		settings = chooseSettings(&remote.Payload, nil, input.Local)
 		switch {
-		case snapshotsEqual(localSnapshot, remote.Materialized):
+		case vaultSnapshotsEqual(localSnapshot, remote.Materialized):
 			materialized = remote.Payload
 		case input.LegacyBaseline != nil:
 			merged, err := MergePayloads(input.LegacyBaseline, input.Local, remote.Payload, options)
@@ -725,7 +813,7 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 			state = next
 			materialized = merged.Payload
 			settings = chooseSettings(&merged.Payload, input.LegacyBaseline, input.Local)
-		case !snapshotHasData(localSnapshot):
+		case !snapshotHasVaultData(localSnapshot):
 			// Fresh install: adopt the v2 cloud copy rather than turning
 			// first-launch defaults into edits.
 			materialized = remote.Payload
@@ -766,8 +854,8 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 			}
 			materialized = merged.Payload
 			settings = chooseSettings(&merged.Payload, input.LegacyBaseline, input.Local)
-		case !snapshotHasData(remoteSnapshot):
-			if !snapshotHasData(localSnapshot) {
+		case !snapshotHasVaultData(remoteSnapshot):
+			if !snapshotHasVaultData(localSnapshot) {
 				plan.block("empty-vault", "both the local Vault and the provider are empty")
 				return plan
 			}
@@ -777,7 +865,7 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 				return plan
 			}
 			materialized = input.Local
-		case !snapshotHasData(localSnapshot) || snapshotsEqual(localSnapshot, remoteSnapshot):
+		case !snapshotHasVaultData(localSnapshot) || vaultSnapshotsEqual(localSnapshot, remoteSnapshot):
 			state, err = domainsync.CreateConvergentStateFromSnapshot(remoteSnapshot, input.DeviceID, input.Now)
 			if err != nil {
 				plan.block("damaged-materialized-payload", err.Error())
@@ -792,7 +880,7 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 		// The local v1 payload still carries tombstones for records deleted on
 		// this device; preserve them when bootstrapping v2 locally.
 		legacyBootstrap = true
-		if !snapshotHasData(localSnapshot) {
+		if !snapshotHasAnyData(localSnapshot) {
 			plan.block("empty-vault", "the local Vault has no syncable records")
 			return plan
 		}
@@ -813,6 +901,23 @@ func planConvergentMigration(input convergentMigrationInput) convergentPlan {
 	if err != nil {
 		plan.block("damaged-materialized-payload", err.Error())
 		return plan
+	}
+	// Settings are part of the v2 state now, so the document set chosen for the
+	// migration must enter the state explicitly. A v1 remote often has no
+	// settings at all; without this step the first published v2 envelope would
+	// silently drop the portable settings this device already has.
+	if len(settings) > 0 {
+		settingsSnapshot, err := portableSettingsSnapshot(settings)
+		if err != nil {
+			plan.block("damaged-materialized-payload", err.Error())
+			return plan
+		}
+		next, _, err := domainsync.ApplyConvergentSnapshot(state, settingsSnapshot, input.DeviceID, input.Now, false)
+		if err != nil {
+			plan.block("damaged-envelope", err.Error())
+			return plan
+		}
+		state = next
 	}
 	if legacyBootstrap {
 		deletions := legacyConvergentDeletions(materialized, materializedSnapshot)

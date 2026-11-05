@@ -120,11 +120,26 @@ type ConvergentEnvelope struct {
 	State         ConvergentState `json:"state"`
 }
 
-// ConvergentFamily describes one payload array and the fields that identify a
+// ConvergentFamily describes one payload family and the fields that identify a
 // record inside it.
+//
+// Most families are arrays of entity objects. An object family is the flat
+// "settings" map the original payload carries; each property is one entity.
+// Normalize canonicalizes a record before it enters the CRDT, and Materialize
+// reverses that transformation when the v1 payload is written. The hooks keep
+// payload compatibility and CRDT identity separate: a field such as a derived
+// group path can be present for older readers without being a register.
 type ConvergentFamily struct {
 	Name      string
 	KeyFields []string
+	// Object marks a family whose v1 shape is a JSON object keyed by property
+	// name instead of an array of records.
+	Object bool
+	// Normalize receives one record (an array element, or one object
+	// property's value) and returns the canonical entity object.
+	Normalize func(json.RawMessage) (json.RawMessage, error)
+	// Materialize turns a canonical entity object back into the v1 record.
+	Materialize func(json.RawMessage) (json.RawMessage, error)
 }
 
 // ConvergentRecord is one materialized record.
@@ -1575,7 +1590,7 @@ func recordKey(value map[string]json.RawMessage, fields []string) (string, error
 // ParseConvergentSnapshot turns the payload's JSON families into records. A
 // missing or null family is an empty family; an explicit empty array is also
 // empty. Unknown top-level fields are ignored here so the application can keep
-// settings and metadata.
+// settings and metadata. An object family is read property by property.
 func ParseConvergentSnapshot(raw map[string]json.RawMessage, families []ConvergentFamily) (ConvergentSnapshot, error) {
 	snapshot := ConvergentSnapshot{Families: map[string][]ConvergentRecord{}}
 	for _, family := range families {
@@ -1584,21 +1599,57 @@ func ParseConvergentSnapshot(raw map[string]json.RawMessage, families []Converge
 			snapshot.Families[family.Name] = nil
 			continue
 		}
+		out := make([]ConvergentRecord, 0)
+		if family.Object {
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(value, &object); err != nil {
+				return ConvergentSnapshot{}, fmt.Errorf("%w: %s must be an object: %v", ErrConvergentInvalid, family.Name, err)
+			}
+			keys := make([]string, 0, len(object))
+			for key := range object {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				if key == "" {
+					return ConvergentSnapshot{}, fmt.Errorf("%w: %s has an empty property name", ErrConvergentInvalid, family.Name)
+				}
+				normalized, err := normalizeConvergentRecord(family, object[key])
+				if err != nil {
+					return ConvergentSnapshot{}, err
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(normalized, &fields); err != nil {
+					return ConvergentSnapshot{}, fmt.Errorf("%w: %s/%s must be an object: %v", ErrConvergentInvalid, family.Name, key, err)
+				}
+				canonical, err := CanonicalValue(normalized)
+				if err != nil {
+					return ConvergentSnapshot{}, fmt.Errorf("%s/%s: %w", family.Name, key, err)
+				}
+				out = append(out, ConvergentRecord{ID: key, Value: canonical})
+			}
+			snapshot.Families[family.Name] = out
+			continue
+		}
 		var records []json.RawMessage
 		if err := json.Unmarshal(value, &records); err != nil {
 			return ConvergentSnapshot{}, fmt.Errorf("%w: %s must be an array: %v", ErrConvergentInvalid, family.Name, err)
 		}
-		out := make([]ConvergentRecord, 0, len(records))
+		out = make([]ConvergentRecord, 0, len(records))
 		for _, recordRaw := range records {
+			normalized, err := normalizeConvergentRecord(family, recordRaw)
+			if err != nil {
+				return ConvergentSnapshot{}, err
+			}
 			var object map[string]json.RawMessage
-			if err := json.Unmarshal(recordRaw, &object); err != nil {
+			if err := json.Unmarshal(normalized, &object); err != nil {
 				return ConvergentSnapshot{}, fmt.Errorf("%w: %s record must be an object: %v", ErrConvergentInvalid, family.Name, err)
 			}
 			key, err := recordKey(object, family.KeyFields)
 			if err != nil {
 				return ConvergentSnapshot{}, fmt.Errorf("%s: %w", family.Name, err)
 			}
-			canonical, err := CanonicalValue(recordRaw)
+			canonical, err := CanonicalValue(normalized)
 			if err != nil {
 				return ConvergentSnapshot{}, fmt.Errorf("%s/%s: %w", family.Name, key, err)
 			}
@@ -1615,19 +1666,72 @@ func ParseConvergentSnapshot(raw map[string]json.RawMessage, families []Converge
 	return snapshot, nil
 }
 
-// RawSnapshot re-serializes a snapshot as the payload family object.
+func normalizeConvergentRecord(family ConvergentFamily, raw json.RawMessage) (json.RawMessage, error) {
+	if family.Normalize == nil {
+		return raw, nil
+	}
+	normalized, err := family.Normalize(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", family.Name, err)
+	}
+	return normalized, nil
+}
+
+// RawSnapshot re-serializes a snapshot as the payload family object, using the
+// array shape for every family. RawSnapshotFor is the shape-aware variant used
+// when an object family is present.
 func RawSnapshot(snapshot ConvergentSnapshot) (map[string]json.RawMessage, error) {
+	return RawSnapshotFor(snapshot, nil)
+}
+
+// RawSnapshotFor re-serializes a snapshot using each family's payload shape
+// and Materialize hook. A family missing from families is written as an array,
+// which keeps RawSnapshot's historical behavior.
+func RawSnapshotFor(snapshot ConvergentSnapshot, families []ConvergentFamily) (map[string]json.RawMessage, error) {
+	byName := make(map[string]ConvergentFamily, len(families))
+	for _, family := range families {
+		byName[family.Name] = family
+	}
 	raw := map[string]json.RawMessage{}
-	for family, records := range snapshot.Families {
+	for familyName, records := range snapshot.Families {
+		family, known := byName[familyName]
+		if known && family.Object {
+			object := make(map[string]json.RawMessage, len(records))
+			for _, record := range records {
+				value := record.Value
+				if family.Materialize != nil {
+					materialized, err := family.Materialize(value)
+					if err != nil {
+						return nil, fmt.Errorf("%s/%s: %w", familyName, record.ID, err)
+					}
+					value = materialized
+				}
+				object[record.ID] = value
+			}
+			data, err := json.Marshal(object)
+			if err != nil {
+				return nil, err
+			}
+			raw[familyName] = data
+			continue
+		}
 		values := make([]json.RawMessage, len(records))
 		for index, record := range records {
-			values[index] = record.Value
+			value := record.Value
+			if known && family.Materialize != nil {
+				materialized, err := family.Materialize(value)
+				if err != nil {
+					return nil, fmt.Errorf("%s/%s: %w", familyName, record.ID, err)
+				}
+				value = materialized
+			}
+			values[index] = value
 		}
 		data, err := json.Marshal(values)
 		if err != nil {
 			return nil, err
 		}
-		raw[family] = data
+		raw[familyName] = data
 	}
 	return raw, nil
 }
@@ -1781,6 +1885,236 @@ func CreateConvergentStateFromSnapshot(snapshot ConvergentSnapshot, node string,
 		return ConvergentState{}, err
 	}
 	return state, nil
+}
+
+// RebuildConvergentFamily replaces one family's entities with the supplied
+// canonical records and allocates fresh dots under node. It is the explicit
+// migration path for a family whose record identity changed, such as Host
+// Groups moving from path keys to stable IDs.
+//
+// An identity change is a delete plus an insert, but the old dots must stay
+// referenced: the global version vector and DotOrigins are permanent, so
+// dropping registers would leave counters no retained candidate witnesses.
+// Every old entity therefore stays in the collection with a tombstoned
+// presence register whose context observes the old one; its fields are kept so
+// their dots remain valid. Materialization skips the tombstoned entities, and
+// a replica that still holds the old shape observes its own dot in the
+// tombstone context when the states merge. New records must use fresh IDs;
+// reusing an old ID would discard that entity's old dots.
+func RebuildConvergentFamily(state ConvergentState, family string, records []ConvergentRecord, node string, now int64) (ConvergentState, bool, error) {
+	if family == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: family is empty", ErrConvergentInvalid)
+	}
+	if node == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: device id is empty", ErrConvergentInvalid)
+	}
+	if err := ValidateConvergentState(state); err != nil {
+		return ConvergentState{}, false, err
+	}
+	clone, err := NormalizeConvergentState(state)
+	if err != nil {
+		return ConvergentState{}, false, err
+	}
+
+	sorted := append([]ConvergentRecord(nil), records...)
+	sort.Slice(sorted, func(left, right int) bool { return sorted[left].ID < sorted[right].ID })
+	for index := 1; index < len(sorted); index++ {
+		if sorted[index].ID == sorted[index-1].ID {
+			return ConvergentState{}, false, fmt.Errorf("%w: %s has duplicate record %q", ErrConvergentInvalid, family, sorted[index].ID)
+		}
+	}
+	writer := &stateWriter{state: clone, node: node, now: now}
+
+	oldIDs := make([]string, 0)
+	if collection, exists := clone.Collections[family]; exists {
+		for id := range collection.Entities {
+			oldIDs = append(oldIDs, id)
+		}
+	}
+	sort.Strings(oldIDs)
+	reused := make(map[string]bool, len(sorted))
+	for _, record := range sorted {
+		reused[record.ID] = true
+	}
+	for _, id := range oldIDs {
+		if reused[id] {
+			return ConvergentState{}, false, fmt.Errorf("%w: %s cannot reuse old entity id %q", ErrConvergentInvalid, family, id)
+		}
+		entity := clone.Collections[family].Entities[id]
+		presence, err := writer.write(RegisterIdentity(family, id, presenceField), entity.Presence, nil, true)
+		if err != nil {
+			return ConvergentState{}, false, err
+		}
+		entity.Presence = presence
+		entity.Version = DerivedEntityVersion(entity)
+		setEntity(writer.state, family, id, entity)
+	}
+	ensureCollection(writer.state, family)
+
+	for _, record := range sorted {
+		if record.ID == "" {
+			return ConvergentState{}, false, fmt.Errorf("%w: %s has an empty entity id", ErrConvergentInvalid, family)
+		}
+		fields, err := entityFieldsFromValue(record.Value)
+		if err != nil {
+			return ConvergentState{}, false, err
+		}
+		presence, err := writer.write(RegisterIdentity(family, record.ID, presenceField), MultiValueRegister{}, json.RawMessage(presenceTrue), false)
+		if err != nil {
+			return ConvergentState{}, false, err
+		}
+		entity := ConvergentEntity{Presence: presence, Fields: map[string]MultiValueRegister{}}
+		fieldNames := make([]string, 0, len(fields))
+		for field := range fields {
+			fieldNames = append(fieldNames, field)
+		}
+		sort.Strings(fieldNames)
+		for _, field := range fieldNames {
+			register, err := writer.write(RegisterIdentity(family, record.ID, field), MultiValueRegister{}, fields[field], false)
+			if err != nil {
+				return ConvergentState{}, false, err
+			}
+			entity.Fields[field] = register
+		}
+		entity.Version = DerivedEntityVersion(entity)
+		setEntity(writer.state, family, record.ID, entity)
+	}
+	clone = writer.state
+	if err := ValidateConvergentState(clone); err != nil {
+		return ConvergentState{}, false, err
+	}
+	return clone, true, nil
+}
+
+// SetConvergentEntityFields writes fields onto existing entities without
+// replacing the rest of the record. It is the migration companion to
+// TombstoneConvergentFields: a renamed reference can be written under its new
+// field name while the old register is retired, and all earlier dots stay
+// witnessed. Unknown entity IDs are ignored.
+func SetConvergentEntityFields(state ConvergentState, family string, updates map[string]map[string]json.RawMessage, node string, now int64) (ConvergentState, bool, error) {
+	if family == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: family is empty", ErrConvergentInvalid)
+	}
+	if node == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: device id is empty", ErrConvergentInvalid)
+	}
+	if err := ValidateConvergentState(state); err != nil {
+		return ConvergentState{}, false, err
+	}
+	clone, err := NormalizeConvergentState(state)
+	if err != nil {
+		return ConvergentState{}, false, err
+	}
+	ids := make([]string, 0, len(updates))
+	for id := range updates {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	writer := &stateWriter{state: clone, node: node, now: now}
+	changed := false
+	for _, id := range ids {
+		entity, exists := getEntity(writer.state, family, id)
+		if !exists {
+			continue
+		}
+		if entity.Fields == nil {
+			entity.Fields = map[string]MultiValueRegister{}
+		}
+		fieldNames := make([]string, 0, len(updates[id]))
+		for field := range updates[id] {
+			fieldNames = append(fieldNames, field)
+		}
+		sort.Strings(fieldNames)
+		for _, field := range fieldNames {
+			value := updates[id][field]
+			canonical, err := CanonicalValue(value)
+			if err != nil {
+				return ConvergentState{}, false, err
+			}
+			register := entity.Fields[field]
+			if current, ok := registerWinnerValue(register); ok && bytes.Equal(current, canonical) {
+				continue
+			}
+			written, err := writer.write(RegisterIdentity(family, id, field), register, canonical, false)
+			if err != nil {
+				return ConvergentState{}, false, err
+			}
+			entity.Fields[field] = written
+			changed = true
+		}
+		entity.Version = DerivedEntityVersion(entity)
+		setEntity(writer.state, family, id, entity)
+	}
+	clone = writer.state
+	if !changed {
+		return clone, false, nil
+	}
+	if err := ValidateConvergentState(clone); err != nil {
+		return ConvergentState{}, false, err
+	}
+	return clone, true, nil
+}
+
+// TombstoneConvergentFields removes fields from a family's entities without
+// replacing the entities or their identity. It is the migration path for a
+// field that became derived, such as a Host's group path once the group tree
+// carries stable IDs: the values stop being registers, but every old dot stays
+// witnessed by the tombstone candidate's context.
+func TombstoneConvergentFields(state ConvergentState, family string, fields []string, node string, now int64) (ConvergentState, bool, error) {
+	if family == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: family is empty", ErrConvergentInvalid)
+	}
+	if node == "" {
+		return ConvergentState{}, false, fmt.Errorf("%w: device id is empty", ErrConvergentInvalid)
+	}
+	if err := ValidateConvergentState(state); err != nil {
+		return ConvergentState{}, false, err
+	}
+	clone, err := NormalizeConvergentState(state)
+	if err != nil {
+		return ConvergentState{}, false, err
+	}
+	collection, exists := clone.Collections[family]
+	if !exists {
+		return clone, false, nil
+	}
+	ids := make([]string, 0, len(collection.Entities))
+	for id := range collection.Entities {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	names := append([]string(nil), fields...)
+	sort.Strings(names)
+	writer := &stateWriter{state: clone, node: node, now: now}
+	changed := false
+	for _, id := range ids {
+		entity := writer.state.Collections[family].Entities[id]
+		for _, field := range names {
+			register, exists := entity.Fields[field]
+			if !exists {
+				continue
+			}
+			if _, live := registerWinnerValue(register); !live {
+				continue
+			}
+			written, err := writer.write(RegisterIdentity(family, id, field), register, nil, true)
+			if err != nil {
+				return ConvergentState{}, false, err
+			}
+			entity.Fields[field] = written
+			changed = true
+		}
+		entity.Version = DerivedEntityVersion(entity)
+		setEntity(writer.state, family, id, entity)
+	}
+	clone = writer.state
+	if !changed {
+		return clone, false, nil
+	}
+	if err := ValidateConvergentState(clone); err != nil {
+		return ConvergentState{}, false, err
+	}
+	return clone, true, nil
 }
 
 func visibleEntity(state ConvergentState, family, id string) (ConvergentEntity, bool) {
