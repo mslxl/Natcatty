@@ -5,7 +5,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	appconnection "github.com/mslxl/natcatty/application/connection"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
@@ -253,12 +255,22 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			ui.Row(c).FillWidth().Gap(8).Padding(6, 8).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Text(c, connectionTitle(m, log)).Bold()
-					status := statusLabel(m, log.Status)
-					meta := m.LogsConnectionMeta(status, log.Kind)
-					if log.IsUnsaved() {
-						meta = m.LogsConnectionMetaUnsaved(status, log.Kind)
+					if log.IsProvider() {
+						// A provider row is a tunnel lifecycle event, not a
+						// Session: report its phase instead of connected/failed.
+						meta := m.LogsProviderMeta(
+							uiconnection.ProviderPhaseText(m,
+								appconnection.ProviderPhase(log.NetworkProviderPhase)),
+							log.NetworkProviderKind)
+						ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
+					} else {
+						status := statusLabel(m, log.Status)
+						meta := m.LogsConnectionMeta(status, log.Kind)
+						if log.IsUnsaved() {
+							meta = m.LogsConnectionMetaUnsaved(status, log.Kind)
+						}
+						ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
 					}
-					ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted)
 					if address := connectionAddress(log); address != "" {
 						ui.Text(c, address).FontSize(12).TextColor(t.TextMuted)
 					}
@@ -267,9 +279,13 @@ func connectionRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					}
 					ui.Text(c, timestamp(log.StartedAt)).FontSize(11).TextColor(t.TextMuted)
 				})
-				if ui.Button(c, m.LogsOpenTerminal()).Clicked() {
-					s.OpenTerminal(log.SessionID, log.HostID)
-					c.Invalidate()
+				// A provider row has no terminal Session to reopen. Delete stays
+				// available for every row.
+				if !log.IsProvider() {
+					if ui.Button(c, m.LogsOpenTerminal()).Clicked() {
+						s.OpenTerminal(log.SessionID, log.HostID)
+						c.Invalidate()
+					}
 				}
 				if ui.Button(c, m.LogsDelete()).Clicked() {
 					s.DeleteLog(log.ID)
@@ -327,6 +343,16 @@ func empty(c *ui.Context, total int, emptyText string, m locales.Messages, t *ui
 }
 
 func connectionTitle(m locales.Messages, log domainhistory.ConnectionLog) string {
+	// A Network Provider row names the Profile whose tunnel changed state.
+	if log.IsProvider() {
+		if log.NetworkProfileLabel != "" {
+			return log.NetworkProfileLabel
+		}
+		if log.HostLabel != "" {
+			return log.HostLabel
+		}
+		return log.NetworkProfileID
+	}
 	// A local attempt has no Host and stores no label; the localized
 	// local-terminal name is the useful title. An unsaved Host also has no
 	// Host identity, but it is not local: its recorded typed label (or
@@ -347,6 +373,9 @@ func connectionTitle(m locales.Messages, log domainhistory.ConnectionLog) string
 }
 
 func connectionAddress(log domainhistory.ConnectionLog) string {
+	if log.IsProvider() {
+		return log.NetworkAddress
+	}
 	if log.Username != "" && log.Hostname != "" {
 		return log.Username + "@" + log.Hostname
 	}

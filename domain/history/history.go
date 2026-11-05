@@ -53,12 +53,30 @@ type ConnectionLog struct {
 	Error       string           `json:"error,omitempty"`
 	StartedAt   time.Time        `json:"startedAt"`
 	EndedAt     time.Time        `json:"endedAt,omitempty"`
+	// Network Provider status rows describe a Network Profile's tunnel rather
+	// than a Host Session. NetworkProviderPhase is the marker that tells them
+	// apart; the remaining fields are display metadata and never include
+	// credential material or an Auth URL.
+	NetworkProfileID     string `json:"networkProfileId,omitempty"`
+	NetworkProfileLabel  string `json:"networkProfileLabel,omitempty"`
+	NetworkProviderKind  string `json:"networkProviderKind,omitempty"`
+	NetworkProviderPhase string `json:"networkProviderPhase,omitempty"`
+	NetworkAddress       string `json:"networkAddress,omitempty"`
+}
+
+// IsProvider reports a Network Provider status row. Such a row is neither a
+// local shell nor a typed Host: it has its own Vault Profile identity.
+func (log ConnectionLog) IsProvider() bool {
+	return log.NetworkProviderPhase != ""
 }
 
 // IsUnsaved reports a Host attempt the user typed without a saved Vault
 // record. Rows recorded before UnsavedHost existed are classified by their
 // non-local kind, so an old draft row is not mistaken for a local shell.
 func (log ConnectionLog) IsUnsaved() bool {
+	if log.IsProvider() {
+		return false
+	}
 	if log.HostID != "" {
 		return false
 	}
@@ -69,8 +87,12 @@ func (log ConnectionLog) IsUnsaved() bool {
 }
 
 // IsLocal reports a local shell attempt, which has neither a saved nor a
-// typed Host identity.
+// typed Host identity. A Network Provider status row belongs to its Profile,
+// not to the local shell.
 func (log ConnectionLog) IsLocal() bool {
+	if log.IsProvider() {
+		return false
+	}
 	return log.HostID == "" && !log.IsUnsaved()
 }
 
@@ -139,6 +161,8 @@ func (filter ConnectionFilter) Match(log ConnectionLog) bool {
 	}
 	haystack := strings.ToLower(strings.Join([]string{
 		log.HostLabel, log.Hostname, log.Username, log.Kind, log.Error,
+		log.NetworkProfileLabel, log.NetworkProviderKind,
+		log.NetworkProviderPhase, log.NetworkAddress,
 	}, "\n"))
 	return strings.Contains(haystack, query)
 }
@@ -290,7 +314,22 @@ func NormalizeConnectionLog(log ConnectionLog) ConnectionLog {
 	log.Hostname = strings.TrimSpace(log.Hostname)
 	log.Username = strings.TrimSpace(log.Username)
 	log.Error = strings.TrimSpace(log.Error)
-	if log.HostID == "" {
+	log.NetworkProfileID = strings.TrimSpace(log.NetworkProfileID)
+	log.NetworkProfileLabel = strings.TrimSpace(log.NetworkProfileLabel)
+	log.NetworkProviderKind = strings.TrimSpace(log.NetworkProviderKind)
+	log.NetworkProviderPhase = strings.TrimSpace(log.NetworkProviderPhase)
+	log.NetworkAddress = strings.TrimSpace(log.NetworkAddress)
+	if log.IsProvider() {
+		// A provider row keeps the Profile label; it is not a draft Host and
+		// the local-shell title must not replace it.
+		log.UnsavedHost = false
+		if log.NetworkProfileLabel == "" {
+			log.NetworkProfileLabel = log.HostLabel
+		}
+		if log.HostLabel == "" {
+			log.HostLabel = log.NetworkProfileLabel
+		}
+	} else if log.HostID == "" {
 		if isLocalKind(log.Kind) {
 			log.UnsavedHost = false
 			log.HostLabel = ""

@@ -1,0 +1,411 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"net"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	adaptertailscale "github.com/mslxl/natcatty/adapters/tailscale"
+	appconnection "github.com/mslxl/natcatty/application/connection"
+	appvault "github.com/mslxl/natcatty/application/vault"
+	domainhistory "github.com/mslxl/natcatty/domain/history"
+	domainvault "github.com/mslxl/natcatty/domain/vault"
+	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
+)
+
+// fakeNetworkVault scripts the two Vault reads the factory performs.
+type fakeNetworkVault struct {
+	profile    domainvault.NetworkProfile
+	profileErr error
+	secret     string
+	secretErr  error
+
+	profileIDs    []string
+	secretIDs     []string
+	secretFields  []string
+	secretLookups int
+}
+
+func (v *fakeNetworkVault) NetworkProfile(_ context.Context, id string) (domainvault.NetworkProfile, error) {
+	v.profileIDs = append(v.profileIDs, id)
+	if v.profileErr != nil {
+		return domainvault.NetworkProfile{}, v.profileErr
+	}
+	return v.profile, nil
+}
+
+func (v *fakeNetworkVault) NetworkProfileSecret(_ context.Context, id, field string) (string, error) {
+	v.secretLookups++
+	v.secretIDs = append(v.secretIDs, id)
+	v.secretFields = append(v.secretFields, field)
+	if v.secretErr != nil {
+		return "", v.secretErr
+	}
+	return v.secret, nil
+}
+
+// stubProvider stands in for the adapter so the factory can be tested without
+// constructing a tsnet node.
+type stubProvider struct {
+	dials int
+}
+
+func (p *stubProvider) DialContext(context.Context, string, string) (net.Conn, error) {
+	p.dials++
+	return nil, errors.New("stub provider does not dial")
+}
+
+func tailscaleTestProfile() domainvault.NetworkProfile {
+	return domainvault.NetworkProfile{
+		ID:    "net-1",
+		Label: "Office",
+		Kind:  domainvault.NetworkKindTailscale,
+		Tailscale: &domainvault.TailscaleNetwork{
+			Hostname:   "natcatty-office",
+			ControlURL: "https://headscale.example.com",
+			Ephemeral:  true,
+			Tags:       []string{"tag:prod"},
+			HasAuthKey: true,
+		},
+	}
+}
+
+func TestFactoryMapsTheTailscaleProfileAndSecret(t *testing.T) {
+	vault := &fakeNetworkVault{profile: tailscaleTestProfile(), secret: "tskey-auth-example"}
+	base := filepath.Join(t.TempDir(), "network-providers")
+	var cfg adaptertailscale.Config
+	var optionCount int
+	provider := &stubProvider{}
+	factory := &networkProviderFactory{
+		vault:     vault,
+		stateBase: base,
+		observe:   func(adaptertailscale.Status) {},
+		logf:      func(string, ...any) {},
+		openTailscale: func(_ context.Context, got adaptertailscale.Config,
+			options ...adaptertailscale.Option) (appconnection.NetworkProvider, error) {
+			cfg = got
+			optionCount = len(options)
+			return provider, nil
+		},
+	}
+
+	opened, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale), Fingerprint: "fp",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if opened != provider {
+		t.Fatalf("Open returned %T, want the adapter provider", opened)
+	}
+	if cfg.ProfileID != "net-1" || cfg.Label != "Office" ||
+		cfg.Kind != domainvault.NetworkKindTailscale {
+		t.Fatalf("Config identity = %+v", cfg)
+	}
+	if cfg.StateBaseDir != base {
+		t.Fatalf("StateBaseDir = %q, want %q", cfg.StateBaseDir, base)
+	}
+	if cfg.Hostname != "natcatty-office" || cfg.ControlURL != "https://headscale.example.com" ||
+		!cfg.Ephemeral || len(cfg.AdvertiseTags) != 1 || cfg.AdvertiseTags[0] != "tag:prod" {
+		t.Fatalf("Config tailnet fields = %+v", cfg)
+	}
+	if cfg.AuthKey != "tskey-auth-example" {
+		t.Fatal("the Vault Auth Key did not reach the adapter configuration")
+	}
+	if optionCount != 2 {
+		t.Fatalf("adapter options = %d, want status observer and logger", optionCount)
+	}
+	if len(vault.secretFields) != 1 || vault.secretFields[0] != appvault.FieldNetworkAuthKey {
+		t.Fatalf("secret fields = %v", vault.secretFields)
+	}
+}
+
+func TestFactoryUsesInteractiveLoginWhenTheSecretIsAbsent(t *testing.T) {
+	vault := &fakeNetworkVault{
+		profile:   tailscaleTestProfile(),
+		secretErr: appvault.ErrNotFound,
+	}
+	var authKey string
+	opened := false
+	factory := &networkProviderFactory{
+		vault: vault,
+		openTailscale: func(_ context.Context, got adaptertailscale.Config,
+			_ ...adaptertailscale.Option) (appconnection.NetworkProvider, error) {
+			opened = true
+			authKey = got.AuthKey
+			return &stubProvider{}, nil
+		},
+	}
+	if _, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale),
+	}); err != nil {
+		t.Fatalf("Open without a stored key: %v", err)
+	}
+	if !opened {
+		t.Fatal("the adapter did not open for the interactive-login path")
+	}
+	if authKey != "" {
+		t.Fatalf("AuthKey = %q, want the interactive-login path", authKey)
+	}
+}
+
+func TestFactoryFailsClosedOnVaultProblems(t *testing.T) {
+	tests := []struct {
+		name  string
+		vault *fakeNetworkVault
+		kind  appconnection.Kind
+	}{
+		{
+			name:  "missing profile",
+			vault: &fakeNetworkVault{profileErr: appvault.ErrNotFound},
+			kind:  appconnection.KindProvider,
+		},
+		{
+			name: "locked secret",
+			vault: &fakeNetworkVault{
+				profile:   tailscaleTestProfile(),
+				secretErr: errors.New("the field secret store is locked"),
+			},
+			kind: appconnection.KindProvider,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			openCalls := 0
+			factory := &networkProviderFactory{
+				vault: test.vault,
+				openTailscale: func(context.Context, adaptertailscale.Config,
+					...adaptertailscale.Option) (appconnection.NetworkProvider, error) {
+					openCalls++
+					return &stubProvider{}, nil
+				},
+			}
+			_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+				ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale),
+			})
+			var typed *appconnection.Error
+			if !errors.As(err, &typed) {
+				t.Fatalf("error %v is not typed", err)
+			}
+			if typed.Kind != test.kind {
+				t.Fatalf("Kind = %q, want %q", typed.Kind, test.kind)
+			}
+			if typed.Provider == nil || typed.Provider.ProfileID != "net-1" ||
+				typed.Provider.Kind != string(domainvault.NetworkKindTailscale) {
+				t.Fatalf("ProviderInfo = %+v", typed.Provider)
+			}
+			if openCalls != 0 {
+				t.Fatalf("adapter opened %d times after a Vault failure", openCalls)
+			}
+		})
+	}
+}
+
+func TestFactoryRejectsAProfileOfAnotherKind(t *testing.T) {
+	profile := tailscaleTestProfile()
+	profile.Kind = domainvault.NetworkKindWireGuard
+	factory := &networkProviderFactory{vault: &fakeNetworkVault{profile: profile}}
+	_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale),
+	})
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("error = %v, want KindProvider", err)
+	}
+}
+
+func TestFactoryFailsClosedForWireGuardAndUnknownKinds(t *testing.T) {
+	factory := &networkProviderFactory{
+		vault: &fakeNetworkVault{profile: tailscaleTestProfile(), secret: "must-not-be-read"},
+	}
+	_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "wg-1", Kind: string(domainvault.NetworkKindWireGuard),
+	})
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("WireGuard error = %v, want KindProvider", err)
+	}
+	if typed.Provider == nil || typed.Provider.ProfileID != "wg-1" {
+		t.Fatalf("WireGuard ProviderInfo = %+v", typed.Provider)
+	}
+	if !strings.Contains(err.Error(), "WireGuard") {
+		t.Fatalf("WireGuard error does not explain the unimplemented kind: %v", err)
+	}
+
+	_, err = factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "x-1", Kind: "someday-net",
+	})
+	if !errors.Is(err, appconnection.ErrNetworkProviderKind) {
+		t.Fatalf("unknown-kind error = %v, want ErrNetworkProviderKind", err)
+	}
+	if !errors.As(err, &typed) || typed.Kind != appconnection.KindProvider {
+		t.Fatalf("unknown-kind error = %v, want KindProvider", err)
+	}
+
+	_, err = factory.Open(context.Background(), appconnection.NetworkRoute{})
+	if !errors.As(err, &typed) || typed.Provider == nil || typed.Provider.ProfileID != "" {
+		t.Fatalf("empty-route error = %v", err)
+	}
+}
+
+func TestFactoryPreservesAdapterKindAndPhaseOnStartFailure(t *testing.T) {
+	factory := &networkProviderFactory{
+		vault: &fakeNetworkVault{profile: tailscaleTestProfile(), secret: "tskey-auth-example"},
+		openTailscale: func(context.Context, adaptertailscale.Config,
+			...adaptertailscale.Option) (appconnection.NetworkProvider, error) {
+			return nil, &appconnection.Error{
+				Kind:  appconnection.KindCancelled,
+				Cause: context.Canceled,
+				Provider: &appconnection.ProviderInfo{
+					Phase: appconnection.ProviderPhaseNeedsLogin,
+				},
+			}
+		},
+	}
+	_, err := factory.Open(context.Background(), appconnection.NetworkRoute{
+		ProfileID: "net-1", Kind: string(domainvault.NetworkKindTailscale),
+	})
+	var typed *appconnection.Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("error %v is not typed", err)
+	}
+	if typed.Kind != appconnection.KindCancelled {
+		t.Fatalf("Kind = %q, want cancelled", typed.Kind)
+	}
+	if typed.Provider == nil || typed.Provider.Phase != appconnection.ProviderPhaseNeedsLogin ||
+		typed.Provider.ProfileID != "net-1" || typed.Provider.Label != "Office" {
+		t.Fatalf("ProviderInfo = %+v", typed.Provider)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error %v does not preserve the cause", err)
+	}
+}
+
+func TestStatusSinkPublishesToTheVaultSurface(t *testing.T) {
+	state := vaultstate.NewState(nil)
+	sink := &networkProviderStatusSink{vault: func() *vaultstate.State { return state }}
+	sink.Observe(adaptertailscale.Status{
+		ProfileID:    "net-1",
+		Label:        "Office",
+		Kind:         string(domainvault.NetworkKindTailscale),
+		Phase:        appconnection.ProviderPhaseRunning,
+		TailscaleIPs: []string{"100.64.0.2"},
+		DNSName:      "natcatty-office.tailnet.ts.net",
+	})
+	state.FlushNetworkProviderStatus()
+	status, ok := state.NetworkStatus("net-1")
+	if !ok {
+		t.Fatal("the Vault surface did not receive the provider status")
+	}
+	if status.Phase != appconnection.ProviderPhaseRunning ||
+		status.Address() != "natcatty-office.tailnet.ts.net" ||
+		status.Label != "Office" || len(status.TailscaleIPs) != 1 {
+		t.Fatalf("status = %+v", status)
+	}
+
+	// A nil vault resolver and a nil history service must both be harmless:
+	// the sink runs on the provider's dial goroutine during shutdown too.
+	(&networkProviderStatusSink{}).Observe(adaptertailscale.Status{ProfileID: "net-1"})
+}
+
+func TestConnectionLogFromProviderStatus(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	base := adaptertailscale.Status{
+		ProfileID:    "net-1",
+		Label:        "Office",
+		Kind:         string(domainvault.NetworkKindTailscale),
+		TailscaleIPs: []string{"100.64.0.2"},
+		DNSName:      "natcatty-office.tailnet.ts.net",
+		AuthURL:      "https://login.tailscale.com/a/example",
+	}
+
+	for _, phase := range []appconnection.ProviderPhase{
+		appconnection.ProviderPhaseStarting, appconnection.ProviderPhaseStopping,
+	} {
+		status := base
+		status.Phase = phase
+		if _, ok := connectionLogFromProviderStatus(status, at); ok {
+			t.Fatalf("phase %q was recorded; transient progress should not be", phase)
+		}
+	}
+
+	for _, test := range []struct {
+		phase    appconnection.ProviderPhase
+		status   domainhistory.ConnectionStatus
+		withAddr bool
+	}{
+		{appconnection.ProviderPhaseRunning, domainhistory.ConnectionConnected, true},
+		{appconnection.ProviderPhaseNeedsLogin, domainhistory.ConnectionFailed, true},
+		{appconnection.ProviderPhaseError, domainhistory.ConnectionFailed, true},
+		{appconnection.ProviderPhaseStopped, domainhistory.ConnectionFailed, true},
+	} {
+		status := base
+		status.Phase = test.phase
+		status.Err = errors.New("tailscale: machine authorization required")
+		log, ok := connectionLogFromProviderStatus(status, at)
+		if !ok {
+			t.Fatalf("phase %q was not recorded", test.phase)
+		}
+		if log.Status != test.status {
+			t.Fatalf("phase %q status = %q, want %q", test.phase, log.Status, test.status)
+		}
+		if !log.IsProvider() || log.IsLocal() || log.IsUnsaved() {
+			t.Fatalf("phase %q row was misclassified: %+v", test.phase, log)
+		}
+		if log.NetworkProfileID != "net-1" || log.NetworkProfileLabel != "Office" ||
+			log.NetworkProviderPhase != string(test.phase) ||
+			log.NetworkProviderKind != string(domainvault.NetworkKindTailscale) {
+			t.Fatalf("phase %q metadata = %+v", test.phase, log)
+		}
+		if log.HostLabel != "Office" || log.Kind != string(domainvault.NetworkKindTailscale) {
+			t.Fatalf("phase %q display fields = %+v", test.phase, log)
+		}
+		if log.NetworkAddress != "natcatty-office.tailnet.ts.net" {
+			t.Fatalf("phase %q address = %q", test.phase, log.NetworkAddress)
+		}
+		if log.StartedAt != at || log.EndedAt != at {
+			t.Fatalf("phase %q timestamps = %v/%v", test.phase, log.StartedAt, log.EndedAt)
+		}
+		// The Auth URL is for the login flow, never for the persisted log.
+		for _, value := range []string{log.HostLabel, log.Hostname, log.Error,
+			log.NetworkAddress, log.NetworkProfileLabel} {
+			if strings.Contains(value, base.AuthURL) {
+				t.Fatalf("phase %q row leaked the Auth URL: %+v", test.phase, log)
+			}
+		}
+	}
+
+	noAddress := base
+	noAddress.Phase = appconnection.ProviderPhaseRunning
+	noAddress.DNSName = ""
+	log, ok := connectionLogFromProviderStatus(noAddress, at)
+	if !ok || log.NetworkAddress != "100.64.0.2" {
+		t.Fatalf("address fallback = %q, want the first tailnet IP", log.NetworkAddress)
+	}
+}
+
+func TestConnectionLogProviderRowsAreNormalizedAsProviderRows(t *testing.T) {
+	log := domainhistory.NormalizeConnectionLog(domainhistory.ConnectionLog{
+		Kind:                 string(domainvault.NetworkKindTailscale),
+		Status:               domainhistory.ConnectionConnected,
+		StartedAt:            time.Now(),
+		NetworkProfileID:     " net-1 ",
+		NetworkProfileLabel:  " Office ",
+		NetworkProviderKind:  " tailscale ",
+		NetworkProviderPhase: " running ",
+		NetworkAddress:       " natcatty-office.tailnet.ts.net ",
+	})
+	if log.HostLabel != "Office" || log.NetworkProfileLabel != "Office" {
+		t.Fatalf("provider labels = %q/%q", log.HostLabel, log.NetworkProfileLabel)
+	}
+	if log.UnsavedHost || log.IsUnsaved() || log.IsLocal() {
+		t.Fatalf("provider row was classified as a Host attempt: %+v", log)
+	}
+	if log.NetworkProviderPhase != "running" || log.NetworkAddress != "natcatty-office.tailnet.ts.net" {
+		t.Fatalf("provider metadata was not trimmed: %+v", log)
+	}
+}

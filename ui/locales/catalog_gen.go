@@ -2202,6 +2202,162 @@ func (msgs Messages) VaultNetworkWarningControlURLInsecure() string {
 	return Catalog.Format(msgs.locale, "vaultNetworkWarningControlURLInsecure", nil)
 }
 
+// NetworkProviderPhaseStopped says "Stopped"
+// in the language the app shows.
+func NetworkProviderPhaseStopped() string { return In(i18n.Locale()).NetworkProviderPhaseStopped() }
+
+// NetworkProviderPhaseStopped says "Stopped"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseStopped() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseStopped", nil)
+}
+
+// NetworkProviderPhaseStarting says "Starting"
+// in the language the app shows.
+func NetworkProviderPhaseStarting() string { return In(i18n.Locale()).NetworkProviderPhaseStarting() }
+
+// NetworkProviderPhaseStarting says "Starting"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseStarting() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseStarting", nil)
+}
+
+// NetworkProviderPhaseNeedsLogin says "Needs login"
+// in the language the app shows.
+func NetworkProviderPhaseNeedsLogin() string {
+	return In(i18n.Locale()).NetworkProviderPhaseNeedsLogin()
+}
+
+// NetworkProviderPhaseNeedsLogin says "Needs login"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseNeedsLogin() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseNeedsLogin", nil)
+}
+
+// NetworkProviderPhaseRunning says "Running"
+// in the language the app shows.
+func NetworkProviderPhaseRunning() string { return In(i18n.Locale()).NetworkProviderPhaseRunning() }
+
+// NetworkProviderPhaseRunning says "Running"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseRunning() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseRunning", nil)
+}
+
+// NetworkProviderPhaseStopping says "Stopping"
+// in the language the app shows.
+func NetworkProviderPhaseStopping() string { return In(i18n.Locale()).NetworkProviderPhaseStopping() }
+
+// NetworkProviderPhaseStopping says "Stopping"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseStopping() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseStopping", nil)
+}
+
+// NetworkProviderPhaseError says "Error"
+// in the language the app shows.
+func NetworkProviderPhaseError() string { return In(i18n.Locale()).NetworkProviderPhaseError() }
+
+// NetworkProviderPhaseError says "Error"
+// in the language of msgs.
+func (msgs Messages) NetworkProviderPhaseError() string {
+	return Catalog.Format(msgs.locale, "networkProviderPhaseError", nil)
+}
+
+// VaultNetworkProviderStatus says "{phase} · {address}"
+// in the language the app shows.
+//
+// A Network Profile row's Provider phase and node address.
+func VaultNetworkProviderStatus(phase string, address string) string {
+	return In(i18n.Locale()).VaultNetworkProviderStatus(phase, address)
+}
+
+// VaultNetworkProviderStatus says "{phase} · {address}"
+// in the language of msgs.
+//
+// A Network Profile row's Provider phase and node address.
+func (msgs Messages) VaultNetworkProviderStatus(phase string, address string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProviderStatus", map[string]any{"phase": phase, "address": address})
+}
+
+// VaultNetworkProviderStatusError says "Last error: {error}"
+// in the language the app shows.
+//
+// The last failure a Network Profile's Provider reported.
+func VaultNetworkProviderStatusError(error string) string {
+	return In(i18n.Locale()).VaultNetworkProviderStatusError(error)
+}
+
+// VaultNetworkProviderStatusError says "Last error: {error}"
+// in the language of msgs.
+//
+// The last failure a Network Profile's Provider reported.
+func (msgs Messages) VaultNetworkProviderStatusError(error string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkProviderStatusError", map[string]any{"error": error})
+}
+
+// VaultNetworkLoginRequired says "Login required: open {url}"
+// in the language the app shows.
+//
+// The interactive-login address a Network Profile's Provider is waiting on.
+func VaultNetworkLoginRequired(url string) string {
+	return In(i18n.Locale()).VaultNetworkLoginRequired(url)
+}
+
+// VaultNetworkLoginRequired says "Login required: open {url}"
+// in the language of msgs.
+//
+// The interactive-login address a Network Profile's Provider is waiting on.
+func (msgs Messages) VaultNetworkLoginRequired(url string) string {
+	return Catalog.Format(msgs.locale, "vaultNetworkLoginRequired", map[string]any{"url": url})
+}
+
+// VaultNetworkAuthKeyStateHint says "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored…"
+// in the language the app shows.
+//
+// Explains tsnet's state-directory precedence over a newly entered Auth
+// Key.
+func VaultNetworkAuthKeyStateHint() string { return In(i18n.Locale()).VaultNetworkAuthKeyStateHint() }
+
+// VaultNetworkAuthKeyStateHint says "A node already registered in this Profile's state directory keeps that registration, and the Auth Key is then ignored…"
+// in the language of msgs.
+//
+// Explains tsnet's state-directory precedence over a newly entered Auth
+// Key.
+func (msgs Messages) VaultNetworkAuthKeyStateHint() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkAuthKeyStateHint", nil)
+}
+
+// VaultNetworkPrivacyNotice says "The embedded Tailscale node uploads operational logs to log.tailscale.com. This build has no switch to disable that u…"
+// in the language the app shows.
+//
+// Privacy disclosure in the Tailscale Network Profile editor.
+func VaultNetworkPrivacyNotice() string { return In(i18n.Locale()).VaultNetworkPrivacyNotice() }
+
+// VaultNetworkPrivacyNotice says "The embedded Tailscale node uploads operational logs to log.tailscale.com. This build has no switch to disable that u…"
+// in the language of msgs.
+//
+// Privacy disclosure in the Tailscale Network Profile editor.
+func (msgs Messages) VaultNetworkPrivacyNotice() string {
+	return Catalog.Format(msgs.locale, "vaultNetworkPrivacyNotice", nil)
+}
+
+// LogsProviderMeta says "{phase} · {kind}"
+// in the language the app shows.
+//
+// The Provider phase and Network kind of a connection log row.
+func LogsProviderMeta(phase string, kind string) string {
+	return In(i18n.Locale()).LogsProviderMeta(phase, kind)
+}
+
+// LogsProviderMeta says "{phase} · {kind}"
+// in the language of msgs.
+//
+// The Provider phase and Network kind of a connection log row.
+func (msgs Messages) LogsProviderMeta(phase string, kind string) string {
+	return Catalog.Format(msgs.locale, "logsProviderMeta", map[string]any{"phase": phase, "kind": kind})
+}
+
 // VaultKnownHostsTitle says "Known Hosts ({count})"
 // in the language the app shows.
 //

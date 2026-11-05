@@ -75,6 +75,27 @@ func ProblemTextFor(m locales.Messages, err error) string {
 	return ProblemText(m, Kind(err))
 }
 
+// ProviderPhaseText localizes a Network Provider lifecycle phase. State stores
+// the opaque phase; the Logs and Vault surfaces share this mapping. An unknown
+// phase renders nothing, so the UI never shows an untranslated token.
+func ProviderPhaseText(m locales.Messages, phase appconnection.ProviderPhase) string {
+	switch phase {
+	case appconnection.ProviderPhaseStopped:
+		return m.NetworkProviderPhaseStopped()
+	case appconnection.ProviderPhaseStarting:
+		return m.NetworkProviderPhaseStarting()
+	case appconnection.ProviderPhaseNeedsLogin:
+		return m.NetworkProviderPhaseNeedsLogin()
+	case appconnection.ProviderPhaseRunning:
+		return m.NetworkProviderPhaseRunning()
+	case appconnection.ProviderPhaseStopping:
+		return m.NetworkProviderPhaseStopping()
+	case appconnection.ProviderPhaseError:
+		return m.NetworkProviderPhaseError()
+	}
+	return ""
+}
+
 // ProblemText localizes a connection failure. Unknown kinds render nothing, so
 // the UI never shows an untranslated token.
 func ProblemText(m locales.Messages, kind appconnection.Kind) string {

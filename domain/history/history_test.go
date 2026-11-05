@@ -184,6 +184,44 @@ func TestNormalizeConnectionLogClassifiesLocalAndUnsavedHosts(t *testing.T) {
 	}
 }
 
+func TestNetworkProviderRowsAreNeitherLocalNorUnsaved(t *testing.T) {
+	log := NormalizeConnectionLog(ConnectionLog{
+		ID:                   "provider-1",
+		Kind:                 "tailscale",
+		Status:               ConnectionConnected,
+		StartedAt:            at(9),
+		NetworkProfileID:     " net-1 ",
+		NetworkProfileLabel:  " Office ",
+		NetworkProviderKind:  " tailscale ",
+		NetworkProviderPhase: " running ",
+		NetworkAddress:       " natcatty-office.tailnet.ts.net ",
+	})
+	if !log.IsProvider() {
+		t.Fatal("a row with a provider phase was not classified as a provider row")
+	}
+	if log.IsLocal() || log.IsUnsaved() || log.UnsavedHost {
+		t.Fatalf("provider row classified as Host/local: %+v", log)
+	}
+	if log.HostLabel != "Office" || log.NetworkProfileLabel != "Office" {
+		t.Fatalf("provider labels = %q/%q", log.HostLabel, log.NetworkProfileLabel)
+	}
+	if log.NetworkProfileID != "net-1" || log.NetworkProviderPhase != "running" ||
+		log.NetworkAddress != "natcatty-office.tailnet.ts.net" {
+		t.Fatalf("provider metadata was not trimmed: %+v", log)
+	}
+
+	for _, key := range []string{LocalHostKey, UnsavedHostKey} {
+		if (ConnectionFilter{Host: key}).Match(log) {
+			t.Fatalf("the %q filter matched a provider row", key)
+		}
+	}
+	for _, query := range []string{"office", "running", "tailnet.ts.net", "tailscale"} {
+		if !(ConnectionFilter{Query: query}).Match(log) {
+			t.Fatalf("query %q did not match the provider row", query)
+		}
+	}
+}
+
 func TestPruneKeepsTheNewestCountAndIsDeterministic(t *testing.T) {
 	logs := make([]ConnectionLog, 0, 5)
 	for index := 0; index < 5; index++ {

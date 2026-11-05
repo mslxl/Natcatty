@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	domainvault "github.com/mslxl/natcatty/domain/vault"
+	uiconnection "github.com/mslxl/natcatty/ui/connection"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 	vaultstate "github.com/mslxl/natcatty/ui/vault/state"
@@ -53,6 +54,7 @@ func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkP
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, profile.Label).Bold()
 			ui.Text(c, networkSummary(m, profile)).FontSize(12).TextColor(t.TextMuted)
+			networkProviderStatus(c, s, profile.ID, m, t)
 		})
 		if ui.Button(c, m.VaultHostEdit()).Clicked() {
 			s.BeginEditNetworkProfile(profile.ID)
@@ -63,6 +65,34 @@ func networkRow(c *ui.Context, s *vaultstate.State, profile domainvault.NetworkP
 			c.Invalidate()
 		}
 	})
+}
+
+// networkProviderStatus renders the latest non-secret Provider status of one
+// Profile. A Profile whose Provider has never run shows no status line; ticket
+// 10 owns starting and stopping the lifecycle explicitly.
+func networkProviderStatus(c *ui.Context, s *vaultstate.State, profileID string,
+	m locales.Messages, t *ui.Theme) {
+	status, ok := s.NetworkStatus(profileID)
+	if !ok {
+		return
+	}
+	if phase := uiconnection.ProviderPhaseText(m, status.Phase); phase != "" {
+		text := phase
+		if address := status.Address(); address != "" {
+			text = m.VaultNetworkProviderStatus(phase, address)
+		}
+		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
+	}
+	// The Auth URL is the interactive-login address, not a stored secret. It
+	// stays on the Profile surface and is never written to the connection log.
+	if status.AuthURL != "" {
+		ui.Text(c, m.VaultNetworkLoginRequired(status.AuthURL)).
+			FontSize(12).TextColor(t.TextMuted)
+	}
+	if status.LastError != "" {
+		ui.Text(c, m.VaultNetworkProviderStatusError(status.LastError)).
+			FontSize(12).TextColor(uitheme.DangerText(t))
+	}
 }
 
 // networkSummary names a profile's Kind and the endpoint a list row can show.
@@ -217,7 +247,7 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 			// group in the same frame.
 			switch domainvault.NetworkProfileKind(form.Kind) {
 			case domainvault.NetworkKindTailscale:
-				tailscaleFields(c, form, m)
+				tailscaleFields(c, form, m, t)
 			case domainvault.NetworkKindWireGuard:
 				wireguardFields(c, s, form, m, t)
 			}
@@ -240,7 +270,8 @@ func networkEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui
 	editorActions(c, func() { _ = s.SaveNetworkProfile() }, s.CancelNetworkProfileEdit, m)
 }
 
-func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm, m locales.Messages) {
+func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm,
+	m locales.Messages, t *ui.Theme) {
 	ui.Field(c, m.VaultNetworkHostname(), func() {
 		ui.TextInput(c, &form.Hostname).Placeholder("netcatty-node")
 	}).Description(m.VaultNetworkHostnameHint())
@@ -252,6 +283,9 @@ func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm, m local
 	ui.Field(c, m.VaultNetworkAuthKey(), func() {
 		ui.TextInput(c, &form.AuthKey).Password()
 	}).Description(authKeyHint)
+	// tsnet prefers an existing registration in the state directory over a new
+	// Auth Key. Say so here so a key that appears to be ignored is explained.
+	ui.Text(c, m.VaultNetworkAuthKeyStateHint()).FontSize(12).TextColor(t.TextMuted)
 
 	ui.Field(c, m.VaultNetworkControlURL(), func() {
 		ui.TextInput(c, &form.ControlURL).Placeholder("https://controlplane.tailscale.com")
@@ -260,6 +294,11 @@ func tailscaleFields(c *ui.Context, form *vaultstate.NetworkProfileForm, m local
 	ui.Field(c, m.VaultNetworkTags(), func() {
 		ui.TextInput(c, &form.Tags).Placeholder("tag:prod, tag:ops")
 	}).Description(m.VaultNetworkTagsHint())
+
+	// The embedded node's logtail upload cannot be disabled from this build.
+	// Say so before the profile is saved rather than implying privacy the
+	// Provider does not provide.
+	ui.Text(c, m.VaultNetworkPrivacyNotice()).FontSize(12).TextColor(t.TextMuted)
 }
 
 func wireguardFields(c *ui.Context, s *vaultstate.State, form *vaultstate.NetworkProfileForm,
