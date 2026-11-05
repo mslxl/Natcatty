@@ -15,9 +15,9 @@ requests; this file is the human-maintained changelog.
   `NOTICE`, expanded third-party notices (the per-crate copyright and mosh-go
   gaps are marked for ticket 15), an About & Licenses settings area, a
   per-release Corresponding Source statement generated into every package, and
-  `internal/legal` checks that fail when a document is missing. The published
-  `v0.1.0` release still needs a human-applied correction documented in
-  `docs/releases/v0.1.0-correction.md`.
+  `internal/legal` checks that fail when a document is missing. The defective
+  `v0.1.0` release and tag were withdrawn on 2026-11-05; `v0.1.0-beta.1` is the
+  first release built with the restored license files.
 
 ### Changed
 
