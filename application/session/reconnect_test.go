@@ -78,7 +78,11 @@ func (t *scriptedTransport) Resize(cols, rows int) error {
 	return nil
 }
 
-func (t *scriptedTransport) End() End { return t.end }
+func (t *scriptedTransport) End() End {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.end
+}
 
 func (t *scriptedTransport) Close() error {
 	t.once.Do(func() { close(t.closed) })
@@ -86,7 +90,9 @@ func (t *scriptedTransport) Close() error {
 }
 
 func (t *scriptedTransport) fail(end End) {
+	t.mu.Lock()
 	t.end = end
+	t.mu.Unlock()
 	t.once.Do(func() { close(t.closed) })
 }
 
@@ -126,6 +132,29 @@ func (f *scriptedFactory) callCount() int {
 	return f.calls
 }
 
+// resizeBlockingTransport models a transport whose Resize can wedge, as SSH's
+// window-change request can while its socket is blocked.
+type resizeBlockingTransport struct {
+	*scriptedTransport
+	entered   chan struct{}
+	release   chan struct{}
+	enterOnce sync.Once
+}
+
+func newResizeBlockingTransport() *resizeBlockingTransport {
+	return &resizeBlockingTransport{
+		scriptedTransport: newScriptedTransport(),
+		entered:           make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+}
+
+func (t *resizeBlockingTransport) Resize(cols, rows int) error {
+	t.enterOnce.Do(func() { close(t.entered) })
+	<-t.release
+	return t.scriptedTransport.Resize(cols, rows)
+}
+
 type permanentTestError struct{}
 
 func (permanentTestError) Error() string   { return "authentication rejected" }
@@ -145,6 +174,18 @@ func waitForCondition(t *testing.T, what string, ready func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func waitForDone(t *testing.T, session *Session) {
+	t.Helper()
+	waitForCondition(t, "the closed Session", func() bool {
+		select {
+		case <-session.Done():
+			return true
+		default:
+			return false
+		}
+	})
 }
 
 // TestReconnectNowDialsImmediately backs the Session menu's Reconnect action:
@@ -336,6 +377,109 @@ func TestUserCloseDuringReconnectDelayClearsSavedCredentials(t *testing.T) {
 	}
 }
 
+// TestCloseDoesNotBlockOnABlockedTransportResize pins the Close contract the
+// UI depends on: Close is called synchronously from the window close path, so a
+// loop stuck in a transport call (an SSH window-change write to a wedged socket,
+// for example) must not wedge the caller. The close stays pending and its
+// credential cleanup runs when teardown reaches it.
+func TestCloseDoesNotBlockOnABlockedTransportResize(t *testing.T) {
+	transport := newResizeBlockingTransport()
+	service := reconnectTestService(&staticFactory{transport: transport})
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindET, ResumeKey: "resume-test",
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(transport.release) }) }
+	t.Cleanup(release)
+
+	if err := session.Resize(120, 40); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	select {
+	case <-transport.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the transport never entered Resize")
+	}
+
+	closed := make(chan struct{})
+	started := time.Now()
+	go func() {
+		_ = session.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Logf("Close returned in %v while transport Resize was blocked", time.Since(started))
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked while the command loop was inside transport Resize")
+	}
+
+	select {
+	case <-session.Done():
+		t.Fatal("the Session finished while Resize was still blocked")
+	default:
+	}
+
+	release()
+	waitForDone(t, session)
+	if got := transport.discards(); got != 1 {
+		t.Fatalf("explicit close discarded credentials %d times, want 1", got)
+	}
+	if got := transport.preserves(); got != 0 {
+		t.Fatalf("explicit close preserved credentials %d times, want 0", got)
+	}
+}
+
+// TestCloseRacingTheEndAppliesTheResumeDecisionOnce: a close that races the
+// natural end of the Session must apply its preserve/discard decision exactly
+// once. The close record is consumed by the loop or teardown, never both.
+func TestCloseRacingTheEndAppliesTheResumeDecisionOnce(t *testing.T) {
+	cases := []struct {
+		name         string
+		close        func(*Session) error
+		wantPreserve int
+		wantDiscard  int
+	}{
+		{"explicit close discards", (*Session).Close, 0, 1},
+		{"app close preserves", (*Session).ClosePreservingResume, 1, 0},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			for i := 0; i < 100; i++ {
+				first := newScriptedTransport()
+				service := reconnectTestService(&staticFactory{transport: first})
+				session, err := service.Open(context.Background(), StartSpec{
+					Kind: KindET, ResumeKey: "resume-test",
+				})
+				if err != nil {
+					t.Fatalf("iteration %d: Open: %v", i, err)
+				}
+				var wg sync.WaitGroup
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					_ = testCase.close(session)
+				}()
+				go func() {
+					defer wg.Done()
+					first.fail(End{Reason: EndReasonExited})
+				}()
+				wg.Wait()
+				waitForDone(t, session)
+				if got := first.preserves(); got != testCase.wantPreserve {
+					t.Fatalf("iteration %d: PreserveResume calls = %d, want %d", i, got, testCase.wantPreserve)
+				}
+				if got := first.discards(); got != testCase.wantDiscard {
+					t.Fatalf("iteration %d: DiscardResume calls = %d, want %d", i, got, testCase.wantDiscard)
+				}
+			}
+		})
+	}
+}
+
 func TestSessionDoesNotReconnectAfterACleanExit(t *testing.T) {
 	first := newScriptedTransport()
 	factory := &scriptedFactory{transports: []*scriptedTransport{first}}
@@ -466,8 +610,8 @@ func TestSessionStopsReconnectingOnAPermanentFailure(t *testing.T) {
 	if err := session.Close(); err != nil {
 		t.Fatalf("Close after the permanent failure: %v", err)
 	}
-	if got := first.discards(); got == 0 {
-		t.Fatal("an explicit Close after the permanent reconnect failure left the preserved credentials")
+	if got := first.discards(); got != 1 {
+		t.Fatalf("an explicit Close after the permanent reconnect failure discarded credentials %d times, want 1", got)
 	}
 }
 
