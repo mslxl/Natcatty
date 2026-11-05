@@ -67,6 +67,12 @@ func TestNetworkProviderStatusAddressPrefersDNSThenFirstIP(t *testing.T) {
 		{"first ip", NetworkProviderStatus{
 			TailscaleIPs: []string{"100.64.0.2", "fd7a::2"},
 		}, "100.64.0.2"},
+		{"wireguard endpoint", NetworkProviderStatus{
+			WireGuardEndpoint: "203.0.113.7:51820",
+		}, "203.0.113.7:51820"},
+		{"dns name beats wireguard endpoint", NetworkProviderStatus{
+			DNSName: "office.tailnet.ts.net", WireGuardEndpoint: "203.0.113.7:51820",
+		}, "office.tailnet.ts.net"},
 		{"none", NetworkProviderStatus{}, ""},
 	}
 	for _, test := range tests {

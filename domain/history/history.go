@@ -56,12 +56,17 @@ type ConnectionLog struct {
 	// Network Provider status rows describe a Network Profile's tunnel rather
 	// than a Host Session. NetworkProviderPhase is the marker that tells them
 	// apart; the remaining fields are display metadata and never include
-	// credential material or an Auth URL.
-	NetworkProfileID     string `json:"networkProfileId,omitempty"`
-	NetworkProfileLabel  string `json:"networkProfileLabel,omitempty"`
-	NetworkProviderKind  string `json:"networkProviderKind,omitempty"`
-	NetworkProviderPhase string `json:"networkProviderPhase,omitempty"`
-	NetworkAddress       string `json:"networkAddress,omitempty"`
+	// credential material or an Auth URL. The WireGuard fields report the live
+	// tunnel: the most recent handshake and the summed rx/tx counters. A zero
+	// handshake time means the Provider has never completed one.
+	NetworkProfileID     string    `json:"networkProfileId,omitempty"`
+	NetworkProfileLabel  string    `json:"networkProfileLabel,omitempty"`
+	NetworkProviderKind  string    `json:"networkProviderKind,omitempty"`
+	NetworkProviderPhase string    `json:"networkProviderPhase,omitempty"`
+	NetworkAddress       string    `json:"networkAddress,omitempty"`
+	NetworkLastHandshake time.Time `json:"networkLastHandshake,omitempty"`
+	NetworkRxBytes       uint64    `json:"networkRxBytes,omitempty"`
+	NetworkTxBytes       uint64    `json:"networkTxBytes,omitempty"`
 }
 
 // IsProvider reports a Network Provider status row. Such a row is neither a

@@ -443,6 +443,7 @@
     }
   },
   "vaultNetworkWarningControlURLInsecure": "This Control URL uses plain HTTP, so the auth key is not encrypted in transit.",
+  "vaultNetworkWarningWireGuardDNS": "No DNS server is configured. This profile can reach only IP-literal targets; host names fail instead of using the system resolver.",
   "networkProviderPhaseStopped": "Stopped",
   "networkProviderPhaseStarting": "Starting",
   "networkProviderPhaseNeedsLogin": "Needs login",
@@ -490,6 +491,31 @@
   "vaultNetworkPrivacyNotice": "The embedded Tailscale node uploads operational logs to log.tailscale.com. This build has no switch to disable that upload, and a self-hosted control server does not stop it. If that is not acceptable, do not use Tailscale Net in this build.",
   "@vaultNetworkPrivacyNotice": {
     "description": "Privacy disclosure in the Tailscale Network Profile editor."
+  },
+  "networkHandshakeEstablished": "Handshake established",
+  "networkHandshakePending": "No handshake yet",
+  "networkHandshakeNever": "never",
+  "networkWireGuardDetail": "{handshake} · last {lastHandshake} · rx {rx} · tx {tx}",
+  "@networkWireGuardDetail": {
+    "description": "Live WireGuard tunnel detail on a Network Profile row and a Connection Log row.",
+    "placeholders": {
+      "handshake": {
+        "type": "String",
+        "example": "Handshake established"
+      },
+      "lastHandshake": {
+        "type": "String",
+        "example": "2026-11-05 12:00:00"
+      },
+      "rx": {
+        "type": "String",
+        "example": "1.5 KiB"
+      },
+      "tx": {
+        "type": "String",
+        "example": "0 B"
+      }
+    }
   },
   "logsProviderMeta": "{phase} · {kind}",
   "@logsProviderMeta": {

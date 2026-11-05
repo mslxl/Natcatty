@@ -83,6 +83,13 @@ func networkProviderStatus(c *ui.Context, s *vaultstate.State, profileID string,
 		}
 		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted)
 	}
+	// A WireGuard Profile reports its live tunnel state: whether a handshake
+	// completed, when, and the summed counters. None of it is secret.
+	if status.Kind == string(domainvault.NetworkKindWireGuard) {
+		ui.Text(c, uiconnection.WireGuardDetail(m, status.HandshakeEstablished,
+			status.LastHandshake, status.RxBytes, status.TxBytes)).
+			FontSize(12).TextColor(t.TextMuted)
+	}
 	// The Auth URL is the interactive-login address, not a stored secret. It
 	// stays on the Profile surface and is never written to the connection log.
 	if status.AuthURL != "" {
@@ -379,6 +386,8 @@ func networkWarningText(m locales.Messages, warning domainvault.NetworkWarning) 
 	switch warning {
 	case domainvault.WarningControlURLInsecure:
 		return m.VaultNetworkWarningControlURLInsecure()
+	case domainvault.WarningWireGuardDNSUnavailable:
+		return m.VaultNetworkWarningWireGuardDNS()
 	default:
 		return ""
 	}

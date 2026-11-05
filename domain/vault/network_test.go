@@ -307,8 +307,14 @@ func TestNetworkProfileWarningsReportAnInsecureControlURL(t *testing.T) {
 	if warnings := NetworkProfileWarnings(NetworkProfileDraft{
 		Kind:      NetworkKindWireGuard,
 		WireGuard: &WireGuardNetworkDraft{},
+	}); len(warnings) != 1 || warnings[0] != WarningWireGuardDNSUnavailable {
+		t.Fatalf("a WireGuard draft without DNS produced %v, want the tunnel-DNS warning", warnings)
+	}
+	if warnings := NetworkProfileWarnings(NetworkProfileDraft{
+		Kind:      NetworkKindWireGuard,
+		WireGuard: &WireGuardNetworkDraft{DNS: []string{"10.0.0.1"}},
 	}); len(warnings) != 0 {
-		t.Fatalf("a WireGuard draft produced warnings: %v", warnings)
+		t.Fatalf("a WireGuard draft with DNS produced warnings: %v", warnings)
 	}
 }
 
