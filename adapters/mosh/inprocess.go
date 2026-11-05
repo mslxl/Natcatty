@@ -15,11 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	appsession "github.com/mslxl/natcatty/application/session"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	moshcore "github.com/mslxl/natcatty/internal/mosh"
+	"github.com/mslxl/natcatty/internal/mosh/terminal"
 )
 
 const (
@@ -63,6 +65,9 @@ type InProcessFactory struct {
 	HandshakeTimeout time.Duration
 	// ProbeTimeout overrides DefaultProbeTimeout.
 	ProbeTimeout time.Duration
+	// clock overrides the overlay clock in tests. Production uses the
+	// process monotonic clock.
+	clock terminal.Clock
 }
 
 // Open performs the SSH handshake, probes the announced UDP endpoint (with a
@@ -129,7 +134,12 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 	// The renderer owns the remote Complete snapshots from the initial state
 	// onward. The display's first frame clears the handshake banner, so the
 	// old viewport-reset escape is not needed and no raw host bytes are queued.
-	renderer := newTerminalRenderer(queue, cfg.Cols, cfg.Rows)
+	rendererOptions := defaultTerminalRendererOptions()
+	if f.clock != nil {
+		rendererOptions.Clock = f.clock
+	}
+	renderer := newTerminalRendererWithOptions(queue, cfg.Cols, cfg.Rows, rendererOptions)
+	renderer.setUDPPort(connect.Port)
 
 	probeTimeout := f.ProbeTimeout
 	if probeTimeout <= 0 {
@@ -195,7 +205,25 @@ func (l *udpLink) writeOne(datagram []byte) error {
 	return err
 }
 
+func (l *udpLink) readFrom(buffer []byte) (int, error) {
+	n, _, err := l.conn.ReadFromUDP(buffer)
+	return n, err
+}
+
+func (l *udpLink) setReadDeadline(deadline time.Time) error {
+	return l.conn.SetReadDeadline(deadline)
+}
+
 func (l *udpLink) close() error { return l.conn.Close() }
+
+// datagramLink is the UDP surface the transport uses. Tests substitute a link
+// whose writes fail so the network-error notification path is deterministic.
+type datagramLink interface {
+	writeOne(datagram []byte) error
+	readFrom(buffer []byte) (int, error)
+	setReadDeadline(deadline time.Time) error
+	close() error
+}
 
 // probeResult is a usable UDP link plus any state the first authenticated
 // datagram already carried. A server whose shell exits immediately can send
@@ -329,10 +357,10 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		if wait > tickInterval {
 			wait = tickInterval
 		}
-		if err := link.conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		if err := link.setReadDeadline(time.Now().Add(wait)); err != nil {
 			return nil, err
 		}
-		n, _, err := link.conn.ReadFromUDP(buffer)
+		n, err := link.readFrom(buffer)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -375,7 +403,7 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 		// The probe polls with short read deadlines. Clear the deadline
 		// before handing the socket to the long-lived read loop, which
 		// otherwise observes an immediate i/o timeout.
-		_ = link.conn.SetReadDeadline(time.Time{})
+		_ = link.setReadDeadline(time.Time{})
 		return &probeResult{link: link, remoteShutdown: update.RemoteShutdown}, nil
 	}
 }
@@ -386,7 +414,7 @@ func awaitResponse(ctx context.Context, client *moshcore.Client, link *udpLink,
 type inProcessTransport struct {
 	queue    *outputQueue
 	client   *moshcore.Client
-	link     *udpLink
+	link     datagramLink
 	renderer *terminalRenderer
 
 	// sendMu serializes SSP state changes with their UDP datagrams, so
@@ -454,6 +482,18 @@ func (t *inProcessTransport) Resize(cols, rows int) error {
 	return t.writeDatagrams(t.client.SendDatagrams(time.Now()))
 }
 
+// networkErrorMessage formats a socket failure the way stock mosh does:
+// Network::send stores "sendto: " + strerror(errno), and recvmsg failures are
+// NetworkException("recvmsg", errno). Go's net.OpError adds the operation,
+// address, and a nested syscall prefix that stock never displays.
+func networkErrorMessage(operation string, err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return operation + ": " + errno.Error()
+	}
+	return operation + ": " + err.Error()
+}
+
 // writeDatagrams sends datagrams to the announced server address. Transient
 // send failures are ignored; the client keeps the corresponding state and
 // retransmits it. Only a closed socket is a transport failure.
@@ -466,10 +506,15 @@ func (t *inProcessTransport) writeDatagrams(datagrams [][]byte) error {
 			// The route is temporarily unavailable (network switch, ICMP,
 			// ENOBUFS). Sending the remaining fragments would likely fail
 			// too; retransmission will resend the whole instruction with a
-			// fresh fragment ID.
+			// fresh fragment ID. Stock stores the sendto error in
+			// Network::send_error, which the main loop turns into the
+			// network-error notification.
+			t.renderer.setNetworkError(networkErrorMessage("sendto", err))
 			return nil
 		}
 	}
+	// Stock clears send_error whenever a send pass reports none.
+	t.renderer.clearNetworkError()
 	return nil
 }
 
@@ -510,7 +555,7 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 	buffer := make([]byte, receiveBuffer)
 	failures := 0
 	for {
-		n, _, err := t.link.conn.ReadFromUDP(buffer)
+		n, err := t.link.readFrom(buffer)
 		if err != nil {
 			if t.isFinished() || t.isClosing() {
 				return
@@ -518,7 +563,9 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 			if !isClosedNetworkError(err) && failures+1 < maxReadFailures {
 				// A network switch can surface a transient read error.
 				// Keep the SSP state and socket alive; the tick loop keeps
-				// sending until the path recovers.
+				// sending until the path recovers. Stock reports the same
+				// condition through its network-error notification.
+				t.renderer.setNetworkError(networkErrorMessage("recvmsg", err))
 				failures++
 				select {
 				case <-t.done:
@@ -532,6 +579,7 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 			return
 		}
 		failures = 0
+		t.renderer.clearNetworkError()
 		update, authenticated, receiveErr := t.client.Receive(buffer[:n], time.Now())
 		if receiveErr != nil {
 			if t.isClosing() {
@@ -544,6 +592,10 @@ func (t *inProcessTransport) readLoop(probeShutdown bool) {
 		if !authenticated {
 			continue
 		}
+		// STMClient::process_network_input reports the send time of the oldest
+		// retained sent state after every receive. Like stock, this timestamp
+		// advances only when an ack prunes the sent queue.
+		t.renderer.serverAcked(t.client.SentStateAckedTimestamp())
 		if err := t.renderer.applyUpdate(update); err != nil {
 			t.finish(appsession.End{Reason: appsession.EndReasonError},
 				fmt.Errorf("%w: %w", moshmodel.ErrProtocol, err))
@@ -587,6 +639,16 @@ func (t *inProcessTransport) tickLoop() {
 			}
 			if err := t.flush(now); err != nil {
 				if t.isClosing() {
+					return
+				}
+				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)
+				return
+			}
+			// Stock interleaves output_new_frame with network ticks using
+			// min(network->wait_time(), overlays.wait_time()), and caps the
+			// wait at 250ms while still connecting.
+			if err := t.renderer.maintainOverlays(); err != nil {
+				if t.isFinished() {
 					return
 				}
 				t.finish(appsession.End{Reason: appsession.EndReasonError}, err)

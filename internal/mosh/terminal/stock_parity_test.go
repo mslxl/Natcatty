@@ -351,6 +351,28 @@ func TestStockParityTerminalModel(t *testing.T) {
 				{input: "\033[91mA\033[38;5;196mB\033[38;2;1;2;3mC\033[0mD"},
 				{input: "\033[1;3;4;5;7;8mZ\033[22;23;24;25;27;28mY"},
 				{input: "\033[38;5;300mQ\033[48;2;255;0;128mR"},
+				// Stock packs true-color components into a 25-bit field
+				// without masking each byte, so the out-of-range components
+				// bleed into their neighbours.
+				{input: "\033[38;2;1;2;300mS\033[48;2;255;2;511mT\033[0m"},
+				{input: "\033[38;2;0;511;0mU"},
+			},
+		},
+		{
+			name: "width-edges", width: 20, height: 6,
+			events: []terminalEvent{
+				// glibc Zs separators are printable width 1, unlike
+				// unicode.IsPrint, which rejects every non-ASCII space.
+				{input: "A B C D E F"},
+				{input: "\r\nG H I J K L M N"},
+				{input: "\r\nO P Q　R"},
+				// Hangul leading Jamo are wide; medial/final are zero width.
+				{input: "\r\nSᄀᅠᆨTᅟᇿU"},
+				// Private-use code points are printable width 1, including
+				// the supplementary private-use planes.
+				{input: "\r\n\U000F0000\U000FFFFD\U00100000\U0010FFFDU"},
+				// Combining and format characters remain zero width.
+				{input: "\r\nX́⃝️\U000E0100​⁠￹Y"},
 			},
 		},
 		{
