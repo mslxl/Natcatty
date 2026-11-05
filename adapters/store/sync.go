@@ -51,6 +51,14 @@ func (s *Store) ApplySync(ctx context.Context, payload appsync.Payload) error {
 		}
 		profiles = append(profiles, model)
 	}
+	networkProfiles := make([]networkProfileSchema, 0, len(payload.NetworkProfiles))
+	for _, value := range payload.NetworkProfiles {
+		model, err := networkProfileModel(value)
+		if err != nil {
+			return err
+		}
+		networkProfiles = append(networkProfiles, model)
+	}
 	rules := make([]forwardingRuleSchema, 0, len(payload.PortForwardingRules))
 	for _, value := range payload.PortForwardingRules {
 		model, err := forwardingRuleModel(value)
@@ -94,7 +102,7 @@ func (s *Store) ApplySync(ctx context.Context, payload appsync.Payload) error {
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
 		for _, model := range []any{
 			&hostSchema{}, &hostGroupSchema{}, &sshKeySchema{}, &identitySchema{}, &proxyProfileSchema{},
-			&forwardingRuleSchema{}, &snippetSchema{}, &snippetPackageSchema{}, &noteSchema{}, &noteGroupSchema{},
+			&networkProfileSchema{}, &forwardingRuleSchema{}, &snippetSchema{}, &snippetPackageSchema{}, &noteSchema{}, &noteGroupSchema{},
 		} {
 			if err := deleteAll(tx, model); err != nil {
 				return err
@@ -122,6 +130,11 @@ func (s *Store) ApplySync(ctx context.Context, payload appsync.Payload) error {
 		}
 		for index := range profiles {
 			if err := upsertModel(tx, &profiles[index], "id", "label", "type", "host", "port", "order_key", "updated_at", "data"); err != nil {
+				return err
+			}
+		}
+		for index := range networkProfiles {
+			if err := upsertModel(tx, &networkProfiles[index], "id", "label", "kind", "order_key", "updated_at", "data"); err != nil {
 				return err
 			}
 		}

@@ -22,6 +22,7 @@ type Records interface {
 	ListKeys(ctx context.Context) ([]domainvault.Key, error)
 	ListIdentities(ctx context.Context) ([]domainvault.Identity, error)
 	ListProxyProfiles(ctx context.Context) ([]domainvault.ProxyProfile, error)
+	ListNetworkProfiles(ctx context.Context) ([]domainvault.NetworkProfile, error)
 	ListForwardingRules(ctx context.Context) ([]domainforward.Rule, error)
 	ListSnippets(ctx context.Context) ([]domainvault.Snippet, error)
 	ListSnippetPackages(ctx context.Context) ([]domainvault.SnippetPackage, error)
@@ -146,6 +147,21 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 			}
 		}
 	}
+	if payload.NetworkProfiles, err = v.records.ListNetworkProfiles(ctx); err != nil {
+		return appsync.Payload{}, err
+	}
+	if payload.NetworkProfiles == nil {
+		// "This writer has no Network Profiles" must be encoded as [] rather
+		// than a missing key: the merge reads nil as a payload written before
+		// the family existed and must not treat it as a deletion.
+		payload.NetworkProfiles = []domainvault.NetworkProfile{}
+	}
+	for _, profile := range payload.NetworkProfiles {
+		add(profile.UpdatedAt.UnixMilli())
+		if err := v.addNetworkSecrets(ctx, &payload, profile); err != nil {
+			return appsync.Payload{}, err
+		}
+	}
 	if payload.PortForwardingRules, err = v.records.ListForwardingRules(ctx); err != nil {
 		return appsync.Payload{}, err
 	}
@@ -190,6 +206,54 @@ func (v *Vault) Snapshot(ctx context.Context) (appsync.Payload, error) {
 	return payload, nil
 }
 
+// addNetworkSecrets appends the secret material a Network Profile advertises
+// through its Has* markers. The profile record itself never carries plaintext:
+// the Auth Key, Private Key, and each peer's Preshared Key are addressed by
+// their field-secret entity and field names.
+func (v *Vault) addNetworkSecrets(ctx context.Context, payload *appsync.Payload, profile domainvault.NetworkProfile) error {
+	for _, secret := range networkSecretRefs(profile) {
+		if !secret.advertised {
+			continue
+		}
+		if err := v.addSecret(ctx, payload, secret.ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// networkSecretRef is one credential address a Network Profile can own.
+// advertised mirrors the record's Has* marker; clearing visits the address
+// regardless because a stale marker must not strand ciphertext.
+type networkSecretRef struct {
+	ref        appvault.SecretRef
+	advertised bool
+}
+
+func networkSecretRefs(profile domainvault.NetworkProfile) []networkSecretRef {
+	var refs []networkSecretRef
+	if profile.Tailscale != nil {
+		refs = append(refs, networkSecretRef{
+			ref:        appvault.NetworkProfileSecretRef(profile.ID, appvault.FieldNetworkAuthKey),
+			advertised: profile.Tailscale.HasAuthKey,
+		})
+	}
+	if profile.WireGuard == nil {
+		return refs
+	}
+	refs = append(refs, networkSecretRef{
+		ref:        appvault.NetworkProfileSecretRef(profile.ID, appvault.FieldNetworkPrivateKey),
+		advertised: profile.WireGuard.HasPrivateKey,
+	})
+	for _, peer := range profile.WireGuard.Peers {
+		refs = append(refs, networkSecretRef{
+			ref:        appvault.NetworkPeerSecretRef(peer.ID, appvault.FieldNetworkPresharedKey),
+			advertised: peer.HasPresharedKey,
+		})
+	}
+	return refs
+}
+
 func (v *Vault) addSecret(ctx context.Context, payload *appsync.Payload, ref appvault.SecretRef) error {
 	value, err := v.secrets.Get(ctx, ref)
 	if errors.Is(err, appvault.ErrSecretNotFound) {
@@ -218,6 +282,21 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 	if mode == appvault.SecretModeUnavailable || mode == appvault.SecretModePassphraseLocked {
 		return fmt.Errorf("syncvault: cannot apply credentials in %s mode", mode)
 	}
+	// Network Profile secrets are addressed by profile and peer id, and a peer
+	// is nested inside a record that the apply replaces wholesale. Capture the
+	// local profiles first so a profile or peer the payload drops still has its
+	// ciphertext removed instead of becoming an orphan.
+	previousProfiles, err := v.records.ListNetworkProfiles(ctx)
+	if err != nil {
+		return fmt.Errorf("syncvault: list local Network Profiles: %w", err)
+	}
+	// A nil family means the payload predates Network Profiles. Its writer
+	// cannot express a deletion, so keep the local records and credentials
+	// instead of replacing them with an empty family.
+	preserveNetworkSecrets := payload.NetworkProfiles == nil
+	if preserveNetworkSecrets {
+		payload.NetworkProfiles = previousProfiles
+	}
 	if err := v.records.ApplySync(ctx, payload); err != nil {
 		return err
 	}
@@ -234,14 +313,16 @@ func (v *Vault) Apply(ctx context.Context, payload appsync.Payload) error {
 		}
 		byRef[ref] = true
 	}
-	return v.clearStale(ctx, payload, byRef)
+	return v.clearStale(ctx, payload, byRef, previousProfiles, preserveNetworkSecrets)
 }
 
 // clearStale deletes credential fields that an incoming record no longer
-// advertises. Orphan rows for entities absent from the payload are left for a
-// later cleanup: they are ciphertext and cannot be addressed without listing
-// the secret store.
-func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef map[appvault.SecretRef]bool) error {
+// advertises, plus every Network Profile credential the apply removed unless
+// the payload predates the family. Orphan rows for other entities absent from
+// the payload are left for a later cleanup: they are ciphertext and cannot be
+// addressed without listing the secret store.
+func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef map[appvault.SecretRef]bool,
+	previousProfiles []domainvault.NetworkProfile, preserveNetworkSecrets bool) error {
 	clear := func(ref appvault.SecretRef) error {
 		if byRef[ref] {
 			return nil
@@ -276,6 +357,21 @@ func (v *Vault) clearStale(ctx context.Context, payload appsync.Payload, byRef m
 	for _, profile := range payload.ProxyProfiles {
 		if err := clear(appvault.ProxyProfileSecretRef(profile.ID, appvault.FieldProxyPassword)); err != nil {
 			return err
+		}
+	}
+	// A Network Profile that survived still needs any credential the payload
+	// did not carry removed, and a profile or peer that disappeared needs all
+	// of its ciphertext removed. previousProfiles is authoritative for the
+	// addresses that existed before the apply. A payload that predates the
+	// family says nothing about these credentials, so keep them.
+	if preserveNetworkSecrets {
+		return nil
+	}
+	for _, profile := range previousProfiles {
+		for _, secret := range networkSecretRefs(profile) {
+			if err := clear(secret.ref); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

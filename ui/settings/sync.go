@@ -1562,6 +1562,8 @@ func syncEntityLabel(entityType string, m locales.Messages) string {
 		return m.SearchSectionIdentity()
 	case "proxyProfiles":
 		return m.SearchSectionProxyProfile()
+	case "networkProfiles":
+		return m.VaultNetworkProfile()
 	case "snippets":
 		return m.SearchSectionSnippet()
 	case "groups":

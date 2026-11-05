@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -31,10 +32,21 @@ func TestSnapshotCoversEveryVaultTable(t *testing.T) {
 	if snapshot.SchemaVersion != version {
 		t.Fatalf("schema = %d, want %d", snapshot.SchemaVersion, version)
 	}
-	if len(snapshot.Tables) != len(domainbackup.Tables) {
-		t.Fatalf("tables = %d, want %d", len(snapshot.Tables), len(domainbackup.Tables))
+	// An empty optional family is omitted so a build that predates it can
+	// still read the backup. Every other table is always present.
+	required := 0
+	for _, table := range domainbackup.Tables {
+		if !domainbackup.OptionalTable(table) {
+			required++
+		}
+	}
+	if len(snapshot.Tables) != required {
+		t.Fatalf("tables = %d, want %d", len(snapshot.Tables), required)
 	}
 	for _, table := range snapshot.Tables {
+		if domainbackup.OptionalTable(table.Name) {
+			t.Fatalf("empty optional table %q was emitted", table.Name)
+		}
 		if len(vaultColumns[table.Name]) == 0 {
 			t.Fatalf("table %q has no column whitelist", table.Name)
 		}
@@ -204,6 +216,164 @@ func TestValidateRejectsIncompleteOrForeignSnapshots(t *testing.T) {
 	if err := store.Validate(ctx, wrongVersion); err == nil {
 		t.Error("Validate accepted a different schema version")
 	}
+}
+
+func TestNetworkProfileBackupRoundTripAndLegacySnapshotRestore(t *testing.T) {
+	store, secrets := openTestSecretStore(t, newFakeKeyStore())
+	ctx := context.Background()
+	if err := store.Save(ctx, testHost("h1", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	// A snapshot written before Network Profiles existed has no family at all.
+	legacy, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableRows(legacy, domainbackup.TableNetworkProfiles) != 0 {
+		t.Fatal("a Vault without Network Profiles emitted the optional table")
+	}
+	if err := store.Validate(ctx, legacy); err != nil {
+		t.Fatalf("legacy snapshot must validate: %v", err)
+	}
+
+	when := time.UnixMilli(1_700_000_000_000).UTC()
+	tailscale := domainvault.NetworkProfile{
+		ID: "net-1", Label: "tailnet", Kind: domainvault.NetworkKindTailscale,
+		Tailscale: &domainvault.TailscaleNetwork{
+			Hostname: "app-node", ControlURL: "https://headscale.example.com",
+			Tags: []string{"tag:prod"}, HasAuthKey: true,
+		},
+		OrderKey: 1000, CreatedAt: when, UpdatedAt: when,
+	}
+	wireguard := domainvault.NetworkProfile{
+		ID: "net-2", Label: "wg", Kind: domainvault.NetworkKindWireGuard,
+		WireGuard: &domainvault.WireGuardNetwork{
+			Addresses: []string{"10.0.0.2/32"}, DNS: []string{"10.0.0.1"}, MTU: 1280,
+			HasPrivateKey: true,
+			Peers: []domainvault.WireGuardPeer{{
+				ID: "peer-1", PublicKey: "peer-public-key-material",
+				Endpoint: "vpn.example.com:51820", AllowedIPs: []string{"10.0.0.0/24"},
+				PersistentKeepalive: 25, HasPresharedKey: true,
+			}},
+		},
+		OrderKey: 2000, CreatedAt: when, UpdatedAt: when,
+	}
+	for _, profile := range []domainvault.NetworkProfile{tailscale, wireguard} {
+		if err := store.SaveNetworkProfile(ctx, profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const (
+		authPlaintext    = "ts-auth-key-plaintext"
+		privatePlaintext = "wg-private-key-plaintext"
+		pskPlaintext     = "wg-preshared-key-plaintext"
+	)
+	// Writing through the real field-secret store proves the snapshot sees
+	// ciphertext: these plaintexts exist only inside the encrypted column.
+	secretsToStore := []struct {
+		ref   appvault.SecretRef
+		value string
+	}{
+		{appvault.NetworkProfileSecretRef("net-1", appvault.FieldNetworkAuthKey), authPlaintext},
+		{appvault.NetworkProfileSecretRef("net-2", appvault.FieldNetworkPrivateKey), privatePlaintext},
+		{appvault.NetworkPeerSecretRef("peer-1", appvault.FieldNetworkPresharedKey), pskPlaintext},
+	}
+	for _, row := range secretsToStore {
+		if err := secrets.Set(ctx, row.ref, row.value); err != nil {
+			t.Fatalf("store %s: %v", row.ref.Field, err)
+		}
+		if got, err := secrets.Get(ctx, row.ref); err != nil || got != row.value {
+			t.Fatalf("read back %s = %q, %v", row.ref.Field, got, err)
+		}
+	}
+
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableRows(before, domainbackup.TableNetworkProfiles) != 2 {
+		t.Fatalf("network_profiles rows = %d", tableRows(before, domainbackup.TableNetworkProfiles))
+	}
+	encoded, err := domainbackup.CanonicalBytes(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plaintext := range []string{authPlaintext, privatePlaintext, pskPlaintext} {
+		if bytes.Contains(encoded, []byte(plaintext)) {
+			t.Fatalf("backup contains plaintext credential %q", plaintext)
+		}
+	}
+	if rows := tableRows(before, domainbackup.TableSecrets); rows != len(secretsToStore) {
+		t.Fatalf("secret rows = %d, want %d", rows, len(secretsToStore))
+	}
+
+	// Restoring the pre-family snapshot succeeds and leaves no Network Profile
+	// rows or credential ciphertext behind.
+	if err := store.Restore(ctx, legacy); err != nil {
+		t.Fatalf("restore legacy snapshot: %v", err)
+	}
+	profiles, err := store.ListNetworkProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("profiles after legacy restore = %+v", profiles)
+	}
+	afterLegacy, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableRows(afterLegacy, domainbackup.TableNetworkProfiles) != 0 ||
+		tableRows(afterLegacy, domainbackup.TableSecrets) != 0 {
+		t.Fatalf("legacy restore left rows: profiles=%d secrets=%d",
+			tableRows(afterLegacy, domainbackup.TableNetworkProfiles),
+			tableRows(afterLegacy, domainbackup.TableSecrets))
+	}
+
+	// The current snapshot reproduces profiles, peers, Has* markers, and the
+	// exact secret ciphertext.
+	if err := store.Restore(ctx, before); err != nil {
+		t.Fatalf("restore current snapshot: %v", err)
+	}
+	restored, err := store.ListNetworkProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) != 2 || restored[0].ID != "net-1" || restored[1].ID != "net-2" {
+		t.Fatalf("profiles after restore = %+v", restored)
+	}
+	if !restored[0].Tailscale.HasAuthKey {
+		t.Fatal("Tailscale HasAuthKey marker was lost")
+	}
+	if !restored[1].WireGuard.HasPrivateKey || len(restored[1].WireGuard.Peers) != 1 ||
+		!restored[1].WireGuard.Peers[0].HasPresharedKey {
+		t.Fatalf("WireGuard markers or peers were lost: %+v", restored[1].WireGuard)
+	}
+	for _, row := range secretsToStore {
+		if got, err := secrets.Get(ctx, row.ref); err != nil || got != row.value {
+			t.Fatalf("restored %s = %q, %v; want %q", row.ref.Field, got, err, row.value)
+		}
+	}
+	after, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterBytes, err := domainbackup.CanonicalBytes(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, afterBytes) {
+		t.Fatalf("restored snapshot differs\nbefore: %s\nafter:  %s", encoded, afterBytes)
+	}
+}
+
+func tableRows(snapshot domainbackup.Snapshot, name string) int {
+	for _, table := range snapshot.Tables {
+		if table.Name == name {
+			return len(table.Rows)
+		}
+	}
+	return 0
 }
 
 func TestChangeHookFiresOnlyAfterVaultWrites(t *testing.T) {

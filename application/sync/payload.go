@@ -19,10 +19,19 @@ import (
 // ciphertext, so the provider never sees plaintext; the applying device
 // re-encrypts each value under its own field key.
 type Payload struct {
-	Hosts           []domainvault.Host           `json:"hosts"`
-	Keys            []domainvault.Key            `json:"keys"`
-	Identities      []domainvault.Identity       `json:"identities"`
-	ProxyProfiles   []domainvault.ProxyProfile   `json:"proxyProfiles"`
+	Hosts         []domainvault.Host         `json:"hosts"`
+	Keys          []domainvault.Key          `json:"keys"`
+	Identities    []domainvault.Identity     `json:"identities"`
+	ProxyProfiles []domainvault.ProxyProfile `json:"proxyProfiles"`
+	// NetworkProfiles carries the profile records, including WireGuard peers
+	// and the Has* credential markers. Secret material still travels in Secrets
+	// under the network_profile and network_peer entity types.
+	//
+	// A nil slice means the payload was written before this family existed; an
+	// empty non-nil slice means the writer intentionally has none. Merge treats
+	// nil as "no opinion" so a pre-family peer cannot delete local profiles,
+	// while [] propagates a deletion. Writers must always set a non-nil slice.
+	NetworkProfiles []domainvault.NetworkProfile `json:"networkProfiles"`
 	Snippets        []domainvault.Snippet        `json:"snippets"`
 	Groups          []domainvault.Group          `json:"groups"`
 	SnippetPackages []domainvault.SnippetPackage `json:"snippetPackages"`
@@ -76,6 +85,7 @@ func (p Payload) HasData() bool {
 		len(p.Keys) > 0 ||
 		len(p.Identities) > 0 ||
 		len(p.ProxyProfiles) > 0 ||
+		len(p.NetworkProfiles) > 0 ||
 		len(p.Groups) > 0 ||
 		len(p.PortForwardingRules) > 0 ||
 		len(p.Snippets) > 0 ||
