@@ -26,29 +26,32 @@ type HostRepository interface {
 
 // Service implements the Vault use cases.
 type Service struct {
-	repo              HostRepository
-	keys              KeyRepository
-	identities        IdentityRepository
-	groups            GroupRepository
-	proxies           ProxyProfileRepository
-	knownHosts        KnownHostRepository
-	snippets          SnippetRepository
-	notes             NoteRepository
-	inspector         KeyInspector
-	secrets           FieldSecrets
-	newID             func() model.HostID
-	newKeyID          func() model.KeyID
-	newIdentityID     func() model.IdentityID
-	newProxyProfileID func() string
-	newSnippetID      func() string
-	newNoteID         func() string
-	newGroupID        func() string
-	now               func() time.Time
-	importStore       ImportStore
-	importFiles       ImportFileReader
-	applyBarrier      func(ctx context.Context) error
-	history           HistoryReader
-	themeSource       func() string
+	repo                HostRepository
+	keys                KeyRepository
+	identities          IdentityRepository
+	groups              GroupRepository
+	proxies             ProxyProfileRepository
+	networks            NetworkProfileRepository
+	knownHosts          KnownHostRepository
+	snippets            SnippetRepository
+	notes               NoteRepository
+	inspector           KeyInspector
+	secrets             FieldSecrets
+	newID               func() model.HostID
+	newKeyID            func() model.KeyID
+	newIdentityID       func() model.IdentityID
+	newProxyProfileID   func() string
+	newNetworkProfileID func() string
+	newNetworkPeerID    func() string
+	newSnippetID        func() string
+	newNoteID           func() string
+	newGroupID          func() string
+	now                 func() time.Time
+	importStore         ImportStore
+	importFiles         ImportFileReader
+	applyBarrier        func(ctx context.Context) error
+	history             HistoryReader
+	themeSource         func() string
 }
 
 // Option customizes a Service.
@@ -138,15 +141,17 @@ func WithGroupIDGenerator(fn func() string) Option {
 // NewService returns a Service that persists Hosts through repo.
 func NewService(repo HostRepository, opts ...Option) *Service {
 	service := &Service{
-		repo:              repo,
-		newID:             newHostID,
-		newKeyID:          newSSHKeyID,
-		newIdentityID:     newIdentityID,
-		newProxyProfileID: newProxyProfileID,
-		newSnippetID:      newSnippetID,
-		newNoteID:         newNoteID,
-		newGroupID:        newGroupID,
-		now:               time.Now,
+		repo:                repo,
+		newID:               newHostID,
+		newKeyID:            newSSHKeyID,
+		newIdentityID:       newIdentityID,
+		newProxyProfileID:   newProxyProfileID,
+		newNetworkProfileID: newNetworkProfileID,
+		newNetworkPeerID:    newNetworkPeerID,
+		newSnippetID:        newSnippetID,
+		newNoteID:           newNoteID,
+		newGroupID:          newGroupID,
+		now:                 time.Now,
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -332,10 +337,19 @@ type priorSecret struct {
 
 // readSecret reads a previous value only when a write is about to replace it.
 func (s *Service) readSecret(ctx context.Context, id model.HostID, field string, needed bool) (priorSecret, error) {
-	if !needed || s.secrets == nil {
+	if !needed {
 		return priorSecret{err: ErrSecretNotFound}, nil
 	}
-	value, err := s.secrets.Get(ctx, HostSecretRef(id, field))
+	return s.readSecretValue(ctx, HostSecretRef(id, field))
+}
+
+// readSecretValue reads the value a write is about to replace. A missing value
+// is not an error; unreadable ciphertext is, and aborts before any write.
+func (s *Service) readSecretValue(ctx context.Context, ref SecretRef) (priorSecret, error) {
+	if s.secrets == nil {
+		return priorSecret{err: ErrSecretNotFound}, nil
+	}
+	value, err := s.secrets.Get(ctx, ref)
 	if err == nil {
 		return priorSecret{value: value}, nil
 	}

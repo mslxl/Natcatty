@@ -74,6 +74,33 @@ _Avoid_: fingerprint entry
 A saved proxy configuration (ProxyCommand, HTTP CONNECT, or SOCKS5) usable by hosts.
 _Avoid_: proxy, tunnel
 
+**Network Profile**:
+A saved Vault record describing how to join one virtual network, identified by a
+Kind (`tailscale` or `wireguard`). Hosts and Host Groups select it by soft reference,
+like a Proxy Profile. Its credentials live only in the field secret store; the record
+carries `HasAuthKey`, `HasPrivateKey`, and `HasPresharedKey` presence markers.
+_Avoid_: VPN, network, tunnel
+
+**Network Provider**:
+The runtime dialing port that opens TCP connections through one Network Profile.
+Tailscale Net and WireGuard Net are its two implementations.
+_Avoid_: VPN client, tunnel, sidecar
+
+**Tailscale Net**:
+A Network Provider that joins a tailnet through tsnet, identified by a Control URL,
+an optional auth key, a hostname, tags, and the Ephemeral preference.
+_Avoid_: Tailscale profile, tailnet
+
+**WireGuard Net**:
+A Network Provider that joins a WireGuard network from addresses, DNS servers, an
+MTU, and a peer list, using the embedded netstack.
+_Avoid_: WireGuard profile, VPN
+
+**First endpoint**:
+The first dial target of a whole route: the first jump when a jump chain exists,
+otherwise the target Host. A Network Profile applies to the First endpoint.
+_Avoid_: destination, final host
+
 **Port Forwarding Rule**:
 A saved local, remote, or dynamic forwarding definition and its runtime status.
 _Avoid_: tunnel, forward

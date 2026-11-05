@@ -436,6 +436,7 @@ func TestShellSidebarChoosesTheVaultPage(t *testing.T) {
 	}{
 		{m.NavKeychain(), section.Keychain},
 		{m.NavProxies(), section.Proxies},
+		{m.NavNetworks(), section.Networks},
 		{m.NavForwarding(), section.Forwarding},
 		{m.NavSnippets(), section.Snippets},
 		{m.NavNotes(), section.Notes},
