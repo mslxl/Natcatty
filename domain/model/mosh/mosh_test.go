@@ -370,3 +370,40 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatalf("target = %q", cfg.Target())
 	}
 }
+
+func TestPredictionDisplayNormalizesToStockModes(t *testing.T) {
+	cases := []struct {
+		value PredictionDisplay
+		want  PredictionDisplay
+		env   string
+	}{
+		// Empty is stock's adaptive default, as is an unknown value from a
+		// newer build: prediction is display-only and never blocks a Session.
+		{"", PredictionAdaptive, "adaptive"},
+		{"adaptive", PredictionAdaptive, "adaptive"},
+		{"always", PredictionAlways, "always"},
+		{"never", PredictionNever, "never"},
+		{"experimental", PredictionAdaptive, "adaptive"},
+	}
+	for _, c := range cases {
+		if got := c.value.Normalized(); got != c.want {
+			t.Errorf("%q.Normalized() = %q, want %q", c.value, got, c.want)
+		}
+		if got := c.value.EnvValue(); got != c.env {
+			t.Errorf("%q.EnvValue() = %q, want %q", c.value, got, c.env)
+		}
+	}
+}
+
+func TestConfigNormalizedCarriesThePredictionMode(t *testing.T) {
+	for _, mode := range []PredictionDisplay{PredictionAdaptive, PredictionAlways, PredictionNever} {
+		cfg := Config{Hostname: " host ", PredictionDisplay: mode}.Normalized()
+		if cfg.PredictionDisplay != mode {
+			t.Errorf("Normalized().PredictionDisplay = %q, want %q", cfg.PredictionDisplay, mode)
+		}
+	}
+	cfg := Config{Hostname: "host"}.Normalized()
+	if cfg.PredictionDisplay != PredictionAdaptive {
+		t.Fatalf("empty prediction mode = %q, want adaptive", cfg.PredictionDisplay)
+	}
+}

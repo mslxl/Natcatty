@@ -8,6 +8,7 @@ import (
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
@@ -322,5 +323,67 @@ func TestOtherProtocolsIgnoreTheImplementationSelection(t *testing.T) {
 	if local.spec.Kind != appsession.KindLocal || telnet.calls != 1 || dialer.calls != 1 {
 		t.Fatalf("local=%+v telnet calls=%d dial calls=%d, want each protocol unchanged",
 			local.spec, telnet.calls, dialer.calls)
+	}
+}
+
+// TestMoshSessionReceivesThePersistedPredictionMode checks that the global
+// local-echo setting reaches the configuration both client implementations
+// receive, while the caller's StartSpec is not mutated.
+func TestMoshSessionReceivesThePersistedPredictionMode(t *testing.T) {
+	settings := domainpreferences.Defaults()
+	settings.Transport.MoshPredictionDisplay = moshmodel.PredictionNever
+	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
+	factory := newImplementationFactory(hosts, settings)
+
+	callerConfig := &moshmodel.Config{
+		Hostname:          "example.test",
+		PredictionDisplay: moshmodel.PredictionAlways,
+	}
+	spec := appsession.StartSpec{Kind: appsession.KindMosh, Mosh: callerConfig}
+	transport, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+
+	opened := factory.mosh.(*implementationFactory)
+	if opened.spec.Mosh == nil {
+		t.Fatal("the bundled factory received no Mosh configuration")
+	}
+	if got := opened.spec.Mosh.PredictionDisplay; got != moshmodel.PredictionNever {
+		t.Fatalf("opened prediction display = %q, want the persisted never", got)
+	}
+	if callerConfig.PredictionDisplay != moshmodel.PredictionAlways {
+		t.Fatalf("the caller's configuration was mutated to %q", callerConfig.PredictionDisplay)
+	}
+}
+
+// TestMoshSessionDefaultsToAdaptivePrediction checks an empty persisted value
+// yields stock's adaptive mode, and that a caller without global preferences
+// (tests and MCP entry points) keeps exactly what it supplied.
+func TestMoshSessionDefaultsToAdaptivePrediction(t *testing.T) {
+	settings := domainpreferences.Defaults()
+	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
+	factory := newImplementationFactory(hosts, settings)
+	spec := appsession.StartSpec{Kind: appsession.KindMosh, Mosh: &moshmodel.Config{Hostname: "example.test"}}
+	transport, err := factory.Open(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_ = transport.Close()
+	if got := factory.mosh.(*implementationFactory).spec.Mosh.PredictionDisplay; got != moshmodel.PredictionAdaptive {
+		t.Fatalf("default opened display = %q, want adaptive", got)
+	}
+
+	bare := newTransportFactory(&factoryLocal{}, nil, &factoryTelnet{}, nil, nil).
+		withClients(&implementationFactory{}, &implementationFactory{})
+	explicit := &moshmodel.Config{Hostname: "example.test", PredictionDisplay: moshmodel.PredictionAlways}
+	transport, err = bare.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindMosh, Mosh: explicit})
+	if err != nil {
+		t.Fatalf("Open without preferences: %v", err)
+	}
+	_ = transport.Close()
+	if got := bare.mosh.(*implementationFactory).spec.Mosh.PredictionDisplay; got != moshmodel.PredictionAlways {
+		t.Fatalf("explicit opened display = %q, want always", got)
 	}
 }

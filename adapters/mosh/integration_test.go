@@ -113,6 +113,18 @@ func runRealMoshCase(t *testing.T, host string, sshPort int, user, password, ser
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	// The in-process transport draws through stock's server-authoritative model:
+	// when the peer announces a new screen size, rendering waits for the
+	// consumer to apply that size. A Session installs this handler itself; this
+	// test reads the transport directly, so it must play the renderer's role.
+	sizer, ok := transport.(appsession.ScreenSizer)
+	if !ok {
+		t.Fatal("in-process transport does not expose the remote screen size")
+	}
+	remoteSizes := make(chan [2]int, 4)
+	sizer.SetScreenSizeHandler(func(cols, rows int, _ uint64) {
+		remoteSizes <- [2]int{cols, rows}
+	})
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
@@ -135,6 +147,14 @@ func runRealMoshCase(t *testing.T, host string, sshPort int, user, password, ser
 		t.Fatalf("write resize probe: %v", err)
 	}
 	readUntil(t, transport, "SIZE:31 100", 10*time.Second)
+	select {
+	case size := <-remoteSizes:
+		if size != [2]int{100, 31} {
+			t.Fatalf("remote screen size = %v, want [100 31]", size)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the server-authoritative resize never reached the screen owner")
+	}
 
 	if err := transport.Close(); err != nil {
 		t.Fatalf("Close: %v", err)

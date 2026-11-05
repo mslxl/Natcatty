@@ -3,6 +3,7 @@ package settings
 import (
 	"github.com/egoist/mygo/ui"
 
+	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domain "github.com/mslxl/natcatty/domain/preferences"
 	"github.com/mslxl/natcatty/ui/locales"
@@ -21,6 +22,7 @@ func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t
 			return
 		}
 		selected := string(state.Settings().Transport.Implementation)
+		prediction := string(state.Settings().Transport.MoshPredictionDisplay)
 		changed := false
 		ui.Field(c, m.SettingsTransportImplementation(), func() {
 			ui.RadioGroup(c, func() {
@@ -39,9 +41,30 @@ func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t
 			}).Label(m.SettingsTransportImplementation())
 		}).Description(m.SettingsTransportImplementationHint())
 
+		// The local-echo mode is stock mosh's MOSH_PREDICTION_DISPLAY choice.
+		// Adaptive is stock's default; always and never are the explicit
+		// overrides.
+		ui.Field(c, m.SettingsMoshPredictionDisplay(), func() {
+			ui.RadioGroup(c, func() {
+				if ui.Radio(c, &prediction, string(moshmodel.PredictionAdaptive),
+					m.SettingsMoshPredictionAdaptive()).Changed() {
+					changed = true
+				}
+				if ui.Radio(c, &prediction, string(moshmodel.PredictionAlways),
+					m.SettingsMoshPredictionAlways()).Changed() {
+					changed = true
+				}
+				if ui.Radio(c, &prediction, string(moshmodel.PredictionNever),
+					m.SettingsMoshPredictionNever()).Changed() {
+					changed = true
+				}
+			}).Label(m.SettingsMoshPredictionDisplay())
+		}).Description(m.SettingsMoshPredictionHint())
+
 		if changed {
 			state.Update(func(settings *domain.Settings) {
 				settings.Transport.Implementation = transportmodel.Implementation(selected)
+				settings.Transport.MoshPredictionDisplay = moshmodel.PredictionDisplay(prediction)
 			})
 			c.Invalidate()
 		}

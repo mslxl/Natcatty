@@ -319,6 +319,10 @@ func (f Factory) launch(resolved bundle.Resolved, cfg moshmodel.Config, spec app
 	environment = setEnv(environment, "TERM", moshmodel.DefaultTerm)
 	environment = moshmodel.ClientEnv(environment, connect.Key, cfg.Lang, fallback)
 	environment = setEnv(environment, "MOSH_NO_TERM_INIT", "1")
+	// Stock's default is adaptive; the setting is passed explicitly so the
+	// user's choice reaches the bundled client with the same meaning as the
+	// in-process prediction engine.
+	environment = setEnv(environment, "MOSH_PREDICTION_DISPLAY", cfg.PredictionDisplay.EnvValue())
 
 	spawn := f.Spawn
 	if spawn == nil {
@@ -619,6 +623,13 @@ type outputQueue struct {
 	chunks [][]byte
 	bytes  int
 	max    int
+	// total counts every output byte pushed, including final bytes. The
+	// terminal renderer uses it to place a remote resize at its exact stream
+	// position.
+	total uint64
+	// sealed reports that final terminal-restoration bytes were pushed. A
+	// normal push that was in flight during close must not land after them.
+	sealed bool
 	closed bool
 	err    error
 }
@@ -636,16 +647,25 @@ func (q *outputQueue) push(chunk []byte) error {
 	copied := bytes.Clone(chunk)
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for q.bytes >= q.max && !q.closed {
+	for q.bytes >= q.max && !q.closed && !q.sealed {
 		q.cond.Wait()
 	}
-	if q.closed {
+	if q.closed || q.sealed {
 		return io.ErrClosedPipe
 	}
 	q.chunks = append(q.chunks, copied)
 	q.bytes += len(copied)
+	q.total += uint64(len(copied))
 	q.cond.Broadcast()
 	return nil
+}
+
+// pushedBytes reports how many output bytes the renderer has produced. It is
+// the stream offset of the next frame.
+func (q *outputQueue) pushedBytes() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.total
 }
 
 func (q *outputQueue) Read(p []byte) (int, error) {
@@ -679,5 +699,27 @@ func (q *outputQueue) close(err error) {
 		q.err = err
 	}
 	q.mu.Unlock()
+	q.cond.Broadcast()
+}
+
+// pushFinal appends terminal-restoration bytes without applying backpressure.
+// At shutdown there may be no reader left to drain a full queue, so blocking
+// here would deadlock the Session's close.
+func (q *outputQueue) pushFinal(chunk []byte) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return
+	}
+	// Seal before appending, even for an empty shutdown frame, so an
+	// in-flight normal push cannot land after the restoration bytes.
+	q.sealed = true
+	if len(chunk) == 0 {
+		return
+	}
+	copied := bytes.Clone(chunk)
+	q.chunks = append(q.chunks, copied)
+	q.bytes += len(copied)
+	q.total += uint64(len(copied))
 	q.cond.Broadcast()
 }

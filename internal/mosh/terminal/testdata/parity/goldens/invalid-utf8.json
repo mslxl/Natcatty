@@ -1,0 +1,33 @@
+{
+  "name": "invalid-utf8",
+  "width": 8,
+  "height": 3,
+  "events": [
+    {
+      "input": "/0HDQuKCQ/CfkkQ="
+    },
+    {
+      "input": "7aCA9JCAgA=="
+    },
+    {
+      "input": "wK/ggK8="
+    },
+    {
+      "input": "gICA"
+    }
+  ],
+  "frames": [
+    "G1s/NWwbW3IbWzBtG1tIG1syShtbPzI1bBtbSwobW0sKG1tLG1sxOzFIG1s/MjVoG1swbRtbPzIwMDRsG1s/MTAwM2wbWz8xMDAybBtbPzEwMDFsG1s/MTAwMGwbWz8xMDA0bBtbPzEwMTVsG1s/MTAwNmwbWz8xMDA1bA==",
+    "77+9Qe+/vULvv71D77+9RA0KG1sxOzhI",
+    "G1s/MjVsG1sxOzhIRO+/ve+/ve+/vRtbPzI1aA==",
+    "77+977+977+977+9",
+    "G1s/MjVsG1syOzhI77+977+977+9G1s/MjVo"
+  ],
+  "screens": [
+    "size\t8\t3\ncursor\t0\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t7\t0\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t1\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t0\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,42\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,43\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,44\nrow\t1\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t3\t1\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t1\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,42\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,43\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,44\nrow\t1\t0\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t7\t1\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t1\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,42\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,43\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,44\nrow\t1\t0\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t1,0,0,1b5b306d,20\nrow\t2\t0\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n",
+    "size\t8\t3\ncursor\t2\t2\nmodes\t1\t0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscroll\t0\t2\nbell\t0\ntitle_init\t0\ntitle\t\nicon\t\nclipboard\t\nrow\t0\t1\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,41\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,42\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,43\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,44\nrow\t1\t1\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\nrow\t2\t0\t0,0,0,1b5b306d,efbfbd\t0,0,0,1b5b306d,efbfbd\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\t1,0,0,1b5b306d,20\n"
+  ]
+}
