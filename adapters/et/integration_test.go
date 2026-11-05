@@ -17,6 +17,7 @@ import (
 	sshadapter "github.com/mslxl/natcatty/adapters/ssh"
 	appconnection "github.com/mslxl/natcatty/application/connection"
 	appsession "github.com/mslxl/natcatty/application/session"
+	appvault "github.com/mslxl/natcatty/application/vault"
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
@@ -288,8 +289,10 @@ func waitExit(t *testing.T, transport appsession.Transport) (int, error) {
 // TestLabAppRestartReattach pins the stock server behavior the feature was
 // designed against: etserver 7.1.1 reattaches the same remote shell by reset,
 // so it starts blank but keeps shell state. etserver 6.2.10 cannot negotiate
-// the challenge or reset, so stock refuses the reattach and tells the user to
-// upgrade; it must not silently start a second shell.
+// the challenge or reset. A fresh session against it stays memory-only (there
+// is nothing a restart could reattach), and a pair persisted by an older build
+// is still refused with stock's upgrade sentence; it must not silently start a
+// second shell.
 func TestLabAppRestartReattach(t *testing.T) {
 	requireLab(t)
 	for _, server := range labServers() {
@@ -304,8 +307,13 @@ func TestLabAppRestartReattach(t *testing.T) {
 			writeCommand(t, first, `ET_RESUME_MARK=42; printf 'ET_MARKED_%s\n' "$ET_RESUME_MARK"`)
 			firstOutput.waitFor(t, "ET_MARKED_42", 20*time.Second)
 			saved, err := store.Load(context.Background(), spec.ResumeKey)
-			if err != nil || saved.ID == "" || len(saved.Passkey) != 32 {
-				t.Fatalf("saved session record is incomplete: %v", err)
+			if server.name == "etserver-7.1.1" {
+				if err != nil || saved.ID == "" || len(saved.Passkey) != 32 {
+					t.Fatalf("saved session record is incomplete: %v", err)
+				}
+			} else if !errors.Is(err, appvault.ErrSecretNotFound) {
+				t.Fatalf("a pre-v7 session was persisted (%+v, err %v); a restart could never reattach it",
+					saved, err)
 			}
 
 			// An app shutdown preserves the pair; the transport is closed as
@@ -316,6 +324,38 @@ func TestLabAppRestartReattach(t *testing.T) {
 			}
 			firstManager.CloseAll()
 
+			if server.name != "etserver-7.1.1" {
+				// Simulate a pair an older build saved before persistence
+				// became capability-aware. It belongs to a real running shell,
+				// so the refusal below is the app-restart decision, not a
+				// missing-session artifact.
+				seedManager := labManager(t, server.password)
+				seedLease := acquireLabLease(t, seedManager, spec)
+				id, passkey := fixedLabCredentials(t)
+				credentials := startLabTerminal(t, seedLease, id, passkey)
+				forwarding, err := seedLease.Forwarding()
+				if err != nil {
+					t.Fatalf("Forwarding: %v", err)
+				}
+				live, err := dialLab(t, forwarding, spec, credentials, false)
+				if err != nil {
+					t.Fatalf("legacy seed dial: %v", err)
+				}
+				startLabSession(t, live)
+				sendETInput(t, live, "echo $((1010+2020))\n")
+				readETUntilAfter(t, live, "3030", "$ ", 20*time.Second)
+				if err := store.Save(context.Background(), spec.ResumeKey,
+					SessionRecord{ID: id, Passkey: passkey}); err != nil {
+					t.Fatalf("seed a legacy saved pair: %v", err)
+				}
+				saved, err = store.Load(context.Background(), spec.ResumeKey)
+				if err != nil {
+					t.Fatalf("load seeded pair: %v", err)
+				}
+				_ = live.Close()
+				seedManager.CloseAll()
+			}
+
 			secondManager := labManager(t, server.password)
 			factory := InProcessFactory{Manager: secondManager, Sessions: store}
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -323,8 +363,12 @@ func TestLabAppRestartReattach(t *testing.T) {
 			second, err := factory.Open(ctx, spec)
 
 			after, loadErr := store.Load(context.Background(), spec.ResumeKey)
-			if loadErr != nil || after.ID == "" || len(after.Passkey) != 32 {
-				t.Fatalf("saved session record after restart is incomplete: %v", loadErr)
+			if server.name == "etserver-7.1.1" {
+				if loadErr != nil || after.ID == "" || len(after.Passkey) != 32 {
+					t.Fatalf("saved session record after restart is incomplete: %v", loadErr)
+				}
+			} else if loadErr != nil {
+				t.Fatalf("a refused legacy reattach lost the saved pair: %v", loadErr)
 			}
 
 			if server.name == "etserver-7.1.1" {

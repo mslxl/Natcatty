@@ -23,6 +23,11 @@ import (
 // reopen.
 var ErrUnknownSession = errors.New("shell: unknown Session kind")
 
+// etResumeCleanupTimeout bounds clearing one saved ET pair from the shell. The
+// store is local, so deletes are normally immediate; the bound keeps a stuck
+// store from blocking a Pane close or a restore fallback indefinitely.
+const etResumeCleanupTimeout = 5 * time.Second
+
 // Tab is one work Tab: an ordered split tree whose leaves are Panes. A Pane is
 // bound to one Session. The Tab's identity and number are stable for its
 // lifetime; a duplicate gets a fresh identity and Copy generation.
@@ -466,7 +471,7 @@ func (s *State) CloseTab(index int) bool {
 		return false
 	}
 	tab := s.tabs[index]
-	closeTab(tab, false)
+	s.closeTab(tab, false)
 	s.removeTabAt(index)
 	s.save()
 	s.RequestRedraw()
@@ -484,7 +489,7 @@ func (s *State) CloseOtherTabs(index int) bool {
 		if tab == keep {
 			continue
 		}
-		closeTab(tab, false)
+		s.closeTab(tab, false)
 		closed = true
 	}
 	s.tabs = []*Tab{keep}
@@ -509,7 +514,7 @@ func (s *State) CloseTabsRight(index int) bool {
 		return false
 	}
 	for _, tab := range s.tabs[index+1:] {
-		closeTab(tab, false)
+		s.closeTab(tab, false)
 	}
 	s.tabs = s.tabs[:index+1]
 	if s.active > index {
@@ -863,23 +868,14 @@ func (s *State) ActiveSessionCountDetached(id model.TabID) int {
 	return activePaneCountIn([]*Tab{tab})
 }
 
-// CloseMainSessions ends the Sessions shown by the main window without
-// touching detached windows. The persisted layout is left intact. It is the
-// explicit close path, so resumable credentials are cleared.
-func (s *State) CloseMainSessions() {
-	for _, tab := range s.tabs {
-		closeTab(tab, false)
-	}
-}
-
-// CloseMainSessionsPreserving ends the main window's Sessions like
-// CloseMainSessions but keeps resumable ET credentials for the next app run.
-// The main window closing is a graceful end of its Sessions: a quit closes the
+// CloseMainSessionsPreserving ends the main window's Sessions without touching
+// detached windows, keeping resumable ET credentials for the next app run. The
+// main window closing is a graceful end of its Sessions: a quit closes the
 // windows before OnWillQuit runs, so this is the only point where the
 // credentials can still be preserved.
 func (s *State) CloseMainSessionsPreserving() {
 	for _, tab := range s.tabs {
-		closeTab(tab, true)
+		s.closeTab(tab, true)
 	}
 }
 
@@ -891,7 +887,7 @@ func (s *State) CloseMainSessionsPreserving() {
 func (s *State) CloseAllSessions() {
 	s.CloseMainSessionsPreserving()
 	for _, tab := range s.detached {
-		closeTab(tab, false)
+		s.closeTab(tab, false)
 	}
 	s.detached = nil
 }
@@ -904,7 +900,7 @@ func (s *State) CloseDetachedTab(id model.TabID) bool {
 		if tab.ID != id {
 			continue
 		}
-		closeTab(tab, false)
+		s.closeTab(tab, false)
 		s.detached = append(s.detached[:index], s.detached[index+1:]...)
 		s.RequestRedraw()
 		return true
@@ -1027,7 +1023,7 @@ func (s *State) CloseFocusedPane() bool {
 		return false
 	}
 	next := domainworkspace.FocusAfterRemove(root, focusedID, focusedID)
-	closePane(value, false)
+	s.closePane(value, false)
 	delete(tab.panes, focusedID)
 	tab.Root = root
 	if next == "" {
@@ -1419,7 +1415,7 @@ func (s *State) RetryPane(tabID model.TabID, paneID model.PaneID) bool {
 		return false
 	}
 	if value.session != nil {
-		closePane(value, false)
+		s.closePane(value, false)
 		value.session = nil
 	}
 	value.pending = true
@@ -1607,7 +1603,48 @@ func (s *State) openDescriptor(ctx context.Context,
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownSession, descriptor.Kind)
 	}
-	return s.sessions.Open(ctx, spec)
+	return s.openETWithLegacyFallback(ctx, spec, descriptor)
+}
+
+// openETWithLegacyFallback opens the Session and handles one stale-secret
+// outcome: a restored ET Pane whose saved pair a pre-v7 etserver cannot
+// reattach. Persistence is capability-aware, so a pair saved by this build is
+// never written for such a server; a pair written by an older build (or by a
+// newer build before the server was downgraded) would otherwise make the Pane
+// fail permanently and reuse the same pair on every Retry. The shell clears the
+// pair and explicitly starts a fresh session, with a visible notice that the
+// previous shell could not be restored. It never falls back silently.
+func (s *State) openETWithLegacyFallback(ctx context.Context,
+	spec appsession.StartSpec, descriptor domainworkspace.SessionDescriptor) (*appsession.Session, error) {
+	session, err := s.sessions.Open(ctx, spec)
+	if err == nil || !errors.Is(err, etmodel.ErrReattachUnsupported) ||
+		descriptor.Kind != domainworkspace.SessionET || descriptor.ResumeKey == "" {
+		return session, err
+	}
+	if s.etResumeStore == nil {
+		// Without a store the stale pair cannot be cleared, so retrying would
+		// only repeat the same permanent failure. Surface stock's refusal.
+		return nil, err
+	}
+	if clearErr := s.discardETResume(descriptor.ResumeKey); clearErr != nil {
+		return nil, fmt.Errorf("%w (the stale ET resume credential could not be cleared: %w)", err, clearErr)
+	}
+	session, retryErr := s.sessions.Open(ctx, spec)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	session.PublishNotice(appsession.Notice{Code: appsession.NoticeETResumeFallback})
+	return session, nil
+}
+
+// discardETResume removes one saved ET pair when no live Session owns it.
+func (s *State) discardETResume(resumeKey string) error {
+	if s.etResumeStore == nil || resumeKey == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), etResumeCleanupTimeout)
+	defer cancel()
+	return s.etResumeStore.Delete(ctx, resumeKey)
 }
 
 // validLocalDir keeps dir only when it still names a directory. The local PTY
@@ -1658,7 +1695,7 @@ func (s *State) closeDetachedSessions() bool {
 			if err != nil {
 				continue
 			}
-			closePane(value, false)
+			s.closePane(value, false)
 			delete(tab.panes, id)
 			tab.Root = root
 			if next := domainworkspace.FocusAfterRemove(root, focusedID, id); next != "" {
@@ -1675,13 +1712,13 @@ func (s *State) closeDetachedSessions() bool {
 	return changed
 }
 
-func closeTab(tab *Tab, preserve bool) {
+func (s *State) closeTab(tab *Tab, preserve bool) {
 	for _, value := range tab.panes {
-		closePane(value, preserve)
+		s.closePane(value, preserve)
 	}
 }
 
-func closePane(value *pane, preserve bool) {
+func (s *State) closePane(value *pane, preserve bool) {
 	if value == nil {
 		return
 	}
@@ -1694,6 +1731,13 @@ func closePane(value *pane, preserve bool) {
 		} else {
 			_ = value.session.Close()
 		}
+		return
+	}
+	// The Session never opened, so no transport can clear its saved pair. An
+	// explicit close still must not leave the secret behind; a preserve close
+	// (app quit) keeps it because the Pane is restored next run.
+	if !preserve && value.descriptor.Kind == domainworkspace.SessionET {
+		_ = s.discardETResume(value.descriptor.ResumeKey)
 	}
 }
 

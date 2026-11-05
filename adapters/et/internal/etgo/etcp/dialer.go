@@ -32,6 +32,10 @@ const (
 	// floor: much below it the watcher would probe and drop links faster
 	// than a typical round trip, and a nanosecond value would spin.
 	minKeepAlive = 100 * time.Millisecond
+	// minHandshakeTimeout is the smallest non-zero HandshakeTimeout Dial
+	// accepts: a shorter bound could not complete a WAN handshake and would
+	// turn every reconnect into a redial loop.
+	minHandshakeTimeout = 100 * time.Millisecond
 	// maxReplayLimit is the largest ReplayLimit Dial accepts: upstream's own
 	// MAX_BACKUP_BYTES. It does not by itself keep a catchup under the
 	// message limit (a disconnected ring can hold about twice the limit);
@@ -124,6 +128,13 @@ type Dialer struct {
 	// resets the session's epoch behind its back. The Conn then fails with
 	// ErrDisplaced. It runs on a Conn goroutine and must not block.
 	OnDisplaced func()
+	// HandshakeTimeout bounds one connect exchange: after the TCP link opens,
+	// if neither side makes progress for this long, this client closes the
+	// link and reports a handshake failure. Reconnect redials then retry
+	// instead of blocking forever on a server that accepted the channel and
+	// never answered. Zero means 30 s (upstream's SocketHandler idle timeout);
+	// Dial refuses a negative value or one below 100 ms.
+	HandshakeTimeout time.Duration
 	// ReplayLimit bounds the sealed bytes kept for replay; Dial refuses a
 	// negative value or one above 64 MiB, and zero means 64 MiB. It is a soft
 	// bound applied separately to the two kinds of retained packets: packets
@@ -162,6 +173,10 @@ func (d *Dialer) Dial(ctx context.Context, addr, id, passkey string) (*Conn, err
 	if d.KeepAlive < 0 || (d.KeepAlive > 0 && d.KeepAlive < minKeepAlive) {
 		return nil, fmt.Errorf("etcp: KeepAlive %v: must be 0 (the default) or at least %v", d.KeepAlive, minKeepAlive)
 	}
+	if d.HandshakeTimeout < 0 || (d.HandshakeTimeout > 0 && d.HandshakeTimeout < minHandshakeTimeout) {
+		return nil, fmt.Errorf("etcp: HandshakeTimeout %v: must be 0 (the default) or at least %v",
+			d.HandshakeTimeout, minHandshakeTimeout)
+	}
 	if d.ReplayLimit < 0 || d.ReplayLimit > maxReplayLimit {
 		return nil, fmt.Errorf("etcp: ReplayLimit %d: must be between 0 (the default) and %d", d.ReplayLimit, maxReplayLimit)
 	}
@@ -174,6 +189,7 @@ func (d *Dialer) Dial(ctx context.Context, addr, id, passkey string) (*Conn, err
 	if info.resumed {
 		c.resumed.Store(true)
 	}
+	c.challenged.Store(info.challenged)
 	c.wg.Go(func() {
 		defer close(c.readerDone)
 		c.supervise(nc, info.catchup)
@@ -186,6 +202,15 @@ func (d *Dialer) Dial(ctx context.Context, addr, id, passkey string) (*Conn, err
 // started the shell, so the caller must not send INITIAL_PAYLOAD. It matches
 // upstream TerminalClient::attachedToExisting.
 func (c *Conn) Resumed() bool { return c.resumed.Load() }
+
+// ChallengeCapable reports whether the server answered this Conn's first
+// connect with the v7 auth challenge. Only such a server can authenticate a
+// later reattach and reset the sequence and keystream state, so only then may
+// the caller persist the session's id and passkey for a future process. A
+// pre-v7 server (6.2.10) reports false: the same session still reconnects
+// within this process, but a saved pair could never be attached after a
+// restart.
+func (c *Conn) ChallengeCapable() bool { return c.challenged.Load() }
 
 func (d *Dialer) newConn(addr, id, passkey string) *Conn {
 	var nd netDialer = d.NetDialer
@@ -206,20 +231,21 @@ func (d *Dialer) newConn(addr, id, passkey string) *Conn {
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	c := &Conn{
-		netDialer:   nd,
-		addr:        addr,
-		id:          id,
-		keepAlive:   cmp.Or(d.KeepAlive, defaultKeepAlive),
-		probe:       d.Probe,
-		logger:      logger,
-		resetIntent: d.ResetIntent,
-		onDisplaced: d.OnDisplaced,
-		ctx:         ctx,
-		cancel:      cancel,
-		inbox:       make(chan protocol.Packet, inboxSize),
-		readerDone:  make(chan struct{}),
-		wake:        make(chan struct{}, 1),
-		space:       make(chan struct{}, 1),
+		netDialer:        nd,
+		addr:             addr,
+		id:               id,
+		keepAlive:        cmp.Or(d.KeepAlive, defaultKeepAlive),
+		probe:            d.Probe,
+		logger:           logger,
+		resetIntent:      d.ResetIntent,
+		handshakeTimeout: cmp.Or(d.HandshakeTimeout, handshakeIdle),
+		onDisplaced:      d.OnDisplaced,
+		ctx:              ctx,
+		cancel:           cancel,
+		inbox:            make(chan protocol.Packet, inboxSize),
+		readerDone:       make(chan struct{}),
+		wake:             make(chan struct{}, 1),
+		space:            make(chan struct{}, 1),
 	}
 	copy(c.key[:], passkey)
 	c.lastProbe = -1
@@ -241,6 +267,9 @@ type netDialer interface {
 type connectResult struct {
 	catchup [][]byte
 	resumed bool
+	// challenged records that the server answered with the v7 auth challenge,
+	// which proves it can authenticate a future reattach.
+	challenged bool
 }
 
 // errRecoveryExchange marks a failure after the server accepted the connect
@@ -267,9 +296,23 @@ func (c *Conn) connect(ctx context.Context, first bool) (net.Conn, connectResult
 		}
 		return nil, connectResult{}, fmt.Errorf("etcp: dial: %w", err)
 	}
+	watchdog := newHandshakeWatchdog(nc, c.handshakeTimeout)
 	stop := context.AfterFunc(ctx, func() { _ = nc.Close() })
 	defer stop()
-	info, err := c.handshake(idleConn{Conn: nc, timeout: handshakeIdle}, first)
+	info, err := c.handshake(idleConn{Conn: watchdog, timeout: handshakeIdle}, first)
+	if !watchdog.stop() {
+		// No progress for HandshakeTimeout: the watchdog closed the link. A
+		// definitive error that arrived first (a rejection, a version
+		// mismatch) still says more than the timeout does.
+		if err == nil || !isFatal(err) {
+			if err == nil {
+				err = fmt.Errorf("etcp: connect handshake made no progress for %v", c.handshakeTimeout)
+			} else {
+				err = fmt.Errorf("etcp: connect handshake made no progress for %v: %w",
+					c.handshakeTimeout, err)
+			}
+		}
+	}
 	if err == nil && !stop() {
 		// ctx ended as the handshake finished and the AfterFunc has
 		// closed nc: the link is unusable.
@@ -322,7 +365,8 @@ func (c *Conn) handshake(conn net.Conn, first bool) (connectResult, error) {
 	}
 	resp := &firstResp
 	challenge := firstResp.GetAuthChallenge()
-	if len(challenge) > 0 {
+	challenged := len(challenge) > 0
+	if challenged {
 		if len(challenge) != authChallengeBytes {
 			return connectResult{}, fmt.Errorf("%w: server sent a %d-byte auth challenge",
 				ErrIntegrity, len(challenge))
@@ -369,7 +413,7 @@ func (c *Conn) handshake(conn net.Conn, first bool) (connectResult, error) {
 	switch resp.GetStatus() {
 	case protocol.ConnectStatus_NEW_CLIENT:
 		if first {
-			return connectResult{}, nil
+			return connectResult{challenged: challenged}, nil
 		}
 		// Deliberately stricter than upstream, whose client closes the
 		// socket and keeps redialing on any status other than INVALID_KEY
@@ -380,7 +424,7 @@ func (c *Conn) handshake(conn net.Conn, first bool) (connectResult, error) {
 		// differently on the next redial.
 		return connectResult{}, fmt.Errorf("%w: server answered NEW_CLIENT to a returning client", ErrRejected)
 	case protocol.ConnectStatus_RETURNING_CLIENT:
-		info := connectResult{}
+		info := connectResult{challenged: challenged}
 		if resp.GetResetRequired() {
 			if err := c.resetRecover(conn, resp.GetResetSalt()); err != nil {
 				return connectResult{}, fmt.Errorf("%w: %w", errRecoveryExchange, err)

@@ -266,6 +266,10 @@ const (
 	// session's single client slot, or that the server reset the session
 	// behind this client. ET has no multi-attach: the newest client wins.
 	NoticeETDisplaced NoticeCode = "et_session_displaced"
+	// NoticeETResumeFallback reports that a saved ET session could not be
+	// reattached because the server lacks the v7 reattach capability. The
+	// stale secret was cleared and a fresh session was started instead.
+	NoticeETResumeFallback NoticeCode = "et_resume_fallback"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -438,8 +442,12 @@ type Session struct {
 	genDone    chan struct{}
 
 	commands chan command
-	writeCh  chan []byte
-	done     chan struct{}
+	// closeCh is unbuffered: a successful send proves the loop received the
+	// close. A close that finds the loop already finished clears the transport's
+	// resume credentials directly after teardown instead.
+	closeCh chan closeCommand
+	writeCh chan []byte
+	done    chan struct{}
 
 	closeOnce sync.Once
 	mu        sync.Mutex
@@ -506,7 +514,6 @@ const (
 	commandTransportOpen
 	commandTransportFailed
 	commandReconnectNow
-	commandClose
 )
 
 type command struct {
@@ -517,6 +524,11 @@ type command struct {
 	transport  Transport
 	end        End
 	err        error
+}
+
+// closeCommand asks the loop to end the Session. The channel is unbuffered, so
+// a close is never left queued after the loop has stopped receiving commands.
+type closeCommand struct {
 	// preserve keeps resumable transport credentials when this close is an
 	// app shutdown rather than the user ending the Session.
 	preserve bool
@@ -744,6 +756,7 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		genDone:         make(chan struct{}),
 		writeCh:         make(chan []byte, s.writeDepth),
 		commands:        make(chan command, 16),
+		closeCh:         make(chan closeCommand),
 		done:            make(chan struct{}),
 		onNotification:  s.onNotification,
 		onTransfer:      s.onTransfer,
@@ -1063,6 +1076,13 @@ func (s *Session) HostID() model.HostID { return s.spec.HostID }
 // Session by ID reports DeliveryMissing rather than DeliveryFailed.
 func (s *Session) Done() <-chan struct{} { return s.done }
 
+// PublishNotice records a non-fatal notice for the Session surface. It is for
+// application-level outcomes of opening a Session, such as a saved reattach
+// that fell back to a fresh session; transport notices use Notifier instead.
+func (s *Session) PublishNotice(notice Notice) {
+	s.update(func(snapshot *Snapshot) { snapshot.Notice = &notice })
+}
+
 // Snapshot returns the Session's current state.
 func (s *Session) Snapshot() Snapshot {
 	now := time.Now()
@@ -1129,8 +1149,10 @@ func (s *Session) ReconnectNow() bool {
 	}
 }
 
-// Close ends the Session. It is idempotent and returns once the command is
-// queued; Done reports when teardown finished. An explicit close clears any
+// Close ends the Session. It is idempotent. It returns once the loop has
+// received the close request, once an already-ended Session has cleared its
+// preserved credentials, or once teardown that was already running finished;
+// Done reports when teardown finished. An explicit close clears any
 // credentials a resumable transport saved.
 func (s *Session) Close() error { return s.close(false) }
 
@@ -1144,9 +1166,21 @@ func (s *Session) ClosePreservingResume() error { return s.close(true) }
 func (s *Session) close(preserve bool) error {
 	s.closeOnce.Do(func() {
 		select {
-		case s.commands <- command{kind: commandClose, preserve: preserve}:
+		case s.closeCh <- closeCommand{preserve: preserve}:
+			// The loop received the close and owns teardown; a preserve close
+			// marked the transport before finishing.
+			return
 		case <-s.done:
 		case <-s.ctx.Done():
+			// Teardown is already running. Wait for it before touching the
+			// transport: the loop may still be replacing or closing it.
+			<-s.done
+		}
+		// The loop never received the close, so no command cleared the pair a
+		// reconnect handover preserved. An explicit close must still clear it;
+		// this is safe after Done because the loop no longer touches s.transport.
+		if !preserve {
+			discardTransportResume(s.transport)
 		}
 	})
 	return nil
@@ -1261,18 +1295,18 @@ func (s *Session) loop() {
 				connection = ConnectionStatusError
 				reason = EndReasonError
 				goto finished
-			case commandClose:
-				if cmd.preserve {
-					preserveTransportResume(s.transport)
-				} else {
-					// The current transport may already be closed: a reconnect
-					// handover preserves its credentials before closing it. An
-					// explicit close still has to clear them.
-					discardTransportResume(s.transport)
-				}
-				status = StatusClosed
-				goto finished
 			}
+		case cmd := <-s.closeCh:
+			if cmd.preserve {
+				preserveTransportResume(s.transport)
+			} else {
+				// The current transport may already be closed: a reconnect
+				// handover preserves its credentials before closing it. An
+				// explicit close still has to clear them.
+				discardTransportResume(s.transport)
+			}
+			status = StatusClosed
+			goto finished
 		}
 	}
 

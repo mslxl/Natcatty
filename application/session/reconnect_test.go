@@ -456,6 +456,19 @@ func TestSessionStopsReconnectingOnAPermanentFailure(t *testing.T) {
 	if calls := factory.callCount(); calls != 2 {
 		t.Fatalf("factory calls = %d, want one retry then a permanent stop", calls)
 	}
+	// The reconnect handover preserved the pair before the replacement Open
+	// failed. The user then closes the ended Pane: Close finds the loop already
+	// finished, so it must clear the preserved pair itself. Otherwise the
+	// secret store keeps orphaned ET credentials forever.
+	if got := first.preserves(); got == 0 {
+		t.Fatal("the reconnect handover did not preserve the credentials")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close after the permanent failure: %v", err)
+	}
+	if got := first.discards(); got == 0 {
+		t.Fatal("an explicit Close after the permanent reconnect failure left the preserved credentials")
+	}
 }
 
 func TestSessionRetriesTransientReconnectFailures(t *testing.T) {

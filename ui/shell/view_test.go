@@ -521,6 +521,9 @@ func TestNoticeTextLocalizesX11Failures(t *testing.T) {
 	if got := noticeText(m, &appsession.Notice{Code: appsession.NoticeETDisplaced}); got != m.ConnectionEternalTerminalDisplaced() {
 		t.Fatalf("ET displaced notice = %q, want %q", got, m.ConnectionEternalTerminalDisplaced())
 	}
+	if got := noticeText(m, &appsession.Notice{Code: appsession.NoticeETResumeFallback}); got != m.ConnectionEternalTerminalResumeUnsupported() {
+		t.Fatalf("ET resume fallback notice = %q, want %q", got, m.ConnectionEternalTerminalResumeUnsupported())
+	}
 	if got := noticeText(m, &appsession.Notice{Code: "unknown"}); got != "" {
 		t.Fatalf("unknown notice = %q, want empty", got)
 	}

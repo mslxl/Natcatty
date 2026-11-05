@@ -614,6 +614,7 @@
   "connectionTmuxNested": "Already inside a tmux session on the remote Host; connected without nesting.",
   "connectionTmuxUnavailable": "tmux is not available on the remote Host; connected with a plain shell.",
   "connectionEternalTerminalDisplaced": "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client at a time.",
+  "connectionEternalTerminalResumeUnsupported": "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserver 6.2.10 or older). A new session was started; upgrade etserver to resume sessions after a restart.",
   "@connectionX11CookieUnavailable": {
     "description": "A non-fatal X11 forwarding notice: no local xauth cookie was available.",
     "placeholders": {

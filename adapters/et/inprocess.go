@@ -75,9 +75,14 @@ var _ ConnectionLease = (*appconnection.Lease)(nil)
 //
 // With Sessions set, a fresh ET session saves its id and passkey in the
 // encrypted secret store so a later app process can reattach the same remote
-// shell by reset. etserver 7.1.1 and newer support that reset; a pre-v7 server
-// such as 6.2.10 cannot negotiate it, so a saved session fails with the same
-// upgrade outcome as stock instead of silently starting a second shell.
+// shell by reset. Persistence is capability-aware: the adapter saves the pair
+// only when the server answered the fresh connect with the v7 auth challenge,
+// which is what makes a later reattach possible. A pre-v7 server such as
+// 6.2.10 stays memory-only for that session, so a restart starts a fresh shell
+// instead of leaving an unusable pair that can only fail with the same upgrade
+// outcome as stock. A pair saved by an older build is still refused rather
+// than silently starting a second shell; the shell clears such a stale record
+// and may then explicitly fall back.
 //
 // The zero value is not usable: Manager or Acquire must be set.
 type InProcessFactory struct {
@@ -213,7 +218,12 @@ func (f InProcessFactory) Open(ctx context.Context, spec appsession.StartSpec) (
 		return nil, context.Cause(ctx)
 	}
 	if startingFresh {
-		if err := f.saveSession(ctx, spec.ResumeKey, credentials); err != nil {
+		if !conn.ChallengeCapable() {
+			// A pre-v7 server cannot authenticate a reattach after a restart.
+			// Keep the pair in the live transport only; persisting it would
+			// guarantee a permanent ErrReattachUnsupported on the next run.
+			f.logger().Info("et: server does not support v7 reattach; session credentials stay memory-only")
+		} else if err := f.saveSession(ctx, spec.ResumeKey, credentials); err != nil {
 			// Persistence only enables a later reattach; a fully working
 			// session must not fail because the secret store is unavailable.
 			// The error never contains the credentials.
@@ -271,11 +281,12 @@ func (f InProcessFactory) dialThrough(ctx context.Context, netDialer leaseNetDia
 		}
 	}
 	dialer := &etcp.Dialer{
-		NetDialer:   netDialer,
-		KeepAlive:   f.KeepAlive,
-		ResetIntent: resetIntent,
-		Logger:      f.logger(),
-		OnDisplaced: onDisplaced,
+		NetDialer:        netDialer,
+		KeepAlive:        f.KeepAlive,
+		HandshakeTimeout: f.handshakeTimeout(),
+		ResetIntent:      resetIntent,
+		Logger:           f.logger(),
+		OnDisplaced:      onDisplaced,
 	}
 	delay := retryLaterDelay
 	for {
@@ -682,9 +693,11 @@ func discardLease(lease ConnectionLease) {
 
 // noDeadlineDialer adapts one direct-tcpip channel to the etcp dialer. The SSH
 // channel rejects SetDeadline, while the handshake sets idle deadlines on its
-// conn. Those deadlines are accepted and ignored: Open bounds the initial
-// handshake with handshakeTimeout, which etcp uses to close the channel.
-// Reconnect handshakes go through leaseDialer and etcp's liveness watcher.
+// conn. Those deadlines are accepted and ignored: every connect exchange is
+// bounded instead by etcp's handshake watchdog, whose timeout comes from
+// InProcessFactory.HandshakeTimeout. Before that watchdog existed, only the
+// initial Open was bounded (by its context) and a reconnect to a server that
+// accepted the channel and never answered could block forever.
 type noDeadlineDialer struct {
 	forwarding appconnection.ForwardingClient
 }
