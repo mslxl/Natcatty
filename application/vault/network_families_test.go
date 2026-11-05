@@ -101,6 +101,82 @@ func TestExportJSONCarriesNetworkProfilesWithoutSecrets(t *testing.T) {
 	}
 }
 
+// TestNetworkProfileReferenceRoundTripsThroughJSONExportAndImport proves the
+// Host's soft reference travels in the document and is remapped onto the
+// import-created profile instead of keeping the source ID.
+func TestNetworkProfileReferenceRoundTripsThroughJSONExportAndImport(t *testing.T) {
+	ctx := context.Background()
+	sourceHosts := &fakeHosts{hosts: []domainvault.Host{{
+		ID: "source-host", Label: "web", Hostname: "10.0.0.2", Port: 22,
+		Username: "root", Protocol: domainvault.ProtocolSSH,
+	}}}
+	sourceNetworks := &fakeNetworkProfiles{}
+	var sourceProfiles int
+	source := NewService(sourceHosts,
+		WithSecrets(newFakeSecrets()),
+		WithNetworkProfiles(sourceNetworks),
+		WithNetworkProfileIDGenerator(func() string {
+			sourceProfiles++
+			return "network-source-" + strconv.Itoa(sourceProfiles)
+		}),
+		WithNetworkPeerIDGenerator(func() string { return "peer-source" }),
+		WithClock(fixedFamilyTime),
+	)
+	profile, err := source.CreateNetworkProfile(ctx,
+		wireGuardNetworkDraft(testWireGuardKey(1), testWireGuardKey(2), testWireGuardKey(3)))
+	if err != nil {
+		t.Fatalf("CreateNetworkProfile: %v", err)
+	}
+	sourceHosts.hosts[0].NetworkProfileID = profile.ID
+
+	exported, err := source.ExportVault(ctx, ExportOptions{
+		Format: ExportJSON, ExportedAt: fixedFamilyTime(),
+	})
+	if err != nil {
+		t.Fatalf("ExportVault: %v", err)
+	}
+	if !strings.Contains(string(exported.Content), `"networkProfileId": "`+profile.ID+`"`) {
+		t.Fatalf("the export does not carry the Host's Network Profile reference: %s",
+			exported.Content)
+	}
+
+	destinationHosts := &fakeHosts{}
+	destinationGroups := &fakeGroups{}
+	destinationNetworks := &fakeNetworkProfiles{}
+	destination := NewService(destinationHosts,
+		WithGroups(destinationGroups),
+		WithSecrets(newFakeSecrets()),
+		WithNetworkProfiles(destinationNetworks),
+		WithImportStore(&fakeImportStore{hosts: destinationHosts, groups: destinationGroups}),
+		WithNetworkProfileIDGenerator(func() string { return "network-destination" }),
+		WithClock(fixedFamilyTime),
+	)
+	preview, err := destination.PreviewImport(ctx, string(exported.Content),
+		PreviewImportOptions{FileName: "netcatty-vault.json"})
+	if err != nil {
+		t.Fatalf("PreviewImport: %v", err)
+	}
+	if _, err := destination.CommitImport(ctx, preview, ImportCommitOptions{}); err != nil {
+		t.Fatalf("CommitImport: %v", err)
+	}
+	if len(destinationNetworks.items) != 1 || len(destinationHosts.hosts) != 1 {
+		t.Fatalf("imported profiles = %+v, hosts = %+v",
+			destinationNetworks.items, destinationHosts.hosts)
+	}
+	created := destinationNetworks.items[0]
+	host := destinationHosts.hosts[0]
+	if host.NetworkProfileID != created.ID {
+		t.Fatalf("Host NetworkProfileID = %q, want the remapped %q",
+			host.NetworkProfileID, created.ID)
+	}
+	if host.NetworkProfileID == profile.ID {
+		t.Fatal("the Host kept the source Network Profile ID")
+	}
+	if created.Label != profile.Label || created.Kind != profile.Kind {
+		t.Fatalf("imported profile = %+v, want the exported identity", created)
+	}
+}
+
 func TestImportRestoresNetworkProfilesFromTheJSONFamily(t *testing.T) {
 	document := `{
   "kind": "netcatty.vault",

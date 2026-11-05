@@ -171,6 +171,12 @@
   },
   "vaultHostProxyProfile": "Proxy Profile",
   "vaultHostProxyProfileHint": "A Host's own proxy settings win over the selected profile.",
+  "vaultNetworkProfile": "Network Profile",
+  "vaultHostNetworkProfileHint": "The first jump's Network Profile wins; otherwise this Host's. Later hops never use one.",
+  "vaultGroupNetworkProfileHint": "Member Hosts inherit this unless they select their own. The first jump's profile wins.",
+  "vaultNetworkProfileSourceHost": "Set on this Host",
+  "vaultNetworkProfileSourceHostGroup": "Set on this Host Group",
+  "vaultNetworkProfileInherited": "Inherited from {path} ({label})",
   "vaultProxyListTitle": "Proxy Profiles ({count})",
   "@vaultProxyListTitle": {
     "description": "The Vault's Proxy Profile list heading and its profile count.",
@@ -219,6 +225,20 @@
   "vaultNetworkNewTailscale": "New Tailscale Net",
   "vaultNetworkNewWireGuard": "New WireGuard Net",
   "vaultNetworkEmpty": "No Network Profiles yet.",
+  "vaultNetworkDeleteAffected": "Affects {hosts, plural, one {# Host} other {# Hosts}} and {groups, plural, one {# Host Group} other {# Host Groups}}. Deleting this Network Profile clears those selections.",
+  "@vaultNetworkDeleteAffected": {
+    "description": "The scope a Network Profile delete affects, naming the Hosts and Host Groups whose references are cleared.",
+    "placeholders": {
+      "hosts": {
+        "type": "int",
+        "example": "2"
+      },
+      "groups": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
   "vaultNetworkFormCreateTitle": "New Network Profile",
   "vaultNetworkFormEditTitle": "Edit Network Profile",
   "vaultNetworkKind": "Network kind",

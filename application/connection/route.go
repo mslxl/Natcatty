@@ -74,12 +74,28 @@ type Proxy struct {
 	Password string
 }
 
-// Route is the non-secret route a Host uses: its jump chain and the proxy that
-// applies to the first endpoint. Proxy password material is carried here only
-// for the duration of a connection attempt.
+// NetworkRoute is the non-secret Network Profile selection for a route's first
+// endpoint. It names the profile and its Kind so the runtime can start the
+// right Provider, and carries no key material. A nil NetworkRoute means the
+// route dials exactly as it did before Network Profiles existed.
+type NetworkRoute struct {
+	ProfileID string
+	Kind      string
+	// Fingerprint is reserved for the Provider lifecycle work: it will digest
+	// the profile's non-secret configuration and secret-material version so a
+	// rotated key invalidates parked connections. It is empty until that ticket
+	// wires the Provider registry.
+	Fingerprint string
+}
+
+// Route is the non-secret route a Host uses: its jump chain, the proxy that
+// applies to the first endpoint, and the Network Profile selected for that
+// endpoint. Proxy password material is carried here only for the duration of a
+// connection attempt.
 type Route struct {
 	Jumps      []Hop
 	Proxy      *Proxy
+	Network    *NetworkRoute
 	Algorithms AlgorithmPolicy
 	// ConfigFingerprint is the target Host's opaque credential and policy
 	// digest. It scopes pool reuse without carrying credential material.

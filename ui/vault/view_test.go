@@ -319,3 +319,95 @@ func TestVaultViewOffersMoshAndETFieldsForTheirProtocols(t *testing.T) {
 		t.Fatal("the mosh-server path was shown for an ET Host")
 	}
 }
+
+// viewNetworkProfiles lists Network Profiles for the view's routing fields.
+type viewNetworkProfiles struct {
+	items []domainvault.NetworkProfile
+}
+
+func (f *viewNetworkProfiles) ListNetworkProfiles(context.Context) ([]domainvault.NetworkProfile, error) {
+	return append([]domainvault.NetworkProfile(nil), f.items...), nil
+}
+
+func (f *viewNetworkProfiles) CreateNetworkProfile(_ context.Context,
+	draft domainvault.NetworkProfileDraft) (domainvault.NetworkProfile, error) {
+	return domainvault.NetworkProfile{}, nil
+}
+
+func (f *viewNetworkProfiles) UpdateNetworkProfile(_ context.Context, id string,
+	draft domainvault.NetworkProfileDraft) (domainvault.NetworkProfile, error) {
+	return domainvault.NetworkProfile{}, nil
+}
+
+func (f *viewNetworkProfiles) DeleteNetworkProfile(context.Context, string) error { return nil }
+
+func newRoutingView(t *testing.T) (*vaultstate.State, *ui.Tester) {
+	t.Helper()
+	hosts := &fakeHosts{items: []domainvault.Host{{
+		ID: "host-1", Label: "web", Hostname: "example.com", Port: 22,
+		Protocol: domainvault.ProtocolSSH, Group: "prod/web",
+	}}}
+	groups := &entityGroups{items: []domainvault.Group{
+		{Path: "prod", NetworkProfileID: "net-1"},
+		{Path: "prod/web"},
+	}}
+	profiles := &viewNetworkProfiles{items: []domainvault.NetworkProfile{
+		{ID: "net-1", Label: "Tailnet", Kind: domainvault.NetworkKindTailscale},
+	}}
+	state := vaultstate.NewState(hosts,
+		vaultstate.WithGroups(groups),
+		vaultstate.WithNetworkProfiles(profiles),
+	)
+	if err := state.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	return state, ui.NewTester(View(state), 900, 1800)
+}
+
+func TestVaultViewHostEditorShowsTheNetworkProfileAndItsSource(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	state.BeginEdit("host-1")
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkProfile()) || !tt.HasText(m.VaultHostNetworkProfileHint()) {
+		t.Fatalf("the Host editor has no Network Profile selector, texts %q", tt.Texts())
+	}
+	if !tt.HasText(m.VaultNetworkProfileInherited("prod", "Tailnet")) {
+		t.Fatalf("the Host editor does not show the group-inherited source, texts %q", tt.Texts())
+	}
+	if tt.HasText(m.VaultNetworkProfileSourceHost()) {
+		t.Fatal("the Host editor claimed the inherited profile was set on the Host")
+	}
+
+	if err := tt.Click("Tailnet"); err != nil {
+		t.Fatalf("click the Network Profile radio: %v", err)
+	}
+	tt.Frame()
+	if state.Form().NetworkProfileID != "net-1" {
+		t.Fatalf("the radio did not select net-1, form has %q", state.Form().NetworkProfileID)
+	}
+	if !tt.HasText(m.VaultNetworkProfileSourceHost()) {
+		t.Fatalf("selecting a profile did not show the Host source, texts %q", tt.Texts())
+	}
+
+	state.BeginEditGroup("prod/web")
+	tt.Frame()
+	if !tt.HasText(m.VaultGroupNetworkProfileHint()) {
+		t.Fatal("the Host Group editor has no Network Profile explanation")
+	}
+	if !tt.HasText(m.VaultNetworkProfileInherited("prod", "Tailnet")) {
+		t.Fatalf("the Host Group editor does not show the parent default, texts %q", tt.Texts())
+	}
+}
+
+func TestVaultViewNetworkDeleteBannerWarnsAboutAffectedRecords(t *testing.T) {
+	state, tt := newRoutingView(t)
+	m := locales.In("en")
+
+	state.RequestDeleteNetworkProfile("net-1")
+	tt.Frame()
+	if !tt.HasText(m.VaultNetworkDeleteAffected(1, 2)) {
+		t.Fatalf("the delete banner does not warn about the affected Host and Groups, texts %q", tt.Texts())
+	}
+}

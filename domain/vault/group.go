@@ -45,9 +45,12 @@ type Group struct {
 	SkipEcdsaHostKey bool                `json:"skipEcdsaHostKey,omitempty"`
 	Algorithms       *AlgorithmOverrides `json:"algorithms,omitempty"`
 	ProxyProfileID   string              `json:"proxyProfileId,omitempty"`
-	OrderKey         int64               `json:"orderKey"`
-	CreatedAt        time.Time           `json:"createdAt"`
-	UpdatedAt        time.Time           `json:"updatedAt"`
+	// NetworkProfileID is the group's default Network Profile. A member Host's
+	// own reference wins; with neither, the Host has no Network Route.
+	NetworkProfileID string    `json:"networkProfileId,omitempty"`
+	OrderKey         int64     `json:"orderKey"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // GroupDraft is the editable part of a Host Group.
@@ -66,6 +69,7 @@ type GroupDraft struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	NetworkProfileID string
 }
 
 // NormalizeGroupDraft trims and canonicalizes a Host Group's input and returns
@@ -79,6 +83,7 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	draft.IdentityID = model.IdentityID(strings.TrimSpace(string(draft.IdentityID)))
 	draft.KeyID = model.KeyID(strings.TrimSpace(string(draft.KeyID)))
 	draft.ProxyProfileID = strings.TrimSpace(draft.ProxyProfileID)
+	draft.NetworkProfileID = strings.TrimSpace(draft.NetworkProfileID)
 	draft.Algorithms = normalizeAlgorithms(draft.Algorithms)
 	// A blank protocol inherits from the parent group, so only an explicit
 	// non-SSH protocol drops defaults its members would never read.
@@ -123,6 +128,9 @@ func NormalizeGroupDraft(draft GroupDraft) (GroupDraft, error) {
 	if err := validateText(FieldProxy, draft.ProxyProfileID, maxLabelLength, false); err != nil {
 		return GroupDraft{}, err
 	}
+	if err := validateText(FieldNetworkProfile, draft.NetworkProfileID, maxLabelLength, false); err != nil {
+		return GroupDraft{}, err
+	}
 	return draft, nil
 }
 
@@ -141,6 +149,7 @@ func (g Group) Defaults() GroupDefaults {
 		SkipEcdsaHostKey: g.SkipEcdsaHostKey,
 		Algorithms:       CloneAlgorithms(g.Algorithms),
 		ProxyProfileID:   g.ProxyProfileID,
+		NetworkProfileID: g.NetworkProfileID,
 	}
 }
 
@@ -159,6 +168,7 @@ type GroupDefaults struct {
 	SkipEcdsaHostKey bool
 	Algorithms       *AlgorithmOverrides
 	ProxyProfileID   string
+	NetworkProfileID string
 }
 
 // ResolveGroupDefaults merges the group configs along a Host Group's ancestor
@@ -232,6 +242,9 @@ func ResolveGroupDefaults(groups []Group, path string) GroupDefaults {
 		if defaults.ProxyProfileID != "" {
 			merged.ProxyProfileID = defaults.ProxyProfileID
 		}
+		if defaults.NetworkProfileID != "" {
+			merged.NetworkProfileID = defaults.NetworkProfileID
+		}
 	}
 	return merged
 }
@@ -296,6 +309,9 @@ func ApplyGroupDefaults(host Host, defaults GroupDefaults) Host {
 	}
 	if effective.ProxyProfileID == "" {
 		effective.ProxyProfileID = defaults.ProxyProfileID
+	}
+	if effective.NetworkProfileID == "" {
+		effective.NetworkProfileID = defaults.NetworkProfileID
 	}
 	return effective
 }

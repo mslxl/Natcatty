@@ -191,6 +191,19 @@ func (preview *ImportPreview) remapProxyProfileID(source string) string {
 	return source
 }
 
+// remapNetworkProfileID returns the imported Network Profile for a source id.
+// A reference to a profile that was not part of the document stays as
+// exported, preserving the Vault's non-cascading soft-reference behavior.
+func (preview *ImportPreview) remapNetworkProfileID(source string) string {
+	if source == "" {
+		return ""
+	}
+	if id, ok := preview.networkProfileIDs[source]; ok {
+		return id
+	}
+	return source
+}
+
 func remapKeyID(ids map[string]model.KeyID, cacheKey string, fallback model.KeyID) model.KeyID {
 	if cacheKey == "" {
 		return fallback

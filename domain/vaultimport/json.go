@@ -54,6 +54,7 @@ type jsonHost struct {
 	X11Forwarding          bool            `json:"x11Forwarding"`
 	X11WarningAcknowledged bool            `json:"x11WarningAcknowledged"`
 	ProxyProfileID         string          `json:"proxyProfileId"`
+	NetworkProfileID       string          `json:"networkProfileId"`
 	LegacyAlgorithms       bool            `json:"legacyAlgorithms"`
 	SkipEcdsaHostKey       bool            `json:"skipEcdsaHostKey"`
 	Algorithms             *jsonAlgorithms `json:"algorithms"`
@@ -246,6 +247,7 @@ func parseJSON(text string) Result {
 			X11Forwarding:          source.X11Forwarding,
 			X11WarningAcknowledged: source.X11WarningAcknowledged,
 			ProxyProfileID:         strings.TrimSpace(source.ProxyProfileID),
+			NetworkProfileID:       strings.TrimSpace(source.NetworkProfileID),
 			LegacyAlgorithms:       source.LegacyAlgorithms,
 			SkipEcdsaHostKey:       source.SkipEcdsaHostKey,
 			DeviceType:             strings.TrimSpace(source.DeviceType),

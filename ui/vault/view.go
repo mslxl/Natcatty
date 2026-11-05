@@ -1394,6 +1394,7 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 					}
 				})
 			}).Description(m.VaultHostProxyProfileHint())
+			hostNetworkProfileField(c, s, m, t)
 			if form.Protocol == string(domainvault.ProtocolSSH) {
 				ui.Field(c, m.VaultHostFileProtocol(), func() {
 					changed := ui.Select(c, &form.FileProtocol, []string{
@@ -1672,6 +1673,7 @@ func groupEditor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.T
 					}
 				})
 			})
+			groupNetworkProfileField(c, s, m, t)
 			if domainvault.Protocol(form.Protocol).UsesSSHAuth() {
 				ui.Checkbox(c, &form.UseSSHAgent, m.VaultHostUseAgent())
 				if form.UseSSHAgent {
