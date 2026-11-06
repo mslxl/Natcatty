@@ -253,47 +253,13 @@ func TestPruneKeepsTheNewestCountAndIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestZeroRetentionKeepsEveryEntry(t *testing.T) {
+func TestZeroRetentionKeepsEveryLog(t *testing.T) {
 	logs := []ConnectionLog{
 		{ID: "a", Kind: "ssh", Status: ConnectionConnected, StartedAt: at(1)},
 		{ID: "b", Kind: "ssh", Status: ConnectionConnected, StartedAt: at(2)},
 	}
 	if got := PruneConnectionLogs(logs, Retention{}, at(100)); len(got) != 2 {
 		t.Fatalf("count-zero retention kept %d, want 2", len(got))
-	}
-	entries := []Entry{
-		{ID: "a", Scope: "local", Command: "one", RecordedAt: at(1)},
-		{ID: "b", Scope: "local", Command: "two", RecordedAt: at(2)},
-	}
-	if got := PruneEntries(entries, Retention{}, at(100)); len(got) != 2 {
-		t.Fatalf("count-zero retention kept %d, want 2", len(got))
-	}
-}
-
-func TestAgeRetentionRemovesOnlyEntriesOlderThanTheBoundary(t *testing.T) {
-	now := at(12)
-	entries := []Entry{
-		{ID: "exactly", Scope: "local", Command: "kept", RecordedAt: now.Add(-24 * time.Hour)},
-		{ID: "older", Scope: "local", Command: "gone", RecordedAt: now.Add(-24*time.Hour - time.Second)},
-		{ID: "newer", Scope: "local", Command: "kept", RecordedAt: now},
-	}
-	got := PruneEntries(entries, Retention{MaxAge: 24 * time.Hour}, now)
-	if len(got) != 2 || got[0].ID != "newer" || got[1].ID != "exactly" {
-		t.Fatalf("kept = %+v, want newer and the exact boundary", got)
-	}
-}
-
-func TestAgeAndCountApplyTogether(t *testing.T) {
-	now := at(12)
-	entries := []Entry{
-		{ID: "old", Scope: "local", Command: "old", RecordedAt: now.Add(-72 * time.Hour)},
-		{ID: "a", Scope: "local", Command: "a", RecordedAt: now.Add(-3 * time.Hour)},
-		{ID: "b", Scope: "local", Command: "b", RecordedAt: now.Add(-2 * time.Hour)},
-		{ID: "c", Scope: "local", Command: "c", RecordedAt: now.Add(-time.Hour)},
-	}
-	got := PruneEntries(entries, Retention{Count: 2, MaxAge: 24 * time.Hour}, now)
-	if len(got) != 2 || got[0].ID != "c" || got[1].ID != "b" {
-		t.Fatalf("kept = %+v, want the newest two within the age limit", got)
 	}
 }
 

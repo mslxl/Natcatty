@@ -93,13 +93,6 @@ func (s *memoryStore) ClearHistoryEntries(context.Context) (int, error) {
 	return removed, nil
 }
 
-func (s *memoryStore) PruneHistoryEntries(_ context.Context, retention domainhistory.Retention, now time.Time) (int, error) {
-	kept := domainhistory.PruneEntries(s.entries, retention, now)
-	removed := len(s.entries) - len(kept)
-	s.entries = kept
-	return removed, nil
-}
-
 func replaceLog(logs []domainhistory.ConnectionLog, log domainhistory.ConnectionLog) []domainhistory.ConnectionLog {
 	for index := range logs {
 		if logs[index].ID == log.ID {
@@ -198,11 +191,10 @@ func TestRecordAppendsEveryExecutionAndDefaultsScope(t *testing.T) {
 	}
 }
 
-func TestRetentionPrunesAtTheConfiguredLimitOnRecord(t *testing.T) {
+func TestConnectionLogRetentionPrunesOnRecordButHistoryDoesNot(t *testing.T) {
 	store := &memoryStore{}
 	service := newTestService(store, Retention{
-		Logs:    domainhistory.Retention{Count: 2},
-		History: domainhistory.Retention{Count: 2},
+		Logs: domainhistory.Retention{Count: 2},
 	})
 	for index := 0; index < 5; index++ {
 		if err := service.Record(context.Background(), domainhistory.Entry{
@@ -216,40 +208,26 @@ func TestRetentionPrunesAtTheConfiguredLimitOnRecord(t *testing.T) {
 			t.Fatalf("RecordConnection: %v", err)
 		}
 	}
-	if len(store.entries) != 2 {
-		t.Fatalf("entries = %d, want 2", len(store.entries))
-	}
+	// Connection Logs keep their configured bound.
 	if len(store.logs) != 2 {
 		t.Fatalf("logs = %d, want 2", len(store.logs))
 	}
-	for _, entry := range store.entries {
-		if entry.Command != "command-4" && entry.Command != "command-3" {
-			t.Fatalf("kept %q, want the newest two", entry.Command)
-		}
-	}
-}
-
-func TestZeroRetentionDoesNotPrune(t *testing.T) {
-	store := &memoryStore{}
-	service := newTestService(store, Retention{})
-	for index := 0; index < 5; index++ {
-		if err := service.Record(context.Background(), domainhistory.Entry{
-			Command: fmt.Sprintf("command-%d", index),
-		}); err != nil {
-			t.Fatalf("Record: %v", err)
-		}
-	}
+	// Command History is never pruned automatically.
 	if len(store.entries) != 5 {
 		t.Fatalf("entries = %d, want all 5", len(store.entries))
 	}
 }
 
-func TestPruneAppliesLoweredRetentionWithoutRecording(t *testing.T) {
+func TestPruneAppliesOnlyConnectionLogRetention(t *testing.T) {
 	store := &memoryStore{}
-	service := newTestService(store, Retention{History: domainhistory.Retention{Count: 2}})
+	service := newTestService(store, Retention{Logs: domainhistory.Retention{Count: 2}})
 	for index := 0; index < 5; index++ {
+		_ = store.SaveConnectionLog(context.Background(), domainhistory.ConnectionLog{
+			ID: fmt.Sprintf("log-%d", index), Kind: "ssh",
+			Status: domainhistory.ConnectionConnected, StartedAt: at(index),
+		})
 		_ = store.SaveHistoryEntry(context.Background(), domainhistory.Entry{
-			ID: fmt.Sprintf("old-%d", index), Scope: "local", Command: "x",
+			ID: fmt.Sprintf("entry-%d", index), Scope: "local", Command: "x",
 			RecordedAt: at(index),
 		})
 	}
@@ -257,11 +235,14 @@ func TestPruneAppliesLoweredRetentionWithoutRecording(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
-	if result.Entries != 3 {
-		t.Fatalf("pruned %d entries, want 3", result.Entries)
+	if result.ConnectionLogs != 3 {
+		t.Fatalf("pruned %d logs, want 3", result.ConnectionLogs)
 	}
-	if len(store.entries) != 2 {
-		t.Fatalf("entries = %d, want 2", len(store.entries))
+	if len(store.logs) != 2 {
+		t.Fatalf("logs = %d, want 2", len(store.logs))
+	}
+	if len(store.entries) != 5 {
+		t.Fatalf("entries = %d, want all 5", len(store.entries))
 	}
 }
 

@@ -118,13 +118,6 @@ func (t *fakeTerminal) SetConnectionLogRetention(count, days int) error {
 	})
 }
 
-func (t *fakeTerminal) SetHistoryRetention(count, days int) error {
-	return t.update(func(settings *domainterminal.Settings) {
-		settings.HistoryRetentionCount = count
-		settings.HistoryRetentionDays = days
-	})
-}
-
 func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 	fake := newFakeTerminal()
 	state := NewTerminalState(fake)
@@ -201,12 +194,7 @@ func TestTerminalStateSavesEachSettingAndReportsFailure(t *testing.T) {
 		fake.settings.ConnectionLogRetentionDays != 7 {
 		t.Fatal("connection log retention was not stored")
 	}
-	if !state.SetHistoryRetention(0, 30) ||
-		fake.settings.HistoryRetentionCount != 0 ||
-		fake.settings.HistoryRetentionDays != 30 {
-		t.Fatal("history retention was not stored")
-	}
-	if state.Problem() || redraws != 21 {
+	if state.Problem() || redraws != 20 {
 		t.Fatalf("problem = %v, redraws = %d", state.Problem(), redraws)
 	}
 

@@ -341,14 +341,10 @@ func autocompleteGhost(c *ui.Context, model chromeModel, m locales.Messages, t *
 }
 
 func suggestionSourceLabel(source string, m locales.Messages) string {
-	switch source {
-	case autocomplete.SourceHistory:
+	if source == autocomplete.SourceHistory {
 		return m.SessionAutocompleteHistory()
-	case autocomplete.SourceShellHistory:
-		return m.SessionAutocompleteShellHistory()
-	default:
-		return source
 	}
+	return source
 }
 
 func encodingLabels(m locales.Messages) []string {

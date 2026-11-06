@@ -167,7 +167,7 @@ func TestAutocompleteLayersFloatAtTheCursor(t *testing.T) {
 	m := locales.In("en")
 	suggestions := []autocomplete.Suggestion{
 		{Text: "git status", Display: "git status", Source: "history", Frequency: 3},
-		{Text: "git stash", Display: "git stash", Source: "shell-history"},
+		{Text: "git stash", Display: "git stash", Source: "history"},
 		{Text: "git rebase --interactive", Display: "git rebase --interactive", Source: "history"},
 		{Text: "git log --oneline", Display: "git log --oneline", Source: "history"},
 		{Text: "git diff", Display: "git diff", Source: "history"},
@@ -255,7 +255,9 @@ func TestSuggestionSourceLabels(t *testing.T) {
 	if got := suggestionSourceLabel("history", m); got != m.SessionAutocompleteHistory() {
 		t.Fatalf("history label = %q", got)
 	}
-	if got := suggestionSourceLabel("shell-history", m); got != m.SessionAutocompleteShellHistory() {
+	// There is no live shell-history suggestion source; imported rows are
+	// journal rows and suggestions only label the journal as "history".
+	if got := suggestionSourceLabel("shell-history", m); got != "shell-history" {
 		t.Fatalf("shell label = %q", got)
 	}
 	if got := suggestionSourceLabel("plugin", m); got != "plugin" {

@@ -215,10 +215,10 @@ func renderPowerUxSection(c *ui.Context, state *TerminalState,
 
 }
 
-// renderRetentionSection draws the connection log and command history
-// retention bounds. The two count fields and the two age fields are edited
-// independently; each save carries the other field's current value so an
-// edit never silently resets its neighbour.
+// renderRetentionSection draws the Connection Log retention bounds. The count
+// and age fields are edited independently; each save carries the other
+// field's current value so an edit never silently resets its neighbour.
+// Command History has no automatic count/day retention.
 func renderRetentionSection(c *ui.Context, state *TerminalState,
 	settings domainterminal.Settings, m locales.Messages, t *ui.Theme) {
 	ui.Text(c, m.SettingsRetentionTitle()).Bold()
@@ -237,23 +237,6 @@ func renderRetentionSection(c *ui.Context, state *TerminalState,
 		if ui.NumberInput(c, &logDays, 0,
 			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
 			state.SetConnectionLogRetention(settings.ConnectionLogRetentionCount, int(logDays))
-			c.Invalidate()
-		}
-	})
-
-	historyCount := float64(domainterminal.NormalizeRetentionCount(settings.HistoryRetentionCount))
-	kit.FormRow(c, m.SettingsHistoryRetentionCount(), func() {
-		if ui.NumberInput(c, &historyCount, 0,
-			float64(domainterminal.MaxRetentionCount), 100).Width(120).Changed() {
-			state.SetHistoryRetention(int(historyCount), settings.HistoryRetentionDays)
-			c.Invalidate()
-		}
-	})
-	historyDays := float64(domainterminal.NormalizeRetentionDays(settings.HistoryRetentionDays))
-	kit.FormRow(c, m.SettingsHistoryRetentionDays(), func() {
-		if ui.NumberInput(c, &historyDays, 0,
-			float64(domainterminal.MaxRetentionDays), 1).Width(120).Changed() {
-			state.SetHistoryRetention(settings.HistoryRetentionCount, int(historyDays))
 			c.Invalidate()
 		}
 	})

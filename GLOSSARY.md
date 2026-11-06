@@ -149,8 +149,9 @@ the same rows instead of keeping its own copy.
 _Avoid_: shell history, command log
 
 **Shell History File**:
-A zsh, bash, or fish history file that autocomplete may read as a suggestion source.
-It belongs to the user's shell and is distinct from the app's Command History.
+A zsh, bash, or fish history file imported once into Command History. It belongs
+to the user's shell and is distinct from the app's Command History; it is never
+read live as an autocomplete suggestion source.
 _Avoid_: history, command history
 
 **Hibernate**:

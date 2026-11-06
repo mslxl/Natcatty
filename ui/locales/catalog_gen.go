@@ -7868,18 +7868,6 @@ func (msgs Messages) SessionAutocompleteHistory() string {
 	return Catalog.Format(msgs.locale, "sessionAutocompleteHistory", nil)
 }
 
-// SessionAutocompleteShellHistory says "Shell history"
-// in the language the app shows.
-func SessionAutocompleteShellHistory() string {
-	return In(i18n.Locale()).SessionAutocompleteShellHistory()
-}
-
-// SessionAutocompleteShellHistory says "Shell history"
-// in the language of msgs.
-func (msgs Messages) SessionAutocompleteShellHistory() string {
-	return Catalog.Format(msgs.locale, "sessionAutocompleteShellHistory", nil)
-}
-
 // SessionAutocompleteGhost says "Suggestion: {suggestion}"
 // in the language the app shows.
 //
@@ -10978,27 +10966,27 @@ func (msgs Messages) LogsProblemDate() string {
 	return Catalog.Format(msgs.locale, "logsProblemDate", nil)
 }
 
-// SettingsRetentionTitle says "Log and history retention"
+// SettingsRetentionTitle says "Connection log retention"
 // in the language the app shows.
 //
-// The Settings section that bounds connection logs and history.
+// The Settings section that bounds connection logs.
 func SettingsRetentionTitle() string { return In(i18n.Locale()).SettingsRetentionTitle() }
 
-// SettingsRetentionTitle says "Log and history retention"
+// SettingsRetentionTitle says "Connection log retention"
 // in the language of msgs.
 //
-// The Settings section that bounds connection logs and history.
+// The Settings section that bounds connection logs.
 func (msgs Messages) SettingsRetentionTitle() string {
 	return Catalog.Format(msgs.locale, "settingsRetentionTitle", nil)
 }
 
-// SettingsRetentionDescription says "A count of 0 keeps every record; a maximum age of 0 days keeps records forever."
+// SettingsRetentionDescription says "A count of 0 keeps every log; a maximum age of 0 days keeps logs forever."
 // in the language the app shows.
 //
 // Explains the zero values of the retention controls.
 func SettingsRetentionDescription() string { return In(i18n.Locale()).SettingsRetentionDescription() }
 
-// SettingsRetentionDescription says "A count of 0 keeps every record; a maximum age of 0 days keeps records forever."
+// SettingsRetentionDescription says "A count of 0 keeps every log; a maximum age of 0 days keeps logs forever."
 // in the language of msgs.
 //
 // Explains the zero values of the retention controls.
@@ -11036,34 +11024,6 @@ func SettingsConnectionLogRetentionDays() string {
 // The maximum age of a connection log in days.
 func (msgs Messages) SettingsConnectionLogRetentionDays() string {
 	return Catalog.Format(msgs.locale, "settingsConnectionLogRetentionDays", nil)
-}
-
-// SettingsHistoryRetentionCount says "History entries kept"
-// in the language the app shows.
-//
-// The maximum number of command history entries to keep.
-func SettingsHistoryRetentionCount() string { return In(i18n.Locale()).SettingsHistoryRetentionCount() }
-
-// SettingsHistoryRetentionCount says "History entries kept"
-// in the language of msgs.
-//
-// The maximum number of command history entries to keep.
-func (msgs Messages) SettingsHistoryRetentionCount() string {
-	return Catalog.Format(msgs.locale, "settingsHistoryRetentionCount", nil)
-}
-
-// SettingsHistoryRetentionDays says "History max age (days)"
-// in the language the app shows.
-//
-// The maximum age of a command history entry in days.
-func SettingsHistoryRetentionDays() string { return In(i18n.Locale()).SettingsHistoryRetentionDays() }
-
-// SettingsHistoryRetentionDays says "History max age (days)"
-// in the language of msgs.
-//
-// The maximum age of a command history entry in days.
-func (msgs Messages) SettingsHistoryRetentionDays() string {
-	return Catalog.Format(msgs.locale, "settingsHistoryRetentionDays", nil)
 }
 
 // VaultExportTitle says "Export Vault"

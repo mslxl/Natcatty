@@ -252,15 +252,6 @@ func (s *Service) SetConnectionLogRetention(count, days int) error {
 	})
 }
 
-// SetHistoryRetention sets how much command history is kept. Zero keeps every
-// entry.
-func (s *Service) SetHistoryRetention(count, days int) error {
-	return s.Update(func(settings *domainterminal.Settings) {
-		settings.HistoryRetentionCount = domainterminal.NormalizeRetentionCount(count)
-		settings.HistoryRetentionDays = domainterminal.NormalizeRetentionDays(days)
-	})
-}
-
 // SetDropAction sets what dropping files on a terminal does.
 func (s *Service) SetDropAction(action domainterminal.DropAction) error {
 	if !action.Valid() {

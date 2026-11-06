@@ -3,53 +3,16 @@ package autocomplete
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
-type memoryStore struct {
-	entries []Entry
-	saves   int
-	err     error
-}
-
-func (s *memoryStore) Load(context.Context) ([]Entry, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return append([]Entry(nil), s.entries...), nil
-}
-
-func (s *memoryStore) Save(_ context.Context, entries []Entry) error {
-	if s.err != nil {
-		return s.err
-	}
-	s.saves++
-	s.entries = append([]Entry(nil), entries...)
-	return nil
-}
-
-type staticSource struct {
-	name    string
-	entries []Suggestion
-	calls   int
-	last    string
-}
-
-func (s *staticSource) Name() string { return s.name }
-func (s *staticSource) Suggestions(input string, limit int) []Suggestion {
-	s.calls++
-	s.last = input
-	result := make([]Suggestion, 0, len(s.entries))
-	for _, entry := range s.entries {
-		if len(result) >= limit {
-			break
-		}
-		result = append(result, entry)
-	}
-	return result
+func journalEntryFor(command, scope string, at time.Time) domainhistory.Entry {
+	return domainhistory.Entry{Command: command, Scope: scope, RecordedAt: at}
 }
 
 func defaultConfig() Config {
@@ -62,16 +25,16 @@ func defaultConfig() Config {
 	}
 }
 
-func newTestService(t *testing.T, store Store, config Config, opts ...Option) *Service {
+func newTestService(t *testing.T, journal Journal, config Config, opts ...Option) *Service {
 	t.Helper()
-	service := NewService(store, func() Config { return config }, opts...)
+	service := NewService(journal, func() Config { return config }, opts...)
 	service.Load(context.Background())
 	return service
 }
 
-func TestSuggestionsComeFromRecordedHistory(t *testing.T) {
-	store := &memoryStore{}
-	service := newTestService(t, store, defaultConfig())
+func TestSuggestionsComeFromTheJournal(t *testing.T) {
+	journal := &journalMemory{}
+	service := newTestService(t, journal, defaultConfig())
 	service.Record("local", "git status")
 	service.Record("local", "git status")
 	service.Record("local", "git stash")
@@ -88,16 +51,16 @@ func TestSuggestionsComeFromRecordedHistory(t *testing.T) {
 		t.Fatalf("second = %+v", got[1])
 	}
 	for _, suggestion := range got {
-		if suggestion.Source != "history" {
-			t.Fatalf("source = %q, want history", suggestion.Source)
+		if suggestion.Source != SourceHistory {
+			t.Fatalf("source = %q, want %q", suggestion.Source, SourceHistory)
 		}
 	}
 }
 
 func TestSuggestionsRespectTheHistoryScope(t *testing.T) {
-	store := &memoryStore{}
+	journal := &journalMemory{}
 	config := defaultConfig()
-	service := NewService(store, func() Config { return config })
+	service := NewService(journal, func() Config { return config })
 	service.Load(context.Background())
 	service.Record("host:a", "deploy staging")
 	service.Record("host:b", "deploy production")
@@ -112,49 +75,12 @@ func TestSuggestionsRespectTheHistoryScope(t *testing.T) {
 	}
 }
 
-func TestSuggestionsComeFromConfiguredSources(t *testing.T) {
-	source := &staticSource{name: "shell", entries: []Suggestion{
-		{Text: "kubectl get pods", Display: "kubectl get pods", Source: "shell", Score: 2000},
-		{Text: "unrelated", Display: "unrelated", Source: "shell", Score: 10},
-	}}
-	service := newTestService(t, &memoryStore{}, defaultConfig(), WithSource(source))
-	service.Record("local", "kubectl rollout status")
-
-	got := service.Suggestions("kubectl", "local")
-	if source.calls != 1 || source.last != "kubectl" {
-		t.Fatalf("source calls = %d input = %q", source.calls, source.last)
-	}
-	if len(got) != 2 {
-		t.Fatalf("suggestions = %+v, want history and shell", got)
-	}
-	if got[0].Text != "kubectl get pods" || got[0].Source != "shell" {
-		t.Fatalf("first = %+v, want the configured-source suggestion", got[0])
-	}
-	if got[1].Text != "kubectl rollout status" || got[1].Source != "history" {
-		t.Fatalf("second = %+v", got[1])
-	}
-}
-
-func TestSuggestionsDedupeAndPreferTheHigherScore(t *testing.T) {
-	source := &staticSource{name: "shell", entries: []Suggestion{
-		{Text: "ls -la", Source: "shell", Score: 900},
-	}}
-	service := newTestService(t, &memoryStore{}, defaultConfig(), WithSource(source))
-	service.Record("local", "ls -la")
-
-	got := service.Suggestions("ls", "local")
-	if len(got) != 1 || got[0].Source != "history" {
-		// The recorded history scores above a bare source suggestion.
-		t.Fatalf("suggestions = %+v, want one history entry", got)
-	}
-}
-
 func TestSuggestionsHonorEnabledMinimumCharsAndLimit(t *testing.T) {
-	store := &memoryStore{}
+	journal := &journalMemory{}
 	config := defaultConfig()
 	config.MinChars = 3
 	config.MaxSuggestions = 2
-	service := NewService(store, func() Config { return config })
+	service := NewService(journal, func() Config { return config })
 	service.Load(context.Background())
 	for _, command := range []string{"alpha one", "alpha two", "alpha three"} {
 		service.Record("local", command)
@@ -178,8 +104,8 @@ func TestSuggestionsHonorEnabledMinimumCharsAndLimit(t *testing.T) {
 }
 
 func TestSuggestionsRankPrefixAboveSubstringAndRecentAboveOld(t *testing.T) {
-	store := &memoryStore{}
-	service := NewService(store, defaultConfig, WithClock(func() time.Time {
+	journal := &journalMemory{}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
 		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	}))
 	service.Load(context.Background())
@@ -196,41 +122,45 @@ func TestSuggestionsRankPrefixAboveSubstringAndRecentAboveOld(t *testing.T) {
 	}
 }
 
-func TestRecordPersistsDeduplicatedHistory(t *testing.T) {
-	store := &memoryStore{}
-	service := newTestService(t, store, defaultConfig())
-	service.Record("local", "  ls  ")
-	service.Record("local", "ls")
-	service.Record("local", "")
-
-	if len(store.entries) != 1 {
-		t.Fatalf("saved entries = %+v", store.entries)
-	}
-	if store.entries[0].Command != "ls" || store.entries[0].Count != 2 {
-		t.Fatalf("entry = %+v", store.entries[0])
-	}
-	if store.saves != 2 {
-		t.Fatalf("saves = %d, want 2", store.saves)
-	}
-}
-
 func TestLoadKeepsTheNewestBoundedHistory(t *testing.T) {
-	entries := make([]Entry, maxHistoryEntries+10)
-	for index := range entries {
-		entries[index] = Entry{Command: string(rune('a' + index%26)), Scope: "local", Count: 1}
+	journal := &journalMemory{}
+	for index := 0; index < maxHistoryEntries+10; index++ {
+		journal.entries = append(journal.entries, journalEntryFor(
+			fmt.Sprintf("command-%d", index), "local", time.Time{}))
 	}
-	store := &memoryStore{entries: entries}
-	service := newTestService(t, store, defaultConfig())
+	service := newTestService(t, journal, defaultConfig())
 	if len(service.entries) != maxHistoryEntries {
 		t.Fatalf("loaded entries = %d, want %d", len(service.entries), maxHistoryEntries)
 	}
 }
 
-func TestLoadFailureKeepsAutocompleteUsable(t *testing.T) {
-	store := &memoryStore{err: errors.New("disk")}
-	service := newTestService(t, store, defaultConfig())
+func TestLoadFailureKeepsThePreviousView(t *testing.T) {
+	journal := &journalMemory{}
+	service := newTestService(t, journal, defaultConfig())
 	service.Record("local", "pwd")
+	journal.err = errors.New("disk")
+	service.Load(context.Background())
 	if got := service.Suggestions("pw", "local"); len(got) != 1 {
 		t.Fatalf("suggestions after a load failure = %+v", got)
+	}
+}
+
+// TestJournalIsTheOnlySuggestionSource pins the single-source behaviour: the
+// only rows that can surface are the journal's, and any row that is not in the
+// journal can never become a suggestion.
+func TestJournalIsTheOnlySuggestionSource(t *testing.T) {
+	journal := &journalMemory{}
+	journal.entries = []domainhistory.Entry{
+		journalEntryFor("git status", "local", time.Now()),
+	}
+	service := newTestService(t, journal, defaultConfig())
+
+	// A command that exists only outside the journal is never suggested.
+	if got := service.Suggestions("kubectl", "local"); got != nil {
+		t.Fatalf("suggestions outside the journal = %+v", got)
+	}
+	got := service.Suggestions("git", "local")
+	if len(got) != 1 || got[0].Text != "git status" || got[0].Source != SourceHistory {
+		t.Fatalf("suggestions = %+v, want the journal row", got)
 	}
 }

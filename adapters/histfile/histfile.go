@@ -1,8 +1,9 @@
-// Package histfile reads the local shell's history files and exposes them as an
-// autocomplete source. It mirrors the original's zsh, bash, and fish import:
+// Package histfile reads the local shell's history files for the one-time
+// Command History import. It mirrors the original's zsh, bash, and fish import:
 // zsh EXTENDED_HISTORY records, bash HISTTIMEFORMAT records, and fish's YAML
 // subset. Reading is best effort; a missing or unreadable file contributes
-// nothing.
+// nothing. There is no live suggestion source here: imported rows reach
+// autocomplete only as Command History journal rows.
 package histfile
 
 import (
@@ -13,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/mslxl/natcatty/application/autocomplete"
 )
 
 const (
@@ -55,12 +54,9 @@ type Entry struct {
 	Timestamp int64
 }
 
-// Options configures a Source.
+// Options configures the history-file reader.
 type Options struct {
-	// Name overrides the source name shown in suggestions. The default is
-	// "shell-history".
-	Name string
-	// Files are read in order when the first suggestion is requested.
+	// Files are read in order when the first import is requested.
 	Files []File
 	// ReadFile replaces os.ReadFile, primarily for tests.
 	ReadFile func(string) ([]byte, error)
@@ -68,28 +64,21 @@ type Options struct {
 	MaxEntries int
 }
 
-// Source implements autocomplete.Source over shell history files. The files
-// are read once, lazily, so constructing a Session does not touch the disk.
-type Source struct {
-	name       string
+// Reader reads shell history files for the one-time import. The files are read
+// once, lazily, so constructing it does not touch the disk.
+type Reader struct {
 	files      []File
 	readFile   func(string) ([]byte, error)
 	maxEntries int
 
-	once    sync.Once
-	entries []autocomplete.Suggestion
-	// history keeps the same deduplicated, newest-first rows with their
-	// timestamps, so the app can persist the import alongside Session
-	// commands instead of leaving it suggestion-only.
+	once sync.Once
+	// history keeps the deduplicated, newest-first rows with their timestamps,
+	// so the app can persist the import into the Command History journal.
 	history []Entry
 }
 
-// New builds a Source from options.
-func New(options Options) *Source {
-	name := options.Name
-	if name == "" {
-		name = autocomplete.SourceShellHistory
-	}
+// New builds a Reader from options.
+func New(options Options) *Reader {
 	readFile := options.ReadFile
 	if readFile == nil {
 		readFile = os.ReadFile
@@ -98,18 +87,17 @@ func New(options Options) *Source {
 	if limit <= 0 || limit > maxEntries {
 		limit = maxEntries
 	}
-	return &Source{
-		name:       name,
+	return &Reader{
 		files:      append([]File(nil), options.Files...),
 		readFile:   readFile,
 		maxEntries: limit,
 	}
 }
 
-// Default builds a Source over the shell history locations the original
+// Default builds a Reader over the shell history locations the original
 // imports under home. The fish paths are both checked; the first that exists
 // contributes its commands.
-func Default(home string) *Source {
+func Default(home string) *Reader {
 	if home == "" {
 		return New(Options{})
 	}
@@ -121,40 +109,15 @@ func Default(home string) *Source {
 	}})
 }
 
-// Name implements autocomplete.Source.
-func (s *Source) Name() string { return s.name }
-
-// Suggestions returns the imported commands that begin with input, newest
-// first.
-func (s *Source) Suggestions(input string, limit int) []autocomplete.Suggestion {
-	input = strings.TrimSpace(input)
-	if input == "" || limit <= 0 {
-		return nil
-	}
-	s.once.Do(s.load)
-	lowered := strings.ToLower(input)
-	result := make([]autocomplete.Suggestion, 0, limit)
-	for _, entry := range s.entries {
-		if !strings.HasPrefix(strings.ToLower(entry.Text), lowered) {
-			continue
-		}
-		result = append(result, entry)
-		if len(result) >= limit {
-			break
-		}
-	}
-	return result
-}
-
 // History returns the imported, deduplicated commands newest first. The app
-// persists them once at startup so the History surface lists shell commands
-// as well as Session commands, subject to the same retention.
-func (s *Source) History() []Entry {
+// persists them once at startup so Command History lists shell commands as
+// well as Session commands, and autocomplete reads those journal rows.
+func (s *Reader) History() []Entry {
 	s.once.Do(s.load)
 	return append([]Entry(nil), s.history...)
 }
 
-func (s *Source) paths() []string {
+func (s *Reader) paths() []string {
 	paths := make([]string, 0, len(s.files))
 	for _, file := range s.files {
 		paths = append(paths, file.Path)
@@ -167,7 +130,7 @@ type sequencedEntry struct {
 	sequence int
 }
 
-func (s *Source) load() {
+func (s *Reader) load() {
 	merged := make([]sequencedEntry, 0, s.maxEntries)
 	sequence := 0
 	for _, file := range s.files {
@@ -207,7 +170,6 @@ func (s *Source) load() {
 	})
 
 	seen := make(map[string]struct{}, len(merged))
-	entries := make([]autocomplete.Suggestion, 0, s.maxEntries)
 	history := make([]Entry, 0, s.maxEntries)
 	for _, entry := range merged {
 		if entry.Command == "" || strings.Contains(entry.Command, aiHistoryMarker) {
@@ -217,22 +179,11 @@ func (s *Source) load() {
 			continue
 		}
 		seen[entry.Command] = struct{}{}
-		score := 900 - len(entries)
-		if score < 0 {
-			score = 0
-		}
-		entries = append(entries, autocomplete.Suggestion{
-			Text:    entry.Command,
-			Display: entry.Command,
-			Source:  s.name,
-			Score:   score,
-		})
 		history = append(history, entry.Entry)
-		if len(entries) >= s.maxEntries {
+		if len(history) >= s.maxEntries {
 			break
 		}
 	}
-	s.entries = entries
 	s.history = history
 }
 

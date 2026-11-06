@@ -105,52 +105,6 @@ func TestPruneConnectionLogsKeepsExactlyTheConfiguredCount(t *testing.T) {
 	}
 }
 
-func TestPruneHistoryEntriesAppliesAgeThenCount(t *testing.T) {
-	ctx := context.Background()
-	store := openHistoryStore(t)
-	now := at(12)
-	for index := 0; index < 6; index++ {
-		_ = store.SaveHistoryEntry(ctx, domainhistory.Entry{
-			ID: fmt.Sprintf("entry-%d", index), Scope: "local",
-			Command: "command", RecordedAt: now.Add(-time.Duration(index) * 4 * time.Hour),
-		})
-	}
-	// entry-4 and entry-5 are older than six hours; the count keeps two.
-	removed, err := store.PruneHistoryEntries(ctx, domainhistory.Retention{
-		Count: 2, MaxAge: 6 * time.Hour,
-	}, now)
-	if err != nil {
-		t.Fatalf("PruneHistoryEntries: %v", err)
-	}
-	if removed != 4 {
-		t.Fatalf("removed = %d, want 4", removed)
-	}
-	entries, _ := store.ListHistoryEntries(ctx)
-	if len(entries) != 2 || entries[0].ID != "entry-0" || entries[1].ID != "entry-1" {
-		t.Fatalf("kept = %+v", entries)
-	}
-}
-
-func TestZeroRetentionPruneRemovesNothing(t *testing.T) {
-	ctx := context.Background()
-	store := openHistoryStore(t)
-	_ = store.SaveHistoryEntry(ctx, domainhistory.Entry{
-		ID: "entry-1", Scope: "local", Command: "ls", RecordedAt: at(9),
-	})
-	for _, retention := range []domainhistory.Retention{
-		{}, {Count: 0, MaxAge: 0},
-	} {
-		removed, err := store.PruneHistoryEntries(ctx, retention, at(12))
-		if err != nil || removed != 0 {
-			t.Fatalf("prune(%+v) = %d, %v; want 0", retention, removed, err)
-		}
-	}
-	entries, _ := store.ListHistoryEntries(ctx)
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(entries))
-	}
-}
-
 func TestClearConnectionLogsReportsTheRemovedCount(t *testing.T) {
 	ctx := context.Background()
 	store := openHistoryStore(t)

@@ -513,6 +513,28 @@ func TestHistoryTabClassifiesUnsavedHostsAndResetsTheFilter(t *testing.T) {
 	}
 }
 
+// TestHistoryMutationsNotifyTheAutocompleteReloader pins the seam that makes
+// deleting or clearing a Command History row remove its suggestion: the
+// composition root installs WithMutationHook to reload the shared journal.
+func TestHistoryMutationsNotifyTheAutocompleteReloader(t *testing.T) {
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("e1", "", "ls", domainhistory.SourceSession, time.Now()),
+	}}
+	reloads := 0
+	state := NewState(source, nil, WithMutationHook(func() { reloads++ }))
+
+	state.DeleteEntry("e1")
+	if reloads != 1 {
+		t.Fatalf("delete reloaded autocomplete %d times, want 1", reloads)
+	}
+	state.SelectTab(TabHistory)
+	state.RequestClear()
+	state.ConfirmClear()
+	if reloads != 2 {
+		t.Fatalf("clear reloaded autocomplete %d times, want 2", reloads)
+	}
+}
+
 func TestHostOptionsDistinguishLocalAndDeletedHosts(t *testing.T) {
 	local := logAt("2", "", domainhistory.ConnectionConnected, time.Now())
 	local.Kind = "local"
