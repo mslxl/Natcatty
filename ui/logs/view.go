@@ -1,6 +1,8 @@
 package logs
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -362,7 +364,17 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					ui.Text(c, m.LogsHistoryMeta(historyHostLabel(m, entry),
 						sourceLabel(m, entry.Source), timestamp(entry.RecordedAt))).
 						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
+					// The captured fields are the minimum the History surface
+					// needs for this ticket: cwd, finish and duration, exit,
+					// shell and tier, and origin. Missing values are labelled,
+					// never shown as a misleading empty string.
+					ui.Text(c, capturedHistoryMeta(m, entry)).
+						FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted).SingleLine()
 				})
+				if kit.SecondaryButton(c, icons.Info, m.LogsHistoryDetails()).Clicked() {
+					s.SelectEntry(entry.ID)
+					c.Invalidate()
+				}
 				if kit.SecondaryButton(c, icons.SquareTerminal, m.LogsOpenTerminal()).Clicked() {
 					s.OpenTerminal(entry.SessionID, entry.HostID)
 					c.Invalidate()
@@ -372,9 +384,86 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					c.Invalidate()
 				}
 			})
+			if s.EntrySelected(entry.ID) {
+				historyDetail(c, s, entry, m, t)
+			}
 		}
 	}
 	showMore(c, s, m)
+}
+
+// historyDetail renders the full command and every captured field for one
+// history row. It is the minimal detail surface: the list stays in place and
+// the panel opens under the selected row. Unknown values use the localized
+// label rather than a misleading empty string.
+func historyDetail(c *ui.Context, s *State, entry domainhistory.Entry, m locales.Messages, t *ui.Theme) {
+	ui.Column(c).FillWidth().Padding(10).Gap(6).Background(t.Surface).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.LogsHistoryDetailTitle()).Bold().Grow(1)
+			if ui.Button(c, m.LogsHistoryDetailClose()).Clicked() {
+				s.CloseEntryDetail()
+				c.Invalidate()
+			}
+		})
+		ui.Text(c, entry.Command).FontSize(13).Wrap()
+		detailField(c, m, m.LogsHistoryFieldHost(), historyHostLabel(m, entry))
+		detailField(c, m, m.LogsHistoryFieldScope(), detailValue(m, entry.Scope))
+		detailField(c, m, m.LogsHistoryFieldOrigin(), detailValue(m, entry.Origin))
+		detailField(c, m, m.LogsHistoryFieldSession(), detailValue(m, string(entry.SessionID)))
+		detailField(c, m, m.LogsHistoryFieldCwd(), detailValue(m, entry.CWD))
+		detailField(c, m, m.LogsHistoryFieldShell(), detailValue(m, entry.Shell))
+		detailField(c, m, m.LogsHistoryFieldStart(), detailTime(m, entry.RecordedAt))
+		detailField(c, m, m.LogsHistoryFieldFinish(), detailTime(m, entry.FinishedAt))
+		detailField(c, m, m.LogsHistoryFieldDuration(), historyDuration(m, entry))
+		detailField(c, m, m.LogsHistoryFieldExit(), historyExit(m, entry))
+		detailField(c, m, m.LogsHistoryFieldSource(), sourceLabel(m, entry.Source))
+		detailField(c, m, m.LogsHistoryFieldTier(), historyTier(m, entry))
+	})
+}
+
+// detailField renders one labelled capture field as one localized line, so the
+// label and its value stay together when the row wraps.
+func detailField(c *ui.Context, m locales.Messages, label, value string) {
+	ui.Text(c, m.LogsHistoryDetailField(label, value)).FontSize(12).Wrap()
+}
+
+func detailValue(m locales.Messages, value string) string {
+	if value == "" {
+		return m.LogsHistoryUnknown()
+	}
+	return value
+}
+
+func detailTime(m locales.Messages, value time.Time) string {
+	if value.IsZero() {
+		return m.LogsHistoryUnknown()
+	}
+	return timestamp(value)
+}
+
+// historyDuration reports the captured duration, or unknown when the shell
+// never reported a finish. A zero duration with a known finish is valid.
+func historyDuration(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.FinishedAt.IsZero() || entry.RecordedAt.IsZero() {
+		return m.LogsHistoryUnknown()
+	}
+	return formatDuration(entry.Duration)
+}
+
+// historyExit reports the captured exit code, or unknown when the shell never
+// reported one. A known zero is shown as 0.
+func historyExit(m locales.Messages, entry domainhistory.Entry) string {
+	if !entry.HasExitCode {
+		return m.LogsHistoryUnknown()
+	}
+	return strconv.Itoa(entry.ExitCode)
+}
+
+func historyTier(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.CaptureTier == 0 {
+		return m.LogsHistoryUnknown()
+	}
+	return strconv.Itoa(entry.CaptureTier)
 }
 
 func showMore(c *ui.Context, s *State, m locales.Messages) {
@@ -462,6 +551,58 @@ func sourceLabel(m locales.Messages, source string) string {
 		return m.LogsSourceShell()
 	}
 	return m.LogsSourceSession()
+}
+
+// capturedHistoryMeta renders the fields the completion pipeline captured. A
+// zero FinishedAt means the shell never reported a finish, so the duration is
+// unknown; a zero duration with a known finish is valid and is shown as 0ms.
+func capturedHistoryMeta(m locales.Messages, entry domainhistory.Entry) string {
+	unknown := m.LogsHistoryUnknown()
+	cwd := entry.CWD
+	if cwd == "" {
+		cwd = unknown
+	}
+	finish := timestamp(entry.FinishedAt)
+	if finish == "" {
+		finish = unknown
+	}
+	duration := unknown
+	if !entry.FinishedAt.IsZero() && !entry.RecordedAt.IsZero() {
+		duration = formatDuration(entry.Duration)
+	}
+	exit := unknown
+	if entry.HasExitCode {
+		exit = strconv.Itoa(entry.ExitCode)
+	}
+	shell := entry.Shell
+	if shell == "" {
+		shell = unknown
+	}
+	tier := unknown
+	if entry.CaptureTier != 0 {
+		tier = strconv.Itoa(entry.CaptureTier)
+	}
+	origin := entry.Origin
+	if origin == "" {
+		origin = unknown
+	}
+	return m.LogsHistoryCaptured(cwd, finish, duration, exit, shell, tier, origin)
+}
+
+// formatDuration renders an execution duration compactly. It clamps a
+// negative value instead of showing a nonsensical one.
+func formatDuration(duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+	if duration < time.Second {
+		return fmt.Sprintf("%dms", duration.Milliseconds())
+	}
+	if duration < time.Minute {
+		return fmt.Sprintf("%.1fs", duration.Seconds())
+	}
+	seconds := int(duration / time.Second)
+	return fmt.Sprintf("%dm%02ds", seconds/60, seconds%60)
 }
 
 // timestamp formats a record time as data, not as a translatable sentence:

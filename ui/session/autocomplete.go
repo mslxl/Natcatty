@@ -57,7 +57,9 @@ func (s *Surface) refreshSuggestions(input string, commandRunning bool) {
 		s.suggestions = nil
 	}
 	if !s.suggestionDismissed && s.suggestions == nil && input != "" {
-		matches := s.options.Suggest(input, s.session.EncodingScope())
+		// Read under the same scope the capture pipeline writes: a saved Host,
+		// an unsaved Host with its captured origin, a serial port, or local.
+		matches := s.options.Suggest(input, s.session.HistoryScope())
 		filtered := make([]autocomplete.Suggestion, 0, len(matches))
 		for _, suggestion := range matches {
 			if suggestion.Text != input {

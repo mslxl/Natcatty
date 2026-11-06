@@ -118,6 +118,50 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 	}
 }
 
+// An Unsaved Host Session reads autocomplete under the same scope its captured
+// commands are recorded with, not the local shell's scope.
+func TestSurfaceAutocompleteReadsTheUnsavedHostHistoryScope(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindSSH, Label: "deploy@typed.example",
+		Hostname: "typed.example", Username: "deploy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes := make(chan string, 4)
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, scope string) []autocomplete.Suggestion {
+			scopes <- scope
+			return []autocomplete.Suggestion{{Text: input + " status", Source: "history"}}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	select {
+	case scope := <-scopes:
+		if scope != "host:unsaved:typed.example:deploy" {
+			t.Fatalf("suggestion scope = %q", scope)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the suggestion provider was not called")
+	}
+}
+
 func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 	transport := newRecordingTransport()
 	service := appsession.NewService(recordingFactory{transport: transport})

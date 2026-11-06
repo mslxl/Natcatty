@@ -10868,6 +10868,264 @@ func (msgs Messages) LogsHistoryMeta(host string, source string, time_ string) s
 	return Catalog.Format(msgs.locale, "logsHistoryMeta", map[string]any{"host": host, "source": source, "time": time_})
 }
 
+// LogsHistoryCaptured says "cwd {cwd} · finished {finish} · {duration} · exit {exit} · {shell} · tier {tier} · {origin}"
+// in the language the app shows.
+//
+// The captured fields of a command history row. A missing value is labelled
+// with the unknown message.
+func LogsHistoryCaptured(cwd string, finish string, duration string, exit string, shell string, tier string, origin string) string {
+	return In(i18n.Locale()).LogsHistoryCaptured(cwd, finish, duration, exit, shell, tier, origin)
+}
+
+// LogsHistoryCaptured says "cwd {cwd} · finished {finish} · {duration} · exit {exit} · {shell} · tier {tier} · {origin}"
+// in the language of msgs.
+//
+// The captured fields of a command history row. A missing value is labelled
+// with the unknown message.
+func (msgs Messages) LogsHistoryCaptured(cwd string, finish string, duration string, exit string, shell string, tier string, origin string) string {
+	return Catalog.Format(msgs.locale, "logsHistoryCaptured", map[string]any{"cwd": cwd, "finish": finish, "duration": duration, "exit": exit, "shell": shell, "tier": tier, "origin": origin})
+}
+
+// LogsHistoryUnknown says "unknown"
+// in the language the app shows.
+//
+// The label for a captured field that the Session could not observe.
+func LogsHistoryUnknown() string { return In(i18n.Locale()).LogsHistoryUnknown() }
+
+// LogsHistoryUnknown says "unknown"
+// in the language of msgs.
+//
+// The label for a captured field that the Session could not observe.
+func (msgs Messages) LogsHistoryUnknown() string {
+	return Catalog.Format(msgs.locale, "logsHistoryUnknown", nil)
+}
+
+// LogsHistoryDetails says "Details"
+// in the language the app shows.
+//
+// The row action that opens the captured fields of one command.
+func LogsHistoryDetails() string { return In(i18n.Locale()).LogsHistoryDetails() }
+
+// LogsHistoryDetails says "Details"
+// in the language of msgs.
+//
+// The row action that opens the captured fields of one command.
+func (msgs Messages) LogsHistoryDetails() string {
+	return Catalog.Format(msgs.locale, "logsHistoryDetails", nil)
+}
+
+// LogsHistoryDetailTitle says "Command details"
+// in the language the app shows.
+//
+// The title of the command history detail panel.
+func LogsHistoryDetailTitle() string { return In(i18n.Locale()).LogsHistoryDetailTitle() }
+
+// LogsHistoryDetailTitle says "Command details"
+// in the language of msgs.
+//
+// The title of the command history detail panel.
+func (msgs Messages) LogsHistoryDetailTitle() string {
+	return Catalog.Format(msgs.locale, "logsHistoryDetailTitle", nil)
+}
+
+// LogsHistoryDetailClose says "Close"
+// in the language the app shows.
+//
+// The action that closes the command history detail panel.
+func LogsHistoryDetailClose() string { return In(i18n.Locale()).LogsHistoryDetailClose() }
+
+// LogsHistoryDetailClose says "Close"
+// in the language of msgs.
+//
+// The action that closes the command history detail panel.
+func (msgs Messages) LogsHistoryDetailClose() string {
+	return Catalog.Format(msgs.locale, "logsHistoryDetailClose", nil)
+}
+
+// LogsHistoryDetailField says "{label}: {value}"
+// in the language the app shows.
+//
+// One labelled capture field in the command history detail panel.
+func LogsHistoryDetailField(label string, value string) string {
+	return In(i18n.Locale()).LogsHistoryDetailField(label, value)
+}
+
+// LogsHistoryDetailField says "{label}: {value}"
+// in the language of msgs.
+//
+// One labelled capture field in the command history detail panel.
+func (msgs Messages) LogsHistoryDetailField(label string, value string) string {
+	return Catalog.Format(msgs.locale, "logsHistoryDetailField", map[string]any{"label": label, "value": value})
+}
+
+// LogsHistoryFieldHost says "Host"
+// in the language the app shows.
+//
+// The Host or origin the command ran against.
+func LogsHistoryFieldHost() string { return In(i18n.Locale()).LogsHistoryFieldHost() }
+
+// LogsHistoryFieldHost says "Host"
+// in the language of msgs.
+//
+// The Host or origin the command ran against.
+func (msgs Messages) LogsHistoryFieldHost() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldHost", nil)
+}
+
+// LogsHistoryFieldScope says "Scope"
+// in the language the app shows.
+//
+// The history scope the command was recorded under.
+func LogsHistoryFieldScope() string { return In(i18n.Locale()).LogsHistoryFieldScope() }
+
+// LogsHistoryFieldScope says "Scope"
+// in the language of msgs.
+//
+// The history scope the command was recorded under.
+func (msgs Messages) LogsHistoryFieldScope() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldScope", nil)
+}
+
+// LogsHistoryFieldOrigin says "Origin"
+// in the language the app shows.
+//
+// The captured host:user origin of the command.
+func LogsHistoryFieldOrigin() string { return In(i18n.Locale()).LogsHistoryFieldOrigin() }
+
+// LogsHistoryFieldOrigin says "Origin"
+// in the language of msgs.
+//
+// The captured host:user origin of the command.
+func (msgs Messages) LogsHistoryFieldOrigin() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldOrigin", nil)
+}
+
+// LogsHistoryFieldSession says "Session"
+// in the language the app shows.
+//
+// The app Session identity the command ran in.
+func LogsHistoryFieldSession() string { return In(i18n.Locale()).LogsHistoryFieldSession() }
+
+// LogsHistoryFieldSession says "Session"
+// in the language of msgs.
+//
+// The app Session identity the command ran in.
+func (msgs Messages) LogsHistoryFieldSession() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldSession", nil)
+}
+
+// LogsHistoryFieldCwd says "CWD"
+// in the language the app shows.
+//
+// The working directory at command start.
+func LogsHistoryFieldCwd() string { return In(i18n.Locale()).LogsHistoryFieldCwd() }
+
+// LogsHistoryFieldCwd says "CWD"
+// in the language of msgs.
+//
+// The working directory at command start.
+func (msgs Messages) LogsHistoryFieldCwd() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldCwd", nil)
+}
+
+// LogsHistoryFieldShell says "Shell"
+// in the language the app shows.
+//
+// The shell name when it was captured.
+func LogsHistoryFieldShell() string { return In(i18n.Locale()).LogsHistoryFieldShell() }
+
+// LogsHistoryFieldShell says "Shell"
+// in the language of msgs.
+//
+// The shell name when it was captured.
+func (msgs Messages) LogsHistoryFieldShell() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldShell", nil)
+}
+
+// LogsHistoryFieldStart says "Start"
+// in the language the app shows.
+//
+// When the command started.
+func LogsHistoryFieldStart() string { return In(i18n.Locale()).LogsHistoryFieldStart() }
+
+// LogsHistoryFieldStart says "Start"
+// in the language of msgs.
+//
+// When the command started.
+func (msgs Messages) LogsHistoryFieldStart() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldStart", nil)
+}
+
+// LogsHistoryFieldFinish says "Finish"
+// in the language the app shows.
+//
+// When the command finished.
+func LogsHistoryFieldFinish() string { return In(i18n.Locale()).LogsHistoryFieldFinish() }
+
+// LogsHistoryFieldFinish says "Finish"
+// in the language of msgs.
+//
+// When the command finished.
+func (msgs Messages) LogsHistoryFieldFinish() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldFinish", nil)
+}
+
+// LogsHistoryFieldDuration says "Duration"
+// in the language the app shows.
+//
+// How long the command ran.
+func LogsHistoryFieldDuration() string { return In(i18n.Locale()).LogsHistoryFieldDuration() }
+
+// LogsHistoryFieldDuration says "Duration"
+// in the language of msgs.
+//
+// How long the command ran.
+func (msgs Messages) LogsHistoryFieldDuration() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldDuration", nil)
+}
+
+// LogsHistoryFieldExit says "Exit"
+// in the language the app shows.
+//
+// The shell exit code of the command.
+func LogsHistoryFieldExit() string { return In(i18n.Locale()).LogsHistoryFieldExit() }
+
+// LogsHistoryFieldExit says "Exit"
+// in the language of msgs.
+//
+// The shell exit code of the command.
+func (msgs Messages) LogsHistoryFieldExit() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldExit", nil)
+}
+
+// LogsHistoryFieldSource says "Source"
+// in the language the app shows.
+//
+// Where the history row came from.
+func LogsHistoryFieldSource() string { return In(i18n.Locale()).LogsHistoryFieldSource() }
+
+// LogsHistoryFieldSource says "Source"
+// in the language of msgs.
+//
+// Where the history row came from.
+func (msgs Messages) LogsHistoryFieldSource() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldSource", nil)
+}
+
+// LogsHistoryFieldTier says "Capture tier"
+// in the language the app shows.
+//
+// The capture fidelity tier of the row.
+func LogsHistoryFieldTier() string { return In(i18n.Locale()).LogsHistoryFieldTier() }
+
+// LogsHistoryFieldTier says "Capture tier"
+// in the language of msgs.
+//
+// The capture fidelity tier of the row.
+func (msgs Messages) LogsHistoryFieldTier() string {
+	return Catalog.Format(msgs.locale, "logsHistoryFieldTier", nil)
+}
+
 // LogsProblemLoad says "Could not load the records."
 // in the language the app shows.
 //

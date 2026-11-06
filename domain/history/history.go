@@ -342,6 +342,25 @@ func NormalizeScope(hostID model.HostID) string {
 	return "host:" + string(hostID)
 }
 
+// CaptureOrigin renders the host:user origin stored with a captured command. A
+// missing hostname falls back to the recorded Host label and then "unknown"; a
+// missing username is "unknown". The rule comes from the capture spec, which
+// requires a value rather than an empty origin for a Host Session.
+func CaptureOrigin(hostname, username, label string) string {
+	host := strings.TrimSpace(hostname)
+	if host == "" {
+		host = strings.TrimSpace(label)
+	}
+	if host == "" {
+		host = "unknown"
+	}
+	name := strings.TrimSpace(username)
+	if name == "" {
+		name = "unknown"
+	}
+	return host + ":" + name
+}
+
 // NormalizeEntry trims and bounds an entry's free text. It does not invent an
 // ID, timestamp, or scope; the application service owns those defaults.
 func NormalizeEntry(entry Entry) Entry {

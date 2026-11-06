@@ -3,6 +3,7 @@ package session
 import (
 	"time"
 
+	"github.com/mslxl/natcatty/domain/model"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -61,19 +62,22 @@ func (s *Session) AcknowledgeActivity() {
 // an active transfer consumed the input.
 func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, changed bool, gated bool) {
 	now := time.Now()
-	forwarded, changed, submitted, transfer := s.tap.handleInput(data, now)
+	forwarded, changed, started, completions, transfer := s.tap.handleInput(data, now)
 	// The tap returns no bytes only while a transfer consumes normal input.
 	// A Ctrl+C abort returns the five CAN bytes, so it is not gated.
 	gated = len(data) > 0 && len(forwarded) == 0
 	if changed {
 		s.publishTap(now)
 	}
-	if submitted != "" {
+	if started {
 		// A deferred check belongs to the command just replaced.
 		s.stopPromptTimer()
-		if s.onCommand != nil {
-			s.onCommand(s.id, s.spec.EncodingScope, submitted)
-		}
+	}
+	// The tap released its lock before returning, so the completion hook never
+	// runs under the tap mutex. The tap finalizes each command exactly once,
+	// so concurrent input, output, and close cannot produce a second event.
+	for _, completion := range completions {
+		s.publishCommandCompletion(completion)
 	}
 	if transfer != nil && s.onTransfer != nil {
 		s.onTransfer(s.id, *transfer)
@@ -87,6 +91,59 @@ func (s *Session) handleInput(data []byte, source bool) (forwarded []byte, chang
 		forwarded = s.encodeInput(forwarded)
 	}
 	return forwarded, changed, gated
+}
+
+// CommandEvent is one command execution captured from a Session. It is emitted
+// only after the command finishes or the Session ends, never at Enter. The
+// event carries the identity the composition root needs to derive the row's
+// Host context and origin, plus the fields the tap observed. Unknown values
+// are zero: an empty CWD or Shell, a zero FinishedAt for an execution the
+// shell never reported finishing (duration unknown), and HasExitCode false
+// when no exit code was reported. CaptureTier is 2 for native OSC 133/7 and 3
+// for typed input plus prompt detection in this ticket.
+type CommandEvent struct {
+	SessionID   model.SessionID
+	Scope       string
+	HostID      model.HostID
+	HostLabel   string
+	Kind        Kind
+	Hostname    string
+	Username    string
+	Command     string
+	CWD         string
+	Shell       string
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	ExitCode    int
+	HasExitCode bool
+	CaptureTier int
+}
+
+// publishCommandCompletion delivers one captured command to the app's hook.
+// The Session adds its identity and the scope it can resolve without the app:
+// "local", "host:<id>", or "serial:<port>". An unsaved Host's scope needs the
+// captured origin, so it is left empty for the app to complete.
+func (s *Session) publishCommandCompletion(capture capturedCommand) {
+	if s.onCommandCompletion == nil {
+		return
+	}
+	s.onCommandCompletion(CommandEvent{
+		SessionID:   s.id,
+		Scope:       commandScope(s.spec),
+		HostID:      s.spec.HostID,
+		HostLabel:   s.spec.Label,
+		Kind:        s.spec.Kind,
+		Hostname:    s.spec.Hostname,
+		Username:    s.spec.Username,
+		Command:     capture.command,
+		CWD:         capture.cwd,
+		Shell:       capture.shell,
+		StartedAt:   capture.startedAt,
+		FinishedAt:  capture.finishedAt,
+		ExitCode:    capture.exitCode,
+		HasExitCode: capture.hasExitCode,
+		CaptureTier: capture.captureTier,
+	})
 }
 
 func (s *Session) publishTap(now time.Time) {
@@ -163,8 +220,9 @@ func (s *Session) schedulePromptRecheck() {
 		}
 		s.mu.Unlock()
 		now := time.Now()
-		if s.tap.resolvePrompt(now) {
+		if completion := s.tap.resolvePrompt(now); completion != nil {
 			s.publishTap(now)
+			s.publishCommandCompletion(*completion)
 		}
 	})
 	s.mu.Unlock()

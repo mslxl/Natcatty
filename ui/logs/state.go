@@ -105,7 +105,11 @@ type State struct {
 	pendingClear bool
 	cleared      int
 	clearedTab   Tab
-	problem      Problem
+	// selectedEntryID names the history row whose detail panel is open. The
+	// panel is inline under that row, so a reload that removes the row also
+	// closes the panel without leaving it detached.
+	selectedEntryID string
+	problem         Problem
 	// problemTab names the record family a clear failed for, so the banner
 	// says "connection logs" or "history" based on the action, not on the tab
 	// the user happens to be looking at now.
@@ -164,6 +168,7 @@ func (s *State) SelectTab(tab Tab) {
 	s.visible = PageSize
 	s.pendingClear = false
 	s.cleared = 0
+	s.selectedEntryID = ""
 	// Each tab starts at its top rather than at the other list's offset. The
 	// unsaved Host key belongs to the record family that offered it; carrying
 	// it across would hide every row of a family with no unsaved records.
@@ -202,6 +207,7 @@ func (s *State) Refresh() {
 	s.loaded = true
 	s.revision = revision
 	s.problem = ProblemNone
+	s.clearMissingSelection()
 }
 
 // Problem returns the current problem code.
@@ -491,6 +497,36 @@ func (s *State) ShowMore() {
 	s.visible += PageSize
 }
 
+// SelectEntry opens the inline detail panel for one history row. Selecting the
+// open row again closes it, so the row's Details action is a toggle.
+func (s *State) SelectEntry(id string) {
+	if s.selectedEntryID == id {
+		s.selectedEntryID = ""
+		return
+	}
+	s.selectedEntryID = id
+}
+
+// CloseEntryDetail closes the inline history detail panel.
+func (s *State) CloseEntryDetail() { s.selectedEntryID = "" }
+
+// EntrySelected reports whether the detail panel is open for this row.
+func (s *State) EntrySelected(id string) bool { return s.selectedEntryID == id }
+
+// clearMissingSelection drops a selection whose row no longer exists, as after
+// a delete, a clear, or a filter reload.
+func (s *State) clearMissingSelection() {
+	if s.selectedEntryID == "" {
+		return
+	}
+	for _, entry := range s.entries {
+		if entry.ID == s.selectedEntryID {
+			return
+		}
+	}
+	s.selectedEntryID = ""
+}
+
 // TotalLogs reports how many connection logs exist before filtering.
 func (s *State) TotalLogs() int { return len(s.logs) }
 
@@ -519,6 +555,9 @@ func (s *State) DeleteEntry(id string) {
 	if err := s.source.DeleteEntry(context.Background(), id); err != nil {
 		s.problem = ProblemDelete
 		return
+	}
+	if s.selectedEntryID == id {
+		s.selectedEntryID = ""
 	}
 	s.problem = ProblemNone
 	s.reload()
@@ -558,6 +597,9 @@ func (s *State) ConfirmClear() {
 	s.problem = ProblemNone
 	s.cleared = removed
 	s.clearedTab = tab
+	if tab == TabHistory {
+		s.selectedEntryID = ""
+	}
 	s.reload()
 	s.mutated()
 }
