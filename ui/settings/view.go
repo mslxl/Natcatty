@@ -441,15 +441,15 @@ func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 			return
 		}
 		settings := state.Settings()
-		layoutCheckbox(c, state, m, t, domain.FieldShowHostTreeSidebar, m.SettingsShowHostTreeSidebar(),
+		checkboxRow(c, state, m, domain.FieldShowHostTreeSidebar, m.SettingsShowHostTreeSidebar(),
 			settings.Layout.ShowHostTreeSidebar, func(s *domain.Settings, value bool) {
 				s.Layout.ShowHostTreeSidebar = value
 			})
-		layoutCheckbox(c, state, m, t, domain.FieldShowSFTPTab, m.SettingsShowSFTPTab(),
+		checkboxRow(c, state, m, domain.FieldShowSFTPTab, m.SettingsShowSFTPTab(),
 			settings.Layout.ShowSFTPTab, func(s *domain.Settings, value bool) {
 				s.Layout.ShowSFTPTab = value
 			})
-		layoutCheckbox(c, state, m, t, domain.FieldShowRecentHosts, m.SettingsShowRecentHosts(),
+		checkboxRow(c, state, m, domain.FieldShowRecentHosts, m.SettingsShowRecentHosts(),
 			settings.Layout.ShowRecentHosts, func(s *domain.Settings, value bool) {
 				s.Layout.ShowRecentHosts = value
 			})
@@ -465,13 +465,13 @@ func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 				c.Invalidate()
 			}
 		})
-		layoutCheckbox(c, state, m, t, domain.FieldShellOnlyTabNumberShortcuts,
+		checkboxRow(c, state, m, domain.FieldShellOnlyTabNumberShortcuts,
 			m.SettingsShellOnlyTabNumberShortcuts(), settings.Layout.ShellOnlyTabNumberShortcuts,
 			func(s *domain.Settings, value bool) { s.Layout.ShellOnlyTabNumberShortcuts = value })
-		layoutCheckbox(c, state, m, t, domain.FieldShowTabNumberBadges,
+		checkboxRow(c, state, m, domain.FieldShowTabNumberBadges,
 			m.SettingsShowTabNumberBadges(), settings.Layout.ShowTabNumberBadges,
 			func(s *domain.Settings, value bool) { s.Layout.ShowTabNumberBadges = value })
-		layoutCheckbox(c, state, m, t, domain.FieldRestorePreviousSession,
+		checkboxRow(c, state, m, domain.FieldRestorePreviousSession,
 			m.SettingsRestorePreviousSession(), settings.Layout.RestorePreviousSession,
 			func(s *domain.Settings, value bool) { s.Layout.RestorePreviousSession = value })
 
@@ -505,17 +505,6 @@ func layoutArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 	})
 }
 
-func layoutCheckbox(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
-	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
-	fieldRow(c, state, m, t, field, label, func() {
-		enabled := value
-		if ui.Checkbox(c, &enabled, "").Changed() {
-			state.Update(func(s *domain.Settings) { set(s, enabled) })
-			c.Invalidate()
-		}
-	})
-}
-
 func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
 	state := config.Preferences
 	sectionBody(c, t, func() {
@@ -534,15 +523,15 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 				c.Invalidate()
 			}
 		})
-		sftpCheckbox(c, state, m, t, domain.FieldAutoSync, m.SettingsAutoSync(),
+		checkboxRow(c, state, m, domain.FieldAutoSync, m.SettingsAutoSync(),
 			settings.SFTPEditor.AutoSync, func(s *domain.Settings, value bool) { s.SFTPEditor.AutoSync = value })
-		sftpCheckbox(c, state, m, t, domain.FieldShowHiddenFiles, m.SettingsShowHiddenFiles(),
+		checkboxRow(c, state, m, domain.FieldShowHiddenFiles, m.SettingsShowHiddenFiles(),
 			settings.SFTPEditor.ShowHiddenFiles, func(s *domain.Settings, value bool) { s.SFTPEditor.ShowHiddenFiles = value })
-		sftpCheckbox(c, state, m, t, domain.FieldUseCompressedUpload, m.SettingsUseCompressedUpload(),
+		checkboxRow(c, state, m, domain.FieldUseCompressedUpload, m.SettingsUseCompressedUpload(),
 			settings.SFTPEditor.UseCompressedUpload, func(s *domain.Settings, value bool) { s.SFTPEditor.UseCompressedUpload = value })
-		sftpCheckbox(c, state, m, t, domain.FieldAutoOpenSidebar, m.SettingsAutoOpenSidebar(),
+		checkboxRow(c, state, m, domain.FieldAutoOpenSidebar, m.SettingsAutoOpenSidebar(),
 			settings.SFTPEditor.AutoOpenSidebar, func(s *domain.Settings, value bool) { s.SFTPEditor.AutoOpenSidebar = value })
-		sftpCheckbox(c, state, m, t, domain.FieldFollowTerminalCwd, m.SettingsFollowTerminalCwd(),
+		checkboxRow(c, state, m, domain.FieldFollowTerminalCwd, m.SettingsFollowTerminalCwd(),
 			settings.SFTPEditor.FollowTerminalCwd, func(s *domain.Settings, value bool) { s.SFTPEditor.FollowTerminalCwd = value })
 
 		viewLabels := []string{m.SettingsViewList(), m.SettingsViewTree()}
@@ -556,7 +545,7 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 				c.Invalidate()
 			}
 		})
-		sftpCheckbox(c, state, m, t, domain.FieldEditorWordWrap, m.SettingsEditorWordWrap(),
+		checkboxRow(c, state, m, domain.FieldEditorWordWrap, m.SettingsEditorWordWrap(),
 			settings.SFTPEditor.EditorWordWrap, func(s *domain.Settings, value bool) { s.SFTPEditor.EditorWordWrap = value })
 		editorSize := settings.SFTPEditor.EditorFontSize
 		fieldRow(c, state, m, t, domain.FieldEditorFontSize, m.SettingsEditorFontSize(), func() {
@@ -573,29 +562,14 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 	})
 }
 
-func sftpCheckbox(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
-	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
-	fieldRow(c, state, m, t, field, label, func() {
-		enabled := value
-		if ui.Checkbox(c, &enabled, "").Changed() {
-			state.Update(func(s *domain.Settings) { set(s, enabled) })
-			c.Invalidate()
-		}
-	})
-}
-
 func logsArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
 	sectionBody(c, t, func() {
 		if state == nil {
 			return
 		}
 		enabled := state.Settings().Logs.SSHDebug
-		fieldRow(c, state, m, t, domain.FieldSSHDebug, m.SettingsSSHDebug(), func() {
-			if ui.Checkbox(c, &enabled, "").Changed() {
-				state.Update(func(s *domain.Settings) { s.Logs.SSHDebug = enabled })
-				c.Invalidate()
-			}
-		})
+		checkboxRow(c, state, m, domain.FieldSSHDebug, m.SettingsSSHDebug(), enabled,
+			func(s *domain.Settings, value bool) { s.Logs.SSHDebug = value })
 		groupReset(c, m, t, m.SettingsLogsTitle(), func() bool {
 			return state.ResetGroup(domain.GroupLogs)
 		}, true)
@@ -617,19 +591,11 @@ func securityArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme)
 		sectionBody(c, t, func() {
 			settings := state.Settings()
 			confirmClose := settings.Security.ConfirmCloseSessions
-			fieldRow(c, state, m, t, domain.FieldConfirmCloseSessions, m.SettingsConfirmCloseSessions(), func() {
-				if ui.Checkbox(c, &confirmClose, "").Changed() {
-					state.Update(func(s *domain.Settings) { s.Security.ConfirmCloseSessions = confirmClose })
-					c.Invalidate()
-				}
-			})
+			checkboxRow(c, state, m, domain.FieldConfirmCloseSessions, m.SettingsConfirmCloseSessions(),
+				confirmClose, func(s *domain.Settings, value bool) { s.Security.ConfirmCloseSessions = value })
 			confirmDestructive := settings.Security.ConfirmDestructive
-			fieldRow(c, state, m, t, domain.FieldConfirmDestructive, m.SettingsConfirmDestructive(), func() {
-				if ui.Checkbox(c, &confirmDestructive, "").Changed() {
-					state.Update(func(s *domain.Settings) { s.Security.ConfirmDestructive = confirmDestructive })
-					c.Invalidate()
-				}
-			})
+			checkboxRow(c, state, m, domain.FieldConfirmDestructive, m.SettingsConfirmDestructive(),
+				confirmDestructive, func(s *domain.Settings, value bool) { s.Security.ConfirmDestructive = value })
 			groupReset(c, m, t, m.SettingsSecurityTitle(), func() bool {
 				return state.ResetGroup(domain.GroupSecurity)
 			}, true)
@@ -814,14 +780,36 @@ func fieldRow(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.
 	ui.Field(c, label, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			build()
-			if !state.IsDefault(field) {
-				if ui.Button(c, m.SettingsReset()).FontSize(11).Clicked() {
-					state.ResetField(field)
-					c.Invalidate()
-				}
-			}
+			resetField(c, state, m, field)
 		})
 	})
+}
+
+// checkboxRow puts a check box and its label on one line, where a Field's
+// label above the control would read as a caption for an unlabeled box, and
+// keeps the per-field reset beside them.
+func checkboxRow(c *ui.Context, state *PreferencesState, m locales.Messages,
+	field domain.Field, label string, value bool, set func(*domain.Settings, bool)) {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		enabled := value
+		if ui.Checkbox(c, &enabled, label).Changed() {
+			state.Update(func(s *domain.Settings) { set(s, enabled) })
+			c.Invalidate()
+		}
+		resetField(c, state, m, field)
+	})
+}
+
+// resetField offers the per-field reset beside a control once the field
+// differs from its default.
+func resetField(c *ui.Context, state *PreferencesState, m locales.Messages, field domain.Field) {
+	if state.IsDefault(field) {
+		return
+	}
+	if ui.Button(c, m.SettingsReset()).FontSize(11).Clicked() {
+		state.ResetField(field)
+		c.Invalidate()
+	}
 }
 
 // conflictMenuName names the menu command a chord collides with. The label
