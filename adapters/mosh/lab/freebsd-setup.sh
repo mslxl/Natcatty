@@ -54,6 +54,18 @@ tar -xzf "${LAB}/mosh-1.3.2.tar.gz" -C "${LAB}/src" --strip-components=1
 # call so the pinned release compiles against the toolchain the runner ships.
 sed -i '' 's/if ( bind( sock(),/if ( ::bind( sock(),/' "${LAB}/src/src/network/network.cc"
 grep -q '::bind( sock(),' "${LAB}/src/src/network/network.cc"
+# 1.3.2 also predates C++17, which removed std::ptr_fun, std::bind1st,
+# std::bind2nd, and std::mem_fun_ref. Rewrite those call sites as lambdas so
+# the pinned release compiles against protobuf headers that require C++17.
+for file in src/statesync/completeterminal.cc src/frontend/terminaloverlay.cc \
+            src/network/transportsender-impl.h; do
+  awk -f "$(dirname "$0")/patch-mosh-1.3.2.awk" "${LAB}/src/${file}" > "${LAB}/src/${file}.patched"
+  mv "${LAB}/src/${file}.patched" "${LAB}/src/${file}"
+done
+if grep -rqE 'ptr_fun|bind1st|bind2nd|mem_fun_ref' "${LAB}/src/src"; then
+  echo "the C++17 source patch did not apply cleanly" >&2
+  exit 1
+fi
 (
   cd "${LAB}/src"
   CXXFLAGS="-std=c++17 -O2" ./configure --prefix="${LAB}/1.3.2" --without-utempter
