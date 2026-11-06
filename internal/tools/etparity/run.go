@@ -238,8 +238,21 @@ func runSuite(ctx context.Context, opts runOptions, spec suiteSpec) (SuiteResult
 	if stderr.Len() > 0 {
 		combined += "\n" + stderr.String()
 	}
-	result.Output = truncate(combined, 256<<10)
+	result.Output = suiteOutput(combined, runErr != nil, 256<<10)
 	return result, runErr
+}
+
+// suiteOutput selects the evidence retained for one suite run. A failing run
+// prints its diagnosis last: a go test timeout panic or the final package
+// failure arrives after the JSON progress lines, and those alone can exceed the
+// capture limit. Keeping the head there would drop the only useful bytes, so a
+// failure keeps the tail. A passing run keeps the head, which names the
+// packages that ran.
+func suiteOutput(combined string, failed bool, limit int) string {
+	if failed {
+		return truncateTail(combined, limit)
+	}
+	return truncate(combined, limit)
 }
 
 func truncate(text string, limit int) string {
