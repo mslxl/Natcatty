@@ -1,8 +1,9 @@
 # Roll out the in-process Mosh/ET clients behind an explicit beta and a gated default switch
 
 The application-owned mosh and ET clients (ADRs 0015 and 0016) are selectable
-globally and per Host, but the release default is still the bundled client.
-This ADR records how the beta becomes the default: an explicit provenance bit
+globally and per Host. At the time this ADR was accepted the release default
+was still the bundled client; this ADR records how the beta becomes the
+default: an explicit provenance bit
 separates a user's durable choice from a value that only reflects the old
 default; one `transport.ReleasePolicy` declaration is the release switch; the
 flip requires both parity gate summaries (tickets 27 and 32) to be green; the
@@ -12,8 +13,9 @@ reason, gate, evidence, and expiry. A rollback runbook records the triggers,
 the per-Host switch, the previous-app-release path, and the release-owner
 decision.
 
-**Status**: accepted. The default flip itself is pending the 27/32 CI evidence;
-this ADR accepts the mechanism, not the flip.
+**Status**: accepted and implemented. The default flip landed after the 27/32
+gates and the packaged smoke jobs passed; the run-bound evidence is recorded in
+[transport-rollout.md](../releases/transport-rollout.md#flip-evidence).
 
 **Amends ADR-0015 and ADR-0016**: both say "No waivers" for the parity release
 gate. That rule remains in force for the parity claim itself: a gate is green
@@ -68,5 +70,7 @@ flip.
 - The release owner's 2026-11-06 risk acceptance for tickets 15 and 19 is
   referenced by the rollback runbook. It is not a legal certification and does
   not change the notice or source-offer requirements.
-- Phase 2 still owns CI gate wiring, packaged smoke tests for macOS, Linux, and
-  Windows arm64, and the actual default flip after 27/32 are green.
+- The CI gate wiring, the packaged smoke tests for macOS, Linux, and Windows
+  arm64, and the default flip after 27/32 became green have landed; the
+  run-bound evidence is recorded in
+  [transport-rollout.md](../releases/transport-rollout.md#flip-evidence).

@@ -410,8 +410,8 @@ var packagedSmokeKinds = []packagedSmokeKind{
 }
 
 // hostDraft builds the session-mode Host fixture. The per-Host
-// TransportImplementation is explicit so the InProcess client runs even while
-// the release default is still Bundled.
+// TransportImplementation is explicit so the InProcess client runs even when
+// a build's release default is Bundled.
 //
 // AuthMethod is password-only, so the lab password is the only credential
 // offered and the default ~/.ssh keys are never enumerated.

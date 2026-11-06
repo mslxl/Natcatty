@@ -106,7 +106,8 @@ type Policy struct {
 // both in VerifiedGates in the same change. See
 // docs/releases/transport-rollout.md.
 var ReleasePolicy = Policy{
-	Default: Bundled,
+	Default:       InProcess,
+	VerifiedGates: []Gate{GateMoshParity, GateETParity},
 }
 
 // CurrentDefault returns the release default for the running platform. The
