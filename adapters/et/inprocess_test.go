@@ -392,6 +392,37 @@ func TestInProcessLifecycle(t *testing.T) {
 	}
 }
 
+// A resize that lands after Resizes is called but before the iterator's first
+// step must still be reported. The session service takes the baseline by
+// calling Resizes before it reads the initial size; if the baseline were read
+// lazily inside the iterator, a resize in that window would be adopted as the
+// baseline and the remote pty would keep the initial size.
+func TestLocalTerminalReportsAResizeBeforeTheIteratorStarts(t *testing.T) {
+	terminal := newLocalTerminal(100, 40)
+	t.Cleanup(func() { _ = terminal.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	resizes := terminal.Resizes(ctx)
+	terminal.SetSize(120, 40)
+
+	got := make(chan [2]int, 1)
+	go func() {
+		for size := range resizes {
+			got <- [2]int{size.Cols, size.Rows}
+			return
+		}
+	}()
+	select {
+	case size := <-got:
+		if size != [2]int{120, 40} {
+			t.Fatalf("resize = %v, want [120 40]", size)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a resize between Resizes and the iterator start was lost")
+	}
+}
+
 func TestReadErrorSeesTheClassifiedEnd(t *testing.T) {
 	server := etservertest.NewServer(testID, testPasskey)
 	network := etservertest.NewNetwork(server)

@@ -237,9 +237,13 @@ func (t *localTerminal) Size() (console.Size, error) {
 }
 
 // Resizes yields each changed size until ctx ends or the terminal closes.
+// The baseline is taken here, when Resizes is called, as the console contract
+// requires: the session service calls Resizes before reading the initial size,
+// and the consumer goroutine may start after a resize has already landed.
+// Taking the baseline lazily inside the iterator would swallow that resize.
 func (t *localTerminal) Resizes(ctx context.Context) iter.Seq[console.Size] {
+	last, _ := t.Size()
 	return func(yield func(console.Size) bool) {
-		last, _ := t.Size()
 		for {
 			select {
 			case <-t.updated:
