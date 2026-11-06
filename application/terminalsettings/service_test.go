@@ -63,6 +63,26 @@ func TestUpdatePersistsAndPublishes(t *testing.T) {
 	}
 }
 
+func TestSetDynamicTabTitleMode(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store)
+	if got := service.Settings().DynamicTabTitleMode; got != domainterminal.DynamicTabTitleAll {
+		t.Fatalf("default mode = %q, want %q", got, domainterminal.DynamicTabTitleAll)
+	}
+	if err := service.SetDynamicTabTitleMode(domainterminal.DynamicTabTitleAgents); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Settings().DynamicTabTitleMode; got != domainterminal.DynamicTabTitleAgents {
+		t.Fatalf("mode = %q, want %q", got, domainterminal.DynamicTabTitleAgents)
+	}
+	if err := service.SetDynamicTabTitleMode("bogus"); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Settings().DynamicTabTitleMode; got != domainterminal.DynamicTabTitleAgents {
+		t.Fatalf("an invalid mode changed the setting to %q", got)
+	}
+}
+
 func TestFailedSaveKeepsThePreviousValue(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store)

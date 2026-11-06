@@ -16,6 +16,7 @@ type Terminal interface {
 	SetLogTimestamps(bool) error
 	SetOSC52(domainterminal.ClipboardAccess) error
 	SetOSCNotifications(domainterminal.NotificationMode) error
+	SetDynamicTabTitleMode(domainterminal.DynamicTabTitleMode) error
 	SetEncoding(domainterminal.Encoding) error
 	SetPasteProtection(bool) error
 	SetPasteMinLines(int) error
@@ -172,6 +173,11 @@ func (s *TerminalState) SetOSC52(access domainterminal.ClipboardAccess) bool {
 // SetOSCNotifications stores when program notifications appear.
 func (s *TerminalState) SetOSCNotifications(mode domainterminal.NotificationMode) bool {
 	return s.apply(func() error { return s.terminal.SetOSCNotifications(mode) })
+}
+
+// SetDynamicTabTitleMode selects which Tabs follow the shell's OSC 0/2 title.
+func (s *TerminalState) SetDynamicTabTitleMode(mode domainterminal.DynamicTabTitleMode) bool {
+	return s.apply(func() error { return s.terminal.SetDynamicTabTitleMode(mode) })
 }
 
 // SetEncoding stores the default terminal encoding.
