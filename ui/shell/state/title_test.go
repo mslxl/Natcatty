@@ -92,6 +92,33 @@ func splitTitleTestTab() *Tab {
 	}
 }
 
+func TestLocalHostTabUsesTheHostLabel(t *testing.T) {
+	graph := newTitledTestGraph(t)
+	host := domainvault.Host{
+		ID: "local-1", Label: "PowerShell 7", Protocol: domainvault.ProtocolLocal,
+	}
+	if err := graph.state.OpenHost(host); err != nil {
+		t.Fatalf("OpenHost: %v", err)
+	}
+	waitFor(t, "the local Host tab", func() bool {
+		graph.state.Flush()
+		return graph.state.TabCount() == 1
+	})
+	info, _ := graph.state.TabInfo(0)
+	if info.Title != "PowerShell 7" {
+		t.Fatalf("tab title = %q, want the local Host label", info.Title)
+	}
+	snapshot, ok := graph.state.ActiveSnapshot()
+	if !ok || snapshot.Kind != appsession.KindLocal {
+		t.Fatalf("session = %+v, want a local shell", snapshot)
+	}
+	payload := graph.state.WorkspacePayload()
+	if len(payload.Panes) != 1 || payload.Panes[0].Session.Kind != domainworkspace.SessionLocal ||
+		payload.Panes[0].Session.HostID != "local-1" {
+		t.Fatalf("payload panes = %+v, want a restorable local Host Session", payload.Panes)
+	}
+}
+
 func TestMergingSinglePaneTabsComposesBothConnectionLabels(t *testing.T) {
 	state := NewState()
 	state.tabs = []*Tab{
