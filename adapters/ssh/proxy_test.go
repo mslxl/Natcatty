@@ -413,6 +413,37 @@ func TestProxyCancellationIsTypedCancelled(t *testing.T) {
 	}
 }
 
+// A successful proxy dial cancels the child context that bounded it as soon as
+// it returns. The watcher must not close the connection on that cancellation:
+// the SSH handshake starts on the returned connection immediately, and a local
+// close there surfaces as "use of closed network connection" mid-handshake.
+func TestStoppedProxyWatcherLeavesTheConnectionOpen(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		client, peer := net.Pipe()
+		stop := watchCancellation(ctx, client)
+		stop()
+		cancel()
+		// Give a watcher that was not stopped the chance to observe the
+		// cancellation.
+		time.Sleep(5 * time.Millisecond)
+
+		written := make(chan error, 1)
+		go func() {
+			_, err := client.Write([]byte{0})
+			written <- err
+		}()
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		_, readErr := peer.Read(make([]byte, 1))
+		writeErr := <-written
+		_ = client.Close()
+		_ = peer.Close()
+		if readErr != nil || writeErr != nil {
+			t.Fatalf("iteration %d: write = %v, peer read = %v; the watcher closed a stopped connection", i, writeErr, readErr)
+		}
+	}
+}
+
 func TestStalledProxyHandshakeIsTypedTimeout(t *testing.T) {
 	host, port := startLoopbackProxy(t, func(conn net.Conn) {
 		if _, err := readProxyHeaders(conn); err == nil {
