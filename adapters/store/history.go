@@ -56,7 +56,47 @@ func (s *Store) DeleteConnectionLog(ctx context.Context, id string) error {
 
 // PruneConnectionLogs deletes logs outside retention and reports how many it removed.
 func (s *Store) PruneConnectionLogs(ctx context.Context, retention domainhistory.Retention, now time.Time) (int, error) {
-	return s.pruneHistory(ctx, retention, now, &connectionLogSchema{}, "started_at", "connection logs")
+	if retention.MaxAge <= 0 && retention.Count <= 0 {
+		return 0, nil
+	}
+	var removed int64
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		if retention.MaxAge > 0 {
+			result := tx.Where("started_at < ?", now.Add(-retention.MaxAge).UnixMilli()).
+				Delete(&connectionLogSchema{})
+			if result.Error != nil {
+				return result.Error
+			}
+			removed += result.RowsAffected
+		}
+		if retention.Count > 0 {
+			var keep []struct {
+				ID string `gorm:"column:id"`
+			}
+			if err := tx.Model(&connectionLogSchema{}).Select("id").
+				Order("started_at DESC").Order("id DESC").Limit(retention.Count).
+				Find(&keep).Error; err != nil {
+				return err
+			}
+			keepIDs := make([]string, 0, len(keep))
+			for _, row := range keep {
+				keepIDs = append(keepIDs, row.ID)
+			}
+			query := tx.Session(&gorm.Session{AllowGlobalUpdate: true})
+			if len(keepIDs) > 0 {
+				query = query.Where("id NOT IN ?", keepIDs)
+			}
+			result := query.Delete(&connectionLogSchema{})
+			if result.Error != nil {
+				return result.Error
+			}
+			removed += result.RowsAffected
+		}
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("store: prune connection logs: %w", err)
+	}
+	return int(removed), nil
 }
 
 // ClearConnectionLogs removes every connection log and reports the count.
@@ -123,52 +163,6 @@ func (s *Store) ClearHistoryEntries(ctx context.Context) (int, error) {
 		return result.Error
 	}); err != nil {
 		return 0, fmt.Errorf("store: clear history entries: %w", err)
-	}
-	return int(removed), nil
-}
-
-// PruneHistoryEntries deletes commands outside retention and reports how many it removed.
-func (s *Store) PruneHistoryEntries(ctx context.Context, retention domainhistory.Retention, now time.Time) (int, error) {
-	return s.pruneHistory(ctx, retention, now, &historyEntrySchema{}, "recorded_at", "history entries")
-}
-
-func (s *Store) pruneHistory(ctx context.Context, retention domainhistory.Retention, now time.Time, model any, timeColumn, label string) (int, error) {
-	if retention.MaxAge <= 0 && retention.Count <= 0 {
-		return 0, nil
-	}
-	var removed int64
-	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
-		if retention.MaxAge > 0 {
-			result := tx.Where(timeColumn+" < ?", now.Add(-retention.MaxAge).UnixMilli()).Delete(model)
-			if result.Error != nil {
-				return result.Error
-			}
-			removed += result.RowsAffected
-		}
-		if retention.Count > 0 {
-			var keep []struct {
-				ID string `gorm:"column:id"`
-			}
-			if err := tx.Model(model).Select("id").Order(timeColumn + " DESC").Order("id DESC").Limit(retention.Count).Find(&keep).Error; err != nil {
-				return err
-			}
-			keepIDs := make([]string, 0, len(keep))
-			for _, row := range keep {
-				keepIDs = append(keepIDs, row.ID)
-			}
-			query := tx.Session(&gorm.Session{AllowGlobalUpdate: true})
-			if len(keepIDs) > 0 {
-				query = query.Where("id NOT IN ?", keepIDs)
-			}
-			result := query.Delete(model)
-			if result.Error != nil {
-				return result.Error
-			}
-			removed += result.RowsAffected
-		}
-		return nil
-	}); err != nil {
-		return 0, fmt.Errorf("store: prune %s: %w", label, err)
 	}
 	return int(removed), nil
 }

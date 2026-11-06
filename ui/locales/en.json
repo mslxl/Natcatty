@@ -1493,7 +1493,6 @@
   "sessionAutocompleteLabel": "Command suggestions",
   "sessionAutocompleteHint": "Tab to accept · Esc to dismiss",
   "sessionAutocompleteHistory": "History",
-  "sessionAutocompleteShellHistory": "Shell history",
   "sessionAutocompleteGhost": "Suggestion: {suggestion}",
   "sessionAutocompleteFrequency": "×{count}",
   "sessionTransferCancel": "Cancel transfer",
@@ -2379,11 +2378,11 @@
   "@logsProblemDate": {
     "description": "Shown when a date filter is malformed or inverted."
   },
-  "settingsRetentionTitle": "Log and history retention",
+  "settingsRetentionTitle": "Connection log retention",
   "@settingsRetentionTitle": {
-    "description": "The Settings section that bounds connection logs and history."
+    "description": "The Settings section that bounds connection logs."
   },
-  "settingsRetentionDescription": "A count of 0 keeps every record; a maximum age of 0 days keeps records forever.",
+  "settingsRetentionDescription": "A count of 0 keeps every log; a maximum age of 0 days keeps logs forever.",
   "@settingsRetentionDescription": {
     "description": "Explains the zero values of the retention controls."
   },
@@ -2394,14 +2393,6 @@
   "settingsConnectionLogRetentionDays": "Connection log max age (days)",
   "@settingsConnectionLogRetentionDays": {
     "description": "The maximum age of a connection log in days."
-  },
-  "settingsHistoryRetentionCount": "History entries kept",
-  "@settingsHistoryRetentionCount": {
-    "description": "The maximum number of command history entries to keep."
-  },
-  "settingsHistoryRetentionDays": "History max age (days)",
-  "@settingsHistoryRetentionDays": {
-    "description": "The maximum age of a command history entry in days."
   },
   "vaultExportTitle": "Export Vault",
   "vaultExportIntro": "Choose a format and a scope. Nothing leaves this machine until you save.",

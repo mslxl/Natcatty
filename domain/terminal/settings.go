@@ -148,12 +148,12 @@ func NormalizeAutocompleteDebounce(value int) int {
 	return value
 }
 
-// Connection log and command history retention. A count of zero keeps every
-// record; an age of zero keeps records of every age. The upper bounds keep a
-// malformed settings file from turning pruning into an unbounded scan.
+// Connection Log retention. A count of zero keeps every record; an age of
+// zero keeps records of every age. The upper bounds keep a malformed settings
+// file from turning pruning into an unbounded scan. Command History has no
+// count/day retention.
 const (
 	DefaultConnectionLogRetentionCount = 500
-	DefaultHistoryRetentionCount       = 1000
 	MaxRetentionCount                  = 100000
 	MaxRetentionDays                   = 3650
 )
@@ -242,12 +242,6 @@ type Settings struct {
 	// ConnectionLogRetentionDays is how many days of connection logs are
 	// kept. Zero keeps logs of every age.
 	ConnectionLogRetentionDays int
-	// HistoryRetentionCount is how many command history entries are kept.
-	// Zero keeps every entry.
-	HistoryRetentionCount int
-	// HistoryRetentionDays is how many days of command history are kept.
-	// Zero keeps entries of every age.
-	HistoryRetentionDays int
 }
 
 // Portable returns the terminal settings that follow the user between
@@ -310,8 +304,6 @@ func Defaults() Settings {
 
 		ConnectionLogRetentionCount: DefaultConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  0,
-		HistoryRetentionCount:       DefaultHistoryRetentionCount,
-		HistoryRetentionDays:        0,
 	}
 }
 
@@ -345,8 +337,6 @@ func Normalize(settings Settings) Settings {
 	settings.KeywordHighlightRules = NormalizeKeywordHighlightRules(settings.KeywordHighlightRules)
 	settings.ConnectionLogRetentionCount = NormalizeRetentionCount(settings.ConnectionLogRetentionCount)
 	settings.ConnectionLogRetentionDays = NormalizeRetentionDays(settings.ConnectionLogRetentionDays)
-	settings.HistoryRetentionCount = NormalizeRetentionCount(settings.HistoryRetentionCount)
-	settings.HistoryRetentionDays = NormalizeRetentionDays(settings.HistoryRetentionDays)
 	if len(settings.Encodings) > 0 {
 		encodings := make(map[string]Encoding, len(settings.Encodings))
 		for scope, encoding := range settings.Encodings {

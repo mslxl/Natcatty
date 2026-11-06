@@ -1,10 +1,11 @@
-// Package history records connection logs and shell/command history, applies
-// the configured retention, and exposes one change signal to the UI.
+// Package history records connection logs and command history, applies the
+// configured Connection Log retention, and exposes one change signal to the UI.
 //
 // The service owns no storage and no UI: adapters implement Store, and the
-// composition root supplies the retention read from Settings. Command history
-// is also the journal autocomplete aggregates, so both surfaces share one
-// persisted record instead of forking it.
+// composition root supplies the retention read from Settings. Command History
+// is the journal autocomplete reads, so both surfaces share one persisted
+// record instead of forking it. Command History has no automatic count/day
+// retention.
 package history
 
 import (
@@ -34,19 +35,17 @@ type Store interface {
 	SaveHistoryEntry(context.Context, domainhistory.Entry) error
 	DeleteHistoryEntry(context.Context, string) error
 	ClearHistoryEntries(context.Context) (int, error)
-	PruneHistoryEntries(context.Context, domainhistory.Retention, time.Time) (int, error)
 }
 
-// Retention is the configured bound for both record families.
+// Retention is the configured bound for Connection Logs. Command History is
+// never pruned automatically.
 type Retention struct {
-	Logs    domainhistory.Retention
-	History domainhistory.Retention
+	Logs domainhistory.Retention
 }
 
-// PruneResult reports how many records retention removed.
+// PruneResult reports how many connection logs retention removed.
 type PruneResult struct {
 	ConnectionLogs int
-	Entries        int
 }
 
 // Option customizes a Service.
@@ -140,8 +139,9 @@ func (s *Service) RecordConnection(ctx context.Context, log domainhistory.Connec
 	return nil
 }
 
-// Record stores one command execution and applies history retention. It is
-// autocomplete's journal entry point.
+// Record appends one command execution to the journal. It is autocomplete's
+// and the History surface's single write path. No count/day retention is
+// applied: a row is removed only by an explicit user action.
 func (s *Service) Record(ctx context.Context, entry domainhistory.Entry) error {
 	if s.store == nil {
 		return ErrInvalid
@@ -161,11 +161,6 @@ func (s *Service) Record(ctx context.Context, entry domainhistory.Entry) error {
 	}
 	if err := s.store.SaveHistoryEntry(ctx, entry); err != nil {
 		return err
-	}
-	if retention := s.retentionFor().History; retention.Bounded() {
-		if _, err := s.store.PruneHistoryEntries(ctx, retention, s.now()); err != nil {
-			return err
-		}
 	}
 	s.notify()
 	return nil
@@ -245,29 +240,22 @@ func (s *Service) ClearHistory(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
-// Prune applies the configured retention to both record families.
+// Prune applies the configured Connection Log retention. Command History is
+// never pruned automatically and is left untouched.
 func (s *Service) Prune(ctx context.Context) (PruneResult, error) {
 	if s.store == nil {
 		return PruneResult{}, ErrInvalid
 	}
 	retention := s.retentionFor()
-	now := s.now()
 	result := PruneResult{}
 	if retention.Logs.Bounded() {
-		removed, err := s.store.PruneConnectionLogs(ctx, retention.Logs, now)
+		removed, err := s.store.PruneConnectionLogs(ctx, retention.Logs, s.now())
 		if err != nil {
 			return result, err
 		}
 		result.ConnectionLogs = removed
 	}
-	if retention.History.Bounded() {
-		removed, err := s.store.PruneHistoryEntries(ctx, retention.History, now)
-		if err != nil {
-			return result, err
-		}
-		result.Entries = removed
-	}
-	if result.ConnectionLogs > 0 || result.Entries > 0 {
+	if result.ConnectionLogs > 0 {
 		s.notify()
 	}
 	return result, nil

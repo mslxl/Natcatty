@@ -262,8 +262,8 @@ func (filter EntryFilter) Match(entry Entry) bool {
 	return strings.Contains(haystack, query)
 }
 
-// Retention bounds one record family. Count zero keeps every entry; MaxAge
-// zero keeps entries of every age.
+// Retention bounds Connection Logs. Count zero keeps every log; MaxAge zero
+// keeps logs of every age. Command History has no automatic retention.
 type Retention struct {
 	Count  int
 	MaxAge time.Duration
@@ -364,21 +364,6 @@ func PruneConnectionLogs(logs []ConnectionLog, retention Retention, now time.Tim
 	}
 	sort.SliceStable(kept, func(i, j int) bool {
 		return newer(kept[i].StartedAt, kept[i].ID, kept[j].StartedAt, kept[j].ID)
-	})
-	return truncate(kept, retention.Count)
-}
-
-// PruneEntries returns the newest command entries that survive retention,
-// ordered newest first. Equal timestamps tie-break by descending ID.
-func PruneEntries(entries []Entry, retention Retention, now time.Time) []Entry {
-	kept := make([]Entry, 0, len(entries))
-	for _, entry := range entries {
-		if retention.Keep(entry.RecordedAt, now) {
-			kept = append(kept, entry)
-		}
-	}
-	sort.SliceStable(kept, func(i, j int) bool {
-		return newer(kept[i].RecordedAt, kept[i].ID, kept[j].RecordedAt, kept[j].ID)
 	})
 	return truncate(kept, retention.Count)
 }

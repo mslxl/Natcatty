@@ -49,16 +49,14 @@ type terminalSettingsRecord struct {
 
 	ConnectionLogRetentionCount int `json:"connectionLogRetentionCount"`
 	ConnectionLogRetentionDays  int `json:"connectionLogRetentionDays"`
-	HistoryRetentionCount       int `json:"historyRetentionCount"`
-	HistoryRetentionDays        int `json:"historyRetentionDays"`
 }
 
 // terminalSettingsVersion is the current record version. Version 1 files
 // lack the encoding, paste, and drop fields; version 2 files lack the
 // autocomplete, keyword highlight, and statistics fields; version 3 files
-// lack the log and history retention fields; version 4 files lack the dynamic
+// lack the connection log retention fields; version 4 files lack the dynamic
 // tab title mode. Zero values for a missing group are replaced by the defaults
-// on load.
+// on load. Older history retention fields are accepted and ignored.
 const terminalSettingsVersion = 5
 
 // Load returns the stored settings. A missing file is the original defaults,
@@ -103,8 +101,8 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 	if record.Version >= 4 {
 		settings.ConnectionLogRetentionCount = record.ConnectionLogRetentionCount
 		settings.ConnectionLogRetentionDays = record.ConnectionLogRetentionDays
-		settings.HistoryRetentionCount = record.HistoryRetentionCount
-		settings.HistoryRetentionDays = record.HistoryRetentionDays
+		// Older files also carried history retention fields. encoding/json
+		// ignores them, so those values are accepted and dropped.
 	}
 	if record.Version >= 5 {
 		settings.DynamicTabTitleMode = record.DynamicTabTitleMode
@@ -142,8 +140,6 @@ func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.
 
 		ConnectionLogRetentionCount: settings.ConnectionLogRetentionCount,
 		ConnectionLogRetentionDays:  settings.ConnectionLogRetentionDays,
-		HistoryRetentionCount:       settings.HistoryRetentionCount,
-		HistoryRetentionDays:        settings.HistoryRetentionDays,
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

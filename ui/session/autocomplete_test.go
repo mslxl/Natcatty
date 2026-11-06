@@ -65,7 +65,7 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 			suggested <- input + "|" + scope
 			return []autocomplete.Suggestion{
 				{Text: "git status", Display: "git status", Source: "history"},
-				{Text: "git stash", Display: "git stash", Source: "shell-history"},
+				{Text: "git stash", Display: "git stash", Source: "history"},
 			}
 		}, func() (bool, bool) { return true, false }),
 	)

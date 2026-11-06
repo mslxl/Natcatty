@@ -1,6 +1,6 @@
 // Package autocomplete composes command suggestions for a Session from the
-// commands the application recorded and from configured external sources such
-// as the local shell's history file.
+// Command History journal. The journal is the only source: there is no
+// separately persisted aggregate and no live shell-history file source.
 //
 // The service owns no UI and no transport: ui/session reads Suggestions while
 // the user types, and the app tests drive the same paths as production.
@@ -17,34 +17,19 @@ import (
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
-// Bounds that keep a malformed history file or a very long typed line from
-// making the popup expensive.
+// Bounds that keep a very long typed line from making the popup expensive.
 const (
 	maxHistoryEntries = 2000
 	maxCommandLength  = domainhistory.MaxCommandLength
 	maxInputLength    = domainhistory.MaxCommandLength
 )
 
-// Suggested source names. Sources may choose their own; the recorded history
-// and the shell-history adapter use these so the UI does not compare raw
-// strings.
-const (
-	SourceHistory      = "history"
-	SourceShellHistory = domainhistory.SourceShellHistory
-)
-
-// Entry is one remembered command and the Host scope it ran in. Scope is
-// "local" for the local shell or "host:<id>" for an SSH Host.
-type Entry struct {
-	Command  string    `json:"command"`
-	Scope    string    `json:"scope"`
-	Count    int       `json:"count"`
-	LastUsed time.Time `json:"lastUsed"`
-}
+// SourceHistory names the journal rows in a Suggestion. The history surface
+// and autocomplete read the same rows, so there is no second source to label.
+const SourceHistory = "history"
 
 // Suggestion is one row the popup can show. Text is what Tab inserts; Display
-// is what the popup draws. Source names where the row came from: "history" for
-// recorded commands, otherwise the configured source's name.
+// is what the popup draws.
 type Suggestion struct {
 	Text        string `json:"text"`
 	Display     string `json:"display,omitempty"`
@@ -54,26 +39,11 @@ type Suggestion struct {
 	Frequency   int    `json:"frequency,omitempty"`
 }
 
-// Store persists the recorded history. Save receives the full bounded set.
-type Store interface {
-	Load(context.Context) ([]Entry, error)
-	Save(context.Context, []Entry) error
-}
-
-// Journal is the shared shell/command history the history surface lists. When
-// set, autocomplete aggregates its per-execution rows instead of keeping a
-// second, forked store. The history application service implements it.
+// Journal is the shared Command History the history surface lists and
+// autocomplete reads. The history application service implements it.
 type Journal interface {
 	Load(context.Context) ([]domainhistory.Entry, error)
 	Record(context.Context, domainhistory.Entry) error
-}
-
-// Source contributes suggestions besides the recorded history, for example the
-// shell's own history file or a snippet catalog. Implementations must return
-// only rows that match input.
-type Source interface {
-	Name() string
-	Suggestions(input string, limit int) []Suggestion
 }
 
 // Config is read on each call, so settings changes take effect without
@@ -89,16 +59,6 @@ type Config struct {
 // Option customizes a Service.
 type Option func(*Service)
 
-// WithSource adds a suggestion source. Sources are queried in registration
-// order.
-func WithSource(source Source) Option {
-	return func(service *Service) {
-		if source != nil {
-			service.sources = append(service.sources, source)
-		}
-	}
-}
-
 // WithClock replaces the clock. Tests use it to make recency ranking
 // deterministic.
 func WithClock(clock func() time.Time) Option {
@@ -109,14 +69,13 @@ func WithClock(clock func() time.Time) Option {
 	}
 }
 
-// WithJournal shares one persisted command history with the history surface.
-// When set, it replaces the Store for loading and persistence.
-func WithJournal(journal Journal) Option {
-	return func(service *Service) {
-		if journal != nil {
-			service.journal = journal
-		}
-	}
+// aggregatedEntry is one scope/command pair derived from the journal. It is
+// the in-memory view autocomplete ranks; the journal stays authoritative.
+type aggregatedEntry struct {
+	Command  string
+	Scope    string
+	Count    int
+	LastUsed time.Time
 }
 
 // Service records commands and composes suggestions. It is safe for
@@ -124,21 +83,19 @@ func WithJournal(journal Journal) Option {
 // suggestions.
 type Service struct {
 	mu      sync.Mutex
-	store   Store
 	journal Journal
 	config  func() Config
-	sources []Source
 	now     func() time.Time
-	entries []Entry
+	entries []aggregatedEntry
 }
 
-// NewService builds a Service. config must be non-nil and is called on every
-// request.
-func NewService(store Store, config func() Config, opts ...Option) *Service {
+// NewService builds a Service over the Command History journal. config must be
+// non-nil and is called on every request.
+func NewService(journal Journal, config func() Config, opts ...Option) *Service {
 	service := &Service{
-		store:  store,
-		config: config,
-		now:    time.Now,
+		journal: journal,
+		config:  config,
+		now:     time.Now,
 	}
 	for _, option := range opts {
 		if option != nil {
@@ -148,43 +105,28 @@ func NewService(store Store, config func() Config, opts ...Option) *Service {
 	return service
 }
 
-// Load reads the persisted history. A missing or unreadable store leaves
-// autocomplete usable from the commands recorded in this process. With a
-// shared journal, the per-execution rows are aggregated here so the history
-// surface and autocomplete observe the same records.
+// Load reads the journal and rebuilds the aggregated view. A missing or
+// unreadable journal leaves the previous view in place. The app calls it at
+// startup and after the History surface deletes or clears a row, so a removed
+// row stops being suggested without a restart.
 func (s *Service) Load(ctx context.Context) {
-	if s.journal != nil {
-		entries, err := s.journal.Load(ctx)
-		if err != nil {
-			return
-		}
-		s.mu.Lock()
-		s.entries = aggregate(entries)
-		s.mu.Unlock()
+	if s.journal == nil {
 		return
 	}
-	if s.store == nil {
-		return
-	}
-	entries, err := s.store.Load(ctx)
+	entries, err := s.journal.Load(ctx)
 	if err != nil {
 		return
 	}
-	s.setEntries(entries)
-}
-
-// setEntries validates, orders, and bounds aggregated history rows.
-func (s *Service) setEntries(entries []Entry) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries = sanitize(entries)
+	s.entries = aggregate(entries)
+	s.mu.Unlock()
 }
 
 // aggregate folds per-execution journal rows into one row per scope and
 // command, keeping the newest execution time and the execution count.
-func aggregate(entries []domainhistory.Entry) []Entry {
+func aggregate(entries []domainhistory.Entry) []aggregatedEntry {
 	indices := make(map[string]int, len(entries))
-	aggregated := make([]Entry, 0, len(entries))
+	aggregated := make([]aggregatedEntry, 0, len(entries))
 	for _, entry := range entries {
 		command := strings.TrimSpace(entry.Command)
 		scope := strings.TrimSpace(entry.Scope)
@@ -200,7 +142,7 @@ func aggregate(entries []domainhistory.Entry) []Entry {
 			continue
 		}
 		indices[key] = len(aggregated)
-		aggregated = append(aggregated, Entry{
+		aggregated = append(aggregated, aggregatedEntry{
 			Command: command, Scope: scope, Count: 1, LastUsed: entry.RecordedAt,
 		})
 	}
@@ -208,8 +150,8 @@ func aggregate(entries []domainhistory.Entry) []Entry {
 }
 
 // sanitize orders aggregated rows newest first and bounds the set.
-func sanitize(entries []Entry) []Entry {
-	cleaned := make([]Entry, 0, len(entries))
+func sanitize(entries []aggregatedEntry) []aggregatedEntry {
+	cleaned := make([]aggregatedEntry, 0, len(entries))
 	for _, entry := range entries {
 		entry.Command = strings.TrimSpace(entry.Command)
 		entry.Scope = strings.TrimSpace(entry.Scope)
@@ -247,9 +189,9 @@ func (s *Service) RecordAt(scope, command string, at time.Time) {
 }
 
 // RecordEntry remembers one command execution together with the Session and
-// Host it ran in, and forwards the full row to the shared journal when one is
-// configured. The app's command hook uses it; Record and RecordAt are the
-// narrower convenience forms.
+// Host it ran in and appends it to the Command History journal. The app's
+// command hook uses it; Record and RecordAt are the narrower convenience
+// forms.
 func (s *Service) RecordEntry(entry domainhistory.Entry) {
 	command := strings.TrimSpace(entry.Command)
 	scope := strings.TrimSpace(entry.Scope)
@@ -268,7 +210,7 @@ func (s *Service) RecordEntry(entry domainhistory.Entry) {
 
 	at := entry.RecordedAt
 	s.mu.Lock()
-	updated := make([]Entry, len(s.entries))
+	updated := make([]aggregatedEntry, len(s.entries))
 	copy(updated, s.entries)
 	found := false
 	for index := range updated {
@@ -280,7 +222,9 @@ func (s *Service) RecordEntry(entry domainhistory.Entry) {
 		}
 	}
 	if !found {
-		updated = append(updated, Entry{Command: command, Scope: scope, Count: 1, LastUsed: at})
+		updated = append(updated, aggregatedEntry{
+			Command: command, Scope: scope, Count: 1, LastUsed: at,
+		})
 	}
 	if len(updated) > maxHistoryEntries {
 		sort.SliceStable(updated, func(i, j int) bool {
@@ -292,18 +236,15 @@ func (s *Service) RecordEntry(entry domainhistory.Entry) {
 	s.mu.Unlock()
 
 	if s.journal != nil {
-		// Persistence is best effort: a failure must not break typing.
+		// Persistence is best effort: a failure must not break typing. The
+		// journal is the only history path; the view above derives from it.
 		_ = s.journal.Record(context.Background(), entry)
-		return
-	}
-	if s.store != nil {
-		_ = s.store.Save(context.Background(), updated)
 	}
 }
 
-// Suggestions returns the ranked rows for input in scope. It returns nil when
-// autocomplete is off, input is shorter than the configured minimum, or
-// nothing matches.
+// Suggestions returns the ranked journal rows for input in scope. It returns
+// nil when autocomplete is off, input is shorter than the configured minimum,
+// or nothing matches.
 func (s *Service) Suggestions(input, scope string) []Suggestion {
 	config := s.normalizedConfig()
 	if !config.Enabled {
@@ -318,7 +259,7 @@ func (s *Service) Suggestions(input, scope string) []Suggestion {
 	}
 
 	s.mu.Lock()
-	entries := make([]Entry, len(s.entries))
+	entries := make([]aggregatedEntry, len(s.entries))
 	copy(entries, s.entries)
 	s.mu.Unlock()
 
@@ -360,22 +301,6 @@ func (s *Service) Suggestions(input, scope string) []Suggestion {
 			Frequency: entry.Count,
 			Score:     base + countBonus(entry.Count) + recencyBonus(entry.LastUsed, now),
 		})
-	}
-
-	for _, source := range s.sources {
-		for _, suggestion := range source.Suggestions(input, config.MaxSuggestions) {
-			suggestion.Text = strings.TrimSpace(suggestion.Text)
-			if suggestion.Text == "" {
-				continue
-			}
-			if !strings.Contains(strings.ToLower(suggestion.Text), lowered) {
-				continue
-			}
-			if suggestion.Source == "" {
-				suggestion.Source = source.Name()
-			}
-			add(suggestion)
-		}
 	}
 
 	if len(result) == 0 {

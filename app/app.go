@@ -271,8 +271,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		store.OpenTerminalSettings(filepath.Join(userData, "terminal-settings.json")),
 		appterminalsettings.WithChangeHook(func(current domainterminal.Settings) {
 			invalidate()
-			// A lowered retention limit takes effect immediately instead of
-			// waiting for the next recorded command.
+			// A lowered Connection Log retention limit takes effect
+			// immediately instead of waiting for the next recorded command.
 			if historyService != nil {
 				_, _ = historyService.Prune(context.Background())
 			}
@@ -383,9 +383,10 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	}
 	defer database.Close()
 
-	// Connection logs and command history share the Vault database. Retention
-	// is read live from Settings on every record and prune, so a change
-	// applies without rebuilding the service.
+	// Connection logs and Command History share the Vault database. Only
+	// Connection Log retention is configurable; Command History is never
+	// pruned automatically. The limit is read live from Settings on every
+	// record and prune, so a change applies without rebuilding the service.
 	historyService = apphistory.NewService(database,
 		apphistory.WithRetention(func() apphistory.Retention {
 			current := terminalService.Settings()
@@ -394,35 +395,26 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 					Count:  current.ConnectionLogRetentionCount,
 					MaxAge: time.Duration(current.ConnectionLogRetentionDays) * 24 * time.Hour,
 				},
-				History: domainhistory.Retention{
-					Count:  current.HistoryRetentionCount,
-					MaxAge: time.Duration(current.HistoryRetentionDays) * 24 * time.Hour,
-				},
 			}
 		}),
 	)
-	// Apply retention once at startup so a lowered limit takes effect even
-	// before the next record arrives.
+	// Apply Connection Log retention once at startup so a lowered limit takes
+	// effect even before the next record arrives.
 	_, _ = historyService.Prune(context.Background())
 
-	// Autocomplete combines the commands recorded in this app with the shell's
-	// own history files, as the original did. Both sources are bounded and
-	// degrade to empty so a missing or malformed history cannot block startup.
-	// The journal is the same per-execution store the History surface lists,
-	// so the two views never fork the records.
+	// Command History is the only autocomplete source. The local shell history
+	// files are imported once into that journal; they are never queried live.
+	// Both the History surface and autocomplete read the same per-execution
+	// rows, so the two views never fork the records.
 	home, _ := os.UserHomeDir()
 	shellHistory := histfile.Default(home)
-	legacyCommandHistory := store.OpenCommandHistory(filepath.Join(userData, "command-history.json"))
-	// Import the pre-journal aggregate and the local shell's files once, so
-	// the History surface lists them too and an upgrade does not silently
-	// drop autocomplete's earlier history. The packaged smoke skips the real
-	// shell files: its result must not depend on, or copy, the user's history.
-	importLegacyCommandHistory(context.Background(), historyService, legacyCommandHistory)
+	// The packaged smoke skips the real shell files: its result must not
+	// depend on, or copy, the user's history.
 	if options.importsShellHistory() {
 		importShellHistory(context.Background(), historyService, shellHistory)
 	}
 	autocompleteService := autocomplete.NewService(
-		legacyCommandHistory,
+		historyService,
 		func() autocomplete.Config {
 			current := terminalService.Settings()
 			return autocomplete.Config{
@@ -433,8 +425,6 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				Scope:          current.AutocompleteHistoryScope,
 			}
 		},
-		autocomplete.WithSource(shellHistory),
-		autocomplete.WithJournal(historyService),
 	)
 	autocompleteService.Load(context.Background())
 
@@ -1756,53 +1746,13 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 	return registry
 }
 
-// importLegacyCommandHistory moves the pre-journal aggregate file into the
-// shared per-execution store. Rows already present are left alone, so running
-// the migration on every launch is idempotent.
-func importLegacyCommandHistory(ctx context.Context, service *apphistory.Service,
-	legacy *store.CommandHistoryStore) {
-	if service == nil || legacy == nil {
-		return
-	}
-	entries, err := legacy.Load(ctx)
-	if err != nil {
-		return
-	}
-	stored, err := service.Entries(ctx)
-	if err != nil {
-		return
-	}
-	seen := make(map[string]bool, len(stored))
-	for _, entry := range stored {
-		seen[entry.Scope+"\x00"+entry.Command] = true
-	}
-	for _, entry := range entries {
-		key := entry.Scope + "\x00" + entry.Command
-		if entry.Command == "" || entry.Scope == "" || seen[key] {
-			continue
-		}
-		recordedAt := entry.LastUsed
-		if recordedAt.IsZero() {
-			recordedAt = time.Now()
-		}
-		if err := service.Record(ctx, domainhistory.Entry{
-			Scope:      entry.Scope,
-			Command:    entry.Command,
-			Source:     domainhistory.SourceSession,
-			RecordedAt: recordedAt,
-		}); err != nil {
-			return
-		}
-		seen[key] = true
-	}
-}
-
 // importShellHistory persists the local shell's deduplicated commands as
-// shell-history rows. Without it the History surface's shell-history source
-// would exist only as an autocomplete suggestion. Commands already imported
-// are skipped, so repeated launches do not duplicate them.
+// shell-history rows in the Command History journal. This is the only path
+// Shell History File rows take; they are never queried live for suggestions.
+// Commands already imported are skipped, so repeated launches do not duplicate
+// them.
 func importShellHistory(ctx context.Context, service *apphistory.Service,
-	source *histfile.Source) {
+	source *histfile.Reader) {
 	if service == nil || source == nil {
 		return
 	}

@@ -187,11 +187,9 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaTerminal, "", m.SettingsKeywordHighlightTitle(), "keyword highlight rules terminal")
 	add(AreaTerminal, "", m.SettingsKeywordHighlightEnabled(), "keyword highlight enabled")
 	add(AreaTerminal, "", m.SettingsKeywordHighlightPatterns(), "keyword highlight patterns regex")
-	add(AreaTerminal, "", m.SettingsRetentionTitle(), "retention history logs cleanup")
+	add(AreaTerminal, "", m.SettingsRetentionTitle(), "retention connection logs cleanup")
 	add(AreaTerminal, "", m.SettingsConnectionLogRetentionCount(), "connection log retention count")
 	add(AreaTerminal, "", m.SettingsConnectionLogRetentionDays(), "connection log retention days")
-	add(AreaTerminal, "", m.SettingsHistoryRetentionCount(), "command history retention count")
-	add(AreaTerminal, "", m.SettingsHistoryRetentionDays(), "command history retention days")
 
 	add(AreaTransport, domain.FieldMoshPredictionDisplay, m.SettingsMoshPredictionDisplay(),
 		"mosh prediction local echo adaptive always never latency")

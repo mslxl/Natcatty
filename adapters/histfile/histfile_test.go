@@ -82,42 +82,23 @@ func TestParseFishHistoryUnescapesValues(t *testing.T) {
 	}
 }
 
-func TestSourceSuggestsFromShellHistoryFiles(t *testing.T) {
+func TestHistoryReadsEveryShellHistoryFileNewestFirst(t *testing.T) {
 	directory := t.TempDir()
 	zsh := filepath.Join(directory, ".zsh_history")
 	bash := filepath.Join(directory, ".bash_history")
 	writeFile(t, zsh, ": 1700000000:0;git status\n: 1700000001:0;git log --oneline\n")
 	writeFile(t, bash, "git branch\n__NCMCP_hidden\ndeploy staging\n")
 
-	source := Default(directory)
-	got := source.Suggestions("git", 10)
-	if len(got) != 3 {
-		t.Fatalf("suggestions = %+v, want 3", got)
+	got := Default(directory).History()
+	if len(got) != 4 {
+		t.Fatalf("history = %+v, want 4", got)
 	}
-	for _, suggestion := range got {
-		if !strings.HasPrefix(suggestion.Text, "git") {
-			t.Fatalf("suggestion %+v does not match the prefix", suggestion)
-		}
-		if suggestion.Source != "shell-history" {
-			t.Fatalf("source = %q", suggestion.Source)
-		}
-	}
-	if got[0].Text != "git log --oneline" || got[1].Text != "git status" {
+	if got[0].Command != "git log --oneline" || got[1].Command != "git status" {
 		t.Fatalf("timestamped order = %+v", got)
-	}
-
-	if limited := source.Suggestions("git", 1); len(limited) != 1 {
-		t.Fatalf("limited = %+v", limited)
-	}
-	if none := source.Suggestions("kubectl", 10); len(none) != 0 {
-		t.Fatalf("non-matching = %+v", none)
-	}
-	if none := source.Suggestions("", 10); len(none) != 0 {
-		t.Fatalf("empty input = %+v", none)
 	}
 }
 
-func TestSourceDeduplicatesAndSkipsNetcattyCommands(t *testing.T) {
+func TestHistoryDeduplicatesAndSkipsNetcattyCommands(t *testing.T) {
 	directory := t.TempDir()
 	writeFile(t, filepath.Join(directory, ".zsh_history"), strings.Join([]string{
 		": 1700000000:0;ls",
@@ -125,33 +106,30 @@ func TestSourceDeduplicatesAndSkipsNetcattyCommands(t *testing.T) {
 		": 1700000002:0;echo __NCMCP_x",
 		"",
 	}, "\n"))
-	source := Default(directory)
-	got := source.Suggestions("l", 10)
-	if len(got) != 1 || got[0].Text != "ls" {
-		t.Fatalf("suggestions = %+v", got)
+	got := Default(directory).History()
+	if len(got) != 1 || got[0].Command != "ls" {
+		t.Fatalf("history = %+v", got)
 	}
 }
 
-func TestSourceToleratesMissingAndUnreadableFiles(t *testing.T) {
+func TestHistoryToleratesMissingAndUnreadableFiles(t *testing.T) {
 	directory := t.TempDir()
-	source := Default(directory)
-	if got := source.Suggestions("git", 10); len(got) != 0 {
+	if got := Default(directory).History(); len(got) != 0 {
 		t.Fatalf("missing files produced %+v", got)
 	}
 
 	failing := New(Options{
-		Name:  "shell-history",
 		Files: []File{{Path: "ignored", Kind: Zsh}},
 		ReadFile: func(string) ([]byte, error) {
 			return nil, errors.New("denied")
 		},
 	})
-	if got := failing.Suggestions("git", 10); len(got) != 0 {
+	if got := failing.History(); len(got) != 0 {
 		t.Fatalf("unreadable file produced %+v", got)
 	}
 }
 
-func TestSourceCapsTheImportedHistory(t *testing.T) {
+func TestHistoryCapsTheImport(t *testing.T) {
 	directory := t.TempDir()
 	var builder strings.Builder
 	for index := 0; index < maxEntries+50; index++ {
@@ -160,10 +138,9 @@ func TestSourceCapsTheImportedHistory(t *testing.T) {
 		builder.WriteString("\n")
 	}
 	writeFile(t, filepath.Join(directory, ".zsh_history"), builder.String())
-	source := Default(directory)
-	got := source.Suggestions("command", maxEntries+10)
+	got := Default(directory).History()
 	if len(got) != maxEntries {
-		t.Fatalf("suggestions = %d, want the %d cap", len(got), maxEntries)
+		t.Fatalf("history = %d, want the %d cap", len(got), maxEntries)
 	}
 }
 
@@ -208,15 +185,6 @@ func TestDefaultUsesTheShellHistoryLocations(t *testing.T) {
 		if paths[index] != want[index] {
 			t.Fatalf("path %d = %q, want %q", index, paths[index], want[index])
 		}
-	}
-}
-
-func TestSourceNameDefaults(t *testing.T) {
-	if name := New(Options{}).Name(); name != "shell-history" {
-		t.Fatalf("default name = %q", name)
-	}
-	if name := New(Options{Name: "custom"}).Name(); name != "custom" {
-		t.Fatalf("custom name = %q", name)
 	}
 }
 

@@ -93,6 +93,27 @@ func TestTerminalSettingsVersion4GetsTheDynamicTitleDefault(t *testing.T) {
 	}
 }
 
+// TestTerminalSettingsIgnoresOldHistoryRetentionFields keeps upgrades safe:
+// settings written by an older build still carry historyRetentionCount and
+// historyRetentionDays, which are accepted and dropped while Connection Log
+// retention is preserved.
+func TestTerminalSettingsIgnoresOldHistoryRetentionFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal-settings.json")
+	old := `{"version":5,"connectionLogRetentionCount":7,"connectionLogRetentionDays":3,` +
+		`"historyRetentionCount":1000,"historyRetentionDays":30}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenTerminalSettings(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConnectionLogRetentionCount != 7 || got.ConnectionLogRetentionDays != 3 {
+		t.Fatalf("connection log retention = %d/%d, want 7/3",
+			got.ConnectionLogRetentionCount, got.ConnectionLogRetentionDays)
+	}
+}
+
 func TestTerminalSettingsSaveLeavesNoTemporaryFile(t *testing.T) {
 	dir := t.TempDir()
 	store := OpenTerminalSettings(filepath.Join(dir, "terminal-settings.json"))

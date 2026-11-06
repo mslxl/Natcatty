@@ -31,7 +31,6 @@ type Terminal interface {
 	SetKeywordHighlightEnabled(bool) error
 	SetKeywordHighlightRules([]domainterminal.KeywordHighlightRule) error
 	SetConnectionLogRetention(count, days int) error
-	SetHistoryRetention(count, days int) error
 }
 
 // terminalResetter is implemented by the application service. Keeping it
@@ -269,12 +268,6 @@ func (s *TerminalState) SetKeywordHighlightRuleEnabled(id string, enabled bool) 
 // how many days. Zero in either field keeps every matching log.
 func (s *TerminalState) SetConnectionLogRetention(count, days int) bool {
 	return s.apply(func() error { return s.terminal.SetConnectionLogRetention(count, days) })
-}
-
-// SetHistoryRetention stores how much command history is kept. Zero in either
-// field keeps every matching entry.
-func (s *TerminalState) SetHistoryRetention(count, days int) bool {
-	return s.apply(func() error { return s.terminal.SetHistoryRetention(count, days) })
 }
 
 func (s *TerminalState) apply(change func() error) bool {
