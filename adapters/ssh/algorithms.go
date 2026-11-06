@@ -54,6 +54,16 @@ var (
 	}
 )
 
+// DefaultHostKeyAlgorithms returns a copy of the transport's default host-key
+// preference order. A caller that must predict which host key a handshake
+// negotiates has to offer this exact order: when ClientConfig.HostKeyAlgorithms
+// is unset, x/crypto/ssh falls back to its own default order, which need not
+// match the one this dialer uses. The returned slice is a copy; mutating it
+// cannot change the transport's defaults.
+func DefaultHostKeyAlgorithms() []string {
+	return copyStrings(defaultHostKeys)
+}
+
 // Legacy additions mirror the original applyLegacyAlgorithms: they broaden an
 // endpoint's offer when its Host enables legacy algorithms. x/crypto/ssh
 // implements only some of the original list; unsupported names (aes256-cbc,
