@@ -27,6 +27,16 @@ for user in tester tester2; do
   sudo chmod 700 "/Users/$user/.ssh"
 done
 
+# The launchd-managed sshd only admits accounts in com.apple.access_ssh when
+# that group exists; without membership it rejects every password and key
+# attempt even though the socket answers. The group is absent on some runner
+# images, in which case every account is allowed.
+if dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
+  for user in tester tester2; do
+    sudo dseditgroup -o edit -a "$user" -t user com.apple.access_ssh
+  done
+fi
+
 # The tests install a user CA; sshd must start with the file present.
 sudo touch /etc/ssh/lab_user_ca.pub
 sudo chmod 644 /etc/ssh/lab_user_ca.pub

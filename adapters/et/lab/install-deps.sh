@@ -39,8 +39,12 @@ if command -v apt-get >/dev/null 2>&1; then
   rm -rf /var/lib/apt/lists/*
 elif command -v dnf >/dev/null 2>&1; then
   if [ "$mode" = build ]; then
+    # GCC ships a linker script that redirects -latomic to the versioned
+    # runtime library, but the runtime package is not a dependency of gcc-c++
+    # with weak deps off; ET links atomic explicitly, so the build stage needs
+    # it too.
     dnf install -y --setopt=install_weak_deps=False \
-      gcc-c++ make cmake git pkgconf-pkg-config findutils \
+      gcc-c++ make cmake git pkgconf-pkg-config findutils libatomic \
       libsodium-devel protobuf-devel protobuf-compiler openssl-devel \
       zlib-devel libutempter-devel libcurl-devel gflags-devel
   else
