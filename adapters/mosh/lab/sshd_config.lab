@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Dedicated sshd for a mosh parity matrix cell. The lab account is disposable
+# and only exists inside the cell container/VM.
+Port 22
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+PermitRootLogin no
+PrintMotd no
+PidFile /run/sshd.pid
+Subsystem sftp internal-sftp

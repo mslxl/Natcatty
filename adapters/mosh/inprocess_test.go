@@ -863,3 +863,43 @@ func TestInProcessAdapterProtocolError(t *testing.T) {
 		t.Fatalf("error = %v, want ErrProtocol", err)
 	}
 }
+
+// TestInProcessAdapterBootstrapRouteError exercises the bootstrap route-error
+// path over a real TCP socket: the SSH endpoint refuses the connection, and
+// Open must return that typed network error promptly instead of hanging until
+// the handshake timeout. Jump-host and proxy routes are rejected earlier by
+// CheckRoute, covered by TestCheckRoute.
+func TestInProcessAdapterBootstrapRouteError(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a closed port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	factory := InProcessFactory{
+		Bootstrap:        sshBootstrap{host: "127.0.0.1", port: port, user: "tester", password: "testpass"},
+		ProbeTimeout:     200 * time.Millisecond,
+		HandshakeTimeout: 5 * time.Second,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err = factory.Open(ctx, inProcessTestSpec())
+	if err == nil {
+		t.Fatal("Open succeeded against a closed SSH endpoint")
+	}
+	if errors.Is(err, moshmodel.ErrHandshake) {
+		t.Fatalf("route error was misclassified as a handshake failure: %v", err)
+	}
+	// The SSH dial error must stay a typed network error so the UI can tell a
+	// route failure apart from an announcement or handshake failure.
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("route error %T = %v, want a net.OpError", err, err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("route error took %s, want a prompt failure", elapsed)
+	}
+}

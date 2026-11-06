@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Fedora mosh parity cell. The pinned upstream mosh release is built from
+# source at image build time; no stock mosh code is stored in this repository.
+# Build from the repository root via the gate:
+#
+#   go run ./internal/tools/moshparity run -cell fedora-41/1.4.0 -build
+ARG BASE=fedora:41
+FROM ${BASE}
+
+ARG MOSH_VERSION=1.4.0
+ARG MOSH_SHA256
+ARG MOSH_URL=https://github.com/mobile-shell/mosh/releases/download/mosh-${MOSH_VERSION}/mosh-${MOSH_VERSION}.tar.gz
+
+RUN dnf install -y \
+      gcc gcc-c++ make perl ca-certificates curl pkgconf-pkg-config \
+      openssl-devel zlib-devel ncurses-devel \
+      protobuf-devel protobuf-compiler \
+      openssh-server shadow-utils passwd glibc-langpack-de \
+ && dnf clean all
+
+RUN curl -fsSL "${MOSH_URL}" -o /tmp/mosh.tar.gz \
+ && echo "${MOSH_SHA256}  /tmp/mosh.tar.gz" | sha256sum -c - \
+ && mkdir -p /src \
+ && tar -xzf /tmp/mosh.tar.gz -C /src \
+ && cd "/src/mosh-${MOSH_VERSION}" \
+ && CXXFLAGS="-std=c++17 -O2" ./configure --prefix=/usr/local --without-utempter \
+ && make -j"$(nproc)" \
+ && make install \
+ && rm -f /tmp/mosh.tar.gz
+
+RUN (id tester >/dev/null 2>&1 || useradd -m -s /bin/bash tester) \
+ && echo 'tester:testpass' | chpasswd \
+ && mkdir -p /run/sshd \
+ && ssh-keygen -A
+
+COPY sshd_config.lab /etc/ssh/sshd_config.lab
+COPY lab-entrypoint.sh /usr/local/bin/mosh-lab-entrypoint
+RUN chmod 0755 /usr/local/bin/mosh-lab-entrypoint
+
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/mosh-lab-entrypoint"]
