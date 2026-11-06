@@ -61,10 +61,11 @@ Downloads the DMG and provisions a native lab on the runner:
   Homebrew dependencies and CMake flags as the `macos-native` job in
   `et-parity.yml`. `etserver`, `et`, and `etterminal` are installed into
   `/usr/local/bin`.
-- The system sshd is provisioned by `adapters/et/lab/macos-provision.sh`; the
-  current runner account is given the same lab secret as
-  `NATCATTY_SMOKE_PASSWORD` because session mode authenticates as the current
-  OS user.
+- The system sshd is provisioned by `adapters/et/lab/macos-provision.sh`.
+  Session mode authenticates as the provisioned `tester` account
+  (`NATCATTY_SMOKE_SSH_USER`) with `NATCATTY_SMOKE_PASSWORD`: the runner
+  account carries a Secure Token, so macOS refuses a scripted password reset
+  even from root. The app itself still runs as the runner user.
 - The Homebrew `mosh-server` is linked into `/usr/local/bin`, which is always
   on the remote PATH, so a shell startup file cannot hide it.
 - `etserver` listens on port 2022; the driver uses SSH port 22 and ET port

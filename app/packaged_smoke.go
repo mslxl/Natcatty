@@ -27,8 +27,12 @@ package app
 //	NATCATTY_SMOKE_ET_PORT=<port>
 //	    Lab etserver port for session mode. Defaults to 2022.
 //	NATCATTY_SMOKE_PASSWORD=<value>
-//	    Password for the lab SSH account (the current OS user). Required in
-//	    session mode; never written to the result or logs.
+//	    Password for the lab SSH account. Required in session mode; never
+//	    written to the result or logs.
+//	NATCATTY_SMOKE_SSH_USER=<name>
+//	    Lab SSH account. Defaults to the current OS user. Set it when the
+//	    local account cannot authenticate to the lab, for example a runner
+//	    account protected by a Secure Token that refuses a password reset.
 //	NATCATTY_SMOKE_SESSION_SECRETS=1
 //	    Ask the Vault for session-only credential mode. Required on a headless
 //	    Linux runner whose OS credential store is unavailable.
@@ -81,6 +85,7 @@ const (
 	packagedSmokeSSHPortEnv                 = "NATCATTY_SMOKE_SSH_PORT"
 	packagedSmokeETPortEnv                  = "NATCATTY_SMOKE_ET_PORT"
 	packagedSmokePasswordEnv                = "NATCATTY_SMOKE_PASSWORD"
+	packagedSmokeSSHUserEnv                 = "NATCATTY_SMOKE_SSH_USER"
 	packagedSmokeSessionSecretsEnv          = "NATCATTY_SMOKE_SESSION_SECRETS"
 	packagedSmokeAllowUnsupportedSessionEnv = "NATCATTY_SMOKE_ALLOW_UNSUPPORTED_SESSION"
 
@@ -112,6 +117,7 @@ type packagedSmokeConfig struct {
 	SSHPort        int
 	ETPort         int
 	Password       string
+	SSHUser        string
 	SessionSecrets bool
 	// AllowUnsupportedSession permits session mode on a platform outside the
 	// Phase 3A gate. It is documented as a lab escape hatch.
@@ -228,6 +234,7 @@ func packagedSmokeConfigForGOOS(getenv func(string) string, goos string) (packag
 	if cfg.Password == "" {
 		return packagedSmokeConfig{}, false, fmt.Errorf("packaged smoke: %s is required in session mode", packagedSmokePasswordEnv)
 	}
+	cfg.SSHUser = strings.TrimSpace(getenv(packagedSmokeSSHUserEnv))
 	cfg.SessionSecrets, err = packagedSmokeBool(getenv, packagedSmokeSessionSecretsEnv)
 	if err != nil {
 		return packagedSmokeConfig{}, false, err
@@ -438,6 +445,16 @@ func packagedSmokeCommand(kind packagedSmokeKind) string {
 	return "printf '" + kind.Marker + "\\n'"
 }
 
+// login is the SSH account. An explicit override exists because a local
+// account can be unable to authenticate (a Secure Token blocks a scripted
+// password reset), while the lab account is still perfectly usable.
+func (c packagedSmokeConfig) login() string {
+	if c.SSHUser != "" {
+		return c.SSHUser
+	}
+	return packagedSmokeUsername()
+}
+
 func packagedSmokeUsername() string {
 	if current, err := user.Current(); err == nil && strings.TrimSpace(current.Username) != "" {
 		return strings.TrimSpace(current.Username)
@@ -508,7 +525,7 @@ func newPackagedSmokeRunner(cfg packagedSmokeConfig, deps packagedSmokeDeps,
 	return &packagedSmokeRunner{
 		cfg:         cfg,
 		deps:        deps,
-		username:    packagedSmokeUsername(),
+		username:    cfg.login(),
 		timeout:     packagedSmokeTimeout,
 		dialHostKey: dialPackagedSmokeHostKey,
 		writeResult: writeResult,
