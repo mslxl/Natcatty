@@ -182,6 +182,33 @@ func TestPreferenceChangesApplyLiveAndResetIndividually(t *testing.T) {
 	}
 }
 
+// TestCheckboxLabelSitsOnItsControlRow keeps a check box and its label on
+// one line. The label used to be the field caption above an unlabeled box,
+// which read as two unrelated controls.
+func TestCheckboxLabelSitsOnItsControlRow(t *testing.T) {
+	fake := newFakePreferences()
+	// Off its default, so the row offers a reset control beside the box.
+	fake.settings.Layout.ShowSFTPTab = false
+	state := NewPreferencesState(fake)
+	tester := ui.NewTester(viewAt(AreaLayout, Config{Preferences: state}), 1100, 720)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	label, ok := tester.Find(m.SettingsShowSFTPTab())
+	if !ok {
+		t.Fatalf("the check box label is missing: %v", tester.Texts())
+	}
+	reset, ok := tester.Find(m.SettingsReset())
+	if !ok {
+		t.Fatalf("the reset control is missing: %v", tester.Texts())
+	}
+	if label.Y+label.H <= reset.Y || reset.Y+reset.H <= label.Y {
+		t.Fatalf("the check box label and its control are on different rows: label %+v, reset %+v",
+			label, reset)
+	}
+}
+
 func TestResetAllAsksBeforeRestoringEverything(t *testing.T) {
 	fake := newFakePreferences()
 	fake.settings.Appearance.WindowOpacity = 0.6
