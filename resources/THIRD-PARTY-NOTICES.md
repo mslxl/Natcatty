@@ -97,13 +97,12 @@ into the distribution.
 
 ## Network Provider dependency baseline
 
-Ticket 01 pins the modules used by the in-process Tailscale and WireGuard
-network providers. They are in the `go.mod` module graph and the minimal import
-probe in `internal/netprobe` compiles the packages the adapters use under
-`CGO_ENABLED=0` on every supported target. The application does not import them
-yet, so they are not linked into the current release binary; the provider
-tickets will link them. They are listed now so the pinned graph is auditable
-before those adapters land.
+The in-process Tailscale and WireGuard network providers link the modules below
+through `adapters/tailscale` and `adapters/wireguard`. They are in the `go.mod`
+module graph, and the minimal import probe in `internal/netprobe` compiles the
+packages the adapters use under `CGO_ENABLED=0` on every supported target. The
+pinned graph is listed here so every linked module is auditable; upgrading
+either provider dependency follows the audit requirements recorded in `go.mod`.
 
 | Module | Version | License | Copyright notice |
 | --- | --- | --- | --- |
