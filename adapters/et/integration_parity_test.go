@@ -517,10 +517,31 @@ func renderedGoldenLines(pane string) ([]string, bool) {
 			return lines, inBody
 		}
 		if inBody {
-			lines = append(lines, strings.TrimRight(line, " "))
+			lines = append(lines, strings.TrimRight(expandTabs(line), " "))
 		}
 	}
 	return nil, false
+}
+
+// expandTabs renders horizontal tabs the way a terminal does, advancing to the
+// next multiple of eight columns. Newer tmux releases return the stored tab
+// from capture-pane where older ones return the expanded cells; expanding here
+// compares the rendered screen, not the capture format.
+func expandTabs(line string) string {
+	var out strings.Builder
+	column := 0
+	for _, r := range line {
+		if r == '\t' {
+			next := (column/8 + 1) * 8
+			for ; column < next; column++ {
+				out.WriteByte(' ')
+			}
+			continue
+		}
+		out.WriteRune(r)
+		column++
+	}
+	return out.String()
 }
 
 // TestLabMatchesStockETOutput runs stock et for the same scripted session and
