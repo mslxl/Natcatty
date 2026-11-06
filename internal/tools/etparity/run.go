@@ -249,6 +249,16 @@ func truncate(text string, limit int) string {
 	return text[:limit] + "\n... truncated ..."
 }
 
+// truncateTail keeps the end of text. Build and test tools print the
+// diagnosis last, so a failing command's error must keep the tail rather than
+// the progress output that filled the head.
+func truncateTail(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return "... truncated ...\n" + text[len(text)-limit:]
+}
+
 func goBinary() (string, error) {
 	if path, err := exec.LookPath("go"); err == nil {
 		return path, nil
@@ -403,7 +413,7 @@ func runDocker(ctx context.Context, root string, args ...string) (string, error)
 	cmd.Stderr = &output
 	if err := cmd.Run(); err != nil {
 		return output.String(), fmt.Errorf("docker %s: %w: %s",
-			strings.Join(args, " "), err, truncate(output.String(), 8192))
+			strings.Join(args, " "), err, truncateTail(output.String(), 8192))
 	}
 	return output.String(), nil
 }
