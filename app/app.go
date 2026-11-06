@@ -993,6 +993,10 @@ func run(afterReady func(hostWindow)) error {
 						Size:   float32(appearance.TerminalFontSize),
 					}
 				}),
+				sessionui.WithTerminalCursor(func() (domainpreferences.CursorStyle, bool) {
+					appearance := preferenceService.Settings().Appearance
+					return appearance.TerminalCursorStyle, !appearance.TerminalCursorSteady
+				}),
 				sessionui.WithTerminalTheme(currentTerminalTheme),
 				sessionui.WithTerminalKeybinds(func() []terminal.Keybind {
 					return terminalKeybinds(keybindingService)
@@ -1217,6 +1221,8 @@ func run(afterReady func(hostWindow)) error {
 		if shellState != nil {
 			shellState.SetTerminalFont(domainpreferences.TerminalFontFamily(current.Appearance.TerminalFontFamily),
 				float32(current.Appearance.TerminalFontSize))
+			shellState.SetTerminalCursor(current.Appearance.TerminalCursorStyle,
+				!current.Appearance.TerminalCursorSteady)
 			// currentTerminalTheme reads Theme.IsDark, which panics before
 			// App.Run; the initial preference apply below happens before the
 			// event loop starts. WhenReady also schedules immediately after

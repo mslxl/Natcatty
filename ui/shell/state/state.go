@@ -21,6 +21,7 @@ import (
 	domainserial "github.com/mslxl/natcatty/domain/model/serial"
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -73,6 +74,13 @@ type FocusedSurface interface {
 // to open Sessions.
 type TerminalThemeSetter interface {
 	SetTerminalTheme(preset domaintheme.TerminalTheme)
+}
+
+// TerminalCursorSetter is implemented by a Surface whose terminal can take a
+// new cursor shape and blink preference without being recreated. The Settings
+// window uses it to apply a cursor change to open Sessions.
+type TerminalCursorSetter interface {
+	SetTerminalCursor(style domainpreferences.CursorStyle, blink bool)
 }
 
 // HostResolver looks a Host up for restore and for reopening a split. It

@@ -11542,6 +11542,58 @@ func (msgs Messages) SettingsTerminalFontSize() string {
 	return Catalog.Format(msgs.locale, "settingsTerminalFontSize", nil)
 }
 
+// SettingsTerminalCursorStyle says "Cursor style"
+// in the language the app shows.
+func SettingsTerminalCursorStyle() string { return In(i18n.Locale()).SettingsTerminalCursorStyle() }
+
+// SettingsTerminalCursorStyle says "Cursor style"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalCursorStyle() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalCursorStyle", nil)
+}
+
+// SettingsTerminalCursorBlock says "Block"
+// in the language the app shows.
+func SettingsTerminalCursorBlock() string { return In(i18n.Locale()).SettingsTerminalCursorBlock() }
+
+// SettingsTerminalCursorBlock says "Block"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalCursorBlock() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalCursorBlock", nil)
+}
+
+// SettingsTerminalCursorBar says "Bar"
+// in the language the app shows.
+func SettingsTerminalCursorBar() string { return In(i18n.Locale()).SettingsTerminalCursorBar() }
+
+// SettingsTerminalCursorBar says "Bar"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalCursorBar() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalCursorBar", nil)
+}
+
+// SettingsTerminalCursorUnderline says "Underline"
+// in the language the app shows.
+func SettingsTerminalCursorUnderline() string {
+	return In(i18n.Locale()).SettingsTerminalCursorUnderline()
+}
+
+// SettingsTerminalCursorUnderline says "Underline"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalCursorUnderline() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalCursorUnderline", nil)
+}
+
+// SettingsTerminalCursorBlink says "Blink the cursor"
+// in the language the app shows.
+func SettingsTerminalCursorBlink() string { return In(i18n.Locale()).SettingsTerminalCursorBlink() }
+
+// SettingsTerminalCursorBlink says "Blink the cursor"
+// in the language of msgs.
+func (msgs Messages) SettingsTerminalCursorBlink() string {
+	return Catalog.Format(msgs.locale, "settingsTerminalCursorBlink", nil)
+}
+
 // SettingsLayoutTitle says "Layout & Tabs"
 // in the language the app shows.
 func SettingsLayoutTitle() string { return In(i18n.Locale()).SettingsLayoutTitle() }

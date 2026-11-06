@@ -147,6 +147,8 @@ func SearchIndex(m locales.Messages, sources ...ShortcutSource) []SearchHit {
 	add(AreaAppearance, domain.FieldTerminalTheme, m.SettingsTerminalTheme(), "terminal theme scheme palette")
 	add(AreaAppearance, domain.FieldTerminalFontFamily, m.SettingsTerminalFontFamily(), "terminal font family")
 	add(AreaAppearance, domain.FieldTerminalFontSize, m.SettingsTerminalFontSize(), "terminal font size")
+	add(AreaAppearance, domain.FieldTerminalCursorStyle, m.SettingsTerminalCursorStyle(), "terminal cursor shape block bar underline")
+	add(AreaAppearance, domain.FieldTerminalCursorBlink, m.SettingsTerminalCursorBlink(), "terminal cursor blink blinking steady")
 	add(AreaAppearance, "", m.SettingsTerminalThemeImport(), "import iterm itermcolors scheme")
 	add(AreaAppearance, "", m.SettingsTerminalThemeFilter(), "filter search scheme")
 

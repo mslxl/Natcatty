@@ -300,6 +300,7 @@ func TestSettingsAreasShowFieldLabels(t *testing.T) {
 				m.SettingsThemeMode(), m.SettingsAccentMode(), m.SettingsAccentColor(),
 				m.SettingsUIFont(), m.SettingsWindowOpacity(), m.SettingsFollowAppTerminalTheme(),
 				m.SettingsTerminalFontFamily(), m.SettingsTerminalFontSize(),
+				m.SettingsTerminalCursorStyle(), m.SettingsTerminalCursorBlink(),
 			}
 		}},
 		{AreaTerminal, func(m locales.Messages) []string {
