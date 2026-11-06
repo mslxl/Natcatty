@@ -238,6 +238,36 @@ func TestCommandCompletesWhenTerminalControlsFollowTheEndMarker(t *testing.T) {
 	}
 }
 
+// TestCommandToleratesAnEraseSequenceBeforeTheLineEnding reproduces the mosh
+// renderer path: when a window resize lands while a command is being typed,
+// the client rewrites the resized screen with erase-to-end-of-line before
+// every CRLF, so the start marker arrives as "marker_S\x1b[K\r\n". Requiring
+// the line ending immediately after the token would never start the collector,
+// and the command would time out after having run successfully on the remote.
+func TestCommandToleratesAnEraseSequenceBeforeTheLineEnding(t *testing.T) {
+	session, transport := newShellSession(t)
+	done := startTestCommand(session, context.Background(), "echo hello", CommandOptions{
+		Timeout: 5 * time.Second,
+	})
+	var marker string
+	eventually(t, "the wrapped command to reach the transport", func() bool {
+		marker = markerPattern.FindString(transport.input())
+		return marker != ""
+	})
+	transport.send("\x1b[K\r\n" + marker + "_S\x1b[K\r\nhello\x1b[K\r\n" + marker + "_E:7\x1b[K\r\n")
+
+	got := awaitTestCommand(t, done)
+	if got.err != nil {
+		t.Fatalf("Command: %v", got.err)
+	}
+	if got.result.Stdout != "hello" {
+		t.Fatalf("stdout = %q; want hello", got.result.Stdout)
+	}
+	if !got.result.HasExitCode || got.result.ExitCode != 7 {
+		t.Fatalf("exit = (%v, %d); want (true, 7)", got.result.HasExitCode, got.result.ExitCode)
+	}
+}
+
 // TestCommandCollectorScansTheEndMarkerIncrementally feeds a full rolling
 // window one byte at a time, the shape a terminal uses when it dribbles a
 // megabyte of output. A full rescan of the window per chunk is quadratic and
