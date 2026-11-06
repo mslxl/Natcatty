@@ -127,7 +127,7 @@ func (s *State) BroadcastSessions() []BroadcastSessionInfo {
 			}
 			info := BroadcastSessionInfo{
 				ID:        id,
-				Label:     value.descriptor.Label,
+				Label:     s.connectionLabel(value),
 				Number:    value.descriptor.Number,
 				TabNumber: tab.Number,
 				// Only the active Tab holds terminal focus; every other Tab's

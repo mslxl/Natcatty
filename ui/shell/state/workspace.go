@@ -17,6 +17,8 @@ import (
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 )
 
@@ -40,6 +42,10 @@ type Tab struct {
 	TitleNumber int
 	Label       string
 	AutoTitle   bool
+	// GeneratedTitle marks a title composed from the merged Panes' connection
+	// labels, such as "web-01/db-02". It keeps following pane renames and
+	// membership until the user renames the Tab.
+	GeneratedTitle bool
 	// Copy counts duplicate generations: 0 is the original, 1 the first copy.
 	Copy      int
 	Dirty     bool
@@ -55,14 +61,21 @@ type pane struct {
 	surface    Surface
 	err        error
 	pending    bool
+	// agent is the last coding-CLI decision for the Session. It carries across
+	// ambiguous OSC titles, as the original's provider tracking does, and is
+	// remade when the Session or its title changes.
+	agent        bool
+	titleSeen    string
+	titleSession *appsession.Session
 }
 
 // TabOptions seeds a new Tab.
 type TabOptions struct {
-	Label      string
-	AutoTitle  bool
-	Copy       int
-	Descriptor domainworkspace.SessionDescriptor
+	Label          string
+	AutoTitle      bool
+	GeneratedTitle bool
+	Copy           int
+	Descriptor     domainworkspace.SessionDescriptor
 }
 
 // TabInfo is the immutable Tab description the view renders.
@@ -70,18 +83,27 @@ type TabInfo struct {
 	ID          model.TabID
 	Number      int
 	TitleNumber int
-	Label       string
-	AutoTitle   bool
-	Copy        int
-	Dirty       bool
-	Active      bool
+	// Label is the Tab's stored title: the connection label snapshot, or a
+	// legacy user-chosen title.
+	Label string
+	// Title is what the tab strip shows, resolved from the focused Session's
+	// connection label, its OSC 0/2 title, and the Dynamic tab title setting.
+	// Empty means the view falls back to the numbered local-session name.
+	Title     string
+	AutoTitle bool
+	Copy      int
+	Dirty     bool
+	Active    bool
 }
 
 // PaneInfo is the immutable Pane description the view renders.
 type PaneInfo struct {
-	ID      model.PaneID
-	Number  int
-	Label   string
+	ID     model.PaneID
+	Number int
+	// Label is the Pane's connection label: its user rename or Host label.
+	Label string
+	// Title is the Pane header title, resolved like TabInfo.Title.
+	Title   string
 	Focused bool
 	Pending bool
 	Err     error
@@ -95,6 +117,7 @@ type DetachedTabInfo struct {
 	Number      int
 	TitleNumber int
 	Label       string
+	Title       string
 	AutoTitle   bool
 	// Copy counts duplicate generations, as Tab.Copy does.
 	Copy  int
@@ -167,13 +190,14 @@ func (s *State) newTab(opts TabOptions) *Tab {
 	}
 	paneID := model.PaneID(newRuntimeID("pane-"))
 	return &Tab{
-		ID:          model.TabID(newRuntimeID("tab-")),
-		Number:      number,
-		TitleNumber: number,
-		Label:       opts.Label,
-		AutoTitle:   opts.AutoTitle,
-		Copy:        opts.Copy,
-		Root:        domainworkspace.NewPaneNode(paneID),
+		ID:             model.TabID(newRuntimeID("tab-")),
+		Number:         number,
+		TitleNumber:    number,
+		Label:          opts.Label,
+		AutoTitle:      opts.AutoTitle,
+		GeneratedTitle: opts.GeneratedTitle,
+		Copy:           opts.Copy,
+		Root:           domainworkspace.NewPaneNode(paneID),
 		panes: map[model.PaneID]*pane{
 			paneID: {ID: paneID, descriptor: opts.Descriptor},
 		},
@@ -267,40 +291,85 @@ func (s *State) TabNumbers() []int {
 	return numbers
 }
 
-// TabLabel returns a Tab's title label and stable number. An empty label means
-// a local Session, whose title the view localizes from the number.
+// TabLabel returns a Tab's resolved title and stable number. An empty title
+// means the view falls back to the numbered local-session name.
 func (s *State) TabLabel(index int) (string, int, bool) {
 	if index < 0 || index >= len(s.tabs) {
 		return "", 0, false
 	}
-	return s.tabs[index].Label, s.tabs[index].Number, true
+	return s.tabTitle(s.tabs[index]), s.tabs[index].Number, true
 }
 
-// RenameTab sets a Tab's user title. An empty title is rejected, so a Pane's
-// Rename dialog cannot leave the tab strip blank. The title persists and stops
-// following the automatic local-session counter.
+// RenameTab gives the Tab at index its user title by renaming the focused
+// Pane's Session, as the original's Session-tab rename does. An empty title is
+// rejected, so a Pane's Rename dialog cannot leave the tab strip blank.
 func (s *State) RenameTab(index int, title string) bool {
 	title = strings.TrimSpace(title)
 	if title == "" || index < 0 || index >= len(s.tabs) {
 		return false
 	}
-	s.tabs[index].Label = title
-	s.tabs[index].AutoTitle = false
+	s.renameTab(s.tabs[index], title)
 	s.save()
+	s.RequestRedraw()
 	return true
 }
 
-// RenameDetachedTab sets a detached window's Tab title under the same rules.
-func (s *State) RenameDetachedTab(id model.TabID, title string) bool {
+// RenamePane gives one Pane's Session a user title. The pane header's rename
+// dialog names exactly the Session it belongs to, even when another Pane of
+// the Tab has focus.
+func (s *State) RenamePane(tabIndex int, paneID model.PaneID, title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" || tabIndex < 0 || tabIndex >= len(s.tabs) {
+		return false
+	}
+	tab := s.tabs[tabIndex]
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	s.renamePane(tab, value, title)
+	s.save()
+	s.RequestRedraw()
+	return true
+}
+
+// RenameDetachedPane is RenamePane for a Pane in a detached Tab.
+func (s *State) RenameDetachedPane(id model.TabID, paneID model.PaneID, title string) bool {
 	title = strings.TrimSpace(title)
 	tab := s.detachedTabByID(id)
 	if title == "" || tab == nil {
 		return false
 	}
-	tab.Label = title
-	tab.AutoTitle = false
+	value, ok := tab.panes[paneID]
+	if !ok || !domainworkspace.ContainsPane(tab.Root, paneID) {
+		return false
+	}
+	s.renamePane(tab, value, title)
 	s.save()
+	s.RequestRedraw()
 	return true
+}
+
+// renameTab applies a user title to the focused Pane's Session, as the
+// original's tab rename does for a standalone Session Tab. The name then
+// persists with that Session, and a split Tab keeps naming itself after the
+// focused Pane. A legacy Tab that was renamed before names belonged to
+// Sessions keeps its Tab-level title.
+func (s *State) renameTab(tab *Tab, title string) {
+	value, _ := tab.focusedPane()
+	if value == nil {
+		tab.Label = title
+		tab.AutoTitle = false
+		return
+	}
+	s.renamePane(tab, value, title)
+}
+
+func (s *State) renamePane(tab *Tab, value *pane, title string) {
+	value.descriptor.CustomName = title
+	if !tab.AutoTitle && !tab.GeneratedTitle {
+		tab.Label = title
+	}
 }
 
 // TabInfo returns everything the tab strip renders for one Tab.
@@ -314,6 +383,7 @@ func (s *State) TabInfo(index int) (TabInfo, bool) {
 		Number:      tab.Number,
 		TitleNumber: tab.TitleNumber,
 		Label:       tab.Label,
+		Title:       s.tabTitle(tab),
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
 		Dirty:       tab.Dirty,
@@ -342,7 +412,7 @@ func (s *State) PaneInfoAt(tabIndex int, id model.PaneID) (PaneInfo, bool) {
 	if tabIndex < 0 || tabIndex >= len(s.tabs) {
 		return PaneInfo{}, false
 	}
-	return paneInfo(s.tabs[tabIndex], id)
+	return s.paneInfo(s.tabs[tabIndex], id)
 }
 
 // FocusedPaneID returns the Pane that owns focus in the Tab at index.
@@ -595,14 +665,15 @@ func (s *State) cloneTab(source *Tab) (*Tab, error) {
 	}
 
 	copyTab := &Tab{
-		ID:          model.TabID(newRuntimeID("tab-")),
-		Number:      s.nextTabNumber,
-		TitleNumber: source.TitleNumber,
-		Label:       source.Label,
-		AutoTitle:   source.AutoTitle,
-		Copy:        source.Copy + 1,
-		Root:        root,
-		panes:       make(map[model.PaneID]*pane, len(mapping)),
+		ID:             model.TabID(newRuntimeID("tab-")),
+		Number:         s.nextTabNumber,
+		TitleNumber:    source.TitleNumber,
+		Label:          source.Label,
+		AutoTitle:      source.AutoTitle,
+		GeneratedTitle: source.GeneratedTitle,
+		Copy:           source.Copy + 1,
+		Root:           root,
+		panes:          make(map[model.PaneID]*pane, len(mapping)),
 	}
 	if copyTab.TitleNumber == 0 {
 		copyTab.TitleNumber = source.Number
@@ -683,6 +754,7 @@ func (s *State) DetachedTabInfo(id model.TabID) (DetachedTabInfo, bool) {
 		Number:      tab.Number,
 		TitleNumber: tab.TitleNumber,
 		Label:       tab.Label,
+		Title:       s.tabTitle(tab),
 		AutoTitle:   tab.AutoTitle,
 		Copy:        tab.Copy,
 		Panes:       panes,
@@ -704,7 +776,7 @@ func (s *State) DetachedPaneInfoAt(tabID model.TabID, paneID model.PaneID) (Pane
 	if tab == nil {
 		return PaneInfo{}, false
 	}
-	return paneInfo(tab, paneID)
+	return s.paneInfo(tab, paneID)
 }
 
 // DetachedTabExists reports whether a detached window still owns the Tab.
@@ -820,8 +892,13 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 	remainingFocus := domainworkspace.FocusAfterRemove(root, focusedID, paneID)
 	tab.FocusPath = domainworkspace.FocusPath(root, remainingFocus)
 
+	if !tab.AutoTitle && !tab.GeneratedTitle &&
+		value.descriptor.CustomName == "" && strings.TrimSpace(tab.Label) != "" {
+		// A legacy Tab-level rename has no Pane to carry it; keep the name on
+		// the Pane that leaves.
+		value.descriptor.CustomName = tab.Label
+	}
 	label := value.descriptor.Label
-	autoTitle := label == ""
 	number := s.nextTabNumber
 	s.nextTabNumber++
 	detachedRoot := domainworkspace.NewPaneNode(paneID)
@@ -830,7 +907,7 @@ func (s *State) DetachPane(tabIndex int, paneID model.PaneID) bool {
 		Number:      number,
 		TitleNumber: value.descriptor.Number,
 		Label:       label,
-		AutoTitle:   autoTitle,
+		AutoTitle:   true,
 		Root:        detachedRoot,
 		FocusPath:   domainworkspace.FocusPath(detachedRoot, paneID),
 		panes:       map[model.PaneID]*pane{paneID: value},
@@ -943,7 +1020,7 @@ func activePaneCountIn(tabs []*Tab) int {
 }
 
 // paneInfo describes one Pane for either a main or a detached Tab.
-func paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
+func (s *State) paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 	value, ok := tab.panes[id]
 	if !ok || !domainworkspace.ContainsPane(tab.Root, id) {
 		return PaneInfo{}, false
@@ -952,12 +1029,157 @@ func paneInfo(tab *Tab, id model.PaneID) (PaneInfo, bool) {
 	return PaneInfo{
 		ID:      id,
 		Number:  value.descriptor.Number,
-		Label:   value.descriptor.Label,
+		Label:   s.connectionLabel(value),
+		Title:   s.paneTitle(value),
 		Focused: id == focusedID && focused != nil,
 		Pending: value.pending,
 		Err:     value.err,
 		Surface: value.surface,
 	}, true
+}
+
+// titleMode returns the live Dynamic tab title setting.
+func (s *State) titleMode() domainterminal.DynamicTabTitleMode {
+	if s.dynamicTabTitleMode == nil {
+		return domainterminal.DynamicTabTitleAll
+	}
+	return domainterminal.NormalizeDynamicTabTitleMode(s.dynamicTabTitleMode())
+}
+
+// hostLabelFor returns the current label of a Pane's Host. A saved Host is looked
+// up live, so a Vault rename reaches its open Tabs; the descriptor's snapshot
+// is the fallback when the Host is gone or the lookup is not wired.
+func (s *State) hostLabelFor(value *pane) string {
+	if value == nil {
+		return ""
+	}
+	if value.descriptor.HostID != "" && s.hostLabel != nil {
+		if label, ok := s.hostLabel(value.descriptor.HostID); ok && strings.TrimSpace(label) != "" {
+			return label
+		}
+	}
+	return value.descriptor.Label
+}
+
+// connectionLabel is a Pane's static name: the user's rename, else its current
+// Host label.
+func (s *State) connectionLabel(value *pane) string {
+	if value == nil {
+		return ""
+	}
+	return domainsessiontitle.ConnectionLabel(value.descriptor.CustomName, s.hostLabelFor(value))
+}
+
+// paneTitle resolves one Pane's header title from its connection label and the
+// live Session's OSC 0/2 title.
+func (s *State) paneTitle(value *pane) string {
+	if value == nil {
+		return ""
+	}
+	var dynamic string
+	if value.session != nil {
+		dynamic = value.session.Snapshot().Title
+	}
+	if value.session != value.titleSession || dynamic != value.titleSeen {
+		value.agent = domainsessiontitle.AgentSession(value.agent, dynamic)
+		value.titleSeen = dynamic
+		value.titleSession = value.session
+	}
+	return domainsessiontitle.Resolve(domainsessiontitle.Input{
+		CustomName:   value.descriptor.CustomName,
+		HostLabel:    s.hostLabelFor(value),
+		DynamicTitle: dynamic,
+		Agent:        value.agent,
+	}, s.titleMode())
+}
+
+// tabTitle resolves the title a Tab shows, before the view adds the numbered
+// local fallback. An auto-titled single-Pane Tab follows
+// its Session. A split Tab names itself after the focused Pane's connection
+// label and counts the other distinct connections, as the original's workspace
+// Tabs do: dynamic titles can differ per Pane on one Host, so they are not used
+// for the aggregate.
+func (s *State) tabTitle(tab *Tab) string {
+	if tab == nil {
+		return ""
+	}
+	if tab.GeneratedTitle {
+		return s.composedTitle(tab)
+	}
+	if !tab.AutoTitle {
+		return tab.Label
+	}
+	ids := tab.paneIDs()
+	switch len(ids) {
+	case 0:
+		return tab.Label
+	case 1:
+		return s.paneTitle(tab.panes[ids[0]])
+	}
+	value, _ := tab.focusedPane()
+	primary := s.connectionLabel(value)
+	if primary == "" {
+		return tab.Label
+	}
+	keys := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		keys[s.connectionKey(tab.panes[id])] = true
+	}
+	if len(keys) > 1 {
+		return fmt.Sprintf("%s +%d", primary, len(keys)-1)
+	}
+	return primary
+}
+
+// composedTitle joins the distinct connection labels of a merged Tab's Panes
+// in tree order, as the original's generated workspace titles do
+// ("web-01/db-02"). Identical labels collapse, so two Panes on one Host do not
+// read "web-01/web-01". An empty result keeps the last stored label.
+func (s *State) composedTitle(tab *Tab) string {
+	labels := make([]string, 0, len(tab.panes))
+	for _, id := range tab.paneIDs() {
+		label := strings.TrimSpace(s.connectionLabel(tab.panes[id]))
+		if label == "" || containsLabel(labels, label) {
+			continue
+		}
+		labels = append(labels, label)
+	}
+	if len(labels) == 0 {
+		return tab.Label
+	}
+	return strings.Join(labels, "/")
+}
+
+func containsLabel(labels []string, label string) bool {
+	for _, candidate := range labels {
+		if candidate == label {
+			return true
+		}
+	}
+	return false
+}
+
+// connectionKey identifies the connection a Pane belongs to. Panes on one Host
+// share a key even after a rename (the Host ID does not change), local shells
+// share one, and serial Panes are distinct per device.
+func (s *State) connectionKey(value *pane) string {
+	if value == nil {
+		return ""
+	}
+	if value.descriptor.HostID != "" {
+		return "host:" + string(value.descriptor.HostID)
+	}
+	switch value.descriptor.Kind {
+	case domainworkspace.SessionLocal:
+		return "local"
+	case domainworkspace.SessionSerial:
+		if value.descriptor.Serial != nil {
+			return "serial:" + value.descriptor.Serial.Path
+		}
+		return "serial"
+	default:
+		return "pane:" + value.descriptor.Label + "\x00" + value.descriptor.Hostname
+	}
 }
 
 // SplitFocusedPane splits the focused Pane on side and opens a Session of the
@@ -983,6 +1205,8 @@ func (s *State) SplitFocusedPane(side domainworkspace.Side) error {
 	}
 	tab.Root = root
 	descriptor := withFreshResumeKey(value.descriptor)
+	// A new shell is not the Session the user renamed.
+	descriptor.CustomName = ""
 	tab.panes[newPaneID] = &pane{
 		ID:         newPaneID,
 		descriptor: descriptor,
@@ -1153,6 +1377,8 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 		return false
 	}
 
+	sourcePanes := len(source.paneIDs())
+	targetPanes := len(target.paneIDs())
 	if source == target {
 		root, err := domainworkspace.MoveWithin(
 			source.Root, sourcePaneID, targetPaneID,
@@ -1182,6 +1408,17 @@ func (s *State) MovePane(sourceTabID model.TabID, sourcePaneID model.PaneID,
 	target.panes[sourcePaneID] = value
 	target.Root = targetRoot
 	target.setFocus(sourcePaneID)
+	if sourcePanes == 1 && targetPanes == 1 {
+		// Dragging one single-Pane Tab onto another merges them into a Tab
+		// named after both connections in tree order, as the original's
+		// merged-workspace title does. Composed titles keep following pane
+		// renames and membership.
+		if title := s.composedTitle(target); title != "" {
+			target.Label = title
+			target.AutoTitle = false
+			target.GeneratedTitle = true
+		}
+	}
 
 	if len(domainworkspace.CollectPaneIDs(sourceRoot)) == 0 {
 		// The source Tab lost its last Pane; it ceases to exist. Its Sessions
@@ -1229,14 +1466,15 @@ func (s *State) WorkspacePayload() domainworkspace.Payload {
 	payload.ActiveTab = s.active
 	for _, tab := range s.tabs {
 		payload.Tabs = append(payload.Tabs, domainworkspace.RestoredTab{
-			ID:          tab.ID,
-			Number:      tab.Number,
-			TitleNumber: tab.TitleNumber,
-			Title:       tab.Label,
-			AutoTitle:   tab.AutoTitle,
-			Copy:        tab.Copy,
-			Root:        domainworkspace.Clone(tab.Root),
-			FocusPath:   append([]int(nil), tab.FocusPath...),
+			ID:             tab.ID,
+			Number:         tab.Number,
+			TitleNumber:    tab.TitleNumber,
+			Title:          tab.Label,
+			AutoTitle:      tab.AutoTitle,
+			GeneratedTitle: tab.GeneratedTitle,
+			Copy:           tab.Copy,
+			Root:           domainworkspace.Clone(tab.Root),
+			FocusPath:      append([]int(nil), tab.FocusPath...),
 		})
 		for _, id := range tab.paneIDs() {
 			value := tab.panes[id]
@@ -1326,14 +1564,15 @@ func (s *State) Restore(ctx context.Context) {
 			s.nextTabNumber = number + 1
 		}
 		tab := &Tab{
-			ID:          restored.ID,
-			Number:      number,
-			TitleNumber: restored.TitleNumber,
-			Label:       restored.Title,
-			AutoTitle:   restored.AutoTitle,
-			Copy:        restored.Copy,
-			Root:        root,
-			panes:       make(map[model.PaneID]*pane),
+			ID:             restored.ID,
+			Number:         number,
+			TitleNumber:    restored.TitleNumber,
+			Label:          restored.Title,
+			AutoTitle:      restored.AutoTitle,
+			GeneratedTitle: restored.GeneratedTitle,
+			Copy:           restored.Copy,
+			Root:           root,
+			panes:          make(map[model.PaneID]*pane),
 		}
 		if tab.TitleNumber == 0 {
 			tab.TitleNumber = number
@@ -1353,6 +1592,12 @@ func (s *State) Restore(ctx context.Context) {
 			}
 			if descriptor.Label == "" {
 				descriptor.Label = restored.Title
+			}
+			if descriptor.Kind == domainworkspace.SessionLocal &&
+				strings.TrimSpace(descriptor.Label) == "" {
+				// Local Sessions always have the original's fixed name, including
+				// ones restored from a payload written before Tabs carried it.
+				descriptor.Label = domainsessiontitle.LocalTerminalLabel
 			}
 			tab.panes[id] = &pane{ID: id, descriptor: descriptor, pending: true}
 		}

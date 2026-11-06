@@ -277,10 +277,10 @@ func TestTrayMenuContainsSectionsAndRaisesMain(t *testing.T) {
 	}
 	controller.SyncNow()
 	labels = strings.Join(trayMenuLabels(backend.surfaces[0].menu), "\n")
-	if strings.Contains(labels, m.TrayNoSessions()) || !strings.Contains(labels, m.TabTitle(1)) {
+	if strings.Contains(labels, m.TrayNoSessions()) || !strings.Contains(labels, "Local Terminal") {
 		t.Fatalf("tray menu did not pick up the Session:\n%s", labels)
 	}
-	clickTrayItemPrefix(t, backend.surfaces[0].menu, m.TabTitle(1))
+	clickTrayItemPrefix(t, backend.surfaces[0].menu, "Local Terminal")
 	if graph.state.ActiveTab() != 0 {
 		t.Fatalf("the Session row did not select the Tab: %d", graph.state.ActiveTab())
 	}
