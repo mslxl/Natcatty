@@ -168,7 +168,7 @@ func runCell(ctx context.Context, cell Cell, opts runOptions) (CellReport, error
 		saveContainerLogs(cell, opts, "final")
 	}
 
-	report.Behaviors = evaluateCell(cell, report.Suites)
+	report.Behaviors = evaluateCell(report)
 	report.Status = "pass"
 	for _, suite := range report.Suites {
 		if suite.Status != "pass" {
@@ -364,7 +364,7 @@ func packagePath(dir string) string {
 func finish(report CellReport, opts runOptions, err error) (CellReport, error) {
 	report.Status = "fail"
 	if report.Behaviors == nil {
-		report.Behaviors = evaluateCell(report.Cell, report.Suites)
+		report.Behaviors = evaluateCell(report)
 	}
 	if writeErr := writeReport(opts.outDir, report); writeErr != nil {
 		return report, errors.Join(err, writeErr)

@@ -34,6 +34,13 @@ type TestRef struct {
 	// Versions, when non-empty, limits the reference to those stock server
 	// versions.
 	Versions []string
+	// RequiresBundleTarget marks a test that drives the in-process Factory,
+	// which resolves the host's bundled mosh-client before it can open a
+	// Session. A harness host adapters/bundle has no target for (FreeBSD)
+	// cannot run the test at all, so the reference is recorded as skipped
+	// there instead of failing the behavior; the behavior's other references
+	// must still pass on that host.
+	RequiresBundleTarget bool
 }
 
 const (
@@ -52,6 +59,14 @@ const (
 
 func unit(name string) TestRef {
 	return TestRef{Suite: suiteUnit, Package: adapterMosh, Name: name}
+}
+
+// unitWithBundle is a unit test that opens a Session through the in-process
+// Factory and therefore needs a bundled mosh-client target on the host.
+func unitWithBundle(name string) TestRef {
+	ref := unit(name)
+	ref.RequiresBundleTarget = true
+	return ref
 }
 
 func core(name string) TestRef {
@@ -227,7 +242,7 @@ var ServerBehaviors = []Behavior{
 	{
 		ID: "locale-environment", Title: "locale and environment propagation to mosh-server",
 		Refs: []TestRef{
-			unit(`TestLocaleFromEnvironment`),
+			unitWithBundle(`TestLocaleFromEnvironment`),
 			model(`TestClientEnv`),
 			model(`TestRemoteCommandDefaultsAndQuoting`),
 			lab(`TestInProcessAdapterLabLocalePropagation`),
