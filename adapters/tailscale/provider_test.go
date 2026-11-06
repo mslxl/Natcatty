@@ -1141,9 +1141,10 @@ func TestStateDirectoryIsIsolatedPerProfileAndPrivate(t *testing.T) {
 	if first == second {
 		t.Fatalf("two profiles share the state directory %q", first)
 	}
+	wantBase := canonicalTestPath(t, base)
 	for _, dir := range []string{first, second} {
-		if !within(base, dir) {
-			t.Fatalf("state directory %q escapes %q", dir, base)
+		if !within(wantBase, dir) {
+			t.Fatalf("state directory %q escapes %q", dir, wantBase)
 		}
 		info, err := os.Stat(dir)
 		if err != nil {
@@ -1164,13 +1165,14 @@ func TestStateDirectoryRejectsPathTraversalProfileIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareStateDir: %v", err)
 	}
-	if !within(base, dir) {
-		t.Fatalf("state directory %q escapes %q", dir, base)
+	wantBase := canonicalTestPath(t, base)
+	if !within(wantBase, dir) {
+		t.Fatalf("state directory %q escapes %q", dir, wantBase)
 	}
 	if strings.Contains(filepath.Base(dir), string(filepath.Separator)) {
 		t.Fatalf("state directory name still contains a separator: %q", dir)
 	}
-	if filepath.Dir(dir) != filepath.Join(base, "tailscale") {
+	if filepath.Dir(dir) != filepath.Join(wantBase, "tailscale") {
 		t.Fatalf("state directory parent = %q", filepath.Dir(dir))
 	}
 }
