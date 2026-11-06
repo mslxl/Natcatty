@@ -558,7 +558,15 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 		case model.Hibernated || s.terminal == nil:
 			s.hibernatedView(c, m, t)
 		default:
-			s.terminalView(c)
+			termView := s.terminalView(c)
+			// Suggestions float over the terminal at the cursor cell. Building
+			// them after the terminal gives the overlay the terminal's bounds,
+			// and an overlay row never takes room from the grid.
+			if model.ShowAutocomplete || model.ShowGhost {
+				cols, rows := s.terminal.Size()
+				cursor := autocompleteCursorFromText(s.terminal.Text(), model.Input, cols, rows)
+				autocompleteLayers(c, termView, model, cursor, cols, rows, m, t, actions)
+			}
 		}
 		if s.renaming {
 			s.renameDialog(c, m, t)
@@ -701,11 +709,12 @@ func (s *Surface) Toolbar(c *ui.Context) {
 	toolbar(c, model, locales.In(c.Locale()), c.Theme(), actions)
 }
 
-// terminalView shows the live terminal. It is the Session's one live view.
-func (s *Surface) terminalView(c *ui.Context) {
+// terminalView shows the live terminal and returns its element, which anchors
+// the floating autocomplete layers. It is the Session's one live view.
+func (s *Surface) terminalView(c *ui.Context) ui.Element {
 	// Key the terminal so its node keeps the same identity when chrome
-	// inserts or removes a row above it (autocomplete popup, statistics,
-	// banners). MyGo derives unkeyed node ids from the child position, so an
+	// inserts or removes a row above it (statistics and banners). MyGo derives
+	// unkeyed node ids from the child position, so an
 	// inserted row above the terminal would move the keyboard focus to the new
 	// row and the user's next keystroke would go nowhere. The key carries the
 	// Session's identity so two Tabs never reuse one terminal node's state.
@@ -742,6 +751,7 @@ func (s *Surface) terminalView(c *ui.Context) {
 		s.drops.Drop(files, s.windowsShell())
 		s.redraw()
 	}
+	return termView
 }
 
 // hibernatedView replaces the live screen with the Session's resumable state.
