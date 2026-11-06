@@ -5,16 +5,17 @@ import (
 	"testing"
 )
 
-func TestResolveDefaultsToBundled(t *testing.T) {
+func TestResolveFallsBackToTheReleaseDefault(t *testing.T) {
 	// A Host saved before the setting existed has no override, and a profile
-	// saved before the setting existed has no global value. Both must keep
-	// opening with the bundled client.
+	// saved before the setting existed has no global value. Both resolve to
+	// whichever implementation ReleasePolicy currently selects, so this test
+	// checks the resolution rule rather than pinning the release value.
 	got, err := Resolve(Unspecified, Unspecified)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got != Bundled {
-		t.Fatalf("Resolve = %q, want %q", got, Bundled)
+	if want := CurrentDefault(); got != want {
+		t.Fatalf("Resolve = %q, want the release default %q", got, want)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mslxl/natcatty/domain/model"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -854,6 +855,10 @@ func draftFromRecord(record vaultimport.Record) domainvault.Draft {
 		LegacyAlgorithms: record.LegacyAlgorithms,
 		SkipEcdsaHostKey: record.SkipEcdsaHostKey,
 		DeviceType:       domainvault.NormalizeDeviceType(domainvault.DeviceType(record.DeviceType)),
+		// The importer preserves the exported client choice verbatim,
+		// including an unknown value from a newer build. NormalizeDraft
+		// clears it for protocols that do not use Mosh or ET.
+		TransportImplementation: transportmodel.Implementation(record.TransportImplementation),
 	}
 	if record.Protocol == "" {
 		draft.Protocol = domainvault.ProtocolSSH

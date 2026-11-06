@@ -63,10 +63,13 @@ func newImplementationFactory(hosts fakeImplementationHosts, defaults domainpref
 func settingsWithImplementation(value transportmodel.Implementation) domainpreferences.Settings {
 	settings := domainpreferences.Defaults()
 	settings.Transport.Implementation = value
+	// Every value supplied through this helper stands for a persisted user or
+	// migrated choice, not the release default.
+	settings.Transport.ImplementationExplicit = true
 	return settings
 }
 
-func TestMoshAndETDefaultToTheBundledImplementation(t *testing.T) {
+func TestMoshAndETFollowTheReleaseDefault(t *testing.T) {
 	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{
 		"mosh": {ID: "mosh", Protocol: domainvault.ProtocolMosh},
 		"et":   {ID: "et", Protocol: domainvault.ProtocolET},
@@ -80,7 +83,16 @@ func TestMoshAndETDefaultToTheBundledImplementation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(string(c.kind), func(t *testing.T) {
-			factory := newImplementationFactory(hosts, domainpreferences.Defaults())
+			bundledMosh := &implementationFactory{}
+			bundledET := &implementationFactory{}
+			inProcessMosh := &implementationFactory{}
+			inProcessET := &implementationFactory{}
+			factory := newTransportFactory(&factoryLocal{}, nil, &factoryTelnet{}, nil, nil).
+				withClients(bundledMosh, bundledET).
+				withInProcess(inProcessMosh, inProcessET).
+				withImplementations(hosts, fakeImplementationDefaults{
+					settings: domainpreferences.Defaults(),
+				})
 			transport, err := factory.Open(context.Background(), appsession.StartSpec{
 				Kind: c.kind, HostID: c.id,
 			})
@@ -88,19 +100,22 @@ func TestMoshAndETDefaultToTheBundledImplementation(t *testing.T) {
 				t.Fatalf("Open: %v", err)
 			}
 			_ = transport.Close()
-			opened := factory.mosh.(*implementationFactory)
-			other := factory.et.(*implementationFactory)
+
+			bundled := bundledMosh
+			inProcess := inProcessMosh
 			if c.kind == appsession.KindET {
-				opened, other = other, opened
+				bundled, inProcess = bundledET, inProcessET
 			}
-			if opened.calls != 1 {
-				t.Fatalf("bundled %s opens = %d, want 1", c.kind, opened.calls)
+			if transportmodel.CurrentDefault() == transportmodel.Bundled {
+				if bundled.calls != 1 || inProcess.calls != 0 {
+					t.Fatalf("bundled default: bundled=%d in-process=%d, want 1/0",
+						bundled.calls, inProcess.calls)
+				}
+				return
 			}
-			if other.calls != 0 {
-				t.Fatalf("the other client factory opened a %s Session", c.kind)
-			}
-			if factory.etInProcess.(*implementationFactory).calls != 0 {
-				t.Fatalf("the in-process ET factory opened a %s Session", c.kind)
+			if inProcess.calls != 1 || bundled.calls != 0 {
+				t.Fatalf("in-process default: in-process=%d bundled=%d, want 1/0",
+					inProcess.calls, bundled.calls)
 			}
 		})
 	}
@@ -124,6 +139,58 @@ func TestHostOverrideSelectsTheBundledImplementation(t *testing.T) {
 	if factory.mosh.(*implementationFactory).calls != 1 {
 		t.Fatalf("bundled Mosh opens = %d, want the Host override to win",
 			factory.mosh.(*implementationFactory).calls)
+	}
+}
+
+// TestBundledStaysSelectableAfterTheDefaultSwitch is the retention guarantee:
+// once the release default is the in-process client, a Host whose persisted
+// override is bundled still opens the bundled client, and a Host saved before
+// the setting existed inherits the new default without being re-saved.
+func TestBundledStaysSelectableAfterTheDefaultSwitch(t *testing.T) {
+	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{
+		"mosh-bundled": {ID: "mosh-bundled", Protocol: domainvault.ProtocolMosh,
+			TransportImplementation: transportmodel.Bundled},
+		"et-bundled": {ID: "et-bundled", Protocol: domainvault.ProtocolET,
+			TransportImplementation: transportmodel.Bundled},
+		"et-old": {ID: "et-old", Protocol: domainvault.ProtocolET},
+	}}
+	bundledMosh := &implementationFactory{}
+	bundledET := &implementationFactory{}
+	inProcessET := &implementationFactory{}
+	factory := newTransportFactory(&factoryLocal{}, nil, nil, nil, nil).
+		withClients(bundledMosh, bundledET).
+		withInProcessET(inProcessET).
+		withImplementations(hosts, fakeImplementationDefaults{
+			settings: settingsWithImplementation(transportmodel.InProcess),
+		})
+
+	for _, spec := range []appsession.StartSpec{
+		{Kind: appsession.KindMosh, HostID: "mosh-bundled"},
+		{Kind: appsession.KindET, HostID: "et-bundled"},
+	} {
+		transport, err := factory.Open(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("%s with a bundled override: %v", spec.Kind, err)
+		}
+		_ = transport.Close()
+	}
+	if bundledMosh.calls != 1 || bundledET.calls != 1 {
+		t.Fatalf("bundled opens after the switch: mosh=%d et=%d, want 1 each",
+			bundledMosh.calls, bundledET.calls)
+	}
+
+	// A Host saved before ticket 21 has an empty override. It inherits the
+	// switched global default directly, with no edit or migration.
+	transport, err := factory.Open(context.Background(), appsession.StartSpec{
+		Kind: appsession.KindET, HostID: "et-old",
+	})
+	if err != nil {
+		t.Fatalf("old Host after the switch: %v", err)
+	}
+	_ = transport.Close()
+	if inProcessET.calls != 1 {
+		t.Fatalf("old Host in-process opens = %d, want it to inherit the new default",
+			inProcessET.calls)
 	}
 }
 
@@ -230,11 +297,13 @@ func TestUnknownSelectionFailsClosedWithATypedError(t *testing.T) {
 }
 
 func TestAMissingBundledClientFailsClosedWithATypedError(t *testing.T) {
+	settings := domainpreferences.Defaults()
+	settings.Transport.ChooseImplementation(transportmodel.Bundled)
 	factory := newTransportFactory(&factoryLocal{}, nil, nil, nil, nil).withImplementations(
 		fakeImplementationHosts{items: map[model.HostID]domainvault.Host{
 			"mosh": {ID: "mosh"},
 		}},
-		fakeImplementationDefaults{settings: domainpreferences.Defaults()},
+		fakeImplementationDefaults{settings: settings},
 	)
 	_, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindMosh, HostID: "mosh",
@@ -271,8 +340,8 @@ func TestInProcessMoshSelectionUsesTheInProcessFactory(t *testing.T) {
 			inProcessMosh.calls, bundledMosh.calls, bundledET.calls)
 	}
 
-	// Ticket 23 has not supplied an in-process ET client yet, so ET must keep
-	// failing closed with the typed unavailable error.
+	// This factory deliberately leaves the in-process ET client unwired, so
+	// ET must keep failing closed with the typed unavailable error.
 	if _, err := factory.Open(context.Background(), appsession.StartSpec{
 		Kind: appsession.KindET, HostID: "et",
 	}); !errors.Is(err, transportmodel.ErrImplementationUnavailable) {
@@ -331,6 +400,10 @@ func TestOtherProtocolsIgnoreTheImplementationSelection(t *testing.T) {
 // receive, while the caller's StartSpec is not mutated.
 func TestMoshSessionReceivesThePersistedPredictionMode(t *testing.T) {
 	settings := domainpreferences.Defaults()
+	// Prediction passes through whichever client is selected; pin the bundled
+	// client so this test inspects the bundled factory regardless of the
+	// release default.
+	settings.Transport.ChooseImplementation(transportmodel.Bundled)
 	settings.Transport.MoshPredictionDisplay = moshmodel.PredictionNever
 	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
 	factory := newImplementationFactory(hosts, settings)
@@ -363,6 +436,7 @@ func TestMoshSessionReceivesThePersistedPredictionMode(t *testing.T) {
 // (tests and MCP entry points) keeps exactly what it supplied.
 func TestMoshSessionDefaultsToAdaptivePrediction(t *testing.T) {
 	settings := domainpreferences.Defaults()
+	settings.Transport.ChooseImplementation(transportmodel.Bundled)
 	hosts := fakeImplementationHosts{items: map[model.HostID]domainvault.Host{}}
 	factory := newImplementationFactory(hosts, settings)
 	spec := appsession.StartSpec{Kind: appsession.KindMosh, Mosh: &moshmodel.Config{Hostname: "example.test"}}
@@ -375,15 +449,22 @@ func TestMoshSessionDefaultsToAdaptivePrediction(t *testing.T) {
 		t.Fatalf("default opened display = %q, want adaptive", got)
 	}
 
+	bundled := &implementationFactory{}
+	inProcess := &implementationFactory{}
 	bare := newTransportFactory(&factoryLocal{}, nil, &factoryTelnet{}, nil, nil).
-		withClients(&implementationFactory{}, &implementationFactory{})
+		withClients(bundled, &implementationFactory{}).
+		withInProcess(inProcess, &implementationFactory{})
 	explicit := &moshmodel.Config{Hostname: "example.test", PredictionDisplay: moshmodel.PredictionAlways}
 	transport, err = bare.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindMosh, Mosh: explicit})
 	if err != nil {
-		t.Fatalf("Open without preferences: %v", err)
+		t.Fatalf("Open without a global Mosh preference: %v", err)
 	}
 	_ = transport.Close()
-	if got := bare.mosh.(*implementationFactory).spec.Mosh.PredictionDisplay; got != moshmodel.PredictionAlways {
+	opened := bundled
+	if transportmodel.CurrentDefault() == transportmodel.InProcess {
+		opened = inProcess
+	}
+	if got := opened.spec.Mosh.PredictionDisplay; got != moshmodel.PredictionAlways {
 		t.Fatalf("explicit opened display = %q, want always", got)
 	}
 }
