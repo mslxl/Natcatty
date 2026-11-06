@@ -100,6 +100,30 @@ const (
 	SyncRemote SyncConflictStrategy = "remote"
 )
 
+// CursorStyle is the shape of a terminal's cursor. Programs may change it for
+// their own modes; this is the shape they reset to and the one a terminal
+// starts with.
+type CursorStyle string
+
+const (
+	CursorBlock     CursorStyle = "block"
+	CursorBar       CursorStyle = "bar"
+	CursorUnderline CursorStyle = "underline"
+
+	// DefaultCursorStyle is the original's block cursor.
+	DefaultCursorStyle = CursorBlock
+)
+
+// Valid reports whether the style is one the application knows.
+func (style CursorStyle) Valid() bool {
+	switch style {
+	case CursorBlock, CursorBar, CursorUnderline:
+		return true
+	default:
+		return false
+	}
+}
+
 // Appearance group.
 type Appearance struct {
 	ThemeMode     ThemeMode  `json:"themeMode"`
@@ -121,6 +145,12 @@ type Appearance struct {
 	FollowAppTerminalTheme bool    `json:"followAppTerminalTheme"`
 	TerminalFontFamily     string  `json:"terminalFontFamily"`
 	TerminalFontSize       float64 `json:"terminalFontSize"`
+	// TerminalCursorStyle is the shape of the terminal cursor.
+	TerminalCursorStyle CursorStyle `json:"terminalCursorStyle"`
+	// TerminalCursorSteady keeps the cursor from blinking. It is stored
+	// inverted so a document written before the field existed, which has no
+	// value, keeps the original's blinking default.
+	TerminalCursorSteady bool `json:"terminalCursorSteady"`
 }
 
 // Layout group.
@@ -279,6 +309,8 @@ func Defaults() Settings {
 			FollowAppTerminalTheme: true,
 			TerminalFontFamily:     DefaultTerminalFont,
 			TerminalFontSize:       DefaultTerminalFontSize,
+			// The original starts with a block cursor that blinks.
+			TerminalCursorStyle: DefaultCursorStyle,
 		},
 		Layout: Layout{
 			ShowHostTreeSidebar:         true,
@@ -353,6 +385,9 @@ func Normalize(settings Settings) Settings {
 	}
 	if settings.Appearance.TerminalFontFamily == "" {
 		settings.Appearance.TerminalFontFamily = defaults.Appearance.TerminalFontFamily
+	}
+	if !settings.Appearance.TerminalCursorStyle.Valid() {
+		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
 	}
 
 	if settings.Layout.TabBarPosition != TabBarTop && settings.Layout.TabBarPosition != TabBarBottom {
@@ -476,6 +511,8 @@ const (
 	FieldFollowAppTerminalTheme      Field = "appearance.followAppTerminalTheme"
 	FieldTerminalFontFamily          Field = "appearance.terminalFontFamily"
 	FieldTerminalFontSize            Field = "appearance.terminalFontSize"
+	FieldTerminalCursorStyle         Field = "appearance.terminalCursorStyle"
+	FieldTerminalCursorBlink         Field = "appearance.terminalCursorBlink"
 	FieldShowHostTreeSidebar         Field = "layout.showHostTreeSidebar"
 	FieldShowSFTPTab                 Field = "layout.showSftpTab"
 	FieldShowRecentHosts             Field = "layout.showRecentHosts"
@@ -512,7 +549,7 @@ func Fields() []Field {
 		FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
-		FieldTerminalFontSize,
+		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink,
 		FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
 		FieldShowTabNumberBadges, FieldRestorePreviousSession,
@@ -535,7 +572,7 @@ func GroupOf(field Field) (Group, bool) {
 	case FieldThemeMode, FieldLightTheme, FieldDarkTheme, FieldAccentMode,
 		FieldAccentColor, FieldAppIcon, FieldUIFont,
 		FieldWindowOpacity, FieldFollowAppTerminalTheme, FieldTerminalTheme, FieldTerminalFontFamily,
-		FieldTerminalFontSize:
+		FieldTerminalFontSize, FieldTerminalCursorStyle, FieldTerminalCursorBlink:
 		return GroupAppearance, true
 	case FieldShowHostTreeSidebar, FieldShowSFTPTab, FieldShowRecentHosts,
 		FieldTabBarPosition, FieldShellOnlyTabNumberShortcuts,
@@ -590,6 +627,10 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Appearance.TerminalFontFamily = defaults.Appearance.TerminalFontFamily
 	case FieldTerminalFontSize:
 		settings.Appearance.TerminalFontSize = defaults.Appearance.TerminalFontSize
+	case FieldTerminalCursorStyle:
+		settings.Appearance.TerminalCursorStyle = defaults.Appearance.TerminalCursorStyle
+	case FieldTerminalCursorBlink:
+		settings.Appearance.TerminalCursorSteady = defaults.Appearance.TerminalCursorSteady
 	case FieldShowHostTreeSidebar:
 		settings.Layout.ShowHostTreeSidebar = defaults.Layout.ShowHostTreeSidebar
 	case FieldShowSFTPTab:
