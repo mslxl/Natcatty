@@ -1086,11 +1086,7 @@ func prepareStateDir(base, profileID string) (string, error) {
 	if err := os.MkdirAll(absoluteBase, 0o700); err != nil {
 		return "", fmt.Errorf("create state base: %w", err)
 	}
-	resolvedBase, err := filepath.EvalSymlinks(absoluteBase)
-	if err != nil {
-		return "", fmt.Errorf("resolve state base: %w", err)
-	}
-	resolvedBase, err = resolveStateLinkTarget(resolvedBase)
+	resolvedBase, err := canonicalStatePath(absoluteBase)
 	if err != nil {
 		return "", fmt.Errorf("resolve state base: %w", err)
 	}
@@ -1113,7 +1109,7 @@ func prepareStateDir(base, profileID string) (string, error) {
 	if err := os.Chmod(dir, 0o700); err != nil && runtime.GOOS != "windows" {
 		return "", fmt.Errorf("protect state directory: %w", err)
 	}
-	resolved, err := filepath.EvalSymlinks(dir)
+	resolved, err := canonicalStatePath(dir)
 	if err != nil {
 		return "", fmt.Errorf("resolve state directory: %w", err)
 	}
@@ -1173,11 +1169,7 @@ func RemoveStateDir(base, profileID string) error {
 	if err != nil {
 		return err
 	}
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return fmt.Errorf("resolve state directory: %w", err)
-	}
-	resolvedDir, err = resolveStateLinkTarget(resolvedDir)
+	resolvedDir, err := canonicalStatePath(dir)
 	if err != nil {
 		return fmt.Errorf("resolve state directory: %w", err)
 	}
@@ -1261,57 +1253,55 @@ func deepestExistingStateAncestor(path string) (string, error) {
 }
 
 // canonicalStatePath resolves symlinks and Windows junctions in every
-// component of an existing absolute path. filepath.EvalSymlinks resolves POSIX
-// and Windows symlinks but leaves Windows directory junctions in place under
-// Go's winsymlink semantics, so each component is also passed through
-// resolveStateLinkTarget.
+// component of an existing absolute path. filepath.EvalSymlinks is deliberately
+// not used on the whole path: on Windows it fails with a missing-path error for
+// any component beneath a directory junction, which is exactly the redirected
+// base this guard must inspect. Components are resolved one at a time, and a
+// link's target is canonicalized recursively under a fixed budget so a cycle is
+// refused instead of followed forever.
 func canonicalStatePath(path string) (string, error) {
-	volume := filepath.VolumeName(path)
-	remainder := strings.TrimPrefix(path, volume)
+	return canonicalStatePathDepth(path, 0)
+}
+
+func canonicalStatePathDepth(path string, depth int) (string, error) {
+	if depth > 32 {
+		return "", errors.New("state base resolves through too many links")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve state base: %w", err)
+	}
+	volume := filepath.VolumeName(absolute)
+	remainder := strings.TrimPrefix(absolute, volume)
 	current := volume + string(filepath.Separator)
 	for _, part := range strings.Split(remainder, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}
-		next, err := filepath.EvalSymlinks(filepath.Join(current, part))
+		next := filepath.Join(current, part)
+		info, err := os.Lstat(next)
 		if err != nil {
 			return "", fmt.Errorf("resolve state base: %w", err)
 		}
-		next, err = resolveStateLinkTarget(next)
-		if err != nil {
-			return "", fmt.Errorf("resolve state base: %w", err)
+		if !info.IsDir() {
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", fmt.Errorf("resolve state base: %w", err)
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(next), target)
+			}
+			// A junction's substitute name may use the NT object-namespace
+			// prefix, which filepath does not treat as a normal drive path.
+			target = strings.TrimPrefix(target, `\??\`)
+			next, err = canonicalStatePathDepth(target, depth+1)
+			if err != nil {
+				return "", err
+			}
 		}
 		current = next
 	}
 	return filepath.Clean(current), nil
-}
-
-// resolveStateLinkTarget follows a link whose target is a directory.
-// filepath.EvalSymlinks already resolves POSIX symlinks and Windows symlinks,
-// but it deliberately leaves Windows directory junctions in place; without this
-// step a junction base could hide a system Tailscale directory.
-func resolveStateLinkTarget(path string) (string, error) {
-	for i := 0; i < 32; i++ {
-		info, err := os.Lstat(path)
-		if err != nil {
-			return "", err
-		}
-		if info.IsDir() {
-			return path, nil
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return "", err
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path, err = filepath.EvalSymlinks(target)
-		if err != nil {
-			return "", err
-		}
-	}
-	return "", errors.New("state base resolves through too many links")
 }
 
 // requireStatePathDirectories rejects every existing component between the
@@ -1378,18 +1368,47 @@ func within(base, target string) bool {
 // isSystemTailscaleDir reports whether dir is a state location owned by a
 // system Tailscale client. The embedded node must never reuse one: sharing it
 // would be an unsupported use that can corrupt the user's system identity.
+// Both sides are canonicalized first: the configured root and the candidate
+// can name the same location through a symlink, a Windows junction, or a
+// Windows short name (macOS /var is /private/var, for example), and comparing
+// the raw strings would miss the protected root behind the alias.
 func isSystemTailscaleDir(dir string) bool {
-	dir = filepath.Clean(dir)
+	dir = canonicalStatePathForComparison(dir)
 	for _, root := range systemTailscaleDirs() {
 		if root == "" {
 			continue
 		}
-		root = filepath.Clean(root)
+		root = canonicalStatePathForComparison(root)
 		if dir == root || within(root, dir) {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalStatePathForComparison resolves the existing prefix of path so a
+// location reached through a link or short name compares equal to its real
+// path, then reattaches any missing suffix lexically. A path that cannot be
+// resolved is returned cleaned; the caller's comparisons stay fail closed
+// because a path that looks distinct is still checked literally.
+func canonicalStatePathForComparison(path string) string {
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return path
+	}
+	existing, err := deepestExistingStateAncestor(path)
+	if err != nil {
+		return path
+	}
+	canonical, err := canonicalStatePath(existing)
+	if err != nil {
+		return path
+	}
+	relative, err := filepath.Rel(existing, path)
+	if err != nil {
+		return path
+	}
+	return filepath.Join(canonical, relative)
 }
 
 func systemTailscaleDirs() []string {

@@ -57,6 +57,28 @@ func dirEntryNames(t *testing.T, dir string) []string {
 	return names
 }
 
+// canonicalTestPath returns the path prepareStateDir reports for base: the
+// existing prefix resolved through symlinks, junctions, and Windows short
+// names, with any missing suffix kept. Tests that compare a returned directory
+// against the base must use this form; macOS /var and the CI runner's
+// C:\Users\RUNNER~1 are aliases of the paths t.TempDir returns.
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	existing, err := deepestExistingStateAncestor(path)
+	if err != nil {
+		t.Fatalf("find existing ancestor of %q: %v", path, err)
+	}
+	canonical, err := canonicalStatePath(existing)
+	if err != nil {
+		t.Fatalf("canonicalize %q: %v", existing, err)
+	}
+	relative, err := filepath.Rel(existing, path)
+	if err != nil {
+		t.Fatalf("relative path of %q under %q: %v", path, existing, err)
+	}
+	return filepath.Join(canonical, relative)
+}
+
 func dirPerm(t *testing.T, dir string) os.FileMode {
 	t.Helper()
 	info, err := os.Stat(dir)
@@ -351,8 +373,9 @@ func TestPrepareStateDirCreatesMissingUserDataBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareStateDir(missing but legitimate base): %v", err)
 	}
-	if !within(base, dir) {
-		t.Fatalf("state directory %q escapes %q", dir, base)
+	wantBase := canonicalTestPath(t, base)
+	if !within(wantBase, dir) {
+		t.Fatalf("state directory %q escapes %q", dir, wantBase)
 	}
 	for _, d := range []string{base, dir} {
 		info, err := os.Stat(d)
