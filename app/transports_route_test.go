@@ -11,7 +11,6 @@ import (
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
-	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 )
 
@@ -80,7 +79,12 @@ func TestETRouteValidationDependsOnTheSelectedImplementation(t *testing.T) {
 			bundledFactory := newTransportFactory(&factoryLocal{}, nil, nil, nil, nil).
 				withClients(nil, bundled).
 				withInProcessET(inProcess).
-				withImplementations(hosts, fakeImplementationDefaults{settings: domainpreferences.Defaults()})
+				// Pin the bundled client explicitly: this branch asserts the
+				// bundled proxy and two-jump restrictions regardless of what
+				// the release default currently is.
+				withImplementations(hosts, fakeImplementationDefaults{
+					settings: settingsWithImplementation(transportmodel.Bundled),
+				})
 			if _, err := bundledFactory.Open(context.Background(), spec); !errors.Is(err, tc.bundledErr) {
 				t.Fatalf("bundled Open error = %v, want %v", err, tc.bundledErr)
 			}

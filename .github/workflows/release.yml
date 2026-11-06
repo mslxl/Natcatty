@@ -47,6 +47,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -101,6 +103,36 @@ jobs:
           done
           echo "no signing or notarization environment variables are set"
 
+      - name: Pin the release commit to github.sha
+        # There is no caller-supplied commit override. The tag push or the
+        # dispatch ref fixes github.sha, and every build and parity job checks
+        # out and verifies that one commit.
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [ "${actual}" != "${RELEASE_SHA}" ]; then
+            echo "checked-out commit ${actual} is not github.sha ${RELEASE_SHA}" >&2
+            exit 1
+          fi
+          echo "release commit ${RELEASE_SHA}"
+
+  # Ticket 34: call both reusable parity workflows for the release commit.
+  # Reusable workflow calls inherit the caller's GITHUB_RUN_ID, so every cell
+  # report and fuzz receipt is bound to this run, and checkout uses this
+  # caller's github.sha. These jobs take no inputs: neither gate can be pointed
+  # at another commit.
+  mosh-parity:
+    name: mosh parity gate (release commit)
+    needs: validate
+    uses: ./.github/workflows/mosh-parity.yml
+
+  et-parity:
+    name: et parity gate (release commit)
+    needs: validate
+    uses: ./.github/workflows/et-parity.yml
+
   build:
     name: build (${{ matrix.artifact }})
     needs: validate
@@ -131,6 +163,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -414,11 +448,106 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  parity-verify:
+    name: verify release parity evidence
+    needs:
+      - validate
+      - mosh-parity
+      - et-parity
+    # Run even when a gate failed so this job can report which gate failed and
+    # every downstream release job has an explicit failed prerequisite. This
+    # job never uses always() to waive a failure; the first step rejects any
+    # non-success gate result.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require both reusable gates to succeed
+        if: needs.mosh-parity.result != 'success' || needs.et-parity.result != 'success'
+        env:
+          MOSH_RESULT: ${{ needs.mosh-parity.result }}
+          ET_RESULT: ${{ needs.et-parity.result }}
+        run: |
+          set -euo pipefail
+          echo "mosh parity gate: ${MOSH_RESULT}" >&2
+          echo "ET parity gate: ${ET_RESULT}" >&2
+          echo "a required parity gate did not succeed" >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Assert the release commit is github.sha
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [ "${actual}" != "${RELEASE_SHA}" ]; then
+            echo "checked-out commit ${actual} is not github.sha ${RELEASE_SHA}" >&2
+            exit 1
+          fi
+          echo "release commit ${RELEASE_SHA}"
+
+      - name: Download the mosh gate artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mosh-parity-*
+          path: build/mosh-parity
+          merge-multiple: true
+
+      - name: Download the ET gate artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: et-parity-*
+          path: build/et-parity
+          merge-multiple: true
+
+      - name: Require both gate summaries
+        run: |
+          set -euo pipefail
+          for summary in build/mosh-parity/summary.json build/et-parity/summary.json; do
+            if [ ! -s "${summary}" ]; then
+              echo "missing required gate summary ${summary}" >&2
+              exit 1
+            fi
+          done
+          echo "both gate summaries are present"
+
+      # Each verify re-checks every report, behavior, and fuzz receipt against
+      # github.sha and this run's GITHUB_RUN_ID. -require-summary also consumes
+      # the summary produced by the reusable gate workflow, so a missing,
+      # stale, or differently bound summary fails closed.
+      - name: Verify the mosh gate artifacts and summary
+        run: >-
+          go run ./internal/tools/moshparity verify
+          -dir build/mosh-parity
+          -commit '${{ github.sha }}'
+          -require-summary
+
+      - name: Verify the ET gate artifacts and summary
+        run: >-
+          go run ./internal/tools/etparity verify
+          -dir build/et-parity
+          -require-summary
+
   checksums:
     name: aggregate checksums
     needs:
       - validate
       - build
+      - parity-verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -427,6 +556,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
@@ -497,12 +628,15 @@ jobs:
     name: publish GitHub release
     # Only a pushed tag publishes. A workflow_dispatch run is always a dry run,
     # even when it is dispatched on a tag ref, so the event name is part of the
-    # condition and not just the ref.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    # condition and not just the ref. success() is explicit: a failed or
+    # skipped parity gate in needs must block publication, and this job never
+    # uses always() to waive a gate.
+    if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs:
       - validate
       - build
       - checksums
+      - parity-verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The workflow as a whole keeps contents: read; only this job may publish.
@@ -519,6 +653,8 @@ jobs:
       - name: Checkout
         # scripts/release.nu lives in the repository; nothing is rebuilt.
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu

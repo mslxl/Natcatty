@@ -59,7 +59,11 @@ type jsonHost struct {
 	SkipEcdsaHostKey       bool            `json:"skipEcdsaHostKey"`
 	Algorithms             *jsonAlgorithms `json:"algorithms"`
 	DeviceType             string          `json:"deviceType"`
-	HostChain              *struct {
+	// TransportImplementation is the Host's Mosh and ET client override. It
+	// round-trips verbatim, including a value this build does not recognize;
+	// the Session factory remains the fail-closed check.
+	TransportImplementation string `json:"transportImplementation"`
+	HostChain               *struct {
 		HostIDs []string `json:"hostIds"`
 	} `json:"hostChain"`
 }
@@ -232,31 +236,32 @@ func parseJSON(text string) Result {
 			protocol = "ssh"
 		}
 		record := Record{
-			Row:                    row,
-			Source:                 "json",
-			SourceID:               source.ID,
-			Label:                  strings.TrimSpace(source.Label),
-			Hostname:               hostname,
-			Username:               strings.TrimSpace(source.Username),
-			Port:                   source.Port,
-			Protocol:               protocol,
-			Group:                  normalizeGroup(source.Group),
-			Tags:                   append([]string(nil), source.Tags...),
-			Notes:                  source.Notes,
-			Password:               source.Password,
-			Pinned:                 source.Pinned,
-			IdentityID:             strings.TrimSpace(source.IdentityID),
-			KeyID:                  strings.TrimSpace(source.KeyID),
-			AuthMethod:             strings.TrimSpace(source.AuthMethod),
-			UseSSHAgent:            source.UseSSHAgent,
-			RequiresMFA:            source.RequiresMFA,
-			X11Forwarding:          source.X11Forwarding,
-			X11WarningAcknowledged: source.X11WarningAcknowledged,
-			ProxyProfileID:         strings.TrimSpace(source.ProxyProfileID),
-			NetworkProfileID:       strings.TrimSpace(source.NetworkProfileID),
-			LegacyAlgorithms:       source.LegacyAlgorithms,
-			SkipEcdsaHostKey:       source.SkipEcdsaHostKey,
-			DeviceType:             strings.TrimSpace(source.DeviceType),
+			Row:                     row,
+			Source:                  "json",
+			SourceID:                source.ID,
+			Label:                   strings.TrimSpace(source.Label),
+			Hostname:                hostname,
+			Username:                strings.TrimSpace(source.Username),
+			Port:                    source.Port,
+			Protocol:                protocol,
+			Group:                   normalizeGroup(source.Group),
+			Tags:                    append([]string(nil), source.Tags...),
+			Notes:                   source.Notes,
+			Password:                source.Password,
+			Pinned:                  source.Pinned,
+			IdentityID:              strings.TrimSpace(source.IdentityID),
+			KeyID:                   strings.TrimSpace(source.KeyID),
+			AuthMethod:              strings.TrimSpace(source.AuthMethod),
+			UseSSHAgent:             source.UseSSHAgent,
+			RequiresMFA:             source.RequiresMFA,
+			X11Forwarding:           source.X11Forwarding,
+			X11WarningAcknowledged:  source.X11WarningAcknowledged,
+			ProxyProfileID:          strings.TrimSpace(source.ProxyProfileID),
+			NetworkProfileID:        strings.TrimSpace(source.NetworkProfileID),
+			LegacyAlgorithms:        source.LegacyAlgorithms,
+			SkipEcdsaHostKey:        source.SkipEcdsaHostKey,
+			DeviceType:              strings.TrimSpace(source.DeviceType),
+			TransportImplementation: strings.TrimSpace(source.TransportImplementation),
 		}
 		if source.Algorithms != nil {
 			record.Algorithms = &Algorithms{

@@ -111,6 +111,7 @@ func applyEntityDraft(host *domainvault.Host, draft domainvault.Draft) {
 	host.UseSSHAgent = draft.UseSSHAgent
 	host.RequiresMFA = draft.RequiresMFA
 	host.ProxyProfileID = draft.ProxyProfileID
+	host.TransportImplementation = draft.TransportImplementation
 }
 
 type entityGroups struct {

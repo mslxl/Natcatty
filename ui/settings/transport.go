@@ -10,36 +10,68 @@ import (
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
+// transportChoice is one of the three global selections. Following the
+// release default is a distinct state from choosing the same client
+// explicitly, so it cannot be represented by an Implementation value alone.
+type transportChoice struct {
+	followDefault  bool
+	implementation transportmodel.Implementation
+}
+
+var releaseDefaultChoice = transportChoice{followDefault: true}
+
+func chosenTransport(value transportmodel.Implementation) transportChoice {
+	return transportChoice{implementation: value}
+}
+
 // transportArea is the global Mosh and EternalTerminal client choice. The
-// selection is persisted exactly as chosen, including the in-process client
-// whose transport lands in later tickets: the factory fails closed with a
-// typed ErrImplementationUnavailable for it rather than silently falling back
-// to the bundled client. A value saved by a newer build stays in the document
-// untouched and is called out so the user can repair it here.
+// in-process client is a first-class opt-in beta and is selectable both
+// globally and per Host. The bundled client remains the release default and
+// the rollback path until the release process flips transport.ReleasePolicy
+// after both parity gates are green. A value saved by a newer build stays in
+// the document untouched and is called out so the user can repair it here
+// without a silent fallback.
 func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme) {
 	sectionBody(c, t, func() {
 		if state == nil {
 			return
 		}
-		selected := string(state.Settings().Transport.Implementation)
-		prediction := string(state.Settings().Transport.MoshPredictionDisplay)
-		changed := false
+		settings := state.Settings()
+		// "Release default" is a distinct choice from an explicit bundled
+		// choice, even while the two currently resolve to the same client.
+		choice := releaseDefaultChoice
+		if settings.Transport.ImplementationExplicit {
+			choice = chosenTransport(settings.Transport.Implementation)
+		}
+		prediction := string(settings.Transport.MoshPredictionDisplay)
+		implementationChanged := false
+		predictionChanged := false
+
 		ui.Field(c, m.SettingsTransportImplementation(), func() {
 			ui.RadioGroup(c, func() {
-				if ui.Radio(c, &selected, string(transportmodel.Bundled),
-					m.SettingsTransportBundled()).Changed() {
-					changed = true
+				if ui.Radio(c, &choice, releaseDefaultChoice,
+					m.SettingsTransportUseReleaseDefault()).Changed() {
+					implementationChanged = true
 				}
-				// The in-process clients are later tickets, so the label
-				// says they are not available yet. The choice stays
-				// selectable so it can be persisted and rolled out; opening
-				// a Session with it fails closed with a typed error.
-				if ui.Radio(c, &selected, string(transportmodel.InProcess),
+				if ui.Radio(c, &choice, chosenTransport(transportmodel.Bundled),
+					m.SettingsTransportBundled()).Changed() {
+					implementationChanged = true
+				}
+				if ui.Radio(c, &choice, chosenTransport(transportmodel.InProcess),
 					m.SettingsTransportInProcess()).Changed() {
-					changed = true
+					implementationChanged = true
 				}
 			}).Label(m.SettingsTransportImplementation())
 		}).Description(m.SettingsTransportImplementationHint())
+
+		defaultLabel := m.SettingsTransportBundled()
+		if transportmodel.CurrentDefault() == transportmodel.InProcess {
+			defaultLabel = m.SettingsTransportInProcess()
+		}
+		ui.Text(c, m.SettingsTransportEffectiveDefault(defaultLabel)).
+			FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, m.SettingsTransportBetaHint(defaultLabel)).
+			FontSize(12).TextColor(t.TextMuted)
 
 		// The local-echo mode is stock mosh's MOSH_PREDICTION_DISPLAY choice.
 		// Adaptive is stock's default; always and never are the explicit
@@ -48,29 +80,38 @@ func transportArea(c *ui.Context, state *PreferencesState, m locales.Messages, t
 			ui.RadioGroup(c, func() {
 				if ui.Radio(c, &prediction, string(moshmodel.PredictionAdaptive),
 					m.SettingsMoshPredictionAdaptive()).Changed() {
-					changed = true
+					predictionChanged = true
 				}
 				if ui.Radio(c, &prediction, string(moshmodel.PredictionAlways),
 					m.SettingsMoshPredictionAlways()).Changed() {
-					changed = true
+					predictionChanged = true
 				}
 				if ui.Radio(c, &prediction, string(moshmodel.PredictionNever),
 					m.SettingsMoshPredictionNever()).Changed() {
-					changed = true
+					predictionChanged = true
 				}
 			}).Label(m.SettingsMoshPredictionDisplay())
 		}).Description(m.SettingsMoshPredictionHint())
 
-		if changed {
+		if implementationChanged || predictionChanged {
 			state.Update(func(settings *domain.Settings) {
-				settings.Transport.Implementation = transportmodel.Implementation(selected)
-				settings.Transport.MoshPredictionDisplay = moshmodel.PredictionDisplay(prediction)
+				if implementationChanged {
+					if choice.followDefault {
+						settings.Transport.FollowReleaseDefault()
+					} else {
+						settings.Transport.ChooseImplementation(choice.implementation)
+					}
+				}
+				if predictionChanged {
+					settings.Transport.MoshPredictionDisplay = moshmodel.PredictionDisplay(prediction)
+				}
 			})
 			c.Invalidate()
 		}
 
-		value := transportmodel.Implementation(selected)
-		if value != transportmodel.Unspecified && !transportmodel.Known(value) {
+		value := choice.implementation
+		if !choice.followDefault && value != transportmodel.Unspecified &&
+			!transportmodel.Known(value) {
 			ui.Text(c, m.SettingsTransportUnknown()).FontSize(12).TextColor(uitheme.DangerText(t))
 		}
 		groupReset(c, m, t, m.SettingsAreaTransport(), func() bool {

@@ -11676,33 +11676,69 @@ func (msgs Messages) SettingsTransportBundled() string {
 	return Catalog.Format(msgs.locale, "settingsTransportBundled", nil)
 }
 
-// SettingsTransportInProcess says "In-process client (not available yet)"
+// SettingsTransportInProcess says "In-process client (beta)"
 // in the language the app shows.
 func SettingsTransportInProcess() string { return In(i18n.Locale()).SettingsTransportInProcess() }
 
-// SettingsTransportInProcess says "In-process client (not available yet)"
+// SettingsTransportInProcess says "In-process client (beta)"
 // in the language of msgs.
 func (msgs Messages) SettingsTransportInProcess() string {
 	return Catalog.Format(msgs.locale, "settingsTransportInProcess", nil)
 }
 
-// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use this client unless a Host overrides it. The in-process client is not available …"
+// SettingsTransportUseReleaseDefault says "Release default (recommended)"
+// in the language the app shows.
+func SettingsTransportUseReleaseDefault() string {
+	return In(i18n.Locale()).SettingsTransportUseReleaseDefault()
+}
+
+// SettingsTransportUseReleaseDefault says "Release default (recommended)"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportUseReleaseDefault() string {
+	return Catalog.Format(msgs.locale, "settingsTransportUseReleaseDefault", nil)
+}
+
+// SettingsTransportEffectiveDefault says "Release default: {client}"
+// in the language the app shows.
+func SettingsTransportEffectiveDefault(client string) string {
+	return In(i18n.Locale()).SettingsTransportEffectiveDefault(client)
+}
+
+// SettingsTransportEffectiveDefault says "Release default: {client}"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportEffectiveDefault(client string) string {
+	return Catalog.Format(msgs.locale, "settingsTransportEffectiveDefault", map[string]any{"client": client})
+}
+
+// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use the selected client unless a Host overrides it. The in-process client is an opt…"
 // in the language the app shows.
 func SettingsTransportImplementationHint() string {
 	return In(i18n.Locale()).SettingsTransportImplementationHint()
 }
 
-// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use this client unless a Host overrides it. The in-process client is not available …"
+// SettingsTransportImplementationHint says "Mosh and EternalTerminal Sessions use the selected client unless a Host overrides it. The in-process client is an opt…"
 // in the language of msgs.
 func (msgs Messages) SettingsTransportImplementationHint() string {
 	return Catalog.Format(msgs.locale, "settingsTransportImplementationHint", nil)
 }
 
-// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose Bu…"
+// SettingsTransportBetaHint says "The in-process client is an opt-in beta. The release default is currently {client}; Bundled remains selectable per Ho…"
+// in the language the app shows.
+func SettingsTransportBetaHint(client string) string {
+	return In(i18n.Locale()).SettingsTransportBetaHint(client)
+}
+
+// SettingsTransportBetaHint says "The in-process client is an opt-in beta. The release default is currently {client}; Bundled remains selectable per Ho…"
+// in the language of msgs.
+func (msgs Messages) SettingsTransportBetaHint(client string) string {
+	return Catalog.Format(msgs.locale, "settingsTransportBetaHint", map[string]any{"client": client})
+}
+
+// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose th…"
 // in the language the app shows.
 func SettingsTransportUnknown() string { return In(i18n.Locale()).SettingsTransportUnknown() }
 
-// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose Bu…"
+// SettingsTransportUnknown says "The saved transport implementation is not recognized. Mosh and EternalTerminal Sessions will fail until you choose th…"
 // in the language of msgs.
 func (msgs Messages) SettingsTransportUnknown() string {
 	return Catalog.Format(msgs.locale, "settingsTransportUnknown", nil)
@@ -11760,13 +11796,13 @@ func (msgs Messages) SettingsMoshPredictionHint() string {
 	return Catalog.Format(msgs.locale, "settingsMoshPredictionHint", nil)
 }
 
-// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this version. Choose Bundled for the Host or in Settings."
+// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this build. Choose Bundled for the Host or in Settings."
 // in the language the app shows.
 func ConnectionErrorTransportUnavailable() string {
 	return In(i18n.Locale()).ConnectionErrorTransportUnavailable()
 }
 
-// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this version. Choose Bundled for the Host or in Settings."
+// ConnectionErrorTransportUnavailable says "The selected in-process transport is not available in this build. Choose Bundled for the Host or in Settings."
 // in the language of msgs.
 func (msgs Messages) ConnectionErrorTransportUnavailable() string {
 	return Catalog.Format(msgs.locale, "connectionErrorTransportUnavailable", nil)
@@ -11816,23 +11852,23 @@ func (msgs Messages) VaultHostTransportBundled() string {
 	return Catalog.Format(msgs.locale, "vaultHostTransportBundled", nil)
 }
 
-// VaultHostTransportInProcess says "In-process client (not available yet)"
+// VaultHostTransportInProcess says "In-process client (beta)"
 // in the language the app shows.
 func VaultHostTransportInProcess() string { return In(i18n.Locale()).VaultHostTransportInProcess() }
 
-// VaultHostTransportInProcess says "In-process client (not available yet)"
+// VaultHostTransportInProcess says "In-process client (beta)"
 // in the language of msgs.
 func (msgs Messages) VaultHostTransportInProcess() string {
 	return Catalog.Format(msgs.locale, "vaultHostTransportInProcess", nil)
 }
 
-// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is not available in …"
+// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is an opt-in beta; c…"
 // in the language the app shows.
 func VaultHostTransportImplementationHint() string {
 	return In(i18n.Locale()).VaultHostTransportImplementationHint()
 }
 
-// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is not available in …"
+// VaultHostTransportImplementationHint says "Overrides the global Mosh and EternalTerminal client choice for this Host. The in-process client is an opt-in beta; c…"
 // in the language of msgs.
 func (msgs Messages) VaultHostTransportImplementationHint() string {
 	return Catalog.Format(msgs.locale, "vaultHostTransportImplementationHint", nil)

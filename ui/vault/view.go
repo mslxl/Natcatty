@@ -1443,10 +1443,9 @@ func editor(c *ui.Context, s *vaultstate.State, m locales.Messages, t *ui.Theme,
 						ui.Radio(c, &form.TransportImplementation, "", m.VaultHostTransportInherit())
 						ui.Radio(c, &form.TransportImplementation,
 							string(transportmodel.Bundled), m.VaultHostTransportBundled())
-						// The in-process clients are later tickets: the label
-						// says so, but the value stays selectable so it can be
-						// persisted. The factory fails closed with a typed
-						// error until the transport lands.
+						// The in-process client is an opt-in beta and stays
+						// selectable per Host. Bundled is the rollback path
+						// for one full release cycle after the default switch.
 						ui.Radio(c, &form.TransportImplementation,
 							string(transportmodel.InProcess), m.VaultHostTransportInProcess())
 					})

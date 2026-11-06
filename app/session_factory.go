@@ -196,9 +196,10 @@ func (f *transportFactory) openSelected(ctx context.Context, spec appsession.Sta
 }
 
 // selectedImplementation applies a Host's persisted override to the global
-// default. One global choice covers both Mosh and EternalTerminal. A missing
+// choice. One global choice covers both Mosh and EternalTerminal. A missing
 // Host identity (an unsaved restore descriptor, or a test) falls back to the
-// global default.
+// global default, and an absent global value resolves through the release
+// policy in transport.Resolve.
 func (f *transportFactory) selectedImplementation(ctx context.Context, spec appsession.StartSpec) (transportmodel.Implementation, error) {
 	global := transportmodel.Unspecified
 	if f.defaults != nil {
