@@ -64,8 +64,8 @@ func TestHistoryEntriesRoundTripAndDeleteIsIdempotent(t *testing.T) {
 		HostLabel: "web-1", Scope: "host:host-1", Command: "git status",
 		Source: domainhistory.SourceSession, RecordedAt: at(9),
 	}
-	if err := store.SaveHistoryEntry(ctx, entry); err != nil {
-		t.Fatalf("SaveHistoryEntry: %v", err)
+	if err := store.RecordHistoryEntry(ctx, entry, nil); err != nil {
+		t.Fatalf("RecordHistoryEntry: %v", err)
 	}
 	entries, err := store.ListHistoryEntries(ctx)
 	if err != nil {
@@ -74,11 +74,11 @@ func TestHistoryEntriesRoundTripAndDeleteIsIdempotent(t *testing.T) {
 	if len(entries) != 1 || entries[0].Command != "git status" {
 		t.Fatalf("entries = %+v", entries)
 	}
-	if err := store.DeleteHistoryEntry(ctx, "missing"); err != nil {
+	if err := store.SoftDeleteHistoryEntry(ctx, "missing", at(10), nil); err != nil {
 		t.Fatalf("deleting a missing row: %v", err)
 	}
-	if err := store.DeleteHistoryEntry(ctx, "entry-1"); err != nil {
-		t.Fatalf("DeleteHistoryEntry: %v", err)
+	if err := store.SoftDeleteHistoryEntry(ctx, "entry-1", at(10), nil); err != nil {
+		t.Fatalf("SoftDeleteHistoryEntry: %v", err)
 	}
 	entries, _ = store.ListHistoryEntries(ctx)
 	if len(entries) != 0 {
@@ -118,9 +118,9 @@ func TestClearConnectionLogsReportsTheRemovedCount(t *testing.T) {
 			Status: domainhistory.ConnectionConnected, StartedAt: at(index),
 		})
 	}
-	_ = store.SaveHistoryEntry(ctx, domainhistory.Entry{
+	_ = store.RecordHistoryEntry(ctx, domainhistory.Entry{
 		ID: "entry-1", Scope: "local", Command: "ls", RecordedAt: at(1),
-	})
+	}, nil)
 	removed, err := store.ClearConnectionLogs(ctx)
 	if err != nil || removed != 3 {
 		t.Fatalf("ClearConnectionLogs = %d, %v; want 3", removed, err)
@@ -165,8 +165,8 @@ func TestHistoryEntryFullFieldSetRoundTripsAcrossReopen(t *testing.T) {
 		Source:      domainhistory.SourceSession,
 		CaptureTier: domainhistory.CaptureTierHook,
 	}
-	if err := first.SaveHistoryEntry(ctx, entry); err != nil {
-		t.Fatalf("SaveHistoryEntry: %v", err)
+	if err := first.RecordHistoryEntry(ctx, entry, nil); err != nil {
+		t.Fatalf("RecordHistoryEntry: %v", err)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -177,15 +177,17 @@ func TestHistoryEntryFullFieldSetRoundTripsAcrossReopen(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer second.Close()
-	entries, err := second.ListHistoryEntries(ctx)
+	// The row is soft-deleted, so normal listing excludes it; its canonical
+	// data still round-trips through the by-identity read.
+	stored, found, err := second.HistoryEntry(ctx, entry.ID)
 	if err != nil {
-		t.Fatalf("ListHistoryEntries: %v", err)
+		t.Fatalf("HistoryEntry: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(entries))
+	if !found {
+		t.Fatal("entry was lost after reopen")
 	}
-	if !reflect.DeepEqual(entries[0], entry) {
-		t.Fatalf("entry after reopen = %+v, want %+v", entries[0], entry)
+	if !reflect.DeepEqual(stored, entry) {
+		t.Fatalf("entry after reopen = %+v, want %+v", stored, entry)
 	}
 
 	// The projection columns, not just the canonical JSON, must carry the
@@ -316,8 +318,8 @@ func TestHistoryProjectionIndexesServeTheHistoryAndSyncQueries(t *testing.T) {
 		if index%10 == 0 {
 			entry.DeletedAt = at(index % 24).Add(time.Minute)
 		}
-		if err := store.SaveHistoryEntry(ctx, entry); err != nil {
-			t.Fatalf("SaveHistoryEntry: %v", err)
+		if err := store.RecordHistoryEntry(ctx, entry, nil); err != nil {
+			t.Fatalf("RecordHistoryEntry: %v", err)
 		}
 		if _, err := store.db.Execute(ctx, `UPDATE history_entries SET recorded_at = ?
 				WHERE id = ?`, at(index%24).UnixMilli()+int64(index), entry.ID); err != nil {
@@ -390,10 +392,10 @@ func TestClearHistoryReportsTheRemovedCount(t *testing.T) {
 	ctx := context.Background()
 	store := openHistoryStore(t)
 	for index := 0; index < 3; index++ {
-		_ = store.SaveHistoryEntry(ctx, domainhistory.Entry{
+		_ = store.RecordHistoryEntry(ctx, domainhistory.Entry{
 			ID: fmt.Sprintf("entry-%d", index), Scope: "local",
 			Command: "ls", RecordedAt: at(index),
-		})
+		}, nil)
 	}
 	removed, err := store.ClearHistoryEntries(ctx)
 	if err != nil || removed != 3 {

@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -32,9 +33,16 @@ type Store interface {
 	PruneConnectionLogs(context.Context, domainhistory.Retention, time.Time) (int, error)
 
 	ListHistoryEntries(context.Context) ([]domainhistory.Entry, error)
-	SaveHistoryEntry(context.Context, domainhistory.Entry) error
-	DeleteHistoryEntry(context.Context, string) error
+	HistoryEntry(context.Context, string) (domainhistory.Entry, bool, error)
+	// RecordHistoryEntry writes the projection and, when record is not nil,
+	// one create record in the same transaction.
+	RecordHistoryEntry(context.Context, domainhistory.Entry, *domainhistory.Record) error
+	// SoftDeleteHistoryEntry writes the soft-delete state and, when record is
+	// not nil, one delete record in the same transaction.
+	SoftDeleteHistoryEntry(context.Context, string, time.Time, *domainhistory.Record) error
 	ClearHistoryEntries(context.Context) (int, error)
+	// EnsureWriterUUID returns the per-install series host, creating it once.
+	EnsureWriterUUID(context.Context, func() string) (string, error)
 }
 
 // Retention is the configured bound for Connection Logs. Command History is
@@ -67,13 +75,14 @@ func WithClock(fn func() time.Time) Option {
 	}
 }
 
-// WithIDGenerator replaces identity generation for both record families.
-// Tests use it for deterministic ordering.
+// WithIDGenerator replaces identity generation for the connection log, the
+// history entry, and the record log. Tests use it for deterministic ordering.
 func WithIDGenerator(fn func() string) Option {
 	return func(s *Service) {
 		if fn != nil {
 			s.newLogID = fn
 			s.newEntryID = fn
+			s.newHistoryRecordID = fn
 		}
 	}
 }
@@ -82,11 +91,13 @@ func WithIDGenerator(fn func() string) Option {
 // for concurrent use: command recording runs on a Session goroutine while the
 // UI lists.
 type Service struct {
-	store      Store
-	retention  func() Retention
-	now        func() time.Time
-	newLogID   func() string
-	newEntryID func() string
+	store              Store
+	retention          func() Retention
+	now                func() time.Time
+	newLogID           func() string
+	newEntryID         func() string
+	newHistoryRecordID func() string
+	newWriterID        func() string
 
 	mu         sync.Mutex
 	revision   uint64
@@ -98,11 +109,13 @@ type Service struct {
 // record.
 func NewService(store Store, opts ...Option) *Service {
 	service := &Service{
-		store:      store,
-		now:        time.Now,
-		newLogID:   newRecordID,
-		newEntryID: newHistoryID,
-		listeners:  make(map[int]func()),
+		store:              store,
+		now:                time.Now,
+		newLogID:           newRecordID,
+		newEntryID:         newHistoryID,
+		newHistoryRecordID: newHistoryID,
+		newWriterID:        newHistoryID,
+		listeners:          make(map[int]func()),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -180,11 +193,54 @@ func (s *Service) Record(ctx context.Context, entry domainhistory.Entry) error {
 	if !entry.Valid() {
 		return ErrInvalid
 	}
-	if err := s.store.SaveHistoryEntry(ctx, entry); err != nil {
+	record, err := s.createRecord(ctx, entry)
+	if err != nil {
+		return err
+	}
+	if err := s.store.RecordHistoryEntry(ctx, entry, record); err != nil {
 		return err
 	}
 	s.notify()
 	return nil
+}
+
+// createRecord returns the create record that belongs to a newly recorded
+// command, or nil when the row must stay local-only. Imported and synced rows
+// are projections of another writer's history and are never uploaded as
+// creates; a legacy non-UUID identity cannot be represented on the Atuin wire.
+func (s *Service) createRecord(ctx context.Context, entry domainhistory.Entry) (*domainhistory.Record, error) {
+	switch entry.Source {
+	case domainhistory.SourceAtuinImport, domainhistory.SourceAtuinSync:
+		return nil, nil
+	}
+	if !entry.HasUUIDIdentity() {
+		return nil, nil
+	}
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return nil, fmt.Errorf("history: encode create record: %w", err)
+	}
+	return s.newLocalRecord(ctx, entry.ID, domainhistory.RecordKindCreate, entry.RecordedAt, payload)
+}
+
+// newLocalRecord builds one pending record in this install's writer series.
+// The store assigns the series index inside the writing transaction.
+func (s *Service) newLocalRecord(ctx context.Context, historyID, kind string, recordedAt time.Time, payload []byte) (*domainhistory.Record, error) {
+	writer, err := s.store.EnsureWriterUUID(ctx, s.newWriterID)
+	if err != nil {
+		return nil, err
+	}
+	return &domainhistory.Record{
+		ID:         s.newHistoryRecordID(),
+		SeriesHost: writer,
+		Tag:        domainhistory.RecordTagHistory,
+		RecordedAt: recordedAt,
+		Version:    domainhistory.RecordVersion,
+		Kind:       kind,
+		HistoryID:  historyID,
+		Payload:    string(payload),
+		Direction:  domainhistory.RecordDirectionLocal,
+	}, nil
 }
 
 // Load returns the persisted command history newest first. It implements
@@ -221,16 +277,47 @@ func (s *Service) DeleteConnectionLog(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteEntry removes one recorded command.
+// DeleteEntry soft-deletes one recorded command and appends its delete
+// tombstone when the row has a UUID identity. A legacy non-UUID row is deleted
+// locally without a record because it cannot be represented on the Atuin wire.
+// A missing or already-deleted row is a no-op.
 func (s *Service) DeleteEntry(ctx context.Context, id string) error {
 	if s.store == nil {
 		return ErrInvalid
 	}
-	if err := s.store.DeleteHistoryEntry(ctx, id); err != nil {
+	entry, found, err := s.store.HistoryEntry(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found || !entry.DeletedAt.IsZero() {
+		return nil
+	}
+	deletedAt := s.now()
+	record, err := s.deleteRecord(ctx, entry, deletedAt)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SoftDeleteHistoryEntry(ctx, id, deletedAt, record); err != nil {
 		return err
 	}
 	s.notify()
 	return nil
+}
+
+// deleteRecord returns the tombstone for a UUID-identified row. A legacy row
+// has no wire identity, so it gets no record and its delete stays local.
+func (s *Service) deleteRecord(ctx context.Context, entry domainhistory.Entry, deletedAt time.Time) (*domainhistory.Record, error) {
+	if !entry.HasUUIDIdentity() {
+		return nil, nil
+	}
+	payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
+		HistoryID: entry.ID,
+		DeletedAt: deletedAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("history: encode delete record: %w", err)
+	}
+	return s.newLocalRecord(ctx, entry.ID, domainhistory.RecordKindDelete, deletedAt, payload)
 }
 
 // ClearConnectionLogs removes every connection log and reports how many were

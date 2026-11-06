@@ -25,7 +25,16 @@ func boolInt(value bool) int {
 }
 
 func loadDataRows(tx *gorm.DB, model any, order ...string) ([]string, error) {
+	return loadDataRowsWhere(tx, model, "", order...)
+}
+
+// loadDataRowsWhere loads the canonical JSON of the rows matching condition
+// (empty matches every row) in the requested order.
+func loadDataRowsWhere(tx *gorm.DB, model any, condition string, order ...string) ([]string, error) {
 	query := tx.Model(model).Select("data")
+	if condition != "" {
+		query = query.Where(condition)
+	}
 	for _, expression := range order {
 		query = query.Order(expression)
 	}

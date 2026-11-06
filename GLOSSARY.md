@@ -167,6 +167,29 @@ to the user's shell and is distinct from the app's Command History; it is never
 read live as an autocomplete suggestion source.
 _Avoid_: history, command history
 
+**Record Log**:
+The append-only local plaintext log of Atuin records: one `create` record per
+recorded command and one `delete` record per deleted command, grouped into writer
+series. It is not the Vault and is not carried by Vault backups.
+_Avoid_: journal, queue, outbox
+
+**Writer UUID**:
+The per-install UUIDv7 that owns this device's writer series. It is generated
+once, survives restarts, and is reused across account reconnects; it is unrelated
+to a command's Origin.
+_Avoid_: device id, client id, series id
+
+**Writer Series**:
+The ordered records identified by `(writer UUID, tag, index)`. Indexes are
+assigned inside the writing transaction, start at 0 for a new series, and are
+never reused.
+_Avoid_: stream, channel
+
+**Sync Checkpoint**:
+The highest writer-series index this device has applied from another writer and
+the highest index the server has acknowledged for this device's uploads.
+_Avoid_: cursor, offset
+
 **Hibernate**:
 The state of a running Session whose one live terminal view is detached while its
 transport and application state stay alive, so Resume can reattach a view.
