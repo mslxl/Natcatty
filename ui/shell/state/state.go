@@ -939,6 +939,13 @@ func (p hostTransportPlan) newResumeKey() string {
 // original's SSH-only auto-reconnect.
 func hostSessionTransport(host domainvault.Host) hostTransportPlan {
 	switch host.Protocol {
+	case domainvault.ProtocolLocal:
+		// A saved local-shell Host opens a shell on this machine, exactly like
+		// the original's local Hosts. Its label is the Tab's connection label.
+		return hostTransportPlan{
+			kind:       appsession.KindLocal,
+			descriptor: domainworkspace.SessionLocal,
+		}
 	case domainvault.ProtocolTelnet:
 		cfg := domaintelnet.Config{Hostname: host.Hostname, Port: host.Port}.Normalized()
 		return hostTransportPlan{
