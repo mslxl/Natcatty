@@ -34,7 +34,7 @@ type tabRef struct {
 	splitDown    func() error
 	closeFocused func() bool
 	detach       func(model.PaneID) bool
-	rename       func(string) bool
+	rename       func(model.PaneID, string) bool
 	retry        func(model.PaneID) bool
 	// split marks a Tab with more than one Pane: only then does the focused
 	// Pane need an outline to tell it apart.
@@ -58,8 +58,10 @@ func mainTabRef(s *state.State, tabIndex int) tabRef {
 			return s.CloseFocusedPane()
 		},
 		detach: func(paneID model.PaneID) bool { return s.DetachPane(tabIndex, paneID) },
-		rename: func(title string) bool { return s.RenameTab(tabIndex, title) },
-		retry:  func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
+		rename: func(paneID model.PaneID, title string) bool {
+			return s.RenamePane(tabIndex, paneID, title)
+		},
+		retry: func(paneID model.PaneID) bool { return s.RetryPane(id, paneID) },
 	}
 }
 
@@ -69,8 +71,10 @@ func detachedTabRef(s *state.State, tabID model.TabID) tabRef {
 		pane:     func(id model.PaneID) (state.PaneInfo, bool) { return s.DetachedPaneInfoAt(tabID, id) },
 		setRatio: func(id model.SplitID, ratio float32) bool { return s.SetDetachedSplitRatio(tabID, id, ratio) },
 		focus:    func(id model.PaneID) bool { return s.FocusDetachedPaneID(tabID, id) },
-		rename:   func(title string) bool { return s.RenameDetachedTab(tabID, title) },
-		retry:    func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
+		rename: func(paneID model.PaneID, title string) bool {
+			return s.RenameDetachedPane(tabID, paneID, title)
+		},
+		retry: func(paneID model.PaneID) bool { return s.RetryPane(tabID, paneID) },
 	}
 }
 
@@ -331,24 +335,26 @@ func tabTitle(m locales.Messages, info state.TabInfo) string {
 	if number == 0 {
 		number = info.Number
 	}
-	return composeTabTitle(m, info.Label, number, info.Copy)
+	title := info.Title
+	if title == "" {
+		title = info.Label
+	}
+	return composeTabTitle(m, title, number)
 }
 
 // TabTitle names a Tab summary the way the tab strip names the Tab. The Quick
 // Switcher reuses it, so a Session is found by the title the user sees.
 func TabTitle(m locales.Messages, info state.TabSummary) string {
-	return composeTabTitle(m, info.Label, info.Number, info.Copy)
+	return composeTabTitle(m, info.Label, info.Number)
 }
 
-func composeTabTitle(m locales.Messages, label string, number, copy int) string {
-	title := label
-	if title == "" {
-		title = m.LocalSessionTab(number)
+// composeTabTitle adds the numbered fallback for a Tab with no resolved title.
+// A duplicate keeps its source's title, as the original does.
+func composeTabTitle(m locales.Messages, label string, number int) string {
+	if label == "" {
+		return m.LocalSessionTab(number)
 	}
-	if copy > 0 {
-		title = m.TabCopyTitle(title, copy)
-	}
-	return title
+	return label
 }
 
 // paneTree renders a Tab's split tree with nested binary MyGo splits. A
@@ -396,8 +402,14 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 	if aware, ok := info.Surface.(interface {
 		SetPaneActions(sessionui.PaneActions)
 	}); ok {
+		// Rename starts from the connection label, as the original's does, not
+		// from a live OSC title that the user did not choose.
+		renameStart := info.Label
+		if renameStart == "" {
+			renameStart = title
+		}
 		actions := sessionui.PaneActions{
-			Title:     title,
+			Title:     renameStart,
 			MenuLabel: m.SessionMenuFor(paneNumber),
 		}
 		if ref.managesPanes {
@@ -422,7 +434,7 @@ func paneView(c *ui.Context, s *state.State, m locales.Messages, t *ui.Theme, re
 				c.Invalidate()
 			}
 			actions.Rename = func(newTitle string) {
-				if ref.rename != nil && ref.rename(newTitle) {
+				if ref.rename != nil && ref.rename(info.ID, newTitle) {
 					c.Invalidate()
 				}
 			}
@@ -627,9 +639,13 @@ func statusPill(c *ui.Context, tone ui.Color, text string) {
 	})
 }
 
-// paneTitle is the Pane's display name: the Session/Host label, or the
-// numbered local-session name when the Session has none.
+// paneTitle is the Pane's display name: the Session's resolved title (which
+// may be the shell-reported OSC title), or the numbered local-session name
+// when the Session has neither.
 func paneTitle(m locales.Messages, info state.PaneInfo) string {
+	if info.Title != "" {
+		return info.Title
+	}
 	if info.Label != "" {
 		return info.Label
 	}

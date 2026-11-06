@@ -110,8 +110,15 @@ type windowGraph struct {
 // detach actions drive one window manager.
 func newWindowGraph(t *testing.T, gate *uiapplock.Gate) *windowGraph {
 	t.Helper()
+	return newWindowGraphWithOutput(t, gate, nil)
+}
+
+// newWindowGraphWithOutput is newWindowGraph with a scripted terminal output
+// channel, so a test can deliver an OSC title through the Session.
+func newWindowGraphWithOutput(t *testing.T, gate *uiapplock.Gate, output chan []byte) *windowGraph {
+	t.Helper()
 	service := appsession.NewService(&wiringFactory{
-		transport: &wiringTransport{closed: make(chan struct{})},
+		transport: &wiringTransport{closed: make(chan struct{}), output: output},
 	})
 	t.Cleanup(service.CloseAll)
 	graph := &windowGraph{
@@ -518,6 +525,51 @@ func TestCloseIntentPromptsNameTheSessionCount(t *testing.T) {
 
 // TestDetachedAndMainCloseIntentCountOnlyTheirOwnSessions keeps a window from
 // warning about Sessions it does not own.
+// TestDetachedWindowTitleFollowsTheResolvedTabTitle proves a detached window's
+// OS title keeps up with the title its header draws. The shell reports OSC 0/2
+// titles after the window has opened, so the title at creation is not enough.
+func TestDetachedWindowTitleFollowsTheResolvedTabTitle(t *testing.T) {
+	output := make(chan []byte, 8)
+	graph := newWindowGraphWithOutput(t, nil, output)
+	graph.manager.OpenMain()
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatal(err)
+	}
+	waitForSurface(t, graph.state, 0)
+	if !graph.state.DetachTab(0) {
+		t.Fatal("DetachTab returned false")
+	}
+	detachedID := graph.state.DetachedTabIDs()[0]
+	waitForDetachedSurface(t, graph.state, detachedID)
+	window, ok := graph.manager.detached[detachedID].(*fakeWindow)
+	if !ok || window == nil {
+		t.Fatal("the detached Tab opened no window")
+	}
+	if window.title != "Local Terminal" {
+		t.Fatalf("detached window title = %q, want the initial label", window.title)
+	}
+
+	output <- []byte("\x1b]0;claude: refactor auth\x07")
+	waitFor(t, "the agent title", func() bool {
+		info, ok := graph.state.DetachedTabInfo(detachedID)
+		return ok && info.Title == "claude: refactor auth"
+	})
+	render(window)
+	if window.title != "claude: refactor auth" {
+		t.Fatalf("detached window title = %q after the OSC title", window.title)
+	}
+
+	output <- []byte("\x1b]0;claude: running tests\x07")
+	waitFor(t, "the updated agent title", func() bool {
+		info, ok := graph.state.DetachedTabInfo(detachedID)
+		return ok && info.Title == "claude: running tests"
+	})
+	render(window)
+	if window.title != "claude: running tests" {
+		t.Fatalf("detached window title = %q after the second OSC title", window.title)
+	}
+}
+
 func TestDetachedAndMainCloseIntentCountOnlyTheirOwnSessions(t *testing.T) {
 	graph := newWindowGraph(t, nil)
 	main := graph.manager.OpenMain()

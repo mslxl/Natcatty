@@ -2,7 +2,7 @@ package terminal
 
 import "testing"
 
-func TestDefaultsMatchTheOriginal(t *testing.T) {
+func TestDefaults(t *testing.T) {
 	settings := Defaults()
 	if settings.LoggingEnabled || settings.LogDirectory != "" ||
 		settings.LogFormat != LogFormatText || settings.LogTimestamps {
@@ -14,6 +14,23 @@ func TestDefaultsMatchTheOriginal(t *testing.T) {
 	if settings.OSCNotifications != NotificationAlways {
 		t.Fatalf("notification default = %q, want %q",
 			settings.OSCNotifications, NotificationAlways)
+	}
+	if settings.DynamicTabTitleMode != DynamicTabTitleAll {
+		t.Fatalf("dynamic tab title default = %q, want %q",
+			settings.DynamicTabTitleMode, DynamicTabTitleAll)
+	}
+}
+
+func TestNormalizeDynamicTabTitleMode(t *testing.T) {
+	if got := NormalizeDynamicTabTitleMode("bogus"); got != DynamicTabTitleAll {
+		t.Fatalf("unknown mode = %q, want %q", got, DynamicTabTitleAll)
+	}
+	for _, mode := range []DynamicTabTitleMode{
+		DynamicTabTitleOff, DynamicTabTitleAgents, DynamicTabTitleAll,
+	} {
+		if got := NormalizeDynamicTabTitleMode(mode); got != mode {
+			t.Errorf("known mode %q normalized to %q", mode, got)
+		}
 	}
 }
 

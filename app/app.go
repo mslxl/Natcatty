@@ -1019,6 +1019,21 @@ func run(afterReady func(hostWindow)) error {
 		// frame that shows the new tab strip or Vault placeholder. Every
 		// window redraws so a lock or unlock propagates.
 		state.WithRedrawRequest(invalidate),
+		// Tab titles follow the shell-reported OSC 0/2 title according to the
+		// live setting, and a Host rename reaches its already-open Tabs.
+		state.WithDynamicTabTitleMode(func() domainterminal.DynamicTabTitleMode {
+			return terminalService.Settings().DynamicTabTitleMode
+		}),
+		state.WithHostLabel(func(id model.HostID) (string, bool) {
+			if vaultState == nil {
+				return "", false
+			}
+			host, ok := vaultState.EffectiveHost(id)
+			if !ok {
+				return "", false
+			}
+			return host.Label, true
+		}),
 		state.WithSessions(sessions, func(s *appsession.Session) (state.Surface, error) {
 			options := []sessionui.Option{
 				sessionui.WithLogDefaults(func() appsession.LogOptions {
