@@ -103,7 +103,8 @@ user's handler.
 Session mode uses the current OS user as the SSH account. It creates two Hosts
 in the temporary profile (`127.0.0.1`, the configured SSH port, the current
 user, the lab secret) with `TransportImplementation=in_process` explicitly,
-so the per-Host choice wins even while the release default is still `bundled`.
+so the per-Host choice wins regardless of the release default the build
+ships with.
 It dials the lab sshd with `x/crypto/ssh`, captures the host key before
 authenticating, inserts a `domainconn.KnownHost` through the normal database
 `UpsertKnownHost` path, then opens each Host through the shell's
