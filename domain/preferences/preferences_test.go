@@ -7,7 +7,8 @@ func TestDefaultsMatchTheOriginal(t *testing.T) {
 	if got.Appearance.ThemeMode != ThemeSystem || got.Appearance.WindowOpacity != 1 ||
 		got.Appearance.TerminalFontSize != 13 || got.Appearance.TerminalFontFamily != DefaultTerminalFont ||
 		got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
-		got.Appearance.AppIcon != "original" || got.Appearance.AccentMode != AccentTheme {
+		got.Appearance.AppIcon != "original" || got.Appearance.AccentMode != AccentTheme ||
+		got.Appearance.TerminalCursorStyle != CursorBlock || got.Appearance.TerminalCursorSteady {
 		t.Errorf("appearance defaults = %+v", got.Appearance)
 	}
 	if !got.Layout.ShowHostTreeSidebar || !got.Layout.ShowSFTPTab || !got.Layout.ShowRecentHosts ||
@@ -39,14 +40,15 @@ func TestSessionRestoreIsOptIn(t *testing.T) {
 func TestNormalizeClampsAndValidates(t *testing.T) {
 	settings := Settings{
 		Appearance: Appearance{
-			ThemeMode:          "neon",
-			LightTheme:         "midnight",
-			DarkTheme:          "snow",
-			AccentMode:         "neon",
-			AppIcon:            "neon",
-			WindowOpacity:      2,
-			TerminalFontSize:   100,
-			TerminalFontFamily: "",
+			ThemeMode:           "neon",
+			LightTheme:          "midnight",
+			DarkTheme:           "snow",
+			AccentMode:          "neon",
+			AppIcon:             "neon",
+			WindowOpacity:       2,
+			TerminalFontSize:    100,
+			TerminalFontFamily:  "",
+			TerminalCursorStyle: "neon",
 		},
 		Layout: Layout{
 			TabBarPosition: "middle",
@@ -65,7 +67,8 @@ func TestNormalizeClampsAndValidates(t *testing.T) {
 		t.Errorf("appearance values = %+v", got.Appearance)
 	}
 	if got.Appearance.LightTheme != "snow" || got.Appearance.DarkTheme != "midnight" ||
-		got.Appearance.AppIcon != "original" {
+		got.Appearance.AppIcon != "original" ||
+		got.Appearance.TerminalCursorStyle != DefaultCursorStyle {
 		t.Errorf("appearance theme enums = %+v", got.Appearance)
 	}
 	if got.Layout.TabBarPosition != TabBarTop || got.Layout.StartupLanding != StartupVault ||
@@ -120,6 +123,28 @@ func TestResetFieldRestoresOnlyThatField(t *testing.T) {
 	}
 }
 
+func TestCursorFieldsResetIndependently(t *testing.T) {
+	settings := Defaults()
+	settings.Appearance.TerminalCursorStyle = CursorBar
+	settings.Appearance.TerminalCursorSteady = true
+
+	reset := ResetField(settings, FieldTerminalCursorBlink)
+	if reset.Appearance.TerminalCursorSteady {
+		t.Error("the blinking default was not restored")
+	}
+	if reset.Appearance.TerminalCursorStyle != CursorBar {
+		t.Errorf("cursor style = %q, want it left alone", reset.Appearance.TerminalCursorStyle)
+	}
+
+	reset = ResetField(reset, FieldTerminalCursorStyle)
+	if reset.Appearance.TerminalCursorStyle != DefaultCursorStyle {
+		t.Errorf("cursor style = %q, want %q", reset.Appearance.TerminalCursorStyle, DefaultCursorStyle)
+	}
+	if reset.Appearance.TerminalCursorSteady {
+		t.Error("resetting the style touched the blink setting")
+	}
+}
+
 func TestEveryFieldBelongsToAGroup(t *testing.T) {
 	seen := make(map[Field]bool)
 	for _, group := range Groups() {
@@ -148,8 +173,8 @@ func TestEveryFieldBelongsToAGroup(t *testing.T) {
 			t.Errorf("field %q has unknown group %q", field, group)
 		}
 	}
-	if len(seen) != 40 {
-		t.Errorf("fields = %d, want 40", len(seen))
+	if len(seen) != 42 {
+		t.Errorf("fields = %d, want 42", len(seen))
 	}
 }
 

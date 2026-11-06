@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
+	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	"github.com/mslxl/natcatty/ui/locales"
 	uitheme "github.com/mslxl/natcatty/ui/theme"
@@ -62,6 +64,10 @@ type Options struct {
 	// Font reads the live terminal font. The app applies a Settings change to
 	// open terminals through SetTerminalFont; this is what a new terminal uses.
 	Font func() terminal.Font
+	// Cursor reads the live terminal cursor shape and whether it blinks. The
+	// app applies a Settings change to open terminals through
+	// SetTerminalCursor; a new terminal reads it here.
+	Cursor func() (domainpreferences.CursorStyle, bool)
 	// Theme reads the live terminal color scheme. The app applies a Settings
 	// change to open terminals through SetTerminalTheme; a new terminal reads
 	// it here.
@@ -191,6 +197,12 @@ func WithAutocompleteDelay(fn func() int) Option {
 // WithTerminalFont supplies the live terminal font a new terminal uses.
 func WithTerminalFont(fn func() terminal.Font) Option {
 	return func(options *Options) { options.Font = fn }
+}
+
+// WithTerminalCursor supplies the live cursor shape and blink preference a new
+// terminal uses.
+func WithTerminalCursor(fn func() (domainpreferences.CursorStyle, bool)) Option {
+	return func(options *Options) { options.Cursor = fn }
 }
 
 // WithTerminalTheme supplies the live terminal color scheme a new terminal
@@ -336,11 +348,14 @@ func (s *Surface) attach(conn io.ReadWriteCloser) error {
 	// the Session then applies the server's authoritative size through
 	// SetScreenSizeSink before feeding the bytes encoded for it.
 	remoteScreen := s.session.ScreenSizeFromRemote()
+	cursor, blink := s.terminalCursor()
 	options := terminal.Options{
 		Conn:             conn,
 		Font:             s.terminalFont(),
 		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
+		Cursor:           cursor,
+		NoBlink:          !blink,
 		ResizeByConn:     remoteScreen,
 		NoClipboardWrite: false,
 		ClipboardRead:    terminal.ClipboardAsk,
@@ -387,6 +402,39 @@ func (s *Surface) terminalFont() terminal.Font {
 	return s.options.Font()
 }
 
+// terminalCursor maps the persisted cursor preference to MyGo's vocabulary.
+// A missing reader keeps the original's blinking block cursor.
+func (s *Surface) terminalCursor() (terminal.CursorStyle, bool) {
+	if s.options.Cursor == nil {
+		return terminal.CursorBlock, true
+	}
+	style, blink := s.options.Cursor()
+	switch style {
+	case domainpreferences.CursorBar:
+		return terminal.CursorBar, blink
+	case domainpreferences.CursorUnderline:
+		return terminal.CursorUnderline, blink
+	default:
+		return terminal.CursorBlock, blink
+	}
+}
+
+// cursorSequence is the DECSCUSR sequence for a cursor shape and blink
+// preference. Odd shapes blink and even ones are steady.
+func cursorSequence(style domainpreferences.CursorStyle, blink bool) string {
+	shape := 1
+	switch style {
+	case domainpreferences.CursorBar:
+		shape = 5
+	case domainpreferences.CursorUnderline:
+		shape = 3
+	}
+	if !blink {
+		shape++
+	}
+	return "\x1b[" + strconv.Itoa(shape) + " q"
+}
+
 func (s *Surface) terminalTheme() *terminal.Theme {
 	if s.options.Theme == nil {
 		return nil
@@ -414,6 +462,21 @@ func (s *Surface) SetTerminalFont(family string, size float32) {
 	}
 	if s.observer != nil {
 		s.observer.SetFont(font)
+	}
+}
+
+// SetTerminalCursor applies a cursor shape and blink change to a live terminal
+// without recreating the Session. MyGo reads the cursor options only when a
+// terminal is built, so the running terminal receives the DECSCUSR a program
+// would send. A program that sets its own cursor later still wins, as it does
+// in MyGo's default-cursor model.
+func (s *Surface) SetTerminalCursor(style domainpreferences.CursorStyle, blink bool) {
+	sequence := []byte(cursorSequence(style, blink))
+	if s.terminal != nil {
+		s.terminal.Feed(sequence)
+	}
+	if s.observer != nil {
+		s.observer.Feed(sequence)
 	}
 }
 
@@ -646,7 +709,13 @@ func (s *Surface) terminalView(c *ui.Context) {
 	// inserted row above the terminal would move the keyboard focus to the new
 	// row and the user's next keystroke would go nowhere. The key carries the
 	// Session's identity so two Tabs never reuse one terminal node's state.
-	termView := terminal.View(c, s.terminal).Grow(1).Key(s.terminalKey)
+	//
+	// The key must be set on the build context, before terminal.View reads the
+	// focus state. Element.Key rekeys only after the terminal has built, so
+	// the terminal would build against the unkeyed node every frame and never
+	// see the focus it was given: its cursor would draw hollow and never blink,
+	// even though input reached the keyed element.
+	termView := terminal.View(c.Key(s.terminalKey), s.terminal).Grow(1)
 	// AutoFocus fires only in the frame the terminal node appears: a new Tab,
 	// a Tab shown again after a switch, and Resume after Hibernate. A Pane
 	// that gains focus while its terminal is already shown needs the one-shot
@@ -905,11 +974,14 @@ func (s *Surface) OpenObserver() error {
 	if err != nil {
 		return err
 	}
+	cursor, blink := s.terminalCursor()
 	term, err := terminal.New(terminal.Options{
 		Conn:             observation,
 		Font:             s.terminalFont(),
 		Theme:            s.terminalTheme(),
 		Keybinds:         s.terminalKeybinds(),
+		Cursor:           cursor,
+		NoBlink:          !blink,
 		NoClipboardWrite: true,
 		ClipboardRead:    terminal.ClipboardDeny,
 	})

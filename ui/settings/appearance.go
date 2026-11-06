@@ -80,6 +80,40 @@ func appearanceArea(c *ui.Context, state *PreferencesState, themes *ThemesState,
 			}
 		})
 
+		cursorLabels := []string{
+			m.SettingsTerminalCursorBlock(),
+			m.SettingsTerminalCursorBar(),
+			m.SettingsTerminalCursorUnderline(),
+		}
+		cursorStyles := []domain.CursorStyle{
+			domain.CursorBlock,
+			domain.CursorBar,
+			domain.CursorUnderline,
+		}
+		cursorLabel := cursorLabels[0]
+		for index, style := range cursorStyles {
+			if style == settings.Appearance.TerminalCursorStyle {
+				cursorLabel = cursorLabels[index]
+				break
+			}
+		}
+		fieldRow(c, state, m, t, domain.FieldTerminalCursorStyle, m.SettingsTerminalCursorStyle(), func() {
+			if ui.Select(c, &cursorLabel, cursorLabels).Width(140).Changed() {
+				state.Update(func(s *domain.Settings) {
+					s.Appearance.TerminalCursorStyle = cursorStyles[indexOf(cursorLabels, cursorLabel)]
+				})
+				c.Invalidate()
+			}
+		})
+
+		blink := !settings.Appearance.TerminalCursorSteady
+		fieldRow(c, state, m, t, domain.FieldTerminalCursorBlink, m.SettingsTerminalCursorBlink(), func() {
+			if ui.Checkbox(c, &blink, "").Changed() {
+				state.Update(func(s *domain.Settings) { s.Appearance.TerminalCursorSteady = !blink })
+				c.Invalidate()
+			}
+		})
+
 		groupReset(c, m, t, m.SettingsAppearanceTitle(), func() bool {
 			return state.ResetGroup(domain.GroupAppearance)
 		}, true)
