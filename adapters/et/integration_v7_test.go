@@ -194,7 +194,7 @@ func readETUntilAfter(t *testing.T, conn *etcp.Conn, first, then string, timeout
 // the production notice channel that another client took its session.
 func TestInProcessAttachDisplacesFirstClientAgainstStock711(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0] // etserver 7.1.1
+	server := labServerNamed(t, "7.1.1")
 	manager := labManager(t, server.password)
 	spec := labSpec(t, server)
 	lease := acquireLabLease(t, manager, spec)
@@ -254,7 +254,7 @@ func TestInProcessAttachDisplacesFirstClientAgainstStock711(t *testing.T) {
 // stock et, while the ordinary legacy session still works.
 func TestInProcessLegacyReattachFailsLikeStock6210(t *testing.T) {
 	requireLab(t)
-	server := labServers()[1] // etserver 6.2.10
+	server := labServerNamed(t, "6.2.10")
 	manager := labManager(t, server.password)
 	spec := labSpec(t, server)
 	lease := acquireLabLease(t, manager, spec)
@@ -293,7 +293,7 @@ func TestInProcessLegacyReattachFailsLikeStock6210(t *testing.T) {
 // session, which the server log shows as repeated retry admissions.
 func TestRetryLaterDrivesBackoffAgainstStock711(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0]
+	server := labServerNamed(t, "7.1.1")
 	manager := labManager(t, server.password)
 	spec := labSpec(t, server)
 	lease := acquireLabLease(t, manager, spec)
@@ -544,7 +544,7 @@ func (f *labSessionFactory) Open(context.Context, appsession.StartSpec) (appsess
 // the new owner.
 func TestInProcessOfflineVictimIsDisplacedAgainstStock711(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0] // etserver 7.1.1
+	server := labServerNamed(t, "7.1.1")
 	manager := labManager(t, server.password)
 	spec := labSpec(t, server)
 

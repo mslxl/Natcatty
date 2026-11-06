@@ -1,0 +1,95 @@
+# Stock-etserver parity matrix. Each service is one matrix cell: a pinned
+# distribution image, a pinned stock EternalTerminal commit built inside that
+# distribution, an SSH endpoint on a deterministic host port, and one
+# etserver behind it. The NATCATTY_ET_LAB gate drives these cells; see
+# README.md.
+#
+# Do not add a volume or a bind mount: cells are disposable and must not see
+# Natcatty code. Do not reuse a host port between cells: every cell publishes
+# exactly one port and the Go harness asserts the mapping.
+#
+# Every BASE must carry a full sha256 digest, not a tag or a prefix. The gate
+# pins the same complete digest per platform in
+# internal/tools/etparity/matrix.go and its tests compare the whole digest.
+
+name: natcatty-et-parity
+
+x-et-711: &et-711
+  ET_REF: et-v7.1.1
+  ET_COMMIT: a8318ca4598756ca3c5f4711cce12a65faeff57d
+  ET_VERSION: "7.1.1"
+
+x-et-6210: &et-6210
+  ET_REF: et-v6.2.10
+  ET_COMMIT: f9a584ac06b2f1730b5bdf0a27150f28478368fb
+  ET_VERSION: "6.2.10"
+
+services:
+  debian12-et711:
+    build:
+      context: .
+      args:
+        BASE: "debian:12-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+        <<: *et-711
+    ports: ["2322:22"]
+
+  debian12-et6210:
+    build:
+      context: .
+      args:
+        BASE: "debian:12-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3"
+        <<: *et-6210
+    ports: ["2323:22"]
+
+  ubuntu2404-et711:
+    build:
+      context: .
+      args:
+        BASE: "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
+        <<: *et-711
+    ports: ["2324:22"]
+
+  ubuntu2404-et6210:
+    build:
+      context: .
+      args:
+        BASE: "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
+        <<: *et-6210
+    ports: ["2325:22"]
+
+  fedora41-et711:
+    build:
+      context: .
+      args:
+        BASE: "fedora:41@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d"
+        <<: *et-711
+    ports: ["2326:22"]
+
+  fedora41-et6210:
+    build:
+      context: .
+      args:
+        BASE: "fedora:41@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d"
+        <<: *et-6210
+    ports: ["2327:22"]
+
+  arch-et711:
+    # Arch Linux publishes amd64 images only. The explicit platform also runs
+    # on arm64 workstations through Docker's emulation; CI is amd64, so the
+    # matrix is native there.
+    platform: linux/amd64
+    build:
+      context: .
+      args:
+        BASE: "archlinux:base-devel@sha256:767de6eaa40dcfeda5263a48737ea03a782caabdf3a403b6e6a203c7fd333681"
+        <<: *et-711
+    ports: ["2328:22"]
+
+  arch-et6210:
+    platform: linux/amd64
+    build:
+      context: .
+      args:
+        BASE: "archlinux:base-devel@sha256:767de6eaa40dcfeda5263a48737ea03a782caabdf3a403b6e6a203c7fd333681"
+        <<: *et-6210
+    ports: ["2329:22"]
