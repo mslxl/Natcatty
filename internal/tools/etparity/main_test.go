@@ -210,6 +210,26 @@ func greenSuites(cell Cell) []SuiteResult {
 	return []SuiteResult{makeSuite(suiteLab, labTests), makeSuite(suiteUnit, unitTests)}
 }
 
+// A failing suite keeps the tail of its captured output: go test prints the
+// diagnosis last, after JSON progress lines that can exceed the capture limit
+// on their own, so a head-only capture would lose it.
+func TestSuiteOutputKeepsTheFailureTail(t *testing.T) {
+	const limit = 64
+	combined := strings.Repeat("progress line\n", 20) +
+		`{"Action":"fail","Package":"p"}` + "\npanic: test timed out\n"
+	failed := suiteOutput(combined, true, limit)
+	if !strings.HasSuffix(failed, "panic: test timed out\n") {
+		t.Fatalf("failing suite output does not keep the tail: %q", failed)
+	}
+	if !strings.Contains(failed, "... truncated ...") {
+		t.Fatalf("failing suite output does not mark the dropped head: %q", failed)
+	}
+	passed := suiteOutput(combined, false, limit)
+	if !strings.HasPrefix(passed, "progress line\n") {
+		t.Fatalf("passing suite output does not keep the head: %q", passed)
+	}
+}
+
 func TestEvaluateCellIsGreenForFullSyntheticResults(t *testing.T) {
 	for _, cell := range Matrix {
 		behaviors := evaluateCell(cell, greenSuites(cell))
