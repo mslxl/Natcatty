@@ -1,0 +1,273 @@
+name: et-parity
+
+on:
+  # Reusable from the release workflow (ticket 34). Existing triggers stay
+  # intact: pull requests, main pushes, and manual runs still run the matrix.
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: et-parity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The gate treats an empty report directory or a skipped required test as a
+  # failure. Nothing in this workflow may turn a failed cell into success.
+  ET_PARITY_OUT: build/et-parity
+
+jobs:
+  linux-cells:
+    name: et cell ${{ matrix.cell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cell:
+          - debian-12/7.1.1
+          - debian-12/6.2.10
+          - ubuntu-24.04/7.1.1
+          - ubuntu-24.04/6.2.10
+          - fedora-41/7.1.1
+          - fedora-41/6.2.10
+          - arch-linux/7.1.1
+          - arch-linux/6.2.10
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run parity cell
+        run: go run ./internal/tools/etparity run -cell '${{ matrix.cell }}' -out "${ET_PARITY_OUT}" -verbose
+
+      - name: Upload cell report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: et-parity-${{ strategy.job-index }}
+          path: ${{ env.ET_PARITY_OUT }}
+          if-no-files-found: warn
+
+  macos-native:
+    name: et cell ${{ matrix.cell }} (native)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: macos/7.1.1
+            ref: et-v7.1.1
+            commit: a8318ca4598756ca3c5f4711cce12a65faeff57d
+          - cell: macos/6.2.10
+            ref: et-v6.2.10
+            commit: f9a584ac06b2f1730b5bdf0a27150f28478368fb
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      ET_REF: ${{ matrix.ref }}
+      ET_COMMIT: ${{ matrix.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install stock ET build dependencies
+        run: |
+          # tmux drives the stock 6.2.10 client oracle: its -u option is
+          # declared without a cxxopts value type and aborts, so the oracle
+          # uses the supported user@host spelling in an interactive session.
+          brew install cmake gflags protobuf libsodium abseil openssl@3 tmux
+
+      - name: Build stock etserver and et from the pinned source
+        run: |
+          set -euo pipefail
+          # external_imported/ vendors the dependencies used with
+          # DISABLE_VCPKG; the external/ submodule links are not needed.
+          git clone --depth 1 --branch "${ET_REF}" \
+            https://github.com/MisterTea/EternalTerminal.git /tmp/et-src
+          test "$(git -C /tmp/et-src rev-parse HEAD)" = "${ET_COMMIT}"
+          prefix_path="$(brew --prefix openssl@3):$(brew --prefix protobuf):$(brew --prefix libsodium):$(brew --prefix abseil)"
+          cmake -S /tmp/et-src -B /tmp/et-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDISABLE_VCPKG=ON \
+            -DBUILD_TESTING=OFF \
+            -DDISABLE_SENTRY=ON \
+            -DDISABLE_TELEMETRY=ON \
+            -DCMAKE_PREFIX_PATH="${prefix_path}"
+          cmake --build /tmp/et-build --target etserver et etterminal -j "$(sysctl -n hw.ncpu)"
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 /tmp/et-build/etserver /tmp/et-build/et /tmp/et-build/etterminal /usr/local/bin/
+
+      - name: Provision the native lab
+        run: |
+          chmod +x adapters/et/lab/macos-provision.sh
+          adapters/et/lab/macos-provision.sh "$NATCATTY_ET_LAB_PASSWORD"
+          nohup sudo /usr/local/bin/etserver --port 2022 --logtostdout -v 1 \
+            >/tmp/etserver.log 2>&1 &
+          # Poll real listening sockets with a hard deadline; the gate also
+          # verifies the etserver version and that SSH is reachable.
+          for _ in $(seq 1 120); do
+            if nc -z 127.0.0.1 22 && nc -z 127.0.0.1 2022; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "native lab did not listen on 22 and 2022" >&2
+          sudo cat /tmp/etserver.log >&2 || true
+          exit 1
+        env:
+          NATCATTY_ET_LAB_PASSWORD: testpass
+
+      - name: Run parity cell
+        run: go run ./internal/tools/etparity run -cell '${{ matrix.cell }}' -lab-addr 127.0.0.1:22 -out "${ET_PARITY_OUT}" -verbose
+
+      - name: Upload cell report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: et-parity-macos-${{ strategy.job-index }}
+          path: ${{ env.ET_PARITY_OUT }}
+          if-no-files-found: warn
+
+  fuzz:
+    name: et protocol fuzz (bounded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Four required targets: framing, secretbox, packet decoding, and the
+      # replay window. Each step runs exactly one target through the gate's
+      # own `fuzz` subcommand, which requires the target to be in the
+      # compiled-in requiredFuzzTargets table and in test source, exact-matches
+      # the `go test -list` line, then runs the bounded fuzz command and
+      # atomically writes fuzz-<Name>.json.
+      #
+      # The receipt, not the workflow text, is the evidence. verify requires
+      # the exact four receipts, so removing, commenting out, or skipping any
+      # step leaves a missing receipt and fails the gate closed. That is why
+      # there is no YAML scanner here to work around: the artifact is the
+      # contract. Receipts are unsigned JSON like the cell reports; the
+      # workflow/artifact boundary is the real control.
+      - name: Fuzz framing
+        run: go run ./internal/tools/etparity fuzz -target './adapters/et/internal/etgo/wire:FuzzReadFrame' -out "${ET_PARITY_OUT}" -fuzztime 30s
+
+      - name: Fuzz secretbox
+        run: go run ./internal/tools/etparity fuzz -target './adapters/et/internal/etgo/seal:FuzzOpen' -out "${ET_PARITY_OUT}" -fuzztime 30s
+
+      - name: Fuzz packet decoding
+        run: go run ./internal/tools/etparity fuzz -target './adapters/et/internal/etgo/wire:FuzzParsePacket' -out "${ET_PARITY_OUT}" -fuzztime 30s
+
+      - name: Fuzz replay handling
+        run: go run ./internal/tools/etparity fuzz -target './adapters/et/internal/etgo/etcp:FuzzReplayHandling' -out "${ET_PARITY_OUT}" -fuzztime 30s
+
+      - name: Upload fuzz receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: et-parity-fuzz
+          path: ${{ env.ET_PARITY_OUT }}/fuzz-*.json
+          if-no-files-found: error
+
+  verify:
+    name: et parity gate
+    needs:
+      - linux-cells
+      - macos-native
+      - fuzz
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download every report and receipt
+        uses: actions/download-artifact@v4
+        with:
+          pattern: et-parity-*
+          path: ${{ env.ET_PARITY_OUT }}
+          merge-multiple: true
+
+      # Fail closed: every matrix cell must have a fresh, run-bound pass
+      # report and every required behavior must have a passing test. Every
+      # required fuzz target must also have a fresh, run-bound pass receipt
+      # whose captured output proves a bounded fuzz run happened. A failed or
+      # missing cell/fuzz job leaves no usable artifact and fails here, so
+      # there is no waiver path. GITHUB_RUN_ID is set by Actions; verify
+      # requires every report and receipt to carry this run's ID, and the
+      # freshness window rejects old artifacts even when their commit matches.
+      #
+      # The step is unconditional so etparity writes summary.json (fail
+      # verdict included) even when a cell/fuzz job or the artifact download
+      # failed. The upstream job results are passed through explicitly: a job
+      # that failed after uploading a green artifact must still fail the gate
+      # and be recorded in the summary.
+      - name: Verify every matrix cell and fuzz target
+        if: always()
+        env:
+          CELL_JOB_RESULT: ${{ needs.linux-cells.result }}
+          MACOS_JOB_RESULT: ${{ needs.macos-native.result }}
+          FUZZ_JOB_RESULT: ${{ needs.fuzz.result }}
+        run: >-
+          go run ./internal/tools/etparity verify
+          -dir "${ET_PARITY_OUT}"
+          -job-result "linux-cells=${CELL_JOB_RESULT}"
+          -job-result "macos-native=${MACOS_JOB_RESULT}"
+          -job-result "fuzz=${FUZZ_JOB_RESULT}"
+
+      # summary.json is the machine-readable verdict for the default switch
+      # (ticket 34). etparity writes it on pass and fail, so a failed gate
+      # still leaves per-cell/per-fuzz evidence on the run.
+      - name: Upload summary.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: et-parity-summary
+          path: ${{ env.ET_PARITY_OUT }}/summary.json
+          if-no-files-found: error
