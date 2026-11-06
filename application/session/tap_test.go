@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -154,8 +156,10 @@ func TestTapOSC9And777Notifications(t *testing.T) {
 
 func TestTapOSC133TracksCommands(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
-	if _, changed, _, _ := tap.handleInput([]byte("echo hi\r"), tapAt(0)); !changed {
+	if _, changed, _, completions, _ := tap.handleInput([]byte("echo hi\r"), tapAt(0)); !changed {
 		t.Fatal("submitting a command did not change state")
+	} else if len(completions) != 0 {
+		t.Fatalf("Enter emitted a completion: %+v", completions)
 	}
 	state := tap.state(tapAt(0))
 	if !state.Command.Running || state.Command.Text != "echo hi" {
@@ -165,6 +169,16 @@ func TestTapOSC133TracksCommands(t *testing.T) {
 	output, effects := tap.observe([]byte("\x1b]133;D;0\x07hi\r\n"), tapAt(time.Second))
 	if !effects.Changed {
 		t.Fatal("OSC 133 D did not change state")
+	}
+	if len(effects.Completions) != 1 {
+		t.Fatalf("OSC 133 D completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.command != "echo hi" || !completion.hasExitCode || completion.exitCode != 0 {
+		t.Fatalf("completion = %+v", completion)
+	}
+	if completion.captureTier != domainhistory.CaptureTierNativeOSC {
+		t.Fatalf("capture tier = %d, want native OSC", completion.captureTier)
 	}
 	if string(output) != "\x1b]133;D;0\x07hi\r\n" {
 		t.Fatalf("OSC 133 should reach the terminal: %q", output)
@@ -177,10 +191,21 @@ func TestTapOSC133TracksCommands(t *testing.T) {
 		t.Fatalf("exit = %+v", state.Command)
 	}
 
+	// Late marks for the finalized command are ignored until a new Enter.
 	tap.observe([]byte("\x1b]133;A\x07$ "), tapAt(2*time.Second))
-	tap.observe([]byte("\x1b]133;C\x07output\x07"), tapAt(3*time.Second))
-	if !tap.state(tapAt(3 * time.Second)).Command.Running {
-		t.Fatal("OSC 133 C did not mark the command running")
+	_, effects = tap.observe([]byte("\x1b]133;C\x07output\x07"), tapAt(3*time.Second))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("late marks emitted a completion: %+v", effects.Completions)
+	}
+	if tap.state(tapAt(3 * time.Second)).Command.Running {
+		t.Fatal("OSC 133 C started a command without a new Enter")
+	}
+
+	// A new Enter starts the next pending command, and C marks it running.
+	tap.handleInput([]byte("echo next\r"), tapAt(4*time.Second))
+	tap.observe([]byte("\x1b]133;C\x07"), tapAt(5*time.Second))
+	if !tap.state(tapAt(5 * time.Second)).Command.Running {
+		t.Fatal("OSC 133 C did not mark the new command running")
 	}
 }
 
@@ -231,10 +256,10 @@ func TestTapPromptFallbackSettlesAFastPromptAfterTheGuardWindow(t *testing.T) {
 	if !tap.state(tapAt(20 * time.Millisecond)).Command.Running {
 		t.Fatal("a prompt inside the guard window finished the command")
 	}
-	if tap.resolvePrompt(tapAt(40 * time.Millisecond)) {
+	if tap.resolvePrompt(tapAt(40*time.Millisecond)) != nil {
 		t.Fatal("the deferred check finished the command inside the guard window")
 	}
-	if !tap.resolvePrompt(tapAt(80 * time.Millisecond)) {
+	if tap.resolvePrompt(tapAt(80*time.Millisecond)) == nil {
 		t.Fatal("the deferred check did not finish the command")
 	}
 	state := tap.state(tapAt(80 * time.Millisecond))
@@ -250,7 +275,7 @@ func TestTapPromptFallbackIgnoresThePreviousPrompt(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.observe([]byte("PS C:\\work> "), tapAt(0))
 	tap.handleInput([]byte("sleep 10\r"), tapAt(time.Second))
-	if tap.resolvePrompt(tapAt(time.Second + 500*time.Millisecond)) {
+	if tap.resolvePrompt(tapAt(time.Second+500*time.Millisecond)) != nil {
 		t.Fatal("the previous prompt finished the new command")
 	}
 	if state := tap.state(tapAt(time.Second + 500*time.Millisecond)); !state.Command.Running {
@@ -325,7 +350,7 @@ func TestTapPromptFallbackSeesAPromptBehindTrailingCursorControls(t *testing.T) 
 	if !tap.state(tapAt(20 * time.Millisecond)).Command.Running {
 		t.Fatal("a prompt inside the guard window finished the command")
 	}
-	if !tap.resolvePrompt(tapAt(80 * time.Millisecond)) {
+	if tap.resolvePrompt(tapAt(80*time.Millisecond)) == nil {
 		t.Fatal("the deferred check did not finish the command behind cursor controls")
 	}
 }
@@ -340,7 +365,7 @@ func TestTapRunningOutputRequestsABoundedRecheckWithoutAPrompt(t *testing.T) {
 	if !effects.PromptRecheck {
 		t.Fatal("running output did not request a bounded recheck")
 	}
-	if tap.resolvePrompt(tapAt(time.Second + 500*time.Millisecond)) {
+	if tap.resolvePrompt(tapAt(time.Second+500*time.Millisecond)) != nil {
 		t.Fatal("the bounded recheck finished a command without a prompt")
 	}
 	if state := tap.state(tapAt(time.Second + 500*time.Millisecond)); !state.Command.Running {
@@ -410,14 +435,14 @@ func TestTapGatesYMODEM(t *testing.T) {
 func TestTapTransferInputGateAndCtrlC(t *testing.T) {
 	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
 	tap.observe([]byte("**\x18Bdata"), tapAt(0))
-	forwarded, changed, _, _ := tap.handleInput([]byte("rm -rf /\r"), tapAt(time.Second))
+	forwarded, changed, _, _, _ := tap.handleInput([]byte("rm -rf /\r"), tapAt(time.Second))
 	if forwarded != nil || changed {
 		t.Fatalf("normal input passed through the gate: %q", forwarded)
 	}
 	if !tap.state(tapAt(time.Second)).Transfer.Active {
 		t.Fatal("gate closed on normal input")
 	}
-	forwarded, changed, _, transfer := tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
+	forwarded, changed, _, _, transfer := tap.handleInput([]byte{0x03}, tapAt(2*time.Second))
 	if !changed || !bytes.Equal(forwarded, []byte{0x18, 0x18, 0x18, 0x18, 0x18}) {
 		t.Fatalf("Ctrl+C abort = %q changed=%v", forwarded, changed)
 	}
@@ -482,5 +507,301 @@ func TestLogOutputStripsClipboardPayloadsButKeepsScreenText(t *testing.T) {
 	}
 	if plain := string(logOutput([]byte("plain output\r\n"))); plain != "plain output\r\n" {
 		t.Fatalf("plain output changed: %q", plain)
+	}
+}
+
+// A command is pending from the Enter that submitted it and never emitted
+// early. OSC 133 C marks it running; D finalizes it with the shell's exit.
+func TestTapCompletionStartsAtEnterAndFinalizesOnD(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	_, changed, started, completions, _ := tap.handleInput([]byte("ls -la\r"), tapAt(0))
+	if !changed || !started || len(completions) != 0 {
+		t.Fatalf("Enter: changed=%v started=%v completions=%+v", changed, started, completions)
+	}
+	if tap.pending == nil || tap.pending.command != "ls -la" ||
+		!tap.pending.startedAt.Equal(tapAt(0)) {
+		t.Fatalf("pending after Enter = %+v", tap.pending)
+	}
+	if !tap.state(tapAt(0)).Command.Running {
+		t.Fatal("a submitted command is not running")
+	}
+
+	_, effects := tap.observe([]byte("\x1b]133;C\x07"), tapAt(time.Second))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("C emitted a completion: %+v", effects.Completions)
+	}
+	if !tap.pending.startedAt.Equal(tapAt(0)) {
+		t.Fatalf("C replaced the Enter start time: %v", tap.pending.startedAt)
+	}
+
+	_, effects = tap.observe([]byte("\x1b]133;D;2\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("D completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.command != "ls -la" ||
+		!completion.startedAt.Equal(tapAt(0)) ||
+		!completion.finishedAt.Equal(tapAt(2*time.Second)) ||
+		!completion.hasExitCode || completion.exitCode != 2 ||
+		completion.captureTier != domainhistory.CaptureTierNativeOSC {
+		t.Fatalf("completion = %+v", completion)
+	}
+	if tap.pending != nil {
+		t.Fatalf("pending survived D: %+v", tap.pending)
+	}
+}
+
+// The cwd is the last OSC 7 seen at Enter, not a later one; an OSC 133 D split
+// across two transport reads still finalizes exactly once.
+func TestTapCompletionUsesCWDAtEnterAndHandlesSplitOSC(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte("\x1b]7;file://host/tmp/work\x07"), tapAt(0))
+	tap.handleInput([]byte("pwd\r"), tapAt(time.Second))
+	tap.observe([]byte("\x1b]7;file://host/tmp/later\x07"), tapAt(2*time.Second))
+
+	output, effects := tap.observe([]byte("\x1b]133;D;0"), tapAt(3*time.Second))
+	if len(output) != 0 || len(effects.Completions) != 0 {
+		t.Fatalf("an incomplete OSC finalized the command: output=%q effects=%+v", output, effects)
+	}
+	output, effects = tap.observe([]byte("\x07"), tapAt(4*time.Second))
+	if string(output) != "\x1b]133;D;0\x07" || len(effects.Completions) != 1 {
+		t.Fatalf("split OSC completion: output=%q effects=%+v", output, effects)
+	}
+	completion := effects.Completions[0]
+	if completion.cwd != "/tmp/work" {
+		t.Fatalf("cwd = %q, want the OSC 7 at Enter", completion.cwd)
+	}
+	if !completion.finishedAt.Equal(tapAt(4 * time.Second)) {
+		t.Fatalf("finishedAt = %v", completion.finishedAt)
+	}
+}
+
+// Malformed OSC 133 sequences must not break output parsing. A D with an
+// unparsable or out-of-range exit still finishes the command, with the exit
+// unknown; unknown marks are ignored.
+func TestTapCompletionMalformedOSC133(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("first\r"), tapAt(0))
+	output, effects := tap.observe([]byte("\x1b]133;Z\x07"), tapAt(time.Second))
+	if string(output) != "\x1b]133;Z\x07" || len(effects.Completions) != 0 {
+		t.Fatalf("unknown mark: output=%q effects=%+v", output, effects)
+	}
+	_, effects = tap.observe([]byte("\x1b]133;D;not-a-number\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("malformed D completions = %+v", effects.Completions)
+	}
+	if effects.Completions[0].hasExitCode {
+		t.Fatalf("malformed exit was accepted: %+v", effects.Completions[0])
+	}
+
+	tap.handleInput([]byte("second\r"), tapAt(3*time.Second))
+	_, effects = tap.observe([]byte("\x1b]133;D;999999999999999999999999999999\x07"), tapAt(4*time.Second))
+	if len(effects.Completions) != 1 || effects.Completions[0].hasExitCode {
+		t.Fatalf("out-of-range exit: %+v", effects.Completions)
+	}
+
+	tap.handleInput([]byte("third\r"), tapAt(5*time.Second))
+	output, effects = tap.observe([]byte("\x1b]133\x07"), tapAt(6*time.Second))
+	if string(output) != "\x1b]133\x07" || len(effects.Completions) != 0 {
+		t.Fatalf("bare OSC 133: output=%q effects=%+v", output, effects)
+	}
+	if tap.pending == nil {
+		t.Fatal("a malformed mark discarded the pending command")
+	}
+}
+
+// A prompt-start mark without D finishes the pending command with an unknown
+// exit. A later D for it is ignored.
+func TestTapCompletionOSC133AWithoutDFinalizesOnce(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("make\r"), tapAt(0))
+	_, effects := tap.observe([]byte("\x1b]133;C\x07building\r\n\x1b]133;A\x07$ "), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("A completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.hasExitCode || !completion.finishedAt.Equal(tapAt(2*time.Second)) {
+		t.Fatalf("completion = %+v", completion)
+	}
+	_, effects = tap.observe([]byte("\x1b]133;D;1\x07"), tapAt(3*time.Second))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("late D emitted a completion: %+v", effects.Completions)
+	}
+}
+
+// B marks the prompt state but does not finish a command.
+func TestTapCompletionOSC133BDoesNotFinalize(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("sleep 1\r"), tapAt(0))
+	_, effects := tap.observe([]byte("\x1b]133;B\x07"), tapAt(time.Second))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("B emitted a completion: %+v", effects.Completions)
+	}
+	if tap.pending == nil {
+		t.Fatal("B discarded the pending command")
+	}
+}
+
+// A recognizable prompt after output finishes a command with an unknown exit
+// and exactly one completion.
+func TestTapCompletionPromptFallbackFinalizesOnce(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("echo world\r"), tapAt(0))
+	_, effects := tap.observe([]byte("world\r\n$ "), tapAt(100*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("prompt fallback completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.command != "echo world" || completion.hasExitCode ||
+		!completion.finishedAt.Equal(tapAt(100*time.Millisecond)) ||
+		completion.captureTier != domainhistory.CaptureTierFallback {
+		t.Fatalf("completion = %+v", completion)
+	}
+	_, effects = tap.observe([]byte("\x1b]133;A\x07$ "), tapAt(2*time.Second))
+	if len(effects.Completions) != 0 {
+		t.Fatalf("a late prompt emitted a second completion: %+v", effects.Completions)
+	}
+}
+
+// OSC 7 alone marks the shell as natively integrated, so a prompt fallback is
+// Tier 2 and uses the OSC 7 cwd.
+func TestTapCompletionOSC7MakesPromptFallbackTier2(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte("\x1b]7;file://host/srv\x07"), tapAt(0))
+	tap.handleInput([]byte("deploy\r"), tapAt(time.Second))
+	_, effects := tap.observe([]byte("done\r\n$ "), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.captureTier != domainhistory.CaptureTierNativeOSC || completion.cwd != "/srv" {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+// Ctrl+C never emits by itself; a following D finalizes with the shell's exit
+// code and a finish time.
+func TestTapCompletionCtrlCWaitsForD(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("sleep 30\r"), tapAt(0))
+	_, _, _, completions, _ := tap.handleInput([]byte{0x03}, tapAt(time.Second))
+	if len(completions) != 0 {
+		t.Fatalf("Ctrl+C emitted a completion: %+v", completions)
+	}
+	if tap.pending == nil || !tap.pending.interrupted {
+		t.Fatalf("pending after Ctrl+C = %+v", tap.pending)
+	}
+	_, effects := tap.observe([]byte("\x1b]133;D;130\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("D completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if !completion.hasExitCode || completion.exitCode != 130 {
+		t.Fatalf("completion = %+v", completion)
+	}
+	if !completion.finishedAt.Equal(tapAt(2 * time.Second)) {
+		t.Fatalf("finishedAt = %v", completion.finishedAt)
+	}
+}
+
+// Without D, Ctrl+C falls back to a recognizable prompt, with an unknown exit.
+func TestTapCompletionCtrlCThenPromptFallback(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("tail -f log\r"), tapAt(0))
+	tap.handleInput([]byte{0x03}, tapAt(time.Second))
+	_, effects := tap.observe([]byte("^C\r\n$ "), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("completions = %+v", effects.Completions)
+	}
+	completion := effects.Completions[0]
+	if completion.hasExitCode || !completion.finishedAt.Equal(tapAt(2*time.Second)) {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+// A new Enter finalizes the previous command with an unknown exit and no
+// finish time, then starts the next one.
+func TestTapCompletionNewEnterFinalizesPreviousWithoutDuration(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("first\r"), tapAt(0))
+	_, _, started, completions, _ := tap.handleInput([]byte("second\r"), tapAt(time.Second))
+	if !started || len(completions) != 1 {
+		t.Fatalf("new Enter: started=%v completions=%+v", started, completions)
+	}
+	previous := completions[0]
+	if previous.command != "first" || previous.hasExitCode ||
+		!previous.finishedAt.IsZero() {
+		t.Fatalf("previous completion = %+v", previous)
+	}
+	if tap.pending == nil || tap.pending.command != "second" {
+		t.Fatalf("pending after the new Enter = %+v", tap.pending)
+	}
+	_, effects := tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 || effects.Completions[0].command != "second" {
+		t.Fatalf("second completion = %+v", effects.Completions)
+	}
+}
+
+// Session close finalizes a pending command once, with an unknown exit and no
+// finish time.
+func TestTapSessionCloseFinalizesPendingWithoutDuration(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("long-job\r"), tapAt(0))
+	completion := tap.finalizePending()
+	if completion == nil {
+		t.Fatal("Session close did not finalize the pending command")
+	}
+	if completion.command != "long-job" || completion.hasExitCode ||
+		!completion.finishedAt.IsZero() {
+		t.Fatalf("completion = %+v", completion)
+	}
+	if again := tap.finalizePending(); again != nil {
+		t.Fatalf("Session close finalized twice: %+v", again)
+	}
+}
+
+// OSC 133 marks with no command text never produce a row.
+func TestTapCompletionNoCommandTextNeverEmits(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	for _, mark := range []string{
+		"\x1b]133;C\x07", "\x1b]133;D;0\x07", "\x1b]133;A\x07", "\x1b]133;B\x07",
+	} {
+		output, effects := tap.observe([]byte(mark), tapAt(0))
+		if string(output) != mark {
+			t.Fatalf("%q was not forwarded: %q", mark, output)
+		}
+		if len(effects.Completions) != 0 {
+			t.Fatalf("%q emitted a completion without command text: %+v", mark, effects.Completions)
+		}
+	}
+	if tap.finalizePending() != nil {
+		t.Fatal("Session close emitted a completion without command text")
+	}
+}
+
+// Concurrent finalizers must not produce two events for one command.
+func TestTapFinalizePendingIsExactlyOnceUnderConcurrency(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.handleInput([]byte("racy\r"), tapAt(0))
+	const workers = 8
+	results := make(chan *capturedCommand, workers)
+	var group sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			results <- tap.finalizePending()
+		}()
+	}
+	group.Wait()
+	close(results)
+	completions := 0
+	for completion := range results {
+		if completion != nil {
+			completions++
+		}
+	}
+	if completions != 1 {
+		t.Fatalf("concurrent finalizers produced %d completions, want 1", completions)
 	}
 }

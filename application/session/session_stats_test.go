@@ -14,10 +14,10 @@ import (
 func TestSessionStatisticsCountOutputInputCommandsAndBells(t *testing.T) {
 	factory := &fakeFactory{transport: newFakeTransport()}
 	bells := make(chan model.SessionID, 2)
-	commands := make(chan string, 2)
+	commands := make(chan CommandEvent, 2)
 	service := newTestService(factory,
 		WithBellHook(func(id model.SessionID) { bells <- id }),
-		WithCommandHook(func(_ model.SessionID, _ string, command string) { commands <- command }),
+		WithCommandCompletionHook(func(event CommandEvent) { commands <- event }),
 	)
 	session, err := service.OpenLocal(context.Background())
 	if err != nil {
@@ -30,12 +30,20 @@ func TestSessionStatisticsCountOutputInputCommandsAndBells(t *testing.T) {
 	}
 	eventually(t, "typed input", func() bool { return factory.transport.input() == "echo hi\r" })
 	select {
-	case command := <-commands:
-		if command != "echo hi" {
-			t.Fatalf("command hook = %q", command)
+	case event := <-commands:
+		t.Fatalf("a completion was emitted at Enter: %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+	// The completion arrives only when the shell reports the finish.
+	factory.transport.send("\x1b]133;D;0\x07")
+	_ = readOutput(t, session)
+	select {
+	case event := <-commands:
+		if event.Command != "echo hi" {
+			t.Fatalf("command completion = %+v", event)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("command hook was not called")
+		t.Fatal("command completion hook was not called")
 	}
 
 	factory.transport.send("done\x07")

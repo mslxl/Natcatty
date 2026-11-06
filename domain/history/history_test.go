@@ -180,6 +180,26 @@ func TestNormalizeEntryDefaultsCapturedAuthorFromOrigin(t *testing.T) {
 	}
 }
 
+func TestCaptureOriginFallsBackWithoutInventingAValue(t *testing.T) {
+	tests := []struct {
+		name                      string
+		hostname, username, label string
+		want                      string
+	}{
+		{"hostname and user", "web.example.com", "deploy", "web-1", "web.example.com:deploy"},
+		{"label fallback", "", "deploy", "web-1", "web-1:deploy"},
+		{"unknown host and user", "", "", "", "unknown:unknown"},
+		{"unknown user", "web.example.com", "", "web-1", "web.example.com:unknown"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := CaptureOrigin(test.hostname, test.username, test.label); got != test.want {
+				t.Fatalf("CaptureOrigin = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestImportedAndSyncedRowsAreNeverTheLocalShell(t *testing.T) {
 	remote := []string{SourceAtuinImport, SourceAtuinSync}
 	for _, source := range remote {

@@ -2350,6 +2350,118 @@
       }
     }
   },
+  "logsHistoryCaptured": "cwd {cwd} · finished {finish} · {duration} · exit {exit} · {shell} · tier {tier} · {origin}",
+  "@logsHistoryCaptured": {
+    "description": "The captured fields of a command history row. A missing value is labelled with the unknown message.",
+    "placeholders": {
+      "cwd": {
+        "type": "String",
+        "example": "/srv/app"
+      },
+      "finish": {
+        "type": "String",
+        "example": "2026-10-21 14:30:01"
+      },
+      "duration": {
+        "type": "String",
+        "example": "1.5s"
+      },
+      "exit": {
+        "type": "String",
+        "example": "0"
+      },
+      "shell": {
+        "type": "String",
+        "example": "zsh"
+      },
+      "tier": {
+        "type": "String",
+        "example": "2"
+      },
+      "origin": {
+        "type": "String",
+        "example": "deploy@web-1"
+      }
+    }
+  },
+  "logsHistoryUnknown": "unknown",
+  "@logsHistoryUnknown": {
+    "description": "The label for a captured field that the Session could not observe."
+  },
+  "logsHistoryDetails": "Details",
+  "@logsHistoryDetails": {
+    "description": "The row action that opens the captured fields of one command."
+  },
+  "logsHistoryDetailTitle": "Command details",
+  "@logsHistoryDetailTitle": {
+    "description": "The title of the command history detail panel."
+  },
+  "logsHistoryDetailClose": "Close",
+  "@logsHistoryDetailClose": {
+    "description": "The action that closes the command history detail panel."
+  },
+  "logsHistoryDetailField": "{label}: {value}",
+  "@logsHistoryDetailField": {
+    "description": "One labelled capture field in the command history detail panel.",
+    "placeholders": {
+      "label": {
+        "type": "String",
+        "example": "CWD"
+      },
+      "value": {
+        "type": "String",
+        "example": "/srv/app"
+      }
+    }
+  },
+  "logsHistoryFieldHost": "Host",
+  "@logsHistoryFieldHost": {
+    "description": "The Host or origin the command ran against."
+  },
+  "logsHistoryFieldScope": "Scope",
+  "@logsHistoryFieldScope": {
+    "description": "The history scope the command was recorded under."
+  },
+  "logsHistoryFieldOrigin": "Origin",
+  "@logsHistoryFieldOrigin": {
+    "description": "The captured host:user origin of the command."
+  },
+  "logsHistoryFieldSession": "Session",
+  "@logsHistoryFieldSession": {
+    "description": "The app Session identity the command ran in."
+  },
+  "logsHistoryFieldCwd": "CWD",
+  "@logsHistoryFieldCwd": {
+    "description": "The working directory at command start."
+  },
+  "logsHistoryFieldShell": "Shell",
+  "@logsHistoryFieldShell": {
+    "description": "The shell name when it was captured."
+  },
+  "logsHistoryFieldStart": "Start",
+  "@logsHistoryFieldStart": {
+    "description": "When the command started."
+  },
+  "logsHistoryFieldFinish": "Finish",
+  "@logsHistoryFieldFinish": {
+    "description": "When the command finished."
+  },
+  "logsHistoryFieldDuration": "Duration",
+  "@logsHistoryFieldDuration": {
+    "description": "How long the command ran."
+  },
+  "logsHistoryFieldExit": "Exit",
+  "@logsHistoryFieldExit": {
+    "description": "The shell exit code of the command."
+  },
+  "logsHistoryFieldSource": "Source",
+  "@logsHistoryFieldSource": {
+    "description": "Where the history row came from."
+  },
+  "logsHistoryFieldTier": "Capture tier",
+  "@logsHistoryFieldTier": {
+    "description": "The capture fidelity tier of the row."
+  },
   "logsProblemLoad": "Could not load the records.",
   "@logsProblemLoad": {
     "description": "Shown when reading the records failed."

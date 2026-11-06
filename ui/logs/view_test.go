@@ -301,6 +301,158 @@ func TestHistoryTabRendersRowsAndOpensTheRelatedTerminal(t *testing.T) {
 	assertNoHorizontalOverflow(t, tt, 1100, 720)
 }
 
+// TestHistoryRowsShowCapturedFieldsAndUnknownLabels proves the History list
+// shows cwd, finish, duration, exit, shell, tier, and origin, and labels a
+// field the Session never observed instead of showing a misleading empty one.
+func TestHistoryRowsShowCapturedFieldsAndUnknownLabels(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	finished := recorded.Add(1500 * time.Millisecond)
+	source := &fakeSource{entries: []domainhistory.Entry{
+		{
+			ID: "captured", SessionID: "session-1", HostID: "host-1",
+			HostLabel: "web-1", Scope: "host:host-1", Command: "make test",
+			CWD: "/srv/app", Shell: "zsh", Origin: "deploy@web-1",
+			RecordedAt: recorded, FinishedAt: finished,
+			Duration: 1500 * time.Millisecond, ExitCode: 2, HasExitCode: true,
+			Source: domainhistory.SourceSession, CaptureTier: 2,
+		},
+		{
+			ID: "partial", Scope: "local", Command: "legacy-command",
+			RecordedAt: recorded, Source: domainhistory.SourceSession,
+		},
+	}}
+	tt, state := newProductionLogsView(t, 1100, 720, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	captured := m.LogsHistoryCaptured(
+		"/srv/app", timestamp(finished), "1.5s", "2", "zsh", "2", "deploy@web-1")
+	if !textsContain(tt, captured) {
+		t.Fatalf("captured fields are not rendered: %v", tt.Texts())
+	}
+	unknown := m.LogsHistoryUnknown()
+	partial := m.LogsHistoryCaptured(unknown, unknown, unknown, unknown, unknown, unknown, unknown)
+	if !textsContain(tt, partial) {
+		t.Fatalf("unknown captured fields are not labelled: %v", tt.Texts())
+	}
+	assertNoHorizontalOverflow(t, tt, 1100, 720)
+}
+
+// TestHistoryDetailShowsEveryCapturedField opens the inline detail panel for a
+// fully populated row and proves it renders the full command and every
+// captured field, then closes it again.
+func TestHistoryDetailShowsEveryCapturedField(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	finished := recorded.Add(1500 * time.Millisecond)
+	source := &fakeSource{entries: []domainhistory.Entry{{
+		ID: "captured", SessionID: "session-1", HostID: "host-1",
+		HostLabel: "web-1", Scope: "host:host-1", Command: "make test --all",
+		CWD: "/srv/app", Shell: "zsh", Origin: "deploy@web-1",
+		RecordedAt: recorded, FinishedAt: finished,
+		Duration: 1500 * time.Millisecond, ExitCode: 137, HasExitCode: true,
+		Source: domainhistory.SourceSession, CaptureTier: 2,
+	}}}
+	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	if err := tt.Click(m.LogsHistoryDetails()); err != nil {
+		t.Fatalf("open details: %v", err)
+	}
+	tt.Frame()
+
+	assertVisible(t, tt, m.LogsHistoryDetailTitle(), 1100, 900)
+	assertVisible(t, tt, "make test --all", 1100, 900)
+	fields := []string{
+		m.LogsHistoryDetailField(m.LogsHistoryFieldHost(), "web-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldScope(), "host:host-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldOrigin(), "deploy@web-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldSession(), "session-1"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldCwd(), "/srv/app"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldShell(), "zsh"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldStart(), timestamp(recorded)),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldFinish(), timestamp(finished)),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldDuration(), "1.5s"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldExit(), "137"),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldSource(), m.LogsSourceSession()),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldTier(), "2"),
+	}
+	for _, field := range fields {
+		assertVisible(t, tt, field, 1100, 900)
+	}
+	assertNoHorizontalOverflow(t, tt, 1100, 900)
+
+	if err := tt.Click(m.LogsHistoryDetailClose()); err != nil {
+		t.Fatalf("close details: %v", err)
+	}
+	tt.Frame()
+	for _, text := range tt.Texts() {
+		if text == m.LogsHistoryDetailTitle() {
+			t.Fatalf("the detail panel did not close: %v", tt.Texts())
+		}
+	}
+}
+
+// TestHistoryDetailLabelsUnknownCapturedFields proves a row with no captured
+// cwd, shell, finish, duration, exit, origin, Session, or tier labels each
+// value instead of rendering an empty string.
+func TestHistoryDetailLabelsUnknownCapturedFields(t *testing.T) {
+	m := locales.In("en")
+	recorded := time.Date(2026, 11, 7, 9, 30, 0, 0, time.Local)
+	source := &fakeSource{entries: []domainhistory.Entry{{
+		ID: "partial", Scope: "local", Command: "legacy-command",
+		RecordedAt: recorded, Source: domainhistory.SourceSession,
+	}}}
+	tt, state := newProductionLogsView(t, 1100, 900, source, &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	if err := tt.Click(m.LogsHistoryDetails()); err != nil {
+		t.Fatalf("open details: %v", err)
+	}
+	tt.Frame()
+
+	unknown := m.LogsHistoryUnknown()
+	fields := []string{
+		m.LogsHistoryDetailField(m.LogsHistoryFieldOrigin(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldSession(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldCwd(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldShell(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldFinish(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldDuration(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldExit(), unknown),
+		m.LogsHistoryDetailField(m.LogsHistoryFieldTier(), unknown),
+	}
+	for _, field := range fields {
+		assertVisible(t, tt, field, 1100, 900)
+	}
+	// The start time is known, so it is shown rather than labelled unknown.
+	assertVisible(t, tt,
+		m.LogsHistoryDetailField(m.LogsHistoryFieldStart(), timestamp(recorded)),
+		1100, 900)
+	assertNoHorizontalOverflow(t, tt, 1100, 900)
+}
+
+func TestFormatDurationShowsZeroAndCoarseUnits(t *testing.T) {
+	tests := []struct {
+		duration time.Duration
+		want     string
+	}{
+		{0, "0ms"},
+		{350 * time.Millisecond, "350ms"},
+		{1500 * time.Millisecond, "1.5s"},
+		{65 * time.Second, "1m05s"},
+		{-time.Second, "0ms"},
+	}
+	for _, test := range tests {
+		if got := formatDuration(test.duration); got != test.want {
+			t.Errorf("formatDuration(%v) = %q, want %q", test.duration, got, test.want)
+		}
+	}
+}
+
 func TestConnectionRowActionReportsAMissingHost(t *testing.T) {
 	m := locales.In("en")
 	actions := &fakeActions{err: ErrHostMissing}

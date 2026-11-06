@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 )
 
@@ -22,6 +23,34 @@ type CommandState struct {
 	HasExitCode bool
 	StartedAt   time.Time
 	FinishedAt  time.Time
+}
+
+// capturedCommand is one command execution the tap observed. The Session adds
+// its identity and scope and turns it into a CommandEvent. Unknown values are
+// zero: an empty cwd or shell, a zero finishedAt when the Session ended before
+// the shell reported a finish (duration unknown), and hasExitCode false when
+// the shell never reported an exit code.
+type capturedCommand struct {
+	command     string
+	cwd         string
+	shell       string
+	startedAt   time.Time
+	finishedAt  time.Time
+	exitCode    int
+	hasExitCode bool
+	captureTier int
+}
+
+// pendingCommand is the one execution the tap is still capturing. It starts on
+// Enter with typed text, is finalized once, and is then nil until the next
+// Enter. A finalized execution's late OSC 133 marks are ignored.
+type pendingCommand struct {
+	command     string
+	cwd         string
+	shell       string
+	startedAt   time.Time
+	captureTier int
+	interrupted bool
 }
 
 // TransferKind names a detected file transfer protocol.
@@ -94,6 +123,9 @@ type tapEffects struct {
 	Bell         bool
 	Notification *TerminalNotification
 	Transfer     *TransferState
+	// Completions are commands that finished during this chunk. The Session
+	// publishes them only after observe returns and releases the tap lock.
+	Completions []capturedCommand
 	// PromptRecheck asks the Session for one deferred prompt check after the
 	// guard window: a command is still running with output after it started,
 	// but its chunk did not settle it, and no further output may arrive to
@@ -165,9 +197,13 @@ type terminalTap struct {
 	buffer []byte
 	tail   []byte
 
-	cwd          string
-	title        string
-	command      CommandState
+	cwd     string
+	title   string
+	command CommandState
+	pending *pendingCommand
+	// nativeSeen reports that the shell emitted OSC 133 or OSC 7. Without it,
+	// typed input plus prompt detection is Tier 3; with it, capture is Tier 2.
+	nativeSeen   bool
 	inputBuffer  string
 	inputPending []byte
 	inputEscape  inputState
@@ -289,6 +325,9 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 					effects.Notification = effect.Notification
 					effects.Changed = true
 				}
+				if len(effect.Completions) > 0 {
+					effects.Completions = append(effects.Completions, effect.Completions...)
+				}
 				t.buffer = t.buffer[totalEnd:]
 				continue
 			}
@@ -342,10 +381,13 @@ func (t *terminalTap) observe(data []byte, now time.Time) ([]byte, tapEffects) {
 	}
 
 done:
-	if t.checkPrompt(now) == promptFinished {
+	if result, completion := t.checkPrompt(now); result == promptFinished {
 		effects.Changed = true
+		if completion != nil {
+			effects.Completions = append(effects.Completions, *completion)
+		}
 	}
-	if t.command.Running && t.outputSinceStart {
+	if t.pending != nil && t.outputSinceStart {
 		// The fallback did not settle the command in this chunk. A prompt can
 		// arrive in a chunk whose visible tail is not prompt-like, and a quiet
 		// session gets no next chunk to look again. Ask for one bounded recheck
@@ -381,7 +423,9 @@ func (t *terminalTap) noteOutput(data []byte, now time.Time) {
 		return
 	}
 	t.lastOutput = now
-	if t.command.Running {
+	if t.pending != nil {
+		// An interrupted command still has a pending capture, and its output
+		// can carry the prompt that finalizes it without a D mark.
 		t.outputSinceStart = true
 	}
 	t.stats.OutputBytes += int64(len(data))
@@ -543,12 +587,17 @@ func (t *terminalTap) handleOSC(payload []byte, now time.Time) (bool, tapEffects
 		return true, tapEffects{Changed: true}
 	case 7:
 		t.cwd = parseOSC7(string(rest))
+		t.nativeSeen = true
 		return true, tapEffects{Changed: true}
 	case 52:
 		return t.handleOSC52(string(rest), now), tapEffects{Changed: true}
 	case 133:
-		changed := t.handleOSC133(string(rest), now)
-		return true, tapEffects{Changed: changed}
+		changed, completion := t.handleOSC133(string(rest), now)
+		effects := tapEffects{Changed: changed}
+		if completion != nil {
+			effects.Completions = []capturedCommand{*completion}
+		}
+		return true, effects
 	case 9:
 		notification := parseOSC9(string(rest))
 		if notification == nil {
@@ -611,45 +660,65 @@ func (t *terminalTap) handleOSC52(rest string, now time.Time) bool {
 	return allowed
 }
 
-func (t *terminalTap) handleOSC133(rest string, now time.Time) bool {
+// handleOSC133 applies one standard shell-integration mark. It reports a state
+// change and, for D or A, the command completion that the Session must publish
+// after the tap lock is released. Marks for an already finalized command are
+// ignored until the next Enter starts a new pending command.
+func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedCommand) {
 	if rest == "" {
-		return false
+		return false, nil
 	}
 	kind := rest[0]
 	switch kind {
 	case 'A':
-		if t.command.Running {
-			t.command.Running = false
-			t.command.FinishedAt = now
+		t.nativeSeen = true
+		// A prompt-start mark without a preceding D still finishes the
+		// command, with an unknown exit code.
+		completion := t.finalizePendingLocked(now, true, 0, false)
+		if completion == nil {
+			return false, nil
 		}
-		return true
+		return true, completion
 	case 'B':
+		t.nativeSeen = true
 		t.command.Running = false
-		return true
+		return true, nil
 	case 'C':
+		t.nativeSeen = true
+		if t.pending == nil {
+			return false, nil
+		}
 		t.command.Running = true
 		if t.command.StartedAt.IsZero() {
 			t.command.StartedAt = now
 		}
+		if t.pending.startedAt.IsZero() {
+			t.pending.startedAt = now
+		}
 		t.command.FinishedAt = time.Time{}
 		// Only output after the command starts can carry its prompt.
 		t.outputSinceStart = false
-		return true
+		return true, nil
 	case 'D':
-		t.command.Running = false
-		t.command.FinishedAt = now
+		t.nativeSeen = true
+		exitCode, hasExitCode := 0, false
 		if len(rest) > 2 && rest[1] == ';' {
 			if code, err := parseInt(rest[2:]); err == nil {
-				t.command.ExitCode = code
-				t.command.HasExitCode = true
-				if code != 0 {
-					t.stats.FailedCommands++
-				}
+				exitCode, hasExitCode = code, true
 			}
 		}
-		return true
+		// The failure statistic counts every reported non-zero exit, as before,
+		// even when no typed command was pending to capture.
+		if hasExitCode && exitCode != 0 {
+			t.stats.FailedCommands++
+		}
+		completion := t.finalizePendingLocked(now, true, exitCode, hasExitCode)
+		if completion == nil {
+			return false, nil
+		}
+		return true, completion
 	default:
-		return false
+		return false, nil
 	}
 }
 
@@ -668,7 +737,11 @@ func parseInt(value string) (int, error) {
 		if value[index] < '0' || value[index] > '9' {
 			return 0, errors.New("session: invalid integer")
 		}
-		number = number*10 + int(value[index]-'0')
+		digit := int(value[index] - '0')
+		if number > (int(^uint(0)>>1)-digit)/10 {
+			return 0, errors.New("session: integer out of range")
+		}
+		number = number*10 + digit
 	}
 	return sign * number, nil
 }
@@ -947,31 +1020,99 @@ const (
 // checkPrompt is the OSC 133-free fallback: a recognizable shell prompt at the
 // end of output finishes a command that was submitted with Enter. Only output
 // that arrived after the command started can carry the new prompt; a prompt
-// already in the tail from before Enter belongs to the previous command.
-func (t *terminalTap) checkPrompt(now time.Time) promptResult {
-	if !t.command.Running || !t.outputSinceStart || len(t.tail) == 0 {
-		return promptNoChange
+// already in the tail from before Enter belongs to the previous command. A
+// command marked interrupted by Ctrl+C still finalizes here when no D arrived.
+func (t *terminalTap) checkPrompt(now time.Time) (promptResult, *capturedCommand) {
+	if t.pending == nil || !t.outputSinceStart || len(t.tail) == 0 {
+		return promptNoChange, nil
 	}
 	line := lastVisibleLine(t.tail)
 	if line == "" || !promptLike(line) {
-		return promptNoChange
+		return promptNoChange, nil
 	}
-	if !t.command.StartedAt.IsZero() && now.Sub(t.command.StartedAt) < promptWindow {
-		return promptDeferred
+	if !t.pending.startedAt.IsZero() && now.Sub(t.pending.startedAt) < promptWindow {
+		return promptDeferred, nil
 	}
-	t.command.Running = false
-	t.command.FinishedAt = now
-	return promptFinished
+	return promptFinished, t.finalizePendingLocked(now, true, 0, false)
 }
 
 // resolvePrompt re-runs the prompt fallback once the guard window has expired.
 // A fast command's prompt can arrive while checkPrompt is still holding back,
 // and with no further output nothing else would revisit it, leaving Running
-// set and autocomplete suppressed until Ctrl+C.
-func (t *terminalTap) resolvePrompt(now time.Time) bool {
+// set and autocomplete suppressed until Ctrl+C. It returns the completion the
+// Session must publish, or nil when the command stays pending.
+func (t *terminalTap) resolvePrompt(now time.Time) *capturedCommand {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.checkPrompt(now) == promptFinished
+	result, completion := t.checkPrompt(now)
+	if result != promptFinished {
+		return nil
+	}
+	return completion
+}
+
+// startPendingLocked begins capturing one command at Enter. The cwd is the
+// last OSC 7 value seen before Enter; a later hook may replace it. The tier is
+// Tier 2 when the shell has shown native OSC 133/7 integration, otherwise the
+// typed-input fallback is Tier 3.
+func (t *terminalTap) startPendingLocked(command string, now time.Time) {
+	tier := domainhistory.CaptureTierFallback
+	if t.nativeSeen {
+		tier = domainhistory.CaptureTierNativeOSC
+	}
+	t.pending = &pendingCommand{
+		command:     command,
+		cwd:         t.cwd,
+		startedAt:   now,
+		captureTier: tier,
+	}
+}
+
+// finalizePendingLocked finalizes the one pending command and returns it once.
+// A nil result means there was nothing left to finalize, so late OSC marks and
+// a racing Session close can never produce a second event. finished reports
+// whether the shell reported a finish; when it did not (a new Enter or the
+// Session ending), FinishedAt stays zero so the duration is unknown.
+func (t *terminalTap) finalizePendingLocked(now time.Time, finished bool, exitCode int, hasExitCode bool) *capturedCommand {
+	pending := t.pending
+	if pending == nil {
+		return nil
+	}
+	t.pending = nil
+	tier := pending.captureTier
+	if t.nativeSeen && tier == domainhistory.CaptureTierFallback {
+		// A command that started as the typed fallback is Tier 2 once the
+		// shell shows native OSC 133/7 integration before it finishes.
+		tier = domainhistory.CaptureTierNativeOSC
+	}
+	completion := &capturedCommand{
+		command:     pending.command,
+		cwd:         pending.cwd,
+		shell:       pending.shell,
+		startedAt:   pending.startedAt,
+		captureTier: tier,
+	}
+	if finished {
+		completion.finishedAt = now
+		t.command.FinishedAt = now
+	}
+	t.command.Running = false
+	if hasExitCode {
+		completion.exitCode = exitCode
+		completion.hasExitCode = true
+		t.command.ExitCode = exitCode
+		t.command.HasExitCode = true
+	}
+	return completion
+}
+
+// finalizePending finalizes a still-pending command when the Session ends. The
+// finish time stays zero because the shell never reported one, so the recorded
+// duration is unknown rather than invented.
+func (t *terminalTap) finalizePending() *capturedCommand {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.finalizePendingLocked(time.Time{}, false, 0, false)
 }
 
 func lastVisibleLine(data []byte) string {
@@ -1041,10 +1182,10 @@ func promptLike(line string) bool {
 }
 
 // handleInput observes typed bytes and returns what may reach the transport,
-// the submitted command if Enter completed one, and the transfer state change.
-// During a transfer all normal input is dropped; Ctrl+C aborts with the
-// original five CAN bytes.
-func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, string, *TransferState) {
+// whether the input started a command, the commands that finished during this
+// call, and the transfer state change. During a transfer all normal input is
+// dropped; Ctrl+C aborts with the original five CAN bytes.
+func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, bool, []capturedCommand, *TransferState) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.transfer.Active {
@@ -1054,17 +1195,18 @@ func (t *terminalTap) handleInput(data []byte, now time.Time) ([]byte, bool, str
 			t.transfer.End = TransferEndCancelled
 			t.buffer = nil
 			copyState := t.transfer
-			return []byte{0x18, 0x18, 0x18, 0x18, 0x18}, true, "", &copyState
+			return []byte{0x18, 0x18, 0x18, 0x18, 0x18}, true, false, nil, &copyState
 		}
-		return nil, false, "", nil
+		return nil, false, false, nil, nil
 	}
-	changed, submitted := t.recordInput(data, now)
-	return data, changed, submitted, nil
+	changed, started, completions := t.recordInput(data, now)
+	return data, changed, started, completions, nil
 }
 
-func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
+func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []capturedCommand) {
 	changed := false
-	submitted := ""
+	started := false
+	var completions []capturedCommand
 	for _, value := range data {
 		switch t.inputEscape {
 		case inputEscape:
@@ -1102,6 +1244,12 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
 		case 0x03:
 			t.inputBuffer = ""
 			t.inputPending = nil
+			// Ctrl+C never emits by itself: the shell may still report an exit
+			// code such as 130, or a prompt fallback or Session close may
+			// finalize the command with an unknown exit.
+			if t.pending != nil {
+				t.pending.interrupted = true
+			}
 			if t.command.Running {
 				t.command.Running = false
 				t.command.FinishedAt = now
@@ -1123,16 +1271,22 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
 			t.inputBuffer = ""
 			t.inputPending = nil
 			if command != "" {
+				// A new Enter finalizes the previous command with an unknown
+				// exit and no finish time before the next one starts.
+				if previous := t.finalizePendingLocked(now, false, 0, false); previous != nil {
+					completions = append(completions, *previous)
+				}
 				t.command = CommandState{
 					Text:      command,
 					Running:   true,
 					StartedAt: now,
 				}
+				t.startPendingLocked(command, now)
 				// Only output after the command starts can carry its prompt;
 				// the previous prompt may still be in the tail.
 				t.outputSinceStart = false
 				t.stats.Commands++
-				submitted = command
+				started = true
 			}
 			changed = true
 		default:
@@ -1141,7 +1295,7 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, string) {
 			}
 		}
 	}
-	return changed, submitted
+	return changed, started, completions
 }
 
 // appendInputByte records typed text one byte at a time, waiting for a

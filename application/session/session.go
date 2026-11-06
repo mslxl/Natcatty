@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 	etmodel "github.com/mslxl/natcatty/domain/model/et"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
@@ -519,11 +520,11 @@ type Session struct {
 	highlightCarry []byte
 	highlightTimer *time.Timer
 
-	onNotification func(model.SessionID, TerminalNotification)
-	onTransfer     func(model.SessionID, TransferState)
-	onInput        func(model.SessionID, []byte)
-	onCommand      func(model.SessionID, string, string)
-	onBell         func(model.SessionID)
+	onNotification      func(model.SessionID, TerminalNotification)
+	onTransfer          func(model.SessionID, TransferState)
+	onInput             func(model.SessionID, []byte)
+	onCommandCompletion func(CommandEvent)
+	onBell              func(model.SessionID)
 
 	onEnd    func(model.SessionID)
 	onChange func(Snapshot)
@@ -572,20 +573,20 @@ type Service struct {
 	onChange   func(Snapshot)
 	// autoLog decides whether a new Session starts logging. Nil disables
 	// automatic logs; the user can still start one from the Session surface.
-	autoLog         func(StartSpec) *LogOptions
-	clipboardPolicy func() domainterminal.ClipboardAccess
-	encodingPolicy  func(StartSpec) domainterminal.Encoding
-	codecFactory    CodecFactory
-	onNotification  func(model.SessionID, TerminalNotification)
-	onTransfer      func(model.SessionID, TransferState)
-	onInput         func(model.SessionID, []byte)
-	onCommand       func(model.SessionID, string, string)
-	onBell          func(model.SessionID)
-	onConnection    func(ConnectionEvent)
-	highlightPolicy func() (bool, []domainterminal.KeywordHighlightRule)
-	mu              sync.Mutex
-	sessions        map[model.SessionID]*Session
-	closing         bool
+	autoLog             func(StartSpec) *LogOptions
+	clipboardPolicy     func() domainterminal.ClipboardAccess
+	encodingPolicy      func(StartSpec) domainterminal.Encoding
+	codecFactory        CodecFactory
+	onNotification      func(model.SessionID, TerminalNotification)
+	onTransfer          func(model.SessionID, TransferState)
+	onInput             func(model.SessionID, []byte)
+	onCommandCompletion func(CommandEvent)
+	onBell              func(model.SessionID)
+	onConnection        func(ConnectionEvent)
+	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
+	mu                  sync.Mutex
+	sessions            map[model.SessionID]*Session
+	closing             bool
 }
 
 // Option customizes a Service.
@@ -648,10 +649,11 @@ func WithTransferHook(fn func(model.SessionID, TransferState)) Option {
 	return func(s *Service) { s.onTransfer = fn }
 }
 
-// WithCommandHook receives each non-empty command submitted in a Session,
-// together with its history scope. The app records it for autocomplete.
-func WithCommandHook(fn func(model.SessionID, string, string)) Option {
-	return func(s *Service) { s.onCommand = fn }
+// WithCommandCompletionHook receives each command when it finishes or its
+// Session ends, never when Enter is pressed. The app records exactly one
+// history row per event. The hook runs after the tap released its lock.
+func WithCommandCompletionHook(fn func(CommandEvent)) Option {
+	return func(s *Service) { s.onCommandCompletion = fn }
 }
 
 // WithBellHook receives a BEL from the transport. The app marks the Session's
@@ -772,26 +774,26 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		highlightEnabled, highlightRules = s.highlightPolicy()
 	}
 	session := &Session{
-		id:              id,
-		ctx:             sessionCtx,
-		cancel:          cancel,
-		transport:       transport,
-		factory:         s.factory,
-		spec:            spec,
-		tap:             tap,
-		clipboardAccess: policy,
-		codec:           codec,
-		highlighter:     domainterminal.NewHighlighter(highlightEnabled, highlightRules),
-		genDone:         make(chan struct{}),
-		writeCh:         make(chan []byte, s.writeDepth),
-		commands:        make(chan command, 16),
-		closeCh:         make(chan struct{}, 1),
-		done:            make(chan struct{}),
-		onNotification:  s.onNotification,
-		onTransfer:      s.onTransfer,
-		onInput:         s.onInput,
-		onCommand:       s.onCommand,
-		onBell:          s.onBell,
+		id:                  id,
+		ctx:                 sessionCtx,
+		cancel:              cancel,
+		transport:           transport,
+		factory:             s.factory,
+		spec:                spec,
+		tap:                 tap,
+		clipboardAccess:     policy,
+		codec:               codec,
+		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
+		genDone:             make(chan struct{}),
+		writeCh:             make(chan []byte, s.writeDepth),
+		commands:            make(chan command, 16),
+		closeCh:             make(chan struct{}, 1),
+		done:                make(chan struct{}),
+		onNotification:      s.onNotification,
+		onTransfer:          s.onTransfer,
+		onInput:             s.onInput,
+		onCommandCompletion: s.onCommandCompletion,
+		onBell:              s.onBell,
 		snapshot: Snapshot{
 			ID:         id,
 			Kind:       spec.Kind,
@@ -901,8 +903,7 @@ func (s *Service) reportConnection(event ConnectionEvent) {
 }
 
 // SessionInfo returns the Host identity, display label, and kind of a live
-// Session. The command hook uses it to associate a recorded command with the
-// terminal it ran in.
+// Session. The app uses it for Session-scoped actions that need the live row.
 func (s *Service) SessionInfo(id model.SessionID) (model.HostID, string, Kind, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -911,6 +912,35 @@ func (s *Service) SessionInfo(id model.SessionID) (model.HostID, string, Kind, b
 		return "", "", "", false
 	}
 	return session.spec.HostID, session.Label(), session.spec.Kind, true
+}
+
+// commandScope returns the history scope a Session's commands are recorded
+// under: the local shell, a saved Host, a serial port, or an unsaved Host whose
+// scope carries the origin captured at execution. A serial port is not a host
+// and is never local. The same value is used for autocomplete's read path, so
+// a Session reads the rows it writes.
+func commandScope(spec StartSpec) string {
+	switch {
+	case spec.Kind == KindSerial:
+		if spec.Serial != nil {
+			return "serial:" + serial.PortName(spec.Serial.Path)
+		}
+		return "serial"
+	case spec.HostID != "":
+		return "host:" + string(spec.HostID)
+	case spec.Kind == KindLocal || spec.Kind == "":
+		return "local"
+	default:
+		return "host:unsaved:" + domainhistory.CaptureOrigin(
+			spec.Hostname, spec.Username, spec.Label)
+	}
+}
+
+// HistoryScope returns the autocomplete scope this Session's captured commands
+// use. It is separate from EncodingScope, which selects a persisted text
+// encoding preference rather than a history partition.
+func (s *Session) HistoryScope() string {
+	return commandScope(s.spec)
 }
 
 // SetClipboardPolicy applies an OSC 52 policy change to every live Session
@@ -1421,6 +1451,12 @@ finished:
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
+	// A command still pending when the Session ends is finalized with an
+	// unknown exit and no finish time, so no duration is invented. The tap
+	// returns it at most once even when output and close race.
+	if completion := s.tap.finalizePending(); completion != nil {
+		s.publishCommandCompletion(*completion)
+	}
 	logging := s.finishLogging()
 	s.update(func(snapshot *Snapshot) {
 		snapshot.Status = status
@@ -1520,6 +1556,11 @@ func (s *Session) readLoop(generation int, transport Transport) {
 			if effects.Changed {
 				s.publishTap(now)
 				s.scheduleActivityClear()
+			}
+			// observe returned after releasing the tap lock, so completions are
+			// published outside it. Each command is finalized once.
+			for _, completion := range effects.Completions {
+				s.publishCommandCompletion(completion)
 			}
 			if effects.PromptRecheck {
 				s.schedulePromptRecheck()
