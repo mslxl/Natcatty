@@ -1494,13 +1494,11 @@ func syncConnected(c *ui.Context, state *SyncState, snapshot appsync.Snapshot, m
 		}
 		ui.Text(c, warning).FontSize(11).TextColor(syncWarningTextColor(t))
 	} else {
-		ui.Field(c, m.SettingsSyncAutoSync(), func() {
-			auto := snapshot.AutoSync
-			if ui.Checkbox(c, &auto, "").Changed() {
-				state.SetAutoSync(auto)
-				c.Invalidate()
-			}
-		})
+		auto := snapshot.AutoSync
+		if ui.Checkbox(c, &auto, m.SettingsSyncAutoSync()).Changed() {
+			state.SetAutoSync(auto)
+			c.Invalidate()
+		}
 	}
 	strategies := []string{
 		m.SettingsSyncStrategySmartMerge(),

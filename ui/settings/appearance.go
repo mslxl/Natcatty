@@ -184,18 +184,14 @@ func findPreset(presets []domaintheme.Preset, id string) (domaintheme.Preset, bo
 func accentPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	settings domain.Settings) {
 	accent := settings.Appearance.AccentMode == domain.AccentCustom
-	fieldRow(c, state, m, t, domain.FieldAccentMode, m.SettingsAccentMode(), func() {
-		if ui.Checkbox(c, &accent, "").Changed() {
-			state.Update(func(s *domain.Settings) {
-				if accent {
-					s.Appearance.AccentMode = domain.AccentCustom
-				} else {
-					s.Appearance.AccentMode = domain.AccentTheme
-				}
-			})
-			c.Invalidate()
-		}
-	})
+	checkboxRow(c, state, m, domain.FieldAccentMode, m.SettingsAccentMode(), accent,
+		func(s *domain.Settings, value bool) {
+			if value {
+				s.Appearance.AccentMode = domain.AccentCustom
+			} else {
+				s.Appearance.AccentMode = domain.AccentTheme
+			}
+		})
 	ui.Field(c, m.SettingsAccentPresets(), func() {
 		ui.Row(c).Wrap().Gap(6).FillWidth().Children(func() {
 			for _, preset := range domaintheme.Accents() {
@@ -294,12 +290,8 @@ func iconPicker(c *ui.Context, state *PreferencesState, m locales.Messages, t *u
 func followAppToggle(c *ui.Context, state *PreferencesState, m locales.Messages, t *ui.Theme,
 	settings domain.Settings) {
 	follow := settings.Appearance.FollowAppTerminalTheme
-	fieldRow(c, state, m, t, domain.FieldFollowAppTerminalTheme, m.SettingsFollowAppTerminalTheme(), func() {
-		if ui.Checkbox(c, &follow, "").Changed() {
-			state.Update(func(s *domain.Settings) { s.Appearance.FollowAppTerminalTheme = follow })
-			c.Invalidate()
-		}
-	})
+	checkboxRow(c, state, m, domain.FieldFollowAppTerminalTheme, m.SettingsFollowAppTerminalTheme(), follow,
+		func(s *domain.Settings, value bool) { s.Appearance.FollowAppTerminalTheme = value })
 	ui.Text(c, m.SettingsFollowAppTerminalThemeDescription()).FontSize(11).TextColor(t.TextMuted)
 }
 
