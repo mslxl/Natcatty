@@ -148,11 +148,12 @@ func TestShellLayoutFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		if err := shellState.NewTab(); err != nil {
 			t.Fatal(err)
 		}
+		shellState.RenameTab(0, "Local Shell")
 		shellState.ShowVault()
 		tt.Frame()
 
 		// The Tab sits in the window's Tab bar and its title is readable.
-		title := assertInTabBar(t, tt, size[0], "Local Session 1")
+		title := assertInTabBar(t, tt, size[0], "Local Shell")
 		if title.W < 60 {
 			t.Fatalf("%dx%d tab title is squeezed to %.1f DIPs: %+v",
 				size[0], size[1], title.W, title)
@@ -330,9 +331,13 @@ func TestShellShowsOpenLocalSessionTabsAndTheirTerminal(t *testing.T) {
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
+	// The original names every local Session "Local Terminal", so rename the
+	// Tabs to tell them apart in the strip.
+	graph.state.RenameTab(0, "First Shell")
+	graph.state.RenameTab(1, "Second Shell")
 	tt.Frame()
 
-	for _, want := range []string{"Local Session 1", "Local Session 2", "terminal-surface"} {
+	for _, want := range []string{"First Shell", "Second Shell", "terminal-surface"} {
 		if !tt.HasText(want) {
 			t.Errorf("shell does not show %q, texts %q", want, tt.Texts())
 		}
@@ -346,11 +351,11 @@ func TestShellShowsOpenLocalSessionTabsAndTheirTerminal(t *testing.T) {
 		t.Fatal("CloseActiveTab returned false")
 	}
 	tt.Frame()
-	if tt.HasText("Local Session 2") {
-		t.Errorf("shell still shows closed Local Session 2, texts %q", tt.Texts())
+	if tt.HasText("Second Shell") {
+		t.Errorf("shell still shows closed Second Shell, texts %q", tt.Texts())
 	}
-	if !tt.HasText("Local Session 1") {
-		t.Errorf("shell does not show Local Session 1 after closing Local Session 2, texts %q", tt.Texts())
+	if !tt.HasText("First Shell") {
+		t.Errorf("shell does not show First Shell after closing Second Shell, texts %q", tt.Texts())
 	}
 }
 
@@ -562,7 +567,7 @@ func TestShellViewRendersTheSearchOverlayAboveEverySurface(t *testing.T) {
 }
 
 // TestTabTitleNamesASummaryLikeTheTabStrip proves the Quick Switcher labels a
-// Session exactly as the tab strip does, copy suffix included.
+// Session exactly as the tab strip does. A duplicate keeps its source's title.
 func TestTabTitleNamesASummaryLikeTheTabStrip(t *testing.T) {
 	m := locales.In("en")
 	if got := TabTitle(m, state.TabSummary{Number: 3}); got != "Local Session 3" {
@@ -571,9 +576,8 @@ func TestTabTitleNamesASummaryLikeTheTabStrip(t *testing.T) {
 	if got := TabTitle(m, state.TabSummary{Label: "prod-db"}); got != "prod-db" {
 		t.Fatalf("named Tab = %q", got)
 	}
-	if got, want := TabTitle(m, state.TabSummary{Label: "prod-db", Copy: 1}),
-		m.TabCopyTitle("prod-db", 1); got != want {
-		t.Fatalf("copied Tab = %q, want %q", got, want)
+	if got := TabTitle(m, state.TabSummary{Label: "prod-db", Copy: 1}); got != "prod-db" {
+		t.Fatalf("duplicated Tab = %q, want the source title", got)
 	}
 }
 

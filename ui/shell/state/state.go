@@ -22,6 +22,7 @@ import (
 	domaintelnet "github.com/mslxl/natcatty/domain/model/telnet"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 	domainpreferences "github.com/mslxl/natcatty/domain/preferences"
+	domainterminal "github.com/mslxl/natcatty/domain/terminal"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	domainworkspace "github.com/mslxl/natcatty/domain/workspace"
 	uiconnection "github.com/mslxl/natcatty/ui/connection"
@@ -201,6 +202,12 @@ type State struct {
 	// workspace persists layout changes and supplies the restore payload.
 	workspace   *appworkspace.Service
 	resolveHost HostResolver
+	// dynamicTabTitleMode is the live Dynamic tab title setting. Nil keeps the
+	// default: dynamic titles for every Session.
+	dynamicTabTitleMode func() domainterminal.DynamicTabTitleMode
+	// hostLabel resolves a Host's current label, so an open Tab follows a Vault
+	// rename. Nil falls back to the descriptor's label snapshot.
+	hostLabel func(model.HostID) (string, bool)
 	// onDetach receives the ID of a Tab that left the main window. Ticket 13
 	// owns the detached window itself; the seam keeps ownership explicit.
 	onDetach func(model.TabID)
@@ -432,6 +439,18 @@ func WithTrustPrompt(prompt *sessionui.TrustPrompt) Option {
 // AuthPrompter.
 func WithAuthPrompt(prompt *sessionui.AuthPrompt) Option {
 	return func(s *State) { s.authPrompt = prompt }
+}
+
+// WithDynamicTabTitleMode supplies the live Dynamic tab title setting. Without
+// it the shell follows the default: every Session's title.
+func WithDynamicTabTitleMode(mode func() domainterminal.DynamicTabTitleMode) Option {
+	return func(s *State) { s.dynamicTabTitleMode = mode }
+}
+
+// WithHostLabel supplies a Host's current label so open Tabs follow a Vault
+// rename. The getter runs on the UI thread.
+func WithHostLabel(label func(model.HostID) (string, bool)) Option {
+	return func(s *State) { s.hostLabel = label }
 }
 
 // WithWorkspace gives the shell the Workspace persistence service and the Host
@@ -735,7 +754,8 @@ func (s *State) NewTab() error {
 	}
 
 	tab := s.newTab(TabOptions{AutoTitle: true, Descriptor: domainworkspace.SessionDescriptor{
-		Kind: domainworkspace.SessionLocal,
+		Kind:  domainworkspace.SessionLocal,
+		Label: session.Label(),
 	}})
 	tab.attachOnlySession(session, surface)
 	s.tabs = append(s.tabs, tab)

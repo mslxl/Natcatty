@@ -60,13 +60,13 @@ func DetachedView(s *state.State, tabID model.TabID) func(*ui.Context) {
 
 // DetachedTitle is the window and header title of a detached Tab. It uses the
 // same rules as the main tab strip: an empty label names the local Session by
-// number, and a copy generation is marked.
+// number.
 func DetachedTitle(m locales.Messages, info state.DetachedTabInfo) string {
 	return tabTitle(m, state.TabInfo{
 		Number:      info.Number,
 		TitleNumber: info.TitleNumber,
 		Label:       info.Label,
+		Title:       info.Title,
 		AutoTitle:   info.AutoTitle,
-		Copy:        info.Copy,
 	})
 }

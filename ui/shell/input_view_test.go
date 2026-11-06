@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ func newInputGraph(t *testing.T) *testGraph {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatalf("open tab %d: %v", index, err)
 		}
+		graph.state.RenameTab(index, fmt.Sprintf("Tab %d", index+1))
 	}
 	graph.state.Flush()
 	return graph
@@ -102,7 +104,7 @@ func TestBroadcastAndComposeFitAtDefaultAndMinimumSizes(t *testing.T) {
 			}
 		}
 
-		tabTitle := assertInputInside(t, tester, size[0], size[1], "Local Session 1")
+		tabTitle := assertInputInside(t, tester, size[0], size[1], "Tab 1")
 		panel := rects[m.BroadcastPanelTitle()]
 		compose := rects[m.ComposeTitle()]
 		if tabTitle.Y+tabTitle.H > panel.Y+0.5 {
@@ -220,7 +222,7 @@ func TestComposeFocusedTargetIndication(t *testing.T) {
 	tester.Frame()
 
 	assertInputInside(t, tester, 720, 480,
-		m.ComposeTargetFocusedNamed(m.LocalSessionTab(3)))
+		m.ComposeTargetFocusedNamed("Tab 3"))
 	assertInputInside(t, tester, 720, 480, m.ComposePreview())
 	assertInputInside(t, tester, 720, 480, "echo hi")
 	assertInputInside(t, tester, 720, 480, m.ComposeSend())
@@ -403,7 +405,7 @@ func TestDetachedTargetLeavesThePanelAndCountsAgree(t *testing.T) {
 	if tester.HasText(m.ComposeTargetBroadcast(2)) {
 		t.Fatalf("compose still counts the detached Session: %v", tester.Texts())
 	}
-	if tester.HasText("Local Session 1") {
+	if tester.HasText("Tab 1") {
 		t.Fatalf("the detached Session still has a tab or target row: %v", tester.Texts())
 	}
 	if tester.HasText(m.BroadcastDelivered()) {
@@ -500,6 +502,7 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatal(err)
 		}
+		graph.state.RenameTab(index, fmt.Sprintf("Tab %d", index+1))
 	}
 	graph.state.Flush()
 
@@ -510,14 +513,14 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 	strip := assertInputInside(t, tester, 704, 421, m.WorkTabsLabel())
 	// The sixth Tab is active and was opened while the strip overflowed; it
 	// must be whole inside the strip without the user scrolling.
-	last := assertInputInside(t, tester, 704, 421, "Local Session 6")
+	last := assertInputInside(t, tester, 704, 421, "Tab 6")
 	if last.W < 40 {
 		t.Fatalf("the active last Tab is clipped at rest: %+v", last)
 	}
 	if last.X < strip.X-0.5 || last.X+last.W > strip.X+strip.W+0.5 {
 		t.Fatalf("the active last Tab is outside the strip at rest: tab %+v strip %+v", last, strip)
 	}
-	if first, ok := tester.Find("Local Session 1"); ok {
+	if first, ok := tester.Find("Tab 1"); ok {
 		// The first Tab is allowed to start off-screen, but it must not be
 		// half cut inside the viewport: either it is whole or fully out.
 		if first.X < strip.X+strip.W && first.X+first.W > strip.X {
@@ -527,7 +530,7 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 
 	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, -2000, 0)
 	tester.Frame()
-	first := assertInputInside(t, tester, 704, 421, "Local Session 1")
+	first := assertInputInside(t, tester, 704, 421, "Tab 1")
 	if first.W < 40 {
 		t.Fatalf("the first Tab is still clipped after scrolling back: %+v", first)
 	}
@@ -537,7 +540,7 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 
 	tester.Scroll(strip.X+strip.W/2, strip.Y+strip.H/2, 2000, 0)
 	tester.Frame()
-	last = assertInputInside(t, tester, 704, 421, "Local Session 6")
+	last = assertInputInside(t, tester, 704, 421, "Tab 6")
 	if last.W < 40 {
 		t.Fatalf("the last Tab is still clipped after scrolling: %+v", last)
 	}
@@ -549,7 +552,7 @@ func TestTabStripScrollsToReachEveryTabAtMinimumWidth(t *testing.T) {
 	// reveal it, so a Tab can never be selected yet invisible.
 	graph.state.SelectTab(0)
 	tester.Frame()
-	first = assertInputInside(t, tester, 704, 421, "Local Session 1")
+	first = assertInputInside(t, tester, 704, 421, "Tab 1")
 	if first.W < 40 || first.X < strip.X-0.5 || first.X+first.W > strip.X+strip.W+0.5 {
 		t.Fatalf("selecting the first Tab did not reveal it: tab %+v strip %+v", first, strip)
 	}
@@ -580,7 +583,7 @@ func TestDenseBroadcastComposeKeepsTabStripAtMinimumSize(t *testing.T) {
 		t.Fatalf("the Tab strip shrank to %.1f DIPs: %+v", strip.H, strip)
 	}
 	// The third Tab is active; the strip reveals it when it overflows.
-	first := assertInputInside(t, tester, 704, 421, "Local Session 3")
+	first := assertInputInside(t, tester, 704, 421, "Tab 3")
 	if first.W < 40 {
 		t.Fatalf("the active Tab is clipped: %+v", first)
 	}

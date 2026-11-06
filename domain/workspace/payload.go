@@ -36,12 +36,15 @@ const (
 type SessionDescriptor struct {
 	Kind SessionKind `json:"kind"`
 	// Number is the stable local-session number used in auto titles.
-	Number   int          `json:"number,omitempty"`
-	Label    string       `json:"label,omitempty"`
-	HostID   model.HostID `json:"hostId,omitempty"`
-	Hostname string       `json:"hostname,omitempty"`
-	Port     int          `json:"port,omitempty"`
-	Username string       `json:"username,omitempty"`
+	Number int    `json:"number,omitempty"`
+	Label  string `json:"label,omitempty"`
+	// CustomName is the user's rename of this Pane's Session. It wins over the
+	// Host label and the shell-reported title, and survives a restore.
+	CustomName string       `json:"customName,omitempty"`
+	HostID     model.HostID `json:"hostId,omitempty"`
+	Hostname   string       `json:"hostname,omitempty"`
+	Port       int          `json:"port,omitempty"`
+	Username   string       `json:"username,omitempty"`
 	// Dir is the working directory to reopen in. For local Sessions it is the
 	// start directory; for SSH it is the last known directory.
 	Dir string `json:"dir,omitempty"`
@@ -89,6 +92,10 @@ type RestoredTab struct {
 	TitleNumber int    `json:"titleNumber,omitempty"`
 	Title       string `json:"title,omitempty"`
 	AutoTitle   bool   `json:"autoTitle,omitempty"`
+	// GeneratedTitle marks a title composed from the merged Panes' connection
+	// labels, such as "web-01/db-02". It keeps following pane renames and
+	// membership until the user renames the Tab.
+	GeneratedTitle bool `json:"generatedTitle,omitempty"`
 	// Copy counts duplicate generations: 0 is the original, 1 the first copy.
 	Copy      int   `json:"copy,omitempty"`
 	Root      *Node `json:"root"`
@@ -149,14 +156,15 @@ func SanitizePayload(payload Payload) Payload {
 			activeIndex = len(out.Tabs)
 		}
 		out.Tabs = append(out.Tabs, RestoredTab{
-			ID:          tab.ID,
-			Number:      tab.Number,
-			TitleNumber: tab.TitleNumber,
-			Title:       strings.TrimSpace(tab.Title),
-			AutoTitle:   tab.AutoTitle,
-			Copy:        max(tab.Copy, 0),
-			Root:        root,
-			FocusPath:   SanitizeFocusPath(root, tab.FocusPath),
+			ID:             tab.ID,
+			Number:         tab.Number,
+			TitleNumber:    tab.TitleNumber,
+			Title:          strings.TrimSpace(tab.Title),
+			AutoTitle:      tab.AutoTitle,
+			GeneratedTitle: tab.GeneratedTitle,
+			Copy:           max(tab.Copy, 0),
+			Root:           root,
+			FocusPath:      SanitizeFocusPath(root, tab.FocusPath),
 		})
 	}
 

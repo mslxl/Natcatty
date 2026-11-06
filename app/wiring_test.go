@@ -15,13 +15,24 @@ import (
 )
 
 type wiringTransport struct {
-	closed    chan struct{}
+	closed chan struct{}
+	// output feeds scripted terminal bytes, such as an OSC title, to the
+	// Session. A nil channel keeps the transport silent until Close.
+	output    chan []byte
 	closeOnce sync.Once
 }
 
-func (t *wiringTransport) Read([]byte) (int, error) {
-	<-t.closed
-	return 0, io.EOF
+func (t *wiringTransport) Read(p []byte) (int, error) {
+	if t.output == nil {
+		<-t.closed
+		return 0, io.EOF
+	}
+	select {
+	case data := <-t.output:
+		return copy(p, data), nil
+	case <-t.closed:
+		return 0, io.EOF
+	}
 }
 func (t *wiringTransport) Write(p []byte) (int, error) { return len(p), nil }
 func (t *wiringTransport) Resize(int, int) error       { return nil }

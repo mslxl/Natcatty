@@ -148,7 +148,7 @@ func TestDetachedWindowFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		if !tester.HasText("terminal-surface") {
 			t.Fatalf("%dx%d does not render the Session: %v", size[0], size[1], tester.Texts())
 		}
-		title := assertInside(t, tester, size[0], size[1], "Local Session 1")
+		title := assertInside(t, tester, size[0], size[1], "Local Terminal")
 		move := assertInside(t, tester, size[0], size[1], "Move to Main Window")
 		assertSideBySide(t, title, move)
 		assertClearOfWindowControls(t, move, size[0])

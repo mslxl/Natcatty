@@ -23,7 +23,7 @@ func TestSanitizePayloadKeepsAValidWorkspace(t *testing.T) {
 		ActiveTab: 1,
 		Tabs: []RestoredTab{
 			{ID: "t1", Number: 1, AutoTitle: true, Root: NewPaneNode("p1"), FocusPath: []int{}},
-			{ID: "t2", Number: 2, Title: "work", Copy: 1, Root: root, FocusPath: []int{1}},
+			{ID: "t2", Number: 2, Title: "work", GeneratedTitle: true, Copy: 1, Root: root, FocusPath: []int{1}},
 		},
 		Panes: []RestoredPane{
 			{ID: "p1", Session: validDescriptor()},
@@ -40,7 +40,8 @@ func TestSanitizePayloadKeepsAValidWorkspace(t *testing.T) {
 	if !reflect.DeepEqual(got.Tabs[1].FocusPath, []int{1}) {
 		t.Fatalf("focus path = %v, want [1]", got.Tabs[1].FocusPath)
 	}
-	if got.Tabs[0].AutoTitle != true || got.Tabs[1].Title != "work" || got.Tabs[1].Copy != 1 {
+	if got.Tabs[0].AutoTitle != true || got.Tabs[1].Title != "work" ||
+		!got.Tabs[1].GeneratedTitle || got.Tabs[1].Copy != 1 {
 		t.Fatalf("titles were not preserved: %+v", got.Tabs)
 	}
 }

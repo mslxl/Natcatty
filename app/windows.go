@@ -316,7 +316,29 @@ func (m *windowManager) wrap(content func(*ui.Context)) func(*ui.Context) {
 // behind the same shared App Lock gate as every other window.
 func (m *windowManager) detachedContent(tabID model.TabID) func(*ui.Context) {
 	window := func() hostWindow { return m.detached[tabID] }
-	return m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
+	content := m.withTheme(m.withAccelerators(withFrame(titlebar.Popup, window, m.wrap(shell.DetachedView(m.state, tabID)))))
+	return m.withDetachedTitle(tabID, content)
+}
+
+// withDetachedTitle keeps a detached window's OS title in step with the Tab's
+// resolved title. The title can change after the window opens: a shell reports
+// OSC 0/2 titles, and focusing another Pane changes a split Tab's name. The
+// title written to the window is the same one its header draws, so the taskbar
+// and the header never disagree.
+func (m *windowManager) withDetachedTitle(tabID model.TabID, content func(*ui.Context)) func(*ui.Context) {
+	var last string
+	return func(c *ui.Context) {
+		if info, ok := m.state.DetachedTabInfo(tabID); ok {
+			title := shell.DetachedTitle(locales.In(c.Locale()), info)
+			if title != last {
+				if window := m.detached[tabID]; window != nil && !window.IsDestroyed() {
+					window.SetTitle(title)
+				}
+				last = title
+			}
+		}
+		content(c)
+	}
 }
 
 func (m *windowManager) messages() locales.Messages {

@@ -4,6 +4,8 @@
 // these values into their own vocabulary.
 package terminal
 
+import modelterminal "github.com/mslxl/natcatty/domain/model/terminal"
+
 // LogFormat is the file form a Session log takes.
 type LogFormat string
 
@@ -63,6 +65,25 @@ const (
 	// the original default.
 	NotificationAlways NotificationMode = "always"
 )
+
+// DynamicTabTitleMode is the terminal model's mode, re-exported because it is
+// part of the persisted terminal settings group.
+type DynamicTabTitleMode = modelterminal.DynamicTabTitleMode
+
+const (
+	// DynamicTabTitleOff always shows the connection label.
+	DynamicTabTitleOff = modelterminal.DynamicTabTitleOff
+	// DynamicTabTitleAgents follows dynamic titles for agent Sessions only.
+	DynamicTabTitleAgents = modelterminal.DynamicTabTitleAgents
+	// DynamicTabTitleAll follows the dynamic title for every Session. It is
+	// the default.
+	DynamicTabTitleAll = modelterminal.DynamicTabTitleAll
+)
+
+// NormalizeDynamicTabTitleMode falls back to the default for an unknown mode.
+func NormalizeDynamicTabTitleMode(mode DynamicTabTitleMode) DynamicTabTitleMode {
+	return modelterminal.NormalizeDynamicTabTitleMode(mode)
+}
 
 // DefaultLogFormat is the original default log format.
 const DefaultLogFormat = LogFormatText
@@ -178,6 +199,10 @@ type Settings struct {
 	OSC52 ClipboardAccess
 	// OSCNotifications is the desktop notification mode for OSC 9/777/99.
 	OSCNotifications NotificationMode
+	// DynamicTabTitleMode selects which Tabs follow the shell-reported OSC 0/2
+	// title. It defaults to every Session, so a plain shell's title names its
+	// Tab too.
+	DynamicTabTitleMode DynamicTabTitleMode
 	// Encoding is the default terminal encoding for a new Session. The
 	// original default is UTF-8.
 	Encoding Encoding
@@ -255,21 +280,23 @@ func EncodingScopeHost(hostID string) string {
 	return "host:" + hostID
 }
 
-// Defaults returns the original defaults: logging off with a text format and
-// no timestamps, OSC 52 write-only, and notifications always.
+// Defaults returns the application defaults: logging off with a text format
+// and no timestamps, OSC 52 write-only, notifications always, and every
+// Session's Tab following the shell-reported title.
 func Defaults() Settings {
 	return Settings{
-		LoggingEnabled:   false,
-		LogDirectory:     "",
-		LogFormat:        DefaultLogFormat,
-		LogTimestamps:    false,
-		OSC52:            ClipboardWriteOnly,
-		OSCNotifications: NotificationAlways,
-		Encoding:         EncodingUTF8,
-		Encodings:        nil,
-		PasteProtection:  false,
-		PasteMinLines:    DefaultPasteMinLines,
-		DropAction:       DropInsert,
+		LoggingEnabled:      false,
+		LogDirectory:        "",
+		LogFormat:           DefaultLogFormat,
+		LogTimestamps:       false,
+		OSC52:               ClipboardWriteOnly,
+		OSCNotifications:    NotificationAlways,
+		DynamicTabTitleMode: DynamicTabTitleAll,
+		Encoding:            EncodingUTF8,
+		Encodings:           nil,
+		PasteProtection:     false,
+		PasteMinLines:       DefaultPasteMinLines,
+		DropAction:          DropInsert,
 
 		AutocompleteEnabled:        true,
 		AutocompleteGhostText:      false,
@@ -303,6 +330,7 @@ func Normalize(settings Settings) Settings {
 	} else if !settings.OSCNotifications.Valid() {
 		settings.OSCNotifications = NotificationAlways
 	}
+	settings.DynamicTabTitleMode = NormalizeDynamicTabTitleMode(settings.DynamicTabTitleMode)
 	settings.Encoding = NormalizeEncoding(settings.Encoding)
 	settings.PasteMinLines = NormalizePasteMinLines(settings.PasteMinLines)
 	if !settings.DropAction.Valid() {

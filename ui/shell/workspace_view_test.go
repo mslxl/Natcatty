@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -126,12 +127,13 @@ func TestShellPaneMenuSplitsAndCloses(t *testing.T) {
 	}
 }
 
-func TestShellTabMenuDuplicatesWithCopyTitle(t *testing.T) {
+func TestShellTabMenuDuplicateKeepsTheSameTitle(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
+	graph.state.RenameTab(0, "Build shell")
 	tt.Frame()
 
 	if err := tt.Click("⋯"); err != nil {
@@ -144,19 +146,26 @@ func TestShellTabMenuDuplicatesWithCopyTitle(t *testing.T) {
 	if graph.state.TabCount() != 2 {
 		t.Fatalf("tabs = %d after Duplicate Tab, want 2", graph.state.TabCount())
 	}
-	want := locales.In("en").TabCopyTitle("Local Session 1", 1)
-	if !tt.HasText(want) {
-		t.Fatalf("shell does not show %q, texts %q", want, tt.Texts())
+	// The original gives a duplicate its source's title instead of marking a
+	// copy generation.
+	first, _, _ := graph.state.TabLabel(0)
+	second, _, _ := graph.state.TabLabel(1)
+	if first != "Build shell" || second != "Build shell" {
+		t.Fatalf("duplicated Tab titles = %q and %q, want the source title", first, second)
+	}
+	if suffix := locales.In("en").TabCopyTitle("Build shell", 1); tt.HasText(suffix) {
+		t.Fatalf("the duplicate is marked as a copy: %q", suffix)
 	}
 }
 
 func TestShellTabMenuClosesOtherTabs(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)
-	for range 3 {
+	for index := range 3 {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatal(err)
 		}
+		graph.state.RenameTab(index, fmt.Sprintf("Tab %d", index+1))
 	}
 	graph.state.SelectTab(0)
 	tt.Frame()
@@ -171,7 +180,7 @@ func TestShellTabMenuClosesOtherTabs(t *testing.T) {
 	if graph.state.TabCount() != 1 {
 		t.Fatalf("tabs = %d after Close Other Tabs, want 1", graph.state.TabCount())
 	}
-	if !tt.HasText("Local Session 1") {
+	if !tt.HasText("Tab 1") {
 		t.Fatalf("the kept Tab is not shown, texts %q", tt.Texts())
 	}
 }
@@ -179,20 +188,21 @@ func TestShellTabMenuClosesOtherTabs(t *testing.T) {
 func TestShellDragReordersTabs(t *testing.T) {
 	graph := newWorkspaceViewGraph(t)
 	tt := ui.NewTester(View(graph.state), 900, 600)
-	for range 3 {
+	for index := range 3 {
 		if err := graph.state.NewTab(); err != nil {
 			t.Fatal(err)
 		}
+		graph.state.RenameTab(index, fmt.Sprintf("Tab %d", index+1))
 	}
 	tt.Frame()
 
-	third, ok := tt.Find("Local Session 3")
+	third, ok := tt.Find("Tab 3")
 	if !ok {
-		t.Fatalf("Local Session 3 is not visible, texts %q", tt.Texts())
+		t.Fatalf("Tab 3 is not visible, texts %q", tt.Texts())
 	}
-	first, ok := tt.Find("Local Session 1")
+	first, ok := tt.Find("Tab 1")
 	if !ok {
-		t.Fatalf("Local Session 1 is not visible, texts %q", tt.Texts())
+		t.Fatalf("Tab 1 is not visible, texts %q", tt.Texts())
 	}
 	tt.Press(third.X+third.W/2, third.Y+third.H/2)
 	tt.Move(first.X+first.W/2, first.Y+first.H/2)
@@ -235,9 +245,11 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
+	graph.state.RenameTab(0, "Tab 1")
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
+	graph.state.RenameTab(1, "Tab 2")
 	graph.waitForSurfaces(t, 2)
 	tt.Frame()
 
@@ -245,9 +257,9 @@ func TestShellDragMovesAPaneOntoAnotherTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("Pane drag handle is not visible, texts %q", tt.Texts())
 	}
-	first, ok := tt.Find("Local Session 1")
+	first, ok := tt.Find("Tab 1")
 	if !ok {
-		t.Fatalf("Local Session 1 is not visible, texts %q", tt.Texts())
+		t.Fatalf("Tab 1 is not visible, texts %q", tt.Texts())
 	}
 	tt.Press(handle.X+handle.W/2, handle.Y+handle.H/2)
 	tt.Move(first.X+first.W/2, first.Y+first.H/2)
@@ -429,10 +441,11 @@ func TestShellKeepsWorkTabsVisibleOverTheVault(t *testing.T) {
 	if err := graph.state.NewTab(); err != nil {
 		t.Fatal(err)
 	}
+	graph.state.RenameTab(0, "Work Tab")
 	graph.state.ShowVault()
 	tt.Frame()
 
-	tab, ok := tt.Find("Local Session 1")
+	tab, ok := tt.Find("Work Tab")
 	if !ok {
 		t.Fatalf("the work Tab is hidden on the Vault, texts %q", tt.Texts())
 	}

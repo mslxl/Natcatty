@@ -3,6 +3,7 @@ package state
 import (
 	appsession "github.com/mslxl/natcatty/application/session"
 	"github.com/mslxl/natcatty/domain/model"
+	domainsessiontitle "github.com/mslxl/natcatty/domain/sessiontitle"
 )
 
 // TabStatus is the aggregate transport state of a Tab's Sessions, as the
@@ -25,7 +26,9 @@ type TabSummary struct {
 	TabIndex int
 	Detached bool
 	Number   int
-	Label    string
+	// Label is the title the tab strip shows, before the view adds the numbered
+	// local fallback. A summary names the Tab the way the tab strip does.
+	Label string
 	// Copy counts duplicate generations, as Tab.Copy does. A summary names the
 	// Tab the way the tab strip does, copy suffix included.
 	Copy   int
@@ -37,21 +40,21 @@ type TabSummary struct {
 func (s *State) TabSummaries() []TabSummary {
 	summaries := make([]TabSummary, 0, len(s.tabs)+len(s.detached))
 	for index, tab := range s.tabs {
-		summaries = append(summaries, summaryFor(tab, index, false))
+		summaries = append(summaries, s.summaryFor(tab, index, false))
 	}
 	for _, tab := range s.detached {
-		summaries = append(summaries, summaryFor(tab, -1, true))
+		summaries = append(summaries, s.summaryFor(tab, -1, true))
 	}
 	return summaries
 }
 
-func summaryFor(tab *Tab, index int, detached bool) TabSummary {
+func (s *State) summaryFor(tab *Tab, index int, detached bool) TabSummary {
 	return TabSummary{
 		TabID:    tab.ID,
 		TabIndex: index,
 		Detached: detached,
 		Number:   tab.TitleNumber,
-		Label:    tab.Label,
+		Label:    s.tabTitle(tab),
 		Copy:     tab.Copy,
 		Status:   aggregateStatus(tab),
 	}
@@ -115,14 +118,16 @@ func labelForSession(tab *Tab, id model.SessionID) (string, bool) {
 		if pane.session == nil || pane.session.ID() != id {
 			continue
 		}
-		if len(tab.panes) > 1 && tab.Label != "" && pane.descriptor.Label != "" {
-			return tab.Label + " · " + pane.descriptor.Label, true
+		paneLabel := domainsessiontitle.ConnectionLabel(
+			pane.descriptor.CustomName, pane.descriptor.Label)
+		if len(tab.panes) > 1 && tab.Label != "" && paneLabel != "" {
+			return tab.Label + " · " + paneLabel, true
+		}
+		if paneLabel != "" {
+			return paneLabel, true
 		}
 		if tab.Label != "" {
 			return tab.Label, true
-		}
-		if pane.descriptor.Label != "" {
-			return pane.descriptor.Label, true
 		}
 		return "", true
 	}
