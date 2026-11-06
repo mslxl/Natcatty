@@ -107,13 +107,13 @@ Limits and boundaries:
 
 ## mosh
 
-mosh is temporarily unsupported with a Network Profile because its UDP channel
+mosh is currently unsupported with a Network Profile because its UDP channel
 has not been integrated. A mosh Session on a Host whose route resolves a
 Network Profile fails closed before the bundle, SSH bootstrap, or `mosh-server`
 starts, and the localized error tells the user to use an OS-level VPN. The
-`NetworkProvider` port deliberately has no datagram capability yet. A separate
-UDP integration ticket should be opened only after the in-process mosh rewrite
-lands; this feature does not modify `adapters/mosh/` or `internal/mosh/`.
+`NetworkProvider` port deliberately has no datagram capability yet; UDP
+integration is a separate follow-up ticket. This feature does not modify
+`adapters/mosh/` or `internal/mosh/`.
 
 ## Validation status
 
