@@ -75,6 +75,11 @@ curl -fsSL -o "${LAB}/mosh-1.3.2.tar.gz" \
 echo "${MOSH_132_SHA256}  ${LAB}/mosh-1.3.2.tar.gz" | shasum -a 256 -c -
 mkdir -p "${MNT}/src"
 tar -xzf "${LAB}/mosh-1.3.2.tar.gz" -C "${MNT}/src" --strip-components=1
+# 1.3.2 calls an unqualified bind() here. With a modern libc++ <functional>
+# in scope that resolves to std::bind, and the build fails; qualify the POSIX
+# call so the pinned release compiles against the toolchain the runner ships.
+sed -i '' 's/if ( bind( sock(),/if ( ::bind( sock(),/' "${MNT}/src/src/network/network.cc"
+grep -q '::bind( sock(),' "${MNT}/src/src/network/network.cc"
 (
   cd "${MNT}/src"
   PATH="${BREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \

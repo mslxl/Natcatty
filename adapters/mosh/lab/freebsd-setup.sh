@@ -49,6 +49,11 @@ fi
 rm -rf "${LAB}/src" "${LAB}/1.3.2"
 mkdir -p "${LAB}/src" "${LAB}/1.3.2"
 tar -xzf "${LAB}/mosh-1.3.2.tar.gz" -C "${LAB}/src" --strip-components=1
+# 1.3.2 calls an unqualified bind() here. With a modern libc++ <functional>
+# in scope that resolves to std::bind, and the build fails; qualify the POSIX
+# call so the pinned release compiles against the toolchain the runner ships.
+sed -i '' 's/if ( bind( sock(),/if ( ::bind( sock(),/' "${LAB}/src/src/network/network.cc"
+grep -q '::bind( sock(),' "${LAB}/src/src/network/network.cc"
 (
   cd "${LAB}/src"
   CXXFLAGS="-std=c++17 -O2" ./configure --prefix="${LAB}/1.3.2" --without-utempter
