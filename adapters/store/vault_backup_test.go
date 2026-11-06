@@ -376,6 +376,79 @@ func tableRows(snapshot domainbackup.Snapshot, name string) int {
 	return 0
 }
 
+func TestPreviousBuildLocalBackupRestoresAfterHistorySchemaGrowth(t *testing.T) {
+	store, _ := openTestStore(t)
+	ctx := context.Background()
+	if err := store.Save(ctx, testHost("h1", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	// A Local Backup written before the history schema grew is a schema
+	// version 1 snapshot. The constant must not change, or the exact-version
+	// check would reject every existing backup.
+	previous, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if previous.SchemaVersion != 1 {
+		t.Fatalf("backup schema version = %d, want the unchanged version 1", previous.SchemaVersion)
+	}
+
+	// History rows added by this build must stay outside the Vault table set.
+	if err := store.SaveHistoryEntry(ctx, domainhistory.Entry{
+		ID: domainhistory.UUIDv7(), SessionID: "session-1", SessionUUID: "session-uuid",
+		Scope: "local", Command: "git status", CWD: "/srv/app", Shell: "zsh",
+		RecordedAt: time.UnixMilli(10), FinishedAt: time.UnixMilli(20),
+		Duration: 10 * time.Millisecond, ExitCode: 0, HasExitCode: true,
+		Origin: "local:deploy", Source: domainhistory.SourceSession,
+		CaptureTier: domainhistory.CaptureTierHook,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConnectionLog(ctx, domainhistory.ConnectionLog{
+		ID: "log-1", Kind: "ssh", Status: domainhistory.ConnectionConnected,
+		StartedAt: time.UnixMilli(5), EndedAt: time.UnixMilli(6),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range previous.Tables {
+		if table.Name == "history_entries" || table.Name == "connection_logs" {
+			t.Fatalf("the Vault backup carries the runtime table %q", table.Name)
+		}
+	}
+
+	// Replace the current Vault, then restore the earlier backup.
+	if err := store.Delete(ctx, model.HostID("h1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(ctx, testHost("h2", "beta")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Restore(ctx, previous); err != nil {
+		t.Fatalf("restore a previous-build backup: %v", err)
+	}
+	hosts, err := store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 1 || hosts[0].ID != "h1" {
+		t.Fatalf("hosts after restore = %+v, want h1", hosts)
+	}
+	entries, err := store.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Command != "git status" {
+		t.Fatalf("history after restore = %+v, want the row preserved", entries)
+	}
+	logs, err := store.ListConnectionLogs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].ID != "log-1" {
+		t.Fatalf("connection logs after restore = %+v, want the row preserved", logs)
+	}
+}
+
 func TestChangeHookFiresOnlyAfterVaultWrites(t *testing.T) {
 	store, _ := openTestStore(t)
 	ctx := context.Background()

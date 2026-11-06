@@ -119,7 +119,11 @@ func (s *Store) SaveHistoryEntry(ctx context.Context, entry domainhistory.Entry)
 		return err
 	}
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		return upsertModel(tx, &model, "id", "session_id", "host_id", "host_label", "scope", "command", "source", "recorded_at", "data")
+		return upsertModel(tx, &model, "id",
+			"session_id", "session_uuid", "host_id", "host_label", "scope", "command",
+			"cwd", "shell", "source", "recorded_at", "finished_at", "duration",
+			"exit_code", "has_exit_code", "origin", "author", "author_kind", "intent",
+			"deleted_at", "capture_tier", "data")
 	}); err != nil {
 		return fmt.Errorf("store: save history entry: %w", err)
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	domainconn "github.com/mslxl/natcatty/domain/connection"
 	domainforward "github.com/mslxl/natcatty/domain/forwarding"
@@ -334,8 +335,23 @@ func historyEntryModel(entry domainhistory.Entry) (historyEntrySchema, error) {
 		return historyEntrySchema{}, err
 	}
 	return historyEntrySchema{
-		ID: entry.ID, SessionID: string(entry.SessionID), HostID: string(entry.HostID),
-		HostLabel: entry.HostLabel, Scope: entry.Scope, Command: entry.Command, Source: entry.Source,
-		RecordedAt: entry.RecordedAt.UnixMilli(), Data: data,
+		ID: entry.ID, SessionID: string(entry.SessionID), SessionUUID: entry.SessionUUID,
+		HostID: string(entry.HostID), HostLabel: entry.HostLabel, Scope: entry.Scope,
+		Command: entry.Command, CWD: entry.CWD, Shell: entry.Shell,
+		Source: entry.Source, RecordedAt: entry.RecordedAt.UnixMilli(),
+		FinishedAt: timestampMilli(entry.FinishedAt), Duration: int64(entry.Duration),
+		ExitCode: int64(entry.ExitCode), HasExitCode: int64(boolInt(entry.HasExitCode)),
+		Origin: entry.Origin, Author: entry.Author, AuthorKind: entry.AuthorKind,
+		Intent: entry.Intent, DeletedAt: timestampMilli(entry.DeletedAt),
+		CaptureTier: int64(entry.CaptureTier), Data: data,
 	}, nil
+}
+
+// timestampMilli encodes a zero time as 0 so old rows and rows without the
+// field keep the column's zero default instead of a negative epoch.
+func timestampMilli(at time.Time) int64 {
+	if at.IsZero() {
+		return 0
+	}
+	return at.UnixMilli()
 }

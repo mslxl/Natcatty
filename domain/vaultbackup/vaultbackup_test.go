@@ -228,6 +228,27 @@ func TestSnapshotTablesAreDatabaseTablesOnly(t *testing.T) {
 	}
 }
 
+// Command History, connection logs, and other runtime state are not Vault
+// families. Atuin history sync is the cross-device path, so a Local Backup
+// must never carry them.
+func TestSnapshotTablesExcludeRuntimeHistory(t *testing.T) {
+	runtimeTables := []string{"history_entries", "connection_logs", "meta", "workspace_layout"}
+	for _, name := range runtimeTables {
+		for _, table := range Tables {
+			if table == name {
+				t.Fatalf("snapshot table set contains the runtime table %q", name)
+			}
+		}
+		err := Validate(Snapshot{SchemaVersion: 1, Tables: []Table{{
+			Name: name,
+			Rows: []Row{{"id": Text("must-not-be-backed-up")}},
+		}}})
+		if !errors.Is(err, ErrInvalidSnapshot) {
+			t.Fatalf("snapshot accepted the runtime table %q: %v", name, err)
+		}
+	}
+}
+
 func TestReasonValid(t *testing.T) {
 	for _, reason := range []Reason{ReasonVaultChange, ReasonBeforeRestore, ReasonAppVersionChange} {
 		if !reason.Valid() {

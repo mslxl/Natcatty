@@ -161,6 +161,118 @@ func TestRecordConnectionDerivesIdentityStatusAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestRecordAssignsUUIDv7AndStableSessionUUID(t *testing.T) {
+	store := &memoryStore{}
+	service := NewService(store, WithClock(func() time.Time { return at(12) }))
+	if err := service.Record(context.Background(), domainhistory.Entry{
+		SessionID: "session-1", HostID: "host-1", Command: "git status",
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	entry := store.entries[0]
+	if !domainhistory.IsUUID(entry.ID) || entry.ID[14] != '7' {
+		t.Fatalf("captured identity = %q, want a UUIDv7", entry.ID)
+	}
+	if entry.SessionUUID != domainhistory.SessionUUID("session-1") {
+		t.Fatalf("SessionUUID = %q, want the stable Session derivation", entry.SessionUUID)
+	}
+	if !entry.HasUUIDIdentity() {
+		t.Fatal("a captured row did not report a UUID identity")
+	}
+}
+
+func TestRecordKeepsAtuinUUIDsAndDerivesOnlyMissingIdentities(t *testing.T) {
+	store := &memoryStore{}
+	service := NewService(store, WithClock(func() time.Time { return at(12) }))
+	ctx := context.Background()
+
+	const atuinID = "9b2f3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+	imported := domainhistory.Entry{
+		ID: atuinID, Source: domainhistory.SourceAtuinImport, Scope: "remote:example.com:deploy",
+		Command: "uptime", Origin: "example.com:deploy", RecordedAt: at(9),
+	}
+	if err := service.Record(ctx, imported); err != nil {
+		t.Fatalf("Record imported: %v", err)
+	}
+	if store.entries[0].ID != atuinID {
+		t.Fatalf("imported identity = %q, want the Atuin UUID", store.entries[0].ID)
+	}
+
+	legacy := domainhistory.Entry{
+		ID: "legacy-local", Source: domainhistory.SourceSession, Scope: "local",
+		Command: "ls", RecordedAt: at(9),
+	}
+	if err := service.Record(ctx, legacy); err != nil {
+		t.Fatalf("Record legacy: %v", err)
+	}
+	if store.entries[1].ID != "legacy-local" || store.entries[1].HasUUIDIdentity() {
+		t.Fatalf("legacy identity = %q, want it preserved without a fabricated UUID", store.entries[1].ID)
+	}
+
+	missing := domainhistory.Entry{
+		ID: "not-a-uuid", Source: domainhistory.SourceAtuinSync,
+		Scope: "remote:other.example:admin", Command: "df -h",
+		Origin: "other.example:admin", RecordedAt: at(10),
+	}
+	if err := service.Record(ctx, missing); err != nil {
+		t.Fatalf("Record derived: %v", err)
+	}
+	want := domainhistory.DerivedEntryUUID(missing)
+	if store.entries[2].ID != want || !store.entries[2].HasUUIDIdentity() {
+		t.Fatalf("derived identity = %q, want %q", store.entries[2].ID, want)
+	}
+
+	// Re-recording the same remote row is stable and does not duplicate it.
+	missing.ID = ""
+	if err := service.Record(ctx, missing); err != nil {
+		t.Fatalf("Record derived again: %v", err)
+	}
+	if len(store.entries) != 3 {
+		t.Fatalf("entries = %d, want the same three rows", len(store.entries))
+	}
+}
+
+func TestDerivedUUIDIsStableWhenAnImportHasNoTimestamp(t *testing.T) {
+	store := &memoryStore{}
+	calls := 0
+	service := NewService(store, WithClock(func() time.Time {
+		calls++
+		return at(calls)
+	}))
+	entry := domainhistory.Entry{
+		Source: domainhistory.SourceAtuinSync, Scope: "remote:example.com:deploy",
+		Command: "ls", Origin: "example.com:deploy",
+	}
+	want := domainhistory.DerivedEntryUUID(entry)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := service.Record(context.Background(), entry); err != nil {
+			t.Fatalf("Record attempt %d: %v", attempt, err)
+		}
+	}
+	if len(store.entries) != 1 {
+		t.Fatalf("entries = %d, want one row after a repeated import", len(store.entries))
+	}
+	if store.entries[0].ID != want {
+		t.Fatalf("derived identity = %q, want the stable %q", store.entries[0].ID, want)
+	}
+	if !store.entries[0].RecordedAt.Equal(at(2)) {
+		t.Fatalf("RecordedAt = %v, want the clock default", store.entries[0].RecordedAt)
+	}
+}
+
+func TestConnectionLogsKeepTheirNonUUIDIdentity(t *testing.T) {
+	store := &memoryStore{}
+	service := NewService(store, WithClock(func() time.Time { return at(12) }))
+	if err := service.RecordConnection(context.Background(), domainhistory.ConnectionLog{
+		Kind: "ssh", StartedAt: at(9),
+	}); err != nil {
+		t.Fatalf("RecordConnection: %v", err)
+	}
+	if domainhistory.IsUUID(store.logs[0].ID) {
+		t.Fatalf("connection log identity = %q, want the existing format", store.logs[0].ID)
+	}
+}
+
 func TestRecordAppendsEveryExecutionAndDefaultsScope(t *testing.T) {
 	store := &memoryStore{}
 	service := newTestService(store, Retention{})

@@ -241,16 +241,34 @@ type connectionLogSchema struct {
 
 func (connectionLogSchema) TableName() string { return "connection_logs" }
 
+// historyEntrySchema is the History surface and sync query projection. The
+// JSON data column stays canonical so a row recorded by an older build opens
+// with zero values for every column added after it. Indexes cover the default
+// recorded-time ordering, the Host and scope filters, and the Session,
+// SessionUUID, origin, and deletion-state lookups sync needs.
 type historyEntrySchema struct {
-	ID         string `gorm:"column:id;type:text;primaryKey;index:history_entries_recorded,priority:2,sort:desc;index:history_entries_host,priority:3,sort:desc;index:history_entries_scope,priority:3,sort:desc"`
-	SessionID  string `gorm:"column:session_id;type:text;not null;default:''"`
-	HostID     string `gorm:"column:host_id;type:text;not null;default:'';index:history_entries_host,priority:1"`
-	HostLabel  string `gorm:"column:host_label;type:text;not null;default:''"`
-	Scope      string `gorm:"column:scope;type:text;not null;default:'';index:history_entries_scope,priority:1"`
-	Command    string `gorm:"column:command;type:text;not null"`
-	Source     string `gorm:"column:source;type:text;not null;default:''"`
-	RecordedAt int64  `gorm:"column:recorded_at;not null;index:history_entries_recorded,priority:1,sort:desc;index:history_entries_host,priority:2,sort:desc;index:history_entries_scope,priority:2,sort:desc"`
-	Data       string `gorm:"column:data;type:text;not null"`
+	ID          string `gorm:"column:id;type:text;primaryKey;index:history_entries_recorded,priority:2,sort:desc;index:history_entries_host,priority:3,sort:desc;index:history_entries_scope,priority:3,sort:desc"`
+	SessionID   string `gorm:"column:session_id;type:text;not null;default:'';index:history_entries_session"`
+	SessionUUID string `gorm:"column:session_uuid;type:text;not null;default:'';index:history_entries_session_uuid"`
+	HostID      string `gorm:"column:host_id;type:text;not null;default:'';index:history_entries_host,priority:1"`
+	HostLabel   string `gorm:"column:host_label;type:text;not null;default:''"`
+	Scope       string `gorm:"column:scope;type:text;not null;default:'';index:history_entries_scope,priority:1"`
+	Command     string `gorm:"column:command;type:text;not null"`
+	CWD         string `gorm:"column:cwd;type:text;not null;default:''"`
+	Shell       string `gorm:"column:shell;type:text;not null;default:''"`
+	Source      string `gorm:"column:source;type:text;not null;default:''"`
+	RecordedAt  int64  `gorm:"column:recorded_at;not null;index:history_entries_recorded,priority:1,sort:desc;index:history_entries_host,priority:2,sort:desc;index:history_entries_scope,priority:2,sort:desc"`
+	FinishedAt  int64  `gorm:"column:finished_at;not null;default:0"`
+	Duration    int64  `gorm:"column:duration;not null;default:0"`
+	ExitCode    int64  `gorm:"column:exit_code;not null;default:0"`
+	HasExitCode int64  `gorm:"column:has_exit_code;type:integer;not null;default:0"`
+	Origin      string `gorm:"column:origin;type:text;not null;default:'';index:history_entries_origin"`
+	Author      string `gorm:"column:author;type:text;not null;default:''"`
+	AuthorKind  string `gorm:"column:author_kind;type:text;not null;default:''"`
+	Intent      string `gorm:"column:intent;type:text;not null;default:''"`
+	DeletedAt   int64  `gorm:"column:deleted_at;not null;default:0;index:history_entries_deleted"`
+	CaptureTier int64  `gorm:"column:capture_tier;type:integer;not null;default:0"`
+	Data        string `gorm:"column:data;type:text;not null"`
 }
 
 func (historyEntrySchema) TableName() string { return "history_entries" }

@@ -159,6 +159,51 @@ func matchingEntryIDs(entries []Entry, filter EntryFilter) []string {
 	return matched
 }
 
+func TestNormalizeEntryDefaultsCapturedAuthorFromOrigin(t *testing.T) {
+	captured := NormalizeEntry(Entry{
+		Command: "ls", Source: SourceSession, Origin: " web.example.com:deploy ",
+	})
+	if captured.AuthorKind != AuthorKindUser || captured.Author != "deploy" {
+		t.Fatalf("captured author = %q/%q, want user/deploy", captured.AuthorKind, captured.Author)
+	}
+	if got := authorFromOrigin("[2001:db8::1]:admin"); got != "admin" {
+		t.Fatalf("IPv6 origin author = %q, want admin", got)
+	}
+	if got := authorFromOrigin("just-a-host"); got != "" {
+		t.Fatalf("origin without a user = %q, want empty", got)
+	}
+	remote := NormalizeEntry(Entry{
+		Command: "ls", Source: SourceAtuinSync, Origin: "other.example:root",
+	})
+	if remote.AuthorKind != "" || remote.Author != "" {
+		t.Fatalf("remote author = %q/%q, want the Atuin record preserved", remote.AuthorKind, remote.Author)
+	}
+}
+
+func TestImportedAndSyncedRowsAreNeverTheLocalShell(t *testing.T) {
+	remote := []string{SourceAtuinImport, SourceAtuinSync}
+	for _, source := range remote {
+		entry := Entry{ID: UUIDv7(), Scope: "local", Command: "ls", Source: source, RecordedAt: at(9)}
+		if entry.IsLocal() {
+			t.Fatalf("a %s row was reported as the local shell", source)
+		}
+	}
+	local := Entry{ID: UUIDv7(), Scope: "local", Command: "ls", Source: SourceSession, RecordedAt: at(9)}
+	if !local.IsLocal() {
+		t.Fatal("a captured local row was not reported as local")
+	}
+	shellHistory := local
+	shellHistory.Source = SourceShellHistory
+	if !shellHistory.IsLocal() {
+		t.Fatal("a shell-history local row was not reported as local")
+	}
+	scoped := local
+	scoped.Scope = "host:host-1"
+	if scoped.IsLocal() {
+		t.Fatal("a Host-scoped row was reported as local")
+	}
+}
+
 func TestNormalizeConnectionLogClassifiesLocalAndUnsavedHosts(t *testing.T) {
 	local := NormalizeConnectionLog(ConnectionLog{Kind: "", HostLabel: "Local Terminal"})
 	if !local.IsLocal() || local.HostLabel != "" {

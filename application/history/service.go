@@ -67,12 +67,13 @@ func WithClock(fn func() time.Time) Option {
 	}
 }
 
-// WithIDGenerator replaces record identity generation. Tests use it for
-// deterministic ordering.
+// WithIDGenerator replaces identity generation for both record families.
+// Tests use it for deterministic ordering.
 func WithIDGenerator(fn func() string) Option {
 	return func(s *Service) {
 		if fn != nil {
-			s.newID = fn
+			s.newLogID = fn
+			s.newEntryID = fn
 		}
 	}
 }
@@ -81,10 +82,11 @@ func WithIDGenerator(fn func() string) Option {
 // for concurrent use: command recording runs on a Session goroutine while the
 // UI lists.
 type Service struct {
-	store     Store
-	retention func() Retention
-	now       func() time.Time
-	newID     func() string
+	store      Store
+	retention  func() Retention
+	now        func() time.Time
+	newLogID   func() string
+	newEntryID func() string
 
 	mu         sync.Mutex
 	revision   uint64
@@ -96,10 +98,11 @@ type Service struct {
 // record.
 func NewService(store Store, opts ...Option) *Service {
 	service := &Service{
-		store:     store,
-		now:       time.Now,
-		newID:     newRecordID,
-		listeners: make(map[int]func()),
+		store:      store,
+		now:        time.Now,
+		newLogID:   newRecordID,
+		newEntryID: newHistoryID,
+		listeners:  make(map[int]func()),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -116,7 +119,7 @@ func (s *Service) RecordConnection(ctx context.Context, log domainhistory.Connec
 	}
 	log = domainhistory.NormalizeConnectionLog(log)
 	if log.ID == "" {
-		log.ID = s.newID()
+		log.ID = s.newLogID()
 	}
 	if log.StartedAt.IsZero() {
 		log.StartedAt = s.now()
@@ -147,11 +150,29 @@ func (s *Service) Record(ctx context.Context, entry domainhistory.Entry) error {
 		return ErrInvalid
 	}
 	entry = domainhistory.NormalizeEntry(entry)
-	if entry.ID == "" {
-		entry.ID = s.newID()
+	if entry.SessionUUID == "" && entry.SessionID != "" {
+		entry.SessionUUID = domainhistory.SessionUUID(entry.SessionID)
 	}
 	if entry.Scope == "" {
 		entry.Scope = domainhistory.NormalizeScope(entry.HostID)
+	}
+	switch entry.Source {
+	case domainhistory.SourceAtuinImport, domainhistory.SourceAtuinSync:
+		// An imported or synced row keeps a valid Atuin UUID and otherwise
+		// gets a stable derived UUID, so a repeated import maps to one row.
+		// Derive before defaulting RecordedAt: a remote row with no timestamp
+		// must still derive the same identity on the next import.
+		if !entry.HasUUIDIdentity() {
+			entry.ID = domainhistory.DerivedEntryUUID(entry)
+		}
+	default:
+		// Captured and shell-history rows get a UUIDv7 when they have no
+		// identity. A row that already carries one keeps it, even a legacy
+		// non-UUID identity: Netcatty never fabricates a wire identity for
+		// local history it did not create.
+		if entry.ID == "" {
+			entry.ID = s.newEntryID()
+		}
 	}
 	if entry.RecordedAt.IsZero() {
 		entry.RecordedAt = s.now()
@@ -308,8 +329,16 @@ func (s *Service) retentionFor() Retention {
 	return s.retention()
 }
 
+// newHistoryID returns a UUIDv7 for a captured or shell-history entry. UUIDv7
+// sorts in recording order like the Connection Log identity, but it is the
+// wire identity Atuin requires.
+func newHistoryID() string {
+	return domainhistory.UUIDv7()
+}
+
 // newRecordID returns a time-prefixed random identity, so IDs sort in
-// recording order and stay unique across processes.
+// recording order and stay unique across processes. Connection Logs keep this
+// format; only Command History moved to UUIDv7.
 func newRecordID() string {
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
