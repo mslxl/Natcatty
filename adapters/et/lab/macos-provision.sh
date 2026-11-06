@@ -31,9 +31,9 @@ done
 # that group exists; without membership it rejects every password and key
 # attempt even though the socket answers. The group is absent on some runner
 # images, in which case every account is allowed.
-if dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
+if /usr/bin/dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
   for user in tester tester2; do
-    sudo dseditgroup -o edit -a "$user" -t user com.apple.access_ssh
+    sudo /usr/sbin/dseditgroup -o edit -a "$user" -t user com.apple.access_ssh
   done
 fi
 
