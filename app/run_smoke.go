@@ -19,7 +19,7 @@ const launchSmokeReady = "natcatty: launch smoke ready"
 // built only with the launchsmoke tag so no test-only behavior ships in the
 // normal app.
 func RunSmoke() error {
-	return run(func(win hostWindow) {
+	return run(func(win hostWindow, _ packagedSmokeDeps) {
 		if !win.IsVisible() {
 			fmt.Fprintln(os.Stderr, "launch smoke: the main window is not visible")
 			mygo.App.Quit()
@@ -27,5 +27,5 @@ func RunSmoke() error {
 		}
 		fmt.Println(launchSmokeReady)
 		time.AfterFunc(500*time.Millisecond, mygo.App.Quit)
-	})
+	}, runOptions{})
 }
