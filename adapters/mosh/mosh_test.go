@@ -449,9 +449,9 @@ func TestHandshakeSwapsToBundledClient(t *testing.T) {
 	if strings.Contains(text, "MOSH CONNECT") || strings.Contains(text, testKey) {
 		t.Fatalf("protocol leaked into the terminal: %q", text)
 	}
-	if !strings.Contains(text, viewportReset) {
-		t.Fatalf("viewport reset missing: %q", text)
-	}
+	// The reset follows the relayed bootstrap output as a separate write, so
+	// the snapshot that first holds the login line need not hold it yet.
+	text = reader.waitFor(t, viewportReset)
 
 	h.client.emit("mosh frame\r\n")
 	text = reader.waitFor(t, "mosh frame")
