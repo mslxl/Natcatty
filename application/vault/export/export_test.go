@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domainhistory "github.com/mslxl/natcatty/domain/history"
+	transportmodel "github.com/mslxl/natcatty/domain/model/transport"
 	domainvault "github.com/mslxl/natcatty/domain/vault"
 	"github.com/mslxl/natcatty/domain/vaultimport"
 )
@@ -168,6 +169,44 @@ func TestJSONRoundTripsThroughImporter(t *testing.T) {
 	}
 	if parsed.Records[1].KeyMaterial != "PRIVATE" || parsed.Records[1].Passphrase != "pa ss" {
 		t.Fatalf("inline key lost: %+v", parsed.Records[1])
+	}
+}
+
+// TestJSONRoundTripsTheTransportImplementation proves a per-Host Mosh/ET
+// client override is exported and read back by the importer, so an export does
+// not silently reset the rollback choice to the global default.
+func TestJSONRoundTripsTheTransportImplementation(t *testing.T) {
+	dataset := Dataset{Hosts: []Host{{
+		Host: domainvault.Host{
+			ID: "mosh-1", Label: "mosh", Hostname: "mosh.example.test",
+			Protocol:                domainvault.ProtocolMosh,
+			TransportImplementation: transportmodel.InProcess,
+		},
+	}}}
+	opts := Options{}
+	opts.ExportedAt = stamp
+	document, err := Export(dataset, FormatJSON, opts)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var decoded struct {
+		Hosts []struct {
+			TransportImplementation string `json:"transportImplementation"`
+		} `json:"hosts"`
+	}
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(decoded.Hosts) != 1 || decoded.Hosts[0].TransportImplementation != "in_process" {
+		t.Fatalf("exported hosts = %+v, want the in_process override", decoded.Hosts)
+	}
+
+	parsed := vaultimport.Parse(vaultimport.FormatNetcattyJSON, string(document), vaultimport.Options{})
+	if len(parsed.Records) != 1 {
+		t.Fatalf("parsed %d records: %+v", len(parsed.Records), parsed.Issues)
+	}
+	if got := parsed.Records[0].TransportImplementation; got != "in_process" {
+		t.Fatalf("parsed implementation = %q, want in_process", got)
 	}
 }
 

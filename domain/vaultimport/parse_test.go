@@ -623,6 +623,30 @@ func TestJSONJumpRefsSkipInvalidHostsWithoutShifting(t *testing.T) {
 	}
 }
 
+// TestJSONHostCarriesTheTransportImplementation checks the per-Host Mosh/ET
+// client override survives a Netcatty JSON import, including a value this
+// build does not know; the factory, not the parser, fails closed.
+func TestJSONHostCarriesTheTransportImplementation(t *testing.T) {
+	document := `{"kind":"netcatty.vault","version":1,"hosts":[
+		{"id":"beta","hostname":"beta.example.test","port":22,"protocol":"mosh","transportImplementation":"in_process"},
+		{"id":"stale","hostname":"stale.example.test","port":22,"protocol":"et","transportImplementation":"future_client"},
+		{"id":"inherit","hostname":"inherit.example.test","port":22,"protocol":"mosh"}
+	]}`
+	result := Parse(FormatNetcattyJSON, document, Options{})
+	if len(result.Records) != 3 {
+		t.Fatalf("records = %+v, issues = %+v", result.Records, result.Issues)
+	}
+	if got := result.Records[0].TransportImplementation; got != "in_process" {
+		t.Fatalf("beta implementation = %q, want in_process", got)
+	}
+	if got := result.Records[1].TransportImplementation; got != "future_client" {
+		t.Fatalf("stale implementation = %q, want the value preserved verbatim", got)
+	}
+	if got := result.Records[2].TransportImplementation; got != "" {
+		t.Fatalf("inherit implementation = %q, want empty", got)
+	}
+}
+
 func TestJSONHostCarriesTheNetworkDeviceMode(t *testing.T) {
 	document := `{"kind":"netcatty.vault","version":1,"hosts":[
 		{"id":"sw","hostname":"switch.example.test","port":22,"deviceType":"network"},

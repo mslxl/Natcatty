@@ -19,7 +19,7 @@ type Implementation string
 
 const (
 	// Unspecified is the zero value. A Host uses it to inherit the global
-	// default; globally it means the bundled default.
+	// choice; globally it means the release default from ReleasePolicy.
 	Unspecified Implementation = ""
 	// Bundled is the packaged mosh-client or et client.
 	Bundled Implementation = "bundled"
@@ -33,9 +33,8 @@ const (
 var ErrUnknownImplementation = errors.New("transport: unknown implementation")
 
 // ErrImplementationUnavailable reports a known implementation this build
-// cannot supply, such as the in-process clients before their transport
-// tickets land. Callers must fail closed instead of silently using the
-// bundled client.
+// cannot supply, such as an in-process client a packaging variant omitted.
+// Callers must fail closed instead of silently using the bundled client.
 var ErrImplementationUnavailable = errors.New("transport: implementation unavailable")
 
 // Known reports whether value names an implementation this build recognizes.
@@ -46,17 +45,17 @@ func Known(value Implementation) bool {
 	return value == Bundled || value == InProcess
 }
 
-// Resolve applies a Host's override to the persisted global default. An empty
-// override inherits the global choice, and an empty global choice is the
-// bundled default, so a Host or profile saved before the setting existed
-// keeps working. A non-empty value this build does not recognize fails closed
-// rather than falling back to the bundled client.
+// Resolve applies a Host's override to the persisted global choice. An empty
+// override inherits the global choice, and an empty global choice means the
+// release default from ReleasePolicy, so a Host or profile saved before the
+// setting existed keeps working. A non-empty value this build does not
+// recognize fails closed rather than falling back to the bundled client.
 func Resolve(global, override Implementation) (Implementation, error) {
 	if override != Unspecified {
 		return validate(override)
 	}
 	if global == Unspecified {
-		return Bundled, nil
+		return CurrentDefault(), nil
 	}
 	return validate(global)
 }

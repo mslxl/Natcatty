@@ -209,9 +209,33 @@ type Security struct {
 // replace it with the default.
 type Transport struct {
 	Implementation transportmodel.Implementation `json:"implementation"`
+	// ImplementationExplicit distinguishes a user's durable choice from a
+	// value that only reflects the release default. Without it, a document
+	// written by an older build says "bundled" whether the user chose the
+	// bundled client or merely kept the old default, and a default flip could
+	// not move one install without moving the other. The settings store
+	// resolves a non-explicit value through transport.CurrentDefault on every
+	// load, so the flip and waiver expiries need no data migration.
+	ImplementationExplicit bool `json:"implementationExplicit"`
 	// MoshPredictionDisplay selects local echo for Mosh Sessions. Adaptive is
 	// stock mosh's default and the value an older document implies.
 	MoshPredictionDisplay moshmodel.PredictionDisplay `json:"moshPredictionDisplay"`
+}
+
+// ChooseImplementation records an explicit user choice. Callers must use this
+// or FollowReleaseDefault instead of assigning Implementation directly, so the
+// provenance flag and the value cannot drift apart.
+func (t *Transport) ChooseImplementation(value transportmodel.Implementation) {
+	t.Implementation = value
+	t.ImplementationExplicit = true
+}
+
+// FollowReleaseDefault clears provenance and stores the current release
+// default. The store recomputes it on load, so a later flip or waiver expiry
+// moves this install without a data migration.
+func (t *Transport) FollowReleaseDefault() {
+	t.Implementation = transportmodel.CurrentDefault()
+	t.ImplementationExplicit = false
 }
 
 // Settings is the whole persisted preference document.
@@ -230,7 +254,9 @@ type Settings struct {
 // PortableSettings is the subset of Settings that follows the user between
 // devices. Platform and machine bindings stay local: the app icon variant,
 // the default opener, file associations, and the cloud-sync provider profile
-// all name a local platform or a device authorization.
+// all name a local platform or a device authorization. The Transport group is
+// local too: the release default and any per-platform waiver differ by device,
+// so a synced document must never overwrite the local client choice.
 type PortableSettings struct {
 	Appearance Appearance `json:"appearance"`
 	Layout     Layout     `json:"layout"`
@@ -343,10 +369,11 @@ func Defaults() Settings {
 		Logs:     Logs{SSHDebug: false},
 		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
 		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
-		// The bundled clients stay the default until the parity gate and the
-		// opt-in beta complete, per the migration spec.
+		// The release switch is transport.ReleasePolicy (domain/model/transport);
+		// this default follows it, so flipping that one place changes new
+		// installs and every install that never made an explicit choice.
 		Transport: Transport{
-			Implementation:        transportmodel.Bundled,
+			Implementation:        transportmodel.CurrentDefault(),
 			MoshPredictionDisplay: moshmodel.PredictionAdaptive,
 		},
 		Monitor:    DefaultMonitor(),
@@ -420,12 +447,16 @@ func Normalize(settings Settings) Settings {
 	default:
 		settings.Sync.ConflictStrategy = defaults.Sync.ConflictStrategy
 	}
-	// An absent global transport choice means the bundled default. A
-	// non-empty value this build does not recognize is deliberately left
-	// alone: the Session factory must report a typed error instead of
-	// silently falling back.
+	// An absent global transport choice means the release default. An empty
+	// value is never an explicit choice, so it also clears the provenance
+	// flag. A non-empty value this build does not recognize is deliberately
+	// left alone: the Session factory must report a typed error instead of
+	// silently falling back. A non-explicit stored value is resolved by the
+	// settings store on load, which is where the release policy and waiver
+	// expiry are known.
 	if settings.Transport.Implementation == transportmodel.Unspecified {
 		settings.Transport.Implementation = defaults.Transport.Implementation
+		settings.Transport.ImplementationExplicit = false
 	}
 	// Prediction is display-only, so an old or unknown value safely becomes the
 	// stock default instead of failing a Session open.
@@ -685,6 +716,7 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.Security.ConfirmDestructive = defaults.Security.ConfirmDestructive
 	case FieldTransportImplementation:
 		settings.Transport.Implementation = defaults.Transport.Implementation
+		settings.Transport.ImplementationExplicit = false
 	case FieldMoshPredictionDisplay:
 		settings.Transport.MoshPredictionDisplay = defaults.Transport.MoshPredictionDisplay
 	}

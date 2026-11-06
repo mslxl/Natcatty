@@ -17,10 +17,11 @@ import (
 )
 
 // TestInProcessSelectionFromSettingsSurvivesRestart drives the Settings seam
-// and the Session factory together: choosing the in-process client persists
-// through a fresh service over the same preferences file. ET has a pure-Go
-// client, so it opens through it; Mosh has none yet, so it still fails closed
-// with the typed unavailable error instead of using the bundled client.
+// and the Session factory together: an explicit in-process choice persists
+// through a fresh service over the same preferences file. ET is wired into
+// this factory, so it opens through the pure-Go client; Mosh is deliberately
+// left unwired so the missing-factory path still fails closed with the typed
+// unavailable error instead of using the bundled client.
 func TestInProcessSelectionFromSettingsSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "preferences.json")
@@ -32,6 +33,7 @@ func TestInProcessSelectionFromSettingsSurvivesRestart(t *testing.T) {
 	state := uisettings.NewPreferencesState(first)
 	if !state.Update(func(settings *domainpreferences.Settings) {
 		settings.Transport.Implementation = transportmodel.InProcess
+		settings.Transport.ImplementationExplicit = true
 	}) {
 		t.Fatal("the Settings seam could not save the in-process choice")
 	}
