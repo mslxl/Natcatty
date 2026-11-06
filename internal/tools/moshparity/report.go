@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mslxl/natcatty/adapters/bundle"
 )
 
 // reportSchema versions the report contract. Schema 2 binds every report to a
@@ -152,8 +154,13 @@ func parseGoTestJSON(r io.Reader) ([]TestResult, error) {
 
 // evaluateCell maps each required behavior for the cell to test results. A
 // reference must have at least one matching test whose final action is pass; a
-// matching skip or fail is a failure, never a waiver.
-func evaluateCell(cell Cell, suites []SuiteResult) []BehaviorResult {
+// matching skip or fail is a failure, never a waiver. The one exception is a
+// reference the cell's harness cannot run at all: a bundle-dependent test on a
+// host adapters/bundle has no target for is recorded as skipped and does not
+// fail the behavior.
+func evaluateCell(report CellReport) []BehaviorResult {
+	cell := report.Cell
+	suites := report.Suites
 	bySuite := make(map[string]map[string]TestResult)
 	for _, suite := range suites {
 		index := make(map[string]TestResult)
@@ -166,6 +173,14 @@ func evaluateCell(cell Cell, suites []SuiteResult) []BehaviorResult {
 	for _, behavior := range BehaviorsForCell(cell) {
 		result := BehaviorResult{ID: behavior.ID, Title: behavior.Title, Status: "pass"}
 		for _, ref := range RefsForVersion(behavior, cell.Version) {
+			if ref.RequiresBundleTarget && !hostHasBundleTarget(cell, report.HostArch) {
+				result.Checks = append(result.Checks, CheckResult{
+					Suite: ref.Suite, Package: ref.Package, Name: ref.Name,
+					Status: "skip",
+					Detail: "the cell host has no bundled mosh-client target",
+				})
+				continue
+			}
 			check := evaluateRef(ref, bySuite)
 			result.Checks = append(result.Checks, check)
 			if check.Status != "pass" {
@@ -181,6 +196,15 @@ func evaluateCell(cell Cell, suites []SuiteResult) []BehaviorResult {
 		results = append(results, result)
 	}
 	return results
+}
+
+// hostHasBundleTarget reports whether the harness host can resolve a bundled
+// mosh-client. Docker and stock cells run the unit suite on Linux; native
+// cells run it on the lab OS. adapters/bundle ships Linux and macOS targets
+// only, so the FreeBSD cells cannot run bundle-dependent unit tests.
+func hostHasBundleTarget(cell Cell, hostArch string) bool {
+	_, ok := bundle.TargetKey(cell.ExpectedLabOS(), hostArch)
+	return ok
 }
 
 func evaluateRef(ref TestRef, bySuite map[string]map[string]TestResult) CheckResult {
@@ -356,7 +380,7 @@ func verifyReports(cells []Cell, reports map[string]CellReport, expectedCommit s
 				failures = append(failures, fmt.Sprintf("%s: required suite %s did not run", cell.ID, name))
 			}
 		}
-		behaviors := evaluateCell(cell, report.Suites)
+		behaviors := evaluateCell(report)
 		if len(behaviors) == 0 {
 			failures = append(failures, fmt.Sprintf("%s: no required behaviors evaluated", cell.ID))
 		}
@@ -487,7 +511,7 @@ func printSummary(w io.Writer, cells []Cell, reports map[string]CellReport) {
 			fmt.Fprintf(w, "%-24s %-14s %-8s %-6s %s\n", cell.ID, cell.Platform, cell.Version, "FAIL", "missing report")
 			continue
 		}
-		behaviors := evaluateCell(cell, report.Suites)
+		behaviors := evaluateCell(report)
 		green, total := 0, len(behaviors)
 		for _, behavior := range behaviors {
 			if behavior.Status == "pass" {
@@ -562,7 +586,7 @@ func buildSummary(cells []Cell, reports map[string]CellReport, verifyErr error) 
 		entry := summaryCell{ID: cell.ID, Platform: cell.Platform, Version: cell.Version, Status: "fail"}
 		report, ok := reports[cell.ID]
 		if ok {
-			behaviors := evaluateCell(cell, report.Suites)
+			behaviors := evaluateCell(report)
 			entry.BehaviorsTotal = len(behaviors)
 			for _, behavior := range behaviors {
 				if behavior.Status == "pass" {
