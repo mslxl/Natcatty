@@ -159,7 +159,11 @@ func TestChromeShowsLogFailure(t *testing.T) {
 	}
 }
 
-func TestChromeAutocompleteFitsAtDefaultAndMinimumSizes(t *testing.T) {
+// TestAutocompleteLayersFloatAtTheCursor proves the suggestion list and ghost
+// hint are floating layers anchored at the cursor cell, over the terminal's
+// input row, rather than a row under the toolbar that resizes the grid. They
+// must stay inside the window at the default and minimum sizes.
+func TestAutocompleteLayersFloatAtTheCursor(t *testing.T) {
 	m := locales.In("en")
 	suggestions := []autocomplete.Suggestion{
 		{Text: "git status", Display: "git status", Source: "history", Frequency: 3},
@@ -183,10 +187,14 @@ func TestChromeAutocompleteFitsAtDefaultAndMinimumSizes(t *testing.T) {
 			ShowGhost:        true,
 			GhostText:        "git status",
 		}
+		const rows = 24
+		cursor := autocompleteCursor{Row: rows - 1, Column: 5, StartRow: rows - 1}
 		tester := ui.NewTester(func(c *ui.Context) {
-			chromeFrame(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
+			autocompleteFrame(c, model, cursor, rows)
 		}, size[0], size[1])
 		tester.SetLocale("en")
+		// The first frame measures the terminal; the layers anchor to it.
+		tester.Frame()
 		tester.Frame()
 
 		wanted := []string{
@@ -216,10 +224,28 @@ func TestChromeAutocompleteFitsAtDefaultAndMinimumSizes(t *testing.T) {
 		if tester.HasText(suggestions[6].Display) {
 			t.Fatalf("%dx%d rendered more than six suggestions", size[0], size[1])
 		}
-		if !(rects[m.SessionMenuLabel()].Y < rects[m.SessionAutocompleteLabel()].Y) {
-			t.Fatalf("%dx%d rows are out of order: menu %+v popup %+v",
-				size[0], size[1], rects[m.SessionMenuLabel()],
-				rects[m.SessionAutocompleteLabel()])
+		popup := rects[m.SessionAutocompleteLabel()]
+		ghost := rects[m.SessionAutocompleteGhost("git status")]
+		first := rects[suggestions[0].Display]
+		last := rects[suggestions[5].Display]
+		// The input line is the terminal's last cell row, under both layers.
+		const toolbarHeight = 30
+		cellHeight := (float32(size[1]) - toolbarHeight - 2*terminalPaddingY) / rows
+		inputTop := toolbarHeight + terminalPaddingY + float32(cursor.Row)*cellHeight
+		if popup.Y <= toolbarHeight {
+			t.Fatalf("%dx%d put the popup in the chrome: %+v", size[0], size[1], popup)
+		}
+		if popup.Y+popup.H > inputTop+epsilon {
+			t.Fatalf("%dx%d popup covers the input line: popup %+v input top %v",
+				size[0], size[1], popup, inputTop)
+		}
+		if !(popup.Y < first.Y && first.Y < last.Y) {
+			t.Fatalf("%dx%d suggestion rows are out of order: header %+v first %+v last %+v",
+				size[0], size[1], popup, first, last)
+		}
+		if ghost.Y <= last.Y || ghost.Y+ghost.H > inputTop+epsilon {
+			t.Fatalf("%dx%d ghost is not between the list and the input line: ghost %+v last row %+v input top %v",
+				size[0], size[1], ghost, last, inputTop)
 		}
 	}
 }
@@ -267,6 +293,21 @@ func chromeFrame(c *ui.Context, model chromeModel, m locales.Messages, t *ui.The
 			toolbar(c, model, m, t, actions)
 		})
 		renderChrome(c, model, m, t, actions)
+	})
+}
+
+// autocompleteFrame draws the Pane toolbar above a terminal-sized target and
+// the floating autocomplete layers, as a Surface does without a native
+// terminal.
+func autocompleteFrame(c *ui.Context, model chromeModel, cursor autocompleteCursor, rows int) {
+	ui.Column(c).Fill().Children(func() {
+		ui.Row(c).FillWidth().Height(30).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Column(c).Grow(1)
+			toolbar(c, model, locales.In(c.Locale()), c.Theme(), chromeActions{})
+		})
+		target := ui.Column(c).Grow(1).FillWidth().MinHeight(0).Key("autocomplete-target")
+		autocompleteLayers(c, target, model, cursor, 80, rows,
+			locales.In(c.Locale()), c.Theme(), chromeActions{})
 	})
 }
 

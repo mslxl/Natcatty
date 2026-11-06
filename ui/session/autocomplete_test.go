@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/mslxl/natcatty/application/autocomplete"
 	appsession "github.com/mslxl/natcatty/application/session"
+	"github.com/mslxl/natcatty/ui/locales"
 )
 
 type recordingTransport struct {
@@ -255,6 +257,146 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 	mu.Unlock()
 	if afterRunning == 0 {
 		t.Fatal("the provider was never called")
+	}
+}
+
+// TestSurfaceAutocompleteDoesNotResizeTheTerminal is the regression this fix
+// exists for: the popup used to be a chrome row above the terminal, so showing
+// it shrank the terminal grid and the Session resized the transport, making the
+// shell repaint the whole screen on each keystroke. The floating layers must
+// leave the terminal's box untouched.
+func TestSurfaceAutocompleteDoesNotResizeTheTerminal(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{
+				{Text: input + " status", Source: "history"},
+				{Text: input + " stash", Source: "history"},
+			}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	before, ok := tester.Find("Terminal")
+	if !ok {
+		t.Fatalf("the terminal is not in the frame: %v", tester.Texts())
+	}
+
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	tester.Frame()
+	if !tester.HasText("gi status") {
+		t.Fatalf("the popup did not show: %v", tester.Texts())
+	}
+	after, ok := tester.Find("Terminal")
+	if !ok {
+		t.Fatal("the terminal left the frame when the popup appeared")
+	}
+	if before != after {
+		t.Fatalf("the popup resized the terminal: %+v -> %+v", before, after)
+	}
+
+	// Dismissing the popup must not resize it back either.
+	if !surface.handleAutocompleteKey(0, ui.KeyEscape) {
+		t.Fatal("Escape was not taken while the popup was visible")
+	}
+	tester.Frame()
+	if tester.HasText("gi status") {
+		t.Fatalf("Escape did not dismiss the popup: %v", tester.Texts())
+	}
+	dismissed, ok := tester.Find("Terminal")
+	if !ok {
+		t.Fatal("the terminal left the frame when the popup closed")
+	}
+	if before != dismissed {
+		t.Fatalf("dismissing the popup resized the terminal: %+v -> %+v", before, dismissed)
+	}
+}
+
+// TestSurfaceAutocompletePopupFloatsAboveThePrompt feeds the terminal a screen
+// of output and a shell prompt, then checks the popup appears above the input
+// row at the bottom of the terminal, not in the chrome above the terminal and
+// not over the line being completed.
+func TestSurfaceAutocompletePopupFloatsAboveThePrompt(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+			return []autocomplete.Suggestion{
+				{Text: input + " status", Source: "history"},
+				{Text: input + " stash", Source: "history"},
+			}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+
+	// A shell keeps the prompt on the last visible row after output scrolls.
+	surface.terminal.Feed([]byte(strings.Repeat("output\r\n", 40) + "$ gi"))
+	tester.Frame()
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	tester.Frame()
+	if !tester.HasText("gi status") {
+		t.Fatalf("the popup did not show: %v", tester.Texts())
+	}
+
+	terminal, ok := tester.Find("Terminal")
+	if !ok {
+		t.Fatalf("the terminal is not in the frame: %v", tester.Texts())
+	}
+	_, rows := surface.terminal.Size()
+	cellHeight := (terminal.H - 2*terminalPaddingY) / float32(rows)
+	inputTop := terminal.Y + terminal.H - terminalPaddingY - cellHeight
+	m := locales.In("en")
+	header, ok := tester.Find(m.SessionAutocompleteLabel())
+	if !ok {
+		t.Fatalf("the popup header is missing: %v", tester.Texts())
+	}
+	last, ok := tester.Find("gi stash")
+	if !ok {
+		t.Fatalf("the last suggestion is missing: %v", tester.Texts())
+	}
+	// The popup floats over the terminal's lower half and ends above the
+	// input row, so the list does not cover the line being completed.
+	if header.Y <= terminal.Y+terminal.H/2 {
+		t.Fatalf("the popup stayed at the top of the terminal: header %+v terminal %+v",
+			header, terminal)
+	}
+	if last.Y+last.H > inputTop+0.5 {
+		t.Fatalf("the popup covers the input line: last row %+v input top %v",
+			last, inputTop)
 	}
 }
 

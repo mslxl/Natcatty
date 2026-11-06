@@ -15,8 +15,9 @@ import (
 	uitheme "github.com/mslxl/natcatty/ui/theme"
 )
 
-// maxVisibleSuggestions bounds the popup so it cannot cover the terminal at
-// the minimum window height.
+// maxVisibleSuggestions bounds the popup to a scannable list. A pane with less
+// room shows fewer rows; placeAutocomplete sizes the window of rows to the
+// space above the input line.
 const maxVisibleSuggestions = 6
 
 // chromeModel is the Session status and banner state the chrome renders.
@@ -117,19 +118,13 @@ type chromeActions struct {
 }
 
 // renderChrome draws what the Session needs to say above its terminal: the
-// counters when Settings asks for them, autocomplete, and the banners of a
-// pending decision. The controls are in the Pane header (see toolbar), so with
-// nothing to say the terminal starts right under it.
+// counters when Settings asks for them and the banners of a pending decision.
+// Autocomplete is not here: it floats over the terminal (see
+// autocompleteLayers), because a row that comes and goes here would resize the
+// grid and make the shell repaint on every keystroke. The controls are in the
+// Pane header (see toolbar), so with nothing to say the terminal starts right
+// under it.
 func renderChrome(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
-	if model.ShowAutocomplete && len(model.Suggestions) > 0 {
-		autocompletePopup(c, model, m, t, actions)
-	}
-	if model.ShowGhost && model.GhostText != "" {
-		ui.Row(c).FillWidth().Padding(0, 6).Height(18).Children(func() {
-			ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(10).
-				SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
-		})
-	}
 	if model.PendingPaste != nil {
 		pastePrompt(c, *model.PendingPaste, m, t, actions)
 	}
@@ -249,29 +244,63 @@ func toolbarButton(c *ui.Context, icon, label string) ui.Element {
 	return button
 }
 
-// autocompletePopup lists the matching commands above the terminal. It shows
-// at most six rows; the selected row is the one Tab accepts.
-func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions) {
-	visible := model.Suggestions
-	if len(visible) > maxVisibleSuggestions {
-		visible = visible[:maxVisibleSuggestions]
+// autocompleteLayers floats the suggestion popup and the ghost hint over the
+// terminal, anchored at the cursor cell. They are Overlay children, so showing
+// or hiding them never changes the terminal's size. target is the terminal
+// view; its bounds are the previous frame's, one frame behind a resize, which
+// the placement clamps away.
+func autocompleteLayers(c *ui.Context, target ui.Element, model chromeModel, cursor autocompleteCursor, cols, rows int, m locales.Messages, t *ui.Theme, actions chromeActions) {
+	bounds := target.Bounds()
+	if bounds.W <= 0 || bounds.H <= 0 {
+		return
 	}
-	ui.Column(c).FillWidth().Padding(3, 6).Gap(1).Background(t.Surface).
-		Border(1, t.Accent).Children(func() {
-		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+	placement := placeAutocomplete(bounds, cursor, cols, rows, len(model.Suggestions),
+		model.ShowAutocomplete, model.ShowGhost && model.GhostText != "")
+	if !placement.ShowPopup && !placement.ShowGhost {
+		return
+	}
+	ui.Overlay(c, func() {
+		if placement.ShowGhost {
+			autocompleteGhost(c, model, m, t, placement)
+		}
+		if placement.ShowPopup {
+			autocompletePopup(c, model, m, t, actions, placement)
+		}
+	})
+}
+
+// autocompletePopup lists the matching commands at the placement. It shows as
+// many rows as fit; the window of rows scrolls so the selected row stays
+// visible, and the marked row is the one Tab accepts.
+func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, actions chromeActions, placement autocompletePlacement) {
+	rows := min(placement.Rows, len(model.Suggestions))
+	if rows <= 0 {
+		return
+	}
+	start := 0
+	if model.SuggestionIndex >= rows {
+		start = model.SuggestionIndex - rows + 1
+	}
+	start = min(max(start, 0), max(len(model.Suggestions)-rows, 0))
+	visible := model.Suggestions[start : start+rows]
+	ui.Column(c).Absolute().Left(placement.Left).Top(placement.PopupTop).
+		Width(placement.Width).Padding(autocompletePadding, 6).Gap(autocompleteRowGap).
+		Background(t.Surface).Border(autocompleteBorder, t.Accent).Clip().Children(func() {
+		ui.Row(c).FillWidth().Height(autocompleteHeaderHeight).Gap(6).
+			AlignItems(ui.Center).Children(func() {
 			ui.Text(c, m.SessionAutocompleteLabel()).FontSize(10).Bold().
 				TextColor(t.TextMuted)
 			ui.Text(c, m.SessionAutocompleteHint()).FontSize(9).SingleLine().
 				MinWidth(0).Grow(1).TextColor(t.TextMuted)
 		})
 		for index, suggestion := range visible {
-			index := index
+			suggestionIndex := start + index
 			display := suggestion.Display
 			if display == "" {
 				display = suggestion.Text
 			}
 			source := suggestionSourceLabel(suggestion.Source, m)
-			selected := index == model.SuggestionIndex
+			selected := suggestionIndex == model.SuggestionIndex
 			// Rows are plain full-width rows with a click action, not theme
 			// buttons: the styled Button painted a rounded Surface card per
 			// label, so a short suggestion showed a narrow pill and neighbors
@@ -280,8 +309,8 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 			// selected line legible. KeepFocus leaves the keyboard with the
 			// terminal while a row is clicked, so typing continues after an
 			// accepted suggestion.
-			row := ui.Row(c).FillWidth().Height(20).Padding(0, 4).Gap(8).
-				AlignItems(ui.Center).KeepFocus()
+			row := ui.Row(c).FillWidth().Height(autocompleteRowHeight).Padding(0, 4).
+				Gap(8).AlignItems(ui.Center).KeepFocus()
 			if selected {
 				row.Background(t.SurfaceHover)
 			}
@@ -307,10 +336,23 @@ func autocompletePopup(c *ui.Context, model chromeModel, m locales.Messages, t *
 			})
 			row.OnClick(func() {
 				if actions.AcceptSuggestion != nil {
-					actions.AcceptSuggestion(index)
+					actions.AcceptSuggestion(suggestionIndex)
 				}
 			})
 		}
+	})
+}
+
+// autocompleteGhost draws the first suggestion as a one-line hint beside the
+// list. It floats like the popup so turning Ghost text on cannot resize the
+// terminal either.
+func autocompleteGhost(c *ui.Context, model chromeModel, m locales.Messages, t *ui.Theme, placement autocompletePlacement) {
+	ui.Row(c).Absolute().Left(placement.Left).Top(placement.GhostTop).
+		Width(placement.Width).Height(autocompleteGhostHeight).Padding(0, 6).
+		Background(t.Surface).Border(autocompleteBorder, t.Border).Clip().
+		AlignItems(ui.Center).Children(func() {
+		ui.Text(c, m.SessionAutocompleteGhost(model.GhostText)).FontSize(10).
+			SingleLine().MinWidth(0).Grow(1).TextColor(t.TextMuted)
 	})
 }
 
