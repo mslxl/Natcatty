@@ -8,8 +8,8 @@ go 1.27.3
 // Upgrading either module requires a fresh dependency audit before the change:
 // CGO_ENABLED=0 cross-builds for windows/amd64, linux/amd64, linux/arm64,
 // darwin/amd64, and darwin/arm64; the five-target minimal import probe in
-// internal/netprobe; an updated resources/THIRD-PARTY-NOTICES.md and
-// resources/SBOM.cdx.json; and a passing govulncheck run. wireguard-go's
+// internal/netprobe; an updated resources/THIRD-PARTY-NOTICES.md; and a
+// passing govulncheck run. wireguard-go's
 // tun/netstack ambiguity note and the replace directive below must be
 // re-checked against the new module graph.
 require (
