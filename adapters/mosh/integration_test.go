@@ -42,34 +42,244 @@ func TestInProcessAdapterRealMoshServer(t *testing.T) {
 	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
 	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
 
-	cases := []struct {
-		name       string
-		sshPort    int
-		serverPath string
-		udpPort    string
-		marker     string
-	}{
-		{
-			name:       "mosh-server 1.3.2",
-			sshPort:    envInt("NATCATTY_MOSH_132_SSH_PORT", 2224),
-			serverPath: "/usr/local/bin/mosh-60111",
-			udpPort:    "60111",
-			marker:     "NATCATTY_MOSH_OK_132",
-		},
-		{
-			name:       "mosh-server 1.4.0",
-			sshPort:    envInt("NATCATTY_MOSH_140_SSH_PORT", 2225),
-			serverPath: "/usr/local/bin/mosh-60121",
-			udpPort:    "60121",
-			marker:     "NATCATTY_MOSH_OK_140",
-		},
-	}
-	for _, testCase := range cases {
+	for _, testCase := range labCases(t) {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			runRealMoshCase(t, host, testCase.sshPort, user, password, testCase.serverPath, testCase.udpPort, testCase.marker)
 		})
 	}
+}
+
+// labCase describes one real mosh-server instance in the lab. The parity gate
+// runs one cell per mosh-server version and points the generic environment at
+// that cell's SSH endpoint, wrapper binary, and published UDP port, so the
+// same test code proves every matrix entry.
+type labCase struct {
+	name       string
+	version    string
+	sshPort    int
+	serverPath string
+	udpPort    string
+	marker     string
+}
+
+// labCases returns the stock servers this test run must cover. The legacy
+// defaults are the mosh-ssh-132/mosh-ssh-140 containers used by earlier
+// tickets; NATCATTY_MOSH_SERVER_VERSION narrows a gate cell to one version and
+// NATCATTY_MOSH_SSH_PORT/SERVER_PATH/UDP_PORT override the cell endpoint.
+func labCases(t *testing.T) []labCase {
+	t.Helper()
+	cases := []labCase{
+		{
+			name:       "mosh-server 1.3.2",
+			version:    "1.3.2",
+			sshPort:    envInt("NATCATTY_MOSH_132_SSH_PORT", 2224),
+			serverPath: envOr("NATCATTY_MOSH_132_SERVER_PATH", "/usr/local/bin/mosh-60111"),
+			udpPort:    envOr("NATCATTY_MOSH_132_UDP_PORT", "60111"),
+			marker:     "NATCATTY_MOSH_OK_132",
+		},
+		{
+			name:       "mosh-server 1.4.0",
+			version:    "1.4.0",
+			sshPort:    envInt("NATCATTY_MOSH_140_SSH_PORT", 2225),
+			serverPath: envOr("NATCATTY_MOSH_140_SERVER_PATH", "/usr/local/bin/mosh-60121"),
+			udpPort:    envOr("NATCATTY_MOSH_140_UDP_PORT", "60121"),
+			marker:     "NATCATTY_MOSH_OK_140",
+		},
+	}
+	if value := os.Getenv("NATCATTY_MOSH_SSH_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil {
+			t.Fatalf("NATCATTY_MOSH_SSH_PORT = %q: %v", value, err)
+		}
+		for i := range cases {
+			cases[i].sshPort = port
+		}
+	}
+	if value := os.Getenv("NATCATTY_MOSH_SERVER_PATH"); value != "" {
+		for i := range cases {
+			cases[i].serverPath = value
+		}
+	}
+	if value := os.Getenv("NATCATTY_MOSH_UDP_PORT"); value != "" {
+		for i := range cases {
+			cases[i].udpPort = value
+		}
+	}
+	if want := os.Getenv("NATCATTY_MOSH_SERVER_VERSION"); want != "" {
+		var selected []labCase
+		for _, testCase := range cases {
+			if testCase.version == want {
+				selected = append(selected, testCase)
+			}
+		}
+		if len(selected) == 0 {
+			t.Fatalf("NATCATTY_MOSH_SERVER_VERSION = %q does not name a stock server", want)
+		}
+		return selected
+	}
+	return cases
+}
+
+// TestInProcessAdapterLabServerVersion proves the cell really runs the pinned
+// stock mosh-server version the matrix claims. The gate sets
+// NATCATTY_MOSH_EXPECT_VERSION and the cell's wrapper path, then this test
+// asks the server for its version over the same SSH bootstrap the Session
+// uses. A mismatch fails the cell; no cell is accepted on trust.
+func TestInProcessAdapterLabServerVersion(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_INTEGRATION") == "" {
+		t.Skip("set NATCATTY_MOSH_INTEGRATION=1 to run against stock mosh-server")
+	}
+	expected := os.Getenv("NATCATTY_MOSH_EXPECT_VERSION")
+	if expected == "" {
+		if version := os.Getenv("NATCATTY_MOSH_SERVER_VERSION"); version != "" {
+			expected = version
+		}
+	}
+	if expected == "" {
+		t.Fatal("NATCATTY_MOSH_EXPECT_VERSION or NATCATTY_MOSH_SERVER_VERSION must name the pinned version")
+	}
+	host := envOr("NATCATTY_MOSH_SSH_HOST", "127.0.0.1")
+	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
+	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
+	cases := labCases(t)
+	if len(cases) != 1 {
+		t.Fatalf("version cell selected %d servers, want 1", len(cases))
+	}
+	testCase := cases[0]
+	if testCase.version != expected {
+		t.Fatalf("cell runs mosh-server %s, expected %s", testCase.version, expected)
+	}
+	out, err := sshRunOutput(host, testCase.sshPort, user, password,
+		moshmodel.ShellQuote(testCase.serverPath)+" --version")
+	if err != nil {
+		t.Fatalf("read mosh-server version through %s: %v\n%s", testCase.serverPath, err, out)
+	}
+	if !strings.Contains(out, "mosh "+expected) {
+		t.Fatalf("mosh-server version output %q does not name mosh %s", out, expected)
+	}
+}
+
+// TestInProcessAdapterLabLocalePropagation proves the client's locale
+// environment reaches the remote shell through mosh-server, not only the
+// generated bootstrap command. The marker is asserted on the command output,
+// not the echoed input, by waiting for two occurrences (echo plus printf).
+func TestInProcessAdapterLabLocalePropagation(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_INTEGRATION") == "" {
+		t.Skip("set NATCATTY_MOSH_INTEGRATION=1 to run against stock mosh-server")
+	}
+	host := envOr("NATCATTY_MOSH_SSH_HOST", "127.0.0.1")
+	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
+	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
+	cases := labCases(t)
+	if len(cases) != 1 {
+		t.Fatalf("locale cell selected %d servers, want 1", len(cases))
+	}
+	testCase := cases[0]
+	const locale = "de_DE.UTF-8"
+	killLabServer(t, host, testCase)
+
+	spec := labStartSpec(host, testCase, locale)
+	factory := InProcessFactory{
+		Bootstrap:        sshBootstrap{host: host, port: testCase.sshPort, user: user, password: password},
+		ProbeTimeout:     800 * time.Millisecond,
+		HandshakeTimeout: 20 * time.Second,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	transport, err := factory.Open(ctx, spec)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = transport.Close()
+		}
+	})
+	setScreenSizeSink(t, transport)
+	if _, err := transport.Write([]byte(`printf 'NATCATTY_LOCALE:%s\n' "$LANG"` + "\r")); err != nil {
+		t.Fatalf("write locale probe: %v", err)
+	}
+	// The echoed input contains the literal %s, not the expanded locale, so
+	// one occurrence is the remote shell's own output.
+	output := readUntilCount(t, transport, "NATCATTY_LOCALE:"+locale, 1, 15*time.Second)
+	if strings.Contains(output, "NATCATTY_LOCALE:C.UTF-8") {
+		t.Fatalf("locale did not propagate; output = %q", output)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	closed = true
+}
+
+// TestInProcessAdapterLabResizeAndShutdown is the matrix-cell resize/shutdown
+// behavior: a scripted Session-size change must reach mosh-server's PTY and
+// every state it draws must announce the same size, then Close must stop the
+// server. The full lifecycle test above covers the same path for the legacy
+// two-container setup; this one is cell-scoped so each matrix entry proves it.
+func TestInProcessAdapterLabResizeAndShutdown(t *testing.T) {
+	if os.Getenv("NATCATTY_MOSH_INTEGRATION") == "" {
+		t.Skip("set NATCATTY_MOSH_INTEGRATION=1 to run against stock mosh-server")
+	}
+	host := envOr("NATCATTY_MOSH_SSH_HOST", "127.0.0.1")
+	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
+	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
+	cases := labCases(t)
+	if len(cases) != 1 {
+		t.Fatalf("resize cell selected %d servers, want 1", len(cases))
+	}
+	testCase := cases[0]
+	runRealMoshCase(t, host, testCase.sshPort, user, password, testCase.serverPath, testCase.udpPort, testCase.marker)
+}
+
+// labStartSpec builds the Session start spec for a matrix cell.
+func labStartSpec(host string, testCase labCase, locale string) appsession.StartSpec {
+	return appsession.StartSpec{
+		Kind:     appsession.KindMosh,
+		Hostname: host,
+		Port:     testCase.sshPort,
+		Username: envOr("NATCATTY_MOSH_SSH_USER", "tester"),
+		Cols:     80,
+		Rows:     24,
+		Env:      []string{"LANG=" + locale, "LC_ALL=" + locale},
+		Mosh: &moshmodel.Config{
+			Hostname:   host,
+			Port:       testCase.sshPort,
+			Username:   envOr("NATCATTY_MOSH_SSH_USER", "tester"),
+			ServerPath: testCase.serverPath,
+			Lang:       locale,
+			Locales:    map[string]string{"LANG": locale, "LC_ALL": locale},
+			Cols:       80,
+			Rows:       24,
+		},
+	}
+}
+
+// killLabServer clears a stale mosh-server from the fixed UDP port the cell's
+// wrapper selects. The pattern matches the wrapper's forced -p argument.
+func killLabServer(t *testing.T, host string, testCase labCase) {
+	t.Helper()
+	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
+	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
+	pattern := fmt.Sprintf("[m]osh-server.*-p %s", testCase.udpPort)
+	sshRun(t, host, testCase.sshPort, user, password, fmt.Sprintf(
+		`for p in $(pgrep -f '%s' 2>/dev/null); do kill "$p" 2>/dev/null; done; true`, pattern))
+	t.Cleanup(func() {
+		sshRunQuiet(host, testCase.sshPort, user, password, fmt.Sprintf(
+			`for p in $(pgrep -f '%s' 2>/dev/null); do kill "$p" 2>/dev/null; done; true`, pattern))
+	})
+}
+
+// setScreenSizeSink plays the renderer's role for a directly-read transport:
+// it applies announced sizes so rendering is not blocked waiting for a view.
+func setScreenSizeSink(t *testing.T, transport appsession.Transport) {
+	t.Helper()
+	sizer, ok := transport.(appsession.ScreenSizer)
+	if !ok {
+		t.Fatal("in-process transport does not expose the remote screen size")
+	}
+	sizer.SetScreenSizeHandler(func(int, int, uint64) {})
 }
 
 func runRealMoshCase(t *testing.T, host string, sshPort int, user, password, serverPath, udpPort, marker string) {
@@ -199,9 +409,25 @@ func TestInProcessAdapterRealMoshRoaming(t *testing.T) {
 	host := envOr("NATCATTY_MOSH_SSH_HOST", "127.0.0.1")
 	user := envOr("NATCATTY_MOSH_SSH_USER", "tester")
 	password := envOr("NATCATTY_MOSH_SSH_PASSWORD", "testpass")
-	sshPort := envInt("NATCATTY_MOSH_140_SSH_PORT", 2225)
-	udpPort := envInt("NATCATTY_MOSH_140_UDP_PORT", 60121)
-	serverPath := envOr("NATCATTY_MOSH_140_SERVER_PATH", "/usr/local/bin/mosh-60121")
+	// The parity gate exports the generic cell endpoint. The _140_ names are
+	// the legacy two-container defaults, kept as fallbacks for the standalone
+	// integration command.
+	sshPort := envInt("NATCATTY_MOSH_SSH_PORT", envInt("NATCATTY_MOSH_140_SSH_PORT", 2225))
+	udpPort := envInt("NATCATTY_MOSH_UDP_PORT", envInt("NATCATTY_MOSH_140_UDP_PORT", 60121))
+	serverPath := envOr("NATCATTY_MOSH_SERVER_PATH", envOr("NATCATTY_MOSH_140_SERVER_PATH", "/usr/local/bin/mosh-60121"))
+
+	// Roaming needs mosh-server 1.4.0's address-learning behavior. Prove the
+	// selected endpoint really is the pinned server before driving it.
+	if want := os.Getenv("NATCATTY_MOSH_EXPECT_VERSION"); want != "" {
+		out, err := sshRunOutput(host, sshPort, user, password,
+			moshmodel.ShellQuote(serverPath)+" --version")
+		if err != nil {
+			t.Fatalf("read roaming server version through %s: %v\n%s", serverPath, err, out)
+		}
+		if !strings.Contains(out, "mosh "+want) {
+			t.Fatalf("roaming server version %q does not name mosh %s", out, want)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -428,20 +654,27 @@ func remoteServerRunning(host string, port int, user, password, pattern string) 
 func readUntilCount(t *testing.T, transport appsession.Transport, marker string, count int, timeout time.Duration) string {
 	t.Helper()
 	result := make(chan string, 1)
+	var mu sync.Mutex
+	var collected []byte
 	go func() {
-		var collected []byte
 		buffer := make([]byte, 4096)
 		for {
 			n, err := transport.Read(buffer)
 			if n > 0 {
+				mu.Lock()
 				collected = append(collected, buffer[:n]...)
-				if strings.Count(string(collected), marker) >= count {
-					result <- string(collected)
+				text := string(collected)
+				mu.Unlock()
+				if strings.Count(text, marker) >= count {
+					result <- text
 					return
 				}
 			}
 			if err != nil {
-				result <- string(collected)
+				mu.Lock()
+				text := string(collected)
+				mu.Unlock()
+				result <- text
 				return
 			}
 		}
@@ -453,7 +686,9 @@ func readUntilCount(t *testing.T, transport appsession.Transport, marker string,
 		}
 		return text
 	case <-time.After(timeout):
-		t.Fatalf("timed out waiting for %q to appear %d times", marker, count)
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("timed out waiting for %q to appear %d times; output = %q", marker, count, collected)
 		return ""
 	}
 }
