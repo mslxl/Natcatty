@@ -12,10 +12,13 @@ import (
 )
 
 type memoryStore struct {
-	logs    []domainhistory.ConnectionLog
-	entries []domainhistory.Entry
-	fail    error
-	saves   int
+	logs      []domainhistory.ConnectionLog
+	entries   []domainhistory.Entry
+	records   []domainhistory.Record
+	writer    string
+	fail      error
+	failWrite error
+	saves     int
 }
 
 func (s *memoryStore) ListConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -63,28 +66,82 @@ func (s *memoryStore) ListHistoryEntries(context.Context) ([]domainhistory.Entry
 	if s.fail != nil {
 		return nil, s.fail
 	}
-	out := append([]domainhistory.Entry(nil), s.entries...)
+	out := make([]domainhistory.Entry, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if entry.DeletedAt.IsZero() {
+			out = append(out, entry)
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].RecordedAt.After(out[j].RecordedAt) })
 	return out, nil
 }
 
-func (s *memoryStore) SaveHistoryEntry(_ context.Context, entry domainhistory.Entry) error {
+func (s *memoryStore) HistoryEntry(_ context.Context, id string) (domainhistory.Entry, bool, error) {
+	if s.fail != nil {
+		return domainhistory.Entry{}, false, s.fail
+	}
+	for _, entry := range s.entries {
+		if entry.ID == id {
+			return entry, true, nil
+		}
+	}
+	return domainhistory.Entry{}, false, nil
+}
+
+func (s *memoryStore) RecordHistoryEntry(_ context.Context, entry domainhistory.Entry, record *domainhistory.Record) error {
 	if s.fail != nil {
 		return s.fail
 	}
+	if s.failWrite != nil {
+		return s.failWrite
+	}
 	s.saves++
 	s.entries = replaceEntry(s.entries, entry)
+	if record != nil {
+		s.appendRecord(*record)
+	}
 	return nil
 }
 
-func (s *memoryStore) DeleteHistoryEntry(_ context.Context, id string) error {
-	for index, entry := range s.entries {
-		if entry.ID == id {
-			s.entries = append(s.entries[:index], s.entries[index+1:]...)
-			return nil
+func (s *memoryStore) SoftDeleteHistoryEntry(_ context.Context, id string, deletedAt time.Time, record *domainhistory.Record) error {
+	if s.fail != nil {
+		return s.fail
+	}
+	if s.failWrite != nil {
+		return s.failWrite
+	}
+	for index := range s.entries {
+		if s.entries[index].ID != id || !s.entries[index].DeletedAt.IsZero() {
+			continue
 		}
+		s.entries[index].DeletedAt = deletedAt
+		if record != nil {
+			s.appendRecord(*record)
+		}
+		return nil
 	}
 	return nil
+}
+
+func (s *memoryStore) appendRecord(record domainhistory.Record) {
+	var next int64
+	for _, stored := range s.records {
+		if stored.SeriesHost == record.SeriesHost && stored.Tag == record.Tag {
+			next = stored.Index + 1
+		}
+	}
+	record.Index = next
+	s.records = append(s.records, record)
+}
+
+func (s *memoryStore) EnsureWriterUUID(_ context.Context, generate func() string) (string, error) {
+	if s.fail != nil {
+		return "", s.fail
+	}
+	if s.writer == "" {
+		s.writer = generate()
+	}
+	return s.writer, nil
 }
 
 func (s *memoryStore) ClearHistoryEntries(context.Context) (int, error) {
@@ -338,10 +395,10 @@ func TestPruneAppliesOnlyConnectionLogRetention(t *testing.T) {
 			ID: fmt.Sprintf("log-%d", index), Kind: "ssh",
 			Status: domainhistory.ConnectionConnected, StartedAt: at(index),
 		})
-		_ = store.SaveHistoryEntry(context.Background(), domainhistory.Entry{
+		_ = store.RecordHistoryEntry(context.Background(), domainhistory.Entry{
 			ID: fmt.Sprintf("entry-%d", index), Scope: "local", Command: "x",
 			RecordedAt: at(index),
-		})
+		}, nil)
 	}
 	result, err := service.Prune(context.Background())
 	if err != nil {
@@ -400,12 +457,15 @@ func TestDeleteAndClearNotifySubscribers(t *testing.T) {
 	defer unsubscribe()
 	_ = service.Record(context.Background(), domainhistory.Entry{Command: "one"})
 	_ = service.Record(context.Background(), domainhistory.Entry{Command: "two"})
-	entries, _ := service.Load(context.Background())
+	entries, err := service.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	if err := service.DeleteEntry(context.Background(), entries[0].ID); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	if removed, err := service.ClearHistory(context.Background()); err != nil || removed != 1 {
-		t.Fatalf("ClearHistory = %d, %v; want 1", removed, err)
+	if removed, err := service.ClearHistory(context.Background()); err != nil || removed != 2 {
+		t.Fatalf("ClearHistory = %d, %v; want 2", removed, err)
 	}
 	if notifications < 4 {
 		t.Fatalf("notifications = %d, want at least 4", notifications)
@@ -428,5 +488,213 @@ func TestInvalidRecordsAreRejectedAndStoreErrorsPropagate(t *testing.T) {
 	service = newTestService(failing, Retention{})
 	if err := service.Record(context.Background(), domainhistory.Entry{Command: "x"}); err == nil {
 		t.Fatal("Record succeeded despite a store failure")
+	}
+}
+
+func newUUIDService(store *memoryStore) *Service {
+	return NewService(store, WithClock(func() time.Time { return at(12) }))
+}
+
+func TestRecordWritesOneCreateRecordInTheWriterSeries(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	for index := 0; index < 2; index++ {
+		if err := service.Record(ctx, domainhistory.Entry{
+			SessionID: "session-1", Command: fmt.Sprintf("command-%d", index),
+		}); err != nil {
+			t.Fatalf("Record %d: %v", index, err)
+		}
+	}
+	if len(store.records) != 2 {
+		t.Fatalf("records = %d, want exactly one create per command", len(store.records))
+	}
+	for index, record := range store.records {
+		if record.Kind != domainhistory.RecordKindCreate {
+			t.Fatalf("record %d kind = %q, want create", index, record.Kind)
+		}
+		if record.SeriesHost != store.writer || !domainhistory.IsUUID(store.writer) {
+			t.Fatalf("series host = %q, want the per-install writer UUID %q", record.SeriesHost, store.writer)
+		}
+		if record.Index != int64(index) {
+			t.Fatalf("record %d index = %d, want %d", index, record.Index, index)
+		}
+		if record.HistoryID != store.entries[index].ID {
+			t.Fatalf("record %d history id = %q, want %q", index, record.HistoryID, store.entries[index].ID)
+		}
+		if record.Direction != domainhistory.RecordDirectionLocal || !record.UploadedAt.IsZero() {
+			t.Fatalf("record %d = %+v, want a pending local record", index, record)
+		}
+	}
+}
+
+func TestRecordDoesNotCreateWireRecordsForRemoteOrLegacyRows(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+
+	imported := domainhistory.Entry{
+		ID:     "9b2f3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+		Source: domainhistory.SourceAtuinImport, Scope: "remote:web-1:deploy",
+		Origin: "web-1:deploy", Command: "uptime", RecordedAt: at(9),
+	}
+	if err := service.Record(ctx, imported); err != nil {
+		t.Fatalf("Record imported: %v", err)
+	}
+	synced := imported
+	synced.ID = "0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9e30"
+	synced.Source = domainhistory.SourceAtuinSync
+	if err := service.Record(ctx, synced); err != nil {
+		t.Fatalf("Record synced: %v", err)
+	}
+	legacy := domainhistory.Entry{
+		ID: "legacy-local-1", Source: domainhistory.SourceSession,
+		Scope: "local", Command: "ls", RecordedAt: at(10),
+	}
+	if err := service.Record(ctx, legacy); err != nil {
+		t.Fatalf("Record legacy: %v", err)
+	}
+	if len(store.entries) != 3 {
+		t.Fatalf("entries = %d, want the three projections", len(store.entries))
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("records = %+v, want none for remote-origin or legacy rows", store.records)
+	}
+}
+
+func TestDeleteEntrySoftDeletesAndAppendsOneTombstonePerUUIDRow(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	if err := service.Record(ctx, domainhistory.Entry{Command: "ls", Scope: "local"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	id := store.entries[0].ID
+
+	if err := service.DeleteEntry(ctx, id); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	stored, found, err := store.HistoryEntry(ctx, id)
+	if err != nil || !found || stored.DeletedAt.IsZero() {
+		t.Fatalf("row = %+v, found=%v, err=%v; want a soft-deleted row", stored, found, err)
+	}
+	live, err := service.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(live) != 0 {
+		t.Fatalf("deleted row is still suggested: %+v", live)
+	}
+	if len(store.records) != 2 {
+		t.Fatalf("records = %d, want create and delete", len(store.records))
+	}
+	tombstone := store.records[1]
+	if tombstone.Kind != domainhistory.RecordKindDelete || tombstone.HistoryID != id ||
+		tombstone.Index != 1 || tombstone.SeriesHost != store.writer {
+		t.Fatalf("tombstone = %+v", tombstone)
+	}
+	if !tombstone.RecordedAt.Equal(stored.DeletedAt) {
+		t.Fatalf("tombstone time = %v, want the deletion time %v", tombstone.RecordedAt, stored.DeletedAt)
+	}
+
+	// A repeated delete is a no-op and must not fork the tombstone.
+	if err := service.DeleteEntry(ctx, id); err != nil {
+		t.Fatalf("repeated DeleteEntry: %v", err)
+	}
+	if len(store.records) != 2 {
+		t.Fatalf("records = %d after a repeated delete, want 2", len(store.records))
+	}
+}
+
+func TestDeleteEntryOfALegacyRowStaysLocal(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	if err := service.Record(ctx, domainhistory.Entry{
+		ID: "legacy-local-1", Source: domainhistory.SourceSession,
+		Scope: "local", Command: "ls", RecordedAt: at(9),
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := service.DeleteEntry(ctx, "legacy-local-1"); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	stored, found, err := store.HistoryEntry(ctx, "legacy-local-1")
+	if err != nil || !found || stored.DeletedAt.IsZero() {
+		t.Fatalf("legacy row = %+v, found=%v, err=%v; want it soft-deleted locally", stored, found, err)
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("legacy row produced wire records: %+v", store.records)
+	}
+}
+
+func TestDeleteEntryOfAMissingRowAppendsNothing(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	if err := service.DeleteEntry(context.Background(), "0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9e40"); err != nil {
+		t.Fatalf("DeleteEntry missing: %v", err)
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("a missing row produced records: %+v", store.records)
+	}
+}
+
+func TestDeleteEntryOfAnImportedRowAppendsATombstone(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	imported := domainhistory.Entry{
+		ID:     "9b2f3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+		Source: domainhistory.SourceAtuinImport, Scope: "remote:web-1:deploy",
+		Origin: "web-1:deploy", Command: "uptime", RecordedAt: at(9),
+	}
+	if err := service.Record(ctx, imported); err != nil {
+		t.Fatalf("Record imported: %v", err)
+	}
+	if err := service.DeleteEntry(ctx, imported.ID); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	if len(store.records) != 1 {
+		t.Fatalf("records = %d, want exactly the delete tombstone", len(store.records))
+	}
+	tombstone := store.records[0]
+	if tombstone.Kind != domainhistory.RecordKindDelete || tombstone.HistoryID != imported.ID {
+		t.Fatalf("tombstone = %+v, want a delete for the imported history id", tombstone)
+	}
+}
+
+func TestFailedRecordLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
+	store := &memoryStore{failWrite: errors.New("disk full")}
+	service := newUUIDService(store)
+	if err := service.Record(context.Background(), domainhistory.Entry{Command: "ls"}); err == nil {
+		t.Fatal("Record succeeded despite a failed store write")
+	}
+	if len(store.entries) != 0 || len(store.records) != 0 {
+		t.Fatalf("failed record changed state: entries=%+v records=%+v", store.entries, store.records)
+	}
+}
+
+func TestFailedDeleteLeavesProjectionAndRecordLogUnchanged(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	if err := service.Record(ctx, domainhistory.Entry{Command: "ls", Scope: "local"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	id := store.entries[0].ID
+
+	store.failWrite = errors.New("disk full")
+	if err := service.DeleteEntry(ctx, id); err == nil {
+		t.Fatal("DeleteEntry succeeded despite a failed store write")
+	}
+	stored, found, err := store.HistoryEntry(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("HistoryEntry = %v, %v", found, err)
+	}
+	if !stored.DeletedAt.IsZero() {
+		t.Fatalf("failed delete changed the projection: %+v", stored)
+	}
+	if len(store.records) != 1 || store.records[0].Kind != domainhistory.RecordKindCreate {
+		t.Fatalf("failed delete changed the record log: %+v", store.records)
 	}
 }

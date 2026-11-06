@@ -273,6 +273,27 @@ type historyEntrySchema struct {
 
 func (historyEntrySchema) TableName() string { return "history_entries" }
 
+// historyRecordSchema is the append-only Atuin record log. A record's
+// identity and payload are never rewritten; only UploadedAt tracks upload
+// progress. The unique series key keeps each writer series continuous and
+// makes a retried download idempotent. The table is deliberately outside the
+// Vault backup table set, so the backup schema version does not change.
+type historyRecordSchema struct {
+	ID         string `gorm:"column:id;type:text;primaryKey"`
+	SeriesHost string `gorm:"column:series_host;type:text;not null;uniqueIndex:history_records_series,priority:1"`
+	Tag        string `gorm:"column:tag;type:text;not null;uniqueIndex:history_records_series,priority:2"`
+	Index      int64  `gorm:"column:idx;not null;uniqueIndex:history_records_series,priority:3"`
+	RecordedAt int64  `gorm:"column:recorded_at;not null"`
+	Version    int64  `gorm:"column:version;not null;default:0"`
+	Kind       string `gorm:"column:kind;type:text;not null"`
+	HistoryID  string `gorm:"column:history_id;type:text;not null;index:history_records_history"`
+	Payload    string `gorm:"column:payload;type:text;not null;default:''"`
+	Direction  string `gorm:"column:direction;type:text;not null;default:'local';index:history_records_direction"`
+	UploadedAt int64  `gorm:"column:uploaded_at;not null;default:0"`
+}
+
+func (historyRecordSchema) TableName() string { return "history_records" }
+
 var schemaModels = []any{
 	&metaSchema{},
 	&hostSchema{},
@@ -292,4 +313,5 @@ var schemaModels = []any{
 	&noteGroupSchema{},
 	&connectionLogSchema{},
 	&historyEntrySchema{},
+	&historyRecordSchema{},
 }

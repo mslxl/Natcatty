@@ -112,30 +112,75 @@ func (s *Store) ClearConnectionLogs(ctx context.Context) (int, error) {
 	return int(removed), nil
 }
 
-// SaveHistoryEntry inserts or replaces one recorded command.
-func (s *Store) SaveHistoryEntry(ctx context.Context, entry domainhistory.Entry) error {
+// historyEntryColumns is the projection update list shared by the write path.
+var historyEntryColumns = []string{
+	"session_id", "session_uuid", "host_id", "host_label", "scope", "command",
+	"cwd", "shell", "source", "recorded_at", "finished_at", "duration",
+	"exit_code", "has_exit_code", "origin", "author", "author_kind", "intent",
+	"deleted_at", "capture_tier", "data",
+}
+
+// RecordHistoryEntry writes one recorded command and, when record is not nil,
+// its create record in one transaction. A failed insert on either side leaves
+// both unchanged.
+func (s *Store) RecordHistoryEntry(ctx context.Context, entry domainhistory.Entry, record *domainhistory.Record) error {
 	model, err := historyEntryModel(entry)
 	if err != nil {
 		return err
 	}
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		return upsertModel(tx, &model, "id",
-			"session_id", "session_uuid", "host_id", "host_label", "scope", "command",
-			"cwd", "shell", "source", "recorded_at", "finished_at", "duration",
-			"exit_code", "has_exit_code", "origin", "author", "author_kind", "intent",
-			"deleted_at", "capture_tier", "data")
+	if record != nil && (record.HistoryID != entry.ID || record.Kind != domainhistory.RecordKindCreate) {
+		return fmt.Errorf("store: create record does not belong to entry %q", entry.ID)
+	}
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		if err := upsertModel(tx, &model, "id", historyEntryColumns...); err != nil {
+			return err
+		}
+		if record == nil {
+			return nil
+		}
+		return appendHistoryRecord(tx, *record)
 	}); err != nil {
-		return fmt.Errorf("store: save history entry: %w", err)
+		return fmt.Errorf("store: record history entry: %w", err)
 	}
 	return nil
 }
 
-// ListHistoryEntries returns every recorded command newest first.
+// HistoryEntry returns one recorded command, including a soft-deleted row.
+// found is false when the identity is unknown.
+func (s *Store) HistoryEntry(ctx context.Context, id string) (domainhistory.Entry, bool, error) {
+	var entry domainhistory.Entry
+	var found bool
+	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
+		var err error
+		entry, found, err = loadHistoryEntry(tx, id)
+		return err
+	}); err != nil {
+		return domainhistory.Entry{}, false, fmt.Errorf("store: read history entry: %w", err)
+	}
+	return entry, found, nil
+}
+
+// loadHistoryEntry reads and decodes one row, including a soft-deleted one.
+func loadHistoryEntry(tx *gorm.DB, id string) (domainhistory.Entry, bool, error) {
+	data, found, err := loadDataRow(tx, &historyEntrySchema{}, &historyEntrySchema{ID: id})
+	if err != nil || !found {
+		return domainhistory.Entry{}, found, err
+	}
+	var entry domainhistory.Entry
+	if err := decodeData(data, "history entry", &entry); err != nil {
+		return domainhistory.Entry{}, false, err
+	}
+	return entry, true, nil
+}
+
+// ListHistoryEntries returns the live recorded commands newest first.
+// Soft-deleted rows are excluded; they remain readable through HistoryEntry.
 func (s *Store) ListHistoryEntries(ctx context.Context) ([]domainhistory.Entry, error) {
 	var data []string
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		var err error
-		data, err = loadDataRows(tx, &historyEntrySchema{}, "recorded_at DESC", "id DESC")
+		data, err = loadDataRowsWhere(tx, &historyEntrySchema{}, "deleted_at = 0",
+			"recorded_at DESC", "id DESC")
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("store: list history entries: %w", err)
@@ -147,11 +192,40 @@ func (s *Store) ListHistoryEntries(ctx context.Context) ([]domainhistory.Entry, 
 	return entries, nil
 }
 
-// DeleteHistoryEntry removes one recorded command.
-func (s *Store) DeleteHistoryEntry(ctx context.Context, id string) error {
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		_, err := deleteModel(tx, &historyEntrySchema{}, &historyEntrySchema{ID: id})
-		return err
+// SoftDeleteHistoryEntry marks one recorded command deleted and, when record
+// is not nil, appends its delete record in the same transaction. A legacy
+// non-UUID row is passed a nil record by the service and stays local-only. A
+// missing or already-deleted row is a no-op, so a repeated delete appends no
+// second tombstone.
+func (s *Store) SoftDeleteHistoryEntry(ctx context.Context, id string, deletedAt time.Time, record *domainhistory.Record) error {
+	if deletedAt.IsZero() {
+		return fmt.Errorf("store: delete history entry: zero deletion time")
+	}
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		entry, found, err := loadHistoryEntry(tx, id)
+		if err != nil {
+			return err
+		}
+		if !found || !entry.DeletedAt.IsZero() {
+			return nil
+		}
+		entry.DeletedAt = deletedAt
+		encoded, err := marshalData(entry, "history entry")
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&historyEntrySchema{}).Where("id = ?", id).
+			Updates(map[string]any{"deleted_at": timestampMilli(deletedAt), "data": encoded})
+		if result.Error != nil {
+			return result.Error
+		}
+		if record == nil {
+			return nil
+		}
+		if record.HistoryID != id || record.Kind != domainhistory.RecordKindDelete {
+			return fmt.Errorf("store: delete record for %q does not match entry %q", record.HistoryID, id)
+		}
+		return appendHistoryRecord(tx, *record)
 	}); err != nil {
 		return fmt.Errorf("store: delete history entry: %w", err)
 	}
@@ -159,6 +233,8 @@ func (s *Store) DeleteHistoryEntry(ctx context.Context, id string) error {
 }
 
 // ClearHistoryEntries removes every recorded command and reports the count.
+// Bulk soft-delete and tombstone semantics belong to the History actions
+// ticket; this method keeps the projection's existing clear behaviour.
 func (s *Store) ClearHistoryEntries(ctx context.Context) (int, error) {
 	var removed int64
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {

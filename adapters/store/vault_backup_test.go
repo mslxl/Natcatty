@@ -394,14 +394,14 @@ func TestPreviousBuildLocalBackupRestoresAfterHistorySchemaGrowth(t *testing.T) 
 	}
 
 	// History rows added by this build must stay outside the Vault table set.
-	if err := store.SaveHistoryEntry(ctx, domainhistory.Entry{
+	if err := store.RecordHistoryEntry(ctx, domainhistory.Entry{
 		ID: domainhistory.UUIDv7(), SessionID: "session-1", SessionUUID: "session-uuid",
 		Scope: "local", Command: "git status", CWD: "/srv/app", Shell: "zsh",
 		RecordedAt: time.UnixMilli(10), FinishedAt: time.UnixMilli(20),
 		Duration: 10 * time.Millisecond, ExitCode: 0, HasExitCode: true,
 		Origin: "local:deploy", Source: domainhistory.SourceSession,
 		CaptureTier: domainhistory.CaptureTierHook,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveConnectionLog(ctx, domainhistory.ConnectionLog{
