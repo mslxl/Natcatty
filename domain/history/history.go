@@ -172,32 +172,72 @@ func (filter ConnectionFilter) Match(log ConnectionLog) bool {
 	return strings.Contains(haystack, query)
 }
 
-// Source names recorded shell history. Session means a command submitted
-// inside a Natcatty Session; shell-history means a row imported from the
-// local shell's history file.
+// Source names where a recorded command came from. Session means a command
+// captured inside an app Session; shell-history means a row imported from the
+// local shell's history file. Atuin import and sync are remote-origin rows and
+// are never reported as the local shell.
 const (
 	SourceSession      = "session"
 	SourceShellHistory = "shell-history"
+	SourceAtuinImport  = "atuin-import"
+	SourceAtuinSync    = "atuin-sync"
 )
+
+// Capture tiers describe how much of an execution Netcatty could observe. A
+// Tier 1 row comes from an authoritative shell hook, Tier 2 from native OSC
+// 133/7 integration, and Tier 3 from typed input plus prompt detection.
+// Imported and synced rows have no tier.
+const (
+	CaptureTierHook      = 1
+	CaptureTierNativeOSC = 2
+	CaptureTierFallback  = 3
+)
+
+// AuthorKindUser is the Atuin author kind for a command run by a user.
+const AuthorKindUser = "user"
 
 // Entry is one recorded command execution. It is a per-execution journal, so
 // autocomplete aggregates it while the history surface lists each execution.
+// A captured or shell-history row carries a UUIDv7 ID; an imported or synced
+// row keeps its Atuin UUID. The ID is the Atuin history id and the target of a
+// tombstone. Rows recorded before these fields existed decode with zero
+// values, so their interpretation is "unknown".
 type Entry struct {
 	ID          string          `json:"id"`
 	SessionID   model.SessionID `json:"sessionId,omitempty"`
+	SessionUUID string          `json:"sessionUuid,omitempty"`
 	HostID      model.HostID    `json:"hostId,omitempty"`
 	HostLabel   string          `json:"hostLabel,omitempty"`
 	UnsavedHost bool            `json:"unsavedHost,omitempty"`
 	Scope       string          `json:"scope"`
 	Command     string          `json:"command"`
-	Source      string          `json:"source"`
+	CWD         string          `json:"cwd,omitempty"`
+	Shell       string          `json:"shell,omitempty"`
 	RecordedAt  time.Time       `json:"recordedAt"`
+	FinishedAt  time.Time       `json:"finishedAt,omitempty"`
+	Duration    time.Duration   `json:"duration,omitempty"`
+	ExitCode    int             `json:"exitCode,omitempty"`
+	HasExitCode bool            `json:"hasExitCode,omitempty"`
+	Origin      string          `json:"origin,omitempty"`
+	Author      string          `json:"author,omitempty"`
+	AuthorKind  string          `json:"authorKind,omitempty"`
+	Intent      string          `json:"intent,omitempty"`
+	DeletedAt   time.Time       `json:"deletedAt,omitempty"`
+	Source      string          `json:"source"`
+	CaptureTier int             `json:"captureTier,omitempty"`
 }
 
 // Valid reports whether the entry carries the minimum persisted identity.
 func (entry Entry) Valid() bool {
 	return entry.ID != "" && entry.Scope != "" && entry.Command != "" &&
 		!entry.RecordedAt.IsZero()
+}
+
+// HasUUIDIdentity reports whether the entry can be represented on the Atuin
+// wire. Legacy local rows carry a non-UUID identity: they stay readable and
+// deletable locally, but they are never uploaded and get no fabricated UUID.
+func (entry Entry) HasUUIDIdentity() bool {
+	return IsUUID(entry.ID)
 }
 
 // IsUnsaved reports a command that ran against a Host the user typed without a
@@ -209,9 +249,19 @@ func (entry Entry) IsUnsaved() bool {
 }
 
 // IsLocal reports a command that ran in the local shell, with neither a saved
-// nor a typed Host identity.
+// nor a typed Host identity. Only captured and shell-history rows can be the
+// local shell; an imported or synced remote-origin row is never local.
 func (entry Entry) IsLocal() bool {
-	return entry.HostID == "" && !entry.UnsavedHost
+	if entry.Scope != "local" || entry.HostID != "" || entry.UnsavedHost {
+		return false
+	}
+	return isCapturedSource(entry.Source)
+}
+
+// isCapturedSource reports a row this install observed, as opposed to an
+// imported or synced projection of another writer's history.
+func isCapturedSource(source string) bool {
+	return source == SourceSession || source == SourceShellHistory
 }
 
 // EntryFilter narrows a command history list. Zero fields match everything.
@@ -301,11 +351,38 @@ func NormalizeEntry(entry Entry) Entry {
 	}
 	entry.Scope = strings.TrimSpace(entry.Scope)
 	entry.HostLabel = strings.TrimSpace(entry.HostLabel)
+	entry.SessionUUID = strings.TrimSpace(entry.SessionUUID)
+	entry.CWD = strings.TrimSpace(entry.CWD)
+	entry.Shell = strings.TrimSpace(entry.Shell)
+	entry.Origin = strings.TrimSpace(entry.Origin)
+	entry.Author = strings.TrimSpace(entry.Author)
+	entry.AuthorKind = strings.TrimSpace(entry.AuthorKind)
+	entry.Intent = strings.TrimSpace(entry.Intent)
 	entry.Source = strings.TrimSpace(entry.Source)
 	if entry.Source == "" {
 		entry.Source = SourceSession
 	}
+	if isCapturedSource(entry.Source) {
+		// A captured command defaults to the origin user as its author; an
+		// imported or synced row keeps whatever its Atuin record carried.
+		if entry.AuthorKind == "" {
+			entry.AuthorKind = AuthorKindUser
+		}
+		if entry.Author == "" {
+			entry.Author = authorFromOrigin(entry.Origin)
+		}
+	}
 	return entry
+}
+
+// authorFromOrigin returns the user part of a host:user origin. The last colon
+// delimits the user so a bracketed IPv6 host stays intact.
+func authorFromOrigin(origin string) string {
+	index := strings.LastIndex(origin, ":")
+	if index < 0 || index == len(origin)-1 {
+		return ""
+	}
+	return strings.TrimSpace(origin[index+1:])
 }
 
 // NormalizeConnectionLog trims the display fields, derives the default status

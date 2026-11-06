@@ -144,9 +144,22 @@ _Avoid_: edit, file session
 
 **Command History**:
 The persisted record of commands executed in Sessions and local shells, one row per
-execution with Session, Host, command, source, and timestamp. Autocomplete aggregates
-the same rows instead of keeping its own copy.
+execution with Session and Host context, command, cwd, shell, start and finish times,
+duration, exit code, origin, author, source, capture tier, and deletion state.
+Autocomplete aggregates the same rows instead of keeping its own copy.
 _Avoid_: shell history, command log
+
+**Origin**:
+The immutable `host:user` captured when a command ran, recording where it executed
+even after a Host is renamed or relabelled. Imported and synced rows keep the origin
+from their Atuin record.
+_Avoid_: hostname, remote
+
+**Capture Tier**:
+How much of one execution Netcatty could observe: Tier 1 from the authoritative
+session hook, Tier 2 from native OSC 133/7 integration, and Tier 3 from typed input
+plus prompt detection. Imported and synced rows have no tier.
+_Avoid_: confidence, quality level
 
 **Shell History File**:
 A zsh, bash, or fish history file imported once into Command History. It belongs
