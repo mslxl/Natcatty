@@ -23,27 +23,30 @@ import (
 // proxy is local test infrastructure; both SSH ends are the real lab.
 func TestInProcessThroughARealProxy(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0]
-	proxyHost, proxyPort, requests := startHTTPConnectProxy(t, func() (net.Conn, error) {
-		return net.DialTimeout("tcp", server.address, 5*time.Second)
-	})
-	manager := labManager(t, server.password)
-	factory := InProcessFactory{
-		Manager: manager,
-		Routes: routeSourceFunc(func(context.Context, model.HostID) (appconnection.Route, error) {
-			return appconnection.Route{Proxy: &appconnection.Proxy{
-				Type: appconnection.ProxyHTTP, Host: proxyHost, Port: proxyPort,
-			}}, nil
-		}),
-	}
-	transport := openLab(t, factory, labSpec(t, server))
-	if first := strings.SplitN(waitProxyRequest(t, requests), "\r\n", 2)[0]; first != "CONNECT "+server.address+" HTTP/1.1" {
-		t.Fatalf("proxy request line = %q", first)
-	}
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			proxyHost, proxyPort, requests := startHTTPConnectProxy(t, func() (net.Conn, error) {
+				return net.DialTimeout("tcp", server.address, 5*time.Second)
+			})
+			manager := labManager(t, server.password)
+			factory := InProcessFactory{
+				Manager: manager,
+				Routes: routeSourceFunc(func(context.Context, model.HostID) (appconnection.Route, error) {
+					return appconnection.Route{Proxy: &appconnection.Proxy{
+						Type: appconnection.ProxyHTTP, Host: proxyHost, Port: proxyPort,
+					}}, nil
+				}),
+			}
+			transport := openLab(t, factory, labSpec(t, server))
+			if first := strings.SplitN(waitProxyRequest(t, requests), "\r\n", 2)[0]; first != "CONNECT "+server.address+" HTTP/1.1" {
+				t.Fatalf("proxy request line = %q", first)
+			}
 
-	output := newOutputCollector(transport)
-	writeCommand(t, transport, `printf 'ET_PROXY_%s\n' "$((7*6))"`)
-	output.waitFor(t, "ET_PROXY_42", 20*time.Second)
+			output := newOutputCollector(transport)
+			writeCommand(t, transport, `printf 'ET_PROXY_%s\n' "$((7*6))"`)
+			output.waitFor(t, "ET_PROXY_42", 20*time.Second)
+		})
+	}
 }
 
 // labSpecAt builds an ET session spec for an arbitrary SSH endpoint. The jump
@@ -88,33 +91,36 @@ func TestInProcessThroughARealJumpHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NATCATTY_ET_LAB_JUMP: %v", err)
 	}
-	server := labServers()[0]
-	targetAddress := envOr("NATCATTY_ET_LAB_JUMP_TARGET", server.address)
-	jumpUser := envOr("NATCATTY_ET_LAB_JUMP_USER", server.username)
-	jumpPassword := envOr("NATCATTY_ET_LAB_JUMP_PASSWORD", server.password)
-	targetID := model.HostID("lab-" + server.name)
-	passwords := passwordMap{
-		model.HostID("jump"): jumpPassword,
-		targetID:             server.password,
-	}
-	manager := appconnection.NewManager(
-		sshadapter.NewDialer(), passwords, labKnownHosts{},
-		appconnection.WithPrompter(labTrust{}),
-	)
-	t.Cleanup(manager.CloseAll)
-	factory := InProcessFactory{
-		Manager: manager,
-		Routes: routeSourceFunc(func(context.Context, model.HostID) (appconnection.Route, error) {
-			return appconnection.Route{Jumps: []appconnection.Hop{{
-				HostID: "jump", Label: "real jump", Hostname: jumpHost, Port: jumpPort, Username: jumpUser,
-			}}}, nil
-		}),
-	}
-	transport := openLab(t, factory, labSpecAt(t, targetID, targetAddress, server.username))
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			targetAddress := envOr("NATCATTY_ET_LAB_JUMP_TARGET", server.address)
+			jumpUser := envOr("NATCATTY_ET_LAB_JUMP_USER", server.username)
+			jumpPassword := envOr("NATCATTY_ET_LAB_JUMP_PASSWORD", server.password)
+			targetID := model.HostID("lab-" + server.name)
+			passwords := passwordMap{
+				model.HostID("jump"): jumpPassword,
+				targetID:             server.password,
+			}
+			manager := appconnection.NewManager(
+				sshadapter.NewDialer(), passwords, labKnownHosts{},
+				appconnection.WithPrompter(labTrust{}),
+			)
+			t.Cleanup(manager.CloseAll)
+			factory := InProcessFactory{
+				Manager: manager,
+				Routes: routeSourceFunc(func(context.Context, model.HostID) (appconnection.Route, error) {
+					return appconnection.Route{Jumps: []appconnection.Hop{{
+						HostID: "jump", Label: "real jump", Hostname: jumpHost, Port: jumpPort, Username: jumpUser,
+					}}}, nil
+				}),
+			}
+			transport := openLab(t, factory, labSpecAt(t, targetID, targetAddress, server.username))
 
-	output := newOutputCollector(transport)
-	writeCommand(t, transport, `printf 'ET_JUMP_%s\n' "$((6*7))"`)
-	output.waitFor(t, "ET_JUMP_42", 20*time.Second)
+			output := newOutputCollector(transport)
+			writeCommand(t, transport, `printf 'ET_JUMP_%s\n' "$((6*7))"`)
+			output.waitFor(t, "ET_JUMP_42", 20*time.Second)
+		})
+	}
 }
 
 // TestInProcessThroughRealKeyAuthentication runs the in-process ET path with

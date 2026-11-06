@@ -30,26 +30,60 @@ const labEnabledVar = "NATCATTY_ET_LAB"
 
 type labServer struct {
 	name     string
+	version  string
 	address  string
 	username string
 	password string
 }
 
+// labServers returns the configured lab endpoints. NATCATTY_ET_LAB_VERSION
+// narrows the list to one stock version; the parity gate sets it so a cell
+// runs only its own server. An empty filter keeps the historical local-lab
+// behavior of running both.
 func labServers() []labServer {
-	return []labServer{
+	all := []labServer{
 		{
 			name:     "etserver-7.1.1",
+			version:  "7.1.1",
 			address:  envOr("NATCATTY_ET_LAB_711", "127.0.0.1:2222"),
 			username: envOr("NATCATTY_ET_LAB_USER", "tester"),
 			password: envOr("NATCATTY_ET_LAB_PASSWORD", "testpass"),
 		},
 		{
 			name:     "etserver-6.2.10",
+			version:  "6.2.10",
 			address:  envOr("NATCATTY_ET_LAB_6210", "127.0.0.1:2223"),
 			username: envOr("NATCATTY_ET_LAB_USER", "tester"),
 			password: envOr("NATCATTY_ET_LAB_PASSWORD", "testpass"),
 		},
 	}
+	want := strings.TrimSpace(os.Getenv("NATCATTY_ET_LAB_VERSION"))
+	if want == "" {
+		return all
+	}
+	var filtered []labServer
+	for _, server := range all {
+		if server.version == want {
+			filtered = append(filtered, server)
+		}
+	}
+	return filtered
+}
+
+// labServerNamed returns the configured server for one stock version. A cell
+// that runs the other version fails here instead of silently skipping the
+// behavior; the gate's skip list prevents that and treats an unexpected pass
+// as no evidence.
+func labServerNamed(t *testing.T, version string) labServer {
+	t.Helper()
+	for _, server := range labServers() {
+		if server.version == version {
+			return server
+		}
+	}
+	t.Fatalf("the %s lab server is not enabled (NATCATTY_ET_LAB_VERSION=%q)",
+		version, os.Getenv("NATCATTY_ET_LAB_VERSION"))
+	return labServer{}
 }
 
 func envOr(name, fallback string) string {
@@ -63,6 +97,11 @@ func requireLab(t *testing.T) {
 	t.Helper()
 	if os.Getenv(labEnabledVar) == "" {
 		t.Skipf("set %s=1 with the stock etserver lab running", labEnabledVar)
+	}
+	// Fail closed on a version filter that matches no endpoint: a test that
+	// loops over labServers() must not pass by looping zero times.
+	if version := strings.TrimSpace(os.Getenv("NATCATTY_ET_LAB_VERSION")); version != "" && len(labServers()) == 0 {
+		t.Fatalf("NATCATTY_ET_LAB_VERSION=%q matches no lab endpoint", version)
 	}
 }
 
@@ -249,7 +288,7 @@ func TestInProcessAgainstStockServers(t *testing.T) {
 			}
 			// et 7.1 propagates the shell's status (TERMINAL_EXIT_STATUS);
 			// 6.2.10 has no such packet, and stock et reports no status there.
-			wantStatus := server.name == "etserver-7.1.1"
+			wantStatus := server.version == "7.1.1"
 			if end.HasExitCode != wantStatus {
 				t.Fatalf("%s HasExitCode = %v, want %v (End = %+v)",
 					server.name, end.HasExitCode, wantStatus, end)
@@ -371,7 +410,7 @@ func TestLabAppRestartReattach(t *testing.T) {
 				t.Fatalf("a refused legacy reattach lost the saved pair: %v", loadErr)
 			}
 
-			if server.name == "etserver-7.1.1" {
+			if server.version == "7.1.1" {
 				if err != nil {
 					t.Fatalf("reattach on %s: %v", server.name, err)
 				}
@@ -474,19 +513,22 @@ func TestInProcessWrongPasswordIsATypedAuthError(t *testing.T) {
 // the error is the ET handshake's, not an SSH auth failure.
 func TestInProcessHandshakeFailureIsTyped(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0]
-	manager := labManager(t, server.password)
-	factory := InProcessFactory{Manager: manager}
-	spec := labSpec(t, server)
-	spec.ET.ETPort = 1 // nothing listens there in the container
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	_, err := factory.Open(ctx, spec)
-	if !errors.Is(err, etmodel.ErrHandshakeFailed) {
-		t.Fatalf("Open error = %v, want ErrHandshakeFailed", err)
-	}
-	if errors.Is(err, etmodel.ErrUnsupportedServer) {
-		t.Fatalf("a refused port was classified as an unsupported server: %v", err)
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			manager := labManager(t, server.password)
+			factory := InProcessFactory{Manager: manager}
+			spec := labSpec(t, server)
+			spec.ET.ETPort = 1 // nothing listens there in the container
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			_, err := factory.Open(ctx, spec)
+			if !errors.Is(err, etmodel.ErrHandshakeFailed) {
+				t.Fatalf("Open error = %v, want ErrHandshakeFailed", err)
+			}
+			if errors.Is(err, etmodel.ErrUnsupportedServer) {
+				t.Fatalf("a refused port was classified as an unsupported server: %v", err)
+			}
+		})
 	}
 }
 
@@ -496,22 +538,25 @@ func TestInProcessHandshakeFailureIsTyped(t *testing.T) {
 // unsupported-server error.
 func TestInProcessUnsupportedServerIsTyped(t *testing.T) {
 	requireLab(t)
-	server := labServers()[0]
-	manager := labManager(t, server.password)
-	spec := labSpec(t, server)
+	for _, server := range labServers() {
+		t.Run(server.name, func(t *testing.T) {
+			manager := labManager(t, server.password)
+			spec := labSpec(t, server)
 
-	const fakePort = 2025
-	const script = `$|=1; use IO::Socket::INET; my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>2025,Listen=>5,ReuseAddr=>1) or die $!; print "READY\n"; my $c=$s->accept; sysread($c,my $b,8); my $n=unpack("Q<",$b); sysread($c,$b,$n); print $c pack("Q<",2), "\x08\x04"; close $c; close $s;`
-	stop := startFakeServer(t, manager, spec, script, fakePort)
-	defer stop()
+			const fakePort = 2025
+			const script = `$|=1; use IO::Socket::INET; my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>2025,Listen=>5,ReuseAddr=>1) or die $!; print "READY\n"; my $c=$s->accept; sysread($c,my $b,8); my $n=unpack("Q<",$b); sysread($c,$b,$n); print $c pack("Q<",2), "\x08\x04"; close $c; close $s;`
+			stop := startFakeServer(t, manager, spec, script, fakePort)
+			defer stop()
 
-	factory := InProcessFactory{Manager: manager}
-	spec.ET.ETPort = fakePort
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	_, err := factory.Open(ctx, spec)
-	if !errors.Is(err, etmodel.ErrUnsupportedServer) {
-		t.Fatalf("Open error = %v, want ErrUnsupportedServer", err)
+			factory := InProcessFactory{Manager: manager}
+			spec.ET.ETPort = fakePort
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			_, err := factory.Open(ctx, spec)
+			if !errors.Is(err, etmodel.ErrUnsupportedServer) {
+				t.Fatalf("Open error = %v, want ErrUnsupportedServer", err)
+			}
+		})
 	}
 }
 
