@@ -55,6 +55,10 @@ func (t *fakeTerminal) SetOSCNotifications(mode domainterminal.NotificationMode)
 	return t.update(func(settings *domainterminal.Settings) { settings.OSCNotifications = mode })
 }
 
+func (t *fakeTerminal) SetDynamicTabTitleMode(mode domainterminal.DynamicTabTitleMode) error {
+	return t.update(func(settings *domainterminal.Settings) { settings.DynamicTabTitleMode = mode })
+}
+
 func (t *fakeTerminal) SetEncoding(encoding domainterminal.Encoding) error {
 	return t.update(func(settings *domainterminal.Settings) { settings.Encoding = encoding })
 }

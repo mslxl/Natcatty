@@ -65,6 +65,17 @@ func terminalSection(c *ui.Context, state *TerminalState, m locales.Messages, t 
 			}
 		})
 
+		ui.Text(c, m.SettingsDynamicTabTitle()).Bold()
+		ui.Text(c, m.SettingsDynamicTabTitleDescription()).FontSize(12).TextColor(t.TextMuted)
+		titleLabels, titleModes := dynamicTabTitleOptions(m)
+		titleLabel := labelForDynamicTabTitle(titleLabels, titleModes, settings.DynamicTabTitleMode)
+		ui.Field(c, m.SettingsDynamicTabTitle(), func() {
+			if ui.Select(c, &titleLabel, titleLabels).Width(180).Changed() {
+				state.SetDynamicTabTitleMode(titleModes[indexOf(titleLabels, titleLabel)])
+				c.Invalidate()
+			}
+		})
+
 		renderPowerUxSection(c, state, settings, m, t)
 		renderRetentionSection(c, state, settings, m, t)
 
@@ -279,6 +290,19 @@ func osc52Options(m locales.Messages) ([]string, []domainterminal.ClipboardAcces
 		}
 }
 
+func dynamicTabTitleOptions(m locales.Messages) ([]string, []domainterminal.DynamicTabTitleMode) {
+	return []string{
+			m.SettingsDynamicTabTitleOff(),
+			m.SettingsDynamicTabTitleAgents(),
+			m.SettingsDynamicTabTitleAll(),
+		},
+		[]domainterminal.DynamicTabTitleMode{
+			domainterminal.DynamicTabTitleOff,
+			domainterminal.DynamicTabTitleAgents,
+			domainterminal.DynamicTabTitleAll,
+		}
+}
+
 func notificationOptions(m locales.Messages) ([]string, []domainterminal.NotificationMode) {
 	return []string{
 			m.SettingsOSCNotificationsOff(),
@@ -358,6 +382,16 @@ func labelForFormat(labels []string, formats []domainterminal.LogFormat, format 
 func labelForAccess(labels []string, accesses []domainterminal.ClipboardAccess, access domainterminal.ClipboardAccess) string {
 	for index, candidate := range accesses {
 		if candidate == access {
+			return labels[index]
+		}
+	}
+	return labels[1]
+}
+
+func labelForDynamicTabTitle(labels []string, modes []domainterminal.DynamicTabTitleMode,
+	mode domainterminal.DynamicTabTitleMode) string {
+	for index, candidate := range modes {
+		if candidate == mode {
 			return labels[index]
 		}
 	}
