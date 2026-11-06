@@ -172,6 +172,17 @@ func (s *Service) SetOSCNotifications(mode domainterminal.NotificationMode) erro
 	})
 }
 
+// SetDynamicTabTitleMode selects which Tabs follow the shell-reported OSC 0/2
+// title.
+func (s *Service) SetDynamicTabTitleMode(mode domainterminal.DynamicTabTitleMode) error {
+	if !mode.Valid() {
+		return nil
+	}
+	return s.Update(func(settings *domainterminal.Settings) {
+		settings.DynamicTabTitleMode = mode
+	})
+}
+
 // EncodingFor returns the encoding a new Session in scope inherits. A Host
 // that remembers its last choice wins over the default.
 func (s *Service) EncodingFor(scope string) domainterminal.Encoding {

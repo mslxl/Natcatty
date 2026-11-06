@@ -14,17 +14,18 @@ func TestTerminalSettingsRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "terminal-settings.json")
 	store := OpenTerminalSettings(path)
 	want := domainterminal.Settings{
-		LoggingEnabled:   true,
-		LogDirectory:     `C:\logs`,
-		LogFormat:        domainterminal.LogFormatHTML,
-		LogTimestamps:    true,
-		OSC52:            domainterminal.ClipboardPrompt,
-		OSCNotifications: domainterminal.NotificationUnfocused,
-		Encoding:         domainterminal.EncodingGB18030,
-		Encodings:        map[string]domainterminal.Encoding{"host:abc": domainterminal.EncodingShiftJIS},
-		PasteProtection:  true,
-		PasteMinLines:    5,
-		DropAction:       domainterminal.DropUpload,
+		LoggingEnabled:      true,
+		LogDirectory:        `C:\logs`,
+		LogFormat:           domainterminal.LogFormatHTML,
+		LogTimestamps:       true,
+		OSC52:               domainterminal.ClipboardPrompt,
+		OSCNotifications:    domainterminal.NotificationUnfocused,
+		DynamicTabTitleMode: domainterminal.DynamicTabTitleAll,
+		Encoding:            domainterminal.EncodingGB18030,
+		Encodings:           map[string]domainterminal.Encoding{"host:abc": domainterminal.EncodingShiftJIS},
+		PasteProtection:     true,
+		PasteMinLines:       5,
+		DropAction:          domainterminal.DropUpload,
 
 		AutocompleteEnabled:        false,
 		AutocompleteGhostText:      true,
@@ -74,6 +75,21 @@ func TestTerminalSettingsVersion2GetsThePowerUxDefaults(t *testing.T) {
 		got.AutocompleteHistoryScope != domainterminal.AutocompleteHistoryHost ||
 		!got.KeywordHighlightEnabled || len(got.KeywordHighlightRules) != 7 {
 		t.Fatalf("version 2 settings = %+v, want the power-UX defaults", got)
+	}
+}
+
+func TestTerminalSettingsVersion4GetsTheDynamicTitleDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terminal-settings.json")
+	if err := os.WriteFile(path, []byte(`{"version":4,"logFormat":"raw"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenTerminalSettings(path).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DynamicTabTitleMode != domainterminal.DynamicTabTitleAll {
+		t.Fatalf("dynamic tab title mode = %q, want %q",
+			got.DynamicTabTitleMode, domainterminal.DynamicTabTitleAll)
 	}
 }
 

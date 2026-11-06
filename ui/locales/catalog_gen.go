@@ -7950,6 +7950,58 @@ func (msgs Messages) SettingsOSCNotificationsAlways() string {
 	return Catalog.Format(msgs.locale, "settingsOSCNotificationsAlways", nil)
 }
 
+// SettingsDynamicTabTitle says "Dynamic tab title"
+// in the language the app shows.
+func SettingsDynamicTabTitle() string { return In(i18n.Locale()).SettingsDynamicTabTitle() }
+
+// SettingsDynamicTabTitle says "Dynamic tab title"
+// in the language of msgs.
+func (msgs Messages) SettingsDynamicTabTitle() string {
+	return Catalog.Format(msgs.locale, "settingsDynamicTabTitle", nil)
+}
+
+// SettingsDynamicTabTitleDescription says "Show the title a shell or coding agent reports instead of the connection name."
+// in the language the app shows.
+func SettingsDynamicTabTitleDescription() string {
+	return In(i18n.Locale()).SettingsDynamicTabTitleDescription()
+}
+
+// SettingsDynamicTabTitleDescription says "Show the title a shell or coding agent reports instead of the connection name."
+// in the language of msgs.
+func (msgs Messages) SettingsDynamicTabTitleDescription() string {
+	return Catalog.Format(msgs.locale, "settingsDynamicTabTitleDescription", nil)
+}
+
+// SettingsDynamicTabTitleOff says "Disabled"
+// in the language the app shows.
+func SettingsDynamicTabTitleOff() string { return In(i18n.Locale()).SettingsDynamicTabTitleOff() }
+
+// SettingsDynamicTabTitleOff says "Disabled"
+// in the language of msgs.
+func (msgs Messages) SettingsDynamicTabTitleOff() string {
+	return Catalog.Format(msgs.locale, "settingsDynamicTabTitleOff", nil)
+}
+
+// SettingsDynamicTabTitleAgents says "Agents only"
+// in the language the app shows.
+func SettingsDynamicTabTitleAgents() string { return In(i18n.Locale()).SettingsDynamicTabTitleAgents() }
+
+// SettingsDynamicTabTitleAgents says "Agents only"
+// in the language of msgs.
+func (msgs Messages) SettingsDynamicTabTitleAgents() string {
+	return Catalog.Format(msgs.locale, "settingsDynamicTabTitleAgents", nil)
+}
+
+// SettingsDynamicTabTitleAll says "All sessions"
+// in the language the app shows.
+func SettingsDynamicTabTitleAll() string { return In(i18n.Locale()).SettingsDynamicTabTitleAll() }
+
+// SettingsDynamicTabTitleAll says "All sessions"
+// in the language of msgs.
+func (msgs Messages) SettingsDynamicTabTitleAll() string {
+	return Catalog.Format(msgs.locale, "settingsDynamicTabTitleAll", nil)
+}
+
 // SettingsAutocompleteTitle says "Autocomplete"
 // in the language the app shows.
 func SettingsAutocompleteTitle() string { return In(i18n.Locale()).SettingsAutocompleteTitle() }

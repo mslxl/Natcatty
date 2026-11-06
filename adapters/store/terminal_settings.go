@@ -23,18 +23,19 @@ func OpenTerminalSettings(path string) *TerminalSettingsStore {
 }
 
 type terminalSettingsRecord struct {
-	Version          int                                `json:"version"`
-	LoggingEnabled   bool                               `json:"loggingEnabled"`
-	LogDirectory     string                             `json:"logDirectory"`
-	LogFormat        domainterminal.LogFormat           `json:"logFormat"`
-	LogTimestamps    bool                               `json:"logTimestamps"`
-	OSC52            domainterminal.ClipboardAccess     `json:"osc52"`
-	OSCNotifications domainterminal.NotificationMode    `json:"oscNotifications"`
-	Encoding         domainterminal.Encoding            `json:"encoding"`
-	Encodings        map[string]domainterminal.Encoding `json:"encodings,omitempty"`
-	PasteProtection  bool                               `json:"pasteProtection"`
-	PasteMinLines    int                                `json:"pasteMinLines"`
-	DropAction       domainterminal.DropAction          `json:"dropAction"`
+	Version             int                                `json:"version"`
+	LoggingEnabled      bool                               `json:"loggingEnabled"`
+	LogDirectory        string                             `json:"logDirectory"`
+	LogFormat           domainterminal.LogFormat           `json:"logFormat"`
+	LogTimestamps       bool                               `json:"logTimestamps"`
+	OSC52               domainterminal.ClipboardAccess     `json:"osc52"`
+	OSCNotifications    domainterminal.NotificationMode    `json:"oscNotifications"`
+	DynamicTabTitleMode domainterminal.DynamicTabTitleMode `json:"dynamicTabTitleMode"`
+	Encoding            domainterminal.Encoding            `json:"encoding"`
+	Encodings           map[string]domainterminal.Encoding `json:"encodings,omitempty"`
+	PasteProtection     bool                               `json:"pasteProtection"`
+	PasteMinLines       int                                `json:"pasteMinLines"`
+	DropAction          domainterminal.DropAction          `json:"dropAction"`
 
 	AutocompleteEnabled        bool                                    `json:"autocompleteEnabled"`
 	AutocompleteGhostText      bool                                    `json:"autocompleteGhostText"`
@@ -55,9 +56,10 @@ type terminalSettingsRecord struct {
 // terminalSettingsVersion is the current record version. Version 1 files
 // lack the encoding, paste, and drop fields; version 2 files lack the
 // autocomplete, keyword highlight, and statistics fields; version 3 files
-// lack the log and history retention fields. Zero values for a missing group
-// are replaced by the original defaults on load.
-const terminalSettingsVersion = 4
+// lack the log and history retention fields; version 4 files lack the dynamic
+// tab title mode. Zero values for a missing group are replaced by the defaults
+// on load.
+const terminalSettingsVersion = 5
 
 // Load returns the stored settings. A missing file is the original defaults,
 // not an error.
@@ -104,6 +106,9 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 		settings.HistoryRetentionCount = record.HistoryRetentionCount
 		settings.HistoryRetentionDays = record.HistoryRetentionDays
 	}
+	if record.Version >= 5 {
+		settings.DynamicTabTitleMode = record.DynamicTabTitleMode
+	}
 	return domainterminal.Normalize(settings), nil
 }
 
@@ -111,18 +116,19 @@ func (s *TerminalSettingsStore) Load(context.Context) (domainterminal.Settings, 
 // truncated file behind.
 func (s *TerminalSettingsStore) Save(_ context.Context, settings domainterminal.Settings) error {
 	record := terminalSettingsRecord{
-		Version:          terminalSettingsVersion,
-		LoggingEnabled:   settings.LoggingEnabled,
-		LogDirectory:     settings.LogDirectory,
-		LogFormat:        settings.LogFormat,
-		LogTimestamps:    settings.LogTimestamps,
-		OSC52:            settings.OSC52,
-		OSCNotifications: settings.OSCNotifications,
-		Encoding:         settings.Encoding,
-		Encodings:        settings.Encodings,
-		PasteProtection:  settings.PasteProtection,
-		PasteMinLines:    settings.PasteMinLines,
-		DropAction:       settings.DropAction,
+		Version:             terminalSettingsVersion,
+		LoggingEnabled:      settings.LoggingEnabled,
+		LogDirectory:        settings.LogDirectory,
+		LogFormat:           settings.LogFormat,
+		LogTimestamps:       settings.LogTimestamps,
+		OSC52:               settings.OSC52,
+		OSCNotifications:    settings.OSCNotifications,
+		DynamicTabTitleMode: settings.DynamicTabTitleMode,
+		Encoding:            settings.Encoding,
+		Encodings:           settings.Encodings,
+		PasteProtection:     settings.PasteProtection,
+		PasteMinLines:       settings.PasteMinLines,
+		DropAction:          settings.DropAction,
 
 		AutocompleteEnabled:        settings.AutocompleteEnabled,
 		AutocompleteGhostText:      settings.AutocompleteGhostText,
