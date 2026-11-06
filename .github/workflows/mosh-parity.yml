@@ -1,0 +1,258 @@
+name: mosh-parity
+
+# Release gate for the in-process mosh client. Every required matrix cell runs
+# against real stock mosh-server / mosh-client binaries over real UDP; the
+# final `verify` job fails closed over the per-cell reports. Ticket 34's
+# default switch must require this workflow (or run `moshparity verify` on the
+# same reports) and must not treat a missing or failed cell as green.
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - "adapters/mosh/**"
+      - "internal/mosh/**"
+      - "domain/model/mosh/**"
+      - "internal/tools/moshparity/**"
+      - ".github/workflows/mosh-parity.yml"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - "adapters/mosh/**"
+      - "internal/mosh/**"
+      - "domain/model/mosh/**"
+      - "internal/tools/moshparity/**"
+      - ".github/workflows/mosh-parity.yml"
+      - "go.mod"
+      - "go.sum"
+
+permissions:
+  contents: read
+
+jobs:
+  docker-cell:
+    name: ${{ matrix.cell }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: debian-12/1.3.2
+            slug: debian-12-1.3.2
+          - cell: debian-12/1.4.0
+            slug: debian-12-1.4.0
+          - cell: ubuntu-22.04/1.3.2
+            slug: ubuntu-22.04-1.3.2
+          - cell: ubuntu-22.04/1.4.0
+            slug: ubuntu-22.04-1.4.0
+          - cell: fedora-41/1.3.2
+            slug: fedora-41-1.3.2
+          - cell: fedora-41/1.4.0
+            slug: fedora-41-1.4.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the cell
+        env:
+          CELL: ${{ matrix.cell }}
+        run: |
+          go run ./internal/tools/moshparity run \
+            -cell "$CELL" -build \
+            -out "$RUNNER_TEMP/mosh-parity" \
+            -fuzztime 10s -timeout 10m
+
+      - name: Upload the cell report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-parity-${{ matrix.slug }}
+          path: ${{ runner.temp }}/mosh-parity
+          if-no-files-found: warn
+
+  stock-client:
+    name: stock-client/1.4.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the stock-client display differential
+        run: |
+          go run ./internal/tools/moshparity run \
+            -cell stock-client/1.4.0 -build \
+            -out "$RUNNER_TEMP/mosh-parity" \
+            -fuzztime 10s -timeout 10m
+
+      - name: Upload the cell report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-parity-stock-client-1.4.0
+          path: ${{ runner.temp }}/mosh-parity
+          if-no-files-found: warn
+
+  macos-cell:
+    name: macos (Homebrew 1.4.0, pinned 1.3.2)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Provision the macOS lab
+        run: sudo bash adapters/mosh/lab/macos-setup.sh
+
+      - name: Run both macOS cells
+        run: |
+          go run ./internal/tools/moshparity run \
+            -cell macos/1.3.2 -cell macos/1.4.0 \
+            -out "$RUNNER_TEMP/mosh-parity" \
+            -fuzztime 10s -timeout 10m
+
+      - name: Upload the cell reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-parity-macos
+          path: ${{ runner.temp }}/mosh-parity
+          if-no-files-found: warn
+
+  freebsd-cell:
+    name: freebsd-14 (ports 1.4.0, pinned 1.3.2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Provision and run both FreeBSD cells
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: pkg install -y curl
+          # The VM workspace sync may not carry .git, so bind both reports to
+          # GitHub's SHA explicitly. The harness also accepts -commit and
+          # refuses to write a report with an empty commit.
+          run: |
+            set -e
+            GATE_COMMIT='${{ github.sha }}'
+            export NATCATTY_MOSH_PARITY_COMMIT="$GATE_COMMIT"
+            sh adapters/mosh/lab/freebsd-setup.sh
+            export PATH=/usr/local/bin:$PATH
+            status=0
+            go run ./internal/tools/moshparity run \
+              -cell freebsd-14/1.3.2 -lab-addr 127.0.0.1:22 \
+              -commit "$GATE_COMMIT" \
+              -out build/mosh-parity -fuzztime 10s -timeout 10m || status=1
+            go run ./internal/tools/moshparity run \
+              -cell freebsd-14/1.4.0 -lab-addr 127.0.0.1:22 \
+              -commit "$GATE_COMMIT" \
+              -out build/mosh-parity -fuzztime 10s -timeout 10m || status=1
+            exit $status
+
+      - name: Upload the cell reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-parity-freebsd
+          path: build/mosh-parity
+          if-no-files-found: warn
+
+  verify:
+    name: verify (fail closed)
+    needs:
+      - docker-cell
+      - stock-client
+      - macos-cell
+      - freebsd-cell
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Pin the called workflow's checkout to the caller's commit so a
+          # release gate cannot follow a force-moved tag between jobs.
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download every cell report
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mosh-parity-*
+          path: build/mosh-parity
+          merge-multiple: true
+
+      - name: Verify the required matrix
+        # Pin the expected commit to GitHub's SHA so a report from another
+        # checkout cannot be mistaken for this run; verify also fails closed
+        # when no commit can be determined at all. Run unconditionally so a
+        # failed download still produces a fail summary.json for ticket 34.
+        if: always()
+        run: >-
+          go run ./internal/tools/moshparity verify
+          -dir build/mosh-parity -commit '${{ github.sha }}'
+
+      # summary.json is the machine-readable verdict for the default switch
+      # (ticket 34). It is uploaded even when verify fails, so a failed gate
+      # still leaves the per-cell verdict on the run.
+      - name: Upload summary.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mosh-parity-summary
+          path: build/mosh-parity/summary.json
+          if-no-files-found: warn
