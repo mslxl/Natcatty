@@ -101,12 +101,61 @@ func Run() error {
 	if adapteret.IsAskpassInvocation(os.Args) {
 		os.Exit(adapteret.RunAskpass(os.Args, os.Stdout))
 	}
-	return run(nil)
+	// The packaged-artifact smoke mode is dormant unless the complete
+	// environment contract is present. It isolates user data before any store
+	// opens, so the real Vault and preferences are never touched.
+	smoke, smokeActive, err := packagedSmokeFromEnv(os.Getenv)
+	if err != nil {
+		writePackagedSmokeActivationFailure(os.Getenv, err)
+		return err
+	}
+	if !smokeActive {
+		return run(nil, runOptions{})
+	}
+	if err := smoke.prepare(); err != nil {
+		smoke.writeStartupFailure(err)
+		return err
+	}
+	mygo.App.SetPath(mygo.PathUserData, smoke.cfg.ProfileDir)
+	err = run(smoke.afterReady, runOptions{packagedSmoke: true, secretService: smoke.secretService})
+	if !smoke.didFinish() {
+		// The app can exit before readiness (for example when another
+		// instance owns the single-instance lock). Never let that look like a
+		// green smoke run.
+		if err == nil {
+			err = errors.New("packaged smoke: the app exited before the smoke ran")
+		}
+		smoke.writeStartupFailure(err)
+	}
+	return err
 }
 
+// runOptions are the composition-root decisions that must be made before the
+// stores and services are built. They are explicit arguments, never globals.
+type runOptions struct {
+	// packagedSmoke keeps the isolated smoke process free of listeners. It
+	// skips the single-instance lock, which would hand the launch to a running
+	// app, and does not start the external MCP loopback listener.
+	packagedSmoke bool
+	// secretService, when set, scopes the OS credential store to this service.
+	// The packaged smoke sets it to a per-profile name so an isolated run never
+	// reads or writes the user's real entries.
+	secretService string
+}
+
+// importsShellHistory reports whether the composition root may read the real
+// shell history files. The packaged smoke keeps the real ~/.zsh_history and
+// friends out of the isolated profile.
+func (o runOptions) importsShellHistory() bool { return !o.packagedSmoke }
+
+// registersURLScheme reports whether the app may claim the OS ssh handler. A
+// packaged smoke must not switch the user's real handler to a temporary build.
+func (o runOptions) registersURLScheme() bool { return !o.packagedSmoke }
+
 // run is the composition root proper. afterReady, when non-nil, runs on the UI
-// thread after the main window exists; the launch smoke build uses it to quit.
-func run(afterReady func(hostWindow)) error {
+// thread after the main window exists; the smoke modes use it to assert
+// readiness, optionally drive real Sessions, and quit.
+func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) error {
 	var windows *windowManager
 	var mainWindow hostWindow
 	var gate *uiapplock.Gate
@@ -157,7 +206,7 @@ func run(afterReady func(hostWindow)) error {
 			desktopCtl.HandleLaunchArgs(args)
 		}
 	}
-	if !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
+	if !options.packagedSmoke && !singleInstancePrimary(mygoInstanceLock{}, secondInstance) {
 		return nil
 	}
 
@@ -366,9 +415,12 @@ func run(afterReady func(hostWindow)) error {
 	legacyCommandHistory := store.OpenCommandHistory(filepath.Join(userData, "command-history.json"))
 	// Import the pre-journal aggregate and the local shell's files once, so
 	// the History surface lists them too and an upgrade does not silently
-	// drop autocomplete's earlier history.
+	// drop autocomplete's earlier history. The packaged smoke skips the real
+	// shell files: its result must not depend on, or copy, the user's history.
 	importLegacyCommandHistory(context.Background(), historyService, legacyCommandHistory)
-	importShellHistory(context.Background(), historyService, shellHistory)
+	if options.importsShellHistory() {
+		importShellHistory(context.Background(), historyService, shellHistory)
+	}
 	autocompleteService := autocomplete.NewService(
 		legacyCommandHistory,
 		func() autocomplete.Config {
@@ -386,9 +438,17 @@ func run(afterReady func(hostWindow)) error {
 	)
 	autocompleteService.Load(context.Background())
 
+	// The packaged smoke scopes OS credential-store entries to a per-profile
+	// service. The store is still the platform keychain, but an isolated run
+	// neither reads nor writes the user's real entries.
+	secretBackend := platformsecrets.Store(platformsecrets.System{})
+	if options.secretService != "" {
+		secretBackend = platformsecrets.Scoped{Service: options.secretService}
+	}
+
 	// Host credentials live in the field-secret store. It reports OS,
 	// passphrase, or session mode; it never falls back to plaintext.
-	secretStore, err := store.OpenSecretStore(context.Background(), database, platformsecrets.System{})
+	secretStore, err := store.OpenSecretStore(context.Background(), database, secretBackend)
 	if err != nil {
 		return err
 	}
@@ -398,7 +458,7 @@ func run(afterReady func(hostWindow)) error {
 	// its own keychain key, separate from the field-secret key, so a backup can
 	// be written even when credential support is in session-only mode.
 	backupStore := adapterbackup.Open(
-		filepath.Join(userData, "vault-backups"), platformsecrets.System{})
+		filepath.Join(userData, "vault-backups"), secretBackend)
 	backupService := appbackup.NewService(database, backupStore,
 		appbackup.WithRetentionStore(backupStore))
 	backupService.Start()
@@ -498,7 +558,7 @@ func run(afterReady func(hostWindow)) error {
 		githubClient,
 		adaptersyncvault.New(database, secretStore, adaptersyncvault.WithSettings(syncedSettings)),
 		syncConfigStore,
-		adaptersyncstore.NewTokenStore(platformsecrets.System{}),
+		adaptersyncstore.NewTokenStore(secretBackend),
 		appsync.WithDevice(deviceID, deviceName, version),
 		appsync.WithRemote(appsync.ProviderGoogleDrive, googleClient),
 		appsync.WithRemote(appsync.ProviderOneDrive, oneDriveClient),
@@ -944,12 +1004,14 @@ func run(afterReady func(hostWindow)) error {
 	mcpSettingsState := settings.NewMCPState(&mcpSettingsController{
 		policy: mcpPolicy, mode: mcpMode, sessions: mcpLive,
 	})
-	externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
-		externalMCPDiscoveryPath(userData), func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, format+"\n", args...)
-		}, withMCPHandler(mcpHandler), withMCPModeState(mcpMode))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
+	if !options.packagedSmoke {
+		externalMCPServer, err = startExternalMCP(context.Background(), mcpBridge,
+			externalMCPDiscoveryPath(userData), func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}, withMCPHandler(mcpHandler), withMCPModeState(mcpMode))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "natcatty: external MCP:", err)
+		}
 	}
 	// The Workspace restores Tabs, splits, and working directories at startup
 	// and persists them after every structural change. Output is never stored.
@@ -1499,7 +1561,13 @@ func run(afterReady func(hostWindow)) error {
 		}
 
 		if afterReady != nil {
-			afterReady(mainWindow)
+			afterReady(mainWindow, packagedSmokeDeps{
+				vault:       vaultService,
+				preferences: preferenceService,
+				shell:       shellState,
+				sessions:    sessions,
+				knownHosts:  database,
+			})
 		}
 	})
 
@@ -1512,8 +1580,11 @@ func run(afterReady func(hostWindow)) error {
 	})
 	// Runtime registration covers Windows/Linux installs; macOS uses
 	// urlSchemes in mygo.json. A development build may not be allowed to
-	// register, which must not stop the app.
-	_ = mygo.App.RegisterURLScheme("ssh")
+	// register, which must not stop the app. The packaged smoke skips it so a
+	// temporary build never takes over the real ssh handler.
+	if options.registersURLScheme() {
+		_ = mygo.App.RegisterURLScheme("ssh")
+	}
 
 	return mygo.App.Run()
 }

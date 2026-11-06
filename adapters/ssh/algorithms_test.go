@@ -2,11 +2,15 @@ package ssh
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"net"
 	"slices"
 	"testing"
 	"time"
+
+	xssh "golang.org/x/crypto/ssh"
 
 	"github.com/mslxl/natcatty/adapters/sshtest/fakessh"
 	appconnection "github.com/mslxl/natcatty/application/connection"
@@ -121,6 +125,37 @@ func TestOfferForSkipECDSAFiltersTheFinalHostKeyList(t *testing.T) {
 	}
 	if !errors.Is(err, appconnection.ErrUnsupportedAlgorithm) {
 		t.Fatalf("error = %v, want the unsupported-algorithm cause", err)
+	}
+}
+
+func TestDefaultHostKeyAlgorithmsReturnsTheDialerOrder(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate an Ed25519 key: %v", err)
+	}
+	signer, err := xssh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+
+	got := DefaultHostKeyAlgorithms()
+	want := copyStrings(defaultHostKeys)
+	if !slices.Equal(got, want) {
+		t.Fatalf("DefaultHostKeyAlgorithms() = %v, want %v", got, want)
+	}
+	// The dialer builds its default offer from the same list.
+	if dialer := NewDialer(); !slices.Equal(dialer.hostKeyAlgos, want) {
+		t.Fatalf("dialer host keys = %v, want %v", dialer.hostKeyAlgos, want)
+	}
+	// The first preference is Ed25519, which is what makes the packaged
+	// smoke probe and the live session agree on a server offering both keys.
+	if got[0] != signer.PublicKey().Type() {
+		t.Fatalf("first host key = %q, want the Ed25519 type %q", got[0], signer.PublicKey().Type())
+	}
+
+	got[0] = "mutated-by-caller"
+	if again := DefaultHostKeyAlgorithms(); !slices.Equal(again, want) {
+		t.Fatalf("mutating the returned slice changed the defaults: %v", again)
 	}
 }
 
