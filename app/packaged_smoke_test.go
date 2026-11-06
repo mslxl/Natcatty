@@ -194,6 +194,34 @@ func TestPackagedSmokeConfigFromEnv(t *testing.T) {
 			},
 		},
 		{
+			name:       "session ssh user override",
+			getenv:     packagedSmokeSessionEnv(map[string]string{packagedSmokeSSHUserEnv: "  tester  "}),
+			goos:       "darwin",
+			wantActive: true,
+			check: func(t *testing.T, cfg packagedSmokeConfig) {
+				if cfg.SSHUser != "tester" {
+					t.Fatalf("ssh user = %q, want tester", cfg.SSHUser)
+				}
+				if cfg.login() != "tester" {
+					t.Fatalf("login = %q, want tester", cfg.login())
+				}
+			},
+		},
+		{
+			name:       "session defaults to the local user",
+			getenv:     packagedSmokeSessionEnv(nil),
+			goos:       "darwin",
+			wantActive: true,
+			check: func(t *testing.T, cfg packagedSmokeConfig) {
+				if cfg.SSHUser != "" {
+					t.Fatalf("ssh user = %q, want the empty override", cfg.SSHUser)
+				}
+				if cfg.login() != packagedSmokeUsername() {
+					t.Fatalf("login = %q, want the current OS user", cfg.login())
+				}
+			},
+		},
+		{
 			name: "session missing secret",
 			getenv: packagedSmokeSessionEnv(map[string]string{
 				packagedSmokePasswordEnv: "",

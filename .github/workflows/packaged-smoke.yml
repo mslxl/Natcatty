@@ -141,9 +141,13 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     env:
-      # Lab-only secret for the current runner account. It is never passed on
-      # a command line or written to the result.
+      # Lab-only secret for the provisioned test account. It is never passed
+      # on a command line or written to the result.
       NATCATTY_SMOKE_PASSWORD: testpass
+      # The runner account carries a Secure Token, so a scripted password
+      # reset is refused; authenticate to the lab as the provisioned account
+      # instead. The smoke still runs as the runner user.
+      NATCATTY_SMOKE_SSH_USER: tester
     defaults:
       run:
         shell: bash
@@ -197,11 +201,6 @@ jobs:
           set -euo pipefail
           chmod +x adapters/et/lab/macos-provision.sh
           adapters/et/lab/macos-provision.sh testpass
-          # Session smoke runs as the current OS user, not the provisioned
-          # test accounts, so that account needs the same secret as
-          # NATCATTY_SMOKE_PASSWORD below. The runner user keeps its normal
-          # privileges.
-          sudo sysadminctl -resetPasswordFor "$USER" -newPassword testpass
           nohup sudo /usr/local/bin/etserver --port 2022 --logtostdout -v 1 \
             >/tmp/etserver.log 2>&1 &
           for _ in $(seq 1 120); do

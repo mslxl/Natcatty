@@ -88,6 +88,7 @@ required. Session-only values are ignored in launch mode.
 | `NATCATTY_SMOKE_SSH_PORT=<port>` | Lab sshd port for session mode; default `22`. |
 | `NATCATTY_SMOKE_ET_PORT=<port>` | Lab etserver port for session mode; default `2022`. |
 | `NATCATTY_SMOKE_PASSWORD=<value>` | Password for the lab SSH account. Required in session mode, passed only through the environment, and never written to the result or logs. |
+| `NATCATTY_SMOKE_SSH_USER=<name>` | Lab SSH account for session mode; defaults to the current OS user. Set it when the local account cannot authenticate, for example a macOS runner account whose Secure Token blocks a scripted password reset. |
 | `NATCATTY_SMOKE_SESSION_SECRETS=1` | Puts the Vault in session-only credential mode. Use it on a headless Linux runner whose OS credential store is unavailable. |
 | `NATCATTY_SMOKE_ALLOW_UNSUPPORTED_SESSION=1` | Lab-only escape hatch for session mode on a platform outside the Phase 3A gate. It changes no check or result semantics. |
 

@@ -301,6 +301,7 @@ def main [
         NATCATTY_SMOKE_SSH_PORT: $ssh_port_value
         NATCATTY_SMOKE_ET_PORT: $et_port_value
         NATCATTY_SMOKE_PASSWORD: ($env.NATCATTY_SMOKE_PASSWORD? | default "")
+        NATCATTY_SMOKE_SSH_USER: ($env.NATCATTY_SMOKE_SSH_USER? | default "")
         NATCATTY_SMOKE_SESSION_SECRETS: $session_secrets_value
         NATCATTY_SMOKE_ALLOW_UNSUPPORTED_SESSION: ($env.NATCATTY_SMOKE_ALLOW_UNSUPPORTED_SESSION? | default "")
     }
