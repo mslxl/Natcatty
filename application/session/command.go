@@ -614,6 +614,28 @@ func skipWrapGap(data []byte, index int) (next int, gap, incomplete bool) {
 	return after + 1, true, false
 }
 
+// skipLineEndingNoise steps over control sequences a renderer may place
+// between a marker token and the line ending that terminates it, without
+// consuming the line ending itself. It reports false when the buffer ends
+// inside a sequence, so the scan waits for the remaining bytes.
+func skipLineEndingNoise(data []byte, index int) (int, bool) {
+	for index < len(data) {
+		switch data[index] {
+		case 0x1b:
+			end, complete := skipEscapeSequence(data, index)
+			if !complete {
+				return index, false
+			}
+			index = end
+		case '\b', 0x07:
+			index++
+		default:
+			return index, true
+		}
+	}
+	return index, true
+}
+
 // skipEscapeSequence returns the first index after the escape sequence that
 // starts at index. It reports false when the sequence is cut off by the end of
 // the buffer.
@@ -701,14 +723,21 @@ func findOwnLineMarker(data []byte, startMarker string) (int, int, bool) {
 		}
 		// Wait for the line ending when the marker is split across reads; a
 		// wrapper echo has another character after the token, never a line
-		// ending, so it cannot match.
-		if end >= len(data) {
+		// ending, so it cannot match. A terminal renderer may put control
+		// sequences between the token and the ending: mosh rewrites a screen
+		// that was resized mid-command with erase-to-end-of-line before every
+		// CRLF, so the start marker line arrives as "marker_S\x1b[K\r\n".
+		after, complete := skipLineEndingNoise(data, end)
+		if !complete {
 			return 0, 0, false
 		}
-		if data[end] != '\r' && data[end] != '\n' {
+		if after >= len(data) {
+			return 0, 0, false
+		}
+		if data[after] != '\r' && data[after] != '\n' {
 			continue
 		}
-		return start, end, true
+		return start, after, true
 	}
 	return 0, 0, false
 }
