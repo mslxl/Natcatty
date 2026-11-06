@@ -651,6 +651,11 @@ func remoteServerRunning(host string, port int, user, password, pattern string) 
 }
 
 // readUntilCount reads transport output until marker has appeared count times.
+//
+// mosh sends a framebuffer diff, so the screen can show a line contiguously
+// while the byte stream carries cursor positioning inside it. mosh 1.4.0 does
+// exactly that to an echoed command after a roaming event. Count against the
+// de-escaped stream so the assertion follows what the terminal displays.
 func readUntilCount(t *testing.T, transport appsession.Transport, marker string, count int, timeout time.Duration) string {
 	t.Helper()
 	result := make(chan string, 1)
@@ -665,7 +670,7 @@ func readUntilCount(t *testing.T, transport appsession.Transport, marker string,
 				collected = append(collected, buffer[:n]...)
 				text := string(collected)
 				mu.Unlock()
-				if strings.Count(text, marker) >= count {
+				if strings.Count(stripTerminalEscapes(text), marker) >= count {
 					result <- text
 					return
 				}
@@ -681,15 +686,84 @@ func readUntilCount(t *testing.T, transport appsession.Transport, marker string,
 	}()
 	select {
 	case text := <-result:
-		if got := strings.Count(text, marker); got < count {
+		if got := strings.Count(stripTerminalEscapes(text), marker); got < count {
 			t.Fatalf("output %q contains %q %d times, want %d", text, marker, got, count)
 		}
 		return text
 	case <-time.After(timeout):
 		mu.Lock()
 		defer mu.Unlock()
-		t.Fatalf("timed out waiting for %q to appear %d times; output = %q", marker, count, collected)
+		text := string(collected)
+		t.Fatalf("timed out waiting for %q to appear %d times; output = %q (de-escaped %q)",
+			marker, count, text, stripTerminalEscapes(text))
 		return ""
+	}
+}
+
+// stripTerminalEscapes removes escape sequences from a terminal byte stream.
+// It handles CSI, OSC/DCS/SOS/PM/APC strings, and two-byte escapes; the
+// terminal's visible text is what remains.
+func stripTerminalEscapes(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	for i := 0; i < len(text); i++ {
+		if text[i] != 0x1b {
+			out.WriteByte(text[i])
+			continue
+		}
+		if i+1 >= len(text) {
+			break
+		}
+		switch text[i+1] {
+		case '[':
+			// CSI: parameter and intermediate bytes, then one final byte.
+			j := i + 2
+			for j < len(text) && (text[j] < 0x40 || text[j] > 0x7e) {
+				j++
+			}
+			if j < len(text) {
+				j++
+			}
+			i = j - 1
+		case ']', 'P', 'X', '^', '_':
+			// Strings terminated by BEL or ST (ESC \).
+			j := i + 2
+			for ; j < len(text); j++ {
+				if text[j] == 0x07 {
+					j++
+					break
+				}
+				if text[j] == 0x1b && j+1 < len(text) && text[j+1] == '\\' {
+					j += 2
+					break
+				}
+			}
+			i = j - 1
+		default:
+			// Two-byte escape.
+			i++
+		}
+	}
+	return out.String()
+}
+
+// The echoed command and its output are both on screen even though mosh wraps
+// part of the echo in cursor positioning.
+func TestStripTerminalEscapesJoinsSplitText(t *testing.T) {
+	raw := "echo NA\x1b[?25l\x1b[10;80HTCATTY_ROAM_AFTER\r\nNATCATTY_ROAM_AFTER\r\n"
+	text := stripTerminalEscapes(raw)
+	if got := strings.Count(text, "NATCATTY_ROAM_AFTER"); got != 2 {
+		t.Fatalf("de-escaped %q contains the marker %d times, want 2", text, got)
+	}
+	// An unterminated CSI at the end must not resurrect bytes or hang.
+	if got := stripTerminalEscapes("before\x1b[10;80"); got != "before" {
+		t.Fatalf("unterminated CSI de-escaped to %q", got)
+	}
+	if got := stripTerminalEscapes("\x1b]0;title\x07text"); got != "text" {
+		t.Fatalf("OSC de-escaped to %q", got)
+	}
+	if got := stripTerminalEscapes("\x1b]0;title\x1b\\text"); got != "text" {
+		t.Fatalf("ST-terminated OSC de-escaped to %q", got)
 	}
 }
 
