@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	appconnection "github.com/mslxl/natcatty/application/connection"
@@ -124,19 +123,15 @@ func (d *Dialer) dialSocketProxy(ctx context.Context, proxy *appconnection.Proxy
 
 // watchCancellation closes conn when ctx is cancelled. The returned stop
 // function disarms the watcher once the connection belongs to the transport.
-func watchCancellation(ctx context.Context, conn net.Conn) func() {
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-done:
-		}
-	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(done) })
-	}
+//
+// stop runs as the dial's child context is being cancelled: openFirst derives
+// the dial context with a deferred cancel, so cancellation follows a successful
+// return immediately. A plain select on ctx.Done and a stop channel would let a
+// late-scheduled watcher pick the cancellation that landed after stop and close
+// a connection the handshake already owns. AfterFunc's stop is atomic with
+// scheduling, so a watcher that was stopped never runs.
+func watchCancellation(ctx context.Context, conn net.Conn) func() bool {
+	return context.AfterFunc(ctx, func() { _ = conn.Close() })
 }
 
 func httpConnect(conn net.Conn, proxy *appconnection.Proxy, targetHost string, targetPort int) error {
