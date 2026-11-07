@@ -227,6 +227,12 @@ func renderHistoryCaptureSection(c *ui.Context, state *TerminalState,
 		state.SetHistoryCaptureHookEnabled(enabled)
 		c.Invalidate()
 	}
+	preferHostAtuin := settings.HistoryPreferHostAtuin
+	if ui.Checkbox(c, &preferHostAtuin, m.SettingsHistoryPreferHostAtuin()).Changed() {
+		state.SetHistoryPreferHostAtuin(preferHostAtuin)
+		c.Invalidate()
+	}
+	ui.Text(c, m.SettingsHistoryPreferHostAtuinDescription()).FontSize(12).TextColor(t.TextMuted)
 }
 
 // renderRetentionSection draws the Connection Log retention bounds. The count

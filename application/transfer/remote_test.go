@@ -272,3 +272,42 @@ func TestNormalizeFileProtocol(t *testing.T) {
 		}
 	}
 }
+
+// The Host-Atuin detector needs its own channel: a Host whose connection
+// offers only the terminal channel must be refused before either channel is
+// opened, rather than sharing the terminal's.
+func TestRequireExtraChannelRefusesASingleChannelHostBeforeAnyChannel(t *testing.T) {
+	for _, protocol := range []FileProtocol{ProtocolAuto, ProtocolSFTP, ProtocolSCP} {
+		session := &fakeRemoteSession{
+			singleChannel: true,
+			sftpFiles:     newFakeFS("remote"),
+			scpFiles:      newFakeFS("remote"),
+		}
+		_, _, err := selectWith(t, session, RemoteOptions{
+			Protocol: protocol, RequireExtraChannel: true,
+		})
+		if !errors.Is(err, ErrSingleChannel) {
+			t.Errorf("%s error = %v, want ErrSingleChannel", protocol, err)
+		}
+		if session.openSFTP != 0 || session.openSCP != 0 {
+			t.Errorf("%s opened a channel on a single-channel Host", protocol)
+		}
+		if session.discarded != 1 {
+			t.Errorf("%s discarded = %d", protocol, session.discarded)
+		}
+	}
+}
+
+func TestRequireExtraChannelAllowsAMultiChannelHost(t *testing.T) {
+	remote := newFakeFS("remote")
+	session := &fakeRemoteSession{sftpFiles: remote}
+	files, protocol, err := selectWith(t, session, RemoteOptions{
+		Protocol: ProtocolSFTP, RequireExtraChannel: true,
+	})
+	if err != nil || files != remote || protocol != ProtocolSFTP {
+		t.Fatalf("SelectRemote = %v, %q, %v", files, protocol, err)
+	}
+	if session.openSFTP != 1 || session.openSCP != 0 {
+		t.Fatalf("openSFTP = %d, openSCP = %d", session.openSFTP, session.openSCP)
+	}
+}

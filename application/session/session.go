@@ -275,6 +275,10 @@ const (
 	// could not be installed, so command capture falls back to native OSC
 	// 133/7 or typed input. It is never a connection failure.
 	NoticeCaptureHookUnavailable NoticeCode = "capture_hook_unavailable"
+	// NoticeHostAtuinDetected reports that the Host already runs Atuin.
+	// Netcatty imported its history read-only and skipped its own capture
+	// hook, so the notice explains the Host-Atuin preference.
+	NoticeHostAtuinDetected NoticeCode = "host_atuin_detected"
 )
 
 // Notice is a non-fatal problem reported while a Session keeps running.
@@ -478,6 +482,31 @@ type CaptureHook interface {
 	Plan(spec StartSpec) (CaptureHookPlan, bool)
 }
 
+// HostAtuinProbe reports the result of one Host-Atuin detection. Present means
+// the Host's own Atuin history is readable, so the Netcatty capture hook is
+// skipped.
+type HostAtuinProbe struct {
+	Present bool
+}
+
+// HostAtuin is the optional Host-Atuin compatibility path. Probe runs on the
+// dialing goroutine before the capture hook and the terminal transport, over a
+// separate read-only file channel; it must never write the Host or run the
+// Atuin binary. MarkNoticed records and reports the one-time preference notice
+// after the Session opens, so a failed Open does not consume it.
+// ImportAfterClose runs once when a Session that skipped the hook ends, to pick
+// up rows Atuin wrote during the Session; it must not block teardown.
+type HostAtuin interface {
+	Probe(ctx context.Context, spec StartSpec) HostAtuinProbe
+	MarkNoticed(ctx context.Context, spec StartSpec) bool
+	ImportAfterClose(spec StartSpec)
+}
+
+// hostAtuinProbeTimeout bounds detection before the terminal opens. A slow
+// probe falls back to the Netcatty hook instead of delaying the Session
+// forever; a later Session retries.
+const hostAtuinProbeTimeout = 15 * time.Second
+
 // ErrClosed reports an operation on a Session that has already ended.
 var ErrClosed = errors.New("session: closed")
 
@@ -527,8 +556,12 @@ type Session struct {
 	// captureCleanup releases the capture hook's session-scoped resources. The
 	// command loop calls it exactly once during teardown.
 	captureCleanup func()
-	codec          Codec
-	highlighter    *domainterminal.Highlighter
+	// hostAtuin is the detection/import policy for a Host that skipped the
+	// capture hook, and hostAtuinActive records that this Session chose it.
+	hostAtuin       HostAtuin
+	hostAtuinActive bool
+	codec           Codec
+	highlighter     *domainterminal.Highlighter
 
 	// rawExecMu serializes programmatic commands on the one interactive PTY.
 	// rawMu guards the single raw-output subscriber that a running command
@@ -645,6 +678,7 @@ type Service struct {
 	onConnection        func(ConnectionEvent)
 	highlightPolicy     func() (bool, []domainterminal.KeywordHighlightRule)
 	captureHook         CaptureHook
+	hostAtuin           HostAtuin
 	mu                  sync.Mutex
 	sessions            map[model.SessionID]*Session
 	// captureNotices records the Host whose capture-hook failure was already
@@ -733,6 +767,13 @@ func WithCaptureHook(hook CaptureHook) Option {
 	return func(s *Service) { s.captureHook = hook }
 }
 
+// WithHostAtuin installs the Host-Atuin detection and read-only import path.
+// Probe runs before the capture hook; a Host where it reports Present skips
+// the hook for that Session. A nil policy keeps the normal hook behaviour.
+func WithHostAtuin(policy HostAtuin) Option {
+	return func(s *Service) { s.hostAtuin = policy }
+}
+
 // WithConnectionHook receives one event per completed connection attempt. The
 // app records it as a connection log. The hook runs on the dialing goroutine,
 // before a successful Session joins the Service.
@@ -809,14 +850,26 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		return nil, fmt.Errorf("session: codec factory returned nil for %q", spec.Encoding)
 	}
 
+	// A Host that already runs Atuin is detected before the terminal opens,
+	// over a separate read-only channel. Present keeps the Netcatty capture
+	// hook out of the startup; MarkNoticed publishes the one-time preference
+	// notice once the Session is live. The probe never fails an Open.
+	hostAtuinActive := false
+	if s.hostAtuin != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, hostAtuinProbeTimeout)
+		probe := s.hostAtuin.Probe(probeCtx, spec)
+		cancel()
+		hostAtuinActive = probe.Present
+	}
+
 	// The capture hook rewrites the startup before the transport opens: local
 	// temp startup files or a remote wrapper command. It never fails an Open;
 	// a failed plan leaves the Session unmodified and reports a capability
-	// notice once per Host.
+	// notice once per Host. A Host-Atuin Session skips the hook entirely.
 	var captureCleanup func()
 	captureFailed := false
 	hookExpected := false
-	if s.captureHook != nil {
+	if s.captureHook != nil && !hostAtuinActive {
 		plan, failed := s.captureHook.Plan(spec)
 		spec = plan.Spec
 		captureCleanup = plan.Cleanup
@@ -878,6 +931,8 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		tap:                 tap,
 		clipboardAccess:     policy,
 		captureCleanup:      captureCleanup,
+		hostAtuin:           s.hostAtuin,
+		hostAtuinActive:     hostAtuinActive,
 		codec:               codec,
 		highlighter:         domainterminal.NewHighlighter(highlightEnabled, highlightRules),
 		genDone:             make(chan struct{}),
@@ -935,6 +990,17 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		// The hook could not be installed but the Session opened: capture is
 		// simply less precise. The notice is per Host, never per connection.
 		session.PublishNotice(Notice{Code: NoticeCaptureHookUnavailable})
+	}
+	if hostAtuinActive && s.hostAtuin != nil {
+		// The Host-Atuin service persists the one-time marker, so a later
+		// Session does not repeat this notice. Marking it here, after a
+		// successful Open, means a failed terminal start does not swallow it.
+		noticeCtx, cancel := context.WithTimeout(context.Background(), hostAtuinProbeTimeout)
+		first := s.hostAtuin.MarkNoticed(noticeCtx, spec)
+		cancel()
+		if first {
+			session.PublishNotice(Notice{Code: NoticeHostAtuinDetected})
+		}
 	}
 
 	if s.autoLog != nil {
@@ -1596,6 +1662,13 @@ finished:
 		cleanup := s.captureCleanup
 		s.captureCleanup = nil
 		cleanup()
+	}
+	// A Host-Atuin Session skipped the hook, so its Atuin history is imported
+	// again now that the terminal has ended. The implementation must return
+	// without waiting; a failure keeps the previous checkpoint for the next
+	// Session to retry.
+	if s.hostAtuinActive && s.hostAtuin != nil {
+		s.hostAtuin.ImportAfterClose(s.spec)
 	}
 	// A command still pending when the Session ends is finalized with an
 	// unknown exit and no finish time, so no duration is invented. The tap

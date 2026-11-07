@@ -972,6 +972,7 @@
   "connectionTmuxNested": "Already inside a tmux session on the remote Host; connected without nesting.",
   "connectionTmuxUnavailable": "tmux is not available on the remote Host; connected with a plain shell.",
   "connectionCaptureHookUnavailable": "The shell capture hook could not be installed; this Session uses best-effort capture.",
+  "connectionHostAtuinDetected": "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. Turn off \"Prefer the Host's Atuin history\" to use the Netcatty hook instead.",
   "connectionEternalTerminalDisplaced": "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client at a time.",
   "connectionEternalTerminalResumeUnsupported": "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserver 6.2.10 or older). A new session was started; upgrade etserver to resume sessions after a restart.",
   "@connectionX11CookieUnavailable": {
@@ -3218,6 +3219,8 @@
   "settingsHistoryCaptureHookTitle": "History capture hook",
   "settingsHistoryCaptureHookDescription": "Install a session-scoped shell hook for zsh, bash, and fish. It reads your startup files without editing them and falls back to native capture when unavailable.",
   "settingsHistoryCaptureHookEnabled": "Install the shell capture hook",
+  "settingsHistoryPreferHostAtuin": "Prefer the Host's Atuin history",
+  "settingsHistoryPreferHostAtuinDescription": "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hook. Turning this off uses the Netcatty hook and skips the import.",
   "settingsSyncTitle": "Sync & Cloud",
   "settingsSyncDescription": "Sync the encrypted Vault through your cloud provider. The master password never leaves this device.",
   "settingsSyncSecurityNote": "The provider can see Vault metadata, such as the device name, app version, and timestamps. Vault records and credentials stay encrypted.",

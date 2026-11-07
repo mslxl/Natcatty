@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,8 +45,8 @@ type Store interface {
 	ClearHistoryEntries(context.Context) (int, error)
 	// EnsureWriterUUID returns the per-install series host, creating it once.
 	EnsureWriterUUID(context.Context, func() string) (string, error)
-	// HistoryMetadata reads the device-local metadata, including the durable
-	// one-time Shell History File import marker.
+	// HistoryMetadata reads the device-local import, notice, and sync state,
+	// including the durable one-time Shell History File import marker.
 	HistoryMetadata(context.Context) (domainhistory.Metadata, error)
 	// ListHistoryEntriesIncludingDeleted returns every recorded command,
 	// including soft-deleted rows. The one-time import deduplicates against
@@ -55,6 +56,12 @@ type Store interface {
 	// their create records and sets the durable import marker in one
 	// transaction. It is a no-op when the marker is already set.
 	ImportShellHistory(context.Context, []ShellHistoryImport) error
+	// ImportHostAtuinEntries writes one read-only Host Atuin snapshot and its
+	// checkpoint in one transaction, without appending create records.
+	ImportHostAtuinEntries(context.Context, string, domainhistory.ImportCheckpoint, []domainhistory.Entry) error
+	// MarkHostAtuinNoticed records the one-time Host Atuin notice and reports
+	// whether this call set it.
+	MarkHostAtuinNoticed(context.Context, string) (bool, error)
 }
 
 // ShellHistoryImport pairs one imported journal row with its create record.
@@ -374,6 +381,86 @@ func (s *Service) recordInSeries(writer, historyID, kind string, recordedAt time
 		Payload:    string(payload),
 		Direction:  domainhistory.RecordDirectionLocal,
 	}
+}
+
+// HostImportResult reports one read-only Host Atuin import. Imported counts
+// the rows written; Skipped counts rows at or below the stored checkpoint.
+// Checkpoint is the resulting per-Host checkpoint, which does not move when
+// the snapshot fails.
+type HostImportResult struct {
+	Imported   int
+	Skipped    int
+	Checkpoint domainhistory.ImportCheckpoint
+}
+
+// ImportHostAtuin maps one Host Atuin snapshot onto the journal and writes it
+// with the per-Host checkpoint in one transaction. A valid Atuin UUID is
+// preserved; a malformed one gets a stable derived UUID. Rows at or below the
+// stored (timestamp, history id) checkpoint are skipped, so reopening and
+// re-importing the same database never duplicates a row. Imported rows are
+// projections: they get no create record and are never uploaded.
+func (s *Service) ImportHostAtuin(ctx context.Context, hostID string,
+	rows []domainhistory.AtuinRow, hostOrigin string) (HostImportResult, error) {
+	result := HostImportResult{}
+	if s.store == nil || hostID == "" {
+		return result, ErrInvalid
+	}
+	metadata, err := s.store.HistoryMetadata(ctx)
+	if err != nil {
+		return result, err
+	}
+	checkpoint := metadata.HostImports[hostID]
+	result.Checkpoint = checkpoint
+	pending := make([]domainhistory.Entry, 0, len(rows))
+	for _, row := range rows {
+		entry, err := domainhistory.MapAtuinRow(row, hostOrigin)
+		if err != nil {
+			return result, err
+		}
+		if domainhistory.CheckpointAfter(checkpoint, entry) {
+			result.Skipped++
+			continue
+		}
+		pending = append(pending, entry)
+	}
+	// Order by the checkpoint key so the last row is the new high-water mark
+	// regardless of the database's row order.
+	sort.SliceStable(pending, func(i, j int) bool {
+		left := domainhistory.ImportCheckpoint{
+			Timestamp: pending[i].RecordedAt, HistoryID: pending[i].ID,
+		}
+		right := domainhistory.ImportCheckpoint{
+			Timestamp: pending[j].RecordedAt, HistoryID: pending[j].ID,
+		}
+		return domainhistory.CompareImportCheckpoint(left, right) < 0
+	})
+	for _, entry := range pending {
+		candidate := domainhistory.ImportCheckpoint{
+			Timestamp: entry.RecordedAt, HistoryID: entry.ID,
+		}
+		if domainhistory.CompareImportCheckpoint(candidate, result.Checkpoint) > 0 {
+			result.Checkpoint = candidate
+		}
+	}
+	if len(pending) == 0 {
+		return result, nil
+	}
+	if err := s.store.ImportHostAtuinEntries(ctx, hostID, result.Checkpoint, pending); err != nil {
+		result.Imported = 0
+		return result, err
+	}
+	result.Imported = len(pending)
+	s.notify()
+	return result, nil
+}
+
+// MarkHostAtuinNoticed records the one-time Host Atuin notice and reports
+// whether this call set it. A duplicate call is a no-op.
+func (s *Service) MarkHostAtuinNoticed(ctx context.Context, hostID string) (bool, error) {
+	if s.store == nil {
+		return false, ErrInvalid
+	}
+	return s.store.MarkHostAtuinNoticed(ctx, hostID)
 }
 
 // Load returns the persisted command history newest first. It implements

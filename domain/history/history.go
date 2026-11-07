@@ -225,6 +225,13 @@ type Entry struct {
 	DeletedAt   time.Time       `json:"deletedAt,omitempty"`
 	Source      string          `json:"source"`
 	CaptureTier int             `json:"captureTier,omitempty"`
+	// ImportLabels names the fields a Host Atuin import could not fill, or the
+	// fields it derived instead of reading. It lets the History surface explain
+	// a partial record rather than showing an empty value as authoritative.
+	ImportLabels []string `json:"importLabels,omitempty"`
+	// ImportUnknown preserves columns an Atuin database carried that this build
+	// does not map. They are labelled in ImportLabels as well.
+	ImportUnknown map[string]string `json:"importUnknown,omitempty"`
 }
 
 // Valid reports whether the entry carries the minimum persisted identity.

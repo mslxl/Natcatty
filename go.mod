@@ -14,6 +14,7 @@ go 1.27.3
 // re-checked against the new module graph.
 require (
 	github.com/egoist/mygo v0.6.0
+	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/kayrus/putty v1.0.5
 	github.com/pkg/sftp v1.13.11
@@ -38,7 +39,6 @@ require (
 	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/gaissmai/bart v0.29.0 // indirect
-	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect

@@ -4988,6 +4988,16 @@ func (msgs Messages) ConnectionCaptureHookUnavailable() string {
 	return Catalog.Format(msgs.locale, "connectionCaptureHookUnavailable", nil)
 }
 
+// ConnectionHostAtuinDetected says "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. T…"
+// in the language the app shows.
+func ConnectionHostAtuinDetected() string { return In(i18n.Locale()).ConnectionHostAtuinDetected() }
+
+// ConnectionHostAtuinDetected says "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. T…"
+// in the language of msgs.
+func (msgs Messages) ConnectionHostAtuinDetected() string {
+	return Catalog.Format(msgs.locale, "connectionHostAtuinDetected", nil)
+}
+
 // ConnectionEternalTerminalDisplaced says "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client …"
 // in the language the app shows.
 func ConnectionEternalTerminalDisplaced() string {
@@ -14842,6 +14852,30 @@ func SettingsHistoryCaptureHookEnabled() string {
 // in the language of msgs.
 func (msgs Messages) SettingsHistoryCaptureHookEnabled() string {
 	return Catalog.Format(msgs.locale, "settingsHistoryCaptureHookEnabled", nil)
+}
+
+// SettingsHistoryPreferHostAtuin says "Prefer the Host's Atuin history"
+// in the language the app shows.
+func SettingsHistoryPreferHostAtuin() string {
+	return In(i18n.Locale()).SettingsHistoryPreferHostAtuin()
+}
+
+// SettingsHistoryPreferHostAtuin says "Prefer the Host's Atuin history"
+// in the language of msgs.
+func (msgs Messages) SettingsHistoryPreferHostAtuin() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryPreferHostAtuin", nil)
+}
+
+// SettingsHistoryPreferHostAtuinDescription says "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hoo…"
+// in the language the app shows.
+func SettingsHistoryPreferHostAtuinDescription() string {
+	return In(i18n.Locale()).SettingsHistoryPreferHostAtuinDescription()
+}
+
+// SettingsHistoryPreferHostAtuinDescription says "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hoo…"
+// in the language of msgs.
+func (msgs Messages) SettingsHistoryPreferHostAtuinDescription() string {
+	return Catalog.Format(msgs.locale, "settingsHistoryPreferHostAtuinDescription", nil)
 }
 
 // SettingsSyncTitle says "Sync & Cloud"

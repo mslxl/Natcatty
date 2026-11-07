@@ -718,3 +718,135 @@ func TestImportShellHistorySetsMarkerForAnEmptyFileSet(t *testing.T) {
 		t.Fatalf("empty import wrote records = %+v, %v", log, err)
 	}
 }
+func TestImportHostAtuinEntriesWritesOnlyTheProjectionAndCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	store := openHistoryStore(t)
+	entries := []domainhistory.Entry{
+		{
+			ID: testEntryOne, Scope: "remote:web-1:deploy", Origin: "web-1:deploy",
+			Command: "ls", RecordedAt: at(9), Source: domainhistory.SourceAtuinImport,
+		},
+		{
+			ID: testEntryTwo, Scope: "remote:web-1:deploy", Origin: "web-1:deploy",
+			Command: "pwd", RecordedAt: at(10), Source: domainhistory.SourceAtuinImport,
+		},
+	}
+	checkpoint := domainhistory.ImportCheckpoint{Timestamp: at(10), HistoryID: testEntryTwo}
+	if err := store.ImportHostAtuinEntries(ctx, "host-1", checkpoint, entries); err != nil {
+		t.Fatalf("ImportHostAtuinEntries: %v", err)
+	}
+
+	stored, err := store.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryEntries: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("entries = %d, want 2", len(stored))
+	}
+	records, err := store.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("an import appended records: %+v", records)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if got := metadata.HostImports["host-1"]; got != checkpoint {
+		t.Fatalf("checkpoint = %+v, want %+v", got, checkpoint)
+	}
+
+	// Re-importing the same snapshot upserts the same history ids instead of
+	// duplicating projection rows, and appends no records.
+	if err := store.ImportHostAtuinEntries(ctx, "host-1", checkpoint, entries); err != nil {
+		t.Fatalf("repeated ImportHostAtuinEntries: %v", err)
+	}
+	stored, err = store.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryEntries after repeat: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("entries after repeat = %d, want 2", len(stored))
+	}
+	records, err = store.ListHistoryRecords(ctx)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("records after repeat = %+v, %v", records, err)
+	}
+
+	// An older snapshot never moves the stored checkpoint backwards.
+	older := domainhistory.Entry{
+		ID: testEntryThree, Scope: "remote:web-1:deploy", Origin: "web-1:deploy",
+		Command: "uptime", RecordedAt: at(8), Source: domainhistory.SourceAtuinImport,
+	}
+	olderCheckpoint := domainhistory.ImportCheckpoint{Timestamp: at(8), HistoryID: testEntryThree}
+	if err := store.ImportHostAtuinEntries(ctx, "host-1", olderCheckpoint,
+		[]domainhistory.Entry{older}); err != nil {
+		t.Fatalf("older ImportHostAtuinEntries: %v", err)
+	}
+	metadata, err = store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata after older: %v", err)
+	}
+	if got := metadata.HostImports["host-1"]; got != checkpoint {
+		t.Fatalf("checkpoint moved backwards to %+v", got)
+	}
+}
+
+func TestImportHostAtuinEntriesRejectsRowsOutsideTheSnapshotContract(t *testing.T) {
+	ctx := context.Background()
+	store := openHistoryStore(t)
+	valid := domainhistory.Entry{
+		ID: testEntryOne, Scope: "remote:web-1:deploy", Command: "ls",
+		RecordedAt: at(9), Source: domainhistory.SourceAtuinImport,
+	}
+	checkpoint := domainhistory.ImportCheckpoint{Timestamp: at(9), HistoryID: testEntryOne}
+
+	wrongSource := valid
+	wrongSource.ID = testEntryTwo
+	wrongSource.Source = domainhistory.SourceSession
+	if err := store.ImportHostAtuinEntries(ctx, "host-1", checkpoint,
+		[]domainhistory.Entry{wrongSource}); err == nil {
+		t.Fatal("a captured row was accepted as a Host Atuin import")
+	}
+
+	uncovered := valid
+	uncovered.ID = testEntryTwo
+	uncovered.RecordedAt = at(10)
+	if err := store.ImportHostAtuinEntries(ctx, "host-1", checkpoint,
+		[]domainhistory.Entry{uncovered}); err == nil {
+		t.Fatal("a row newer than the checkpoint was accepted")
+	}
+
+	if stored, err := store.ListHistoryEntries(ctx); err != nil || len(stored) != 0 {
+		t.Fatalf("a rejected import wrote rows: %+v, %v", stored, err)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if _, found := metadata.HostImports["host-1"]; found {
+		t.Fatal("a rejected import advanced the checkpoint")
+	}
+}
+
+func TestMarkHostAtuinNoticedPersistsOncePerHost(t *testing.T) {
+	ctx := context.Background()
+	store := openHistoryStore(t)
+	first, err := store.MarkHostAtuinNoticed(ctx, "host-1")
+	if err != nil || !first {
+		t.Fatalf("first = %t, %v", first, err)
+	}
+	second, err := store.MarkHostAtuinNoticed(ctx, "host-1")
+	if err != nil || second {
+		t.Fatalf("second = %t, %v", second, err)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if !metadata.HostAtuinNotified["host-1"] {
+		t.Fatal("the notice marker was not persisted")
+	}
+}
