@@ -141,7 +141,13 @@ func TestHistorySurfaceOpensTheAtuinAccountPanel(t *testing.T) {
 func newProductionLogsView(t *testing.T, width, height int,
 	source *fakeSource, actions TerminalActions) (*ui.Tester, *State) {
 	t.Helper()
-	state := NewState(source, actions)
+	return newProductionLogsViewWithOptions(t, width, height, source, actions)
+}
+
+func newProductionLogsViewWithOptions(t *testing.T, width, height int,
+	source *fakeSource, actions TerminalActions, options ...Option) (*ui.Tester, *State) {
+	t.Helper()
+	state := NewState(source, actions, options...)
 	sessions := appsession.NewService(logsFactory{})
 	t.Cleanup(sessions.CloseAll)
 	shell := shellstate.NewState(
@@ -694,6 +700,119 @@ func TestClearHistoryConfirmationIsReachable(t *testing.T) {
 	tt.Frame()
 	if state.PendingClear() {
 		t.Fatal("Cancel did not close the clear confirmation")
+	}
+}
+
+func TestHistoryRowCopyAndInsertAreExplicitActions(t *testing.T) {
+	m := locales.In("en")
+	commands := &fakeCommandActions{}
+	tt, state := newProductionLogsViewWithOptions(t, 1100, 720, seededSource(),
+		&fakeActions{}, WithCommandActions(commands))
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	// Rendering the rows must not insert anything; only the explicit action
+	// does.
+	if len(commands.commands) != 0 {
+		t.Fatalf("rendering inserted commands: %+v", commands.commands)
+	}
+	if err := tt.Click(m.LogsCopy()); err != nil {
+		t.Fatalf("click Copy: %v", err)
+	}
+	tt.Frame()
+	if got := tt.Clipboard(); got != "command-00 --run" {
+		t.Fatalf("clipboard = %q, want the first row's command", got)
+	}
+
+	if err := tt.Click(m.LogsInsert()); err != nil {
+		t.Fatalf("click Insert: %v", err)
+	}
+	tt.Frame()
+	if len(commands.commands) != 1 || commands.commands[0] != "command-00 --run" {
+		t.Fatalf("inserted commands = %+v, want the first row", commands.commands)
+	}
+	if state.OpenProblem() != ProblemNone {
+		t.Fatalf("insert problem = %v", state.OpenProblem())
+	}
+}
+
+// TestHistoryRowDeleteWaitsForConfirmation proves the row action is not a
+// one-click destructive action: the first click opens a confirmation, Cancel
+// leaves the row, and only the confirming click removes it.
+func TestHistoryRowDeleteWaitsForConfirmation(t *testing.T) {
+	m := locales.In("en")
+	tt, state := newProductionLogsView(t, 1100, 720, seededSource(), &fakeActions{})
+	state.SelectTab(TabHistory)
+	tt.Frame()
+
+	if err := tt.Click(m.LogsDelete()); err != nil {
+		t.Fatalf("click Delete: %v", err)
+	}
+	tt.Frame()
+	if state.PendingDeleteEntry() != "entry-00" {
+		t.Fatalf("pending delete = %q, want entry-00", state.PendingDeleteEntry())
+	}
+	if state.TotalEntries() != 30 {
+		t.Fatalf("entries = %d, want none removed before confirmation", state.TotalEntries())
+	}
+	assertVisible(t, tt, m.LogsDeleteConfirm(), 1100, 720)
+
+	if err := tt.Click(m.LogsCancel()); err != nil {
+		t.Fatalf("click Cancel: %v", err)
+	}
+	tt.Frame()
+	if state.PendingDeleteEntry() != "" || state.TotalEntries() != 30 {
+		t.Fatalf("cancel changed the journal: pending=%q entries=%d",
+			state.PendingDeleteEntry(), state.TotalEntries())
+	}
+
+	if err := tt.Click(m.LogsDelete()); err != nil {
+		t.Fatalf("click Delete again: %v", err)
+	}
+	tt.Frame()
+	// The row's Delete is replaced by the confirmation strip, so the only
+	// Delete button is the confirming one.
+	if err := tt.Click(m.LogsDelete()); err != nil {
+		t.Fatalf("confirm Delete: %v", err)
+	}
+	tt.Frame()
+	if state.PendingDeleteEntry() != "" {
+		t.Fatalf("pending delete = %q after confirmation", state.PendingDeleteEntry())
+	}
+	if state.TotalEntries() != 29 {
+		t.Fatalf("entries = %d, want the confirmed row removed", state.TotalEntries())
+	}
+}
+
+func TestPruneDialogShowsAPreviewAndOnlyAppliesMatchedRows(t *testing.T) {
+	m := locales.In("en")
+	tt, state := newProductionLogsView(t, 1100, 900, seededSource(), &fakeActions{})
+	state.SelectTab(TabHistory)
+	state.SetSearch("command-01")
+	tt.Frame()
+
+	if err := tt.Click(m.LogsPrune()); err != nil {
+		t.Fatalf("click Prune matching: %v", err)
+	}
+	tt.Frame()
+	if !state.PendingPrune() {
+		t.Fatal("the prune dialog did not open")
+	}
+	if !tt.HasText(m.LogsPruneTitle()) {
+		t.Fatalf("the prune dialog title is not rendered: %v", tt.Texts())
+	}
+	if !tt.HasText(m.LogsPrunePreview(1)) {
+		t.Fatalf("the preview does not report one matched row: %v", tt.Texts())
+	}
+	if err := tt.Click(m.LogsCancel()); err != nil {
+		t.Fatalf("click Cancel in the prune dialog: %v", err)
+	}
+	tt.Frame()
+	if state.PendingPrune() {
+		t.Fatal("Cancel did not close the prune dialog")
+	}
+	if state.TotalEntries() != 30 {
+		t.Fatalf("Cancel changed the journal: %d entries", state.TotalEntries())
 	}
 }
 

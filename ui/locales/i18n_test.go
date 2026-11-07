@@ -139,19 +139,19 @@ func TestClearBannersUsePluralForms(t *testing.T) {
 		connectionsTwo string
 	}{
 		{"en",
-			"History cleared (1 entry removed).",
+			"History on this device cleared (1 entry removed).",
 			"Connection logs cleared (2 entries removed)."},
 		{"es",
-			"Historial borrado (1 entrada eliminada).",
+			"Historial de este dispositivo borrado (1 entrada eliminada).",
 			"Registros de conexión borrados (2 entradas eliminadas)."},
 		{"ru",
-			"История очищена (удалена 1 запись).",
+			"История на этом устройстве очищена (удалена 1 запись).",
 			"Журнал подключений очищен (удалено 2 записи)."},
 		{"zh-CN",
-			"历史已清除（已删除 1 条记录）。",
+			"本设备历史已清除（已删除 1 条记录）。",
 			"连接日志已清除（已删除 2 条记录）。"},
 		{"zh-TW",
-			"歷史已清除（已刪除 1 筆記錄）。",
+			"本裝置歷史已清除（已刪除 1 筆記錄）。",
 			"連線記錄已清除（已刪除 2 筆記錄）。"},
 	}
 	for _, test := range tests {

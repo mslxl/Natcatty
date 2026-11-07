@@ -2304,21 +2304,33 @@
   "@logsDelete": {
     "description": "The row action that removes one record."
   },
+  "logsDeleteConfirm": "Delete this command from history?",
+  "@logsDeleteConfirm": {
+    "description": "The confirmation shown before one history row is deleted."
+  },
+  "logsCopy": "Copy command",
+  "@logsCopy": {
+    "description": "The row action that copies the command text."
+  },
+  "logsInsert": "Insert",
+  "@logsInsert": {
+    "description": "The row action that inserts the command into the focused Session without running it."
+  },
   "logsShowMore": "Show more",
   "@logsShowMore": {
     "description": "The button that reveals the next page of records."
   },
-  "logsClearHistory": "Clear history",
+  "logsClearHistory": "Clear this device",
   "@logsClearHistory": {
-    "description": "The button that opens the clear-history confirmation."
+    "description": "The button that opens the clear-this-device confirmation for command history."
   },
   "logsClearConnections": "Clear connection logs",
   "@logsClearConnections": {
     "description": "The button that opens the clear-connection-logs confirmation."
   },
-  "logsClearConfirm": "Remove every recorded command?",
+  "logsClearConfirm": "Remove history created on this device? Imported and other devices' history stays.",
   "@logsClearConfirm": {
-    "description": "The clear-history confirmation."
+    "description": "The clear-this-device confirmation for command history."
   },
   "logsClearConnectionsConfirm": "Remove every connection log?",
   "@logsClearConnectionsConfirm": {
@@ -2330,9 +2342,53 @@
   },
   "logsCancel": "Cancel",
   "@logsCancel": {
-    "description": "The button that dismisses the clear-history confirmation."
+    "description": "The button that dismisses the clear-history or prune confirmation."
   },
-  "logsHistoryCleared": "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}",
+  "logsPrune": "Prune matching",
+  "@logsPrune": {
+    "description": "The header action that opens the filter-based prune dialog."
+  },
+  "logsPruneTitle": "Prune matching history",
+  "@logsPruneTitle": {
+    "description": "The title of the filter-based prune dialog."
+  },
+  "logsPruneHint": "Only entries matching these filters are removed. An optional limit removes the oldest matches first.",
+  "@logsPruneHint": {
+    "description": "Explains which entries a filter-based prune removes."
+  },
+  "logsPruneLimit": "Limit (optional)",
+  "@logsPruneLimit": {
+    "description": "The optional maximum number of matching entries to prune."
+  },
+  "logsPrunePreview": "{count, plural, =0 {No entries match these filters.} one {# matching entry will be removed.} other {# matching entries will be removed.}}",
+  "@logsPrunePreview": {
+    "description": "The prune preview count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsPruneApply": "Prune",
+  "@logsPruneApply": {
+    "description": "The confirmation button that prunes the matching entries."
+  },
+  "logsPruneLimitProblem": "Enter a whole number of entries to prune, or leave the limit empty.",
+  "@logsPruneLimitProblem": {
+    "description": "The validation message for a malformed prune limit."
+  },
+  "logsPruned": "{count, plural, one {# matching entry pruned.} other {# matching entries pruned.}}",
+  "@logsPruned": {
+    "description": "Confirms how many matching entries a prune removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsHistoryCleared": "{count, plural, one {History on this device cleared (# entry removed).} other {History on this device cleared (# entries removed).}}",
   "@logsHistoryCleared": {
     "description": "Confirms that the command history was cleared.",
     "placeholders": {
@@ -2798,13 +2854,21 @@
   "@logsProblemDelete": {
     "description": "Shown when deleting one record failed."
   },
-  "logsProblemClear": "Could not clear the history.",
+  "logsProblemClear": "Could not clear this device's history.",
   "@logsProblemClear": {
-    "description": "Shown when clearing the history failed."
+    "description": "Shown when clearing this device's history failed."
   },
   "logsProblemClearConnections": "Could not clear the connection logs.",
   "@logsProblemClearConnections": {
     "description": "Shown when clearing the connection logs failed."
+  },
+  "logsProblemPrune": "Could not prune the history.",
+  "@logsProblemPrune": {
+    "description": "Shown when a filter-based prune failed."
+  },
+  "logsProblemInsert": "Could not insert the command. Open an active Session first.",
+  "@logsProblemInsert": {
+    "description": "Shown when a history command cannot be inserted into a Session."
   },
   "logsProblemOpen": "Could not open the terminal.",
   "@logsProblemOpen": {

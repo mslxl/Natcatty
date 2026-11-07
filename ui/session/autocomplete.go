@@ -16,7 +16,7 @@ import (
 // command runs: Tab must reach vim, less, and other full-screen programs even
 // when the typed text matches history. Dismissing the popup keeps it hidden
 // until the input changes again.
-func (s *Surface) refreshSuggestions(input string, commandRunning bool) {
+func (s *Surface) refreshSuggestions(input, cwd string, commandRunning bool) {
 	popup, ghost := false, false
 	if s.options.AutocompleteDisplay != nil {
 		popup, ghost = s.options.AutocompleteDisplay()
@@ -59,7 +59,8 @@ func (s *Surface) refreshSuggestions(input string, commandRunning bool) {
 	if !s.suggestionDismissed && s.suggestions == nil && input != "" {
 		// Read under the same scope the capture pipeline writes: a saved Host,
 		// an unsaved Host with its captured origin, a serial port, or local.
-		matches := s.options.Suggest(input, s.session.HistoryScope())
+		// The cwd is the shell's last OSC 7 value for the ranking bonus.
+		matches := s.options.Suggest(input, s.session.HistoryScope(), cwd)
 		filtered := make([]autocomplete.Suggestion, 0, len(matches))
 		for _, suggestion := range matches {
 			if suggestion.Text != input {
@@ -88,7 +89,7 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 		return false
 	}
 	snapshot := s.session.Snapshot()
-	s.refreshSuggestions(snapshot.Input, snapshot.Command.Running)
+	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
 	switch key {
 	case ui.KeyTab:
 		if len(s.suggestions) == 0 || (!s.showAutocomplete && !s.showGhost) {

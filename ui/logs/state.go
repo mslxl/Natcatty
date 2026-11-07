@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ const (
 // so this package need not know the shell.
 var ErrHostMissing = errors.New("logs: the related Host no longer exists")
 
+// ErrNoActiveSession reports that no focused Session can receive a history
+// command. The composition root supplies it; the surface never guesses.
+var ErrNoActiveSession = errors.New("logs: no active Session")
+
 // Problem is a localized problem code. The view maps it to a catalog string;
 // the state never carries user-visible text.
 type Problem int
@@ -55,6 +60,8 @@ const (
 	ProblemOpen
 	ProblemHostMissing
 	ProblemDate
+	ProblemPrune
+	ProblemInsert
 )
 
 // Source is the read/write seam over the history service.
@@ -64,7 +71,12 @@ type Source interface {
 	DeleteConnectionLog(context.Context, string) error
 	DeleteEntry(context.Context, string) error
 	ClearConnectionLogs(context.Context) (int, error)
-	ClearHistory(context.Context) (int, error)
+	// ClearThisDevice soft-deletes locally owned rows and leaves imported and
+	// synced remote-origin rows in place.
+	ClearThisDevice(context.Context) (int, error)
+	// PruneHistory soft-deletes the live rows matching filter. A positive
+	// limit removes only the oldest matching rows.
+	PruneHistory(context.Context, domainhistory.EntryFilter, int) (int, error)
 	Revision() uint64
 	Subscribe(func()) func()
 }
@@ -72,6 +84,12 @@ type Source interface {
 // TerminalActions opens or focuses the terminal related to a row.
 type TerminalActions interface {
 	OpenTerminal(model.SessionID, model.HostID) error
+}
+
+// CommandActions inserts a history command into the focused Session without
+// running it. Insertion is always an explicit user action.
+type CommandActions interface {
+	InsertCommand(command string) error
 }
 
 // HostOption is one value of the Host filter.
@@ -102,6 +120,51 @@ type Facets struct {
 	Exits    []FacetValue
 }
 
+// PruneFilter is the editable filter set of the Prune matching dialog. It is
+// seeded from the History filters when the dialog opens, then applies to the
+// prune that the dialog confirms.
+type PruneFilter struct {
+	Query   string
+	Host    string
+	Session string
+	CWD     string
+	Exit    domainhistory.ExitFilter
+	Shell   string
+	Source  string
+	From    string
+	To      string
+}
+
+// entryFilter converts the prune draft into the shared history filter. ok is
+// false for a malformed or inverted date range, which must not match rows.
+func (draft PruneFilter) entryFilter() (domainhistory.EntryFilter, bool) {
+	from, ok := parseDay(draft.From)
+	if !ok {
+		return domainhistory.EntryFilter{}, false
+	}
+	to, ok := parseDay(draft.To)
+	if !ok {
+		return domainhistory.EntryFilter{}, false
+	}
+	if !to.IsZero() {
+		to = to.Add(24 * time.Hour)
+	}
+	if !from.IsZero() && !to.IsZero() && !from.Before(to) {
+		return domainhistory.EntryFilter{}, false
+	}
+	return domainhistory.EntryFilter{
+		Query:   draft.Query,
+		Host:    draft.Host,
+		Session: draft.Session,
+		CWD:     draft.CWD,
+		Exit:    draft.Exit,
+		Shell:   draft.Shell,
+		Source:  draft.Source,
+		From:    from,
+		To:      to,
+	}, true
+}
+
 // focusTarget names the field OpenGlobalSearch asks the next frame to focus.
 // It is a FocusBind value and must stay comparable.
 type focusTarget int
@@ -119,10 +182,11 @@ const PageSize = 100
 // WithRefreshRequest, which just asks for a redraw.
 type State struct {
 	// pickers are the calendars of the From and To filters while unset.
-	pickers [2]datePicker
-	source  Source
-	actions TerminalActions
-	redraw  func()
+	pickers  [2]datePicker
+	source   Source
+	actions  TerminalActions
+	commands CommandActions
+	redraw   func()
 	// afterMutation lets the composition root refresh a consumer that shares
 	// the store, so deleting or clearing history stops autocomplete from
 	// suggesting rows that no longer exist.
@@ -155,9 +219,18 @@ type State struct {
 	// focusHistorySearch asks the next frame to focus the search field.
 	focusRequest focusTarget
 
-	pendingClear bool
-	cleared      int
-	clearedTab   Tab
+	pendingClear    bool
+	pendingDeleteID string
+	cleared         int
+	clearedTab      Tab
+
+	// Prune matching uses its own draft filters, seeded from the History
+	// filters when the dialog opens, so a failed or cancelled prune never
+	// changes what the surface is showing.
+	pendingPrune bool
+	pruneFilter  PruneFilter
+	pruneLimit   string
+	pruned       int
 	// selectedEntryID names the history row whose detail panel is open. The
 	// panel is inline under that row, so a reload that removes the row also
 	// closes the panel without leaving it detached.
@@ -185,8 +258,8 @@ func WithRefreshRequest(fn func()) Option {
 	return func(s *State) { s.redraw = fn }
 }
 
-// WithMutationHook receives a callback after a successful delete or clear, so
-// another consumer of the same store (autocomplete) can reload.
+// WithMutationHook receives a callback after a successful delete, prune, or
+// clear, so another consumer of the same store (autocomplete) can reload.
 func WithMutationHook(fn func()) Option {
 	return func(s *State) { s.afterMutation = fn }
 }
@@ -209,6 +282,12 @@ func (s *State) OpenAccountPanel() {
 	}
 }
 
+// WithCommandActions supplies the explicit Insert into the focused Session
+// action. Nil leaves Insert reporting that no Session is active.
+func WithCommandActions(actions CommandActions) Option {
+	return func(s *State) { s.commands = actions }
+}
+
 // NewState returns a State over source and actions and subscribes to source
 // changes. source may be nil in tests that only exercise filters.
 func NewState(source Source, actions TerminalActions, opts ...Option) *State {
@@ -229,8 +308,8 @@ func NewState(source Source, actions TerminalActions, opts ...Option) *State {
 // Tab returns the selected tab.
 func (s *State) Tab() Tab { return s.tab }
 
-// SelectTab changes the selected tab, resets paging, and clears a pending
-// clear confirmation.
+// SelectTab changes the selected tab, resets paging, and clears the pending
+// confirmations and result banners that belong to the previous tab.
 func (s *State) SelectTab(tab Tab) {
 	if s.tab == tab {
 		return
@@ -238,7 +317,10 @@ func (s *State) SelectTab(tab Tab) {
 	s.tab = tab
 	s.visible = PageSize
 	s.pendingClear = false
+	s.pendingPrune = false
+	s.pendingDeleteID = ""
 	s.cleared = 0
+	s.pruned = 0
 	s.selectedEntryID = ""
 	// Each tab starts at its top rather than at the other list's offset. The
 	// unsaved Host key belongs to the record family that offered it; carrying
@@ -933,7 +1015,35 @@ func (s *State) DeleteLog(id string) {
 	s.mutated()
 }
 
-// DeleteEntry removes one recorded command execution.
+// RequestDeleteEntry asks for confirmation before deleting one recorded
+// command execution. The row's Delete action opens the confirmation; nothing
+// is removed until ConfirmDeleteEntry runs.
+func (s *State) RequestDeleteEntry(id string) {
+	s.pendingDeleteID = id
+}
+
+// CancelDeleteEntry closes the row delete confirmation without removing
+// anything.
+func (s *State) CancelDeleteEntry() { s.pendingDeleteID = "" }
+
+// PendingDeleteEntry returns the row awaiting delete confirmation, or an empty
+// identity when no confirmation is open.
+func (s *State) PendingDeleteEntry() string { return s.pendingDeleteID }
+
+// ConfirmDeleteEntry deletes the row the user confirmed. It is the only path
+// from the History surface's row action to the store.
+func (s *State) ConfirmDeleteEntry() {
+	id := s.pendingDeleteID
+	s.pendingDeleteID = ""
+	if id == "" {
+		return
+	}
+	s.DeleteEntry(id)
+}
+
+// DeleteEntry removes one recorded command execution. Callers that offer a
+// row action first ask through RequestDeleteEntry and then confirm; the side
+// panel's paste/run history uses it directly.
 func (s *State) DeleteEntry(id string) {
 	if s.source == nil {
 		return
@@ -958,7 +1068,8 @@ func (s *State) CancelClear() { s.pendingClear = false }
 
 // ConfirmClear removes every record on the selected tab. Connection logs and
 // command history are separate families; clearing one leaves the other in
-// place.
+// place. Clearing History removes only rows this device created: imported and
+// synced remote-origin rows stay.
 func (s *State) ConfirmClear() {
 	s.pendingClear = false
 	if s.source == nil {
@@ -970,7 +1081,7 @@ func (s *State) ConfirmClear() {
 	if tab == TabConnections {
 		removed, err = s.source.ClearConnectionLogs(context.Background())
 	} else {
-		removed, err = s.source.ClearHistory(context.Background())
+		removed, err = s.source.ClearThisDevice(context.Background())
 	}
 	s.problemTab = tab
 	if err != nil {
@@ -988,6 +1099,116 @@ func (s *State) ConfirmClear() {
 	}
 	s.reload()
 	s.mutated()
+}
+
+// RequestPrune opens the prune dialog seeded with the History filters the
+// user is looking at.
+func (s *State) RequestPrune() {
+	s.pruneFilter = PruneFilter{
+		Query: s.search, Host: s.hostKey, Session: s.sessionKey, CWD: s.cwdKey,
+		Exit: s.exitKey, Shell: s.shellKey, Source: s.sourceFilter,
+		From: s.fromText, To: s.toText,
+	}
+	s.pruneLimit = ""
+	s.pendingPrune = true
+}
+
+// CancelPrune closes the prune dialog without changing any record.
+func (s *State) CancelPrune() { s.pendingPrune = false }
+
+// PendingPrune reports whether the prune dialog is open.
+func (s *State) PendingPrune() bool { return s.pendingPrune }
+
+// PruneFilter returns the editable prune draft. The view binds its fields.
+func (s *State) PruneFilter() *PruneFilter { return &s.pruneFilter }
+
+// PruneLimit returns the editable optional limit draft.
+func (s *State) PruneLimit() *string { return &s.pruneLimit }
+
+// PrunePreview reports how many live rows the current draft would remove. A
+// malformed date range or limit reports zero, and the view explains why.
+func (s *State) PrunePreview() int {
+	filter, ok := s.pruneFilter.entryFilter()
+	if !ok || s.PruneLimitProblem() {
+		return 0
+	}
+	matched := 0
+	for _, entry := range s.entries {
+		if entry.DeletedAt.IsZero() && filter.Match(entry) {
+			matched++
+		}
+	}
+	if limit := s.pruneLimitValue(); limit > 0 && matched > limit {
+		return limit
+	}
+	return matched
+}
+
+// PruneDateProblem reports a malformed or inverted date range in the draft.
+func (s *State) PruneDateProblem() bool {
+	_, ok := s.pruneFilter.entryFilter()
+	return !ok
+}
+
+// PruneLimitProblem reports a limit that is not a whole non-negative number.
+func (s *State) PruneLimitProblem() bool {
+	text := strings.TrimSpace(s.pruneLimit)
+	if text == "" {
+		return false
+	}
+	limit, err := strconv.Atoi(text)
+	return err != nil || limit < 0
+}
+
+// pruneLimitValue returns the parsed limit; zero means every match.
+func (s *State) pruneLimitValue() int {
+	limit, err := strconv.Atoi(strings.TrimSpace(s.pruneLimit))
+	if err != nil || limit < 0 {
+		return 0
+	}
+	return limit
+}
+
+// ConfirmPrune soft-deletes only the rows matching the draft filter. The
+// optional limit selects the oldest matches. A malformed draft keeps the
+// dialog open instead of guessing what the user meant.
+func (s *State) ConfirmPrune() {
+	if s.source == nil {
+		return
+	}
+	filter, ok := s.pruneFilter.entryFilter()
+	if !ok || s.PruneLimitProblem() {
+		return
+	}
+	removed, err := s.source.PruneHistory(context.Background(), filter,
+		s.pruneLimitValue())
+	s.problemTab = TabHistory
+	if err != nil {
+		s.pruned = 0
+		s.problem = ProblemPrune
+		return
+	}
+	s.pendingPrune = false
+	s.problem = ProblemNone
+	s.pruned = removed
+	s.reload()
+	s.mutated()
+}
+
+// Pruned reports how many entries the last confirmed prune removed.
+func (s *State) Pruned() int { return s.pruned }
+
+// InsertEntry inserts a history command into the focused Session without
+// running it. It is only reachable through the row's explicit Insert action.
+func (s *State) InsertEntry(command string) {
+	s.openProblem = ProblemNone
+	if s.commands == nil {
+		s.openProblem = ProblemInsert
+		return
+	}
+	if err := s.commands.InsertCommand(command); err != nil {
+		s.openProblem = ProblemInsert
+	}
 }
 
 func (s *State) mutated() {

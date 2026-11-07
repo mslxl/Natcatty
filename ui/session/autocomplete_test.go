@@ -61,7 +61,7 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 	suggested := make(chan string, 4)
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, scope string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, scope, _ string) []autocomplete.Suggestion {
 			suggested <- input + "|" + scope
 			return []autocomplete.Suggestion{
 				{Text: "git status", Display: "git status", Source: "history"},
@@ -134,7 +134,7 @@ func TestSurfaceAutocompleteReadsTheUnsavedHostHistoryScope(t *testing.T) {
 	scopes := make(chan string, 4)
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, scope string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, scope, _ string) []autocomplete.Suggestion {
 			scopes <- scope
 			return []autocomplete.Suggestion{{Text: input + " status", Source: "history"}}
 		}, func() (bool, bool) { return true, false }),
@@ -172,7 +172,7 @@ func TestSurfaceAutocompleteKeysDismissSelectAndAccept(t *testing.T) {
 	}
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			return []autocomplete.Suggestion{
 				{Text: input + " status", Source: "history"},
 				{Text: input + " stash", Source: "history"},
@@ -250,7 +250,7 @@ func TestSurfaceAutocompleteHonorsTheDebounceAndRunningCommand(t *testing.T) {
 	calls := 0
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			mu.Lock()
 			calls++
 			mu.Unlock()
@@ -319,7 +319,7 @@ func TestSurfaceAutocompleteDoesNotResizeTheTerminal(t *testing.T) {
 	}
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			return []autocomplete.Suggestion{
 				{Text: input + " status", Source: "history"},
 				{Text: input + " stash", Source: "history"},
@@ -387,7 +387,7 @@ func TestSurfaceAutocompletePopupFloatsAboveThePrompt(t *testing.T) {
 	}
 	surface, err := New(session,
 		WithRedraw(func() {}),
-		WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			return []autocomplete.Suggestion{
 				{Text: input + " status", Source: "history"},
 				{Text: input + " stash", Source: "history"},

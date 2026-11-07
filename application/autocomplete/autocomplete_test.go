@@ -82,8 +82,11 @@ func TestSuggestionsHonorEnabledMinimumCharsAndLimit(t *testing.T) {
 	config.MaxSuggestions = 2
 	service := NewService(journal, func() Config { return config })
 	service.Load(context.Background())
+	// Equal frequency and recency keep the limit deterministic and expose the
+	// command-text tie-break.
+	fixed := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
 	for _, command := range []string{"alpha one", "alpha two", "alpha three"} {
-		service.Record("local", command)
+		service.RecordAt("local", command, fixed)
 	}
 
 	if got := service.Suggestions("al", "local"); got != nil {
@@ -93,8 +96,8 @@ func TestSuggestionsHonorEnabledMinimumCharsAndLimit(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("limit = %+v, want 2", got)
 	}
-	if got[0].Text != "alpha one" || got[1].Text != "alpha two" {
-		t.Fatalf("order = %+v", got)
+	if got[0].Text != "alpha one" || got[1].Text != "alpha three" {
+		t.Fatalf("order = %+v, want the deterministic text tie-break", got)
 	}
 
 	config.Enabled = false
@@ -119,6 +122,166 @@ func TestSuggestionsRankPrefixAboveSubstringAndRecentAboveOld(t *testing.T) {
 	}
 	if got[0].Text != "git status" || got[1].Text != "git rebase" || got[2].Text != "echo git" {
 		t.Fatalf("order = %+v, want prefix matches newest first and the substring last", got)
+	}
+}
+
+func TestSuggestionsRankExactAndPrefixThenWordPrefixThenSubstring(t *testing.T) {
+	journal := &journalMemory{}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+	// Every row has the same execution count and recency, so only the match
+	// tier separates them.
+	for _, command := range []string{"legit", "run git status", "git status", "git"} {
+		service.RecordAt("local", command, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC))
+	}
+	got := service.Suggestions("git", "local")
+	want := []string{"git", "git status", "run git status", "legit"}
+	if len(got) != len(want) {
+		t.Fatalf("suggestions = %+v, want %v", got, want)
+	}
+	for index, command := range want {
+		if got[index].Text != command {
+			t.Fatalf("rank %d = %q, want %q (all: %+v)", index, got[index].Text, command, got)
+		}
+	}
+}
+
+// TestSuggestionsRankFrequencyInsideTheExactPrefixTier pins the tier boundary:
+// an exact match and a prefix match are equal for ranking, so a frequently
+// used prefix command beats a once-used exact command.
+func TestSuggestionsRankFrequencyInsideTheExactPrefixTier(t *testing.T) {
+	journal := &journalMemory{}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+	at := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	service.RecordAt("local", "git", at)
+	service.RecordAt("local", "git status", at)
+	service.RecordAt("local", "git status", at)
+
+	got := service.Suggestions("git", "local")
+	if len(got) != 2 || got[0].Text != "git status" || got[1].Text != "git" {
+		t.Fatalf("suggestions = %+v, want the frequent prefix command first", got)
+	}
+}
+
+func TestSuggestionsRankFrequencyBeforeRecency(t *testing.T) {
+	journal := &journalMemory{}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for index := 0; index < 3; index++ {
+		service.RecordAt("local", "git frequent", old)
+	}
+	service.RecordAt("local", "git recent", time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC))
+	got := service.Suggestions("git", "local")
+	if len(got) != 2 || got[0].Text != "git frequent" {
+		t.Fatalf("suggestions = %+v, want the more frequent command first", got)
+	}
+
+	// Equal frequency falls back to recency.
+	service.RecordAt("local", "git newer", time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC))
+	service.RecordAt("local", "git older", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	got = service.Suggestions("git", "local")
+	if got[0].Text != "git frequent" {
+		t.Fatalf("first = %q, want the most frequent", got[0].Text)
+	}
+	newer, older := -1, -1
+	for index, suggestion := range got {
+		switch suggestion.Text {
+		case "git newer":
+			newer = index
+		case "git older":
+			older = index
+		}
+	}
+	if newer < 0 || older < 0 || newer > older {
+		t.Fatalf("equal-frequency order = %+v, want newer before older", got)
+	}
+}
+
+func TestSuggestionsPreferACommandLastRunInTheCurrentDirectory(t *testing.T) {
+	journal := &journalMemory{
+		entries: []domainhistory.Entry{
+			{
+				Command: "git status", Scope: "local", CWD: "/work/project",
+				RecordedAt: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+			},
+			{
+				Command: "git stash", Scope: "local", CWD: "/work/other",
+				RecordedAt: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+
+	got := service.SuggestionsIn("git st", "local", "/work/project")
+	if len(got) != 2 || got[0].Text != "git status" {
+		t.Fatalf("cwd suggestions = %+v, want the command last run in the cwd first", got)
+	}
+	// Without a current directory there is no bonus; the tie breaks by text so
+	// the result stays deterministic.
+	got = service.SuggestionsIn("git st", "local", "")
+	if len(got) != 2 || got[0].Text != "git stash" {
+		t.Fatalf("no-cwd suggestions = %+v, want the deterministic tie-break", got)
+	}
+}
+
+// TestSuggestionScoreMatchesTheReturnedOrder keeps the informational Score
+// honest: the cwd bonus only breaks ties left after frequency and recency, so
+// it must not lift an older cwd match above a newer command elsewhere.
+func TestSuggestionScoreMatchesTheReturnedOrder(t *testing.T) {
+	journal := &journalMemory{
+		entries: []domainhistory.Entry{
+			{
+				Command: "git older here", Scope: "local", CWD: "/work/project",
+				RecordedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			},
+			{
+				Command: "git newer there", Scope: "local", CWD: "/work/other",
+				RecordedAt: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+
+	got := service.SuggestionsIn("git", "local", "/work/project")
+	if len(got) != 2 || got[0].Text != "git newer there" {
+		t.Fatalf("suggestions = %+v, want the newer command first", got)
+	}
+	if got[0].Score <= got[1].Score {
+		t.Fatalf("scores newer=%d older-cwd=%d; want Score to follow the order",
+			got[0].Score, got[1].Score)
+	}
+}
+
+func TestAggregationKeepsTheCwdOfTheLatestExecution(t *testing.T) {
+	journal := &journalMemory{
+		entries: []domainhistory.Entry{
+			{Command: "git status", Scope: "local", CWD: "/old", RecordedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
+			{Command: "git status", Scope: "local", CWD: "/new", RecordedAt: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)},
+		},
+	}
+	service := newTestService(t, journal, defaultConfig())
+	if got := service.SuggestionsIn("git status", "local", "/new"); len(got) != 1 || got[0].Frequency != 2 {
+		t.Fatalf("suggestions = %+v, want the aggregated row", got)
+	}
+	// The bonus follows the newest execution, not the oldest one.
+	inNew := service.SuggestionsIn("git status", "local", "/new")[0].Score
+	inOld := service.SuggestionsIn("git status", "local", "/old")[0].Score
+	if inNew <= inOld {
+		t.Fatalf("scores new=%d old=%d; want the bonus only for the latest cwd", inNew, inOld)
 	}
 }
 

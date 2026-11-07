@@ -224,47 +224,67 @@ func (s *Store) SoftDeleteHistoryEntry(ctx context.Context, id string, deletedAt
 		return fmt.Errorf("store: delete history entry: zero deletion time")
 	}
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
-		entry, found, err := loadHistoryEntry(tx, id)
-		if err != nil {
-			return err
-		}
-		if !found || !entry.DeletedAt.IsZero() {
-			return nil
-		}
-		entry.DeletedAt = deletedAt
-		encoded, err := marshalData(entry, "history entry")
-		if err != nil {
-			return err
-		}
-		result := tx.Model(&historyEntrySchema{}).Where("id = ?", id).
-			Updates(map[string]any{"deleted_at": timestampMilli(deletedAt), "data": encoded})
-		if result.Error != nil {
-			return result.Error
-		}
-		if record == nil {
-			return nil
-		}
-		if record.HistoryID != id || record.Kind != domainhistory.RecordKindDelete {
-			return fmt.Errorf("store: delete record for %q does not match entry %q", record.HistoryID, id)
-		}
-		return appendHistoryRecord(tx, *record)
+		_, err := softDeleteHistoryEntry(tx, id, deletedAt, record)
+		return err
 	}); err != nil {
 		return fmt.Errorf("store: delete history entry: %w", err)
 	}
 	return nil
 }
 
-// ClearHistoryEntries removes every recorded command and reports the count.
-// Bulk soft-delete and tombstone semantics belong to the History actions
-// ticket; this method keeps the projection's existing clear behaviour.
-func (s *Store) ClearHistoryEntries(ctx context.Context) (int, error) {
-	var removed int64
-	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
-		result := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&historyEntrySchema{})
-		removed = result.RowsAffected
-		return result.Error
-	}); err != nil {
-		return 0, fmt.Errorf("store: clear history entries: %w", err)
+// SoftDeleteHistoryEntries marks every listed command deleted and appends each
+// tombstone in one transaction. A row that is missing or already deleted is
+// skipped together with its record, so a retried prune cannot append a
+// duplicate tombstone. Rows deleted before the batch are not counted.
+func (s *Store) SoftDeleteHistoryEntries(ctx context.Context, deletions []domainhistory.EntryDeletion, deletedAt time.Time) (int, error) {
+	if deletedAt.IsZero() {
+		return 0, fmt.Errorf("store: delete history entries: zero deletion time")
 	}
-	return int(removed), nil
+	removed := 0
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		for _, deletion := range deletions {
+			deleted, err := softDeleteHistoryEntry(tx, deletion.ID, deletedAt, deletion.Record)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				removed++
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("store: delete history entries: %w", err)
+	}
+	return removed, nil
+}
+
+// softDeleteHistoryEntry applies one soft delete inside the caller's
+// transaction. It reports whether the row was live and therefore changed.
+func softDeleteHistoryEntry(tx *gorm.DB, id string, deletedAt time.Time, record *domainhistory.Record) (bool, error) {
+	entry, found, err := loadHistoryEntry(tx, id)
+	if err != nil {
+		return false, err
+	}
+	if !found || !entry.DeletedAt.IsZero() {
+		return false, nil
+	}
+	if record != nil && (record.HistoryID != id || record.Kind != domainhistory.RecordKindDelete) {
+		return false, fmt.Errorf("store: delete record for %q does not match entry %q", record.HistoryID, id)
+	}
+	entry.DeletedAt = deletedAt
+	encoded, err := marshalData(entry, "history entry")
+	if err != nil {
+		return false, err
+	}
+	result := tx.Model(&historyEntrySchema{}).Where("id = ?", id).
+		Updates(map[string]any{"deleted_at": timestampMilli(deletedAt), "data": encoded})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if record != nil {
+		if err := appendHistoryRecord(tx, *record); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }

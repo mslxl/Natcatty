@@ -10854,6 +10854,50 @@ func (msgs Messages) LogsDelete() string {
 	return Catalog.Format(msgs.locale, "logsDelete", nil)
 }
 
+// LogsDeleteConfirm says "Delete this command from history?"
+// in the language the app shows.
+//
+// The confirmation shown before one history row is deleted.
+func LogsDeleteConfirm() string { return In(i18n.Locale()).LogsDeleteConfirm() }
+
+// LogsDeleteConfirm says "Delete this command from history?"
+// in the language of msgs.
+//
+// The confirmation shown before one history row is deleted.
+func (msgs Messages) LogsDeleteConfirm() string {
+	return Catalog.Format(msgs.locale, "logsDeleteConfirm", nil)
+}
+
+// LogsCopy says "Copy command"
+// in the language the app shows.
+//
+// The row action that copies the command text.
+func LogsCopy() string { return In(i18n.Locale()).LogsCopy() }
+
+// LogsCopy says "Copy command"
+// in the language of msgs.
+//
+// The row action that copies the command text.
+func (msgs Messages) LogsCopy() string {
+	return Catalog.Format(msgs.locale, "logsCopy", nil)
+}
+
+// LogsInsert says "Insert"
+// in the language the app shows.
+//
+// The row action that inserts the command into the focused Session without
+// running it.
+func LogsInsert() string { return In(i18n.Locale()).LogsInsert() }
+
+// LogsInsert says "Insert"
+// in the language of msgs.
+//
+// The row action that inserts the command into the focused Session without
+// running it.
+func (msgs Messages) LogsInsert() string {
+	return Catalog.Format(msgs.locale, "logsInsert", nil)
+}
+
 // LogsShowMore says "Show more"
 // in the language the app shows.
 //
@@ -10868,16 +10912,18 @@ func (msgs Messages) LogsShowMore() string {
 	return Catalog.Format(msgs.locale, "logsShowMore", nil)
 }
 
-// LogsClearHistory says "Clear history"
+// LogsClearHistory says "Clear this device"
 // in the language the app shows.
 //
-// The button that opens the clear-history confirmation.
+// The button that opens the clear-this-device confirmation for command
+// history.
 func LogsClearHistory() string { return In(i18n.Locale()).LogsClearHistory() }
 
-// LogsClearHistory says "Clear history"
+// LogsClearHistory says "Clear this device"
 // in the language of msgs.
 //
-// The button that opens the clear-history confirmation.
+// The button that opens the clear-this-device confirmation for command
+// history.
 func (msgs Messages) LogsClearHistory() string {
 	return Catalog.Format(msgs.locale, "logsClearHistory", nil)
 }
@@ -10896,16 +10942,16 @@ func (msgs Messages) LogsClearConnections() string {
 	return Catalog.Format(msgs.locale, "logsClearConnections", nil)
 }
 
-// LogsClearConfirm says "Remove every recorded command?"
+// LogsClearConfirm says "Remove history created on this device? Imported and other devices' history stays."
 // in the language the app shows.
 //
-// The clear-history confirmation.
+// The clear-this-device confirmation for command history.
 func LogsClearConfirm() string { return In(i18n.Locale()).LogsClearConfirm() }
 
-// LogsClearConfirm says "Remove every recorded command?"
+// LogsClearConfirm says "Remove history created on this device? Imported and other devices' history stays."
 // in the language of msgs.
 //
-// The clear-history confirmation.
+// The clear-this-device confirmation for command history.
 func (msgs Messages) LogsClearConfirm() string {
 	return Catalog.Format(msgs.locale, "logsClearConfirm", nil)
 }
@@ -10941,24 +10987,136 @@ func (msgs Messages) LogsClearYes() string {
 // LogsCancel says "Cancel"
 // in the language the app shows.
 //
-// The button that dismisses the clear-history confirmation.
+// The button that dismisses the clear-history or prune confirmation.
 func LogsCancel() string { return In(i18n.Locale()).LogsCancel() }
 
 // LogsCancel says "Cancel"
 // in the language of msgs.
 //
-// The button that dismisses the clear-history confirmation.
+// The button that dismisses the clear-history or prune confirmation.
 func (msgs Messages) LogsCancel() string {
 	return Catalog.Format(msgs.locale, "logsCancel", nil)
 }
 
-// LogsHistoryCleared says "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}"
+// LogsPrune says "Prune matching"
+// in the language the app shows.
+//
+// The header action that opens the filter-based prune dialog.
+func LogsPrune() string { return In(i18n.Locale()).LogsPrune() }
+
+// LogsPrune says "Prune matching"
+// in the language of msgs.
+//
+// The header action that opens the filter-based prune dialog.
+func (msgs Messages) LogsPrune() string {
+	return Catalog.Format(msgs.locale, "logsPrune", nil)
+}
+
+// LogsPruneTitle says "Prune matching history"
+// in the language the app shows.
+//
+// The title of the filter-based prune dialog.
+func LogsPruneTitle() string { return In(i18n.Locale()).LogsPruneTitle() }
+
+// LogsPruneTitle says "Prune matching history"
+// in the language of msgs.
+//
+// The title of the filter-based prune dialog.
+func (msgs Messages) LogsPruneTitle() string {
+	return Catalog.Format(msgs.locale, "logsPruneTitle", nil)
+}
+
+// LogsPruneHint says "Only entries matching these filters are removed. An optional limit removes the oldest matches first."
+// in the language the app shows.
+//
+// Explains which entries a filter-based prune removes.
+func LogsPruneHint() string { return In(i18n.Locale()).LogsPruneHint() }
+
+// LogsPruneHint says "Only entries matching these filters are removed. An optional limit removes the oldest matches first."
+// in the language of msgs.
+//
+// Explains which entries a filter-based prune removes.
+func (msgs Messages) LogsPruneHint() string {
+	return Catalog.Format(msgs.locale, "logsPruneHint", nil)
+}
+
+// LogsPruneLimit says "Limit (optional)"
+// in the language the app shows.
+//
+// The optional maximum number of matching entries to prune.
+func LogsPruneLimit() string { return In(i18n.Locale()).LogsPruneLimit() }
+
+// LogsPruneLimit says "Limit (optional)"
+// in the language of msgs.
+//
+// The optional maximum number of matching entries to prune.
+func (msgs Messages) LogsPruneLimit() string {
+	return Catalog.Format(msgs.locale, "logsPruneLimit", nil)
+}
+
+// LogsPrunePreview says "{count, plural, =0 {No entries match these filters.} one {# matching entry will be removed.} other {# matching entrie…"
+// in the language the app shows.
+//
+// The prune preview count.
+func LogsPrunePreview(count int) string { return In(i18n.Locale()).LogsPrunePreview(count) }
+
+// LogsPrunePreview says "{count, plural, =0 {No entries match these filters.} one {# matching entry will be removed.} other {# matching entrie…"
+// in the language of msgs.
+//
+// The prune preview count.
+func (msgs Messages) LogsPrunePreview(count int) string {
+	return Catalog.Format(msgs.locale, "logsPrunePreview", map[string]any{"count": count})
+}
+
+// LogsPruneApply says "Prune"
+// in the language the app shows.
+//
+// The confirmation button that prunes the matching entries.
+func LogsPruneApply() string { return In(i18n.Locale()).LogsPruneApply() }
+
+// LogsPruneApply says "Prune"
+// in the language of msgs.
+//
+// The confirmation button that prunes the matching entries.
+func (msgs Messages) LogsPruneApply() string {
+	return Catalog.Format(msgs.locale, "logsPruneApply", nil)
+}
+
+// LogsPruneLimitProblem says "Enter a whole number of entries to prune, or leave the limit empty."
+// in the language the app shows.
+//
+// The validation message for a malformed prune limit.
+func LogsPruneLimitProblem() string { return In(i18n.Locale()).LogsPruneLimitProblem() }
+
+// LogsPruneLimitProblem says "Enter a whole number of entries to prune, or leave the limit empty."
+// in the language of msgs.
+//
+// The validation message for a malformed prune limit.
+func (msgs Messages) LogsPruneLimitProblem() string {
+	return Catalog.Format(msgs.locale, "logsPruneLimitProblem", nil)
+}
+
+// LogsPruned says "{count, plural, one {# matching entry pruned.} other {# matching entries pruned.}}"
+// in the language the app shows.
+//
+// Confirms how many matching entries a prune removed.
+func LogsPruned(count int) string { return In(i18n.Locale()).LogsPruned(count) }
+
+// LogsPruned says "{count, plural, one {# matching entry pruned.} other {# matching entries pruned.}}"
+// in the language of msgs.
+//
+// Confirms how many matching entries a prune removed.
+func (msgs Messages) LogsPruned(count int) string {
+	return Catalog.Format(msgs.locale, "logsPruned", map[string]any{"count": count})
+}
+
+// LogsHistoryCleared says "{count, plural, one {History on this device cleared (# entry removed).} other {History on this device cleared (# entr…"
 // in the language the app shows.
 //
 // Confirms that the command history was cleared.
 func LogsHistoryCleared(count int) string { return In(i18n.Locale()).LogsHistoryCleared(count) }
 
-// LogsHistoryCleared says "{count, plural, one {History cleared (# entry removed).} other {History cleared (# entries removed).}}"
+// LogsHistoryCleared says "{count, plural, one {History on this device cleared (# entry removed).} other {History on this device cleared (# entr…"
 // in the language of msgs.
 //
 // Confirms that the command history was cleared.
@@ -12000,16 +12158,16 @@ func (msgs Messages) LogsProblemDelete() string {
 	return Catalog.Format(msgs.locale, "logsProblemDelete", nil)
 }
 
-// LogsProblemClear says "Could not clear the history."
+// LogsProblemClear says "Could not clear this device's history."
 // in the language the app shows.
 //
-// Shown when clearing the history failed.
+// Shown when clearing this device's history failed.
 func LogsProblemClear() string { return In(i18n.Locale()).LogsProblemClear() }
 
-// LogsProblemClear says "Could not clear the history."
+// LogsProblemClear says "Could not clear this device's history."
 // in the language of msgs.
 //
-// Shown when clearing the history failed.
+// Shown when clearing this device's history failed.
 func (msgs Messages) LogsProblemClear() string {
 	return Catalog.Format(msgs.locale, "logsProblemClear", nil)
 }
@@ -12026,6 +12184,34 @@ func LogsProblemClearConnections() string { return In(i18n.Locale()).LogsProblem
 // Shown when clearing the connection logs failed.
 func (msgs Messages) LogsProblemClearConnections() string {
 	return Catalog.Format(msgs.locale, "logsProblemClearConnections", nil)
+}
+
+// LogsProblemPrune says "Could not prune the history."
+// in the language the app shows.
+//
+// Shown when a filter-based prune failed.
+func LogsProblemPrune() string { return In(i18n.Locale()).LogsProblemPrune() }
+
+// LogsProblemPrune says "Could not prune the history."
+// in the language of msgs.
+//
+// Shown when a filter-based prune failed.
+func (msgs Messages) LogsProblemPrune() string {
+	return Catalog.Format(msgs.locale, "logsProblemPrune", nil)
+}
+
+// LogsProblemInsert says "Could not insert the command. Open an active Session first."
+// in the language the app shows.
+//
+// Shown when a history command cannot be inserted into a Session.
+func LogsProblemInsert() string { return In(i18n.Locale()).LogsProblemInsert() }
+
+// LogsProblemInsert says "Could not insert the command. Open an active Session first."
+// in the language of msgs.
+//
+// Shown when a history command cannot be inserted into a Session.
+func (msgs Messages) LogsProblemInsert() string {
+	return Catalog.Format(msgs.locale, "logsProblemInsert", nil)
 }
 
 // LogsProblemOpen says "Could not open the terminal."

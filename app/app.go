@@ -1051,8 +1051,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 		return err
 	}), logsui.WithRefreshRequest(invalidate),
 		logsui.WithMutationHook(func() {
-			// Autocomplete aggregates the same journal; a deleted or cleared
-			// row must stop being suggested without a restart.
+			// Autocomplete aggregates the same journal; a deleted, pruned, or
+			// cleared row must stop being suggested without a restart.
 			autocompleteService.Load(context.Background())
 		}),
 		logsui.WithAccountPanel(func() {
@@ -1064,7 +1064,16 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 			if windows != nil {
 				windows.OpenSettings()
 			}
-		}))
+		}),
+		// Insert is always an explicit row action. It writes the command to
+		// the focused Session's prompt without a trailing Enter, so nothing
+		// is submitted automatically.
+		logsui.WithCommandActions(commandActionsFunc(func(command string) error {
+			if shellState == nil || !shellState.SendToFocused(command, false) {
+				return logsui.ErrNoActiveSession
+			}
+			return nil
+		})))
 	// The Quick Switcher and command palette read live Vault and Tab state.
 	// Their closures resolve the shell and registry lazily, as both are
 	// assigned below, and the records rerun on every frame.
@@ -1146,7 +1155,7 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 				}),
 				// Suggestions and counters read Settings on each frame, so a
 				// Settings change applies to open Sessions without reopening.
-				sessionui.WithSuggestions(autocompleteService.Suggestions,
+				sessionui.WithSuggestions(autocompleteService.SuggestionsIn,
 					func() (bool, bool) {
 						current := terminalService.Settings()
 						return current.AutocompletePopupMenu, current.AutocompleteGhostText
@@ -1943,6 +1952,15 @@ type terminalActionsFunc func(model.SessionID, model.HostID) error
 // OpenTerminal opens or focuses the terminal related to a log or history row.
 func (fn terminalActionsFunc) OpenTerminal(sessionID model.SessionID, hostID model.HostID) error {
 	return fn(sessionID, hostID)
+}
+
+// commandActionsFunc adapts a function to the Logs surface's Insert action.
+type commandActionsFunc func(command string) error
+
+// InsertCommand inserts a history command into the focused Session without
+// running it.
+func (fn commandActionsFunc) InsertCommand(command string) error {
+	return fn(command)
 }
 
 // newSyncDeviceID names this device in the encrypted envelope. It is generated
