@@ -553,6 +553,41 @@ func TestInsertAndSuggestionInvalidationReachOpenSurfaces(t *testing.T) {
 	}
 }
 
+// TestSendToFocusedWithoutRunUsesTheSafeInsertionPath pins the side panel's
+// Paste action, which calls SendToFocused with run=false: it must reach the
+// surface's InsertText refusal instead of writing raw newlines to the shell.
+func TestSendToFocusedWithoutRunUsesTheSafeInsertionPath(t *testing.T) {
+	graph := newTestGraph(t)
+	if err := graph.state.NewTab(); err != nil {
+		t.Fatalf("NewTab: %v", err)
+	}
+
+	graph.surface.insertErr = sessionui.ErrInsertUnsafe
+	if graph.state.SendToFocused("touch marker\necho SHOULD_NOT_RUN", false) {
+		t.Fatal("SendToFocused accepted the refused multi-line insertion")
+	}
+	graph.factory.transport.mu.Lock()
+	input := append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("the refused insertion reached the shell: %q", input)
+	}
+
+	graph.surface.insertErr = nil
+	if !graph.state.SendToFocused("git status", false) {
+		t.Fatal("SendToFocused refused a single-line insertion")
+	}
+	if len(graph.surface.inserted) != 1 || graph.surface.inserted[0] != "git status" {
+		t.Fatalf("inserted = %+v, want git status through the surface", graph.surface.inserted)
+	}
+	graph.factory.transport.mu.Lock()
+	input = append([]byte(nil), graph.factory.transport.input...)
+	graph.factory.transport.mu.Unlock()
+	if len(input) != 0 {
+		t.Fatalf("insertion bypassed the surface and reached the shell: %q", input)
+	}
+}
+
 func TestOpenHostCarriesTheNetworkDeviceModeOnlyForSSH(t *testing.T) {
 	graph := newTestGraph(t)
 	host := domainvault.Host{

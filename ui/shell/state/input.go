@@ -657,10 +657,15 @@ func (s *State) InsertIntoFocused(text string) error {
 }
 
 // SendToFocused types text into the focused Session: run submits it with
-// Enter, otherwise it is pasted for the user to finish. The side panel's
-// History uses it. It reports false when no Session is focused or the
-// Session did not take the input.
+// Enter, otherwise it is inserted into the line editor without submitting.
+// The insertion goes through the same safe path as the History Insert action,
+// so a multi-line command is refused when the shell cannot paste it rather
+// than typing newlines that would execute it. It reports false when no Session
+// is focused or the Session did not take the input.
 func (s *State) SendToFocused(text string, run bool) bool {
+	if !run {
+		return s.InsertIntoFocused(text) == nil
+	}
 	if s.sessions == nil {
 		return false
 	}
@@ -668,7 +673,7 @@ func (s *State) SendToFocused(text string, run bool) bool {
 	if !ok {
 		return false
 	}
-	preview := appsession.TransformCompose(text, appsession.ComposeOptions{NoAutoRun: !run})
+	preview := appsession.TransformCompose(text, appsession.ComposeOptions{NoAutoRun: false})
 	if preview.Empty() {
 		return false
 	}
