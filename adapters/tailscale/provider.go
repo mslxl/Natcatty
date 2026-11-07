@@ -83,8 +83,9 @@ var (
 	// ErrNotRunning reports a Provider that is not in the Running phase and
 	// could not be started.
 	ErrNotRunning = errors.New("tailscale: provider is not running")
-	// ErrUnsupportedNetwork reports a dial network outside tcp/tcp4/tcp6.
-	// The Network Provider port deliberately has no UDP or Listen support.
+	// ErrUnsupportedNetwork reports a network outside the capability that was
+	// asked: tcp/tcp4/tcp6 for DialContext, udp/udp4/udp6 for DialDatagram.
+	// The Network Provider port deliberately has no Listen support.
 	ErrUnsupportedNetwork = errors.New("tailscale: network is not supported")
 	// ErrInvalidConfig reports a profile the adapter cannot start. It never
 	// carries key material.
@@ -179,9 +180,10 @@ func withPollInterval(d time.Duration) Option {
 }
 
 // Provider is one Network Profile's in-process Tailscale Net dial port. It
-// implements application/connection's NetworkProvider and
-// NetworkProviderCloser. Create it with NewProvider, start it with Start, and
-// release it with Close. It is safe for concurrent use.
+// implements application/connection's NetworkProvider,
+// NetworkProviderDatagram, and NetworkProviderCloser. Create it with
+// NewProvider, start it with Start, and release it with Close. It is safe for
+// concurrent use.
 type Provider struct {
 	cfg        Config
 	newBackend func(Config) (backend, error)
@@ -212,6 +214,11 @@ type Provider struct {
 	statusSeq  uint64
 	emittedSeq uint64
 }
+
+// A mosh Session type-asserts the datagram capability at runtime; this
+// assertion keeps dropping DialDatagram a compile error instead of a silent
+// fail-closed regression.
+var _ appconnection.NetworkProviderDatagram = (*Provider)(nil)
 
 // NewProvider validates and derives one profile's configuration. It creates no
 // directory and no tsnet resource: an unused Network Profile must not leave a
@@ -715,20 +722,37 @@ func statusEqual(a, b Status) bool {
 }
 
 // DialContext dials one tailnet TCP address through the embedded node. It
-// accepts tcp, tcp4, and tcp6 only; UDP stays out of the port until the mosh
-// rewrite lands. A provider-level failure is KindProvider with profile
-// context; an unreachable target remains KindNetwork and a deadline remains
-// KindTimeout.
+// accepts tcp, tcp4, and tcp6 only; datagrams have their own capability,
+// DialDatagram. A provider-level failure is KindProvider with profile context;
+// an unreachable target remains KindNetwork and a deadline remains KindTimeout.
 func (p *Provider) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if !tcpNetwork(network) {
-		phase := p.Phase()
-		return nil, &appconnection.Error{
-			Kind:     appconnection.KindUnsupported,
-			Cause:    fmt.Errorf("%w: %q", ErrUnsupportedNetwork, network),
-			Provider: p.providerInfo(phase),
-		}
+		return nil, p.unsupportedNetwork(network)
 	}
+	return p.dial(ctx, network, address)
+}
 
+// DialDatagram opens one connected UDP flow through the embedded node. The
+// address, including a MagicDNS name, is handed to the node's own dialer
+// unresolved. Only udp, udp4, and udp6 are accepted.
+func (p *Provider) DialDatagram(ctx context.Context, network, address string) (net.Conn, error) {
+	if !udpNetwork(network) {
+		return nil, p.unsupportedNetwork(network)
+	}
+	return p.dial(ctx, network, address)
+}
+
+func (p *Provider) unsupportedNetwork(network string) error {
+	return &appconnection.Error{
+		Kind:     appconnection.KindUnsupported,
+		Cause:    fmt.Errorf("%w: %q", ErrUnsupportedNetwork, network),
+		Provider: p.providerInfo(p.Phase()),
+	}
+}
+
+// dial carries one flow through the running node and classifies a failure
+// against the node's live phase.
+func (p *Provider) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	p.mu.Lock()
 	closed := p.closed
 	phase := p.phase
@@ -974,6 +998,15 @@ func (p *Provider) providerInfo(phase appconnection.ProviderPhase) *appconnectio
 func tcpNetwork(network string) bool {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
+		return true
+	default:
+		return false
+	}
+}
+
+func udpNetwork(network string) bool {
+	switch network {
+	case "udp", "udp4", "udp6":
 		return true
 	default:
 		return false

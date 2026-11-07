@@ -3074,7 +3074,7 @@
   "vaultProblemETPort": "請輸入 1 到 65535 之間的連接埠。",
   "connectionErrorMoshJump": "Mosh 工作階段不能使用跳板主機。",
   "connectionErrorMoshProxy": "Mosh 工作階段不能使用 Proxy。",
-  "connectionErrorMoshNetwork": "Mosh 工作階段不支援內嵌的網路設定，請為此主機使用 OS 級 VPN。",
+  "connectionErrorMoshNetwork": "Mosh 無法使用此 Host 的網路設定，因為其提供者無法承載 UDP 資料流。請選擇使用 Tailscale Net 或 WireGuard Net 的網路設定。",
   "connectionErrorMoshHandshake": "mosh-server 未能啟動。請確認主機上已安裝 mosh-server。",
   "browserAddress": "位址",
   "browserBack": "上一頁",

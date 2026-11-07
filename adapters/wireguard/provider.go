@@ -78,8 +78,9 @@ var (
 	// ErrNotRunning reports a Provider that is not in the Running phase and
 	// could not be started.
 	ErrNotRunning = errors.New("wireguard: provider is not running")
-	// ErrUnsupportedNetwork reports a dial network outside tcp/tcp4/tcp6. The
-	// Network Provider port deliberately has no UDP or Listen support.
+	// ErrUnsupportedNetwork reports a network outside the capability that was
+	// asked: tcp/tcp4/tcp6 for DialContext, udp/udp4/udp6 for DialDatagram.
+	// The Network Provider port deliberately has no Listen support.
 	ErrUnsupportedNetwork = errors.New("wireguard: network is not supported")
 	// ErrInvalidConfig reports a profile the adapter cannot run. It never
 	// carries key material.
@@ -280,9 +281,10 @@ type endpointResolver interface {
 }
 
 // Provider is one Network Profile's in-process WireGuard Net dial port. It
-// implements application/connection's NetworkProvider and
-// NetworkProviderCloser. Create it with NewProvider, start it with Start, and
-// release it with Close. It is safe for concurrent use.
+// implements application/connection's NetworkProvider,
+// NetworkProviderDatagram, and NetworkProviderCloser. Create it with
+// NewProvider, start it with Start, and release it with Close. It is safe for
+// concurrent use.
 type Provider struct {
 	cfg        Config
 	plan       providerPlan
@@ -313,6 +315,11 @@ type Provider struct {
 	pollCancel          context.CancelFunc
 	pollDone            chan struct{}
 }
+
+// A mosh Session type-asserts the datagram capability at runtime; this
+// assertion keeps dropping DialDatagram a compile error instead of a silent
+// fail-closed regression.
+var _ appconnection.NetworkProviderDatagram = (*Provider)(nil)
 
 // NewProvider validates and derives one profile's configuration. It creates no
 // socket, device, or goroutine: an unused Network Profile must not leave a
@@ -580,18 +587,38 @@ func (p *Provider) failRuntime(backend backend, cause error) {
 }
 
 // DialContext dials one TCP address through the netstack. It accepts tcp, tcp4,
-// and tcp6 only; UDP stays out of the port until the mosh rewrite lands. A
+// and tcp6 only; datagrams have their own capability, DialDatagram. A
 // provider-level failure is KindProvider with profile context; an unreachable
 // target remains KindNetwork and a deadline remains KindTimeout.
 func (p *Provider) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if !tcpNetwork(network) {
-		return nil, &appconnection.Error{
-			Kind:     appconnection.KindUnsupported,
-			Cause:    fmt.Errorf("%w: %q", ErrUnsupportedNetwork, network),
-			Provider: p.providerInfo(p.Phase()),
-		}
+		return nil, p.unsupportedNetwork(network)
 	}
+	return p.dial(ctx, network, address)
+}
 
+// DialDatagram opens one connected UDP flow through the netstack. The address
+// is resolved by the netstack with the tunnel's DNS servers only, so the
+// operating-system resolver is never consulted; checkTargetDNS rejects a name
+// when the profile has no tunnel DNS. Only udp, udp4, and udp6 are accepted.
+func (p *Provider) DialDatagram(ctx context.Context, network, address string) (net.Conn, error) {
+	if !udpNetwork(network) {
+		return nil, p.unsupportedNetwork(network)
+	}
+	return p.dial(ctx, network, address)
+}
+
+func (p *Provider) unsupportedNetwork(network string) error {
+	return &appconnection.Error{
+		Kind:     appconnection.KindUnsupported,
+		Cause:    fmt.Errorf("%w: %q", ErrUnsupportedNetwork, network),
+		Provider: p.providerInfo(p.Phase()),
+	}
+}
+
+// dial carries one flow through the running netstack and classifies a failure
+// against the device's live phase.
+func (p *Provider) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	p.mu.Lock()
 	closed := p.closed
 	phase := p.phase
@@ -913,6 +940,15 @@ func errorText(err error) string {
 func tcpNetwork(network string) bool {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
+		return true
+	default:
+		return false
+	}
+}
+
+func udpNetwork(network string) bool {
+	switch network {
+	case "udp", "udp4", "udp6":
 		return true
 	default:
 		return false
