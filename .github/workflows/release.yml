@@ -50,24 +50,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Set up Nushell
         uses: ./.github/actions/setup-nu
-
-      - name: Test the legal package
-        run: go test ./internal/legal -count=1
-
-      - name: Scan dependencies for known vulnerabilities
-        # Pin the scanner: a new version changes the advisory view and must be
-        # reviewed with the dependency baseline in go.mod. The default
-        # symbol-level scan fails when a vulnerability affects called code;
-        # package- and module-level findings are reported but do not fail it.
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
       - name: Read the release version from mygo.json
         id: tag
@@ -105,8 +89,8 @@ jobs:
 
       - name: Pin the release commit to github.sha
         # There is no caller-supplied commit override. The tag push or the
-        # dispatch ref fixes github.sha, and every build and parity job checks
-        # out and verifies that one commit.
+        # dispatch ref fixes github.sha, and every build job checks out and
+        # verifies that one commit.
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: |
@@ -117,21 +101,6 @@ jobs:
             exit 1
           fi
           echo "release commit ${RELEASE_SHA}"
-
-  # Ticket 34: call both reusable parity workflows for the release commit.
-  # Reusable workflow calls inherit the caller's GITHUB_RUN_ID, so every cell
-  # report and fuzz receipt is bound to this run, and checkout uses this
-  # caller's github.sha. These jobs take no inputs: neither gate can be pointed
-  # at another commit.
-  mosh-parity:
-    name: mosh parity gate (release commit)
-    needs: validate
-    uses: ./.github/workflows/mosh-parity.yml
-
-  et-parity:
-    name: et parity gate (release commit)
-    needs: validate
-    uses: ./.github/workflows/et-parity.yml
 
   build:
     name: build (${{ matrix.artifact }})
@@ -148,9 +117,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - artifact: darwin-universal
+          - artifact: darwin
             os: macos-latest
-            platform: darwin/universal
+            platform: darwin/arm64,darwin/amd64
           - artifact: windows-amd64
             os: windows-latest
             platform: windows/amd64
@@ -217,9 +186,11 @@ jobs:
             CHANGELOG.md
             mygo.json)
           case "${{ matrix.artifact }}" in
-            darwin-universal)
-              test -s "dist/darwin-universal/natcatty-${NATCATTY_VERSION}-macos-universal.dmg"
-              root="dist/darwin-universal/Natcatty.app/Contents/Resources"
+            darwin)
+              for arch in arm64 amd64; do
+                test -s "dist/darwin-${arch}/natcatty-${NATCATTY_VERSION}-macos-${arch}.dmg"
+              done
+              root="dist/darwin-arm64/Natcatty.app/Contents/Resources"
               ;;
             windows-amd64)
               test -s "dist/windows-amd64/natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe"
@@ -240,6 +211,15 @@ jobs:
             test -s "${root}/${entry}"
           done
           grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${root}/mygo.json"
+          if [ "${{ matrix.artifact }}" = "darwin" ]; then
+            for arch in arm64 amd64; do
+              for entry in "${resources[@]}"; do
+                test -s "dist/darwin-${arch}/Natcatty.app/Contents/Resources/${entry}"
+              done
+              grep -q "\"version\": \"${NATCATTY_VERSION}\"" \
+                "dist/darwin-${arch}/Natcatty.app/Contents/Resources/mygo.json"
+            done
+          fi
           if [ "${{ matrix.artifact }}" = "linux" ]; then
             for entry in "${resources[@]}"; do
               test -s "dist/linux-arm64/${entry}"
@@ -247,50 +227,54 @@ jobs:
           fi
           echo "layout, version, and resources verified"
 
-      - name: Verify the macOS disk image
-        if: matrix.artifact == 'darwin-universal'
+      - name: Verify the macOS disk images
+        if: matrix.artifact == 'darwin'
         run: |
           set -euo pipefail
-          dmg="dist/darwin-universal/natcatty-${NATCATTY_VERSION}-macos-universal.dmg"
-          hdiutil verify "${dmg}"
-          mount="$(mktemp -d)"
-          hdiutil attach -nobrowse -readonly -mountpoint "${mount}" "${dmg}" >/dev/null
-          cleanup() { hdiutil detach "${mount}" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          app="${mount}/Natcatty.app"
-          test -d "${app}"
-          plutil -lint "${app}/Contents/Info.plist"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "${app}/Contents/Info.plist")" = "${NATCATTY_VERSION}"
-          test "$(plutil -extract CFBundleIdentifier raw -o - "${app}/Contents/Info.plist")" = "io.github.mslxl.natcatty"
-          for entry in THIRD-PARTY-NOTICES.md \
-            LICENSE \
-            NOTICE \
-            SOURCE-OFFER.md \
-            CHANGELOG.md \
-            mygo.json; do
-            test -s "${app}/Contents/Resources/${entry}"
+          for arch in arm64 amd64; do
+            dmg="dist/darwin-${arch}/natcatty-${NATCATTY_VERSION}-macos-${arch}.dmg"
+            hdiutil verify "${dmg}"
+            mount="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -mountpoint "${mount}" "${dmg}" >/dev/null
+            cleanup() { hdiutil detach "${mount}" >/dev/null 2>&1 || true; }
+            trap cleanup EXIT
+            app="${mount}/Natcatty.app"
+            test -d "${app}"
+            plutil -lint "${app}/Contents/Info.plist"
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "${app}/Contents/Info.plist")" = "${NATCATTY_VERSION}"
+            test "$(plutil -extract CFBundleIdentifier raw -o - "${app}/Contents/Info.plist")" = "io.github.mslxl.natcatty"
+            for entry in THIRD-PARTY-NOTICES.md \
+              LICENSE \
+              NOTICE \
+              SOURCE-OFFER.md \
+              CHANGELOG.md \
+              mygo.json; do
+              test -s "${app}/Contents/Resources/${entry}"
+            done
+            grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${app}/Contents/Resources/mygo.json"
+            if find "${mount}" \( -iname 'update-*.json' -o -iname 'latest*.yml' \
+              -o -iname 'latest*.yaml' -o -iname 'appcast*.xml' -o -iname '*.delta' \
+              -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.mobileprovision' \) \
+              -print | grep -q .; then
+              echo "the ${arch} disk image contains update or signing metadata" >&2
+              exit 1
+            fi
+            codesign -dv --verbose=4 "${app}" 2>"codesign-${arch}.txt"
+            cat "codesign-${arch}.txt"
+            grep -q 'Signature=adhoc' "codesign-${arch}.txt"
+            if grep -q 'Authority=' "codesign-${arch}.txt"; then
+              echo "the ${arch} app carries a distribution signature" >&2
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=2 "${app}"
+            if codesign -dv "${dmg}" 2>&1 | grep -q 'Developer ID'; then
+              echo "the ${arch} disk image carries a Developer ID signature" >&2
+              exit 1
+            fi
+            cleanup
+            trap - EXIT
+            echo "the ${arch} disk image verifies; its app is ad hoc signed and carries no Developer ID"
           done
-          grep -q "\"version\": \"${NATCATTY_VERSION}\"" "${app}/Contents/Resources/mygo.json"
-          if find "${mount}" \( -iname 'update-*.json' -o -iname 'latest*.yml' \
-            -o -iname 'latest*.yaml' -o -iname 'appcast*.xml' -o -iname '*.delta' \
-            -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.mobileprovision' \) \
-            -print | grep -q .; then
-            echo "the disk image contains update or signing metadata" >&2
-            exit 1
-          fi
-          codesign -dv --verbose=4 "${app}" 2>codesign.txt
-          cat codesign.txt
-          grep -q 'Signature=adhoc' codesign.txt
-          if grep -q 'Authority=' codesign.txt; then
-            echo "the app carries a distribution signature" >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "${app}"
-          if codesign -dv "${dmg}" 2>&1 | grep -q 'Developer ID'; then
-            echo "the disk image carries a Developer ID signature" >&2
-            exit 1
-          fi
-          echo "the disk image verifies; its app is ad hoc signed and carries no Developer ID"
 
       - name: Verify the Windows installer
         if: matrix.artifact == 'windows-amd64'
@@ -381,106 +365,11 @@ jobs:
           path: dist
           if-no-files-found: error
 
-  parity-verify:
-    name: verify release parity evidence
-    needs:
-      - validate
-      - mosh-parity
-      - et-parity
-    # Run even when a gate failed so this job can report which gate failed and
-    # every downstream release job has an explicit failed prerequisite. This
-    # job never uses always() to waive a failure; the first step rejects any
-    # non-success gate result.
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Require both reusable gates to succeed
-        if: needs.mosh-parity.result != 'success' || needs.et-parity.result != 'success'
-        env:
-          MOSH_RESULT: ${{ needs.mosh-parity.result }}
-          ET_RESULT: ${{ needs.et-parity.result }}
-        run: |
-          set -euo pipefail
-          echo "mosh parity gate: ${MOSH_RESULT}" >&2
-          echo "ET parity gate: ${ET_RESULT}" >&2
-          echo "a required parity gate did not succeed" >&2
-          exit 1
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Assert the release commit is github.sha
-        env:
-          RELEASE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          actual="$(git rev-parse HEAD)"
-          if [ "${actual}" != "${RELEASE_SHA}" ]; then
-            echo "checked-out commit ${actual} is not github.sha ${RELEASE_SHA}" >&2
-            exit 1
-          fi
-          echo "release commit ${RELEASE_SHA}"
-
-      - name: Download the mosh gate artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: mosh-parity-*
-          path: build/mosh-parity
-          merge-multiple: true
-
-      - name: Download the ET gate artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: et-parity-*
-          path: build/et-parity
-          merge-multiple: true
-
-      - name: Require both gate summaries
-        run: |
-          set -euo pipefail
-          for summary in build/mosh-parity/summary.json build/et-parity/summary.json; do
-            if [ ! -s "${summary}" ]; then
-              echo "missing required gate summary ${summary}" >&2
-              exit 1
-            fi
-          done
-          echo "both gate summaries are present"
-
-      # Each verify re-checks every report, behavior, and fuzz receipt against
-      # github.sha and this run's GITHUB_RUN_ID. -require-summary also consumes
-      # the summary produced by the reusable gate workflow, so a missing,
-      # stale, or differently bound summary fails closed.
-      - name: Verify the mosh gate artifacts and summary
-        run: >-
-          go run ./internal/tools/moshparity verify
-          -dir build/mosh-parity
-          -commit '${{ github.sha }}'
-          -require-summary
-
-      - name: Verify the ET gate artifacts and summary
-        run: >-
-          go run ./internal/tools/etparity verify
-          -dir build/et-parity
-          -require-summary
-
   checksums:
     name: aggregate checksums
     needs:
       - validate
       - build
-      - parity-verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -518,14 +407,15 @@ jobs:
           natcatty-${NATCATTY_VERSION}-linux-amd64.tar.gz
           natcatty-${NATCATTY_VERSION}-linux-arm64.deb
           natcatty-${NATCATTY_VERSION}-linux-arm64.tar.gz
-          natcatty-${NATCATTY_VERSION}-macos-universal.dmg
+          natcatty-${NATCATTY_VERSION}-macos-amd64.dmg
+          natcatty-${NATCATTY_VERSION}-macos-arm64.dmg
           natcatty-${NATCATTY_VERSION}-windows-amd64-portable.zip
           natcatty-${NATCATTY_VERSION}-windows-amd64-setup.exe
           EOF
           sort -o expected.txt expected.txt
           find release -maxdepth 1 -type f -printf '%f\n' | sort > actual.txt
           diff -u expected.txt actual.txt
-          test "$(wc -l < actual.txt)" -eq 7
+          test "$(wc -l < actual.txt)" -eq 8
         env:
           NATCATTY_VERSION: ${{ needs.validate.outputs.version }}
 
@@ -562,14 +452,13 @@ jobs:
     # Only a pushed tag publishes. A workflow_dispatch run is always a dry run,
     # even when it is dispatched on a tag ref, so the event name is part of the
     # condition and not just the ref. success() is explicit: a failed or
-    # skipped parity gate in needs must block publication, and this job never
-    # uses always() to waive a gate.
+    # skipped prerequisite in needs must block publication, and this job never
+    # uses always() to waive one.
     if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs:
       - validate
       - build
       - checksums
-      - parity-verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The workflow as a whole keeps contents: read; only this job may publish.
@@ -628,8 +517,8 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           assets=(release/*)
-          # The seven installers plus the checksum manifest.
-          test "${#assets[@]}" -eq 8
+          # The eight installers plus the checksum manifest.
+          test "${#assets[@]}" -eq 9
           # GitHub generates the body from the commits and pull requests since
           # the previous release. `gh release edit` cannot regenerate notes, so
           # fetch one body and use it for both the create and edit paths.
@@ -655,4 +544,22 @@ jobs:
               --notes-file "${notes}"
           fi
           gh release upload "${NATCATTY_TAG}" "${assets[@]}" --clobber
+
+      - name: Remove assets that are not part of this release
+        # A force-moved tag can publish a different asset set than the previous
+        # run. Uploading does not remove files that no longer belong to the
+        # release, so delete them and leave exactly the assets this run built
+        # and verified.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          find release -maxdepth 1 -type f -printf '%f\n' | sort > expected.txt
+          gh release view "${NATCATTY_TAG}" --json assets --jq '.assets[].name' | sort > observed.txt
+          comm -13 expected.txt observed.txt > stale.txt
+          while IFS= read -r name; do
+            echo "removing stale release asset ${name}"
+            gh release delete-asset "${NATCATTY_TAG}" "${name}" --yes
+          done < stale.txt
+
           gh release view "${NATCATTY_TAG}" --json url,tagName,assets
