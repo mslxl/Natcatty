@@ -380,13 +380,18 @@ func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
 	return result
 }
 
-// betterSuggestion orders two candidates by the documented ranking tuple.
+// betterSuggestion orders two candidates by the documented ranking tuple. It
+// compares the same bounded frequency the packed Score uses, so counts above
+// the cap are ties resolved by recency in both places and Score cannot
+// contradict the returned order.
 func betterSuggestion(left, right rankedSuggestion) bool {
+	leftFrequency := boundedFrequency(left.suggestion.Frequency)
+	rightFrequency := boundedFrequency(right.suggestion.Frequency)
 	switch {
 	case left.rank != right.rank:
 		return left.rank > right.rank
-	case left.suggestion.Frequency != right.suggestion.Frequency:
-		return left.suggestion.Frequency > right.suggestion.Frequency
+	case leftFrequency != rightFrequency:
+		return leftFrequency > rightFrequency
 	case left.lastUsed.UnixMilli() != right.lastUsed.UnixMilli():
 		return left.lastUsed.UnixMilli() > right.lastUsed.UnixMilli()
 	case left.inCWD != right.inCWD:
@@ -399,13 +404,18 @@ func betterSuggestion(left, right rankedSuggestion) bool {
 // The Score packing uses UnixMilli recency, the same precision
 // betterSuggestion compares. Across Go's whole Time range, including the zero
 // time and pre-epoch imports, the recency term spans less than one frequency
-// step, and the bounded frequency term spans less than one rank step. Score
-// therefore orders exactly like the returned list; the command text remains
-// the final tie-break and is not encoded.
+// step, and the bounded frequency term spans less than one rank step. Because
+// betterSuggestion also compares the bounded frequency, Score is non-increasing
+// over the returned list: equal scores mean the command-text tie-break decided
+// the order, and the text itself is not encoded.
 const (
-	scoreRankStep      int64 = 1_000_000_000_000_000_000
+	scoreRankStep      int64 = 2_000_000_000_000_000_000
 	scoreFrequencyStep int64 = 1_000_000_000_000_000
 	scoreRecencyStep   int64 = 2
+	// scoreFrequencyCap bounds the frequency term: 1000 * scoreFrequencyStep
+	// stays below one rank step, so a long-lived command cannot overflow the
+	// tier above it. betterSuggestion applies the same cap.
+	scoreFrequencyCap = 1000
 	// cwdBonus rewards a command whose latest execution ran in the Session's
 	// current working directory. It is smaller than one recency step, so it
 	// only breaks ties between commands with equal frequency and recency.
@@ -446,10 +456,12 @@ func (s *Service) normalizedConfig() Config {
 }
 
 // boundedFrequency caps the frequency term so a long-lived command cannot
-// overflow the tier above it.
+// overflow the rank tier above it. betterSuggestion and suggestionScore share
+// this function: counts above the cap tie on frequency and fall through to
+// recency, so the exported Score stays consistent with the returned order.
 func boundedFrequency(count int) int {
-	if count > 100 {
-		count = 100
+	if count > scoreFrequencyCap {
+		count = scoreFrequencyCap
 	}
 	if count < 0 {
 		return 0

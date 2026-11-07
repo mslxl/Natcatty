@@ -313,6 +313,105 @@ func TestSuggestionScoreStepsHoldAcrossTheWholeTimeRange(t *testing.T) {
 	}
 }
 
+// TestSuggestionScoreAndOrderStayConsistentAcrossTheFrequencyCap pins the
+// exported contract: the comparator and the packed Score use the same bounded
+// frequency. Raw counts on either side of the cap must order the same way in
+// both, so Score is non-increasing over the returned list.
+func TestSuggestionScoreAndOrderStayConsistentAcrossTheFrequencyCap(t *testing.T) {
+	older := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	journal := &journalMemory{}
+	for index := 0; index < 101; index++ {
+		journal.entries = append(journal.entries,
+			journalEntryFor("git alpha", "local", newer))
+	}
+	for index := 0; index < 200; index++ {
+		journal.entries = append(journal.entries,
+			journalEntryFor("git bravo", "local", older))
+	}
+	service := newTestService(t, journal, defaultConfig())
+	got := service.SuggestionsIn("git ", "local", "")
+	if len(got) != 2 || got[0].Text != "git bravo" || got[0].Frequency != 200 {
+		t.Fatalf("suggestions = %+v; raw frequency must order bravo first", got)
+	}
+	if !(got[0].Score > got[1].Score) {
+		t.Fatalf("Score contradicts the returned order: bravo=%d alpha=%d",
+			got[0].Score, got[1].Score)
+	}
+
+	// Above the cap both counts are the same bounded frequency, so the newer
+	// command wins; the score must agree with that order too.
+	journal = &journalMemory{}
+	for index := 0; index < 1500; index++ {
+		journal.entries = append(journal.entries,
+			journalEntryFor("git capped-newer", "local", newer))
+	}
+	for index := 0; index < 2000; index++ {
+		journal.entries = append(journal.entries,
+			journalEntryFor("git capped-older", "local", older))
+	}
+	service = newTestService(t, journal, defaultConfig())
+	got = service.SuggestionsIn("git ", "local", "")
+	if len(got) != 2 || got[0].Text != "git capped-newer" {
+		t.Fatalf("capped suggestions = %+v; equal bounded frequency must tie on recency", got)
+	}
+	if !(got[0].Score > got[1].Score) {
+		t.Fatalf("capped Score contradicts the returned order: newer=%d older=%d",
+			got[0].Score, got[1].Score)
+	}
+}
+
+// TestSuggestionScoreOrdersExactlyLikeTheComparator walks the ranking space
+// and asserts the two implementations agree in both directions. Equal scores
+// are allowed only when the command text, the final tie-break, decides.
+func TestSuggestionScoreOrdersExactlyLikeTheComparator(t *testing.T) {
+	ranks := []int{1, 2, 3}
+	frequencies := []int{0, 1, 99, 100, 101, 999, 1000, 1001, 5000}
+	times := []time.Time{
+		{},
+		time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+		time.Date(9999, 12, 31, 23, 59, 59, 999_000_000, time.UTC),
+	}
+	candidates := make([]rankedSuggestion, 0, len(ranks)*len(frequencies)*len(times)*2)
+	for _, rank := range ranks {
+		for _, frequency := range frequencies {
+			for _, lastUsed := range times {
+				for _, inCWD := range []bool{false, true} {
+					text := fmt.Sprintf("command-%03d", len(candidates))
+					candidates = append(candidates, rankedSuggestion{
+						suggestion: Suggestion{
+							Text:      text,
+							Frequency: frequency,
+							Score: suggestionScore(
+								rank, frequency, lastUsed, inCWD),
+						},
+						rank:     rank,
+						lastUsed: lastUsed,
+						inCWD:    inCWD,
+					})
+				}
+			}
+		}
+	}
+	for leftIndex := range candidates {
+		for rightIndex := range candidates {
+			if leftIndex == rightIndex {
+				continue
+			}
+			left, right := candidates[leftIndex], candidates[rightIndex]
+			byComparator := betterSuggestion(left, right)
+			byScore := left.suggestion.Score > right.suggestion.Score ||
+				(left.suggestion.Score == right.suggestion.Score &&
+					left.suggestion.Text < right.suggestion.Text)
+			if byComparator != byScore {
+				t.Fatalf("comparator says %v but scores say %v: %+v vs %+v",
+					byComparator, byScore, left, right)
+			}
+		}
+	}
+}
+
 func TestAggregationKeepsTheCwdOfTheLatestExecution(t *testing.T) {
 	journal := &journalMemory{
 		entries: []domainhistory.Entry{
