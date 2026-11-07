@@ -12,15 +12,14 @@ import (
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 )
 
-// The twelve icon variants are the original's own PNG artwork. Embedding them
-// keeps the build asset-free at runtime and preserves the exact visuals the
-// Electron application shipped.
+// The twelve icon variants are embedded so every desktop surface can use the
+// selected artwork without reading files from the user's installation.
 //
 //go:embed icons/variants/*.png
 var iconAssets embed.FS
 
 // appIconPNG returns the variant's full-resolution artwork. An unknown ID or a
-// failed read falls back to the original icon, as the original manager did.
+// failed read falls back to the default icon.
 func appIconPNG(variant string) []byte {
 	id := domaintheme.ResolveIconVariant(variant).ID
 	data, err := iconAssets.ReadFile("icons/variants/" + id + ".png")
@@ -35,15 +34,11 @@ var (
 	trayVariantCache = make(map[string][]byte)
 )
 
-// trayIconPNG returns the notification-area icon for a variant. The original
-// variant keeps the hand-drawn 32px mark; every other variant is cropped to
-// its artwork and scaled to 32px, because a tray icon taken from the 1024px
-// asset would render tiny inside its transparent margin.
+// trayIconPNG returns the notification-area icon for a variant. Every variant
+// is cropped to its artwork and scaled to 32px, because a tray icon taken from
+// the 1024px asset would render tiny inside its transparent margin.
 func trayIconPNG(variant string) []byte {
 	id := domaintheme.ResolveIconVariant(variant).ID
-	if id == domaintheme.DefaultIconVariant {
-		return trayIconGlyphPNG()
-	}
 	trayVariantMu.Lock()
 	defer trayVariantMu.Unlock()
 	if data, ok := trayVariantCache[id]; ok {
