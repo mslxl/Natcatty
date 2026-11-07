@@ -138,6 +138,10 @@ To describe the feature set accurately, the following are **explicitly out of sc
   WireGuard Net, supported transports, capability limits, validation status,
   and the opt-in real-network tests.
 - [Packaging](docs/packaging.md): release artifacts and platform requirements.
+- [Atuin-compatible history sync](docs/atuin/README.md): supported versions,
+  compatibility and fail-closed policy, licensing and trademark rules, and the
+  independent-client notice. Netcatty is an independent client and is not
+  affiliated with Atuin, Inc.
 
 ---
 
