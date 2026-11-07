@@ -382,6 +382,15 @@ func UnmarshalHistoryRecord(version string, data []byte) (HistoryRecord, error) 
 	}
 }
 
+// CanonicalUUID returns the lowercase hyphenated form of a UUID value the
+// Atuin wire accepts (hyphenated, simple, braced, or URN form). It reports
+// false for any other value. The sync adapter uses it to validate a series
+// host before a request and to normalize a session identity decoded from a
+// record; it is the same parser the record and history codecs use.
+func CanonicalUUID(value string) (string, bool) {
+	return canonicalUUID(value)
+}
+
 // canonicalUUID accepts the hyphenated and simple forms Uuid::parse_str
 // accepts, and returns the lowercase hyphenated form serde emits.
 func canonicalUUID(value string) (string, bool) {

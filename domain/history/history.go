@@ -196,6 +196,9 @@ const (
 // AuthorKindUser is the Atuin author kind for a command run by a user.
 const AuthorKindUser = "user"
 
+// AuthorKindAgent is the Atuin author kind for a command run by an AI agent.
+const AuthorKindAgent = "agent"
+
 // Entry is one recorded command execution. It is a per-execution journal, so
 // autocomplete aggregates it while the history surface lists each execution.
 // A captured or shell-history row carries a UUIDv7 ID; an imported or synced
@@ -537,15 +540,16 @@ func NormalizeEntry(entry Entry) Entry {
 			entry.AuthorKind = AuthorKindUser
 		}
 		if entry.Author == "" {
-			entry.Author = authorFromOrigin(entry.Origin)
+			entry.Author = AuthorFromOrigin(entry.Origin)
 		}
 	}
 	return entry
 }
 
-// authorFromOrigin returns the user part of a host:user origin. The last colon
-// delimits the user so a bracketed IPv6 host stays intact.
-func authorFromOrigin(origin string) string {
+// AuthorFromOrigin returns the user part of a host:user origin. The last colon
+// delimits the user so a bracketed IPv6 host stays intact. It is the domain's
+// author provenance rule for both imported and synced rows.
+func AuthorFromOrigin(origin string) string {
 	index := strings.LastIndex(origin, ":")
 	if index < 0 || index == len(origin)-1 {
 		return ""
