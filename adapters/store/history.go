@@ -124,25 +124,32 @@ var historyEntryColumns = []string{
 // its create record in one transaction. A failed insert on either side leaves
 // both unchanged.
 func (s *Store) RecordHistoryEntry(ctx context.Context, entry domainhistory.Entry, record *domainhistory.Record) error {
-	model, err := historyEntryModel(entry)
-	if err != nil {
-		return err
-	}
 	if record != nil && (record.HistoryID != entry.ID || record.Kind != domainhistory.RecordKindCreate) {
 		return fmt.Errorf("store: create record does not belong to entry %q", entry.ID)
 	}
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
-		if err := upsertModel(tx, &model, "id", historyEntryColumns...); err != nil {
-			return err
-		}
-		if record == nil {
-			return nil
-		}
-		return appendHistoryRecord(tx, *record)
+		return writeHistoryEntry(tx, entry, record)
 	}); err != nil {
 		return fmt.Errorf("store: record history entry: %w", err)
 	}
 	return nil
+}
+
+// writeHistoryEntry writes the projection and, when record is not nil, its
+// record inside the caller's transaction. The projection and the record log
+// commit or roll back together.
+func writeHistoryEntry(tx *gorm.DB, entry domainhistory.Entry, record *domainhistory.Record) error {
+	model, err := historyEntryModel(entry)
+	if err != nil {
+		return err
+	}
+	if err := upsertModel(tx, &model, "id", historyEntryColumns...); err != nil {
+		return err
+	}
+	if record == nil {
+		return nil
+	}
+	return appendHistoryRecord(tx, *record)
 }
 
 // HistoryEntry returns one recorded command, including a soft-deleted row.
@@ -176,10 +183,25 @@ func loadHistoryEntry(tx *gorm.DB, id string) (domainhistory.Entry, bool, error)
 // ListHistoryEntries returns the live recorded commands newest first.
 // Soft-deleted rows are excluded; they remain readable through HistoryEntry.
 func (s *Store) ListHistoryEntries(ctx context.Context) ([]domainhistory.Entry, error) {
+	return s.listHistoryEntries(ctx, false)
+}
+
+// ListHistoryEntriesIncludingDeleted returns every recorded command newest
+// first. The one-time Shell History File import uses it to deduplicate against
+// soft-deleted rows so a deleted command is not resurrected.
+func (s *Store) ListHistoryEntriesIncludingDeleted(ctx context.Context) ([]domainhistory.Entry, error) {
+	return s.listHistoryEntries(ctx, true)
+}
+
+func (s *Store) listHistoryEntries(ctx context.Context, includeDeleted bool) ([]domainhistory.Entry, error) {
+	condition := "deleted_at = 0"
+	if includeDeleted {
+		condition = ""
+	}
 	var data []string
 	if err := s.db.ORM(ctx, func(tx *gorm.DB) error {
 		var err error
-		data, err = loadDataRowsWhere(tx, &historyEntrySchema{}, "deleted_at = 0",
+		data, err = loadDataRowsWhere(tx, &historyEntrySchema{}, condition,
 			"recorded_at DESC", "id DESC")
 		return err
 	}); err != nil {

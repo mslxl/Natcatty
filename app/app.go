@@ -413,7 +413,8 @@ func run(afterReady func(hostWindow, packagedSmokeDeps), options runOptions) err
 	// The packaged smoke skips the real shell files: its result must not
 	// depend on, or copy, the user's history.
 	if options.importsShellHistory() {
-		importShellHistory(context.Background(), historyService, shellHistory)
+		importShellHistory(context.Background(), historyService, shellHistory,
+			resolveCommandLocalIdentity())
 	}
 	autocompleteService := autocomplete.NewService(
 		historyService,
@@ -1740,48 +1741,33 @@ func newRegistry(shellState *state.State, quit func(), lockApp func() error,
 	return registry
 }
 
-// importShellHistory persists the local shell's deduplicated commands as
-// shell-history rows in the Command History journal. This is the only path
-// Shell History File rows take; they are never queried live for suggestions.
-// Commands already imported are skipped, so repeated launches do not duplicate
-// them.
+// importShellHistory runs the one-time Shell History File import into the
+// Command History journal. This is the only path Shell History File rows take;
+// they are never queried live for suggestions. The service owns the durable
+// marker, deduplication, and create records; the source is read lazily, so a
+// later startup never parses the files again. Errors are best effort: the
+// marker stays unset and the next startup retries.
 func importShellHistory(ctx context.Context, service *apphistory.Service,
-	source *histfile.Reader) {
+	source *histfile.Reader, local commandLocalIdentity) {
 	if service == nil || source == nil {
 		return
 	}
-	entries := source.History()
-	if len(entries) == 0 {
-		return
-	}
-	stored, err := service.Entries(ctx)
-	if err != nil {
-		return
-	}
-	seen := make(map[string]bool, len(stored))
-	for _, entry := range stored {
-		if entry.Source == domainhistory.SourceShellHistory {
-			seen[entry.Command] = true
+	origin := domainhistory.CaptureOrigin(local.Host, local.User, "")
+	_ = service.ImportShellHistory(ctx, func() []domainhistory.ShellHistoryCommand {
+		entries := source.History()
+		commands := make([]domainhistory.ShellHistoryCommand, 0, len(entries))
+		for _, entry := range entries {
+			command := domainhistory.ShellHistoryCommand{
+				Command: entry.Command,
+				Shell:   entry.Shell,
+			}
+			if entry.Timestamp > 0 {
+				command.RecordedAt = time.Unix(entry.Timestamp, 0)
+			}
+			commands = append(commands, command)
 		}
-	}
-	for _, entry := range entries {
-		if entry.Command == "" || seen[entry.Command] {
-			continue
-		}
-		recordedAt := time.Now()
-		if entry.Timestamp > 0 {
-			recordedAt = time.Unix(entry.Timestamp, 0)
-		}
-		if err := service.Record(ctx, domainhistory.Entry{
-			Scope:      domainhistory.NormalizeScope(""),
-			Command:    entry.Command,
-			Source:     domainhistory.SourceShellHistory,
-			RecordedAt: recordedAt,
-		}); err != nil {
-			return
-		}
-		seen[entry.Command] = true
-	}
+		return commands
+	}, origin)
 }
 
 // connectionLogFromEvent maps one Session connection outcome to the persisted

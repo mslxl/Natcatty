@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	apphistory "github.com/mslxl/natcatty/application/history"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"gorm.io/gorm"
 )
@@ -125,6 +126,42 @@ func (s *Store) SaveHistoryMetadata(ctx context.Context, metadata domainhistory.
 			len(metadata.Series) > 0)
 	}); err != nil {
 		return fmt.Errorf("store: save history metadata: %w", err)
+	}
+	return nil
+}
+
+// ImportShellHistory writes the one-time Shell History File rows with their
+// create records and sets the durable import marker in one transaction. It is
+// a no-op when the marker is already set, so a repeated or concurrent import
+// cannot duplicate rows. A failed write leaves the projection, the record log,
+// and the marker unchanged.
+func (s *Store) ImportShellHistory(ctx context.Context, imports []apphistory.ShellHistoryImport) error {
+	for _, imported := range imports {
+		if !imported.Entry.Valid() {
+			return fmt.Errorf("store: invalid shell-history entry")
+		}
+		if imported.Record.Kind != domainhistory.RecordKindCreate ||
+			imported.Record.HistoryID != imported.Entry.ID {
+			return fmt.Errorf("store: shell-history record does not belong to entry %q", imported.Entry.ID)
+		}
+	}
+	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
+		alreadyImported, err := readMetaFlag(tx, metaKeyHistoryShellImport)
+		if err != nil {
+			return err
+		}
+		if alreadyImported {
+			return nil
+		}
+		for _, imported := range imports {
+			record := imported.Record
+			if err := writeHistoryEntry(tx, imported.Entry, &record); err != nil {
+				return err
+			}
+		}
+		return writeMetaFlag(tx, metaKeyHistoryShellImport, true)
+	}); err != nil {
+		return fmt.Errorf("store: import shell history: %w", err)
 	}
 	return nil
 }

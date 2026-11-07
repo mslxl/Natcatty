@@ -96,6 +96,22 @@ func TestHistoryReadsEveryShellHistoryFileNewestFirst(t *testing.T) {
 	if got[0].Command != "git log --oneline" || got[1].Command != "git status" {
 		t.Fatalf("timestamped order = %+v", got)
 	}
+	if got[0].Shell != "zsh" || got[1].Shell != "zsh" {
+		t.Fatalf("zsh rows lost their shell: %+v", got)
+	}
+	if got[2].Command != "deploy staging" || got[3].Command != "git branch" ||
+		got[2].Shell != "bash" || got[3].Shell != "bash" {
+		t.Fatalf("bash rows = %+v, want their shell", got[2:])
+	}
+}
+
+func TestKindNamesTheShellRecordedWithAnImport(t *testing.T) {
+	tests := map[Kind]string{Zsh: "zsh", Bash: "bash", Fish: "fish"}
+	for kind, want := range tests {
+		if got := kind.Shell(); got != want {
+			t.Fatalf("Kind(%d).Shell() = %q, want %q", kind, got, want)
+		}
+	}
 }
 
 func TestHistoryDeduplicatesAndSkipsNetcattyCommands(t *testing.T) {

@@ -41,6 +41,18 @@ const (
 	Fish
 )
 
+// Shell returns the shell name recorded with an imported Entry.
+func (kind Kind) Shell() string {
+	switch kind {
+	case Bash:
+		return "bash"
+	case Fish:
+		return "fish"
+	default:
+		return "zsh"
+	}
+}
+
 // File is one candidate history file.
 type File struct {
 	Path string
@@ -48,10 +60,11 @@ type File struct {
 }
 
 // Entry is one parsed command. Timestamp is Unix seconds, zero when the file
-// does not store one.
+// does not store one. Shell is the file's shell name, set by Reader.History.
 type Entry struct {
 	Command   string
 	Timestamp int64
+	Shell     string
 }
 
 // Options configures the history-file reader.
@@ -148,7 +161,9 @@ func (s *Reader) load() {
 		default:
 			entries = ParseZshHistory(text)
 		}
+		shell := file.Kind.Shell()
 		for _, entry := range entries {
+			entry.Shell = shell
 			merged = append(merged, sequencedEntry{Entry: entry, sequence: sequence})
 			sequence++
 		}

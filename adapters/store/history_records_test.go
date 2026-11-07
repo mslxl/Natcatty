@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	apphistory "github.com/mslxl/natcatty/application/history"
 	domainhistory "github.com/mslxl/natcatty/domain/history"
 )
 
@@ -558,5 +559,162 @@ func TestConcurrentRecordWritesAssignUniqueMonotonicIndexes(t *testing.T) {
 		if !seen[index] {
 			t.Fatalf("index %d is missing; got %v", index, seen)
 		}
+	}
+}
+
+func TestImportShellHistoryWritesRowsRecordsAndMarkerTogether(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "vault.db")
+	first, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	writer, err := first.EnsureWriterUUID(ctx, func() string { return testWriterUUID })
+	if err != nil {
+		t.Fatalf("EnsureWriterUUID: %v", err)
+	}
+	imports := []apphistory.ShellHistoryImport{
+		{
+			Entry: domainhistory.Entry{
+				ID: testEntryOne, Scope: "local", Command: "git status", Shell: "zsh",
+				Source: domainhistory.SourceShellHistory, Origin: "workstation:alice", RecordedAt: at(9),
+			},
+			Record: testHistoryRecord(domainhistory.RecordKindCreate, testEntryOne, testRecordOne, at(9)),
+		},
+		{
+			Entry: domainhistory.Entry{
+				ID: testEntryTwo, Scope: "local", Command: "secret command", Shell: "bash",
+				Source: domainhistory.SourceShellHistory, Origin: "workstation:alice", RecordedAt: at(10),
+			},
+			Record: testHistoryRecord(domainhistory.RecordKindCreate, testEntryTwo, testRecordTwo, at(10)),
+		},
+	}
+	if err := first.ImportShellHistory(ctx, imports); err != nil {
+		t.Fatalf("ImportShellHistory: %v", err)
+	}
+	live, err := first.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryEntries: %v", err)
+	}
+	if len(live) != 2 || live[0].ID != testEntryTwo || live[1].ID != testEntryOne {
+		t.Fatalf("live entries = %+v, want both imports newest first", live)
+	}
+	all, err := first.ListHistoryEntriesIncludingDeleted(ctx)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all entries = %d, %v; want 2", len(all), err)
+	}
+	log, err := first.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	if len(log) != 2 {
+		t.Fatalf("records = %d, want 2 creates", len(log))
+	}
+	for index, record := range log {
+		if record.Kind != domainhistory.RecordKindCreate ||
+			record.SeriesHost != writer || record.Index != int64(index) ||
+			record.HistoryID != imports[index].Entry.ID {
+			t.Fatalf("record %d = %+v", index, record)
+		}
+	}
+	metadata, err := first.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if !metadata.ShellHistoryImported {
+		t.Fatal("ImportShellHistory did not set the durable marker")
+	}
+
+	// A repeated import is a no-op even if the caller supplies new rows.
+	extra := apphistory.ShellHistoryImport{
+		Entry: domainhistory.Entry{
+			ID: testEntryThree, Scope: "local", Command: "later",
+			Source: domainhistory.SourceShellHistory, RecordedAt: at(11),
+		},
+		Record: testHistoryRecord(domainhistory.RecordKindCreate, testEntryThree, testRecordThree, at(11)),
+	}
+	if err := first.ImportShellHistory(ctx, []apphistory.ShellHistoryImport{extra}); err != nil {
+		t.Fatalf("repeated ImportShellHistory: %v", err)
+	}
+	live, _ = first.ListHistoryEntries(ctx)
+	if len(live) != 2 {
+		t.Fatalf("a repeated import wrote %d rows", len(live))
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer second.Close()
+	metadata, err = second.HistoryMetadata(ctx)
+	if err != nil || !metadata.ShellHistoryImported {
+		t.Fatalf("marker after reopen = %v, %v; want set", metadata.ShellHistoryImported, err)
+	}
+	live, err = second.ListHistoryEntries(ctx)
+	if err != nil || len(live) != 2 {
+		t.Fatalf("rows after reopen = %d, %v; want 2", len(live), err)
+	}
+}
+
+func TestImportShellHistoryRollsBackRowsAndMarkerOnFailure(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openWriterStore(t)
+	imports := []apphistory.ShellHistoryImport{
+		{
+			Entry: domainhistory.Entry{
+				ID: testEntryOne, Scope: "local", Command: "ls",
+				Source: domainhistory.SourceShellHistory, RecordedAt: at(9),
+			},
+			Record: testHistoryRecord(domainhistory.RecordKindCreate, testEntryOne, testRecordOne, at(9)),
+		},
+		{
+			Entry: domainhistory.Entry{
+				ID: testEntryTwo, Scope: "local", Command: "pwd",
+				Source: domainhistory.SourceShellHistory, RecordedAt: at(10),
+			},
+			Record: testHistoryRecord(domainhistory.RecordKindCreate, testEntryTwo, testRecordTwo, at(10)),
+		},
+	}
+	if _, err := store.db.Execute(ctx, `CREATE TRIGGER fail_import_record_insert
+		BEFORE INSERT ON history_records
+		BEGIN SELECT RAISE(ABORT, 'injected import failure'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if err := store.ImportShellHistory(ctx, imports); err == nil {
+		t.Fatal("ImportShellHistory succeeded despite the injected record failure")
+	}
+	live, err := store.ListHistoryEntriesIncludingDeleted(ctx)
+	if err != nil || len(live) != 0 {
+		t.Fatalf("failed import left entries = %+v, %v", live, err)
+	}
+	log, err := store.ListHistoryRecords(ctx)
+	if err != nil || len(log) != 0 {
+		t.Fatalf("failed import left records = %+v, %v", log, err)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil {
+		t.Fatalf("HistoryMetadata: %v", err)
+	}
+	if metadata.ShellHistoryImported {
+		t.Fatal("a failed import set the durable marker")
+	}
+}
+
+func TestImportShellHistorySetsMarkerForAnEmptyFileSet(t *testing.T) {
+	ctx := context.Background()
+	store := openHistoryStore(t)
+	if err := store.ImportShellHistory(ctx, nil); err != nil {
+		t.Fatalf("ImportShellHistory empty: %v", err)
+	}
+	metadata, err := store.HistoryMetadata(ctx)
+	if err != nil || !metadata.ShellHistoryImported {
+		t.Fatalf("empty import marker = %v, %v; want set", metadata.ShellHistoryImported, err)
+	}
+	log, err := store.ListHistoryRecords(ctx)
+	if err != nil || len(log) != 0 {
+		t.Fatalf("empty import wrote records = %+v, %v", log, err)
 	}
 }
