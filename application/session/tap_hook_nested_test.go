@@ -481,6 +481,128 @@ func TestTapHookPromptLikeOutputIsNotANestedShell(t *testing.T) {
 	}
 }
 
+// A hooked zsh can launch xonsh. Its default prompt ends with "@", which the
+// ordinary prompt heuristic does not know. The outer command is finalized once
+// with unknown finish/exit, the inner commands use Tier 3, and the outer
+// handshake publishes the last inner capture and restores Tier 1.
+func TestTapHookNestedXonshKeepsInnerCommandsTierThree(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte(hookHandshake("zsh")), tapAt(0))
+
+	tap.handleInput([]byte("xonsh -l\r"), tapAt(time.Second))
+	tap.observe([]byte(netcattyExec("zsh", "/work", "xonsh -l", false)),
+		tapAt(time.Second+time.Millisecond))
+
+	// Xonsh draws its default prompt in several chunks; the final visible
+	// line ends with the "@" prompt token.
+	_, effects := tap.observe([]byte("user@host /work @"), tapAt(1200*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("outer completions = %+v, want one", effects.Completions)
+	}
+	outer := effects.Completions[0]
+	if outer.command != "xonsh -l" || outer.captureTier != domainhistory.CaptureTierHook ||
+		outer.hasExitCode || !outer.finishedAt.IsZero() {
+		t.Fatalf("outer completion = %+v", outer)
+	}
+	if tap.state(tapAt(1200 * time.Millisecond)).HookActive {
+		t.Fatal("the outer hook stayed authoritative over nested xonsh")
+	}
+
+	// An inner command is captured from typed input. The xonsh prompt finishes
+	// it, but no exit code or native cwd is borrowed from the outer shell.
+	tap.handleInput([]byte("echo inner\r"), tapAt(1300*time.Millisecond))
+	_, effects = tap.observe([]byte("inner\r\nuser@host /work @"), tapAt(1500*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("inner completions = %+v, want one", effects.Completions)
+	}
+	inner := effects.Completions[0]
+	if inner.command != "echo inner" || inner.captureTier != domainhistory.CaptureTierFallback ||
+		inner.cwd != "" || inner.hasExitCode {
+		t.Fatalf("inner completion = %+v", inner)
+	}
+
+	// "exit" has no prompt after it. The outer hook's handshake finalizes it
+	// with an unknown finish instead of borrowing the outer command's D.
+	tap.handleInput([]byte("exit\r"), tapAt(1600*time.Millisecond))
+	_, effects = tap.observe([]byte(hookHandshake("zsh")), tapAt(1800*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("exit completions = %+v, want one", effects.Completions)
+	}
+	leaving := effects.Completions[0]
+	if leaving.command != "exit" || leaving.captureTier != domainhistory.CaptureTierFallback ||
+		leaving.hasExitCode || !leaving.finishedAt.IsZero() {
+		t.Fatalf("exit completion = %+v", leaving)
+	}
+	if !tap.state(tapAt(1800 * time.Millisecond)).HookActive {
+		t.Fatal("the outer handshake did not restore the hook")
+	}
+
+	// The restored hook captures the next outer command at Tier 1 again.
+	tap.handleInput([]byte("echo back\r"), tapAt(1900*time.Millisecond))
+	tap.observe([]byte(netcattyExec("zsh", "/work", "echo back", false)),
+		tapAt(1900*time.Millisecond+time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"), tapAt(2*time.Second))
+	if len(effects.Completions) != 1 || effects.Completions[0].captureTier != domainhistory.CaptureTierHook {
+		t.Fatalf("restored completion = %+v", effects.Completions)
+	}
+}
+
+// Nushell emits native OSC 133/7 from the inner shell. Those marks must not
+// raise the inner capture to Tier 2 or let the outer command borrow the inner
+// exit/duration.
+func TestTapHookNestedNuIgnoresNativeMarks(t *testing.T) {
+	tap := newTerminalTap(domainterminal.ClipboardWriteOnly)
+	tap.observe([]byte(hookHandshake("bash")), tapAt(0))
+
+	tap.handleInput([]byte("nu -l\r"), tapAt(time.Second))
+	tap.observe([]byte(netcattyExec("bash", "/work", "nu -l", false)),
+		tapAt(time.Second+time.Millisecond))
+
+	// Nu emits its native mark set and prompt.
+	_, effects := tap.observe([]byte("\x1b]133;A\x07\x1b]7;file://host/inner\x07\x1b]133;B\x07/inner> "),
+		tapAt(1200*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("outer completions = %+v, want one", effects.Completions)
+	}
+	if outer := effects.Completions[0]; outer.command != "nu -l" ||
+		outer.captureTier != domainhistory.CaptureTierHook ||
+		outer.hasExitCode || !outer.finishedAt.IsZero() {
+		t.Fatalf("outer completion = %+v", outer)
+	}
+
+	// The inner command's native C/D are ignored: the prompt still finalizes
+	// the typed capture, but the exit code and the inner cwd stay unknown.
+	tap.handleInput([]byte("echo inner\r"), tapAt(1300*time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;C\x07inner\r\n\x1b]133;D;0\x07\x1b]7;file://host/inner\x07/inner> "),
+		tapAt(1500*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("inner completions = %+v, want one", effects.Completions)
+	}
+	inner := effects.Completions[0]
+	if inner.command != "echo inner" || inner.captureTier != domainhistory.CaptureTierFallback ||
+		inner.cwd != "" || inner.hasExitCode {
+		t.Fatalf("inner completion = %+v", inner)
+	}
+	if got := tap.state(tapAt(1500 * time.Millisecond)).CWD; got != "" {
+		t.Fatalf("the nested shell's cwd leaked into Session state: %q", got)
+	}
+
+	// The outer handshake publishes the last inner capture and restores Tier 1.
+	tap.handleInput([]byte("exit\r"), tapAt(1600*time.Millisecond))
+	_, effects = tap.observe([]byte("\x1b]133;D;0\x07"+hookHandshake("bash")), tapAt(1800*time.Millisecond))
+	if len(effects.Completions) != 1 {
+		t.Fatalf("exit completions = %+v, want one", effects.Completions)
+	}
+	leaving := effects.Completions[0]
+	if leaving.command != "exit" || leaving.captureTier != domainhistory.CaptureTierFallback ||
+		leaving.hasExitCode || !leaving.finishedAt.IsZero() {
+		t.Fatalf("exit completion = %+v", leaving)
+	}
+	if !tap.state(tapAt(1800 * time.Millisecond)).HookActive {
+		t.Fatal("the outer handshake did not restore the hook")
+	}
+}
+
 func TestNestedShellCommand(t *testing.T) {
 	cases := map[string]bool{
 		"/bin/bash":          true,
@@ -517,13 +639,10 @@ func TestNestedShellCommand(t *testing.T) {
 		`& pwsh -ExecutionPolicy Bypass -NoExit`:                    true,
 		`& bash`:                                                    true,
 		`& tmux attach`:                                             true,
-		// A quoted option value keeps its spaces as one word.
-		`pwsh -WorkingDirectory 'C:\dir with a space'`:             true,
-		`pwsh -WorkingDirectory "C:\Program Files\PowerShell\7"`:   true,
-		`& pwsh -NoLogo -WorkingDirectory '/tmp/dir with a space'`: true,
-		`pwsh -WorkingDirectory 'C:\it''s here' -NoLogo`:           true,
-		// -NoExit keeps the prompt after -Command/-File/-EncodedCommand,
-		// but only before them: after, it is the command's own argument.
+		`pwsh -WorkingDirectory 'C:\dir with a space'`:              true,
+		`pwsh -WorkingDirectory "C:\Program Files\PowerShell\7"`:    true,
+		`& pwsh -NoLogo -WorkingDirectory '/tmp/dir with a space'`:  true,
+		`pwsh -WorkingDirectory 'C:\it''s here' -NoLogo`:            true,
 		"pwsh -NoExit -Command 'echo hi'":                           true,
 		"pwsh -NoExit -File script.ps1":                             true,
 		"pwsh -NoExit -EncodedCommand AAAA":                         true,
@@ -543,15 +662,33 @@ func TestNestedShellCommand(t *testing.T) {
 		`& pwsh -Command 'echo hi'`:                                 false,
 		`& bash -c 'echo hi'`:                                       false,
 		`& "C:\Program Files\PowerShell\7\pwsh.exe" -File hook.ps1`: false,
-		"&":                  false,
-		"&& pwsh":            false,
-		"bash -c 'echo hi'":  false,
-		"bash -lc 'echo hi'": false,
-		"sh script.sh":       false,
-		"tmux ls":            false,
-		"vim":                false,
-		"sleep 3":            false,
-		"":                   false,
+		"&":                        false,
+		"&& pwsh":                  false,
+		"bash -c 'echo hi'":        false,
+		"bash -lc 'echo hi'":       false,
+		"sh script.sh":             false,
+		"tmux ls":                  false,
+		"vim":                      false,
+		"sleep 3":                  false,
+		"":                         false,
+		"nu":                       true,
+		"nu -l":                    true,
+		"nu --login":               true,
+		"/opt/homebrew/bin/nu":     true,
+		"-nu":                      true,
+		"xonsh":                    true,
+		"xonsh -l":                 true,
+		"xonsh --login":            true,
+		"/usr/local/bin/xonsh":     true,
+		"-xonsh":                   true,
+		"nu -c 'echo hi'":          false,
+		"nu --commands 'echo hi'":  false,
+		"nu --commands=echo hi":    false,
+		"nu --execute=echo hi":     false,
+		"nu script.nu":             false,
+		"xonsh -c 'print(1)'":      false,
+		"xonsh --command=print(1)": false,
+		"xonsh script.xsh":         false,
 	}
 	for command, want := range cases {
 		if got := nestedShellCommand(command); got != want {

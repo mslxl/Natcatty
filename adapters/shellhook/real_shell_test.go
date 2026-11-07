@@ -922,11 +922,13 @@ func TestRealXonshSessionCapturesTierOneEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRealXonshWithoutHookKeepsTypedFallback starts xonsh with the hook
-// disabled. Xonsh emits no native OSC 133/7 and its default prompt is not the
-// heuristic's shape, so the command is finalized at Session close as Tier 3
-// with no cwd, exit, or finish. The row must still be captured exactly once.
-func TestRealXonshWithoutHookKeepsTypedFallback(t *testing.T) {
+// TestRealXonshWithoutHookKeepsNativeFallback starts xonsh with the hook
+// disabled. Xonsh emits OSC 7 at its first interactive prompt, so the typed
+// command starts as Tier 2 with the cwd the shell reported. It does not emit
+// OSC 133 and its default prompt is not the heuristic's shape, so the command
+// is finalized at Session close with no exit or finish. The row must still be
+// captured exactly once.
+func TestRealXonshWithoutHookKeepsNativeFallback(t *testing.T) {
 	path := xonshPath(t)
 	for _, key := range []string{
 		"ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY",
@@ -974,6 +976,16 @@ func TestRealXonshWithoutHookKeepsTypedFallback(t *testing.T) {
 		text, _ := service.ScreenText(session.ID())
 		t.Fatalf("the xonsh user startup never ran: %q", text.Text)
 	}
+	// The rc marker is printed while xonsh loads its startup files, before the
+	// shell builds its interactive prompt. Wait for the OSC 7 that precedes the
+	// first prompt, so the typed command starts with the reported cwd.
+	if !waitCondition(func() bool { return session.Snapshot().CWD != "" }) {
+		t.Fatalf("xonsh never reported its cwd: snapshot=%+v", session.Snapshot())
+	}
+	expectedCWD := workDir
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
+		expectedCWD = resolved
+	}
 	typed := "echo netcatty_xonsh_typed_42"
 	service.SendInput([]model.SessionID{session.ID()}, []byte(typed+"\r"))
 	if !waitCondition(func() bool {
@@ -990,11 +1002,11 @@ func TestRealXonshWithoutHookKeepsTypedFallback(t *testing.T) {
 	if event.Command != typed {
 		t.Fatalf("completion = %+v, want %q", event, typed)
 	}
-	if event.CaptureTier != domainhistory.CaptureTierFallback {
-		t.Fatalf("fallback tier = %d, want Tier 3: %+v", event.CaptureTier, event)
+	if event.CaptureTier != domainhistory.CaptureTierNativeOSC {
+		t.Fatalf("fallback tier = %d, want Tier 2 from OSC 7: %+v", event.CaptureTier, event)
 	}
-	if event.CWD != "" {
-		t.Fatalf("the typed fallback invented a cwd: %+v", event)
+	if event.CWD != workDir && event.CWD != expectedCWD {
+		t.Fatalf("the OSC 7 cwd = %q, want %q: %+v", event.CWD, workDir, event)
 	}
 	if event.HasExitCode {
 		t.Fatalf("the typed fallback invented an exit code: %+v", event)
@@ -1088,6 +1100,9 @@ func TestRealNushellWithoutHookKeepsNativeCapture(t *testing.T) {
 	}
 	if event.FinishedAt.IsZero() {
 		t.Fatalf("the native prompt never reported a finish: %+v", event)
+	}
+	if event.HasExitCode {
+		t.Fatalf("the native fallback invented an exit code: %+v", event)
 	}
 	t.Logf("nushell native fidelity: tier=%d cwd=%q exit=%d/%t duration=%v",
 		event.CaptureTier, event.CWD, event.ExitCode, event.HasExitCode,

@@ -551,11 +551,15 @@ def __netcatty_install():
 
     $NETCATTY_HOOK = "1"
 
-if __netcatty_os.environ.get("NETCATTY_HOOK"):
+# A non-interactive child (xonsh -c) sources this file whenever it inherits
+# XONSHRC_DIR. It must stay silent: the skip marker written to stdout would
+# corrupt the child's redirected output. Test interactivity before emitting
+# anything at all.
+if not bool($XONSH_INTERACTIVE):
+    pass
+elif __netcatty_os.environ.get("NETCATTY_HOOK"):
     __netcatty_skip()
 elif any(__netcatty_os.environ.get(name) for name in ("ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY", "ITERM_SHELL_INTEGRATION_INSTALLED")):
-    __netcatty_skip()
-elif not bool($XONSH_INTERACTIVE):
     __netcatty_skip()
 else:
     try:
@@ -615,21 +619,9 @@ NETCATTY_USER_ZDOTDIR="$netcatty_zdotdir" NETCATTY_HOOK_DIR="$netcatty_dir" ZDOT
 	builder.WriteString(remoteFile("hook.fish", fishHookText))
 	builder.WriteString(`NETCATTY_HOOK_FILE="$netcatty_dir/hook.fish" "$netcatty_shell" -l --init-command "source \"\$NETCATTY_HOOK_FILE\""
 ` + ";;\n")
-	builder.WriteString("nu)\n")
-	builder.WriteString(remoteFile("hook.nu", nuHookText))
-	builder.WriteString(`NETCATTY_HOOK_DIR="$netcatty_dir" "$netcatty_shell" -l -e "source \"$netcatty_dir/hook.nu\""
-` + ";;\n")
-	builder.WriteString("xonsh)\n")
-	builder.WriteString(remoteFile("hook.xsh", xonshHookText))
-	builder.WriteString(`NETCATTY_HOOK_DIR="$netcatty_dir"
-if [ -n "${XONSHRC_DIR:-}" ]; then
-  XONSHRC_DIR="$XONSHRC_DIR:$netcatty_dir"
-else
-  XONSHRC_DIR="${XONSH_SYS_CONFIG_DIR:-/etc/xonsh}/rc.d:${XONSH_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/xonsh}/rc.d:$netcatty_dir"
-fi
-export XONSHRC_DIR NETCATTY_HOOK_DIR
-"$netcatty_shell" -l
-` + ";;\n")
+	// xonsh, csh, tcsh, nushell, and every other login shell never reach this
+	// wrapper: the SSH transport keeps the plain login shell for them, because
+	// sshd would ask the login shell to parse this POSIX script itself.
 	builder.WriteString("esac\n")
 	builder.WriteString("netcatty_status=$?\nexit $netcatty_status\n")
 	return builder.String()
@@ -654,7 +646,7 @@ if [ -z "$netcatty_shell" ] || [ ! -x "$netcatty_shell" ]; then
 fi
 netcatty_name=${netcatty_shell##*/}
 case "$netcatty_name" in
-zsh|bash|fish|nu|xonsh)
+zsh|bash|fish)
   ;;
 *)
   printf "\033]1337;NetcattyHookSkip\007"

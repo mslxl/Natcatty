@@ -135,7 +135,10 @@ func (p *Planner) Plan(spec appsession.StartSpec) (appsession.CaptureHookPlan, b
 		spec.RemoteCommand = remoteWrapperCommand()
 		// The transport learns the peer's platform only after connecting. A
 		// Windows OpenSSH peer needs a PowerShell wrapper instead of the POSIX
-		// one, so the factory may choose the final command then.
+		// one, so the factory may choose the final command then. On POSIX
+		// peers it must also prove the login shell can parse a POSIX command;
+		// the wrapper is withdrawn for xonsh, csh, tcsh, nu, and unknown
+		// shells.
 		spec.CaptureHookRemote = true
 		return appsession.CaptureHookPlan{Spec: spec, HookExpected: true}, false
 	default:
@@ -306,6 +309,34 @@ func shellName(path string) string {
 	return path[strings.LastIndex(path, "/")+1:]
 }
 
+// RemoteLoginShellSupported reports whether an SSH login shell can receive the
+// POSIX remote wrapper. Only zsh, bash, and fish qualify: their command
+// language accepts the wrapper and Netcatty has a hook for them. Xonsh, csh,
+// tcsh, nushell, and every unknown shell must open as the plain login shell
+// and use Tier 2/3, because sshd runs the RemoteCommand through the login
+// shell with -c and a POSIX script is a parse error there.
+func RemoteLoginShellSupported(shellPath string) bool {
+	name := filepath.Base(strings.TrimSpace(shellPath))
+	name = strings.TrimPrefix(name, "-")
+	switch name {
+	case shellZsh, shellBash, shellFish:
+		return true
+	default:
+		return false
+	}
+}
+
+// RemoteCommandForLoginShell returns the command an SSH transport should run
+// for the detected login shell. A supported shell receives the planned
+// wrapper; every other answer, including an empty one when the login shell
+// could not be established, keeps the plain interactive login shell.
+func RemoteCommandForLoginShell(planned, loginShell string) string {
+	if RemoteLoginShellSupported(loginShell) {
+		return planned
+	}
+	return ""
+}
+
 // interactiveShellArgs rejects invocations that run a command or a script, or
 // that tell the shell not to read a startup file. A user-supplied startup file
 // is preserved by skipping injection instead of overriding it.
@@ -359,6 +390,12 @@ func nuNonInteractiveArg(arg string) bool {
 		"--stdin", "--mcp", "-h", "--help", "-v", "--version":
 		return true
 	}
+	// The GNU long options also accept an attached value. -e is reserved for
+	// the hook's own source command, so a user-supplied --execute= must be
+	// rejected exactly like --execute.
+	if strings.HasPrefix(arg, "--commands=") || strings.HasPrefix(arg, "--execute=") {
+		return true
+	}
 	return shortOptionCarries(arg, "cen")
 }
 
@@ -370,7 +407,7 @@ func xonshNonInteractiveArg(arg string) bool {
 		"-V", "--version", "-h", "--help":
 		return true
 	}
-	if strings.HasPrefix(arg, "--rc=") {
+	if strings.HasPrefix(arg, "--rc=") || strings.HasPrefix(arg, "--command=") {
 		return true
 	}
 	return shortOptionCarries(arg, "cn")

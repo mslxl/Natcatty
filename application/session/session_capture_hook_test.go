@@ -7,8 +7,15 @@ import (
 	"testing"
 	"time"
 
+	domainhistory "github.com/mslxl/natcatty/domain/history"
 	"github.com/mslxl/natcatty/domain/model"
 )
+
+// withdrawnCaptureTransport models an SSH transport that kept the plain login
+// shell because the login shell could not accept the planned POSIX wrapper.
+type withdrawnCaptureTransport struct{ *fakeTransport }
+
+func (t *withdrawnCaptureTransport) CaptureHookWithdrawn() bool { return true }
 
 type captureHookFunc func(StartSpec) (CaptureHookPlan, bool)
 
@@ -34,6 +41,48 @@ func TestCaptureHookPlanReachesTheTransport(t *testing.T) {
 	}
 	if len(factory.spec.Env) != 1 || factory.spec.Env[0] != "NETCATTY_HOOK=1" {
 		t.Fatalf("factory env = %v", factory.spec.Env)
+	}
+}
+
+// A planned hook that the transport withdrew must not keep the first typed
+// command tentative. The Session captures it with the ordinary fallback and
+// finishes it at the shell's own prompt.
+func TestCaptureHookWithdrawnKeepsTypedCapture(t *testing.T) {
+	base := newFakeTransport()
+	transport := &withdrawnCaptureTransport{fakeTransport: base}
+	events := make(chan CommandEvent, 4)
+	hook := captureHookFunc(func(spec StartSpec) (CaptureHookPlan, bool) {
+		spec.RemoteCommand = "exec /bin/sh -c wrapper"
+		spec.CaptureHookRemote = true
+		return CaptureHookPlan{Spec: spec, HookExpected: true}, false
+	})
+	service := newTestService(&staticFactory{transport: transport},
+		WithCaptureHook(hook),
+		WithCommandCompletionHook(func(event CommandEvent) { events <- event }),
+	)
+	session, err := service.Open(context.Background(), StartSpec{
+		Kind: KindSSH, HostID: "host-1", Hostname: "example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if _, err := session.TerminalConn().Write([]byte("echo plain\r")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "typed input", func() bool { return base.input() == "echo plain\r" })
+	base.send("echo plain\r\nresult\r\n$ ")
+	_ = readOutput(t, session)
+	select {
+	case event := <-events:
+		if event.Command != "echo plain" ||
+			event.CaptureTier != domainhistory.CaptureTierFallback ||
+			event.HasExitCode || event.FinishedAt.IsZero() {
+			t.Fatalf("completion = %+v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the withdrawn hook kept the typed command tentative")
 	}
 }
 

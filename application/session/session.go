@@ -324,6 +324,16 @@ type CaptureHookExpectedReporter interface {
 	CaptureHookExpected() bool
 }
 
+// CaptureHookWithdrawn is implemented by a transport that dropped the planned
+// capture hook before the shell started. An SSH transport withdraws the hook
+// when it cannot establish that the login shell accepts the POSIX wrapper, for
+// example when the login shell is xonsh, csh, or tcsh. The Session must then
+// stop reserving its first typed command for a handshake that will never
+// arrive and keep the ordinary native or typed fallback.
+type CaptureHookWithdrawn interface {
+	CaptureHookWithdrawn() bool
+}
+
 // ResumePreserver is implemented by transports that can keep their resume
 // credentials in the secret store past Close. Close clears them by default; the
 // Session service preserves them when it abandons a transport for a reconnect
@@ -398,9 +408,11 @@ type StartSpec struct {
 	// CaptureHookRemote marks an SSH Session whose interactive shell startup
 	// the session capture hook owns. A transport that learns the peer platform
 	// after connecting may replace RemoteCommand with the wrapper for that
-	// platform; a transport that does not leaves it unchanged. The flag is only
-	// set by the capture hook planner and never accompanies a user-supplied
-	// RemoteCommand. Other transports ignore it.
+	// platform; a transport that does not leaves it unchanged. It may also
+	// withdraw the wrapper for a login shell that cannot parse a POSIX command,
+	// so xonsh, csh, or tcsh never receives one. The flag is only set by the
+	// capture hook planner and never accompanies a user-supplied RemoteCommand.
+	// Other transports ignore it.
 	CaptureHookRemote bool
 	// AutoAttachTmux asks an SSH transport to keep the remote shell in the
 	// Host's deterministic tmux session. The transport probes the remote and
@@ -913,6 +925,13 @@ func (s *Service) Open(ctx context.Context, spec StartSpec) (*Session, error) {
 		// installed. Do not reserve the first typed command for a handshake
 		// that will never come; Tier 2/3 capture starts at the first Enter.
 		hookExpected = false
+	}
+	if hookExpected {
+		// The transport may have withdrawn the plan at open time. Do not
+		// reserve the first typed command for a handshake that cannot arrive.
+		if withdrawn, ok := transport.(CaptureHookWithdrawn); ok && withdrawn.CaptureHookWithdrawn() {
+			hookExpected = false
+		}
 	}
 
 	id := s.newID()
@@ -1637,6 +1656,11 @@ func (s *Session) loop() {
 				}
 				s.reopening = false
 				s.transport = cmd.transport
+				if withdrawn, ok := cmd.transport.(CaptureHookWithdrawn); ok && withdrawn.CaptureHookWithdrawn() {
+					// The replacement transport kept the plain login shell. Release
+					// any hook reservation left from the previous generation.
+					s.tap.withdrawCaptureHook()
+				}
 				s.bindScreenSizer(cmd.transport)
 				s.update(func(snapshot *Snapshot) {
 					snapshot.Connection = ConnectionStatusActive

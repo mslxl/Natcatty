@@ -256,7 +256,13 @@ type terminalTap struct {
 	// hookSeen reports that the planned hook has spoken at least once. A
 	// nested shell detected later clears hookActive but not hookSeen, so its
 	// inner commands return to the ordinary Tier 2/3 capture.
-	hookSeen     bool
+	hookSeen bool
+	// nestedShell names an opaque nested shell (nu or xonsh) that took over
+	// the terminal from a hook-owned command. Its native OSC marks belong to
+	// the nested shell, not the Session shell, so they are not used to raise
+	// the inner commands above the typed fallback. The outer hook's next
+	// handshake clears it and restores Tier 1.
+	nestedShell  string
 	inputBuffer  string
 	inputPending []byte
 	inputEscape  inputState
@@ -310,6 +316,22 @@ func (t *terminalTap) setClipboardPolicy(policy domainterminal.ClipboardAccess) 
 	t.mu.Lock()
 	t.policy = policy
 	t.mu.Unlock()
+}
+
+// withdrawCaptureHook releases a planned hook that the transport did not
+// install. The shell never receives the startup files, so its own prompt
+// marks may finalize a typed capture again. Clearing hookSeen also means an
+// unrelated late skip cannot change state later.
+func (t *terminalTap) withdrawCaptureHook() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.hookExpected = false
+	t.hookActive = false
+	t.hookSeen = false
+	t.nestedShell = ""
+	if t.pending != nil {
+		t.pending.awaitingHook = false
+	}
 }
 
 // observe consumes transport output and returns the bytes the terminal may
@@ -646,6 +668,11 @@ func (t *terminalTap) handleOSC(payload []byte, now time.Time) (bool, tapEffects
 		t.title = string(rest)
 		return true, tapEffects{Changed: true}
 	case 7:
+		if t.nestedShell != "" {
+			// The nested shell's cwd is not the Session shell's cwd. The outer
+			// shell publishes its own OSC 7 again with the next hook handshake.
+			return true, tapEffects{}
+		}
 		t.cwd = parseOSC7(string(rest))
 		t.nativeSeen = true
 		return true, tapEffects{Changed: true}
@@ -659,8 +686,12 @@ func (t *terminalTap) handleOSC(payload []byte, now time.Time) (bool, tapEffects
 		}
 		return true, effects
 	case 1337:
-		if changed, owned := t.handleNetcattyHook(string(rest)); owned {
-			return false, tapEffects{Changed: changed}
+		if changed, owned, completion := t.handleNetcattyHook(string(rest)); owned {
+			effects := tapEffects{Changed: changed}
+			if completion != nil {
+				effects.Completions = []capturedCommand{*completion}
+			}
+			return false, effects
 		}
 		if changed, owned := t.handleNetcattyHookSkip(string(rest)); owned {
 			return false, tapEffects{Changed: changed}
@@ -742,6 +773,13 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 	if rest == "" {
 		return false, nil
 	}
+	if t.nestedShell != "" {
+		// While an opaque nested shell owns the terminal, native marks come
+		// from it (nu) or are the outer hook's late marks for a command that
+		// was already finalized. Neither may change the Session shell's
+		// capture state; the next outer handshake restores it.
+		return false, nil
+	}
 	kind := rest[0]
 	switch kind {
 	case 'A':
@@ -812,20 +850,28 @@ func (t *terminalTap) handleOSC133(rest string, now time.Time) (bool, *capturedC
 // private preexec sequence is the authoritative command start. A sequence with
 // the private marker is always consumed, even when malformed; a malformed
 // payload changes nothing so a broken handshake leaves the fallback in place.
-func (t *terminalTap) handleNetcattyHook(rest string) (changed, owned bool) {
+func (t *terminalTap) handleNetcattyHook(rest string) (changed, owned bool, completion *capturedCommand) {
 	if !strings.HasPrefix(rest, netcattyHookPrefix) {
-		return false, false
+		return false, false, nil
 	}
 	if !validHookShell(rest[len(netcattyHookPrefix):]) {
-		return false, true
+		return false, true, nil
+	}
+	if t.nestedShell != "" {
+		// A hook has resumed after the nested shell: the outer command's
+		// handshake, or the nested shell's own hook. Publish the last inner
+		// fallback capture before Tier 1 takes over again. Its finish and exit
+		// stay unknown because the inner shell never reported them to us.
+		completion = t.finalizePendingLocked(time.Time{}, false, 0, false)
+		t.nestedShell = ""
 	}
 	if t.hookActive {
 		t.hookSeen = true
-		return false, true
+		return completion != nil, true, completion
 	}
 	t.hookActive = true
 	t.hookSeen = true
-	return true, true
+	return true, true, completion
 }
 
 // handleNetcattyHookSkip consumes the startup script's refusal marker. A hook
@@ -847,8 +893,14 @@ func (t *terminalTap) handleNetcattyHookSkip(rest string) (changed, owned bool) 
 	if shell != "" && !validHookShell(shell) {
 		return false, true
 	}
-	if t.hookActive {
-		if t.pending == nil || !nestedShellCommand(t.pending.command) {
+	if t.nestedShell != "" {
+		// A skip from the opaque nested shell says nothing about the outer
+		// hook, which is resumed by its own handshake.
+		return false, true
+	}
+	if t.hookSeen {
+		if !t.hookActive || t.pending == nil || !nestedShellCommand(t.pending.command) {
+			// The installed hook stays authoritative; a late skip is ignored.
 			return false, true
 		}
 		// A shell we launched nested refused its own hook. Its startup script
@@ -1298,11 +1350,12 @@ func (t *terminalTap) hookOwnedPending() bool {
 // capture. The outer D that arrives when the inner shell exits is ignored
 // because the capture is already finalized; the next handshake restores Tier 1.
 func (t *terminalTap) promptNestedShellLocked(now time.Time) (promptResult, *capturedCommand) {
-	if !nestedShellCommand(t.pending.command) {
+	name := nestedShellName(t.pending.command)
+	if name == "" {
 		return promptNoChange, nil
 	}
 	line := lastVisibleLine(t.tail)
-	if line == "" || !promptLike(line) || continuationPrompt(line) {
+	if line == "" || !nestedShellPromptLike(name, line) || continuationPrompt(line) {
 		return promptNoChange, nil
 	}
 	if !t.pending.startedAt.IsZero() && now.Sub(t.pending.startedAt) < promptWindow {
@@ -1314,21 +1367,40 @@ func (t *terminalTap) promptNestedShellLocked(now time.Time) (promptResult, *cap
 	// Tier 3 instead of inheriting Tier 2 from the parent. A child that emits
 	// native marks sets this again for its own commands.
 	t.nativeSeen = false
+	if name == "nu" || name == "xonsh" {
+		// These shells were not started with the Session hook. Their native
+		// marks describe the inner shell, so drop the outer cwd state and keep
+		// the inner commands on the typed fallback (Tier 3) until the Session
+		// shell's next handshake.
+		t.cwd = ""
+		t.nestedShell = name
+	}
 	return promptFinished, t.finalizePendingLocked(now, false, 0, false)
 }
 
-// nestedShellCommand reports whether command starts an interactive shell or an
-// attach client that takes over the terminal. The command line is split with
-// quote and escape awareness, so a launcher or an option value that contains
-// spaces ("-WorkingDirectory 'C:\dir with a space'") stays one word. A shell
-// is only recognized when every argument is an option: an operand is a script
-// path and -c runs a command, so neither produces an inner interactive prompt.
-// The list is intentionally small and conservative; an unrecognized launch
-// keeps the existing Tier 1 semantics until its D arrives.
-func nestedShellCommand(command string) bool {
+// nestedShellPromptLike recognizes the primary prompt of a nested shell. The
+// ordinary prompt heuristic covers bash, zsh, fish, and nu. Xonsh's default
+// prompt ends with the "@" that separates the path from the prompt token, so
+// it needs its own suffix.
+func nestedShellPromptLike(name, line string) bool {
+	if promptLike(line) {
+		return true
+	}
+	return name == "xonsh" && strings.HasSuffix(strings.TrimRight(line, " \t"), "@")
+}
+
+// nestedShellName reports the interactive shell or attach client command
+// starts, or "" when it does not take over the terminal. The command line is
+// split with quote and escape awareness, so a launcher or an option value that
+// contains spaces stays one word. A shell is only recognized when every
+// argument is an option: an operand is a script path and -c runs a command, so
+// neither produces an inner interactive prompt. Nushell and xonsh are included
+// because a hooked POSIX shell can hand its terminal to either, and their inner
+// commands must not be lost.
+func nestedShellName(command string) string {
 	words := splitShellWords(command)
 	if len(words) == 0 {
-		return false
+		return ""
 	}
 	// PowerShell's call operator prefixes the launcher: "& pwsh" or
 	// "& 'C:\Program Files\...\pwsh.exe'". A leading ampersand is a syntax
@@ -1337,12 +1409,12 @@ func nestedShellCommand(command string) bool {
 	if words[0] == "&" {
 		words = words[1:]
 		if len(words) == 0 {
-			return false
+			return ""
 		}
 	} else if strings.HasPrefix(words[0], "&") {
 		words[0] = strings.TrimPrefix(words[0], "&")
 		if words[0] == "" {
-			return false
+			return ""
 		}
 	}
 	first := words[0]
@@ -1353,49 +1425,85 @@ func nestedShellCommand(command string) bool {
 		first = first[slash+1:]
 	}
 	first = strings.ToLower(strings.TrimSuffix(first, ".exe"))
-	arguments := words[1:]
+	// A login shell may be invoked through an argv0 such as -nu.
+	first = strings.TrimPrefix(first, "-")
 	switch first {
-	case "bash", "zsh", "fish", "sh", "dash", "ksh":
-		for _, argument := range arguments {
-			if !strings.HasPrefix(argument, "-") {
-				return false
-			}
-			if strings.HasPrefix(argument, "--") {
-				continue
-			}
-			if strings.Contains(argument, "c") {
-				return false
-			}
+	case "bash", "zsh", "fish", "sh", "dash", "ksh", "nu", "xonsh":
+		if nestedShellArgsInteractive(first, words[1:]) {
+			return first
 		}
-		return true
+		return ""
 	case "pwsh", "powershell":
 		// PowerShell's interactive options do not share the POSIX short
 		// forms; -Command, -File, -EncodedCommand, and -NonInteractive all
 		// end the interactive prompt unless -NoExit comes before them.
 		// Known value-taking options may carry their value as the next
 		// argument ("-ExecutionPolicy Bypass") and still open the prompt.
-		return nestedPowerShellArguments(arguments)
-	case "ssh":
-		return true
-	case "tmux":
-		if len(arguments) < 1 {
-			return false
+		if nestedPowerShellArguments(words[1:]) {
+			return first
 		}
-		switch arguments[0] {
+		return ""
+	case "ssh":
+		return "ssh"
+	case "tmux":
+		if len(words) < 2 {
+			return ""
+		}
+		switch words[1] {
 		case "attach", "attach-session", "a":
-			return true
+			return "tmux"
 		}
 	}
-	return false
+	return ""
 }
 
-// splitShellWords splits a command line into words, honoring PowerShell's
-// quoting rules: single-quoted text is literal except for a doubled quote,
-// double-quoted text allows a backtick escape, and a backtick escapes the next
-// character outside quotes. Backslashes are literal so a Windows path with
-// spaces or separators survives. Shells do not agree on every escape, but the
-// classification only needs option words and their values; an unquoted
-// backslash is common in the paths this sees.
+func nestedShellCommand(command string) bool {
+	return nestedShellName(command) != ""
+}
+
+func nestedShellArgsInteractive(name string, args []string) bool {
+	for _, argument := range args {
+		if !strings.HasPrefix(argument, "-") {
+			return false
+		}
+		if strings.HasPrefix(argument, "--") {
+			switch name {
+			case "nu":
+				switch {
+				case argument == "--commands", strings.HasPrefix(argument, "--commands="),
+					argument == "--execute", strings.HasPrefix(argument, "--execute="),
+					argument == "--stdin", argument == "--mcp",
+					argument == "--help", argument == "--version":
+					return false
+				}
+			case "xonsh":
+				switch {
+				case argument == "--command", strings.HasPrefix(argument, "--command="),
+					argument == "--help", argument == "--version":
+					return false
+				}
+			}
+			continue
+		}
+		letters := argument[1:]
+		switch name {
+		case "nu":
+			if strings.ContainsAny(letters, "chv") {
+				return false
+			}
+		case "xonsh":
+			if strings.ContainsAny(letters, "chV") {
+				return false
+			}
+		default:
+			if strings.Contains(letters, "c") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func splitShellWords(command string) []string {
 	words := []string{}
 	var word strings.Builder
@@ -1456,13 +1564,6 @@ func splitShellWords(command string) []string {
 	return words
 }
 
-// nestedPowerShellArguments reports whether every argument keeps a PowerShell
-// invocation interactive. Options are case-insensitive and may be abbreviated
-// or carry a colon-attached value, so they are matched like the planner does.
-// A known value-taking option may also carry its value as the next argument.
-// -NoExit keeps the prompt after -Command, -File, or -EncodedCommand; because
-// PowerShell treats the rest of the line as that command's own arguments,
-// -NoExit only counts when it appears before them.
 func nestedPowerShellArguments(arguments []string) bool {
 	noExit := false
 	for index := 0; index < len(arguments); index++ {
@@ -1501,9 +1602,6 @@ func nestedPowerShellArguments(arguments []string) bool {
 	return true
 }
 
-// nestedPowerShellValueOption reports whether an option's value is the
-// following word. Without this, a value such as Bypass would look like a bare
-// script operand and the nested shell would go unrecognized.
 func nestedPowerShellValueOption(name string) bool {
 	switch {
 	case strings.HasPrefix(name, "executionpolicy"), name == "ex":
@@ -1533,7 +1631,10 @@ func (t *terminalTap) promptCandidateLocked(now time.Time) (promptResult, *captu
 		return promptNoChange, nil
 	}
 	line := lastVisibleLine(t.tail)
-	if line == "" || !promptLike(line) {
+	if line == "" {
+		return promptNoChange, nil
+	}
+	if !promptLike(line) && (t.nestedShell == "" || !nestedShellPromptLike(t.nestedShell, line)) {
 		return promptNoChange, nil
 	}
 	if !t.pending.startedAt.IsZero() && now.Sub(t.pending.startedAt) < promptWindow {

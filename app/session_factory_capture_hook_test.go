@@ -125,6 +125,7 @@ func TestCaptureHookRemoteSelectsTheRemoteShellWrapper(t *testing.T) {
 
 			fixture := newRemoteCommandFixture(t, fakessh.Options{
 				ServerVersion: test.serverVersion,
+				Subsystems:    passwdSFTP("root:x:0:0:root:/root:/bin/zsh\n"),
 				Exec: func(command string, channel xssh.Channel) int {
 					if command == shellhook.WindowsDefaultShellProbeCommand() {
 						if test.probeFails {
