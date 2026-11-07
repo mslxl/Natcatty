@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -169,6 +170,58 @@ func TestAtuinPanelShowsStatusFingerprintAndNoCredential(t *testing.T) {
 		if strings.Contains(texts, secret) {
 			t.Fatalf("panel rendered credential %q: %s", secret, texts)
 		}
+	}
+}
+
+// TestAtuinPanelShowsEngineProgressAndManualSync proves the account panel
+// reads the background engine live: pending uploads, the next retry time, and
+// last sync appear without an account action, and the Sync now control reaches
+// the engine seam.
+func TestAtuinPanelShowsEngineProgressAndManualSync(t *testing.T) {
+	account := &fakeHistoryAccount{status: atuinStatus(atuinmodel.KeyStateVerified)}
+	prefs := newFakePreferences()
+	prefs.settings.History.SyncEnabled = true
+	prefs.settings.History.SyncAddress = "https://atuin.example.test"
+	prefs.settings.History.Username = "alice"
+	lastSync := time.Date(2026, 11, 8, 12, 0, 0, 0, time.Local)
+	engine := historysync.SyncStatus{
+		State:          atuinmodel.SyncOffline,
+		Problem:        atuinmodel.ProblemOffline,
+		ServerVersion:  historysync.PinnedAtuinVersion,
+		LastSyncAt:     lastSync,
+		PendingUploads: 3,
+		NextRetryAt:    lastSync.Add(30 * time.Minute),
+	}
+	manual := 0
+	state := NewAtuinState(account,
+		WithAtuinSyncStatus(func() historysync.SyncStatus { return engine }),
+		WithAtuinSyncNow(func() { manual++ }))
+	tester := ui.NewTester(viewAt(AreaLogs,
+		Config{Preferences: NewPreferencesState(prefs), Atuin: state}), 1100, 2400)
+	tester.SetLocale("en")
+	tester.Frame()
+	m := locales.In("en")
+
+	merged := state.Status()
+	if merged.State != atuinmodel.SyncOffline || merged.LastSyncAt != lastSync ||
+		merged.PendingUploads != 3 || merged.NextRetryAt != lastSync.Add(30*time.Minute) {
+		t.Fatalf("merged status = %+v", merged)
+	}
+	for _, want := range []string{
+		m.SettingsAtuinStatusOffline(),
+		m.SettingsAtuinPendingUploads("3"),
+		m.SettingsAtuinLastSync("2026-11-08 12:00"),
+		m.SettingsAtuinNextRetry("2026-11-08 12:30"),
+	} {
+		if !tester.HasText(want) {
+			t.Errorf("panel is missing %q: %v", want, tester.Texts())
+		}
+	}
+	if err := tester.Click(m.SettingsAtuinSyncNow()); err != nil {
+		t.Fatalf("click Sync now: %v", err)
+	}
+	if manual != 1 {
+		t.Fatalf("manual sync calls = %d", manual)
 	}
 }
 

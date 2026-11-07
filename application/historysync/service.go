@@ -1,0 +1,1561 @@
+package historysync
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/rand"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	domainhistory "github.com/mslxl/natcatty/domain/history"
+	atuinmodel "github.com/mslxl/natcatty/domain/model/atuin"
+)
+
+// Sync engine errors. They never carry a token, key, server response body, or
+// record payload; the adapter sentinels in remote.go are reused where they
+// already name the failure.
+var (
+	// ErrSyncDisabled reports a manual sync while the user has turned history
+	// sync off.
+	ErrSyncDisabled = errors.New("historysync: sync disabled")
+	// ErrAccountMismatch reports a remote account that does not match the
+	// stored account identity. Local records are never sent to another account
+	// by accident.
+	ErrAccountMismatch = errors.New("historysync: remote account does not match the stored account")
+	// ErrUploadConflict reports a duplicate series index whose server metadata
+	// does not match the local record.
+	ErrUploadConflict = errors.New("historysync: upload conflict does not match the local record")
+	// ErrKeyUnverified reports an account with no remote history whose master
+	// key the user has not explicitly confirmed. Uploading would make the
+	// first record decide the account key, so the engine waits for the user.
+	ErrKeyUnverified = errors.New("historysync: master key is not confirmed")
+	// ErrIncompletePage reports a download page that made no progress or broke
+	// series index continuity. The checkpoint is never advanced for it.
+	ErrIncompletePage = errors.New("historysync: incomplete or discontinuous remote page")
+)
+
+// SyncResult counts one sync operation. Applied counts downloaded records
+// whose projection was committed; Uploaded counts local records the server
+// acknowledged, including a matching duplicate conflict; PendingUploads is
+// what remains after the run.
+type SyncResult struct {
+	Trigger        Trigger
+	Downloaded     int
+	Applied        int
+	Uploaded       int
+	PendingUploads int
+	LastSyncAt     time.Time
+}
+
+// Trigger names why a sync ran. The values are stable for tests and status.
+type Trigger string
+
+const (
+	TriggerStartup  Trigger = "startup"
+	TriggerFocus    Trigger = "focus"
+	TriggerInterval Trigger = "interval"
+	TriggerManual   Trigger = "manual"
+	TriggerCapture  Trigger = "capture"
+	TriggerRetry    Trigger = "retry"
+)
+
+// SyncStatus is the engine's sanitized view. It never contains the Session
+// Token, Master Key, server response text, command text, or record payload.
+type SyncStatus struct {
+	State          atuinmodel.SyncState
+	Problem        atuinmodel.Problem
+	ServerURL      string
+	ServerVersion  string
+	LastSyncAt     time.Time
+	PendingUploads int
+	NextRetryAt    time.Time
+}
+
+// RemoteDelete is one downloaded tombstone applied to the projection. A
+// tombstone for a history id this device never saw is still stored in the
+// record log; there is simply no projection to update.
+type RemoteDelete struct {
+	HistoryID string
+	DeletedAt time.Time
+}
+
+// RemotePage is one page applied in a single local transaction. Checkpoint is
+// committed with the records and projections, so the engine never advances
+// past a page that did not commit.
+type RemotePage struct {
+	Checkpoint domainhistory.SeriesCheckpoint
+	Records    []domainhistory.Record
+	Entries    []domainhistory.Entry
+	Deletes    []RemoteDelete
+}
+
+// SyncStore is the local persistence port the sync engine needs. The SQLite
+// store implements it; the engine's tests use an in-memory record log. The
+// three write methods are atomic: records, projections, and checkpoints commit
+// or roll back together.
+type SyncStore interface {
+	HistoryMetadata(context.Context) (domainhistory.Metadata, error)
+	ListHistoryRecords(context.Context) ([]domainhistory.Record, error)
+	ApplyRemotePage(context.Context, RemotePage) error
+	MarkUploaded(context.Context, []string, time.Time, domainhistory.SeriesCheckpoint) error
+	ResetUploaded(context.Context, domainhistory.SeriesCheckpoint) error
+}
+
+// Timer is one scheduled callback. Stop cancels it; the callback must not run
+// after Stop returns when the implementation can guarantee it.
+type Timer interface {
+	Stop()
+}
+
+// Scheduler is the engine's timing seam. The app uses real time; tests drive
+// a manual scheduler so startup, focus, interval, debounce, and retry are
+// deterministic without sleeps.
+type Scheduler interface {
+	Now() time.Time
+	AfterFunc(time.Duration, func()) Timer
+}
+
+type realScheduler struct{}
+
+func (realScheduler) Now() time.Time { return time.Now() }
+
+func (realScheduler) AfterFunc(delay time.Duration, fn func()) Timer {
+	return realTimer{timer: time.AfterFunc(delay, fn)}
+}
+
+type realTimer struct {
+	timer *time.Timer
+}
+
+func (timer realTimer) Stop() { timer.timer.Stop() }
+
+// Default scheduling values. Focus and capture debounces are deliberately
+// short: a capture never waits for the network, and a focus only coalesces the
+// burst of redraw activity into one sync.
+const (
+	DefaultCaptureDebounce = 2 * time.Second
+	DefaultFocusDebounce   = 5 * time.Second
+	DefaultPageSize        = 100
+	maxPageSize            = 1000
+)
+
+// retryDelays is the exponential backoff sequence from the product spec,
+// capped at thirty minutes. Authentication, key, account, conflict, and
+// incompatible-server failures never reach it.
+var retryDelays = []time.Duration{
+	30 * time.Second,
+	time.Minute,
+	5 * time.Minute,
+	15 * time.Minute,
+	30 * time.Minute,
+}
+
+// Option customizes a Service.
+type Option func(*Service)
+
+// WithScheduler replaces the clock and timer source. Tests pass a manual
+// scheduler; the app keeps real time.
+func WithScheduler(scheduler Scheduler) Option {
+	return func(service *Service) {
+		if scheduler != nil {
+			service.scheduler = scheduler
+		}
+	}
+}
+
+// WithJitter replaces the retry jitter. The default applies +/-20 percent with
+// a random source; tests pass an identity function for exact times.
+func WithJitter(jitter func(time.Duration) time.Duration) Option {
+	return func(service *Service) {
+		if jitter != nil {
+			service.jitter = jitter
+		}
+	}
+}
+
+// WithCaptureDebounce replaces the post-capture debounce. A zero or negative
+// value keeps the default.
+func WithCaptureDebounce(delay time.Duration) Option {
+	return func(service *Service) {
+		if delay > 0 {
+			service.captureDebounce = delay
+		}
+	}
+}
+
+// WithFocusDebounce replaces the window-focus debounce. A zero or negative
+// value keeps the default.
+func WithFocusDebounce(delay time.Duration) Option {
+	return func(service *Service) {
+		if delay > 0 {
+			service.focusDebounce = delay
+		}
+	}
+}
+
+// WithSyncCompleted registers a callback for every successful run, including a
+// run that applied no downloaded rows. It runs on the sync goroutine outside
+// every service lock and must not block. The app uses it to refresh History
+// and autocomplete after downloaded projections change the store.
+func WithSyncCompleted(fn func(SyncResult)) Option {
+	return func(service *Service) { service.onCompleted = fn }
+}
+
+// Service is the background history sync engine. It downloads before it
+// uploads, applies one remote page per transaction, advances checkpoints only
+// after a commit, uploads the local writer series in index order, and coalesces
+// concurrent triggers into at most one queued run.
+//
+// Capture only calls NotifyLocalChange; it never waits for the network.
+type Service struct {
+	settings AccountSettings
+	secrets  Secrets
+	store    SyncStore
+	factory  Factory
+
+	scheduler       Scheduler
+	jitter          func(time.Duration) time.Duration
+	captureDebounce time.Duration
+	focusDebounce   time.Duration
+	onCompleted     func(SyncResult)
+
+	// statusMu protects cached. Status reads it without running a sync.
+	statusMu sync.Mutex
+	cached   SyncStatus
+
+	// mu protects the scheduler, trigger, and listener state. It is never held
+	// across a remote call or a store transaction.
+	mu           sync.Mutex
+	version      uint64
+	listeners    map[int]func()
+	nextListener int
+
+	started bool
+	stopped bool
+	running bool
+	pending *pendingRun
+	// idle is closed while no run is active and none is queued. WaitIdle uses
+	// it so tests do not need a fixed sleep.
+	idle chan struct{}
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	intervalTimer Timer
+	retryTimer    Timer
+	focusTimer    Timer
+	captureTimer  Timer
+	retryAttempt  int
+}
+
+// pendingRun is a trigger received while another sync was running. Its
+// waiters are manual callers that coalesced into that next run.
+type pendingRun struct {
+	trigger Trigger
+	ctx     context.Context
+	waiters []chan runOutcome
+}
+
+type runOutcome struct {
+	result SyncResult
+	err    error
+}
+
+// NewService returns a sync engine over the supplied settings, secret store,
+// local sync store, and Remote factory. A nil factory makes every operation
+// fail closed as unavailable; the HTTP adapter arrives in a later ticket.
+func NewService(settings AccountSettings, secrets Secrets, store SyncStore,
+	factory Factory, opts ...Option) *Service {
+	idle := make(chan struct{})
+	close(idle)
+	service := &Service{
+		settings:        settings,
+		secrets:         secrets,
+		store:           store,
+		factory:         factory,
+		scheduler:       realScheduler{},
+		jitter:          jittered,
+		captureDebounce: DefaultCaptureDebounce,
+		focusDebounce:   DefaultFocusDebounce,
+		listeners:       make(map[int]func()),
+		idle:            idle,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service
+}
+
+// Start begins scheduled sync: one startup run, the configured interval, and
+// the timers used by focus, capture, and retry triggers. Start is idempotent
+// and does not block the caller.
+func (s *Service) Start(parent context.Context) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	s.mu.Lock()
+	if s.started || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	s.ctx, s.cancel = context.WithCancel(parent)
+	ctx := s.ctx
+	s.mu.Unlock()
+
+	s.scheduleInterval()
+	s.enqueue(ctx, TriggerStartup, nil)
+}
+
+// Stop ends scheduled work and cancels an in-flight remote operation started
+// by a scheduled trigger. It is idempotent.
+func (s *Service) Stop() {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.stopped = true
+	cancel := s.cancel
+	timers := []Timer{s.intervalTimer, s.retryTimer, s.focusTimer, s.captureTimer}
+	s.intervalTimer, s.retryTimer, s.focusTimer, s.captureTimer = nil, nil, nil, nil
+	waiters := []chan runOutcome(nil)
+	if s.pending != nil {
+		waiters = append(waiters, s.pending.waiters...)
+		s.pending = nil
+	}
+	s.mu.Unlock()
+
+	for _, timer := range timers {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+	if cancel != nil {
+		cancel()
+	}
+	for _, waiter := range waiters {
+		waiter <- runOutcome{err: context.Canceled}
+	}
+}
+
+// NotifyFocus requests a debounced sync after the window regains focus. It
+// never blocks and is a no-op before Start or after Stop.
+func (s *Service) NotifyFocus() {
+	s.mu.Lock()
+	if !s.started || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	if s.focusTimer != nil {
+		s.focusTimer.Stop()
+	}
+	ctx := s.ctx
+	s.focusTimer = s.scheduler.AfterFunc(s.focusDebounce, func() {
+		s.enqueue(ctx, TriggerFocus, nil)
+	})
+	s.mu.Unlock()
+}
+
+// NotifyLocalChange requests a short debounce after a history mutation when
+// the engine is idle. While a sync is running it queues the next run instead,
+// so a burst of captures coalesces into one follow-up sync.
+func (s *Service) NotifyLocalChange() {
+	s.mu.Lock()
+	if !s.started || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	if s.running {
+		if s.pending == nil {
+			s.pending = &pendingRun{trigger: TriggerCapture, ctx: s.ctx}
+		} else {
+			s.pending.trigger = preferTrigger(s.pending.trigger, TriggerCapture)
+		}
+		s.mu.Unlock()
+		return
+	}
+	if s.captureTimer != nil {
+		s.captureTimer.Stop()
+	}
+	ctx := s.ctx
+	s.captureTimer = s.scheduler.AfterFunc(s.captureDebounce, func() {
+		s.enqueue(ctx, TriggerCapture, nil)
+	})
+	s.mu.Unlock()
+}
+
+// SyncNow runs one manual sync and waits for the run that covers the trigger.
+// Concurrent triggers coalesce into the pending run.
+func (s *Service) SyncNow(ctx context.Context) (SyncResult, error) {
+	return s.Sync(ctx, TriggerManual)
+}
+
+// Sync runs one sync and waits for its outcome. A trigger received while
+// another run is active joins the queued run rather than racing it.
+func (s *Service) Sync(ctx context.Context, trigger Trigger) (SyncResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if trigger == "" {
+		trigger = TriggerManual
+	}
+	waiter := make(chan runOutcome, 1)
+	s.enqueue(ctx, trigger, waiter)
+	select {
+	case outcome := <-waiter:
+		return outcome.result, outcome.err
+	case <-ctx.Done():
+		return SyncResult{Trigger: trigger}, ctx.Err()
+	}
+}
+
+// WaitIdle blocks until no sync is running and none is queued, or ctx ends.
+func (s *Service) WaitIdle(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	idle := s.idle
+	s.mu.Unlock()
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Status returns the last local and remote sync state. It never performs a
+// network request and never decrypts a credential.
+func (s *Service) Status() SyncStatus {
+	status, _, _ := s.localStatus(context.Background())
+	cached := s.cachedStatus()
+
+	status.ServerVersion = cached.ServerVersion
+	status.LastSyncAt = cached.LastSyncAt
+	if status.State == atuinmodel.SyncIdle {
+		switch cached.State {
+		case atuinmodel.SyncSyncing, atuinmodel.SyncOffline, atuinmodel.SyncAuthExpired,
+			atuinmodel.SyncKeyMismatch, atuinmodel.SyncIncompatibleServer,
+			atuinmodel.SyncError:
+			status.State = cached.State
+			status.Problem = cached.Problem
+			status.NextRetryAt = cached.NextRetryAt
+		}
+	}
+	switch status.State {
+	case atuinmodel.SyncDisabled, atuinmodel.SyncLocked, atuinmodel.SyncNotConfigured:
+		// A local disabled/locked/not-configured state is authoritative and
+		// carries no retry: nothing is scheduled in those states.
+		status.NextRetryAt = time.Time{}
+	}
+	return status
+}
+
+// Subscribe registers fn for status changes. The callback runs outside every
+// service lock and only asks the UI for a redraw. It returns an unsubscribe
+// function.
+func (s *Service) Subscribe(fn func()) func() {
+	if fn == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	id := s.nextListener
+	s.nextListener++
+	s.listeners[id] = fn
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.listeners, id)
+		s.mu.Unlock()
+	}
+}
+
+// Revision increments on every status change, so a UI that misses a callback
+// can still observe that a reload is needed.
+func (s *Service) Revision() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.version
+}
+
+func (s *Service) cachedStatus() SyncStatus {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	return s.cached
+}
+
+func (s *Service) setStatus(status SyncStatus) {
+	s.statusMu.Lock()
+	s.cached = status
+	s.statusMu.Unlock()
+
+	s.mu.Lock()
+	s.version++
+	listeners := make([]func(), 0, len(s.listeners))
+	for _, listener := range s.listeners {
+		listeners = append(listeners, listener)
+	}
+	s.mu.Unlock()
+	for _, listener := range listeners {
+		listener()
+	}
+}
+
+// enqueue starts a worker when idle, or records a coalesced pending run.
+func (s *Service) enqueue(ctx context.Context, trigger Trigger, waiter chan runOutcome) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		if waiter != nil {
+			waiter <- runOutcome{err: context.Canceled}
+		}
+		return
+	}
+	if s.running {
+		if s.pending == nil {
+			s.pending = &pendingRun{trigger: trigger, ctx: ctx}
+		} else {
+			s.pending.trigger = preferTrigger(s.pending.trigger, trigger)
+		}
+		if waiter != nil {
+			s.pending.waiters = append(s.pending.waiters, waiter)
+		}
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.idle = make(chan struct{})
+	waiters := []chan runOutcome(nil)
+	if waiter != nil {
+		waiters = append(waiters, waiter)
+	}
+	s.mu.Unlock()
+	go s.worker(ctx, trigger, waiters)
+}
+
+func (s *Service) worker(ctx context.Context, trigger Trigger, waiters []chan runOutcome) {
+	for {
+		result, err := s.run(ctx, trigger)
+		outcome := runOutcome{result: result, err: err}
+		for _, waiter := range waiters {
+			waiter <- outcome
+		}
+
+		s.mu.Lock()
+		next := s.pending
+		s.pending = nil
+		if next == nil {
+			s.running = false
+			close(s.idle)
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		ctx, trigger, waiters = next.ctx, next.trigger, next.waiters
+	}
+}
+
+// preferTrigger keeps the strongest reason for a coalesced run. Manual wins so
+// a user action is never reported as a routine capture sync.
+func preferTrigger(current, next Trigger) Trigger {
+	rank := map[Trigger]int{
+		TriggerManual:   6,
+		TriggerStartup:  5,
+		TriggerInterval: 4,
+		TriggerRetry:    3,
+		TriggerFocus:    2,
+		TriggerCapture:  1,
+	}
+	if rank[next] > rank[current] {
+		return next
+	}
+	return current
+}
+
+// run is one download-before-upload sync. It never holds a service lock across
+// a remote call or a store transaction.
+func (s *Service) run(ctx context.Context, trigger Trigger) (SyncResult, error) {
+	result := SyncResult{Trigger: trigger}
+	status, metadata, err := s.localStatus(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	result.PendingUploads = status.PendingUploads
+	switch status.State {
+	case atuinmodel.SyncDisabled:
+		s.clearRetry()
+		s.setStatus(status)
+		return result, ErrSyncDisabled
+	case atuinmodel.SyncLocked:
+		s.clearRetry()
+		s.setStatus(status)
+		return result, ErrSecretsLocked
+	case atuinmodel.SyncNotConfigured:
+		s.clearRetry()
+		s.setStatus(status)
+		return result, ErrNotConfigured
+	}
+
+	syncing := status
+	syncing.State = atuinmodel.SyncSyncing
+	syncing.Problem = atuinmodel.ProblemNone
+	syncing.NextRetryAt = time.Time{}
+	previous := s.cachedStatus()
+	syncing.ServerVersion = previous.ServerVersion
+	syncing.LastSyncAt = previous.LastSyncAt
+	s.setStatus(syncing)
+
+	address, err := NormalizeSyncAddress(s.settings.HistorySettings().SyncAddress)
+	if err != nil {
+		return result, s.fail(status, ErrInvalidSyncAddress, &result)
+	}
+	token, err := s.secrets.Get(ctx, SessionTokenRef())
+	if err != nil {
+		return result, s.fail(status, publicSecretError(err), &result)
+	}
+	key, keyPresent, err := s.loadMasterKey(ctx)
+	if err != nil {
+		return result, s.fail(status, publicSecretError(err), &result)
+	}
+	if !keyPresent {
+		return result, s.fail(status, ErrNotConfigured, &result)
+	}
+	defer domainhistory.WipeMasterKey(key)
+
+	config := Config{
+		BaseURL: address, AuthMode: atuinmodel.NormalizeAuthMode(s.settings.HistorySettings().AuthMode),
+		Token: token, MasterKey: key,
+	}
+	defer config.Wipe()
+	remote, err := s.openRemote(ctx, config)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	defer func() { _ = remote.Close() }()
+
+	auth, err := remote.Authenticate(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if err := storedAccountMatches(metadata.Account, address, auth.Account); err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	capabilities, err := remote.Capabilities(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if err := capabilities.Check(); err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	status.ServerVersion = capabilities.ServerVersion
+	status.ServerURL = address
+
+	statuses, err := remote.RecordStatus(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if HasHistory(statuses) {
+		// Never upload with a key that cannot decrypt the account's existing
+		// history. A real adapter discovers the same mismatch while decrypting
+		// the first downloaded page; validating up front keeps the failure
+		// before any local mutation.
+		validation, err := remote.ValidateMasterKey(ctx)
+		if err != nil {
+			return result, s.fail(status, err, &result)
+		}
+		if validation != KeyValidationVerified {
+			return result, s.fail(status, ErrKeyMismatch, &result)
+		}
+	}
+
+	// Download before upload, including other writers' tombstones, so this
+	// device never re-creates something another device already deleted.
+	downloaded, applied, err := s.download(ctx, remote, capabilities, statuses, &metadata)
+	result.Downloaded, result.Applied = downloaded, applied
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+
+	localRecords, err := s.store.ListHistoryRecords(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	pending, err := s.prepareUpload(ctx, localRecords, statuses, metadata)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	if pending > 0 && !HasHistory(statuses) && !metadata.UnverifiedKeyConfirmed {
+		// The first upload establishes the account key. The account panel
+		// requires an explicit confirmation before that happens.
+		blocked := status
+		blocked.State = atuinmodel.SyncIdle
+		blocked.Problem = atuinmodel.ProblemKeyUnverified
+		blocked.PendingUploads = pending
+		s.clearRetry()
+		s.setStatus(blocked)
+		return result, ErrKeyUnverified
+	}
+
+	uploaded, err := s.upload(ctx, remote, capabilities, statuses, metadata)
+	result.Uploaded = uploaded
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+
+	final, _, err := s.localStatus(ctx)
+	if err != nil {
+		return result, s.fail(status, err, &result)
+	}
+	final.State = atuinmodel.SyncIdle
+	final.Problem = atuinmodel.ProblemNone
+	final.ServerVersion = capabilities.ServerVersion
+	final.ServerURL = address
+	final.LastSyncAt = s.scheduler.Now()
+	final.NextRetryAt = time.Time{}
+	result.PendingUploads = final.PendingUploads
+	result.LastSyncAt = final.LastSyncAt
+	s.clearRetry()
+	s.setStatus(final)
+	if s.onCompleted != nil {
+		s.onCompleted(result)
+	}
+	return result, nil
+}
+
+// localStatus computes the status from device-local state only.
+func (s *Service) localStatus(ctx context.Context) (SyncStatus, domainhistory.Metadata, error) {
+	settings := s.settings.HistorySettings()
+	status := SyncStatus{
+		State:     atuinmodel.SyncNotConfigured,
+		Problem:   atuinmodel.ProblemNotConfigured,
+		ServerURL: settings.SyncAddress,
+	}
+	metadata, err := s.store.HistoryMetadata(ctx)
+	if err != nil {
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		return status, metadata, err
+	}
+	records, recordErr := s.store.ListHistoryRecords(ctx)
+	if recordErr == nil {
+		status.PendingUploads = pendingUploads(records, metadata.WriterUUID)
+	}
+
+	switch s.secrets.Mode() {
+	case SecretModePassphraseLocked:
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
+		return status, metadata, nil
+	case SecretModeUnavailable:
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+		return status, metadata, nil
+	}
+
+	address, addressErr := NormalizeSyncAddress(settings.SyncAddress)
+	if addressErr != nil {
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		return status, metadata, addressErr
+	}
+	status.ServerURL = address
+	if !settings.SyncEnabled {
+		status.State = atuinmodel.SyncDisabled
+		status.Problem = atuinmodel.ProblemDisabled
+		return status, metadata, nil
+	}
+	tokenPresent, err := s.secrets.Has(ctx, SessionTokenRef())
+	if err != nil {
+		return syncStatusForSecretError(status, err), metadata, err
+	}
+	keyPresent, err := s.secrets.Has(ctx, MasterKeyRef())
+	if err != nil {
+		return syncStatusForSecretError(status, err), metadata, err
+	}
+	if !sameAccountAddress(metadata.Account, address) {
+		// A token must never be sent to an address the stored account does not
+		// own. The account service enforces the same rule before it authenticates.
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+		return status, metadata, ErrAccountMismatch
+	}
+	if !tokenPresent {
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+		return status, metadata, nil
+	}
+	if !keyPresent {
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemKeyMissing
+		return status, metadata, nil
+	}
+	status.State = atuinmodel.SyncIdle
+	status.Problem = atuinmodel.ProblemNone
+	return status, metadata, nil
+}
+
+func syncStatusForSecretError(status SyncStatus, err error) SyncStatus {
+	switch {
+	case errors.Is(err, ErrSecretsLocked):
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
+	case errors.Is(err, ErrSecretsUnavailable):
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+	default:
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+	}
+	return status
+}
+
+func (s *Service) loadMasterKey(ctx context.Context) ([]byte, bool, error) {
+	present, err := s.secrets.Has(ctx, MasterKeyRef())
+	if err != nil || !present {
+		return nil, false, err
+	}
+	encoded, err := s.secrets.Get(ctx, MasterKeyRef())
+	if err != nil {
+		return nil, false, err
+	}
+	key, err := domainhistory.ParseMasterKey(encoded)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: stored master key is invalid", ErrSecretUnreadable)
+	}
+	return key, true, nil
+}
+
+func (s *Service) openRemote(ctx context.Context, config Config) (Remote, error) {
+	if s.factory == nil {
+		return nil, ErrRemoteUnavailable
+	}
+	remote, err := s.factory.Open(ctx, config)
+	if err != nil || remote == nil {
+		return nil, ErrRemoteUnavailable
+	}
+	return remote, nil
+}
+
+// download applies every remote history series that is ahead of its local
+// checkpoint. One page is one transaction; the checkpoint advances only after
+// that transaction commits.
+func (s *Service) download(ctx context.Context, remote Remote, capabilities Capabilities,
+	statuses []SeriesStatus, metadata *domainhistory.Metadata) (int, int, error) {
+	records, err := s.store.ListHistoryRecords(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	if metadata.Series == nil {
+		metadata.Series = make(map[string]domainhistory.SeriesCheckpoint)
+	}
+	pageSize := pageSizeFor(capabilities)
+
+	downloaded, applied := 0, 0
+	for _, series := range remoteHistorySeries(statuses) {
+		key := domainhistory.SeriesKey(series.SeriesHost, series.Tag)
+		checkpoint, known := metadata.Series[key]
+		if !known {
+			// A missing checkpoint means nothing has been applied. Index 0 is
+			// a real record, so the zero value is not a valid position.
+			checkpoint.AppliedIndex = -1
+			checkpoint.UploadedIndex = -1
+		}
+		checkpoint.SeriesHost = series.SeriesHost
+		checkpoint.Tag = series.Tag
+		if checkpoint.AppliedIndex < -1 {
+			checkpoint.AppliedIndex = -1
+		}
+		if local := maxSeriesIndex(records, series.SeriesHost, series.Tag); local > checkpoint.AppliedIndex {
+			// A logout clears checkpoints but not the appended log. Rebuild the
+			// applied position from the records so a reconnect never
+			// re-downloads or re-applies a page it already committed.
+			checkpoint.AppliedIndex = local
+		}
+		if checkpoint.AppliedIndex >= series.MaxIndex {
+			metadata.Series[key] = checkpoint
+			continue
+		}
+		for checkpoint.AppliedIndex < series.MaxIndex {
+			page, err := remote.Download(ctx, series.Series, checkpoint.AppliedIndex+1, pageSize)
+			if err != nil {
+				return downloaded, applied, err
+			}
+			pageRecords, entries, deletes, last, err := prepareRemotePage(
+				series, checkpoint.AppliedIndex+1, page)
+			if err != nil {
+				return downloaded, applied, err
+			}
+			next := checkpoint
+			next.AppliedIndex = last
+			if err := s.store.ApplyRemotePage(ctx, RemotePage{
+				Checkpoint: next,
+				Records:    pageRecords,
+				Entries:    entries,
+				Deletes:    deletes,
+			}); err != nil {
+				return downloaded, applied, err
+			}
+			checkpoint = next
+			metadata.Series[key] = checkpoint
+			downloaded += len(pageRecords)
+			applied += len(pageRecords)
+		}
+	}
+	return downloaded, applied, nil
+}
+
+// prepareRemotePage validates index continuity, ignores records for any tag
+// other than history, and builds the domain log records plus typed projections
+// for one atomic page.
+func prepareRemotePage(series SeriesStatus, start int64, page Page) ([]domainhistory.Record, []domainhistory.Entry, []RemoteDelete, int64, error) {
+	if start < 0 {
+		return nil, nil, nil, 0, ErrIncompletePage
+	}
+	next := start
+	var records []domainhistory.Record
+	var entries []domainhistory.Entry
+	var deletes []RemoteDelete
+	for _, record := range page.Records {
+		if record.Tag != domainhistory.RecordTagHistory || record.SeriesHost != series.SeriesHost {
+			// Other Atuin tags are out of scope. They are never applied and
+			// never advance a history checkpoint.
+			continue
+		}
+		if record.Index < start {
+			// A page may overlap a committed page after a retried request.
+			// The checkpoint already proves this index committed, so applying
+			// it again would add nothing.
+			continue
+		}
+		if record.Index != next || !record.Valid() {
+			return nil, nil, nil, 0, ErrIncompletePage
+		}
+		switch record.Kind {
+		case domainhistory.RecordKindCreate:
+			entry := *record.Entry
+			if entry.ID == "" {
+				entry.ID = record.HistoryID
+			}
+			if entry.ID != record.HistoryID {
+				return nil, nil, nil, 0, ErrIncompletePage
+			}
+			entry.Source = domainhistory.SourceAtuinSync
+			if entry.RecordedAt.IsZero() {
+				entry.RecordedAt = record.RecordedAt
+			}
+			// A remote record never carries this device's Host, Session, or
+			// capture tier. Keeping them would attach another device's Host id
+			// to a local Connection Log and mislabel an unobserved row.
+			entry.HostID = ""
+			entry.HostLabel = ""
+			entry.UnsavedHost = false
+			entry.SessionID = ""
+			entry.CaptureTier = 0
+			entry.Scope = RemoteScope(entry.Origin)
+			entry = domainhistory.NormalizeEntry(entry)
+			payload, err := json.Marshal(entry)
+			if err != nil {
+				return nil, nil, nil, 0, err
+			}
+			records = append(records, remoteRecord(record, string(payload)))
+			entries = append(entries, entry)
+		case domainhistory.RecordKindDelete:
+			payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
+				HistoryID: record.HistoryID,
+				DeletedAt: record.DeletedAt,
+			})
+			if err != nil {
+				return nil, nil, nil, 0, err
+			}
+			records = append(records, remoteRecord(record, string(payload)))
+			deletes = append(deletes, RemoteDelete{
+				HistoryID: record.HistoryID,
+				DeletedAt: record.DeletedAt,
+			})
+		default:
+			return nil, nil, nil, 0, ErrIncompletePage
+		}
+		next++
+	}
+	if next == start {
+		return nil, nil, nil, 0, ErrIncompletePage
+	}
+	return records, entries, deletes, next - 1, nil
+}
+
+func remoteRecord(record SyncRecord, payload string) domainhistory.Record {
+	return domainhistory.Record{
+		ID:         record.ID,
+		SeriesHost: record.SeriesHost,
+		Tag:        domainhistory.RecordTagHistory,
+		Index:      record.Index,
+		RecordedAt: record.RecordedAt,
+		Version:    record.Version,
+		Kind:       record.Kind,
+		HistoryID:  record.HistoryID,
+		Payload:    payload,
+		Direction:  domainhistory.RecordDirectionRemote,
+	}
+}
+
+// RemoteScope is the autocomplete scope of a synced row: another writer's
+// origin, never a local Host identity.
+func RemoteScope(origin string) string {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		origin = "unknown"
+	}
+	return "remote:" + origin
+}
+
+// remoteHistorySeries returns every history series the server reports. The
+// local writer series is included: when the server is ahead of this device
+// (a restored or older database), its missing records are downloaded before
+// upload rather than silently skipped.
+func pageSizeFor(capabilities Capabilities) int {
+	pageSize := capabilities.PageSize
+	if pageSize <= 0 {
+		pageSize = DefaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	return pageSize
+}
+
+// serverMaxIndex returns the highest history index the server reports for the
+// local writer series, or -1 when the account has no series for this writer.
+func serverMaxIndex(statuses []SeriesStatus, writer string) int64 {
+	serverMax := int64(-1)
+	for _, status := range statuses {
+		if status.Tag == domainhistory.RecordTagHistory && status.SeriesHost == writer &&
+			status.MaxIndex > serverMax {
+			serverMax = status.MaxIndex
+		}
+	}
+	return serverMax
+}
+
+func remoteHistorySeries(statuses []SeriesStatus) []SeriesStatus {
+	merged := make(map[string]SeriesStatus)
+	for _, status := range statuses {
+		if status.Tag != domainhistory.RecordTagHistory || status.SeriesHost == "" {
+			continue
+		}
+		key := domainhistory.SeriesKey(status.SeriesHost, status.Tag)
+		if current, ok := merged[key]; !ok || status.MaxIndex > current.MaxIndex {
+			merged[key] = status
+		}
+	}
+	series := make([]SeriesStatus, 0, len(merged))
+	for _, status := range merged {
+		series = append(series, status)
+	}
+	sort.Slice(series, func(i, j int) bool {
+		if series[i].SeriesHost == series[j].SeriesHost {
+			return series[i].Tag < series[j].Tag
+		}
+		return series[i].SeriesHost < series[j].SeriesHost
+	})
+	return series
+}
+
+// prepareUpload reconciles the local writer series with the server status.
+// Uploaded timestamps are only a display cache; the server's highest index is
+// authoritative for what still has to be sent. An account change (or a server
+// that lost the series) has no local series status, so every local record is
+// sent to the new account.
+func (s *Service) prepareUpload(ctx context.Context, records []domainhistory.Record,
+	statuses []SeriesStatus, metadata domainhistory.Metadata) (int, error) {
+	local := localSeriesRecords(records, metadata.WriterUUID)
+	for index, record := range local {
+		if record.Index != int64(index) {
+			// The local writer series is assigned inside a transaction and can
+			// never have a gap. Refuse to upload rather than skip an index.
+			return 0, ErrIncompletePage
+		}
+	}
+	serverMax := serverMaxIndex(statuses, metadata.WriterUUID)
+	checkpoint := metadata.Series[domainhistory.SeriesKey(metadata.WriterUUID, domainhistory.RecordTagHistory)]
+	checkpoint.SeriesHost = metadata.WriterUUID
+	checkpoint.Tag = domainhistory.RecordTagHistory
+	if checkpoint.UploadedIndex < -1 {
+		checkpoint.UploadedIndex = -1
+	}
+	maxUploaded := maxUploadedIndex(local)
+	if serverMax < maxUploaded {
+		// The account changed or the server no longer holds what this device
+		// thought it uploaded. Clear the display cache and send the records
+		// again; the new account must receive the local history.
+		checkpoint.UploadedIndex = serverMax
+		if err := s.store.ResetUploaded(ctx, checkpoint); err != nil {
+			return 0, err
+		}
+		// The server's prefix still counts as acknowledged. Let the mark step
+		// below restore it instead of showing those rows as pending forever.
+		maxUploaded = -1
+	}
+	if serverMax > maxUploaded {
+		// A re-login clears checkpoints but not the log. The server proves a
+		// prefix is present, so record that without re-sending it. The
+		// checkpoint must name the server's high-water mark, not the stale
+		// local value, or the next run would persist an old position.
+		checkpoint.UploadedIndex = serverMax
+		if err := s.store.MarkUploaded(ctx, recordIDsInRange(local, maxUploaded+1, serverMax),
+			s.scheduler.Now(), checkpoint); err != nil {
+			return 0, err
+		}
+	}
+	pending := 0
+	for _, record := range local {
+		if record.Index > serverMax {
+			pending++
+		}
+	}
+	return pending, nil
+}
+
+// upload sends the local writer series in index order in page-sized batches.
+// Each batch is marked uploaded only after the server acknowledges it. A
+// matching duplicate conflict is acknowledged; a mismatched one fails closed.
+func (s *Service) upload(ctx context.Context, remote Remote, capabilities Capabilities,
+	statuses []SeriesStatus, metadata domainhistory.Metadata) (int, error) {
+	records, err := s.store.ListHistoryRecords(ctx)
+	if err != nil {
+		return 0, err
+	}
+	local := localSeriesRecords(records, metadata.WriterUUID)
+	serverMax := serverMaxIndex(statuses, metadata.WriterUUID)
+	pageSize := pageSizeFor(capabilities)
+	checkpoint := metadata.Series[domainhistory.SeriesKey(metadata.WriterUUID, domainhistory.RecordTagHistory)]
+	checkpoint.SeriesHost = metadata.WriterUUID
+	checkpoint.Tag = domainhistory.RecordTagHistory
+	checkpoint.UploadedIndex = serverMax
+
+	uploaded := 0
+	position := 0
+	for position < len(local) && local[position].Index <= serverMax {
+		position++
+	}
+	for position < len(local) {
+		limit := position + pageSize
+		if limit > len(local) {
+			limit = len(local)
+		}
+		chunk := local[position:limit]
+		if chunk[0].Index != serverMax+1 {
+			return uploaded, ErrIncompletePage
+		}
+		acked, err := s.uploadChunk(ctx, remote, chunk)
+		if err != nil {
+			return uploaded, err
+		}
+		last := acked[len(acked)-1].Index
+		checkpoint.UploadedIndex = last
+		if err := s.store.MarkUploaded(ctx, recordIDs(acked), s.scheduler.Now(), checkpoint); err != nil {
+			return uploaded, err
+		}
+		serverMax = last
+		uploaded += len(acked)
+		position = limit
+	}
+	return uploaded, nil
+}
+
+// uploadChunk acknowledges one contiguous batch. The server may report any of
+// its indexes as already present; a matching duplicate is removed from the
+// retry set, while the records before and after it are retried. This converges
+// after a lost response without ever marking an index the server did not
+// confirm.
+func (s *Service) uploadChunk(ctx context.Context, remote Remote,
+	chunk []domainhistory.Record) ([]domainhistory.Record, error) {
+	records := append([]domainhistory.Record(nil), chunk...)
+	acked := make([]domainhistory.Record, 0, len(chunk))
+	for len(records) > 0 {
+		batch := make([]SyncRecord, 0, len(records))
+		for _, record := range records {
+			syncRecord, err := syncRecordFromLocal(record)
+			if err != nil {
+				return nil, err
+			}
+			batch = append(batch, syncRecord)
+		}
+		err := remote.Upload(ctx, batch)
+		if err == nil {
+			acked = append(acked, records...)
+			break
+		}
+		duplicate, ok := AsDuplicateRecord(err)
+		if !ok {
+			return nil, err
+		}
+		position := -1
+		for index, record := range records {
+			if record.Index == duplicate.Existing.Index {
+				position = index
+				break
+			}
+		}
+		if position < 0 || !duplicateMatches(records[position], duplicate.Existing) {
+			return nil, ErrUploadConflict
+		}
+		acked = append(acked, records[position])
+		records = append(records[:position:position], records[position+1:]...)
+		if len(acked) == len(chunk) {
+			break
+		}
+	}
+	sort.Slice(acked, func(i, j int) bool { return acked[i].Index < acked[j].Index })
+	return acked, nil
+}
+
+// duplicateMatches compares the record metadata the Atuin server reports on a
+// conflict: id, series host, tag, index, timestamp, and version. Payload fields
+// are not part of the server's metadata and are not compared.
+func duplicateMatches(local domainhistory.Record, existing SyncRecord) bool {
+	return local.ID == existing.ID &&
+		local.SeriesHost == existing.SeriesHost &&
+		local.Tag == existing.Tag &&
+		local.Index == existing.Index &&
+		local.Version == existing.Version &&
+		!local.RecordedAt.IsZero() &&
+		local.RecordedAt.UnixNano() == existing.RecordedAt.UnixNano()
+}
+
+func syncRecordFromLocal(record domainhistory.Record) (SyncRecord, error) {
+	syncRecord := SyncRecord{
+		ID:         record.ID,
+		SeriesHost: record.SeriesHost,
+		Tag:        record.Tag,
+		Index:      record.Index,
+		RecordedAt: record.RecordedAt,
+		Version:    record.Version,
+		Kind:       record.Kind,
+		HistoryID:  record.HistoryID,
+	}
+	switch record.Kind {
+	case domainhistory.RecordKindCreate:
+		var entry domainhistory.Entry
+		if err := json.Unmarshal([]byte(record.Payload), &entry); err != nil {
+			return SyncRecord{}, err
+		}
+		if entry.ID == "" {
+			entry.ID = record.HistoryID
+		}
+		syncRecord.Entry = &entry
+	case domainhistory.RecordKindDelete:
+		var payload domainhistory.DeleteRecordPayload
+		if err := json.Unmarshal([]byte(record.Payload), &payload); err != nil {
+			return SyncRecord{}, err
+		}
+		if payload.DeletedAt.IsZero() {
+			payload.DeletedAt = record.RecordedAt
+		}
+		syncRecord.DeletedAt = payload.DeletedAt
+	}
+	if !syncRecord.Valid() {
+		return SyncRecord{}, ErrIncompletePage
+	}
+	return syncRecord, nil
+}
+
+func localSeriesRecords(records []domainhistory.Record, writer string) []domainhistory.Record {
+	local := make([]domainhistory.Record, 0, len(records))
+	for _, record := range records {
+		if record.SeriesHost == writer && record.Tag == domainhistory.RecordTagHistory &&
+			record.Direction == domainhistory.RecordDirectionLocal {
+			local = append(local, record)
+		}
+	}
+	sort.Slice(local, func(i, j int) bool { return local[i].Index < local[j].Index })
+	return local
+}
+
+func maxSeriesIndex(records []domainhistory.Record, seriesHost, tag string) int64 {
+	max := int64(-1)
+	for _, record := range records {
+		if record.SeriesHost == seriesHost && record.Tag == tag && record.Index > max {
+			max = record.Index
+		}
+	}
+	return max
+}
+
+func maxUploadedIndex(records []domainhistory.Record) int64 {
+	max := int64(-1)
+	for _, record := range records {
+		if !record.UploadedAt.IsZero() && record.Index > max {
+			max = record.Index
+		}
+	}
+	return max
+}
+
+func pendingUploads(records []domainhistory.Record, writer string) int {
+	count := 0
+	for _, record := range records {
+		if record.SeriesHost == writer && record.Tag == domainhistory.RecordTagHistory &&
+			record.Direction == domainhistory.RecordDirectionLocal && record.UploadedAt.IsZero() {
+			count++
+		}
+	}
+	return count
+}
+
+func recordIDs(records []domainhistory.Record) []string {
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.ID)
+	}
+	return ids
+}
+
+func recordIDsInRange(records []domainhistory.Record, from, to int64) []string {
+	ids := make([]string, 0)
+	for _, record := range records {
+		if record.Index >= from && record.Index <= to {
+			ids = append(ids, record.ID)
+		}
+	}
+	return ids
+}
+
+func storedAccountMatches(stored domainhistory.AccountIdentity, address string, account Account) error {
+	if stored.ServerURL == "" {
+		return ErrAccountMismatch
+	}
+	recorded, err := NormalizeSyncAddress(stored.ServerURL)
+	if err != nil || recorded != address {
+		return ErrAccountMismatch
+	}
+	if stored.UserID != "" && account.UserID != "" && stored.UserID != account.UserID {
+		return ErrAccountMismatch
+	}
+	return nil
+}
+
+// fail maps a sync error to a status and schedules a retry only for transient
+// failures. It returns the sanitized public error.
+func (s *Service) fail(base SyncStatus, err error, result *SyncResult) error {
+	status := statusForSyncError(base, err)
+	status.ServerVersion = base.ServerVersion
+	// LastSyncAt names the last run that finished, so a failure keeps it.
+	previous := s.cachedStatus()
+	if status.ServerVersion == "" {
+		status.ServerVersion = previous.ServerVersion
+	}
+	if status.LastSyncAt.IsZero() {
+		status.LastSyncAt = previous.LastSyncAt
+	}
+	if retryableSyncError(err) {
+		attempt := s.nextRetryAttempt()
+		delay := s.backoff(attempt)
+		status.NextRetryAt = s.scheduler.Now().Add(delay)
+		s.scheduleRetry(delay)
+	} else {
+		s.clearRetry()
+		status.NextRetryAt = time.Time{}
+	}
+	status.PendingUploads = base.PendingUploads
+	result.PendingUploads = status.PendingUploads
+	s.setStatus(status)
+	return publicSyncError(err)
+}
+
+func (s *Service) nextRetryAttempt() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	attempt := s.retryAttempt
+	s.retryAttempt++
+	return attempt
+}
+
+func (s *Service) clearRetry() {
+	s.mu.Lock()
+	s.retryAttempt = 0
+	timer := s.retryTimer
+	s.retryTimer = nil
+	s.mu.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+}
+
+func (s *Service) scheduleRetry(delay time.Duration) {
+	s.mu.Lock()
+	if s.stopped || !s.started {
+		s.mu.Unlock()
+		return
+	}
+	if s.retryTimer != nil {
+		s.retryTimer.Stop()
+	}
+	ctx := s.ctx
+	s.retryTimer = s.scheduler.AfterFunc(delay, func() {
+		s.enqueue(ctx, TriggerRetry, nil)
+	})
+	s.mu.Unlock()
+}
+
+func (s *Service) scheduleInterval() {
+	if s.settings == nil {
+		return
+	}
+	minutes := s.settings.HistorySettings().SyncIntervalMinutes
+	if minutes <= 0 {
+		minutes = 5
+	}
+	delay := time.Duration(minutes) * time.Minute
+
+	s.mu.Lock()
+	if s.stopped || !s.started {
+		s.mu.Unlock()
+		return
+	}
+	ctx := s.ctx
+	s.intervalTimer = s.scheduler.AfterFunc(delay, func() {
+		s.enqueue(ctx, TriggerInterval, nil)
+		s.scheduleInterval()
+	})
+	s.mu.Unlock()
+}
+
+func (s *Service) backoff(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt >= len(retryDelays) {
+		attempt = len(retryDelays) - 1
+	}
+	return s.jitter(retryDelays[attempt])
+}
+
+// jittered applies +/-20 percent so many clients do not retry in lockstep.
+func jittered(delay time.Duration) time.Duration {
+	factor := 0.8 + 0.4*rand.Float64()
+	return time.Duration(float64(delay) * factor)
+}
+
+func retryableSyncError(err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return false
+	case errors.Is(err, ErrAuthExpired), errors.Is(err, ErrAuthFailed):
+		return false
+	case errors.Is(err, ErrKeyMismatch), errors.Is(err, ErrKeyUnverified):
+		return false
+	case errors.Is(err, ErrIncompatibleServer):
+		return false
+	case errors.Is(err, ErrAccountMismatch), errors.Is(err, ErrUploadConflict):
+		return false
+	case errors.Is(err, ErrSecretsLocked), errors.Is(err, ErrSecretsUnavailable):
+		return false
+	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrSyncDisabled):
+		return false
+	case errors.Is(err, ErrRemoteUnavailable), errors.Is(err, ErrInvalidSyncAddress):
+		return false
+	case errors.Is(err, ErrIncompletePage):
+		return false
+	default:
+		return true
+	}
+}
+
+func statusForSyncError(base SyncStatus, err error) SyncStatus {
+	status := base
+	status.NextRetryAt = time.Time{}
+	switch {
+	case errors.Is(err, ErrSecretsLocked):
+		status.State = atuinmodel.SyncLocked
+		status.Problem = atuinmodel.ProblemLocked
+	case errors.Is(err, ErrSecretsUnavailable):
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+	case errors.Is(err, ErrAuthExpired), errors.Is(err, ErrAuthFailed):
+		status.State = atuinmodel.SyncAuthExpired
+		status.Problem = atuinmodel.ProblemAuthExpired
+	case errors.Is(err, ErrKeyMismatch):
+		status.State = atuinmodel.SyncKeyMismatch
+		status.Problem = atuinmodel.ProblemKeyMismatch
+	case errors.Is(err, ErrKeyUnverified):
+		status.State = atuinmodel.SyncIdle
+		status.Problem = atuinmodel.ProblemKeyUnverified
+	case errors.Is(err, ErrIncompatibleServer):
+		status.State = atuinmodel.SyncIncompatibleServer
+		status.Problem = atuinmodel.ProblemIncompatibleServer
+	case errors.Is(err, ErrAccountMismatch):
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrRemoteUnavailable):
+		status.State = atuinmodel.SyncNotConfigured
+		status.Problem = atuinmodel.ProblemNotConfigured
+	case errors.Is(err, ErrSyncDisabled):
+		status.State = atuinmodel.SyncDisabled
+		status.Problem = atuinmodel.ProblemDisabled
+	case errors.Is(err, ErrOffline):
+		status.State = atuinmodel.SyncOffline
+		status.Problem = atuinmodel.ProblemOffline
+	default:
+		status.State = atuinmodel.SyncError
+		status.Problem = atuinmodel.ProblemError
+	}
+	return status
+}
+
+// publicSyncError returns only a known sentinel so a server message, request
+// body, or record payload cannot leak through an error string.
+func publicSyncError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, ErrAuthExpired):
+		return ErrAuthExpired
+	case errors.Is(err, ErrAuthFailed):
+		return ErrAuthFailed
+	case errors.Is(err, ErrIncompatibleServer):
+		return ErrIncompatibleServer
+	case errors.Is(err, ErrKeyMismatch):
+		return ErrKeyMismatch
+	case errors.Is(err, ErrKeyUnverified):
+		return ErrKeyUnverified
+	case errors.Is(err, ErrOffline):
+		return ErrOffline
+	case errors.Is(err, ErrRemoteUnavailable):
+		return ErrRemoteUnavailable
+	case errors.Is(err, ErrAccountMismatch):
+		return ErrAccountMismatch
+	case errors.Is(err, ErrUploadConflict):
+		return ErrUploadConflict
+	case errors.Is(err, ErrSecretsLocked):
+		return ErrSecretsLocked
+	case errors.Is(err, ErrSecretsUnavailable):
+		return ErrSecretsUnavailable
+	case errors.Is(err, ErrNotConfigured):
+		return ErrNotConfigured
+	case errors.Is(err, ErrSyncDisabled):
+		return ErrSyncDisabled
+	case errors.Is(err, ErrIncompletePage):
+		return ErrIncompletePage
+	case errors.Is(err, ErrInvalidSyncAddress):
+		return ErrInvalidSyncAddress
+	default:
+		return ErrRemote
+	}
+}

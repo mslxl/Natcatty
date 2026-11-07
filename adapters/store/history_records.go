@@ -76,36 +76,49 @@ func (s *Store) HistoryMetadata(ctx context.Context) (domainhistory.Metadata, er
 	var metadata domainhistory.Metadata
 	// One transaction keeps the several meta rows a consistent snapshot.
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
-		writer, found, err := readMeta(tx, metaKeyHistoryWriter)
-		if err != nil {
-			return err
-		}
-		if found {
-			metadata.WriterUUID = writer
-		}
-		metadata.ShellHistoryImported, err = readMetaFlag(tx, metaKeyHistoryShellImport)
-		if err != nil {
-			return err
-		}
-		if metadata.KeyFingerprint, _, err = readMeta(tx, metaKeyHistoryKeyFingerprint); err != nil {
-			return err
-		}
-		metadata.UnverifiedKeyConfirmed, err = readMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed)
-		if err != nil {
-			return err
-		}
-		if err := readMetaJSON(tx, metaKeyHistoryAccount, &metadata.Account); err != nil {
-			return err
-		}
-		if err := readMetaJSON(tx, metaKeyHistoryHostImports, &metadata.HostImports); err != nil {
-			return err
-		}
-		if err := readMetaJSON(tx, metaKeyHistoryHostNotified, &metadata.HostAtuinNotified); err != nil {
-			return err
-		}
-		return readMetaJSON(tx, metaKeyHistorySeries, &metadata.Series)
+		var err error
+		metadata, err = readHistoryMetadata(tx)
+		return err
 	}); err != nil {
 		return domainhistory.Metadata{}, fmt.Errorf("store: read history metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// readHistoryMetadata reads every device-local history meta row inside the
+// caller's transaction. The sync engine needs the same snapshot while it
+// commits a page checkpoint atomically.
+func readHistoryMetadata(tx *gorm.DB) (domainhistory.Metadata, error) {
+	var metadata domainhistory.Metadata
+	writer, found, err := readMeta(tx, metaKeyHistoryWriter)
+	if err != nil {
+		return metadata, err
+	}
+	if found {
+		metadata.WriterUUID = writer
+	}
+	metadata.ShellHistoryImported, err = readMetaFlag(tx, metaKeyHistoryShellImport)
+	if err != nil {
+		return metadata, err
+	}
+	if metadata.KeyFingerprint, _, err = readMeta(tx, metaKeyHistoryKeyFingerprint); err != nil {
+		return metadata, err
+	}
+	metadata.UnverifiedKeyConfirmed, err = readMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed)
+	if err != nil {
+		return metadata, err
+	}
+	if err := readMetaJSON(tx, metaKeyHistoryAccount, &metadata.Account); err != nil {
+		return metadata, err
+	}
+	if err := readMetaJSON(tx, metaKeyHistoryHostImports, &metadata.HostImports); err != nil {
+		return metadata, err
+	}
+	if err := readMetaJSON(tx, metaKeyHistoryHostNotified, &metadata.HostAtuinNotified); err != nil {
+		return metadata, err
+	}
+	if err := readMetaJSON(tx, metaKeyHistorySeries, &metadata.Series); err != nil {
+		return metadata, err
 	}
 	return metadata, nil
 }
@@ -117,30 +130,7 @@ func (s *Store) HistoryMetadata(ctx context.Context) (domainhistory.Metadata, er
 // by EnsureWriterUUID and is never rewritten here.
 func (s *Store) SaveHistoryMetadata(ctx context.Context, metadata domainhistory.Metadata) error {
 	if err := s.db.ORMTransaction(ctx, func(tx *gorm.DB) error {
-		if err := writeMetaFlag(tx, metaKeyHistoryShellImport, metadata.ShellHistoryImported); err != nil {
-			return err
-		}
-		if err := writeMetaText(tx, metaKeyHistoryKeyFingerprint, metadata.KeyFingerprint); err != nil {
-			return err
-		}
-		if err := writeMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed,
-			metadata.UnverifiedKeyConfirmed); err != nil {
-			return err
-		}
-		if err := writeMetaJSON(tx, metaKeyHistoryAccount, metadata.Account,
-			metadata.Account != domainhistory.AccountIdentity{}); err != nil {
-			return err
-		}
-		if err := writeMetaJSON(tx, metaKeyHistoryHostImports, metadata.HostImports,
-			len(metadata.HostImports) > 0); err != nil {
-			return err
-		}
-		if err := writeMetaJSON(tx, metaKeyHistoryHostNotified, metadata.HostAtuinNotified,
-			len(metadata.HostAtuinNotified) > 0); err != nil {
-			return err
-		}
-		return writeMetaJSON(tx, metaKeyHistorySeries, metadata.Series,
-			len(metadata.Series) > 0)
+		return writeHistoryMetadata(tx, metadata)
 	}); err != nil {
 		return fmt.Errorf("store: save history metadata: %w", err)
 	}
@@ -265,6 +255,36 @@ func (s *Store) MarkHostAtuinNoticed(ctx context.Context, hostID string) (bool, 
 	}
 	return first, nil
 }
+
+// writeHistoryMetadata writes every device-local history meta row inside the
+// caller's transaction.
+func writeHistoryMetadata(tx *gorm.DB, metadata domainhistory.Metadata) error {
+	if err := writeMetaFlag(tx, metaKeyHistoryShellImport, metadata.ShellHistoryImported); err != nil {
+		return err
+	}
+	if err := writeMetaText(tx, metaKeyHistoryKeyFingerprint, metadata.KeyFingerprint); err != nil {
+		return err
+	}
+	if err := writeMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed,
+		metadata.UnverifiedKeyConfirmed); err != nil {
+		return err
+	}
+	if err := writeMetaJSON(tx, metaKeyHistoryAccount, metadata.Account,
+		metadata.Account != domainhistory.AccountIdentity{}); err != nil {
+		return err
+	}
+	if err := writeMetaJSON(tx, metaKeyHistoryHostImports, metadata.HostImports,
+		len(metadata.HostImports) > 0); err != nil {
+		return err
+	}
+	if err := writeMetaJSON(tx, metaKeyHistoryHostNotified, metadata.HostAtuinNotified,
+		len(metadata.HostAtuinNotified) > 0); err != nil {
+		return err
+	}
+	return writeMetaJSON(tx, metaKeyHistorySeries, metadata.Series,
+		len(metadata.Series) > 0)
+}
+
 
 // ListHistoryRecords returns the append-only log in series and index order.
 func (s *Store) ListHistoryRecords(ctx context.Context) ([]domainhistory.Record, error) {

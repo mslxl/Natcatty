@@ -598,6 +598,35 @@ func TestDeleteAndClearNotifySubscribers(t *testing.T) {
 	}
 }
 
+// TestExternalChangeNotifiesObserversButNotLocalWriters proves a downloaded
+// page refreshes History without scheduling an upload for rows this device did
+// not record.
+func TestExternalChangeNotifiesObserversButNotLocalWriters(t *testing.T) {
+	service := newTestService(&memoryStore{}, Retention{})
+	var all, local int
+	unsubscribeAll := service.Subscribe(func() { all++ })
+	defer unsubscribeAll()
+	unsubscribeLocal := service.SubscribeLocal(func() { local++ })
+	defer unsubscribeLocal()
+	before := service.Revision()
+
+	service.NotifyExternalChange()
+	if all != 1 || local != 0 {
+		t.Fatalf("external change: all = %d, local = %d; want 1 and 0", all, local)
+	}
+	if service.Revision() != before+1 {
+		t.Fatalf("revision = %d, want %d", service.Revision(), before+1)
+	}
+
+	if err := service.Record(context.Background(),
+		domainhistory.Entry{Command: "ls"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if all != 2 || local != 1 {
+		t.Fatalf("local record: all = %d, local = %d; want 2 and 1", all, local)
+	}
+}
+
 func TestInvalidRecordsAreRejectedAndStoreErrorsPropagate(t *testing.T) {
 	service := newTestService(&memoryStore{}, Retention{})
 	if err := service.Record(context.Background(), domainhistory.Entry{Command: "  "}); !errors.Is(err, ErrInvalid) {

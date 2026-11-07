@@ -1,5 +1,6 @@
-// Package historysync owns the Atuin account and the future record sync
-// engine. It declares the single external sync seam, Remote, and speaks only
+// Package historysync owns the Atuin account, the background history sync
+// engine, and the record log projection rules. It declares the single
+// external sync seam, Remote, and speaks only
 // domain sync records; HTTP, MessagePack, and PASETO belong to adapters.
 //
 // This package never touches the UI or a transport. Local Command History
@@ -138,6 +139,28 @@ func (capabilities Capabilities) Check() error {
 		}
 	}
 	return nil
+}
+
+// DuplicateRecordError reports an upload conflict for a series index that the
+// server already holds. Existing is the server's record metadata. The engine
+// treats the conflict as success only when Existing matches the record it
+// tried to upload, so a lost response after a server commit can be retried
+// safely while a foreign record at the same index still fails closed.
+type DuplicateRecordError struct {
+	Existing SyncRecord
+}
+
+func (err *DuplicateRecordError) Error() string {
+	return "historysync: duplicate record at the same series index"
+}
+
+// AsDuplicateRecord returns the duplicate conflict carried by err, if any.
+func AsDuplicateRecord(err error) (*DuplicateRecordError, bool) {
+	var duplicate *DuplicateRecordError
+	if errors.As(err, &duplicate) {
+		return duplicate, true
+	}
+	return nil, false
 }
 
 // Series identifies one append-only Atuin record series.

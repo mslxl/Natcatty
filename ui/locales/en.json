@@ -2224,11 +2224,11 @@
   "logsFrom": "From",
   "logsSourceAtuinImport": "Atuin import",
   "@logsSourceAtuinImport": {
-    "description": "A command imported read-only from a Host's own Atuin history."
+    "description": "A command projected from an Atuin history import."
   },
-  "logsSourceAtuinSync": "Another device",
+  "logsSourceAtuinSync": "Atuin sync",
   "@logsSourceAtuinSync": {
-    "description": "A command downloaded from another device through Atuin sync."
+    "description": "A command downloaded from another Atuin device."
   },
   "logsSessionFilter": "Session",
   "@logsSessionFilter": {
@@ -5431,5 +5431,9 @@
   "settingsAtuinProblemOffline": "The server could not be reached.",
   "settingsAtuinProblemRemote": "The Atuin request failed.",
   "settingsAtuinProblemSave": "The account change could not be saved.",
-  "logsAtuinAccount": "Atuin account"
+  "logsAtuinAccount": "Atuin account",
+  "settingsAtuinLastSync": "Last sync {time}",
+  "settingsAtuinPendingUploads": "Pending uploads: {count}",
+  "settingsAtuinNextRetry": "Next retry {time}",
+  "settingsAtuinSyncNow": "Sync now"
 }
