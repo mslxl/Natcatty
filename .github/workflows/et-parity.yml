@@ -1,13 +1,33 @@
 name: et-parity
 
 on:
-  # Reusable from the release workflow (ticket 34). Existing triggers stay
-  # intact: pull requests, main pushes, and manual runs still run the matrix.
+  # Reusable from the release workflow (ticket 34). Automatic runs are limited
+  # to the ET client, the session layer it uses, and its parity tool; a manual
+  # dispatch still runs the full matrix on any ref. Reusable calls ignore the
+  # path filters, so the release gate always runs.
   workflow_call:
   pull_request:
+    paths:
+      - "adapters/et/**"
+      - "application/session/**"
+      - "domain/model/et/**"
+      - "domain/model/transport/**"
+      - "internal/tools/etparity/**"
+      - ".github/workflows/et-parity.yml"
+      - "go.mod"
+      - "go.sum"
   push:
     branches:
       - main
+    paths:
+      - "adapters/et/**"
+      - "application/session/**"
+      - "domain/model/et/**"
+      - "domain/model/transport/**"
+      - "internal/tools/etparity/**"
+      - ".github/workflows/et-parity.yml"
+      - "go.mod"
+      - "go.sum"
   workflow_dispatch:
 
 concurrency:
