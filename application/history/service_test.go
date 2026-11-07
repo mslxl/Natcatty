@@ -153,6 +153,50 @@ func (s *memoryStore) HistoryMetadata(context.Context) (domainhistory.Metadata, 
 	return s.metadata, nil
 }
 
+func (s *memoryStore) ImportHostAtuinEntries(_ context.Context, hostID string,
+	checkpoint domainhistory.ImportCheckpoint, entries []domainhistory.Entry) error {
+	if s.fail != nil {
+		return s.fail
+	}
+	if s.failWrite != nil {
+		return s.failWrite
+	}
+	for _, entry := range entries {
+		if entry.Source != domainhistory.SourceAtuinImport {
+			return fmt.Errorf("import row %q has source %q", entry.ID, entry.Source)
+		}
+		if !domainhistory.CheckpointAfter(checkpoint, entry) {
+			return fmt.Errorf("checkpoint does not cover row %q", entry.ID)
+		}
+		s.entries = replaceEntry(s.entries, entry)
+	}
+	if s.metadata.HostImports == nil {
+		s.metadata.HostImports = make(map[string]domainhistory.ImportCheckpoint)
+	}
+	current, found := s.metadata.HostImports[hostID]
+	if !found || domainhistory.CompareImportCheckpoint(checkpoint, current) > 0 {
+		s.metadata.HostImports[hostID] = checkpoint
+	}
+	return nil
+}
+
+func (s *memoryStore) MarkHostAtuinNoticed(_ context.Context, hostID string) (bool, error) {
+	if s.fail != nil {
+		return false, s.fail
+	}
+	if s.failWrite != nil {
+		return false, s.failWrite
+	}
+	if s.metadata.HostAtuinNotified == nil {
+		s.metadata.HostAtuinNotified = make(map[string]bool)
+	}
+	if s.metadata.HostAtuinNotified[hostID] {
+		return false, nil
+	}
+	s.metadata.HostAtuinNotified[hostID] = true
+	return true, nil
+}
+
 func (s *memoryStore) ListHistoryEntriesIncludingDeleted(context.Context) ([]domainhistory.Entry, error) {
 	if s.fail != nil {
 		return nil, s.fail
