@@ -26,8 +26,9 @@ on:
     paths:
       - "app/**"
       - "scripts/artifact-tests.nu"
-      - "docs/packaging.md"
-      - "docs/ci/artifact-tests.md"
+      - "scripts/release.nu"
+      - "internal/legal/**"
+      - "internal/tools/sourceoffer/**"
       - "resources/**"
       - "mygo.json"
       - "go.mod"
@@ -36,6 +37,17 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "app/**"
+      - "scripts/artifact-tests.nu"
+      - "scripts/release.nu"
+      - "internal/legal/**"
+      - "internal/tools/sourceoffer/**"
+      - "resources/**"
+      - "mygo.json"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/artifact-tests.yml"
   workflow_dispatch:
 
 concurrency:

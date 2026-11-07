@@ -17,9 +17,9 @@ hosted run can settle.
 | Trigger | Behavior |
 | --- | --- |
 | `workflow_call` | Reusable with no inputs. Nothing in `release.yml` calls it yet. |
-| `pull_request` | Runs only when the app, the driver, the packaging docs, `resources/**`, `mygo.json`, `go.mod`, `go.sum`, or this workflow changes. |
-| `push` to `main` | Runs the full matrix for every main push. |
-| `workflow_dispatch` | Manual run from the Actions tab or `gh`. |
+| `pull_request` | Runs only when the app, the driver, `scripts/release.nu`, the legal texts, the source-offer tool, `resources/**`, `mygo.json`, `go.mod`, `go.sum`, or this workflow changes. A docs-only change does not run it. |
+| `push` to `main` | Runs the full matrix only when one of the same paths changes; an unrelated main push skips the workflow. |
+| `workflow_dispatch` | Manual run from the Actions tab or `gh`; it bypasses the path filters. |
 
 The workflow has `permissions: contents: read` and a concurrency group
 (`artifact-tests-<ref>`) that cancels an older run for the same ref. Every
@@ -171,10 +171,10 @@ gh run list --workflow artifact-tests.yml
 ```
 
 `workflow_dispatch` only appears for a workflow GitHub has registered from the
-default branch. Before this lands on `main`, use a `pull_request` run (the
-path filter above triggers it for app, driver, package, and workflow changes)
-or a temporary branch push. The `workflow_call` trigger has no inputs and is
-reserved for a future release integration; `release.yml` does not call it now.
+default branch. A `pull_request` run starts automatically when one of the
+path-filtered changes above lands, and a manual dispatch runs on any branch.
+The `workflow_call` trigger has no inputs and is reserved for a future release
+integration; `release.yml` does not call it now.
 
 ## Local reproduction
 
