@@ -13,8 +13,10 @@ on:
       - main
     paths:
       - "adapters/mosh/**"
+      - "application/session/**"
       - "internal/mosh/**"
       - "domain/model/mosh/**"
+      - "domain/model/transport/**"
       - "internal/tools/moshparity/**"
       - ".github/workflows/mosh-parity.yml"
       - "go.mod"
@@ -22,8 +24,10 @@ on:
   pull_request:
     paths:
       - "adapters/mosh/**"
+      - "application/session/**"
       - "internal/mosh/**"
       - "domain/model/mosh/**"
+      - "domain/model/transport/**"
       - "internal/tools/moshparity/**"
       - ".github/workflows/mosh-parity.yml"
       - "go.mod"
