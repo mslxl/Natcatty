@@ -58,7 +58,7 @@ func TestSurfaceAutocompleteReplacesTheRealShellLine(t *testing.T) {
 	providers := map[string]string{tabPrefix: tabSuggestion, clickPrefix: clickSuggest}
 	surface, err := sessionui.New(session,
 		sessionui.WithRedraw(func() {}),
-		sessionui.WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		sessionui.WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			suggestion, ok := providers[input]
 			if !ok {
 				return nil
@@ -182,7 +182,7 @@ func TestSurfaceAutocompleteAfterAFastRealCommand(t *testing.T) {
 	)
 	surface, err := sessionui.New(session,
 		sessionui.WithRedraw(func() {}),
-		sessionui.WithSuggestions(func(input, _ string) []autocomplete.Suggestion {
+		sessionui.WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
 			if input != prefix {
 				return nil
 			}

@@ -42,7 +42,10 @@ type Store interface {
 	// SoftDeleteHistoryEntry writes the soft-delete state and, when record is
 	// not nil, one delete record in the same transaction.
 	SoftDeleteHistoryEntry(context.Context, string, time.Time, *domainhistory.Record) error
-	ClearHistoryEntries(context.Context) (int, error)
+	// SoftDeleteHistoryEntries writes every listed row's soft-delete state and
+	// its tombstone in one transaction. Rows that are missing or already
+	// deleted are skipped, so a retried prune appends no duplicate tombstone.
+	SoftDeleteHistoryEntries(context.Context, []domainhistory.EntryDeletion, time.Time) (int, error)
 	// EnsureWriterUUID returns the per-install series host, creating it once.
 	EnsureWriterUUID(context.Context, func() string) (string, error)
 	// HistoryMetadata reads the device-local import, notice, and sync state,
@@ -356,7 +359,7 @@ func (s *Service) createRecordForWriter(entry domainhistory.Entry, writer string
 	if err != nil {
 		return nil, fmt.Errorf("history: encode create record: %w", err)
 	}
-	return s.recordInSeries(writer, entry.ID, domainhistory.RecordKindCreate, entry.RecordedAt, payload), nil
+	return s.localRecord(writer, entry.ID, domainhistory.RecordKindCreate, entry.RecordedAt, payload), nil
 }
 
 // newLocalRecord builds one pending record in this install's writer series.
@@ -365,11 +368,12 @@ func (s *Service) newLocalRecord(ctx context.Context, historyID, kind string, re
 	if err != nil {
 		return nil, err
 	}
-	return s.recordInSeries(writer, historyID, kind, recordedAt, payload), nil
+	return s.localRecord(writer, historyID, kind, recordedAt, payload), nil
 }
 
-// recordInSeries builds one pending record for a known writer series.
-func (s *Service) recordInSeries(writer, historyID, kind string, recordedAt time.Time, payload []byte) *domainhistory.Record {
+// localRecord builds one pending record for a known writer series. Bulk
+// deletes resolve the writer once instead of asking the store for it per row.
+func (s *Service) localRecord(writer, historyID, kind string, recordedAt time.Time, payload []byte) *domainhistory.Record {
 	return &domainhistory.Record{
 		ID:         s.newHistoryRecordID(),
 		SeriesHost: writer,
@@ -512,32 +516,8 @@ func (s *Service) DeleteEntry(ctx context.Context, id string) error {
 	if !found || !entry.DeletedAt.IsZero() {
 		return nil
 	}
-	deletedAt := s.now()
-	record, err := s.deleteRecord(ctx, entry, deletedAt)
-	if err != nil {
-		return err
-	}
-	if err := s.store.SoftDeleteHistoryEntry(ctx, id, deletedAt, record); err != nil {
-		return err
-	}
-	s.notify()
-	return nil
-}
-
-// deleteRecord returns the tombstone for a UUID-identified row. A legacy row
-// has no wire identity, so it gets no record and its delete stays local.
-func (s *Service) deleteRecord(ctx context.Context, entry domainhistory.Entry, deletedAt time.Time) (*domainhistory.Record, error) {
-	if !entry.HasUUIDIdentity() {
-		return nil, nil
-	}
-	payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
-		HistoryID: entry.ID,
-		DeletedAt: deletedAt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("history: encode delete record: %w", err)
-	}
-	return s.newLocalRecord(ctx, entry.ID, domainhistory.RecordKindDelete, deletedAt, payload)
+	_, err = s.deleteEntries(ctx, []domainhistory.Entry{entry})
+	return err
 }
 
 // ClearConnectionLogs removes every connection log and reports how many were
@@ -554,17 +534,141 @@ func (s *Service) ClearConnectionLogs(ctx context.Context) (int, error) {
 	return removed, nil
 }
 
-// ClearHistory removes every recorded command and reports how many were
-// deleted.
-func (s *Service) ClearHistory(ctx context.Context) (int, error) {
+// clearBatchSize bounds one Clear this device transaction. A large journal is
+// cleared in several committed batches instead of one transaction that holds
+// the writer lock for the whole operation.
+const clearBatchSize = 500
+
+// ClearThisDevice soft-deletes every live command this install created: rows
+// captured in a Session or imported from a local Shell History File, including
+// legacy rows with no source. Imported and synced remote-origin rows are left
+// in place so one device's clear never silently erases another writer's
+// history. Each removed row with a UUID identity also gets a delete tombstone;
+// a legacy non-UUID row stays local-only. Rows are removed in batches, so a
+// failure part-way through leaves the already-committed batches deleted and
+// stops before the rest.
+func (s *Service) ClearThisDevice(ctx context.Context) (int, error) {
 	if s.store == nil {
 		return 0, ErrInvalid
 	}
-	removed, err := s.store.ClearHistoryEntries(ctx)
+	entries, err := s.store.ListHistoryEntries(ctx)
 	if err != nil {
 		return 0, err
 	}
-	s.notify()
+	owned := make([]domainhistory.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsLocallyOwned() {
+			owned = append(owned, entry)
+		}
+	}
+	removed := 0
+	for start := 0; start < len(owned); start += clearBatchSize {
+		end := start + clearBatchSize
+		if end > len(owned) {
+			end = len(owned)
+		}
+		removedInBatch, err := s.deleteEntries(ctx, owned[start:end])
+		if err != nil {
+			return removed, err
+		}
+		removed += removedInBatch
+	}
+	return removed, nil
+}
+
+// PreviewPrune reports how many live rows the filter-based prune would remove.
+// limit bounds the count; zero or a negative value means every match. The
+// optional limit selects the oldest matching rows first, so a bounded prune
+// trims age rather than the newest history.
+func (s *Service) PreviewPrune(ctx context.Context, filter domainhistory.EntryFilter, limit int) (int, error) {
+	matched, err := s.pruneMatches(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return len(boundedPrune(matched, limit)), nil
+}
+
+// PruneHistory soft-deletes the live rows matching filter and appends a delete
+// tombstone for every removed row with a UUID identity, all in one
+// transaction. It removes only matched rows; an optional limit selects the
+// oldest matches first. A legacy non-UUID row is soft-deleted locally and
+// excluded from the tombstone batch.
+func (s *Service) PruneHistory(ctx context.Context, filter domainhistory.EntryFilter, limit int) (int, error) {
+	matched, err := s.pruneMatches(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return s.deleteEntries(ctx, boundedPrune(matched, limit))
+}
+
+// pruneMatches returns the live rows matching filter newest first, using the
+// same deterministic ordering as the History surface.
+func (s *Service) pruneMatches(ctx context.Context, filter domainhistory.EntryFilter) ([]domainhistory.Entry, error) {
+	if s.store == nil {
+		return nil, ErrInvalid
+	}
+	entries, err := s.store.ListHistoryEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matched := make([]domainhistory.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.DeletedAt.IsZero() && filter.Match(entry) {
+			matched = append(matched, entry)
+		}
+	}
+	domainhistory.SortEntries(matched)
+	return matched, nil
+}
+
+// boundedPrune applies an optional prune limit to the newest-first matches by
+// keeping the oldest matches, which are at the end of the slice.
+func boundedPrune(entries []domainhistory.Entry, limit int) []domainhistory.Entry {
+	if limit <= 0 || len(entries) <= limit {
+		return entries
+	}
+	return entries[len(entries)-limit:]
+}
+
+// deleteEntries soft-deletes the listed rows and appends one tombstone per
+// UUID-identified row in a single store transaction. It is the shared path for
+// Delete one, Prune, and Clear this device.
+func (s *Service) deleteEntries(ctx context.Context, entries []domainhistory.Entry) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	deletedAt := s.now()
+	writer := ""
+	deletions := make([]domainhistory.EntryDeletion, 0, len(entries))
+	for _, entry := range entries {
+		deletion := domainhistory.EntryDeletion{ID: entry.ID}
+		if entry.HasUUIDIdentity() {
+			if writer == "" {
+				var err error
+				writer, err = s.store.EnsureWriterUUID(ctx, s.newWriterID)
+				if err != nil {
+					return 0, err
+				}
+			}
+			payload, err := json.Marshal(domainhistory.DeleteRecordPayload{
+				HistoryID: entry.ID,
+				DeletedAt: deletedAt,
+			})
+			if err != nil {
+				return 0, fmt.Errorf("history: encode delete record: %w", err)
+			}
+			deletion.Record = s.localRecord(writer, entry.ID,
+				domainhistory.RecordKindDelete, deletedAt, payload)
+		}
+		deletions = append(deletions, deletion)
+	}
+	removed, err := s.store.SoftDeleteHistoryEntries(ctx, deletions, deletedAt)
+	if err != nil {
+		return 0, err
+	}
+	if removed > 0 {
+		s.notify()
+	}
 	return removed, nil
 }
 

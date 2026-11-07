@@ -67,3 +67,12 @@ type DeleteRecordPayload struct {
 	HistoryID string    `json:"historyId"`
 	DeletedAt time.Time `json:"deletedAt"`
 }
+
+// EntryDeletion pairs one journal row with the tombstone that must be
+// appended with its soft delete in the same transaction. A nil Record keeps a
+// legacy non-UUID row local-only because it cannot be represented on the Atuin
+// wire.
+type EntryDeletion struct {
+	ID     string
+	Record *Record
+}

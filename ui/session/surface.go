@@ -54,9 +54,10 @@ type Options struct {
 	ReceiveYmodem func()
 	// OnEncoding persists a user's live encoding choice.
 	OnEncoding func(domainterminal.Encoding)
-	// Suggest returns command suggestions for the line being typed. Nil leaves
-	// autocomplete off.
-	Suggest func(input, scope string) []autocomplete.Suggestion
+	// Suggest returns command suggestions for the line being typed. cwd is the
+	// working directory the shell last reported with OSC 7, used for the
+	// current-directory ranking bonus. Nil leaves autocomplete off.
+	Suggest func(input, scope, cwd string) []autocomplete.Suggestion
 	// AutocompleteDisplay reports whether the popup and ghost hint are shown.
 	AutocompleteDisplay func() (popup, ghost bool)
 	// AutocompleteDelay is the debounce in milliseconds before suggestions are
@@ -183,8 +184,9 @@ func WithEncodingChange(fn func(domainterminal.Encoding)) Option {
 }
 
 // WithSuggestions supplies the autocomplete provider and the live popup/ghost
-// switches.
-func WithSuggestions(suggest func(input, scope string) []autocomplete.Suggestion,
+// switches. The provider receives the Session's scope and its last reported
+// working directory.
+func WithSuggestions(suggest func(input, scope, cwd string) []autocomplete.Suggestion,
 	display func() (popup, ghost bool)) Option {
 	return func(options *Options) {
 		options.Suggest = suggest
@@ -540,7 +542,7 @@ func (s *Surface) view(c *ui.Context, focused bool) ui.Element {
 	m := locales.In(c.Locale())
 	t := c.Theme()
 	snapshot := s.session.Snapshot()
-	s.refreshSuggestions(snapshot.Input, snapshot.Command.Running)
+	s.refreshSuggestions(snapshot.Input, snapshot.CWD, snapshot.Command.Running)
 	model, actions := s.chrome(c, snapshot)
 
 	return ui.Column(c).Fill().Children(func() {

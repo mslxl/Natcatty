@@ -19,6 +19,7 @@ type fakeSource struct {
 	deleteErr  error
 	entriesErr error
 	cleared    int
+	pruned     int
 }
 
 func (f *fakeSource) ConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -71,15 +72,48 @@ func (f *fakeSource) ClearConnectionLogs(context.Context) (int, error) {
 	return removed, nil
 }
 
-func (f *fakeSource) ClearHistory(context.Context) (int, error) {
+func (f *fakeSource) ClearThisDevice(context.Context) (int, error) {
 	if f.deleteErr != nil {
 		return 0, f.deleteErr
 	}
-	removed := len(f.entries)
-	f.entries = nil
+	removed := 0
+	kept := make([]domainhistory.Entry, 0, len(f.entries))
+	for _, entry := range f.entries {
+		if entry.IsLocallyOwned() {
+			removed++
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	f.entries = kept
 	f.cleared = removed
 	f.markChanged()
 	return removed, nil
+}
+
+func (f *fakeSource) PruneHistory(_ context.Context, filter domainhistory.EntryFilter, limit int) (int, error) {
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	kept := make([]domainhistory.Entry, 0, len(f.entries))
+	matched := make([]domainhistory.Entry, 0, len(f.entries))
+	for _, entry := range f.entries {
+		if filter.Match(entry) {
+			matched = append(matched, entry)
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if limit > 0 && len(matched) > limit {
+		// The service selects the oldest matches; the fake keeps the newest.
+		domainhistory.SortEntries(matched)
+		kept = append(kept, matched[:len(matched)-limit]...)
+		matched = matched[len(matched)-limit:]
+	}
+	f.entries = kept
+	f.pruned = len(matched)
+	f.markChanged()
+	return len(matched), nil
 }
 
 func (f *fakeSource) Revision() uint64 { return f.revision }
@@ -106,6 +140,19 @@ func (f *fakeActions) OpenTerminal(sessionID model.SessionID, hostID model.HostI
 	f.sessions = append(f.sessions, sessionID)
 	f.hosts = append(f.hosts, hostID)
 	return f.err
+}
+
+type fakeCommandActions struct {
+	err      error
+	commands []string
+}
+
+func (f *fakeCommandActions) InsertCommand(command string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.commands = append(f.commands, command)
+	return nil
 }
 
 func logAt(id string, hostID model.HostID, status domainhistory.ConnectionStatus,
@@ -292,6 +339,136 @@ func TestRowActionsDeleteClearAndReportProblems(t *testing.T) {
 	state.ConfirmClear()
 	if state.Problem() != ProblemClear {
 		t.Fatalf("clear problem = %v", state.Problem())
+	}
+}
+
+// TestClearThisDeviceLeavesImportedHistory proves Clear this device removes
+// only locally owned rows; imported and synced remote-origin rows stay.
+func TestClearThisDeviceLeavesImportedHistory(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("local", "", "ls", domainhistory.SourceSession, now),
+		entryAt("imported", "", "uptime", domainhistory.SourceAtuinImport, now),
+		entryAt("synced", "", "df -h", domainhistory.SourceAtuinSync, now),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.RequestClear()
+	state.ConfirmClear()
+
+	if state.TotalEntries() != 2 || state.Cleared() != 1 {
+		t.Fatalf("entries = %d, cleared = %d; want 2 imported/synced left",
+			state.TotalEntries(), state.Cleared())
+	}
+	for _, entry := range source.entries {
+		if entry.Source == domainhistory.SourceSession {
+			t.Fatalf("Clear this device removed the local row %+v", entry)
+		}
+	}
+}
+
+func TestPrunePreviewAndConfirmOnlyMatchedRows(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("git-1", "", "git status", domainhistory.SourceSession, now),
+		entryAt("git-2", "", "git log", domainhistory.SourceSession, now.Add(-time.Hour)),
+		entryAt("make", "", "make test", domainhistory.SourceSession, now.Add(-2*time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.SetSearch("git")
+	state.RequestPrune()
+
+	if !state.PendingPrune() {
+		t.Fatal("the prune dialog did not open")
+	}
+	if got := state.PrunePreview(); got != 2 {
+		t.Fatalf("preview = %d, want the two git rows", got)
+	}
+	state.ConfirmPrune()
+	if state.PendingPrune() || state.Problem() != ProblemNone {
+		t.Fatalf("pending = %v, problem = %v", state.PendingPrune(), state.Problem())
+	}
+	if state.Pruned() != 2 || state.TotalEntries() != 1 {
+		t.Fatalf("pruned = %d, entries = %d; want only make test left",
+			state.Pruned(), state.TotalEntries())
+	}
+	if source.entries[0].Command != "make test" {
+		t.Fatalf("remaining row = %+v, want make test", source.entries[0])
+	}
+}
+
+func TestPruneLimitSelectsTheOldestMatches(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("newest", "", "deploy", domainhistory.SourceSession, now),
+		entryAt("middle", "", "deploy", domainhistory.SourceSession, now.Add(-time.Hour)),
+		entryAt("oldest", "", "deploy", domainhistory.SourceSession, now.Add(-2*time.Hour)),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.RequestPrune()
+	*state.PruneLimit() = "2"
+	if got := state.PrunePreview(); got != 2 {
+		t.Fatalf("preview = %d, want the limit", got)
+	}
+	state.ConfirmPrune()
+	if state.Pruned() != 2 || state.TotalEntries() != 1 {
+		t.Fatalf("pruned = %d, entries = %d", state.Pruned(), state.TotalEntries())
+	}
+	if len(source.entries) != 1 || source.entries[0].ID != "newest" {
+		t.Fatalf("remaining rows = %+v, want the newest", source.entries)
+	}
+}
+
+func TestPruneInvalidLimitKeepsTheDialogOpen(t *testing.T) {
+	now := time.Now()
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("one", "", "ls", domainhistory.SourceSession, now),
+	}}
+	state := NewState(source, nil)
+	state.Refresh()
+	state.SelectTab(TabHistory)
+	state.RequestPrune()
+	*state.PruneLimit() = "many"
+	if !state.PruneLimitProblem() {
+		t.Fatal("a malformed limit was accepted")
+	}
+	if got := state.PrunePreview(); got != 0 {
+		t.Fatalf("preview with a malformed limit = %d, want 0", got)
+	}
+	state.ConfirmPrune()
+	if !state.PendingPrune() || state.TotalEntries() != 1 {
+		t.Fatalf("pending = %v, entries = %d; want no prune",
+			state.PendingPrune(), state.TotalEntries())
+	}
+}
+
+func TestInsertEntryIsExplicitAndReportsFailure(t *testing.T) {
+	commands := &fakeCommandActions{}
+	state := NewState(&fakeSource{}, nil, WithCommandActions(commands))
+	state.InsertEntry("git status")
+	if len(commands.commands) != 1 || commands.commands[0] != "git status" {
+		t.Fatalf("inserted = %+v, want git status", commands.commands)
+	}
+	if state.OpenProblem() != ProblemNone {
+		t.Fatalf("insert problem = %v", state.OpenProblem())
+	}
+
+	commands.err = errors.New("no session")
+	state.InsertEntry("git stash")
+	if state.OpenProblem() != ProblemInsert {
+		t.Fatalf("insert problem = %v, want ProblemInsert", state.OpenProblem())
+	}
+
+	// A surface without the action seam never fakes success.
+	bare := NewState(&fakeSource{}, nil)
+	bare.InsertEntry("ls")
+	if bare.OpenProblem() != ProblemInsert {
+		t.Fatalf("bare insert problem = %v, want ProblemInsert", bare.OpenProblem())
 	}
 }
 
@@ -523,6 +700,36 @@ func TestHistoryTabClassifiesUnsavedHostsAndResetsTheFilter(t *testing.T) {
 		if option.Key == domainhistory.UnsavedHostKey {
 			t.Fatal("the Connections tab offered an unsaved option with no unsaved logs")
 		}
+	}
+}
+
+// TestDeleteRowConfirmationGatesTheStore proves the History row action opens a
+// confirmation first and that switching tabs discards it.
+func TestDeleteRowConfirmationGatesTheStore(t *testing.T) {
+	source := &fakeSource{entries: []domainhistory.Entry{
+		entryAt("e1", "", "ls", domainhistory.SourceSession, time.Now()),
+	}}
+	state := NewState(source, nil)
+
+	state.RequestDeleteEntry("e1")
+	if state.PendingDeleteEntry() != "e1" {
+		t.Fatalf("pending delete = %q, want e1", state.PendingDeleteEntry())
+	}
+	if len(source.entries) != 1 {
+		t.Fatal("requesting a delete removed the row")
+	}
+	state.SelectTab(TabHistory)
+	if state.PendingDeleteEntry() != "" {
+		t.Fatalf("pending delete = %q after switching tabs", state.PendingDeleteEntry())
+	}
+
+	state.RequestDeleteEntry("e1")
+	state.ConfirmDeleteEntry()
+	if state.PendingDeleteEntry() != "" {
+		t.Fatalf("pending delete = %q after confirmation", state.PendingDeleteEntry())
+	}
+	if len(source.entries) != 0 {
+		t.Fatalf("entries = %+v, want the confirmed row removed", source.entries)
 	}
 }
 

@@ -21,6 +21,7 @@ type memoryStore struct {
 	fail      error
 	failWrite error
 	saves     int
+	batches   int
 }
 
 func (s *memoryStore) ListConnectionLogs(context.Context) ([]domainhistory.ConnectionLog, error) {
@@ -225,9 +226,28 @@ func (s *memoryStore) ImportShellHistory(_ context.Context, imports []ShellHisto
 	return nil
 }
 
-func (s *memoryStore) ClearHistoryEntries(context.Context) (int, error) {
-	removed := len(s.entries)
-	s.entries = nil
+func (s *memoryStore) SoftDeleteHistoryEntries(_ context.Context, deletions []domainhistory.EntryDeletion, deletedAt time.Time) (int, error) {
+	if s.fail != nil {
+		return 0, s.fail
+	}
+	if s.failWrite != nil {
+		return 0, s.failWrite
+	}
+	s.batches++
+	removed := 0
+	for _, deletion := range deletions {
+		for index := range s.entries {
+			if s.entries[index].ID != deletion.ID || !s.entries[index].DeletedAt.IsZero() {
+				continue
+			}
+			s.entries[index].DeletedAt = deletedAt
+			if deletion.Record != nil {
+				s.appendRecord(*deletion.Record)
+			}
+			removed++
+			break
+		}
+	}
 	return removed, nil
 }
 
@@ -545,8 +565,10 @@ func TestDeleteAndClearNotifySubscribers(t *testing.T) {
 	if err := service.DeleteEntry(context.Background(), entries[0].ID); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	if removed, err := service.ClearHistory(context.Background()); err != nil || removed != 2 {
-		t.Fatalf("ClearHistory = %d, %v; want 2", removed, err)
+	// One of the two rows was already soft-deleted; Clear this device removes
+	// the one live local row.
+	if removed, err := service.ClearThisDevice(context.Background()); err != nil || removed != 1 {
+		t.Fatalf("ClearThisDevice = %d, %v; want 1", removed, err)
 	}
 	if notifications < 4 {
 		t.Fatalf("notifications = %d, want at least 4", notifications)
@@ -741,6 +763,238 @@ func TestDeleteEntryOfAnImportedRowAppendsATombstone(t *testing.T) {
 	tombstone := store.records[0]
 	if tombstone.Kind != domainhistory.RecordKindDelete || tombstone.HistoryID != imported.ID {
 		t.Fatalf("tombstone = %+v, want a delete for the imported history id", tombstone)
+	}
+}
+
+func uuid(number int) string {
+	return fmt.Sprintf("0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9%03d", number)
+}
+
+func TestPreviewPruneCountsOnlyMatchingLiveRowsAndAppliesTheLimit(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	rows := []domainhistory.Entry{
+		{ID: uuid(1), Scope: "local", Command: "git status", Source: domainhistory.SourceSession, RecordedAt: at(1)},
+		{ID: uuid(2), Scope: "local", Command: "git log", Source: domainhistory.SourceSession, RecordedAt: at(2)},
+		{ID: uuid(3), Scope: "local", Command: "make test", Source: domainhistory.SourceSession, RecordedAt: at(3)},
+		{ID: uuid(4), Scope: "remote:web:deploy", Command: "git fetch", Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(4)},
+	}
+	for _, entry := range rows {
+		if err := service.Record(ctx, entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.Command, err)
+		}
+	}
+	if err := service.DeleteEntry(ctx, uuid(3)); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	filter := domainhistory.EntryFilter{Query: "git"}
+	count, err := service.PreviewPrune(ctx, filter, 0)
+	if err != nil || count != 3 {
+		t.Fatalf("PreviewPrune = %d, %v; want the three live git rows", count, err)
+	}
+	count, err = service.PreviewPrune(ctx, filter, 2)
+	if err != nil || count != 2 {
+		t.Fatalf("PreviewPrune with limit = %d, %v; want 2", count, err)
+	}
+	count, err = service.PreviewPrune(ctx, domainhistory.EntryFilter{Query: "missing"}, 0)
+	if err != nil || count != 0 {
+		t.Fatalf("PreviewPrune with no match = %d, %v; want 0", count, err)
+	}
+}
+
+func TestPruneHistorySoftDeletesOnlyMatchedRowsAndAppendsTombstones(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	rows := []domainhistory.Entry{
+		{ID: uuid(1), Scope: "local", Command: "git status", Source: domainhistory.SourceSession, RecordedAt: at(1)},
+		{ID: uuid(2), Scope: "local", Command: "git log", Source: domainhistory.SourceSession, RecordedAt: at(2)},
+		{ID: uuid(3), Scope: "local", Command: "make test", Source: domainhistory.SourceSession, RecordedAt: at(3)},
+		{ID: uuid(4), Scope: "remote:web:deploy", Command: "git fetch", Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(4)},
+	}
+	for _, entry := range rows {
+		if err := service.Record(ctx, entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.Command, err)
+		}
+	}
+	created := len(store.records)
+
+	removed, err := service.PruneHistory(ctx,
+		domainhistory.EntryFilter{Host: domainhistory.LocalHostKey, Query: "git"}, 0)
+	if err != nil || removed != 2 {
+		t.Fatalf("PruneHistory = %d, %v; want the two local git rows", removed, err)
+	}
+	for _, entry := range store.entries {
+		deleted := !entry.DeletedAt.IsZero()
+		want := entry.Command == "git status" || entry.Command == "git log"
+		if deleted != want {
+			t.Fatalf("row %q deleted = %v, want %v", entry.Command, deleted, want)
+		}
+	}
+	tombstones := store.records[created:]
+	if len(tombstones) != 2 {
+		t.Fatalf("tombstones = %d, want one per pruned UUID row", len(tombstones))
+	}
+	for _, record := range tombstones {
+		if record.Kind != domainhistory.RecordKindDelete || record.Direction != domainhistory.RecordDirectionLocal {
+			t.Fatalf("tombstone = %+v, want a pending local delete", record)
+		}
+		if record.HistoryID != uuid(1) && record.HistoryID != uuid(2) {
+			t.Fatalf("tombstone history id = %q, want a pruned row", record.HistoryID)
+		}
+	}
+	live, err := service.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(live) != 2 {
+		t.Fatalf("live rows = %d, want the unmatched local row and the imported row", len(live))
+	}
+}
+
+func TestPruneHistoryLimitSelectsTheOldestMatches(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	for index := 0; index < 5; index++ {
+		if err := service.Record(ctx, domainhistory.Entry{
+			ID: uuid(index + 1), Scope: "local", Command: "old command",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		}); err != nil {
+			t.Fatalf("Record %d: %v", index, err)
+		}
+	}
+	removed, err := service.PruneHistory(ctx,
+		domainhistory.EntryFilter{Query: "old"}, 2)
+	if err != nil || removed != 2 {
+		t.Fatalf("PruneHistory = %d, %v; want 2", removed, err)
+	}
+	for index := 0; index < 5; index++ {
+		stored, found, err := store.HistoryEntry(ctx, uuid(index+1))
+		if err != nil || !found {
+			t.Fatalf("HistoryEntry %d = %v, %v", index, found, err)
+		}
+		wantDeleted := index < 2
+		if stored.DeletedAt.IsZero() == wantDeleted {
+			t.Fatalf("row %d deleted = %v, want %v", index,
+				!stored.DeletedAt.IsZero(), wantDeleted)
+		}
+	}
+}
+
+func TestPruneHistoryKeepsLegacyRowsOutOfTheTombstoneBatch(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	if err := service.Record(ctx, domainhistory.Entry{
+		ID: "legacy-local-1", Scope: "local", Command: "git old",
+		Source: domainhistory.SourceSession, RecordedAt: at(1),
+	}); err != nil {
+		t.Fatalf("Record legacy: %v", err)
+	}
+	if err := service.Record(ctx, domainhistory.Entry{
+		ID: uuid(1), Scope: "local", Command: "git newer",
+		Source: domainhistory.SourceSession, RecordedAt: at(2),
+	}); err != nil {
+		t.Fatalf("Record UUID: %v", err)
+	}
+	recordsBefore := len(store.records)
+	removed, err := service.PruneHistory(ctx, domainhistory.EntryFilter{Query: "git"}, 0)
+	if err != nil || removed != 2 {
+		t.Fatalf("PruneHistory = %d, %v; want both matched rows", removed, err)
+	}
+	if got := len(store.records) - recordsBefore; got != 1 {
+		t.Fatalf("tombstones = %d, want one for the UUID row only", got)
+	}
+	stored, found, err := store.HistoryEntry(ctx, "legacy-local-1")
+	if err != nil || !found || stored.DeletedAt.IsZero() {
+		t.Fatalf("legacy row = %+v, found=%v, err=%v; want it deleted locally", stored, found, err)
+	}
+}
+
+func TestClearThisDeviceLeavesImportedAndSyncedRows(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	rows := []domainhistory.Entry{
+		{ID: uuid(1), Scope: "local", Command: "ls", Source: domainhistory.SourceSession, RecordedAt: at(1)},
+		{ID: uuid(2), Scope: "local", Command: "pwd", Source: domainhistory.SourceShellHistory, RecordedAt: at(2)},
+		{ID: uuid(3), Scope: "remote:web:deploy", Command: "uptime", Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(3)},
+		{ID: uuid(4), Scope: "remote:other:admin", Command: "df -h", Source: domainhistory.SourceAtuinSync, Origin: "other:admin", RecordedAt: at(4)},
+		{ID: "legacy-local-1", Scope: "local", Command: "whoami", Source: domainhistory.SourceSession, RecordedAt: at(5)},
+	}
+	for _, entry := range rows {
+		if err := service.Record(ctx, entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.Command, err)
+		}
+	}
+	recordsBefore := len(store.records)
+	removed, err := service.ClearThisDevice(ctx)
+	if err != nil || removed != 3 {
+		t.Fatalf("ClearThisDevice = %d, %v; want the three local rows", removed, err)
+	}
+	live, err := service.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(live) != 2 {
+		t.Fatalf("live rows = %+v, want only imported and synced rows", live)
+	}
+	for _, entry := range live {
+		if entry.Source != domainhistory.SourceAtuinImport && entry.Source != domainhistory.SourceAtuinSync {
+			t.Fatalf("Clear this device removed local row %+v", entry)
+		}
+	}
+	// Three local rows were removed; the two UUID rows get tombstones and the
+	// legacy row stays local-only.
+	if got := len(store.records) - recordsBefore; got != 2 {
+		t.Fatalf("tombstones = %d, want two for the UUID rows", got)
+	}
+}
+
+func TestClearThisDeviceWithNoLocalRowsIsANoOp(t *testing.T) {
+	store := &memoryStore{}
+	service := newUUIDService(store)
+	ctx := context.Background()
+	if err := service.Record(ctx, domainhistory.Entry{
+		ID: uuid(1), Scope: "remote:web:deploy", Command: "uptime",
+		Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(1),
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	records := len(store.records)
+	removed, err := service.ClearThisDevice(ctx)
+	if err != nil || removed != 0 {
+		t.Fatalf("ClearThisDevice = %d, %v; want 0", removed, err)
+	}
+	if len(store.records) != records {
+		t.Fatalf("Clear this device appended records for remote rows")
+	}
+	live, _ := service.Load(ctx)
+	if len(live) != 1 {
+		t.Fatalf("live rows = %d, want the imported row", len(live))
+	}
+}
+
+func TestClearThisDeviceAppliesInBoundedBatches(t *testing.T) {
+	store := &memoryStore{}
+	service := NewService(store)
+	ctx := context.Background()
+	total := clearBatchSize + 1
+	for index := 0; index < total; index++ {
+		store.entries = append(store.entries, domainhistory.Entry{
+			ID: fmt.Sprintf("legacy-%d", index), Scope: "local", Command: "ls",
+			Source: domainhistory.SourceSession, RecordedAt: at(index),
+		})
+	}
+	removed, err := service.ClearThisDevice(ctx)
+	if err != nil || removed != total {
+		t.Fatalf("ClearThisDevice = %d, %v; want %d", removed, err, total)
+	}
+	if store.batches != 2 {
+		t.Fatalf("store batches = %d, want 2 for %d rows", store.batches, total)
 	}
 }
 

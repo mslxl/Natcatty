@@ -279,6 +279,44 @@ func TestSoftDeleteWritesTheSoftDeleteStateAndOneDeleteRecord(t *testing.T) {
 	}
 }
 
+func TestSoftDeleteHistoryEntriesWritesEveryTombstoneInOneTransaction(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openWriterStore(t)
+	entries := []domainhistory.Entry{
+		{ID: testEntryOne, Scope: "local", Command: "ls", RecordedAt: at(9), Source: domainhistory.SourceSession},
+		{ID: testEntryTwo, Scope: "local", Command: "pwd", RecordedAt: at(9), Source: domainhistory.SourceSession},
+	}
+	for _, entry := range entries {
+		if err := store.RecordHistoryEntry(ctx, entry, nil); err != nil {
+			t.Fatalf("RecordHistoryEntry %q: %v", entry.ID, err)
+		}
+	}
+	deletions := []domainhistory.EntryDeletion{
+		{ID: testEntryOne, Record: ptrRecord(testHistoryRecord(
+			domainhistory.RecordKindDelete, testEntryOne, testRecordOne, at(10)))},
+		{ID: testEntryTwo, Record: ptrRecord(testHistoryRecord(
+			domainhistory.RecordKindDelete, testEntryTwo, testRecordTwo, at(10)))},
+	}
+	removed, err := store.SoftDeleteHistoryEntries(ctx, deletions, at(10))
+	if err != nil || removed != 2 {
+		t.Fatalf("SoftDeleteHistoryEntries = %d, %v; want 2", removed, err)
+	}
+	records, err := store.ListHistoryRecords(ctx)
+	if err != nil {
+		t.Fatalf("ListHistoryRecords: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want two tombstones", len(records))
+	}
+	for index, record := range records {
+		if record.Kind != domainhistory.RecordKindDelete || record.Index != int64(index) {
+			t.Fatalf("record %d = %+v, want a delete at its series index", index, record)
+		}
+	}
+}
+
+func ptrRecord(record domainhistory.Record) *domainhistory.Record { return &record }
+
 func TestSoftDeleteOfALegacyRowAppendsNoWireRecord(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openWriterStore(t)

@@ -388,21 +388,33 @@ func indexNames(t *testing.T, store *Store) map[string]bool {
 	return names
 }
 
-func TestClearHistoryReportsTheRemovedCount(t *testing.T) {
+func TestSoftDeleteHistoryEntriesMarksEveryLiveRowInOneTransaction(t *testing.T) {
 	ctx := context.Background()
 	store := openHistoryStore(t)
+	deletions := make([]domainhistory.EntryDeletion, 0, 3)
 	for index := 0; index < 3; index++ {
-		_ = store.RecordHistoryEntry(ctx, domainhistory.Entry{
+		entry := domainhistory.Entry{
 			ID: fmt.Sprintf("entry-%d", index), Scope: "local",
 			Command: "ls", RecordedAt: at(index),
-		}, nil)
+		}
+		_ = store.RecordHistoryEntry(ctx, entry, nil)
+		deletions = append(deletions, domainhistory.EntryDeletion{ID: entry.ID})
 	}
-	removed, err := store.ClearHistoryEntries(ctx)
+	// A missing identity is skipped rather than failing the batch.
+	deletions = append(deletions, domainhistory.EntryDeletion{ID: "missing"})
+	removed, err := store.SoftDeleteHistoryEntries(ctx, deletions, at(10))
 	if err != nil || removed != 3 {
-		t.Fatalf("ClearHistoryEntries = %d, %v; want 3", removed, err)
+		t.Fatalf("SoftDeleteHistoryEntries = %d, %v; want 3", removed, err)
 	}
 	entries, _ := store.ListHistoryEntries(ctx)
 	if len(entries) != 0 {
-		t.Fatalf("entries remain: %d", len(entries))
+		t.Fatalf("live entries remain: %d", len(entries))
+	}
+	for _, deletion := range deletions[:3] {
+		stored, found, err := store.HistoryEntry(ctx, deletion.ID)
+		if err != nil || !found || stored.DeletedAt.IsZero() {
+			t.Fatalf("row %q = %+v, found=%v, err=%v; want it soft-deleted",
+				deletion.ID, stored, found, err)
+		}
 	}
 }

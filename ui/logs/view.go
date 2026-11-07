@@ -42,6 +42,9 @@ func View(s *State) func(*ui.Context) {
 				tabs(c, s, m, t)
 				problems(c, s, m, t)
 				filters(c, s, m, t)
+				if s.PendingPrune() {
+					pruneDialog(c, s, m, t)
+				}
 
 				if s.Tab() == TabConnections {
 					connectionRows(c, s, m, t)
@@ -69,7 +72,7 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		clearLabel, clearConfirm = m.LogsClearHistory(), m.LogsClearConfirm()
 	}
 	// The record families switch with the same underline tabs as the System
-	// manager's, and the clear-all action trails them as a toolbar action.
+	// manager's; the family's actions trail them as toolbar actions.
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		labels := []string{m.LogsTabConnections(s.TotalLogs()), m.LogsTabHistory(s.TotalEntries())}
 		index := 0
@@ -90,10 +93,18 @@ func tabs(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 		if s.Tab() == TabHistory {
 			total = s.TotalEntries()
 		}
-		// There is nothing to clear in an empty family.
-		if total > 0 && kit.GhostButton(c, icons.Trash, clearLabel).Clicked() {
-			s.RequestClear()
-			c.Invalidate()
+		// There is nothing to prune or clear in an empty family.
+		if total > 0 {
+			// Prune is a History-only action: Connection Logs keep their own
+			// retention and are not part of Command History.
+			if s.Tab() == TabHistory && kit.GhostButton(c, icons.Filter, m.LogsPrune()).Clicked() {
+				s.RequestPrune()
+				c.Invalidate()
+			}
+			if kit.GhostButton(c, icons.Trash, clearLabel).Clicked() {
+				s.RequestClear()
+				c.Invalidate()
+			}
 		}
 	})
 	if s.PendingClear() {
@@ -127,6 +138,9 @@ func problems(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 			ui.Text(c, m.LogsHistoryCleared(count)).FontSize(kit.M(c).Font.Footnote).TextColor(t.TextMuted)
 		}
 	}
+	if count := s.Pruned(); count > 0 {
+		ui.Text(c, m.LogsPruned(count)).FontSize(12).TextColor(t.TextMuted)
+	}
 }
 
 func problemText(m locales.Messages, tab Tab, problem Problem) string {
@@ -146,6 +160,10 @@ func problemText(m locales.Messages, tab Tab, problem Problem) string {
 		return m.LogsProblemHostMissing()
 	case ProblemDate:
 		return m.LogsProblemDate()
+	case ProblemPrune:
+		return m.LogsProblemPrune()
+	case ProblemInsert:
+		return m.LogsProblemInsert()
 	default:
 		return ""
 	}
@@ -258,6 +276,100 @@ func dateField(c *ui.Context, m locales.Messages, label, text string, picker *da
 			set("")
 			c.Invalidate()
 		}
+	})
+}
+
+// pruneDialog is the filter-based prune preview. It edits its own draft
+// filters seeded from the History surface, so a cancelled or malformed prune
+// never changes what the list below is showing. Only the matching rows are
+// removed, with the optional limit trimming the oldest matches first.
+func pruneDialog(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
+	draft := s.PruneFilter()
+	ui.Column(c).FillWidth().Padding(10).Gap(6).Background(t.Surface).Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.LogsPruneTitle()).Bold().Grow(1)
+			if ui.Button(c, m.LogsCancel()).Clicked() {
+				s.CancelPrune()
+				c.Invalidate()
+			}
+		})
+		ui.Text(c, m.LogsPruneHint()).FontSize(12).TextColor(t.TextMuted)
+		ui.Field(c, m.LogsSearch(), func() {
+			if ui.TextInput(c, &draft.Query).FillWidth().Changed() {
+				c.Invalidate()
+			}
+		})
+
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
+			hostChoices := []selectChoice{{Value: "", Label: m.LogsHostAll()}}
+			for _, option := range s.HostOptions() {
+				if option.Key == "" {
+					continue
+				}
+				hostChoices = append(hostChoices, selectChoice{
+					Value: option.Key, Label: hostOptionLabel(m, option),
+				})
+			}
+			selectField(c, m.LogsHostFilter(), draft.Host, hostChoices, 200,
+				func(value string) { draft.Host = value })
+			selectField(c, m.LogsSourceFilter(), draft.Source,
+				facetChoices(m.LogsSourceAll(), s.SourceOptions(), func(value string) string {
+					return sourceLabel(m, value)
+				}), 190, func(value string) { draft.Source = value })
+		})
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
+			selectField(c, m.LogsSessionFilter(), draft.Session,
+				facetChoices(m.LogsSessionAll(), s.SessionOptions(), identityLabel), 240,
+				func(value string) { draft.Session = value })
+			selectField(c, m.LogsCwdFilter(), draft.CWD,
+				facetChoices(m.LogsCwdAll(), s.CwdOptions(), identityLabel), 250,
+				func(value string) { draft.CWD = value })
+		})
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
+			selectField(c, m.LogsShellFilter(), draft.Shell,
+				facetChoices(m.LogsShellAll(), s.ShellOptions(), identityLabel), 170,
+				func(value string) { draft.Shell = value })
+			selectField(c, m.LogsExitFilter(), string(draft.Exit),
+				exitChoices(m, s.ExitOptions()), 180,
+				func(value string) { draft.Exit = domainhistory.ExitFilter(value) })
+		})
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Start).Children(func() {
+			ui.Field(c, m.LogsFrom(), func() {
+				if ui.TextInput(c, &draft.From).Width(130).Changed() {
+					c.Invalidate()
+				}
+			}).Width(150)
+			ui.Field(c, m.LogsTo(), func() {
+				if ui.TextInput(c, &draft.To).Width(130).Changed() {
+					c.Invalidate()
+				}
+			}).Width(150)
+			ui.Field(c, m.LogsPruneLimit(), func() {
+				if ui.TextInput(c, s.PruneLimit()).Width(120).Changed() {
+					c.Invalidate()
+				}
+			}).Width(150)
+		})
+
+		ui.Text(c, m.LogsPrunePreview(s.PrunePreview())).FontSize(12)
+		if s.PruneDateProblem() {
+			ui.Text(c, m.LogsProblemDate()).FontSize(12).
+				TextColor(uitheme.DangerText(t))
+		}
+		if s.PruneLimitProblem() {
+			ui.Text(c, m.LogsPruneLimitProblem()).FontSize(12).
+				TextColor(uitheme.DangerText(t))
+		}
+		ui.Row(c).FillWidth().Gap(8).Children(func() {
+			if ui.PrimaryButton(c, m.LogsPruneApply()).Clicked() {
+				s.ConfirmPrune()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.LogsCancel()).Clicked() {
+				s.CancelPrune()
+				c.Invalidate()
+			}
+		})
 	})
 }
 
@@ -429,15 +541,41 @@ func historyRows(c *ui.Context, s *State, m locales.Messages, t *ui.Theme) {
 					s.SelectEntry(entry.ID)
 					c.Invalidate()
 				}
+				// Copy and Insert are explicit row actions. Insert writes the
+				// command into the focused Session's prompt and never submits
+				// it; nothing is sent automatically.
+				if kit.SecondaryButton(c, icons.Copy, m.LogsCopy()).Clicked() {
+					c.WriteClipboard(entry.Command)
+				}
+				if kit.SecondaryButton(c, icons.CornerDownLeft, m.LogsInsert()).Clicked() {
+					s.InsertEntry(entry.Command)
+					c.Invalidate()
+				}
 				if kit.SecondaryButton(c, icons.SquareTerminal, m.LogsOpenTerminal()).Clicked() {
 					s.OpenTerminal(entry.SessionID, entry.HostID)
 					c.Invalidate()
 				}
-				if kit.IconButton(c, icons.Trash, m.LogsDelete()).Clicked() {
-					s.DeleteEntry(entry.ID)
+				// While the row awaits confirmation its Delete action is
+				// replaced by the confirmation strip below, so the only
+				// Delete button in the strip is the confirming one.
+				if s.PendingDeleteEntry() != entry.ID &&
+					kit.IconButton(c, icons.Trash, m.LogsDelete()).Clicked() {
+					s.RequestDeleteEntry(entry.ID)
 					c.Invalidate()
 				}
 			})
+			if s.PendingDeleteEntry() == entry.ID {
+				kit.Notice(c, icons.Trash, t.Danger, m.LogsDeleteConfirm(), func() {
+					if kit.GhostButton(c, "", m.LogsCancel()).Clicked() {
+						s.CancelDeleteEntry()
+						c.Invalidate()
+					}
+					if kit.DangerButton(c, icons.Trash, m.LogsDelete()).Clicked() {
+						s.ConfirmDeleteEntry()
+						c.Invalidate()
+					}
+				})
+			}
 			if s.EntrySelected(entry.ID) {
 				historyDetail(c, s, entry, m, t)
 			}
