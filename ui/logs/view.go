@@ -679,7 +679,50 @@ func historyDetail(c *ui.Context, s *State, entry domainhistory.Entry, m locales
 		detailField(c, m, m.LogsHistoryFieldAuthor(), detailValue(m, entry.Author))
 		detailField(c, m, m.LogsHistoryFieldAuthorKind(), detailValue(m, entry.AuthorKind))
 		detailField(c, m, m.LogsHistoryFieldIntent(), detailValue(m, entry.Intent))
+		historyMissingFields(c, m, entry, t)
 	})
+}
+
+// historyMissingFields explains each captured field the Session never
+// observed. Naming the field and the capture tier that could not observe it
+// keeps a missing cwd distinguishable from an empty one, which is the point of
+// the partial-field label.
+func historyMissingFields(c *ui.Context, m locales.Messages, entry domainhistory.Entry, t *ui.Theme) {
+	reason := historyMissingReason(m, entry)
+	missing := []string{}
+	if entry.CWD == "" {
+		missing = append(missing, m.LogsHistoryFieldCwd())
+	}
+	if !entry.HasExitCode {
+		missing = append(missing, m.LogsHistoryFieldExit())
+	}
+	if entry.FinishedAt.IsZero() || entry.RecordedAt.IsZero() {
+		missing = append(missing, m.LogsHistoryFieldDuration())
+	}
+	for _, field := range missing {
+		ui.Text(c, m.LogsHistoryMissingField(field, reason)).
+			FontSize(12).TextColor(t.TextMuted).Wrap()
+	}
+}
+
+// historyMissingReason names what the capture path could not observe. The
+// reason is per row, not per field: a row shares one capture tier. A row that
+// came from an import or another device has no live capture path, so it gets a
+// neutral reason instead of blaming a shell that never ran here.
+func historyMissingReason(m locales.Messages, entry domainhistory.Entry) string {
+	if entry.Source != "" && entry.Source != domainhistory.SourceSession {
+		return m.LogsHistoryMissingReasonImported()
+	}
+	switch entry.CaptureTier {
+	case domainhistory.CaptureTierHook:
+		return m.LogsHistoryMissingReasonHook()
+	case domainhistory.CaptureTierNativeOSC:
+		return m.LogsHistoryMissingReasonNative()
+	case domainhistory.CaptureTierFallback:
+		return m.LogsHistoryMissingReasonTyped()
+	default:
+		return m.LogsHistoryMissingReasonUnknown()
+	}
 }
 
 // detailField renders one labelled capture field as one localized line, so the

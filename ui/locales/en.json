@@ -972,7 +972,6 @@
   "connectionTmuxNested": "Already inside a tmux session on the remote Host; connected without nesting.",
   "connectionTmuxUnavailable": "tmux is not available on the remote Host; connected with a plain shell.",
   "connectionCaptureHookUnavailable": "The shell capture hook could not be installed; this Session uses best-effort capture.",
-  "connectionHostAtuinDetected": "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. Turn off \"Prefer the Host's Atuin history\" to use the Netcatty hook instead.",
   "connectionEternalTerminalDisplaced": "Another client attached to this EternalTerminal session, so this connection ended. EternalTerminal allows one client at a time.",
   "connectionEternalTerminalResumeUnsupported": "The saved EternalTerminal session could not be restored because the server does not support session reattach (etserver 6.2.10 or older). A new session was started; upgrade etserver to resume sessions after a restart.",
   "@connectionX11CookieUnavailable": {
@@ -2178,16 +2177,6 @@
   "@logsHostFilter": {
     "description": "The label of the Host filter."
   },
-  "logsHostOrigin": "Origin: {origin}",
-  "@logsHostOrigin": {
-    "description": "The Host filter value for a captured origin with no local Host identity.",
-    "placeholders": {
-      "origin": {
-        "type": "String",
-        "example": "web-1:deploy"
-      }
-    }
-  },
   "logsHostAll": "All hosts",
   "@logsHostAll": {
     "description": "The Host filter value that matches every Host."
@@ -2304,18 +2293,6 @@
   "@logsDelete": {
     "description": "The row action that removes one record."
   },
-  "logsDeleteConfirm": "Delete this command from history?",
-  "@logsDeleteConfirm": {
-    "description": "The confirmation shown before one history row is deleted."
-  },
-  "logsCopy": "Copy command",
-  "@logsCopy": {
-    "description": "The row action that copies the command text."
-  },
-  "logsInsert": "Insert",
-  "@logsInsert": {
-    "description": "The row action that inserts the command into the focused Session without running it."
-  },
   "logsShowMore": "Show more",
   "@logsShowMore": {
     "description": "The button that reveals the next page of records."
@@ -2343,50 +2320,6 @@
   "logsCancel": "Cancel",
   "@logsCancel": {
     "description": "The button that dismisses the clear-history or prune confirmation."
-  },
-  "logsPrune": "Prune matching",
-  "@logsPrune": {
-    "description": "The header action that opens the filter-based prune dialog."
-  },
-  "logsPruneTitle": "Prune matching history",
-  "@logsPruneTitle": {
-    "description": "The title of the filter-based prune dialog."
-  },
-  "logsPruneHint": "Only entries matching these filters are removed. An optional limit removes the oldest matches first.",
-  "@logsPruneHint": {
-    "description": "Explains which entries a filter-based prune removes."
-  },
-  "logsPruneLimit": "Limit (optional)",
-  "@logsPruneLimit": {
-    "description": "The optional maximum number of matching entries to prune."
-  },
-  "logsPrunePreview": "{count, plural, =0 {No entries match these filters.} one {# matching entry will be removed.} other {# matching entries will be removed.}}",
-  "@logsPrunePreview": {
-    "description": "The prune preview count.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "40"
-      }
-    }
-  },
-  "logsPruneApply": "Prune",
-  "@logsPruneApply": {
-    "description": "The confirmation button that prunes the matching entries."
-  },
-  "logsPruneLimitProblem": "Enter a whole number of entries to prune, or leave the limit empty.",
-  "@logsPruneLimitProblem": {
-    "description": "The validation message for a malformed prune limit."
-  },
-  "logsPruned": "{count, plural, one {# matching entry pruned.} other {# matching entries pruned.}}",
-  "@logsPruned": {
-    "description": "Confirms how many matching entries a prune removed.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "40"
-      }
-    }
   },
   "logsHistoryCleared": "{count, plural, one {History on this device cleared (# entry removed).} other {History on this device cleared (# entries removed).}}",
   "@logsHistoryCleared": {
@@ -2508,100 +2441,6 @@
   "@logsHistoryUnknown": {
     "description": "The label for a captured field that the Session could not observe."
   },
-  "logsHistoryRowMeta": "{host} · cwd {cwd} · {duration} · {time}",
-  "@logsHistoryRowMeta": {
-    "description": "The Host or origin, working directory, duration, and start time of a history row.",
-    "placeholders": {
-      "host": {
-        "type": "String",
-        "example": "web-1"
-      },
-      "cwd": {
-        "type": "String",
-        "example": "/srv/app"
-      },
-      "duration": {
-        "type": "String",
-        "example": "1.5s"
-      },
-      "time": {
-        "type": "String",
-        "example": "2026-10-21 14:30:00"
-      }
-    }
-  },
-  "logsHistoryExitBadge": "exit {code}",
-  "@logsHistoryExitBadge": {
-    "description": "The exit-status badge of a history row.",
-    "placeholders": {
-      "code": {
-        "type": "int",
-        "example": "0"
-      }
-    }
-  },
-  "logsHistoryExitUnknown": "exit unknown",
-  "@logsHistoryExitUnknown": {
-    "description": "The exit-status badge when the shell never reported an exit code."
-  },
-  "logsHistoryTierBadge": "Tier {tier}",
-  "@logsHistoryTierBadge": {
-    "description": "The capture-tier badge of a history row.",
-    "placeholders": {
-      "tier": {
-        "type": "int",
-        "example": "2"
-      }
-    }
-  },
-  "logsProvenanceThisDevice": "This device",
-  "@logsProvenanceThisDevice": {
-    "description": "A command captured or imported on this device."
-  },
-  "logsProvenanceShellImport": "Shell history import",
-  "@logsProvenanceShellImport": {
-    "description": "A command imported from this device's shell history file."
-  },
-  "logsProvenanceAtuinImport": "Atuin import",
-  "@logsProvenanceAtuinImport": {
-    "description": "A command imported read-only from a Host's Atuin database."
-  },
-  "logsProvenanceAtuinSync": "Another device",
-  "@logsProvenanceAtuinSync": {
-    "description": "A command downloaded from another device through sync."
-  },
-  "logsHistoryYes": "Yes",
-  "@logsHistoryYes": {
-    "description": "A boolean field that is set."
-  },
-  "logsHistoryNo": "No",
-  "@logsHistoryNo": {
-    "description": "A boolean field that is not set."
-  },
-  "logsHistoryMissingCwd": "not captured — the shell did not report its working directory",
-  "@logsHistoryMissingCwd": {
-    "description": "Explains why a history row has no working directory."
-  },
-  "logsHistoryMissingShell": "not captured — the shell did not identify itself",
-  "@logsHistoryMissingShell": {
-    "description": "Explains why a history row has no shell name."
-  },
-  "logsHistoryMissingFinish": "not captured — the shell did not report when the command finished",
-  "@logsHistoryMissingFinish": {
-    "description": "Explains why a history row has no finish time."
-  },
-  "logsHistoryMissingDuration": "not captured — the command duration is unknown",
-  "@logsHistoryMissingDuration": {
-    "description": "Explains why a history row has no duration."
-  },
-  "logsHistoryMissingExit": "not captured — the shell did not report an exit code",
-  "@logsHistoryMissingExit": {
-    "description": "Explains why a history row has no exit code."
-  },
-  "logsHistoryMissingTier": "not applicable — imported or synced rows have no capture tier",
-  "@logsHistoryMissingTier": {
-    "description": "Explains why a history row has no capture tier."
-  },
   "logsHistoryDetails": "Details",
   "@logsHistoryDetails": {
     "description": "The row action that opens the captured fields of one command."
@@ -2676,175 +2515,39 @@
   "@logsHistoryFieldTier": {
     "description": "The capture fidelity tier of the row."
   },
-  "logsHistoryFieldID": "History ID",
-  "@logsHistoryFieldID": {
-    "description": "The UUID identity shared with the Atuin history record."
-  },
-  "logsHistoryFieldSessionUUID": "Session UUID",
-  "@logsHistoryFieldSessionUUID": {
-    "description": "The stable Atuin session UUID derived from the app Session."
-  },
-  "logsHistoryFieldHostID": "Host ID",
-  "@logsHistoryFieldHostID": {
-    "description": "The local Host identity of the row."
-  },
-  "logsHistoryFieldHostLabel": "Host label",
-  "@logsHistoryFieldHostLabel": {
-    "description": "The recorded Host label of the row."
-  },
-  "logsHistoryFieldUnsaved": "Unsaved Host",
-  "@logsHistoryFieldUnsaved": {
-    "description": "Whether the command ran against a typed Host with no saved Vault record."
-  },
-  "logsHistoryFieldAuthor": "Author",
-  "@logsHistoryFieldAuthor": {
-    "description": "The Atuin author of the command."
-  },
-  "logsHistoryFieldAuthorKind": "Author kind",
-  "@logsHistoryFieldAuthorKind": {
-    "description": "The Atuin author kind of the command."
-  },
-  "logsHistoryFieldIntent": "Intent",
-  "@logsHistoryFieldIntent": {
-    "description": "The Atuin intent metadata of the command."
-  },
-  "logsHistoryModeCommands": "Commands",
-  "@logsHistoryModeCommands": {
-    "description": "Switches the History tab back to the list of matching commands."
-  },
-  "logsStatisticsTitle": "Statistics",
-  "@logsStatisticsTitle": {
-    "description": "Switches the History tab to the summary of the matching commands."
-  },
-  "logsStatisticsTotal": "Total commands: {count}",
-  "@logsStatisticsTotal": {
-    "description": "How many commands match the active History filters.",
+  "logsHistoryMissingField": "{field} was not captured: {reason}.",
+  "@logsHistoryMissingField": {
+    "description": "Explains one captured field the shell never reported, naming the field and the capture tier that could not observe it.",
     "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "128"
-      }
-    }
-  },
-  "logsStatisticsUnique": "Unique commands: {count}",
-  "@logsStatisticsUnique": {
-    "description": "How many distinct command texts match the active History filters.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "96"
-      }
-    }
-  },
-  "logsStatisticsFailures": "Failures: {count}",
-  "@logsStatisticsFailures": {
-    "description": "How many matching commands exited with a known non-zero status.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "7"
-      }
-    }
-  },
-  "logsStatisticsFailureRate": "Failure rate (known exit statuses): {rate}",
-  "@logsStatisticsFailureRate": {
-    "description": "Failures divided by matching commands whose exit status was observed.",
-    "placeholders": {
-      "rate": {
+      "field": {
         "type": "String",
-        "example": "25%"
-      }
-    }
-  },
-  "logsStatisticsFailureRateUnknown": "Failure rate: unknown — no exit status was captured",
-  "@logsStatisticsFailureRateUnknown": {
-    "description": "Shown instead of a failure rate when no matching command reported an exit status."
-  },
-  "logsStatisticsAverageDuration": "Average duration: {duration}",
-  "@logsStatisticsAverageDuration": {
-    "description": "The mean duration of matching commands whose finish time was captured.",
-    "placeholders": {
-      "duration": {
-        "type": "String",
-        "example": "1.5s"
-      }
-    }
-  },
-  "logsStatisticsAverageDurationUnknown": "Average duration: unknown — no command reported a finish time",
-  "@logsStatisticsAverageDurationUnknown": {
-    "description": "Shown instead of an average duration when no matching command has a known duration."
-  },
-  "logsStatisticsDurationExcluded": "{count, plural, one {# command with unknown duration is excluded from the average.} other {# commands with unknown duration are excluded from the average.}}",
-  "@logsStatisticsDurationExcluded": {
-    "description": "Explains that rows without a captured finish time are left out of the average duration.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "12"
-      }
-    }
-  },
-  "logsStatisticsDurationAllKnown": "{count, plural, one {The average covers the only command with a known duration.} other {The average covers all # commands with a known duration.}}",
-  "@logsStatisticsDurationAllKnown": {
-    "description": "States the number of matching commands the average duration covers.",
-    "placeholders": {
-      "count": {
-        "type": "int",
-        "example": "116"
-      }
-    }
-  },
-  "logsStatisticsTopCommands": "Top commands",
-  "@logsStatisticsTopCommands": {
-    "description": "Heading for the most frequently run commands in the filtered set."
-  },
-  "logsStatisticsTopCwds": "Top directories",
-  "@logsStatisticsTopCwds": {
-    "description": "Heading for the working directories used most often in the filtered set."
-  },
-  "logsStatisticsNoCwds": "No working directory was captured.",
-  "@logsStatisticsNoCwds": {
-    "description": "Shown when no matching command has a captured working directory."
-  },
-  "logsStatisticsBusiestHour": "Busiest hour: {hour} · {count}",
-  "@logsStatisticsBusiestHour": {
-    "description": "The hour of day with the most matching commands, and that hour's count.",
-    "placeholders": {
-      "hour": {
-        "type": "String",
-        "example": "09:00"
+        "example": "CWD"
       },
-      "count": {
-        "type": "int",
-        "example": "24"
-      }
-    }
-  },
-  "logsStatisticsBusiestHourNone": "Busiest hour: none",
-  "@logsStatisticsBusiestHourNone": {
-    "description": "Shown when there are no matching commands to find a busiest hour for."
-  },
-  "logsStatisticsHosts": "Hosts and origins",
-  "@logsStatisticsHosts": {
-    "description": "Heading for matching command counts by Host or captured origin."
-  },
-  "logsStatisticsRow": "{name} · {count}",
-  "@logsStatisticsRow": {
-    "description": "One row of a ranked statistics list: the value and its command count.",
-    "placeholders": {
-      "name": {
+      "reason": {
         "type": "String",
-        "example": "git status"
-      },
-      "count": {
-        "type": "int",
-        "example": "27"
+        "example": "typed-input capture cannot observe it"
       }
     }
   },
-  "logsStatisticsEmpty": "No commands to summarize.",
-  "@logsStatisticsEmpty": {
-    "description": "Shown when the active History filters match no commands."
+  "logsHistoryMissingReasonHook": "the capture hook did not report it",
+  "@logsHistoryMissingReasonHook": {
+    "description": "The explanation for a missing field on a Tier 1 row."
+  },
+  "logsHistoryMissingReasonNative": "the shell's native integration did not report it",
+  "@logsHistoryMissingReasonNative": {
+    "description": "The explanation for a missing field on a Tier 2 row."
+  },
+  "logsHistoryMissingReasonTyped": "typed-input capture cannot observe it",
+  "@logsHistoryMissingReasonTyped": {
+    "description": "The explanation for a missing field on a Tier 3 row."
+  },
+  "logsHistoryMissingReasonUnknown": "the shell did not report it",
+  "@logsHistoryMissingReasonUnknown": {
+    "description": "The explanation for a missing field on a row whose capture tier is unknown."
+  },
+  "logsHistoryMissingReasonImported": "the record does not include it",
+  "@logsHistoryMissingReasonImported": {
+    "description": "The explanation for a missing field on a row imported from shell history, Atuin, or another device."
   },
   "logsProblemLoad": "Could not load the records.",
   "@logsProblemLoad": {
@@ -2861,18 +2564,6 @@
   "logsProblemClearConnections": "Could not clear the connection logs.",
   "@logsProblemClearConnections": {
     "description": "Shown when clearing the connection logs failed."
-  },
-  "logsProblemPrune": "Could not prune the history.",
-  "@logsProblemPrune": {
-    "description": "Shown when a filter-based prune failed."
-  },
-  "logsProblemInsert": "Could not insert the command. Open an active Session first.",
-  "@logsProblemInsert": {
-    "description": "Shown when a history command cannot be inserted into a Session."
-  },
-  "logsProblemInsertUnsafe": "This shell cannot insert a multi-line command safely. Copy the command instead.",
-  "@logsProblemInsertUnsafe": {
-    "description": "Shown when a multi-line history command is refused because the shell did not enable bracketed paste."
   },
   "logsProblemOpen": "Could not open the terminal.",
   "@logsProblemOpen": {
@@ -3287,8 +2978,6 @@
   "settingsHistoryCaptureHookTitle": "History capture hook",
   "settingsHistoryCaptureHookDescription": "Install a session-scoped shell hook for zsh, bash, and fish. It reads your startup files without editing them and falls back to native capture when unavailable.",
   "settingsHistoryCaptureHookEnabled": "Install the shell capture hook",
-  "settingsHistoryPreferHostAtuin": "Prefer the Host's Atuin history",
-  "settingsHistoryPreferHostAtuinDescription": "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hook. Turning this off uses the Netcatty hook and skips the import.",
   "settingsSyncTitle": "Sync & Cloud",
   "settingsSyncDescription": "Sync the encrypted Vault through your cloud provider. The master password never leaves this device.",
   "settingsSyncSecurityNote": "The provider can see Vault metadata, such as the device name, app version, and timestamps. Vault records and credentials stay encrypted.",
@@ -4186,10 +3875,6 @@
   "settingsBindingTransferCenter": "Open the Transfer center",
   "@settingsBindingTransferCenter": {
     "description": "The Settings shortcut label for the local Transfer center binding."
-  },
-  "settingsBindingHistorySearch": "Search global history",
-  "@settingsBindingHistorySearch": {
-    "description": "The Settings shortcut label for the global History search binding."
   },
   "sftpConflictTitle": "File Conflict",
   "@sftpConflictTitle": {
@@ -5322,6 +5007,355 @@
   "settingsAboutNoticesBody": "Licenses and copyright notices for MyGo, libghostty-vt, the Go modules, EternalTerminal, and other bundled components.",
   "settingsAboutUnavailable": "The legal documents are missing from this installation. Reinstall from a release artifact.",
   "settingsAboutLegalReview": "Distribution compliance is mechanically checked and remains pending human and legal review.",
+  "connectionHostAtuinDetected": "This Host runs Atuin. Netcatty prefers the Host's Atuin history and skips its own shell capture hook for this Host. Turn off \"Prefer the Host's Atuin history\" to use the Netcatty hook instead.",
+  "logsHostOrigin": "Origin: {origin}",
+  "@logsHostOrigin": {
+    "description": "The Host filter value for a captured origin with no local Host identity.",
+    "placeholders": {
+      "origin": {
+        "type": "String",
+        "example": "web-1:deploy"
+      }
+    }
+  },
+  "logsDeleteConfirm": "Delete this command from history?",
+  "@logsDeleteConfirm": {
+    "description": "The confirmation shown before one history row is deleted."
+  },
+  "logsCopy": "Copy command",
+  "@logsCopy": {
+    "description": "The row action that copies the command text."
+  },
+  "logsInsert": "Insert",
+  "@logsInsert": {
+    "description": "The row action that inserts the command into the focused Session without running it."
+  },
+  "logsPrune": "Prune matching",
+  "@logsPrune": {
+    "description": "The header action that opens the filter-based prune dialog."
+  },
+  "logsPruneTitle": "Prune matching history",
+  "@logsPruneTitle": {
+    "description": "The title of the filter-based prune dialog."
+  },
+  "logsPruneHint": "Only entries matching these filters are removed. An optional limit removes the oldest matches first.",
+  "@logsPruneHint": {
+    "description": "Explains which entries a filter-based prune removes."
+  },
+  "logsPruneLimit": "Limit (optional)",
+  "@logsPruneLimit": {
+    "description": "The optional maximum number of matching entries to prune."
+  },
+  "logsPrunePreview": "{count, plural, =0 {No entries match these filters.} one {# matching entry will be removed.} other {# matching entries will be removed.}}",
+  "@logsPrunePreview": {
+    "description": "The prune preview count.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsPruneApply": "Prune",
+  "@logsPruneApply": {
+    "description": "The confirmation button that prunes the matching entries."
+  },
+  "logsPruneLimitProblem": "Enter a whole number of entries to prune, or leave the limit empty.",
+  "@logsPruneLimitProblem": {
+    "description": "The validation message for a malformed prune limit."
+  },
+  "logsPruned": "{count, plural, one {# matching entry pruned.} other {# matching entries pruned.}}",
+  "@logsPruned": {
+    "description": "Confirms how many matching entries a prune removed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "40"
+      }
+    }
+  },
+  "logsHistoryRowMeta": "{host} · cwd {cwd} · {duration} · {time}",
+  "@logsHistoryRowMeta": {
+    "description": "The Host or origin, working directory, duration, and start time of a history row.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-1"
+      },
+      "cwd": {
+        "type": "String",
+        "example": "/srv/app"
+      },
+      "duration": {
+        "type": "String",
+        "example": "1.5s"
+      },
+      "time": {
+        "type": "String",
+        "example": "2026-10-21 14:30:00"
+      }
+    }
+  },
+  "logsHistoryExitBadge": "exit {code}",
+  "@logsHistoryExitBadge": {
+    "description": "The exit-status badge of a history row.",
+    "placeholders": {
+      "code": {
+        "type": "int",
+        "example": "0"
+      }
+    }
+  },
+  "logsHistoryExitUnknown": "exit unknown",
+  "@logsHistoryExitUnknown": {
+    "description": "The exit-status badge when the shell never reported an exit code."
+  },
+  "logsHistoryTierBadge": "Tier {tier}",
+  "@logsHistoryTierBadge": {
+    "description": "The capture-tier badge of a history row.",
+    "placeholders": {
+      "tier": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "logsProvenanceThisDevice": "This device",
+  "@logsProvenanceThisDevice": {
+    "description": "A command captured or imported on this device."
+  },
+  "logsProvenanceShellImport": "Shell history import",
+  "@logsProvenanceShellImport": {
+    "description": "A command imported from this device's shell history file."
+  },
+  "logsProvenanceAtuinImport": "Atuin import",
+  "@logsProvenanceAtuinImport": {
+    "description": "A command imported read-only from a Host's Atuin database."
+  },
+  "logsProvenanceAtuinSync": "Another device",
+  "@logsProvenanceAtuinSync": {
+    "description": "A command downloaded from another device through sync."
+  },
+  "logsHistoryYes": "Yes",
+  "@logsHistoryYes": {
+    "description": "A boolean field that is set."
+  },
+  "logsHistoryNo": "No",
+  "@logsHistoryNo": {
+    "description": "A boolean field that is not set."
+  },
+  "logsHistoryMissingCwd": "not captured — the shell did not report its working directory",
+  "@logsHistoryMissingCwd": {
+    "description": "Explains why a history row has no working directory."
+  },
+  "logsHistoryMissingShell": "not captured — the shell did not identify itself",
+  "@logsHistoryMissingShell": {
+    "description": "Explains why a history row has no shell name."
+  },
+  "logsHistoryMissingFinish": "not captured — the shell did not report when the command finished",
+  "@logsHistoryMissingFinish": {
+    "description": "Explains why a history row has no finish time."
+  },
+  "logsHistoryMissingDuration": "not captured — the command duration is unknown",
+  "@logsHistoryMissingDuration": {
+    "description": "Explains why a history row has no duration."
+  },
+  "logsHistoryMissingExit": "not captured — the shell did not report an exit code",
+  "@logsHistoryMissingExit": {
+    "description": "Explains why a history row has no exit code."
+  },
+  "logsHistoryMissingTier": "not applicable — imported or synced rows have no capture tier",
+  "@logsHistoryMissingTier": {
+    "description": "Explains why a history row has no capture tier."
+  },
+  "logsHistoryFieldID": "History ID",
+  "@logsHistoryFieldID": {
+    "description": "The UUID identity shared with the Atuin history record."
+  },
+  "logsHistoryFieldSessionUUID": "Session UUID",
+  "@logsHistoryFieldSessionUUID": {
+    "description": "The stable Atuin session UUID derived from the app Session."
+  },
+  "logsHistoryFieldHostID": "Host ID",
+  "@logsHistoryFieldHostID": {
+    "description": "The local Host identity of the row."
+  },
+  "logsHistoryFieldHostLabel": "Host label",
+  "@logsHistoryFieldHostLabel": {
+    "description": "The recorded Host label of the row."
+  },
+  "logsHistoryFieldUnsaved": "Unsaved Host",
+  "@logsHistoryFieldUnsaved": {
+    "description": "Whether the command ran against a typed Host with no saved Vault record."
+  },
+  "logsHistoryFieldAuthor": "Author",
+  "@logsHistoryFieldAuthor": {
+    "description": "The Atuin author of the command."
+  },
+  "logsHistoryFieldAuthorKind": "Author kind",
+  "@logsHistoryFieldAuthorKind": {
+    "description": "The Atuin author kind of the command."
+  },
+  "logsHistoryFieldIntent": "Intent",
+  "@logsHistoryFieldIntent": {
+    "description": "The Atuin intent metadata of the command."
+  },
+  "logsHistoryModeCommands": "Commands",
+  "@logsHistoryModeCommands": {
+    "description": "Switches the History tab back to the list of matching commands."
+  },
+  "logsStatisticsTitle": "Statistics",
+  "@logsStatisticsTitle": {
+    "description": "Switches the History tab to the summary of the matching commands."
+  },
+  "logsStatisticsTotal": "Total commands: {count}",
+  "@logsStatisticsTotal": {
+    "description": "How many commands match the active History filters.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "128"
+      }
+    }
+  },
+  "logsStatisticsUnique": "Unique commands: {count}",
+  "@logsStatisticsUnique": {
+    "description": "How many distinct command texts match the active History filters.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "96"
+      }
+    }
+  },
+  "logsStatisticsFailures": "Failures: {count}",
+  "@logsStatisticsFailures": {
+    "description": "How many matching commands exited with a known non-zero status.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "logsStatisticsFailureRate": "Failure rate (known exit statuses): {rate}",
+  "@logsStatisticsFailureRate": {
+    "description": "Failures divided by matching commands whose exit status was observed.",
+    "placeholders": {
+      "rate": {
+        "type": "String",
+        "example": "25%"
+      }
+    }
+  },
+  "logsStatisticsFailureRateUnknown": "Failure rate: unknown — no exit status was captured",
+  "@logsStatisticsFailureRateUnknown": {
+    "description": "Shown instead of a failure rate when no matching command reported an exit status."
+  },
+  "logsStatisticsAverageDuration": "Average duration: {duration}",
+  "@logsStatisticsAverageDuration": {
+    "description": "The mean duration of matching commands whose finish time was captured.",
+    "placeholders": {
+      "duration": {
+        "type": "String",
+        "example": "1.5s"
+      }
+    }
+  },
+  "logsStatisticsAverageDurationUnknown": "Average duration: unknown — no command reported a finish time",
+  "@logsStatisticsAverageDurationUnknown": {
+    "description": "Shown instead of an average duration when no matching command has a known duration."
+  },
+  "logsStatisticsDurationExcluded": "{count, plural, one {# command with unknown duration is excluded from the average.} other {# commands with unknown duration are excluded from the average.}}",
+  "@logsStatisticsDurationExcluded": {
+    "description": "Explains that rows without a captured finish time are left out of the average duration.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "logsStatisticsDurationAllKnown": "{count, plural, one {The average covers the only command with a known duration.} other {The average covers all # commands with a known duration.}}",
+  "@logsStatisticsDurationAllKnown": {
+    "description": "States the number of matching commands the average duration covers.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "116"
+      }
+    }
+  },
+  "logsStatisticsTopCommands": "Top commands",
+  "@logsStatisticsTopCommands": {
+    "description": "Heading for the most frequently run commands in the filtered set."
+  },
+  "logsStatisticsTopCwds": "Top directories",
+  "@logsStatisticsTopCwds": {
+    "description": "Heading for the working directories used most often in the filtered set."
+  },
+  "logsStatisticsNoCwds": "No working directory was captured.",
+  "@logsStatisticsNoCwds": {
+    "description": "Shown when no matching command has a captured working directory."
+  },
+  "logsStatisticsBusiestHour": "Busiest hour: {hour} · {count}",
+  "@logsStatisticsBusiestHour": {
+    "description": "The hour of day with the most matching commands, and that hour's count.",
+    "placeholders": {
+      "hour": {
+        "type": "String",
+        "example": "09:00"
+      },
+      "count": {
+        "type": "int",
+        "example": "24"
+      }
+    }
+  },
+  "logsStatisticsBusiestHourNone": "Busiest hour: none",
+  "@logsStatisticsBusiestHourNone": {
+    "description": "Shown when there are no matching commands to find a busiest hour for."
+  },
+  "logsStatisticsHosts": "Hosts and origins",
+  "@logsStatisticsHosts": {
+    "description": "Heading for matching command counts by Host or captured origin."
+  },
+  "logsStatisticsRow": "{name} · {count}",
+  "@logsStatisticsRow": {
+    "description": "One row of a ranked statistics list: the value and its command count.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "git status"
+      },
+      "count": {
+        "type": "int",
+        "example": "27"
+      }
+    }
+  },
+  "logsStatisticsEmpty": "No commands to summarize.",
+  "@logsStatisticsEmpty": {
+    "description": "Shown when the active History filters match no commands."
+  },
+  "logsProblemPrune": "Could not prune the history.",
+  "@logsProblemPrune": {
+    "description": "Shown when a filter-based prune failed."
+  },
+  "logsProblemInsert": "Could not insert the command. Open an active Session first.",
+  "@logsProblemInsert": {
+    "description": "Shown when a history command cannot be inserted into a Session."
+  },
+  "logsProblemInsertUnsafe": "This shell cannot insert a multi-line command safely. Copy the command instead.",
+  "@logsProblemInsertUnsafe": {
+    "description": "Shown when a multi-line history command is refused because the shell did not enable bracketed paste."
+  },
+  "settingsHistoryPreferHostAtuin": "Prefer the Host's Atuin history",
+  "settingsHistoryPreferHostAtuinDescription": "When a Host already runs Atuin, import its history read-only when the Session opens and skip the Netcatty capture hook. Turning this off uses the Netcatty hook and skips the import.",
+  "settingsBindingHistorySearch": "Search global history",
+  "@settingsBindingHistorySearch": {
+    "description": "The Settings shortcut label for the global History search binding."
+  },
   "connectionHostAtuinImportFailed": "This Host runs Atuin, but Netcatty could not read its history this time. It will retry on a later Session.",
   "settingsAtuinSectionTitle": "Command History sync",
   "settingsAtuinSectionDescription": "One Atuin account; local history stays plaintext. These settings stay on this device.",

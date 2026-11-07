@@ -415,6 +415,155 @@ end
 set -gx NETCATTY_HOOK 1
 `
 
+// nuHookText appends to Nushell's pre_execution and pre_prompt hooks. Nushell
+// loads the user config before -e runs this file, so the user's own hooks stay
+// installed and run first. The pre_execution hook has the exact command line
+// and cwd; the pre_prompt hook has LAST_EXIT_CODE. Nushell also emits native
+// OSC 133/7, so the private sequence upgrades an already usable Tier 2
+// fallback to Tier 1 instead of replacing a working integration.
+const nuHookText = `# Netcatty session hook for Nushell. It appends to the user hooks and never
+# replaces them. It emits the private NetcattyExec sequence plus OSC 133/7.
+
+def __netcatty_b64 [value: string] {
+  $value | encode base64 --url --nopad
+}
+
+def __netcatty_skip [] {
+  print -n $"\u{1b}]1337;NetcattyHookSkip;nu\u{7}"
+}
+
+if ($env.NETCATTY_HOOK? | default "") != "" {
+  __netcatty_skip
+} else if ($env.ATUIN_SESSION? | default "") != "" {
+  __netcatty_skip
+} else if ($env.STARSHIP_SHELL? | default "") != "" {
+  __netcatty_skip
+} else if ($env.STARSHIP_SESSION_KEY? | default "") != "" {
+  __netcatty_skip
+} else if ($env.ITERM_SHELL_INTEGRATION_INSTALLED? | default "") != "" {
+  __netcatty_skip
+} else {
+  let __netcatty_ready = (try {
+    let __netcatty_probe = ("x" | encode base64 --url --nopad)
+    let __netcatty_pre = ($env.config.hooks.pre_execution | length)
+    let __netcatty_prompt = ($env.config.hooks.pre_prompt | length)
+    $__netcatty_probe == "eA"
+  } catch { false })
+  if not $__netcatty_ready {
+    __netcatty_skip
+  } else {
+    $env.config.hooks.pre_execution = ($env.config.hooks.pre_execution | append {||
+      let __netcatty_line = (commandline)
+      if not ($__netcatty_line | is-empty) {
+        let __netcatty_cwd = ($env.PWD | into string)
+        let __netcatty_enc_cwd = (__netcatty_b64 $__netcatty_cwd)
+        let __netcatty_enc_line = (__netcatty_b64 $__netcatty_line)
+        print -n $"\u{1b}]1337;NetcattyExec;nu;($__netcatty_enc_cwd);($__netcatty_enc_line)\u{7}"
+        print -n $"\u{1b}]133;C\u{7}"
+        $env.NETCATTY_NU_PENDING = 1
+      }
+    })
+    $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt | append {||
+      let __netcatty_pending = ($env.NETCATTY_NU_PENDING? | default 0)
+      if $__netcatty_pending == 1 {
+        let __netcatty_code = ($env.LAST_EXIT_CODE?)
+        if $__netcatty_code == null {
+          # An absent LAST_EXIT_CODE is an unknown exit, not a successful 0.
+          print -n $"\u{1b}]133;D\u{7}"
+        } else {
+          print -n $"\u{1b}]133;D;($__netcatty_code)\u{7}"
+        }
+        $env.NETCATTY_NU_PENDING = 0
+      }
+      print -n $"\u{1b}]1337;NetcattyHook;nu\u{7}"
+      print -n $"\u{1b}]133;A\u{7}"
+      let __netcatty_host = ($env.HOSTNAME? | default "")
+      let __netcatty_cwd = ($env.PWD | into string)
+      print -n $"\u{1b}]7;file://($__netcatty_host)($__netcatty_cwd)\u{7}"
+      print -n $"\u{1b}]133;B\u{7}"
+    })
+    $env.NETCATTY_HOOK = 1
+  }
+}
+`
+
+// xonshHookText appends two event handlers through the xonsh events API.
+// Xonsh calls on_precommand with the final command and on_postcommand with the
+// return code, so the hook reports the exact command, cwd, exit, and finish
+// time. It is installed from a temporary rc.d directory appended to XONSHRC_DIR,
+// after every user startup file (including user rc.d files) has run.
+const xonshHookText = `# Netcatty session hook for xonsh. It appends event handlers and never
+# replaces the user handlers. It emits the private NetcattyExec sequence plus
+# OSC 133/7.
+
+import base64 as __netcatty_base64
+import os as __netcatty_os
+import sys as __netcatty_sys
+
+def __netcatty_b64(value):
+    return __netcatty_base64.urlsafe_b64encode(value.encode("utf-8", "replace")).decode("ascii").rstrip("=")
+
+def __netcatty_emit(payload):
+    __netcatty_sys.stdout.write(payload)
+    __netcatty_sys.stdout.flush()
+
+def __netcatty_skip():
+    __netcatty_emit("\x1b]1337;NetcattyHookSkip;xonsh\x07")
+
+def __netcatty_install():
+    from xonsh.events import events
+    state = {"pending": False}
+
+    @events.on_precommand
+    def __netcatty_preexec(cmd=None, **kwargs):
+        line = cmd if cmd is not None else kwargs.get("cmd")
+        if line is None:
+            return
+        # The precommand source ends in a newline; keep only the logical line.
+        line = line.rstrip("\n")
+        if not line:
+            return
+        try:
+            cwd = __netcatty_os.getcwd()
+        except OSError:
+            cwd = ""
+        __netcatty_emit("\x1b]1337;NetcattyExec;xonsh;" + __netcatty_b64(cwd) + ";" + __netcatty_b64(line) + "\x07")
+        __netcatty_emit("\x1b]133;C\x07")
+        state["pending"] = True
+
+    @events.on_postcommand
+    def __netcatty_postexec(rtn=None, **kwargs):
+        if state["pending"]:
+            state["pending"] = False
+            if isinstance(rtn, int):
+                __netcatty_emit("\x1b]133;D;" + str(rtn) + "\x07")
+            else:
+                __netcatty_emit("\x1b]133;D\x07")
+        __netcatty_emit("\x1b]1337;NetcattyHook;xonsh\x07")
+        __netcatty_emit("\x1b]133;A\x07")
+        try:
+            cwd = __netcatty_os.getcwd()
+        except OSError:
+            cwd = ""
+        host = __netcatty_os.environ.get("HOSTNAME", "")
+        __netcatty_emit("\x1b]7;file://" + host + cwd + "\x07")
+        __netcatty_emit("\x1b]133;B\x07")
+
+    $NETCATTY_HOOK = "1"
+
+if __netcatty_os.environ.get("NETCATTY_HOOK"):
+    __netcatty_skip()
+elif any(__netcatty_os.environ.get(name) for name in ("ATUIN_SESSION", "STARSHIP_SHELL", "STARSHIP_SESSION_KEY", "ITERM_SHELL_INTEGRATION_INSTALLED")):
+    __netcatty_skip()
+elif not bool($XONSH_INTERACTIVE):
+    __netcatty_skip()
+else:
+    try:
+        __netcatty_install()
+    except Exception:
+        __netcatty_skip()
+`
+
 // writeZshStartup writes the five zsh startup files. The user's own files are
 // only sourced; nothing is created in their home directory.
 func writeZshStartup(dir string) error {
@@ -466,6 +615,21 @@ NETCATTY_USER_ZDOTDIR="$netcatty_zdotdir" NETCATTY_HOOK_DIR="$netcatty_dir" ZDOT
 	builder.WriteString(remoteFile("hook.fish", fishHookText))
 	builder.WriteString(`NETCATTY_HOOK_FILE="$netcatty_dir/hook.fish" "$netcatty_shell" -l --init-command "source \"\$NETCATTY_HOOK_FILE\""
 ` + ";;\n")
+	builder.WriteString("nu)\n")
+	builder.WriteString(remoteFile("hook.nu", nuHookText))
+	builder.WriteString(`NETCATTY_HOOK_DIR="$netcatty_dir" "$netcatty_shell" -l -e "source \"$netcatty_dir/hook.nu\""
+` + ";;\n")
+	builder.WriteString("xonsh)\n")
+	builder.WriteString(remoteFile("hook.xsh", xonshHookText))
+	builder.WriteString(`NETCATTY_HOOK_DIR="$netcatty_dir"
+if [ -n "${XONSHRC_DIR:-}" ]; then
+  XONSHRC_DIR="$XONSHRC_DIR:$netcatty_dir"
+else
+  XONSHRC_DIR="${XONSH_SYS_CONFIG_DIR:-/etc/xonsh}/rc.d:${XONSH_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/xonsh}/rc.d:$netcatty_dir"
+fi
+export XONSHRC_DIR NETCATTY_HOOK_DIR
+"$netcatty_shell" -l
+` + ";;\n")
 	builder.WriteString("esac\n")
 	builder.WriteString("netcatty_status=$?\nexit $netcatty_status\n")
 	return builder.String()
@@ -476,11 +640,21 @@ if [ -z "$netcatty_shell" ] || [ ! -x "$netcatty_shell" ]; then
   netcatty_shell=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f7)
 fi
 if [ -z "$netcatty_shell" ] || [ ! -x "$netcatty_shell" ]; then
+  # BSD and macOS have no getent, so read the login shell from the passwd file.
+  netcatty_uid=$(id -u)
+  while IFS=: read -r netcatty_pw_name netcatty_pw_pw netcatty_pw_uid netcatty_pw_gid netcatty_pw_gecos netcatty_pw_home netcatty_pw_shell; do
+    if [ "$netcatty_pw_uid" = "$netcatty_uid" ]; then
+      netcatty_shell=$netcatty_pw_shell
+      break
+    fi
+  done < /etc/passwd 2>/dev/null
+fi
+if [ -z "$netcatty_shell" ] || [ ! -x "$netcatty_shell" ]; then
   netcatty_shell=/bin/sh
 fi
 netcatty_name=${netcatty_shell##*/}
 case "$netcatty_name" in
-zsh|bash|fish)
+zsh|bash|fish|nu|xonsh)
   ;;
 *)
   printf "\033]1337;NetcattyHookSkip\007"
