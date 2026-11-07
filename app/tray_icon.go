@@ -13,9 +13,8 @@ var (
 	trayIconData []byte
 )
 
-// trayIconGlyphPNG returns the hand-drawn 32x32 notification-area mark used
-// by the original icon variant. The glyph is drawn from rectangles so the
-// default tray icon needs no image asset and no C compiler.
+// trayIconGlyphPNG returns a small fallback notification-area mark for cases
+// where the selected PNG asset cannot be decoded.
 func trayIconGlyphPNG() []byte {
 	trayIconOnce.Do(func() {
 		const size = 32
