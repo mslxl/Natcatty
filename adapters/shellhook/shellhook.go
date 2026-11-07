@@ -311,10 +311,14 @@ func shellName(path string) string {
 
 // RemoteLoginShellSupported reports whether an SSH login shell can receive the
 // POSIX remote wrapper. Only zsh, bash, and fish qualify: their command
-// language accepts the wrapper and Netcatty has a hook for them. Xonsh, csh,
-// tcsh, nushell, and every unknown shell must open as the plain login shell
-// and use Tier 2/3, because sshd runs the RemoteCommand through the login
-// shell with -c and a POSIX script is a parse error there.
+// language accepts `exec /bin/sh -c '<wrapper>'` and Netcatty has a hook for
+// them. sshd runs the RemoteCommand through the login shell with -c, and
+// xonsh, csh, and tcsh reject that quoting as a syntax error. Nushell parses
+// the outer command, but Netcatty has no remote nushell hook: the wrapper
+// would only announce its skip and re-exec the login shell, so the transport
+// opens the plain login shell directly. An unknown shell may be non-POSIX,
+// so it must not receive a command Netcatty cannot prove it accepts. Every
+// withdrawn shell opens as the plain login shell and uses Tier 2/3.
 func RemoteLoginShellSupported(shellPath string) bool {
 	name := filepath.Base(strings.TrimSpace(shellPath))
 	name = strings.TrimPrefix(name, "-")

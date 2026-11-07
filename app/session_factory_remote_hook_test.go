@@ -5,7 +5,11 @@ import (
 	"context"
 	"io"
 	"os"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	xssh "golang.org/x/crypto/ssh"
@@ -168,6 +172,71 @@ func TestSSHCaptureHookFallsBackWhenTheLoginShellIsUnknown(t *testing.T) {
 				t.Fatal("an unknown login shell did not withdraw the hook")
 			}
 		})
+	}
+}
+
+// A server that accepts the "sftp" subsystem but never sends its protocol
+// version wedges the SFTP handshake, which reads the stream without a
+// context. Open must still fall back to the plain login shell after the
+// bounded probe, and the subsystem channel and probe goroutine must be
+// released before it returns so repeated opens cannot exhaust server channels.
+func TestSSHCaptureHookWedgedSFTPSubsystemIsBoundedAndReleased(t *testing.T) {
+	closed := make(chan struct{})
+	var closeOnce sync.Once
+	fixture := newRemoteCommandFixture(t, fakessh.Options{
+		Subsystems: map[string]func(xssh.Channel){
+			"sftp": func(channel xssh.Channel) {
+				// Accept the subsystem, then never write the version banner.
+				_, _ = io.Copy(io.Discard, channel)
+				closeOnce.Do(func() { close(closed) })
+			},
+		},
+		Shell: func(channel xssh.Channel) {
+			_, _ = io.WriteString(channel, "plain-login-shell\r\n")
+		},
+	})
+	started := time.Now()
+	transport := openCaptureHookSSH(t, fixture, "exec /bin/sh -c 'posix wrapper'")
+	if elapsed := time.Since(started); elapsed > 7*time.Second {
+		t.Fatalf("Open took %v, want the 5s probe bound plus a bounded drain", elapsed)
+	}
+	server := fixture.sshServer(t)
+	if !server.ShellOpened() {
+		t.Fatal("the terminal did not fall back to the plain login shell")
+	}
+	if requests := server.ExecRequests(); len(requests) != 0 {
+		t.Fatalf("exec requests = %v, want none", requests)
+	}
+	if withdrawn, ok := transport.(appsession.CaptureHookWithdrawn); !ok || !withdrawn.CaptureHookWithdrawn() {
+		t.Fatal("a wedged probe did not withdraw the hook")
+	}
+	// The server's copy ends when the client closes the subsystem channel.
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the wedged SFTP subsystem is still open after Open returned")
+	}
+	// Open waits for the probe goroutine, so it must not still be blocked in
+	// the handshake. runtime.Stack names the frame; poll with a hard deadline
+	// against scheduling jitter.
+	deadline := time.Now().Add(2 * time.Second)
+	for goroutineRunning("readRemoteLoginShell") {
+		if time.Now().After(deadline) {
+			t.Fatal("the login-shell probe goroutine is still running after Open returned")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// goroutineRunning reports whether any goroutine's stack mentions name.
+func goroutineRunning(name string) bool {
+	buffer := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buffer, true)
+		if n < len(buffer) {
+			return strings.Contains(string(buffer[:n]), name)
+		}
+		buffer = make([]byte, len(buffer)*2)
 	}
 }
 

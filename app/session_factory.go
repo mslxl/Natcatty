@@ -39,6 +39,12 @@ const captureHookProbeTimeout = 5 * time.Second
 // the login shell cannot parse.
 const remoteLoginShellProbeTimeout = 5 * time.Second
 
+// remoteLoginShellProbeDrainTimeout bounds how long the probe waits for its
+// own goroutine to release the SFTP channel after the probe deadline. Closing
+// the stream unblocks the SFTP version handshake immediately, so the wait is
+// normally negligible; the bound only covers a transport whose Close blocks.
+const remoteLoginShellProbeDrainTimeout = time.Second
+
 // maxPasswdFileBytes bounds the account database read over SFTP.
 const maxPasswdFileBytes = 1 << 20
 
@@ -284,12 +290,14 @@ func (f *transportFactory) acquireTerminal(ctx context.Context, spec appsession.
 		hookWithdrawn := false
 		if spec.CaptureHookRemote && specification.Command != "" &&
 			!shellhook.IsWindowsOpenSSH(lease.RemoteVersion()) {
-			// sshd runs the RemoteCommand through the login shell with -c. A
-			// POSIX wrapper is a syntax error in xonsh, csh, tcsh, and nu, and
-			// would kill the channel. Establish the login shell without
-			// executing it; only a POSIX shell that accepts the wrapper keeps
-			// it. Every other answer keeps the plain interactive login shell
-			// and lets the Session use Tier 2/3.
+			// sshd runs the RemoteCommand through the login shell with -c.
+			// Xonsh, csh, and tcsh reject the wrapper's quoting as a syntax
+			// error, and nushell has no remote hook: it parses the outer
+			// command but the wrapper only announces its skip and re-execs
+			// the login shell. Establish the login shell without executing
+			// it; only a shell that accepts and uses the wrapper keeps it.
+			// Every other answer keeps the plain interactive login shell and
+			// lets the Session use Tier 2/3.
 			loginShell := probeRemoteLoginShell(ctx, lease, spec.Username)
 			command := shellhook.RemoteCommandForLoginShell(specification.Command, loginShell)
 			if command != specification.Command {
@@ -362,7 +370,9 @@ func probeRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, user
 	// The abort channel closes the SFTP stream if the probe outlives its
 	// deadline, so a wedged subsystem cannot hold the Session open.
 	abort := make(chan struct{})
-	defer close(abort)
+	var abortOnce sync.Once
+	stop := func() { abortOnce.Do(func() { close(abort) }) }
+	defer stop()
 	done := make(chan string, 1)
 	go func() {
 		done <- readRemoteLoginShell(probeCtx, lease, username, abort)
@@ -371,8 +381,42 @@ func probeRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, user
 	case shell := <-done:
 		return shell
 	case <-probeCtx.Done():
+		// readRemoteLoginShell owns the subsystem channel until its SFTP
+		// handshake returns. Close the abort channel, then wait for that
+		// goroutine so Open never returns while a wedged probe still holds
+		// the channel: a repeated open or reconnect must not accumulate
+		// channels on the server. Closing the stream unblocks the handshake,
+		// so this normally returns at once; the wait stays bounded in case a
+		// transport's Close itself blocks.
+		stop()
+		select {
+		case <-done:
+		case <-time.After(remoteLoginShellProbeDrainTimeout):
+		}
 		return ""
 	}
+}
+
+// synchronizedStream serializes Close against Write. The SFTP client writes
+// its init packet before it blocks reading the server's version, and the SSH
+// channel behind a subsystem is not safe to close while that write is in
+// flight. The mutex makes the probe's deadline wait for the packet to finish
+// before closing the stream.
+type synchronizedStream struct {
+	io.ReadWriteCloser
+	writeMu sync.Mutex
+}
+
+func (s *synchronizedStream) Write(p []byte) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.ReadWriteCloser.Write(p)
+}
+
+func (s *synchronizedStream) Close() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.ReadWriteCloser.Close()
 }
 
 // readRemoteLoginShell performs the SFTP read. It is separate so the caller
@@ -383,19 +427,31 @@ func readRemoteLoginShell(ctx context.Context, lease *appconnection.Lease, usern
 	if err != nil {
 		return ""
 	}
-	remote, err := adaptersftp.NewRemote(stream, nil)
+	guarded := &synchronizedStream{ReadWriteCloser: stream}
+	// NewClientPipe first reads the server's protocol version, and that read
+	// has no context. Watch the probe deadline from the moment the channel
+	// exists, before the handshake can block: a peer that accepts the "sftp"
+	// subsystem and then goes silent must release the channel and this
+	// goroutine instead of holding them for the life of the SSH Connection.
+	// Closing the stream also aborts every later SFTP request.
+	var streamOnce sync.Once
+	closeStream := func() { streamOnce.Do(func() { _ = guarded.Close() }) }
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-abort:
+			closeStream()
+		case <-ctx.Done():
+			closeStream()
+		case <-watchDone:
+		}
+	}()
+	remote, err := adaptersftp.NewRemote(guarded, nil)
 	if err != nil {
 		return ""
 	}
 	defer remote.Close()
-	go func() {
-		select {
-		case <-abort:
-			_ = remote.Close()
-		case <-ctx.Done():
-			_ = remote.Close()
-		}
-	}()
 	home := ""
 	if strings.TrimSpace(username) == "" {
 		// Without a configured user, match the SFTP home directory instead of

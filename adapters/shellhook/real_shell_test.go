@@ -1074,6 +1074,13 @@ func TestRealNushellWithoutHookKeepsNativeCapture(t *testing.T) {
 		text, _ := service.ScreenText(session.ID())
 		t.Fatalf("the nushell user config never ran: %q", text.Text)
 	}
+	// The user config marker prints while nushell is still starting, before
+	// the first prompt. Wait for the OSC 7 that precedes that prompt so the
+	// typed command starts with the reported cwd; typing earlier races the
+	// native capture and records Tier 2 without a cwd under load.
+	if !waitCondition(func() bool { return session.Snapshot().CWD != "" }) {
+		t.Fatalf("nushell never reported its cwd: snapshot=%+v", session.Snapshot())
+	}
 
 	expectedCWD := workDir
 	if resolved, err := filepath.EvalSymlinks(workDir); err == nil {
