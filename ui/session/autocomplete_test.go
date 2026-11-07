@@ -3,6 +3,7 @@ package sessionui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -171,6 +172,131 @@ func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) 
 		t.Fatalf("Ctrl+U reached the transport: %q", transport.input())
 	}
 	if !waitFor(t, func() bool { return session.Snapshot().Input == "git status" }) {
+		t.Fatalf("the shell line tracked after accepting = %q", session.Snapshot().Input)
+	}
+}
+
+// TestSurfaceAutocompleteRefusesMultilineSuggestionWithoutBracketedPaste
+// proves the acceptance path uses the safe insertion seam: without DEC 2004 a
+// multi-line suggestion cannot be typed into the editor, so nothing is sent
+// and the typed prefix stays. The Tab and popup-click paths share the seam.
+func TestSurfaceAutocompleteRefusesMultilineSuggestionWithoutBracketedPaste(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const command = "git status\ntouch /tmp/never-run"
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			if input == "gi" {
+				return []autocomplete.Suggestion{{
+					Text: command, Display: "git status (multiline)", Source: "history",
+				}}
+			}
+			return nil
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if len(surface.SuggestionRows()) != 1 {
+		t.Fatalf("popup rows = %+v, want the multiline suggestion", surface.SuggestionRows())
+	}
+	before := transport.input()
+
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a suggestion available")
+	}
+	if got := transport.input(); got != before {
+		t.Fatalf("Tab sent unsafe bytes: %q", got)
+	}
+	if session.Snapshot().Input != "gi" {
+		t.Fatalf("Tab changed the tracked line to %q", session.Snapshot().Input)
+	}
+
+	// The popup stays available after the refusal, and the click path uses the
+	// same seam and is refused the same way.
+	tester.Frame()
+	if err := tester.Click("git status (multiline)"); err != nil {
+		t.Fatalf("click the multiline suggestion: %v", err)
+	}
+	if got := transport.input(); got != before {
+		t.Fatalf("click sent unsafe bytes: %q", got)
+	}
+	if session.Snapshot().Input != "gi" {
+		t.Fatalf("click changed the tracked line to %q", session.Snapshot().Input)
+	}
+	if err := surface.insertTextReplacing(2, command); !errors.Is(err, ErrInsertUnsafe) {
+		t.Fatalf("insertTextReplacing error = %v, want ErrInsertUnsafe", err)
+	}
+}
+
+// TestSurfaceAutocompleteInsertsMultilineSuggestionAsBracketedPaste proves the
+// same acceptance path sanitizes and wraps a multi-line suggestion when the
+// shell enabled DEC 2004: the prefix is erased, the text arrives as one paste,
+// and no newline is submitted.
+func TestSurfaceAutocompleteInsertsMultilineSuggestionAsBracketedPaste(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const command = "git status\ntouch marker"
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, _, _ string) []autocomplete.Suggestion {
+			if input == "gi" {
+				return []autocomplete.Suggestion{{
+					Text: command, Display: "git status (multiline)", Source: "history",
+				}}
+			}
+			return nil
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	surface.terminal.Feed([]byte("\x1b[?2004h"))
+	if !surface.BracketedPasteEnabled() {
+		t.Fatal("bracketed paste mode was not read from the terminal")
+	}
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if !surface.handleAutocompleteKey(0, ui.KeyTab) {
+		t.Fatal("Tab was not taken with a suggestion available")
+	}
+	want := "\x7f\x7f\x1b[200~" + command + "\x1b[201~"
+	if !waitFor(t, func() bool { return bytes.Contains([]byte(transport.input()), []byte(want)) }) {
+		t.Fatalf("accepted input = %q, want %q", transport.input(), want)
+	}
+	if bytes.HasSuffix([]byte(transport.input()), []byte("\n")) {
+		t.Fatalf("acceptance submitted the line: %q", transport.input())
+	}
+	if !waitFor(t, func() bool { return session.Snapshot().Input == command }) {
 		t.Fatalf("the shell line tracked after accepting = %q", session.Snapshot().Input)
 	}
 }

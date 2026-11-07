@@ -17,6 +17,30 @@ var ErrInsertUnsafe = errors.New("session: the shell cannot insert multi-line te
 // transfer gate refused the insertion.
 var errInsertUnavailable = errors.New("session: insertion is unavailable")
 
+// insertPayload builds the exact bytes InsertText queues. It is the one place
+// that sanitizes the text and enforces the bracketed-paste requirement, so a
+// caller that first replaces existing input cannot bypass those rules.
+func (s *Surface) insertPayload(text string) ([]byte, error) {
+	if s.terminal == nil || s.session == nil {
+		return nil, errInsertUnavailable
+	}
+	text = sanitizeInsertText(text)
+	if text == "" {
+		return nil, errInsertUnavailable
+	}
+	if strings.ContainsAny(text, "\n\t") {
+		if !s.bracketedPasteEnabled() {
+			return nil, ErrInsertUnsafe
+		}
+		payload := make([]byte, 0, len(text)+12)
+		payload = append(payload, "\x1b[200~"...)
+		payload = append(payload, text...)
+		payload = append(payload, "\x1b[201~"...)
+		return payload, nil
+	}
+	return []byte(text), nil
+}
+
 // InsertText puts a command into the terminal's line editor without submitting
 // it. Single-line text is sent as typed. Text with a line break or a tab is
 // sent as a bracketed paste when the program enabled bracketed paste mode, so
@@ -24,27 +48,26 @@ var errInsertUnavailable = errors.New("session: insertion is unavailable")
 // that mode the insertion is refused. A trailing newline is part of the pasted
 // buffer and never a submit.
 func (s *Surface) InsertText(text string) error {
-	if s.terminal == nil || s.session == nil {
-		return errInsertUnavailable
+	return s.insertTextReplacing(0, text)
+}
+
+// insertTextReplacing deletes eraseCount characters to the left of the line
+// editor's cursor and then inserts text with InsertText's safety rules. The
+// erases and the insertion are queued in one write, and only after the text
+// has passed the sanitizer and bracketed-paste check: an unsafe multi-line
+// text is refused before any erasure, so the typed prefix is left intact and
+// nothing is submitted. It is the autocomplete acceptance seam; both the Tab
+// and popup-click paths use it.
+func (s *Surface) insertTextReplacing(eraseCount int, text string) error {
+	payload, err := s.insertPayload(text)
+	if err != nil {
+		return err
 	}
-	text = sanitizeInsertText(text)
-	if text == "" {
-		return errInsertUnavailable
+	if eraseCount > 0 {
+		erased := bytes.Repeat([]byte{0x7f}, eraseCount)
+		payload = append(erased, payload...)
 	}
-	if strings.ContainsAny(text, "\n\t") {
-		if !s.bracketedPasteEnabled() {
-			return ErrInsertUnsafe
-		}
-		payload := make([]byte, 0, len(text)+12)
-		payload = append(payload, "\x1b[200~"...)
-		payload = append(payload, text...)
-		payload = append(payload, "\x1b[201~"...)
-		if !s.session.InsertInput(payload) {
-			return errInsertUnavailable
-		}
-		return nil
-	}
-	if !s.session.InsertInput([]byte(text)) {
+	if !s.session.InsertInput(payload) {
 		return errInsertUnavailable
 	}
 	return nil

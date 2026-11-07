@@ -1,7 +1,6 @@
 package sessionui
 
 import (
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -115,15 +114,19 @@ func (s *Surface) handleAutocompleteKey(mods ui.Modifiers, key ui.Key) bool {
 	return true
 }
 
-// acceptSuggestion replaces the typed line with the suggestion. The line is
-// cleared with one Backspace (DEL) per character rather than Ctrl+U: PSReadLine
-// binds Ctrl+U to Undo, so PowerShell rendered the raw byte and merged the
-// suggestion into the typed text ("git s^Ugit stash", #18). Backspace is the
-// one erase every target understands — readline, zle, and PSReadLine all
-// delete the character to its left — and the Session's tap counts the same
-// runes, so the tracked line stays aligned with the shell's. The bytes go
-// through the terminal, keeping the tap, statistics, and command tracking in
-// step, and no Tab byte is ever sent.
+// acceptSuggestion replaces the typed line with the suggestion through
+// insertTextReplacing, the safe insertion seam the side panel also uses. The
+// line is cleared with one Backspace (DEL) per character rather than Ctrl+U:
+// PSReadLine binds Ctrl+U to Undo, so PowerShell rendered the raw byte and
+// merged the suggestion into the typed text ("git s^Ugit stash", #18).
+// Backspace is the one erase every target understands — readline, zle, and
+// PSReadLine all delete the character to its left — and the Session's tap
+// counts the same runes, so the tracked line stays aligned with the shell's.
+// The erases and the replacement are queued as one write only after the
+// sanitizer and bracketed-paste check, so a multi-line suggestion (for
+// example a row synced from another device) is pasted into the editor instead
+// of being executed, and without DEC 2004 it is refused with the typed prefix
+// left intact. No Tab byte and no submit is ever sent.
 func (s *Surface) acceptSuggestion(index int) {
 	if index < 0 || index >= len(s.suggestions) {
 		return
@@ -133,17 +136,19 @@ func (s *Surface) acceptSuggestion(index int) {
 		return
 	}
 	input := s.session.Snapshot().Input
+	eraseCount := utf8.RuneCountInString(input)
+	if err := s.insertTextReplacing(eraseCount, text); err != nil {
+		// Nothing reached the shell, so keep the popup and the typed line:
+		// the user can still see, copy, or insert the row another way.
+		s.redraw()
+		return
+	}
 	s.suggestionInput = input
 	s.suggestions = nil
 	s.suggestionIndex = 0
 	s.suggestionDismissed = true
 	s.showAutocomplete = false
 	s.showGhost = false
-	eraseCount := utf8.RuneCountInString(input)
-	payload := make([]byte, 0, eraseCount+len(text))
-	payload = append(payload, strings.Repeat("\x7f", eraseCount)...)
-	payload = append(payload, text...)
-	s.terminal.Send(payload)
 	s.redraw()
 }
 
