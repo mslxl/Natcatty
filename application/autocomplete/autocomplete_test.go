@@ -266,6 +266,53 @@ func TestSuggestionScoreMatchesTheReturnedOrder(t *testing.T) {
 	}
 }
 
+// TestScoreAndOrderAgreeWithinOneRecencyBucket pins the case a bucketed score
+// got wrong: even when both commands are within the same day, an older cwd
+// match must not outrank a newer command, and Score must say so.
+func TestScoreAndOrderAgreeWithinOneRecencyBucket(t *testing.T) {
+	journal := &journalMemory{
+		entries: []domainhistory.Entry{
+			{
+				Command: "git older here", Scope: "local", CWD: "/work/project",
+				RecordedAt: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+			},
+			{
+				Command: "git newer there", Scope: "local", CWD: "/work/other",
+				RecordedAt: time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(journal, defaultConfig, WithClock(func() time.Time {
+		return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	}))
+	service.Load(context.Background())
+
+	got := service.SuggestionsIn("git", "local", "/work/project")
+	if len(got) != 2 || got[0].Text != "git newer there" {
+		t.Fatalf("suggestions = %+v, want the newer command first", got)
+	}
+	if got[1].Frequency != got[0].Frequency || got[0].Score <= got[1].Score {
+		t.Fatalf("scores newer=%d older-cwd=%d; want Score to follow the order",
+			got[0].Score, got[1].Score)
+	}
+}
+
+// TestSuggestionScoreStepsHoldAcrossTheWholeTimeRange pins the packing bounds:
+// a zero or pre-epoch LastUsed is still older than every real timestamp in
+// Go's range, and a one-use older command must score above a zero-use newest
+// one, because the comparator ranks frequency before recency.
+func TestSuggestionScoreStepsHoldAcrossTheWholeTimeRange(t *testing.T) {
+	oldest := time.Time{}
+	newest := time.Date(9999, 12, 31, 23, 59, 59, 999_000_000, time.UTC)
+	if older := suggestionScore(3, 1, oldest, false); older <= suggestionScore(3, 0, newest, true) {
+		t.Fatalf("a used oldest command scored %d, below a zero-use newest command",
+			older)
+	}
+	if higherRank := suggestionScore(3, 0, oldest, false); higherRank <= suggestionScore(2, 100, newest, true) {
+		t.Fatalf("rank 3 scored %d, below rank 2 at maximum frequency", higherRank)
+	}
+}
+
 func TestAggregationKeepsTheCwdOfTheLatestExecution(t *testing.T) {
 	journal := &journalMemory{
 		entries: []domainhistory.Entry{

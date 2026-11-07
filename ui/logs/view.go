@@ -164,6 +164,8 @@ func problemText(m locales.Messages, tab Tab, problem Problem) string {
 		return m.LogsProblemPrune()
 	case ProblemInsert:
 		return m.LogsProblemInsert()
+	case ProblemInsertUnsafe:
+		return m.LogsProblemInsertUnsafe()
 	default:
 		return ""
 	}

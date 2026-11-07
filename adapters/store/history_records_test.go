@@ -108,6 +108,39 @@ func TestRecordHistoryEntryWritesProjectionAndOneCreateRecord(t *testing.T) {
 	}
 }
 
+// TestLocallyRecordedHistoryIDsFindsCreateRecords proves Clear this device can
+// still recognize a row this install created after an import or sync powered
+// over its source: the create record in the local writer series remains.
+func TestLocallyRecordedHistoryIDsFindsCreateRecords(t *testing.T) {
+	ctx := context.Background()
+	store, writer := openWriterStore(t)
+	created := testHistoryRecord(domainhistory.RecordKindCreate, testEntryOne, testRecordOne, at(1))
+	if err := store.RecordHistoryEntry(ctx, domainhistory.Entry{
+		ID: testEntryOne, Scope: "local", Command: "ls",
+		Source: domainhistory.SourceAtuinSync, RecordedAt: at(1),
+	}, &created); err != nil {
+		t.Fatalf("RecordHistoryEntry: %v", err)
+	}
+	if err := store.RecordHistoryEntry(ctx, domainhistory.Entry{
+		ID: testEntryTwo, Scope: "remote:web:deploy", Command: "uptime",
+		Source: domainhistory.SourceAtuinImport, Origin: "web:deploy", RecordedAt: at(2),
+	}, nil); err != nil {
+		t.Fatalf("RecordHistoryEntry without a record: %v", err)
+	}
+	linked, err := store.LocallyRecordedHistoryIDs(ctx, writer)
+	if err != nil {
+		t.Fatalf("LocallyRecordedHistoryIDs: %v", err)
+	}
+	if !linked[testEntryOne] || linked[testEntryTwo] || len(linked) != 1 {
+		t.Fatalf("linked = %+v, want only %s", linked, testEntryOne)
+	}
+	other, err := store.LocallyRecordedHistoryIDs(ctx,
+		"0198c7e2-6a1b-7c3d-8e4f-5a6b7c8d9e99")
+	if err != nil || len(other) != 0 {
+		t.Fatalf("other writer linked = %+v, %v; want none", other, err)
+	}
+}
+
 func TestNewWriterSeriesStartsAtZeroAndContinuesAfterReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "vault.db")

@@ -321,7 +321,6 @@ func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
 	copy(entries, s.entries)
 	s.mu.Unlock()
 
-	now := s.now()
 	lowered := strings.ToLower(input)
 	cwd = strings.TrimSpace(cwd)
 	ranked := make([]rankedSuggestion, 0, len(entries))
@@ -355,7 +354,7 @@ func (s *Service) SuggestionsIn(input, scope, cwd string) []Suggestion {
 				Text:      entry.Command,
 				Source:    SourceHistory,
 				Frequency: entry.Count,
-				Score:     suggestionScore(rank, entry.Count, entry.LastUsed, inCWD, now),
+				Score:     suggestionScore(rank, entry.Count, entry.LastUsed, inCWD),
 			},
 			rank:     rank,
 			lastUsed: entry.LastUsed,
@@ -388,8 +387,8 @@ func betterSuggestion(left, right rankedSuggestion) bool {
 		return left.rank > right.rank
 	case left.suggestion.Frequency != right.suggestion.Frequency:
 		return left.suggestion.Frequency > right.suggestion.Frequency
-	case !left.lastUsed.Equal(right.lastUsed):
-		return left.lastUsed.After(right.lastUsed)
+	case left.lastUsed.UnixMilli() != right.lastUsed.UnixMilli():
+		return left.lastUsed.UnixMilli() > right.lastUsed.UnixMilli()
 	case left.inCWD != right.inCWD:
 		return left.inCWD
 	default:
@@ -397,25 +396,34 @@ func betterSuggestion(left, right rankedSuggestion) bool {
 	}
 }
 
+// The Score packing uses UnixMilli recency, the same precision
+// betterSuggestion compares. Across Go's whole Time range, including the zero
+// time and pre-epoch imports, the recency term spans less than one frequency
+// step, and the bounded frequency term spans less than one rank step. Score
+// therefore orders exactly like the returned list; the command text remains
+// the final tie-break and is not encoded.
+const (
+	scoreRankStep      int64 = 1_000_000_000_000_000_000
+	scoreFrequencyStep int64 = 1_000_000_000_000_000
+	scoreRecencyStep   int64 = 2
+	// cwdBonus rewards a command whose latest execution ran in the Session's
+	// current working directory. It is smaller than one recency step, so it
+	// only breaks ties between commands with equal frequency and recency.
+	cwdBonus int64 = 1
+)
+
 // suggestionScore encodes the ranking tuple in the Suggestion's Score: the
-// match tier dominates, then frequency, then recency, then the cwd bonus. Each
-// term fits below one step of the term before it, so Score orders exactly like
-// betterSuggestion; the command text remains the final tie-break and is not
-// encoded.
-func suggestionScore(rank, frequency int, lastUsed time.Time, inCWD bool, now time.Time) int {
-	score := rank*1_000_000 + boundedFrequency(frequency)*1_000 +
-		recencyBonus(lastUsed, now)*10
+// match tier dominates, then frequency, then recency, then the cwd bonus.
+func suggestionScore(rank, frequency int, lastUsed time.Time, inCWD bool) int {
+	recency := lastUsed.UnixMilli()
+	score := int64(rank)*scoreRankStep +
+		int64(boundedFrequency(frequency))*scoreFrequencyStep +
+		recency*scoreRecencyStep
 	if inCWD {
 		score += cwdBonus
 	}
-	return score
+	return int(score)
 }
-
-// cwdBonus rewards a command whose latest execution ran in the Session's
-// current working directory. It is smaller than one recency step, so it only
-// breaks ties between commands with equal frequency and recency; it never
-// outweighs either.
-const cwdBonus = 1
 
 // newerExecution reports whether at is later than the stored last-execution
 // time. A zero stored time means no execution has been recorded yet.
@@ -447,24 +455,4 @@ func boundedFrequency(count int) int {
 		return 0
 	}
 	return count
-}
-
-func recencyBonus(lastUsed, now time.Time) int {
-	if lastUsed.IsZero() {
-		return 0
-	}
-	age := now.Sub(lastUsed)
-	if age < 0 {
-		age = 0
-	}
-	switch {
-	case age <= 24*time.Hour:
-		return 90
-	case age <= 7*24*time.Hour:
-		return 60
-	case age <= 30*24*time.Hour:
-		return 30
-	default:
-		return 0
-	}
 }

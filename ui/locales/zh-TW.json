@@ -1513,6 +1513,7 @@
   "logsProblemClearConnections": "無法清除連線記錄。",
   "logsProblemPrune": "無法清理歷史。",
   "logsProblemInsert": "無法插入命令。請先開啟使用中的工作階段。",
+  "logsProblemInsertUnsafe": "此 shell 無法安全插入多行命令。請改為複製該命令。",
   "logsProblemOpen": "無法開啟終端機。",
   "logsProblemHostMissing": "關聯的主機已不存在。",
   "logsProblemDate": "請按 YYYY-MM-DD 輸入日期，且開始日期早於結束日期。",

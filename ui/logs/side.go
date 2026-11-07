@@ -154,9 +154,25 @@ func (p *HistoryPanel) row(c *ui.Context, m locales.Messages, t *ui.Theme, entry
 		}
 		menu.Separator()
 		if menu.Item(m.LogsDelete()).Chosen() {
-			p.state.DeleteEntry(entry.ID)
+			p.state.RequestDeleteEntry(entry.ID)
+			c.Invalidate()
 		}
 	})
+	if p.state.PendingDeleteEntry() == entry.ID {
+		ui.Row(c).FillWidth().Gap(8).Padding(4, 4, 4, 8).
+			AlignItems(ui.Center).Children(func() {
+			ui.Text(c, m.LogsDeleteConfirm()).Grow(1).FontSize(11).
+				TextColor(t.Danger)
+			if ui.Button(c, m.LogsCancel()).Clicked() {
+				p.state.CancelDeleteEntry()
+				c.Invalidate()
+			}
+			if ui.Button(c, m.LogsDelete()).Clicked() {
+				p.state.ConfirmDeleteEntry()
+				c.Invalidate()
+			}
+		})
+	}
 	if row.DoubleClicked() {
 		p.failed = !p.send(entry.Command, false)
 		c.Invalidate()

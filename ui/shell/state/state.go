@@ -38,6 +38,11 @@ var ErrNoSessions = errors.New("shell: no session service")
 // ErrNoActiveTab reports a Pane action taken while no Tab is active.
 var ErrNoActiveTab = errors.New("shell: no active Tab")
 
+// ErrNoTextInserter reports a focused Surface that cannot insert text into its
+// line editor. The caller must not fall back to typing, which could submit a
+// multi-line command.
+var ErrNoTextInserter = errors.New("shell: the focused terminal cannot insert text")
+
 // ErrHostUnavailable reports a restored Pane whose Host is no longer in the
 // Vault. The Pane stays in the layout as an error surface so the user can see
 // which Session is missing; nothing is invented in its place.
@@ -89,6 +94,19 @@ type TerminalThemeSetter interface {
 // window uses it to apply a cursor change to open Sessions.
 type TerminalCursorSetter interface {
 	SetTerminalCursor(style domainpreferences.CursorStyle, blink bool)
+}
+
+// TextInserter is implemented by a Surface that can put text into its
+// terminal's line editor without submitting it. The History surface's Insert
+// action uses it so a multi-line command is never typed as several lines.
+type TextInserter interface {
+	InsertText(text string) error
+}
+
+// SuggestionInvalidator is implemented by a Surface whose open autocomplete
+// popup must be recomputed after the shared history journal changes.
+type SuggestionInvalidator interface {
+	InvalidateSuggestions()
 }
 
 // HostResolver looks a Host up for restore and for reopening a split. It

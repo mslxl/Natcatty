@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,6 +49,62 @@ type recordingFactory struct{ transport *recordingTransport }
 
 func (f recordingFactory) Open(context.Context, appsession.StartSpec) (appsession.Transport, error) {
 	return f.transport, nil
+}
+
+// TestInvalidateSuggestionsDropsADeletedCommand proves an open popup cannot
+// keep offering a row the shared journal no longer has: invalidating it makes
+// the next frame recompute from the reloaded source, and Tab cannot accept the
+// vanished text.
+func TestInvalidateSuggestionsDropsADeletedCommand(t *testing.T) {
+	transport := newRecordingTransport()
+	service := appsession.NewService(recordingFactory{transport: transport})
+	t.Cleanup(service.CloseAll)
+	session, err := service.Open(context.Background(), appsession.StartSpec{Kind: appsession.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var available atomic.Bool
+	available.Store(true)
+	surface, err := New(session,
+		WithRedraw(func() {}),
+		WithSuggestions(func(input, scope, _ string) []autocomplete.Suggestion {
+			if !available.Load() {
+				return nil
+			}
+			return []autocomplete.Suggestion{
+				{Text: "git status", Display: "git status", Source: "history"},
+			}
+		}, func() (bool, bool) { return true, false }),
+	)
+	if err != nil {
+		t.Fatalf("New surface: %v", err)
+	}
+	t.Cleanup(surface.Close)
+	tester := ui.NewTester(func(c *ui.Context) { surfaceFrame(c, surface, false) }, 720, 480)
+	tester.SetLocale("en")
+	tester.Frame()
+	tester.ClickAt(360, 420)
+	tester.Type("gi")
+	if !waitFor(t, func() bool { return session.Snapshot().Input == "gi" }) {
+		t.Fatalf("typed input = %q", session.Snapshot().Input)
+	}
+	tester.Frame()
+	if len(surface.SuggestionRows()) != 1 {
+		t.Fatalf("popup rows = %+v, want the suggestion", surface.SuggestionRows())
+	}
+
+	// The History mutation reloads the journal and invalidates open popups.
+	available.Store(false)
+	surface.InvalidateSuggestions()
+	tester.Frame()
+	if len(surface.SuggestionRows()) != 0 {
+		t.Fatalf("popup rows after invalidation = %+v, want none", surface.SuggestionRows())
+	}
+	tester.Key(0, ui.KeyTab)
+	tester.Frame()
+	if bytes.Contains([]byte(transport.input()), []byte("git status")) {
+		t.Fatalf("Tab inserted the deleted command: %q", transport.input())
+	}
 }
 
 func TestSurfaceAutocompleteSuggestsFromTheTypedLineAndTabAccepts(t *testing.T) {

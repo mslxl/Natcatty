@@ -260,7 +260,14 @@ type terminalTap struct {
 	inputBuffer  string
 	inputPending []byte
 	inputEscape  inputState
-	lastOutput   time.Time
+	// inputCSIParams holds the parameter bytes of the CSI sequence being
+	// parsed, so the tap can recognize the bracketed-paste markers.
+	inputCSIParams []byte
+	// inputPaste reports that the bytes being typed are inside a bracketed
+	// paste. The shell inserts them into its line editor literally, so the
+	// tap must not treat their newlines as Enter.
+	inputPaste bool
+	lastOutput time.Time
 	// outputSinceStart marks that text output arrived after the current
 	// command started. The prompt fallback must ignore the previous command's
 	// prompt still sitting in the tail.
@@ -1739,9 +1746,19 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 	started := false
 	var completions []capturedCommand
 	for _, value := range data {
+		if t.inputPaste && t.inputEscape == inputPlain {
+			// A bracketed paste is inserted into the line editor literally.
+			// Only the end marker is meaningful; every other byte, including
+			// a newline, is pasted text rather than Enter or a control key.
+			if value == 0x1b {
+				t.inputEscape = inputEscape
+			}
+			continue
+		}
 		switch t.inputEscape {
 		case inputEscape:
 			t.inputEscape = inputPlain
+			t.inputCSIParams = t.inputCSIParams[:0]
 			if value == '[' {
 				t.inputEscape = inputCSI
 			} else if value == ']' {
@@ -1749,8 +1766,23 @@ func (t *terminalTap) recordInput(data []byte, now time.Time) (bool, bool, []cap
 			}
 			continue
 		case inputCSI:
-			if value >= 0x40 && value <= 0x7e {
+			switch {
+			case value >= 0x40 && value <= 0x7e:
+				if value == '~' {
+					switch string(t.inputCSIParams) {
+					case "200":
+						t.inputPaste = true
+					case "201":
+						t.inputPaste = false
+					}
+				}
 				t.inputEscape = inputPlain
+				t.inputCSIParams = t.inputCSIParams[:0]
+			case value >= 0x30 && value <= 0x3f:
+				t.inputCSIParams = append(t.inputCSIParams, value)
+			default:
+				t.inputEscape = inputPlain
+				t.inputCSIParams = t.inputCSIParams[:0]
 			}
 			continue
 		case inputOSC:

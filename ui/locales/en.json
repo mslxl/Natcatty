@@ -2870,6 +2870,10 @@
   "@logsProblemInsert": {
     "description": "Shown when a history command cannot be inserted into a Session."
   },
+  "logsProblemInsertUnsafe": "This shell cannot insert a multi-line command safely. Copy the command instead.",
+  "@logsProblemInsertUnsafe": {
+    "description": "Shown when a multi-line history command is refused because the shell did not enable bracketed paste."
+  },
   "logsProblemOpen": "Could not open the terminal.",
   "@logsProblemOpen": {
     "description": "Shown when a row action could not open a terminal."

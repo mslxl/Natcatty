@@ -2014,6 +2014,33 @@ func (s *State) removeTabAt(index int) {
 	s.refreshBroadcastState()
 }
 
+// InvalidateSuggestions drops the cached autocomplete rows of every open
+// terminal in the main and detached windows. The shared journal was reloaded,
+// and a popup that stays cached could still offer a deleted command.
+func (s *State) InvalidateSuggestions() {
+	invalidate := func(tab *Tab) {
+		if tab == nil {
+			return
+		}
+		for _, pane := range tab.panes {
+			if pane == nil {
+				continue
+			}
+			invalidator, ok := pane.surface.(SuggestionInvalidator)
+			if !ok {
+				continue
+			}
+			invalidator.InvalidateSuggestions()
+		}
+	}
+	for _, tab := range s.tabs {
+		invalidate(tab)
+	}
+	for _, tab := range s.detached {
+		invalidate(tab)
+	}
+}
+
 // SetTerminalFont restyles every open terminal in the main and detached
 // windows. A Surface that cannot restyle live is left alone; a new Session
 // reads the setting when its terminal is created.

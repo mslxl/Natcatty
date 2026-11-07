@@ -1513,6 +1513,7 @@
   "logsProblemClearConnections": "No se pudieron borrar los registros de conexión.",
   "logsProblemPrune": "No se pudo purgar el historial.",
   "logsProblemInsert": "No se pudo insertar el comando. Abre primero una sesión activa.",
+  "logsProblemInsertUnsafe": "Este shell no puede insertar un comando de varias líneas de forma segura. Copia el comando en su lugar.",
   "logsProblemOpen": "No se pudo abrir la terminal.",
   "logsProblemHostMissing": "El host relacionado ya no existe.",
   "logsProblemDate": "Introduce fechas como AAAA-MM-DD, con el inicio antes del final.",
