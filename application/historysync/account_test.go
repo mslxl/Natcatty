@@ -870,6 +870,222 @@ func TestCheckReportsAMissingRemoteAdapterAsNotConfigured(t *testing.T) {
 	}
 }
 
+func TestStoredCredentialsFailClosedAfterTheSyncAddressChanges(t *testing.T) {
+	t.Run("Check", func(t *testing.T) {
+		h := newAccountHarness(t)
+		h.configureEmptyAccount(t)
+		opens := h.factory.opens
+		gets := h.secrets.get[SessionTokenRef()]
+		h.settings.history.SyncAddress = "https://evil.example.test"
+		status, err := h.service.Check(context.Background())
+		if !errors.Is(err, ErrAccountChangeRequiresLogout) {
+			t.Fatalf("Check = %v, want ErrAccountChangeRequiresLogout", err)
+		}
+		if h.factory.opens != opens {
+			t.Fatalf("Check opened %d remote(s) with stored credentials after the address changed", h.factory.opens-opens)
+		}
+		if h.secrets.get[SessionTokenRef()] != gets {
+			t.Fatal("Check decrypted the token before the address ownership check")
+		}
+		if status.State != atuinmodel.SyncError {
+			t.Fatalf("status = %+v, want error", status)
+		}
+		assertCredentialFree(t, "status", status, testToken, testKeyB64)
+	})
+
+	t.Run("SetMasterKey", func(t *testing.T) {
+		h := newAccountHarness(t)
+		h.loginPassword(t)
+		opens := h.factory.opens
+		h.settings.history.SyncAddress = "https://evil.example.test"
+		status, err := h.service.SetMasterKey(context.Background(), testKeyB64, false)
+		if !errors.Is(err, ErrAccountChangeRequiresLogout) {
+			t.Fatalf("SetMasterKey = %v, want ErrAccountChangeRequiresLogout", err)
+		}
+		if h.factory.opens != opens {
+			t.Fatalf("SetMasterKey opened %d remote(s) with stored credentials after the address changed", h.factory.opens-opens)
+		}
+		if _, ok := h.secrets.values[MasterKeyRef()]; ok {
+			t.Fatal("SetMasterKey stored a key after the address changed")
+		}
+		if status.State != atuinmodel.SyncError {
+			t.Fatalf("status = %+v, want error", status)
+		}
+		assertCredentialFree(t, "status", status, testToken, testKeyB64)
+	})
+
+	t.Run("Login", func(t *testing.T) {
+		h := newAccountHarness(t)
+		h.loginPassword(t)
+		opens := h.factory.opens
+		status, err := h.service.Login(context.Background(), LoginRequest{
+			ServerURL: "https://evil.example.test", Username: "alice", Password: "hunter2",
+		})
+		if !errors.Is(err, ErrAccountChangeRequiresLogout) {
+			t.Fatalf("Login = %v, want ErrAccountChangeRequiresLogout", err)
+		}
+		if h.factory.opens != opens {
+			t.Fatalf("Login opened %d remote(s) before the account ownership check", h.factory.opens-opens)
+		}
+		if status.State != atuinmodel.SyncError {
+			t.Fatalf("status = %+v, want error", status)
+		}
+	})
+}
+
+func TestTheConnectedAccountAcceptsAHostCaseVariation(t *testing.T) {
+	h := newAccountHarness(t)
+	h.configureEmptyAccount(t)
+	h.settings.history.SyncAddress = "HTTPS://ATUIN.EXAMPLE.TEST/"
+	opens := h.factory.opens
+	status, err := h.service.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if h.factory.opens != opens+1 {
+		t.Fatal("a case-only address change did not reach the server")
+	}
+	if got := h.factory.lastConfig.BaseURL; got != testServer {
+		t.Fatalf("effective address = %q, want %q", got, testServer)
+	}
+	if status.State != atuinmodel.SyncIdle {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestStatusPreservesAnUnverifiedKeyWarningAfterSetMasterKey(t *testing.T) {
+	h := newAccountHarness(t)
+	h.loginPassword(t)
+	if _, err := h.service.SetMasterKey(context.Background(), testKeyB64, false); err != nil {
+		t.Fatal(err)
+	}
+	status := h.service.Status()
+	if status.Problem != atuinmodel.ProblemKeyUnverified ||
+		status.KeyState != atuinmodel.KeyStateUnverified {
+		t.Fatalf("Status = %+v, want the unverified-key warning", status)
+	}
+	if status.KeyConfirmed {
+		t.Fatal("an unconfirmed key reported as confirmed")
+	}
+}
+
+func TestConfirmUnverifiedKeyPersistsForTheSameKey(t *testing.T) {
+	h := newAccountHarness(t)
+	h.loginPassword(t)
+	if _, err := h.service.SetMasterKey(context.Background(), testKeyB64, false); err != nil {
+		t.Fatal(err)
+	}
+	status, err := h.service.ConfirmUnverifiedKey(context.Background())
+	if err != nil {
+		t.Fatalf("ConfirmUnverifiedKey: %v", err)
+	}
+	if !status.KeyConfirmed || status.KeyState != atuinmodel.KeyStateUnverified ||
+		status.Problem != atuinmodel.ProblemKeyUnverified {
+		t.Fatalf("status = %+v, want a confirmed unverified key", status)
+	}
+	if !h.metadata.metadata.UnverifiedKeyConfirmed {
+		t.Fatal("the confirmation was not persisted")
+	}
+	if got := h.service.Status(); !got.KeyConfirmed {
+		t.Fatalf("Status lost the confirmation: %+v", got)
+	}
+
+	// Re-entering the same key keeps the confirmation.
+	if _, err := h.service.SetMasterKey(context.Background(), testKeyB64, false); err != nil {
+		t.Fatal(err)
+	}
+	if !h.metadata.metadata.UnverifiedKeyConfirmed {
+		t.Fatal("re-entering the same key cleared the confirmation")
+	}
+
+	// A different key is a new risk and must be confirmed again.
+	newKey := base64.StdEncoding.EncodeToString([]byte("00112233445566778899aabbccddeeff"))
+	if _, err := h.service.SetMasterKey(context.Background(), newKey, true); err != nil {
+		t.Fatal(err)
+	}
+	if h.metadata.metadata.UnverifiedKeyConfirmed {
+		t.Fatal("a key change kept the previous key's confirmation")
+	}
+	if got := h.service.Status(); got.KeyConfirmed {
+		t.Fatalf("Status kept the previous key's confirmation: %+v", got)
+	}
+}
+
+func TestConfirmUnverifiedKeyRequiresAStoredKey(t *testing.T) {
+	h := newAccountHarness(t)
+	h.loginPassword(t)
+	status, err := h.service.ConfirmUnverifiedKey(context.Background())
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("ConfirmUnverifiedKey = %v, want ErrNotConfigured", err)
+	}
+	if status.Problem != atuinmodel.ProblemKeyMissing || status.KeyConfirmed {
+		t.Fatalf("status = %+v, want a missing-key error", status)
+	}
+}
+
+func TestKeyLossAndLogoutClearTheUnverifiedConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(*AccountService) (Status, error)
+	}{
+		{"forget", func(service *AccountService) (Status, error) {
+			return service.ForgetMasterKey(context.Background())
+		}},
+		{"logout", func(service *AccountService) (Status, error) {
+			return service.Logout(context.Background())
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newAccountHarness(t)
+			h.loginPassword(t)
+			if _, err := h.service.SetMasterKey(context.Background(), testKeyB64, false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.service.ConfirmUnverifiedKey(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := test.run(h.service); err != nil {
+				t.Fatal(err)
+			}
+			if h.metadata.metadata.UnverifiedKeyConfirmed {
+				t.Fatal("the confirmation survived losing the key")
+			}
+			if got := h.service.Status(); got.KeyConfirmed {
+				t.Fatalf("Status kept a confirmation without a key: %+v", got)
+			}
+		})
+	}
+}
+
+func TestSetMasterKeyReportsDisabledWhenSyncIsOff(t *testing.T) {
+	h := newAccountHarness(t)
+	h.loginPassword(t)
+	h.settings.history.SyncEnabled = false
+	status, err := h.service.SetMasterKey(context.Background(), testKeyB64, false)
+	if err != nil {
+		t.Fatalf("SetMasterKey: %v", err)
+	}
+	if status.State != atuinmodel.SyncDisabled ||
+		status.Problem != atuinmodel.ProblemDisabled {
+		t.Fatalf("status = %+v, want disabled", status)
+	}
+	if got := h.service.Status(); got.State != atuinmodel.SyncDisabled {
+		t.Fatalf("Status = %+v, want disabled", got)
+	}
+}
+
+func TestSanitizeServerURLNormalizesHostCase(t *testing.T) {
+	for _, test := range []struct{ raw, want string }{
+		{" HTTPS://API.ATUIN.SH/ ", "https://api.atuin.sh"},
+		{"https://Atuin.Example.Test/base/", "https://atuin.example.test/base"},
+		{"not a url/", "not a url"},
+	} {
+		if got := SanitizeServerURL(test.raw); got != test.want {
+			t.Errorf("SanitizeServerURL(%q) = %q, want %q", test.raw, got, test.want)
+		}
+	}
+}
+
 func TestStatusNeverDecryptsTheMasterKey(t *testing.T) {
 	h := newAccountHarness(t)
 	h.configureEmptyAccount(t)
@@ -898,7 +1114,9 @@ func TestNormalizeSyncAddress(t *testing.T) {
 		want string
 	}{
 		{"https://api.atuin.sh/", "https://api.atuin.sh"},
+		{"HTTPS://API.ATUIN.SH/", "https://api.atuin.sh"},
 		{"  https://atuin.example.test/base/  ", "https://atuin.example.test/base"},
+		{"https://atuin.example.test/#", "https://atuin.example.test"},
 		{"http://localhost:8888", "http://localhost:8888"},
 		{"http://127.0.0.1:8888/", "http://127.0.0.1:8888"},
 		{"http://[::1]:8888", "http://[::1]:8888"},

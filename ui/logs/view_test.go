@@ -109,6 +109,32 @@ func seededLogSource(count int) *fakeSource {
 	return source
 }
 
+func TestHistorySurfaceOpensTheAtuinAccountPanel(t *testing.T) {
+	m := locales.In("en")
+	opened := 0
+	state := NewState(nil, nil, WithAccountPanel(func() { opened++ }))
+	tester := ui.NewTester(View(state), 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+	if !tester.HasText(m.LogsAtuinAccount()) {
+		t.Fatalf("the History surface has no account entry point: %v", tester.Texts())
+	}
+	if err := tester.Click(m.LogsAtuinAccount()); err != nil {
+		t.Fatal(err)
+	}
+	if opened != 1 {
+		t.Fatalf("account panel requests = %d, want 1", opened)
+	}
+
+	without := NewState(nil, nil)
+	tester = ui.NewTester(View(without), 900, 600)
+	tester.SetLocale("en")
+	tester.Frame()
+	if tester.HasText(m.LogsAtuinAccount()) {
+		t.Fatal("an unconfigured surface showed an account entry point")
+	}
+}
+
 // newProductionLogsView builds the real shell, opens one work Tab so the tab
 // strip renders, and shows Logs. This is the chrome the production window
 // gives the surface, not a bare component.

@@ -181,6 +181,48 @@ func TestFakeAdapterValidatesAccountAndReportsStatusWithoutSyncing(t *testing.T)
 	assertCredentialFree(t, "metadata", metadata.metadata, fakePassword, fakeToken, fakeMasterKey)
 }
 
+func TestFakeAdapterRequiresExplicitConfirmationForAnEmptyAccountKey(t *testing.T) {
+	factory := fake.NewFactory(fake.Options{})
+	settings := newTestSettings()
+	metadata := newTestMetadata()
+	service := historysync.NewAccountService(settings, newTestSecrets(), metadata, factory)
+	ctx := context.Background()
+	if _, err := service.Login(ctx, historysync.LoginRequest{
+		ServerURL: fakeServer, Username: fakeUsername, Password: fakePassword,
+	}); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	status, err := service.SetMasterKey(ctx, fakeMasterKey, false)
+	if err != nil {
+		t.Fatalf("SetMasterKey: %v", err)
+	}
+	keyRemote := factory.Last()
+	if status.KeyState != atuinmodel.KeyStateUnverified ||
+		status.Problem != atuinmodel.ProblemKeyUnverified || status.KeyConfirmed {
+		t.Fatalf("status = %+v, want an unconfirmed unverified key", status)
+	}
+	if keyRemote.Calls().ValidateMasterKey != 0 {
+		t.Fatal("an empty account called real-record validation")
+	}
+	if metadata.metadata.UnverifiedKeyConfirmed {
+		t.Fatal("an empty-account key was confirmed without the user's action")
+	}
+
+	confirmed, err := service.ConfirmUnverifiedKey(ctx)
+	if err != nil {
+		t.Fatalf("ConfirmUnverifiedKey: %v", err)
+	}
+	if !confirmed.KeyConfirmed || confirmed.KeyState != atuinmodel.KeyStateUnverified {
+		t.Fatalf("confirmed status = %+v", confirmed)
+	}
+	if !metadata.metadata.UnverifiedKeyConfirmed {
+		t.Fatal("the confirmation was not persisted for the upload gate")
+	}
+	if got := service.Status(); !got.KeyConfirmed {
+		t.Fatalf("Status = %+v, want the persisted confirmation", got)
+	}
+}
+
 func TestFakeAdapterRejectsAWrongPastedToken(t *testing.T) {
 	factory := fake.NewFactory(fake.Options{
 		ExpectedToken: "the-only-valid-token",

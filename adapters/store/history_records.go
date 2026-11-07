@@ -20,13 +20,14 @@ var errInvalidWriterUUID = errors.New("store: invalid history writer UUID")
 // other state kept in the shared meta table. None of these keys is part of the
 // Vault backup table set.
 const (
-	metaKeyHistoryWriter         = "history.writer_uuid"
-	metaKeyHistoryShellImport    = "history.shell_history_imported"
-	metaKeyHistoryKeyFingerprint = "history.key_fingerprint"
-	metaKeyHistoryAccount        = "history.account"
-	metaKeyHistoryHostImports    = "history.host_imports"
-	metaKeyHistoryHostNotified   = "history.host_atuin_notified"
-	metaKeyHistorySeries         = "history.series_checkpoints"
+	metaKeyHistoryWriter              = "history.writer_uuid"
+	metaKeyHistoryShellImport         = "history.shell_history_imported"
+	metaKeyHistoryKeyFingerprint      = "history.key_fingerprint"
+	metaKeyHistoryUnverifiedConfirmed = "history.unverified_key_confirmed"
+	metaKeyHistoryAccount             = "history.account"
+	metaKeyHistoryHostImports         = "history.host_imports"
+	metaKeyHistoryHostNotified        = "history.host_atuin_notified"
+	metaKeyHistorySeries              = "history.series_checkpoints"
 )
 
 // EnsureWriterUUID returns the per-install writer UUID, generating and
@@ -89,6 +90,10 @@ func (s *Store) HistoryMetadata(ctx context.Context) (domainhistory.Metadata, er
 		if metadata.KeyFingerprint, _, err = readMeta(tx, metaKeyHistoryKeyFingerprint); err != nil {
 			return err
 		}
+		metadata.UnverifiedKeyConfirmed, err = readMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed)
+		if err != nil {
+			return err
+		}
 		if err := readMetaJSON(tx, metaKeyHistoryAccount, &metadata.Account); err != nil {
 			return err
 		}
@@ -116,6 +121,10 @@ func (s *Store) SaveHistoryMetadata(ctx context.Context, metadata domainhistory.
 			return err
 		}
 		if err := writeMetaText(tx, metaKeyHistoryKeyFingerprint, metadata.KeyFingerprint); err != nil {
+			return err
+		}
+		if err := writeMetaFlag(tx, metaKeyHistoryUnverifiedConfirmed,
+			metadata.UnverifiedKeyConfirmed); err != nil {
 			return err
 		}
 		if err := writeMetaJSON(tx, metaKeyHistoryAccount, metadata.Account,
@@ -256,6 +265,7 @@ func (s *Store) MarkHostAtuinNoticed(ctx context.Context, hostID string) (bool, 
 	}
 	return first, nil
 }
+
 // ListHistoryRecords returns the append-only log in series and index order.
 func (s *Store) ListHistoryRecords(ctx context.Context) ([]domainhistory.Record, error) {
 	var rows []historyRecordSchema

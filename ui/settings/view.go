@@ -34,6 +34,8 @@ type Config struct {
 	Search       *SearchState
 	Sync         *SyncState
 	MCP          *MCPState
+	// Atuin is the Logs area's single Command History account panel.
+	Atuin *AtuinState
 	// Licenses is the About and Licenses area: the GPLv3 Appropriate Legal
 	// Notices surface.
 	Licenses *LicensesState
@@ -549,12 +551,18 @@ func sftpEditorArea(c *ui.Context, config Config, m locales.Messages, t *ui.Them
 	})
 }
 
-// logsArea holds the Logs settings, including the command capture controls.
-// The capture hook decides what Command History can record, so its switch
-// lives beside the other logging controls rather than on the Terminal page.
+// logsArea holds the Logs settings, the single Atuin account panel, and the
+// command capture controls. The capture hook decides what Command History can
+// record, so its switch lives beside the other logging controls rather than on
+// the Terminal page.
 func logsArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
-	sectionBody(c, t, func() {
-		if state := config.Preferences; state != nil {
+	historySyncSettingsSection(c, config.Preferences, config.Atuin, m, t)
+	atuinAccountSection(c, config.Atuin, config.Preferences, m, t)
+	if config.Terminal != nil {
+		renderHistoryCaptureSection(c, config.Terminal, config.Terminal.Settings(), m, t)
+	}
+	if state := config.Preferences; state != nil {
+		sectionBody(c, t, func() {
 			enabled := state.Settings().Logs.SSHDebug
 			checkboxRow(c, state, m, domain.FieldSSHDebug, m.SettingsSSHDebug(), enabled,
 				func(s *domain.Settings, value bool) { s.Logs.SSHDebug = value })
@@ -562,11 +570,8 @@ func logsArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {
 				return state.ResetGroup(domain.GroupLogs)
 			}, true)
 			saveProblem(c, state, m, t)
-		}
-		if config.Terminal != nil {
-			renderHistoryCaptureSection(c, config.Terminal, config.Terminal.Settings(), m, t)
-		}
-	})
+		})
+	}
 }
 
 func syncArea(c *ui.Context, config Config, m locales.Messages, t *ui.Theme) {

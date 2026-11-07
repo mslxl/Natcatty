@@ -18,6 +18,11 @@ type Metadata struct {
 	// KeyFingerprint is a hash prefix of the local Atuin master key, never the
 	// key itself.
 	KeyFingerprint string `json:"keyFingerprint,omitempty"`
+	// UnverifiedKeyConfirmed records that the user explicitly accepted an
+	// unverified key for an account with no remote history. It lets a later
+	// upload proceed without pretending the key was validated, while a key
+	// change clears it. It is device-local state, never a portable setting.
+	UnverifiedKeyConfirmed bool `json:"unverifiedKeyConfirmed,omitempty"`
 	// Account identifies the last connected Atuin account so a same-account
 	// reconnect can be told from an account change. It survives logout; the
 	// absent session token is what marks the account disconnected.

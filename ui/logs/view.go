@@ -30,7 +30,15 @@ func View(s *State) func(*ui.Context) {
 
 		ui.Scroll(c).Grow(1).FillHeight().MinWidth(0).TrackScroll(s.Scroll()).Children(func() {
 			ui.Column(c).FillWidth().MinWidth(0).Gap(8).Children(func() {
-				kit.PageTitle(c, m.LogsTitle(), "")
+				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+					kit.PageTitle(c, m.LogsTitle(), "")
+					if s.AccountPanelAvailable() {
+						if kit.SecondaryButton(c, icons.User, m.LogsAtuinAccount()).Clicked() {
+							s.OpenAccountPanel()
+							c.Invalidate()
+						}
+					}
+				})
 				tabs(c, s, m, t)
 				problems(c, s, m, t)
 				filters(c, s, m, t)

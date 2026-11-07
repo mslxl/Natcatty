@@ -356,8 +356,9 @@ func TestHistoryMetadataRoundTripsAcrossReopen(t *testing.T) {
 		t.Fatalf("EnsureWriterUUID: %v", err)
 	}
 	want := domainhistory.Metadata{
-		ShellHistoryImported: true,
-		KeyFingerprint:       "sha256:ab12cd34",
+		ShellHistoryImported:   true,
+		KeyFingerprint:         "sha256:ab12cd34",
+		UnverifiedKeyConfirmed: true,
 		Account: domainhistory.AccountIdentity{
 			ServerURL: "https://api.atuin.sh",
 			UserID:    "user-1",
