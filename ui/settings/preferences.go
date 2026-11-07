@@ -168,6 +168,10 @@ func fieldValue(settings domain.Settings, field domain.Field) string {
 		return settings.Appearance.TerminalFontFamily
 	case domain.FieldSyncProvider:
 		return settings.Sync.Provider
+	case domain.FieldHistorySyncAddress:
+		return settings.History.SyncAddress
+	case domain.FieldHistoryUsername:
+		return settings.History.Username
 	default:
 		return ""
 	}

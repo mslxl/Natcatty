@@ -6,7 +6,9 @@ package preferences
 import (
 	"math"
 	"runtime"
+	"strings"
 
+	atuinmodel "github.com/mslxl/natcatty/domain/model/atuin"
 	moshmodel "github.com/mslxl/natcatty/domain/model/mosh"
 	domaintheme "github.com/mslxl/natcatty/domain/model/theme"
 )
@@ -282,9 +284,63 @@ type SFTPEditor struct {
 	FileAssociations []FileAssociation `json:"fileAssociations,omitempty"`
 }
 
-// Logs group holds the diagnostics settings that are not per-Session logging.
+// Logs group holds the diagnostics settings and the device-local Command
+// History sync settings shown in the Logs settings area. It is not per-Session
+// logging.
 type Logs struct {
 	SSHDebug bool `json:"sshDebug"`
+}
+
+// History sync bounds. The address is the public Atuin server by default; the
+// interval is clamped so a malformed file cannot disable or flood sync.
+const (
+	DefaultHistorySyncAddress         = "https://api.atuin.sh"
+	DefaultHistorySyncIntervalMinutes = 5
+	MinHistorySyncIntervalMinutes     = 1
+	MaxHistorySyncIntervalMinutes     = 60
+)
+
+// History holds the device-local Atuin account and sync settings. The session
+// token and master key never live here: they belong to the field-secret store
+// under a dedicated entity type. These settings therefore do not travel in
+// PortableSettings, Vault cloud sync, or a portable export.
+//
+// HistoryCaptureHookEnabled is the portable capture preference; it belongs to
+// the terminal settings group because it changes Session behavior.
+type History struct {
+	SyncEnabled         bool                `json:"syncEnabled"`
+	SyncAddress         string              `json:"syncAddress"`
+	Username            string              `json:"username"`
+	AuthMode            atuinmodel.AuthMode `json:"authMode"`
+	SyncIntervalMinutes int                 `json:"syncIntervalMinutes"`
+	// PreferHostAtuin keeps an Atuin install on a Host authoritative: the
+	// capture hook is skipped and the Host database is imported read-only.
+	PreferHostAtuin bool `json:"preferHostAtuin"`
+}
+
+// NormalizeHistory returns a usable device-local history configuration. A
+// zero interval from a document written before the field existed gets the
+// default, not the one-minute minimum.
+func NormalizeHistory(history History) History {
+	if history == (History{}) {
+		// An older document has no history section. PreferHostAtuin defaults
+		// to true; an explicit false is saved with the rest of the normalized
+		// section and is therefore not mistaken for an absent one.
+		history.PreferHostAtuin = true
+	}
+	history.SyncAddress = strings.TrimSpace(history.SyncAddress)
+	if history.SyncAddress == "" {
+		history.SyncAddress = DefaultHistorySyncAddress
+	}
+	history.Username = strings.TrimSpace(history.Username)
+	history.AuthMode = atuinmodel.NormalizeAuthMode(history.AuthMode)
+	if history.SyncIntervalMinutes <= 0 {
+		history.SyncIntervalMinutes = DefaultHistorySyncIntervalMinutes
+	}
+	if history.SyncIntervalMinutes > MaxHistorySyncIntervalMinutes {
+		history.SyncIntervalMinutes = MaxHistorySyncIntervalMinutes
+	}
+	return history
 }
 
 // Sync group. A backend may be unavailable; the typed preferences still exist
@@ -316,6 +372,10 @@ type Settings struct {
 	Layout     Layout     `json:"layout"`
 	SFTPEditor SFTPEditor `json:"sftpEditor"`
 	Logs       Logs       `json:"logs"`
+	// History is device-local. It is deliberately absent from
+	// PortableSettings, so Vault cloud sync never carries an account address,
+	// username, auth mode, interval, or the Host-Atuin preference.
+	History    History    `json:"history"`
 	Sync       Sync       `json:"sync"`
 	Security   Security   `json:"security"`
 	Transport  Transport  `json:"transport"`
@@ -451,7 +511,15 @@ func Defaults() Settings {
 			// the least surprising fallback.
 			DefaultOpener: Opener{Kind: OpenerSystem},
 		},
-		Logs:     Logs{SSHDebug: false},
+		Logs: Logs{SSHDebug: false},
+		History: History{
+			SyncEnabled:         false,
+			SyncAddress:         DefaultHistorySyncAddress,
+			Username:            "",
+			AuthMode:            atuinmodel.AuthModeSession,
+			SyncIntervalMinutes: DefaultHistorySyncIntervalMinutes,
+			PreferHostAtuin:     true,
+		},
 		Sync:     Sync{Enabled: false, AutoSync: false, ConflictStrategy: SyncNewest, Provider: ""},
 		Security: Security{ConfirmCloseSessions: true, ConfirmDestructive: true},
 		Transport: Transport{
@@ -535,6 +603,8 @@ func Normalize(settings Settings) Settings {
 	settings.SFTPEditor.FileAssociations =
 		NormalizeFileAssociations(settings.SFTPEditor.FileAssociations)
 
+	settings.History = NormalizeHistory(settings.History)
+
 	switch settings.Sync.ConflictStrategy {
 	case SyncNewest, SyncLocal, SyncRemote:
 	default:
@@ -593,6 +663,7 @@ func ResetGroup(settings Settings, group Group) Settings {
 		settings.SFTPEditor = defaults.SFTPEditor
 	case GroupLogs:
 		settings.Logs = defaults.Logs
+		settings.History = defaults.History
 	case GroupSync:
 		settings.Sync = defaults.Sync
 	case GroupSecurity:
@@ -656,6 +727,12 @@ const (
 	FieldConfirmCloseSessions         Field = "security.confirmCloseSessions"
 	FieldConfirmDestructive           Field = "security.confirmDestructive"
 	FieldMoshPredictionDisplay        Field = "transport.moshPredictionDisplay"
+	FieldHistorySyncEnabled           Field = "history.syncEnabled"
+	FieldHistorySyncAddress           Field = "history.syncAddress"
+	FieldHistoryUsername              Field = "history.username"
+	FieldHistoryAuthMode              Field = "history.authMode"
+	FieldHistorySyncInterval          Field = "history.syncIntervalMinutes"
+	FieldHistoryPreferHostAtuin       Field = "history.preferHostAtuin"
 )
 
 // Fields returns every resettable field in Settings-window order.
@@ -675,6 +752,8 @@ func Fields() []Field {
 		FieldDefaultViewMode, FieldEditorWordWrap, FieldEditorFontSize,
 		FieldDefaultOpener,
 		FieldSSHDebug,
+		FieldHistorySyncEnabled, FieldHistorySyncAddress, FieldHistoryUsername,
+		FieldHistoryAuthMode, FieldHistorySyncInterval, FieldHistoryPreferHostAtuin,
 		FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider,
 		FieldConfirmCloseSessions, FieldConfirmDestructive,
@@ -701,7 +780,9 @@ func GroupOf(field Field) (Group, bool) {
 		FieldDefaultViewMode, FieldEditorWordWrap, FieldEditorFontSize,
 		FieldDefaultOpener:
 		return GroupSFTPEditor, true
-	case FieldSSHDebug:
+	case FieldSSHDebug, FieldHistorySyncEnabled, FieldHistorySyncAddress,
+		FieldHistoryUsername, FieldHistoryAuthMode, FieldHistorySyncInterval,
+		FieldHistoryPreferHostAtuin:
 		return GroupLogs, true
 	case FieldSyncEnabled, FieldSyncAutoSync, FieldSyncConflictStrategy,
 		FieldSyncProvider:
@@ -794,6 +875,18 @@ func ResetField(settings Settings, field Field) Settings {
 		settings.SFTPEditor.DefaultOpener = defaults.SFTPEditor.DefaultOpener
 	case FieldSSHDebug:
 		settings.Logs.SSHDebug = defaults.Logs.SSHDebug
+	case FieldHistorySyncEnabled:
+		settings.History.SyncEnabled = defaults.History.SyncEnabled
+	case FieldHistorySyncAddress:
+		settings.History.SyncAddress = defaults.History.SyncAddress
+	case FieldHistoryUsername:
+		settings.History.Username = defaults.History.Username
+	case FieldHistoryAuthMode:
+		settings.History.AuthMode = defaults.History.AuthMode
+	case FieldHistorySyncInterval:
+		settings.History.SyncIntervalMinutes = defaults.History.SyncIntervalMinutes
+	case FieldHistoryPreferHostAtuin:
+		settings.History.PreferHostAtuin = defaults.History.PreferHostAtuin
 	case FieldSyncEnabled:
 		settings.Sync.Enabled = defaults.Sync.Enabled
 	case FieldSyncAutoSync:

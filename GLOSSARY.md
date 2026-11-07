@@ -190,6 +190,46 @@ The highest writer-series index this device has applied from another writer and
 the highest index the server has acknowledged for this device's uploads.
 _Avoid_: cursor, offset
 
+**Atuin Account**:
+The one Atuin service identity this install connects to: a base URL (`atuin.sh`
+or a self-hosted Atuin v18.x server), username, auth mode, session token, and
+master key. One account exists per install; switching accounts requires logout
+first. It is distinct from a Sync Profile, which is a Vault cloud-sync target.
+_Avoid_: sync account, Atuin profile
+
+**Session Token**:
+The credential an Atuin username/password login mints, or one the user pastes in
+advanced mode. It travels as a `Token` or `Bearer` authorization header and is
+stored only in the field-secret store; it is never displayed again.
+_Avoid_: password, API key
+
+**Master Key**:
+The 32-byte Atuin account secret, entered as a BIP39 English mnemonic or a
+base64-encoded 32-byte value. It encrypts and decrypts remote Atuin records and
+is held only for one remote operation. It does not protect local Command History
+and is never written to settings, logs, a portable export, Vault cloud sync, or
+a Host.
+_Avoid_: encryption key, sync password
+
+**Key Fingerprint**:
+A short hash prefix of the Master Key shown in place of the key and retained
+after logout, so entering a different key can be recognized and confirmed.
+_Avoid_: key hash, checksum
+
+**Remote**:
+The single external Atuin sync port. It authenticates the Atuin Account, reads
+capabilities and record status, and downloads or uploads domain sync records.
+HTTP, MessagePack, PASETO, ciphertext, and wire types stay inside its adapter.
+_Avoid_: client, API, transport
+
+**Sync Status**:
+The account panel's sanitized account and sync view: disabled, not configured,
+locked, idle, syncing, offline, auth expired, key mismatch, incompatible
+server, or error, plus the server version, key fingerprint, pending uploads,
+and next retry. It never contains the Session Token, Master Key, server
+response text, or record payload.
+_Avoid_: sync state, error message
+
 **Hibernate**:
 The state of a running Session whose one live terminal view is detached while its
 transport and application state stay alive, so Resume can reattach a view.
@@ -260,9 +300,10 @@ confirmation.
 _Avoid_: dump, backup, download
 
 **Local Backup**:
-An encrypted, format-versioned snapshot of every Vault family kept under
-`vault-backups/` on this device so the user can undo a Vault change locally. It is not
-an Export and it is not a Sync Profile copy.
+An encrypted, format-versioned snapshot of every Vault table, including the
+field-secret ciphertext table, kept under `vault-backups/` on this device so the
+user can undo a Vault change locally. It is not an Export and it is not a Sync
+Profile copy; it never travels to a Host or cloud service by itself.
 _Avoid_: export, dump, cloud copy
 
 **Backup Retention**:
